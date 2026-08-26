@@ -126,6 +126,7 @@ export default {
       dataset: 'Dataset',
       memories: 'Memory',
       openMetadata: 'Catalog',
+      businessDocuments: 'Business docs',
       discord: 'Discord',
       github: 'GitHub',
       help: 'Help',

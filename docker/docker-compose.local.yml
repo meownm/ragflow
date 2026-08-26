@@ -18,6 +18,7 @@ services:
       OPENMETADATA_DATASET_TOP_N: ${OPENMETADATA_DATASET_TOP_N:-20}
       OPENMETADATA_DATASET_SIMILARITY_THRESHOLD: ${OPENMETADATA_DATASET_SIMILARITY_THRESHOLD:-0.05}
       OPENMETADATA_DATASET_VECTOR_WEIGHT: ${OPENMETADATA_DATASET_VECTOR_WEIGHT:-0.3}
+      BUSINESS_DOCUMENT_WORKER_ENABLED: "true"
     healthcheck:
       test:
         - CMD-SHELL
@@ -43,6 +44,11 @@ services:
       - ../api/apps/services/openmetadata_dataset_retrieval.py:/ragflow/api/apps/services/openmetadata_dataset_retrieval.py:ro
       - ../api/apps/restful_apis/openmetadata_api.py:/ragflow/api/apps/restful_apis/openmetadata_api.py:ro
       - ../api/apps/services/dataset_api_service.py:/ragflow/api/apps/services/dataset_api_service.py:ro
+      - ../api/apps/business_documents:/ragflow/api/apps/business_documents:ro
+      - ../api/apps/restful_apis/business_document_api.py:/ragflow/api/apps/restful_apis/business_document_api.py:ro
+      - ../api/db/db_models.py:/ragflow/api/db/db_models.py:ro
+      - ../api/ragflow_server.py:/ragflow/api/ragflow_server.py:ro
+      - ../agent/business_requirements:/ragflow/agent/business_requirements:ro
       - ../agent/canvas.py:/ragflow/agent/canvas.py:ro
       - ../agent/component/openmetadata.py:/ragflow/agent/component/openmetadata.py:ro
       - ../api/db/services/file_service.py:/ragflow/api/db/services/file_service.py:ro

@@ -250,6 +250,16 @@ export default {
   openMetadataGovernancePreview: `${restAPIv1}/openmetadata/governance/preview`,
   openMetadataGovernanceConfirm: `${restAPIv1}/openmetadata/governance/confirm`,
 
+  // business documents
+  businessDocuments: `${restAPIv1}/business-documents`,
+  businessDocument: (id: string) => `${restAPIv1}/business-documents/${id}`,
+  businessDocumentCommands: (id: string) =>
+    `${restAPIv1}/business-documents/${id}/commands`,
+  businessDocumentExports: (id: string) =>
+    `${restAPIv1}/business-documents/${id}/exports`,
+  businessDocumentExportDownload: (id: string, artifactId: string) =>
+    `${restAPIv1}/business-documents/${id}/exports/${artifactId}/download`,
+
   // flow
   listAgentTemplate: `${restAPIv1}/agents/templates`,
   listAgents: `${restAPIv1}/agents`,

@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Link, useLocation } from 'react-router';
 
 import {
+  FilePenLine,
   LucideBrain,
   LucideCpu,
   LucideDatabase,
@@ -12,6 +13,7 @@ import {
   LucideMessageSquareText,
   LucideNetwork,
   LucideSearch,
+  type LucideIcon,
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -27,6 +29,7 @@ const PathMap = {
   [Routes.Agents]: [Routes.Agents, Routes.AgentTemplates],
   [Routes.Memories]: [Routes.Memories, Routes.Memory, Routes.MemoryMessage],
   [Routes.OpenMetadata]: [Routes.OpenMetadata],
+  [Routes.BusinessDocuments]: [Routes.BusinessDocuments],
   [Routes.Files]: [Routes.Files],
 } as const;
 
@@ -35,7 +38,13 @@ const PathMap = {
 const matchesPath = (pathname: string, candidate: string) =>
   pathname === candidate || pathname.startsWith(`${candidate}/`);
 
-const menuItems = [
+const menuItems: Array<{
+  path: Routes;
+  name: string;
+  icon: LucideIcon;
+  fallbackName?: string;
+  'data-testid'?: string;
+}> = [
   { path: Routes.Root, name: 'header.home', icon: LucideHouse },
   { path: Routes.Datasets, name: 'header.dataset', icon: LucideDatabase },
   {
@@ -62,6 +71,13 @@ const menuItems = [
     name: 'header.openMetadata',
     icon: LucideNetwork,
     'data-testid': 'nav-openmetadata',
+  },
+  {
+    path: Routes.BusinessDocuments,
+    name: 'header.businessDocuments',
+    fallbackName: 'Business docs',
+    icon: FilePenLine,
+    'data-testid': 'nav-business-documents',
   },
   { path: Routes.Files, name: 'header.fileManager', icon: LucideFolderOpen },
 ];
@@ -95,7 +111,7 @@ const DesktopNavbarWithAnchor = () => {
   return (
     <nav>
       <ul className="relative flex items-center p-1 bg-bg-card rounded-full border border-border-button">
-        {menuItems.map(({ path, name, icon: Icon, ...props }) => {
+        {menuItems.map(({ path, name, fallbackName, icon: Icon, ...props }) => {
           const isActive = path === activePath;
           const anchorName = `--${navbarAnchorNamePrefix}${path === Routes.Root ? '-root' : path.replace('/', '-')}`;
 
@@ -114,10 +130,12 @@ const DesktopNavbarWithAnchor = () => {
                 {path === Routes.Root ? (
                   <>
                     <Icon className="size-6 stroke-[1.5]" />
-                    <span className="sr-only">{t(name)}</span>
+                    <span className="sr-only">
+                      {t(name, { defaultValue: fallbackName ?? name })}
+                    </span>
                   </>
                 ) : (
-                  <span>{t(name)}</span>
+                  <span>{t(name, { defaultValue: fallbackName ?? name })}</span>
                 )}
               </Link>
             </li>
@@ -151,7 +169,7 @@ const DesktopNavbarFallback = () => {
   return (
     <nav>
       <ul className="flex items-center p-1 bg-bg-card rounded-full border border-border-button">
-        {menuItems.map(({ path, name, icon: Icon, ...props }) => {
+        {menuItems.map(({ path, name, fallbackName, icon: Icon, ...props }) => {
           const isActive = path === activePath;
 
           return (
@@ -165,13 +183,13 @@ const DesktopNavbarFallback = () => {
                   isActive &&
                     '!text-bg-base bg-text-primary border-b-2 border-b-accent-primary',
                 )}
-                aria-label={t(name)}
+                aria-label={t(name, { defaultValue: fallbackName ?? name })}
                 aria-current={isActive ? 'page' : undefined}
               >
                 {path === Routes.Root ? (
                   <Icon className="size-6 stroke-[1.5]" />
                 ) : (
-                  <span>{t(name)}</span>
+                  <span>{t(name, { defaultValue: fallbackName ?? name })}</span>
                 )}
               </Link>
             </li>
@@ -258,12 +276,12 @@ export function MobileNavbar({ renderFooter }: MobileNavbarProps) {
 
         <nav className="min-h-0 flex-1 overflow-y-auto py-3">
           <ul className="space-y-1">
-            {menuItems.map(({ path, name, icon, ...props }) => (
+            {menuItems.map(({ path, name, fallbackName, icon, ...props }) => (
               <li key={path}>
                 <MobileNavItem
                   {...props}
                   to={path}
-                  label={t(name)}
+                  label={t(name, { defaultValue: fallbackName ?? name })}
                   icon={icon}
                   isActive={path === activePath}
                   onClick={close}

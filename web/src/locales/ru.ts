@@ -117,6 +117,7 @@ export default {
       dataset: 'Датасет',
       memories: 'Память',
       openMetadata: 'Каталог',
+      businessDocuments: 'Документы',
     },
     openMetadata: {
       title: 'OpenMetadata Copilot',

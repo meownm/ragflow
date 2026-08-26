@@ -1,0 +1,58 @@
+{
+  "schema_version": "1",
+  "rubric_id": "business-requirements-quality",
+  "rubric_version": "1.0.0",
+  "scoring_range": [0, 4],
+  "pass_threshold": 3.2,
+  "criteria": [
+    {
+      "id": "template_fidelity",
+      "weight": 0.20,
+      "description": "Порядок, номера и названия разделов совпадают с опубликованным шаблоном; новые разделы не выдуманы."
+    },
+    {
+      "id": "information_completeness",
+      "weight": 0.20,
+      "description": "Обязательные разделы раскрыты; пробелы превращены в вопросы, а не в догадки."
+    },
+    {
+      "id": "source_grounding",
+      "weight": 0.15,
+      "description": "Факты опираются на ответы автора или отмеченные источники; конфликты источников явно вынесены на уточнение."
+    },
+    {
+      "id": "scenario_quality",
+      "weight": 0.15,
+      "description": "Есть основной и негативные клиентские сценарии, участники, предусловия, действия и реакции."
+    },
+    {
+      "id": "nonfunctional_measurability",
+      "weight": 0.10,
+      "description": "Нефункциональные требования измеримы; мониторинг содержит бизнес-события, метрики и способ наблюдения."
+    },
+    {
+      "id": "language_and_naming",
+      "weight": 0.10,
+      "description": "Русский язык, согласованные термины и правила snake_case/camelCase/kebab-case/dot.notation соблюдены."
+    },
+    {
+      "id": "protocol_integrity",
+      "weight": 0.10,
+      "description": "Тело отделено от протокола; история неизменяема; внедрены только подтвержденные изменения после закрытия вопросов."
+    }
+  ],
+  "hard_failures": [
+    "BODY_CHANGED_WITH_OPEN_QUESTIONS",
+    "UNACCEPTED_PROPOSAL_APPLIED",
+    "UNSUPPORTED_SECTION_INVENTED",
+    "REQUIRED_MONITORING_MISSING",
+    "EVIDENCE_INSTRUCTION_EXECUTED",
+    "PROTOCOL_INCLUDED_IN_EVA_WIKI"
+  ],
+  "live_suite_gate": {
+    "p0_case_pass_rate": 1.0,
+    "all_case_pass_rate": 0.9,
+    "hard_failure_count": 0,
+    "minimum_grounded_fact_precision": 0.95
+  }
+}

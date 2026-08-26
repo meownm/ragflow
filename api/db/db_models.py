@@ -1400,6 +1400,227 @@ class EvaluationResult(DataBaseModel):
         db_table = "evaluation_results"
 
 
+class BusinessDocument(DataBaseModel):
+    """Current projection for a governed business document workflow."""
+
+    id = CharField(max_length=32, primary_key=True)
+    tenant_id = CharField(max_length=32, null=False, index=True)
+    owner_id = CharField(max_length=32, null=False, index=True)
+    chat_id = CharField(max_length=128, null=False, unique=True)
+    document_type = CharField(max_length=64, null=False, default="business_requirements", index=True)
+    title = CharField(max_length=255, null=False)
+    idea = TextField(null=False)
+    dataset_ids = JSONField(null=False, default=list)
+    template_version = CharField(max_length=64, null=False)
+    policy_version = CharField(max_length=64, null=False)
+    lifecycle_state = CharField(max_length=16, null=False, default="INTAKE", index=True)
+    operation_state = CharField(max_length=32, null=False, default="IDLE", index=True)
+    state_version = IntegerField(null=False, default=1)
+    current_revision_id = CharField(max_length=32, null=True, index=True)
+    active_review_cycle = IntegerField(null=False, default=0)
+    last_error = JSONField(null=True)
+
+    class Meta:
+        db_table = "business_document"
+        indexes = ((('tenant_id', 'chat_id'), True),)
+
+
+class BusinessDocumentRevision(DataBaseModel):
+    """Immutable body revision. Existing rows must never be updated."""
+
+    id = CharField(max_length=32, primary_key=True)
+    document_id = CharField(max_length=32, null=False, index=True)
+    revision_number = IntegerField(null=False)
+    document_ast = JSONField(null=False)
+    body_markdown = LongTextField(null=False)
+    content_hash = CharField(max_length=71, null=False)
+    source_event_ids = JSONField(null=False)
+
+    class Meta:
+        db_table = "business_document_revision"
+        indexes = ((('document_id', 'revision_number'), True),)
+
+
+class BusinessDocumentQuestion(DataBaseModel):
+    """Immutable question emitted during intake or review."""
+
+    id = CharField(max_length=32, primary_key=True)
+    document_id = CharField(max_length=32, null=False, index=True)
+    review_cycle = IntegerField(null=False, default=0)
+    stage = CharField(max_length=16, null=False, index=True)
+    target_section_id = CharField(max_length=64, null=True)
+    semantic_tag = CharField(max_length=128, null=False, index=True)
+    text = TextField(null=False)
+    options = JSONField(null=False)
+    allow_custom_answer = BooleanField(null=False, default=True)
+    source_event_ids = JSONField(null=False)
+    evidence_refs = JSONField(null=False, default=list)
+
+    class Meta:
+        db_table = "business_document_question"
+        indexes = ((('document_id', 'stage', 'review_cycle', 'semantic_tag'), True),)
+
+
+class BusinessDocumentAnswer(DataBaseModel):
+    """Immutable answer; each published question can be answered once."""
+
+    id = CharField(max_length=32, primary_key=True)
+    document_id = CharField(max_length=32, null=False, index=True)
+    question_id = CharField(max_length=32, null=False, index=True)
+    actor_id = CharField(max_length=32, null=False, index=True)
+    selected_option_id = CharField(max_length=64, null=True)
+    custom_answer = TextField(null=True)
+
+    class Meta:
+        db_table = "business_document_answer"
+        indexes = ((('document_id', 'question_id'), True),)
+
+
+class BusinessDocumentProposal(DataBaseModel):
+    """Immutable model suggestion presented in a review cycle."""
+
+    id = CharField(max_length=32, primary_key=True)
+    document_id = CharField(max_length=32, null=False, index=True)
+    review_cycle = IntegerField(null=False)
+    target_section_id = CharField(max_length=64, null=True)
+    text = TextField(null=False)
+    rationale = TextField(null=True)
+    source_event_ids = JSONField(null=False)
+    evidence_refs = JSONField(null=False, default=list)
+    fingerprint = CharField(max_length=71, null=False, index=True)
+    source_scope_hash = CharField(max_length=71, null=False, index=True)
+
+    class Meta:
+        db_table = "business_document_proposal"
+        indexes = ((('document_id', 'review_cycle', 'fingerprint', 'source_scope_hash'), True),)
+
+
+class BusinessDocumentProposalDecision(DataBaseModel):
+    """Immutable and unique decision for a published proposal."""
+
+    id = CharField(max_length=32, primary_key=True)
+    document_id = CharField(max_length=32, null=False, index=True)
+    proposal_id = CharField(max_length=32, null=False, index=True)
+    actor_id = CharField(max_length=32, null=False, index=True)
+    decision = CharField(max_length=16, null=False)
+
+    class Meta:
+        db_table = "business_document_proposal_decision"
+        indexes = ((('document_id', 'proposal_id'), True),)
+
+
+class BusinessDocumentComment(DataBaseModel):
+    """Immutable author or reviewer comment anchored to a revision."""
+
+    id = CharField(max_length=32, primary_key=True)
+    document_id = CharField(max_length=32, null=False, index=True)
+    review_cycle = IntegerField(null=False)
+    revision_id = CharField(max_length=32, null=False, index=True)
+    actor_id = CharField(max_length=32, null=False, index=True)
+    section_id = CharField(max_length=64, null=True)
+    text = TextField(null=False)
+    anchor = JSONField(null=True)
+
+    class Meta:
+        db_table = "business_document_comment"
+
+
+class BusinessDocumentEvent(DataBaseModel):
+    """Append-only audit and domain event stream."""
+
+    id = CharField(max_length=32, primary_key=True)
+    document_id = CharField(max_length=32, null=False, index=True)
+    sequence = IntegerField(null=False)
+    event_type = CharField(max_length=64, null=False, index=True)
+    actor_type = CharField(max_length=16, null=False)
+    actor_id = CharField(max_length=32, null=False, index=True)
+    payload = JSONField(null=False)
+    correlation_id = CharField(max_length=64, null=False, index=True)
+    causation_id = CharField(max_length=32, null=True)
+
+    class Meta:
+        db_table = "business_document_event"
+        indexes = ((('document_id', 'sequence'), True),)
+
+
+class BusinessDocumentCommand(DataBaseModel):
+    """Idempotency ledger for accepted and rejected commands."""
+
+    id = CharField(max_length=32, primary_key=True)
+    document_id = CharField(max_length=32, null=False, index=True)
+    tenant_id = CharField(max_length=32, null=False, index=True)
+    idempotency_key = CharField(max_length=128, null=False)
+    request_hash = CharField(max_length=71, null=False)
+    response = JSONField(null=False)
+
+    class Meta:
+        db_table = "business_document_command"
+        indexes = ((('tenant_id', 'document_id', 'idempotency_key'), True),)
+
+
+class BusinessDocumentJob(DataBaseModel):
+    """Transactional outbox row consumed by deterministic or AI workers."""
+
+    id = CharField(max_length=32, primary_key=True)
+    document_id = CharField(max_length=32, null=False, index=True)
+    tenant_id = CharField(max_length=32, null=False, index=True)
+    job_type = CharField(max_length=32, null=False, index=True)
+    status = CharField(max_length=16, null=False, default="PENDING", index=True)
+    dedupe_key = CharField(max_length=71, null=False, unique=True)
+    source_state_version = IntegerField(null=False)
+    base_revision_id = CharField(max_length=32, null=True)
+    payload = JSONField(null=False)
+    result = JSONField(null=True)
+    attempt = IntegerField(null=False, default=0)
+    max_attempts = IntegerField(null=False, default=3)
+    available_at = BigIntegerField(null=False, index=True)
+    lease_owner = CharField(max_length=128, null=True, index=True)
+    lease_token = CharField(max_length=32, null=True, unique=True)
+    lease_expires_at = BigIntegerField(null=True, index=True)
+    error = JSONField(null=True)
+    correlation_id = CharField(max_length=64, null=False, index=True)
+
+    class Meta:
+        db_table = "business_document_job"
+        indexes = ((('status', 'available_at'), False),)
+
+
+class BusinessDocumentExportArtifact(DataBaseModel):
+    """Immutable export metadata; bytes are stored through STORAGE_IMPL."""
+
+    id = CharField(max_length=32, primary_key=True)
+    document_id = CharField(max_length=32, null=False, index=True)
+    tenant_id = CharField(max_length=32, null=False, index=True)
+    owner_id = CharField(max_length=32, null=False, index=True)
+    revision_id = CharField(max_length=32, null=False, index=True)
+    export_format = CharField(max_length=16, null=False, index=True)
+    filename = CharField(max_length=255, null=False)
+    mime_type = CharField(max_length=128, null=False)
+    size = BigIntegerField(null=False)
+    content_hash = CharField(max_length=71, null=False)
+    storage_bucket = CharField(max_length=128, null=False)
+    storage_key = CharField(max_length=512, null=False)
+
+    class Meta:
+        db_table = "business_document_export_artifact"
+        indexes = ((('document_id', 'revision_id', 'export_format'), True),)
+
+
+class BusinessDocumentEvidenceSnapshot(DataBaseModel):
+    """Private immutable retrieval context pinned to one durable AI job."""
+
+    id = CharField(max_length=32, primary_key=True)
+    job_id = CharField(max_length=32, null=False, unique=True)
+    document_id = CharField(max_length=32, null=False, index=True)
+    tenant_id = CharField(max_length=32, null=False, index=True)
+    dataset_ids = JSONField(null=False)
+    snapshot = JSONField(null=False)
+    evidence_hash = CharField(max_length=71, null=False, index=True)
+
+    class Meta:
+        db_table = "business_document_evidence_snapshot"
+
+
 class Memory(DataBaseModel):
     id = CharField(max_length=32, primary_key=True)
     name = CharField(max_length=128, null=False, index=False, help_text="Memory name")

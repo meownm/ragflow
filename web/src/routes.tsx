@@ -25,6 +25,7 @@ export enum Routes {
   AgentExplore = `${Routes.Agent}/:id/explore`,
   Memories = '/memories',
   OpenMetadata = '/openmetadata',
+  BusinessDocuments = '/business-documents',
   Memory = '/memory',
   MemoryMessage = '/memory-message',
   MemorySetting = '/memory-setting',
@@ -235,6 +236,14 @@ const routeConfigOptions = [
       {
         path: Routes.OpenMetadata,
         Component: () => import('@/pages/openmetadata'),
+      },
+      {
+        path: Routes.BusinessDocuments,
+        Component: () => import('@/pages/business-documents'),
+      },
+      {
+        path: `${Routes.BusinessDocuments}/:id`,
+        Component: () => import('@/pages/business-documents'),
       },
       {
         path: `${Routes.Memory}`,

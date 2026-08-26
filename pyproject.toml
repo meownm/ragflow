@@ -1,6 +1,6 @@
 [project]
 name = "ragflow"
-version = "0.28.0"
+version = "0.29.0"
 description = "[RAGFlow](https://ragflow.io/) is an open-source RAG (Retrieval-Augmented Generation) engine based on deep document understanding. It offers a streamlined RAG workflow for businesses of any scale, combining LLM (Large Language Models) to provide truthful question-answering capabilities, backed by well-founded citations from various complex formatted data."
 authors = [{ name = "Zhichang Yu", email = "yuzhichang@gmail.com" }]
 license-files = ["LICENSE"]
@@ -239,6 +239,13 @@ trio = [{ index = "pypi" }]
 [tool.setuptools]
 packages = [
     'agent',
+    'agent.business_requirements',
+    'agent.business_requirements.contracts',
+    'agent.business_requirements.evals',
+    'agent.business_requirements.golden_dialogs',
+    'agent.business_requirements.policies',
+    'agent.business_requirements.prompts',
+    'agent.business_requirements.templates',
     'api',
     'deepdoc',
     'rag.graphrag',
@@ -253,6 +260,12 @@ packages = [
 # we map the underscored Python name to the hyphenated filesystem path.
 [tool.setuptools.package-dir]
 "tools.chatgpt_on_wechat.plugins" = "tools/chatgpt-on-wechat/plugins"
+
+[tool.setuptools.package-data]
+agent = [
+    "business_requirements/**/*.json",
+    "business_requirements/**/*.md",
+]
 
 [tool.ruff]
 line-length = 200

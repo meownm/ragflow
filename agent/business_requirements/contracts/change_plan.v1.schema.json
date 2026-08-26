@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ragflow:business-requirements:change-plan:v1",
+  "title": "Business requirements change plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "base_revision_id", "source_state_version", "acknowledged_no_change_event_ids", "operations"],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "base_revision_id": {"type": "string", "minLength": 1, "maxLength": 64},
+    "source_state_version": {"type": "integer", "minimum": 1},
+    "acknowledged_no_change_event_ids": {
+      "type": "array",
+      "maxItems": 500,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1, "maxLength": 64}
+    },
+    "operations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["operation_id", "type", "section_id", "expected_section_hash", "source_event_ids", "content"],
+        "properties": {
+          "operation_id": {"type": "string", "minLength": 1, "maxLength": 64},
+          "type": {"enum": ["REPLACE_SECTION_CONTENT"]},
+          "section_id": {"type": "string", "minLength": 1, "maxLength": 16},
+          "expected_section_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+          "source_event_ids": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {"type": "string", "minLength": 1, "maxLength": 64}
+          },
+          "evidence_refs": {
+            "type": "array",
+            "maxItems": 50,
+            "uniqueItems": true,
+            "items": {"type": "string", "pattern": "^ragflow://dataset/[^\\s]+/document/[^\\s]+/chunk/[^\\s]+$"}
+          },
+          "content": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["blocks"],
+            "properties": {
+              "blocks": {"type": "array"}
+            }
+          }
+        }
+      }
+    }
+  }
+}

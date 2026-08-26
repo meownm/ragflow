@@ -1,0 +1,135 @@
+{
+  "schema_version": "1",
+  "document_type": "business_requirements",
+  "template_version": "1.0.0",
+  "language": "ru",
+  "status": "PUBLISHED",
+  "source_name": "03_business_requirements.md",
+  "rendering": {
+    "body_heading_base_level": 2,
+    "preserve_section_numbers": true,
+    "protocol_in_body": false
+  },
+  "sections": [
+    {
+      "id": "1",
+      "title": "Цель",
+      "required": true,
+      "allowed_blocks": ["paragraph", "list"]
+    },
+    {
+      "id": "2",
+      "title": "Нормативно-правовые акты (НПА)",
+      "required": false,
+      "allowed_blocks": ["paragraph", "list", "reference"]
+    },
+    {
+      "id": "3",
+      "title": "Целевая аудитория",
+      "required": true,
+      "allowed_blocks": ["paragraph"]
+    },
+    {
+      "id": "3.1",
+      "parent_id": "3",
+      "title": "Пользователи и их категории",
+      "required": true,
+      "allowed_blocks": ["paragraph", "table", "list"]
+    },
+    {
+      "id": "3.2",
+      "parent_id": "3",
+      "title": "Географический охват",
+      "required": true,
+      "allowed_blocks": ["paragraph", "list"]
+    },
+    {
+      "id": "3.3",
+      "parent_id": "3",
+      "title": "Потребность целевой аудитории",
+      "required": true,
+      "allowed_blocks": ["paragraph", "list"]
+    },
+    {
+      "id": "4",
+      "title": "Концепция (общая схема) взаимодействия с детализацией данных",
+      "required": true,
+      "allowed_blocks": ["paragraph"]
+    },
+    {
+      "id": "4.1",
+      "parent_id": "4",
+      "title": "Концептуальная схема взаимодействия",
+      "required": true,
+      "allowed_blocks": ["paragraph", "plantuml", "list"],
+      "semantic_requirements": ["REQUIRED_VALID_PLANTUML_DIAGRAM"]
+    },
+    {
+      "id": "4.2",
+      "parent_id": "4",
+      "title": "Контрагенты",
+      "required": false,
+      "allowed_blocks": ["paragraph", "table", "list"]
+    },
+    {
+      "id": "4.3",
+      "parent_id": "4",
+      "title": "Клиентские сценарии (схемы) с сопровождающим текстом",
+      "required": true,
+      "allowed_blocks": ["paragraph", "bpmn", "table", "list"],
+      "semantic_requirements": [
+        "REQUIRED_BPMN_2_0_XML",
+        "REQUIRED_ACCOMPANYING_TEXT",
+        "REQUIRED_EXPLICIT_NEGATIVE_ALTERNATIVE_PATH"
+      ]
+    },
+    {
+      "id": "5",
+      "title": "Нефункциональные требования",
+      "required": true,
+      "allowed_blocks": ["paragraph", "table", "list"]
+    },
+    {
+      "id": "5.2",
+      "parent_id": "5",
+      "title": "Прототип",
+      "required": false,
+      "allowed_blocks": ["paragraph", "image", "reference"]
+    },
+    {
+      "id": "5.3",
+      "parent_id": "5",
+      "title": "Требования к дизайну",
+      "required": false,
+      "allowed_blocks": ["paragraph", "list", "image"]
+    },
+    {
+      "id": "5.4",
+      "parent_id": "5",
+      "title": "Требования к отчетности",
+      "required": false,
+      "allowed_blocks": ["paragraph", "table", "list"]
+    },
+    {
+      "id": "5.5",
+      "parent_id": "5",
+      "title": "Мониторинг",
+      "required": true,
+      "allowed_blocks": ["paragraph", "table", "list"]
+    }
+  ],
+  "known_source_anomalies": [
+    {
+      "code": "MISSING_SECTION_5_1",
+      "resolution": "Preserve the published source numbering; do not invent a section."
+    },
+    {
+      "code": "SOURCE_HEADING_LEVEL_CONFLICT",
+      "resolution": "Use the semantic outline and render body headings according to the policy pack."
+    },
+    {
+      "code": "BPMN_EXAMPLE_NOTATION_CONFLICT",
+      "resolution": "The requirement for BPMN 2.0 is normative. Section 4.3 accepts BPMN XML; the PlantUML example is illustrative only."
+    }
+  ]
+}

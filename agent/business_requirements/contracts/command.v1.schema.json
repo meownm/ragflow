@@ -1,0 +1,148 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ragflow:business-requirements:command:v1",
+  "title": "Business document command envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "command_id",
+    "idempotency_key",
+    "expected_state_version",
+    "type",
+    "payload"
+  ],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "command_id": {"type": "string", "minLength": 1, "maxLength": 64},
+    "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 128},
+    "expected_state_version": {"type": "integer", "minimum": 1},
+    "type": {
+      "enum": [
+        "REQUEST_INTAKE_ASSESSMENT",
+        "ANSWER_QUESTION",
+        "REQUEST_DRAFT",
+        "DECIDE_PROPOSAL",
+        "ADD_COMMENT",
+        "REQUEST_REVIEW_ASSESSMENT",
+        "APPLY_CHANGES",
+        "START_REVIEW",
+        "REQUEST_EXPORT",
+        "ARCHIVE"
+      ]
+    },
+    "payload": {"type": "object"}
+  },
+  "$defs": {
+    "emptyPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "maxProperties": 0
+    },
+    "answerQuestionPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["question_id", "selected_option_id", "custom_answer"],
+      "properties": {
+        "question_id": {"type": "string", "minLength": 1, "maxLength": 64},
+        "selected_option_id": {"type": ["string", "null"], "maxLength": 64},
+        "custom_answer": {"type": ["string", "null"], "maxLength": 10000}
+      }
+    },
+    "decideProposalPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["proposal_id", "decision"],
+      "properties": {
+        "proposal_id": {"type": "string", "minLength": 1, "maxLength": 64},
+        "decision": {"enum": ["ACCEPTED", "REJECTED"]}
+      }
+    },
+    "addCommentPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["revision_id", "section_id", "text", "anchor"],
+      "properties": {
+        "revision_id": {"type": "string", "minLength": 1, "maxLength": 64},
+        "section_id": {"type": ["string", "null"], "maxLength": 16},
+        "text": {"type": "string", "minLength": 1, "maxLength": 20000},
+        "anchor": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["revision_id", "section_id", "selected_text", "prefix", "suffix", "start_offset", "end_offset"],
+              "properties": {
+                "revision_id": {"type": "string", "minLength": 1, "maxLength": 64},
+                "section_id": {"type": "string", "minLength": 1, "maxLength": 16},
+                "selected_text": {"type": "string", "minLength": 1, "maxLength": 20000},
+                "prefix": {"type": "string", "maxLength": 64},
+                "suffix": {"type": "string", "maxLength": 64},
+                "start_offset": {"type": "integer", "minimum": 0},
+                "end_offset": {"type": "integer", "minimum": 1}
+              }
+            }
+          ]
+        }
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "section_id": {"type": "null"},
+            "anchor": {"type": "null"}
+          }
+        },
+        {
+          "properties": {
+            "section_id": {"type": "string", "minLength": 1, "maxLength": 16},
+            "anchor": {"type": "object"}
+          }
+        }
+      ]
+    },
+    "applyChangesPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["base_revision_id"],
+      "properties": {
+        "base_revision_id": {"type": "string", "minLength": 1, "maxLength": 64}
+      }
+    },
+    "requestExportPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["revision_id", "format"],
+      "properties": {
+        "revision_id": {"type": "string", "minLength": 1, "maxLength": 64},
+        "format": {"enum": ["MARKDOWN", "DOCX", "EVA_WIKI"]}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"type": {"enum": ["REQUEST_INTAKE_ASSESSMENT", "REQUEST_REVIEW_ASSESSMENT", "REQUEST_DRAFT", "START_REVIEW", "ARCHIVE"]}}},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/emptyPayload"}}}
+    },
+    {
+      "if": {"properties": {"type": {"const": "ANSWER_QUESTION"}}},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/answerQuestionPayload"}}}
+    },
+    {
+      "if": {"properties": {"type": {"const": "DECIDE_PROPOSAL"}}},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/decideProposalPayload"}}}
+    },
+    {
+      "if": {"properties": {"type": {"const": "ADD_COMMENT"}}},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/addCommentPayload"}}}
+    },
+    {
+      "if": {"properties": {"type": {"const": "APPLY_CHANGES"}}},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/applyChangesPayload"}}}
+    },
+    {
+      "if": {"properties": {"type": {"const": "REQUEST_EXPORT"}}},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/requestExportPayload"}}}
+    }
+  ]
+}

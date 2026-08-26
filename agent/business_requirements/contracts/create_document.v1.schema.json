@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ragflow:business-requirements:create-document:v1",
+  "title": "Create business requirements document",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "document_type", "title", "idea"],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "document_type": {"const": "business_requirements"},
+    "title": {"type": "string", "minLength": 1, "maxLength": 255},
+    "idea": {"type": "string", "minLength": 1, "maxLength": 50000},
+    "dataset_ids": {
+      "type": "array",
+      "maxItems": 20,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1, "maxLength": 64}
+    },
+    "template_version": {"type": "string", "minLength": 1, "maxLength": 64},
+    "policy_version": {"type": "string", "minLength": 1, "maxLength": 64}
+  }
+}

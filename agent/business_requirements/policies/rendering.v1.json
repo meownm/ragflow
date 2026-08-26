@@ -1,0 +1,52 @@
+{
+  "schema_version": "1",
+  "policy_id": "business-requirements-rendering",
+  "policy_version": "1.0.0",
+  "language": "ru",
+  "heading_rules": {
+    "body_heading_base_level": 2,
+    "child_level_increment": 1,
+    "preserve_section_numbers": true,
+    "bold_headings_forbidden": true
+  },
+  "body_rules": {
+    "emphasis": "ITALIC",
+    "technical_names": "BOLD_ITALIC",
+    "inline_code": ["API_PATH", "HTTP_METHOD", "TOPIC", "TECHNICAL_IDENTIFIER", "PLACEHOLDER"],
+    "document_references": "ITALIC_TITLE_ONLY",
+    "outline_source": "PUBLISHED_TEMPLATE_ONLY",
+    "numbered_headings": true,
+    "first_use_expansion_required": true,
+    "list_items_start_with_uppercase": true,
+    "protocol_references_in_body_forbidden": true,
+    "language": "ru"
+  },
+  "naming_rules": {
+    "database_entity_and_field": "snake_case",
+    "service_field_and_command": "camelCase",
+    "microservice": "kebab-case",
+    "kafka_topic": "dot.notation",
+    "same_meaning_requires_same_name": true
+  },
+  "protocol": {
+    "section_order": ["Комментарии автора", "Предложения агента", "Вопросы агента"],
+    "omit_empty_sections": true,
+    "author_text_is_verbatim": true,
+    "published_items_are_immutable": true
+  },
+  "eva_wiki": {
+    "requires_lifecycle_state": "AGREED",
+    "exclude_protocol": true,
+    "preserve_heading_numbering": true,
+    "xml_class": "language-markup",
+    "plantuml_class": "language-markup",
+    "json_class": "language-json",
+    "root_list_class": "root-list disc",
+    "nested_list_class": "disc",
+    "table_wrapper_class": "tableView-content-wrap cmf-scrollbar",
+    "table_wrapper_macro": "wikitables",
+    "empty_nodes_forbidden": true,
+    "ordinary_text_as_code_forbidden": true,
+    "generation_version_and_date_required": true
+  }
+}

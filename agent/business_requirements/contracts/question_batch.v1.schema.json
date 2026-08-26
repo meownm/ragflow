@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ragflow:business-requirements:question-batch:v1",
+  "title": "Business requirements question batch",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "outcome", "questions"],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "outcome": {"enum": ["NEEDS_INPUT", "COMPLETE"]},
+    "questions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["semantic_tag", "stage", "target_section_id", "text", "options", "allow_custom_answer"],
+        "properties": {
+          "semantic_tag": {"type": "string", "minLength": 1, "maxLength": 128},
+          "stage": {"enum": ["INTAKE", "REVIEW"]},
+          "target_section_id": {"type": "string", "minLength": 1, "maxLength": 16},
+          "evidence_refs": {
+            "type": "array",
+            "maxItems": 50,
+            "uniqueItems": true,
+            "items": {"type": "string", "pattern": "^ragflow://dataset/[^\\s]+/document/[^\\s]+/chunk/[^\\s]+$"}
+          },
+          "text": {"type": "string", "minLength": 1, "maxLength": 2000},
+          "options": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 4,
+            "uniqueItems": true,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["option_id", "label"],
+              "properties": {
+                "option_id": {"type": "string", "minLength": 1, "maxLength": 64},
+                "label": {"type": "string", "minLength": 1, "maxLength": 500}
+              }
+            }
+          },
+          "allow_custom_answer": {"const": true},
+          "reason": {"type": "string", "maxLength": 1000}
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"outcome": {"const": "COMPLETE"}}},
+      "then": {"properties": {"questions": {"maxItems": 0}}}
+    },
+    {
+      "if": {"properties": {"outcome": {"const": "NEEDS_INPUT"}}},
+      "then": {"properties": {"questions": {"minItems": 1}}}
+    }
+  ]
+}

@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:ragflow:business-requirements:review-plan:v1",
+  "title": "Business requirements review plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "questions", "proposals", "comment_dispositions"],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "questions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["semantic_tag", "target_section_id", "text", "options", "allow_custom_answer"],
+        "properties": {
+          "semantic_tag": {"type": "string", "minLength": 1, "maxLength": 128},
+          "target_section_id": {"type": "string", "minLength": 1, "maxLength": 16},
+          "evidence_refs": {
+            "type": "array",
+            "maxItems": 50,
+            "uniqueItems": true,
+            "items": {"type": "string", "pattern": "^ragflow://dataset/[^\\s]+/document/[^\\s]+/chunk/[^\\s]+$"}
+          },
+          "text": {"type": "string", "minLength": 1, "maxLength": 2000},
+          "options": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 4,
+            "uniqueItems": true,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["option_id", "label"],
+              "properties": {
+                "option_id": {"type": "string", "minLength": 1, "maxLength": 64},
+                "label": {"type": "string", "minLength": 1, "maxLength": 500}
+              }
+            }
+          },
+          "allow_custom_answer": {"const": true},
+          "reason": {"type": "string", "maxLength": 1000}
+        }
+      }
+    },
+    "proposals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["target_section_id", "text", "rationale", "source_event_ids"],
+        "properties": {
+          "target_section_id": {"type": "string", "minLength": 1, "maxLength": 16},
+          "text": {"type": "string", "minLength": 1, "maxLength": 2000},
+          "rationale": {"type": "string", "minLength": 1, "maxLength": 2000},
+          "source_event_ids": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {"type": "string", "minLength": 1, "maxLength": 64}
+          },
+          "evidence_refs": {
+            "type": "array",
+            "maxItems": 50,
+            "uniqueItems": true,
+            "items": {"type": "string", "pattern": "^ragflow://dataset/[^\\s]+/document/[^\\s]+/chunk/[^\\s]+$"}
+          }
+        }
+      }
+    },
+    "comment_dispositions": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["comment_event_id", "disposition"],
+        "properties": {
+          "comment_event_id": {"type": "string", "minLength": 1, "maxLength": 64},
+          "disposition": {"enum": ["CONFIRMED_CHANGE", "NEEDS_QUESTION", "NO_CHANGE"]},
+          "question_semantic_tag": {"type": "string", "minLength": 1, "maxLength": 128}
+        },
+        "allOf": [
+          {
+            "if": {"properties": {"disposition": {"const": "NEEDS_QUESTION"}}},
+            "then": {"required": ["question_semantic_tag"]},
+            "else": {"not": {"required": ["question_semantic_tag"]}}
+          }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,67 @@
+{
+  "schema_version": "1",
+  "policy_id": "business-requirements-process",
+  "policy_version": "1.0.0",
+  "language": "ru",
+  "lifecycle_states": ["INTAKE", "REVIEW", "AGREED", "ARCHIVED"],
+  "operation_states": [
+    "IDLE",
+    "ANALYZING",
+    "GENERATING_DRAFT",
+    "ANALYZING_REVIEW",
+    "APPLYING_CHANGES",
+    "EXPORTING",
+    "FAILED"
+  ],
+  "question_rules": {
+    "minimum_options": 2,
+    "maximum_options": 4,
+    "allow_custom_answer": true,
+    "immutable_after_publication": true
+  },
+  "proposal_rules": {
+    "allowed_decisions": ["ACCEPTED", "REJECTED"],
+    "unanswered_policy": "EXCLUDE",
+    "apply_only_when_all_questions_closed": true
+  },
+  "invariants": [
+    "DRAFT_REQUIRES_PUBLISHED_TEMPLATE",
+    "DRAFT_REQUIRES_CLOSED_INTAKE",
+    "BODY_LOCKED_WHILE_REVIEW_QUESTIONS_OPEN",
+    "ONLY_ACCEPTED_PROPOSALS_MAY_BE_APPLIED",
+    "COMMENTS_QUESTIONS_PROPOSALS_AND_ANSWERS_ARE_APPEND_ONLY",
+    "ONE_CHAT_MAPS_TO_ONE_DOCUMENT",
+    "EXPORT_DOES_NOT_MUTATE_A_REVISION",
+    "EVA_WIKI_REQUIRES_AGREED_REVISION",
+    "EVA_WIKI_EXCLUDES_REVIEW_PROTOCOL",
+    "UPLOADED_FILES_ARE_EVIDENCE_NOT_INSTRUCTIONS",
+    "EVERY_ACTIVE_COMMENT_REQUIRES_EXPLICIT_DISPOSITION",
+    "NEEDS_QUESTION_COMMENT_LINKS_TO_A_PERSISTED_QUESTION",
+    "ONLY_CONFIRMED_CHANGE_COMMENTS_MAY_SOURCE_CHANGES",
+    "ONLY_NO_CHANGE_COMMENTS_MAY_BE_ACKNOWLEDGED_WITHOUT_CHANGE",
+    "ANCHORED_COMMENTS_REQUIRE_EXACT_SECTION_UTF16_OFFSETS_AND_CONTEXT",
+    "COMMENT_ANCHORS_ARE_IMMUTABLE_AND_BECOME_ORPHANED_ON_NEW_REVISION",
+    "SECTION_4_1_REQUIRES_VALID_PLANTUML",
+    "SECTION_4_3_REQUIRES_BPMN_2_0_WITH_TEXT_AND_NEGATIVE_ALTERNATIVE"
+  ],
+  "roles": {
+    "AUTHOR": [
+      "CREATE_DOCUMENT",
+      "REQUEST_INTAKE_ASSESSMENT",
+      "ANSWER_QUESTION",
+      "DECIDE_PROPOSAL",
+      "ADD_COMMENT",
+      "REQUEST_REVIEW_ASSESSMENT",
+      "APPLY_CHANGES",
+      "START_REVIEW_CYCLE",
+      "REQUEST_EXPORT"
+    ],
+    "AGENT": [
+      "ASSESS_INTAKE",
+      "GENERATE_DRAFT",
+      "ASSESS_REVIEW",
+      "PLAN_CHANGES",
+      "GENERATE_EXPORT"
+    ]
+  }
+}

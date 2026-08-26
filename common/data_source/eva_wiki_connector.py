@@ -162,6 +162,7 @@ class EvaWikiConnector(LoadConnector, PollConnector, SlimConnectorWithPermSync):
         "cur_published_version_id",
         "cur_workflow_version_id",
     ]
+    _EDITABLE_DOCUMENT_FIELDS = [*_DOCUMENT_FIELDS, "text_draft"]
     _COMMENT_FIELDS = [
         "id",
         "parent_id",
@@ -318,6 +319,83 @@ class EvaWikiConnector(LoadConnector, PollConnector, SlimConnectorWithPermSync):
             if len(rows) < self.batch_size:
                 break
         return sorted(projects, key=lambda project: (project["name"].casefold(), project["code"].casefold(), project["id"]))
+
+    def search_documents(self, query: str = "", limit: int = 20) -> list[dict[str, Any]]:
+        """Return published pages that may be selected for an edit workflow."""
+
+        self._validate_config()
+        normalized_query = " ".join(str(query or "").casefold().split())
+        safe_limit = min(max(self._coerce_int(limit), 1), 100)
+        matches: list[dict[str, Any]] = []
+        for page in self._iter_entities("CmfDocument", self._DOCUMENT_FIELDS):
+            name = str(page.get("name") or page.get("code") or page.get("id") or "")
+            code = str(page.get("code") or "")
+            raw_content = str(page.get("text") or page.get("text_render") or "")
+            searchable = " ".join((name, code, parse_html_page_basic(raw_content))).casefold()
+            if normalized_query and normalized_query not in searchable:
+                continue
+            matches.append(self._editable_document(page, include_content=False))
+            if len(matches) >= safe_limit:
+                break
+        return matches
+
+    def get_document_for_edit(self, document_id: str) -> dict[str, Any]:
+        """Load one published page together with its current EVA draft."""
+
+        self._validate_config()
+        normalized_id = str(document_id or "").strip()
+        if not normalized_id:
+            raise ConnectorValidationError("EVA Wiki document_id is required")
+        page = self._get_entity_by_id("CmfDocument", self._EDITABLE_DOCUMENT_FIELDS, normalized_id)
+        if page is None:
+            raise ConnectorValidationError(f"EVA Wiki document was not found or is not accessible: {normalized_id}")
+        return self._editable_document(page, include_content=True)
+
+    def update_document_draft(self, document_id: str, html: str) -> Any:
+        """Replace only EVA's unpublished draft for a page."""
+
+        self._validate_config()
+        normalized_id = str(document_id or "").strip()
+        if not normalized_id:
+            raise ConnectorValidationError("EVA Wiki document_id is required")
+        return self._rpc("CmfDocument.update", {}, args=[normalized_id], call_kwargs={"text_draft": str(html)})
+
+    def publish_document(self, document_id: str) -> Any:
+        """Publish the current EVA draft for a page."""
+
+        self._validate_config()
+        normalized_id = str(document_id or "").strip()
+        if not normalized_id:
+            raise ConnectorValidationError("EVA Wiki document_id is required")
+        return self._rpc("CmfDocument.do_publish", {}, args=[normalized_id], call_kwargs={})
+
+    def _editable_document(self, page: dict[str, Any], *, include_content: bool) -> dict[str, Any]:
+        document_id = str(page.get("id") or "")
+        code = str(page.get("code") or "").strip()
+        raw_content = str(page.get("text") or page.get("text_render") or "")
+        result: dict[str, Any] = {
+            "id": document_id,
+            "name": str(page.get("name") or code or document_id),
+            "code": code,
+            "project_id": str(page.get("project_id") or self.project_id),
+            "version": self._document_version(page),
+            "modified_at": str(page.get("cmf_modified_at") or ""),
+            "web_url": f"{self.web_base_url}/project/Document/{quote(code, safe='')}" if code else self.web_base_url,
+            "excerpt": parse_html_page_basic(raw_content)[:240],
+        }
+        if include_content:
+            result["html"] = raw_content
+            result["draft_html"] = str(page.get("text_draft") or "")
+        return result
+
+    @staticmethod
+    def _document_version(page: dict[str, Any]) -> str:
+        values = (
+            page.get("doc_version"),
+            page.get("cur_published_version_id"),
+            page.get("cmf_modified_at"),
+        )
+        return "|".join(str(value or "") for value in values)
 
     def load_from_state(self) -> GenerateDocumentsOutput:
         yield from self._load_documents(end=datetime.now(timezone.utc).timestamp())
@@ -791,12 +869,24 @@ class EvaWikiConnector(LoadConnector, PollConnector, SlimConnectorWithPermSync):
             port = 443 if parsed.scheme.lower() == "https" else 80 if parsed.scheme.lower() == "http" else None
         return parsed.scheme.lower(), (parsed.hostname or "").lower(), port
 
-    def _rpc(self, method: str, kwargs: dict[str, Any]) -> Any:
+    def _rpc(
+        self,
+        method: str,
+        kwargs: dict[str, Any],
+        *,
+        args: list[Any] | None = None,
+        call_kwargs: dict[str, Any] | None = None,
+    ) -> Any:
         endpoint = self._resolve_same_origin_api_url("api/")
+        request_payload: dict[str, Any] = {"method": method, "kwargs": kwargs, "callid": str(uuid.uuid4()), "jsonrpc": "2.2"}
+        if args is not None:
+            request_payload["args"] = args
+        if call_kwargs is not None:
+            request_payload["kwargs"] = call_kwargs
         try:
             response = self._session.post(
                 endpoint,
-                json={"method": method, "kwargs": kwargs, "callid": str(uuid.uuid4()), "jsonrpc": "2.2"},
+                json=request_payload,
                 timeout=REQUEST_TIMEOUT_SECONDS,
                 verify=self.verify_ssl,
                 allow_redirects=False,
@@ -810,6 +900,9 @@ class EvaWikiConnector(LoadConnector, PollConnector, SlimConnectorWithPermSync):
             raise ConnectorValidationError(f"EVA Wiki returned invalid JSON for {method}") from exc
 
         error = payload.get("error") if isinstance(payload, dict) else None
+        abort = payload.get("abort") if isinstance(payload, dict) else None
+        if abort:
+            error = abort
         if error:
             if isinstance(error, dict):
                 message = error.get("message") or error.get("error") or json.dumps(error, ensure_ascii=False)

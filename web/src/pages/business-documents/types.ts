@@ -209,3 +209,110 @@ export interface BusinessDocumentCommandResult {
   allowed_commands?: BusinessDocumentCommandType[];
   idempotent_replay?: boolean;
 }
+
+export type EvaDocumentChangeState =
+  | 'EDITING'
+  | 'APPROVED'
+  | 'PREPARING_EVA_DRAFT'
+  | 'EVA_DRAFT_READY'
+  | 'PUBLISHING'
+  | 'PUBLISHED';
+
+export type EvaDocumentChangeAction =
+  | 'SAVE_DRAFT'
+  | 'APPROVE'
+  | 'PREPARE_EVA_DRAFT'
+  | 'PUBLISH_EVA';
+
+export interface EvaDocumentSource {
+  connector_id: string;
+  connector_name: string;
+  id: string;
+  name: string;
+  code: string;
+  project_id: string;
+  version: string;
+  modified_at: string;
+  web_url: string;
+  excerpt: string;
+}
+
+export interface EvaDocumentSourceSearchResult {
+  items: EvaDocumentSource[];
+  connectors: Array<{ connector_id: string; connector_name: string }>;
+}
+
+export interface EvaDocumentDiffLine {
+  type: 'context' | 'added' | 'removed';
+  content: string;
+}
+
+export interface EvaDocumentSectionDiff {
+  key: string;
+  title: string;
+  lines: EvaDocumentDiffLine[];
+}
+
+export interface EvaDocumentDiff {
+  changed: boolean;
+  added_lines: number;
+  removed_lines: number;
+  changed_sections: number;
+  sections: EvaDocumentSectionDiff[];
+}
+
+export interface EvaDocumentChangeEvent {
+  event_id: string;
+  sequence: number;
+  event_type: string;
+  actor_id: string;
+  payload: Record<string, unknown>;
+  create_time: number | null;
+}
+
+export interface EvaDocumentChange {
+  change_id: string;
+  state_version: number;
+  workflow_state: EvaDocumentChangeState;
+  change_summary: string;
+  source: {
+    connector_id: string;
+    project_id: string;
+    document_id: string;
+    document_code?: string | null;
+    document_name: string;
+    web_url?: string | null;
+    base_version: string;
+    base_content_hash: string;
+  };
+  base_markdown: string;
+  draft_markdown: string;
+  draft_content_hash: string;
+  diff: EvaDocumentDiff;
+  allowed_actions: EvaDocumentChangeAction[];
+  approved_at?: number | null;
+  eva_draft_at?: number | null;
+  published_at?: number | null;
+  published_version?: string | null;
+  last_error?: { code?: string; message?: string; details?: unknown } | null;
+  operation_retry_after_ms?: number | null;
+  events: EvaDocumentChangeEvent[];
+}
+
+export interface EvaDocumentChangeSummary {
+  change_id: string;
+  document_name: string;
+  document_code?: string | null;
+  change_summary: string;
+  workflow_state: EvaDocumentChangeState;
+  state_version: number;
+  update_time: number | null;
+  web_url?: string | null;
+}
+
+export interface EvaDocumentChangeList {
+  items: EvaDocumentChangeSummary[];
+  total: number;
+  page: number;
+  page_size: number;
+}

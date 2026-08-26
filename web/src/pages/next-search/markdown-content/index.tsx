@@ -1,3 +1,7 @@
+import {
+  DiagramCodeBlock,
+  getDiagramKind,
+} from '@/components/diagram-code-block';
 import Image, { AuthenticatedImg } from '@/components/image';
 import SvgIcon from '@/components/svg-icon';
 import { MarkdownRemarkPlugins } from '@/constants/markdown-remark-plugins';
@@ -263,6 +267,12 @@ const MarkdownContent = ({
               const { children, className, ...rest } = props;
               const restProps = omit(rest, 'node');
               const match = /language-(\w+)/.exec(className || '');
+              const source = String(children).replace(/\n$/, '');
+              if (getDiagramKind(match?.[1])) {
+                return (
+                  <DiagramCodeBlock language={match![1]} source={source} />
+                );
+              }
               return match ? (
                 <SyntaxHighlighter
                   {...restProps}
@@ -270,7 +280,7 @@ const MarkdownContent = ({
                   language={match[1]}
                   wrapLongLines
                 >
-                  {String(children).replace(/\n$/, '')}
+                  {source}
                 </SyntaxHighlighter>
               ) : (
                 <code

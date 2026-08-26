@@ -16,6 +16,14 @@ API_PATH = Path(__file__).parents[5] / "api" / "apps" / "restful_apis" / "busine
 
 
 EXPECTED_ROUTES = {
+    "search_eva_business_document_sources": ("/business-documents/eva/sources", ("GET",)),
+    "create_eva_business_document_change": ("/business-documents/eva/changes", ("POST",)),
+    "list_eva_business_document_changes": ("/business-documents/eva/changes", ("GET",)),
+    "get_eva_business_document_change": ("/business-documents/eva/changes/<change_id>", ("GET",)),
+    "save_eva_business_document_change_draft": ("/business-documents/eva/changes/<change_id>/draft", ("PUT",)),
+    "approve_eva_business_document_change": ("/business-documents/eva/changes/<change_id>/approve", ("POST",)),
+    "prepare_eva_business_document_change": ("/business-documents/eva/changes/<change_id>/prepare", ("POST",)),
+    "publish_eva_business_document_change": ("/business-documents/eva/changes/<change_id>/publish", ("POST",)),
     "create_business_document": ("/business-documents", ("POST",)),
     "list_business_documents": ("/business-documents", ("GET",)),
     "get_business_document": ("/business-documents/<document_id>", ("GET",)),
@@ -63,7 +71,15 @@ def test_mutating_routes_read_json_and_all_routes_map_domain_errors():
         assert any(isinstance(handler.type, ast.Name) and handler.type.id == "BusinessDocumentError" for handler in handlers)
         assert "_error" in called_names
         assert "thread_pool_exec" in called_names
-        if name in {"create_business_document", "execute_business_document_command"}:
+        if name in {
+            "create_eva_business_document_change",
+            "save_eva_business_document_change_draft",
+            "approve_eva_business_document_change",
+            "prepare_eva_business_document_change",
+            "publish_eva_business_document_change",
+            "create_business_document",
+            "execute_business_document_command",
+        }:
             assert "get_request_json" in called_names
 
 

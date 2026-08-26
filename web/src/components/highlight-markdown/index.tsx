@@ -1,3 +1,7 @@
+import {
+  DiagramCodeBlock,
+  getDiagramKind,
+} from '@/components/diagram-code-block';
 import { MarkdownRemarkPlugins } from '@/constants/markdown-remark-plugins';
 import classNames from 'classnames';
 import DOMPurify from 'dompurify';
@@ -49,6 +53,12 @@ const HighLightMarkdown = ({
             code(props: any) {
               const { children, className, ...rest } = props;
               const match = /language-(\w+)/.exec(className || '');
+              const source = String(children).replace(/\n$/, '');
+              if (getDiagramKind(match?.[1])) {
+                return (
+                  <DiagramCodeBlock language={match![1]} source={source} />
+                );
+              }
               return match ? (
                 <SyntaxHighlighter
                   {...rest}
@@ -56,7 +66,7 @@ const HighLightMarkdown = ({
                   language={match[1]}
                   style={isDarkTheme ? oneDark : oneLight}
                 >
-                  {String(children).replace(/\n$/, '')}
+                  {source}
                 </SyntaxHighlighter>
               ) : (
                 <code {...rest} className={`${className} ${styles.code}`}>

@@ -256,3 +256,4 @@ internal/deepdoc/parser/docx/testdata/
 internal/deepdoc/parser/docx/tool/
 /.playwright-cli
 /docker/.env.local
+/output

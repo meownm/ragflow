@@ -6,7 +6,7 @@ import authorizationUtil, {
   redirectToLogin,
 } from '@/utils/authorization-util';
 import notification from '@/utils/notification';
-import axios from 'axios';
+import axios, { AxiosError } from 'axios';
 import { convertTheKeysOfTheObjectToSnake, isFormData } from './common-util';
 import { setCachedLlmList } from './llm-cache';
 import { addTenantParams } from './llm-util';
@@ -49,10 +49,15 @@ export type ResultCode =
   | 503
   | 504;
 
-const errorHandler = (error: {
-  response: Response;
-  message: string;
-}): Response => {
+type RequestErrorPayload = {
+  message?: string;
+};
+
+type RequestConfigWithNotifications = {
+  skipErrorNotification?: boolean;
+};
+
+const errorHandler = (error: AxiosError<RequestErrorPayload>) => {
   const { response } = error;
   if (error.message === FAILED_TO_FETCH) {
     notification.error({
@@ -63,14 +68,16 @@ const errorHandler = (error: {
     if (response && response.status) {
       const errorText =
         RetcodeMessage[response.status as ResultCode] || response.statusText;
-      const { status, url } = response;
+      const { status } = response;
+      const url = response.config?.url;
       notification.error({
-        message: `${i18n.t('message.requestError')} ${status}: ${url}`,
-        description: errorText,
+        message: url
+          ? `${i18n.t('message.requestError')} ${status}: ${url}`
+          : `${i18n.t('message.requestError')} ${status}`,
+        description: response.data?.message || errorText,
       });
     }
   }
-  return response ?? { data: { code: 1999 } };
 };
 
 // avoid duplicate 401 redirects
@@ -167,7 +174,12 @@ request.interceptors.response.use(
       return Promise.reject(error);
     }
 
-    errorHandler(error);
+    const requestConfig = error?.config as
+      | RequestConfigWithNotifications
+      | undefined;
+    if (!requestConfig?.skipErrorNotification) {
+      errorHandler(error);
+    }
     return Promise.reject(error);
   },
 );

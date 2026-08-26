@@ -22,6 +22,7 @@ from quart import Response, jsonify, request
 from werkzeug.exceptions import BadRequest
 
 from api.apps import current_user, login_required
+from api.apps.business_documents.eva_changes import EvaDocumentChangeService
 from api.apps.business_documents.errors import BusinessDocumentError
 from api.apps.business_documents.exports import BusinessDocumentExportService
 from api.apps.business_documents.service import BusinessDocumentService
@@ -41,6 +42,122 @@ def _error(error: BusinessDocumentError):
         "data": {"error_code": error.code, "details": error.details},
     }
     return jsonify(payload), error.status
+
+
+@manager.route("/business-documents/eva/sources", methods=["GET"])  # noqa: F821
+@login_required
+async def search_eva_business_document_sources():
+    try:
+        actor_id = current_user.id
+        query = request.args.get("query", "")
+        connector_id = request.args.get("connector_id") or None
+        limit = int(request.args.get("limit", 20))
+        result = await thread_pool_exec(EvaDocumentChangeService.search_sources, actor_id, query, connector_id, limit)
+        return _success(result)
+    except (TypeError, ValueError):
+        return _error(BusinessDocumentError("INVALID_EVA_SEARCH", "limit must be an integer", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/eva/changes", methods=["POST"])  # noqa: F821
+@login_required
+async def create_eva_business_document_change():
+    try:
+        data = await get_request_json()
+        if not data:
+            raise BusinessDocumentError("INVALID_EVA_CHANGE", "Request body must be a valid JSON object", 422)
+        actor_id = current_user.id
+        result = await thread_pool_exec(EvaDocumentChangeService.create_change, actor_id, actor_id, data)
+        return _success(result, 201)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_EVA_CHANGE", "Request body must be a valid JSON object", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/eva/changes", methods=["GET"])  # noqa: F821
+@login_required
+async def list_eva_business_document_changes():
+    try:
+        actor_id = current_user.id
+        page = int(request.args.get("page", 1))
+        page_size = int(request.args.get("page_size", 20))
+        result = await thread_pool_exec(EvaDocumentChangeService.list_changes, actor_id, actor_id, page, page_size)
+        return _success(result)
+    except (TypeError, ValueError):
+        return _error(BusinessDocumentError("INVALID_PAGINATION", "page and page_size must be integers", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/eva/changes/<change_id>", methods=["GET"])  # noqa: F821
+@login_required
+async def get_eva_business_document_change(change_id):
+    try:
+        actor_id = current_user.id
+        result = await thread_pool_exec(EvaDocumentChangeService.get_change, actor_id, actor_id, change_id)
+        return _success(result)
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/eva/changes/<change_id>/draft", methods=["PUT"])  # noqa: F821
+@login_required
+async def save_eva_business_document_change_draft(change_id):
+    try:
+        data = await get_request_json()
+        if not data:
+            raise BusinessDocumentError("INVALID_EVA_DRAFT", "Request body must be a valid JSON object", 422)
+        actor_id = current_user.id
+        result = await thread_pool_exec(EvaDocumentChangeService.save_draft, actor_id, actor_id, change_id, data)
+        return _success(result)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_EVA_DRAFT", "Request body must be a valid JSON object", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/eva/changes/<change_id>/approve", methods=["POST"])  # noqa: F821
+@login_required
+async def approve_eva_business_document_change(change_id):
+    try:
+        data = await get_request_json()
+        actor_id = current_user.id
+        result = await thread_pool_exec(EvaDocumentChangeService.approve, actor_id, actor_id, change_id, data)
+        return _success(result)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_EVA_CHANGE", "Request body must be a valid JSON object", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/eva/changes/<change_id>/prepare", methods=["POST"])  # noqa: F821
+@login_required
+async def prepare_eva_business_document_change(change_id):
+    try:
+        data = await get_request_json()
+        actor_id = current_user.id
+        result = await thread_pool_exec(EvaDocumentChangeService.prepare_eva_draft, actor_id, actor_id, change_id, data)
+        return _success(result)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_EVA_CHANGE", "Request body must be a valid JSON object", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/eva/changes/<change_id>/publish", methods=["POST"])  # noqa: F821
+@login_required
+async def publish_eva_business_document_change(change_id):
+    try:
+        data = await get_request_json()
+        actor_id = current_user.id
+        result = await thread_pool_exec(EvaDocumentChangeService.publish, actor_id, actor_id, change_id, data)
+        return _success(result)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_EVA_CHANGE", "Request body must be a valid JSON object", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
 
 
 @manager.route("/business-documents", methods=["POST"])  # noqa: F821

@@ -1,3 +1,7 @@
+import {
+  DiagramCodeBlock,
+  getDiagramKind,
+} from '@/components/diagram-code-block';
 import Image, { AuthenticatedImg } from '@/components/image';
 import SvgIcon from '@/components/svg-icon';
 
@@ -310,6 +314,12 @@ const FloatingChatWidgetMarkdown = ({
               // eslint-disable-next-line @typescript-eslint/no-unused-vars
               const { children, className, node, ...rest } = props;
               const match = /language-(\w+)/.exec(className || '');
+              const source = String(children).replace(/\n$/, '');
+              if (getDiagramKind(match?.[1])) {
+                return (
+                  <DiagramCodeBlock language={match![1]} source={source} />
+                );
+              }
               return match ? (
                 <SyntaxHighlighter
                   {...omit(rest, 'inline')}
@@ -318,7 +328,7 @@ const FloatingChatWidgetMarkdown = ({
                   style={isDarkTheme ? oneDark : oneLight}
                   wrapLongLines
                 >
-                  {String(children).replace(/\n$/, '')}
+                  {source}
                 </SyntaxHighlighter>
               ) : (
                 <code

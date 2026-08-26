@@ -25,6 +25,13 @@ server {
         include proxy.conf;
     }
 
+    location ^~ /plantuml/ {
+        proxy_pass http://plantuml-server:8080/;
+        proxy_set_header Host $host;
+        proxy_read_timeout 30s;
+        client_max_body_size 1m;
+    }
+
     location / {
         index index.html;
         try_files $uri $uri/ /index.html;

@@ -140,6 +140,56 @@ def test_list_projects_does_not_require_project_id_and_returns_stable_options():
     assert request_payload["kwargs"]["order_by"] == ["id"]
 
 
+def test_search_documents_returns_editable_source_metadata():
+    connector = _connector()
+    connector._session.post = MagicMock(
+        side_effect=[
+            _response({"result": [_page(doc_version=3, cur_published_version_id="CmfVersion:v3")]}),
+            _response({"result": []}),
+        ]
+    )
+
+    documents = connector.search_documents("runbook", limit=5)
+
+    assert documents == [
+        {
+            "id": "CmfDocument:doc-1",
+            "name": "Runbook",
+            "code": "DOC-42",
+            "project_id": PROJECT_ID,
+            "version": "3|CmfVersion:v3|2026-08-24T10:00:00+03:00",
+            "modified_at": "2026-08-24T10:00:00+03:00",
+            "web_url": "https://eva.example.com/project/Document/DOC-42",
+            "excerpt": "Hello EVA",
+        }
+    ]
+
+
+def test_editable_document_draft_and_publish_use_explicit_rpc_args():
+    connector = _connector()
+    connector._session.post = MagicMock(return_value=_response({"result": True}))
+
+    connector.update_document_draft("CmfDocument:doc-1", "<p>Draft</p>")
+    update_payload = connector._session.post.call_args.kwargs["json"]
+    assert update_payload["method"] == "CmfDocument.update"
+    assert update_payload["args"] == ["CmfDocument:doc-1"]
+    assert update_payload["kwargs"] == {"text_draft": "<p>Draft</p>"}
+
+    connector.publish_document("CmfDocument:doc-1")
+    publish_payload = connector._session.post.call_args.kwargs["json"]
+    assert publish_payload["method"] == "CmfDocument.do_publish"
+    assert publish_payload["args"] == ["CmfDocument:doc-1"]
+    assert publish_payload["kwargs"] == {}
+
+
+def test_rpc_reports_eva_abort_payload():
+    connector = _connector()
+    connector._session.post = MagicMock(return_value=_response({"abort": {"message": "workflow denied"}}))
+
+    with pytest.raises(ConnectorValidationError, match="workflow denied"):
+        connector.publish_document("CmfDocument:doc-1")
+
+
 def test_archived_projects_are_available_only_when_enabled():
     connector = _connector(project_id=None, include_archived=True)
     connector._session.post = MagicMock(return_value=_response({"result": []}))

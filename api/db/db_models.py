@@ -1621,6 +1621,54 @@ class BusinessDocumentEvidenceSnapshot(DataBaseModel):
         db_table = "business_document_evidence_snapshot"
 
 
+class BusinessDocumentEvaChange(DataBaseModel):
+    """Editable change request pinned to one published EVA Wiki document."""
+
+    id = CharField(max_length=32, primary_key=True)
+    tenant_id = CharField(max_length=32, null=False, index=True)
+    owner_id = CharField(max_length=32, null=False, index=True)
+    connector_id = CharField(max_length=32, null=False, index=True)
+    eva_project_id = CharField(max_length=128, null=False, index=True)
+    eva_document_id = CharField(max_length=128, null=False, index=True)
+    eva_document_code = CharField(max_length=255, null=True)
+    eva_document_name = CharField(max_length=255, null=False)
+    eva_web_url = TextField(null=True)
+    change_summary = TextField(null=False)
+    base_version = CharField(max_length=255, null=False)
+    base_content_hash = CharField(max_length=71, null=False)
+    base_html = LongTextField(null=False)
+    base_markdown = LongTextField(null=False)
+    draft_markdown = LongTextField(null=False)
+    draft_html = LongTextField(null=False)
+    draft_content_hash = CharField(max_length=71, null=False)
+    workflow_state = CharField(max_length=32, null=False, default="EDITING", index=True)
+    state_version = IntegerField(null=False, default=1)
+    approved_at = BigIntegerField(null=True)
+    eva_draft_at = BigIntegerField(null=True)
+    published_at = BigIntegerField(null=True)
+    published_version = CharField(max_length=255, null=True)
+    last_error = JSONField(null=True)
+
+    class Meta:
+        db_table = "business_document_eva_change"
+        indexes = ((('tenant_id', 'owner_id', 'update_time'), False),)
+
+
+class BusinessDocumentEvaChangeEvent(DataBaseModel):
+    """Append-only audit trail for an EVA document change request."""
+
+    id = CharField(max_length=32, primary_key=True)
+    change_id = CharField(max_length=32, null=False, index=True)
+    sequence = IntegerField(null=False)
+    event_type = CharField(max_length=64, null=False, index=True)
+    actor_id = CharField(max_length=32, null=False, index=True)
+    payload = JSONField(null=False)
+
+    class Meta:
+        db_table = "business_document_eva_change_event"
+        indexes = ((('change_id', 'sequence'), True),)
+
+
 class Memory(DataBaseModel):
     id = CharField(max_length=32, primary_key=True)
     name = CharField(max_length=128, null=False, index=False, help_text="Memory name")

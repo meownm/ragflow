@@ -1,5 +1,9 @@
 import {
+  createEvaDocumentChange,
   listBusinessDocuments,
+  publishEvaDocumentChange,
+  saveEvaDocumentChangeDraft,
+  searchEvaDocumentSources,
   submitBusinessDocumentCommand,
 } from '@/services/business-document-service';
 import api from '@/utils/api';
@@ -10,11 +14,13 @@ jest.mock('@/utils/next-request', () => ({
   default: {
     get: jest.fn(),
     post: jest.fn(),
+    put: jest.fn(),
   },
 }));
 
 const mockedGet = jest.mocked(request.get);
 const mockedPost = jest.mocked(request.post);
+const mockedPut = jest.mocked(request.put);
 
 beforeEach(() => jest.clearAllMocks());
 
@@ -40,6 +46,7 @@ test('loads the canonical paginated document list envelope', async () => {
   await expect(listBusinessDocuments(2, 10)).resolves.toEqual(list);
   expect(mockedGet).toHaveBeenCalledWith(api.businessDocuments, {
     params: { page: 2, page_size: 10 },
+    skipErrorNotification: true,
   });
 });
 
@@ -74,4 +81,80 @@ test('reads the domain error code from the backend error envelope', async () => 
     code: 'OPEN_REVIEW_QUESTIONS',
     message: 'Есть открытые вопросы',
   });
+  expect(mockedPost).toHaveBeenCalledWith(
+    api.businessDocumentCommands('doc-1'),
+    expect.any(Object),
+    { skipErrorNotification: true },
+  );
+});
+
+test('uses a nested backend message without leaking an undefined transport error', async () => {
+  mockedGet.mockRejectedValueOnce({
+    isAxiosError: true,
+    message: 'Request error 404: undefined',
+    response: {
+      status: 404,
+      data: {
+        code: 404,
+        data: {
+          error_code: 'DOCUMENT_NOT_FOUND',
+          message: 'Бизнес-документ не найден',
+        },
+      },
+    },
+  });
+
+  await expect(listBusinessDocuments()).rejects.toThrow(
+    'Бизнес-документ не найден',
+  );
+});
+
+test('uses explicit EVA source, draft and publish endpoints', async () => {
+  const sourceResult = { items: [], connectors: [] };
+  const change = { change_id: 'change-1' };
+  mockedGet.mockResolvedValueOnce({ data: { code: 0, data: sourceResult } });
+  mockedPost
+    .mockResolvedValueOnce({ data: { code: 0, data: change } })
+    .mockResolvedValueOnce({ data: { code: 0, data: change } });
+  mockedPut.mockResolvedValueOnce({ data: { code: 0, data: change } });
+
+  await expect(searchEvaDocumentSources('BR-42')).resolves.toEqual(
+    sourceResult,
+  );
+  await createEvaDocumentChange({
+    connector_id: 'connector-1',
+    document_id: 'CmfDocument:doc-1',
+    change_summary: 'Уточнить цель',
+  });
+  await saveEvaDocumentChangeDraft('change-1', {
+    expected_state_version: 2,
+    draft_markdown: '# Draft',
+  });
+  await publishEvaDocumentChange('change-1', 5);
+
+  expect(mockedGet).toHaveBeenCalledWith(api.evaBusinessDocumentSources, {
+    params: { query: 'BR-42' },
+    skipErrorNotification: true,
+  });
+  expect(mockedPost).toHaveBeenNthCalledWith(
+    1,
+    api.evaBusinessDocumentChanges,
+    {
+      connector_id: 'connector-1',
+      document_id: 'CmfDocument:doc-1',
+      change_summary: 'Уточнить цель',
+    },
+    { skipErrorNotification: true },
+  );
+  expect(mockedPut).toHaveBeenCalledWith(
+    api.evaBusinessDocumentChangeDraft('change-1'),
+    { expected_state_version: 2, draft_markdown: '# Draft' },
+    { skipErrorNotification: true },
+  );
+  expect(mockedPost).toHaveBeenNthCalledWith(
+    2,
+    api.evaBusinessDocumentChangePublish('change-1'),
+    { expected_state_version: 5 },
+    { skipErrorNotification: true },
+  );
 });

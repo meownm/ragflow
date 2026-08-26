@@ -9,6 +9,21 @@ sidebar_custom_props: {
 
 Key features, improvements and bug fixes in the latest releases.
 
+## v1.0.0
+
+Released on August 26, 2026.
+
+### New features
+
+- Business documents: Adds a dedicated workflow for changing an existing EVA Wiki page without replacing the published source while editing.
+- Review workbench: Pins the EVA source version, provides Markdown editing and heading-scoped diffs, and keeps approval, EVA draft preparation, and publication as separate actions.
+
+### Improvements and bug fixes
+
+- Rejects concurrent source drift before writing to EVA and verifies both the saved EVA draft and published result by content hash.
+- Makes interrupted EVA draft and publication operations safely resumable with fenced leases and idempotent read-back recovery.
+- Keeps domain errors inside the business-document workbench and improves its responsive action layout.
+
 ## v0.28.0
 
 Released on August 26, 2026.

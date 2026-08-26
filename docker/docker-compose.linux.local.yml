@@ -1,0 +1,11 @@
+# Linux Docker Engine installs and registers gVisor/runsc on the host.
+# The Docker Desktop bootstrap from docker-compose.local.yml is intentionally
+# disabled here; sandbox-executor-manager can start after the host runtime gate
+# in the Linux installation runbook has passed.
+services:
+  sandbox-executor-manager:
+    depends_on: !reset {}
+
+  sandbox-runtime-bootstrap:
+    profiles: !override
+      - docker-desktop-only

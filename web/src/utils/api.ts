@@ -259,6 +259,18 @@ export default {
     `${restAPIv1}/business-documents/${id}/exports`,
   businessDocumentExportDownload: (id: string, artifactId: string) =>
     `${restAPIv1}/business-documents/${id}/exports/${artifactId}/download`,
+  evaBusinessDocumentSources: `${restAPIv1}/business-documents/eva/sources`,
+  evaBusinessDocumentChanges: `${restAPIv1}/business-documents/eva/changes`,
+  evaBusinessDocumentChange: (id: string) =>
+    `${restAPIv1}/business-documents/eva/changes/${id}`,
+  evaBusinessDocumentChangeDraft: (id: string) =>
+    `${restAPIv1}/business-documents/eva/changes/${id}/draft`,
+  evaBusinessDocumentChangeApprove: (id: string) =>
+    `${restAPIv1}/business-documents/eva/changes/${id}/approve`,
+  evaBusinessDocumentChangePrepare: (id: string) =>
+    `${restAPIv1}/business-documents/eva/changes/${id}/prepare`,
+  evaBusinessDocumentChangePublish: (id: string) =>
+    `${restAPIv1}/business-documents/eva/changes/${id}/publish`,
 
   // flow
   listAgentTemplate: `${restAPIv1}/agents/templates`,

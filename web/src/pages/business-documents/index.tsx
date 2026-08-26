@@ -33,6 +33,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
+  FilePenLine,
   FilePlus2,
   LoaderCircle,
   RefreshCw,
@@ -43,6 +44,8 @@ import {
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { DocumentPane } from './components/document-pane';
+import { EvaChangeCreatePanel } from './components/eva-change-create-panel';
+import { EvaChangeWorkbench } from './components/eva-change-workbench';
 import { ProtocolPane } from './components/protocol-pane';
 import type {
   BusinessDocumentCommand,
@@ -106,6 +109,7 @@ const BusinessDocumentKeys = {
 
 function CreateBusinessDocumentPage() {
   const navigate = useNavigate();
+  const [mode, setMode] = useState<'new' | 'eva'>('new');
   const [title, setTitle] = useState('');
   const [idea, setIdea] = useState('');
   const [datasetIds, setDatasetIds] = useState<string[]>([]);
@@ -295,89 +299,117 @@ function CreateBusinessDocumentPage() {
           )}
         </section>
 
-        <form
-          onSubmit={submit}
-          className="min-h-0 overflow-y-auto px-6 py-7 scrollbar-auto lg:px-8"
-        >
-          <div className="flex items-center gap-2 text-sm font-medium text-accent-primary">
-            <FilePlus2 className="size-4" />
-            Новый документ
-          </div>
-          <h2 className="mt-3 text-xl font-semibold tracking-tight text-text-primary">
-            Бизнес-требования
-          </h2>
-          <p className="mt-2 text-sm leading-6 text-text-secondary">
-            Агент соберёт вводные, подготовит документ и проведёт согласование.
-          </p>
-
-          <label className="mt-6 block space-y-2 text-sm font-medium">
-            <span>Название</span>
-            <Input
-              value={title}
-              maxLength={200}
-              aria-label="Название документа"
-              placeholder="Например, Переводы одной кнопкой"
-              onChange={(event) => setTitle(event.target.value)}
-            />
-          </label>
-          <label className="mt-5 block space-y-2 text-sm font-medium">
-            <span>Идея</span>
-            <Textarea
-              value={idea}
-              maxLength={10000}
-              autoSize={{ minRows: 7, maxRows: 18 }}
-              resize="vertical"
-              aria-label="Описание идеи"
-              placeholder="Что нужно создать, для кого и какой результат ожидается?"
-              onChange={(event) => setIdea(event.target.value)}
-            />
-          </label>
-
-          <div className="mt-5 space-y-2 text-sm font-medium">
-            <span>Источники RAGFlow</span>
-            <MultiSelect
-              options={datasetOptions}
-              value={datasetIds}
-              defaultValue={datasetIds}
-              onValueChange={setDatasetIds}
-              placeholder="Выберите индексированные datasets"
-              maxCount={3}
-              showSelectAll={false}
-              isSearching={datasetsLoading}
-              data-testid="business-document-datasets"
-            />
-            <p className="text-xs font-normal leading-5 text-text-secondary">
-              Необязательно. Фрагменты используются только как цитируемые
-              данные; инструкции внутри источников агент не выполняет.
-            </p>
-          </div>
-
-          {createMutation.error && (
-            <p className="mt-4 text-sm text-state-error" role="alert">
-              {createMutation.error.message}
-            </p>
-          )}
-
-          <div className="mt-6 flex justify-end">
+        <section className="min-h-0 overflow-y-auto scrollbar-auto">
+          <div className="sticky top-0 z-20 flex gap-1 border-b border-border-button bg-bg-base px-6 py-3 lg:px-8">
             <Button
-              type="submit"
-              variant="accent"
-              size="lg"
-              loading={createMutation.isPending}
-              disabled={!title.trim() || !idea.trim()}
+              size="sm"
+              variant={mode === 'new' ? 'secondary' : 'ghost'}
+              onClick={() => setMode('new')}
+              data-testid="new-document-mode"
             >
-              <Sparkles className="size-4" />
-              Начать работу
+              <FilePlus2 className="size-4" />
+              Новый
+            </Button>
+            <Button
+              size="sm"
+              variant={mode === 'eva' ? 'secondary' : 'ghost'}
+              onClick={() => setMode('eva')}
+              data-testid="eva-change-mode"
+            >
+              <FilePenLine className="size-4" />
+              Доработать EVA
             </Button>
           </div>
-        </form>
+
+          {mode === 'new' ? (
+            <form onSubmit={submit} className="px-6 py-7 lg:px-8">
+              <div className="flex items-center gap-2 text-sm font-medium text-accent-primary">
+                <FilePlus2 className="size-4" />
+                Новый документ
+              </div>
+              <h2 className="mt-3 text-xl font-semibold tracking-tight text-text-primary">
+                Бизнес-требования
+              </h2>
+              <p className="mt-2 text-sm leading-6 text-text-secondary">
+                Агент соберёт вводные, подготовит документ и проведёт
+                согласование.
+              </p>
+
+              <label className="mt-6 block space-y-2 text-sm font-medium">
+                <span>Название</span>
+                <Input
+                  value={title}
+                  maxLength={200}
+                  aria-label="Название документа"
+                  placeholder="Например, Переводы одной кнопкой"
+                  onChange={(event) => setTitle(event.target.value)}
+                />
+              </label>
+              <label className="mt-5 block space-y-2 text-sm font-medium">
+                <span>Идея</span>
+                <Textarea
+                  value={idea}
+                  maxLength={10000}
+                  autoSize={{ minRows: 7, maxRows: 18 }}
+                  resize="vertical"
+                  aria-label="Описание идеи"
+                  placeholder="Что нужно создать, для кого и какой результат ожидается?"
+                  onChange={(event) => setIdea(event.target.value)}
+                />
+              </label>
+
+              <div className="mt-5 space-y-2 text-sm font-medium">
+                <span>Источники RAGFlow</span>
+                <MultiSelect
+                  options={datasetOptions}
+                  value={datasetIds}
+                  defaultValue={datasetIds}
+                  onValueChange={setDatasetIds}
+                  placeholder="Выберите индексированные datasets"
+                  maxCount={3}
+                  showSelectAll={false}
+                  isSearching={datasetsLoading}
+                  data-testid="business-document-datasets"
+                />
+                <p className="text-xs font-normal leading-5 text-text-secondary">
+                  Необязательно. Фрагменты используются только как цитируемые
+                  данные; инструкции внутри источников агент не выполняет.
+                </p>
+              </div>
+
+              {createMutation.error && (
+                <p className="mt-4 text-sm text-state-error" role="alert">
+                  {createMutation.error.message}
+                </p>
+              )}
+
+              <div className="mt-6 flex justify-end">
+                <Button
+                  type="submit"
+                  variant="accent"
+                  size="lg"
+                  loading={createMutation.isPending}
+                  disabled={!title.trim() || !idea.trim()}
+                >
+                  <Sparkles className="size-4" />
+                  Начать работу
+                </Button>
+              </div>
+            </form>
+          ) : (
+            <EvaChangeCreatePanel />
+          )}
+        </section>
       </div>
     </main>
   );
 }
 
 export default function BusinessDocumentsPage() {
-  const { id: documentId } = useParams<{ id: string }>();
+  const { id: documentId, changeId } = useParams<{
+    id: string;
+    changeId: string;
+  }>();
   const queryClient = useQueryClient();
   const [selection, setSelection] = useState<BusinessDocumentSelection | null>(
     null,
@@ -388,7 +420,7 @@ export default function BusinessDocumentsPage() {
   const documentQuery = useQuery({
     queryKey: BusinessDocumentKeys.detail(documentId),
     queryFn: () => fetchBusinessDocument(documentId!),
-    enabled: Boolean(documentId),
+    enabled: Boolean(documentId && !changeId),
     retry: false,
     refetchInterval: (query) => {
       const state = query.state.data?.operation_state;
@@ -462,6 +494,8 @@ export default function BusinessDocumentsPage() {
       document.operation_state !== 'FAILED',
     );
 
+  if (changeId) return <EvaChangeWorkbench changeId={changeId} />;
+
   if (!documentId) return <CreateBusinessDocumentPage />;
 
   if (documentQuery.isLoading) {
@@ -520,16 +554,16 @@ export default function BusinessDocumentsPage() {
 
   return (
     <main
-      className="grid h-full min-h-0 grid-rows-[auto_auto_1fr] bg-bg-base"
+      className="grid h-full min-h-0 min-w-0 grid-rows-[auto_auto_1fr] bg-bg-base"
       data-testid="business-document-workbench"
     >
       <header
-        className="flex min-h-16 flex-wrap items-center justify-between gap-3 border-b border-border-button px-5 py-3"
+        className="flex min-h-16 min-w-0 flex-wrap items-start justify-between gap-3 border-b border-border-button px-5 py-3 sm:items-center"
         data-testid="business-document-header"
       >
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="truncate text-lg font-semibold tracking-tight">
+        <div className="w-full min-w-0 sm:w-auto sm:flex-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <h1 className="min-w-0 break-words text-lg font-semibold tracking-tight sm:truncate">
               {document.title}
             </h1>
             <Badge
@@ -553,7 +587,10 @@ export default function BusinessDocumentsPage() {
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center justify-end gap-2">
+        <div
+          className="flex w-full min-w-0 flex-wrap items-center justify-start gap-2 sm:w-auto sm:justify-end"
+          data-testid="business-document-actions"
+        >
           {allowed.has('REQUEST_INTAKE_ASSESSMENT') && (
             <Button
               size="sm"

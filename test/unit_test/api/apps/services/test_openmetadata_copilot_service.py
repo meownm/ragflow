@@ -402,6 +402,28 @@ def test_follow_up_uses_only_most_recent_non_empty_turn(om_module):
     assert [entity["id"] for entity in result["entities"]] == [latest_missing["id"]]
 
 
+@pytest.mark.parametrize("pronoun", ["неё", "нее"])
+def test_natural_pronoun_follow_up_returns_entity_description_and_column_count(om_module, pronoun):
+    table = _raw_table(
+        "54545454-5454-4454-8454-545454545454",
+        "llm_logs",
+        description="Журнал обращений к LLM.",
+        columns=["id", "model", "input_json", "output_json"],
+    )
+    service, _client = _service(om_module, [table])
+
+    result = service.catalog.run(
+        f"А какое у {pronoun} описание и сколько колонок?",
+        context=[{"question": "Покажи llm_logs", "entity_ids": [table["id"]]}],
+    )
+
+    assert result["context_applied"] is True
+    assert result["retrieval"] == "conversation_context"
+    assert [entity["id"] for entity in result["entities"]] == [table["id"]]
+    assert result["answer"].endswith("Описание: Журнал обращений к LLM. Колонок: 4.")
+    assert ".." not in result["answer"]
+
+
 def test_empty_discovery_query_supports_pagination(om_module):
     tables = [
         _raw_table("60606060-6060-4060-8060-606060606060", "alpha"),

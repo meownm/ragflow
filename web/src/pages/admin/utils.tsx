@@ -15,22 +15,19 @@ export function formMergeDefaultValues<T>(
   ...parts: (DefaultValues<T> | AsyncDefaultValues<T> | undefined)[]
 ): (payload?: unknown) => Promise<Required<T>> {
   return async (payload?: unknown) => {
-    if (parts.length === 0) {
-      return {} as DefaultValues<T>;
-    }
-
-    if (parts.length === 1) {
-      return typeof parts[0] === 'function'
-        ? await parts[0](payload)
-        : parts[0];
-    }
-
-    return Object.assign(
-      // @ts-ignore
-      ...(await Promise.all(
-        parts.map((p) => (typeof p === 'function' ? p(payload) : p)),
-      )),
+    const definedParts = parts.filter(
+      (part): part is DefaultValues<T> | AsyncDefaultValues<T> =>
+        part !== undefined,
     );
+    const resolvedParts = await Promise.all(
+      definedParts.map((part) =>
+        typeof part === 'function'
+          ? (part as AsyncDefaultValues<T>)(payload)
+          : part,
+      ),
+    );
+
+    return Object.assign({}, ...resolvedParts) as Required<T>;
   };
 }
 

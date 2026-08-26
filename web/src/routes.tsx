@@ -246,6 +246,10 @@ const routeConfigOptions = [
         Component: () => import('@/pages/business-documents'),
       },
       {
+        path: `${Routes.BusinessDocuments}/eva/:changeId`,
+        Component: () => import('@/pages/business-documents'),
+      },
+      {
         path: `${Routes.Memory}`,
         Component: () => import('@/pages/memory'),
         children: [

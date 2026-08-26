@@ -3,6 +3,8 @@ services:
     depends_on: !override
       postgres:
         condition: service_healthy
+      plantuml-server:
+        condition: service_healthy
     environment:
       WAIT_FOR_BACKEND_BEFORE_NGINX: "true"
       RAGFLOW_BACKEND_READY_TIMEOUT_SECONDS: "180"
@@ -66,6 +68,12 @@ services:
       - ../rag/app/audio.py:/ragflow/rag/app/audio.py:ro
       - ../rag/app/picture.py:/ragflow/rag/app/picture.py:ro
       - ../web/dist:/ragflow/web/dist:ro
+      - ./nginx/ragflow.conf.python:/etc/nginx/conf.d/ragflow.conf.python:ro
+      - ./nginx/ragflow.conf.hybrid:/etc/nginx/conf.d/ragflow.conf.hybrid:ro
+      - ./nginx/ragflow.conf.golang:/etc/nginx/conf.d/ragflow.conf.golang:ro
+    networks:
+      - ragflow
+      - diagram_renderer
 
   sandbox-executor-manager:
     depends_on:

@@ -79,6 +79,37 @@ are Markdown, DOCX, and EvaWiki HTML code. Export never mutates a revision and
 never includes the review protocol. `START_REVIEW` opens a new append-only
 cycle on the same document; a different idea requires a new document/chat.
 
+### Existing EVA document change MVP
+
+An existing EVA page follows a separate change-request workflow. It does not
+enter the new-document intake lifecycle and is never overwritten as a side
+effect of opening the workbench.
+
+1. The author searches documents through an accessible `eva_wiki` connector
+   and selects one published page.
+2. The server reads the page from EVA and pins its document/project identity,
+   published version tag, published HTML, normalized Markdown, and content
+   hash in `BusinessDocumentEvaChange`.
+3. The author edits a private Markdown copy in RAGFlow. Every save regenerates
+   sanitized HTML and a heading-scoped line diff. Editing an approved copy
+   returns it to `EDITING` and clears the prior approval.
+4. `APPROVE` fixes the exact draft hash. `PREPARE_EVA_DRAFT` first rereads the
+   published EVA page, rejects source drift, writes only `text_draft`, and
+   reads that draft back for verification.
+5. `PUBLISH_EVA` is a separate confirmation. It rereads both the published
+   source and EVA draft, verifies their hashes, calls EVA publication, and
+   verifies the resulting published content before recording `PUBLISHED`.
+6. EVA write and publish reservations are fenced by `state_version`. A
+   reservation that remains transient for two minutes becomes explicitly
+   retryable; the retry first renews the fence, then uses EVA read-back to
+   finish idempotently. A late response from the previous worker cannot roll
+   back or complete the renewed operation.
+
+The MVP is deliberately limited to one EVA page per change request and manual
+Markdown editing. Automatic drafting from the change summary, related-document
+packages, reviewer roles, comments, and three-way rebase are later increments;
+source drift currently blocks the write without touching the published page.
+
 ## State axes
 
 - Lifecycle: `INTAKE`, `REVIEW`, `AGREED`, `ARCHIVED`.
@@ -157,6 +188,12 @@ The HTTP surface is rooted at `/api/v1/business-documents`:
 - `GET /{id}/exports` and `GET /{id}/exports/{artifact_id}/download` expose
   owner-checked artifact metadata and bytes.
 - Worker completion is never a public endpoint.
+- `GET /eva/sources` searches published pages through accessible EVA connectors.
+- `POST /eva/changes` creates a pinned change request; `GET /eva/changes` and
+  `GET /eva/changes/{id}` resume it.
+- `PUT /eva/changes/{id}/draft` saves the private draft and diff.
+- `POST /eva/changes/{id}/approve`, `/prepare`, and `/publish` keep approval,
+  EVA draft creation, and publication as explicit independent transitions.
 
 Success uses the RAGFlow envelope `{ "code": 0, "data": ... }`. An HTTP error
 uses a numeric `code` and places the stable domain identifier in

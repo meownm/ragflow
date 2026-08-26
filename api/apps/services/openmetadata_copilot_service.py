@@ -63,9 +63,17 @@ _CONTEXT_REFERENCE_MARKERS = (
     "them",
     "that table",
 )
+_CONTEXT_REFERENCE_PATTERNS = (
+    re.compile(r"(?<!\w)(?:у\s+не[её]|для\s+не[её]|о\s+не[её]|она|е[её])(?=\W|$)", re.IGNORECASE),
+)
 _MISSING_DESCRIPTION_MARKERS = ("без описан", "не имеют описан", "missing description", "without description")
 _WITH_DESCRIPTION_MARKERS = ("с описан", "имеют описан", "with description")
 _RECENT_MARKERS = ("последн", "недавн", "свеж", "recent", "latest", "updated last")
+_DESCRIPTION_QUERY_MARKERS = ("описан", "description")
+_COLUMN_COUNT_QUERY_PATTERNS = (
+    re.compile(r"(?:сколько|количеств\w*)\s+(?:у\s+не[её]\s+)?колон", re.IGNORECASE),
+    re.compile(r"how\s+many\s+columns?", re.IGNORECASE),
+)
 _CAPABILITY_ENDPOINTS = {
     "tables": "/api/v1/tables",
     "database_services": "/api/v1/services/databaseServices",
@@ -1808,7 +1816,7 @@ class CatalogCopilotAgent:
                 )
             )
         context_entities = self._context_entities(context, user_id=user_id, filters=filters)
-        references_context = any(marker in question.casefold() for marker in _CONTEXT_REFERENCE_MARKERS)
+        references_context = self._references_context(question)
 
         if action_type in {"missing_descriptions", "domain", "recent"}:
             action_filters = dict(filters or {})
@@ -1892,6 +1900,18 @@ class CatalogCopilotAgent:
             base["answer"] = quality.get("message") or quality.get("clarification")
             base["entities"] = quality.get("entities") or ([quality["entity"]] if quality.get("entity") else [])
             return base
+        if intent == "catalog" and references_context and context_entities:
+            contextual = list(context_entities)[: self.service.config.max_results]
+            base.update(
+                {
+                    "entities": contextual,
+                    "total_matches": len(context_entities),
+                    "context_applied": True,
+                    "retrieval": "conversation_context",
+                }
+            )
+            base["answer"] = self._context_answer(question, contextual, projection["freshness"], locale)
+            return base
         if intent == "catalog":
             scoped_projection = dict(projection)
             scoped_projection["counts"] = self.service.capabilities_for_user(user_id)
@@ -1966,7 +1986,7 @@ class CatalogCopilotAgent:
                     "retrieval": "conversation_context",
                 }
             )
-            base["answer"] = self._discovery_answer(contextual, projection["freshness"], locale, total=total)
+            base["answer"] = self._context_answer(question, contextual, projection["freshness"], locale, total=total)
             return base
 
         text = question.casefold()
@@ -2036,6 +2056,48 @@ class CatalogCopilotAgent:
         allowed_domains = self.service.allowed_domains(user_id)
         visible_by_id = {entity["id"]: entity for entity in self.service.projection.get()["tables"] if entity["id"] in wanted and _matches_filters(entity, filters or {}, allowed_domains)}
         return [visible_by_id[entity_id] for entity_id in entity_ids if entity_id in visible_by_id]
+
+    @staticmethod
+    def _references_context(question: str) -> bool:
+        text = question.casefold()
+        return any(marker in text for marker in _CONTEXT_REFERENCE_MARKERS) or any(pattern.search(question) for pattern in _CONTEXT_REFERENCE_PATTERNS)
+
+    @classmethod
+    def _context_answer(
+        cls,
+        question: str,
+        entities: list[dict[str, Any]],
+        freshness: dict[str, Any],
+        locale: str,
+        *,
+        total: int | None = None,
+    ) -> str:
+        if len(entities) != 1:
+            return cls._discovery_answer(entities, freshness, locale, total=total)
+
+        entity = entities[0]
+        text = question.casefold()
+        wants_description = any(marker in text for marker in _DESCRIPTION_QUERY_MARKERS)
+        wants_column_count = any(pattern.search(question) for pattern in _COLUMN_COUNT_QUERY_PATTERNS)
+        if not wants_description and not wants_column_count:
+            return cls._discovery_answer(entities, freshness, locale, total=total)
+
+        def sentence(label: str, value: Any) -> str:
+            detail = f"{label}: {value}"
+            return detail if detail.endswith((".", "!", "?")) else f"{detail}."
+
+        details = []
+        if _language(locale) == "en":
+            if wants_description:
+                details.append(sentence("Description", entity.get("description") or "not set"))
+            if wants_column_count:
+                details.append(sentence("Columns", int(entity.get("column_count") or 0)))
+        else:
+            if wants_description:
+                details.append(sentence("Описание", entity.get("description") or "не задано"))
+            if wants_column_count:
+                details.append(sentence("Колонок", int(entity.get("column_count") or 0)))
+        return f"{entity['fqn']}. {' '.join(details)}"
 
     @staticmethod
     def _catalog_answer(projection: dict[str, Any], locale: str) -> str:

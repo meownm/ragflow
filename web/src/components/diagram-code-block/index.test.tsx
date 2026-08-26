@@ -22,6 +22,7 @@ describe('DiagramCodeBlock', () => {
     ['meraid', 'mermaid'],
     ['plantuml', 'plantuml'],
     ['puml', 'plantuml'],
+    ['startuml', 'plantuml'],
   ] as const)('maps %s to %s', (language, expected) => {
     expect(getDiagramKind(language)).toBe(expected);
   });

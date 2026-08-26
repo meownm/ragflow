@@ -9,6 +9,7 @@ const diagramLanguageAliases: Record<string, DiagramKind> = {
   mermaid: 'mermaid',
   plantuml: 'plantuml',
   puml: 'plantuml',
+  startuml: 'plantuml',
 };
 
 const maxDiagramSourceLength = 50_000;

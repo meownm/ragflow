@@ -262,11 +262,14 @@ export default defineConfig(({ mode }) => {
               if (id.includes('node_modules/@antv')) {
                 return 'antv';
               }
-              const name = id
-                .toString()
-                .split('node_modules/')[1]
-                .split('/')[0]
-                .toString();
+              const dependencyPath = id
+                .replaceAll('\\', '/')
+                .split('/node_modules/')
+                .at(-1);
+              const name = dependencyPath?.split('/')[0];
+              if (!name) {
+                return;
+              }
               if (['lodash', 'dayjs', 'date-fns', 'axios'].includes(name)) {
                 return 'utils';
               }

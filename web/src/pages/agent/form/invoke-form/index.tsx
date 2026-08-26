@@ -201,7 +201,7 @@ function InvokeForm({ node }: INextOperatorForm) {
           rightContent={
             <Button
               variant={'ghost'}
-              onClick={(e) => {
+              onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
                 e.preventDefault();
                 showModal();
               }}

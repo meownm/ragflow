@@ -102,7 +102,7 @@ function ListOperationsForm({ node }: INextOperatorForm) {
 
   const query = useWatch({ control: form.control, name: 'query' });
 
-  const subType = getArrayElementType(getType(query));
+  const subType = getArrayElementType(getType(query) ?? '');
 
   const currentOutputs = useMemo(() => {
     return {

@@ -1,57 +1,104 @@
 import { Button } from '@/components/ui/button';
+import { SearchInput } from '@/components/ui/input';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
+import { Radio } from '@/components/ui/radio';
+import { Segmented } from '@/components/ui/segmented';
 import { useTranslate } from '@/hooks/common-hooks';
 import { cn } from '@/lib/utils';
-import { Plus } from 'lucide-react';
+import { LucideFilter, Plus } from 'lucide-react';
 import { useState } from 'react';
 import { ChunkTextMode } from '../../constant';
+
 interface ChunkResultBarProps {
+  className?: string;
   changeChunkTextMode: (mode: ChunkTextMode) => void;
-  createChunk: (text: string) => void;
-  isReadonly: boolean;
+  createChunk: (id: string) => unknown;
+  isReadonly?: boolean;
+  available?: number;
+  selectAllChunk?: (value: boolean) => void;
+  handleSetAvailable?: (value: number | undefined) => void;
+  handleInputChange?: React.ChangeEventHandler<HTMLInputElement>;
+  searchString?: string;
 }
+
 export default function ChunkResultBar({
+  className,
   changeChunkTextMode,
   createChunk,
-  isReadonly,
+  isReadonly = false,
+  available,
+  selectAllChunk,
+  handleSetAvailable,
+  handleInputChange,
+  searchString,
 }: ChunkResultBarProps) {
   const { t } = useTranslate('chunk');
-  const [textSelectValue, setTextSelectValue] = useState<ChunkTextMode>(
+  const [textSelectValue, setTextSelectValue] = useState<string | number>(
     ChunkTextMode.Full,
   );
+
+  const handleFilterChange = (value: string | number) => {
+    selectAllChunk?.(false);
+    handleSetAvailable?.(value === -1 ? undefined : Number(value));
+  };
+
   const textSelectOptions = [
     { label: t(ChunkTextMode.Full), value: ChunkTextMode.Full },
     { label: t(ChunkTextMode.Ellipse), value: ChunkTextMode.Ellipse },
   ];
 
-  const changeTextSelectValue = (value: ChunkTextMode) => {
+  const changeTextSelectValue = (value: string | number) => {
     setTextSelectValue(value);
-    changeChunkTextMode(value);
+    changeChunkTextMode(value as ChunkTextMode);
   };
+
+  const supportsFiltering = Boolean(selectAllChunk && handleSetAvailable);
+
   return (
-    <div className="flex gap-2">
-      <div className="flex items-center gap-1 bg-bg-card text-muted-foreground w-fit h-[35px] rounded-md p-1">
-        {textSelectOptions.map((option) => (
-          <div
-            key={option.value}
-            className={cn(
-              'flex items-center cursor-pointer px-4 py-1 rounded-md',
-              {
-                'text-primary bg-bg-base': option.value === textSelectValue,
-                'text-text-primary': option.value !== textSelectValue,
-              },
-            )}
-            onClick={() => changeTextSelectValue(option.value)}
-          >
-            {option.label}
-          </div>
-        ))}
-      </div>
+    <div className={cn('flex justify-end gap-4', className)}>
+      <Segmented
+        className="gap-0 me-auto"
+        buttonSize="xs"
+        itemClassName="px-2"
+        options={textSelectOptions}
+        value={textSelectValue}
+        onChange={changeTextSelectValue}
+      />
+
+      {supportsFiltering && (
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button variant="outline" size="icon">
+              <LucideFilter />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="p-0 w-[200px]">
+            <Radio.Group onChange={handleFilterChange} value={available ?? -1}>
+              <div className="flex flex-col gap-2 p-4">
+                <Radio value={-1}>{t('all')}</Radio>
+                <Radio value={1}>{t('enabled')}</Radio>
+                <Radio value={0}>{t('disabled')}</Radio>
+              </div>
+            </Radio.Group>
+          </PopoverContent>
+        </Popover>
+      )}
+
+      {(handleInputChange || searchString !== undefined) && (
+        <SearchInput
+          className="w-28"
+          placeholder={t('search')}
+          onChange={handleInputChange}
+          value={searchString}
+        />
+      )}
+
       {!isReadonly && (
-        <Button
-          onClick={() => createChunk('')}
-          variant={'secondary'}
-          className="bg-bg-card text-muted-foreground hover:bg-card"
-        >
+        <Button variant="outline" size="icon" onClick={() => createChunk('')}>
           <Plus size={44} />
         </Button>
       )}

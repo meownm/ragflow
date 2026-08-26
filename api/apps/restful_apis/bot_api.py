@@ -24,6 +24,7 @@ from quart import Response, request
 
 from agent.canvas import Canvas
 from api.apps import AUTH_BETA, login_required
+from api.apps.services.agent_file_service import upload_agent_files
 from api.db.db_models import APIToken
 from api.db.services.api_service import API4ConversationService
 from api.db.services.canvas_service import UserCanvasService
@@ -272,6 +273,38 @@ async def begin_inputs(agent_id, tenant_id=None):
 
     canvas = Canvas(json.dumps(cvs.dsl), tenant_id, canvas_id=cvs.id)
     return get_result(data={"title": cvs.title, "avatar": cvs.avatar, "inputs": canvas.get_component_input_form("begin"), "prologue": canvas.get_prologue(), "mode": canvas.get_mode()})
+
+
+@manager.route("/agentbots/<agent_id>/upload", methods=["POST"])  # noqa: F821
+@login_required(auth_types=AUTH_BETA)
+@add_tenant_id_to_kwargs
+async def upload_agent_bot_file(agent_id, tenant_id=None):
+    if not await thread_pool_exec(UserCanvasService.accessible, agent_id, tenant_id):
+        logger.warning(
+            "upload_agent_bot_file access denied tenant_id=%s agent_id=%s",
+            tenant_id,
+            agent_id,
+        )
+        return get_error_data_result(f"Can't find agent by ID: {agent_id}")
+
+    files = await request.files
+    file_objs = files.getlist("file") if files and files.get("file") else []
+    logger.info(
+        "Embedded agent file upload requested: tenant_id=%s agent_id=%s file_count=%s",
+        tenant_id,
+        agent_id,
+        len(file_objs),
+    )
+    try:
+        uploaded = await upload_agent_files(tenant_id, file_objs, request.args.get("url"))
+        return get_json_result(data=uploaded)
+    except Exception as exc:
+        logger.exception(
+            "Embedded agent file upload failed: tenant_id=%s agent_id=%s",
+            tenant_id,
+            agent_id,
+        )
+        return server_error_response(exc)
 
 
 @manager.route("/agentbots/<shared_id>/logs/<message_id>", methods=["GET"])  # noqa: F821

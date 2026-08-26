@@ -52,6 +52,8 @@ class DocumentSource(str, Enum):
     OCI_STORAGE = "oci_storage"
     SLACK = "slack"
     CONFLUENCE = "confluence"
+    EVA_WIKI = "eva_wiki"
+    OPENMETADATA = "openmetadata"
     JIRA = "jira"
     GOOGLE_DRIVE = "google_drive"
     GMAIL = "gmail"

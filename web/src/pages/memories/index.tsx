@@ -35,7 +35,7 @@ export default function MemoryList() {
     openCreateModal,
     showMemoryRenameModal,
     hideMemoryModal,
-    searchRenameLoading,
+    memoryRenameLoading,
     onMemoryRenameOk,
     initialMemory,
   } = useRenameMemory();
@@ -145,7 +145,7 @@ export default function MemoryList() {
           hideModal={hideMemoryRenameModal}
           onOk={onMemoryRenameConfirm}
           initialName={initialMemoryName}
-          loading={searchRenameLoading}
+          loading={memoryRenameLoading}
           title={<HomeIcon name="memory" width={'24'} />}
         ></RenameDialog>
       )} */}
@@ -154,7 +154,7 @@ export default function MemoryList() {
           initialMemory={initialMemory}
           isCreate={addOrEditType === 'add'}
           open={openCreateModal}
-          loading={searchRenameLoading}
+          loading={memoryRenameLoading}
           onClose={hideMemoryModal}
           onSubmit={onMemoryConfirm}
         />

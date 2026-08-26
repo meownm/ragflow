@@ -339,7 +339,7 @@ export const useSendAgentMessage = ({
         clearUploadResponseList();
 
         if (receiveMessageError(res)) {
-          sonnerMessage.error(res?.data?.message);
+          sonnerMessage.error(res?.data?.message ?? 'Failed to send message');
 
           // cancel loading
           setValue(message.content);

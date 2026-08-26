@@ -209,7 +209,7 @@ class TaskService(CommonService):
             .join(Document, on=(doc_id == Document.id))
             .join(Knowledgebase, on=(Document.kb_id == Knowledgebase.id))
             .join(Tenant, on=(Knowledgebase.tenant_id == Tenant.id))
-            .where(cls.model.id == task_id)
+            .where(cls.model.id == task_id, cls.model.progress < 1)
         )
         docs = list(docs.dicts())
         if not docs:

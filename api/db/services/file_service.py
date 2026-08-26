@@ -39,7 +39,7 @@ from common.ssrf_guard import assert_url_is_safe
 from common.constants import TaskStatus, FileSource, ParserType, MAXIMUM_PAGE_NUMBER
 from api.db.services.knowledgebase_service import KnowledgebaseService
 from api.db.services.task_service import TaskService
-from api.utils.file_utils import filename_type, read_potential_broken_pdf, thumbnail_img, sanitize_path
+from api.utils.file_utils import filename_type, is_video_filename, read_potential_broken_pdf, thumbnail_img, sanitize_path
 from rag.llm.cv_model import GptV4
 from common import settings
 
@@ -645,9 +645,11 @@ class FileService(CommonService):
         parser_config = {"chunk_token_num": 16096, "delimiter": "\n!?;。；！？", "layout_recognize": layout_recognize or "Plain Text"}
         kwargs = {"lang": "English", "callback": dummy, "parser_config": parser_config, "from_page": 0, "to_page": MAXIMUM_PAGE_NUMBER, "tenant_id": current_user.id if current_user else tenant_id}
         file_type = filename_type(filename)
-        if img_base64 and file_type == FileType.VISUAL.value:
+        is_video = is_video_filename(filename)
+        if img_base64 and file_type == FileType.VISUAL.value and not is_video:
             return GptV4.image2base64(blob)
-        cks = FACTORY.get(FileService.get_parser(filename_type(filename), filename, ""), naive).chunk(filename, blob, **kwargs)
+        parser = audio if is_video else FACTORY.get(FileService.get_parser(file_type, filename, ""), naive)
+        cks = parser.chunk(filename, blob, **kwargs)
         return f"\n -----------------\nFile: {filename}\nContent as following: \n" + "\n".join([ck["content_with_weight"] for ck in cks])
 
     @staticmethod
@@ -845,7 +847,7 @@ class FileService(CommonService):
             threads = []
             imgs = []
             for file in files:
-                if file["mime_type"].find("image") >= 0:
+                if file["mime_type"].find("image") >= 0 and not is_video_filename(file["name"]):
                     if raw:
                         imgs.append(FileService.get_blob(file["created_by"], file["id"]))
                     else:

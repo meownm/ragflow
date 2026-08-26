@@ -45,8 +45,7 @@ export function removeObjectProperty(
   if (!isObjectSchema(schema) || !schema.properties) return schema;
 
   const newSchema = copySchema(schema);
-  const { [propertyName]: _, ...remainingProps } = newSchema.properties;
-  newSchema.properties = remainingProps;
+  delete newSchema.properties?.[propertyName];
 
   // Also remove from required array if present
   if (newSchema.required) {
@@ -109,14 +108,11 @@ export function updateArrayItems(
  */
 export function createFieldSchema(field: NewField): JSONSchema {
   const { type, description, validation } = field;
-  if (isObjectSchema(validation)) {
-    return {
-      type,
-      description,
-      ...validation,
-    };
-  }
-  return validation;
+  return {
+    type,
+    description,
+    ...(validation ?? {}),
+  };
 }
 
 /**

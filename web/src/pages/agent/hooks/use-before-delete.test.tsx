@@ -1,4 +1,5 @@
-import { act, renderHook } from '@testing-library/react';
+import { RAGFlowNodeType } from '@/interfaces/database/agent';
+import { renderHook } from '@testing-library/react';
 import { Edge } from '@xyflow/react';
 import { NodeHandleId, Operator } from '../constant';
 import useGraphStore from '../store';
@@ -7,18 +8,19 @@ import { useBeforeDelete } from './use-before-delete';
 const createNode = (
   id: string,
   label: Operator,
-  options: Record<string, unknown> = {},
-) => ({
-  id,
-  type: 'ragNode',
-  position: { x: 0, y: 0 },
-  data: {
-    label,
-    name: id,
-    form: {},
-  },
-  ...options,
-});
+  options: Partial<RAGFlowNodeType> = {},
+): RAGFlowNodeType =>
+  ({
+    id,
+    type: 'ragNode',
+    position: { x: 0, y: 0 },
+    data: {
+      label,
+      name: id,
+      form: {},
+    },
+    ...options,
+  }) as RAGFlowNodeType;
 
 const createEdge = (
   id: string,
@@ -53,26 +55,23 @@ describe('useBeforeDelete', () => {
       }),
       createNode('message:0', Operator.Message, { parentId: 'iteration:0' }),
       createNode('message:1', Operator.Message, { parentId: 'message:0' }),
-      createNode('generate:0', Operator.Generate),
+      createNode('rewrite:0', Operator.RewriteQuestion),
     ];
 
     const edges = [
       createEdge('e1', 'iterationStart:0', 'message:0'),
       createEdge('e2', 'message:0', 'message:1'),
-      createEdge('e3', 'message:0', 'generate:0'),
-      createEdge('e4', 'generate:0', 'message:1'),
+      createEdge('e3', 'message:0', 'rewrite:0'),
+      createEdge('e4', 'rewrite:0', 'message:1'),
     ];
 
     useGraphStore.setState({ nodes, edges });
 
     const { result } = renderHook(() => useBeforeDelete());
-    let deletion;
-    await act(async () => {
-      deletion = await result.current.handleBeforeDelete({
-        nodes: [nodes[0] as any],
-        edges: [],
-      });
-    });
+    const deletion = (await result.current.handleBeforeDelete({
+      nodes: [nodes[0]],
+      edges: [],
+    })) as { nodes: RAGFlowNodeType[]; edges: Edge[] };
 
     expect(deletion?.nodes.map((node) => node.id).sort()).toEqual(
       ['iteration:0', 'iterationStart:0', 'message:0', 'message:1'].sort(),
@@ -102,18 +101,14 @@ describe('useBeforeDelete', () => {
     });
 
     const { result } = renderHook(() => useBeforeDelete());
-    let beginDeletion;
-    let startDeletion;
-    await act(async () => {
-      beginDeletion = await result.current.handleBeforeDelete({
-        nodes: [beginNode as any],
-        edges: [],
-      });
-      startDeletion = await result.current.handleBeforeDelete({
-        nodes: [iterationStartNode as any],
-        edges: [],
-      });
-    });
+    const beginDeletion = (await result.current.handleBeforeDelete({
+      nodes: [beginNode],
+      edges: [],
+    })) as { nodes: RAGFlowNodeType[]; edges: Edge[] };
+    const startDeletion = (await result.current.handleBeforeDelete({
+      nodes: [iterationStartNode],
+      edges: [],
+    })) as { nodes: RAGFlowNodeType[]; edges: Edge[] };
 
     expect(beginDeletion?.nodes).toEqual([]);
     expect(startDeletion?.nodes).toEqual([]);
@@ -138,13 +133,10 @@ describe('useBeforeDelete', () => {
     useGraphStore.setState({ nodes, edges });
 
     const { result } = renderHook(() => useBeforeDelete());
-    let deletion;
-    await act(async () => {
-      deletion = await result.current.handleBeforeDelete({
-        nodes: [nodes[0] as any],
-        edges,
-      });
-    });
+    const deletion = (await result.current.handleBeforeDelete({
+      nodes: [nodes[0]],
+      edges,
+    })) as { nodes: RAGFlowNodeType[]; edges: Edge[] };
 
     expect(deletion?.nodes.map((node) => node.id).sort()).toEqual(
       ['agent:0', 'tool:0', 'message:0'].sort(),
@@ -164,7 +156,7 @@ describe('useBeforeDelete', () => {
       createNode('agent:0', Operator.Agent, { parentId: 'iteration:0' }),
       createNode('tool:0', Operator.Tool),
       createNode('message:0', Operator.Message),
-      createNode('generate:0', Operator.Generate),
+      createNode('rewrite:0', Operator.RewriteQuestion),
     ];
 
     const edges = [
@@ -175,19 +167,16 @@ describe('useBeforeDelete', () => {
       createEdge('e3', 'tool:0', 'message:0', {
         sourceHandle: NodeHandleId.Tool,
       }),
-      createEdge('e4', 'generate:0', 'message:0'),
+      createEdge('e4', 'rewrite:0', 'message:0'),
     ];
 
     useGraphStore.setState({ nodes, edges });
 
     const { result } = renderHook(() => useBeforeDelete());
-    let deletion;
-    await act(async () => {
-      deletion = await result.current.handleBeforeDelete({
-        nodes: [nodes[0] as any],
-        edges: [],
-      });
-    });
+    const deletion = (await result.current.handleBeforeDelete({
+      nodes: [nodes[0]],
+      edges: [],
+    })) as { nodes: RAGFlowNodeType[]; edges: Edge[] };
 
     expect(deletion?.nodes.map((node) => node.id).sort()).toEqual(
       [

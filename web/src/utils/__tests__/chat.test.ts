@@ -16,7 +16,7 @@ describe('preprocessLaTeX', () => {
     expect(result).toContain('\\right]');
     expect(result).toContain('\\frac{1}{|y|}');
     expect(result).toBe(
-      '$$ C_{seq}(y|x) = \\frac{1}{|y|} \\sum_{t=1}^{|y|} \\right] $$',
+      '$$C_{seq}(y|x) = \\frac{1}{|y|} \\sum_{t=1}^{|y|} \\right]$$',
     );
   });
 
@@ -24,12 +24,12 @@ describe('preprocessLaTeX', () => {
     const content = '\\( f(x) + \\big) \\)';
     const result = preprocessLaTeX(content);
     expect(result).toContain('\\big)');
-    expect(result).toBe('$ f(x) + \\big) $');
+    expect(result).toBe('$f(x) + \\big)$');
   });
 
   it('handles multiple block equations', () => {
     const content = 'First \\[ a \\] then \\[ b \\right] c \\]';
     const result = preprocessLaTeX(content);
-    expect(result).toBe('First $$a$$ then $$ b \\right] c $$');
+    expect(result).toBe('First $$a$$ then $$b \\right] c$$');
   });
 });

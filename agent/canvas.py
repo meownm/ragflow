@@ -34,6 +34,7 @@ from api.db.joint_services.tenant_model_service import get_tenant_default_model_
 from api.db.services.file_service import FileService
 from api.db.services.llm_service import LLMBundle
 from api.db.services.task_service import has_canceled
+from api.utils.file_utils import is_video_filename
 from common.constants import LLMType
 from common.llm_request_context import set_llm_request_context, reset_llm_request_context
 from common.exceptions import TaskCanceledException
@@ -905,7 +906,7 @@ class Canvas(Graph):
         loop = asyncio.get_running_loop()
         tasks = []
         for file in files:
-            if file["mime_type"].find("image") >= 0:
+            if file["mime_type"].find("image") >= 0 and not is_video_filename(file["name"]):
                 tasks.append(loop.run_in_executor(self._thread_pool, image_to_base64, file))
                 continue
             tasks.append(loop.run_in_executor(self._thread_pool, parse_file, file))

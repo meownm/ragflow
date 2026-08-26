@@ -116,6 +116,85 @@ export default {
       welcome: 'Добро пожаловать в',
       dataset: 'Датасет',
       memories: 'Память',
+      openMetadata: 'Каталог',
+    },
+    openMetadata: {
+      title: 'OpenMetadata Copilot',
+      subtitle:
+        'Поиск метаданных, владельцев и доменов, анализ графа знаний OpenMetadata и управляемые изменения внутри RAGFlow.',
+      unavailable: 'OpenMetadata Copilot недоступен',
+      retry: 'Повторить',
+      refresh: 'Обновить снимок',
+      provisionAgentApps: 'Создать/обновить Agent Apps',
+      agentAppsReady: 'Agent Apps готовы: {{count}}',
+      stale: 'Снимок устарел',
+      fresh: 'Данные свежие',
+      staleWarning:
+        'Ответы будут сформулированы как состояние по последнему снимку. Проверьте ingestion OpenMetadata перед операционными решениями.',
+      snapshot: 'Последнее обновление сущностей',
+      tables: 'Таблицы',
+      columns: 'Колонки',
+      describedTables: 'С описанием',
+      testCases: 'Тесты качества',
+      foreignKeys: 'Внешние ключи',
+      starterTitle: 'С чего начать',
+      starterSubtitle:
+        'Вопросы построены только по доступным возможностям и текущему снимку OMD.',
+      noStarterQuestions:
+        'Для доступной части каталога нет проверяемых подсказок.',
+      catalogTitle: 'Просмотр каталога',
+      catalogSubtitle:
+        'Поиск и фильтрация доступных таблиц OpenMetadata. Эти же фильтры ограничивают ответы Copilot.',
+      catalogSearch: 'Поиск по имени таблицы, FQN или описанию',
+      searchCatalog: 'Найти в каталоге',
+      onlyMissingDescriptions: 'Только таблицы без описания',
+      noCatalogEntities: 'По текущему запросу и фильтрам таблицы не найдены.',
+      catalogPage: 'Показано {{from}}–{{to}} из {{total}}',
+      previousPage: 'Назад',
+      nextPage: 'Далее',
+      conversationTitle: 'Диалог по каталогу',
+      conversationSubtitle:
+        'Продолжающий вопрос может использовать последние релевантные таблицы из восьми предыдущих ходов.',
+      newConversation: 'Новый диалог',
+      emptyConversation:
+        'Выберите стартовый вопрос или задайте вопрос по каталогу.',
+      contextUsed: 'учтён контекст',
+      filtersApplyToConversation:
+        'Фильтры каталога выше также применяются к этому диалогу.',
+      questionPlaceholder:
+        'Спросите о таблице, владельце, домене, качестве или влиянии изменения…',
+      ask: 'Спросить',
+      filterBy: 'Фильтр: {{field}}',
+      domain: 'домен',
+      service: 'сервис',
+      owner: 'владелец',
+      tag: 'тег',
+      schema: 'Схема',
+      updated: 'Обновлено',
+      noDescription: 'Описание не заполнено',
+      openInOmd: 'Открыть в OpenMetadata',
+      selectTable: 'Выбрать таблицу',
+      askAboutTable: 'Спросить о таблице',
+      aboutTableQuestion: 'Расскажи о таблице {{fqn}}',
+      exploreRelationships: 'Исследовать связи',
+      relationshipsQuestion:
+        'Покажи все зарегистрированные связи таблицы {{fqn}}',
+      prepareChange: 'Подготовить изменение',
+      governanceTitle: 'Governance: безопасное изменение',
+      displayName: 'Отображаемое имя',
+      description: 'Описание',
+      previewChange: 'Показать diff',
+      diffTitle: 'Изменение ещё не применено',
+      confirmationExpires: 'Подтверждение действует {{seconds}} сек.',
+      confirmApply: 'Подтвердить и применить',
+      backToEdit: 'Вернуться к редактированию',
+      upstream: 'Upstream',
+      downstream: 'Downstream',
+      semanticRelationships: 'Общие термины глоссария',
+      semanticRelationshipsTruncated:
+        'Показаны только наиболее сильные семантические связи.',
+      snapshotAnswer: 'по снимку',
+      liveAnswer: 'проверено в OMD',
     },
     memories: {
       llmTooltip:
@@ -1024,6 +1103,10 @@ export default {
         'Подключение к публичной ленте RSS или Atom и синхронизация записей в базу знаний.',
       confluenceDescription:
         'Интегрируйте ваше рабочее пространство Confluence для поиска документации.',
+      eva_wikiDescription:
+        'Синхронизируйте страницы и вложения EVA Wiki через авторизованный API.',
+      openmetadataDescription:
+        'Индексируйте таблицы, описания и колонки OpenMetadata в приватный Dataset с инкрементальной синхронизацией.',
       s3Description:
         'Подключитесь к вашему AWS S3 бакету для импорта и синхронизации хранимых файлов.',
       google_cloud_storageDescription:

@@ -38,11 +38,14 @@ const WebhookSheet = ({ hideModal }: RunSheetProps) => {
       event.data.component_id === BeginId,
   )?.data.inputs;
 
-  const latestOutput = data?.events?.findLast(
-    (event) =>
-      event.event === MessageEventType.NodeFinished &&
-      event.data.component_id !== BeginId,
-  )?.data.outputs;
+  const latestOutput = data?.events
+    ?.slice()
+    .reverse()
+    .find(
+      (event: any) =>
+        event.event === MessageEventType.NodeFinished &&
+        event.data.component_id !== BeginId,
+    )?.data.outputs;
 
   const statusInfo = useMemo(() => {
     if (data?.finished === false) {

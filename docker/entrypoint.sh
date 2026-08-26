@@ -248,13 +248,36 @@ function ensure_db_init() {
     echo "Database tables initialized."
 }
 
+function wait_for_ragflow_backend() {
+    [[ "${WAIT_FOR_BACKEND_BEFORE_NGINX:-false}" == "true" ]] || return 0
+
+    local ready_url="${RAGFLOW_BACKEND_READY_URL:-http://127.0.0.1:9380/api/v1/system/healthz}"
+    local timeout_seconds="${RAGFLOW_BACKEND_READY_TIMEOUT_SECONDS:-180}"
+
+    if ! [[ "${timeout_seconds}" =~ ^[1-9][0-9]*$ ]]; then
+        echo "Invalid RAGFLOW_BACKEND_READY_TIMEOUT_SECONDS=${timeout_seconds}." >&2
+        return 1
+    fi
+
+    echo "Waiting up to ${timeout_seconds}s for RAGFlow backend readiness at ${ready_url}..."
+    local deadline=$((SECONDS + timeout_seconds))
+    until curl --fail --silent --max-time 5 "${ready_url}" >/dev/null; do
+        if (( SECONDS >= deadline )); then
+            echo "RAGFlow backend did not become ready within ${timeout_seconds}s." >&2
+            return 1
+        fi
+        sleep 1
+    done
+    echo "RAGFlow backend is ready."
+}
+
 # -----------------------------------------------------------------------------
 # Start components based on flags
 # -----------------------------------------------------------------------------
 ensure_docling
 ensure_db_init
 
-if [[ "${INIT_MODEL_PROVIDER_TABLES}" -eq 1 ]]; then
+if [[ "${INIT_MODEL_PROVIDER_TABLES}" -eq 1 && "${DB_TYPE:-mysql}" == "mysql" ]]; then
     echo "Running model provider table migrations..."
     "$PY" tools/scripts/mysql_migration.py \
         --stages tenant_model_provider,tenant_model_instance,tenant_model,model_id_config \
@@ -263,6 +286,8 @@ if [[ "${INIT_MODEL_PROVIDER_TABLES}" -eq 1 ]]; then
         --database-version "v0.26.1" \
         --mark-database-version-on-success
     echo "Model provider table migrations completed."
+elif [[ "${INIT_MODEL_PROVIDER_TABLES}" -eq 1 ]]; then
+    echo "Skipping MySQL-only model provider migration for DB_TYPE=${DB_TYPE}."
 fi
 
 if [[ "${ENABLE_ADMIN_SERVER}" -eq 1 ]]; then
@@ -286,14 +311,15 @@ if [[ "${ENABLE_ADMIN_SERVER}" -eq 1 ]]; then
 fi
 
 if [[ "${ENABLE_WEBSERVER}" -eq 1 ]]; then
-    echo "Starting nginx..."
-    /usr/sbin/nginx
-
     if [[ "${API_PROXY_SCHEME}" == "hybrid" ]] || [[ "${API_PROXY_SCHEME}" == "python" ]]; then
         while true; do
             echo "Attempt to start RAGFlow python server..."
-            "$PY" api/ragflow_server.py ${INIT_SUPERUSER_ARGS}
-            echo "RAGFlow python server started."
+            if "$PY" api/ragflow_server.py ${INIT_SUPERUSER_ARGS}; then
+                exit_status=0
+            else
+                exit_status=$?
+            fi
+            echo "RAGFlow python server exited with status ${exit_status}; restarting in 1s." >&2
             sleep 1;
         done &
     fi
@@ -306,6 +332,11 @@ if [[ "${ENABLE_WEBSERVER}" -eq 1 ]]; then
             sleep 1;
         done &
     fi
+
+    wait_for_ragflow_backend
+
+    echo "Starting nginx..."
+    /usr/sbin/nginx
 fi
 
 if [[ "${ENABLE_DATASYNC}" -eq 1 ]]; then

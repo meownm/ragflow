@@ -398,7 +398,7 @@ const ModelProviders = () => {
       <SoMarkModal
         visible={somarkVisible}
         hideModal={hideSoMarkModal}
-        onOk={onSoMarkOk}
+        onOk={async (payload) => (await onSoMarkOk(payload, false)) === true}
         loading={somarkLoading}
         onVerify={onSoMarkVerifying}
       ></SoMarkModal>

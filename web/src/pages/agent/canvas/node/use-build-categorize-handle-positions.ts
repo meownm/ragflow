@@ -14,9 +14,9 @@ export const useBuildCategorizeHandlePositions = ({
 }) => {
   const updateNodeInternals = useUpdateNodeInternals();
 
-  const FormSchema = useCreateCategorizeFormSchema();
-
-  type FormSchemaType = z.infer<typeof FormSchema>;
+  type FormSchemaType = z.infer<
+    ReturnType<typeof useCreateCategorizeFormSchema>
+  >;
 
   const items: Required<FormSchemaType['items']> = useMemo(() => {
     return get(data, `form.items`, []);

@@ -137,7 +137,21 @@ export function SimilaritySliderFormField({
                   step={0.01}
                   {...field}
                   value={getVectorWeight(field.value)}
-                  onChange={(value) => field.onChange(getStoredWeight(value))}
+                  onChange={(value) =>
+                    field.onChange(
+                      getStoredWeight(
+                        value == null
+                          ? 0
+                          : typeof value === 'number'
+                            ? value
+                            : typeof value === 'string'
+                              ? Number(value)
+                              : 'target' in value
+                                ? Number(value.target.value)
+                                : Number(value[0] ?? 0),
+                      ),
+                    )
+                  }
                 ></NumberInput>
               </FormControl>
             </div>

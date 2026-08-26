@@ -21,7 +21,11 @@ import tempfile
 from common.constants import LLMType
 from api.db.services.llm_service import LLMBundle
 from api.db.joint_services.tenant_model_service import get_tenant_default_model_by_type
+from api.utils.file_utils import VIDEO_EXTENSIONS
 from rag.nlp import rag_tokenizer, tokenize
+
+
+AUDIO_EXTENSIONS = frozenset({".da", ".wave", ".wav", ".mp3", ".aac", ".flac", ".ogg", ".aiff", ".au", ".midi", ".wma", ".realaudio", ".vqf", ".oggvorbis", ".ape"})
 
 
 def chunk(filename, binary, tenant_id, lang, callback=None, **kwargs):
@@ -35,7 +39,7 @@ def chunk(filename, binary, tenant_id, lang, callback=None, **kwargs):
         if not ext:
             raise RuntimeError("No extension detected.")
 
-        if ext not in [".da", ".wave", ".wav", ".mp3", ".aac", ".flac", ".ogg", ".aiff", ".au", ".midi", ".wma", ".realaudio", ".vqf", ".oggvorbis", ".ape"]:
+        if ext.lower() not in AUDIO_EXTENSIONS | VIDEO_EXTENSIONS:
             raise RuntimeError(f"Extension {ext} is not supported yet.")
 
         tmp_path = ""

@@ -42,7 +42,16 @@ export function ReferenceDocumentList({ list }: { list: Docagg[] }) {
           hideModal={hideModal}
           documentId={selectedDocument.doc_id}
           chunk={{
+            id: '',
+            content: null,
+            document_id: selectedDocument.doc_id,
             document_name: selectedDocument.doc_name,
+            dataset_id: '',
+            image_id: '',
+            similarity: 0,
+            vector_similarity: 0,
+            term_similarity: 0,
+            positions: [],
           }}
         ></PdfDrawer>
       )}

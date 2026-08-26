@@ -1,0 +1,131 @@
+services:
+  ragflow-cpu:
+    depends_on: !override
+      postgres:
+        condition: service_healthy
+    environment:
+      WAIT_FOR_BACKEND_BEFORE_NGINX: "true"
+      RAGFLOW_BACKEND_READY_TIMEOUT_SECONDS: "180"
+      OPENMETADATA_URL: ${OPENMETADATA_URL:-http://host.docker.internal:8585}
+      OPENMETADATA_PUBLIC_URL: ${OPENMETADATA_PUBLIC_URL:-http://127.0.0.1:8585}
+      OPENMETADATA_USERNAME: ${OPENMETADATA_USERNAME:-}
+      OPENMETADATA_PASSWORD: ${OPENMETADATA_PASSWORD:-}
+      OPENMETADATA_JWT_TOKEN: ${OPENMETADATA_JWT_TOKEN:-}
+      OPENMETADATA_WRITE_ENABLED: ${OPENMETADATA_WRITE_ENABLED:-false}
+      OPENMETADATA_CACHE_TTL_SECONDS: ${OPENMETADATA_CACHE_TTL_SECONDS:-900}
+      OPENMETADATA_STALE_AFTER_HOURS: ${OPENMETADATA_STALE_AFTER_HOURS:-168}
+      OPENMETADATA_DATASET_ID: ${OPENMETADATA_DATASET_ID:-}
+      OPENMETADATA_DATASET_TOP_N: ${OPENMETADATA_DATASET_TOP_N:-20}
+      OPENMETADATA_DATASET_SIMILARITY_THRESHOLD: ${OPENMETADATA_DATASET_SIMILARITY_THRESHOLD:-0.05}
+      OPENMETADATA_DATASET_VECTOR_WEIGHT: ${OPENMETADATA_DATASET_VECTOR_WEIGHT:-0.3}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          curl --fail --silent --max-time 5
+          http://127.0.0.1:9380/api/v1/system/healthz >/dev/null &&
+          curl --fail --silent --max-time 5
+          http://127.0.0.1/ >/dev/null
+      interval: 5s
+      timeout: 12s
+      retries: 12
+      start_period: 60s
+    ports: !override
+      - "127.0.0.1:9380:80"
+    volumes:
+      - ../api/db/services/connector_service.py:/ragflow/api/db/services/connector_service.py:ro
+      - ../api/apps/restful_apis/connector_api.py:/ragflow/api/apps/restful_apis/connector_api.py:ro
+      - ../api/apps/restful_apis/agent_api.py:/ragflow/api/apps/restful_apis/agent_api.py:ro
+      - ../api/apps/restful_apis/bot_api.py:/ragflow/api/apps/restful_apis/bot_api.py:ro
+      - ../api/apps/services/agent_file_service.py:/ragflow/api/apps/services/agent_file_service.py:ro
+      - ../api/apps/services/openmetadata_copilot_service.py:/ragflow/api/apps/services/openmetadata_copilot_service.py:ro
+      - ../api/apps/services/openmetadata_agent_service.py:/ragflow/api/apps/services/openmetadata_agent_service.py:ro
+      - ../api/apps/services/openmetadata_dataset_retrieval.py:/ragflow/api/apps/services/openmetadata_dataset_retrieval.py:ro
+      - ../api/apps/restful_apis/openmetadata_api.py:/ragflow/api/apps/restful_apis/openmetadata_api.py:ro
+      - ../api/apps/services/dataset_api_service.py:/ragflow/api/apps/services/dataset_api_service.py:ro
+      - ../agent/canvas.py:/ragflow/agent/canvas.py:ro
+      - ../agent/component/openmetadata.py:/ragflow/agent/component/openmetadata.py:ro
+      - ../api/db/services/file_service.py:/ragflow/api/db/services/file_service.py:ro
+      - ../api/db/services/task_service.py:/ragflow/api/db/services/task_service.py:ro
+      - ../api/utils/file_utils.py:/ragflow/api/utils/file_utils.py:ro
+      - ../common/constants.py:/ragflow/common/constants.py:ro
+      - ../common/ssrf_guard.py:/ragflow/common/ssrf_guard.py:ro
+      - ../common/openmetadata_agents.py:/ragflow/common/openmetadata_agents.py:ro
+      - ../common/data_source/__init__.py:/ragflow/common/data_source/__init__.py:ro
+      - ../common/data_source/config.py:/ragflow/common/data_source/config.py:ro
+      - ../common/data_source/eva_wiki_connector.py:/ragflow/common/data_source/eva_wiki_connector.py:ro
+      - ../common/data_source/openmetadata_connector.py:/ragflow/common/data_source/openmetadata_connector.py:ro
+      - ../common/data_source/html_utils.py:/ragflow/common/data_source/html_utils.py:ro
+      - ../rag/svr/sync_data_source.py:/ragflow/rag/svr/sync_data_source.py:ro
+      - ../rag/app/audio.py:/ragflow/rag/app/audio.py:ro
+      - ../rag/app/picture.py:/ragflow/rag/app/picture.py:ro
+      - ../web/dist:/ragflow/web/dist:ro
+
+  sandbox-executor-manager:
+    depends_on:
+      sandbox-runtime-bootstrap:
+        condition: service_healthy
+    ports: !reset []
+
+  sandbox-runtime-bootstrap:
+    profiles:
+      - sandbox
+    image: ${SANDBOX_EXECUTOR_MANAGER_IMAGE-infiniflow/sandbox-executor-manager:latest}
+    entrypoint:
+      - /bin/sh
+      - /usr/local/bin/ensure-runsc-runtime
+    environment:
+      RUNSC_CHECK_INTERVAL_SECONDS: "30"
+    network_mode: none
+    pid: host
+    privileged: true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /run/config/docker:/run/config/docker
+      - /var/lib/docker/gvisor:/var/lib/docker/gvisor:ro
+      - ./ensure_runsc_runtime.sh:/usr/local/bin/ensure-runsc-runtime:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          docker info --format '{{json .Runtimes}}' 2>/dev/null |
+          grep -q '"runsc"'
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+    restart: unless-stopped
+
+  es01:
+    ports: !reset []
+
+  mysql:
+    profiles: !override
+      - mysql
+    ports: !reset []
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DBNAME}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - ragflow
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DBNAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  minio:
+    ports: !reset []
+
+  redis:
+    ports: !reset []
+
+volumes:
+  postgres_data:

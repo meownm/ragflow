@@ -16,15 +16,9 @@ export const useObjectFields = () => {
       const fieldValue = field.value ? true : false;
       return (
         <BoolSegmented
-          options={
-            [
-              { value: true, label: 'True' },
-              { value: false, label: 'False' },
-            ] as any
-          }
           sizeType="sm"
-          value={fieldValue}
-          onChange={field.onChange}
+          value={fieldValue ? 1 : 0}
+          onChange={(value) => field.onChange(Boolean(value))}
           className={className}
           itemClassName="justify-center flex-1"
         ></BoolSegmented>
@@ -45,7 +39,7 @@ export const useObjectFields = () => {
         });
       }
       for (const key in obj) {
-        if (obj.hasOwnProperty(key)) {
+        if (Object.prototype.hasOwnProperty.call(obj, key)) {
           if (!/^[a-zA-Z_0-9]+$/.test(key)) {
             errors.push({
               path: [...path, key],
@@ -184,7 +178,7 @@ export const useObjectFields = () => {
               {booleanRender(
                 {
                   value: item,
-                  onChange: (value) => {
+                  onChange: (value: string | number) => {
                     values[index] = !!value;
                     field.onChange(values);
                   },

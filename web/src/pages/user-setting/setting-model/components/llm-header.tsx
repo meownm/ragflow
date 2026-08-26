@@ -14,7 +14,7 @@ export const LLMHeader = ({ name }: { name: string }) => {
           <Button
             variant={'ghost'}
             className=" bg-transparent w-4 h-5"
-            onClick={(e) => {
+            onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
               e.stopPropagation();
               window.open(APIMapUrl[name as keyof typeof APIMapUrl]);
             }}

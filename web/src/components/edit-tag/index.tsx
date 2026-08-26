@@ -73,7 +73,7 @@ const EditTag = React.forwardRef<HTMLDivElement, EditTagsProps>(
                   <Button
                     variant="delete"
                     size="icon-xs"
-                    onClick={(e) => {
+                    onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
                       e.preventDefault();
                       handleClose(tag);
                     }}

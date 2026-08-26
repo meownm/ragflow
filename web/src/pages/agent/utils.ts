@@ -627,7 +627,7 @@ export const buildNewPositionMap = (
   >((pre, cur) => {
     // take a coordinate
     const effectiveIdxes = CategorizeAnchorPointPositions.map(
-      (x, idx) => idx,
+      (_item, idx) => idx,
     ).filter((x) => !indexesInUse.some((y) => y === x));
     const idx = sample(effectiveIdxes);
     if (idx !== undefined) {

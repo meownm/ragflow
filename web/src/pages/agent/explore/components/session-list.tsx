@@ -21,11 +21,12 @@ export function SessionList({
   const { sessions, loading, addTemporarySession, removeTemporarySession } =
     useSelectDerivedSessionList();
 
-  const { filteredData, handleSearchChange, searchKeyword } =
-    useClientSearch<IAgentLogResponse>({
-      data: sessions,
-      searchFields: ['name'],
-    });
+  const { filteredData, handleSearchChange, searchKeyword } = useClientSearch<
+    IAgentLogResponse & { is_new?: boolean }
+  >({
+    data: sessions,
+    searchFields: ['name'],
+  });
 
   return (
     <section className="p-5 flex flex-col h-full">

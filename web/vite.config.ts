@@ -178,6 +178,13 @@ export default defineConfig(({ mode }) => {
       },
     },
     css: {
+      // Multiple Less worker threads intermittently fail with EINVAL on
+      // Windows-mounted workspaces. One worker is deterministic and can be
+      // raised explicitly for build hosts that support parallel preprocessing.
+      preprocessorMaxWorkers: Math.max(
+        1,
+        Number(env.VITE_CSS_PREPROCESSOR_MAX_WORKERS) || 1,
+      ),
       modules: {
         localsConvention: 'camelCase',
       },
@@ -278,6 +285,10 @@ export default defineConfig(({ mode }) => {
       },
       minify: resolveMinify(env.VITE_MINIFY),
       terserOptions: {
+        // Worker creation is unreliable on some Windows-mounted workspaces.
+        // Keep the production minifier deterministic while allowing build
+        // hosts to opt into a larger pool explicitly.
+        maxWorkers: Math.max(1, Number(env.VITE_TERSER_MAX_WORKERS) || 1),
         compress: {
           drop_console: true, // delete console
           drop_debugger: true, // delete debugger

@@ -68,7 +68,8 @@ const SchemaVisualEditor: FC<SchemaVisualEditorProps & KeyInputProps> = ({
     // If name changed, we need to remove the old field
     if (name !== updatedField.name) {
       const { properties, ...rest } = newSchema;
-      const { [name]: _, ...remainingProps } = properties || {};
+      const remainingProps = { ...(properties || {}) };
+      delete remainingProps[name];
 
       newSchema = {
         ...rest,
@@ -100,7 +101,8 @@ const SchemaVisualEditor: FC<SchemaVisualEditorProps & KeyInputProps> = ({
     }
 
     // Create a new schema without the field
-    const { [name]: _, ...remainingProps } = schema.properties;
+    const remainingProps = { ...schema.properties };
+    delete remainingProps[name];
 
     const newSchema = {
       ...schema,

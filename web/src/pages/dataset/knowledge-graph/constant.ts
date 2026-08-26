@@ -121,7 +121,9 @@ const nodes = [
     entity_type: '"EVENT"',
     id: '"主要财务指标"',
   },
-].map(({ type, ...x }) => ({ ...x }));
+].map((item) =>
+  Object.fromEntries(Object.entries(item).filter(([key]) => key !== 'type')),
+);
 
 const edges = [
   {

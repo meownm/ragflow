@@ -1,5 +1,9 @@
 import { CheckedState } from '@radix-ui/react-checkbox';
-import { FormatPreserveEditorProps } from './interface';
+import {
+  FormatPreserveEditorProps,
+  IJsonContainerProps,
+  IObjContainerProps,
+} from './interface';
 import { ArrayContainer } from './json-parser';
 import { ObjectContainer } from './object-parser';
 
@@ -32,7 +36,7 @@ const FormatPreserveEditor = ({
         <ArrayContainer
           isReadonly={isReadonly}
           className={className}
-          initialValue={initialValue}
+          initialValue={initialValue as IJsonContainerProps['initialValue']}
           handleCheck={handleCheck}
           selectedChunkIds={selectedChunkIds}
           onSave={onSave}
@@ -48,9 +52,8 @@ const FormatPreserveEditor = ({
         <ObjectContainer
           isReadonly={isReadonly}
           className={className}
-          initialValue={initialValue}
+          initialValue={initialValue as IObjContainerProps['initialValue']}
           handleCheck={handleCheck}
-          selectedChunkIds={selectedChunkIds}
           onSave={onSave}
           escapeNewlines={escapeNewlines}
           unescapeNewlines={unescapeNewlines}

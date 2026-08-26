@@ -68,7 +68,7 @@ export interface FormFieldConfig {
   hidden?: boolean;
   required?: boolean;
   placeholder?: string;
-  options?: { label: string; value: string }[];
+  options?: { label: string; value: string | number | boolean }[];
   allowCustomValue?: boolean;
   defaultValue?: any;
   validation?: {
@@ -102,10 +102,10 @@ interface DynamicFormProps<T extends FieldValues> {
   className?: string;
   children?: React.ReactNode;
   defaultValues?: DefaultValues<T>;
-  // onFieldUpdate?: (
-  //   fieldName: string,
-  //   updatedField: Partial<FormFieldConfig>,
-  // ) => void;
+  onFieldUpdate?: (
+    fieldName: string,
+    updatedField: Partial<FormFieldConfig>,
+  ) => void;
   labelClassName?: string;
 }
 
@@ -128,7 +128,7 @@ export interface DynamicFormRef {
 // Generate Zod validation schema based on field configurations
 export const generateSchema = (fields: FormFieldConfig[]): ZodSchema<any> => {
   const schema: Record<string, ZodSchema> = {};
-  const nestedSchemas: Record<string, Record<string, ZodSchema>> = {};
+  const nestedSchemas: Record<string, Record<string, any>> = {};
 
   fields.forEach((field) => {
     let fieldSchema: ZodSchema;
@@ -352,7 +352,11 @@ export const RenderField = ({
 }) => {
   if (field.render) {
     if (field.type === FormFieldType.Custom && field.hideLabel) {
-      return <div className="w-full">{field.render({})}</div>;
+      return (
+        <div className="w-full">
+          {field.render({} as ControllerRenderProps)}
+        </div>
+      );
     }
     return (
       <RAGFlowFormItem
@@ -396,7 +400,11 @@ export const RenderField = ({
             return (
               <Segmented
                 {...finalFieldProps}
-                options={field.options || []}
+                options={
+                  (field.options || []) as React.ComponentProps<
+                    typeof Segmented
+                  >['options']
+                }
                 className="w-full"
                 itemClassName="flex-1 justify-center"
                 disabled={field.disabled}
@@ -456,7 +464,11 @@ export const RenderField = ({
               <SelectWithSearch
                 triggerClassName="!shrink"
                 {...finalFieldProps}
-                options={field.options}
+                options={
+                  field.options as React.ComponentProps<
+                    typeof SelectWithSearch
+                  >['options']
+                }
                 allowCustomValue={field.allowCustomValue}
                 disabled={field.disabled}
               />
@@ -624,298 +636,290 @@ export const RenderField = ({
 
 // Dynamic form component
 const DynamicForm = {
-  Root: forwardRef(
-    <T extends FieldValues>(
-      {
-        fields: originFields,
-        onSubmit,
-        className = '',
-        children,
-        defaultValues: formDefaultValues = {} as DefaultValues<T>,
-        // onFieldUpdate,
-        labelClassName,
-      }: DynamicFormProps<T>,
-      ref: React.Ref<any>,
-    ) => {
-      // Generate validation schema and default values
-      const [fields, setFields] = useState(originFields);
-      useMemo(() => {
-        setFields(originFields);
-      }, [originFields]);
+  Root: forwardRef(function DynamicFormRoot<T extends FieldValues>(
+    {
+      fields: originFields,
+      onSubmit,
+      className = '',
+      children,
+      defaultValues: formDefaultValues = {} as DefaultValues<T>,
+      onFieldUpdate,
+      labelClassName,
+    }: DynamicFormProps<T>,
+    ref: React.Ref<any>,
+  ) {
+    // Generate validation schema and default values
+    const [fields, setFields] = useState(originFields);
+    useMemo(() => {
+      setFields(originFields);
+    }, [originFields]);
 
-      const defaultValues = useMemo(() => {
-        const value = {
-          ...generateDefaultValues(fields),
-          ...formDefaultValues,
-        };
-        return value;
-      }, [fields, formDefaultValues]);
+    const defaultValues = useMemo(() => {
+      const value = {
+        ...generateDefaultValues(fields),
+        ...formDefaultValues,
+      };
+      return value;
+    }, [fields, formDefaultValues]);
 
-      // Initialize form
-      const form = useForm<T>({
-        resolver: async (data, context, options) => {
-          // Filter out fields that should not render
-          const activeFields = fields.filter(
-            (field) => !field.shouldRender || field.shouldRender(data),
-          );
+    // Initialize form
+    const form = useForm<T>({
+      resolver: async (data, context, options) => {
+        // Filter out fields that should not render
+        const activeFields = fields.filter(
+          (field) => !field.shouldRender || field.shouldRender(data),
+        );
 
-          const activeSchema = generateSchema(activeFields);
-          const zodResult = await zodResolver(activeSchema)(
-            data,
-            context,
-            options,
-          );
+        const activeSchema = generateSchema(activeFields);
+        const zodResult = await zodResolver(activeSchema)(
+          data,
+          context,
+          options,
+        );
 
-          let combinedErrors = { ...zodResult.errors };
+        let combinedErrors: Record<string, any> = { ...zodResult.errors };
 
-          const fieldErrors: Record<string, { type: string; message: string }> =
-            {};
-          for (const field of fields) {
-            if (
-              field.customValidate &&
-              getNestedValue(data, field.name) !== undefined &&
-              (!field.shouldRender || field.shouldRender(data))
-            ) {
-              try {
-                const result = await field.customValidate(
-                  getNestedValue(data, field.name),
-                  data,
-                );
-                if (typeof result === 'string') {
-                  fieldErrors[field.name] = {
-                    type: 'custom',
-                    message: result,
-                  };
-                } else if (result === false) {
-                  fieldErrors[field.name] = {
-                    type: 'custom',
-                    message:
-                      field.validation?.message || `${field.label} is invalid`,
-                  };
-                }
-              } catch (error) {
+        const fieldErrors: Record<string, { type: string; message: string }> =
+          {};
+        for (const field of fields) {
+          if (
+            field.customValidate &&
+            getNestedValue(data, field.name) !== undefined &&
+            (!field.shouldRender || field.shouldRender(data))
+          ) {
+            try {
+              const result = await field.customValidate(
+                getNestedValue(data, field.name),
+                data,
+              );
+              if (typeof result === 'string') {
+                fieldErrors[field.name] = {
+                  type: 'custom',
+                  message: result,
+                };
+              } else if (result === false) {
                 fieldErrors[field.name] = {
                   type: 'custom',
                   message:
-                    error instanceof Error
-                      ? error.message
-                      : 'Validation failed',
+                    field.validation?.message || `${field.label} is invalid`,
                 };
               }
+            } catch (error) {
+              fieldErrors[field.name] = {
+                type: 'custom',
+                message:
+                  error instanceof Error ? error.message : 'Validation failed',
+              };
             }
           }
+        }
 
-          combinedErrors = {
-            ...combinedErrors,
-            ...fieldErrors,
-          } as any;
+        combinedErrors = {
+          ...combinedErrors,
+          ...fieldErrors,
+        } as any;
 
-          for (const key in combinedErrors) {
-            if (Array.isArray(combinedErrors[key])) {
-              combinedErrors[key] = combinedErrors[key][0];
-            }
+        for (const key in combinedErrors) {
+          if (Array.isArray(combinedErrors[key])) {
+            combinedErrors[key] = combinedErrors[key][0];
           }
-          console.log('combinedErrors', combinedErrors);
-          return {
-            values: Object.keys(combinedErrors).length ? {} : data,
-            errors: combinedErrors,
-          } as any;
-        },
-        defaultValues,
+        }
+        console.log('combinedErrors', combinedErrors);
+        return {
+          values: Object.keys(combinedErrors).length ? {} : data,
+          errors: combinedErrors,
+        } as any;
+      },
+      defaultValues,
+    });
+
+    useEffect(() => {
+      const dependencyMap: Record<string, string[]> = {};
+
+      fields.forEach((field) => {
+        if (field.dependencies && field.dependencies.length > 0) {
+          field.dependencies.forEach((dep) => {
+            if (!dependencyMap[dep]) {
+              dependencyMap[dep] = [];
+            }
+            dependencyMap[dep].push(field.name);
+          });
+        }
       });
 
-      useEffect(() => {
-        const dependencyMap: Record<string, string[]> = {};
-
-        fields.forEach((field) => {
-          if (field.dependencies && field.dependencies.length > 0) {
-            field.dependencies.forEach((dep) => {
-              if (!dependencyMap[dep]) {
-                dependencyMap[dep] = [];
-              }
-              dependencyMap[dep].push(field.name);
+      const subscriptions = Object.keys(dependencyMap).map((depField) => {
+        return form.watch((_values: any, { name }) => {
+          if (name === depField && dependencyMap[depField]) {
+            dependencyMap[depField].forEach((dependentField) => {
+              form.trigger(dependentField as any);
             });
           }
         });
+      });
 
-        const subscriptions = Object.keys(dependencyMap).map((depField) => {
-          return form.watch((values: any, { name }) => {
-            if (name === depField && dependencyMap[depField]) {
-              dependencyMap[depField].forEach((dependentField) => {
-                form.trigger(dependentField as any);
-              });
+      return () => {
+        subscriptions.forEach((sub) => {
+          if (sub.unsubscribe) {
+            sub.unsubscribe();
+          }
+        });
+      };
+    }, [fields, form]);
+
+    const filterActiveValues = useCallback(
+      (allValues: any) => {
+        const filteredValues: any = {};
+
+        fields.forEach((field) => {
+          if (
+            !field.shouldRender ||
+            (field.shouldRender(allValues) &&
+              field.name?.indexOf(FilterFormField) < 0)
+          ) {
+            const keys = field.name.split('.');
+            let current = allValues;
+            let exists = true;
+
+            for (const key of keys) {
+              if (current && current[key] !== undefined) {
+                current = current[key];
+              } else {
+                exists = false;
+                break;
+              }
             }
-          });
+
+            if (exists) {
+              let target = filteredValues;
+              for (let i = 0; i < keys.length - 1; i++) {
+                const key = keys[i];
+                if (!target[key]) {
+                  target[key] = {};
+                }
+                target = target[key];
+              }
+              target[keys[keys.length - 1]] = getNestedValue(
+                allValues,
+                field.name,
+              );
+            }
+          }
         });
 
-        return () => {
-          subscriptions.forEach((sub) => {
-            if (sub.unsubscribe) {
-              sub.unsubscribe();
-            }
-          });
-        };
-      }, [fields, form]);
+        return filteredValues;
+      },
+      [fields],
+    );
 
-      const filterActiveValues = useCallback(
-        (allValues: any) => {
-          const filteredValues: any = {};
-
-          fields.forEach((field) => {
-            if (
-              !field.shouldRender ||
-              (field.shouldRender(allValues) &&
-                field.name?.indexOf(FilterFormField) < 0)
-            ) {
-              const keys = field.name.split('.');
-              let current = allValues;
-              let exists = true;
-
-              for (const key of keys) {
-                if (current && current[key] !== undefined) {
-                  current = current[key];
-                } else {
-                  exists = false;
-                  break;
-                }
-              }
-
-              if (exists) {
-                let target = filteredValues;
-                for (let i = 0; i < keys.length - 1; i++) {
-                  const key = keys[i];
-                  if (!target[key]) {
-                    target[key] = {};
-                  }
-                  target = target[key];
-                }
-                target[keys[keys.length - 1]] = getNestedValue(
-                  allValues,
-                  field.name,
-                );
-              }
-            }
-          });
-
-          return filteredValues;
+    // Expose form methods via ref
+    useImperativeHandle(
+      ref,
+      () => ({
+        form: form,
+        submit: () => {
+          form.handleSubmit((values) => {
+            const filteredValues = filterActiveValues(values);
+            onSubmit(filteredValues);
+          })();
         },
-        [fields],
-      );
+        isDirty: () => form.formState.isDirty,
+        getValues: form.getValues,
+        reset: (values?: T) => {
+          if (values) {
+            form.reset(values);
+          } else {
+            form.reset();
+          }
+        },
+        setError: form.setError,
+        clearErrors: form.clearErrors,
+        trigger: form.trigger,
+        watch: (field: string, callback: (value: any) => void) => {
+          const { unsubscribe } = form.watch((values: any) => {
+            if (values && values[field] !== undefined) {
+              callback(values[field]);
+            }
+          });
+          return unsubscribe;
+        },
+        watchDirty: (callback: (isDirty: boolean, values: any) => void) => {
+          const { unsubscribe } = form.watch((values: any) => {
+            callback(form.formState.isDirty, values);
+          });
+          return unsubscribe;
+        },
 
-      // Expose form methods via ref
-      useImperativeHandle(
-        ref,
-        () => ({
-          form: form,
-          submit: () => {
+        onFieldUpdate: (
+          fieldName: string,
+          updatedField: Partial<FormFieldConfig>,
+        ) => {
+          setFields((prevFields: any) =>
+            prevFields.map((field: any) =>
+              field.name === fieldName ? { ...field, ...updatedField } : field,
+            ),
+          );
+          onFieldUpdate?.(fieldName, updatedField);
+          // setTimeout(() => {
+          //   if (onFieldUpdate) {
+          //     onFieldUpdate(fieldName, updatedField);
+          //   } else {
+          //     console.warn(
+          //       'onFieldUpdate prop is not provided. Cannot update field type.',
+          //     );
+          //   }
+          // }, 0);
+        },
+      }),
+      [form, onSubmit, filterActiveValues, onFieldUpdate],
+    );
+    (form as any).filterActiveValues = filterActiveValues;
+    useEffect(() => {
+      if (formDefaultValues && Object.keys(formDefaultValues).length > 0) {
+        form.reset({
+          ...generateDefaultValues(fields),
+          ...formDefaultValues,
+        });
+      }
+    }, [form, formDefaultValues, fields]);
+
+    // Submit handler
+    //   const handleSubmit = form.handleSubmit(onSubmit);
+
+    // Watch all form values to re-render when they change (for shouldRender checks)
+    const formValues = form.watch();
+
+    return (
+      <Form {...form}>
+        <form
+          className={`space-y-6 ${className}`}
+          onSubmit={(e) => {
+            e.preventDefault();
             form.handleSubmit((values) => {
               const filteredValues = filterActiveValues(values);
               onSubmit(filteredValues);
-            })();
-          },
-          isDirty: () => form.formState.isDirty,
-          getValues: form.getValues,
-          reset: (values?: T) => {
-            if (values) {
-              form.reset(values);
-            } else {
-              form.reset();
-            }
-          },
-          setError: form.setError,
-          clearErrors: form.clearErrors,
-          trigger: form.trigger,
-          watch: (field: string, callback: (value: any) => void) => {
-            const { unsubscribe } = form.watch((values: any) => {
-              if (values && values[field] !== undefined) {
-                callback(values[field]);
-              }
-            });
-            return unsubscribe;
-          },
-          watchDirty: (callback: (isDirty: boolean, values: any) => void) => {
-            const { unsubscribe } = form.watch((values: any) => {
-              callback(form.formState.isDirty, values);
-            });
-            return unsubscribe;
-          },
-
-          onFieldUpdate: (
-            fieldName: string,
-            updatedField: Partial<FormFieldConfig>,
-          ) => {
-            setFields((prevFields: any) =>
-              prevFields.map((field: any) =>
-                field.name === fieldName
-                  ? { ...field, ...updatedField }
-                  : field,
-              ),
-            );
-            // setTimeout(() => {
-            //   if (onFieldUpdate) {
-            //     onFieldUpdate(fieldName, updatedField);
-            //   } else {
-            //     console.warn(
-            //       'onFieldUpdate prop is not provided. Cannot update field type.',
-            //     );
-            //   }
-            // }, 0);
-          },
-        }),
-        [form, onSubmit, filterActiveValues],
-      );
-      (form as any).filterActiveValues = filterActiveValues;
-      useEffect(() => {
-        if (formDefaultValues && Object.keys(formDefaultValues).length > 0) {
-          form.reset({
-            ...generateDefaultValues(fields),
-            ...formDefaultValues,
-          });
-        }
-      }, [form, formDefaultValues, fields]);
-
-      // Submit handler
-      //   const handleSubmit = form.handleSubmit(onSubmit);
-
-      // Watch all form values to re-render when they change (for shouldRender checks)
-      const formValues = form.watch();
-
-      return (
-        <Form {...form}>
-          <form
-            className={`space-y-6 ${className}`}
-            onSubmit={(e) => {
-              e.preventDefault();
-              form.handleSubmit((values) => {
-                const filteredValues = filterActiveValues(values);
-                onSubmit(filteredValues);
-              })(e);
-            }}
-          >
-            <>
-              {fields.map((field) => {
-                const shouldShow = field.shouldRender
-                  ? field.shouldRender(formValues)
-                  : true;
-                return (
-                  <div
-                    key={field.name}
-                    className={cn({ hidden: field.hidden || !shouldShow })}
-                  >
-                    <RenderField
-                      field={field}
-                      labelClassName={labelClassName}
-                    />
-                  </div>
-                );
-              })}
-              {children}
-            </>
-          </form>
-        </Form>
-      );
-    },
-  ) as <T extends FieldValues>(
+            })(e);
+          }}
+        >
+          <>
+            {fields.map((field) => {
+              const shouldShow = field.shouldRender
+                ? field.shouldRender(formValues)
+                : true;
+              return (
+                <div
+                  key={field.name}
+                  className={cn({ hidden: field.hidden || !shouldShow })}
+                >
+                  <RenderField field={field} labelClassName={labelClassName} />
+                </div>
+              );
+            })}
+            {children}
+          </>
+        </form>
+      </Form>
+    );
+  }) as <T extends FieldValues>(
     props: DynamicFormProps<T> & { ref?: React.Ref<DynamicFormRef> },
   ) => React.ReactElement,
   SavingButton: ({
@@ -993,7 +997,5 @@ const DynamicForm = {
     );
   },
 };
-
-DynamicForm.Root.displayName = 'DynamicFormRoot';
 
 export { DynamicForm };

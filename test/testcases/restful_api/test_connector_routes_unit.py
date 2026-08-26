@@ -67,6 +67,8 @@ class _FakeResponse:
 class _FakeConnectorRecord:
     def __init__(self, payload):
         self._payload = payload
+        for key, value in payload.items():
+            setattr(self, key, value)
 
     def to_dict(self):
         return dict(self._payload)
@@ -247,6 +249,7 @@ def _load_connector_app(monkeypatch):
     constants_mod = ModuleType("common.constants")
     constants_mod.RetCode = SimpleNamespace(
         ARGUMENT_ERROR=101,
+        DATA_ERROR=102,
         SERVER_ERROR=500,
         RUNNING=102,
         PERMISSION_ERROR=403,
@@ -263,8 +266,26 @@ def _load_connector_app(monkeypatch):
     config_mod.GOOGLE_DRIVE_WEB_OAUTH_REDIRECT_URI = "https://example.com/drive"
     config_mod.GMAIL_WEB_OAUTH_REDIRECT_URI = "https://example.com/gmail"
     config_mod.BOX_WEB_OAUTH_REDIRECT_URI = "https://example.com/box"
-    config_mod.DocumentSource = SimpleNamespace(GMAIL="gmail", GOOGLE_DRIVE="google-drive")
+    config_mod.INDEX_BATCH_SIZE = 1000
+    config_mod.DocumentSource = SimpleNamespace(
+        BIGQUERY="bigquery",
+        EVA_WIKI="eva_wiki",
+        OPENMETADATA="openmetadata",
+        GMAIL="gmail",
+        GOOGLE_DRIVE="google-drive",
+        REST_API="rest_api",
+    )
     monkeypatch.setitem(sys.modules, "common.data_source.config", config_mod)
+
+    exceptions_mod = ModuleType("common.data_source.exceptions")
+
+    class _ConnectorError(Exception):
+        pass
+
+    exceptions_mod.ConnectorMissingCredentialError = _ConnectorError
+    exceptions_mod.ConnectorValidationError = _ConnectorError
+    exceptions_mod.InsufficientPermissionsError = _ConnectorError
+    monkeypatch.setitem(sys.modules, "common.data_source.exceptions", exceptions_mod)
 
     google_constants_mod = ModuleType("common.data_source.google_util.constant")
     google_constants_mod.WEB_OAUTH_POPUP_TEMPLATE = (
@@ -419,6 +440,240 @@ def test_connector_basic_routes_and_task_controls(monkeypatch):
     assert rm_res["data"] is True
     assert cancel_calls == ["conn-rm"]
     assert delete_calls == ["conn-rm"]
+
+
+@pytest.mark.p2
+def test_eva_wiki_create_update_and_test_validate_before_persisting(monkeypatch):
+    module = _load_connector_app(monkeypatch)
+
+    async def _no_sleep(_secs):
+        return None
+
+    monkeypatch.setattr(module.asyncio, "sleep", _no_sleep)
+    config = {
+        "api_base_url": "https://eva.example.com",
+        "project_id": "CmfProject:project-1",
+        "credentials": {"eva_api_token": "secret"},
+    }
+    records = {"conn-eva": _FakeConnectorRecord({"id": "conn-eva", "source": module.DocumentSource.EVA_WIKI, "config": config})}
+    validated = []
+    saved = []
+    updated = []
+
+    monkeypatch.setattr(module, "_validate_eva_wiki_config", lambda value: validated.append(value))
+    monkeypatch.setattr(module, "get_uuid", lambda: "conn-eva-created")
+    monkeypatch.setattr(module.ConnectorService, "get_by_id", lambda connector_id: (True, records[connector_id]))
+
+    def _save(**payload):
+        saved.append(payload)
+        records[payload["id"]] = _FakeConnectorRecord(payload)
+
+    monkeypatch.setattr(module.ConnectorService, "save", _save)
+    monkeypatch.setattr(module.ConnectorService, "update_by_id", lambda connector_id, payload: updated.append((connector_id, payload)))
+
+    monkeypatch.setattr(
+        module,
+        "get_request_json",
+        lambda: _AwaitableValue(
+            {
+                "name": "EVA Wiki",
+                "source": module.DocumentSource.EVA_WIKI,
+                "config": config,
+            }
+        ),
+    )
+    created = _run(module.create_connector())
+    assert created["data"]["id"] == "conn-eva-created"
+    assert created["data"]["config"]["credentials"] == {}
+    assert saved[0]["config"] == config
+    assert validated == [config]
+
+    update_config = {
+        **config,
+        "credentials": {"eva_api_token": ""},
+    }
+    monkeypatch.setattr(module, "get_request_json", lambda: _AwaitableValue({"config": update_config}))
+    updated_response = _run(module.update_connector("conn-eva"))
+    assert updated_response["data"]["id"] == "conn-eva"
+    assert updated == [("conn-eva", {"id": "conn-eva", "config": config})]
+    assert updated_response["data"]["config"]["credentials"] == {}
+    assert validated == [config, config]
+
+    changed_project_config = {
+        **update_config,
+        "project_id": "CmfProject:project-2",
+    }
+    monkeypatch.setattr(module, "get_request_json", lambda: _AwaitableValue({"config": changed_project_config}))
+    rejected = _run(module.update_connector("conn-eva"))
+    assert rejected["code"] == module.RetCode.DATA_ERROR
+    assert "cannot be changed" in rejected["message"]
+    assert len(updated) == 1
+    assert validated == [config, config]
+
+    detail = module.get_connector("conn-eva")
+    assert detail["data"]["config"]["credentials"] == {}
+
+    tested = _run(module.test_connector("conn-eva"))
+    assert tested["data"] is True
+    assert validated == [config, config, config]
+
+
+@pytest.mark.p2
+def test_openmetadata_create_update_and_test_redacts_secrets(monkeypatch):
+    module = _load_connector_app(monkeypatch)
+
+    async def _no_sleep(_secs):
+        return None
+
+    monkeypatch.setattr(module.asyncio, "sleep", _no_sleep)
+    config = {
+        "base_url": "http://openmetadata:8585",
+        "public_url": "https://catalog.example.test",
+        "credentials": {
+            "openmetadata_username": "reader@example.test",
+            "openmetadata_password": "secret",
+            "openmetadata_jwt_token": "jwt-secret",
+        },
+    }
+    records = {}
+    validated = []
+    updated = []
+    monkeypatch.setattr(module, "_validate_openmetadata_config", lambda value: validated.append(value))
+    monkeypatch.setattr(module, "get_uuid", lambda: "conn-omd")
+
+    def _save(**payload):
+        records[payload["id"]] = _FakeConnectorRecord(payload)
+
+    monkeypatch.setattr(module.ConnectorService, "save", _save)
+    monkeypatch.setattr(module.ConnectorService, "get_by_id", lambda connector_id: (True, records[connector_id]))
+
+    def _update(connector_id, payload):
+        updated.append((connector_id, payload))
+        stored = records[connector_id].to_dict()
+        stored.update(payload)
+        records[connector_id] = _FakeConnectorRecord(stored)
+
+    monkeypatch.setattr(module.ConnectorService, "update_by_id", _update)
+    monkeypatch.setattr(
+        module,
+        "get_request_json",
+        lambda: _AwaitableValue(
+            {
+                "name": "OpenMetadata",
+                "source": module.DocumentSource.OPENMETADATA,
+                "config": config,
+            }
+        ),
+    )
+
+    created = _run(module.create_connector())
+
+    assert created["data"]["config"]["credentials"] == {"openmetadata_username": "reader@example.test"}
+    assert validated == [config]
+
+    monkeypatch.setattr(
+        module,
+        "get_request_json",
+        lambda: _AwaitableValue(
+            {
+                "config": {
+                    "base_url": "http://openmetadata:8585",
+                    "credentials": {
+                        "openmetadata_username": "reader@example.test",
+                        "openmetadata_password": "",
+                        "openmetadata_jwt_token": "",
+                    },
+                }
+            }
+        ),
+    )
+    changed = _run(module.update_connector("conn-omd"))
+
+    persisted_credentials = updated[-1][1]["config"]["credentials"]
+    assert persisted_credentials["openmetadata_password"] == "secret"
+    assert persisted_credentials["openmetadata_jwt_token"] == "jwt-secret"
+    assert changed["data"]["config"]["credentials"] == {"openmetadata_username": "reader@example.test"}
+
+    tested = _run(module.test_connector("conn-omd"))
+    assert tested["data"] is True
+    assert len(validated) == 3
+
+
+@pytest.mark.p2
+def test_eva_wiki_project_discovery_supports_draft_and_saved_credentials(monkeypatch):
+    module = _load_connector_app(monkeypatch)
+
+    discovered_configs = []
+
+    def _discover(config):
+        discovered_configs.append(config)
+        return [
+            {
+                "id": "CmfProject:portal",
+                "name": "Portal",
+                "code": "portal",
+            }
+        ]
+
+    monkeypatch.setattr(module, "_list_eva_wiki_projects", _discover)
+    monkeypatch.setattr(
+        module,
+        "get_request_json",
+        lambda: _AwaitableValue(
+            {
+                "config": {
+                    "api_base_url": "https://eva.example.com",
+                    "credentials": {"eva_api_token": "draft-token"},
+                }
+            }
+        ),
+    )
+
+    draft = _run(module.list_eva_wiki_projects())
+
+    assert draft["code"] == 0
+    assert draft["data"][0]["id"] == "CmfProject:portal"
+    assert discovered_configs[-1]["credentials"]["eva_api_token"] == "draft-token"
+
+    stored_config = {
+        "api_base_url": "https://stored-eva.example.com",
+        "verify_ssl": True,
+        "credentials": {"eva_api_token": "stored-token"},
+    }
+    record = _FakeConnectorRecord(
+        {
+            "id": "conn-eva",
+            "source": module.DocumentSource.EVA_WIKI,
+            "config": stored_config,
+        }
+    )
+    monkeypatch.setattr(module.ConnectorService, "get_by_id", lambda _connector_id: (True, record))
+    monkeypatch.setattr(
+        module,
+        "get_request_json",
+        lambda: _AwaitableValue(
+            {
+                "connector_id": "conn-eva",
+                "config": {
+                    "api_base_url": "",
+                    "verify_ssl": False,
+                    "credentials": {"eva_api_token": ""},
+                },
+            }
+        ),
+    )
+
+    saved = _run(module.list_eva_wiki_projects())
+
+    assert saved["code"] == 0
+    assert discovered_configs[-1]["api_base_url"] == "https://stored-eva.example.com"
+    assert discovered_configs[-1]["verify_ssl"] is False
+    assert discovered_configs[-1]["credentials"]["eva_api_token"] == "stored-token"
+
+    monkeypatch.setattr(module.ConnectorService, "accessible", lambda *_args: False)
+    denied = _run(module.list_eva_wiki_projects())
+    assert denied["code"] == module.RetCode.AUTHENTICATION_ERROR
+    assert len(discovered_configs) == 2
 
 
 @pytest.mark.p2

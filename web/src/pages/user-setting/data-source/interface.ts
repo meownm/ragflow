@@ -1,4 +1,4 @@
-import { RunningStatus } from '@/constants/knowledge';
+import { RunningStatus, RunningStatusOld } from '@/constants/knowledge';
 import { DataSourceKey } from './constant';
 
 export interface IDataSorceInfo {
@@ -37,7 +37,7 @@ export interface IDataSourceLog {
   new_docs_indexed: number;
   prune_freq?: number;
   refresh_freq?: number;
-  status: RunningStatus;
+  status: RunningStatus | RunningStatusOld;
   task_type?: string;
   time_started?: string | null;
   total_docs_indexed?: number;

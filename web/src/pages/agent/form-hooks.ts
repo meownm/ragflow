@@ -20,7 +20,7 @@ export const useBuildFormSelectOptions = (
           (x) =>
             excludedNodes.every((y) => y !== x.data.label) &&
             x.id !== selfId &&
-            !toList.some((y) => y === x.id), // filter out selected values ​​in other to fields from the current drop-down box options
+            !toList.some((y) => y === x.id), // filter out values selected in other fields
         )
         .map((x) => ({ label: x.data.name, value: x.id }));
     },

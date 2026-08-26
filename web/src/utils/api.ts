@@ -89,6 +89,7 @@ export default {
   dataSourceLogs: (id: string) => `${restAPIv1}/connectors/${id}/logs`,
   dataSourceDetail: (id: string) => `${restAPIv1}/connectors/${id}`,
   dataSourceTest: (id: string) => `${restAPIv1}/connectors/${id}/test`,
+  evaWikiProjects: `${restAPIv1}/connectors/eva-wiki/projects`,
   googleWebAuthStart: (type: 'google-drive' | 'gmail') =>
     `${restAPIv1}/connectors/google/oauth/web/start?type=${type}`,
   googleWebAuthResult: (type: 'google-drive' | 'gmail') =>
@@ -240,6 +241,15 @@ export default {
   getSystemConfig: `${restAPIv1}/system/config`,
   setLangfuseConfig: `${restAPIv1}/langfuse/api-key`,
 
+  // OpenMetadata Copilot
+  openMetadataStatus: `${restAPIv1}/openmetadata/status`,
+  openMetadataStarterQuestions: `${restAPIv1}/openmetadata/starter-questions`,
+  openMetadataProvisionAgents: `${restAPIv1}/openmetadata/agents/provision`,
+  openMetadataQuery: `${restAPIv1}/openmetadata/query`,
+  openMetadataEntities: `${restAPIv1}/openmetadata/entities`,
+  openMetadataGovernancePreview: `${restAPIv1}/openmetadata/governance/preview`,
+  openMetadataGovernanceConfirm: `${restAPIv1}/openmetadata/governance/confirm`,
+
   // flow
   listAgentTemplate: `${restAPIv1}/agents/templates`,
   listAgents: `${restAPIv1}/agents`,
@@ -267,6 +277,8 @@ export default {
     `${restAPIv1}/agents/${agentId}/versions/${versionId}`,
   getAgent: (id: string) => `${restAPIv1}/agents/${id}`,
   uploadAgentFile: (id?: string) => `${restAPIv1}/agents/${id}/upload`,
+  uploadExternalAgentFile: (id: string) =>
+    `${restAPIv1}/agentbots/${id}/upload`,
   createAgentSession: (agentId: string) =>
     `${restAPIv1}/agents/${agentId}/sessions`,
   fetchAgentLogs: (canvasId: string) => `${webAPI}/canvas/${canvasId}/sessions`,

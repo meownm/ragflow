@@ -12,7 +12,11 @@ import {
 import Divider from '@/components/ui/divider';
 import { Form } from '@/components/ui/form';
 import { FormLayout } from '@/constants/form';
-import { DocumentParserType, ParseType } from '@/constants/knowledge';
+import {
+  DocumentParserType,
+  ParseType,
+  RunningStatus,
+} from '@/constants/knowledge';
 import { PermissionRole } from '@/constants/permission';
 import { IConnector, IDataset } from '@/interfaces/database/dataset';
 import { useDataSourceInfo } from '@/pages/user-setting/data-source/constant';
@@ -188,12 +192,14 @@ export default function DatasetSettings() {
   //   }
   // };
 
-  const handleLinkOrEditSubmit = (data: IConnector[] | undefined) => {
+  const handleLinkOrEditSubmit = (data: IDataSourceBase[] | undefined) => {
     if (data) {
       const connectors = data.map((connector) => {
+        const existing = sourceData?.find((item) => item.id === connector.id);
         return {
           ...connector,
-          auto_parse: connector.auto_parse === '0' ? '0' : '1',
+          status: existing?.status ?? RunningStatus.UNSTART,
+          auto_parse: existing?.auto_parse === '0' ? '0' : '1',
           icon:
             dataSourceInfo[connector.source as keyof typeof dataSourceInfo]
               ?.icon || '',

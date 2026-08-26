@@ -29,7 +29,8 @@ from api.db.services.connector_service import ConnectorService, SyncLogsService
 from api.utils.api_utils import get_data_error_result, get_json_result, get_request_json, validate_request
 from api.utils.pagination_utils import validate_rest_api_page_size
 from common.constants import RetCode, TaskStatus
-from common.data_source.config import GOOGLE_DRIVE_WEB_OAUTH_REDIRECT_URI, GMAIL_WEB_OAUTH_REDIRECT_URI, BOX_WEB_OAUTH_REDIRECT_URI, DocumentSource
+from common.data_source.config import BOX_WEB_OAUTH_REDIRECT_URI, GMAIL_WEB_OAUTH_REDIRECT_URI, GOOGLE_DRIVE_WEB_OAUTH_REDIRECT_URI, INDEX_BATCH_SIZE, DocumentSource
+from common.data_source.exceptions import ConnectorMissingCredentialError, ConnectorValidationError, InsufficientPermissionsError
 from common.data_source.google_util.constant import WEB_OAUTH_POPUP_TEMPLATE, GOOGLE_SCOPES
 from common.misc_utils import get_uuid
 from rag.utils.redis_conn import REDIS_CONN
@@ -44,6 +45,181 @@ def _connector_auth_error(connector_id: str, user_id: str):
     """Return the connector authorization failure response and log the denial."""
     LOGGER.warning("connector access denied: connector_id=%s user_id=%s", connector_id, user_id)
     return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)
+
+
+def _build_eva_wiki_connector(config: dict[str, Any]):
+    from common.data_source.eva_wiki_connector import EvaWikiConnector
+
+    return EvaWikiConnector(
+        api_base_url=config.get("api_base_url", ""),
+        web_base_url=config.get("web_base_url") or None,
+        project_id=config.get("project_id") or None,
+        include_attachments=config.get("include_attachments", True),
+        include_archived=config.get("include_archived", False),
+        verify_ssl=config.get("verify_ssl", True),
+        batch_size=config.get("batch_size") or INDEX_BATCH_SIZE,
+        attachment_size_limit=config.get("attachment_size_limit") or EvaWikiConnector.DEFAULT_ATTACHMENT_SIZE_LIMIT,
+        page_size_limit=config.get("page_size_limit") or EvaWikiConnector.DEFAULT_PAGE_SIZE_LIMIT,
+        retry_count=config.get("retry_count", EvaWikiConnector.DEFAULT_RETRY_COUNT),
+    )
+
+
+def _validate_eva_wiki_config(config: dict[str, Any]) -> None:
+    connector = _build_eva_wiki_connector(config)
+    connector.load_credentials(config.get("credentials") or {})
+    connector.validate_connector_settings()
+
+
+def _build_openmetadata_connector(config: dict[str, Any]):
+    from common.data_source.openmetadata_connector import OpenMetadataConnector
+
+    return OpenMetadataConnector(
+        base_url=config.get("base_url", ""),
+        public_url=config.get("public_url") or None,
+        include_columns=config.get("include_columns", True),
+        services=config.get("services"),
+        domains=config.get("domains"),
+        tags=config.get("tags"),
+        batch_size=config.get("batch_size", INDEX_BATCH_SIZE),
+        max_entities=config.get("max_entities", OpenMetadataConnector.DEFAULT_MAX_ENTITIES),
+        timeout_seconds=config.get("timeout_seconds", OpenMetadataConnector.DEFAULT_TIMEOUT_SECONDS),
+        retry_count=config.get("retry_count", OpenMetadataConnector.DEFAULT_RETRY_COUNT),
+    )
+
+
+def _validate_openmetadata_config(config: dict[str, Any]) -> None:
+    connector = _build_openmetadata_connector(config)
+    connector.load_credentials(config.get("credentials") or {})
+    connector.validate_connector_settings()
+
+
+def _list_eva_wiki_projects(config: dict[str, Any]) -> list[dict[str, str]]:
+    connector = _build_eva_wiki_connector(config)
+    connector.load_credentials(config.get("credentials") or {})
+    return connector.list_projects()
+
+
+def _serialize_connector(connector) -> dict[str, Any]:
+    data = dict(connector.to_dict())
+    if data.get("source") not in {DocumentSource.EVA_WIKI, DocumentSource.OPENMETADATA}:
+        return data
+
+    config = dict(data.get("config") or {})
+    credentials = dict(config.get("credentials") or {})
+    if data.get("source") == DocumentSource.EVA_WIKI:
+        credentials.pop("eva_api_token", None)
+    else:
+        credentials.pop("openmetadata_password", None)
+        credentials.pop("openmetadata_jwt_token", None)
+    config["credentials"] = credentials
+    data["config"] = config
+    return data
+
+
+def _merge_openmetadata_update_config(stored: dict[str, Any], submitted: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(submitted, dict):
+        raise ConnectorValidationError("config must be an object")
+    config = dict(stored)
+    for key, value in submitted.items():
+        if key != "credentials":
+            config[key] = value
+    submitted_credentials = submitted.get("credentials") or {}
+    if not isinstance(submitted_credentials, dict):
+        raise ConnectorValidationError("config.credentials must be an object")
+    credentials = dict(stored.get("credentials") or {})
+    for key, value in submitted_credentials.items():
+        if key in {"openmetadata_password", "openmetadata_jwt_token"} and not str(value or "").strip():
+            continue
+        credentials[key] = value
+    config["credentials"] = credentials
+    return config
+
+
+def _merge_eva_wiki_update_config(stored: dict[str, Any], submitted: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(submitted, dict):
+        raise ConnectorValidationError("config must be an object")
+
+    stored_project_id = str(stored.get("project_id") or "").strip()
+    submitted_project_id = str(submitted.get("project_id") or stored_project_id).strip()
+    if submitted_project_id != stored_project_id:
+        raise ConnectorValidationError("EVA Wiki project cannot be changed after connector creation; create a separate connector for another project")
+
+    config = dict(stored)
+    for key, value in submitted.items():
+        if key != "credentials":
+            config[key] = value
+    config["project_id"] = stored_project_id
+
+    submitted_credentials = submitted.get("credentials") or {}
+    if not isinstance(submitted_credentials, dict):
+        raise ConnectorValidationError("config.credentials must be an object")
+    credentials = dict(stored.get("credentials") or {})
+    for key, value in submitted_credentials.items():
+        if key == "eva_api_token" and not str(value or "").strip():
+            continue
+        credentials[key] = value
+    config["credentials"] = credentials
+    return config
+
+
+def _merge_eva_wiki_discovery_config(stored: dict[str, Any], submitted: dict[str, Any]) -> dict[str, Any]:
+    config = dict(stored)
+    for key, value in submitted.items():
+        if key == "credentials":
+            continue
+        if not isinstance(value, str) or value.strip():
+            config[key] = value
+
+    credentials = dict(stored.get("credentials") or {})
+    submitted_credentials = submitted.get("credentials") or {}
+    for key, value in submitted_credentials.items():
+        if not isinstance(value, str) or value.strip():
+            credentials[key] = value
+    config["credentials"] = credentials
+    return config
+
+
+@manager.route("/connectors/eva-wiki/projects", methods=["POST"])  # noqa: F821
+@login_required
+async def list_eva_wiki_projects():
+    """List the EVA projects accessible with draft or saved connector credentials."""
+    req = await get_request_json()
+    if isinstance(req, dict) and isinstance(req.get("data"), dict):
+        req = req["data"]
+    if not isinstance(req, dict):
+        return get_json_result(code=RetCode.ARGUMENT_ERROR, message="Request body must be an object", data=False)
+
+    connector_id = str(req.get("connector_id") or "").strip()
+    stored_config: dict[str, Any] = {}
+    if connector_id:
+        if not ConnectorService.accessible(connector_id, current_user.id):
+            return _connector_auth_error(connector_id, current_user.id)
+        found, connector = ConnectorService.get_by_id(connector_id)
+        if not found:
+            return get_data_error_result(message="Can't find this Connector!")
+        if connector.source != DocumentSource.EVA_WIKI:
+            return get_json_result(code=RetCode.ARGUMENT_ERROR, message="Connector is not an EVA Wiki connector", data=False)
+        stored_config = connector.config or {}
+
+    submitted_config = req.get("config") or {}
+    if not isinstance(submitted_config, dict):
+        return get_json_result(code=RetCode.ARGUMENT_ERROR, message="config must be an object", data=False)
+    if not isinstance(submitted_config.get("credentials") or {}, dict):
+        return get_json_result(code=RetCode.ARGUMENT_ERROR, message="config.credentials must be an object", data=False)
+    config = _merge_eva_wiki_discovery_config(stored_config, submitted_config)
+
+    try:
+        projects = await asyncio.to_thread(_list_eva_wiki_projects, config)
+    except (ConnectorValidationError, ConnectorMissingCredentialError, InsufficientPermissionsError) as exc:
+        return get_json_result(code=RetCode.DATA_ERROR, message=str(exc), data=False)
+    except Exception as exc:
+        logging.exception("EVA Wiki project discovery failed: %s", exc)
+        return get_json_result(
+            code=RetCode.SERVER_ERROR,
+            message="EVA Wiki project discovery failed, please check logs.",
+            data=False,
+        )
+    return get_json_result(data=projects)
 
 
 @manager.route("/connectors/<connector_id>", methods=["PATCH"])  # noqa: F821
@@ -64,6 +240,18 @@ async def update_connector(connector_id):
     should_sleep = False
     if req:
         update_fields = {fld: req[fld] for fld in ["prune_freq", "refresh_freq", "config", "timeout_secs"] if fld in req}
+        if conn.source == DocumentSource.EVA_WIKI and "config" in update_fields:
+            try:
+                update_fields["config"] = _merge_eva_wiki_update_config(conn.config or {}, update_fields["config"])
+                await asyncio.to_thread(_validate_eva_wiki_config, update_fields["config"])
+            except (ConnectorValidationError, ConnectorMissingCredentialError, InsufficientPermissionsError) as exc:
+                return get_json_result(code=RetCode.DATA_ERROR, message=str(exc), data=False)
+        if conn.source == DocumentSource.OPENMETADATA and "config" in update_fields:
+            try:
+                update_fields["config"] = _merge_openmetadata_update_config(conn.config or {}, update_fields["config"])
+                await asyncio.to_thread(_validate_openmetadata_config, update_fields["config"])
+            except (ConnectorValidationError, ConnectorMissingCredentialError, InsufficientPermissionsError) as exc:
+                return get_json_result(code=RetCode.DATA_ERROR, message=str(exc), data=False)
         if update_fields:
             update_fields["id"] = connector_id
             ConnectorService.update_by_id(connector_id, update_fields)
@@ -83,7 +271,7 @@ async def update_connector(connector_id):
     if not e:
         return get_data_error_result(message="Can't find this Connector!")
 
-    return get_json_result(data=conn.to_dict())
+    return get_json_result(data=_serialize_connector(conn))
 
 
 @manager.route("/connectors", methods=["POST"])  # noqa: F821
@@ -92,6 +280,16 @@ async def create_connector():
     """Create a connector owned by the current tenant."""
     req = await get_request_json()
     if req:
+        if req.get("source") == DocumentSource.EVA_WIKI:
+            try:
+                await asyncio.to_thread(_validate_eva_wiki_config, req.get("config") or {})
+            except (ConnectorValidationError, ConnectorMissingCredentialError, InsufficientPermissionsError) as exc:
+                return get_json_result(code=RetCode.DATA_ERROR, message=str(exc), data=False)
+        if req.get("source") == DocumentSource.OPENMETADATA:
+            try:
+                await asyncio.to_thread(_validate_openmetadata_config, req.get("config") or {})
+            except (ConnectorValidationError, ConnectorMissingCredentialError, InsufficientPermissionsError) as exc:
+                return get_json_result(code=RetCode.DATA_ERROR, message=str(exc), data=False)
         req["id"] = get_uuid()
         conn = {
             "id": req["id"],
@@ -110,7 +308,7 @@ async def create_connector():
     await asyncio.sleep(1)
     e, conn = ConnectorService.get_by_id(req["id"])
 
-    return get_json_result(data=conn.to_dict())
+    return get_json_result(data=_serialize_connector(conn))
 
 
 @manager.route("/connectors", methods=["GET"])  # noqa: F821
@@ -130,7 +328,7 @@ def get_connector(connector_id):
     e, conn = ConnectorService.get_by_id(connector_id)
     if not e:
         return get_data_error_result(message="Can't find this Connector!")
-    return get_json_result(data=conn.to_dict())
+    return get_json_result(data=_serialize_connector(conn))
 
 
 @manager.route("/connectors/<connector_id>/logs", methods=["GET"])  # noqa: F821
@@ -192,8 +390,6 @@ async def test_connector(connector_id):
     if not ConnectorService.accessible(connector_id, current_user.id):
         return _connector_auth_error(connector_id, current_user.id)
 
-    from common.data_source.exceptions import ConnectorMissingCredentialError, ConnectorValidationError
-
     ok, conn = ConnectorService.get_by_id(connector_id)
     if not ok:
         return get_data_error_result(message="Can't find this Connector!")
@@ -221,6 +417,44 @@ async def test_connector(connector_id):
             return get_json_result(
                 code=RetCode.SERVER_ERROR,
                 message="REST API connector validation failed, please check logs.",
+                data=False,
+            )
+
+        return get_json_result(data=True)
+
+    if conn.source == DocumentSource.EVA_WIKI:
+        try:
+            await asyncio.to_thread(_validate_eva_wiki_config, config)
+        except (ConnectorValidationError, ConnectorMissingCredentialError, InsufficientPermissionsError) as exc:
+            return get_json_result(
+                code=RetCode.DATA_ERROR,
+                message=str(exc),
+                data=False,
+            )
+        except Exception as exc:
+            logging.exception("EVA Wiki connector validation failed: %s", exc)
+            return get_json_result(
+                code=RetCode.SERVER_ERROR,
+                message="EVA Wiki connector validation failed, please check logs.",
+                data=False,
+            )
+
+        return get_json_result(data=True)
+
+    if conn.source == DocumentSource.OPENMETADATA:
+        try:
+            await asyncio.to_thread(_validate_openmetadata_config, config)
+        except (ConnectorValidationError, ConnectorMissingCredentialError, InsufficientPermissionsError) as exc:
+            return get_json_result(
+                code=RetCode.DATA_ERROR,
+                message=str(exc),
+                data=False,
+            )
+        except Exception as exc:
+            logging.exception("OpenMetadata connector validation failed: %s", exc)
+            return get_json_result(
+                code=RetCode.SERVER_ERROR,
+                message="OpenMetadata connector validation failed, please check logs.",
                 data=False,
             )
 
@@ -273,7 +507,7 @@ async def test_connector(connector_id):
 
     return get_json_result(
         code=RetCode.ARGUMENT_ERROR,
-        message="Test endpoint currently supports only REST API and BigQuery connectors.",
+        message="Test endpoint currently supports only REST API, EVA Wiki, OpenMetadata, and BigQuery connectors.",
         data=False,
     )
 

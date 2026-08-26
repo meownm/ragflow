@@ -37,6 +37,17 @@ export const featchDataSourceDetail = (id: string) =>
 export const testDataSource = (id: string) =>
   request.post(api.dataSourceTest(id));
 
+export type EvaWikiProject = {
+  id: string;
+  name: string;
+  code: string;
+};
+
+export const discoverEvaWikiProjects = (data: {
+  connector_id?: string;
+  config: Record<string, any>;
+}) => request.post(api.evaWikiProjects, { data });
+
 export const startGoogleDriveWebAuth = (payload: {
   credentials: string;
   redirect_uri?: string;

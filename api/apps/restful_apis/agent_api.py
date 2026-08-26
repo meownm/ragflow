@@ -36,6 +36,7 @@ import jwt
 from quart import Response, jsonify, request, make_response
 
 from api.apps import current_user, login_required
+from api.apps.services.agent_file_service import upload_agent_files
 from api.apps.services.canvas_replica_service import CanvasReplicaService
 from api.db import CanvasCategory
 from api.db.db_models import Task
@@ -858,11 +859,8 @@ async def upload_agent_file(agent_id, tenant_id):
         len(file_objs),
     )
     try:
-        if len(file_objs) == 1:
-            uploaded = await thread_pool_exec(FileService.upload_info, tenant_id, file_objs[0], request.args.get("url"))
-            return get_json_result(data=uploaded)
-        results = await asyncio.gather(*(thread_pool_exec(FileService.upload_info, tenant_id, file_obj) for file_obj in file_objs))
-        return get_json_result(data=results)
+        uploaded = await upload_agent_files(tenant_id, file_objs, request.args.get("url"))
+        return get_json_result(data=uploaded)
     except Exception as exc:
         logging.exception(
             "Agent file upload failed: tenant_id=%s agent_id=%s",

@@ -26,7 +26,7 @@ from api.db.services.document_service import DocumentService, queue_raptor_o_gra
 from api.db.services.file2document_service import File2DocumentService
 from api.db.services.file_service import FileService
 from api.db.services.knowledgebase_service import KnowledgebaseService
-from api.db.services.connector_service import Connector2KbService
+from api.db.services.connector_service import Connector2KbService, ConnectorService
 from api.db.services.task_service import GRAPH_RAPTOR_FAKE_DOC_ID, TaskService
 from api.db.services.user_service import TenantService, UserService, UserTenantService
 from common.constants import FileSource, StatusEnum
@@ -287,9 +287,19 @@ async def update_dataset(tenant_id: str, dataset_id: str, req: dict):
 
     # Extract connectors from request
     connectors = []
-    if "connectors" in req:
+    connectors_were_supplied = "connectors" in req
+    if connectors_were_supplied:
         connectors = req["connectors"]
         del req["connectors"]
+
+    target_permission = req.get("permission", kb.permission)
+    selected_connectors = connectors if connectors_were_supplied else list(Connector2KbService.list_connectors(kb.id))
+    if target_permission == "team":
+        for connector_ref in selected_connectors:
+            found, connector = ConnectorService.get_by_id(connector_ref["id"])
+            if found and connector.source in {FileSource.EVA_WIKI, FileSource.OPENMETADATA}:
+                source_label = "EVA Wiki" if connector.source == FileSource.EVA_WIKI else "OpenMetadata"
+                return False, f"{source_label} connectors require a private knowledge base because entity ACLs cannot be enforced by RAGFlow"
 
     if req.get("parser_config"):
         # Flatten parent_child config into children_delimiter for the execution layer
@@ -1167,8 +1177,7 @@ def check_embedding(dataset_id: str, tenant_id: str, req: dict):
         except Exception as e:
             if "not_found_exception" in repr(e) or "index_not_found_exception" in repr(e):
                 logging.info(
-                    "sample_random_chunks_with_vectors: index %s not yet created for tenant %s; "
-                    "returning empty sample set",
+                    "sample_random_chunks_with_vectors: index %s not yet created for tenant %s; returning empty sample set",
                     index_nm,
                     tenant_id,
                 )

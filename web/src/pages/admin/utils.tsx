@@ -43,7 +43,7 @@ export function parseBooleanish(value: any): boolean {
 export function createFuzzySearchFn<TData extends RowData>(
   columns: (keyof TData)[] = [],
 ) {
-  return (row: Row<TData>, columnId: string, filterValue: string) => {
+  return (row: Row<TData>, _columnId: string, filterValue: string) => {
     const searchText = filterValue.trim().toLowerCase();
 
     return columns
@@ -77,4 +77,4 @@ export function getSortIcon(sorting: false | SortDirection) {
 export const PERMISSION_TYPES = ['enable', 'read', 'write', 'share'] as const;
 export const EMPTY_DATA = Object.freeze<any[]>([]) as any[];
 export const IS_ENTERPRISE =
-  import.meta.env.VITE_RAGFLOW_ENTERPRISE === 'RAGFLOW_ENTERPRISE';
+  import.meta.env?.VITE_RAGFLOW_ENTERPRISE === 'RAGFLOW_ENTERPRISE';

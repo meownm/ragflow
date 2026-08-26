@@ -13,8 +13,7 @@ import { useEffect, useState } from 'react';
 
 interface IProps extends IModalProps<any> {
   documentId: string;
-  chunk: IChunk &
-    IReferenceChunk & { docnm_kwd: string; document_name: string };
+  chunk: IChunk | IReferenceChunk;
 }
 function getFileExtensionRegex(filename: string): string {
   const match = filename.match(/\.([^.]+)$/);
@@ -26,6 +25,8 @@ const PdfDrawer = ({
   documentId,
   chunk,
 }: IProps) => {
+  const documentName =
+    'document_name' in chunk ? chunk.document_name : chunk.doc_name;
   const getDocumentUrl = useGetDocumentUrl(documentId);
   const { highlights, setWidthAndHeight } = useGetChunkHighlights(chunk);
   // const ref = useRef<(highlight: IHighlight) => void>(() => {});
@@ -35,19 +36,17 @@ const PdfDrawer = ({
   const [fileType, setFileType] = useState('');
 
   useEffect(() => {
-    if (chunk.docnm_kwd || chunk.document_name) {
-      const type = getFileExtensionRegex(
-        chunk.docnm_kwd || chunk.document_name,
-      );
+    if (documentName) {
+      const type = getFileExtensionRegex(documentName);
       setFileType(type);
     }
-  }, [chunk.docnm_kwd, chunk.document_name]);
+  }, [documentName]);
   return (
     <Modal
       title={
         <div className="flex items-center gap-2">
-          <FileIcon name={chunk.docnm_kwd || chunk.document_name}></FileIcon>
-          {chunk.docnm_kwd || chunk.document_name}
+          <FileIcon name={documentName}></FileIcon>
+          {documentName}
         </div>
       }
       onCancel={hideModal}

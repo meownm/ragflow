@@ -140,7 +140,7 @@ export const GlobalParamSheet = (props: IGlobalParamModalProps) => {
                         <Button
                           variant={'secondary'}
                           className="bg-transparent hidden text-text-secondary border-none group-hover:bg-bg-card group-hover:text-text-primary group-hover:border group-hover:block"
-                          onClick={(e) => {
+                          onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
                             e.stopPropagation();
                           }}
                         >

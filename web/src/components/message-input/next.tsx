@@ -223,6 +223,7 @@ export function NextMessageInput({
           disabled={isUploading || disabled || sendLoading}
           onKeyDown={handleKeyDown}
           autoSize={{ minRows: 2, maxRows: 8 }}
+          style={{ resize }}
         />
 
         <div className="flex items-center justify-between gap-2">

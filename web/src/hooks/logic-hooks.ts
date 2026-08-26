@@ -658,9 +658,9 @@ export const useRemoveMessagesAfterCurrentMessage = (
   const removeMessagesAfterCurrentMessage = useCallback(
     (messageId: string) => {
       setCurrentConversation((pre) => {
-        const index = pre.message?.findIndex((x) => x.id === messageId);
+        const index = pre.messages.findIndex((x) => x.id === messageId);
         if (index !== -1) {
-          let nextMessages = pre.message?.slice(0, index + 2) ?? [];
+          let nextMessages = pre.messages.slice(0, index + 2);
           const latestMessage = nextMessages.at(-1);
           nextMessages = latestMessage
             ? [

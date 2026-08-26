@@ -10,6 +10,7 @@ import tokenize
 from pathlib import Path
 
 import yaml
+from yaml.nodes import MappingNode, ScalarNode, SequenceNode
 
 
 MERGE_PATTERNS = ("<<<<<<< ", "=======\n", ">>>>>>> ")
@@ -17,6 +18,24 @@ MERGE_PATTERNS = ("<<<<<<< ", "=======\n", ">>>>>>> ")
 # Printable ASCII (0x20-0x7E) plus newline — matches the regex used by the
 # historical check_comment_ascii.py.
 _PRINTABLE_ASCII = re.compile(r"^[\n -~]*\Z")
+
+
+class _ComposeSafeLoader(yaml.SafeLoader):
+    pass
+
+
+def _construct_compose_tag(loader: yaml.SafeLoader, node: yaml.Node):
+    if isinstance(node, ScalarNode):
+        return loader.construct_scalar(node)
+    if isinstance(node, SequenceNode):
+        return loader.construct_sequence(node, deep=True)
+    if isinstance(node, MappingNode):
+        return loader.construct_mapping(node, deep=True)
+    raise yaml.constructor.ConstructorError(None, None, f"unsupported Compose tag node: {type(node).__name__}", node.start_mark)
+
+
+for _compose_tag in ("!override", "!reset"):
+    _ComposeSafeLoader.add_constructor(_compose_tag, _construct_compose_tag)
 
 
 def _read_bytes(path: Path) -> bytes:
@@ -59,7 +78,7 @@ def check_yaml(paths: list[Path], fix: bool = False) -> int:
         if path.suffix not in {".yaml", ".yml"} or not path.is_file():
             continue
         try:
-            yaml.safe_load(path.read_text(encoding="utf-8"))
+            yaml.load(path.read_text(encoding="utf-8"), Loader=_ComposeSafeLoader)
         except Exception as exc:
             errors.append(f"invalid yaml: {path}: {exc}")
     return _report(errors)

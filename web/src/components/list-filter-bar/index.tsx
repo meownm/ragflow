@@ -10,6 +10,14 @@ import { HomeIcon } from '../svg-icon';
 import { Button, ButtonProps } from '../ui/button';
 import { SearchInput } from '../ui/input';
 import { CheckboxFormMultipleProps, FilterPopover } from './filter-popover';
+import { FilterValue } from './interface';
+
+const countFilterValues = (value: FilterValue): number =>
+  Object.values(value).reduce<number>(
+    (total, item) =>
+      total + (Array.isArray(item) ? item.length : countFilterValues(item)),
+    0,
+  );
 
 interface IProps {
   title?: ReactNode;
@@ -70,20 +78,7 @@ export default function ListFilterBar({
 }) {
   const filterCount = useMemo(() => {
     return typeof value === 'object' && value !== null
-      ? Object.values(value).reduce((pre, cur) => {
-          if (Array.isArray(cur)) {
-            return pre + cur.length;
-          }
-          if (typeof cur === 'object') {
-            return (
-              pre +
-              Object.values(cur).reduce((pre, cur) => {
-                return pre + cur.length;
-              }, 0)
-            );
-          }
-          return pre;
-        }, 0)
+      ? countFilterValues(value)
       : 0;
   }, [value]);
 

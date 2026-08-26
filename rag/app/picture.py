@@ -26,6 +26,7 @@ from PIL import Image
 
 from api.db.services.llm_service import LLMBundle
 from api.db.joint_services.tenant_model_service import get_tenant_default_model_by_type, get_first_provider_model_name, get_model_config_from_provider_instance, ensure_paddleocr_from_env
+from api.utils.file_utils import is_video_filename
 from common.constants import LLMType
 from common.parser_config_utils import normalize_layout_recognizer
 from common.string_utils import clean_markdown_block
@@ -33,9 +34,6 @@ from deepdoc.vision import OCR
 from rag.nlp import attach_media_context, rag_tokenizer, tokenize
 
 ocr = OCR()
-
-# Gemini supported MIME types
-VIDEO_EXTS = [".mp4", ".mov", ".avi", ".flv", ".mpeg", ".mpg", ".webm", ".wmv", ".3gp", ".3gpp", ".mkv"]
 
 
 def chunk(filename, binary, tenant_id, lang, callback=None, **kwargs):
@@ -48,7 +46,7 @@ def chunk(filename, binary, tenant_id, lang, callback=None, **kwargs):
     parser_config = kwargs.get("parser_config", {}) or {}
     image_ctx = max(0, int(parser_config.get("image_context_size", 0) or 0))
 
-    if any(filename.lower().endswith(ext) for ext in VIDEO_EXTS):
+    if is_video_filename(filename):
         try:
             doc.update(
                 {

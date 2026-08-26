@@ -32,6 +32,7 @@ import agentService, {
   updateAgent,
   updateAgentTags,
   uploadAgentFile,
+  uploadExternalAgentFile,
 } from '@/services/agent-service';
 import { buildMessageListWithUuid } from '@/utils/chat';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -513,7 +514,9 @@ export const useUploadAgentFile = () => {
           });
         }
 
-        const { data } = await uploadAgentFile(agentId as string, nextBody);
+        const { data } = shared_id
+          ? await uploadExternalAgentFile(agentId as string, nextBody)
+          : await uploadAgentFile(agentId as string, nextBody);
         if (data?.code === 0) {
           message.success(i18n.t('message.uploaded'));
         }
@@ -529,6 +532,7 @@ export const useUploadAgentFile = () => {
 
 export const useUploadAgentFileWithProgress = (identifier?: string | null) => {
   const { id } = useParams();
+  const { sharedId } = useGetSharedChatSearchParams();
 
   type UploadParameters = Parameters<NonNullable<FileUploadProps['onUpload']>>;
 
@@ -552,7 +556,10 @@ export const useUploadAgentFileWithProgress = (identifier?: string | null) => {
           });
         }
 
-        const { data } = await agentService.uploadAgentFile(
+        const upload = sharedId
+          ? agentService.uploadExternalAgentFile
+          : agentService.uploadAgentFile;
+        const { data } = await upload(
           {
             agentId: identifier || id,
             data: formData,

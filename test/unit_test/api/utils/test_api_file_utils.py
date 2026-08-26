@@ -23,6 +23,7 @@ from api.utils.file_utils import (
     MAX_BLOB_SIZE_THUMBNAIL,
     GHOSTSCRIPT_TIMEOUT_SEC,
     filename_type,
+    is_video_filename,
     thumbnail_img,
     thumbnail,
     sanitize_path,
@@ -40,6 +41,8 @@ class TestFilenameType:
             ("doc.pdf", FileType.PDF.value),
             ("a.PDF", FileType.PDF.value),
             ("x.png", FileType.VISUAL.value),
+            ("clip.mp4", FileType.VISUAL.value),
+            ("clip.WEBM", FileType.VISUAL.value),
             ("file.docx", FileType.DOC.value),
             ("a/b/c.pdf", FileType.PDF.value),
             ("path/to/file.txt", FileType.DOC.value),
@@ -66,6 +69,14 @@ class TestFilenameType:
 
     def test_path_with_basename_uses_extension(self):
         assert filename_type("folder/subfolder/document.pdf") == FileType.PDF.value
+
+    @pytest.mark.parametrize("filename", ["clip.mp4", "clip.WEBM", "folder/movie.mkv"])
+    def test_video_filename(self, filename):
+        assert is_video_filename(filename)
+
+    @pytest.mark.parametrize("filename", ["frame.png", "movie.mp4.txt", None])
+    def test_non_video_filename(self, filename):
+        assert not is_video_filename(filename)
 
 
 class TestSanitizePath:

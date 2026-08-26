@@ -149,7 +149,7 @@ export const FormSchema = z.object({
   setups: z.array(
     z.object({
       fileFormat: z.string().nullish(),
-      // preprocess: z.array(z.string()).optional(),
+      preprocess: z.array(z.string()).optional(),
       output_format: z.string().optional(),
       parse_method: z.string().optional(),
       lang: z.string().optional(),
@@ -355,7 +355,7 @@ const ParserForm = ({ node }: INextOperatorForm) => {
       table_result_type: '',
       markdown_image_response_type: '',
       remove_header_footer: false,
-      // preprocess: [],
+      preprocess: [],
     });
   }, [append]);
 

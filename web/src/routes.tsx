@@ -24,6 +24,7 @@ export enum Routes {
   Explore = '/explore',
   AgentExplore = `${Routes.Agent}/:id/explore`,
   Memories = '/memories',
+  OpenMetadata = '/openmetadata',
   Memory = '/memory',
   MemoryMessage = '/memory-message',
   MemorySetting = '/memory-setting',
@@ -232,6 +233,10 @@ const routeConfigOptions = [
         Component: () => import('@/pages/memories'),
       },
       {
+        path: Routes.OpenMetadata,
+        Component: () => import('@/pages/openmetadata'),
+      },
+      {
         path: `${Routes.Memory}`,
         Component: () => import('@/pages/memory'),
         children: [
@@ -428,7 +433,7 @@ const wrapRoutes = (routes: LazyRouteConfig[]): RouteObject[] =>
 const routeConfig = wrapRoutes(routeConfigOptions);
 
 const routers = createBrowserRouter(routeConfig, {
-  basename: import.meta.env.VITE_BASE_URL || '/',
+  basename: import.meta.env?.VITE_BASE_URL || '/',
 });
 
 export { routers };

@@ -146,7 +146,11 @@ export function DynamicVariables({
         VariableAssignerLogicalArrayOperator.Extend === logicalOperator
       ) {
         return (
-          <QueryVariable types={[type]} hideLabel pureQuery></QueryVariable>
+          <QueryVariable
+            types={type ? [type] : []}
+            hideLabel
+            pureQuery
+          ></QueryVariable>
         );
       } else if (logicalOperator === VariableAssignerLogicalOperator.Set) {
         if (type === JsonSchemaDataType.Boolean) {
@@ -173,7 +177,7 @@ export function DynamicVariables({
       } else if (
         logicalOperator === VariableAssignerLogicalArrayOperator.Append
       ) {
-        const subType = getArrayElementType(type);
+        const subType = getArrayElementType(type ?? '');
         return (
           <QueryVariable
             types={[subType as JsonSchemaDataType]}
@@ -267,7 +271,7 @@ export function DynamicVariables({
                           onChange(val);
                         }}
                         options={buildLogicalOptions(
-                          getVariableType(keyFieldAlias),
+                          getVariableType(keyFieldAlias) ?? '',
                         )}
                       ></SelectWithSearch>
                     )}

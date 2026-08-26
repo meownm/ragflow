@@ -10,6 +10,7 @@ import {
   LucideHouse,
   LucideMenu,
   LucideMessageSquareText,
+  LucideNetwork,
   LucideSearch,
 } from 'lucide-react';
 
@@ -25,6 +26,7 @@ const PathMap = {
   [Routes.Searches]: [Routes.Searches, Routes.Search],
   [Routes.Agents]: [Routes.Agents, Routes.AgentTemplates],
   [Routes.Memories]: [Routes.Memories, Routes.Memory, Routes.MemoryMessage],
+  [Routes.OpenMetadata]: [Routes.OpenMetadata],
   [Routes.Files]: [Routes.Files],
 } as const;
 
@@ -55,6 +57,12 @@ const menuItems = [
     'data-testid': 'nav-agent',
   },
   { path: Routes.Memories, name: 'header.memories', icon: LucideBrain },
+  {
+    path: Routes.OpenMetadata,
+    name: 'header.openMetadata',
+    icon: LucideNetwork,
+    'data-testid': 'nav-openmetadata',
+  },
   { path: Routes.Files, name: 'header.fileManager', icon: LucideFolderOpen },
 ];
 

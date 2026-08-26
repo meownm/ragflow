@@ -49,7 +49,9 @@ const StringEditor: React.FC<TypeEditorProps> = ({
       : { ...schema };
 
     // Get all validation props except type and description
-    const { type: _, description: __, ...validationProps } = baseSchema;
+    const validationProps = { ...baseSchema };
+    delete validationProps.type;
+    delete validationProps.description;
 
     // Create the updated validation schema
     const updatedValidation: ObjectJSONSchema = {
@@ -86,8 +88,9 @@ const StringEditor: React.FC<TypeEditorProps> = ({
 
       // Use a type safe approach
       if (!isBooleanSchema(baseSchema) && 'enum' in baseSchema) {
-        const { enum: _, ...rest } = baseSchema;
-        onChange(rest as ObjectJSONSchema);
+        const updatedSchema = { ...baseSchema };
+        delete updatedSchema.enum;
+        onChange(updatedSchema as ObjectJSONSchema);
       } else {
         onChange(baseSchema as ObjectJSONSchema);
       }
@@ -141,7 +144,7 @@ const StringEditor: React.FC<TypeEditorProps> = ({
           <Label
             htmlFor={minLengthId}
             className={
-              (!!minMaxError || !!minLengthError) && 'text-destructive'
+              !!minMaxError || !!minLengthError ? 'text-destructive' : undefined
             }
           >
             {t.stringMinimumLengthLabel}
@@ -167,7 +170,7 @@ const StringEditor: React.FC<TypeEditorProps> = ({
           <Label
             htmlFor={maxLengthId}
             className={
-              (!!minMaxError || !!maxLengthError) && 'text-destructive'
+              !!minMaxError || !!maxLengthError ? 'text-destructive' : undefined
             }
           >
             {t.stringMaximumLengthLabel}
@@ -200,7 +203,7 @@ const StringEditor: React.FC<TypeEditorProps> = ({
       <div className="space-y-2">
         <Label
           htmlFor={patternId}
-          className={!!patternError && 'text-destructive'}
+          className={patternError ? 'text-destructive' : undefined}
         >
           {t.stringPatternLabel}
         </Label>
@@ -220,7 +223,7 @@ const StringEditor: React.FC<TypeEditorProps> = ({
       <div className="space-y-2">
         <Label
           htmlFor={formatId}
-          className={!!formatError && 'text-destructive'}
+          className={formatError ? 'text-destructive' : undefined}
         >
           {t.stringFormatLabel}
         </Label>

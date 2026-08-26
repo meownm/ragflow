@@ -67,6 +67,8 @@ class _FakeResponse:
 class _FakeConnectorRecord:
     def __init__(self, payload):
         self._payload = payload
+        for key, value in payload.items():
+            setattr(self, key, value)
 
     def to_dict(self):
         return dict(self._payload)
@@ -247,20 +249,39 @@ def _load_connector_app(monkeypatch):
     constants_mod = ModuleType("common.constants")
     constants_mod.RetCode = SimpleNamespace(
         ARGUMENT_ERROR=101,
+        DATA_ERROR=102,
         SERVER_ERROR=500,
         RUNNING=102,
         PERMISSION_ERROR=403,
         AUTHENTICATION_ERROR=109,
     )
-    constants_mod.TaskStatus = SimpleNamespace(SCHEDULE="schedule", CANCEL="cancel")
+    constants_mod.TaskStatus = SimpleNamespace(UNSTART="unstart", SCHEDULE="schedule", CANCEL="cancel")
     monkeypatch.setitem(sys.modules, "common.constants", constants_mod)
 
     config_mod = ModuleType("common.data_source.config")
     config_mod.GOOGLE_DRIVE_WEB_OAUTH_REDIRECT_URI = "https://example.com/drive"
     config_mod.GMAIL_WEB_OAUTH_REDIRECT_URI = "https://example.com/gmail"
     config_mod.BOX_WEB_OAUTH_REDIRECT_URI = "https://example.com/box"
-    config_mod.DocumentSource = SimpleNamespace(GMAIL="gmail", GOOGLE_DRIVE="google-drive")
+    config_mod.INDEX_BATCH_SIZE = 1000
+    config_mod.DocumentSource = SimpleNamespace(
+        BIGQUERY="bigquery",
+        EVA_WIKI="eva_wiki",
+        OPENMETADATA="openmetadata",
+        GMAIL="gmail",
+        GOOGLE_DRIVE="google-drive",
+        REST_API="rest_api",
+    )
     monkeypatch.setitem(sys.modules, "common.data_source.config", config_mod)
+
+    exceptions_mod = ModuleType("common.data_source.exceptions")
+
+    class _ConnectorError(Exception):
+        pass
+
+    exceptions_mod.ConnectorMissingCredentialError = _ConnectorError
+    exceptions_mod.ConnectorValidationError = _ConnectorError
+    exceptions_mod.InsufficientPermissionsError = _ConnectorError
+    monkeypatch.setitem(sys.modules, "common.data_source.exceptions", exceptions_mod)
 
     google_constants_mod = ModuleType("common.data_source.google_util.constant")
     google_constants_mod.WEB_OAUTH_POPUP_TEMPLATE = (

@@ -124,6 +124,8 @@ function transformApiResponseToForm(
 
   return {
     method,
+    hierarchy: hierarchy ?? hierarchyHierarchy,
+    rules: rules ?? cloneDeep(originalRules),
     hierarchyHierarchy,
     hierarchyGroup,
     include_heading_content: Boolean(apiData.include_heading_content),

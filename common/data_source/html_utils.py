@@ -4,6 +4,7 @@ from copy import copy
 from dataclasses import dataclass
 from io import BytesIO
 from typing import IO
+from urllib.parse import unquote, urlparse
 
 import bs4
 
@@ -73,80 +74,97 @@ def format_document_soup(document: bs4.BeautifulSoup, table_cell_separator: str 
     - Table columns/rows are separated by newline
     - List elements are separated by newline and start with a hyphen
     """
-    text = ""
-    list_element_start = False
-    verbatim_output = 0
-    in_table = False
-    last_added_newline = False
-    link_href: str | None = None
+    ignored_tags = {"script", "style", "noscript", "template"}
+    block_tags = {
+        "address",
+        "article",
+        "aside",
+        "blockquote",
+        "details",
+        "div",
+        "dl",
+        "fieldset",
+        "figcaption",
+        "figure",
+        "footer",
+        "form",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "header",
+        "hr",
+        "main",
+        "nav",
+        "ol",
+        "p",
+        "section",
+        "summary",
+        "ul",
+    }
 
-    for e in document.descendants:
-        verbatim_output -= 1
-        if isinstance(e, bs4.element.NavigableString):
-            if isinstance(e, (bs4.element.Comment, bs4.element.Doctype)):
+    def render_children(tag: bs4.element.Tag) -> str:
+        return "".join(render_node(child) for child in tag.children)
+
+    def render_image(tag: bs4.element.Tag) -> str:
+        src_value = tag.get("src") or ""
+        src = src_value[0] if isinstance(src_value, list) else str(src_value)
+        label_value = tag.get("alt") or tag.get("title") or ""
+        label = label_value[0] if isinstance(label_value, list) else str(label_value)
+        if not label and src and not src.lower().startswith("data:"):
+            label = unquote(urlparse(src).path.rsplit("/", 1)[-1])
+        label = strip_newlines(label).strip() or "image"
+        if not src or src.lower().startswith("data:"):
+            return f"[Image: {label}]"
+        return f"[Image: {label}]({src})"
+
+    def render_table(tag: bs4.element.Tag) -> str:
+        rows: list[str] = []
+        for row in tag.find_all("tr"):
+            if row.find_parent("table") is not tag:
                 continue
-            element_text = e.text
-            if in_table:
-                # Tables are represented in natural language with rows separated by newlines
-                # Can't have newlines then in the table elements
-                element_text = element_text.replace("\n", " ").strip()
+            cells = row.find_all(["td", "th"], recursive=False)
+            if not cells:
+                cells = [cell for cell in row.find_all(["td", "th"]) if cell.find_parent("tr") is row]
+            rendered_cells = [strip_excessive_newlines_and_spaces(render_children(cell)) for cell in cells]
+            if rendered_cells:
+                rows.append(table_cell_separator.join(rendered_cells))
+        return "\n" + "\n".join(rows) + "\n" if rows else ""
 
-            # Some tags are translated to spaces but in the logic underneath this section, we
-            # translate them to newlines as a browser should render them such as with br
-            # This logic here avoids a space after newline when it shouldn't be there.
-            if last_added_newline and element_text.startswith(" "):
-                element_text = element_text[1:]
-                last_added_newline = False
+    def render_node(node: bs4.element.PageElement) -> str:
+        if isinstance(node, (bs4.element.Comment, bs4.element.Doctype)):
+            return ""
+        if isinstance(node, bs4.element.NavigableString):
+            return str(node)
+        if not isinstance(node, bs4.element.Tag):
+            return ""
 
-            if element_text:
-                content_to_add = element_text if verbatim_output > 0 else format_element_text(element_text, link_href)
+        name = (node.name or "").lower()
+        if name in ignored_tags:
+            return ""
+        if name == "br":
+            return "\n"
+        if name == "img":
+            return render_image(node)
+        if name == "table":
+            return render_table(node)
+        if name == "pre":
+            return f"\n{node.get_text()}\n"
 
-                # Don't join separate elements without any spacing
-                if (text and not text[-1].isspace()) and (content_to_add and not content_to_add[0].isspace()):
-                    text += " "
+        content = render_children(node)
+        if name == "a":
+            href_value = node.get("href")
+            href = href_value[0] if isinstance(href_value, list) else href_value
+            return format_element_text(content, str(href) if href else None)
+        if name == "li":
+            return f"\n- {content.strip()}\n"
+        if name in block_tags:
+            return f"\n{content}\n"
+        return content
 
-                text += content_to_add
-
-                list_element_start = False
-        elif isinstance(e, bs4.element.Tag):
-            # table is standard HTML element
-            if e.name == "table":
-                in_table = True
-            # TR is for rows
-            elif e.name == "tr" and in_table:
-                text += "\n"
-            # td for data cell, th for header
-            elif e.name in ["td", "th"] and in_table:
-                text += table_cell_separator
-            elif e.name == "/table":
-                in_table = False
-            elif in_table:
-                # don't handle other cases while in table
-                pass
-            elif e.name == "a":
-                href_value = e.get("href", None)
-                # mostly for typing, having multiple hrefs is not valid HTML
-                link_href = href_value[0] if isinstance(href_value, list) else href_value
-            elif e.name == "/a":
-                link_href = None
-            elif e.name in ["p", "div"]:
-                if not list_element_start:
-                    text += "\n"
-            elif e.name in ["h1", "h2", "h3", "h4"]:
-                text += "\n"
-                list_element_start = False
-                last_added_newline = True
-            elif e.name == "br":
-                text += "\n"
-                list_element_start = False
-                last_added_newline = True
-            elif e.name == "li":
-                text += "\n- "
-                list_element_start = True
-            elif e.name == "pre":
-                if verbatim_output <= 0:
-                    verbatim_output = len(list(e.childGenerator()))
-    return strip_excessive_newlines_and_spaces(text)
+    return strip_excessive_newlines_and_spaces(render_children(document))
 
 
 def parse_html_page_basic(text: str | BytesIO | IO[bytes]) -> str:

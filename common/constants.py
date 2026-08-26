@@ -131,6 +131,8 @@ class FileSource(StrEnum):
     REST_API = "rest_api"
     DISCORD = "discord"
     CONFLUENCE = "confluence"
+    EVA_WIKI = "eva_wiki"
+    OPENMETADATA = "openmetadata"
     GMAIL = "gmail"
     GOOGLE_DRIVE = "google_drive"
     JIRA = "jira"

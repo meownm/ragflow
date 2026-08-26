@@ -108,7 +108,7 @@ const FormSheet = ({
                     size="icon"
                     className="ml-1 inline-flex size-5 !p-0 align-middle bg-transparent"
                     type="button"
-                    onClick={(e) => {
+                    onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
                       e.stopPropagation();
                       window.open(
                         SandboxQuickstartUrl,

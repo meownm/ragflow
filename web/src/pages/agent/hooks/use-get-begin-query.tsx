@@ -19,7 +19,6 @@ import {
   BeginId,
   BeginQueryType,
   BeginQueryTypeMap,
-  JsonSchemaDataType,
   Operator,
   VariableType,
 } from '../constant';
@@ -182,27 +181,32 @@ function splitOperatorOutputValue(value?: string) {
   return { nodeId, output };
 }
 
-function filterDocGeneratorDownloadOutputOptions(
-  groups: Array<{
+function filterDocGeneratorDownloadOutputOptions<
+  T extends {
     options: Array<{ value?: string } & Record<string, any>>;
-  }>,
+  },
+>(
+  groups: T[],
   allowDocGeneratorDownloadOutput: boolean,
   getOperatorTypeFromId: (nodeId?: string) => string | undefined,
 ) {
-  return groups.map((group) => ({
-    ...group,
-    options: group.options.filter((option) => {
-      const { nodeId, output } = splitOperatorOutputValue(option.value);
-      if (
-        output === 'download' &&
-        getOperatorTypeFromId(nodeId) === Operator.DocGenerator
-      ) {
-        return allowDocGeneratorDownloadOutput;
-      }
+  return groups.map(
+    (group) =>
+      ({
+        ...group,
+        options: group.options.filter((option) => {
+          const { nodeId, output } = splitOperatorOutputValue(option.value);
+          if (
+            output === 'download' &&
+            getOperatorTypeFromId(nodeId) === Operator.DocGenerator
+          ) {
+            return allowDocGeneratorDownloadOutput;
+          }
 
-      return true;
-    }),
-  }));
+          return true;
+        }),
+      }) as T,
+  );
 }
 
 export function useBuildGlobalWithBeginVariableOptions() {
@@ -356,7 +360,7 @@ export function useFilterQueryVariableOptionsByTypes({
   nodeIds = [],
   variablesExceptOperatorOutputs,
 }: {
-  types?: (JsonSchemaDataType | VariableType)[];
+  types?: string[];
 } & BuildQueryVariableOptions) {
   const nextOptions = useBuildQueryVariableOptions({
     nodeIds,
@@ -447,7 +451,7 @@ export const useGetComponentLabelByValue = (nodeId: string) => {
 
   const flattenOptions = useMemo(() => {
     return options.reduce<DefaultOptionType[]>((pre, cur) => {
-      return [...pre, ...cur.options];
+      return [...pre, ...(cur.options ?? [])];
     }, []);
   }, [options]);
 
@@ -462,7 +466,7 @@ export const useGetComponentLabelByValue = (nodeId: string) => {
 
 export function flatOptions(options: DefaultOptionType[]) {
   return options.reduce<DefaultOptionType[]>((pre, cur) => {
-    return [...pre, ...cur.options];
+    return [...pre, ...(cur.options ?? [])];
   }, []);
 }
 

@@ -19,7 +19,7 @@ import os
 from typing import Optional, Tuple, List
 
 from anthropic import BaseModel
-from peewee import SQL, fn
+from peewee import SQL
 
 from api.db import InputType
 from api.db.db_models import DB, Connector, SyncLogs, Connector2Kb, Knowledgebase
@@ -28,7 +28,7 @@ from api.db.services.document_service import DocumentService
 from api.db.services.document_service import DocMetadataService
 from api.utils.common import hash128
 from common.misc_utils import get_uuid
-from common.constants import ConnectorTaskType, TaskStatus
+from common.constants import ConnectorTaskType, FileSource, TaskStatus
 from common.settings import TIMEZONE
 from common.time_utils import current_timestamp, timestamp_to_date
 
@@ -152,7 +152,7 @@ class ConnectorService(CommonService):
         connector_id: str,
         kb_id: str,
         tenant_id: str,
-        file_list,
+        file_batches,
         delete_batch_size: int = 100,
     ):
         from api.db.services.file_service import FileService
@@ -165,24 +165,32 @@ class ConnectorService(CommonService):
             return 0, []
 
         source_type = f"{conn.source}/{conn.id}"
-        retain_doc_ids = {doc_id for file in file_list for doc_id in (hash128(f"{connector_id}:{file.id}"), hash128(f"{kb_id}:{connector_id}:{file.id}"))}
         existing_docs = DocumentService.list_doc_headers_by_kb_and_source_type(
             kb_id,
             source_type,
         )
-        stale_doc_ids = [doc["id"] for doc in existing_docs if doc["id"] not in retain_doc_ids]
+        stale_doc_ids = {doc["id"] for doc in existing_docs}
+        for item in file_batches:
+            batch = item if isinstance(item, (list, tuple)) else [item]
+            for file in batch:
+                stale_doc_ids.discard(hash128(f"{connector_id}:{file.id}"))
+                stale_doc_ids.discard(hash128(f"{kb_id}:{connector_id}:{file.id}"))
         if not stale_doc_ids:
             return 0, []
 
         stale_doc_id_set = set(stale_doc_ids)
+        ordered_stale_doc_ids = sorted(stale_doc_ids)
         errors = []
-        for offset in range(0, len(stale_doc_ids), delete_batch_size):
+        for offset in range(0, len(ordered_stale_doc_ids), delete_batch_size):
             err = FileService.delete_docs(
-                stale_doc_ids[offset : offset + delete_batch_size],
+                ordered_stale_doc_ids[offset : offset + delete_batch_size],
                 tenant_id,
             )
             if err:
-                errors.append(err)
+                if isinstance(err, list):
+                    errors.extend(str(item) for item in err)
+                else:
+                    errors.append(str(err))
 
         remaining_doc_ids = {
             doc["id"]
@@ -213,6 +221,7 @@ class SyncLogsService(CommonService):
             cls.model.task_type,
             cls.model.kb_id,
             cls.model.update_date,
+            cls.model.update_time,
             cls.model.new_docs_indexed,
             cls.model.total_docs_indexed,
             cls.model.docs_removed_from_index,
@@ -394,17 +403,28 @@ class SyncLogsService(CommonService):
 
     @classmethod
     def increase_docs(cls, id, max_update, doc_num, err_msg="", error_count=0):
-        # Keep sync monotonic.
+        cursor = cls.model.select(cls.model.poll_range_start, cls.model.poll_range_end).where(cls.model.id == id).first()
+        if cursor is None:
+            return
+
         cls.model.update(
             new_docs_indexed=cls.model.new_docs_indexed + doc_num,
             total_docs_indexed=cls.model.total_docs_indexed + doc_num,
-            poll_range_start=fn.COALESCE(fn.GREATEST(cls.model.poll_range_start, max_update), max_update),
-            poll_range_end=fn.COALESCE(fn.GREATEST(cls.model.poll_range_end, max_update), max_update),
+            poll_range_start=cls._later_cursor(cursor.poll_range_start, max_update),
+            poll_range_end=cls._later_cursor(cursor.poll_range_end, max_update),
             error_msg=cls.model.error_msg + err_msg,
             error_count=cls.model.error_count + error_count,
             update_time=current_timestamp(),
             update_date=timestamp_to_date(current_timestamp()),
         ).where(cls.model.id == id).execute()
+
+    @staticmethod
+    def _later_cursor(current, candidate):
+        if current is None:
+            return candidate
+        if candidate is None:
+            return current
+        return max(current, candidate)
 
     @classmethod
     def increase_removed_docs(cls, id, removed_count, err_msg="", error_count=0):
@@ -446,20 +466,17 @@ class SyncLogsService(CommonService):
         err, doc_blob_pairs = FileService.upload_document(kb, files, tenant_id, src)
         errs.extend(err)
 
-        # Create a mapping from filename to metadata for later use
         metadata_map = {}
         for d in docs:
             if d.get("metadata"):
-                filename = d["semantic_identifier"] + (f"{d['extension']}" if d["semantic_identifier"][::-1].find(d["extension"][::-1]) < 0 else "")
-                metadata_map[filename] = d["metadata"]
+                metadata_map[d["id"]] = d["metadata"]
 
         kb_table_num_map = {}
         for doc, _ in doc_blob_pairs:
             doc_ids.append(doc["id"])
 
-            # Set metadata if available for this document
-            if doc["name"] in metadata_map:
-                DocMetadataService.update_document_metadata(doc["id"], metadata_map[doc["name"]])
+            if doc["id"] in metadata_map:
+                DocMetadataService.update_document_metadata(doc["id"], metadata_map[doc["id"]])
 
             if not auto_parse or auto_parse == "0":
                 continue
@@ -483,19 +500,24 @@ class Connector2KbService(CommonService):
         arr = cls.query(kb_id=kb_id)
         old_conn_ids = [a.connector_id for a in arr]
         connector_ids = []
+        errs = []
+        kb = Knowledgebase.get_or_none(id=kb_id)
         for conn in connectors:
             conn_id = conn["id"]
+            found, full_conn = ConnectorService.get_by_id(conn_id)
+            if found and full_conn.source in {FileSource.EVA_WIKI, FileSource.OPENMETADATA} and kb and kb.permission != "me":
+                source_label = "EVA Wiki" if full_conn.source == FileSource.EVA_WIKI else "OpenMetadata"
+                errs.append(f"{source_label} connectors require a private knowledge base")
+                continue
             connector_ids.append(conn_id)
             if conn_id in old_conn_ids:
                 cls.filter_update([cls.model.connector_id == conn_id, cls.model.kb_id == kb_id], {"auto_parse": conn.get("auto_parse", "1")})
                 continue
             cls.save(**{"id": get_uuid(), "connector_id": conn_id, "kb_id": kb_id, "auto_parse": conn.get("auto_parse", "1")})
             SyncLogsService.schedule(conn_id, kb_id, reindex=True, task_type=ConnectorTaskType.SYNC)
-            e, full_conn = ConnectorService.get_by_id(conn_id)
-            if e and (full_conn.config or {}).get("sync_deleted_files"):
+            if found and (full_conn.config or {}).get("sync_deleted_files"):
                 SyncLogsService.schedule(conn_id, kb_id, task_type=ConnectorTaskType.PRUNE)
 
-        errs = []
         for conn_id in old_conn_ids:
             if conn_id in connector_ids:
                 continue

@@ -27,8 +27,10 @@ export const useSelectDerivedSessionList = () => {
       errors: '',
       source: '',
       user_id: '',
+      name: '',
+      version_title: '',
       dsl: '',
-      reference: {},
+      reference: [],
       is_new: true,
     };
 

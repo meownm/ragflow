@@ -109,7 +109,7 @@ function useHandleSelectChange({ onChange, value }: ToolCommandProps) {
 }
 
 // eslint-disable-next-line
-export function ToolCommand({ value, onChange }: ToolCommandProps) {
+export function ToolCommand(_props: ToolCommandProps) {
   const { t } = useTranslation();
 
   const currentValue = useGetNodeTools();

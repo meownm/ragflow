@@ -37,6 +37,29 @@ from api.db import FileType
 MAX_BLOB_SIZE_THUMBNAIL = 50 * 1024 * 1024  # 50 MiB for thumbnail generation
 MAX_BLOB_SIZE_PDF = 100 * 1024 * 1024  # 100 MiB for PDF repair / read
 GHOSTSCRIPT_TIMEOUT_SEC = 120  # Timeout for Ghostscript subprocess
+VIDEO_EXTENSIONS = frozenset(
+    {
+        ".3gp",
+        ".3gpp",
+        ".asf",
+        ".asx",
+        ".avi",
+        ".dat",
+        ".flv",
+        ".mkv",
+        ".mov",
+        ".mp4",
+        ".mpa",
+        ".mpe",
+        ".mpeg",
+        ".mpg",
+        ".rm",
+        ".rmvb",
+        ".webm",
+        ".wmv",
+        ".wvx",
+    }
+)
 
 LOCK_KEY_pdfplumber = "global_shared_lock_pdfplumber"
 if LOCK_KEY_pdfplumber not in sys.modules:
@@ -53,6 +76,11 @@ def _normalize_filename_for_type(filename):
     if not base or len(base) > FILE_NAME_LEN_LIMIT:
         return "", False
     return base.lower(), True
+
+
+def is_video_filename(filename) -> bool:
+    normalized, ok = _normalize_filename_for_type(filename)
+    return ok and os.path.splitext(normalized)[1] in VIDEO_EXTENSIONS
 
 
 def filename_type(filename):
@@ -72,9 +100,10 @@ def filename_type(filename):
     if re.match(r".*\.(wav|flac|ape|alac|wavpack|wv|mp3|aac|ogg|vorbis|opus)$", filename):
         return FileType.AURAL.value
 
-    if re.match(
-        r".*\.(jpg|jpeg|png|tif|gif|pcx|tga|exif|fpx|svg|psd|cdr|pcd|dxf|ufo|eps|ai|raw|WMF|webp|avif|apng|icon|ico|mpg|mpeg|avi|rm|rmvb|mov|wmv|asf|dat|asx|wvx|mpe|mpa|mp4|avi|mkv)$", filename
-    ):
+    if is_video_filename(filename):
+        return FileType.VISUAL.value
+
+    if re.match(r".*\.(jpg|jpeg|png|tif|gif|pcx|tga|exif|fpx|svg|psd|cdr|pcd|dxf|ufo|eps|ai|raw|wmf|webp|avif|apng|icon|ico)$", filename):
         return FileType.VISUAL.value
 
     return FileType.OTHER.value

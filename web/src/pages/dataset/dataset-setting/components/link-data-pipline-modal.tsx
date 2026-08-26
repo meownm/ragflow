@@ -5,7 +5,6 @@ import {
 import { Button } from '@/components/ui/button';
 import { Form } from '@/components/ui/form';
 import { Modal } from '@/components/ui/modal/modal';
-import { useNavigatePage } from '@/hooks/logic-hooks/navigate-hooks';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { t } from 'i18next';
 import { useState } from 'react';
@@ -36,7 +35,6 @@ const LinkDataPipelineModal = ({
     },
   });
   //   const [open, setOpen] = useState(false);
-  const { navigateToAgents } = useNavigatePage();
   const handleFormSubmit = (values: any) => {
     console.log(values, data);
     // const param = {
@@ -63,7 +61,6 @@ const LinkDataPipelineModal = ({
           <div className="flex flex-col gap-4 ">
             {!isEdit && (
               <DataFlowSelect
-                toDataPipeline={navigateToAgents}
                 formFieldName="pipeline_id"
                 setDataList={setList}
               />

@@ -368,10 +368,10 @@ export function useFetchKnowledgeMetadataKeys(kbIds: string[] = []) {
     enabled: sortedKbIds.length > 0,
     gcTime: 0,
     queryFn: async () => {
-      const { data } = await kbService.getMetaKeys({
-        kb_ids: sortedKbIds.join(','),
+      const { data } = await kbService.getMeta({
+        dataset_ids: sortedKbIds.join(','),
       });
-      return data?.data ?? [];
+      return Object.keys(data?.data ?? {});
     },
   });
 

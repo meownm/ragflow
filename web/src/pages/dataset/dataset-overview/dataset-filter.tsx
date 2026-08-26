@@ -9,6 +9,18 @@ import { ChangeEventHandler, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { LogTabs } from './dataset-common';
 
+const countFilterValues = (value: Record<string, unknown>): number =>
+  Object.values(value).reduce<number>(
+    (total, item) =>
+      total +
+      (Array.isArray(item)
+        ? item.length
+        : item && typeof item === 'object'
+          ? countFilterValues(item as Record<string, unknown>)
+          : 0),
+    0,
+  );
+
 interface IProps {
   searchString?: string;
   onSearchChange?: ChangeEventHandler<HTMLInputElement>;
@@ -27,14 +39,11 @@ const DatasetFilter = (
     onOpenChange,
     active = LogTabs.FILE_LOGS,
     setActive,
-    ...rest
   } = props;
   const { t } = useTranslation();
   const filterCount = useMemo(() => {
     return typeof value === 'object' && value !== null
-      ? Object.values(value).reduce((pre, cur) => {
-          return pre + cur.length;
-        }, 0)
+      ? countFilterValues(value)
       : 0;
   }, [value]);
   return (

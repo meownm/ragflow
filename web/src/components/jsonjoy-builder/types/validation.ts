@@ -11,10 +11,21 @@ function refineRangeConsistency(
   if (min !== undefined && max !== undefined && min > max) {
     return false;
   }
-  if (isMinExclusive && isMaxExclusive && max - min < 2) {
+  if (
+    min !== undefined &&
+    max !== undefined &&
+    isMinExclusive &&
+    isMaxExclusive &&
+    max - min < 2
+  ) {
     return false;
   }
-  if ((isMinExclusive || isMaxExclusive) && max - min < 1) {
+  if (
+    min !== undefined &&
+    max !== undefined &&
+    (isMinExclusive || isMaxExclusive) &&
+    max - min < 1
+  ) {
     return false;
   }
   return true;
@@ -200,7 +211,7 @@ export function getTypeValidation(type: string, t: Translation) {
 
 export interface TypeValidationResult {
   success: boolean;
-  errors?: z.core.$ZodIssue[];
+  errors?: z.ZodIssue[];
 }
 
 export function validateSchemaByType(
@@ -255,7 +266,7 @@ export function buildValidationTree(
                 code: 'custom',
                 message: t.validatorErrorSchemaValidation,
                 path: [],
-              } as unknown as z.core.$ZodIssue,
+              } as z.ZodIssue,
             ],
           };
 
@@ -265,7 +276,7 @@ export function buildValidationTree(
       children: {},
       cumulativeChildrenErrors: validation.success
         ? 0
-        : validation.errors?.length ?? 0,
+        : (validation.errors?.length ?? 0),
     };
 
     return node;
@@ -273,7 +284,7 @@ export function buildValidationTree(
 
   // schema is an object-shaped JSONSchema
   const sch = schema as Record<string, unknown>;
-  const currentType = deriveType(sch);
+  const currentType = deriveType(sch) ?? 'object';
 
   const validation = validateSchemaByType(schema, currentType, t);
 
@@ -362,7 +373,7 @@ export function buildValidationTree(
   }
 
   // Compute cumulative error counts (own + all descendants)
-  const ownErrors = validation.success ? 0 : validation.errors?.length ?? 0;
+  const ownErrors = validation.success ? 0 : (validation.errors?.length ?? 0);
   const childrenErrors = Object.values(children).reduce(
     (sum, child) => sum + child.cumulativeChildrenErrors,
     0,

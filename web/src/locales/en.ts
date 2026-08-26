@@ -125,9 +125,87 @@ export default {
       welcome: 'Welcome to',
       dataset: 'Dataset',
       memories: 'Memory',
+      openMetadata: 'Catalog',
       discord: 'Discord',
       github: 'GitHub',
       help: 'Help',
+    },
+    openMetadata: {
+      title: 'OpenMetadata Copilot',
+      subtitle:
+        'Search metadata, owners and domains, inspect the OpenMetadata knowledge graph, and make governed changes from RAGFlow.',
+      unavailable: 'OpenMetadata Copilot is unavailable',
+      retry: 'Retry',
+      refresh: 'Refresh snapshot',
+      provisionAgentApps: 'Create/update Agent Apps',
+      agentAppsReady: 'Agent Apps ready: {{count}}',
+      stale: 'Snapshot is stale',
+      fresh: 'Data is fresh',
+      staleWarning:
+        'Answers will be phrased as the state of the latest snapshot. Check OpenMetadata ingestion before operational decisions.',
+      snapshot: 'Latest entity update',
+      tables: 'Tables',
+      columns: 'Columns',
+      describedTables: 'With descriptions',
+      testCases: 'Quality tests',
+      foreignKeys: 'Foreign keys',
+      starterTitle: 'Start here',
+      starterSubtitle:
+        'Questions are generated only from available OMD capabilities and the current snapshot.',
+      noStarterQuestions:
+        'No answerable suggestions are available for this catalog scope.',
+      catalogTitle: 'Browse catalog',
+      catalogSubtitle:
+        'Search and filter the accessible OpenMetadata tables. Filters also scope Copilot answers.',
+      catalogSearch: 'Search by table name, FQN, or description',
+      searchCatalog: 'Search catalog',
+      onlyMissingDescriptions: 'Only tables without descriptions',
+      noCatalogEntities: 'No tables match the current search and filters.',
+      catalogPage: 'Showing {{from}}–{{to}} of {{total}}',
+      previousPage: 'Previous',
+      nextPage: 'Next',
+      conversationTitle: 'Catalog conversation',
+      conversationSubtitle:
+        'A follow-up question can use the most recent relevant tables from the last eight turns.',
+      newConversation: 'New conversation',
+      emptyConversation: 'Choose a starter question or ask about the catalog.',
+      contextUsed: 'context used',
+      filtersApplyToConversation:
+        'The catalog filters above also apply to this conversation.',
+      questionPlaceholder:
+        'Ask about a table, owner, domain, quality, or change impact…',
+      ask: 'Ask',
+      filterBy: 'Filter: {{field}}',
+      domain: 'domain',
+      service: 'service',
+      owner: 'owner',
+      tag: 'tag',
+      schema: 'Schema',
+      updated: 'Updated',
+      noDescription: 'No description',
+      openInOmd: 'Open in OpenMetadata',
+      selectTable: 'Select table',
+      askAboutTable: 'Ask about table',
+      aboutTableQuestion: 'Tell me about the table {{fqn}}',
+      exploreRelationships: 'Explore relationships',
+      relationshipsQuestion:
+        'Show all registered relationships for the table {{fqn}}',
+      prepareChange: 'Prepare change',
+      governanceTitle: 'Governance: safe change',
+      displayName: 'Display name',
+      description: 'Description',
+      previewChange: 'Preview diff',
+      diffTitle: 'The change has not been applied',
+      confirmationExpires: 'Confirmation expires in {{seconds}} seconds.',
+      confirmApply: 'Confirm and apply',
+      backToEdit: 'Back to editing',
+      upstream: 'Upstream',
+      downstream: 'Downstream',
+      semanticRelationships: 'Shared glossary concepts',
+      semanticRelationshipsTruncated:
+        'Only the highest-confidence semantic relationships are shown.',
+      snapshotAnswer: 'snapshot result',
+      liveAnswer: 'verified in OMD',
     },
     skills: {
       title: 'Skills',
@@ -1227,6 +1305,10 @@ Example: Virtual Hosted Style`,
         'Connect to a public RSS or Atom feed and sync feed entries into your knowledge base.',
       confluenceDescription:
         'Integrate your Confluence workspace to search documentation.',
+      eva_wikiDescription:
+        'Sync EVA Wiki pages and attachments through the authenticated API.',
+      openmetadataDescription:
+        'Index OpenMetadata tables, descriptions, and columns into a private Dataset with incremental sync.',
       s3Description:
         'Connect to your AWS S3 bucket to import and sync stored files.',
       google_cloud_storageDescription:
@@ -2240,7 +2322,8 @@ Best for: Documents with flowing, contextually connected content — such as boo
       bGPTDescription:
         'Search scientific papers via BGPT and return structured evidence from full-text studies: methods, sample sizes, limitations, conflicts of interest, data availability, blind spots, and falsification prompts. Optional API key after the free tier.',
       bgptApiKey: 'API key',
-      bgptApiKeyTip: 'Optional. Leave blank for the free tier (first 50 results).',
+      bgptApiKeyTip:
+        'Optional. Leave blank for the free tier (first 50 results).',
       bgptDaysBack: 'Days back',
       bgptDaysBackTip: 'Optional recency filter (e.g. 365 for the last year).',
       email: 'Email',

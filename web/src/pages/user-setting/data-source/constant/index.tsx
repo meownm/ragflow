@@ -2,7 +2,7 @@ import { FormFieldConfig, FormFieldType } from '@/components/dynamic-form';
 import { IconFontFill } from '@/components/icon-font';
 import SvgIcon from '@/components/svg-icon';
 import { t, TFunction } from 'i18next';
-import { Mail, Rss } from 'lucide-react';
+import { DatabaseZap, Mail, Rss } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import BoxTokenField from '../component/box-token-field';
@@ -11,12 +11,16 @@ import GoogleDriveTokenField from '../component/google-drive-token-field';
 import { IDataSourceInfoMap } from '../interface';
 import { bitbucketConstant } from './bitbucket-constant';
 import { confluenceConstant } from './confluence-constant';
+import { evaWikiConstant } from './eva-wiki-constant';
 import { jiraConstant } from './jira-constant';
+import { openMetadataConstant } from './openmetadata-constant';
 import { S3Constant } from './s3-constant';
 import { seafileConstant } from './seafile-constant';
 
 export enum DataSourceKey {
   CONFLUENCE = 'confluence',
+  EVA_WIKI = 'eva_wiki',
+  OPENMETADATA = 'openmetadata',
   NOTION = 'notion',
   GOOGLE_DRIVE = 'google_drive',
   GMAIL = 'gmail',
@@ -78,6 +82,12 @@ export const DataSourceFeatureVisibilityMap: Partial<
     syncDeletedFiles: true,
   },
   [DataSourceKey.CONFLUENCE]: {
+    syncDeletedFiles: true,
+  },
+  [DataSourceKey.EVA_WIKI]: {
+    syncDeletedFiles: true,
+  },
+  [DataSourceKey.OPENMETADATA]: {
     syncDeletedFiles: true,
   },
   [DataSourceKey.BOX]: {
@@ -220,6 +230,16 @@ export const generateDataSourceInfo = (t: TFunction) => {
       name: 'Confluence',
       description: t(`setting.${DataSourceKey.CONFLUENCE}Description`),
       icon: <SvgIcon name={'data-source/confluence'} width={38} />,
+    },
+    [DataSourceKey.EVA_WIKI]: {
+      name: 'EVA Wiki',
+      description: t(`setting.${DataSourceKey.EVA_WIKI}Description`),
+      icon: <SvgIcon name={'data-source/eva-wiki'} width={38} />,
+    },
+    [DataSourceKey.OPENMETADATA]: {
+      name: 'OpenMetadata',
+      description: t(`setting.${DataSourceKey.OPENMETADATA}Description`),
+      icon: <DatabaseZap className="text-text-primary" size={24} />,
     },
     [DataSourceKey.GOOGLE_DRIVE]: {
       name: 'Google Drive',
@@ -853,6 +873,8 @@ export const DataSourceFormFields = {
   ],
 
   [DataSourceKey.CONFLUENCE]: confluenceConstant(t),
+  [DataSourceKey.EVA_WIKI]: evaWikiConstant,
+  [DataSourceKey.OPENMETADATA]: openMetadataConstant,
   [DataSourceKey.GOOGLE_DRIVE]: [
     {
       label: 'Primary Admin Email',
@@ -2009,6 +2031,47 @@ export const DataSourceFormDefaultValues = {
       index_mode: 'everything',
     },
   },
+  [DataSourceKey.EVA_WIKI]: {
+    name: '',
+    source: DataSourceKey.EVA_WIKI,
+    config: {
+      api_base_url: '',
+      web_base_url: '',
+      project_id: '',
+      include_attachments: true,
+      include_archived: false,
+      verify_ssl: true,
+      batch_size: 2,
+      attachment_size_limit: 10485760,
+      page_size_limit: 26214400,
+      retry_count: 3,
+      credentials: {
+        eva_api_token: '',
+      },
+    },
+  },
+  [DataSourceKey.OPENMETADATA]: {
+    name: '',
+    source: DataSourceKey.OPENMETADATA,
+    config: {
+      base_url: 'http://host.docker.internal:8585',
+      public_url: 'http://127.0.0.1:8585',
+      include_columns: true,
+      services: [],
+      domains: [],
+      tags: [],
+      batch_size: 20,
+      max_entities: 5000,
+      timeout_seconds: 12,
+      retry_count: 2,
+      sync_deleted_files: true,
+      credentials: {
+        openmetadata_username: '',
+        openmetadata_password: '',
+        openmetadata_jwt_token: '',
+      },
+    },
+  },
   [DataSourceKey.GOOGLE_DRIVE]: {
     name: '',
     source: DataSourceKey.GOOGLE_DRIVE,
@@ -2438,8 +2501,9 @@ export const getDataSourceFieldsWithExtras = (
     return [];
   }
 
-  const sourceFields =
-    DataSourceFormFields[source as keyof typeof DataSourceFormFields] || [];
+  const sourceFields = (DataSourceFormFields[
+    source as keyof typeof DataSourceFormFields
+  ] || []) as FormFieldConfig[];
   const extraFields = getCommonExtraFields(source);
 
   if (source !== DataSourceKey.JIRA) {

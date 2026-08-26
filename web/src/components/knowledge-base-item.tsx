@@ -124,11 +124,7 @@ export function KnowledgeBaseFormField({
           options: knowledgeOptions,
         },
         ...nextOptions.map((x) => {
-          const groupLabel = (('label' in x
-            ? x.label
-            : 'title' in x
-              ? x.title
-              : '') ?? '') as ReactNode;
+          const groupLabel = (x.label ?? '') as ReactNode;
 
           return {
             ...x,

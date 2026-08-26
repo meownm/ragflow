@@ -4,13 +4,10 @@ jest.mock('react-i18next', () => ({
 
 import { act, renderHook } from '@testing-library/react';
 import { MetadataType, metadataValueTypeEnum } from '../../constant';
-import { IManageValuesProps, IMetaDataTableData } from '../../interface';
 import { useManageValues } from '../use-manage-values-modal';
 
-function makeProps(
-  overrides: Partial<IManageValuesProps> = {},
-): IManageValuesProps {
-  const data: IMetaDataTableData = {
+function makeProps(overrides: Record<string, unknown> = {}) {
+  const data = {
     field: '',
     description: '',
     values: [''],
@@ -34,7 +31,7 @@ function makeProps(
     addUpdateValue: jest.fn(),
     addDeleteValue: jest.fn(),
     ...overrides,
-  } as IManageValuesProps;
+  } as any;
 }
 
 describe('useManageValues - add new metadata', () => {

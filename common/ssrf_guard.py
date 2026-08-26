@@ -93,10 +93,23 @@ def pin_dns_global(hostname: str, ip: str):
 
 _DEFAULT_ALLOWED_SCHEMES: frozenset[str] = frozenset({"http", "https"})
 _ALLOW_ANY_HOST_ENV = "ALLOW_ANY_HOST"
+_ALLOWED_PRIVATE_DB_HOSTS_ENV = "SSRF_ALLOWED_PRIVATE_DB_HOSTS"
 
 
 def _allow_any_host() -> bool:
     return os.environ.get(_ALLOW_ANY_HOST_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _normalize_hostname(hostname: str) -> str:
+    return hostname.strip().rstrip(".").casefold()
+
+
+def _allowed_private_db_hosts() -> frozenset[str]:
+    return frozenset(_normalize_hostname(hostname) for hostname in os.environ.get(_ALLOWED_PRIVATE_DB_HOSTS_ENV, "").split(",") if hostname.strip())
+
+
+def _allow_private_db_host(hostname: str) -> bool:
+    return _normalize_hostname(hostname) in _allowed_private_db_hosts()
 
 
 def _effective_ip(
@@ -194,7 +207,9 @@ def assert_host_is_safe(host: str) -> str:
     for callers that connect via database drivers or other non-HTTP protocols
     where there is no URL to parse.
 
-    Returns the first validated public IP string so the caller can pin it if needed.
+    Returns the first validated IP string so the caller can pin it if needed.
+    Private addresses are accepted only when *host* exactly matches an entry in
+    ``SSRF_ALLOWED_PRIVATE_DB_HOSTS``; URL validation remains unaffected.
     """
     host = host.strip()
     if not host:
@@ -207,6 +222,13 @@ def assert_host_is_safe(host: str) -> str:
         )
         return host
 
+    allow_private_db_host = _allow_private_db_host(host)
+    if allow_private_db_host:
+        logger.info(
+            "SSRF guard allowing explicitly configured private database host: host=%r",
+            host,
+        )
+
     try:
         addr_infos = socket.getaddrinfo(host, None)
     except socket.gaierror as exc:
@@ -217,7 +239,7 @@ def assert_host_is_safe(host: str) -> str:
     for _family, _type, _proto, _canonname, sockaddr in addr_infos:
         raw_ip = ipaddress.ip_address(sockaddr[0])
         eff_ip = _effective_ip(raw_ip)
-        if not eff_ip.is_global:
+        if not allow_private_db_host and not eff_ip.is_global:
             logger.warning(
                 "SSRF guard blocked host: host=%r resolved to non-public address=%s",
                 host,

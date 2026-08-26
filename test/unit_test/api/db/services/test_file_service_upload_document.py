@@ -18,6 +18,7 @@ import socket
 import sys
 import types
 import warnings
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -65,7 +66,9 @@ def _install_xgboost_stub_if_unavailable():
 _install_cv2_stub_if_unavailable()
 _install_xgboost_stub_if_unavailable()
 
+from api.db.services import connector_service as connector_service_module  # noqa: E402
 from api.db.services import file_service as file_service_module  # noqa: E402
+from api.db.services.connector_service import SyncLogsService  # noqa: E402
 from api.db.services.file_service import FileService  # noqa: E402
 
 
@@ -121,6 +124,63 @@ def test_upload_document_skips_cross_kb_document_id_collision(monkeypatch):
     assert len(err) == 1
     assert err[0].startswith("collision.txt: ")
     assert "Existing document id collision with another knowledge base; skipping update." in err[0]
+
+
+@pytest.mark.p2
+def test_connector_metadata_is_matched_by_stable_document_id(monkeypatch):
+    kb = SimpleNamespace(id="kb-1")
+    docs = [
+        {
+            "id": "doc-a",
+            "semantic_identifier": "Duplicate",
+            "extension": ".txt",
+            "blob": b"a",
+            "metadata": {"link": "https://eva/a"},
+        },
+        {
+            "id": "doc-b",
+            "semantic_identifier": "Duplicate",
+            "extension": ".txt",
+            "blob": b"b",
+            "metadata": {"link": "https://eva/b"},
+        },
+    ]
+    uploaded = [
+        ({"id": "doc-a", "name": "Duplicate.txt"}, b"a"),
+        ({"id": "doc-b", "name": "Duplicate(1).txt"}, b"b"),
+    ]
+    metadata_updates = []
+
+    monkeypatch.setattr(
+        FileService,
+        "upload_document",
+        classmethod(lambda cls, *_args, **_kwargs: ([], uploaded)),
+    )
+    monkeypatch.setattr(
+        connector_service_module.DocMetadataService,
+        "update_document_metadata",
+        lambda doc_id, metadata: metadata_updates.append((doc_id, metadata)),
+    )
+
+    errors, doc_ids = SyncLogsService.duplicate_and_parse(kb, docs, "tenant-1", "eva_wiki/connector-1", auto_parse=False)
+
+    assert errors == []
+    assert doc_ids == ["doc-a", "doc-b"]
+    assert metadata_updates == [
+        ("doc-a", {"link": "https://eva/a"}),
+        ("doc-b", {"link": "https://eva/b"}),
+    ]
+
+
+@pytest.mark.p2
+def test_sync_log_cursor_comparison_is_monotonic_for_serialized_timestamps():
+    older = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    newer = datetime(2026, 2, 1, tzinfo=timezone.utc)
+
+    assert SyncLogsService._later_cursor(None, older) == older
+    assert SyncLogsService._later_cursor(older, None) == older
+    assert SyncLogsService._later_cursor(older, newer) == newer
+    assert SyncLogsService._later_cursor(newer, older) == newer
 
 
 # ---------------------------------------------------------------------------

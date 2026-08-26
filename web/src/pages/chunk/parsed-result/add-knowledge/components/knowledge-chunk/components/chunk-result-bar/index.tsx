@@ -13,13 +13,14 @@ import { LucideFilter, Plus } from 'lucide-react';
 import { useState } from 'react';
 import { ChunkTextMode } from '../../constant';
 interface ChunkResultBarProps {
-  changeChunkTextMode: React.Dispatch<React.SetStateAction<string | number>>;
+  className?: string;
+  changeChunkTextMode: (mode: ChunkTextMode) => void;
   available: number | undefined;
   selectAllChunk: (value: boolean) => void;
   handleSetAvailable: (value: number | undefined) => void;
-  createChunk: () => void;
-  handleInputChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  searchString: string;
+  createChunk: (id?: string) => void;
+  handleInputChange?: React.ChangeEventHandler<HTMLInputElement>;
+  searchString?: string;
 }
 export default function ChunkResultBar({
   className,
@@ -58,7 +59,7 @@ export default function ChunkResultBar({
 
   const changeTextSelectValue = (value: string | number) => {
     setTextSelectValue(value);
-    changeChunkTextMode(value);
+    changeChunkTextMode(value as ChunkTextMode);
   };
   return (
     <div className={cn('flex justify-end gap-4', className)}>

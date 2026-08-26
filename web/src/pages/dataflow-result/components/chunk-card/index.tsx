@@ -22,7 +22,7 @@ interface IProps {
   editChunk: (chunkId: string) => void;
   handleCheckboxClick: (chunkId: string, checked: boolean) => void;
   selected: boolean;
-  clickChunkCard: (chunkId: string) => void;
+  clickChunkCard: (chunk: IChunk) => void;
   textMode: ChunkTextMode;
 }
 
@@ -53,7 +53,7 @@ const ChunkCard = ({
   };
 
   const handleContentClick = () => {
-    clickChunkCard(item.chunk_id);
+    clickChunkCard(item);
   };
 
   useEffect(() => {

@@ -37,6 +37,7 @@ from typing import Any
 
 from flask import json
 
+from api.db import TenantPermission
 from api.utils.common import hash128
 from api.db.services.connector_service import ConnectorService, SyncLogsService
 from api.db.services.document_service import DocumentService
@@ -48,6 +49,8 @@ from common.data_source.config import INDEX_BATCH_SIZE
 from common.data_source import (
     BlobStorageConnector,
     RSSConnector,
+    EvaWikiConnector,
+    OpenMetadataConnector,
     NotionConnector,
     DiscordConnector,
     GoogleDriveConnector,
@@ -166,6 +169,7 @@ class SyncBase:
             except asyncio.TimeoutError:
                 msg = f"Task timeout after {task['timeout_secs']} seconds"
                 SyncLogsService.update_by_id(task["id"], {"status": TaskStatus.FAIL, "error_msg": msg})
+                self._schedule_failed_task(task)
                 return
 
             except Exception as ex:
@@ -176,6 +180,7 @@ class SyncBase:
                     ]
                 )
                 SyncLogsService.update_by_id(task["id"], {"status": TaskStatus.FAIL, "full_exception_trace": msg, "error_msg": str(ex)})
+                self._schedule_failed_task(task)
                 return
 
         task_type = task.get("task_type", ConnectorTaskType.SYNC)
@@ -192,6 +197,18 @@ class SyncBase:
                 task["kb_id"],
                 task_type=ConnectorTaskType.PRUNE,
             )
+
+    def _schedule_failed_task(self, task: dict) -> None:
+        task_type = task.get("task_type", ConnectorTaskType.SYNC)
+        ConnectorService.update_by_id(task["connector_id"], {"status": TaskStatus.SCHEDULE})
+        SyncLogsService.schedule(
+            task["connector_id"],
+            task["kb_id"],
+            task.get("poll_range_start"),
+            reindex=task.get("reindex") == "1",
+            total_docs_indexed=task.get("total_docs_indexed", 0),
+            task_type=task_type,
+        )
 
     async def _run_task_logic(self, task: dict):
         task_type = task.get("task_type", ConnectorTaskType.SYNC)
@@ -228,7 +245,6 @@ class SyncBase:
                 continue
 
             max_update = max(doc.doc_updated_at for doc in document_batch)
-            next_update = max(next_update, max_update)
 
             docs = []
             for doc in document_batch:
@@ -255,13 +271,16 @@ class SyncBase:
                 err, dids = SyncLogsService.duplicate_and_parse(kb, docs, task["tenant_id"], f"{self.SOURCE_NAME}/{task['connector_id']}", task["auto_parse"])
                 if err:
                     had_parse_errors = True
-                SyncLogsService.increase_docs(task["id"], max_update, len(docs), "\n".join(err), len(err))
+                    failed_docs += len(err)
+                SyncLogsService.increase_docs(task["id"], max_update, len(dids), "\n".join(err), len(err))
                 changed_doc_ids = set(dids)
                 updated_in_batch = len(changed_doc_ids & existing_doc_ids)
                 added_in_batch = len(changed_doc_ids) - updated_in_batch
                 added_docs += added_in_batch
                 updated_docs += updated_in_batch
                 existing_doc_ids.update(changed_doc_ids)
+                if not err:
+                    next_update = max(next_update, max_update)
 
             except Exception as batch_ex:
                 msg = str(batch_ex)
@@ -285,7 +304,10 @@ class SyncBase:
             summary = f"{summary}, skipped={failed_docs}"
         logging.info(summary)
 
-        if isinstance(self, _CursorPersistingSyncBase) and failed_docs == 0 and not had_parse_errors:
+        if failed_docs > 0 or had_parse_errors:
+            raise RuntimeError(summary)
+
+        if isinstance(self, _CursorPersistingSyncBase):
             self.connector.persist_sync_state()
         SyncLogsService.done(task["id"], task["connector_id"])
         task["poll_range_start"] = next_update
@@ -297,23 +319,16 @@ class SyncBase:
 
         await self._initialize_for_prune(task)
 
-        file_list = self._collect_prune_snapshot(task)
-        if file_list is None:
-            logging.warning(
-                "%s prune snapshot retrieval failed (connector_id=%s, kb_id=%s)",
-                self.SOURCE_NAME,
-                task["connector_id"],
-                task["kb_id"],
-            )
-            SyncLogsService.done(task["id"], task["connector_id"])
-            return
+        file_batches = self._collect_prune_snapshot(task)
+        if file_batches is None:
+            raise RuntimeError(f"{self.SOURCE_NAME} does not provide a prune snapshot")
 
         removed_docs, cleanup_errors = ConnectorService.cleanup_stale_documents_for_task(
             task["id"],
             task["connector_id"],
             task["kb_id"],
             task["tenant_id"],
-            file_list,
+            file_batches,
         )
         logging.info(
             "%s prune summary: deleted=%s, errors=%s",
@@ -321,6 +336,8 @@ class SyncBase:
             removed_docs,
             len(cleanup_errors),
         )
+        if cleanup_errors:
+            raise RuntimeError(f"{self.SOURCE_NAME} prune failed for {len(cleanup_errors)} document batch(es)")
         SyncLogsService.done(task["id"], task["connector_id"])
 
     async def _generate(self, task: dict):
@@ -341,28 +358,11 @@ class SyncBase:
         if not hasattr(self.connector, "retrieve_all_slim_docs_perm_sync"):
             return None
 
-        file_list = []
         snapshot_kwargs = self._get_prune_snapshot_kwargs(task)
-        try:
-            for slim_batch in self.connector.retrieve_all_slim_docs_perm_sync(**snapshot_kwargs):
-                file_list.extend(slim_batch)
-        except TypeError:
-            for slim_batch in self.connector.retrieve_all_slim_docs_perm_sync():
-                file_list.extend(slim_batch)
-        except Exception:
-            logging.exception(
-                "%s prune snapshot failed (connector_id=%s, kb_id=%s)",
-                self.SOURCE_NAME,
-                task["connector_id"],
-                task["kb_id"],
-            )
-            return None
-        return file_list
+        return self.connector.retrieve_all_slim_docs_perm_sync(**snapshot_kwargs)
 
 
-class _BlobLikeBase(SyncBase):
-    DEFAULT_BUCKET_TYPE: str = "s3"
-
+class _FingerprintSyncBase(SyncBase):
     def _fingerprint_filtered_generator(self, task: dict):
         """Generator that uses list_keys() + get_value() to skip unchanged objects.
 
@@ -436,6 +436,10 @@ class _BlobLikeBase(SyncBase):
             logging.warning(log_msg, *log_args)
         else:
             logging.info(log_msg, *log_args)
+
+
+class _BlobLikeBase(_FingerprintSyncBase):
+    DEFAULT_BUCKET_TYPE: str = "s3"
 
     async def _generate(self, task: dict):
         bucket_type = self.conf.get("bucket_type", self.DEFAULT_BUCKET_TYPE)
@@ -598,6 +602,90 @@ class Confluence(SyncBase):
 
         self.log_connection("Confluence", self.conf["wiki_base"], task)
         return wrapper()
+
+
+class EvaWiki(SyncBase):
+    SOURCE_NAME: str = FileSource.EVA_WIKI
+
+    async def _generate(self, task: dict):
+        found, kb = KnowledgebaseService.get_by_id(task["kb_id"])
+        if not found:
+            raise ConnectorValidationError("EVA Wiki target knowledge base was not found")
+        if kb.permission != TenantPermission.ME.value:
+            raise ConnectorValidationError("EVA Wiki connectors require a private knowledge base because EVA document ACLs cannot be enforced by RAGFlow")
+
+        self.connector = EvaWikiConnector(
+            api_base_url=self.conf["api_base_url"],
+            web_base_url=self.conf.get("web_base_url"),
+            project_id=self.conf.get("project_id"),
+            include_attachments=self.conf.get("include_attachments", True),
+            include_archived=self.conf.get("include_archived", False),
+            verify_ssl=self.conf.get("verify_ssl", True),
+            batch_size=self.conf.get("batch_size", INDEX_BATCH_SIZE),
+            attachment_size_limit=self.conf.get("attachment_size_limit", 10 * 1024 * 1024),
+            page_size_limit=self.conf.get("page_size_limit", EvaWikiConnector.DEFAULT_PAGE_SIZE_LIMIT),
+            retry_count=self.conf.get("retry_count", EvaWikiConnector.DEFAULT_RETRY_COUNT),
+        )
+        self.connector.load_credentials(self.conf.get("credentials", {}))
+        self.connector.validate_connector_settings()
+
+        poll_start = task.get("poll_range_start")
+        if task.get("reindex") == "1" or poll_start is None:
+            document_generator = self.connector.load_from_state()
+            begin_info = "totally"
+        else:
+            document_generator = self.connector.poll_source(
+                poll_start.timestamp(),
+                datetime.now(timezone.utc).timestamp(),
+            )
+            begin_info = f"from {poll_start}"
+
+        logging.info(
+            "Connect to EVA Wiki: %s project=%s %s",
+            self.conf["api_base_url"],
+            self.conf["project_id"],
+            begin_info,
+        )
+        return document_generator
+
+
+class OpenMetadata(_FingerprintSyncBase):
+    SOURCE_NAME: str = FileSource.OPENMETADATA
+
+    def _build_connector(self) -> OpenMetadataConnector:
+        connector = OpenMetadataConnector(
+            base_url=self.conf.get("base_url", ""),
+            public_url=self.conf.get("public_url") or None,
+            include_columns=self.conf.get("include_columns", True),
+            services=self.conf.get("services"),
+            domains=self.conf.get("domains"),
+            tags=self.conf.get("tags"),
+            batch_size=self.conf.get("batch_size", INDEX_BATCH_SIZE),
+            max_entities=self.conf.get("max_entities", OpenMetadataConnector.DEFAULT_MAX_ENTITIES),
+            timeout_seconds=self.conf.get("timeout_seconds", OpenMetadataConnector.DEFAULT_TIMEOUT_SECONDS),
+            retry_count=self.conf.get("retry_count", OpenMetadataConnector.DEFAULT_RETRY_COUNT),
+        )
+        connector.load_credentials(self.conf.get("credentials") or {})
+        return connector
+
+    async def _generate(self, task: dict):
+        found, kb = KnowledgebaseService.get_by_id(task["kb_id"])
+        if not found:
+            raise ConnectorValidationError("OpenMetadata target knowledge base was not found")
+        if kb.permission != TenantPermission.ME.value:
+            raise ConnectorValidationError("OpenMetadata connectors require a private knowledge base because entity ACLs cannot be enforced by RAGFlow")
+
+        self.connector = self._build_connector()
+        self.connector.validate_connector_settings()
+        use_fingerprint_path = task.get("reindex") != "1"
+        generator = self._fingerprint_filtered_generator(task) if use_fingerprint_path else self.connector.load_from_state()
+        self.log_connection(
+            "OpenMetadata",
+            self.conf.get("base_url", ""),
+            task,
+            "fingerprint-bypass" if use_fingerprint_path else "full reindex",
+        )
+        return generator
 
 
 class Notion(SyncBase):
@@ -2145,6 +2233,8 @@ func_factory = {
     FileSource.NOTION: Notion,
     FileSource.DISCORD: Discord,
     FileSource.CONFLUENCE: Confluence,
+    FileSource.EVA_WIKI: EvaWiki,
+    FileSource.OPENMETADATA: OpenMetadata,
     FileSource.GMAIL: Gmail,
     FileSource.GOOGLE_DRIVE: GoogleDrive,
     FileSource.JIRA: Jira,

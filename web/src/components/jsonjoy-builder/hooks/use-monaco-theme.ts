@@ -165,7 +165,7 @@ export function useMonacoTheme() {
     schema?: JSONSchema,
   ) => {
     // Create a new diagnostics options object
-    const diagnosticsOptions: Monaco.languages.json.DiagnosticsOptions = {
+    const diagnosticsOptions = {
       validate: true,
       allowComments: false,
       schemaValidation: 'error',
@@ -194,9 +194,14 @@ export function useMonacoTheme() {
           ],
     };
 
-    monaco.languages.json.jsonDefaults.setDiagnosticsOptions(
-      diagnosticsOptions,
-    );
+    const jsonLanguage = monaco.languages as typeof monaco.languages & {
+      json: {
+        jsonDefaults: {
+          setDiagnosticsOptions: (options: typeof diagnosticsOptions) => void;
+        };
+      };
+    };
+    jsonLanguage.json.jsonDefaults.setDiagnosticsOptions(diagnosticsOptions);
   };
 
   return {

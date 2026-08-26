@@ -38,7 +38,7 @@ export function useSelectedIds<T extends Array<{ id: string }>>(
     if (isIndexBased) {
       // Legacy index-based selection
       return list
-        .filter((x, idx) => selectionKeys.some((y) => Number(y) === idx))
+        .filter((_item, idx) => selectionKeys.some((y) => Number(y) === idx))
         .map((x) => x.id);
     } else {
       // ID-based selection (when getRowId is used)

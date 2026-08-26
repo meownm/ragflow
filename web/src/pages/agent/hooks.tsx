@@ -173,14 +173,18 @@ export const useValidateConnection = () => {
       //   (x) => x.source === connection.source && x.target === connection.target,
       // );
 
-      const ret =
-        !isSelfConnected &&
+      const restrictions =
         RestrictedUpstreamMap[
           getOperatorTypeFromId(connection.source) as Operator
-        ]?.every((x) => x !== getOperatorTypeFromId(connection.target)) &&
+        ] ?? [];
+      return (
+        !isSelfConnected &&
+        restrictions.every(
+          (operator) => operator !== getOperatorTypeFromId(connection.target),
+        ) &&
         isSameNodeChild(connection) &&
-        hasCanvasCycle(connection);
-      return ret;
+        hasCanvasCycle(connection)
+      );
     },
     [getOperatorTypeFromId, hasCanvasCycle, isSameNodeChild],
   );

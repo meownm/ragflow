@@ -2,7 +2,6 @@
 
 import { cn } from '@/lib/utils';
 import { TimelineNodeType } from '@/pages/dataflow-result/constant';
-import { parseColorToRGB } from '@/utils/common-util';
 import { Slot } from '@radix-ui/react-slot';
 import * as React from 'react';
 
@@ -260,7 +259,6 @@ const CustomTimeline = ({
 }: CustomTimelineProps) => {
   const [internalActiveStep, setInternalActiveStep] =
     React.useState(defaultValue);
-  // const _lineColor = `rgb(${parseColorToRGB(lineColor)})`;
   const currentActiveStep = activeStep ?? internalActiveStep;
 
   const handleStepChange = (step: number, id: string | number) => {
@@ -269,7 +267,6 @@ const CustomTimeline = ({
     }
     onStepChange?.(step, id);
   };
-  const [r, g, b] = parseColorToRGB(indicatorColor);
   return (
     <Timeline
       value={currentActiveStep}
@@ -315,7 +312,7 @@ const CustomTimeline = ({
               )}
               style={{
                 borderStyle: lineStyle,
-                // borderColor: isActive ? _activeStyle.lineColor || _lineColor : _lineColor,
+                borderColor: _activeStyle.lineColor || lineColor,
                 backgroundColor: 'transparent',
                 width:
                   orientation === 'horizontal'

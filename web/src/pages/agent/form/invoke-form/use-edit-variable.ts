@@ -19,7 +19,7 @@ export const useEditVariableRecord = ({
   });
 
   const otherThanCurrentQuery = useMemo(() => {
-    return variables.filter((item, idx) => idx !== index);
+    return variables.filter((_item, idx) => idx !== index);
   }, [index, variables]);
 
   const handleEditRecord = useCallback(
@@ -28,7 +28,9 @@ export const useEditVariableRecord = ({
 
       const nextVaribales =
         index > -1
-          ? variables.toSpliced(index, 1, record)
+          ? variables.map((item, itemIndex) =>
+              itemIndex === index ? record : item,
+            )
           : [...variables, record];
 
       form.setValue('variables', nextVaribales);
@@ -50,7 +52,7 @@ export const useEditVariableRecord = ({
   const handleDeleteRecord = useCallback(
     (idx: number) => {
       const variables = form?.getValues('variables') || [];
-      const nextVariables = variables.filter((item, index) => index !== idx);
+      const nextVariables = variables.filter((_item, index) => index !== idx);
 
       form.setValue('variables', nextVariables);
     },

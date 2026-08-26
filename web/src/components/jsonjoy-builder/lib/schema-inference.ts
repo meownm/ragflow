@@ -126,7 +126,9 @@ function detectSemanticFormatsInArrayItems(
       /coordinates?|coords?|latLon|lonLat|point/i.test(key) &&
       currentSchema.type === 'array'
     ) {
-      const itemsSchema = asObjectSchema(currentSchema.items);
+      const itemsSchema = currentSchema.items
+        ? asObjectSchema(currentSchema.items)
+        : undefined;
       if (itemsSchema?.type === 'number' || itemsSchema?.type === 'integer') {
         let isValidCoordArray = true;
         let coordLength: number | null = null;
@@ -217,8 +219,8 @@ function processArrayOfObjects(
   }
 
   const requiredProps = Object.entries(propertyCounts)
-    .filter(([_, count]) => count === totalItems)
-    .map(([key, _]) => key);
+    .filter(([, count]) => count === totalItems)
+    .map(([key]) => key);
 
   // Apply Enum Detection
   mergedProperties = detectEnumsInArrayItems(

@@ -1,0 +1,113 @@
+import { FormFieldConfig, FormFieldType } from '@/components/dynamic-form';
+
+export const openMetadataConstant: FormFieldConfig[] = [
+  {
+    label: 'OpenMetadata API Base URL',
+    name: 'config.base_url',
+    type: FormFieldType.Text,
+    required: true,
+    placeholder: 'http://host.docker.internal:8585',
+    tooltip: 'Server-side URL reachable from the RAGFlow container.',
+  },
+  {
+    label: 'OpenMetadata Public URL',
+    name: 'config.public_url',
+    type: FormFieldType.Text,
+    required: false,
+    placeholder: 'http://127.0.0.1:8585',
+    tooltip: 'Browser URL used in citations. Defaults to the API URL.',
+  },
+  {
+    label: 'Username',
+    name: 'config.credentials.openmetadata_username',
+    type: FormFieldType.Text,
+    required: false,
+    placeholder: 'admin@example.com',
+    tooltip: 'Use username and password, or provide a JWT token below.',
+  },
+  {
+    label: 'Password',
+    name: 'config.credentials.openmetadata_password',
+    type: FormFieldType.Password,
+    required: false,
+    placeholder: 'Leave blank when editing to keep the saved password',
+  },
+  {
+    label: 'JWT Token',
+    name: 'config.credentials.openmetadata_jwt_token',
+    type: FormFieldType.Password,
+    required: false,
+    placeholder: 'Alternative to username and password',
+  },
+  {
+    label: 'Services',
+    name: 'config.services',
+    type: FormFieldType.Tag,
+    required: false,
+    tooltip: 'Optional exact service names. Empty means all database services.',
+  },
+  {
+    label: 'Domains',
+    name: 'config.domains',
+    type: FormFieldType.Tag,
+    required: false,
+    tooltip: 'Optional exact domain names. The Dataset must remain private.',
+  },
+  {
+    label: 'Tags',
+    name: 'config.tags',
+    type: FormFieldType.Tag,
+    required: false,
+    tooltip: 'Optional exact OpenMetadata tags.',
+  },
+  {
+    label: 'Include Columns',
+    name: 'config.include_columns',
+    type: FormFieldType.Checkbox,
+    required: false,
+  },
+  {
+    label: 'Batch Size',
+    name: 'config.batch_size',
+    type: FormFieldType.Number,
+    required: false,
+    validation: {
+      min: 1,
+      max: 1000,
+      message: 'Batch Size must be between 1 and 1000',
+    },
+  },
+  {
+    label: 'Maximum Tables',
+    name: 'config.max_entities',
+    type: FormFieldType.Number,
+    required: false,
+    validation: {
+      min: 1,
+      max: 100000,
+      message: 'Maximum Tables must be between 1 and 100000',
+    },
+  },
+  {
+    label: 'Request Timeout (seconds)',
+    name: 'config.timeout_seconds',
+    type: FormFieldType.Number,
+    required: false,
+    validation: {
+      min: 1,
+      max: 120,
+      message: 'Timeout must be between 1 and 120 seconds',
+    },
+  },
+  {
+    label: 'Retry Count',
+    name: 'config.retry_count',
+    type: FormFieldType.Number,
+    required: false,
+    validation: {
+      min: 0,
+      max: 10,
+      message: 'Retry Count must be between 0 and 10',
+    },
+  },
+];

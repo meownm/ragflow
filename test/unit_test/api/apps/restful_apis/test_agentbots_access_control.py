@@ -16,11 +16,11 @@
 """Regression tests for cross-tenant access control on the SDK agent-bot routes
 (`api/apps/restful_apis/bot_api.py`).
 
-`POST /agentbots/<agent_id>/completions` and `GET /agentbots/<agent_id>/inputs`
-authenticate with a beta API token (which only yields the caller's tenant_id)
-and then load/run the agent named in the URL. They must reject an `agent_id`
-the caller's tenant cannot access (`UserCanvasService.accessible`) instead of
-loading or executing another tenant's agent.
+The completion, input, and upload routes authenticate with a beta API token
+(which only yields the caller's tenant_id) and then access the agent named in
+the URL. They must reject an `agent_id` the caller's tenant cannot access
+(`UserCanvasService.accessible`) instead of loading, executing, or uploading
+files through another tenant's agent.
 """
 
 import asyncio
@@ -70,8 +70,13 @@ def _load_bot_api(monkeypatch, *, accessible, calls):
 
         return _gen()
 
+    async def _upload_agent_files(tenant_id, file_objs, url=None):
+        calls["upload"] = (tenant_id, [file.filename for file in file_objs], url)
+        return [{"filename": file.filename} for file in file_objs]
+
     _stub(monkeypatch, "quart", Response=lambda *a, **k: SimpleNamespace(headers=SimpleNamespace(add_header=lambda *aa, **kk: None)), request=SimpleNamespace())
     _stub(monkeypatch, "api.apps", AUTH_BETA="beta", login_required=lambda *_a, **_k: lambda func: func)
+    _stub(monkeypatch, "api.apps.services.agent_file_service", upload_agent_files=_upload_agent_files)
     _stub(monkeypatch, "agent.canvas", Canvas=lambda *a, **k: SimpleNamespace(get_component_input_form=lambda _n: {}, get_prologue=lambda: "", get_mode=lambda: "agent"))
     _stub(monkeypatch, "api.db.db_models", APIToken=SimpleNamespace(query=lambda **_k: [SimpleNamespace(tenant_id="attacker-tenant")]))
     _stub(monkeypatch, "api.db.services.api_service", API4ConversationService=SimpleNamespace())
@@ -172,3 +177,68 @@ class TestAgentBotAccessControl:
 
         assert calls.get("completion") is True
         assert result["code"] == 0
+
+    @pytest.mark.p1
+    def test_upload_denied_for_inaccessible_agent(self, monkeypatch):
+        calls = {}
+        module = _load_bot_api(monkeypatch, accessible=False, calls=calls)
+        module.request = SimpleNamespace(
+            args={},
+            files=_AwaitableFiles([SimpleNamespace(filename="secret.txt")]),
+        )
+
+        result = asyncio.run(
+            module.upload_agent_bot_file(
+                agent_id="victim-agent",
+                tenant_id="attacker-tenant",
+            )
+        )
+
+        assert result == {"code": 102, "message": "Can't find agent by ID: victim-agent", "data": None}
+        assert "upload" not in calls
+
+    @pytest.mark.p1
+    def test_upload_allowed_for_accessible_agent(self, monkeypatch):
+        calls = {}
+        module = _load_bot_api(monkeypatch, accessible=True, calls=calls)
+        module.request = SimpleNamespace(
+            args={"url": "https://example.com/source.txt"},
+            files=_AwaitableFiles([SimpleNamespace(filename="source.txt")]),
+        )
+
+        result = asyncio.run(
+            module.upload_agent_bot_file(
+                agent_id="own-agent",
+                tenant_id="attacker-tenant",
+            )
+        )
+
+        assert result["code"] == 0
+        assert result["data"] == [{"filename": "source.txt"}]
+        assert calls["upload"] == (
+            "attacker-tenant",
+            ["source.txt"],
+            "https://example.com/source.txt",
+        )
+
+
+class _RequestFiles:
+    def __init__(self, files):
+        self._files = files
+
+    def get(self, name):
+        return self._files[0] if name == "file" and self._files else None
+
+    def getlist(self, name):
+        return list(self._files) if name == "file" else []
+
+
+class _AwaitableFiles:
+    def __init__(self, files):
+        self._files = _RequestFiles(files)
+
+    def __await__(self):
+        async def _resolve():
+            return self._files
+
+        return _resolve().__await__()

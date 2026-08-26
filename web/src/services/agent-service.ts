@@ -88,6 +88,11 @@ const methods = {
     url: (config: { agentId: string }) => api.uploadAgentFile(config.agentId),
     method: 'post',
   },
+  uploadExternalAgentFile: {
+    url: (config: { agentId: string }) =>
+      api.uploadExternalAgentFile(config.agentId),
+    method: 'post',
+  },
   trace: {
     url: (config: { agentId: string; messageId: string }) =>
       trace(config.agentId, config.messageId),
@@ -219,6 +224,13 @@ export const deleteAgentSession = (canvasId: string, sessionId: string) => {
 
 export const uploadAgentFile = (agentId: string, data: FormData) => {
   return request(api.uploadAgentFile(agentId), {
+    method: 'post',
+    data,
+  });
+};
+
+export const uploadExternalAgentFile = (agentId: string, data: FormData) => {
+  return request(api.uploadExternalAgentFile(agentId), {
     method: 'post',
     data,
   });

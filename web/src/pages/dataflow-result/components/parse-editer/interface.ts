@@ -7,7 +7,7 @@ export interface FormatPreserveEditorProps {
   initialValue: {
     key: keyof typeof parserKeyMap | 'text' | 'html';
     type: string;
-    value: Array<{ [key: string]: string }>;
+    value: any;
     params: ComponentParams;
   };
   onSave: (value: any) => void;

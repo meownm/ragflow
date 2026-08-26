@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next';
 import ChunkResultBar from './components/chunk-result-bar';
 import CheckboxSets from './components/chunk-result-bar/checkbox-sets';
 import FormatPreserEditor from './components/parse-editer';
+import { FormatPreserveEditorProps } from './components/parse-editer/interface';
 import RerunButton from './components/rerun-button';
 import { TimelineNodeType } from './constant';
 import { useChangeChunkTextMode } from './hooks';
@@ -37,7 +38,9 @@ const ParserContainer = (props: IProps) => {
   const { t } = useTranslation();
   const [selectedChunkIds, setSelectedChunkIds] = useState<string[]>([]);
   const { changeChunkTextMode, textMode } = useChangeChunkTextMode();
-  const initialValue = useMemo(() => {
+  const initialValue = useMemo<
+    FormatPreserveEditorProps['initialValue']
+  >(() => {
     const outputs = data?.value?.obj?.params?.outputs;
     const key = outputs?.output_format?.value;
     if (!outputs || !key)
@@ -45,6 +48,7 @@ const ParserContainer = (props: IProps) => {
         key: '' as 'text' | 'html' | 'json' | 'chunks',
         type: '',
         value: [],
+        params: {} as FormatPreserveEditorProps['initialValue']['params'],
       };
     const value = outputs[key as keyof typeof outputs]?.value;
     const type = outputs[key as keyof typeof outputs]?.type;

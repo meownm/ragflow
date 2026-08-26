@@ -55,9 +55,9 @@ export const useTraceGenerate = ({ open }: { open: boolean }) => {
       refetchInterval: isLoopGraphRun ? 5000 : false,
       retry: 3,
       retryDelay: 1000,
-      enabled: open,
+      enabled: open && !!id,
       queryFn: async () => {
-        const { data } = await traceIndex(id, 'graph');
+        const { data } = await traceIndex(id!, 'graph');
         return data?.data || {};
       },
     });
@@ -70,9 +70,9 @@ export const useTraceGenerate = ({ open }: { open: boolean }) => {
       refetchInterval: isLoopRaptorRun ? 5000 : false,
       retry: 3,
       retryDelay: 1000,
-      enabled: open,
+      enabled: open && !!id,
       queryFn: async () => {
-        const { data } = await traceIndex(id, 'raptor');
+        const { data } = await traceIndex(id!, 'raptor');
         return data?.data || {};
       },
     });
@@ -144,6 +144,7 @@ export const useDatasetGenerate = () => {
     mutationFn: async ({ type }: { type: GenerateType }) => {
       const indexType =
         type === GenerateType.KnowledgeGraph ? 'graph' : 'raptor';
+      if (!id) throw new Error('Dataset ID is required');
       const { data } = await runIndex(id, indexType);
       if (data.code === 0) {
         message.success(t('message.operated'));

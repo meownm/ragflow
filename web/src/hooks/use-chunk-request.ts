@@ -199,7 +199,10 @@ export const useFetchNextChunkList = (
   return {
     data,
     loading,
-    pagination,
+    pagination: {
+      ...pagination,
+      onChange: (page, pageSize) => pagination.onChange?.(page, pageSize ?? 10),
+    },
     setPagination,
     searchString,
     handleInputChange: onInputChange,

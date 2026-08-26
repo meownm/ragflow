@@ -131,6 +131,82 @@ def _patch_common_dependencies(monkeypatch):
     )
 
 
+class _FakeOpenMetadataConnector:
+    instance = None
+
+    DEFAULT_MAX_ENTITIES = 5000
+    DEFAULT_TIMEOUT_SECONDS = 12
+    DEFAULT_RETRY_COUNT = 2
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+        self.batch_size = kwargs.get("batch_size", 2)
+        self.credentials = None
+        self.validated = False
+        self.fetched = []
+        _FakeOpenMetadataConnector.instance = self
+
+    def load_credentials(self, credentials):
+        self.credentials = credentials
+
+    def validate_connector_settings(self):
+        self.validated = True
+
+    def list_keys(self):
+        yield types.SimpleNamespace(key="unchanged", fingerprint="a" * 32, deleted=False)
+        yield types.SimpleNamespace(key="changed", fingerprint="b" * 32, deleted=False)
+
+    def get_value(self, key):
+        self.fetched.append(key)
+        return _make_fake_doc(key)
+
+    def load_from_state(self):
+        return iter(([_make_fake_doc("full")],))
+
+    def retrieve_all_slim_docs_perm_sync(self, callback=None):
+        del callback
+        yield [types.SimpleNamespace(id="unchanged"), types.SimpleNamespace(id="changed")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.p2
+async def test_openmetadata_uses_fingerprint_bypass_and_requires_private_dataset(monkeypatch):
+    monkeypatch.setattr(sync_data_source, "OpenMetadataConnector", _FakeOpenMetadataConnector)
+    monkeypatch.setattr(
+        sync_data_source.KnowledgebaseService,
+        "get_by_id",
+        lambda *_args, **_kwargs: (True, types.SimpleNamespace(permission="me")),
+    )
+    monkeypatch.setattr(
+        sync_data_source.DocumentService,
+        "list_id_content_hash_map_by_kb_and_source_type",
+        lambda *_args, **_kwargs: {
+            sync_data_source.hash128("kb-1:connector-1:unchanged"): "a" * 32,
+        },
+    )
+    task = {**_make_task(), "reindex": "0", "skip_connection_log": True}
+    sync = sync_data_source.OpenMetadata(
+        {
+            "base_url": "http://omd:8585",
+            "credentials": {"openmetadata_jwt_token": "secret"},
+        }
+    )
+
+    batches = list(await sync._generate(task))
+
+    assert [[doc.id for doc in batch] for batch in batches] == [["changed"]]
+    assert _FakeOpenMetadataConnector.instance.fetched == ["changed"]
+    assert _FakeOpenMetadataConnector.instance.validated is True
+
+    monkeypatch.setattr(
+        sync_data_source.KnowledgebaseService,
+        "get_by_id",
+        lambda *_args, **_kwargs: (True, types.SimpleNamespace(permission="team")),
+    )
+    with pytest.raises(sync_data_source.ConnectorValidationError, match="private knowledge base"):
+        await sync_data_source.OpenMetadata({"base_url": "http://omd:8585"})._generate(task)
+
+
 @pytest.mark.asyncio
 @pytest.mark.p2
 async def test_run_task_logic_skips_empty_sync_batches(monkeypatch):
@@ -186,13 +262,55 @@ async def test_run_task_logic_skips_multiple_empty_sync_batches(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.p2
+async def test_failed_sync_is_rescheduled_without_advancing_cursor(monkeypatch):
+    original_cursor = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    task = {
+        **_make_task(),
+        "poll_range_start": original_cursor,
+        "timeout_secs": 30,
+        "reindex": "0",
+        "total_docs_indexed": 7,
+    }
+    scheduled = []
+    task_updates = []
+    connector_updates = []
+
+    monkeypatch.setattr(sync_data_source.SyncLogsService, "start", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(sync_data_source.SyncLogsService, "done", lambda *_args, **_kwargs: pytest.fail("failed task must not be marked done"))
+    monkeypatch.setattr(sync_data_source.SyncLogsService, "update_by_id", lambda *args, **kwargs: task_updates.append((args, kwargs)))
+    monkeypatch.setattr(sync_data_source.SyncLogsService, "schedule", lambda *args, **kwargs: scheduled.append((args, kwargs)))
+    monkeypatch.setattr(sync_data_source.ConnectorService, "update_by_id", lambda *args, **kwargs: connector_updates.append((args, kwargs)))
+    monkeypatch.setattr(sync_data_source.DocumentService, "list_doc_headers_by_kb_and_source_type", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(sync_data_source.KnowledgebaseService, "get_by_id", lambda *_args, **_kwargs: (True, object()))
+    monkeypatch.setattr(sync_data_source.SyncLogsService, "duplicate_and_parse", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("batch failed")))
+
+    await _FakeSync(iter(([_make_fake_doc(updated_at=datetime(2026, 2, 1, tzinfo=timezone.utc))],)))(task)
+
+    assert task["poll_range_start"] == original_cursor
+    assert task_updates[-1][0][1]["status"] == sync_data_source.TaskStatus.FAIL
+    assert connector_updates[-1][0] == ("connector-1", {"status": sync_data_source.TaskStatus.SCHEDULE})
+    assert scheduled == [
+        (
+            ("connector-1", "kb-1", original_cursor),
+            {
+                "reindex": False,
+                "total_docs_indexed": 7,
+                "task_type": sync_data_source.ConnectorTaskType.SYNC,
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.p2
 async def test_run_prune_task_logic_cleans_up_for_empty_snapshot(monkeypatch):
     cleanup_calls = []
 
     _patch_common_dependencies(monkeypatch)
 
-    def _fake_cleanup(*args, **kwargs):
-        cleanup_calls.append((args, kwargs))
+    def _fake_cleanup(task_id, connector_id, kb_id, tenant_id, file_batches, **kwargs):
+        file_list = [file for batch in file_batches for file in batch]
+        cleanup_calls.append(((task_id, connector_id, kb_id, tenant_id, file_list), kwargs))
         return 1, []
 
     monkeypatch.setattr(
@@ -229,8 +347,9 @@ async def test_run_prune_task_logic_cleans_up_for_non_empty_snapshot(monkeypatch
 
     _patch_common_dependencies(monkeypatch)
 
-    def _fake_cleanup(*args, **kwargs):
-        cleanup_calls.append((args, kwargs))
+    def _fake_cleanup(task_id, connector_id, kb_id, tenant_id, file_batches, **kwargs):
+        file_list = [file for batch in file_batches for file in batch]
+        cleanup_calls.append(((task_id, connector_id, kb_id, tenant_id, file_list), kwargs))
         return 2, []
 
     monkeypatch.setattr(
@@ -354,10 +473,10 @@ async def test_rdbms_generate_keeps_deleted_file_snapshot_without_timestamp_colu
     assert connector is not None
     assert connector.load_from_state_called is True
     assert connector.load_from_cursor_range_called is False
-    file_list = sync._collect_prune_snapshot(task)
+    file_batches = sync._collect_prune_snapshot(task)
+    assert file_batches is not None
+    assert [doc.id for batch in file_batches for doc in batch] == ["row-1"]
     assert connector.retrieve_all_slim_docs_perm_sync_called is True
-    assert file_list is not None
-    assert [doc.id for doc in file_list] == ["row-1"]
     assert list(document_generator) == [["full-sync"]]
 
 
@@ -449,7 +568,8 @@ async def test_rdbms_cursor_does_not_persist_when_parse_returns_errors(monkeypat
         }
     )
 
-    await sync._run_task_logic(task)
+    with pytest.raises(RuntimeError, match="skipped=1"):
+        await sync._run_task_logic(task)
 
     connector = _FakeRDBMSConnector.instance
     assert connector is not None
@@ -500,7 +620,8 @@ async def test_rdbms_cursor_does_not_persist_when_batch_is_skipped(monkeypatch):
         }
     )
 
-    await sync._run_task_logic(task)
+    with pytest.raises(RuntimeError, match="skipped=1"):
+        await sync._run_task_logic(task)
 
     connector = _FakeRDBMSConnector.instance
     assert connector is not None
@@ -696,7 +817,8 @@ async def test_bigquery_cursor_does_not_persist_when_parse_returns_errors(monkey
     }
     sync = sync_data_source.BigQuery(_bigquery_conf(timestamp_column="updated_at"))
 
-    await sync._run_task_logic(task)
+    with pytest.raises(RuntimeError, match="skipped=1"):
+        await sync._run_task_logic(task)
 
     connector = _FakeBigQueryConnector.instance
     assert connector is not None
@@ -736,7 +858,8 @@ async def test_bigquery_cursor_does_not_persist_when_batch_is_skipped(monkeypatc
     }
     sync = sync_data_source.BigQuery(_bigquery_conf(timestamp_column="updated_at"))
 
-    await sync._run_task_logic(task)
+    with pytest.raises(RuntimeError, match="skipped=1"):
+        await sync._run_task_logic(task)
 
     connector = _FakeBigQueryConnector.instance
     assert connector is not None
@@ -757,11 +880,11 @@ async def test_bigquery_collect_prune_snapshot_when_enabled(monkeypatch):
     sync = sync_data_source.BigQuery(_bigquery_conf(sync_deleted_files=True))
 
     await sync._generate(task)
-    file_list = sync._collect_prune_snapshot(task)
+    file_batches = sync._collect_prune_snapshot(task)
     connector = _FakeBigQueryConnector.instance
 
+    assert [doc.id for batch in file_batches for doc in batch] == ["bq-row-1"]
     assert connector.retrieve_all_slim_docs_perm_sync_called is True
-    assert [doc.id for doc in file_list] == ["bq-row-1"]
 
 
 class _FakeDropboxConnector:
@@ -820,8 +943,8 @@ async def test_dropbox_generate_returns_snapshot_when_sync_deleted_enabled(monke
     connector = _FakeDropboxConnector.instance
 
     assert list(document_generator) == [["poll-sync"]]
-    file_list = sync._collect_prune_snapshot(task)
-    assert [doc.id for doc in file_list] == ["dropbox:id-1", "dropbox:id-2"]
+    file_batches = sync._collect_prune_snapshot(task)
+    assert [doc.id for batch in file_batches for doc in batch] == ["dropbox:id-1", "dropbox:id-2"]
     assert connector.credentials == {"dropbox_access_token": "token-1"}
     assert connector.retrieve_all_slim_docs_perm_sync_called is True
     assert connector.snapshot_called_before_poll is False
@@ -852,7 +975,7 @@ async def test_dropbox_generate_skips_snapshot_for_full_reindex(monkeypatch):
 
     assert list(document_generator) == [["full-sync"]]
     assert connector.load_from_state_called is True
-    file_list = sync._collect_prune_snapshot(task)
-    assert [doc.id for doc in file_list] == ["dropbox:id-1", "dropbox:id-2"]
+    file_batches = sync._collect_prune_snapshot(task)
+    assert [doc.id for batch in file_batches for doc in batch] == ["dropbox:id-1", "dropbox:id-2"]
     assert connector.retrieve_all_slim_docs_perm_sync_called is True
     assert connector.poll_source_called is False

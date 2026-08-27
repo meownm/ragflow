@@ -5,21 +5,14 @@ services:
         condition: service_healthy
       plantuml-server:
         condition: service_healthy
+    env_file: !override
+      - path: .env
+        required: true
+      - path: .env.local
+        required: false
     environment:
       WAIT_FOR_BACKEND_BEFORE_NGINX: "true"
       RAGFLOW_BACKEND_READY_TIMEOUT_SECONDS: "180"
-      OPENMETADATA_URL: ${OPENMETADATA_URL:-http://host.docker.internal:8585}
-      OPENMETADATA_PUBLIC_URL: ${OPENMETADATA_PUBLIC_URL:-http://127.0.0.1:8585}
-      OPENMETADATA_USERNAME: ${OPENMETADATA_USERNAME:-}
-      OPENMETADATA_PASSWORD: ${OPENMETADATA_PASSWORD:-}
-      OPENMETADATA_JWT_TOKEN: ${OPENMETADATA_JWT_TOKEN:-}
-      OPENMETADATA_WRITE_ENABLED: ${OPENMETADATA_WRITE_ENABLED:-false}
-      OPENMETADATA_CACHE_TTL_SECONDS: ${OPENMETADATA_CACHE_TTL_SECONDS:-900}
-      OPENMETADATA_STALE_AFTER_HOURS: ${OPENMETADATA_STALE_AFTER_HOURS:-168}
-      OPENMETADATA_DATASET_ID: ${OPENMETADATA_DATASET_ID:-}
-      OPENMETADATA_DATASET_TOP_N: ${OPENMETADATA_DATASET_TOP_N:-20}
-      OPENMETADATA_DATASET_SIMILARITY_THRESHOLD: ${OPENMETADATA_DATASET_SIMILARITY_THRESHOLD:-0.05}
-      OPENMETADATA_DATASET_VECTOR_WEIGHT: ${OPENMETADATA_DATASET_VECTOR_WEIGHT:-0.3}
       BUSINESS_DOCUMENT_WORKER_ENABLED: "true"
     healthcheck:
       test:
@@ -67,6 +60,7 @@ services:
       - ../rag/svr/sync_data_source.py:/ragflow/rag/svr/sync_data_source.py:ro
       - ../rag/app/audio.py:/ragflow/rag/app/audio.py:ro
       - ../rag/app/picture.py:/ragflow/rag/app/picture.py:ro
+      - ../rag/llm/chat_model.py:/ragflow/rag/llm/chat_model.py:ro
       - ../web/dist:/ragflow/web/dist:ro
       - ./nginx/ragflow.conf.python:/etc/nginx/conf.d/ragflow.conf.python:ro
       - ./nginx/ragflow.conf.hybrid:/etc/nginx/conf.d/ragflow.conf.hybrid:ro

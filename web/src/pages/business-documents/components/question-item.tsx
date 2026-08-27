@@ -4,6 +4,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { CheckCircle2, CircleHelp } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { BusinessDocumentQuestion } from '../types';
+import { appendVoiceTranscript, VoiceInput } from './voice-input';
 
 interface QuestionItemProps {
   question: BusinessDocumentQuestion;
@@ -93,17 +94,32 @@ export function QuestionItem({
           </RadioGroup>
 
           {question.allow_custom_answer && isOpen && (
-            <Textarea
-              value={customAnswer}
-              aria-label="Свой ответ"
-              placeholder="Свой ответ"
-              className="mt-3 min-h-20"
-              disabled={!canAnswer || pending}
-              onChange={(event) => {
-                setCustomAnswer(event.target.value);
-                if (event.target.value) setSelectedOptionId('');
-              }}
-            />
+            <div className="relative mt-3">
+              <Textarea
+                value={customAnswer}
+                aria-label="Свой ответ"
+                placeholder="Свой ответ"
+                className="min-h-20 pe-11"
+                disabled={!canAnswer || pending}
+                onChange={(event) => {
+                  setCustomAnswer(event.target.value);
+                  if (event.target.value) setSelectedOptionId('');
+                }}
+              />
+              <div className="absolute end-2 top-2">
+                <VoiceInput
+                  label="Ответ на вопрос"
+                  disabled={!canAnswer || pending}
+                  onTranscript={(transcript) => {
+                    setCustomAnswer((value) =>
+                      appendVoiceTranscript(value, transcript),
+                    );
+                    setSelectedOptionId('');
+                  }}
+                  testId={`voice-input-question-${question.question_id}`}
+                />
+              </div>
+            </div>
           )}
 
           {isOpen ? (

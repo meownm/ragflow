@@ -14,6 +14,7 @@ import asyncio
 import hashlib
 import json
 import math
+import os
 from datetime import UTC, datetime
 from typing import Any, Callable, Protocol
 from urllib.parse import quote
@@ -31,6 +32,12 @@ MAX_QUERY_CHARS = 4_000
 MAX_CHUNKS = 12
 MAX_CHUNK_CHARS = 4_000
 MAX_TOTAL_CHARS = 24_000
+
+
+def related_file_search_enabled() -> bool:
+    """Return whether business-document jobs may retrieve dataset evidence."""
+
+    return os.getenv("BUSINESS_DOCUMENT_RELATED_FILE_SEARCH_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _sha256_bytes(value: bytes) -> str:

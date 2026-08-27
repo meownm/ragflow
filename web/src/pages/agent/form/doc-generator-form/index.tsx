@@ -54,12 +54,10 @@ function DocGeneratorForm({ node }: INextOperatorForm) {
   const outputFormat = form.watch('output_format');
   const formOutputs = form.watch('outputs');
 
-  const supportsDocumentDecorations =
-    outputFormat === 'pdf' || outputFormat === 'docx';
+  const supportsDocumentDecorations = outputFormat === 'pdf';
 
   const supportsTimestamp =
     outputFormat === 'pdf' ||
-    outputFormat === 'docx' ||
     outputFormat === 'txt' ||
     outputFormat === 'markdown' ||
     outputFormat === 'html';
@@ -89,7 +87,6 @@ function DocGeneratorForm({ node }: INextOperatorForm) {
                     {...field}
                     options={[
                       { label: 'PDF', value: 'pdf' },
-                      { label: 'DOCX', value: 'docx' },
                       { label: 'TXT', value: 'txt' },
                       { label: 'Markdown', value: 'markdown' },
                       { label: 'HTML', value: 'html' },

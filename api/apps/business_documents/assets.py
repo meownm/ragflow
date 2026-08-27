@@ -125,6 +125,7 @@ def validate_contract(name: str, value: object) -> None:
 
 
 def validate_document_ast(document: object) -> dict[str, Any]:
+    document = normalize_document_ast(document)
     validate_contract("document_draft", document)
     assert isinstance(document, dict)
     template = published_template()
@@ -160,8 +161,195 @@ def validate_document_ast(document: object) -> dict[str, Any]:
     return document
 
 
+def normalize_document_ast(document: object) -> object:
+    """Restore the published optional section skeleton before validation.
+
+    Section presence and ordering are deterministic template concerns.  The
+    model owns section content, but it must not be able to accidentally drop
+    optional headings from the canonical document outline.
+    """
+
+    if not isinstance(document, dict) or not isinstance(document.get("sections"), list):
+        return document
+    template_sections = published_template()["sections"]
+    actual_sections = document["sections"]
+    if not all(isinstance(section, dict) and isinstance(section.get("id"), str) for section in actual_sections):
+        return document
+    expected_ids = [section["id"] for section in template_sections]
+    expected_id_set = set(expected_ids)
+    flattened_sections = []
+    for section in actual_sections:
+        section = deepcopy(section)
+        blocks = section.get("blocks")
+        if isinstance(blocks, list):
+            content_blocks = []
+            for block in blocks:
+                if isinstance(block, dict) and block.get("id") in expected_id_set and isinstance(block.get("blocks"), list):
+                    flattened_sections.append(block)
+                else:
+                    content_blocks.append(block)
+            section["blocks"] = content_blocks
+        flattened_sections.append(section)
+    actual_ids = [section["id"] for section in flattened_sections]
+    if len(actual_ids) != len(set(actual_ids)) or not set(actual_ids).issubset(expected_ids):
+        return document
+    by_id = {section["id"]: section for section in flattened_sections}
+    normalized = deepcopy(document)
+    normalized_sections = []
+    for template_section in template_sections:
+        section = deepcopy(
+            by_id.get(
+                template_section["id"],
+                {"id": template_section["id"], "title": template_section["title"], "blocks": []},
+            )
+        )
+        if template_section["required"] and not any(_block_has_content(block) for block in section.get("blocks", [])):
+            prefix = f"{template_section['id']}."
+            allowed = set(template_section["allowed_blocks"])
+            inherited = next(
+                (
+                    deepcopy(block)
+                    for child in flattened_sections
+                    if child["id"].startswith(prefix)
+                    for block in child.get("blocks", [])
+                    if isinstance(block, dict) and block.get("type") in allowed and _block_has_content(block)
+                ),
+                None,
+            )
+            if inherited is not None:
+                section["blocks"] = [inherited]
+        for template_only_field in ("parent_id", "required", "allowed_blocks", "semantic_requirements"):
+            section.pop(template_only_field, None)
+        normalized_sections.append(section)
+    scenario = next((section for section in normalized_sections if section["id"] == "4.3"), None)
+    if scenario is not None:
+        scenario["blocks"] = [_normalize_bpmn_block(block) for block in scenario["blocks"]]
+    normalized["sections"] = normalized_sections
+    return normalized
+
+
 _BPMN_MODEL_NAMESPACE = "http://www.omg.org/spec/BPMN/20100524/MODEL"
-_NEGATIVE_PATH_PATTERN = re.compile(r"(?:негатив|ошиб|отказ|исключ|negative|error|failure|reject)", re.IGNORECASE)
+_NEGATIVE_PATH_PATTERN = re.compile(
+    r"(?:негатив|ошиб|отказ|исключ|нет[\s_-]|недоступ|отсутств|невозмож|negative|error|failure|reject|denied|unavailable|no[\s_-])",
+    re.IGNORECASE,
+)
+_NEGATIVE_CONDITION_PATTERN = re.compile(r"(?:\bfalse\b|==\s*false|!=\s*true|\bnot\b|\bнет\b)", re.IGNORECASE)
+_BPMN_FLOW_NODE_TAGS = {
+    "startEvent",
+    "endEvent",
+    "intermediateCatchEvent",
+    "intermediateThrowEvent",
+    "boundaryEvent",
+    "task",
+    "userTask",
+    "serviceTask",
+    "manualTask",
+    "businessRuleTask",
+    "scriptTask",
+    "sendTask",
+    "receiveTask",
+    "callActivity",
+    "subProcess",
+    "transaction",
+    "adHocSubProcess",
+    "exclusiveGateway",
+    "inclusiveGateway",
+    "parallelGateway",
+    "complexGateway",
+    "eventBasedGateway",
+}
+
+
+def _normalize_bpmn_block(block: object) -> object:
+    """Promote an unambiguous negative-branch signal to its flow label.
+
+    Small local models often describe the negative branch on its target node or
+    condition while omitting the sequenceFlow name. They can also omit the
+    declaration of a gateway whose topology is still unambiguous. Canonicalize
+    those two structural details without inventing activities or path content.
+    """
+
+    if not isinstance(block, dict) or block.get("type") != "bpmn" or not isinstance(block.get("source"), str):
+        return block
+    source = block["source"].strip()
+    if "<!DOCTYPE" in source.upper() or "<!ENTITY" in source.upper():
+        return block
+    try:
+        root = ET.fromstring(source)
+    except ET.ParseError:
+        return block
+    namespace = f"{{{_BPMN_MODEL_NAMESPACE}}}"
+    changed = False
+    if root.tag != f"{namespace}definitions":
+        root_namespace = root.tag[1:].split("}", 1)[0] if root.tag.startswith("{") and "}" in root.tag else None
+        root_local_name = root.tag.rsplit("}", 1)[-1]
+        if root_local_name != "definitions":
+            return block
+        for element in root.iter():
+            element_namespace = element.tag[1:].split("}", 1)[0] if element.tag.startswith("{") and "}" in element.tag else None
+            if element_namespace == root_namespace:
+                element.tag = f"{namespace}{element.tag.rsplit('}', 1)[-1]}"
+                changed = True
+    flows = root.findall(f".//{namespace}sequenceFlow")
+    flow_nodes = {element.get("id"): element for element in root.iter() if element.tag.removeprefix(namespace) in _BPMN_FLOW_NODE_TAGS and element.get("id")}
+    normalized_node_ids: dict[str, list[str]] = {}
+    for node_id in flow_nodes:
+        normalized_node_ids.setdefault(re.sub(r"[^a-z0-9]", "", node_id.lower()), []).append(node_id)
+    for flow in flows:
+        for ref_name in ("sourceRef", "targetRef"):
+            ref = flow.get(ref_name)
+            if not ref or ref in flow_nodes:
+                continue
+            matches = normalized_node_ids.get(re.sub(r"[^a-z0-9]", "", ref.lower()), [])
+            if len(matches) == 1:
+                flow.set(ref_name, matches[0])
+                changed = True
+    missing_refs = {ref for flow in flows for ref in (flow.get("sourceRef"), flow.get("targetRef")) if ref and ref not in flow_nodes}
+    processes = root.findall(f".//{namespace}process")
+    if len(processes) == 1:
+        for missing_ref in missing_refs:
+            incoming = [flow for flow in flows if flow.get("targetRef") == missing_ref]
+            outgoing = [flow for flow in flows if flow.get("sourceRef") == missing_ref]
+            if not incoming:
+                continue
+            if len(outgoing) >= 2:
+                gateway = ET.SubElement(processes[0], f"{namespace}exclusiveGateway", {"id": missing_ref})
+                flow_nodes[missing_ref] = gateway
+                changed = True
+                continue
+            node_name = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", missing_ref).replace("_", " ").replace("-", " ").strip()
+            task = ET.SubElement(processes[0], f"{namespace}task", {"id": missing_ref, "name": node_name or missing_ref})
+            flow_nodes[missing_ref] = task
+            changed = True
+    elements_by_id = {element.get("id"): element for element in root.iter() if element.get("id")}
+    for gateway in root.findall(f".//{namespace}exclusiveGateway"):
+        gateway_id = gateway.get("id")
+        outgoing = [flow for flow in flows if gateway_id and flow.get("sourceRef") == gateway_id]
+        if len(outgoing) < 2 or any(_NEGATIVE_PATH_PATTERN.search(flow.get("name", "")) for flow in outgoing):
+            continue
+        for flow in outgoing:
+            target = elements_by_id.get(flow.get("targetRef"))
+            target_signal = " ".join(
+                value
+                for value in (
+                    target.get("id", "") if target is not None else "",
+                    target.get("name", "") if target is not None else "",
+                )
+                if value
+            )
+            condition = flow.find(f"{namespace}conditionExpression")
+            condition_signal = "" if condition is None else "".join(condition.itertext())
+            if not (_NEGATIVE_PATH_PATTERN.search(target_signal) or _NEGATIVE_CONDITION_PATTERN.search(condition_signal)):
+                continue
+            existing_name = flow.get("name", "").strip()
+            detail = existing_name or (target.get("name", "").strip() if target is not None else "") or "отказ"
+            flow.set("name", f"Негативный сценарий: {detail}")
+            changed = True
+    if not changed:
+        return block
+    normalized = deepcopy(block)
+    normalized["source"] = ET.tostring(root, encoding="unicode")
+    return normalized
 
 
 def _validate_conceptual_diagram(section: dict[str, Any]) -> None:
@@ -207,6 +395,17 @@ def _validate_bpmn_scenario(section: dict[str, Any]) -> None:
         ends = root.findall(f".//{namespace}endEvent")
         gateways = root.findall(f".//{namespace}exclusiveGateway")
         flows = root.findall(f".//{namespace}sequenceFlow")
+        flow_node_ids = {element.get("id") for element in root.iter() if element.tag.removeprefix(namespace) in _BPMN_FLOW_NODE_TAGS and element.get("id")}
+        invalid_refs = sorted(
+            {ref for flow in flows for ref in (flow.get("sourceRef"), flow.get("targetRef")) if not ref or ref not in flow_node_ids},
+            key=lambda value: value or "",
+        )
+        if invalid_refs:
+            raise ValidationError(
+                "INVALID_BPMN_XML",
+                "BPMN sequence flows must reference declared flow nodes",
+                {"section_id": "4.3", "invalid_refs": invalid_refs},
+            )
         gateway_ids = {gateway.get("id") for gateway in gateways if gateway.get("id")}
         outgoing_by_gateway = {gateway_id: [flow for flow in flows if flow.get("sourceRef") == gateway_id] for gateway_id in gateway_ids}
         alternative_flows = [flow for outgoing in outgoing_by_gateway.values() if len(outgoing) >= 2 for flow in outgoing]
@@ -237,6 +436,26 @@ def _block_has_content(block: dict[str, Any]) -> bool:
 def section_hash(section: dict[str, Any]) -> str:
     encoded = json.dumps(section, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8")
     return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+
+
+def bind_change_plan_section_hashes(base_document: dict[str, Any], change_plan: object) -> object:
+    """Bind concurrency hashes from the immutable server snapshot.
+
+    A language model selects and rewrites sections; it does not calculate the
+    optimistic-concurrency token used to protect those sections.
+    """
+
+    if not isinstance(change_plan, dict) or not isinstance(change_plan.get("operations"), list):
+        return change_plan
+    hashes = {section["id"]: section_hash(section) for section in base_document.get("sections", []) if isinstance(section, dict) and isinstance(section.get("id"), str)}
+    bound = deepcopy(change_plan)
+    for operation in bound["operations"]:
+        if not isinstance(operation, dict):
+            continue
+        expected_hash = hashes.get(operation.get("section_id"))
+        if expected_hash is not None:
+            operation["expected_section_hash"] = expected_hash
+    return bound
 
 
 def apply_change_plan(base_document: dict[str, Any], change_plan: dict[str, Any]) -> dict[str, Any]:

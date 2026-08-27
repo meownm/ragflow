@@ -19,6 +19,7 @@ import {
 import { FormEvent, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import type { EvaDocumentChangeState, EvaDocumentSource } from '../types';
+import { appendVoiceTranscript, VoiceInput } from './voice-input';
 
 const stateLabels: Record<EvaDocumentChangeState, string> = {
   EDITING: 'Редактирование',
@@ -91,6 +92,17 @@ export function EvaChangeCreatePanel() {
               aria-label="Поиск документа EVA"
               placeholder="Например, BR-42 или переводы"
               onChange={(event) => setQuery(event.target.value)}
+              suffix={
+                <VoiceInput
+                  label="Поисковый запрос EVA"
+                  onTranscript={(transcript) =>
+                    setQuery((value) =>
+                      appendVoiceTranscript(value, transcript, 500),
+                    )
+                  }
+                  testId="voice-input-eva-search"
+                />
+              }
             />
             <Button
               type="submit"
@@ -176,15 +188,29 @@ export function EvaChangeCreatePanel() {
           </div>
           <label className="mt-5 block space-y-2 text-sm font-medium">
             <span>Что нужно изменить</span>
-            <Textarea
-              value={changeSummary}
-              maxLength={50000}
-              autoSize={{ minRows: 5, maxRows: 12 }}
-              resize="vertical"
-              aria-label="Описание доработки"
-              placeholder="Опишите бизнес-изменение, границы и ожидаемый результат."
-              onChange={(event) => setChangeSummary(event.target.value)}
-            />
+            <div className="relative">
+              <Textarea
+                value={changeSummary}
+                maxLength={50000}
+                autoSize={{ minRows: 5, maxRows: 12 }}
+                resize="vertical"
+                aria-label="Описание доработки"
+                placeholder="Опишите бизнес-изменение, границы и ожидаемый результат."
+                className="pe-11"
+                onChange={(event) => setChangeSummary(event.target.value)}
+              />
+              <div className="absolute end-2 top-2">
+                <VoiceInput
+                  label="Доработка EVA"
+                  onTranscript={(transcript) =>
+                    setChangeSummary((value) =>
+                      appendVoiceTranscript(value, transcript, 50000),
+                    )
+                  }
+                  testId="voice-input-eva-change-summary"
+                />
+              </div>
+            </div>
           </label>
           {createMutation.error && (
             <p className="mt-3 text-sm text-state-error" role="alert">

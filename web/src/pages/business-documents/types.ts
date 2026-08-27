@@ -147,6 +147,22 @@ export interface BusinessDocumentReviewCycle {
   comments: BusinessDocumentComment[];
 }
 
+export interface BusinessDocumentJobSummary {
+  job_id: string;
+  job_type: string;
+  status: 'PENDING' | 'RUNNING' | 'RETRY' | 'COMPLETED' | 'DEAD';
+  attempt: number;
+  max_attempts: number;
+  available_at?: number | null;
+  lease_expires_at?: number | null;
+  error?:
+    | { code?: string; message?: string; details?: unknown }
+    | string
+    | null;
+  create_time?: number | null;
+  update_time?: number | null;
+}
+
 export interface BusinessDocumentProjection {
   document_id: string;
   title: string;
@@ -161,6 +177,7 @@ export interface BusinessDocumentProjection {
   protocol: BusinessDocumentReviewCycle;
   allowed_commands: BusinessDocumentCommandType[];
   last_error?: { code?: string; message?: string } | string | null;
+  latest_job?: BusinessDocumentJobSummary | null;
   latest_exports?: BusinessDocumentExportArtifact[];
 }
 

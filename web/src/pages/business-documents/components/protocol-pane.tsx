@@ -10,6 +10,7 @@ import type {
 } from '../types';
 import { ProposalItem } from './proposal-item';
 import { QuestionItem } from './question-item';
+import { appendVoiceTranscript, VoiceInput } from './voice-input';
 
 const dispositionLabels = {
   NEEDS_QUESTION: 'Требует уточнения',
@@ -198,20 +199,35 @@ export function ProtocolPane({
           </div>
         )}
         <div className="flex items-end gap-2">
-          <Textarea
-            value={comment}
-            autoSize={{ minRows: 2, maxRows: 6 }}
-            aria-label="Комментарий"
-            placeholder="Оставить комментарий"
-            disabled={!canComment || pending}
-            onChange={(event) => setComment(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-                event.preventDefault();
-                submitComment();
-              }
-            }}
-          />
+          <div className="relative flex-1">
+            <Textarea
+              value={comment}
+              autoSize={{ minRows: 2, maxRows: 6 }}
+              aria-label="Комментарий"
+              placeholder="Оставить комментарий"
+              className="pe-11"
+              disabled={!canComment || pending}
+              onChange={(event) => setComment(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+                  event.preventDefault();
+                  submitComment();
+                }
+              }}
+            />
+            <div className="absolute end-2 top-2">
+              <VoiceInput
+                label="Замечание к документу"
+                disabled={!canComment || pending}
+                onTranscript={(transcript) =>
+                  setComment((value) =>
+                    appendVoiceTranscript(value, transcript),
+                  )
+                }
+                testId="voice-input-comment"
+              />
+            </div>
+          </div>
           <Button
             size="icon-lg"
             variant="accent"

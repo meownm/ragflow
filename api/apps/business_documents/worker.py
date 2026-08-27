@@ -24,7 +24,7 @@ from typing import Any
 
 from api.apps.business_documents.ai import BusinessDocumentAI
 from api.apps.business_documents.errors import BusinessDocumentError
-from api.apps.business_documents.evidence import BusinessDocumentEvidence
+from api.apps.business_documents.evidence import BusinessDocumentEvidence, related_file_search_enabled
 from api.apps.business_documents.exports import BusinessDocumentExportService
 from api.apps.business_documents.service import BusinessDocumentService
 from api.db.db_models import BusinessDocumentJob
@@ -72,7 +72,6 @@ class BusinessDocumentJobQueue:
                         lease_owner=worker_id,
                         lease_token=lease_token,
                         lease_expires_at=now_ms + lease_ms,
-                        error=None,
                         update_time=now_ms,
                         update_date=datetime.now(),
                     )
@@ -277,7 +276,7 @@ class BusinessDocumentWorker:
                 execution_audit = None
             else:
                 dataset_ids = job.payload.get("dataset_ids", []) if isinstance(job.payload, dict) else []
-                if dataset_ids:
+                if dataset_ids and related_file_search_enabled():
                     evidence_snapshot = self.evidence.retrieve(job)
                     execution_audit = self.evidence.audit(evidence_snapshot, job.attempt)
                     output = self.ai.process(job, evidence_snapshot)

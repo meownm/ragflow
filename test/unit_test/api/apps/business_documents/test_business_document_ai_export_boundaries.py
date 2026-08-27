@@ -14,7 +14,8 @@ import hashlib
 from datetime import datetime
 from pathlib import Path
 import sys
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
+import xml.etree.ElementTree as ET
 
 import pytest
 from peewee import SqliteDatabase
@@ -26,7 +27,15 @@ if "api.apps" not in sys.modules:
     sys.modules["api.apps"] = api_apps
 
 from api.apps.business_documents.ai import BusinessDocumentAI
-from api.apps.business_documents.assets import prompt_text, published_template, render_document_ast, validate_document_ast
+from api.apps.business_documents.assets import (
+    apply_change_plan,
+    bind_change_plan_section_hashes,
+    prompt_text,
+    published_template,
+    render_document_ast,
+    section_hash,
+    validate_document_ast,
+)
 from api.apps.business_documents.errors import BusinessDocumentError
 from api.apps.business_documents.exports import BusinessDocumentExportService
 from api.apps.business_documents.service import BusinessDocumentService
@@ -92,6 +101,229 @@ def _draft():
     }
 
 
+@pytest.mark.p0
+def test_document_ast_restores_missing_optional_sections_from_published_template(database):
+    draft = _draft()
+    optional_ids = {section["id"] for section in published_template()["sections"] if not section["required"]}
+    draft["sections"] = [section for section in draft["sections"] if section["id"] not in optional_ids]
+
+    normalized = validate_document_ast(draft)
+
+    assert [section["id"] for section in normalized["sections"]] == [section["id"] for section in published_template()["sections"]]
+    assert all(section["blocks"] == [] for section in normalized["sections"] if section["id"] in optional_ids)
+
+
+@pytest.mark.p0
+def test_document_ast_removes_template_only_section_metadata(database):
+    draft = _draft()
+    draft["sections"][3]["parent_id"] = "3"
+    draft["sections"][3]["required"] = True
+    draft["sections"][3]["allowed_blocks"] = ["paragraph"]
+    draft["sections"][3]["semantic_requirements"] = ["TEMPLATE_ONLY_RULE"]
+
+    normalized = validate_document_ast(draft)
+
+    assert set(normalized["sections"][3]) == {"id", "title", "blocks"}
+
+
+@pytest.mark.p0
+def test_document_ast_flattens_template_sections_returned_inside_parent_blocks(database):
+    draft = _draft()
+    child = draft["sections"].pop(3)
+    child["parent_id"] = "3"
+    draft["sections"][2]["blocks"].append(child)
+
+    normalized = validate_document_ast(draft)
+
+    assert [section["id"] for section in normalized["sections"]] == [section["id"] for section in published_template()["sections"]]
+    assert all("id" not in block for block in normalized["sections"][2]["blocks"])
+    assert normalized["sections"][3]["id"] == "3.1"
+    assert set(normalized["sections"][3]) == {"id", "title", "blocks"}
+
+
+@pytest.mark.p0
+def test_document_ast_promotes_negative_bpmn_target_to_explicit_flow_name(database):
+    draft = _draft()
+    scenario = next(section for section in draft["sections"] if section["id"] == "4.3")
+    scenario["blocks"][-1]["source"] = """<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL">
+      <process id="p"><startEvent id="start"/><exclusiveGateway id="choice"/>
+      <task id="ok"/><endEvent id="rejected" name="Отказ в заказе"/>
+      <sequenceFlow id="f1" sourceRef="start" targetRef="choice"/>
+      <sequenceFlow id="f2" sourceRef="choice" targetRef="ok"/>
+      <sequenceFlow id="f3" sourceRef="choice" targetRef="rejected"/>
+      </process></definitions>"""
+
+    normalized = validate_document_ast(draft)
+
+    source = next(section for section in normalized["sections"] if section["id"] == "4.3")["blocks"][-1]["source"]
+    root = ET.fromstring(source)
+    namespace = "{http://www.omg.org/spec/BPMN/20100524/MODEL}"
+    negative = next(flow for flow in root.findall(f".//{namespace}sequenceFlow") if flow.get("id") == "f3")
+    assert negative.get("name") == "Негативный сценарий: Отказ в заказе"
+
+
+@pytest.mark.p0
+def test_document_ast_rejects_dangling_bpmn_sequence_flow_references(database):
+    draft = _draft()
+    scenario = next(section for section in draft["sections"] if section["id"] == "4.3")
+    scenario["blocks"][-1]["source"] = """<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL">
+      <process id="p"><startEvent id="start"/><exclusiveGateway id="choice"/><endEvent id="failed"/>
+      <sequenceFlow id="f1" sourceRef="start" targetRef="choice"/>
+      <sequenceFlow id="f2" sourceRef="missing" targetRef="failed"/>
+      <sequenceFlow id="f3" name="Отказ" sourceRef="choice" targetRef="failed"/>
+      </process></definitions>"""
+
+    with pytest.raises(BusinessDocumentError) as caught:
+        validate_document_ast(draft)
+
+    assert caught.value.code == "INVALID_BPMN_XML"
+    assert caught.value.details["invalid_refs"] == ["missing"]
+
+
+@pytest.mark.p0
+def test_document_ast_restores_an_unambiguously_implicit_bpmn_gateway(database):
+    draft = _draft()
+    scenario = next(section for section in draft["sections"] if section["id"] == "4.3")
+    scenario["blocks"][-1]["source"] = """<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL">
+      <process id="p"><startEvent id="start"/><task id="ok"/><endEvent id="rejected" name="Отказ"/>
+      <sequenceFlow id="f1" sourceRef="start" targetRef="Check_Availability"/>
+      <sequenceFlow id="f2" sourceRef="Check_Availability" targetRef="ok"/>
+      <sequenceFlow id="f3" sourceRef="Check_Availability" targetRef="rejected"/>
+      </process></definitions>"""
+
+    normalized = validate_document_ast(draft)
+
+    source = next(section for section in normalized["sections"] if section["id"] == "4.3")["blocks"][-1]["source"]
+    root = ET.fromstring(source)
+    namespace = "{http://www.omg.org/spec/BPMN/20100524/MODEL}"
+    gateway = root.find(f".//{namespace}exclusiveGateway")
+    assert gateway is not None
+    assert gateway.get("id") == "Check_Availability"
+
+
+@pytest.mark.p0
+def test_document_ast_restores_an_implicit_bpmn_task_with_declared_topology(database):
+    draft = _draft()
+    scenario = next(section for section in draft["sections"] if section["id"] == "4.3")
+    scenario["blocks"][-1]["source"] = """<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL">
+      <process id="p"><startEvent id="start"/><exclusiveGateway id="choice"/>
+      <task id="ok"/><endEvent id="done"/><endEvent id="No_Translators_Available"/>
+      <sequenceFlow id="f1" sourceRef="start" targetRef="choice"/>
+      <sequenceFlow id="f2" sourceRef="choice" targetRef="SendConfirmation"/>
+      <sequenceFlow id="f3" sourceRef="SendConfirmation" targetRef="done"/>
+      <sequenceFlow id="f4" sourceRef="choice" targetRef="No_Translators_Available"/>
+      </process></definitions>"""
+
+    normalized = validate_document_ast(draft)
+
+    source = next(section for section in normalized["sections"] if section["id"] == "4.3")["blocks"][-1]["source"]
+    root = ET.fromstring(source)
+    namespace = "{http://www.omg.org/spec/BPMN/20100524/MODEL}"
+    task = next(item for item in root.findall(f".//{namespace}task") if item.get("id") == "SendConfirmation")
+    assert task.get("name") == "Send Confirmation"
+
+
+@pytest.mark.p0
+def test_document_ast_repairs_an_unambiguous_bpmn_model_namespace(database):
+    draft = _draft()
+    scenario = next(section for section in draft["sections"] if section["id"] == "4.3")
+    bpmn = next(block for block in scenario["blocks"] if block["type"] == "bpmn")
+    bpmn["source"] = bpmn["source"].replace(
+        "http://www.omg.org/spec/BPMN/20100524/MODEL",
+        "urn:local-model:bpmn",
+    )
+
+    validated = validate_document_ast(draft)
+
+    normalized_scenario = next(section for section in validated["sections"] if section["id"] == "4.3")
+    normalized_bpmn = next(block for block in normalized_scenario["blocks"] if block["type"] == "bpmn")
+    assert ET.fromstring(normalized_bpmn["source"]).tag == "{http://www.omg.org/spec/BPMN/20100524/MODEL}definitions"
+
+
+@pytest.mark.p0
+def test_document_ast_restores_required_structural_parents_from_child_content(database):
+    draft = _draft()
+    draft["sections"] = [section for section in draft["sections"] if section["id"] not in {"3", "4", "5"}]
+
+    normalized = validate_document_ast(draft)
+
+    sections = {section["id"]: section for section in normalized["sections"]}
+    assert sections["3"]["blocks"]
+    assert sections["4"]["blocks"][0]["type"] == "paragraph"
+    assert sections["5"]["blocks"]
+
+
+@pytest.mark.p0
+def test_change_plan_hashes_are_bound_from_server_snapshot(database):
+    base = _draft()
+    target = next(section for section in base["sections"] if section["id"] == "3.3")
+    plan = {
+        "schema_version": "1",
+        "base_revision_id": "revision-1",
+        "source_state_version": 7,
+        "acknowledged_no_change_event_ids": [],
+        "operations": [
+            {
+                "operation_id": "replace-need",
+                "type": "REPLACE_SECTION_CONTENT",
+                "section_id": "3.3",
+                "expected_section_hash": "sha256:not-a-model-owned-value",
+                "source_event_ids": ["event-1"],
+                "content": {"blocks": [{"type": "paragraph", "text": "Уточнённая потребность."}]},
+            }
+        ],
+    }
+
+    bound = bind_change_plan_section_hashes(base, plan)
+
+    assert bound["operations"][0]["expected_section_hash"] == section_hash(target)
+    assert plan["operations"][0]["expected_section_hash"] == "sha256:not-a-model-owned-value"
+    assert apply_change_plan(base, bound)["sections"][5]["blocks"][0]["text"] == "Уточнённая потребность."
+
+
+@pytest.mark.p0
+def test_change_plan_drops_no_change_acknowledgements_from_old_review_cycles(database):
+    base = _draft()
+    job = BusinessDocumentJob(
+        id="plan-job",
+        tenant_id=TENANT,
+        document_id="document-1",
+        job_type="PLAN_CHANGES",
+        status="RUNNING",
+        dedupe_key="plan-job",
+        source_state_version=7,
+        base_revision_id="revision-1",
+        payload={
+            "active_change_input_event_ids": ["active-comment"],
+            "current_revision": {"document_ast": base},
+        },
+        attempt=1,
+        max_attempts=3,
+        available_at=0,
+        correlation_id="plan-job",
+    )
+    output = {
+        "schema_version": "1",
+        "base_revision_id": "revision-1",
+        "source_state_version": 7,
+        "acknowledged_no_change_event_ids": ["old-answer-1", "old-answer-2"],
+        "operations": [
+            {
+                "operation_id": "replace-need",
+                "type": "REPLACE_SECTION_CONTENT",
+                "section_id": "3.3",
+                "expected_section_hash": "sha256:" + "0" * 64,
+                "source_event_ids": ["active-comment"],
+                "content": {"blocks": [{"type": "paragraph", "text": "Добавить чатбот."}]},
+            }
+        ],
+    }
+
+    validated = BusinessDocumentAI._validate(job, output)
+
+    assert validated["change_plan"]["acknowledged_no_change_event_ids"] == []
+
+
 def _claim_complete(job_id, output, worker_id="boundary-worker"):
     job = BusinessDocumentJobQueue.claim(worker_id, lease_ms=60_000)
     assert job is not None and job.id == job_id
@@ -130,6 +362,7 @@ def test_ai_repairs_json_validates_schema_and_persists_pinned_prompt_audit(datab
     assert '"policy_id": "business-requirements-process"' in system_prompt
     assert "Не создавай и не угадывай идентификаторы событий" in system_prompt
     assert input_payload["prompt"] == prompt
+    assert "schemas" not in input_payload
     allowed_event_ids = {event["event_id"] for event in input_payload["job_input"]["source_events"]}
     assert input_payload["job_input"]["idea_source_event_id"] in allowed_event_ids
     event = BusinessDocumentEvent.get((BusinessDocumentEvent.document_id == document["document_id"]) & (BusinessDocumentEvent.event_type == "IntakeAssessed"))
@@ -168,6 +401,282 @@ def test_ai_unwraps_exact_contract_name_envelope(database):
     job = BusinessDocumentJob.get_by_id(requested["job_id"])
     assert job.status == "COMPLETED"
     assert job.result["output"] == {"schema_version": "1", "outcome": "COMPLETE", "questions": []}
+
+
+@pytest.mark.p0
+def test_ai_drops_redundant_contract_name_property_when_root_contract_is_valid(database):
+    document = _create()
+    requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
+    contract = {"schema_version": "1", "outcome": "COMPLETE", "questions": []}
+    adapter = CapturingAdapter({**contract, "question_batch": contract})
+
+    worker = BusinessDocumentWorker(worker_id="ai-worker", ai=BusinessDocumentAI(adapter), lease_ms=60_000)
+    assert worker.run_once() is True
+
+    job = BusinessDocumentJob.get_by_id(requested["job_id"])
+    assert job.status == "COMPLETED"
+    assert job.result["output"] == contract
+
+
+@pytest.mark.p0
+def test_ai_normalizes_numeric_published_schema_versions_recursively():
+    output = {
+        "schema_version": 1,
+        "nested": {"schema_version": 1},
+        "items": [{"schema_version": 2}],
+    }
+
+    assert BusinessDocumentAI._normalize_schema_versions(output) == {
+        "schema_version": "1",
+        "nested": {"schema_version": "1"},
+        "items": [{"schema_version": 2}],
+    }
+
+
+@pytest.mark.p0
+def test_ai_uses_valid_named_contract_when_sibling_properties_are_invalid(database):
+    document = _create()
+    requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
+    contract = {"schema_version": "1", "outcome": "COMPLETE", "questions": []}
+    adapter = CapturingAdapter({"question_batch": contract, "explanation": "done"})
+
+    worker = BusinessDocumentWorker(worker_id="ai-worker", ai=BusinessDocumentAI(adapter), lease_ms=60_000)
+    assert worker.run_once() is True
+
+    job = BusinessDocumentJob.get_by_id(requested["job_id"])
+    assert job.status == "COMPLETED"
+    assert job.result["output"] == contract
+
+
+@pytest.mark.p0
+def test_ai_drops_echoed_schema_and_restores_its_constant_version(database):
+    document = _create()
+    requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
+    contract = {"schema_version": "1", "outcome": "COMPLETE", "questions": []}
+    echoed_schema = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {"schema_version": {"const": "1"}},
+    }
+    adapter = CapturingAdapter({"question_batch": echoed_schema, "outcome": "COMPLETE", "questions": []})
+
+    worker = BusinessDocumentWorker(worker_id="ai-worker", ai=BusinessDocumentAI(adapter), lease_ms=60_000)
+    assert worker.run_once() is True
+
+    job = BusinessDocumentJob.get_by_id(requested["job_id"])
+    assert job.status == "COMPLETED"
+    assert job.result["output"] == contract
+
+
+@pytest.mark.p0
+def test_ai_treats_an_exact_repeated_answered_question_as_complete():
+    text = "Какие ключевые потребности решает сервис?"
+    job = SimpleNamespace(
+        job_type="ASSESS_INTAKE",
+        payload={
+            "protocol": {
+                "questions": [
+                    {
+                        "stage": "INTAKE",
+                        "target_section_id": "3.3",
+                        "semantic_tag": "original_tag",
+                        "text": text,
+                        "status": "ANSWERED",
+                    }
+                ]
+            }
+        },
+    )
+    repeated = {
+        "schema_version": "1",
+        "outcome": "NEEDS_INPUT",
+        "questions": [
+            {
+                "stage": "INTAKE",
+                "target_section_id": "3.3",
+                "semantic_tag": "renamed_tag",
+                "text": f"  {text.upper()}  ",
+                "options": [{"option_id": "a", "label": "A"}, {"option_id": "b", "label": "B"}],
+                "allow_custom_answer": True,
+            }
+        ],
+    }
+
+    assert BusinessDocumentAI._drop_answered_questions(job, repeated) == {
+        "schema_version": "1",
+        "outcome": "COMPLETE",
+        "questions": [],
+    }
+
+
+@pytest.mark.p0
+def test_ai_retry_prompt_contains_previous_validation_error(database):
+    document = _create()
+    requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
+    job = BusinessDocumentJob.get_by_id(requested["job_id"])
+    job.attempt = 2
+    job.error = {"code": "INVALID_BPMN", "message": "Negative alternative path is missing", "details": {}}
+
+    prompt = BusinessDocumentAI._prompt(job)
+
+    assert prompt.input_payload["job_input"]["retry_feedback"] == job.error
+    assert "Исправление предыдущей попытки" in prompt.system
+    assert "retry_feedback" not in job.payload
+
+
+@pytest.mark.p0
+@pytest.mark.parametrize(("questions", "expected"), [([], "COMPLETE"), ([{"stage": "REVIEW"}], "NEEDS_INPUT")])
+def test_ai_maps_draft_review_lifecycle_marker_to_question_outcome(questions, expected):
+    job = SimpleNamespace(job_type="GENERATE_DRAFT")
+    output = {
+        "draft": {},
+        "review_questions": {"schema_version": "1", "outcome": "REVIEW", "questions": questions},
+        "proposals": [],
+    }
+
+    normalized = BusinessDocumentAI._normalize_draft_review_outcome(job, output)
+
+    assert normalized["review_questions"]["outcome"] == expected
+    assert normalized["review_questions"]["questions"] == questions
+
+
+@pytest.mark.p0
+def test_ai_drops_dispositions_for_events_that_are_not_comments():
+    job = SimpleNamespace(
+        job_type="ASSESS_REVIEW",
+        payload={"protocol": {"comments": [{"source_event_id": "real-comment"}]}},
+    )
+    output = {
+        "schema_version": "1",
+        "questions": [],
+        "proposals": [],
+        "comment_dispositions": [
+            {"comment_event_id": "real-comment", "disposition": "NO_CHANGE"},
+            {"comment_event_id": "answer-event", "disposition": "CONFIRMED_CHANGE"},
+        ],
+    }
+
+    normalized = BusinessDocumentAI._drop_unknown_comment_dispositions(job, output)
+
+    assert normalized["comment_dispositions"] == [{"comment_event_id": "real-comment", "disposition": "NO_CHANGE"}]
+
+
+@pytest.mark.p0
+def test_ai_drops_an_exact_proposal_repeat_from_the_active_review_protocol():
+    proposal = {
+        "target_section_id": "4.3",
+        "text": "Добавить явный негативный путь",
+        "rationale": "Проверяемость",
+        "source_event_ids": ["review-request-2"],
+    }
+    job = SimpleNamespace(
+        job_type="ASSESS_REVIEW",
+        payload={
+            "protocol": {
+                "proposals": [
+                    {
+                        **proposal,
+                        "text": "  ДОБАВИТЬ  ЯВНЫЙ НЕГАТИВНЫЙ ПУТЬ ",
+                        "source_event_ids": ["review-request-1"],
+                    }
+                ]
+            }
+        },
+    )
+    output = {
+        "schema_version": "1",
+        "questions": [],
+        "proposals": [proposal],
+        "comment_dispositions": [],
+    }
+
+    normalized = BusinessDocumentAI._drop_existing_proposals(job, output)
+
+    assert normalized == {**output, "proposals": []}
+
+
+@pytest.mark.p0
+def test_ai_keeps_only_evidence_refs_from_the_pinned_snapshot():
+    allowed = "ragflow://dataset/d/document/doc/chunk/allowed"
+    invented = "ragflow://dataset/d/document/doc/chunk/invented"
+    output = {
+        "questions": [{"evidence_refs": [allowed, invented]}],
+        "proposals": [{"evidence_refs": [invented]}],
+    }
+    evidence = {"chunks": [{"source_ref": allowed}]}
+
+    normalized = BusinessDocumentAI._filter_evidence_refs(output, evidence)
+
+    assert normalized == {
+        "questions": [{"evidence_refs": [allowed]}],
+        "proposals": [{"evidence_refs": []}],
+    }
+
+
+@pytest.mark.p0
+def test_ai_routes_change_sources_to_the_operation_for_their_declared_section():
+    job = SimpleNamespace(
+        job_type="PLAN_CHANGES",
+        payload={
+            "protocol": {
+                "questions": [
+                    {
+                        "target_section_id": "4.3",
+                        "answer": {"source_event_id": "answer-43"},
+                    }
+                ],
+                "proposals": [
+                    {
+                        "target_section_id": "4.1",
+                        "decision": "ACCEPTED",
+                        "decision_event_id": "proposal-41",
+                    },
+                    {
+                        "target_section_id": "4.3",
+                        "decision": "ACCEPTED",
+                        "decision_event_id": "proposal-43-omitted",
+                    },
+                ],
+            }
+        },
+    )
+    output = {
+        "operations": [
+            {"section_id": "4.1", "source_event_ids": ["answer-43", "proposal-41", "comment"]},
+            {"section_id": "4.3", "source_event_ids": []},
+        ]
+    }
+
+    normalized = BusinessDocumentAI._bind_change_plan_source_sections(job, output)
+
+    assert normalized["operations"] == [
+        {"section_id": "4.1", "source_event_ids": ["proposal-41", "comment"]},
+        {"section_id": "4.3", "source_event_ids": ["answer-43", "proposal-43-omitted"]},
+    ]
+    assert output["operations"][0]["source_event_ids"] == ["answer-43", "proposal-41", "comment"]
+
+
+@pytest.mark.p0
+def test_ai_acknowledges_confirming_answer_when_no_operation_targets_its_section():
+    job = SimpleNamespace(
+        job_type="PLAN_CHANGES",
+        payload={
+            "protocol": {
+                "questions": [{"target_section_id": "3.1", "answer": {"source_event_id": "answer-confirmed"}}],
+                "proposals": [],
+            }
+        },
+    )
+    output = {
+        "acknowledged_no_change_event_ids": [],
+        "operations": [{"section_id": "4.3", "source_event_ids": ["answer-confirmed", "comment-change"]}],
+    }
+
+    normalized = BusinessDocumentAI._bind_change_plan_source_sections(job, output)
+
+    assert normalized["operations"][0]["source_event_ids"] == ["comment-change"]
+    assert normalized["acknowledged_no_change_event_ids"] == ["answer-confirmed"]
+    assert output["operations"][0]["source_event_ids"] == ["answer-confirmed", "comment-change"]
 
 
 class MemoryStorage:

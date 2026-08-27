@@ -216,9 +216,13 @@ const VoiceInputBox = ({
 export const AudioButton = ({
   onOk,
   testId,
+  ariaLabel = 'Голосовой ввод',
+  disabled = false,
 }: {
   onOk?: (transcript: string) => void;
   testId?: string;
+  ariaLabel?: string;
+  disabled?: boolean;
 }) => {
   // const [showInputBox, setShowInputBox] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -392,6 +396,7 @@ export const AudioButton = ({
         )}
 
         <Button
+          type="button"
           variant="transparent"
           size="icon-xs"
           // onMouseDown={() => {
@@ -412,7 +417,9 @@ export const AudioButton = ({
             isRecording &&
               'animate-pulse !bg-state-success/20 text-state-success rounded-full',
           )}
-          disabled={isProcessing}
+          disabled={disabled || isProcessing}
+          aria-label={ariaLabel}
+          title={ariaLabel}
           data-testid={testId}
         >
           {isProcessing ? (

@@ -33,6 +33,30 @@ jest.mock('remark-gfm', () => ({
   default: () => undefined,
 }));
 
+jest.mock('@/components/ui/audio-button', () => ({
+  AudioButton: ({
+    ariaLabel,
+    disabled,
+    onOk,
+    testId,
+  }: {
+    ariaLabel?: string;
+    disabled?: boolean;
+    onOk?: (transcript: string) => void;
+    testId?: string;
+  }) => (
+    <button
+      type="button"
+      aria-label={ariaLabel}
+      data-testid={testId}
+      disabled={disabled}
+      onClick={() => onOk?.('текст из диктовки')}
+    >
+      Голосовой ввод
+    </button>
+  ),
+}));
+
 jest.mock('@/hooks/use-knowledge-request', () => ({
   useFetchKnowledgeList: () => ({ list: [], loading: false }),
 }));
@@ -437,6 +461,35 @@ test('renders completed exports with their own revision and canonical download U
   );
   expect(download).toHaveAttribute('download', 'requirements_r2.md');
   expect(download).not.toHaveTextContent('r3');
+});
+
+test('does not expose DOCX export actions or completed DOCX artifacts', async () => {
+  mockedFetch.mockResolvedValueOnce({
+    ...projection,
+    lifecycle_state: 'AGREED',
+    allowed_commands: ['REQUEST_EXPORT'],
+    latest_exports: [
+      {
+        artifact_id: 'artifact-docx-r3',
+        revision_id: 'revision-3',
+        revision_number: 3,
+        format: 'DOCX',
+        filename: 'requirements_r3.docx',
+        mime_type:
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        size: 1024,
+        content_hash: 'sha256:docx-artifact',
+        create_time: 1_787_695_200,
+      },
+    ],
+  });
+  renderPage();
+
+  expect(await screen.findByRole('button', { name: 'MD' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'EvaWiki' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'DOCX' })).not.toBeInTheDocument();
+  expect(screen.queryByText('Готовые файлы:')).not.toBeInTheDocument();
+  expect(screen.queryByRole('link', { name: /Word/ })).not.toBeInTheDocument();
 });
 
 test('keeps all agreed-state actions in a wrapping mobile header', async () => {
@@ -962,6 +1015,33 @@ test('renders loading and retryable error states', async () => {
   await waitFor(() => expect(mockedFetch).toHaveBeenCalledTimes(2));
 });
 
+test('shows the active attempt and previous validation error while retrying', async () => {
+  mockedFetch.mockResolvedValue({
+    ...projection,
+    operation_state: 'GENERATING_DRAFT',
+    latest_job: {
+      job_id: 'job-draft',
+      job_type: 'GENERATE_DRAFT',
+      status: 'RUNNING',
+      attempt: 2,
+      max_attempts: 3,
+      error: {
+        code: 'INVALID_DRAFT_BUNDLE',
+        message: 'Черновик не соответствует контракту',
+      },
+    },
+  });
+
+  renderPage();
+
+  expect(
+    await screen.findByTestId('business-document-operation'),
+  ).toHaveTextContent('Попытка 2 из 3');
+  expect(screen.getByTestId('business-document-operation')).toHaveTextContent(
+    'Предыдущая ошибка: Черновик не соответствует контракту',
+  );
+});
+
 test('creates a new business requirements document', async () => {
   renderPage('/business-documents');
 
@@ -987,6 +1067,21 @@ test('creates a new business requirements document', async () => {
   expect(
     await screen.findByTestId('business-document-workbench'),
   ).toBeVisible();
+});
+
+test('appends voice transcripts to document input fields', () => {
+  renderPage('/business-documents');
+
+  const title = screen.getByRole('textbox', { name: 'Название документа' });
+  const idea = screen.getByRole('textbox', { name: 'Описание идеи' });
+  fireEvent.change(title, { target: { value: 'Новый' } });
+  fireEvent.change(idea, { target: { value: 'Исходная идея.' } });
+
+  fireEvent.click(screen.getByTestId('voice-input-document-title'));
+  fireEvent.click(screen.getByTestId('voice-input-document-idea'));
+
+  expect(title).toHaveValue('Новый текст из диктовки');
+  expect(idea).toHaveValue('Исходная идея. текст из диктовки');
 });
 
 test('lists saved documents so work can be resumed', async () => {

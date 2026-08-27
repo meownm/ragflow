@@ -63,6 +63,20 @@ def test_qwen3_litellm_provider_uses_provider_field(provider):
     assert gen_conf["enable_thinking"] is False
 
 
+def test_qwen3_ollama_uses_native_top_level_think_field():
+    gen_conf, kwargs = _apply_model_family_policies(
+        "qwen3.6:27b",
+        backend="litellm",
+        provider="Ollama",
+        gen_conf={"enable_thinking": False, "temperature": 0},
+        request_kwargs={"extra_body": {"seed": 1}},
+    )
+
+    assert gen_conf == {"temperature": 0}
+    assert kwargs["extra_body"] == {"seed": 1, "think": False}
+    assert "enable_thinking" not in kwargs["extra_body"]
+
+
 def test_kimi_thinking_maps_to_moonshot_payload():
     gen_conf, kwargs = _apply_model_family_policies(
         "kimi-k2.6-preview",

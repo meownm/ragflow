@@ -155,6 +155,8 @@ def _apply_model_family_policies(
             SupportedLiteLLMProvider.Dashscope,
         }:
             sanitized_gen_conf["enable_thinking"] = enable_thinking
+        elif backend == "litellm" and str(provider) == "Ollama":
+            _merge_extra_body(sanitized_kwargs, {"think": enable_thinking})
         else:
             _merge_extra_body(sanitized_kwargs, {"enable_thinking": enable_thinking})
 
@@ -166,7 +168,7 @@ def _apply_model_family_policies(
             for key in ("temperature", "top_p", "logprobs", "top_logprobs"):
                 sanitized_gen_conf.pop(key, None)
                 sanitized_kwargs.pop(key, None)
-        elif provider == SupportedLiteLLMProvider.Anthropic and model_name_lower in {"claude-opus-4-7", "claude-opus-4-8"}:
+        elif str(provider) == "Anthropic" and model_name_lower in {"claude-opus-4-7", "claude-opus-4-8"}:
             for key in ("temperature", "top_p", "top_k"):
                 sanitized_gen_conf.pop(key, None)
                 sanitized_kwargs.pop(key, None)

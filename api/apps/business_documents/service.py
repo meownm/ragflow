@@ -31,12 +31,13 @@ from api.apps.business_documents.assets import (
     process_policy,
     render_document_ast,
     render_section_text,
+    section_hash,
     validate_contract,
     validate_document_ast,
 )
 from api.apps.business_documents.contracts import CommandEnvelope, CommandType, LifecycleState, OperationState
 from api.apps.business_documents.errors import BusinessDocumentError, ConflictError, NotFoundError, ValidationError
-from api.apps.business_documents.evidence import ensure_dataset_access, ensure_dataset_embedding_compatibility
+from api.apps.business_documents.evidence import ensure_dataset_access, ensure_dataset_embedding_compatibility, related_file_search_enabled
 from api.db.db_models import (
     BusinessDocument,
     BusinessDocumentAnswer,
@@ -1214,7 +1215,12 @@ class BusinessDocumentService:
             source_cycle, source_section = cls._event_scope(event)
             if source_cycle != document.active_review_cycle:
                 raise ValidationError("CHANGE_SOURCE_REVIEW_CYCLE_CONFLICT", "Change source is outside the active review cycle", {"event_id": event.id})
-            if source_section is not None and source_section != operation["section_id"]:
+            # An anchor identifies the text the author commented on, not the
+            # complete scope of the requested change.  A confirmed comment may
+            # explicitly ask for a coordinated update in another section.
+            # Questions and proposals retain their strict target-section
+            # boundary because their contracts carry an explicit target.
+            if event.event_type != "AuthorCommentAdded" and source_section is not None and source_section != operation["section_id"]:
                 raise ValidationError(
                     "CHANGE_SOURCE_SECTION_CONFLICT",
                     "Change source targets a different template section",
@@ -1365,6 +1371,7 @@ class BusinessDocumentService:
         if document.current_revision_id:
             row = BusinessDocumentRevision.get_by_id(document.current_revision_id)
             revision = cls._revision_dict(row)
+            revision["section_hashes"] = {section["id"]: section_hash(section) for section in row.document_ast.get("sections", []) if isinstance(section, dict) and isinstance(section.get("id"), str)}
         source_events = list(BusinessDocumentEvent.select().where(BusinessDocumentEvent.document_id == document.id).order_by(BusinessDocumentEvent.sequence.asc()))
         created = next((event for event in source_events if event.event_type == "DocumentCreated"), None)
         return {
@@ -1386,6 +1393,7 @@ class BusinessDocumentService:
                 }
                 for event in source_events
             ],
+            "active_change_input_event_ids": sorted(cls._active_change_input_event_ids(document)),
             "lifecycle_state": document.lifecycle_state,
             "state_version": document.state_version + 1,
             "template_version": document.template_version,
@@ -1653,7 +1661,7 @@ class BusinessDocumentService:
     @staticmethod
     def _validate_execution_audit(value, job):
         if value is None:
-            if job.job_type != "GENERATE_EXPORT" and job.payload.get("dataset_ids"):
+            if job.job_type != "GENERATE_EXPORT" and job.payload.get("dataset_ids") and related_file_search_enabled():
                 raise ValidationError("EVIDENCE_AUDIT_REQUIRED", "AI jobs with datasets require a pinned evidence audit")
             return {}
         if not isinstance(value, dict) or set(value) != {"retrieval"} or not isinstance(value["retrieval"], dict):

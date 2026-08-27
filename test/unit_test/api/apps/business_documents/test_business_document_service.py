@@ -846,6 +846,71 @@ def test_change_source_must_match_active_cycle_and_target_section(database):
 
 
 @pytest.mark.p0
+def test_confirmed_anchored_comment_may_request_a_cross_section_change(database):
+    document = _request_and_complete_draft(_create())
+    revision = document["current_revision"]
+    selected_text = revision["section_texts"]["3.3"]
+    response = BusinessDocumentService.execute_command(
+        TENANT,
+        AUTHOR,
+        document["document_id"],
+        _command(
+            document,
+            "ADD_COMMENT",
+            {
+                "revision_id": revision["revision_id"],
+                "section_id": "3.3",
+                "text": "Добавить чатбот и описать через него подачу заявки",
+                "anchor": {
+                    "revision_id": revision["revision_id"],
+                    "section_id": "3.3",
+                    "selected_text": selected_text,
+                    "prefix": "",
+                    "suffix": "",
+                    "start_offset": 0,
+                    "end_offset": len(selected_text),
+                },
+            },
+        ),
+    )
+    document = BusinessDocumentService.get_document(TENANT, response["document_id"], AUTHOR)
+    comment_event = BusinessDocumentEvent.get((BusinessDocumentEvent.document_id == document["document_id"]) & (BusinessDocumentEvent.event_type == "AuthorCommentAdded"))
+    document = _complete_review_assessment(document)
+    requested = BusinessDocumentService.execute_command(
+        TENANT,
+        AUTHOR,
+        document["document_id"],
+        _command(document, "APPLY_CHANGES", {"base_revision_id": revision["revision_id"]}),
+    )
+    target = next(section for section in revision["document_ast"]["sections"] if section["id"] == "4.3")
+    changed = _complete(
+        requested["job_id"],
+        {
+            "change_plan": {
+                "schema_version": "1",
+                "base_revision_id": revision["revision_id"],
+                "source_state_version": requested["state_version"],
+                "acknowledged_no_change_event_ids": [],
+                "operations": [
+                    {
+                        "operation_id": "op-cross-section-comment",
+                        "type": "REPLACE_SECTION_CONTENT",
+                        "section_id": "4.3",
+                        "expected_section_hash": section_hash(target),
+                        "source_event_ids": [comment_event.id],
+                        "content": {"blocks": required_section_blocks("4.3", "Подача заявки через чатбот.")},
+                    }
+                ],
+            }
+        },
+    )
+
+    assert changed["lifecycle_state"] == "AGREED"
+    assert changed["current_revision"]["revision_number"] == 2
+    assert "Подача заявки через чатбот" in changed["current_revision"]["section_texts"]["4.3"]
+
+
+@pytest.mark.p0
 def test_export_from_review_requires_agreed_revision(database):
     document = _request_and_complete_draft(_create())
     with pytest.raises(BusinessDocumentError) as caught:

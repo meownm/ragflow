@@ -47,6 +47,10 @@ import { DocumentPane } from './components/document-pane';
 import { EvaChangeCreatePanel } from './components/eva-change-create-panel';
 import { EvaChangeWorkbench } from './components/eva-change-workbench';
 import { ProtocolPane } from './components/protocol-pane';
+import {
+  appendVoiceTranscript,
+  VoiceInput,
+} from './components/voice-input';
 import type {
   BusinessDocumentCommand,
   BusinessDocumentCommandType,
@@ -343,19 +347,44 @@ function CreateBusinessDocumentPage() {
                   aria-label="Название документа"
                   placeholder="Например, Переводы одной кнопкой"
                   onChange={(event) => setTitle(event.target.value)}
+                  suffix={
+                    <VoiceInput
+                      label="Название"
+                      onTranscript={(transcript) =>
+                        setTitle((value) =>
+                          appendVoiceTranscript(value, transcript, 200),
+                        )
+                      }
+                      testId="voice-input-document-title"
+                    />
+                  }
                 />
               </label>
               <label className="mt-5 block space-y-2 text-sm font-medium">
                 <span>Идея</span>
-                <Textarea
-                  value={idea}
-                  maxLength={10000}
-                  autoSize={{ minRows: 7, maxRows: 18 }}
-                  resize="vertical"
-                  aria-label="Описание идеи"
-                  placeholder="Что нужно создать, для кого и какой результат ожидается?"
-                  onChange={(event) => setIdea(event.target.value)}
-                />
+                <div className="relative">
+                  <Textarea
+                    value={idea}
+                    maxLength={10000}
+                    autoSize={{ minRows: 7, maxRows: 18 }}
+                    resize="vertical"
+                    aria-label="Описание идеи"
+                    placeholder="Что нужно создать, для кого и какой результат ожидается?"
+                    className="pe-11"
+                    onChange={(event) => setIdea(event.target.value)}
+                  />
+                  <div className="absolute end-2 top-2">
+                    <VoiceInput
+                      label="Идея"
+                      onTranscript={(transcript) =>
+                        setIdea((value) =>
+                          appendVoiceTranscript(value, transcript, 10000),
+                        )
+                      }
+                      testId="voice-input-document-idea"
+                    />
+                  </div>
+                </div>
               </label>
 
               <div className="mt-5 space-y-2 text-sm font-medium">
@@ -383,7 +412,7 @@ function CreateBusinessDocumentPage() {
                 </p>
               )}
 
-              <div className="mt-6 flex justify-end">
+              <div className="mt-6 flex scroll-mt-20 justify-end">
                 <Button
                   type="submit"
                   variant="accent"
@@ -552,6 +581,10 @@ export default function BusinessDocumentsPage() {
     submitCommand(type, payload ?? payloadByCommand[type] ?? {});
   };
 
+  const visibleExports =
+    document.latest_exports?.filter((artifact) => artifact.format !== 'DOCX') ??
+    [];
+
   return (
     <main
       className="grid h-full min-h-0 min-w-0 grid-rows-[auto_auto_1fr] bg-bg-base"
@@ -658,20 +691,6 @@ export default function BusinessDocumentsPage() {
                 onClick={() =>
                   runDocumentCommand('REQUEST_EXPORT', {
                     revision_id: document.current_revision?.revision_id,
-                    format: 'DOCX',
-                  })
-                }
-              >
-                <Download className="size-4" />
-                DOCX
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={isBusy}
-                onClick={() =>
-                  runDocumentCommand('REQUEST_EXPORT', {
-                    revision_id: document.current_revision?.revision_id,
                     format: 'EVA_WIKI',
                   })
                 }
@@ -767,8 +786,25 @@ export default function BusinessDocumentsPage() {
               role="status"
             >
               <LoaderCircle className="size-3.5 animate-spin text-accent-primary" />
-              {operationLabels[document.operation_state]}. Можно оставить
-              страницу открытой — состояние обновится автоматически.
+              <span>
+                {operationLabels[document.operation_state]}.
+                {document.latest_job && document.latest_job.attempt > 0
+                  ? ` Попытка ${document.latest_job.attempt} из ${document.latest_job.max_attempts}.`
+                  : ''}
+                {document.latest_job?.error &&
+                (typeof document.latest_job.error === 'string' ||
+                  document.latest_job.error.message ||
+                  document.latest_job.error.code)
+                  ? ` Предыдущая ошибка: ${
+                      typeof document.latest_job.error === 'string'
+                        ? document.latest_job.error
+                        : document.latest_job.error.message ||
+                          document.latest_job.error.code
+                    }.`
+                  : ''}{' '}
+                Можно оставить страницу открытой — состояние обновится
+                автоматически.
+              </span>
             </div>
           )}
         {document.operation_state === 'FAILED' && document.last_error && (
@@ -779,13 +815,13 @@ export default function BusinessDocumentsPage() {
               : document.last_error.message || document.last_error.code}
           </div>
         )}
-        {!!document.latest_exports?.length && (
+        {!!visibleExports.length && (
           <div
             className="flex flex-wrap items-center gap-2 border-b border-border-button bg-bg-card/40 px-5 py-2 text-xs"
             data-testid="business-document-exports"
           >
             <span className="me-1 text-text-secondary">Готовые файлы:</span>
-            {document.latest_exports.map((artifact) => (
+            {visibleExports.map((artifact) => (
               <a
                 key={artifact.artifact_id}
                 href={api.businessDocumentExportDownload(

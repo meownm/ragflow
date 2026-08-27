@@ -4,7 +4,7 @@ import { initialDocGeneratorValues } from '../../constant';
 
 export const useValues = (node?: Node) => {
   const values = useMemo(() => {
-    const supportedOutputFormats = ['pdf', 'docx', 'txt', 'markdown', 'html'];
+    const supportedOutputFormats = ['pdf', 'txt', 'markdown', 'html'];
     const nextValues = {
       ...initialDocGeneratorValues,
       ...(node?.data.form ?? {}),

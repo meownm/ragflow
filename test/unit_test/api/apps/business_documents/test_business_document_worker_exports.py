@@ -294,6 +294,21 @@ def test_retry_backoff_exhaustion_dead_letters_once_and_rejects_wrong_token(data
     assert BusinessDocumentJob.get_by_id(requested["job_id"]).status == "DEAD"
 
 
+@pytest.mark.p0
+def test_retry_error_remains_visible_while_next_attempt_is_running(database):
+    document = _create()
+    requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
+    first = BusinessDocumentJobQueue.claim("first-worker", lease_ms=60_000)
+    assert first is not None and first.id == requested["job_id"]
+    previous_error = {"code": "INVALID_MODEL_OUTPUT", "message": "Model output failed validation"}
+    assert BusinessDocumentJobQueue.retry(first.id, "first-worker", first.lease_token, previous_error, delay_ms=0)
+
+    second = BusinessDocumentJobQueue.claim("second-worker", lease_ms=60_000)
+
+    assert second is not None and second.attempt == 2
+    assert second.error == previous_error
+
+
 @pytest.mark.p1
 def test_worker_start_is_singleton_and_wake_interrupts_idle_wait(database, monkeypatch):
     ready = threading.Event()

@@ -40,6 +40,7 @@ import type {
   EvaDocumentChangeAction,
   EvaDocumentChangeState,
 } from '../types';
+import { appendVoiceTranscript, VoiceInput } from './voice-input';
 
 const stateLabels: Record<EvaDocumentChangeState, string> = {
   EDITING: 'Редактирование',
@@ -340,15 +341,29 @@ export function EvaChangeWorkbench({ changeId }: { changeId: string }) {
 
           {view === 'draft' ? (
             <div className="flex min-h-0 flex-1 flex-col p-4">
-              <Textarea
-                value={draftMarkdown}
-                maxLength={1_000_000}
-                resize="none"
-                aria-label="Черновик документа EVA"
-                className="min-h-[420px] flex-1 font-mono text-[13px] leading-6"
-                disabled={!allowed.has('SAVE_DRAFT') || isPending}
-                onChange={(event) => setDraftMarkdown(event.target.value)}
-              />
+              <div className="relative flex min-h-0 flex-1">
+                <Textarea
+                  value={draftMarkdown}
+                  maxLength={1_000_000}
+                  resize="none"
+                  aria-label="Черновик документа EVA"
+                  className="min-h-[420px] flex-1 pe-11 font-mono text-[13px] leading-6"
+                  disabled={!allowed.has('SAVE_DRAFT') || isPending}
+                  onChange={(event) => setDraftMarkdown(event.target.value)}
+                />
+                <div className="absolute end-2 top-2">
+                  <VoiceInput
+                    label="Редактор EVA"
+                    disabled={!allowed.has('SAVE_DRAFT') || isPending}
+                    onTranscript={(transcript) =>
+                      setDraftMarkdown((value) =>
+                        appendVoiceTranscript(value, transcript, 1_000_000),
+                      )
+                    }
+                    testId="voice-input-eva-draft"
+                  />
+                </div>
+              </div>
               <div className="mt-3 flex items-center justify-between gap-3">
                 <p className="text-xs text-text-secondary">
                   Markdown будет безопасно преобразован в HTML только при записи

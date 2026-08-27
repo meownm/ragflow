@@ -1,9 +1,32 @@
 services:
+  t-one-asr:
+    build:
+      context: ../services/asr-online-service
+    restart: unless-stopped
+    environment:
+      ASR_FFMPEG_PATH: ffmpeg
+      ASR_SOX_PATH: sox
+      ASR_OLLAMA_BASE_URL: http://host.docker.internal:11434
+      ASR_OLLAMA_MODEL: ${T_ONE_ASR_OLLAMA_MODEL:-gpt-oss:20b}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9011/health/ready', timeout=5)"
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+    networks:
+      - ragflow
+
   ragflow-cpu:
     depends_on: !override
       postgres:
         condition: service_healthy
       plantuml-server:
+        condition: service_healthy
+      t-one-asr:
         condition: service_healthy
     env_file: !override
       - path: .env
@@ -41,6 +64,7 @@ services:
       - ../api/apps/services/dataset_api_service.py:/ragflow/api/apps/services/dataset_api_service.py:ro
       - ../api/apps/business_documents:/ragflow/api/apps/business_documents:ro
       - ../api/apps/restful_apis/business_document_api.py:/ragflow/api/apps/restful_apis/business_document_api.py:ro
+      - ../api/apps/restful_apis/chat_api.py:/ragflow/api/apps/restful_apis/chat_api.py:ro
       - ../api/db/db_models.py:/ragflow/api/db/db_models.py:ro
       - ../api/ragflow_server.py:/ragflow/api/ragflow_server.py:ro
       - ../agent/business_requirements:/ragflow/agent/business_requirements:ro

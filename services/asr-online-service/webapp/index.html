@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <title>ASR Online Service</title>
+</head>
+<body>
+  <h1>ASR Online Service</h1>
+  <div>
+    <label for="audioFile">Аудиофайл</label>
+    <input id="audioFile" type="file" accept="audio/*" />
+  </div>
+  <div>
+    <label for="language">Язык</label>
+    <select id="language"></select>
+  </div>
+  <div>
+    <label for="model">Модель</label>
+    <select id="model"></select>
+  </div>
+  <div>
+    <label><input type="checkbox" id="wantTxt" /> Добавить txt артефакт</label>
+  </div>
+  <button id="createJob">Запустить распознавание</button>
+  <p id="progress"></p>
+  <pre id="output"></pre>
+  <p><a id="artifactJson" href="#" style="display:none">Скачать result_json</a></p>
+  <p><a id="artifactTxt" href="#" style="display:none">Скачать txt</a></p>
+  <script src="/app.js"></script>
+</body>
+</html>

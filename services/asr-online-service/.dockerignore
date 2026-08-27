@@ -1,0 +1,12 @@
+.env
+.venv/
+.pytest_cache/
+.ruff_cache/
+artifacts/
+openapi/
+scripts/
+tests/
+tools/
+uploads/
+**/__pycache__/
+**/*.pyc

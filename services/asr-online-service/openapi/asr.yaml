@@ -1,0 +1,250 @@
+openapi: 3.1.0
+info:
+  title: ASR Online Service
+  version: 0.2.0
+paths:
+  /health/live:
+    get:
+      responses:
+        '200': { description: live }
+  /health/ready:
+    get:
+      responses:
+        '200': { description: ready }
+  /metrics:
+    get:
+      responses:
+        '200': { description: metrics }
+  /v1/models:
+    get:
+      responses:
+        '200':
+          description: OpenAI-compatible model list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpenAIModelsResponse'
+  /v1/audio/transcriptions:
+    post:
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file: { type: string, format: binary }
+                model: { type: string, default: t-one }
+                language: { type: string, default: ru }
+                response_format: { type: string, enum: [json, text], default: json }
+              required: [file]
+      responses:
+        '200':
+          description: OpenAI-compatible transcription
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranscriptionResponse'
+  /v1/asr/uploads:
+    post:
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+              required: [file]
+      responses:
+        '201':
+          description: uploaded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadResponse'
+  /v1/asr/languages:
+    get:
+      responses:
+        '200':
+          description: languages
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LanguagesResponse'
+  /v1/asr/models:
+    get:
+      responses:
+        '200':
+          description: models
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelsResponse'
+  /v1/asr/jobs:
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateJobRequest' }
+      responses:
+        '201': { description: created }
+  /v1/asr/jobs/{job_id}:
+    get:
+      parameters:
+        - in: path
+          name: job_id
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: status }
+    delete:
+      parameters:
+        - in: path
+          name: job_id
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: canceled }
+  /v1/asr/jobs/{job_id}/result:
+    get:
+      parameters:
+        - in: path
+          name: job_id
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobResultResponse'
+        '409': { description: not done }
+  /v1/asr/jobs/{job_id}/artifacts/{kind}:
+    get:
+      parameters:
+        - in: path
+          name: job_id
+          required: true
+          schema: { type: string }
+        - in: path
+          name: kind
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: artifact stream }
+components:
+  schemas:
+    OpenAIModel:
+      type: object
+      properties:
+        id: { type: string }
+        object: { type: string, default: model }
+        owned_by: { type: string, default: t-tech }
+      required: [id, object, owned_by]
+    OpenAIModelsResponse:
+      type: object
+      properties:
+        object: { type: string, default: list }
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/OpenAIModel' }
+      required: [object, data]
+    TranscriptionResponse:
+      type: object
+      properties:
+        text: { type: string }
+      required: [text]
+    JobStatus:
+      type: string
+      enum: [queued, processing, done, error, canceled, expired]
+    EngineType:
+      type: string
+      enum: [whisper, t_one, gigam]
+    ModelDescriptor:
+      type: object
+      properties:
+        key: { type: string }
+        engine_type: { $ref: '#/components/schemas/EngineType' }
+        engine_model_id: { type: string }
+        supported_languages:
+          type: array
+          items: { type: string }
+        available: { type: boolean }
+        revision: { type: [string, 'null'] }
+      required: [key, engine_type, engine_model_id, supported_languages, available]
+    ModelsResponse:
+      type: object
+      properties:
+        models:
+          type: array
+          items: { $ref: '#/components/schemas/ModelDescriptor' }
+      required: [models]
+    LanguagesResponse:
+      type: object
+      properties:
+        languages:
+          type: array
+          items: { type: string }
+      required: [languages]
+    UploadResponse:
+      type: object
+      properties:
+        source_uri: { type: string }
+      required: [source_uri]
+    EnrichOptions:
+      type: object
+      properties:
+        enabled: { type: boolean, default: false }
+    OutputOptions:
+      type: object
+      properties:
+        artifact_formats:
+          type: array
+          items: { type: string }
+        include_segments: { type: boolean, default: true }
+    JobOptions:
+      type: object
+      properties:
+        enrich:
+          $ref: '#/components/schemas/EnrichOptions'
+        output:
+          $ref: '#/components/schemas/OutputOptions'
+    CreateJobRequest:
+      type: object
+      required: [model_key, language]
+      properties:
+        model_key: { type: string }
+        language: { type: string }
+        source_uri: { type: string, default: memory://sample.wav }
+        options:
+          $ref: '#/components/schemas/JobOptions'
+    JobResultResponse:
+      type: object
+      properties:
+        job_id: { type: string }
+        result:
+          $ref: '#/components/schemas/ResultPayload'
+        artifacts:
+          type: object
+          additionalProperties: { type: string }
+      required: [job_id, result, artifacts]
+    Segment:
+      type: object
+      properties:
+        start: { type: number }
+        end: { type: number }
+        text: { type: string }
+      additionalProperties: true
+    ResultPayload:
+      type: object
+      properties:
+        transcript: { type: string }
+        segments:
+          type: array
+          items: { $ref: '#/components/schemas/Segment' }
+        enriched_text: { type: string }
+      additionalProperties: true

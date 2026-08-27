@@ -1063,19 +1063,41 @@ async def transcription():
     os.close(fd)
     await uploaded.save(temp_audio_path)
 
+    if not stream_mode:
+        try:
+            default_asr_model_config = get_tenant_default_model_by_type(current_user.id, LLMType.SPEECH2TEXT)
+        except Exception as e:
+            try:
+                os.remove(temp_audio_path)
+            except Exception as cleanup_error:
+                logging.error(f"Failed to remove temp audio file: {str(cleanup_error)}")
+            return get_data_error_result(message=str(e))
+
+        model_name = default_asr_model_config.get("llm_name", "configured ASR model")
+        try:
+            asr_mdl = LLMBundle(current_user.id, default_asr_model_config)
+            text = asr_mdl.transcription(temp_audio_path)
+            if not isinstance(text, str) or not text.strip():
+                raise ValueError(f"ASR model {model_name} returned an empty transcription")
+            return get_json_result(data={"text": text.strip(), "model": model_name})
+        except Exception as e:
+            logging.exception("Configured ASR model transcription failed")
+            return get_data_error_result(message=f"ASR transcription failed: {e}")
+        finally:
+            try:
+                os.remove(temp_audio_path)
+            except Exception as e:
+                logging.error(f"Failed to remove temp audio file: {str(e)}")
+
     try:
         default_asr_model_config = get_tenant_default_model_by_type(current_user.id, LLMType.SPEECH2TEXT)
+        asr_mdl = LLMBundle(current_user.id, default_asr_model_config)
     except Exception as e:
-        return get_data_error_result(message=str(e))
-
-    asr_mdl = LLMBundle(current_user.id, default_asr_model_config)
-    if not stream_mode:
-        text = asr_mdl.transcription(temp_audio_path)
         try:
             os.remove(temp_audio_path)
-        except Exception as e:
-            logging.error(f"Failed to remove temp audio file: {str(e)}")
-        return get_json_result(data={"text": text})
+        except Exception as cleanup_error:
+            logging.error(f"Failed to remove temp audio file: {str(cleanup_error)}")
+        return get_data_error_result(message=str(e))
 
     async def event_stream():
         try:

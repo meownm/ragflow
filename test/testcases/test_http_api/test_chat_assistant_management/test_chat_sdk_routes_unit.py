@@ -1083,6 +1083,7 @@ def test_chat_audio_transcription_routes_unit(monkeypatch):
     res = _run(module.transcription.__wrapped__())
     assert res["code"] == 0
     assert res["data"]["text"] == "transcribed text"
+    assert res["data"]["model"] == "asr-x"
 
     class _StreamASR:
         def transcription(self, _path):

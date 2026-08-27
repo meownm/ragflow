@@ -1,0 +1,37 @@
+[tool.poetry]
+name = "asr-online-service"
+version = "0.1.0"
+description = "ASR online service"
+authors = ["Codex <codex@example.com>"]
+readme = "docs/architecture.md"
+packages = [{ include = "asr_service", from = "src" }]
+
+[tool.poetry.dependencies]
+python = ">=3.11,<4.0"
+fastapi = "^0.115.0"
+uvicorn = {version = "^0.30.0", extras = ["standard"]}
+pydantic = "^2.8.0"
+pydantic-settings = "^2.4.0"
+pyyaml = "^6.0.2"
+watchfiles = "^0.24.0"
+httpx = "^0.27.2"
+python-multipart = "^0.0.9"
+python-docx = "^1.1.2"
+numpy = "^1.26.0"
+torch = "^2.4.0"
+transformers = "^4.44.0"
+tone = {version = "*", optional = true}
+gigaam = {version = "*", optional = true}
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3.2"
+ruff = "0.6.9"
+vulture = "2.11"
+
+[build-system]
+requires = ["poetry-core>=1.9.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.extras]
+tone = ["tone"]
+gigaam = ["gigaam"]

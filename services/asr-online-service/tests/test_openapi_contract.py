@@ -1,0 +1,155 @@
+import json
+import logging
+import time
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+
+from asr_service.logging_json import JsonFormatter
+from asr_service.main import app
+
+
+def _extract_enum(yaml_text: str, key: str) -> list[str]:
+    marker = f"    {key}:"
+    start = yaml_text.find(marker)
+    block = yaml_text[start:]
+    enum_marker = "      enum: ["
+    enum_start = block.find(enum_marker)
+    enum_end = block.find("]", enum_start)
+    values = block[enum_start + len(enum_marker):enum_end]
+    return [v.strip() for v in values.split(",")]
+
+
+def test_enum_contract_matches_runtime():
+    yaml_text = Path("openapi/asr.yaml").read_text(encoding="utf-8")
+    declared_statuses = _extract_enum(yaml_text, "JobStatus")
+    declared_engine_types = _extract_enum(yaml_text, "EngineType")
+
+    with TestClient(app) as client:
+        runtime = client.get("/openapi.json").json()
+
+    runtime_statuses = runtime["components"]["schemas"]["JobStatus"]["enum"]
+    runtime_engine_types = runtime["components"]["schemas"]["EngineType"]["enum"]
+
+    assert declared_statuses == runtime_statuses
+    assert declared_engine_types == runtime_engine_types
+
+
+def test_upload_filename_sanitization():
+    with TestClient(app) as client:
+        uploaded = client.post("/v1/asr/uploads", files={"file": ("../unsafe.wav", b"RIFF", "audio/wav")})
+        assert uploaded.status_code == 201
+        assert uploaded.json()["source_uri"].endswith("unsafe.wav")
+        assert ".." not in uploaded.json()["source_uri"]
+
+
+def test_job_api_artifacts_docx_txt(monkeypatch):
+    monkeypatch.setattr("asr_service.jobs.worker.preprocess_audio", lambda source_uri, settings, output_dir: (Path("sample.wav"), Path("sample.wav")))
+    monkeypatch.setattr("asr_service.models.engines.whisper_engine.WhisperEngine.load", lambda self: setattr(self, "_loaded", True))
+    monkeypatch.setattr("asr_service.models.engines.whisper_engine.WhisperEngine.transcribe", lambda self, audio_path, language: {"transcript": "integration transcript", "segments": []})
+
+    descriptor = next(item for item in app.state.registry.items if item.key == "whisper-large-v3")
+    previous = descriptor.available
+    descriptor.available = True
+    try:
+        with TestClient(app) as client:
+            created = client.post(
+                "/v1/asr/jobs",
+                json={
+                    "model_key": "whisper-large-v3",
+                    "language": "ru",
+                    "source_uri": "memory://sample.wav",
+                    "options": {"output": {"artifact_formats": ["result_json", "txt", "docx", "normalized_wav"]}},
+                },
+            )
+            assert created.status_code == 201
+            job_id = created.json()["job_id"]
+
+            for _ in range(40):
+                state = client.get(f"/v1/asr/jobs/{job_id}").json()
+                if state["status"] in {"done", "error"}:
+                    break
+                time.sleep(0.05)
+
+            result = client.get(f"/v1/asr/jobs/{job_id}/result")
+            assert result.status_code == 200
+            artifacts = result.json()["artifacts"]
+            assert {"result_json", "txt", "docx", "normalized_wav"}.issubset(artifacts.keys())
+
+            assert client.get(f"/v1/asr/jobs/{job_id}/artifacts/txt").status_code == 200
+            assert client.get(f"/v1/asr/jobs/{job_id}/artifacts/docx").status_code == 200
+    finally:
+        descriptor.available = previous
+
+def test_log_masked_mode_hides_strings():
+    formatter = JsonFormatter(data_mode="masked")
+    record = logging.LogRecord("asr.data", logging.INFO, __file__, 0, "evt", (), None)
+    record.event = "ollama_call_done"
+    record.request_id = "rq-1"
+    record.payload = {"prompt": "secret", "response": "hidden", "duration_ms": 1}
+    parsed = json.loads(formatter.format(record))
+    assert parsed["prompt"] == {"masked": True, "length": 6}
+    assert parsed["response"] == {"masked": True, "length": 6}
+    assert parsed["request_id"] == "rq-1"
+
+
+def test_openapi_declares_upload_multipart_and_result_shape():
+    yaml_text = Path("openapi/asr.yaml").read_text(encoding="utf-8")
+
+    assert "multipart/form-data" in yaml_text
+    assert "required: [file]" in yaml_text
+    assert "ResultPayload" in yaml_text
+    assert "transcript" in yaml_text
+    assert "segments" in yaml_text
+
+
+def test_create_job_unavailable_engine_returns_q_error():
+    descriptor = next(item for item in app.state.registry.items if item.key == "t-one")
+    previous = descriptor.available
+    descriptor.available = False
+    try:
+        with TestClient(app) as client:
+            created = client.post(
+                "/v1/asr/jobs",
+                json={
+                    "model_key": "t-one",
+                    "language": "ru",
+                    "source_uri": "memory://sample.wav",
+                },
+            )
+
+        assert created.status_code == 409
+        assert created.json()["detail"]["error_code"] == "Q-ASR-ENGINE-NOT-AVAILABLE"
+    finally:
+        descriptor.available = previous
+
+
+def test_log_masked_mode_masks_message_and_keeps_shape():
+    formatter = JsonFormatter(data_mode="masked")
+    record = logging.LogRecord("asr.data", logging.INFO, __file__, 0, "raw transcript", (), None)
+    record.event = "worker_job_done"
+    record.request_id = "rq-2"
+    parsed = json.loads(formatter.format(record))
+
+    assert parsed["message"] == {"masked": True, "length": 14}
+    assert parsed["event"] == "worker_job_done"
+    assert parsed["request_id"] == "rq-2"
+
+
+def test_openapi_and_runtime_include_segments_contract():
+    yaml_text = Path("openapi/asr.yaml").read_text(encoding="utf-8")
+
+    assert "include_segments" in yaml_text
+    assert "include_segments: { type: boolean, default: true }" in yaml_text
+
+    with TestClient(app) as client:
+        runtime = client.get("/openapi.json").json()
+
+    output_options = runtime["components"]["schemas"]["OutputOptions"]
+    include_segments = output_options["properties"]["include_segments"]
+    assert include_segments["type"] == "boolean"
+    assert include_segments["default"] is True
+
+    create_job = runtime["components"]["schemas"]["CreateJobRequest"]
+    options_ref = create_job["properties"]["options"]["$ref"]
+    assert options_ref.endswith("/JobOptions")

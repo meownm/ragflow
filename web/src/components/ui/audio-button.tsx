@@ -5,6 +5,7 @@ import { Authorization } from '@/constants/authorization';
 import { cn } from '@/lib/utils';
 import api from '@/utils/api';
 import { getAuthorization } from '@/utils/authorization-util';
+import notification from '@/utils/notification';
 import { chain, sum } from 'lodash';
 import { Loader2, Mic, Square } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -215,11 +216,13 @@ const VoiceInputBox = ({
 };
 export const AudioButton = ({
   onOk,
+  onError,
   testId,
   ariaLabel = 'Голосовой ввод',
   disabled = false,
 }: {
   onOk?: (transcript: string) => void;
+  onError?: (message: string) => void;
   testId?: string;
   ariaLabel?: string;
   disabled?: boolean;
@@ -267,23 +270,28 @@ export const AudioButton = ({
         body: formData,
       });
 
-      // if (!response.ok) {
-      //   throw new Error(`HTTP error! status: ${response.status}`);
-      // }
-
-      // if (!response.body) {
-      //   throw new Error('ReadableStream not supported in this browser');
-      // }
-
-      const { data, code } = await response.json();
-      if (code === 0 && data && data.text) {
-        setTranscript(data.text);
-        onOk?.(data.text);
+      const payload = await response.json();
+      if (!response.ok || payload.code !== 0) {
+        throw new Error(payload.message || `HTTP ${response.status}`);
       }
+
+      const recognizedText = payload.data?.text?.trim();
+      if (!recognizedText) {
+        throw new Error('ASR-модель вернула пустой результат');
+      }
+
+      setTranscript(recognizedText);
+      onOk?.(recognizedText);
       setPopoverOpen(false);
     } catch (error) {
       console.error('Failed to process audio:', error);
-      // setTranscript(t('voiceRecorder.processingError'));
+      const message =
+        error instanceof Error ? error.message : 'Неизвестная ошибка ASR';
+      onError?.(message);
+      notification.error({
+        message: 'Не удалось распознать речь',
+        description: message,
+      });
     } finally {
       setIsProcessing(false);
     }

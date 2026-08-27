@@ -1031,10 +1031,31 @@ def test_chat_audio_transcription_routes_unit(monkeypatch):
     _set_request({"stream": "false"}, {"file": _DummyUploadFile("audio.wav")})
     monkeypatch.setattr(module, "get_tenant_default_model_by_type", lambda *_args, **_kwargs: {"llm_name": "asr-x"})
     monkeypatch.setattr(module, "LLMBundle", lambda *_args, **_kwargs: _SyncASR())
-    monkeypatch.setattr(module.os, "remove", lambda _path: (_ for _ in ()).throw(RuntimeError("cleanup fail")))
+    monkeypatch.setattr(module.os, "remove", lambda _path: None)
     res = _run(module.transcription.__wrapped__())
     assert res["code"] == 0
     assert res["data"]["text"] == "transcribed text"
+    assert res["data"]["model"] == "asr-x"
+
+    class _EmptyASR:
+        def transcription(self, _path):
+            return ""
+
+    _set_request({"stream": "false"}, {"file": _DummyUploadFile("audio.wav")})
+    monkeypatch.setattr(module, "LLMBundle", lambda *_args, **_kwargs: _EmptyASR())
+    res = _run(module.transcription.__wrapped__())
+    assert res["code"] != 0
+    assert res["message"] == "ASR transcription failed: ASR model asr-x returned an empty transcription"
+
+    class _FailingASR:
+        def transcription(self, _path):
+            raise ConnectionError("ASR service is unavailable")
+
+    _set_request({"stream": "false"}, {"file": _DummyUploadFile("audio.wav")})
+    monkeypatch.setattr(module, "LLMBundle", lambda *_args, **_kwargs: _FailingASR())
+    res = _run(module.transcription.__wrapped__())
+    assert res["code"] != 0
+    assert res["message"] == "ASR transcription failed: ASR service is unavailable"
 
     class _StreamASR:
         def transcription(self, _path):

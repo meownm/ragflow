@@ -9,6 +9,21 @@ sidebar_custom_props: {
 
 Key features, improvements and bug fixes in the latest releases.
 
+## v1.3.0
+
+Released on September 1, 2026.
+
+### New features
+
+- Deployment: Adds a self-contained PostgreSQL-based Linux bundle for Ubuntu 24.04 and Debian 12 with Elasticsearch, MinIO, Valkey, PlantUML, and T-One ASR.
+- Agent templates: Adds the MRZ document reader template and keeps executable component parameters synchronized with canvas node forms.
+
+### Improvements and bug fixes
+
+- Prevents OAuth providers from provisioning new accounts while registration is disabled.
+- Downloads business-document exports through the authenticated API client and clarifies review lifecycle actions in the workbench.
+- Keeps ignored local files and generated release archives out of Linux bundles and Git commits.
+
 ## v1.0.0
 
 Released on August 26, 2026.

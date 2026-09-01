@@ -109,6 +109,21 @@ export async function fetchBusinessDocument(documentId: string) {
   }
 }
 
+export async function downloadBusinessDocumentExport(
+  documentId: string,
+  artifactId: string,
+) {
+  try {
+    const response = await request.get(
+      api.businessDocumentExportDownload(documentId, artifactId),
+      requestConfig({ responseType: 'blob' }),
+    );
+    return response.data as Blob;
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
 export async function listBusinessDocuments(page = 1, pageSize = 20) {
   try {
     const response = await request.get(

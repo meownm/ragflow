@@ -3,6 +3,7 @@ import {
   approveEvaDocumentChange,
   createBusinessDocument,
   createEvaDocumentChange,
+  downloadBusinessDocumentExport,
   fetchBusinessDocument,
   fetchEvaDocumentChange,
   listBusinessDocuments,
@@ -13,6 +14,7 @@ import {
   searchEvaDocumentSources,
   submitBusinessDocumentCommand,
 } from '@/services/business-document-service';
+import { downloadFileFromBlob } from '@/utils/file-util';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes as RouterRoutes } from 'react-router';
@@ -61,11 +63,16 @@ jest.mock('@/hooks/use-knowledge-request', () => ({
   useFetchKnowledgeList: () => ({ list: [], loading: false }),
 }));
 
+jest.mock('@/utils/file-util', () => ({
+  downloadFileFromBlob: jest.fn(),
+}));
+
 jest.mock('@/services/business-document-service', () => {
   const actual = jest.requireActual('@/services/business-document-service');
   return {
     ...actual,
     createBusinessDocument: jest.fn(),
+    downloadBusinessDocumentExport: jest.fn(),
     fetchBusinessDocument: jest.fn(),
     listBusinessDocuments: jest.fn(),
     submitBusinessDocumentCommand: jest.fn(),
@@ -81,6 +88,8 @@ jest.mock('@/services/business-document-service', () => {
 });
 
 const mockedCreate = jest.mocked(createBusinessDocument);
+const mockedDownloadExport = jest.mocked(downloadBusinessDocumentExport);
+const mockedDownloadFileFromBlob = jest.mocked(downloadFileFromBlob);
 const mockedFetch = jest.mocked(fetchBusinessDocument);
 const mockedList = jest.mocked(listBusinessDocuments);
 const mockedSubmit = jest.mocked(submitBusinessDocumentCommand);
@@ -362,7 +371,9 @@ test('renders a dense read-only workbench from the server projection', async () 
   expect(
     screen.getByTestId('business-document-comment-disposition'),
   ).toHaveTextContent('Подтверждено к правке');
-  expect(screen.getByTestId('apply-changes-button')).toBeInTheDocument();
+  expect(screen.getByTestId('apply-changes-button')).toHaveTextContent(
+    'Завершить ревью',
+  );
   expect(screen.queryByRole('textbox', { name: 'Документ' })).toBeNull();
   expect(screen.getAllByTestId('business-document-section')[2]).toHaveAttribute(
     'data-section-text',
@@ -433,7 +444,7 @@ test('shows all agent comment dispositions as read-only protocol status', async 
   );
 });
 
-test('renders completed exports with their own revision and canonical download URL', async () => {
+test('downloads completed exports through the authenticated request client', async () => {
   mockedFetch.mockResolvedValueOnce({
     ...projection,
     latest_exports: [
@@ -461,6 +472,20 @@ test('renders completed exports with their own revision and canonical download U
   );
   expect(download).toHaveAttribute('download', 'requirements_r2.md');
   expect(download).not.toHaveTextContent('r3');
+
+  const blob = new Blob(['# requirements'], { type: 'text/markdown' });
+  mockedDownloadExport.mockResolvedValueOnce(blob);
+  fireEvent.click(download);
+  await waitFor(() =>
+    expect(mockedDownloadExport).toHaveBeenCalledWith(
+      'doc-1',
+      'artifact-md-r2',
+    ),
+  );
+  expect(mockedDownloadFileFromBlob).toHaveBeenCalledWith(
+    blob,
+    'requirements_r2.md',
+  );
 });
 
 test('does not expose DOCX export actions or completed DOCX artifacts', async () => {
@@ -485,9 +510,15 @@ test('does not expose DOCX export actions or completed DOCX artifacts', async ()
   });
   renderPage();
 
-  expect(await screen.findByRole('button', { name: 'MD' })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'EvaWiki' })).toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: 'DOCX' })).not.toBeInTheDocument();
+  expect(
+    await screen.findByRole('button', { name: 'Создать Markdown' }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole('button', { name: 'Создать HTML для EvaWiki' }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole('button', { name: 'DOCX' }),
+  ).not.toBeInTheDocument();
   expect(screen.queryByText('Готовые файлы:')).not.toBeInTheDocument();
   expect(screen.queryByRole('link', { name: /Word/ })).not.toBeInTheDocument();
 });
@@ -510,7 +541,15 @@ test('keeps all agreed-state actions in a wrapping mobile header', async () => {
   expect(actions).toHaveClass('w-full', 'min-w-0', 'flex-wrap');
   expect(actions).toHaveClass('sm:w-auto');
   expect(title).toHaveClass('break-words', 'sm:truncate');
-  expect(screen.getByRole('button', { name: 'EvaWiki' })).toBeInTheDocument();
+  expect(
+    screen.getByRole('button', { name: 'Начать новое ревью' }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole('button', { name: 'Создать Markdown' }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole('button', { name: 'Создать HTML для EvaWiki' }),
+  ).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'В архив' })).toBeInTheDocument();
 });
 
@@ -956,6 +995,24 @@ test('uses the canonical backend command to request a draft', async () => {
   );
 });
 
+test('uses an analysis action label for intake assessment', async () => {
+  mockedFetch.mockResolvedValueOnce({
+    ...projection,
+    lifecycle_state: 'INTAKE',
+    current_revision: null,
+    active_review_cycle: 0,
+    protocol: { questions: [], proposals: [], comments: [] },
+    allowed_commands: ['REQUEST_INTAKE_ASSESSMENT'],
+  });
+  renderPage();
+
+  expect(
+    await screen.findByRole('button', {
+      name: 'Проанализировать вводные',
+    }),
+  ).toBeInTheDocument();
+});
+
 test('requests review assessment before applying and exports EvaWiki explicitly', async () => {
   mockedFetch.mockResolvedValueOnce({
     ...projection,
@@ -964,7 +1021,7 @@ test('requests review assessment before applying and exports EvaWiki explicitly'
   const { unmount } = renderPage();
 
   fireEvent.click(
-    await screen.findByRole('button', { name: 'Проверить согласование' }),
+    await screen.findByRole('button', { name: 'Проанализировать замечания' }),
   );
   await waitFor(() => expect(mockedSubmit).toHaveBeenCalledTimes(1));
   expect(mockedSubmit).toHaveBeenLastCalledWith(
@@ -984,7 +1041,9 @@ test('requests review assessment before applying and exports EvaWiki explicitly'
   });
   mockedSubmit.mockResolvedValue(commandResult);
   renderPage();
-  fireEvent.click(await screen.findByRole('button', { name: 'EvaWiki' }));
+  fireEvent.click(
+    await screen.findByRole('button', { name: 'Создать HTML для EvaWiki' }),
+  );
 
   await waitFor(() => expect(mockedSubmit).toHaveBeenCalledTimes(1));
   expect(mockedSubmit).toHaveBeenLastCalledWith(
@@ -1111,6 +1170,49 @@ test('lists saved documents so work can be resumed', async () => {
   );
   fireEvent.click(screen.getByTestId('business-document-list-item'));
   await waitFor(() => expect(mockedFetch).toHaveBeenCalledWith('saved-1'));
+});
+
+test('shows the reviewed lifecycle and review operation labels', async () => {
+  mockedList.mockResolvedValueOnce({
+    items: [
+      {
+        document_id: 'review-1',
+        title: 'Документ на ревью',
+        lifecycle_state: 'REVIEW',
+        operation_state: 'ANALYZING_REVIEW',
+        state_version: 3,
+        current_revision_number: 1,
+        update_time: 1_787_695_200,
+      },
+      {
+        document_id: 'agreed-1',
+        title: 'Проверенный документ',
+        lifecycle_state: 'AGREED',
+        operation_state: 'IDLE',
+        state_version: 4,
+        current_revision_number: 2,
+        update_time: 1_787_695_200,
+      },
+      {
+        document_id: 'archived-1',
+        title: 'Архивный документ',
+        lifecycle_state: 'ARCHIVED',
+        operation_state: 'IDLE',
+        state_version: 5,
+        current_revision_number: 2,
+        update_time: 1_787_695_200,
+      },
+    ],
+    total: 3,
+    page: 1,
+    page_size: 20,
+  });
+  renderPage('/business-documents');
+
+  expect(await screen.findByText('Ревью')).toBeInTheDocument();
+  expect(screen.getByText('Ревью пройдено')).toBeInTheDocument();
+  expect(screen.getByText('В архиве')).toBeInTheDocument();
+  expect(screen.getByText('Анализ замечаний')).toBeInTheDocument();
 });
 
 test('finds an existing EVA document and opens a pinned change request', async () => {

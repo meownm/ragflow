@@ -222,6 +222,14 @@ async def oauth_callback(channel):
         user_id = get_uuid()
 
         if not users:
+            if not settings.REGISTER_ENABLED:
+                logging.warning(
+                    "OAuth login rejected for unprovisioned account while registration is disabled: channel='%s', email='%s'",
+                    channel,
+                    user_info.email,
+                )
+                return redirect("/?error=Account is not allowed. Contact administrator.")
+
             try:
                 try:
                     avatar = await download_img(user_info.avatar_url)

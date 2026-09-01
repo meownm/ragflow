@@ -19,11 +19,13 @@ import { Routes } from '@/routes';
 import {
   BusinessDocumentConflictError,
   createBusinessDocument,
+  downloadBusinessDocumentExport,
   fetchBusinessDocument,
   listBusinessDocuments,
   submitBusinessDocumentCommand,
 } from '@/services/business-document-service';
 import api from '@/utils/api';
+import { downloadFileFromBlob } from '@/utils/file-util';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
@@ -41,16 +43,20 @@ import {
   Send,
   Sparkles,
 } from 'lucide-react';
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  FormEvent,
+  MouseEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { DocumentPane } from './components/document-pane';
 import { EvaChangeCreatePanel } from './components/eva-change-create-panel';
 import { EvaChangeWorkbench } from './components/eva-change-workbench';
 import { ProtocolPane } from './components/protocol-pane';
-import {
-  appendVoiceTranscript,
-  VoiceInput,
-} from './components/voice-input';
+import { appendVoiceTranscript, VoiceInput } from './components/voice-input';
 import type {
   BusinessDocumentCommand,
   BusinessDocumentCommandType,
@@ -61,15 +67,15 @@ import type {
 
 const lifecycleLabels: Record<BusinessDocumentLifecycleState, string> = {
   INTAKE: 'Сбор вводных',
-  REVIEW: 'Согласование',
-  AGREED: 'Согласовано',
-  ARCHIVED: 'Архив',
+  REVIEW: 'Ревью',
+  AGREED: 'Ревью пройдено',
+  ARCHIVED: 'В архиве',
 };
 
 const operationLabels: Record<BusinessDocumentOperationState, string> = {
   IDLE: 'Готово к работе',
   ANALYZING: 'Анализ вводных',
-  ANALYZING_REVIEW: 'Проверка согласования',
+  ANALYZING_REVIEW: 'Анализ замечаний',
   GENERATING_DRAFT: 'Создание черновика',
   APPLYING_CHANGES: 'Применение изменений',
   EXPORTING: 'Подготовка файла',
@@ -585,6 +591,19 @@ export default function BusinessDocumentsPage() {
     document.latest_exports?.filter((artifact) => artifact.format !== 'DOCX') ??
     [];
 
+  const downloadExport = async (
+    event: MouseEvent<HTMLAnchorElement>,
+    artifactId: string,
+    filename: string,
+  ) => {
+    event.preventDefault();
+    const blob = await downloadBusinessDocumentExport(
+      document.document_id,
+      artifactId,
+    );
+    downloadFileFromBlob(blob, filename);
+  };
+
   return (
     <main
       className="grid h-full min-h-0 min-w-0 grid-rows-[auto_auto_1fr] bg-bg-base"
@@ -632,7 +651,7 @@ export default function BusinessDocumentsPage() {
               onClick={() => runDocumentCommand('REQUEST_INTAKE_ASSESSMENT')}
             >
               <Sparkles className="size-4" />
-              Уточнить вводные
+              Проанализировать вводные
             </Button>
           )}
           {allowed.has('REQUEST_DRAFT') && (
@@ -654,7 +673,7 @@ export default function BusinessDocumentsPage() {
               onClick={() => runDocumentCommand('START_REVIEW')}
             >
               <RotateCcw className="size-4" />
-              Новый цикл
+              Начать новое ревью
             </Button>
           )}
           {allowed.has('REQUEST_REVIEW_ASSESSMENT') && (
@@ -665,7 +684,7 @@ export default function BusinessDocumentsPage() {
               onClick={() => runDocumentCommand('REQUEST_REVIEW_ASSESSMENT')}
             >
               <Sparkles className="size-4" />
-              Проверить согласование
+              Проанализировать замечания
             </Button>
           )}
           {allowed.has('REQUEST_EXPORT') && (
@@ -682,7 +701,7 @@ export default function BusinessDocumentsPage() {
                 }
               >
                 <Download className="size-4" />
-                MD
+                Создать Markdown
               </Button>
               <Button
                 size="sm"
@@ -696,7 +715,7 @@ export default function BusinessDocumentsPage() {
                 }
               >
                 <Send className="size-4" />
-                EvaWiki
+                Создать HTML для EvaWiki
               </Button>
             </>
           )}
@@ -710,7 +729,7 @@ export default function BusinessDocumentsPage() {
               onClick={() => runDocumentCommand('APPLY_CHANGES')}
             >
               <CheckCircle2 className="size-4" />
-              Применить изменения
+              Завершить ревью
             </Button>
           )}
           {allowed.has('ARCHIVE') && (
@@ -829,6 +848,13 @@ export default function BusinessDocumentsPage() {
                   artifact.artifact_id,
                 )}
                 download={artifact.filename}
+                onClick={(event) =>
+                  void downloadExport(
+                    event,
+                    artifact.artifact_id,
+                    artifact.filename,
+                  )
+                }
                 className="inline-flex items-center gap-1.5 rounded-md border border-border-button bg-bg-base px-2.5 py-1.5 font-medium text-text-primary transition-colors hover:border-accent-primary hover:text-accent-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent-primary"
               >
                 <Download className="size-3.5" />

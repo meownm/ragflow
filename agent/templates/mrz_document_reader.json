@@ -1,0 +1,274 @@
+{
+  "id": 42,
+  "title": {
+    "en": "MRZ document reader",
+    "de": "MRZ-Dokumentleser",
+    "zh": "MRZ 证件识别器"
+  },
+  "description": {
+    "en": "Finds an ICAO MRZ in a document photo, validates every required check digit, and returns attributes only when validation succeeds.",
+    "de": "Findet die ICAO-MRZ in einem Dokumentfoto, prüft alle erforderlichen Prüfziffern und gibt Attribute nur nach erfolgreicher Prüfung zurück.",
+    "zh": "从证件照片中查找 ICAO MRZ，验证所有必需校验位，仅在验证成功后返回属性。"
+  },
+  "canvas_type": "Consumer App",
+  "canvas_types": [
+    "Consumer App",
+    "Recommended"
+  ],
+  "dsl": {
+    "history": [],
+    "path": [],
+    "retrieval": [],
+    "components": {
+      "begin": {
+        "downstream": [
+          "Agent:MRZOCR"
+        ],
+        "obj": {
+          "component_name": "Begin",
+          "params": {
+            "enablePrologue": true,
+            "inputs": {},
+            "mode": "conversational",
+            "prologue": "Загрузите фотографию документа. Я верну данные MRZ только после успешной проверки всех обязательных контрольных цифр."
+          }
+        },
+        "upstream": []
+      },
+      "Agent:MRZOCR": {
+        "downstream": [
+          "CodeExec:MRZValidate"
+        ],
+        "obj": {
+          "component_name": "Agent",
+          "params": {
+            "delay_after_error": 1,
+            "description": "Locates and transcribes an ICAO 9303 machine-readable zone from a document image.",
+            "exception_comment": "",
+            "exception_goto": [],
+            "exception_method": null,
+            "frequency_penalty": 0,
+            "frequencyPenaltyEnabled": false,
+            "llm_filter": "image2text",
+            "llm_id": "",
+            "max_retries": 2,
+            "max_rounds": 1,
+            "max_tokens": 256,
+            "maxTokensEnabled": true,
+            "mcp": [],
+            "message_history_window_size": 1,
+            "outputs": {
+              "content": {
+                "type": "string",
+                "value": ""
+              },
+              "structured_output": {}
+            },
+            "presence_penalty": 0,
+            "presencePenaltyEnabled": false,
+            "prompts": [
+              {
+                "content": "Inspect the attached document photo. {sys.query}",
+                "role": "user"
+              }
+            ],
+            "sys_prompt": "You are an OCR stage, not a document-data extraction stage. Locate the machine-readable zone (MRZ) in the image and transcribe it character-for-character. Allowed characters are A-Z, 0-9 and <. Never repair a check digit, infer a missing character, replace a character to make validation pass, or return fields printed outside the MRZ. Preserve every filler < and exact line length. Supported layouts are TD1 (3 lines of 30), TD2 (2 lines of 36), and TD3 (2 lines of 44). Return JSON only, exactly in this shape: {\"mrz_lines\":[\"...\"]}. If no complete MRZ is visible or any character is unreadable, return {\"mrz_lines\":[]}.",
+            "temperature": 0,
+            "temperatureEnabled": true,
+            "tools": [],
+            "top_p": 0.1,
+            "topPEnabled": true,
+            "user_prompt": "",
+            "visual_files_var": "sys.files"
+          }
+        },
+        "upstream": [
+          "begin"
+        ]
+      },
+      "CodeExec:MRZValidate": {
+        "downstream": [
+          "Message:MRZResult"
+        ],
+        "obj": {
+          "component_name": "CodeExec",
+          "params": {
+            "arguments": {
+              "ocr_result": "Agent:MRZOCR@content"
+            },
+            "lang": "python",
+            "outputs": {
+              "result": {
+                "type": "String",
+                "value": ""
+              }
+            },
+            "script": "import json\nimport re\n\nWEIGHTS = (7, 3, 1)\n\n\ndef char_value(ch):\n    if ch == '<':\n        return 0\n    if '0' <= ch <= '9':\n        return ord(ch) - ord('0')\n    if 'A' <= ch <= 'Z':\n        return ord(ch) - ord('A') + 10\n    raise ValueError('invalid MRZ character')\n\n\ndef valid_digit(data, digit, allow_empty=False):\n    if allow_empty and digit == '<' and set(data) <= {'<'}:\n        return True\n    return digit.isdigit() and sum(char_value(ch) * WEIGHTS[i % 3] for i, ch in enumerate(data)) % 10 == int(digit)\n\n\ndef clean(value):\n    return value.replace('<', ' ').strip()\n\n\ndef names(value):\n    parts = value.split('<<', 1)\n    return {'surname': clean(parts[0]), 'given_names': clean(parts[1]) if len(parts) == 2 else ''}\n\n\ndef response(error, failed=None):\n    body = {'valid': False, 'error': error, 'attributes': None}\n    if failed:\n        body['failed_checks'] = failed\n    return json.dumps(body, ensure_ascii=False, separators=(',', ':'))\n\n\ndef parse_input(raw):\n    if not isinstance(raw, str):\n        return []\n    match = re.search(r'\\{[\\s\\S]*\\}', raw)\n    if not match:\n        return []\n    try:\n        value = json.loads(match.group(0)).get('mrz_lines', [])\n    except (ValueError, TypeError, AttributeError):\n        return []\n    if not isinstance(value, list):\n        return []\n    return [str(line).strip().upper() for line in value]\n\n\ndef document_number(primary, fixed_digit, optional):\n    if fixed_digit.isdigit():\n        return clean(primary), ('document_number', primary, fixed_digit), optional\n    if fixed_digit != '<':\n        return None\n    filler = optional.find('<')\n    if filler < 1:\n        return None\n    encoded = optional[:filler]\n    continuation, digit = encoded[:-1], encoded[-1]\n    if not continuation or not digit.isdigit():\n        return None\n    return clean(primary + continuation), ('document_number', primary + continuation, digit), optional[filler + 1:]\n\n\ndef main(ocr_result):\n    lines = parse_input(ocr_result)\n    if not lines:\n        return response('mrz_not_found')\n    if any(not re.fullmatch(r'[A-Z0-9<]+', line) for line in lines):\n        return response('invalid_mrz_characters')\n\n    if len(lines) == 2 and all(len(line) == 44 for line in lines):\n        kind = 'TD3'\n        a, b = lines\n        checks = [\n            ('document_number', b[0:9], b[9]),\n            ('birth_date', b[13:19], b[19]),\n            ('expiry_date', b[21:27], b[27]),\n            ('optional_data', b[28:42], b[42], True),\n            ('composite', b[0:10] + b[13:20] + b[21:43], b[43])\n        ]\n        attrs = {'document_code': clean(a[0:2]), 'issuing_state': a[2:5], **names(a[5:44]), 'document_number': clean(b[0:9]), 'nationality': b[10:13], 'birth_date': b[13:19], 'sex': clean(b[20]), 'expiry_date': b[21:27], 'optional_data': clean(b[28:42])}\n    elif len(lines) == 2 and all(len(line) == 36 for line in lines):\n        kind = 'TD2'\n        a, b = lines\n        parsed_number = document_number(b[0:9], b[9], b[28:35])\n        if parsed_number is None:\n            return response('invalid_document_number_encoding')\n        number, number_check, remaining_optional = parsed_number\n        checks = [number_check, ('birth_date', b[13:19], b[19]), ('expiry_date', b[21:27], b[27]), ('composite', b[0:10] + b[13:20] + b[21:35], b[35])]\n        attrs = {'document_code': clean(a[0:2]), 'issuing_state': a[2:5], **names(a[5:36]), 'document_number': number, 'nationality': b[10:13], 'birth_date': b[13:19], 'sex': clean(b[20]), 'expiry_date': b[21:27], 'optional_data': clean(remaining_optional)}\n    elif len(lines) == 3 and all(len(line) == 30 for line in lines):\n        kind = 'TD1'\n        a, b, c = lines\n        parsed_number = document_number(a[5:14], a[14], a[15:30])\n        if parsed_number is None:\n            return response('invalid_document_number_encoding')\n        number, number_check, remaining_optional = parsed_number\n        checks = [number_check, ('birth_date', b[0:6], b[6]), ('expiry_date', b[8:14], b[14]), ('composite', a[5:30] + b[0:7] + b[8:15] + b[18:29], b[29])]\n        attrs = {'document_code': clean(a[0:2]), 'issuing_state': a[2:5], 'document_number': number, 'optional_data': clean(remaining_optional + b[18:29]), 'birth_date': b[0:6], 'sex': clean(b[7]), 'expiry_date': b[8:14], 'nationality': b[15:18], **names(c)}\n    else:\n        return response('unsupported_mrz_layout')\n\n    failed = []\n    for check in checks:\n        name, value, digit, *options = check\n        if not valid_digit(value, digit, *options):\n            failed.append(name)\n    if failed:\n        return response('checksum_failed', failed)\n    return json.dumps({'valid': True, 'format': kind, 'attributes': attrs}, ensure_ascii=False, separators=(',', ':'))\n"
+          }
+        },
+        "upstream": [
+          "Agent:MRZOCR"
+        ]
+      },
+      "Message:MRZResult": {
+        "downstream": [],
+        "obj": {
+          "component_name": "Message",
+          "params": {
+            "content": [
+              "{CodeExec:MRZValidate@result}"
+            ]
+          }
+        },
+        "upstream": [
+          "CodeExec:MRZValidate"
+        ]
+      }
+    },
+    "globals": {
+      "sys.conversation_turns": 0,
+      "sys.files": [],
+      "sys.query": "",
+      "sys.user_id": ""
+    },
+    "graph": {
+      "edges": [
+        {
+          "id": "xy-edge__beginstart-Agent:MRZOCRend",
+          "source": "begin",
+          "sourceHandle": "start",
+          "target": "Agent:MRZOCR",
+          "targetHandle": "end"
+        },
+        {
+          "id": "xy-edge__Agent:MRZOCRstart-CodeExec:MRZValidateend",
+          "source": "Agent:MRZOCR",
+          "sourceHandle": "start",
+          "target": "CodeExec:MRZValidate",
+          "targetHandle": "end"
+        },
+        {
+          "id": "xy-edge__CodeExec:MRZValidatestart-Message:MRZResultend",
+          "source": "CodeExec:MRZValidate",
+          "sourceHandle": "start",
+          "target": "Message:MRZResult",
+          "targetHandle": "end"
+        }
+      ],
+      "nodes": [
+        {
+          "id": "begin",
+          "type": "beginNode",
+          "position": {
+            "x": 50,
+            "y": 200
+          },
+          "data": {
+            "label": "Begin",
+            "name": "begin",
+            "form": {
+              "enablePrologue": true,
+              "inputs": {},
+              "mode": "conversational",
+              "prologue": "Загрузите фотографию документа. Я верну данные MRZ только после успешной проверки всех обязательных контрольных цифр."
+            }
+          }
+        },
+        {
+          "id": "Agent:MRZOCR",
+          "type": "agentNode",
+          "position": {
+            "x": 350,
+            "y": 200
+          },
+          "data": {
+            "label": "Agent",
+            "name": "MRZ OCR",
+            "form": {
+              "delay_after_error": 1,
+              "description": "Locates and transcribes an ICAO 9303 machine-readable zone from a document image.",
+              "exception_comment": "",
+              "exception_goto": [],
+              "exception_method": null,
+              "frequency_penalty": 0,
+              "frequencyPenaltyEnabled": false,
+              "llm_filter": "image2text",
+              "llm_id": "",
+              "max_retries": 2,
+              "max_rounds": 1,
+              "max_tokens": 256,
+              "maxTokensEnabled": true,
+              "mcp": [],
+              "message_history_window_size": 1,
+              "outputs": {
+                "content": {
+                  "type": "string",
+                  "value": ""
+                },
+                "structured_output": {}
+              },
+              "presence_penalty": 0,
+              "presencePenaltyEnabled": false,
+              "prompts": [
+                {
+                  "content": "Inspect the attached document photo. {sys.query}",
+                  "role": "user"
+                }
+              ],
+              "sys_prompt": "You are an OCR stage, not a document-data extraction stage. Locate the machine-readable zone (MRZ) in the image and transcribe it character-for-character. Allowed characters are A-Z, 0-9 and <. Never repair a check digit, infer a missing character, replace a character to make validation pass, or return fields printed outside the MRZ. Preserve every filler < and exact line length. Supported layouts are TD1 (3 lines of 30), TD2 (2 lines of 36), and TD3 (2 lines of 44). Return JSON only, exactly in this shape: {\"mrz_lines\":[\"...\"]}. If no complete MRZ is visible or any character is unreadable, return {\"mrz_lines\":[]}.",
+              "temperature": 0,
+              "temperatureEnabled": true,
+              "tools": [],
+              "top_p": 0.1,
+              "topPEnabled": true,
+              "user_prompt": "",
+              "visual_files_var": "sys.files"
+            }
+          }
+        },
+        {
+          "id": "CodeExec:MRZValidate",
+          "type": "ragNode",
+          "position": {
+            "x": 650,
+            "y": 200
+          },
+          "data": {
+            "label": "CodeExec",
+            "name": "Validate and parse MRZ",
+            "form": {
+              "arguments": {
+                "ocr_result": "Agent:MRZOCR@content"
+              },
+              "lang": "python",
+              "outputs": {
+                "result": {
+                  "type": "String",
+                  "value": ""
+                }
+              },
+              "script": "import json\nimport re\n\nWEIGHTS = (7, 3, 1)\n\n\ndef char_value(ch):\n    if ch == '<':\n        return 0\n    if '0' <= ch <= '9':\n        return ord(ch) - ord('0')\n    if 'A' <= ch <= 'Z':\n        return ord(ch) - ord('A') + 10\n    raise ValueError('invalid MRZ character')\n\n\ndef valid_digit(data, digit, allow_empty=False):\n    if allow_empty and digit == '<' and set(data) <= {'<'}:\n        return True\n    return digit.isdigit() and sum(char_value(ch) * WEIGHTS[i % 3] for i, ch in enumerate(data)) % 10 == int(digit)\n\n\ndef clean(value):\n    return value.replace('<', ' ').strip()\n\n\ndef names(value):\n    parts = value.split('<<', 1)\n    return {'surname': clean(parts[0]), 'given_names': clean(parts[1]) if len(parts) == 2 else ''}\n\n\ndef response(error, failed=None):\n    body = {'valid': False, 'error': error, 'attributes': None}\n    if failed:\n        body['failed_checks'] = failed\n    return json.dumps(body, ensure_ascii=False, separators=(',', ':'))\n\n\ndef parse_input(raw):\n    if not isinstance(raw, str):\n        return []\n    match = re.search(r'\\{[\\s\\S]*\\}', raw)\n    if not match:\n        return []\n    try:\n        value = json.loads(match.group(0)).get('mrz_lines', [])\n    except (ValueError, TypeError, AttributeError):\n        return []\n    if not isinstance(value, list):\n        return []\n    return [str(line).strip().upper() for line in value]\n\n\ndef document_number(primary, fixed_digit, optional):\n    if fixed_digit.isdigit():\n        return clean(primary), ('document_number', primary, fixed_digit), optional\n    if fixed_digit != '<':\n        return None\n    filler = optional.find('<')\n    if filler < 1:\n        return None\n    encoded = optional[:filler]\n    continuation, digit = encoded[:-1], encoded[-1]\n    if not continuation or not digit.isdigit():\n        return None\n    return clean(primary + continuation), ('document_number', primary + continuation, digit), optional[filler + 1:]\n\n\ndef main(ocr_result):\n    lines = parse_input(ocr_result)\n    if not lines:\n        return response('mrz_not_found')\n    if any(not re.fullmatch(r'[A-Z0-9<]+', line) for line in lines):\n        return response('invalid_mrz_characters')\n\n    if len(lines) == 2 and all(len(line) == 44 for line in lines):\n        kind = 'TD3'\n        a, b = lines\n        checks = [\n            ('document_number', b[0:9], b[9]),\n            ('birth_date', b[13:19], b[19]),\n            ('expiry_date', b[21:27], b[27]),\n            ('optional_data', b[28:42], b[42], True),\n            ('composite', b[0:10] + b[13:20] + b[21:43], b[43])\n        ]\n        attrs = {'document_code': clean(a[0:2]), 'issuing_state': a[2:5], **names(a[5:44]), 'document_number': clean(b[0:9]), 'nationality': b[10:13], 'birth_date': b[13:19], 'sex': clean(b[20]), 'expiry_date': b[21:27], 'optional_data': clean(b[28:42])}\n    elif len(lines) == 2 and all(len(line) == 36 for line in lines):\n        kind = 'TD2'\n        a, b = lines\n        parsed_number = document_number(b[0:9], b[9], b[28:35])\n        if parsed_number is None:\n            return response('invalid_document_number_encoding')\n        number, number_check, remaining_optional = parsed_number\n        checks = [number_check, ('birth_date', b[13:19], b[19]), ('expiry_date', b[21:27], b[27]), ('composite', b[0:10] + b[13:20] + b[21:35], b[35])]\n        attrs = {'document_code': clean(a[0:2]), 'issuing_state': a[2:5], **names(a[5:36]), 'document_number': number, 'nationality': b[10:13], 'birth_date': b[13:19], 'sex': clean(b[20]), 'expiry_date': b[21:27], 'optional_data': clean(remaining_optional)}\n    elif len(lines) == 3 and all(len(line) == 30 for line in lines):\n        kind = 'TD1'\n        a, b, c = lines\n        parsed_number = document_number(a[5:14], a[14], a[15:30])\n        if parsed_number is None:\n            return response('invalid_document_number_encoding')\n        number, number_check, remaining_optional = parsed_number\n        checks = [number_check, ('birth_date', b[0:6], b[6]), ('expiry_date', b[8:14], b[14]), ('composite', a[5:30] + b[0:7] + b[8:15] + b[18:29], b[29])]\n        attrs = {'document_code': clean(a[0:2]), 'issuing_state': a[2:5], 'document_number': number, 'optional_data': clean(remaining_optional + b[18:29]), 'birth_date': b[0:6], 'sex': clean(b[7]), 'expiry_date': b[8:14], 'nationality': b[15:18], **names(c)}\n    else:\n        return response('unsupported_mrz_layout')\n\n    failed = []\n    for check in checks:\n        name, value, digit, *options = check\n        if not valid_digit(value, digit, *options):\n            failed.append(name)\n    if failed:\n        return response('checksum_failed', failed)\n    return json.dumps({'valid': True, 'format': kind, 'attributes': attrs}, ensure_ascii=False, separators=(',', ':'))\n"
+            }
+          }
+        },
+        {
+          "id": "Message:MRZResult",
+          "type": "messageNode",
+          "position": {
+            "x": 950,
+            "y": 200
+          },
+          "data": {
+            "label": "Message",
+            "name": "Validated MRZ result",
+            "form": {
+              "content": [
+                "{CodeExec:MRZValidate@result}"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

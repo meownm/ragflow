@@ -257,3 +257,15 @@ internal/deepdoc/parser/docx/tool/
 /.playwright-cli
 /docker/.env.local
 /output
+/.codex_tmp
+/deployment/linux-pg/*.tar.gz
+/deployment/linux-pg/*.tar.gz.sha256
+/release/
+/ragflow_deps/office_oxide-*.tar.gz
+/ragflow_deps/pdf_oxide-*.tar.gz
+/ragflow_deps/stagehand-server-*
+/agent/business_requirements/document_constructor_*.png
+/agent/business_requirements/document_constructor_*.puml
+/agent/business_requirements/document_constructor_*.svg
+/intake-complete.png
+/review-revision-1.png

@@ -1,0 +1,23 @@
+services:
+  ragflow-cpu:
+    ports: !override
+      - "127.0.0.1:${RAGFLOW_PORT:-9380}:80"
+
+  t-one-asr:
+    environment:
+      ASR_FFMPEG_PATH: ffmpeg
+      ASR_SOX_PATH: sox
+      ASR_OLLAMA_BASE_URL: http://host.docker.internal:11434
+      ASR_OLLAMA_MODEL: ${T_ONE_ASR_OLLAMA_MODEL-}
+
+  mysql:
+    profiles: !override
+      - mysql-disabled
+
+  sandbox-executor-manager:
+    profiles: !override
+      - sandbox-disabled
+
+  sandbox-runtime-bootstrap:
+    profiles: !override
+      - docker-desktop-only

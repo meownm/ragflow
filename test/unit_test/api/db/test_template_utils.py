@@ -64,3 +64,36 @@ def test_normalize_canvas_template_categories_no_valid_categories():
 
     assert normalized["canvas_type"] is None
     assert normalized["canvas_types"] == []
+
+
+def test_normalize_canvas_template_hydrates_graph_forms_from_components():
+    payload = {
+        "id": 42,
+        "canvas_type": "Consumer App",
+        "dsl": {
+            "components": {
+                "Agent:OCR": {
+                    "obj": {
+                        "component_name": "Agent",
+                        "params": {"llm_id": "vision@local", "outputs": {}},
+                    }
+                }
+            },
+            "graph": {
+                "nodes": [
+                    {
+                        "id": "Agent:OCR",
+                        "data": {"form": {"llm_id": "stale"}},
+                    }
+                ]
+            },
+        },
+    }
+
+    normalized = normalize_canvas_template_categories(payload)
+
+    assert normalized["dsl"]["graph"]["nodes"][0]["data"]["form"] == {
+        "llm_id": "vision@local",
+        "outputs": {},
+    }
+    assert payload["dsl"]["graph"]["nodes"][0]["data"]["form"] == {"llm_id": "stale"}

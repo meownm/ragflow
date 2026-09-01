@@ -89,6 +89,7 @@ func parseCanvasTemplateFile(raw []byte) (*entity.CanvasTemplate, error) {
 	if err := decoder.Decode(&data); err != nil {
 		return nil, err
 	}
+	hydrateCanvasGraphForms(data)
 
 	tmpl := &entity.CanvasTemplate{
 		CanvasCategory: "agent_canvas",
@@ -123,6 +124,68 @@ func parseCanvasTemplateFile(raw []byte) (*entity.CanvasTemplate, error) {
 	}
 
 	return tmpl, nil
+}
+
+// hydrateCanvasGraphForms keeps the React canvas representation aligned with
+// the executable component parameters. The frontend treats graph node forms
+// as canonical when opening and saving a template-created canvas.
+func hydrateCanvasGraphForms(data map[string]any) {
+	dsl, ok := data["dsl"].(map[string]any)
+	if !ok {
+		return
+	}
+	components, ok := dsl["components"].(map[string]any)
+	if !ok {
+		return
+	}
+	graph, ok := dsl["graph"].(map[string]any)
+	if !ok {
+		return
+	}
+	nodes, ok := graph["nodes"].([]any)
+	if !ok {
+		return
+	}
+
+	for _, rawNode := range nodes {
+		node, ok := rawNode.(map[string]any)
+		if !ok {
+			continue
+		}
+		id, ok := node["id"].(string)
+		if !ok {
+			continue
+		}
+		component, ok := components[id].(map[string]any)
+		if !ok {
+			continue
+		}
+		obj, ok := component["obj"].(map[string]any)
+		if !ok {
+			continue
+		}
+		params, ok := obj["params"].(map[string]any)
+		if !ok {
+			continue
+		}
+		nodeData, ok := node["data"].(map[string]any)
+		if !ok {
+			continue
+		}
+		nodeData["form"] = cloneJSONMap(params)
+	}
+}
+
+func cloneJSONMap(value map[string]any) map[string]any {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return value
+	}
+	var cloned map[string]any
+	if err := json.Unmarshal(raw, &cloned); err != nil {
+		return value
+	}
+	return cloned
 }
 
 func collectCanvasTypes(rawType, rawTypes any) entity.JSONSlice {

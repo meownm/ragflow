@@ -877,6 +877,14 @@ def test_oauth_callback_matrix_unit(monkeypatch):
     monkeypatch.setattr(module, "get_auth_client", lambda _config: async_new_user)
     monkeypatch.setattr(module.UserService, "query", lambda **_kwargs: [])
 
+    monkeypatch.setattr(module.settings, "REGISTER_ENABLED", False)
+    module.session.clear()
+    module.session["oauth_state"] = "closed-registration-state"
+    _set_request_args(monkeypatch, module, {"state": "closed-registration-state", "code": "code"})
+    res = _run(module.oauth_callback("github"))
+    assert res["redirect"] == "/?error=Account is not allowed. Contact administrator."
+    monkeypatch.setattr(module.settings, "REGISTER_ENABLED", True)
+
     def _raise_download(_url):
         raise RuntimeError("download explode")
 

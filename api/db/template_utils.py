@@ -14,6 +14,7 @@
 #  limitations under the License.
 #
 
+import copy
 import logging
 from typing import Any
 
@@ -56,7 +57,7 @@ def _collect_canvas_types(canvas_type: Any, canvas_types: Any) -> list[str]:
 
 
 def normalize_canvas_template_categories(template: dict[str, Any]) -> dict[str, Any]:
-    normalized = dict(template)
+    normalized = copy.deepcopy(template)
     raw_canvas_type = normalized.get("canvas_type")
     raw_canvas_types = normalized.get("canvas_types")
     canvas_types = _collect_canvas_types(
@@ -74,4 +75,19 @@ def normalize_canvas_template_categories(template: dict[str, Any]) -> dict[str, 
             raw_canvas_types,
             normalized["canvas_types"],
         )
+    dsl = normalized.get("dsl")
+    if isinstance(dsl, dict):
+        components = dsl.get("components")
+        graph = dsl.get("graph")
+        nodes = graph.get("nodes") if isinstance(graph, dict) else None
+        if isinstance(components, dict) and isinstance(nodes, list):
+            for node in nodes:
+                if not isinstance(node, dict):
+                    continue
+                component = components.get(node.get("id"))
+                obj = component.get("obj") if isinstance(component, dict) else None
+                params = obj.get("params") if isinstance(obj, dict) else None
+                data = node.get("data")
+                if isinstance(params, dict) and isinstance(data, dict):
+                    data["form"] = copy.deepcopy(params)
     return normalized

@@ -403,7 +403,7 @@ $urls = @(
   'http://host.docker.internal:8585/api/v1/system/version',
   'http://host.docker.internal:11435/api/tags',
   'http://host.docker.internal:8013/health',
-  'http://host.docker.internal:9011/v1/models'
+  'http://t-one-asr:9011/v1/models'
 )
 foreach ($url in $urls) {
   docker exec ragflow-local-ragflow-cpu-1 `

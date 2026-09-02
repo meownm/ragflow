@@ -29,13 +29,15 @@ if "api.apps" not in sys.modules:
 
 from api.apps.business_documents.errors import BusinessDocumentError
 from api.apps.business_documents.eva_changes import EvaChangeState, EvaDocumentChangeService
-from api.db.db_models import BusinessDocumentEvaChange, BusinessDocumentEvaChangeEvent
+from api.db.db_models import BusinessDocumentEvaChange, BusinessDocumentEvaChangeEvent, Connector
+from api.db.services.connector_service import ConnectorService
+from api.db.services.user_external_credential_service import ExternalCredentialMissingError
 from common.time_utils import current_timestamp
 
 
 TENANT = "tenant-1"
 AUTHOR = "author-1"
-CONNECTOR = SimpleNamespace(id="connector-1", name="EVA Wiki")
+CONNECTOR = SimpleNamespace(id="connector-1", name="EVA Wiki", config={})
 
 
 class FakeEvaClient:
@@ -70,6 +72,26 @@ class FakeEvaClient:
         return True
 
 
+class FakeEvaMutationClient:
+    def __init__(self, document):
+        self.document = document
+        self.update_calls = 0
+        self.publish_calls = 0
+
+    def update_document_draft(self, document_id, html):
+        assert document_id == self.document["id"]
+        self.update_calls += 1
+        self.document["draft_html"] = html
+        return True
+
+    def publish_document(self, document_id):
+        assert document_id == self.document["id"]
+        self.publish_calls += 1
+        self.document["html"] = self.document["draft_html"]
+        self.document["version"] = "2|CmfVersion:v2|2026-08-26T10:00:00+03:00"
+        return True
+
+
 @pytest.fixture()
 def database():
     database = SqliteDatabase(":memory:")
@@ -82,7 +104,17 @@ def database():
         database.close()
 
 
+@pytest.fixture(autouse=True)
+def personal_mutation_client(monkeypatch):
+    monkeypatch.setattr(
+        EvaDocumentChangeService,
+        "_mutation_client",
+        staticmethod(lambda connector, _actor_id: (connector.mutation_client, 1)),
+    )
+
+
 def _create(client):
+    CONNECTOR.mutation_client = client
     with patch.object(EvaDocumentChangeService, "_connector", return_value=(CONNECTOR, client)):
         return EvaDocumentChangeService.create_change(
             TENANT,
@@ -93,6 +125,55 @@ def _create(client):
                 "change_summary": "Уточнить ожидаемый результат и ограничения.",
             },
         )
+
+
+def test_resolve_page_url_materializes_connectors_before_nested_access_queries(monkeypatch):
+    connector = SimpleNamespace(id="connector-1", name="EVA Wiki")
+
+    class CursorSensitiveQuery:
+        iterating = False
+
+        def where(self, *_args):
+            return self
+
+        def order_by(self, *_args):
+            return self
+
+        def __iter__(self):
+            self.iterating = True
+            try:
+                yield connector
+            finally:
+                self.iterating = False
+
+    query = CursorSensitiveQuery()
+    monkeypatch.setattr(Connector, "select", lambda *_args, **_kwargs: query)
+
+    def accessible(_connector_id, _actor_id):
+        assert query.iterating is False
+        return True
+
+    monkeypatch.setattr(ConnectorService, "accessible", staticmethod(accessible))
+    monkeypatch.setattr(
+        EvaDocumentChangeService,
+        "_connector",
+        classmethod(lambda _cls, _connector_id, _actor_id: (connector, SimpleNamespace(web_base_url="https://other.example.com"))),
+    )
+
+    binding = EvaDocumentChangeService.resolve_page_url(AUTHOR, "https://eva.example.com/project/Document/BR-42")
+
+    assert binding["status"] == "LINK_ONLY"
+    assert binding["capabilities"] == ["OPEN"]
+
+
+def test_resolve_page_url_rejects_embedded_credentials():
+    with pytest.raises(BusinessDocumentError) as exc_info:
+        EvaDocumentChangeService.resolve_page_url(
+            AUTHOR,
+            "https://user:password@eva.example.com/project/Document/BR-42",
+        )
+
+    assert exc_info.value.code == "INVALID_EVA_PAGE_URL"
 
 
 def test_full_eva_change_flow_keeps_publish_as_separate_action(database):
@@ -157,6 +238,113 @@ def test_full_eva_change_flow_keeps_publish_as_separate_action(database):
         "EVA_DRAFT_SAVED",
         "EVA_DOCUMENT_PUBLISHED",
     ]
+
+
+def test_eva_writes_use_personal_mutation_client_while_reads_use_connector(database, monkeypatch):
+    reader = FakeEvaClient()
+    writer = FakeEvaMutationClient(reader.document)
+    created = _create(reader)
+    draft = EvaDocumentChangeService.save_draft(
+        TENANT,
+        AUTHOR,
+        created["change_id"],
+        {
+            "expected_state_version": created["state_version"],
+            "draft_markdown": "# Бизнес-требования\n\n## Цель\n\nИзменение пользователя.",
+        },
+    )
+    approved = EvaDocumentChangeService.approve(
+        TENANT,
+        AUTHOR,
+        created["change_id"],
+        {"expected_state_version": draft["state_version"]},
+    )
+    monkeypatch.setattr(
+        EvaDocumentChangeService,
+        "_mutation_client",
+        staticmethod(lambda _connector, _actor_id: (writer, 7)),
+    )
+
+    with patch.object(EvaDocumentChangeService, "_connector", return_value=(CONNECTOR, reader)):
+        prepared = EvaDocumentChangeService.prepare_eva_draft(
+            TENANT,
+            AUTHOR,
+            created["change_id"],
+            {"expected_state_version": approved["state_version"]},
+        )
+        published = EvaDocumentChangeService.publish(
+            TENANT,
+            AUTHOR,
+            created["change_id"],
+            {"expected_state_version": prepared["state_version"]},
+        )
+
+    assert writer.update_calls == 1
+    assert writer.publish_calls == 1
+    assert published["workflow_state"] == "PUBLISHED"
+    assert published["events"][-2]["payload"]["user_credential_version"] == 7
+    assert published["events"][-1]["payload"]["user_credential_version"] == 7
+
+
+def test_missing_personal_eva_token_blocks_write_and_restores_state(database, monkeypatch):
+    reader = FakeEvaClient()
+    created = _create(reader)
+    draft = EvaDocumentChangeService.save_draft(
+        TENANT,
+        AUTHOR,
+        created["change_id"],
+        {
+            "expected_state_version": created["state_version"],
+            "draft_markdown": "# Бизнес-требования\n\n## Цель\n\nИзменение пользователя.",
+        },
+    )
+    approved = EvaDocumentChangeService.approve(
+        TENANT,
+        AUTHOR,
+        created["change_id"],
+        {"expected_state_version": draft["state_version"]},
+    )
+    monkeypatch.setattr(
+        EvaDocumentChangeService,
+        "_mutation_client",
+        staticmethod(lambda _connector, _actor_id: (_ for _ in ()).throw(ExternalCredentialMissingError("missing"))),
+    )
+
+    with (
+        patch.object(EvaDocumentChangeService, "_connector", return_value=(CONNECTOR, reader)),
+        pytest.raises(BusinessDocumentError) as exc_info,
+    ):
+        EvaDocumentChangeService.prepare_eva_draft(
+            TENANT,
+            AUTHOR,
+            created["change_id"],
+            {"expected_state_version": approved["state_version"]},
+        )
+
+    assert exc_info.value.code == "EVA_USER_TOKEN_MISSING"
+    restored = EvaDocumentChangeService.get_change(TENANT, AUTHOR, created["change_id"])
+    assert restored["workflow_state"] == "APPROVED"
+    assert reader.document["draft_html"] == ""
+
+
+def test_change_can_start_from_an_agreed_business_document_revision(database):
+    client = FakeEvaClient()
+    with patch.object(EvaDocumentChangeService, "_connector", return_value=(CONNECTOR, client)):
+        created = EvaDocumentChangeService.create_change(
+            TENANT,
+            AUTHOR,
+            {
+                "connector_id": CONNECTOR.id,
+                "document_id": client.document["id"],
+                "change_summary": "Синхронизация согласованной ревизии.",
+                "draft_markdown": "# Бизнес-требования\n\n## Цель\n\nТекст из конструктора.",
+            },
+        )
+
+    assert created["workflow_state"] == "EDITING"
+    assert created["diff"]["changed"] is True
+    assert "APPROVE" in created["allowed_actions"]
+    assert created["draft_markdown"].endswith("Текст из конструктора.")
 
 
 def test_prepare_rejects_changed_published_source_and_keeps_it_untouched(database):

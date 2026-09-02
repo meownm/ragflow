@@ -757,6 +757,21 @@ class UserTenant(DataBaseModel):
         db_table = "user_tenant"
 
 
+class UserExternalCredential(DataBaseModel):
+    """Encrypted external-service credential owned by one RAGFlow user."""
+
+    id = CharField(max_length=32, primary_key=True)
+    user_id = CharField(max_length=32, null=False, index=True)
+    provider = CharField(max_length=64, null=False, index=True)
+    scope = CharField(max_length=512, null=False, index=True)
+    encrypted_secret = TextField(null=False)
+    credential_version = IntegerField(null=False, default=1)
+
+    class Meta:
+        db_table = "user_external_credential"
+        indexes = ((("user_id", "provider", "scope"), True),)
+
+
 class InvitationCode(DataBaseModel):
     id = CharField(max_length=32, primary_key=True)
     code = CharField(max_length=32, null=False, index=True)
@@ -1422,7 +1437,7 @@ class BusinessDocument(DataBaseModel):
 
     class Meta:
         db_table = "business_document"
-        indexes = ((('tenant_id', 'chat_id'), True),)
+        indexes = ((("tenant_id", "chat_id"), True),)
 
 
 class BusinessDocumentRevision(DataBaseModel):
@@ -1438,7 +1453,7 @@ class BusinessDocumentRevision(DataBaseModel):
 
     class Meta:
         db_table = "business_document_revision"
-        indexes = ((('document_id', 'revision_number'), True),)
+        indexes = ((("document_id", "revision_number"), True),)
 
 
 class BusinessDocumentQuestion(DataBaseModel):
@@ -1458,7 +1473,7 @@ class BusinessDocumentQuestion(DataBaseModel):
 
     class Meta:
         db_table = "business_document_question"
-        indexes = ((('document_id', 'stage', 'review_cycle', 'semantic_tag'), True),)
+        indexes = ((("document_id", "stage", "review_cycle", "semantic_tag"), True),)
 
 
 class BusinessDocumentAnswer(DataBaseModel):
@@ -1473,7 +1488,7 @@ class BusinessDocumentAnswer(DataBaseModel):
 
     class Meta:
         db_table = "business_document_answer"
-        indexes = ((('document_id', 'question_id'), True),)
+        indexes = ((("document_id", "question_id"), True),)
 
 
 class BusinessDocumentProposal(DataBaseModel):
@@ -1492,7 +1507,7 @@ class BusinessDocumentProposal(DataBaseModel):
 
     class Meta:
         db_table = "business_document_proposal"
-        indexes = ((('document_id', 'review_cycle', 'fingerprint', 'source_scope_hash'), True),)
+        indexes = ((("document_id", "review_cycle", "fingerprint", "source_scope_hash"), True),)
 
 
 class BusinessDocumentProposalDecision(DataBaseModel):
@@ -1506,7 +1521,7 @@ class BusinessDocumentProposalDecision(DataBaseModel):
 
     class Meta:
         db_table = "business_document_proposal_decision"
-        indexes = ((('document_id', 'proposal_id'), True),)
+        indexes = ((("document_id", "proposal_id"), True),)
 
 
 class BusinessDocumentComment(DataBaseModel):
@@ -1540,7 +1555,7 @@ class BusinessDocumentEvent(DataBaseModel):
 
     class Meta:
         db_table = "business_document_event"
-        indexes = ((('document_id', 'sequence'), True),)
+        indexes = ((("document_id", "sequence"), True),)
 
 
 class BusinessDocumentCommand(DataBaseModel):
@@ -1555,7 +1570,7 @@ class BusinessDocumentCommand(DataBaseModel):
 
     class Meta:
         db_table = "business_document_command"
-        indexes = ((('tenant_id', 'document_id', 'idempotency_key'), True),)
+        indexes = ((("tenant_id", "document_id", "idempotency_key"), True),)
 
 
 class BusinessDocumentJob(DataBaseModel):
@@ -1582,7 +1597,7 @@ class BusinessDocumentJob(DataBaseModel):
 
     class Meta:
         db_table = "business_document_job"
-        indexes = ((('status', 'available_at'), False),)
+        indexes = ((("status", "available_at"), False),)
 
 
 class BusinessDocumentExportArtifact(DataBaseModel):
@@ -1603,7 +1618,7 @@ class BusinessDocumentExportArtifact(DataBaseModel):
 
     class Meta:
         db_table = "business_document_export_artifact"
-        indexes = ((('document_id', 'revision_id', 'export_format'), True),)
+        indexes = ((("document_id", "revision_id", "export_format"), True),)
 
 
 class BusinessDocumentEvidenceSnapshot(DataBaseModel):
@@ -1651,7 +1666,7 @@ class BusinessDocumentEvaChange(DataBaseModel):
 
     class Meta:
         db_table = "business_document_eva_change"
-        indexes = ((('tenant_id', 'owner_id', 'update_time'), False),)
+        indexes = ((("tenant_id", "owner_id", "update_time"), False),)
 
 
 class BusinessDocumentEvaChangeEvent(DataBaseModel):
@@ -1666,7 +1681,7 @@ class BusinessDocumentEvaChangeEvent(DataBaseModel):
 
     class Meta:
         db_table = "business_document_eva_change_event"
-        indexes = ((('change_id', 'sequence'), True),)
+        indexes = ((("change_id", "sequence"), True),)
 
 
 class Memory(DataBaseModel):

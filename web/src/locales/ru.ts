@@ -1320,6 +1320,28 @@ export default {
       timezonePlaceholder: 'выберите ваш часовой пояс',
       email: 'Email',
       emailDescription: 'После регистрации Email нельзя изменить.',
+      evaApiToken: 'EVA API токен',
+      evaTokenLoading: 'Загрузка EVA-подключений…',
+      evaTokenNoConnectors:
+        'Нет доступных EVA-коннекторов для настройки токена.',
+      evaTokenConfigured: 'Персональный токен настроен',
+      evaTokenNotConfigured: 'Персональный токен не настроен',
+      evaTokenHowToGet:
+        'Как получить: откройте настройки своего профиля в EVA, найдите раздел «API-токены», нажмите «Создать токен», задайте срок действия и сразу скопируйте значение. Если раздел недоступен, обратитесь к администратору EVA.',
+      evaTokenWriteOnlyDescription:
+        'Токен используется только для сохранения черновика и публикации изменений в EVA. Чтение и синхронизация выполняются сервисной учетной записью коннектора.',
+      evaTokenAdd: 'Добавить EVA-токен',
+      evaTokenReplace: 'Заменить EVA-токен',
+      evaTokenAddAction: 'Добавить',
+      evaTokenReplaceAction: 'Заменить',
+      evaTokenDelete: 'Удалить EVA-токен',
+      evaTokenDeleteConfirmation:
+        'После удаления сохранение и публикация изменений в EVA будут недоступны, пока вы не добавите токен снова.',
+      evaTokenSaved: 'EVA-токен сохранен.',
+      evaTokenDeleted: 'EVA-токен удален.',
+      evaTokenLoadFailed: 'Не удалось загрузить состояние EVA-токена.',
+      evaTokenSaveFailed: 'Не удалось сохранить EVA-токен.',
+      evaTokenDeleteFailed: 'Не удалось удалить EVA-токен.',
       currentPassword: 'Текущий пароль',
       currentPasswordMessage: 'Пожалуйста, введите ваш пароль!',
       newPassword: 'Новый пароль',

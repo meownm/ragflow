@@ -679,6 +679,64 @@ def test_ai_acknowledges_confirming_answer_when_no_operation_targets_its_section
     assert output["operations"][0]["source_event_ids"] == ["answer-confirmed", "comment-change"]
 
 
+@pytest.mark.p0
+def test_ai_binds_entity_aliases_and_completes_active_eva_change_dispositions():
+    job = SimpleNamespace(
+        job_type="PLAN_CHANGES",
+        payload={
+            "active_change_input_event_ids": ["answer-4", "answer-43", "proposal-43-event", "eva-pull-event"],
+            "source_events": [
+                {"event_id": "answer-4", "event_type": "QuestionAnswered"},
+                {"event_id": "answer-43", "event_type": "QuestionAnswered"},
+                {"event_id": "proposal-43-event", "event_type": "ProposalDecided"},
+                {"event_id": "eva-pull-event", "event_type": "EvaDocumentPulled"},
+            ],
+            "protocol": {
+                "questions": [
+                    {
+                        "question_id": "question-4",
+                        "target_section_id": "4",
+                        "answer": {"source_event_id": "answer-4"},
+                    },
+                    {
+                        "question_id": "question-43",
+                        "target_section_id": "4.3",
+                        "answer": {"source_event_id": "answer-43"},
+                    },
+                ],
+                "proposals": [
+                    {
+                        "proposal_id": "proposal-43",
+                        "target_section_id": "4.3",
+                        "decision": "ACCEPTED",
+                        "decision_event_id": "proposal-43-event",
+                    }
+                ],
+                "comments": [],
+            },
+        },
+    )
+    output = {
+        "acknowledged_no_change_event_ids": [],
+        "operations": [
+            {
+                "section_id": "4.3",
+                "source_event_ids": ["proposal-43"],
+            }
+        ],
+    }
+
+    normalized = BusinessDocumentAI._bind_change_plan_source_sections(job, output)
+
+    assert set(normalized["operations"][0]["source_event_ids"]) == {
+        "answer-43",
+        "proposal-43-event",
+        "eva-pull-event",
+    }
+    assert normalized["acknowledged_no_change_event_ids"] == ["answer-4"]
+    assert output["operations"][0]["source_event_ids"] == ["proposal-43"]
+
+
 class MemoryStorage:
     def __init__(self, *, discard=False):
         self.discard = discard

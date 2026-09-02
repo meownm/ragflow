@@ -24,7 +24,7 @@ from datetime import datetime
 from difflib import SequenceMatcher
 from enum import StrEnum
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from bs4 import BeautifulSoup
 from markdown import markdown as render_markdown
@@ -34,8 +34,14 @@ from peewee import fn
 from api.apps.business_documents.errors import BusinessDocumentError, ConflictError, ValidationError
 from api.db.db_models import BusinessDocumentEvaChange, BusinessDocumentEvaChangeEvent, Connector
 from api.db.services.connector_service import ConnectorService
+from api.db.services.user_external_credential_service import (
+    ExternalCredentialDecryptionError,
+    ExternalCredentialError,
+    ExternalCredentialMissingError,
+    UserExternalCredentialService,
+)
 from common.data_source.config import DocumentSource, INDEX_BATCH_SIZE
-from common.data_source.eva_wiki_connector import EvaWikiConnector
+from common.data_source.eva_wiki_connector import EvaWikiConnector, EvaWikiMutationClient
 from common.data_source.exceptions import ConnectorMissingCredentialError, ConnectorValidationError, InsufficientPermissionsError
 from common.misc_utils import get_uuid
 from common.time_utils import current_timestamp
@@ -203,6 +209,19 @@ class EvaDocumentChangeService:
         client.load_credentials(config.get("credentials") or {})
         return connector, client
 
+    @classmethod
+    def _mutation_client(cls, connector: Connector, actor_id: str) -> tuple[EvaWikiMutationClient, int]:
+        config = dict(connector.config or {})
+        credential = UserExternalCredentialService.get_eva_wiki_token(actor_id, config.get("api_base_url", ""))
+        client = EvaWikiMutationClient(
+            api_base_url=config.get("api_base_url", ""),
+            project_id=config.get("project_id", ""),
+            verify_ssl=config.get("verify_ssl", True),
+            retry_count=config.get("retry_count", EvaWikiConnector.DEFAULT_RETRY_COUNT),
+        )
+        client.load_credentials({"eva_api_token": credential.secret})
+        return client, credential.credential_version
+
     @staticmethod
     def _map_external_error(error: Exception) -> BusinessDocumentError:
         if isinstance(error, BusinessDocumentError):
@@ -214,6 +233,24 @@ class EvaDocumentChangeService:
         if isinstance(error, ConnectorValidationError):
             return BusinessDocumentError("EVA_UNAVAILABLE", str(error), 502)
         return BusinessDocumentError("EVA_UNAVAILABLE", "EVA Wiki request failed", 502)
+
+    @staticmethod
+    def _map_user_token_error(error: Exception) -> BusinessDocumentError:
+        if isinstance(error, BusinessDocumentError):
+            return error
+        if isinstance(error, ExternalCredentialMissingError):
+            return BusinessDocumentError("EVA_USER_TOKEN_MISSING", "Add your personal EVA API token in Profile before changing EVA", 422)
+        if isinstance(error, ExternalCredentialDecryptionError):
+            return BusinessDocumentError("EVA_USER_TOKEN_UNAVAILABLE", "Your personal EVA API token could not be loaded", 503)
+        if isinstance(error, ExternalCredentialError):
+            return BusinessDocumentError("EVA_USER_TOKEN_INVALID", str(error), 422)
+        if isinstance(error, InsufficientPermissionsError):
+            return BusinessDocumentError("EVA_USER_TOKEN_REJECTED", "EVA rejected your personal API token for this change", 403)
+        if isinstance(error, ConnectorMissingCredentialError):
+            return BusinessDocumentError("EVA_USER_TOKEN_MISSING", "Add your personal EVA API token in Profile before changing EVA", 422)
+        if isinstance(error, ConnectorValidationError):
+            return BusinessDocumentError("EVA_USER_CHANGE_FAILED", str(error), 502)
+        return BusinessDocumentError("EVA_USER_CHANGE_FAILED", "EVA Wiki change failed", 502)
 
     @staticmethod
     def _validate_text(value: Any, field: str, *, maximum: int, required: bool = True) -> str:
@@ -256,6 +293,82 @@ class EvaDocumentChangeService:
         return {"items": items, "connectors": connector_summaries}
 
     @classmethod
+    def resolve_page_url(cls, actor_id: str, page_url: object) -> dict[str, Any]:
+        """Resolve a user-facing EVA URL without ever requesting that URL directly.
+
+        The URL is matched only against already configured, accessible EVA
+        connectors. An unmatched URL remains a useful read-only link; connector
+        capabilities are exposed only after the page is verified through EVA's
+        authenticated API.
+        """
+
+        normalized_url = cls._validate_text(page_url, "eva_page_url", maximum=2048)
+        try:
+            parsed = urlparse(normalized_url)
+            hostname = parsed.hostname
+        except ValueError as error:
+            raise ValidationError("INVALID_EVA_PAGE_URL", "eva_page_url must be an absolute HTTP(S) URL") from error
+        if parsed.scheme.casefold() not in {"http", "https"} or not hostname or parsed.username or parsed.password:
+            raise ValidationError("INVALID_EVA_PAGE_URL", "eva_page_url must be an absolute HTTP(S) URL")
+        canonical_url = parsed._replace(query="", fragment="").geturl().rstrip("/")
+        marker = "/project/Document/"
+        marker_index = parsed.path.casefold().find(marker.casefold())
+        code = unquote(parsed.path[marker_index + len(marker) :].strip("/")) if marker_index >= 0 else ""
+
+        binding: dict[str, Any] = {
+            "page_url": canonical_url,
+            "status": "LINK_ONLY",
+            "capabilities": ["OPEN"],
+            "connector_id": None,
+            "project_id": None,
+            "document_id": None,
+            "document_code": code or None,
+            "document_name": None,
+            "remote_version": None,
+            "remote_content_hash": None,
+            "last_pulled_content_hash": None,
+        }
+        connector_candidates = list(Connector.select().where(Connector.source == DocumentSource.EVA_WIKI.value).order_by(Connector.name.asc()))
+        connectors = [connector for connector in connector_candidates if ConnectorService.accessible(connector.id, actor_id)]
+        for connector in connectors:
+            try:
+                _, client = cls._connector(connector.id, actor_id)
+                client_base = urlparse(client.web_base_url)
+                if (client_base.scheme.casefold(), client_base.netloc.casefold()) != (parsed.scheme.casefold(), parsed.netloc.casefold()):
+                    continue
+                candidates = client.search_documents(code, 100) if code else []
+                source = next(
+                    (
+                        candidate
+                        for candidate in candidates
+                        if str(candidate.get("web_url") or "").rstrip("/").casefold() == canonical_url.casefold() or (code and str(candidate.get("code") or "").casefold() == code.casefold())
+                    ),
+                    None,
+                )
+                if source is None:
+                    continue
+                remote = client.get_document_for_edit(str(source["id"]))
+                remote_markdown = _html_to_markdown(str(remote.get("html") or ""))
+                return {
+                    **binding,
+                    "page_url": str(remote.get("web_url") or canonical_url),
+                    "status": "CONNECTED",
+                    "capabilities": ["OPEN", "PULL_FROM_EVA", "CREATE_EVA_CHANGE"],
+                    "connector_id": connector.id,
+                    "project_id": str(remote.get("project_id") or "") or None,
+                    "document_id": str(remote.get("id") or "") or None,
+                    "document_code": str(remote.get("code") or "") or None,
+                    "document_name": str(remote.get("name") or "") or None,
+                    "remote_version": str(remote.get("version") or "") or None,
+                    "remote_content_hash": _content_hash(remote_markdown) if remote_markdown else None,
+                }
+            except Exception:
+                # Optional linking must not make document creation depend on EVA
+                # availability; the URL remains an explicit read-only link.
+                continue
+        return binding
+
+    @classmethod
     def create_change(cls, tenant_id: str, actor_id: str, raw: object) -> dict[str, Any]:
         if not isinstance(raw, dict):
             raise ValidationError("INVALID_EVA_CHANGE", "Request body must be an object")
@@ -271,7 +384,9 @@ class EvaDocumentChangeService:
         base_markdown = _html_to_markdown(base_html)
         if not base_markdown:
             raise ValidationError("EVA_DOCUMENT_EMPTY", "The selected EVA document has no published content")
-        draft_html = _markdown_to_html(base_markdown)
+        requested_draft = raw.get("draft_markdown")
+        draft_markdown = base_markdown if requested_draft is None else cls._validate_text(requested_draft, "draft_markdown", maximum=_MAX_DRAFT_SIZE)
+        draft_html = _markdown_to_html(draft_markdown)
         change_id = get_uuid()
         with BusinessDocumentEvaChange._meta.database.atomic():
             change = BusinessDocumentEvaChange.create(
@@ -289,9 +404,9 @@ class EvaDocumentChangeService:
                 base_content_hash=_content_hash(base_markdown),
                 base_html=base_html,
                 base_markdown=base_markdown,
-                draft_markdown=base_markdown,
+                draft_markdown=draft_markdown,
                 draft_html=draft_html,
-                draft_content_hash=_content_hash(base_markdown),
+                draft_content_hash=_content_hash(draft_markdown),
                 workflow_state=EvaChangeState.EDITING.value,
                 state_version=1,
                 last_error=None,
@@ -387,18 +502,23 @@ class EvaDocumentChangeService:
         expected = cls._expected_version(raw)
         change = cls._reserve(tenant_id, actor_id, change_id, expected, EvaChangeState.APPROVED, EvaChangeState.PREPARING_EVA_DRAFT)
         reservation_version = change.state_version
-        client: EvaWikiConnector | None = None
+        reader: EvaWikiConnector | None = None
+        user_token_operation = False
+        credential_version: int | None = None
         try:
-            _, client = cls._connector(change.connector_id, actor_id)
-            remote = client.get_document_for_edit(change.eva_document_id)
+            connector, reader = cls._connector(change.connector_id, actor_id)
+            remote = reader.get_document_for_edit(change.eva_document_id)
             cls._ensure_source_unchanged(change, remote)
-            client.update_document_draft(change.eva_document_id, change.draft_html)
-            verified = client.get_document_for_edit(change.eva_document_id)
+            user_token_operation = True
+            mutation_client, credential_version = cls._mutation_client(connector, actor_id)
+            mutation_client.update_document_draft(change.eva_document_id, change.draft_html)
+            user_token_operation = False
+            verified = reader.get_document_for_edit(change.eva_document_id)
             if _content_hash(_html_to_markdown(str(verified.get("draft_html") or ""))) != change.draft_content_hash:
                 raise ConflictError("EVA_DRAFT_VERIFICATION_FAILED", "EVA returned a different draft after saving")
         except Exception as error:
-            if client is None or not cls._remote_draft_matches(client, change):
-                mapped = cls._map_external_error(error)
+            if reader is None or not cls._remote_draft_matches(reader, change):
+                mapped = cls._map_user_token_error(error) if user_token_operation else cls._map_external_error(error)
                 cls._restore_after_external_failure(change.id, reservation_version, EvaChangeState.PREPARING_EVA_DRAFT, EvaChangeState.APPROVED, mapped)
                 raise mapped from error
         with BusinessDocumentEvaChange._meta.database.atomic():
@@ -407,7 +527,10 @@ class EvaDocumentChangeService:
                 raise ConflictError("STATE_VERSION_CONFLICT", "The EVA change request changed concurrently")
             cls._transition(change, EvaChangeState.EVA_DRAFT_READY, eva_draft_at=current_timestamp(), last_error=None)
             change = cls._get_change(tenant_id, actor_id, change_id)
-            cls._record_event(change, actor_id, "EVA_DRAFT_SAVED", {"draft_content_hash": change.draft_content_hash})
+            event_payload = {"draft_content_hash": change.draft_content_hash}
+            if credential_version is not None:
+                event_payload["user_credential_version"] = credential_version
+            cls._record_event(change, actor_id, "EVA_DRAFT_SAVED", event_payload)
         return cls._projection(change)
 
     @classmethod
@@ -415,11 +538,13 @@ class EvaDocumentChangeService:
         expected = cls._expected_version(raw)
         change = cls._reserve(tenant_id, actor_id, change_id, expected, EvaChangeState.EVA_DRAFT_READY, EvaChangeState.PUBLISHING)
         reservation_version = change.state_version
-        client: EvaWikiConnector | None = None
+        reader: EvaWikiConnector | None = None
         published: dict[str, Any] | None = None
+        user_token_operation = False
+        credential_version: int | None = None
         try:
-            _, client = cls._connector(change.connector_id, actor_id)
-            remote = client.get_document_for_edit(change.eva_document_id)
+            connector, reader = cls._connector(change.connector_id, actor_id)
+            remote = reader.get_document_for_edit(change.eva_document_id)
             if cls._remote_published_hash(remote) == change.draft_content_hash:
                 published = remote
             else:
@@ -431,8 +556,11 @@ class EvaDocumentChangeService:
                         "The EVA draft changed after it was prepared",
                         {"expected": change.draft_content_hash, "actual": remote_draft_hash},
                     )
-                client.publish_document(change.eva_document_id)
-                published = client.get_document_for_edit(change.eva_document_id)
+                user_token_operation = True
+                mutation_client, credential_version = cls._mutation_client(connector, actor_id)
+                mutation_client.publish_document(change.eva_document_id)
+                user_token_operation = False
+                published = reader.get_document_for_edit(change.eva_document_id)
                 published_hash = cls._remote_published_hash(published)
                 if published_hash != change.draft_content_hash:
                     raise ConflictError(
@@ -441,11 +569,11 @@ class EvaDocumentChangeService:
                         {"expected": change.draft_content_hash, "actual": published_hash},
                     )
         except Exception as error:
-            recovered = cls._published_remote_if_matching(client, change)
+            recovered = cls._published_remote_if_matching(reader, change)
             if recovered is not None:
                 published = recovered
             else:
-                mapped = cls._map_external_error(error)
+                mapped = cls._map_user_token_error(error) if user_token_operation else cls._map_external_error(error)
                 cls._restore_after_external_failure(change.id, reservation_version, EvaChangeState.PUBLISHING, EvaChangeState.EVA_DRAFT_READY, mapped)
                 raise mapped from error
         assert published is not None
@@ -461,7 +589,10 @@ class EvaDocumentChangeService:
                 last_error=None,
             )
             change = cls._get_change(tenant_id, actor_id, change_id)
-            cls._record_event(change, actor_id, "EVA_DOCUMENT_PUBLISHED", {"published_version": change.published_version})
+            event_payload = {"published_version": change.published_version}
+            if credential_version is not None:
+                event_payload["user_credential_version"] = credential_version
+            cls._record_event(change, actor_id, "EVA_DOCUMENT_PUBLISHED", event_payload)
         return cls._projection(change)
 
     @classmethod

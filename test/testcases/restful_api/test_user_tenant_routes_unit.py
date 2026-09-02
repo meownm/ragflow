@@ -1030,6 +1030,112 @@ def test_logout_setting_profile_matrix_unit(monkeypatch):
 
 
 @pytest.mark.p2
+def test_personal_eva_credential_profile_routes_never_return_token(monkeypatch):
+    module = _load_user_app(monkeypatch)
+    connector = SimpleNamespace(
+        id="eva-connector-1",
+        name="EVA Production",
+        source="eva_wiki",
+        config={"api_base_url": "https://eva.example/api/"},
+    )
+
+    class _ProfileField:
+        def __eq__(self, other):
+            return other
+
+        def asc(self):
+            return self
+
+    class _ConnectorQuery(list):
+        def where(self, *_args):
+            return self
+
+        def order_by(self, *_args):
+            return self
+
+    class _Connector:
+        source = _ProfileField()
+        name = _ProfileField()
+
+        @staticmethod
+        def select():
+            return _ConnectorQuery([connector])
+
+    class _ConnectorService:
+        accessible = staticmethod(lambda connector_id, user_id: connector_id == connector.id and user_id == "current-user")
+        get_by_id = staticmethod(lambda connector_id: (connector_id == connector.id, connector if connector_id == connector.id else None))
+
+    calls = []
+
+    class _ExternalCredentialError(RuntimeError):
+        pass
+
+    class _CredentialService:
+        @staticmethod
+        def normalize_http_scope(value):
+            return value.rstrip("/")
+
+        @staticmethod
+        def list_eva_wiki_statuses(user_id):
+            assert user_id == "current-user"
+            return {
+                "https://eva.example/api": {
+                    "configured": True,
+                    "scope": "https://eva.example/api",
+                    "credential_version": 2,
+                    "update_time": 123,
+                }
+            }
+
+        @staticmethod
+        def put_eva_wiki_token(user_id, api_base_url, token):
+            calls.append(("put", user_id, api_base_url, token))
+            return {"configured": True, "scope": api_base_url.rstrip("/"), "credential_version": 3}
+
+        @staticmethod
+        def delete_eva_wiki_token(user_id, api_base_url):
+            calls.append(("delete", user_id, api_base_url))
+            return True
+
+    sys.modules["api.db.db_models"].Connector = _Connector
+    connector_service_mod = ModuleType("api.db.services.connector_service")
+    connector_service_mod.ConnectorService = _ConnectorService
+    monkeypatch.setitem(sys.modules, "api.db.services.connector_service", connector_service_mod)
+    credential_service_mod = ModuleType("api.db.services.user_external_credential_service")
+    credential_service_mod.ExternalCredentialError = _ExternalCredentialError
+    credential_service_mod.UserExternalCredentialService = _CredentialService
+    monkeypatch.setitem(sys.modules, "api.db.services.user_external_credential_service", credential_service_mod)
+    data_source_config_mod = ModuleType("common.data_source.config")
+    data_source_config_mod.DocumentSource = SimpleNamespace(EVA_WIKI=SimpleNamespace(value="eva_wiki"))
+    monkeypatch.setitem(sys.modules, "common.data_source.config", data_source_config_mod)
+
+    res = _run(module.list_user_eva_credentials())
+    assert res["code"] == 0
+    assert res["data"]["items"] == [
+        {
+            "scope": "https://eva.example/api",
+            "configured": True,
+            "credential_version": 2,
+            "update_time": 123,
+            "connector_id": connector.id,
+            "connectors": [{"id": connector.id, "name": connector.name}],
+        }
+    ]
+    assert "secret-token" not in repr(res)
+
+    _set_request_json(monkeypatch, module, {"eva_api_token": "secret-token"})
+    res = _run(module.put_user_eva_credential(connector.id))
+    assert res["code"] == 0
+    assert "secret-token" not in repr(res)
+    assert calls[-1] == ("put", "current-user", "https://eva.example/api/", "secret-token")
+
+    res = _run(module.delete_user_eva_credential(connector.id))
+    assert res["code"] == 0
+    assert res["data"] == {"deleted": True}
+    assert calls[-1] == ("delete", "current-user", "https://eva.example/api/")
+
+
+@pytest.mark.p2
 def test_registration_helpers_and_register_route_matrix_unit(monkeypatch):
     module = _load_user_app(monkeypatch)
 

@@ -10,6 +10,9 @@ export default {
   register: `${restAPIv1}/users`,
   setting: `${restAPIv1}/users/me`,
   userInfo: `${restAPIv1}/users/me`,
+  evaUserCredentials: `${restAPIv1}/users/me/eva-credentials`,
+  evaUserCredential: (connectorId: string) =>
+    `${restAPIv1}/users/me/eva-credentials/${connectorId}`,
   tenantInfo: `${restAPIv1}/users/me/models`,
   loginChannels: `${restAPIv1}/auth/login/channels`,
   loginChannel: (channel: string) => `${restAPIv1}/auth/login/${channel}`,
@@ -255,6 +258,12 @@ export default {
   businessDocument: (id: string) => `${restAPIv1}/business-documents/${id}`,
   businessDocumentCommands: (id: string) =>
     `${restAPIv1}/business-documents/${id}/commands`,
+  businessDocumentRevisions: (id: string) =>
+    `${restAPIv1}/business-documents/${id}/revisions`,
+  businessDocumentEvaPull: (id: string) =>
+    `${restAPIv1}/business-documents/${id}/eva/pull`,
+  businessDocumentEvaChanges: (id: string) =>
+    `${restAPIv1}/business-documents/${id}/eva/changes`,
   businessDocumentExports: (id: string) =>
     `${restAPIv1}/business-documents/${id}/exports`,
   businessDocumentExportDownload: (id: string, artifactId: string) =>

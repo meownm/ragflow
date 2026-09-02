@@ -19,9 +19,12 @@ import { Routes } from '@/routes';
 import {
   BusinessDocumentConflictError,
   createBusinessDocument,
+  createEvaChangeFromBusinessDocument,
   downloadBusinessDocumentExport,
   fetchBusinessDocument,
+  listBusinessDocumentRevisions,
   listBusinessDocuments,
+  pullBusinessDocumentFromEva,
   submitBusinessDocumentCommand,
 } from '@/services/business-document-service';
 import api from '@/utils/api';
@@ -30,13 +33,18 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
   Archive,
+  ArrowDownToLine,
   ArrowRight,
+  ArrowUpFromLine,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
   Download,
+  ExternalLink,
+  FileClock,
   FilePenLine,
   FilePlus2,
+  Link2,
   LoaderCircle,
   RefreshCw,
   RotateCcw,
@@ -56,12 +64,14 @@ import { DocumentPane } from './components/document-pane';
 import { EvaChangeCreatePanel } from './components/eva-change-create-panel';
 import { EvaChangeWorkbench } from './components/eva-change-workbench';
 import { ProtocolPane } from './components/protocol-pane';
+import { RevisionHistoryPanel } from './components/revision-history-panel';
 import { appendVoiceTranscript, VoiceInput } from './components/voice-input';
 import type {
   BusinessDocumentCommand,
   BusinessDocumentCommandType,
   BusinessDocumentLifecycleState,
   BusinessDocumentOperationState,
+  BusinessDocumentRevision,
   BusinessDocumentSelection,
 } from './types';
 
@@ -123,6 +133,7 @@ function CreateBusinessDocumentPage() {
   const [title, setTitle] = useState('');
   const [idea, setIdea] = useState('');
   const [datasetIds, setDatasetIds] = useState<string[]>([]);
+  const [evaPageUrl, setEvaPageUrl] = useState('');
   const [page, setPage] = useState(1);
   const { list: datasets, loading: datasetsLoading } =
     useFetchKnowledgeList(true);
@@ -163,6 +174,7 @@ function CreateBusinessDocumentPage() {
       title: title.trim(),
       idea: idea.trim(),
       dataset_ids: datasetIds,
+      ...(evaPageUrl.trim() ? { eva_page_url: evaPageUrl.trim() } : {}),
     });
   };
 
@@ -412,6 +424,23 @@ function CreateBusinessDocumentPage() {
                 </p>
               </div>
 
+              <label className="mt-5 block space-y-2 text-sm font-medium">
+                <span>Страница EVA</span>
+                <Input
+                  type="url"
+                  value={evaPageUrl}
+                  maxLength={2048}
+                  aria-label="URL страницы EVA"
+                  placeholder="https://eva.example.com/project/Document/BR-42"
+                  onChange={(event) => setEvaPageUrl(event.target.value)}
+                />
+                <span className="block text-xs font-normal leading-5 text-text-secondary">
+                  Необязательно. При доступном коннекторе появится обмен
+                  изменениями в обе стороны; иначе сохранится ссылка на
+                  страницу.
+                </span>
+              </label>
+
               {createMutation.error && (
                 <p className="mt-4 text-sm text-state-error" role="alert">
                   {createMutation.error.message}
@@ -445,11 +474,15 @@ export default function BusinessDocumentsPage() {
     id: string;
     changeId: string;
   }>();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [selection, setSelection] = useState<BusinessDocumentSelection | null>(
     null,
   );
   const [hasConflict, setHasConflict] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [selectedRevisionId, setSelectedRevisionId] = useState<string>();
+  const [evaSyncNotice, setEvaSyncNotice] = useState<string>();
   const clearSelection = useCallback(() => setSelection(null), []);
 
   const documentQuery = useQuery({
@@ -468,6 +501,12 @@ export default function BusinessDocumentsPage() {
   useEffect(() => {
     clearSelection();
   }, [clearSelection, currentRevisionId]);
+  const revisionsQuery = useQuery({
+    queryKey: ['business-document-revisions', documentId],
+    queryFn: () => listBusinessDocumentRevisions(documentId!),
+    enabled: Boolean(documentId && !changeId && historyOpen),
+    retry: false,
+  });
   const commandMutation = useMutation({
     mutationFn: ({
       type,
@@ -528,6 +567,51 @@ export default function BusinessDocumentsPage() {
       document.operation_state !== 'IDLE' &&
       document.operation_state !== 'FAILED',
     );
+  const displayedRevision = useMemo<BusinessDocumentRevision | null>(() => {
+    if (!document?.current_revision) return null;
+    if (!historyOpen || !selectedRevisionId) return document.current_revision;
+    return (
+      revisionsQuery.data?.find(
+        (revision) => revision.revision_id === selectedRevisionId,
+      ) ?? document.current_revision
+    );
+  }, [
+    document?.current_revision,
+    historyOpen,
+    revisionsQuery.data,
+    selectedRevisionId,
+  ]);
+  const pullEvaMutation = useMutation({
+    mutationFn: () => {
+      if (!documentId || !document) throw new Error('Документ не загружен');
+      return pullBusinessDocumentFromEva(documentId, document.state_version);
+    },
+    onSuccess: async (result) => {
+      queryClient.setQueryData(
+        BusinessDocumentKeys.detail(documentId),
+        result.document,
+      );
+      setEvaSyncNotice(
+        result.sync.changed
+          ? 'Новая версия EVA добавлена в ревью. Запустите анализ замечаний.'
+          : 'В EVA нет новых изменений после последней синхронизации.',
+      );
+      await queryClient.invalidateQueries({
+        queryKey: ['business-document-revisions', documentId],
+      });
+    },
+  });
+  const createEvaChangeMutation = useMutation({
+    mutationFn: () => {
+      if (!documentId || !document) throw new Error('Документ не загружен');
+      return createEvaChangeFromBusinessDocument(
+        documentId,
+        document.state_version,
+      );
+    },
+    onSuccess: (change) =>
+      navigate(`${Routes.BusinessDocuments}/eva/${change.change_id}`),
+  });
 
   if (changeId) return <EvaChangeWorkbench changeId={changeId} />;
 
@@ -643,6 +727,20 @@ export default function BusinessDocumentsPage() {
           className="flex w-full min-w-0 flex-wrap items-center justify-start gap-2 sm:w-auto sm:justify-end"
           data-testid="business-document-actions"
         >
+          {!!document.current_revision && (
+            <Button
+              size="sm"
+              variant={historyOpen ? 'secondary' : 'ghost'}
+              onClick={() => {
+                setHistoryOpen((open) => !open);
+                setSelectedRevisionId(undefined);
+              }}
+              data-testid="business-document-history-toggle"
+            >
+              <FileClock className="size-4" />
+              История
+            </Button>
+          )}
           {allowed.has('REQUEST_INTAKE_ASSESSMENT') && (
             <Button
               size="sm"
@@ -763,6 +861,85 @@ export default function BusinessDocumentsPage() {
       </header>
 
       <div aria-live="polite">
+        {document.eva_binding && (
+          <div
+            className="flex animate-in flex-wrap items-center gap-x-4 gap-y-2 border-b border-border-button bg-bg-card/35 px-5 py-2.5 text-xs fade-in duration-200"
+            data-testid="business-document-eva-binding"
+          >
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <Link2 className="size-3.5 shrink-0 text-accent-primary" />
+              <span className="text-text-secondary">Связано с EVA:</span>
+              <a
+                href={document.eva_binding.page_url}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex min-w-0 items-center gap-1 font-medium text-text-primary hover:text-accent-primary"
+              >
+                <span className="truncate">
+                  {document.eva_binding.document_name ||
+                    document.eva_binding.document_code ||
+                    document.eva_binding.page_url}
+                </span>
+                <ExternalLink className="size-3 shrink-0" />
+              </a>
+              {document.eva_binding.status === 'LINK_ONLY' && (
+                <span className="text-text-disabled">
+                  Только ссылка — доступный коннектор не найден
+                </span>
+              )}
+            </div>
+            {document.eva_binding.capabilities.includes('PULL_FROM_EVA') && (
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={
+                  isBusy ||
+                  !document.current_revision ||
+                  !['REVIEW', 'AGREED'].includes(document.lifecycle_state) ||
+                  pullEvaMutation.isPending
+                }
+                loading={pullEvaMutation.isPending}
+                onClick={() => pullEvaMutation.mutate()}
+                data-testid="pull-business-document-from-eva"
+              >
+                <ArrowDownToLine className="size-3.5" />
+                Получить из EVA
+              </Button>
+            )}
+            {document.eva_binding.capabilities.includes(
+              'CREATE_EVA_CHANGE',
+            ) && (
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={
+                  isBusy ||
+                  document.lifecycle_state !== 'AGREED' ||
+                  createEvaChangeMutation.isPending
+                }
+                loading={createEvaChangeMutation.isPending}
+                onClick={() => createEvaChangeMutation.mutate()}
+                data-testid="push-business-document-to-eva"
+              >
+                <ArrowUpFromLine className="size-3.5" />
+                Подготовить в EVA
+              </Button>
+            )}
+            {(pullEvaMutation.error || createEvaChangeMutation.error) && (
+              <span className="w-full text-state-error" role="alert">
+                {
+                  (pullEvaMutation.error || createEvaChangeMutation.error)
+                    ?.message
+                }
+              </span>
+            )}
+            {evaSyncNotice && (
+              <span className="w-full text-text-secondary">
+                {evaSyncNotice}
+              </span>
+            )}
+          </div>
+        )}
         {hasConflict && (
           <div
             className="flex flex-wrap items-center gap-3 border-b border-state-warning/40 bg-state-warning/5 px-5 py-2.5 text-sm"
@@ -870,19 +1047,41 @@ export default function BusinessDocumentsPage() {
 
       <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_minmax(360px,430px)] max-lg:grid-cols-1 max-lg:grid-rows-[minmax(360px,1fr)_minmax(320px,0.8fr)]">
         <DocumentPane
-          revision={document.current_revision}
-          onSelectionChange={setSelection}
+          revision={displayedRevision}
+          onSelectionChange={(nextSelection) => {
+            if (!historyOpen) setSelection(nextSelection);
+          }}
         />
-        <ProtocolPane
-          reviewCycle={document.protocol}
-          reviewCycleNumber={document.active_review_cycle}
-          revision={document.current_revision}
-          selection={selection}
-          allowedCommands={document.allowed_commands}
-          pending={isBusy}
-          onCommand={submitCommand}
-          onClearSelection={clearSelection}
-        />
+        {historyOpen ? (
+          <RevisionHistoryPanel
+            revisions={revisionsQuery.data ?? []}
+            selectedRevisionId={
+              selectedRevisionId ?? document.current_revision?.revision_id
+            }
+            currentRevisionId={document.current_revision?.revision_id}
+            loading={revisionsQuery.isLoading}
+            error={revisionsQuery.error}
+            onSelect={(revision) => {
+              setSelectedRevisionId(revision.revision_id);
+              clearSelection();
+            }}
+            onClose={() => {
+              setHistoryOpen(false);
+              setSelectedRevisionId(undefined);
+            }}
+          />
+        ) : (
+          <ProtocolPane
+            reviewCycle={document.protocol}
+            reviewCycleNumber={document.active_review_cycle}
+            revision={document.current_revision}
+            selection={selection}
+            allowedCommands={document.allowed_commands}
+            pending={isBusy}
+            onCommand={submitCommand}
+            onClearSelection={clearSelection}
+          />
+        )}
       </div>
     </main>
   );

@@ -200,6 +200,34 @@ async def get_business_document(document_id):
         return _error(error)
 
 
+@manager.route("/business-documents/<document_id>/eva/pull", methods=["POST"])  # noqa: F821
+@login_required
+async def pull_business_document_from_eva(document_id):
+    try:
+        data = await get_request_json()
+        actor_id = current_user.id
+        result = await thread_pool_exec(BusinessDocumentService.pull_from_eva, actor_id, actor_id, document_id, data)
+        return _success(result)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_EVA_SYNC", "Request body must be a valid JSON object", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/<document_id>/eva/changes", methods=["POST"])  # noqa: F821
+@login_required
+async def create_business_document_eva_change(document_id):
+    try:
+        data = await get_request_json()
+        actor_id = current_user.id
+        result = await thread_pool_exec(BusinessDocumentService.create_eva_change_from_revision, actor_id, actor_id, document_id, data)
+        return _success(result, 201)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_EVA_SYNC", "Request body must be a valid JSON object", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
 @manager.route("/business-documents/<document_id>/commands", methods=["POST"])  # noqa: F821
 @login_required
 async def execute_business_document_command(document_id):

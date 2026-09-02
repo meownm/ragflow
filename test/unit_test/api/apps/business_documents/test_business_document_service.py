@@ -793,6 +793,44 @@ def test_accepted_proposal_cannot_be_silently_omitted(database):
 
 
 @pytest.mark.p0
+def test_accepted_proposal_cannot_be_acknowledged_as_no_change(database):
+    document = _request_and_complete_draft(_create(), proposals=[{"text": "Добавить метрику"}])
+    proposal_id = document["protocol"]["proposals"][0]["proposal_id"]
+    response = BusinessDocumentService.execute_command(
+        TENANT,
+        AUTHOR,
+        document["document_id"],
+        _command(document, "DECIDE_PROPOSAL", {"proposal_id": proposal_id, "decision": "ACCEPTED"}),
+    )
+    document = BusinessDocumentService.get_document(TENANT, response["document_id"], AUTHOR)
+    document = _complete_review_assessment(document)
+    accepted_event = BusinessDocumentEvent.get((BusinessDocumentEvent.document_id == document["document_id"]) & (BusinessDocumentEvent.event_type == "ProposalDecided"))
+    requested = BusinessDocumentService.execute_command(
+        TENANT,
+        AUTHOR,
+        document["document_id"],
+        _command(document, "APPLY_CHANGES", {"base_revision_id": document["current_revision"]["revision_id"]}),
+    )
+
+    with pytest.raises(BusinessDocumentError) as caught:
+        _complete(
+            requested["job_id"],
+            {
+                "change_plan": {
+                    "schema_version": "1",
+                    "base_revision_id": document["current_revision"]["revision_id"],
+                    "source_state_version": requested["state_version"],
+                    "acknowledged_no_change_event_ids": [accepted_event.id],
+                    "operations": [],
+                }
+            },
+        )
+
+    assert caught.value.code == "ACCEPTED_PROPOSAL_ACKNOWLEDGED_NO_CHANGE"
+    assert BusinessDocumentRevision.select().count() == 1
+
+
+@pytest.mark.p0
 def test_change_source_must_match_active_cycle_and_target_section(database):
     document = _request_and_complete_draft(_create(), review_questions=_question_batch("REVIEW", "audience"))
     question = document["protocol"]["questions"][0]
@@ -908,6 +946,120 @@ def test_confirmed_anchored_comment_may_request_a_cross_section_change(database)
     assert changed["lifecycle_state"] == "AGREED"
     assert changed["current_revision"]["revision_number"] == 2
     assert "Подача заявки через чатбот" in changed["current_revision"]["section_texts"]["4.3"]
+    assert changed["current_revision"]["change_basis"] == [
+        {
+            "event_id": comment_event.id,
+            "actor_id": AUTHOR,
+            "created_at": comment_event.create_time,
+            "type": "COMMENT",
+            "title": "Комментарий автора",
+            "summary": "Добавить чатбот и описать через него подачу заявки",
+            "details": selected_text,
+            "section_id": "3.3",
+        }
+    ]
+
+
+@pytest.mark.p0
+def test_verified_eva_binding_supports_governed_pull_and_outbound_change(database, monkeypatch):
+    from api.apps.business_documents.eva_changes import EvaDocumentChangeService
+
+    binding = {
+        "page_url": "https://eva.example.com/project/Document/BR-42",
+        "status": "CONNECTED",
+        "capabilities": ["OPEN", "PULL_FROM_EVA", "CREATE_EVA_CHANGE"],
+        "connector_id": "connector-1",
+        "project_id": "project-1",
+        "document_id": "eva-document-1",
+        "document_code": "BR-42",
+        "document_name": "Требования EVA",
+        "remote_version": "1|published-1|2026-09-01",
+        "remote_content_hash": "sha256:initial",
+        "last_pulled_content_hash": None,
+    }
+    monkeypatch.setattr(
+        EvaDocumentChangeService,
+        "resolve_page_url",
+        staticmethod(lambda _actor_id, _page_url: binding),
+    )
+    document = _request_and_complete_draft(_create(eva_page_url=binding["page_url"]))
+    document = _complete_review_assessment(document)
+    requested = BusinessDocumentService.execute_command(
+        TENANT,
+        AUTHOR,
+        document["document_id"],
+        _command(
+            document,
+            "APPLY_CHANGES",
+            {"base_revision_id": document["current_revision"]["revision_id"]},
+        ),
+    )
+    document = _complete(
+        requested["job_id"],
+        {
+            "change_plan": {
+                "schema_version": "1",
+                "base_revision_id": document["current_revision"]["revision_id"],
+                "source_state_version": requested["state_version"],
+                "acknowledged_no_change_event_ids": [],
+                "operations": [],
+            }
+        },
+    )
+    assert document["lifecycle_state"] == "AGREED"
+    assert document["eva_binding"]["status"] == "CONNECTED"
+
+    captured_change = {}
+
+    def create_change(_tenant_id, _actor_id, raw):
+        captured_change.update(raw)
+        return {"change_id": "eva-change-1", "draft_markdown": raw["draft_markdown"]}
+
+    monkeypatch.setattr(EvaDocumentChangeService, "create_change", staticmethod(create_change))
+    outbound = BusinessDocumentService.create_eva_change_from_revision(
+        TENANT,
+        AUTHOR,
+        document["document_id"],
+        {"expected_state_version": document["state_version"]},
+    )
+    assert outbound["change_id"] == "eva-change-1"
+    assert captured_change["connector_id"] == "connector-1"
+    assert captured_change["document_id"] == "eva-document-1"
+    assert captured_change["draft_markdown"] == document["current_revision"]["body_markdown"]
+
+    class EvaClient:
+        @staticmethod
+        def get_document_for_edit(_document_id):
+            return {
+                "id": "eva-document-1",
+                "version": "2|published-2|2026-09-01",
+                "html": "<h1>Требования EVA</h1><p>Добавлен новый процесс.</p>",
+            }
+
+    monkeypatch.setattr(
+        EvaDocumentChangeService,
+        "_connector",
+        staticmethod(lambda _connector_id, _actor_id: (None, EvaClient())),
+    )
+    pulled = BusinessDocumentService.pull_from_eva(
+        TENANT,
+        AUTHOR,
+        document["document_id"],
+        {"expected_state_version": document["state_version"]},
+    )
+    assert pulled["sync"]["changed"] is True
+    assert pulled["document"]["lifecycle_state"] == "REVIEW"
+    assert pulled["document"]["active_review_cycle"] == document["active_review_cycle"] + 1
+    assert pulled["document"]["allowed_commands"] == [
+        "DECIDE_PROPOSAL",
+        "ADD_COMMENT",
+        "ARCHIVE",
+        "REQUEST_REVIEW_ASSESSMENT",
+    ]
+    assert pulled["document"]["eva_binding"]["last_pulled_content_hash"].startswith("sha256:")
+    pull_event = BusinessDocumentEvent.get(BusinessDocumentEvent.id == pulled["sync"]["event_id"])
+    assert pull_event.event_type == "EvaDocumentPulled"
+    assert "Добавлен новый процесс" in pull_event.payload["remote_markdown"]
 
 
 @pytest.mark.p0

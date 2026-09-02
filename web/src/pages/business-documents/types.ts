@@ -59,6 +59,41 @@ export interface BusinessDocumentRevision {
   body_markdown: string;
   content_hash: string;
   source_event_ids?: string[];
+  created_at?: number | null;
+  change_basis?: BusinessDocumentRevisionBasis[];
+}
+
+export interface BusinessDocumentRevisionBasis {
+  event_id: string;
+  type: 'INITIAL_DRAFT' | 'QUESTION' | 'PROPOSAL' | 'COMMENT' | 'EVA_SYNC';
+  title: string;
+  summary: string;
+  details?: string | null;
+  section_id?: string | null;
+  actor_id?: string;
+  created_at?: number | null;
+}
+
+export type BusinessDocumentEvaCapability =
+  | 'OPEN'
+  | 'PULL_FROM_EVA'
+  | 'CREATE_EVA_CHANGE';
+
+export interface BusinessDocumentEvaBinding {
+  page_url: string;
+  status: 'LINK_ONLY' | 'CONNECTED';
+  capabilities: BusinessDocumentEvaCapability[];
+  connector_id?: string | null;
+  project_id?: string | null;
+  document_id?: string | null;
+  document_code?: string | null;
+  document_name?: string | null;
+  remote_version?: string | null;
+  remote_content_hash?: string | null;
+  last_pulled_content_hash?: string | null;
+  last_pulled_at?: number | null;
+  last_pull_event_id?: string | null;
+  last_pull_review_cycle?: number | null;
 }
 
 export interface BusinessDocumentSelection {
@@ -179,6 +214,7 @@ export interface BusinessDocumentProjection {
   last_error?: { code?: string; message?: string } | string | null;
   latest_job?: BusinessDocumentJobSummary | null;
   latest_exports?: BusinessDocumentExportArtifact[];
+  eva_binding?: BusinessDocumentEvaBinding | null;
 }
 
 export interface BusinessDocumentSummary {
@@ -188,6 +224,7 @@ export interface BusinessDocumentSummary {
   operation_state: BusinessDocumentOperationState;
   state_version: number;
   current_revision_number: number | null;
+  eva_page_url?: string | null;
   update_time: number | null;
 }
 
@@ -204,6 +241,17 @@ export interface CreateBusinessDocumentRequest {
   title: string;
   idea: string;
   dataset_ids?: string[];
+  eva_page_url?: string;
+}
+
+export interface BusinessDocumentEvaPullResult {
+  document: BusinessDocumentProjection;
+  sync: {
+    changed: boolean;
+    direction: 'FROM_EVA';
+    event_id?: string;
+    remote_version?: string | null;
+  };
 }
 
 export interface BusinessDocumentCommand {

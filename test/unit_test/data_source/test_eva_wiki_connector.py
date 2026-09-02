@@ -6,7 +6,7 @@ import pytest
 import requests
 
 from common.data_source.config import REQUEST_TIMEOUT_SECONDS
-from common.data_source.eva_wiki_connector import EvaWikiConnector
+from common.data_source.eva_wiki_connector import EvaWikiConnector, EvaWikiMutationClient
 from common.data_source.exceptions import ConnectorMissingCredentialError, ConnectorValidationError, InsufficientPermissionsError
 
 
@@ -36,6 +36,15 @@ def _connector(**overrides):
     connector = EvaWikiConnector(**kwargs)
     connector.load_credentials({"eva_api_token": "secret-token"})
     return connector
+
+
+def _mutation_client():
+    client = EvaWikiMutationClient(
+        api_base_url="http://eva.internal:8084",
+        project_id=PROJECT_ID,
+    )
+    client.load_credentials({"eva_api_token": "personal-token"})
+    return client
 
 
 def _page(**overrides):
@@ -166,25 +175,33 @@ def test_search_documents_returns_editable_source_metadata():
 
 
 def test_editable_document_draft_and_publish_use_explicit_rpc_args():
-    connector = _connector()
-    connector._session.post = MagicMock(return_value=_response({"result": True}))
+    reader = _connector()
+    assert not hasattr(reader, "update_document_draft")
+    assert not hasattr(reader, "publish_document")
+
+    connector = _mutation_client()
+    transport = connector._EvaWikiMutationClient__transport
+    transport._session.post = MagicMock(return_value=_response({"result": True}))
 
     connector.update_document_draft("CmfDocument:doc-1", "<p>Draft</p>")
-    update_payload = connector._session.post.call_args.kwargs["json"]
+    update_call = transport._session.post.call_args
+    update_payload = update_call.kwargs["json"]
     assert update_payload["method"] == "CmfDocument.update"
     assert update_payload["args"] == ["CmfDocument:doc-1"]
     assert update_payload["kwargs"] == {"text_draft": "<p>Draft</p>"}
+    assert transport._session.headers["X-Eva-Token"] == "personal-token"
 
     connector.publish_document("CmfDocument:doc-1")
-    publish_payload = connector._session.post.call_args.kwargs["json"]
+    publish_payload = transport._session.post.call_args.kwargs["json"]
     assert publish_payload["method"] == "CmfDocument.do_publish"
     assert publish_payload["args"] == ["CmfDocument:doc-1"]
     assert publish_payload["kwargs"] == {}
 
 
 def test_rpc_reports_eva_abort_payload():
-    connector = _connector()
-    connector._session.post = MagicMock(return_value=_response({"abort": {"message": "workflow denied"}}))
+    connector = _mutation_client()
+    transport = connector._EvaWikiMutationClient__transport
+    transport._session.post = MagicMock(return_value=_response({"abort": {"message": "workflow denied"}}))
 
     with pytest.raises(ConnectorValidationError, match="workflow denied"):
         connector.publish_document("CmfDocument:doc-1")

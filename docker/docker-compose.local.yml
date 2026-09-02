@@ -53,6 +53,7 @@ services:
       - "0.0.0.0:9380:80"
     volumes:
       - ../api/db/services/connector_service.py:/ragflow/api/db/services/connector_service.py:ro
+      - ../api/db/services/user_external_credential_service.py:/ragflow/api/db/services/user_external_credential_service.py:ro
       - ../api/apps/restful_apis/connector_api.py:/ragflow/api/apps/restful_apis/connector_api.py:ro
       - ../api/apps/restful_apis/agent_api.py:/ragflow/api/apps/restful_apis/agent_api.py:ro
       - ../api/apps/restful_apis/bot_api.py:/ragflow/api/apps/restful_apis/bot_api.py:ro

@@ -351,24 +351,6 @@ class EvaWikiConnector(LoadConnector, PollConnector, SlimConnectorWithPermSync):
             raise ConnectorValidationError(f"EVA Wiki document was not found or is not accessible: {normalized_id}")
         return self._editable_document(page, include_content=True)
 
-    def update_document_draft(self, document_id: str, html: str) -> Any:
-        """Replace only EVA's unpublished draft for a page."""
-
-        self._validate_config()
-        normalized_id = str(document_id or "").strip()
-        if not normalized_id:
-            raise ConnectorValidationError("EVA Wiki document_id is required")
-        return self._rpc("CmfDocument.update", {}, args=[normalized_id], call_kwargs={"text_draft": str(html)})
-
-    def publish_document(self, document_id: str) -> Any:
-        """Publish the current EVA draft for a page."""
-
-        self._validate_config()
-        normalized_id = str(document_id or "").strip()
-        if not normalized_id:
-            raise ConnectorValidationError("EVA Wiki document_id is required")
-        return self._rpc("CmfDocument.do_publish", {}, args=[normalized_id], call_kwargs={})
-
     def _editable_document(self, page: dict[str, Any], *, include_content: bool) -> dict[str, Any]:
         document_id = str(page.get("id") or "")
         code = str(page.get("code") or "").strip()
@@ -1005,3 +987,44 @@ class EvaWikiConnector(LoadConnector, PollConnector, SlimConnectorWithPermSync):
     @staticmethod
     def _clean_path_component(value: Any) -> str:
         return " ".join(str(value or "").replace("\x00", "").replace("/", "-").replace("\\", "-").split())
+
+
+class EvaWikiMutationClient:
+    """Narrow EVA client that exposes only document mutation operations."""
+
+    def __init__(
+        self,
+        api_base_url: str,
+        project_id: str,
+        *,
+        verify_ssl: bool = True,
+        retry_count: int = EvaWikiConnector.DEFAULT_RETRY_COUNT,
+    ) -> None:
+        self.__transport = EvaWikiConnector(
+            api_base_url=api_base_url,
+            project_id=project_id,
+            include_attachments=False,
+            verify_ssl=verify_ssl,
+            retry_count=retry_count,
+        )
+
+    def load_credentials(self, credentials: dict[str, Any]) -> None:
+        self.__transport.load_credentials(credentials)
+
+    def update_document_draft(self, document_id: str, html: str) -> Any:
+        """Replace only EVA's unpublished draft for a page."""
+
+        self.__transport._validate_config()
+        normalized_id = str(document_id or "").strip()
+        if not normalized_id:
+            raise ConnectorValidationError("EVA Wiki document_id is required")
+        return self.__transport._rpc("CmfDocument.update", {}, args=[normalized_id], call_kwargs={"text_draft": str(html)})
+
+    def publish_document(self, document_id: str) -> Any:
+        """Publish the current EVA draft for a page."""
+
+        self.__transport._validate_config()
+        normalized_id = str(document_id or "").strip()
+        if not normalized_id:
+            raise ConnectorValidationError("EVA Wiki document_id is required")
+        return self.__transport._rpc("CmfDocument.do_publish", {}, args=[normalized_id], call_kwargs={})

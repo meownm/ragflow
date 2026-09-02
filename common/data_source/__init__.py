@@ -28,7 +28,7 @@ from .slack_connector import SlackConnector
 from .gmail_connector import GmailConnector
 from .notion_connector import NotionConnector
 from .confluence_connector import ConfluenceConnector
-from .eva_wiki_connector import EvaWikiConnector
+from .eva_wiki_connector import EvaWikiConnector, EvaWikiMutationClient
 from .openmetadata_connector import OpenMetadataConnector
 from .discord_connector import DiscordConnector
 from .dropbox_connector import DropboxConnector
@@ -63,6 +63,7 @@ __all__ = [
     "NotionConnector",
     "ConfluenceConnector",
     "EvaWikiConnector",
+    "EvaWikiMutationClient",
     "OpenMetadataConnector",
     "DiscordConnector",
     "DropboxConnector",

@@ -2,14 +2,17 @@ import {
   BusinessDocumentConflictError,
   approveEvaDocumentChange,
   createBusinessDocument,
+  createEvaChangeFromBusinessDocument,
   createEvaDocumentChange,
   downloadBusinessDocumentExport,
   fetchBusinessDocument,
   fetchEvaDocumentChange,
+  listBusinessDocumentRevisions,
   listBusinessDocuments,
   listEvaDocumentChanges,
   prepareEvaDocumentChange,
   publishEvaDocumentChange,
+  pullBusinessDocumentFromEva,
   saveEvaDocumentChangeDraft,
   searchEvaDocumentSources,
   submitBusinessDocumentCommand,
@@ -72,9 +75,11 @@ jest.mock('@/services/business-document-service', () => {
   return {
     ...actual,
     createBusinessDocument: jest.fn(),
+    createEvaChangeFromBusinessDocument: jest.fn(),
     downloadBusinessDocumentExport: jest.fn(),
     fetchBusinessDocument: jest.fn(),
     listBusinessDocuments: jest.fn(),
+    listBusinessDocumentRevisions: jest.fn(),
     submitBusinessDocumentCommand: jest.fn(),
     searchEvaDocumentSources: jest.fn(),
     createEvaDocumentChange: jest.fn(),
@@ -84,14 +89,19 @@ jest.mock('@/services/business-document-service', () => {
     approveEvaDocumentChange: jest.fn(),
     prepareEvaDocumentChange: jest.fn(),
     publishEvaDocumentChange: jest.fn(),
+    pullBusinessDocumentFromEva: jest.fn(),
   };
 });
 
 const mockedCreate = jest.mocked(createBusinessDocument);
+const mockedCreateEvaFromDocument = jest.mocked(
+  createEvaChangeFromBusinessDocument,
+);
 const mockedDownloadExport = jest.mocked(downloadBusinessDocumentExport);
 const mockedDownloadFileFromBlob = jest.mocked(downloadFileFromBlob);
 const mockedFetch = jest.mocked(fetchBusinessDocument);
 const mockedList = jest.mocked(listBusinessDocuments);
+const mockedListRevisions = jest.mocked(listBusinessDocumentRevisions);
 const mockedSubmit = jest.mocked(submitBusinessDocumentCommand);
 const mockedSearchEva = jest.mocked(searchEvaDocumentSources);
 const mockedCreateEva = jest.mocked(createEvaDocumentChange);
@@ -101,6 +111,7 @@ const mockedSaveEva = jest.mocked(saveEvaDocumentChangeDraft);
 const mockedApproveEva = jest.mocked(approveEvaDocumentChange);
 const mockedPrepareEva = jest.mocked(prepareEvaDocumentChange);
 const mockedPublishEva = jest.mocked(publishEvaDocumentChange);
+const mockedPullEvaDocument = jest.mocked(pullBusinessDocumentFromEva);
 
 const firstSectionText =
   'Повторяемая фраза. Сократить время перевода. Результат измеряется в минутах.';
@@ -338,6 +349,7 @@ beforeEach(() => {
     page: 1,
     page_size: 20,
   });
+  mockedListRevisions.mockResolvedValue([projection.current_revision!]);
   mockedListEva.mockResolvedValue({
     items: [],
     total: 0,
@@ -351,6 +363,11 @@ beforeEach(() => {
   mockedPublishEva.mockResolvedValue(evaChange);
   mockedSubmit.mockResolvedValue(commandResult);
   mockedCreate.mockResolvedValue(projection);
+  mockedCreateEvaFromDocument.mockResolvedValue(evaChange);
+  mockedPullEvaDocument.mockResolvedValue({
+    document: projection,
+    sync: { changed: false, direction: 'FROM_EVA' },
+  });
 });
 
 test('renders a dense read-only workbench from the server projection', async () => {
@@ -379,6 +396,140 @@ test('renders a dense read-only workbench from the server projection', async () 
     'data-section-text',
     '| Флаг | Значение |\n| --- | --- |\n| True | None |\n| False | 7 |',
   );
+});
+
+test('shows which comments, questions and AI proposals produced each revision', async () => {
+  mockedListRevisions.mockResolvedValueOnce([
+    {
+      ...projection.current_revision!,
+      created_at: 1_788_200_000,
+      change_basis: [
+        {
+          event_id: 'event-question',
+          type: 'QUESTION',
+          title: 'Ответ на вопрос',
+          summary: 'Как измеряется скорость перевода?',
+          details: 'Не более двух минут',
+          section_id: '3.1',
+        },
+        {
+          event_id: 'event-comment',
+          type: 'COMMENT',
+          title: 'Комментарий автора',
+          summary: 'Добавить негативный сценарий.',
+          section_id: '4.3',
+        },
+        {
+          event_id: 'event-proposal',
+          type: 'PROPOSAL',
+          title: 'Принятое предложение ИИ',
+          summary: 'Уточнить критерий успешности.',
+          section_id: '5.5',
+        },
+      ],
+    },
+  ]);
+  renderPage();
+
+  fireEvent.click(
+    await screen.findByTestId('business-document-history-toggle'),
+  );
+
+  expect(
+    await screen.findByText('Как измеряется скорость перевода?'),
+  ).toBeVisible();
+  expect(screen.getByTestId('business-document-history')).toHaveTextContent(
+    'Добавить негативный сценарий.',
+  );
+  expect(screen.getByTestId('business-document-history')).toHaveTextContent(
+    'Принятое предложение ИИ',
+  );
+  expect(mockedListRevisions).toHaveBeenCalledWith('doc-1');
+});
+
+test('offers bidirectional EVA actions only for a verified page binding', async () => {
+  const linked = {
+    ...projection,
+    lifecycle_state: 'AGREED' as const,
+    operation_state: 'IDLE' as const,
+    eva_binding: {
+      page_url: 'https://eva.example.com/project/Document/BR-42',
+      status: 'CONNECTED' as const,
+      capabilities: [
+        'OPEN' as const,
+        'PULL_FROM_EVA' as const,
+        'CREATE_EVA_CHANGE' as const,
+      ],
+      connector_id: 'connector-1',
+      document_id: 'eva-document-1',
+      document_code: 'BR-42',
+      document_name: 'Переводы одной кнопкой',
+    },
+  };
+  mockedFetch.mockResolvedValueOnce(linked);
+  mockedPullEvaDocument.mockResolvedValueOnce({
+    document: { ...linked, lifecycle_state: 'REVIEW' },
+    sync: { changed: true, direction: 'FROM_EVA', event_id: 'eva-pull-1' },
+  });
+  renderPage();
+
+  expect(
+    await screen.findByTestId('business-document-eva-binding'),
+  ).toHaveTextContent('Переводы одной кнопкой');
+  fireEvent.click(screen.getByTestId('pull-business-document-from-eva'));
+  await waitFor(() =>
+    expect(mockedPullEvaDocument).toHaveBeenCalledWith('doc-1', 18),
+  );
+  expect(
+    await screen.findByText(
+      'Новая версия EVA добавлена в ревью. Запустите анализ замечаний.',
+    ),
+  ).toBeVisible();
+});
+
+test('keeps EVA pull disabled until the first local revision exists', async () => {
+  mockedFetch.mockResolvedValueOnce({
+    ...projection,
+    lifecycle_state: 'INTAKE',
+    current_revision: null,
+    eva_binding: {
+      page_url: 'https://eva.example.com/project/Document/BR-42',
+      status: 'CONNECTED',
+      capabilities: ['OPEN', 'PULL_FROM_EVA'],
+      connector_id: 'connector-1',
+      document_id: 'eva-document-1',
+    },
+  });
+  renderPage();
+
+  const pullButton = await screen.findByTestId(
+    'pull-business-document-from-eva',
+  );
+  expect(pullButton).toBeDisabled();
+  fireEvent.click(pullButton);
+  expect(mockedPullEvaDocument).not.toHaveBeenCalled();
+});
+
+test('opens the guarded EVA publication workflow from an agreed revision', async () => {
+  mockedFetch.mockResolvedValueOnce({
+    ...projection,
+    lifecycle_state: 'AGREED',
+    operation_state: 'IDLE',
+    eva_binding: {
+      page_url: 'https://eva.example.com/project/Document/BR-42',
+      status: 'CONNECTED',
+      capabilities: ['OPEN', 'CREATE_EVA_CHANGE'],
+      connector_id: 'connector-1',
+      document_id: 'eva-document-1',
+    },
+  });
+  renderPage();
+
+  fireEvent.click(await screen.findByTestId('push-business-document-to-eva'));
+  await waitFor(() =>
+    expect(mockedCreateEvaFromDocument).toHaveBeenCalledWith('doc-1', 18),
+  );
+  expect(await screen.findByTestId('eva-change-workbench')).toBeVisible();
 });
 
 test('marks a preserved comment when its anchor belongs to an older revision', async () => {
@@ -1126,6 +1277,33 @@ test('creates a new business requirements document', async () => {
   expect(
     await screen.findByTestId('business-document-workbench'),
   ).toBeVisible();
+});
+
+test('optionally links a new document to an EVA page URL', async () => {
+  renderPage('/business-documents');
+
+  fireEvent.change(
+    screen.getByRole('textbox', { name: 'Название документа' }),
+    { target: { value: 'Связанный документ' } },
+  );
+  fireEvent.change(screen.getByRole('textbox', { name: 'Описание идеи' }), {
+    target: { value: 'Синхронизировать требования с EVA.' },
+  });
+  fireEvent.change(screen.getByRole('textbox', { name: 'URL страницы EVA' }), {
+    target: {
+      value: 'https://eva.example.com/project/Document/BR-42',
+    },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Начать работу' }));
+
+  await waitFor(() =>
+    expect(mockedCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eva_page_url: 'https://eva.example.com/project/Document/BR-42',
+      }),
+      expect.anything(),
+    ),
+  );
 });
 
 test('appends voice transcripts to document input fields', () => {

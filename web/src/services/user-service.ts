@@ -104,4 +104,26 @@ export const listTenant = () => request.get(api.listTenant);
 export const agreeTenant = (tenantId: string) =>
   request.patch(api.agreeTenant(tenantId));
 
+export interface EvaUserCredentialStatus {
+  scope: string;
+  configured: boolean;
+  credential_version?: number | null;
+  update_time?: number | null;
+  connector_id: string;
+  connectors: Array<{ id: string; name: string }>;
+}
+
+export const listEvaUserCredentials = () => request.get(api.evaUserCredentials);
+
+export const putEvaUserCredential = (
+  connectorId: string,
+  evaApiToken: string,
+) =>
+  request.put(api.evaUserCredential(connectorId), {
+    eva_api_token: evaApiToken,
+  });
+
+export const deleteEvaUserCredential = (connectorId: string) =>
+  request.delete(api.evaUserCredential(connectorId));
+
 export default userService;

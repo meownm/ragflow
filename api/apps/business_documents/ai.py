@@ -189,11 +189,17 @@ class BusinessDocumentAI:
         if job.job_type == "PLAN_CHANGES":
             active_event_ids = _active_change_input_event_ids(job_input)
             job_input["active_change_input_event_ids"] = active_event_ids
+            source_events = job_input.get("source_events")
+            if isinstance(source_events, list):
+                active_event_id_set = set(active_event_ids)
+                job_input["active_change_inputs"] = [event for event in source_events if isinstance(event, dict) and event.get("event_id") in active_event_id_set]
             system += (
                 "\n\n# Активные основания текущего цикла\n"
                 "В operations.source_event_ids и acknowledged_no_change_event_ids используй только event_id из "
                 f"job_input.active_change_input_event_ids: {json.dumps(active_event_ids, ensure_ascii=False)}. "
-                "События из прошлых циклов не включай."
+                "События из прошлых циклов не включай. Распредели каждый перечисленный event_id ровно один раз: "
+                "как основание операции или как осознанное подтверждение отсутствия изменения. "
+                "Не используй question_id, proposal_id и comment_id вместо event_id."
             )
         return PromptBundle(
             version=pinned["version"],
@@ -262,10 +268,7 @@ class BusinessDocumentAI:
 
         def normalize(value: Any) -> Any:
             if isinstance(value, dict):
-                return {
-                    key: ("1" if key == "schema_version" and item == 1 else normalize(item))
-                    for key, item in value.items()
-                }
+                return {key: ("1" if key == "schema_version" and item == 1 else normalize(item)) for key, item in value.items()}
             if isinstance(value, list):
                 return [normalize(item) for item in value]
             return value
@@ -342,7 +345,7 @@ class BusinessDocumentAI:
 
     @staticmethod
     def _bind_change_plan_source_sections(job: BusinessDocumentJob, output: dict[str, Any]) -> dict[str, Any]:
-        """Route strict review inputs to the operation for their declared section."""
+        """Bind model references to immutable active-cycle event IDs and sections."""
         if job.job_type != "PLAN_CHANGES":
             return output
         operations = output.get("operations")
@@ -350,18 +353,49 @@ class BusinessDocumentAI:
         if not isinstance(operations, list) or not isinstance(protocol, dict):
             return output
 
+        active_event_ids = set(_active_change_input_event_ids(job.payload))
         source_sections: dict[str, str] = {}
         accepted_proposal_sources: set[str] = set()
+        question_sources: set[str] = set()
+        confirmed_comment_sources: set[str] = set()
+        no_change_comment_sources: set[str] = set()
+        entity_event_aliases: dict[str, str] = {}
         for question in protocol.get("questions", []):
             if not isinstance(question, dict) or not isinstance(question.get("target_section_id"), str):
                 continue
             answer = question.get("answer")
             if isinstance(answer, dict) and isinstance(answer.get("source_event_id"), str):
-                source_sections[answer["source_event_id"]] = question["target_section_id"]
+                event_id = answer["source_event_id"]
+                source_sections[event_id] = question["target_section_id"]
+                question_sources.add(event_id)
+                if isinstance(question.get("question_id"), str):
+                    entity_event_aliases[question["question_id"]] = event_id
         for proposal in protocol.get("proposals", []):
             if isinstance(proposal, dict) and proposal.get("decision") == "ACCEPTED" and isinstance(proposal.get("target_section_id"), str) and isinstance(proposal.get("decision_event_id"), str):
-                source_sections[proposal["decision_event_id"]] = proposal["target_section_id"]
-                accepted_proposal_sources.add(proposal["decision_event_id"])
+                event_id = proposal["decision_event_id"]
+                source_sections[event_id] = proposal["target_section_id"]
+                accepted_proposal_sources.add(event_id)
+                if isinstance(proposal.get("proposal_id"), str):
+                    entity_event_aliases[proposal["proposal_id"]] = event_id
+        for comment in protocol.get("comments", []):
+            if not isinstance(comment, dict) or not isinstance(comment.get("source_event_id"), str):
+                continue
+            event_id = comment["source_event_id"]
+            if isinstance(comment.get("comment_id"), str):
+                entity_event_aliases[comment["comment_id"]] = event_id
+            disposition = comment.get("disposition")
+            disposition_value = disposition.get("disposition") if isinstance(disposition, dict) else None
+            if disposition_value == "CONFIRMED_CHANGE":
+                confirmed_comment_sources.add(event_id)
+                if isinstance(comment.get("section_id"), str):
+                    source_sections[event_id] = comment["section_id"]
+            elif disposition_value == "NO_CHANGE":
+                no_change_comment_sources.add(event_id)
+
+        source_events = job.payload.get("source_events")
+        eva_pull_sources = {
+            event.get("event_id") for event in source_events or [] if isinstance(event, dict) and event.get("event_type") == "EvaDocumentPulled" and event.get("event_id") in active_event_ids
+        }
 
         bound = deepcopy(output)
         acknowledgements = bound.get("acknowledged_no_change_event_ids")
@@ -378,7 +412,10 @@ class BusinessDocumentAI:
             if not isinstance(operation, dict) or not isinstance(operation.get("source_event_ids"), list):
                 continue
             retained: list[Any] = []
-            for event_id in operation["source_event_ids"]:
+            for raw_event_id in operation["source_event_ids"]:
+                event_id = entity_event_aliases.get(raw_event_id, raw_event_id)
+                if event_id != raw_event_id:
+                    changed = True
                 target_section = source_sections.get(event_id)
                 targets = operations_by_section.get(target_section, []) if target_section is not None else []
                 if target_section is not None and target_section != operation.get("section_id") and len(targets) == 1:
@@ -395,14 +432,58 @@ class BusinessDocumentAI:
                 if event_id not in retained:
                     retained.append(event_id)
             operation["source_event_ids"] = retained
-        used_sources = {
-            event_id for operation in bound["operations"] if isinstance(operation, dict) and isinstance(operation.get("source_event_ids"), list) for event_id in operation["source_event_ids"]
-        }
-        for event_id in accepted_proposal_sources - used_sources:
-            targets = operations_by_section.get(source_sections[event_id], [])
+        normalized_acknowledgements: list[str] = []
+        for raw_event_id in acknowledgements:
+            event_id = entity_event_aliases.get(raw_event_id, raw_event_id)
+            if event_id != raw_event_id:
+                changed = True
+            if event_id not in normalized_acknowledgements:
+                normalized_acknowledgements.append(event_id)
+        if normalized_acknowledgements != acknowledgements:
+            bound["acknowledged_no_change_event_ids"] = normalized_acknowledgements
+            acknowledgements = normalized_acknowledgements
+
+        def used_event_ids() -> set[str]:
+            return {
+                event_id
+                for operation in bound["operations"]
+                if isinstance(operation, dict) and isinstance(operation.get("source_event_ids"), list)
+                for event_id in operation["source_event_ids"]
+                if isinstance(event_id, str)
+            }
+
+        for event_id in accepted_proposal_sources | confirmed_comment_sources:
+            if event_id in used_event_ids():
+                continue
+            targets = operations_by_section.get(source_sections.get(event_id), [])
             if len(targets) == 1 and isinstance(targets[0].get("source_event_ids"), list):
                 targets[0]["source_event_ids"].append(event_id)
                 changed = True
+
+        for event_id in question_sources - used_event_ids() - set(acknowledgements):
+            targets = operations_by_section.get(source_sections[event_id], [])
+            if len(targets) == 1 and isinstance(targets[0].get("source_event_ids"), list):
+                targets[0]["source_event_ids"].append(event_id)
+            else:
+                acknowledgements.append(event_id)
+            changed = True
+
+        for event_id in no_change_comment_sources - used_event_ids() - set(acknowledgements):
+            acknowledgements.append(event_id)
+            changed = True
+
+        for event_id in eva_pull_sources - used_event_ids() - set(acknowledgements):
+            if bound["operations"] and isinstance(bound["operations"][0], dict) and isinstance(bound["operations"][0].get("source_event_ids"), list):
+                bound["operations"][0]["source_event_ids"].append(event_id)
+            else:
+                acknowledgements.append(event_id)
+            changed = True
+
+        used_sources = used_event_ids()
+        cleaned_acknowledgements = [event_id for event_id in acknowledgements if event_id not in used_sources]
+        if cleaned_acknowledgements != acknowledgements:
+            bound["acknowledged_no_change_event_ids"] = cleaned_acknowledgements
+            changed = True
         return bound if changed else output
 
     @staticmethod

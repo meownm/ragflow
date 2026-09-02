@@ -9,6 +9,22 @@ sidebar_custom_props: {
 
 Key features, improvements and bug fixes in the latest releases.
 
+## v1.4.0
+
+Released on September 2, 2026.
+
+### New features
+
+- Business documents: Adds immutable revision history that shows the questions, author comments, accepted AI proposals, and EVA imports behind every document version.
+- EVA Wiki: Adds optional page linking and governed two-way synchronization between agreed business-document revisions and existing EVA pages.
+- User profile: Adds encrypted, per-user EVA API tokens for draft preparation and publication while retaining connector credentials for read operations.
+
+### Improvements and bug fixes
+
+- Keeps remote EVA content inside the existing review and change-plan gates instead of overwriting local revisions directly.
+- Normalizes model-generated references to immutable event IDs and requires accepted proposals to authorize concrete document changes.
+- Rejects ambiguous EVA origins and page URLs that could expose embedded credentials.
+
 ## v1.3.0
 
 Released on September 1, 2026.

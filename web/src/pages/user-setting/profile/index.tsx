@@ -24,6 +24,7 @@ import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { ProfileSettingWrapperCard } from '../components/user-setting-header';
 import { NICKNAME_MAX_LENGTH, NICKNAME_PATTERN } from './constants';
+import { EvaCredentialProfile } from './eva-credential-profile';
 import { EditType, modalTitle, useProfile } from './hooks/use-profile';
 
 const timezoneOptions = TimezoneList.map(({ name }) => ({
@@ -215,6 +216,8 @@ const ProfilePage: FC = () => {
             </span>
           </div>
         </div>
+
+        <EvaCredentialProfile />
 
         {/* Password */}
         <div className="flex items-start gap-4">

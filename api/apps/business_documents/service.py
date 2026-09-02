@@ -71,6 +71,8 @@ _MODEL_TABLES = (
     BusinessDocumentEvidenceSnapshot,
 )
 
+_MAX_EVA_SYNC_MARKDOWN_SIZE = 100_000
+
 
 def _timestamps() -> dict[str, Any]:
     now = datetime.now()
@@ -158,6 +160,11 @@ class BusinessDocumentService:
             raise ValidationError("TEMPLATE_NOT_PUBLISHED", "Requested business requirements template version is not published")
         if policy_version != process_policy()["policy_version"]:
             raise ValidationError("POLICY_NOT_PUBLISHED", "Requested business requirements policy version is not published")
+        eva_binding = None
+        if raw.get("eva_page_url"):
+            from api.apps.business_documents.eva_changes import EvaDocumentChangeService
+
+            eva_binding = EvaDocumentChangeService.resolve_page_url(actor_id, raw["eva_page_url"])
 
         database = BusinessDocument._meta.database
         with database.atomic():
@@ -186,7 +193,12 @@ class BusinessDocumentService:
                 event_type="DocumentCreated",
                 actor_type="USER",
                 actor_id=actor_id,
-                payload={"chat_id": chat_id.strip(), "document_type": document_type, "idea": idea.strip()},
+                payload={
+                    "chat_id": chat_id.strip(),
+                    "document_type": document_type,
+                    "idea": idea.strip(),
+                    **({"eva_binding": eva_binding} if eva_binding else {}),
+                },
                 correlation_id=document_id,
             )
         return cls.get_document(tenant_id, document_id, actor_id)
@@ -212,6 +224,7 @@ class BusinessDocumentService:
                     "operation_state": row.operation_state,
                     "state_version": row.state_version,
                     "current_revision_number": (BusinessDocumentRevision.get_by_id(row.current_revision_id).revision_number if row.current_revision_id else None),
+                    "eva_page_url": (cls._eva_binding(row) or {}).get("page_url"),
                     "update_time": row.update_time,
                 }
                 for row in rows
@@ -234,6 +247,134 @@ class BusinessDocumentService:
         if row is None:
             raise BusinessDocumentError("REVISION_NOT_FOUND", "Business document revision not found", 404)
         return cls._revision_dict(row)
+
+    @classmethod
+    def pull_from_eva(cls, tenant_id: str, actor_id: str, document_id: str, raw: object) -> dict[str, Any]:
+        """Bring a newer EVA page into the governed review protocol.
+
+        The remote content is recorded as an immutable review input. It never
+        overwrites a local revision directly; the existing review assessment and
+        change-plan gates remain responsible for producing the next revision.
+        """
+
+        if not isinstance(raw, dict) or isinstance(raw.get("expected_state_version"), bool) or not isinstance(raw.get("expected_state_version"), int):
+            raise ValidationError("INVALID_EVA_SYNC", "expected_state_version must be an integer")
+        expected = raw["expected_state_version"]
+        document = cls._get_owned_document(tenant_id, actor_id, document_id)
+        if document.state_version != expected:
+            raise ConflictError("STATE_VERSION_CONFLICT", "The document changed since it was loaded", {"expected": expected, "actual": document.state_version})
+        cls._require_idle(document)
+        if document.lifecycle_state not in {LifecycleState.AGREED.value, LifecycleState.REVIEW.value} or not document.current_revision_id:
+            raise ConflictError("EVA_SYNC_REVIEW_REQUIRED", "EVA content can be pulled only after the first local revision exists")
+        binding = cls._eva_binding(document)
+        if not binding or "PULL_FROM_EVA" not in binding.get("capabilities", []):
+            raise ConflictError("EVA_SYNC_UNAVAILABLE", "The linked EVA page is not connected to an accessible connector")
+
+        from api.apps.business_documents.eva_changes import EvaDocumentChangeService, _content_hash, _html_to_markdown
+
+        try:
+            _, client = EvaDocumentChangeService._connector(binding["connector_id"], actor_id)
+            remote = client.get_document_for_edit(binding["document_id"])
+        except Exception as error:
+            raise EvaDocumentChangeService._map_external_error(error) from error
+        remote_markdown = _html_to_markdown(str(remote.get("html") or ""))
+        if not remote_markdown:
+            raise ValidationError("EVA_DOCUMENT_EMPTY", "The linked EVA document has no published content")
+        if len(remote_markdown) > _MAX_EVA_SYNC_MARKDOWN_SIZE:
+            raise ValidationError(
+                "EVA_DOCUMENT_TOO_LARGE",
+                "The linked EVA document is too large for governed synchronization",
+                {"maximum": _MAX_EVA_SYNC_MARKDOWN_SIZE},
+            )
+        remote_hash = _content_hash(remote_markdown)
+        current_revision = BusinessDocumentRevision.get_by_id(document.current_revision_id)
+        pull_is_pending = document.lifecycle_state == LifecycleState.REVIEW.value and binding.get("last_pull_review_cycle") == document.active_review_cycle
+        pull_is_consumed = binding.get("last_pull_event_id") in (current_revision.source_event_ids or [])
+        if binding.get("last_pulled_content_hash") == remote_hash and (pull_is_pending or pull_is_consumed):
+            return {
+                "document": cls._project(document),
+                "sync": {"changed": False, "direction": "FROM_EVA", "remote_version": str(remote.get("version") or "") or None},
+            }
+
+        database = BusinessDocument._meta.database
+        with database.atomic():
+            document = cls._get_owned_document(tenant_id, actor_id, document_id)
+            if document.state_version != expected:
+                raise ConflictError("STATE_VERSION_CONFLICT", "The document changed during EVA synchronization", {"expected": expected, "actual": document.state_version})
+            current_binding = cls._eva_binding(document)
+            if not current_binding or current_binding.get("connector_id") != binding.get("connector_id") or current_binding.get("document_id") != binding.get("document_id"):
+                raise ConflictError("EVA_BINDING_CONFLICT", "The EVA link changed during synchronization")
+            review_cycle = document.active_review_cycle + 1 if document.lifecycle_state == LifecycleState.AGREED.value else document.active_review_cycle
+            new_version = document.state_version + 1
+            cls._optimistic_update(
+                document,
+                {
+                    "lifecycle_state": LifecycleState.REVIEW.value,
+                    "active_review_cycle": review_cycle,
+                    "state_version": new_version,
+                    "last_error": None,
+                },
+            )
+            event_id = cls._create_event(
+                document.id,
+                new_version,
+                "EvaDocumentPulled",
+                "USER",
+                actor_id,
+                {
+                    "review_cycle": review_cycle,
+                    "revision_id": document.current_revision_id,
+                    "page_url": binding["page_url"],
+                    "connector_id": binding["connector_id"],
+                    "document_id": binding["document_id"],
+                    "remote_version": str(remote.get("version") or "") or None,
+                    "remote_content_hash": remote_hash,
+                    "remote_markdown": remote_markdown,
+                },
+                get_uuid(),
+            )
+        projection = cls._project(cls._get_document(tenant_id, document_id))
+        return {
+            "document": projection,
+            "sync": {"changed": True, "direction": "FROM_EVA", "event_id": event_id, "remote_version": str(remote.get("version") or "") or None},
+        }
+
+    @classmethod
+    def create_eva_change_from_revision(cls, tenant_id: str, actor_id: str, document_id: str, raw: object) -> dict[str, Any]:
+        """Open the existing EVA approval workflow with the agreed local revision."""
+
+        if not isinstance(raw, dict) or isinstance(raw.get("expected_state_version"), bool) or not isinstance(raw.get("expected_state_version"), int):
+            raise ValidationError("INVALID_EVA_SYNC", "expected_state_version must be an integer")
+        document = cls._get_owned_document(tenant_id, actor_id, document_id)
+        expected = raw["expected_state_version"]
+        if document.state_version != expected:
+            raise ConflictError("STATE_VERSION_CONFLICT", "The document changed since it was loaded", {"expected": expected, "actual": document.state_version})
+        cls._require_idle(document)
+        cls._require_lifecycle(document, LifecycleState.AGREED)
+        if not document.current_revision_id:
+            raise ConflictError("AGREED_REVISION_REQUIRED", "An agreed local revision is required")
+        binding = cls._eva_binding(document)
+        if not binding or "CREATE_EVA_CHANGE" not in binding.get("capabilities", []):
+            raise ConflictError("EVA_SYNC_UNAVAILABLE", "The linked EVA page is not connected to an accessible connector")
+        revision = BusinessDocumentRevision.get_by_id(document.current_revision_id)
+        basis = cls._revision_change_basis(revision)
+        basis_summary = "; ".join(item["summary"] for item in basis[:3] if item.get("summary"))
+        change_summary = f"Синхронизация ревизии {revision.revision_number} документа «{document.title}»"
+        if basis_summary:
+            change_summary = f"{change_summary}: {basis_summary}"
+
+        from api.apps.business_documents.eva_changes import EvaDocumentChangeService
+
+        return EvaDocumentChangeService.create_change(
+            tenant_id,
+            actor_id,
+            {
+                "connector_id": binding["connector_id"],
+                "document_id": binding["document_id"],
+                "change_summary": change_summary[:50_000],
+                "draft_markdown": revision.body_markdown,
+            },
+        )
 
     @classmethod
     def list_jobs(cls, tenant_id: str, actor_id: str, document_id: str) -> list[dict[str, Any]]:
@@ -877,7 +1018,18 @@ class BusinessDocumentService:
         )
         new_version = document.state_version + 1
         event_id = get_uuid()
-        revision_id = cls._insert_revision(document.id, 1, draft, body, [event_id])
+        intake_answer_event_ids = [
+            source_event["event_id"]
+            for source_event in job.payload.get("source_events", [])
+            if isinstance(source_event, dict) and source_event.get("event_type") == "QuestionAnswered" and isinstance(source_event.get("event_id"), str)
+        ]
+        revision_id = cls._insert_revision(
+            document.id,
+            1,
+            draft,
+            body,
+            [event_id, *intake_answer_event_ids],
+        )
         inserted_question_count = 0
         for question in questions:
             cls._validate_evidence_refs(execution, question.get("evidence_refs", []))
@@ -959,6 +1111,14 @@ class BusinessDocumentService:
                 "A review input cannot both authorize a change and be acknowledged as no-change",
                 {"event_ids": duplicate_disposition},
             )
+        required_accepted = cls._accepted_proposal_event_ids(document)
+        acknowledged_accepted = sorted(acknowledged & required_accepted)
+        if acknowledged_accepted:
+            raise ValidationError(
+                "ACCEPTED_PROPOSAL_ACKNOWLEDGED_NO_CHANGE",
+                "An accepted proposal must authorize a concrete change operation",
+                {"event_ids": acknowledged_accepted},
+            )
         current_comment_dispositions = cls._current_comment_dispositions(document)
         acknowledged_events = cls._validate_known_sources(document.id, list(acknowledged)) if acknowledged else {}
         invalid_comment_acknowledgements = sorted(
@@ -971,7 +1131,6 @@ class BusinessDocumentService:
                 {"event_ids": invalid_comment_acknowledgements},
             )
         missing_inputs = active_inputs - used_sources - acknowledged
-        required_accepted = cls._accepted_proposal_event_ids(document)
         missing_accepted = sorted(missing_inputs & required_accepted)
         if missing_accepted:
             raise ValidationError(
@@ -1200,7 +1359,7 @@ class BusinessDocumentService:
     def _validate_change_sources(cls, document, operation):
         source_event_ids = operation["source_event_ids"]
         events = cls._validate_known_sources(document.id, source_event_ids)
-        allowed_event_types = {"QuestionAnswered", "ProposalDecided", "AuthorCommentAdded"}
+        allowed_event_types = {"QuestionAnswered", "ProposalDecided", "AuthorCommentAdded", "EvaDocumentPulled"}
         for event in events.values():
             if event.event_type not in allowed_event_types:
                 raise ValidationError("INVALID_CHANGE_SOURCE_TYPE", "Event type cannot authorize a document change", {"event_id": event.id})
@@ -1290,6 +1449,8 @@ class BusinessDocumentService:
         if event.event_type == "AuthorCommentAdded":
             row = BusinessDocumentComment.get_by_id(event.payload["comment_id"])
             return row.review_cycle, row.section_id
+        if event.event_type == "EvaDocumentPulled":
+            return event.payload.get("review_cycle"), None
         return None, None
 
     @staticmethod
@@ -1327,7 +1488,14 @@ class BusinessDocumentService:
             if (event.event_type == "QuestionAnswered" and event.payload.get("question_id") in question_ids)
             or (event.event_type == "AuthorCommentAdded" and event.payload.get("comment_id") in comment_ids)
         }
-        return accepted | related
+        latest_eva_pull = (
+            BusinessDocumentEvent.select()
+            .where((BusinessDocumentEvent.document_id == document.id) & (BusinessDocumentEvent.event_type == "EvaDocumentPulled"))
+            .order_by(BusinessDocumentEvent.sequence.desc())
+            .first()
+        )
+        eva_inputs = {latest_eva_pull.id} if latest_eva_pull is not None and latest_eva_pull.payload.get("review_cycle") == document.active_review_cycle else set()
+        return accepted | related | eva_inputs
 
     @staticmethod
     def _validate_known_sources(document_id, source_event_ids):
@@ -1430,6 +1598,7 @@ class BusinessDocumentService:
             "last_error": document.last_error,
             "latest_job": cls._latest_job(document.id),
             "latest_exports": cls._latest_exports(document.id),
+            "eva_binding": cls._eva_binding(document),
         }
 
     @classmethod
@@ -1531,7 +1700,7 @@ class BusinessDocumentService:
             elif cls._assessment_is_current(
                 document_id,
                 "ReviewAssessed",
-                {"QuestionAnswered", "ProposalDecided", "AuthorCommentAdded"},
+                {"QuestionAnswered", "ProposalDecided", "AuthorCommentAdded", "EvaDocumentPulled"},
                 review_cycle=review_cycle,
             ):
                 commands.append(CommandType.APPLY_CHANGES.value)
@@ -1617,8 +1786,8 @@ class BusinessDocumentService:
                 result["comments"][event.payload["comment_id"]] = event.id
         return result
 
-    @staticmethod
-    def _revision_dict(row):
+    @classmethod
+    def _revision_dict(cls, row):
         sections = row.document_ast.get("sections", []) if isinstance(row.document_ast, dict) else []
         return {
             "revision_id": row.id,
@@ -1630,7 +1799,131 @@ class BusinessDocumentService:
             },
             "content_hash": row.content_hash,
             "source_event_ids": row.source_event_ids,
+            "created_at": row.create_time,
+            "change_basis": cls._revision_change_basis(row),
         }
+
+    @classmethod
+    def _revision_change_basis(cls, row: BusinessDocumentRevision) -> list[dict[str, Any]]:
+        event_ids = [event_id for event_id in (row.source_event_ids or []) if isinstance(event_id, str)]
+        if not event_ids:
+            return []
+        events = {event.id: event for event in BusinessDocumentEvent.select().where((BusinessDocumentEvent.document_id == row.document_id) & (BusinessDocumentEvent.id.in_(event_ids)))}
+        basis: list[dict[str, Any]] = []
+        for event_id in event_ids:
+            event = events.get(event_id)
+            if event is None or event.event_type in {"ChangesApplied", "ReviewAgreedWithoutChanges"}:
+                continue
+            common = {
+                "event_id": event.id,
+                "actor_id": event.actor_id,
+                "created_at": event.create_time,
+            }
+            if event.event_type == "DraftCreated":
+                document = BusinessDocument.get_by_id(row.document_id)
+                basis.append(
+                    {
+                        **common,
+                        "type": "INITIAL_DRAFT",
+                        "title": "Первичный черновик",
+                        "summary": document.idea,
+                        "section_id": None,
+                    }
+                )
+                continue
+            if event.event_type == "QuestionAnswered":
+                question = BusinessDocumentQuestion.get_or_none((BusinessDocumentQuestion.id == event.payload.get("question_id")) & (BusinessDocumentQuestion.document_id == row.document_id))
+                answer = BusinessDocumentAnswer.get_or_none((BusinessDocumentAnswer.id == event.payload.get("answer_id")) & (BusinessDocumentAnswer.document_id == row.document_id))
+                if question is None or answer is None:
+                    continue
+                option_label = next(
+                    (str(option.get("label") or option.get("option_id")) for option in question.options if isinstance(option, dict) and option.get("option_id") == answer.selected_option_id),
+                    None,
+                )
+                basis.append(
+                    {
+                        **common,
+                        "type": "QUESTION",
+                        "title": "Ответ на вопрос",
+                        "summary": question.text,
+                        "details": answer.custom_answer or option_label,
+                        "section_id": question.target_section_id,
+                    }
+                )
+                continue
+            if event.event_type == "ProposalDecided" and event.payload.get("decision") == "ACCEPTED":
+                proposal = BusinessDocumentProposal.get_or_none((BusinessDocumentProposal.id == event.payload.get("proposal_id")) & (BusinessDocumentProposal.document_id == row.document_id))
+                if proposal is None:
+                    continue
+                basis.append(
+                    {
+                        **common,
+                        "type": "PROPOSAL",
+                        "title": "Принятое предложение ИИ",
+                        "summary": proposal.text,
+                        "details": proposal.rationale,
+                        "section_id": proposal.target_section_id,
+                    }
+                )
+                continue
+            if event.event_type == "AuthorCommentAdded":
+                comment = BusinessDocumentComment.get_or_none((BusinessDocumentComment.id == event.payload.get("comment_id")) & (BusinessDocumentComment.document_id == row.document_id))
+                if comment is None:
+                    continue
+                basis.append(
+                    {
+                        **common,
+                        "type": "COMMENT",
+                        "title": "Комментарий автора",
+                        "summary": comment.text,
+                        "details": comment.anchor.get("selected_text") if isinstance(comment.anchor, dict) else None,
+                        "section_id": comment.section_id,
+                    }
+                )
+                continue
+            if event.event_type == "EvaDocumentPulled":
+                basis.append(
+                    {
+                        **common,
+                        "type": "EVA_SYNC",
+                        "title": "Изменения из EVA",
+                        "summary": str(event.payload.get("page_url") or "Связанная страница EVA"),
+                        "details": str(event.payload.get("remote_version") or "") or None,
+                        "section_id": None,
+                    }
+                )
+        return basis
+
+    @staticmethod
+    def _eva_binding(document: BusinessDocument) -> dict[str, Any] | None:
+        created = (
+            BusinessDocumentEvent.select()
+            .where((BusinessDocumentEvent.document_id == document.id) & (BusinessDocumentEvent.event_type == "DocumentCreated"))
+            .order_by(BusinessDocumentEvent.sequence.asc())
+            .first()
+        )
+        raw_binding = created.payload.get("eva_binding") if created is not None and isinstance(created.payload, dict) else None
+        if not isinstance(raw_binding, dict) or not raw_binding.get("page_url"):
+            return None
+        binding = dict(raw_binding)
+        latest_pull = (
+            BusinessDocumentEvent.select()
+            .where((BusinessDocumentEvent.document_id == document.id) & (BusinessDocumentEvent.event_type == "EvaDocumentPulled"))
+            .order_by(BusinessDocumentEvent.sequence.desc())
+            .first()
+        )
+        if latest_pull is not None:
+            binding.update(
+                {
+                    "remote_version": latest_pull.payload.get("remote_version"),
+                    "remote_content_hash": latest_pull.payload.get("remote_content_hash"),
+                    "last_pulled_content_hash": latest_pull.payload.get("remote_content_hash"),
+                    "last_pulled_at": latest_pull.create_time,
+                    "last_pull_event_id": latest_pull.id,
+                    "last_pull_review_cycle": latest_pull.payload.get("review_cycle"),
+                }
+            )
+        return binding
 
     @staticmethod
     def _job_dict(row):

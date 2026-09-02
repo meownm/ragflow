@@ -1,8 +1,10 @@
 import type {
   BusinessDocumentCommand,
   BusinessDocumentCommandResult,
+  BusinessDocumentEvaPullResult,
   BusinessDocumentList,
   BusinessDocumentProjection,
+  BusinessDocumentRevision,
   CreateBusinessDocumentRequest,
   EvaDocumentChange,
   EvaDocumentChangeList,
@@ -104,6 +106,50 @@ export async function fetchBusinessDocument(documentId: string) {
       requestConfig(),
     );
     return unwrap<BusinessDocumentProjection>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function listBusinessDocumentRevisions(documentId: string) {
+  try {
+    const response = await request.get(
+      api.businessDocumentRevisions(documentId),
+      requestConfig(),
+    );
+    return unwrap<BusinessDocumentRevision[]>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function pullBusinessDocumentFromEva(
+  documentId: string,
+  expectedStateVersion: number,
+) {
+  try {
+    const response = await request.post(
+      api.businessDocumentEvaPull(documentId),
+      { expected_state_version: expectedStateVersion },
+      requestConfig(),
+    );
+    return unwrap<BusinessDocumentEvaPullResult>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function createEvaChangeFromBusinessDocument(
+  documentId: string,
+  expectedStateVersion: number,
+) {
+  try {
+    const response = await request.post(
+      api.businessDocumentEvaChanges(documentId),
+      { expected_state_version: expectedStateVersion },
+      requestConfig(),
+    );
+    return unwrap<EvaDocumentChange>(response.data);
   } catch (error) {
     return rethrowBusinessDocumentError(error);
   }

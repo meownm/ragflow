@@ -16,6 +16,13 @@
       "uniqueItems": true,
       "items": {"type": "string", "minLength": 1, "maxLength": 64}
     },
+    "eva_page_url": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048,
+      "format": "uri",
+      "pattern": "^https?://"
+    },
     "template_version": {"type": "string", "minLength": 1, "maxLength": 64},
     "policy_version": {"type": "string", "minLength": 1, "maxLength": 64}
   }

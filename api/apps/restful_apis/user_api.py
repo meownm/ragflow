@@ -415,6 +415,98 @@ async def user_profile():
     return get_json_result(data=current_user.to_safe_dict(for_self=True))
 
 
+def _accessible_eva_profile_connectors(user_id: str) -> list:
+    from api.db.db_models import Connector
+    from api.db.services.connector_service import ConnectorService
+    from common.data_source.config import DocumentSource
+
+    return [connector for connector in Connector.select().where(Connector.source == DocumentSource.EVA_WIKI.value).order_by(Connector.name.asc()) if ConnectorService.accessible(connector.id, user_id)]
+
+
+def _eva_profile_connector(connector_id: str, user_id: str):
+    from api.db.services.connector_service import ConnectorService
+    from common.data_source.config import DocumentSource
+
+    found, connector = ConnectorService.get_by_id(str(connector_id or "").strip())
+    if not found or connector.source != DocumentSource.EVA_WIKI.value or not ConnectorService.accessible(connector.id, user_id):
+        return None
+    return connector
+
+
+@manager.route("/users/me/eva-credentials", methods=["GET"])  # noqa: F821
+@login_required
+async def list_user_eva_credentials():
+    """Return per-EVA-origin credential status without returning any token."""
+
+    from api.db.services.user_external_credential_service import ExternalCredentialError, UserExternalCredentialService
+
+    statuses = UserExternalCredentialService.list_eva_wiki_statuses(current_user.id)
+    origins: dict[str, dict] = {}
+    for connector in _accessible_eva_profile_connectors(current_user.id):
+        try:
+            scope = UserExternalCredentialService.normalize_http_scope((connector.config or {}).get("api_base_url", ""))
+        except ExternalCredentialError:
+            continue
+        item = origins.setdefault(
+            scope,
+            {
+                "scope": scope,
+                "configured": False,
+                "credential_version": None,
+                "update_time": None,
+                "connector_id": connector.id,
+                "connectors": [],
+            },
+        )
+        item["connectors"].append({"id": connector.id, "name": connector.name})
+        item.update(statuses.get(scope, {}))
+    return get_json_result(data={"items": list(origins.values())})
+
+
+@manager.route("/users/me/eva-credentials/<connector_id>", methods=["PUT"])  # noqa: F821
+@login_required
+async def put_user_eva_credential(connector_id):
+    """Add or replace the current user's EVA token for the connector origin."""
+
+    from api.db.services.user_external_credential_service import ExternalCredentialError, UserExternalCredentialService
+
+    connector = _eva_profile_connector(connector_id, current_user.id)
+    if connector is None:
+        return get_json_result(data=False, message="EVA connector is not accessible.", code=RetCode.AUTHENTICATION_ERROR)
+    req = await get_request_json()
+    if not isinstance(req, dict):
+        return get_json_result(data=False, message="Request body must be an object.", code=RetCode.ARGUMENT_ERROR)
+    try:
+        status = UserExternalCredentialService.put_eva_wiki_token(
+            current_user.id,
+            (connector.config or {}).get("api_base_url", ""),
+            req.get("eva_api_token", ""),
+        )
+    except ExternalCredentialError as exc:
+        return get_json_result(data=False, message=str(exc), code=RetCode.ARGUMENT_ERROR)
+    return get_json_result(data=status)
+
+
+@manager.route("/users/me/eva-credentials/<connector_id>", methods=["DELETE"])  # noqa: F821
+@login_required
+async def delete_user_eva_credential(connector_id):
+    """Delete the current user's EVA token for the connector origin."""
+
+    from api.db.services.user_external_credential_service import ExternalCredentialError, UserExternalCredentialService
+
+    connector = _eva_profile_connector(connector_id, current_user.id)
+    if connector is None:
+        return get_json_result(data=False, message="EVA connector is not accessible.", code=RetCode.AUTHENTICATION_ERROR)
+    try:
+        deleted = UserExternalCredentialService.delete_eva_wiki_token(
+            current_user.id,
+            (connector.config or {}).get("api_base_url", ""),
+        )
+    except ExternalCredentialError as exc:
+        return get_json_result(data=False, message=str(exc), code=RetCode.ARGUMENT_ERROR)
+    return get_json_result(data={"deleted": deleted})
+
+
 def rollback_user_registration(user_id):
     try:
         UserService.delete_by_id(user_id)

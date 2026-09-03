@@ -12,9 +12,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { MultiSelect } from '@/components/ui/multi-select';
 import { Textarea } from '@/components/ui/textarea';
-import { useFetchKnowledgeList } from '@/hooks/use-knowledge-request';
 import { Routes } from '@/routes';
 import {
   BusinessDocumentConflictError,
@@ -25,8 +23,13 @@ import {
   listBusinessDocumentRevisions,
   listBusinessDocuments,
   pullBusinessDocumentFromEva,
+  rebindBusinessDocumentToEva,
   submitBusinessDocumentCommand,
 } from '@/services/business-document-service';
+import {
+  EvaUserCredentialStatus,
+  listEvaUserCredentials,
+} from '@/services/user-service';
 import api from '@/utils/api';
 import { downloadFileFromBlob } from '@/utils/file-util';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -132,28 +135,8 @@ function CreateBusinessDocumentPage() {
   const [mode, setMode] = useState<'new' | 'eva'>('new');
   const [title, setTitle] = useState('');
   const [idea, setIdea] = useState('');
-  const [datasetIds, setDatasetIds] = useState<string[]>([]);
   const [evaPageUrl, setEvaPageUrl] = useState('');
   const [page, setPage] = useState(1);
-  const { list: datasets, loading: datasetsLoading } =
-    useFetchKnowledgeList(true);
-  const selectedEmbedding = useMemo(
-    () =>
-      datasets.find((dataset) => dataset.id === datasetIds[0])?.embedding_model,
-    [datasetIds, datasets],
-  );
-  const datasetOptions = useMemo(
-    () =>
-      datasets.map((dataset) => ({
-        label: dataset.name,
-        value: dataset.id,
-        suffix: dataset.embedding_model,
-        disabled: Boolean(
-          selectedEmbedding && dataset.embedding_model !== selectedEmbedding,
-        ),
-      })),
-    [datasets, selectedEmbedding],
-  );
   const documentsQuery = useQuery({
     queryKey: BusinessDocumentKeys.list(page),
     queryFn: () => listBusinessDocuments(page, 20),
@@ -161,8 +144,24 @@ function CreateBusinessDocumentPage() {
   });
   const createMutation = useMutation({
     mutationFn: createBusinessDocument,
-    onSuccess: (document) =>
-      navigate(`${Routes.BusinessDocuments}/${document.document_id}`),
+    onSuccess: async (document) => {
+      const command: BusinessDocumentCommand = {
+        schema_version: '1',
+        command_id: makeId('cmd-initial-analysis'),
+        idempotency_key: makeId('idem-initial-analysis'),
+        expected_state_version: document.state_version,
+        type: 'REQUEST_INTAKE_ASSESSMENT',
+        payload: {},
+      };
+
+      try {
+        await submitBusinessDocumentCommand(document.document_id, command);
+      } finally {
+        // The document already exists even if the follow-up request fails. Open
+        // it so the author can retry the analysis without creating a duplicate.
+        navigate(`${Routes.BusinessDocuments}/${document.document_id}`);
+      }
+    },
   });
 
   const submit = (event: FormEvent) => {
@@ -173,7 +172,7 @@ function CreateBusinessDocumentPage() {
       document_type: 'business_requirements',
       title: title.trim(),
       idea: idea.trim(),
-      dataset_ids: datasetIds,
+      dataset_ids: [],
       ...(evaPageUrl.trim() ? { eva_page_url: evaPageUrl.trim() } : {}),
     });
   };
@@ -405,25 +404,6 @@ function CreateBusinessDocumentPage() {
                 </div>
               </label>
 
-              <div className="mt-5 space-y-2 text-sm font-medium">
-                <span>Источники RAGFlow</span>
-                <MultiSelect
-                  options={datasetOptions}
-                  value={datasetIds}
-                  defaultValue={datasetIds}
-                  onValueChange={setDatasetIds}
-                  placeholder="Выберите индексированные datasets"
-                  maxCount={3}
-                  showSelectAll={false}
-                  isSearching={datasetsLoading}
-                  data-testid="business-document-datasets"
-                />
-                <p className="text-xs font-normal leading-5 text-text-secondary">
-                  Необязательно. Фрагменты используются только как цитируемые
-                  данные; инструкции внутри источников агент не выполняет.
-                </p>
-              </div>
-
               <label className="mt-5 block space-y-2 text-sm font-medium">
                 <span>Страница EVA</span>
                 <Input
@@ -497,6 +477,38 @@ export default function BusinessDocumentsPage() {
   });
 
   const document = documentQuery.data;
+  const evaPageUrl = document?.eva_binding?.page_url;
+  const evaConnectorId = document?.eva_binding?.connector_id;
+  const evaCredentialsQuery = useQuery<EvaUserCredentialStatus[]>({
+    queryKey: ['eva-user-credentials'],
+    queryFn: async () => {
+      const { data } = await listEvaUserCredentials();
+      if (data.code !== 0) {
+        throw new Error(
+          data.message || 'Не удалось проверить персональный EVA-токен.',
+        );
+      }
+      return data.data?.items ?? [];
+    },
+    enabled: Boolean(documentId && !changeId && evaPageUrl),
+    retry: false,
+  });
+  const hasPersonalEvaToken = useMemo(
+    () =>
+      Boolean(
+        evaPageUrl &&
+        evaCredentialsQuery.data?.some(
+          (credential) =>
+            credential.configured &&
+            (!evaConnectorId ||
+              credential.connector_id === evaConnectorId ||
+              credential.connectors.some(
+                (connector) => connector.id === evaConnectorId,
+              )),
+        ),
+      ),
+    [evaConnectorId, evaCredentialsQuery.data, evaPageUrl],
+  );
   const currentRevisionId = document?.current_revision?.revision_id;
   useEffect(() => {
     clearSelection();
@@ -581,10 +593,35 @@ export default function BusinessDocumentsPage() {
     revisionsQuery.data,
     selectedRevisionId,
   ]);
-  const pullEvaMutation = useMutation({
-    mutationFn: () => {
+  const ensureEvaCapability = useCallback(
+    async (capability: 'PULL_FROM_EVA' | 'CREATE_EVA_CHANGE') => {
       if (!documentId || !document) throw new Error('Документ не загружен');
-      return pullBusinessDocumentFromEva(documentId, document.state_version);
+      if (document.eva_binding?.capabilities.includes(capability)) {
+        return document;
+      }
+      const updatedDocument = await rebindBusinessDocumentToEva(
+        documentId,
+        document.state_version,
+      );
+      queryClient.setQueryData(
+        BusinessDocumentKeys.detail(documentId),
+        updatedDocument,
+      );
+      if (!updatedDocument.eva_binding?.capabilities.includes(capability)) {
+        throw new Error('Связанная страница EVA недоступна для этой операции.');
+      }
+      return updatedDocument;
+    },
+    [document, documentId, queryClient],
+  );
+  const pullEvaMutation = useMutation({
+    mutationFn: async () => {
+      if (!documentId) throw new Error('Документ не загружен');
+      const connectedDocument = await ensureEvaCapability('PULL_FROM_EVA');
+      return pullBusinessDocumentFromEva(
+        documentId,
+        connectedDocument.state_version,
+      );
     },
     onSuccess: async (result) => {
       queryClient.setQueryData(
@@ -601,12 +638,26 @@ export default function BusinessDocumentsPage() {
       });
     },
   });
-  const createEvaChangeMutation = useMutation({
+  const rebindEvaMutation = useMutation({
     mutationFn: () => {
       if (!documentId || !document) throw new Error('Документ не загружен');
+      return rebindBusinessDocumentToEva(documentId, document.state_version);
+    },
+    onSuccess: (updatedDocument) => {
+      queryClient.setQueryData(
+        BusinessDocumentKeys.detail(documentId),
+        updatedDocument,
+      );
+      setEvaSyncNotice('Страница EVA подключена. Синхронизация доступна.');
+    },
+  });
+  const createEvaChangeMutation = useMutation({
+    mutationFn: async () => {
+      if (!documentId) throw new Error('Документ не загружен');
+      const connectedDocument = await ensureEvaCapability('CREATE_EVA_CHANGE');
       return createEvaChangeFromBusinessDocument(
         documentId,
-        document.state_version,
+        connectedDocument.state_version,
       );
     },
     onSuccess: (change) =>
@@ -712,11 +763,6 @@ export default function BusinessDocumentsPage() {
             <span className="font-mono text-[11px] text-text-disabled">
               v{document.state_version}
             </span>
-            {!!document.dataset_ids?.length && (
-              <span className="text-[11px] text-text-secondary">
-                Источников: {document.dataset_ids.length}
-              </span>
-            )}
           </div>
           <p className="mt-1 text-xs text-text-secondary">
             {operationLabels[document.operation_state]}
@@ -883,12 +929,25 @@ export default function BusinessDocumentsPage() {
                 <ExternalLink className="size-3 shrink-0" />
               </a>
               {document.eva_binding.status === 'LINK_ONLY' && (
-                <span className="text-text-disabled">
-                  Только ссылка — доступный коннектор не найден
-                </span>
+                <>
+                  <span className="text-text-disabled">
+                    Только ссылка — доступный коннектор не найден
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={isBusy || rebindEvaMutation.isPending}
+                    loading={rebindEvaMutation.isPending}
+                    onClick={() => rebindEvaMutation.mutate()}
+                    data-testid="rebind-business-document-to-eva"
+                  >
+                    <RefreshCw className="size-3.5" />
+                    Подключить заново
+                  </Button>
+                </>
               )}
             </div>
-            {document.eva_binding.capabilities.includes('PULL_FROM_EVA') && (
+            {hasPersonalEvaToken && (
               <Button
                 size="sm"
                 variant="ghost"
@@ -903,12 +962,10 @@ export default function BusinessDocumentsPage() {
                 data-testid="pull-business-document-from-eva"
               >
                 <ArrowDownToLine className="size-3.5" />
-                Получить из EVA
+                Перечитать текущий документ из EVA
               </Button>
             )}
-            {document.eva_binding.capabilities.includes(
-              'CREATE_EVA_CHANGE',
-            ) && (
+            {hasPersonalEvaToken && (
               <Button
                 size="sm"
                 variant="ghost"
@@ -922,14 +979,19 @@ export default function BusinessDocumentsPage() {
                 data-testid="push-business-document-to-eva"
               >
                 <ArrowUpFromLine className="size-3.5" />
-                Подготовить в EVA
+                Сохранить текущий вариант в EVA
               </Button>
             )}
-            {(pullEvaMutation.error || createEvaChangeMutation.error) && (
+            {(rebindEvaMutation.error ||
+              pullEvaMutation.error ||
+              createEvaChangeMutation.error) && (
               <span className="w-full text-state-error" role="alert">
                 {
-                  (pullEvaMutation.error || createEvaChangeMutation.error)
-                    ?.message
+                  (
+                    rebindEvaMutation.error ||
+                    pullEvaMutation.error ||
+                    createEvaChangeMutation.error
+                  )?.message
                 }
               </span>
             )}
@@ -1074,6 +1136,7 @@ export default function BusinessDocumentsPage() {
           <ProtocolPane
             reviewCycle={document.protocol}
             reviewCycleNumber={document.active_review_cycle}
+            proposalDecisionsOpen={document.lifecycle_state === 'REVIEW'}
             revision={document.current_revision}
             selection={selection}
             allowedCommands={document.allowed_commands}

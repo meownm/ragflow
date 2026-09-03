@@ -340,6 +340,54 @@ class BusinessDocumentService:
         }
 
     @classmethod
+    def rebind_eva(cls, tenant_id: str, actor_id: str, document_id: str, raw: object) -> dict[str, Any]:
+        """Re-resolve an existing EVA link without rewriting its creation event."""
+
+        if not isinstance(raw, dict) or isinstance(raw.get("expected_state_version"), bool) or not isinstance(raw.get("expected_state_version"), int):
+            raise ValidationError("INVALID_EVA_BINDING", "expected_state_version must be an integer")
+        expected = raw["expected_state_version"]
+        document = cls._get_owned_document(tenant_id, actor_id, document_id)
+        if document.state_version != expected:
+            raise ConflictError("STATE_VERSION_CONFLICT", "The document changed since it was loaded", {"expected": expected, "actual": document.state_version})
+        cls._require_idle(document)
+        if document.lifecycle_state == LifecycleState.ARCHIVED.value:
+            raise ConflictError("LIFECYCLE_STATE_CONFLICT", "Archived documents cannot be reconnected to EVA")
+        current_binding = cls._eva_binding(document)
+        if not current_binding:
+            raise ConflictError("EVA_BINDING_MISSING", "The document has no EVA page link")
+
+        from api.apps.business_documents.eva_changes import EvaDocumentChangeService
+
+        resolved = EvaDocumentChangeService.resolve_page_url(actor_id, current_binding["page_url"])
+        if resolved.get("status") != "CONNECTED":
+            raise ConflictError(
+                "EVA_BINDING_UNAVAILABLE",
+                "No accessible EVA connector matches the linked page",
+                {"document_code": resolved.get("document_code")},
+            )
+
+        database = BusinessDocument._meta.database
+        with database.atomic():
+            document = cls._get_owned_document(tenant_id, actor_id, document_id)
+            if document.state_version != expected:
+                raise ConflictError("STATE_VERSION_CONFLICT", "The document changed during EVA reconnection", {"expected": expected, "actual": document.state_version})
+            latest_binding = cls._eva_binding(document)
+            if not latest_binding or latest_binding.get("page_url") != current_binding.get("page_url"):
+                raise ConflictError("EVA_BINDING_CONFLICT", "The EVA link changed during reconnection")
+            new_version = document.state_version + 1
+            cls._optimistic_update(document, {"state_version": new_version, "last_error": None})
+            cls._create_event(
+                document.id,
+                new_version,
+                "EvaBindingResolved",
+                "USER",
+                actor_id,
+                {"eva_binding": resolved},
+                get_uuid(),
+            )
+        return cls._project(cls._get_document(tenant_id, document_id))
+
+    @classmethod
     def create_eva_change_from_revision(cls, tenant_id: str, actor_id: str, document_id: str, raw: object) -> dict[str, Any]:
         """Open the existing EVA approval workflow with the agreed local revision."""
 
@@ -1906,13 +1954,23 @@ class BusinessDocumentService:
         if not isinstance(raw_binding, dict) or not raw_binding.get("page_url"):
             return None
         binding = dict(raw_binding)
+        latest_resolution = (
+            BusinessDocumentEvent.select()
+            .where((BusinessDocumentEvent.document_id == document.id) & (BusinessDocumentEvent.event_type == "EvaBindingResolved"))
+            .order_by(BusinessDocumentEvent.sequence.desc())
+            .first()
+        )
+        if latest_resolution is not None and isinstance(latest_resolution.payload, dict):
+            resolved_binding = latest_resolution.payload.get("eva_binding")
+            if isinstance(resolved_binding, dict) and resolved_binding.get("page_url"):
+                binding = dict(resolved_binding)
         latest_pull = (
             BusinessDocumentEvent.select()
             .where((BusinessDocumentEvent.document_id == document.id) & (BusinessDocumentEvent.event_type == "EvaDocumentPulled"))
             .order_by(BusinessDocumentEvent.sequence.desc())
             .first()
         )
-        if latest_pull is not None:
+        if latest_pull is not None and (latest_resolution is None or latest_pull.sequence > latest_resolution.sequence):
             binding.update(
                 {
                     "remote_version": latest_pull.payload.get("remote_version"),

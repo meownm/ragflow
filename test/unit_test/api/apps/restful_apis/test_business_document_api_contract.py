@@ -28,6 +28,7 @@ EXPECTED_ROUTES = {
     "list_business_documents": ("/business-documents", ("GET",)),
     "get_business_document": ("/business-documents/<document_id>", ("GET",)),
     "pull_business_document_from_eva": ("/business-documents/<document_id>/eva/pull", ("POST",)),
+    "rebind_business_document_to_eva": ("/business-documents/<document_id>/eva/rebind", ("POST",)),
     "create_business_document_eva_change": ("/business-documents/<document_id>/eva/changes", ("POST",)),
     "execute_business_document_command": ("/business-documents/<document_id>/commands", ("POST",)),
     "list_business_document_revisions": ("/business-documents/<document_id>/revisions", ("GET",)),
@@ -81,6 +82,7 @@ def test_mutating_routes_read_json_and_all_routes_map_domain_errors():
             "publish_eva_business_document_change",
             "create_business_document",
             "pull_business_document_from_eva",
+            "rebind_business_document_to_eva",
             "create_business_document_eva_change",
             "execute_business_document_command",
         }:

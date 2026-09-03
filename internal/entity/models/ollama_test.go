@@ -17,11 +17,72 @@
 package models
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
+
+func newOllamaForChatTest(baseURL string) *OllamaModel {
+	return NewOllamaModel(map[string]string{"default": baseURL}, URLSuffix{Chat: "api/chat", AsyncChat: "api/chat"})
+}
+
+func decodeOllamaRequestBody(t *testing.T, r *http.Request) map[string]interface{} {
+	t.Helper()
+	var body map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		t.Fatalf("decode request body: %v", err)
+	}
+	return body
+}
+
+func TestOllamaChatDisablesThinkingByDefault(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/chat" {
+			t.Errorf("path=%s, want /api/chat", r.URL.Path)
+		}
+		body := decodeOllamaRequestBody(t, r)
+		if think, ok := body["think"].(bool); !ok || think {
+			t.Errorf("think=%#v, want false", body["think"])
+		}
+		_, _ = io.WriteString(w, `{"message":{"content":"ok"}}`)
+	}))
+	defer srv.Close()
+
+	_, err := newOllamaForChatTest(srv.URL).ChatWithMessages(
+		"qwen3.8:latest",
+		[]Message{{Role: "user", Content: "ping"}},
+		&APIConfig{},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("ChatWithMessages: %v", err)
+	}
+}
+
+func TestOllamaStreamingChatSerializesExplicitFalseThinking(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body := decodeOllamaRequestBody(t, r)
+		if think, ok := body["think"].(bool); !ok || think {
+			t.Errorf("think=%#v, want false", body["think"])
+		}
+		_, _ = io.WriteString(w, `{"message":{"content":"ok"},"done":true}`+"\n")
+	}))
+	defer srv.Close()
+
+	thinking := false
+	err := newOllamaForChatTest(srv.URL).ChatStreamlyWithSender(
+		"qwen3.8:latest",
+		[]Message{{Role: "user", Content: "ping"}},
+		&APIConfig{},
+		&ChatConfig{Thinking: &thinking},
+		func(*string, *string) error { return nil },
+	)
+	if err != nil {
+		t.Fatalf("ChatStreamlyWithSender: %v", err)
+	}
+}
 
 func newOllamaForListModelsTest(baseURL string) *OllamaModel {
 	return NewOllamaModel(map[string]string{"default": baseURL}, URLSuffix{Models: "api/tags"})

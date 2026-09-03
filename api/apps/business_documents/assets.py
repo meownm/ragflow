@@ -19,7 +19,6 @@ from __future__ import annotations
 import json
 import hashlib
 import re
-import xml.etree.ElementTree as ET
 from copy import deepcopy
 from functools import lru_cache
 from pathlib import Path
@@ -157,7 +156,7 @@ def validate_document_ast(document: object) -> dict[str, Any]:
         )
     sections = {section["id"]: section for section in document["sections"]}
     _validate_conceptual_diagram(sections["4.1"])
-    _validate_bpmn_scenario(sections["4.3"])
+    _validate_client_scenario(sections["4.3"])
     return document
 
 
@@ -221,135 +220,14 @@ def normalize_document_ast(document: object) -> object:
         for template_only_field in ("parent_id", "required", "allowed_blocks", "semantic_requirements"):
             section.pop(template_only_field, None)
         normalized_sections.append(section)
-    scenario = next((section for section in normalized_sections if section["id"] == "4.3"), None)
-    if scenario is not None:
-        scenario["blocks"] = [_normalize_bpmn_block(block) for block in scenario["blocks"]]
     normalized["sections"] = normalized_sections
     return normalized
 
 
-_BPMN_MODEL_NAMESPACE = "http://www.omg.org/spec/BPMN/20100524/MODEL"
 _NEGATIVE_PATH_PATTERN = re.compile(
-    r"(?:негатив|ошиб|отказ|исключ|нет[\s_-]|недоступ|отсутств|невозмож|negative|error|failure|reject|denied|unavailable|no[\s_-])",
+    r"(?:негатив\w*|ошиб\w*|отказ\w*|исключ\w*|\bнет\b|недоступ\w*|отсутств\w*|невозмож\w*|negative\w*|error\w*|failure\w*|reject\w*|denied\w*|unavailable\w*|\bno\b)",
     re.IGNORECASE,
 )
-_NEGATIVE_CONDITION_PATTERN = re.compile(r"(?:\bfalse\b|==\s*false|!=\s*true|\bnot\b|\bнет\b)", re.IGNORECASE)
-_BPMN_FLOW_NODE_TAGS = {
-    "startEvent",
-    "endEvent",
-    "intermediateCatchEvent",
-    "intermediateThrowEvent",
-    "boundaryEvent",
-    "task",
-    "userTask",
-    "serviceTask",
-    "manualTask",
-    "businessRuleTask",
-    "scriptTask",
-    "sendTask",
-    "receiveTask",
-    "callActivity",
-    "subProcess",
-    "transaction",
-    "adHocSubProcess",
-    "exclusiveGateway",
-    "inclusiveGateway",
-    "parallelGateway",
-    "complexGateway",
-    "eventBasedGateway",
-}
-
-
-def _normalize_bpmn_block(block: object) -> object:
-    """Promote an unambiguous negative-branch signal to its flow label.
-
-    Small local models often describe the negative branch on its target node or
-    condition while omitting the sequenceFlow name. They can also omit the
-    declaration of a gateway whose topology is still unambiguous. Canonicalize
-    those two structural details without inventing activities or path content.
-    """
-
-    if not isinstance(block, dict) or block.get("type") != "bpmn" or not isinstance(block.get("source"), str):
-        return block
-    source = block["source"].strip()
-    if "<!DOCTYPE" in source.upper() or "<!ENTITY" in source.upper():
-        return block
-    try:
-        root = ET.fromstring(source)
-    except ET.ParseError:
-        return block
-    namespace = f"{{{_BPMN_MODEL_NAMESPACE}}}"
-    changed = False
-    if root.tag != f"{namespace}definitions":
-        root_namespace = root.tag[1:].split("}", 1)[0] if root.tag.startswith("{") and "}" in root.tag else None
-        root_local_name = root.tag.rsplit("}", 1)[-1]
-        if root_local_name != "definitions":
-            return block
-        for element in root.iter():
-            element_namespace = element.tag[1:].split("}", 1)[0] if element.tag.startswith("{") and "}" in element.tag else None
-            if element_namespace == root_namespace:
-                element.tag = f"{namespace}{element.tag.rsplit('}', 1)[-1]}"
-                changed = True
-    flows = root.findall(f".//{namespace}sequenceFlow")
-    flow_nodes = {element.get("id"): element for element in root.iter() if element.tag.removeprefix(namespace) in _BPMN_FLOW_NODE_TAGS and element.get("id")}
-    normalized_node_ids: dict[str, list[str]] = {}
-    for node_id in flow_nodes:
-        normalized_node_ids.setdefault(re.sub(r"[^a-z0-9]", "", node_id.lower()), []).append(node_id)
-    for flow in flows:
-        for ref_name in ("sourceRef", "targetRef"):
-            ref = flow.get(ref_name)
-            if not ref or ref in flow_nodes:
-                continue
-            matches = normalized_node_ids.get(re.sub(r"[^a-z0-9]", "", ref.lower()), [])
-            if len(matches) == 1:
-                flow.set(ref_name, matches[0])
-                changed = True
-    missing_refs = {ref for flow in flows for ref in (flow.get("sourceRef"), flow.get("targetRef")) if ref and ref not in flow_nodes}
-    processes = root.findall(f".//{namespace}process")
-    if len(processes) == 1:
-        for missing_ref in missing_refs:
-            incoming = [flow for flow in flows if flow.get("targetRef") == missing_ref]
-            outgoing = [flow for flow in flows if flow.get("sourceRef") == missing_ref]
-            if not incoming:
-                continue
-            if len(outgoing) >= 2:
-                gateway = ET.SubElement(processes[0], f"{namespace}exclusiveGateway", {"id": missing_ref})
-                flow_nodes[missing_ref] = gateway
-                changed = True
-                continue
-            node_name = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", missing_ref).replace("_", " ").replace("-", " ").strip()
-            task = ET.SubElement(processes[0], f"{namespace}task", {"id": missing_ref, "name": node_name or missing_ref})
-            flow_nodes[missing_ref] = task
-            changed = True
-    elements_by_id = {element.get("id"): element for element in root.iter() if element.get("id")}
-    for gateway in root.findall(f".//{namespace}exclusiveGateway"):
-        gateway_id = gateway.get("id")
-        outgoing = [flow for flow in flows if gateway_id and flow.get("sourceRef") == gateway_id]
-        if len(outgoing) < 2 or any(_NEGATIVE_PATH_PATTERN.search(flow.get("name", "")) for flow in outgoing):
-            continue
-        for flow in outgoing:
-            target = elements_by_id.get(flow.get("targetRef"))
-            target_signal = " ".join(
-                value
-                for value in (
-                    target.get("id", "") if target is not None else "",
-                    target.get("name", "") if target is not None else "",
-                )
-                if value
-            )
-            condition = flow.find(f"{namespace}conditionExpression")
-            condition_signal = "" if condition is None else "".join(condition.itertext())
-            if not (_NEGATIVE_PATH_PATTERN.search(target_signal) or _NEGATIVE_CONDITION_PATTERN.search(condition_signal)):
-                continue
-            existing_name = flow.get("name", "").strip()
-            detail = existing_name or (target.get("name", "").strip() if target is not None else "") or "отказ"
-            flow.set("name", f"Негативный сценарий: {detail}")
-            changed = True
-    if not changed:
-        return block
-    normalized = deepcopy(block)
-    normalized["source"] = ET.tostring(root, encoding="unicode")
-    return normalized
 
 
 def _validate_conceptual_diagram(section: dict[str, Any]) -> None:
@@ -370,50 +248,33 @@ def _validate_conceptual_diagram(section: dict[str, Any]) -> None:
             )
 
 
-def _validate_bpmn_scenario(section: dict[str, Any]) -> None:
-    diagrams = [block for block in section["blocks"] if block.get("type") == "bpmn"]
-    accompanying = [block for block in section["blocks"] if block.get("type") != "bpmn" and _block_has_content(block)]
+def _validate_client_scenario(section: dict[str, Any]) -> None:
+    diagrams = [block for block in section["blocks"] if block.get("type") == "plantuml"]
+    accompanying = [block for block in section["blocks"] if block.get("type") != "plantuml" and _block_has_content(block)]
     if not diagrams or not accompanying:
         raise ValidationError(
-            "BPMN_SCENARIO_REQUIRED",
-            "Section 4.3 must contain BPMN 2.0 XML and accompanying scenario text",
+            "ACTIVITY_SCENARIO_REQUIRED",
+            "Section 4.3 must contain a PlantUML activity diagram and accompanying scenario text",
             {"section_id": "4.3"},
         )
     for diagram in diagrams:
         source = diagram["source"].strip()
-        if "<!DOCTYPE" in source.upper() or "<!ENTITY" in source.upper():
-            raise ValidationError("INVALID_BPMN_XML", "BPMN XML declarations may not define entities", {"section_id": "4.3"})
-        try:
-            root = ET.fromstring(source)
-        except ET.ParseError as exc:
-            raise ValidationError("INVALID_BPMN_XML", "Section 4.3 contains malformed BPMN XML", {"section_id": "4.3"}) from exc
-        namespace = f"{{{_BPMN_MODEL_NAMESPACE}}}"
-        if root.tag != f"{namespace}definitions":
-            raise ValidationError("INVALID_BPMN_XML", "BPMN XML must use BPMN 2.0 definitions", {"section_id": "4.3"})
-        processes = root.findall(f".//{namespace}process")
-        starts = root.findall(f".//{namespace}startEvent")
-        ends = root.findall(f".//{namespace}endEvent")
-        gateways = root.findall(f".//{namespace}exclusiveGateway")
-        flows = root.findall(f".//{namespace}sequenceFlow")
-        flow_node_ids = {element.get("id") for element in root.iter() if element.tag.removeprefix(namespace) in _BPMN_FLOW_NODE_TAGS and element.get("id")}
-        invalid_refs = sorted(
-            {ref for flow in flows for ref in (flow.get("sourceRef"), flow.get("targetRef")) if not ref or ref not in flow_node_ids},
-            key=lambda value: value or "",
+        bounded = source.startswith("@startuml") and source.endswith("@enduml")
+        has_start = re.search(r"(?im)^\s*start\s*$", source) is not None
+        has_end = re.search(r"(?im)^\s*(?:stop|end)\s*$", source) is not None
+        has_decision = re.search(r"(?im)^\s*if\s*\(.+\)\s*then(?:\s*\(.+\))?\s*$", source) is not None
+        alternative = re.search(
+            r"(?ims)^\s*else(?:\s*\((?P<label>[^)]*)\))?\s*\r?\n(?P<body>.*?)^\s*endif\s*$",
+            source,
         )
-        if invalid_refs:
+        has_alternative = alternative is not None
+        has_decision_end = re.search(r"(?im)^\s*endif\s*$", source) is not None
+        negative_branch = "" if alternative is None else f"{alternative.group('label') or ''} {alternative.group('body')}"
+        has_negative_path = _NEGATIVE_PATH_PATTERN.search(negative_branch) is not None
+        if not all((bounded, has_start, has_end, has_decision, has_alternative, has_decision_end, has_negative_path)):
             raise ValidationError(
-                "INVALID_BPMN_XML",
-                "BPMN sequence flows must reference declared flow nodes",
-                {"section_id": "4.3", "invalid_refs": invalid_refs},
-            )
-        gateway_ids = {gateway.get("id") for gateway in gateways if gateway.get("id")}
-        outgoing_by_gateway = {gateway_id: [flow for flow in flows if flow.get("sourceRef") == gateway_id] for gateway_id in gateway_ids}
-        alternative_flows = [flow for outgoing in outgoing_by_gateway.values() if len(outgoing) >= 2 for flow in outgoing]
-        has_negative_path = any(_NEGATIVE_PATH_PATTERN.search(flow.get("name", "")) for flow in alternative_flows)
-        if not processes or not starts or not ends or not alternative_flows or not has_negative_path:
-            raise ValidationError(
-                "INCOMPLETE_BPMN_SCENARIO",
-                "BPMN must contain a process, start/end events, and an explicitly named negative alternative path",
+                "INCOMPLETE_ACTIVITY_SCENARIO",
+                "PlantUML activity diagram must contain start/end, an if/else decision, and an explicitly named negative alternative path",
                 {"section_id": "4.3"},
             )
 
@@ -426,7 +287,7 @@ def _block_has_content(block: dict[str, Any]) -> bool:
         return any(str(item).strip() for item in block.get("items", []))
     if block_type == "table":
         return bool(block.get("headers") or block.get("rows"))
-    if block_type in {"plantuml", "bpmn"}:
+    if block_type == "plantuml":
         return bool(str(block.get("source", "")).strip())
     if block_type in {"image", "reference"}:
         return bool(str(block.get("url", "")).strip())
@@ -504,8 +365,6 @@ def render_section_text(section: dict[str, Any]) -> str:
                 lines.extend("| " + " | ".join(_canonical_scalar(item) for item in row) + " |" for row in rows)
         elif block_type == "plantuml":
             lines.extend(["```plantuml", str(block.get("source", "")).strip(), "```"])
-        elif block_type == "bpmn":
-            lines.extend(["```bpmn", str(block.get("source", "")).strip(), "```"])
         elif block_type == "image":
             lines.append(f"![{block.get('alt', '')}]({block.get('url', '')})")
         elif block_type == "reference":

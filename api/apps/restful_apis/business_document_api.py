@@ -214,6 +214,20 @@ async def pull_business_document_from_eva(document_id):
         return _error(error)
 
 
+@manager.route("/business-documents/<document_id>/eva/rebind", methods=["POST"])  # noqa: F821
+@login_required
+async def rebind_business_document_to_eva(document_id):
+    try:
+        data = await get_request_json()
+        actor_id = current_user.id
+        result = await thread_pool_exec(BusinessDocumentService.rebind_eva, actor_id, actor_id, document_id, data)
+        return _success(result)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_EVA_BINDING", "Request body must be a valid JSON object", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
 @manager.route("/business-documents/<document_id>/eva/changes", methods=["POST"])  # noqa: F821
 @login_required
 async def create_business_document_eva_change(document_id):

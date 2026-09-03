@@ -104,6 +104,7 @@ func (o *OllamaModel) ChatWithMessages(modelName string, messages []Message, api
 		"messages":    apiMessages,
 		"stream":      false,
 		"temperature": 1,
+		"think":       false,
 	}
 
 	if chatModelConfig != nil {
@@ -132,9 +133,7 @@ func (o *OllamaModel) ChatWithMessages(modelName string, messages []Message, api
 				reqBody["think"] = *chatModelConfig.Effort
 			}
 		} else if chatModelConfig.Thinking != nil {
-			if *chatModelConfig.Thinking {
-				reqBody["think"] = true
-			}
+			reqBody["think"] = *chatModelConfig.Thinking
 		}
 	}
 
@@ -223,6 +222,7 @@ func (o *OllamaModel) ChatStreamlyWithSender(modelName string, messages []Messag
 		"model":    modelName,
 		"messages": apiMessages,
 		"stream":   true,
+		"think":    false,
 	}
 
 	if modelConfig.Stream != nil {
@@ -254,9 +254,7 @@ func (o *OllamaModel) ChatStreamlyWithSender(modelName string, messages []Messag
 			reqBody["think"] = *modelConfig.Effort
 		}
 	} else if modelConfig.Thinking != nil {
-		if *modelConfig.Thinking {
-			reqBody["think"] = true
-		}
+		reqBody["think"] = *modelConfig.Thinking
 	}
 
 	jsonData, err := json.Marshal(reqBody)

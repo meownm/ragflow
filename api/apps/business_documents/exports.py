@@ -243,7 +243,7 @@ class BusinessDocumentExportService:
                         cells = table.add_row().cells
                         for index, value in enumerate(row[: len(cells)]):
                             cells[index].text = "" if value is None else str(value)
-                elif block_type in {"plantuml", "bpmn"}:
+                elif block_type == "plantuml":
                     document.add_paragraph(block["source"], style="No Spacing")
                 elif block_type in {"image", "reference"}:
                     document.add_paragraph(f"{block.get('alt') or block.get('label')}: {block['url']}")
@@ -300,9 +300,8 @@ class BusinessDocumentExportService:
                         f'data-id="{block_node_id}"><table data-id="{block_node_id}-table">'
                         f'<thead><tr data-id="{block_node_id}-r0">{headers}</tr></thead><tbody>{rows}</tbody></table></div>'
                     )
-                elif block_type in {"plantuml", "bpmn"}:
-                    css_class = policy["plantuml_class"] if block_type == "plantuml" else policy["xml_class"]
-                    lines.append(f'<pre class="{css_class}" data-id="{block_node_id}"><code data-id="{block_node_id}-code">{html.escape(block["source"])}</code></pre>')
+                elif block_type == "plantuml":
+                    lines.append(f'<pre class="{policy["plantuml_class"]}" data-id="{block_node_id}"><code data-id="{block_node_id}-code">{html.escape(block["source"])}</code></pre>')
                 elif block_type == "image":
                     image_url = _safe_external_url(block["url"])
                     lines.append(f'<img data-id="{block_node_id}" alt="{html.escape(block["alt"])}" src="{html.escape(image_url)}" />')

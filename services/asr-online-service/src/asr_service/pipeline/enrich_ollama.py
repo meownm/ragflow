@@ -14,6 +14,7 @@ def enrich_text(settings: Settings, prompt: str) -> str:
         "model": settings.ollama_model,
         "prompt": prompt,
         "stream": False,
+        "think": False,
         "options": {
             "temperature": settings.ollama_temperature,
             "top_p": settings.ollama_top_p,

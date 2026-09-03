@@ -3,16 +3,17 @@ sidebar_position: 5
 slug: /linux-sources-runbook-ru
 ---
 
-# Установка RAGFlow с PostgreSQL и T-One из отдельного Git
+# Установка RAGFlow с PostgreSQL и T-One из архива
 
 Этот runbook описывает установку текущего кастомного RAGFlow с нуля на Linux.
-Источник поставки — отдельный deployment Git, подготовленный из рабочего
-репозитория. Tar bundle не используется.
+Источник поставки — проверенный `tar.gz` с отдельной SHA-256 суммой. Архив
+передаётся через `pscp.exe`; Git на Linux-сервере не требуется.
 
-Документ рассчитан на Ubuntu Server 24.04 LTS x86_64. Debian 12 поддерживается
-установщиком, если доступная версия Docker Compose понимает теги `!override` и
-`!reset`; для предсказуемого production-развёртывания базовой платформой
-считается Ubuntu 24.04.
+Основная целевая платформа — Rocky Linux 9.8 x86_64 с корпоративным
+DNF-репозиторием `cifra-docker`. Интернет-инсталлятор также поддерживает Ubuntu
+24.04 и Debian 12, если доступная версия Docker Compose понимает теги
+`!override` и `!reset`. Offline-пакет переносит frontend и Docker-образы без
+обращения сервера к Docker Hub; системные RPM берутся из корпоративного DNF.
 
 ## 1. Что будет установлено
 
@@ -50,9 +51,9 @@ Tenant default: t-one@t-one-local@New API
 
 ## 2. Как гарантируется установка актуального кода
 
-Deployment Git содержит полное текущее дерево исходников, включая встроенный
+Архив содержит полное проверенное дерево исходников, включая встроенный
 `services/asr-online-service`. Frontend собирается на целевом сервере из этого
-же clean Git checkout в контейнере `node:20-bookworm-slim`.
+же распакованного дерева в контейнере `node:20-bookworm-slim`.
 
 Runtime RAGFlow состоит из закреплённого upstream-образа и локального overlay:
 
@@ -66,9 +67,9 @@ Runtime RAGFlow состоит из закреплённого upstream-обра
 ограничивает публикацию RAGFlow loopback-адресом. Запуск только первого
 Compose-файла означает потерю PostgreSQL-профиля, T-One и кастомного кода.
 
-Установщик принимает только clean Git checkout, записывает фактические
-`SOURCE_COMMIT` и `SOURCE_REF` в `/etc/ragflow-pg/deployed-source.env` и
-отказывается устанавливать поверх уже существующего `/opt/ragflow-pg`.
+Установщик принимает дерево с `DEPLOYMENT-SOURCE.env`, проверяет формат пакета,
+копирует manifest в `/etc/ragflow-pg/deployed-source.env` и отказывается
+устанавливать поверх уже существующего `/opt/ragflow-pg`.
 
 ## 3. Что ещё нужно решить до production
 
@@ -100,32 +101,32 @@ production.
 
 ## 4. Требования
 
-### 4.1. Машина подготовки deployment Git
+### 4.1. Машина подготовки файла поставки
 
 Нужны:
 
-- текущий рабочий checkout `S:\ragflow`;
-- Git и PowerShell 7;
-- достаточно места для второго полного дерева исходников;
-- адрес новой закрытой Git-репозитории для hosted-варианта либо PuTTY/PSCP для
-  однофайловой передачи.
+- текущее рабочее дерево `S:\ragflow`;
+- PowerShell 7 и `tar`;
+- достаточно места для временной контрольной распаковки;
+- PuTTY/PSCP для передачи архива и checksum.
 
-Для однофайловой передачи без Git-хостинга достаточно установленного комплекта
-PuTTY с `pscp.exe`; на этой машине он находится в `C:\Program Files\PuTTY`.
+На Linux Git не устанавливается и не вызывается. Комплекта PuTTY с `pscp.exe`
+достаточно для передачи; на этой машине он находится в `C:\Program Files\PuTTY`.
 
 ### 4.2. Linux-сервер
 
 Базовый профиль:
 
-- Ubuntu Server 24.04 LTS, `x86_64`, `systemd`;
+- Rocky Linux 9.x, Ubuntu 24.04 или Debian 12, `x86_64`, `systemd`;
 - доступ `sudo`;
-- минимум 8 CPU, 16 GB RAM и 100 GB SSD для smoke;
+- 16 GB RAM для smoke; текущий Rocky-контур с 6 CPU допускается к установке;
 - ориентир 16 CPU, 32 GB RAM и 300+ GB SSD для рабочего контура;
-- исходящий HTTPS к APT и registry образов;
+- исходящий HTTPS к DNF/APT и registry образов;
 - свободный loopback-порт `9380` или другой выбранный порт.
 
 Итоговые требования определяются объёмом данных и моделями. До загрузки
 production-данных подтвердить их нагрузочным тестом и ростом индекса.
+Установщик не блокирует запуск по числу CPU или размеру диска.
 
 Проверка сервера:
 
@@ -141,154 +142,98 @@ sudo ss -ltnp | grep ':9380 ' || true
 
 Ожидаются `x86_64`, поддерживаемая ОС и свободный порт.
 
-## 5. Подготовить самостоятельную папку
+## 5. Собрать архив поставки
 
-На Windows открыть PowerShell в `S:\ragflow` и проверить текущий источник:
+### 5.1. Рекомендуемый вариант без Docker Hub на сервере
 
-```powershell
-git status --short --branch
-git log -1 --oneline --decorate
-git tag --points-at HEAD
-```
-
-Для обычного release worktree должен быть чистым. Создать соседний каталог:
+Для Rocky Linux 9.x x86_64 можно собрать один архив, включающий готовый frontend
+и все семь Docker-образов:
 
 ```powershell
-./deployment/linux-pg/export_git_tree.ps1 `
-  -TargetDirectory 'S:\ragflow-linux-pg'
+./deployment/linux-pg/build_offline_archive.ps1 -ReleaseVersion v1.6.0
 ```
 
-Экспортируются tracked и новые non-ignored файлы текущего рабочего дерева.
-Не копируются исходная `.git`, игнорируемые `.env`, кэши, данные контейнеров,
-`node_modules`, `web/dist` и старые архивы. `web/dist` не нужен в Git: installer
-соберёт его из исходников на Linux.
+Передать `ragflow-linux-pg-v1.6.0-offline.tar.gz` и соседний `.sha256` через
+`pscp.exe`. На сервере:
 
-Если формируется самая первая deployment-репозитория и release-изменения ещё
-не закоммичены в исходном checkout, допускается разовый экспорт:
+```bash
+cd /tmp
+sha256sum -c ragflow-linux-pg-v1.6.0-offline.tar.gz.sha256
+sudo install -d -m 0755 /srv/ragflow-offline-v1.6.0
+sudo tar -xzf ragflow-linux-pg-v1.6.0-offline.tar.gz \
+  -C /srv/ragflow-offline-v1.6.0
+cd /srv/ragflow-offline-v1.6.0
+sudo env ADMIN_EMAIL=admin@example.org \
+  ADMIN_NICKNAME='RAGFlow Administrator' \
+  bash install_offline.sh
+```
+
+Сценарий проверяет внутренний `SHA256SUMS`, устанавливает Docker и утилиты через
+корпоративный `cifra-docker`, выполняет `docker load` и запускает Compose с
+`--pull never --no-build`. Docker Hub на сервере не используется. T-One и его
+веса включены; chat LLM и embedding-модели поставляются отдельно после выбора
+провайдера.
+
+### 5.2. Компактный вариант с интернетом на сервере
+
+На Windows открыть PowerShell в `S:\ragflow` и выполнить:
 
 ```powershell
-./deployment/linux-pg/export_git_tree.ps1 `
-  -TargetDirectory 'S:\ragflow-linux-pg' `
-  -AllowDirty
+./deployment/linux-pg/build_archive.ps1 -ReleaseVersion v1.6.0
 ```
 
-Перед production-публикацией итоговая папка всё равно должна пройти review и
-быть закоммичена уже в новой репозитории.
+Скрипт создаёт `ragflow-linux-pg-v1.6.0.tar.gz` и
+`ragflow-linux-pg-v1.6.0.tar.gz.sha256`, выполняет контрольную распаковку и
+проверяет обязательные файлы. В архив не входят `.git`, локальные `.env`, кэши,
+данные контейнеров, `node_modules`, `web/dist`, локальные build/test-артефакты,
+скачанные `ragflow_deps`, `output` и старые артефакты. Frontend будет собран на
+Linux из исходников поставки. Скрипт Git не вызывает: он упаковывает текущее
+состояние файлов, поэтому перед сборкой нужно завершить проверку всех изменений
+поставки.
 
-Проверить состав:
+`DEPLOYMENT-SOURCE.env` содержит `RELEASE_VERSION`, `PACKAGE_FORMAT`, режим
+сборки и время упаковки. Источником доверия служат утверждённая SHA-256 сумма и
+этот manifest.
 
-```powershell
-Set-Location 'S:\ragflow-linux-pg'
-Get-Content .\DEPLOYMENT-SOURCE.env
-Test-Path .\deployment\linux-pg\install.sh
-Test-Path .\deployment\linux-pg\docker-compose.release.yml
-Test-Path .\deployment\linux-pg\seed_admin_asr.py
-Test-Path .\services\asr-online-service\Dockerfile
-Get-ChildItem -Recurse -Force -Filter '.env' | Select-Object FullName
-Get-ChildItem -Recurse -Force -Include '*.tar.gz','*.key','*.pem' |
-  Select-Object FullName
-```
+## 6. Передать архив через PuTTY
 
-Из `.env` ожидается только tracked `web/.env` с публичными build-настройками.
-Из PEM ожидается upstream-пара `conf/private.pem`/`conf/public.pem`, используемая
-RAGFlow для шифрования password payload; это не production TLS/SSH key. Иных
-локальных секретов и старых bundles быть не должно. Файл
-`deployment/linux-pg/env.template` секретов не содержит: реальные пароли
-генерируются на сервере.
-
-## 6. Создать отдельный Git
-
-В подготовленной папке:
-
-```powershell
-git init -b main
-git add --all
-git status --short
-git diff --cached --check -- deployment/linux-pg DEPLOYMENT-SOURCE.env
-git commit -m "Initial RAGFlow PostgreSQL Linux deployment"
-git tag -a v1.0.0 -m "Initial Linux deployment repository"
-git remote add origin <DEPLOYMENT_GIT_URL>
-git push -u origin main --follow-tags
-```
-
-Whitespace-проверка ограничена файлами deployment-контура: полный upstream
-snapshot содержит исторические файлы с завершающими пробелами, а его целостность
-задаётся clean tagged source commit и фиксируется в `DEPLOYMENT-SOURCE.env`.
-
-Название версии deployment Git независимо от upstream RAGFlow. В описании
-релиза хранить оба идентификатора: commit deployment Git и значения из
-`DEPLOYMENT-SOURCE.env`.
-
-Репозиторий должен быть закрытым. Не коммитить production `.env`, admin password,
-API keys, TLS private keys, database dumps и model caches.
-
-### 6.1. Собрать и передать однофайловый Git bundle через PuTTY
-
-Для сервера без доступа к закрытому Git-хостингу собрать bundle из clean
-tagged checkout:
-
-```powershell
-Set-Location 'S:\ragflow'
-./deployment/linux-pg/build_git_bundle.ps1
-```
-
-Скрипт создаёт рядом с собой `.bundle` и `.bundle.sha256`, сохраняет executable
-mode исходных shell-скриптов, проверяет bundle через отдельный clone и откажется
-работать с dirty source. Передать оба файла программой `pscp.exe` из комплекта
-PuTTY; имя пользователя и адрес сервера заменить на реальные:
+Передать оба файла программой `pscp.exe`; пользователя и адрес заменить:
 
 ```powershell
 & 'C:\Program Files\PuTTY\pscp.exe' -P 22 `
-  'S:\ragflow\deployment\linux-pg\ragflow-linux-pg-v1.5.0.bundle' `
+  'S:\ragflow\deployment\linux-pg\ragflow-linux-pg-v1.6.0.tar.gz' `
   'admin@ragflow-server:/tmp/'
+
 & 'C:\Program Files\PuTTY\pscp.exe' -P 22 `
-  'S:\ragflow\deployment\linux-pg\ragflow-linux-pg-v1.5.0.bundle.sha256' `
+  'S:\ragflow\deployment\linux-pg\ragflow-linux-pg-v1.6.0.tar.gz.sha256' `
   'admin@ragflow-server:/tmp/'
 ```
 
 Пароль не указывать в командной строке: `pscp.exe` запросит его сам. Для PPK-ключа
 добавить `-i 'C:\path\to\key.ppk'`.
 
-## 7. Получить код на чистом Linux
+## 7. Проверить и распаковать на Linux
 
-Сначала установить только Git и CA certificates:
-
-```bash
-sudo apt-get update
-sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \
-  ca-certificates git
-```
-
-Клонировать в отдельный source-каталог, не в runtime-каталог:
-
-```bash
-sudo install -d -m 0755 /srv/ragflow-linux-pg
-sudo chown "$USER:$USER" /srv/ragflow-linux-pg
-git clone <DEPLOYMENT_GIT_URL> /srv/ragflow-linux-pg
-cd /srv/ragflow-linux-pg
-git checkout <APPROVED_TAG_OR_COMMIT>
-git status --short
-git rev-parse HEAD
-git describe --tags --exact-match HEAD
-```
-
-Если файлы переданы через `pscp.exe`, заменить `git clone` на:
+В сеансе PuTTY:
 
 ```bash
 cd /tmp
-sha256sum -c ragflow-linux-pg-v1.5.0.bundle.sha256
+sha256sum -c ragflow-linux-pg-v1.6.0.tar.gz.sha256
+
 sudo install -d -m 0755 /srv/ragflow-linux-pg
-sudo chown "$USER:$USER" /srv/ragflow-linux-pg
-git clone /tmp/ragflow-linux-pg-v1.5.0.bundle /srv/ragflow-linux-pg
+sudo tar -xzf ragflow-linux-pg-v1.6.0.tar.gz -C /srv/ragflow-linux-pg
 cd /srv/ragflow-linux-pg
-git checkout v1.5.0
-git status --short
-git rev-parse HEAD
-git describe --tags --exact-match HEAD
+
+cat DEPLOYMENT-SOURCE.env
+test -s deployment/linux-pg/install.sh
+test -s deployment/linux-pg/docker-compose.release.yml
+test -s deployment/linux-pg/seed_admin_asr.py
+test -s services/asr-online-service/Dockerfile
 ```
 
-`git status --short` должен быть пустым. Не устанавливать из плавающего branch
-без сохранённого commit SHA.
+`sha256sum` должен вывести `OK`, manifest — ожидаемую версию и
+`PACKAGE_FORMAT=tar.gz`. На сервере не нужны `git clone`, `git checkout` или
+установка Git.
 
 ## 8. Запустить установку
 
@@ -305,15 +250,18 @@ sudo env \
   INSTALL_DIR=/opt/ragflow-pg \
   PROJECT_NAME=ragflow-pg \
   RAGFLOW_PORT=9380 \
+  DOCKER_DNF_REPO=cifra-docker \
   bash deployment/linux-pg/install.sh
 ```
 
 Установщик:
 
-1. Проверяет ОС, архитектуру, clean Git checkout и новый `INSTALL_DIR`.
-2. Устанавливает Docker Engine/Compose из репозитория ОС, `curl`, `jq`,
-   `openssl`, `rsync` и системные зависимости.
-3. Включает Docker и сохраняет `vm.max_map_count=262144` для Elasticsearch.
+1. Проверяет ОС, архитектуру, manifest архива и новый `INSTALL_DIR`.
+2. На Ubuntu/Debian устанавливает Docker Engine/Compose через APT; на Rocky
+   Linux 9.x — Docker CE, containerd, Buildx и Compose plugin через включённый
+   `cifra-docker` (или repo id из `DOCKER_DNF_REPO`).
+3. Требует Docker >= 24 и Compose >= 2.26.1, включает Docker и сохраняет
+   `vm.max_map_count=262144` и `net.ipv4.ip_forward=1`.
 4. Копирует source tree в `/opt/ragflow-pg`, не копируя `.git`, кэши и данные.
 5. Собирает frontend командой `npm ci && npm run build` в одноразовом
    `node:20-bookworm-slim`; `node_modules` остаётся во временном Docker volume,
@@ -386,9 +334,10 @@ sudo grep -Eq '^RAGFLOW_CREDENTIALS_KEY=[0-9a-f]{64}$' \
   /opt/ragflow-pg/docker/.env && echo 'credential key: ok'
 ```
 
-`SOURCE_COMMIT` должен совпадать с утверждённым commit deployment Git.
-`RAGFLOW_IMAGE` — это закреплённая upstream-основа; версию кастомного релиза
-определяет Git commit и локальные монтирования, а не имя base image.
+`RELEASE_VERSION` и `PACKAGE_FORMAT=tar.gz` должны совпадать с утверждённой
+поставкой, а проверка внешнего `.sha256` перед распаковкой должна завершиться
+со статусом `OK`. `RAGFLOW_IMAGE` — закреплённая upstream-основа; версию
+кастомного релиза определяют архив, manifest и локальные монтирования.
 
 ### 10.2. Сервисы и отсутствие MySQL
 
@@ -534,7 +483,7 @@ T-One в LAN/WAN. Docker published ports могут обходить UFW, поэ
 Имена моделей, endpoint и API keys должны храниться в утверждённом secret
 контуре. Health провайдера не заменяет реальный inference. Если модели локальные,
 их сервис, GPU runtime и model cache — отдельный deployment-контур, которого в
-этом Git пока нет.
+этой поставке пока нет.
 
 ## 13. Автозапуск и reboot test
 
@@ -564,7 +513,7 @@ curl -fsS http://127.0.0.1:9380/api/v1/system/healthz | jq -e \
 - MinIO volume с загруженными файлами;
 - `/opt/ragflow-pg/docker/.env`;
 - `/etc/ragflow-pg/admin.env` и `deployed-source.env`;
-- commit/tag deployment Git;
+- исходный release-архив, его `.sha256` и `DEPLOYMENT-SOURCE.env`;
 - Elasticsearch snapshots либо гарантированно воспроизводимый индекс;
 - reverse proxy, TLS и firewall-конфигурацию.
 
@@ -594,12 +543,12 @@ Compose-проект.
 
 Для обновления требуется отдельный `upgrade.sh`, который должен:
 
-1. Проверить clean approved commit новой deployment-репозитории.
+1. Проверить SHA-256 и manifest нового утверждённого архива.
 2. Сделать и проверить backup.
 3. Сохранить существующий `/opt/ragflow-pg/docker/.env`.
 4. Обновить код и пересобрать frontend/T-One без удаления volumes.
 5. Выполнить schema migrations и health/inference regression.
-6. Записать новый deployed commit.
+6. Записать новую версию поставки и время установки.
 
 До появления проверенного `upgrade.sh` каждое обновление проводить как
 отдельную change-процедуру. Откат образа допустим только при совместимой схеме;
@@ -607,10 +556,10 @@ Compose-проект.
 
 ## 16. Приёмочный лист
 
-- [ ] Deployment Git private, clean, tagged и зафиксирован commit SHA.
-- [ ] В Git нет `.env`, ключей, dump, model cache и старых bundles.
-- [ ] `deployed-source.env` совпадает с утверждённым commit.
-- [ ] Frontend собран из того же checkout.
+- [ ] SHA-256 архива проверен до распаковки и сохранён в change-записи.
+- [ ] В архиве нет `.git`, локальных `.env`, ключей, dump и model cache.
+- [ ] `deployed-source.env` совпадает с manifest утверждённого архива.
+- [ ] Frontend собран из того же release-архива.
 - [ ] Постоянный `RAGFLOW_CREDENTIALS_KEY` сгенерирован и входит в защищённый backup.
 - [ ] Compose config валиден и содержит семь ожидаемых сервисов.
 - [ ] Сервис и контейнер MySQL отсутствуют.
@@ -630,17 +579,18 @@ Compose-проект.
 
 ## 17. Типовые неисправности
 
-### Installer сообщает `dirty Git checkout`
+### Installer сообщает ошибку `DEPLOYMENT-SOURCE.env`
 
 ```bash
 cd /srv/ragflow-linux-pg
-git status --short
-git diff
-git diff --cached
+cat DEPLOYMENT-SOURCE.env
+grep -Fx 'PACKAGE_FORMAT=tar.gz' DEPLOYMENT-SOURCE.env
+test -n "$(sed -n 's/^RELEASE_VERSION=//p' DEPLOYMENT-SOURCE.env)"
 ```
 
-Не обходить gate в production. Либо убрать локальные изменения безопасным
-способом, либо создать новый approved commit.
+Не создавать manifest вручную на сервере. Повторно проверить checksum,
+распаковать утверждённый архив в пустой `/srv/ragflow-linux-pg` и запустить
+installer из его корня.
 
 ### Compose не понимает `!override` или `!reset`
 

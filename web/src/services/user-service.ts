@@ -120,7 +120,7 @@ export const putEvaUserCredential = (
   evaApiToken: string,
 ) =>
   request.put(api.evaUserCredential(connectorId), {
-    eva_api_token: evaApiToken,
+    data: { eva_api_token: evaApiToken },
   });
 
 export const deleteEvaUserCredential = (connectorId: string) =>

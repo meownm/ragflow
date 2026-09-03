@@ -50,11 +50,11 @@ def test_template_preserves_published_semantic_outline():
     by_id = {section["id"]: section for section in sections}
     assert by_id["5.5"]["required"] is True
     assert by_id["5.2"]["required"] is False
-    assert "bpmn" in by_id["4.3"]["allowed_blocks"]
-    assert "plantuml" not in by_id["4.3"]["allowed_blocks"]
+    assert "plantuml" in by_id["4.3"]["allowed_blocks"]
+    assert "bpmn" not in by_id["4.3"]["allowed_blocks"]
     assert by_id["4.1"]["semantic_requirements"] == ["REQUIRED_VALID_PLANTUML_DIAGRAM"]
     assert by_id["4.3"]["semantic_requirements"] == [
-        "REQUIRED_BPMN_2_0_XML",
+        "REQUIRED_PLANTUML_ACTIVITY_DIAGRAM",
         "REQUIRED_ACCOMPANYING_TEXT",
         "REQUIRED_EXPLICIT_NEGATIVE_ALTERNATIVE_PATH",
     ]
@@ -92,7 +92,7 @@ def test_process_policy_encodes_non_negotiable_invariants():
         "ANCHORED_COMMENTS_REQUIRE_EXACT_SECTION_UTF16_OFFSETS_AND_CONTEXT",
         "COMMENT_ANCHORS_ARE_IMMUTABLE_AND_BECOME_ORPHANED_ON_NEW_REVISION",
         "SECTION_4_1_REQUIRES_VALID_PLANTUML",
-        "SECTION_4_3_REQUIRES_BPMN_2_0_WITH_TEXT_AND_NEGATIVE_ALTERNATIVE",
+        "SECTION_4_3_REQUIRES_PLANTUML_ACTIVITY_WITH_TEXT_AND_NEGATIVE_ALTERNATIVE",
     }.issubset(policy["invariants"])
 
 

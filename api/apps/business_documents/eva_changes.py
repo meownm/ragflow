@@ -189,6 +189,14 @@ def _section_diff(base_markdown: str, draft_markdown: str) -> dict[str, Any]:
 class EvaDocumentChangeService:
     @classmethod
     def _connector(cls, connector_id: str, actor_id: str) -> tuple[Connector, EvaWikiConnector]:
+        """Build the EVA reader used by interactive document management.
+
+        The connector service token remains the primary credential. A personal
+        token is used only when that shared token is not configured, so
+        background connector synchronization keeps its existing credential
+        boundary while the current user can still browse EVA documents.
+        """
+
         exists, connector = ConnectorService.get_by_id(str(connector_id or "").strip())
         if not exists or connector.source != DocumentSource.EVA_WIKI.value:
             raise BusinessDocumentError("EVA_CONNECTOR_NOT_FOUND", "EVA Wiki connector not found", 404)
@@ -206,7 +214,17 @@ class EvaDocumentChangeService:
             page_size_limit=config.get("page_size_limit") or EvaWikiConnector.DEFAULT_PAGE_SIZE_LIMIT,
             retry_count=config.get("retry_count", EvaWikiConnector.DEFAULT_RETRY_COUNT),
         )
-        client.load_credentials(config.get("credentials") or {})
+        credentials = dict(config.get("credentials") or {})
+        if not str(credentials.get("eva_api_token") or "").strip():
+            try:
+                personal_credential = UserExternalCredentialService.get_eva_wiki_token(actor_id, config.get("api_base_url", ""))
+            except ExternalCredentialMissingError:
+                pass
+            except ExternalCredentialError as error:
+                raise cls._map_user_token_error(error) from error
+            else:
+                credentials["eva_api_token"] = personal_credential.secret
+        client.load_credentials(credentials)
         return connector, client
 
     @classmethod
@@ -333,8 +351,9 @@ class EvaDocumentChangeService:
         for connector in connectors:
             try:
                 _, client = cls._connector(connector.id, actor_id)
-                client_base = urlparse(client.web_base_url)
-                if (client_base.scheme.casefold(), client_base.netloc.casefold()) != (parsed.scheme.casefold(), parsed.netloc.casefold()):
+                page_origin = EvaWikiConnector._url_origin(normalized_url)
+                configured_origins = {EvaWikiConnector._url_origin(base_url) for base_url in (client.web_base_url, client.api_base_url) if str(base_url or "").strip()}
+                if page_origin not in configured_origins:
                     continue
                 candidates = client.search_documents(code, 100) if code else []
                 source = next(

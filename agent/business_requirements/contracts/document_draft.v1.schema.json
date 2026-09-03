@@ -83,15 +83,6 @@
                 {
                   "type": "object",
                   "additionalProperties": false,
-                  "required": ["type", "source"],
-                  "properties": {
-                    "type": {"const": "bpmn"},
-                    "source": {"type": "string", "minLength": 1, "maxLength": 100000}
-                  }
-                },
-                {
-                  "type": "object",
-                  "additionalProperties": false,
                   "required": ["type", "alt", "url"],
                   "properties": {
                     "type": {"const": "image"},

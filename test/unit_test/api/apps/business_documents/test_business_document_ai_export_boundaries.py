@@ -15,7 +15,6 @@ from datetime import datetime
 from pathlib import Path
 import sys
 from types import ModuleType, SimpleNamespace
-import xml.etree.ElementTree as ET
 
 import pytest
 from peewee import SqliteDatabase
@@ -142,102 +141,36 @@ def test_document_ast_flattens_template_sections_returned_inside_parent_blocks(d
 
 
 @pytest.mark.p0
-def test_document_ast_promotes_negative_bpmn_target_to_explicit_flow_name(database):
+def test_document_ast_accepts_a_complete_plantuml_activity_scenario(database):
     draft = _draft()
-    scenario = next(section for section in draft["sections"] if section["id"] == "4.3")
-    scenario["blocks"][-1]["source"] = """<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL">
-      <process id="p"><startEvent id="start"/><exclusiveGateway id="choice"/>
-      <task id="ok"/><endEvent id="rejected" name="Отказ в заказе"/>
-      <sequenceFlow id="f1" sourceRef="start" targetRef="choice"/>
-      <sequenceFlow id="f2" sourceRef="choice" targetRef="ok"/>
-      <sequenceFlow id="f3" sourceRef="choice" targetRef="rejected"/>
-      </process></definitions>"""
 
-    normalized = validate_document_ast(draft)
+    validated = validate_document_ast(draft)
 
-    source = next(section for section in normalized["sections"] if section["id"] == "4.3")["blocks"][-1]["source"]
-    root = ET.fromstring(source)
-    namespace = "{http://www.omg.org/spec/BPMN/20100524/MODEL}"
-    negative = next(flow for flow in root.findall(f".//{namespace}sequenceFlow") if flow.get("id") == "f3")
-    assert negative.get("name") == "Негативный сценарий: Отказ в заказе"
+    scenario = next(section for section in validated["sections"] if section["id"] == "4.3")
+    activity = next(block for block in scenario["blocks"] if block["type"] == "plantuml")
+    assert "if (Проверка успешна?) then (Да)" in activity["source"]
+    assert "else (Нет)" in activity["source"]
 
 
 @pytest.mark.p0
-def test_document_ast_rejects_dangling_bpmn_sequence_flow_references(database):
+@pytest.mark.parametrize(
+    ("source", "missing"),
+    [
+        ("@startuml\nif (Успех?) then (Да)\nelse (Нет)\nendif\nstop\n@enduml", "start"),
+        ("@startuml\nstart\nif (Успех?) then (Да)\nelse (Нет)\nendif\n@enduml", "end"),
+        ("@startuml\nstart\n:Действие;\nstop\n@enduml", "decision"),
+        ("@startuml\nstart\nif (Успех?) then (Да)\nelse (Да)\nendif\nstop\n@enduml", "negative path"),
+    ],
+)
+def test_document_ast_rejects_incomplete_plantuml_activity_scenarios(database, source, missing):
     draft = _draft()
     scenario = next(section for section in draft["sections"] if section["id"] == "4.3")
-    scenario["blocks"][-1]["source"] = """<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL">
-      <process id="p"><startEvent id="start"/><exclusiveGateway id="choice"/><endEvent id="failed"/>
-      <sequenceFlow id="f1" sourceRef="start" targetRef="choice"/>
-      <sequenceFlow id="f2" sourceRef="missing" targetRef="failed"/>
-      <sequenceFlow id="f3" name="Отказ" sourceRef="choice" targetRef="failed"/>
-      </process></definitions>"""
+    scenario["blocks"][-1]["source"] = source
 
     with pytest.raises(BusinessDocumentError) as caught:
         validate_document_ast(draft)
 
-    assert caught.value.code == "INVALID_BPMN_XML"
-    assert caught.value.details["invalid_refs"] == ["missing"]
-
-
-@pytest.mark.p0
-def test_document_ast_restores_an_unambiguously_implicit_bpmn_gateway(database):
-    draft = _draft()
-    scenario = next(section for section in draft["sections"] if section["id"] == "4.3")
-    scenario["blocks"][-1]["source"] = """<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL">
-      <process id="p"><startEvent id="start"/><task id="ok"/><endEvent id="rejected" name="Отказ"/>
-      <sequenceFlow id="f1" sourceRef="start" targetRef="Check_Availability"/>
-      <sequenceFlow id="f2" sourceRef="Check_Availability" targetRef="ok"/>
-      <sequenceFlow id="f3" sourceRef="Check_Availability" targetRef="rejected"/>
-      </process></definitions>"""
-
-    normalized = validate_document_ast(draft)
-
-    source = next(section for section in normalized["sections"] if section["id"] == "4.3")["blocks"][-1]["source"]
-    root = ET.fromstring(source)
-    namespace = "{http://www.omg.org/spec/BPMN/20100524/MODEL}"
-    gateway = root.find(f".//{namespace}exclusiveGateway")
-    assert gateway is not None
-    assert gateway.get("id") == "Check_Availability"
-
-
-@pytest.mark.p0
-def test_document_ast_restores_an_implicit_bpmn_task_with_declared_topology(database):
-    draft = _draft()
-    scenario = next(section for section in draft["sections"] if section["id"] == "4.3")
-    scenario["blocks"][-1]["source"] = """<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL">
-      <process id="p"><startEvent id="start"/><exclusiveGateway id="choice"/>
-      <task id="ok"/><endEvent id="done"/><endEvent id="No_Translators_Available"/>
-      <sequenceFlow id="f1" sourceRef="start" targetRef="choice"/>
-      <sequenceFlow id="f2" sourceRef="choice" targetRef="SendConfirmation"/>
-      <sequenceFlow id="f3" sourceRef="SendConfirmation" targetRef="done"/>
-      <sequenceFlow id="f4" sourceRef="choice" targetRef="No_Translators_Available"/>
-      </process></definitions>"""
-
-    normalized = validate_document_ast(draft)
-
-    source = next(section for section in normalized["sections"] if section["id"] == "4.3")["blocks"][-1]["source"]
-    root = ET.fromstring(source)
-    namespace = "{http://www.omg.org/spec/BPMN/20100524/MODEL}"
-    task = next(item for item in root.findall(f".//{namespace}task") if item.get("id") == "SendConfirmation")
-    assert task.get("name") == "Send Confirmation"
-
-
-@pytest.mark.p0
-def test_document_ast_repairs_an_unambiguous_bpmn_model_namespace(database):
-    draft = _draft()
-    scenario = next(section for section in draft["sections"] if section["id"] == "4.3")
-    bpmn = next(block for block in scenario["blocks"] if block["type"] == "bpmn")
-    bpmn["source"] = bpmn["source"].replace(
-        "http://www.omg.org/spec/BPMN/20100524/MODEL",
-        "urn:local-model:bpmn",
-    )
-
-    validated = validate_document_ast(draft)
-
-    normalized_scenario = next(section for section in validated["sections"] if section["id"] == "4.3")
-    normalized_bpmn = next(block for block in normalized_scenario["blocks"] if block["type"] == "bpmn")
-    assert ET.fromstring(normalized_bpmn["source"]).tag == "{http://www.omg.org/spec/BPMN/20100524/MODEL}definitions"
+    assert caught.value.code == "INCOMPLETE_ACTIVITY_SCENARIO", missing
 
 
 @pytest.mark.p0
@@ -515,7 +448,7 @@ def test_ai_retry_prompt_contains_previous_validation_error(database):
     requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
     job = BusinessDocumentJob.get_by_id(requested["job_id"])
     job.attempt = 2
-    job.error = {"code": "INVALID_BPMN", "message": "Negative alternative path is missing", "details": {}}
+    job.error = {"code": "INCOMPLETE_ACTIVITY_SCENARIO", "message": "Negative alternative path is missing", "details": {}}
 
     prompt = BusinessDocumentAI._prompt(job)
 

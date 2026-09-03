@@ -13,10 +13,12 @@ import {
   prepareEvaDocumentChange,
   publishEvaDocumentChange,
   pullBusinessDocumentFromEva,
+  rebindBusinessDocumentToEva,
   saveEvaDocumentChangeDraft,
   searchEvaDocumentSources,
   submitBusinessDocumentCommand,
 } from '@/services/business-document-service';
+import { listEvaUserCredentials } from '@/services/user-service';
 import { downloadFileFromBlob } from '@/utils/file-util';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -62,10 +64,6 @@ jest.mock('@/components/ui/audio-button', () => ({
   ),
 }));
 
-jest.mock('@/hooks/use-knowledge-request', () => ({
-  useFetchKnowledgeList: () => ({ list: [], loading: false }),
-}));
-
 jest.mock('@/utils/file-util', () => ({
   downloadFileFromBlob: jest.fn(),
 }));
@@ -90,8 +88,13 @@ jest.mock('@/services/business-document-service', () => {
     prepareEvaDocumentChange: jest.fn(),
     publishEvaDocumentChange: jest.fn(),
     pullBusinessDocumentFromEva: jest.fn(),
+    rebindBusinessDocumentToEva: jest.fn(),
   };
 });
+
+jest.mock('@/services/user-service', () => ({
+  listEvaUserCredentials: jest.fn(),
+}));
 
 const mockedCreate = jest.mocked(createBusinessDocument);
 const mockedCreateEvaFromDocument = jest.mocked(
@@ -112,6 +115,8 @@ const mockedApproveEva = jest.mocked(approveEvaDocumentChange);
 const mockedPrepareEva = jest.mocked(prepareEvaDocumentChange);
 const mockedPublishEva = jest.mocked(publishEvaDocumentChange);
 const mockedPullEvaDocument = jest.mocked(pullBusinessDocumentFromEva);
+const mockedRebindEvaDocument = jest.mocked(rebindBusinessDocumentToEva);
+const mockedListEvaUserCredentials = jest.mocked(listEvaUserCredentials);
 
 const firstSectionText =
   'Повторяемая фраза. Сократить время перевода. Результат измеряется в минутах.';
@@ -368,6 +373,21 @@ beforeEach(() => {
     document: projection,
     sync: { changed: false, direction: 'FROM_EVA' },
   });
+  mockedListEvaUserCredentials.mockResolvedValue({
+    data: {
+      code: 0,
+      data: {
+        items: [
+          {
+            scope: 'https://eva.example.com',
+            configured: true,
+            connector_id: 'connector-1',
+            connectors: [{ id: 'connector-1', name: 'EVA Wiki' }],
+          },
+        ],
+      },
+    },
+  });
 });
 
 test('renders a dense read-only workbench from the server projection', async () => {
@@ -396,6 +416,130 @@ test('renders a dense read-only workbench from the server projection', async () 
     'data-section-text',
     '| Флаг | Значение |\n| --- | --- |\n| True | None |\n| False | 7 |',
   );
+});
+
+test('shows an explicit message for an empty document section', async () => {
+  mockedFetch.mockResolvedValueOnce({
+    ...projection,
+    current_revision: {
+      ...projection.current_revision!,
+      document_ast: {
+        ...projection.current_revision!.document_ast,
+        sections: [
+          ...projection.current_revision!.document_ast.sections,
+          { id: '4', title: 'Ограничения', blocks: [] },
+        ],
+      },
+      section_texts: {
+        ...projection.current_revision!.section_texts,
+        '4': '',
+      },
+    },
+  });
+  renderPage();
+
+  const sections = await screen.findAllByTestId('business-document-section');
+  expect(sections[3]).toHaveTextContent('4. Ограничения');
+  expect(sections[3]).toHaveTextContent('Требования отсутствуют');
+  expect(sections[3]).toHaveAttribute('data-section-text', '');
+});
+
+test('uses semantic status colors for questions and proposals', async () => {
+  mockedFetch.mockResolvedValue({
+    ...projection,
+    protocol: {
+      ...projection.protocol,
+      questions: [
+        ...projection.protocol.questions,
+        {
+          ...projection.protocol.questions[0],
+          question_id: 'question-answered',
+          sequence_number: 10,
+          status: 'ANSWERED',
+          answer: { selected_option_id: 'all' },
+        },
+        {
+          ...projection.protocol.questions[0],
+          question_id: 'question-cancelled',
+          sequence_number: 11,
+          status: 'CANCELLED',
+        },
+      ],
+      proposals: [
+        ...projection.protocol.proposals,
+        {
+          ...projection.protocol.proposals[0],
+          proposal_id: 'proposal-accepted',
+          decision: 'ACCEPTED',
+        },
+        {
+          ...projection.protocol.proposals[0],
+          proposal_id: 'proposal-rejected',
+          decision: 'REJECTED',
+        },
+      ],
+    },
+  });
+  renderPage();
+
+  const questions = await screen.findAllByTestId('business-document-question');
+  expect(questions.find((item) => item.dataset.status === 'OPEN')).toHaveClass(
+    'bg-accent-primary/5',
+  );
+  expect(
+    questions.find((item) => item.dataset.status === 'ANSWERED'),
+  ).toHaveClass('bg-state-success/5');
+  expect(
+    questions.find((item) => item.dataset.status === 'CANCELLED'),
+  ).toHaveClass('bg-bg-card/40');
+  expect(screen.getByTestId('question-status-question-9')).toHaveTextContent(
+    'Требует ответа',
+  );
+  expect(screen.getByTestId('question-status-question-answered')).toHaveClass(
+    'text-state-success',
+  );
+  expect(
+    screen.getByTestId('question-status-question-cancelled'),
+  ).toHaveTextContent('Закрыт');
+
+  const proposals = screen.getAllByTestId('business-document-proposal');
+  expect(
+    proposals.find((item) => item.dataset.status === 'PENDING'),
+  ).toHaveClass('bg-state-warning/5');
+  expect(
+    proposals.find((item) => item.dataset.status === 'ACCEPTED'),
+  ).toHaveClass('bg-state-success/5');
+  expect(
+    proposals.find((item) => item.dataset.status === 'REJECTED'),
+  ).toHaveClass('bg-state-error/5');
+  expect(
+    screen.getByTestId('proposal-status-proposal-accepted'),
+  ).toHaveTextContent('Принято');
+  expect(screen.getByTestId('proposal-status-proposal-rejected')).toHaveClass(
+    'text-state-error',
+  );
+});
+
+test('renders an undecided proposal as closed history after review completion', async () => {
+  mockedFetch.mockResolvedValueOnce({
+    ...projection,
+    lifecycle_state: 'AGREED',
+    allowed_commands: ['START_REVIEW', 'REQUEST_EXPORT', 'ARCHIVE'],
+  });
+  renderPage();
+
+  const status = await screen.findByTestId('proposal-status-proposal-12');
+  expect(status).toHaveTextContent('Не принято');
+  expect(status).toHaveClass('text-text-disabled');
+  expect(screen.getByTestId('closed-proposal-proposal-12')).toHaveTextContent(
+    'Решение не было принято до завершения ревью.',
+  );
+  expect(
+    screen.queryByTestId('accept-proposal-proposal-12'),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByTestId('reject-proposal-proposal-12'),
+  ).not.toBeInTheDocument();
 });
 
 test('shows which comments, questions and AI proposals produced each revision', async () => {
@@ -447,7 +591,7 @@ test('shows which comments, questions and AI proposals produced each revision', 
   expect(mockedListRevisions).toHaveBeenCalledWith('doc-1');
 });
 
-test('offers bidirectional EVA actions only for a verified page binding', async () => {
+test('offers personal-token EVA actions for a verified page binding', async () => {
   const linked = {
     ...projection,
     lifecycle_state: 'AGREED' as const,
@@ -476,6 +620,16 @@ test('offers bidirectional EVA actions only for a verified page binding', async 
   expect(
     await screen.findByTestId('business-document-eva-binding'),
   ).toHaveTextContent('Переводы одной кнопкой');
+  expect(
+    await screen.findByRole('button', {
+      name: 'Сохранить текущий вариант в EVA',
+    }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole('button', {
+      name: 'Перечитать текущий документ из EVA',
+    }),
+  ).toBeVisible();
   fireEvent.click(screen.getByTestId('pull-business-document-from-eva'));
   await waitFor(() =>
     expect(mockedPullEvaDocument).toHaveBeenCalledWith('doc-1', 18),
@@ -485,6 +639,135 @@ test('offers bidirectional EVA actions only for a verified page binding', async 
       'Новая версия EVA добавлена в ревью. Запустите анализ замечаний.',
     ),
   ).toBeVisible();
+});
+
+test('hides document EVA actions when the personal token is absent', async () => {
+  mockedFetch.mockResolvedValueOnce({
+    ...projection,
+    lifecycle_state: 'AGREED',
+    eva_binding: {
+      page_url: 'https://eva.example.com/project/Document/BR-42',
+      status: 'CONNECTED',
+      capabilities: ['OPEN', 'PULL_FROM_EVA', 'CREATE_EVA_CHANGE'],
+      connector_id: 'connector-1',
+      document_id: 'eva-document-1',
+    },
+  });
+  mockedListEvaUserCredentials.mockResolvedValueOnce({
+    data: { code: 0, data: { items: [] } },
+  });
+
+  renderPage();
+
+  expect(
+    await screen.findByTestId('business-document-eva-binding'),
+  ).toBeVisible();
+  await waitFor(() => expect(mockedListEvaUserCredentials).toHaveBeenCalled());
+  expect(
+    screen.queryByRole('button', {
+      name: 'Сохранить текущий вариант в EVA',
+    }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole('button', {
+      name: 'Перечитать текущий документ из EVA',
+    }),
+  ).not.toBeInTheDocument();
+});
+
+test('reconnects a linked EVA page before rereading it with a personal token', async () => {
+  const linkOnly = {
+    ...projection,
+    lifecycle_state: 'AGREED' as const,
+    eva_binding: {
+      page_url: 'https://eva.example.com/project/Document/BR-42',
+      status: 'LINK_ONLY' as const,
+      capabilities: ['OPEN' as const],
+      document_code: 'BR-42',
+    },
+  };
+  const connected = {
+    ...linkOnly,
+    state_version: 19,
+    eva_binding: {
+      ...linkOnly.eva_binding,
+      status: 'CONNECTED' as const,
+      capabilities: [
+        'OPEN' as const,
+        'PULL_FROM_EVA' as const,
+        'CREATE_EVA_CHANGE' as const,
+      ],
+      connector_id: 'connector-1',
+      document_id: 'eva-document-1',
+    },
+  };
+  mockedFetch.mockResolvedValueOnce(linkOnly);
+  mockedRebindEvaDocument.mockResolvedValueOnce(connected);
+  mockedPullEvaDocument.mockResolvedValueOnce({
+    document: connected,
+    sync: { changed: false, direction: 'FROM_EVA' },
+  });
+
+  renderPage();
+
+  fireEvent.click(
+    await screen.findByRole('button', {
+      name: 'Перечитать текущий документ из EVA',
+    }),
+  );
+  await waitFor(() =>
+    expect(mockedRebindEvaDocument).toHaveBeenCalledWith('doc-1', 18),
+  );
+  await waitFor(() =>
+    expect(mockedPullEvaDocument).toHaveBeenCalledWith('doc-1', 19),
+  );
+});
+
+test('reconnects a link-only EVA page after a connector becomes available', async () => {
+  const linkOnly = {
+    ...projection,
+    eva_binding: {
+      page_url: 'http://host.docker.internal:8084//project/Document/DOC-001883',
+      status: 'LINK_ONLY' as const,
+      capabilities: ['OPEN' as const],
+      document_code: 'DOC-001883',
+    },
+  };
+  const connected = {
+    ...linkOnly,
+    state_version: 19,
+    eva_binding: {
+      page_url: 'https://eva.example.com/project/Document/DOC-001883',
+      status: 'CONNECTED' as const,
+      capabilities: [
+        'OPEN' as const,
+        'PULL_FROM_EVA' as const,
+        'CREATE_EVA_CHANGE' as const,
+      ],
+      connector_id: 'connector-business-documents',
+      document_id: 'CmfDocument:doc-1',
+      document_code: 'DOC-001883',
+      document_name: 'Документ1',
+    },
+  };
+  mockedFetch.mockResolvedValueOnce(linkOnly);
+  mockedRebindEvaDocument.mockResolvedValueOnce(connected);
+  renderPage();
+
+  expect(
+    await screen.findByText('Только ссылка — доступный коннектор не найден'),
+  ).toBeVisible();
+  fireEvent.click(screen.getByTestId('rebind-business-document-to-eva'));
+
+  await waitFor(() =>
+    expect(mockedRebindEvaDocument).toHaveBeenCalledWith('doc-1', 18),
+  );
+  expect(
+    await screen.findByText('Страница EVA подключена. Синхронизация доступна.'),
+  ).toBeVisible();
+  expect(screen.getByTestId('business-document-eva-binding')).toHaveTextContent(
+    'Документ1',
+  );
 });
 
 test('keeps EVA pull disabled until the first local revision exists', async () => {
@@ -744,6 +1027,94 @@ test('submits a structured answer and current state version', async () => {
       },
     }),
   );
+});
+
+test('lets the author collapse and reopen an individual question', async () => {
+  renderPage();
+
+  const toggle = await screen.findByTestId('toggle-question-question-9');
+  expect(toggle).toHaveAttribute('aria-expanded', 'true');
+
+  fireEvent.click(toggle);
+  expect(toggle).toHaveAttribute('aria-expanded', 'false');
+
+  fireEvent.click(toggle);
+  expect(toggle).toHaveAttribute('aria-expanded', 'true');
+});
+
+test('collapses an answered question and focuses the next unanswered one', async () => {
+  mockedFetch.mockResolvedValue({
+    ...projection,
+    protocol: {
+      ...projection.protocol,
+      questions: [
+        ...projection.protocol.questions,
+        {
+          question_id: 'question-10',
+          sequence_number: 10,
+          target_section_id: '5.6',
+          text: 'Как долго хранить историю операций?',
+          options: [
+            { option_id: 'month', label: 'Один месяц' },
+            { option_id: 'year', label: 'Один год' },
+          ],
+          allow_custom_answer: false,
+          status: 'OPEN',
+        },
+      ],
+    },
+  });
+  renderPage();
+
+  const currentToggle = await screen.findByTestId('toggle-question-question-9');
+  const nextToggle = screen.getByTestId('toggle-question-question-10');
+  const scrollContainer = screen.getByTestId(
+    'business-document-protocol-scroll',
+  );
+  const scrollIntoView = jest.fn();
+  nextToggle.scrollIntoView = scrollIntoView;
+  jest.spyOn(nextToggle, 'getBoundingClientRect').mockReturnValue({
+    bottom: 540,
+    height: 40,
+    left: 0,
+    right: 100,
+    top: 500,
+    width: 100,
+    x: 0,
+    y: 500,
+    toJSON: () => ({}),
+  });
+  jest.spyOn(scrollContainer, 'getBoundingClientRect').mockReturnValue({
+    bottom: 300,
+    height: 300,
+    left: 0,
+    right: 430,
+    top: 0,
+    width: 430,
+    x: 0,
+    y: 0,
+    toJSON: () => ({}),
+  });
+
+  expect(currentToggle).toHaveAttribute('aria-expanded', 'true');
+  expect(nextToggle).toHaveAttribute('aria-expanded', 'false');
+
+  fireEvent.click(
+    screen.getByRole('radio', {
+      name: 'Успешные и неуспешные операции',
+    }),
+  );
+  fireEvent.click(screen.getByTestId('answer-question-question-9'));
+
+  await waitFor(() => {
+    expect(currentToggle).toHaveAttribute('aria-expanded', 'false');
+    expect(nextToggle).toHaveAttribute('aria-expanded', 'true');
+    expect(nextToggle).toHaveFocus();
+  });
+  expect(scrollIntoView).toHaveBeenCalledWith({
+    behavior: 'smooth',
+    block: 'nearest',
+  });
 });
 
 test('records proposal decisions and author comments as commands', async () => {
@@ -1255,6 +1626,11 @@ test('shows the active attempt and previous validation error while retrying', as
 test('creates a new business requirements document', async () => {
   renderPage('/business-documents');
 
+  expect(screen.queryByText('Источники RAGFlow')).not.toBeInTheDocument();
+  expect(
+    screen.queryByTestId('business-document-datasets'),
+  ).not.toBeInTheDocument();
+
   fireEvent.change(
     screen.getByRole('textbox', { name: 'Название документа' }),
     {
@@ -1274,9 +1650,58 @@ test('creates a new business requirements document', async () => {
     idea: 'Нужен новый клиентский сценарий.',
     dataset_ids: [],
   });
+  await waitFor(() => expect(mockedSubmit).toHaveBeenCalledTimes(1));
+  expect(mockedSubmit).toHaveBeenCalledWith(
+    'doc-1',
+    expect.objectContaining({
+      schema_version: '1',
+      expected_state_version: projection.state_version,
+      type: 'REQUEST_INTAKE_ASSESSMENT',
+      payload: {},
+    }),
+  );
+  expect(mockedSubmit.mock.calls[0][1].command_id).toMatch(
+    /^cmd-initial-analysis-/,
+  );
+  expect(mockedSubmit.mock.calls[0][1].idempotency_key).toMatch(
+    /^idem-initial-analysis-/,
+  );
   expect(
     await screen.findByTestId('business-document-workbench'),
   ).toBeVisible();
+});
+
+test('opens the created document when automatic analysis cannot be started', async () => {
+  mockedSubmit.mockRejectedValueOnce(new Error('analysis unavailable'));
+  renderPage('/business-documents');
+
+  fireEvent.change(
+    screen.getByRole('textbox', { name: 'Название документа' }),
+    { target: { value: 'Новый продукт' } },
+  );
+  fireEvent.change(screen.getByRole('textbox', { name: 'Описание идеи' }), {
+    target: { value: 'Нужен новый клиентский сценарий.' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Начать работу' }));
+
+  expect(
+    await screen.findByTestId('business-document-workbench'),
+  ).toBeVisible();
+  expect(mockedCreate).toHaveBeenCalledTimes(1);
+  expect(mockedSubmit).toHaveBeenCalledTimes(1);
+});
+
+test('does not show linked RAGFlow source counts in a document', async () => {
+  mockedFetch.mockResolvedValueOnce({
+    ...projection,
+    dataset_ids: ['dataset-1'],
+  });
+  renderPage();
+
+  expect(
+    await screen.findByTestId('business-document-workbench'),
+  ).toBeVisible();
+  expect(screen.queryByText('Источников: 1')).not.toBeInTheDocument();
 });
 
 test('optionally links a new document to an EVA page URL', async () => {

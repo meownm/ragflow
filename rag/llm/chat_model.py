@@ -207,6 +207,8 @@ def _move_litellm_provider_body_fields(provider: SupportedLiteLLMProvider | str 
     body = completion_args.get("extra_body")
     if not isinstance(body, dict):
         body = {}
+    if str(provider) == "Ollama":
+        body.setdefault("think", False)
     moved = False
     for key in provider_body_fields:
         if key in completion_args:

@@ -1,11 +1,12 @@
 import { AlertTriangle, FileText, MousePointer2 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { isValidElement, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type {
   BusinessDocumentRevision,
   BusinessDocumentSelection,
 } from '../types';
+import { PlantUmlDiagram } from './plantuml-diagram';
 
 interface DocumentPaneProps {
   revision: BusinessDocumentRevision | null;
@@ -191,14 +192,15 @@ export function DocumentPane({
         >
           <article className="mx-auto max-w-[860px] text-[15px] leading-7 text-text-primary">
             {revision.document_ast.sections.map((section) => {
-              const sectionText = revision.section_texts[section.id];
+              const sectionText = revision.section_texts[section.id] ?? '';
+              const displayedSectionText = sectionText.trim()
+                ? sectionText
+                : 'Требования отсутствуют';
               const headingLevel = Math.min(
                 6,
                 2 + section.id.split('.').length - 1,
               );
-              const markdown = `${'#'.repeat(headingLevel)} ${section.id}. ${section.title}${
-                sectionText ? `\n\n${sectionText}` : ''
-              }`;
+              const markdown = `${'#'.repeat(headingLevel)} ${section.id}. ${section.title}\n\n${displayedSectionText}`;
 
               return (
                 <section
@@ -253,6 +255,33 @@ export function DocumentPane({
                           {children}
                         </td>
                       ),
+                      pre: ({ children }) => {
+                        const code = isValidElement<{
+                          className?: string;
+                          children?: unknown;
+                        }>(children)
+                          ? children
+                          : null;
+                        if (
+                          code?.props.className
+                            ?.split(/\s+/)
+                            .includes('language-plantuml')
+                        ) {
+                          return (
+                            <PlantUmlDiagram
+                              source={String(code.props.children ?? '').replace(
+                                /\n$/,
+                                '',
+                              )}
+                            />
+                          );
+                        }
+                        return (
+                          <pre className="mb-4 overflow-x-auto rounded bg-bg-card p-3 text-sm">
+                            {children}
+                          </pre>
+                        );
+                      },
                       code: ({ children }) => (
                         <code className="rounded bg-bg-card px-1.5 py-0.5 font-mono text-[0.9em]">
                           {children}

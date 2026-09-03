@@ -139,6 +139,22 @@ export async function pullBusinessDocumentFromEva(
   }
 }
 
+export async function rebindBusinessDocumentToEva(
+  documentId: string,
+  expectedStateVersion: number,
+) {
+  try {
+    const response = await request.post(
+      api.businessDocumentEvaRebind(documentId),
+      { expected_state_version: expectedStateVersion },
+      requestConfig(),
+    );
+    return unwrap<BusinessDocumentProjection>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
 export async function createEvaChangeFromBusinessDocument(
   documentId: string,
   expectedStateVersion: number,

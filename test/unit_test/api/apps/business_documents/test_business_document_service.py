@@ -46,7 +46,7 @@ from api.db.db_models import (
     BusinessDocumentQuestion,
     BusinessDocumentRevision,
 )
-from test.unit_test.api.apps.business_documents.helpers import VALID_BPMN_SCENARIO, required_section_blocks
+from test.unit_test.api.apps.business_documents.helpers import VALID_ACTIVITY_SCENARIO, required_section_blocks
 
 
 TENANT = "tenant-1"
@@ -558,20 +558,20 @@ def test_required_sections_cannot_be_empty_and_child_headings_are_nested(databas
     assert "## 3. Целевая аудитория" in markdown
     assert "### 3.1. Пользователи и их категории" in markdown
 
-    bpmn = _draft()
-    scenario = next(item for item in bpmn["sections"] if item["id"] == "4.3")
+    activity = _draft()
+    scenario = next(item for item in activity["sections"] if item["id"] == "4.3")
     scenario["blocks"] = [
         {"type": "paragraph", "text": "Основной и негативный клиентские сценарии."},
-        {"type": "bpmn", "source": VALID_BPMN_SCENARIO},
+        {"type": "plantuml", "source": VALID_ACTIVITY_SCENARIO},
     ]
-    assert "```bpmn" in render_document_ast(validate_document_ast(bpmn))
+    assert "```plantuml" in render_document_ast(validate_document_ast(activity))
 
     wrong_diagram = _draft()
     scenario = next(item for item in wrong_diagram["sections"] if item["id"] == "4.3")
-    scenario["blocks"] = [{"type": "plantuml", "source": "@startuml\n@enduml"}]
+    scenario["blocks"] = [{"type": "paragraph", "text": "Только текст"}]
     with pytest.raises(BusinessDocumentError) as caught:
         validate_document_ast(wrong_diagram)
-    assert caught.value.code == "BLOCK_TYPE_NOT_ALLOWED"
+    assert caught.value.code == "ACTIVITY_SCENARIO_REQUIRED"
 
     missing_concept = _draft()
     conceptual = next(item for item in missing_concept["sections"] if item["id"] == "4.1")
@@ -580,20 +580,18 @@ def test_required_sections_cannot_be_empty_and_child_headings_are_nested(databas
         validate_document_ast(missing_concept)
     assert caught.value.code == "CONCEPTUAL_DIAGRAM_REQUIRED"
 
-    incomplete_bpmn = _draft()
-    scenario = next(item for item in incomplete_bpmn["sections"] if item["id"] == "4.3")
+    incomplete_activity = _draft()
+    scenario = next(item for item in incomplete_activity["sections"] if item["id"] == "4.3")
     scenario["blocks"] = [
         {"type": "paragraph", "text": "Сопровождающий текст"},
         {
-            "type": "bpmn",
-            "source": (
-                '<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"><bpmn:process id="p"><bpmn:startEvent id="s"/><bpmn:endEvent id="e"/></bpmn:process></bpmn:definitions>'
-            ),
+            "type": "plantuml",
+            "source": "@startuml\nstart\n:Основной путь;\nstop\n@enduml",
         },
     ]
     with pytest.raises(BusinessDocumentError) as caught:
-        validate_document_ast(incomplete_bpmn)
-    assert caught.value.code == "INCOMPLETE_BPMN_SCENARIO"
+        validate_document_ast(incomplete_activity)
+    assert caught.value.code == "INCOMPLETE_ACTIVITY_SCENARIO"
 
 
 @pytest.mark.p0
@@ -958,6 +956,50 @@ def test_confirmed_anchored_comment_may_request_a_cross_section_change(database)
             "section_id": "3.3",
         }
     ]
+
+
+@pytest.mark.p0
+def test_link_only_eva_binding_can_be_reconnected_without_rewriting_creation_event(database, monkeypatch):
+    from api.apps.business_documents.eva_changes import EvaDocumentChangeService
+
+    link_only = {
+        "page_url": "http://host.docker.internal:8084//project/Document/DOC-001883",
+        "status": "LINK_ONLY",
+        "capabilities": ["OPEN"],
+        "connector_id": None,
+        "project_id": None,
+        "document_id": None,
+        "document_code": "DOC-001883",
+        "document_name": None,
+    }
+    connected = {
+        **link_only,
+        "page_url": "https://eva.example.com/project/Document/DOC-001883",
+        "status": "CONNECTED",
+        "capabilities": ["OPEN", "PULL_FROM_EVA", "CREATE_EVA_CHANGE"],
+        "connector_id": "connector-business-documents",
+        "project_id": "CmfProject:business-documents",
+        "document_id": "CmfDocument:doc-1",
+        "document_name": "Документ1",
+    }
+    monkeypatch.setattr(EvaDocumentChangeService, "resolve_page_url", staticmethod(lambda _actor_id, _page_url: link_only))
+    document = _create(eva_page_url=link_only["page_url"])
+    created_event = BusinessDocumentEvent.get((BusinessDocumentEvent.document_id == document["document_id"]) & (BusinessDocumentEvent.event_type == "DocumentCreated"))
+    original_created_payload = deepcopy(created_event.payload)
+    monkeypatch.setattr(EvaDocumentChangeService, "resolve_page_url", staticmethod(lambda _actor_id, _page_url: connected))
+
+    rebound = BusinessDocumentService.rebind_eva(
+        TENANT,
+        AUTHOR,
+        document["document_id"],
+        {"expected_state_version": document["state_version"]},
+    )
+
+    assert rebound["state_version"] == document["state_version"] + 1
+    assert rebound["eva_binding"] == connected
+    assert BusinessDocumentEvent.get_by_id(created_event.id).payload == original_created_payload
+    resolution_event = BusinessDocumentEvent.get((BusinessDocumentEvent.document_id == document["document_id"]) & (BusinessDocumentEvent.event_type == "EvaBindingResolved"))
+    assert resolution_event.payload == {"eva_binding": connected}
 
 
 @pytest.mark.p0

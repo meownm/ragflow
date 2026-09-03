@@ -175,3 +175,14 @@ def test_litellm_provider_body_fields_preserve_existing_extra_body():
 
     assert completion_args["extra_body"] == {"seed": 1, "enable_thinking": False}
     assert "enable_thinking" not in completion_args
+
+
+def test_ollama_completion_payload_disables_thinking_by_default():
+    completion_args = {
+        "model": "llama3.3:latest",
+        "messages": [],
+    }
+
+    _move_litellm_provider_body_fields("Ollama", completion_args)
+
+    assert completion_args["extra_body"] == {"think": False}

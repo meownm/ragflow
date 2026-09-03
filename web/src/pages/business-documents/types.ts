@@ -33,7 +33,7 @@ export type BusinessDocumentBlock =
       headers: string[];
       rows: Array<Array<string | number | boolean | null>>;
     }
-  | { type: 'plantuml' | 'bpmn'; source: string }
+  | { type: 'plantuml'; source: string }
   | { type: 'image'; alt: string; url: string }
   | { type: 'reference'; label: string; url: string };
 

@@ -122,7 +122,7 @@ export function EvaCredentialProfile() {
             {t('evaTokenHowToGet')}
           </p>
           <p className="text-xs leading-5 text-text-secondary">
-            {t('evaTokenWriteOnlyDescription')}
+            {t('evaTokenUsageDescription')}
           </p>
           {credentialsQuery.error && (
             <p className="text-xs text-state-error" role="alert">

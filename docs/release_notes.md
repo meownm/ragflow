@@ -9,6 +9,21 @@ sidebar_custom_props: {
 
 Key features, improvements and bug fixes in the latest releases.
 
+## v1.6.0
+
+Released on September 3, 2026.
+
+### Improvements and bug fixes
+
+- Adds a Rocky Linux 9.x release archive containing the source snapshot, prebuilt frontend, and all required Docker images, including T-One weights.
+- Adds checksum verification and an installer that uses the corporate `cifra-docker` DNF repository while starting Compose with public image pulls and builds disabled.
+- Restores vertical scrolling on the profile page and fixes saving a personal EVA token from the profile dialog.
+- Lets interactive EVA document management use the current user's personal token when the connector has no shared service token.
+- Adds an explicit EVA reconnect action and keeps published document links on the connector's public browser origin.
+- Renders PlantUML diagrams directly in business documents and keeps question/proposal state synchronized across the workbench.
+- Disables reasoning output for compatible Ollama chat, Go runtime, and T-One enrichment requests.
+- Adds a verified `tar.gz` plus SHA-256 delivery path that can be transferred with PuTTY and installed without Git.
+
 ## v1.5.0
 
 Released on September 3, 2026.

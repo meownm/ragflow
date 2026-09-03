@@ -149,92 +149,99 @@ const ProfilePage: FC = () => {
         </header>
       }
     >
-      <Spotlight />
+      <div className="h-full overflow-x-hidden overflow-y-auto">
+        <Spotlight />
 
-      {/* Main Content */}
-      <div className="max-w-3xl space-y-11 w-3/4 p-7">
-        {/* Name */}
-        <div className="flex items-start gap-4 ">
-          <label className="w-[190px] text-sm font-medium">
-            {t('username')}
-          </label>
-          <div className="flex-1 flex items-center gap-4 min-w-0">
-            <div className="text-sm text-text-primary border border-border-button flex-1 min-w-0 rounded-md py-1.5 px-2 truncate">
-              {profile.userName}
+        {/* Main Content */}
+        <div className="max-w-3xl space-y-11 w-3/4 p-7">
+          {/* Name */}
+          <div className="flex items-start gap-4 ">
+            <label className="w-[190px] text-sm font-medium">
+              {t('username')}
+            </label>
+            <div className="flex-1 flex items-center gap-4 min-w-0">
+              <div className="text-sm text-text-primary border border-border-button flex-1 min-w-0 rounded-md py-1.5 px-2 truncate">
+                {profile.userName}
+              </div>
+
+              <Button
+                variant="outline"
+                type="button"
+                onClick={() => handleEditClick(EditType.editName)}
+              >
+                <PenLine size={12} /> {t('edit')}
+              </Button>
             </div>
-
-            <Button
-              variant="outline"
-              type="button"
-              onClick={() => handleEditClick(EditType.editName)}
-            >
-              <PenLine size={12} /> {t('edit')}
-            </Button>
           </div>
-        </div>
 
-        {/* Avatar */}
-        <div className="flex items-start gap-4">
-          <label className="w-[190px] text-sm font-medium">{t('avatar')}</label>
-          <div className="flex items-center gap-4">
-            <AvatarUpload
-              value={profile.avatar}
-              onChange={handleAvatarUpload}
-              tips={t('avatarTip')}
-            />
-          </div>
-        </div>
-
-        {/* Time Zone */}
-        <div className="flex items-start gap-4">
-          <label className="w-[190px] text-sm font-medium">
-            {t('timezone')}
-          </label>
-          <div className="flex-1 flex items-center gap-4">
-            <div className="text-sm text-text-primary border border-border-button flex-1 rounded-md py-1.5 px-2 empty:before:content-['_'] empty:before:whitespace-pre">
-              {timezone}
+          {/* Avatar */}
+          <div className="flex items-start gap-4">
+            <label className="w-[190px] text-sm font-medium">
+              {t('avatar')}
+            </label>
+            <div className="flex items-center gap-4">
+              <AvatarUpload
+                value={profile.avatar}
+                onChange={handleAvatarUpload}
+                tips={t('avatarTip')}
+              />
             </div>
-            <Button
-              variant="outline"
-              type="button"
-              onClick={() => handleEditClick(EditType.editTimeZone)}
-            >
-              <PenLine size={12} /> {t('edit')}
-            </Button>
           </div>
-        </div>
 
-        {/* Email Address */}
-        <div className="flex items-start gap-4">
-          <label className="w-[190px] text-sm font-medium"> {t('email')}</label>
-          <div className="flex-1 flex flex-col items-start gap-2">
-            <div className="text-sm text-text-primary flex-1 rounded-md py-1.5 ">
-              {profile.email}
+          {/* Time Zone */}
+          <div className="flex items-start gap-4">
+            <label className="w-[190px] text-sm font-medium">
+              {t('timezone')}
+            </label>
+            <div className="flex-1 flex items-center gap-4">
+              <div className="text-sm text-text-primary border border-border-button flex-1 rounded-md py-1.5 px-2 empty:before:content-['_'] empty:before:whitespace-pre">
+                {timezone}
+              </div>
+              <Button
+                variant="outline"
+                type="button"
+                onClick={() => handleEditClick(EditType.editTimeZone)}
+              >
+                <PenLine size={12} /> {t('edit')}
+              </Button>
             </div>
-            <span className="text-text-secondary text-xs">
-              {t('emailDescription')}
-            </span>
           </div>
-        </div>
 
-        <EvaCredentialProfile />
-
-        {/* Password */}
-        <div className="flex items-start gap-4">
-          <label className="w-[190px] text-sm font-medium">
-            {t('password')}
-          </label>
-          <div className="flex-1 flex items-center gap-4">
-            <div className="text-sm text-text-primary border border-border-button flex-1 rounded-md py-1.5 px-2">
-              <span className="inline-block translate-y-0.5">********</span>
+          {/* Email Address */}
+          <div className="flex items-start gap-4">
+            <label className="w-[190px] text-sm font-medium">
+              {' '}
+              {t('email')}
+            </label>
+            <div className="flex-1 flex flex-col items-start gap-2">
+              <div className="text-sm text-text-primary flex-1 rounded-md py-1.5 ">
+                {profile.email}
+              </div>
+              <span className="text-text-secondary text-xs">
+                {t('emailDescription')}
+              </span>
             </div>
-            <Button
-              variant="outline"
-              type="button"
-              onClick={() => handleEditClick(EditType.editPassword)}
-            >
-              <PenLine size={12} /> {t('edit')}
-            </Button>
+          </div>
+
+          <EvaCredentialProfile />
+
+          {/* Password */}
+          <div className="flex items-start gap-4">
+            <label className="w-[190px] text-sm font-medium">
+              {t('password')}
+            </label>
+            <div className="flex-1 flex items-center gap-4">
+              <div className="text-sm text-text-primary border border-border-button flex-1 rounded-md py-1.5 px-2">
+                <span className="inline-block translate-y-0.5">********</span>
+              </div>
+              <Button
+                variant="outline"
+                type="button"
+                onClick={() => handleEditClick(EditType.editPassword)}
+              >
+                <PenLine size={12} /> {t('edit')}
+              </Button>
+            </div>
           </div>
         </div>
       </div>

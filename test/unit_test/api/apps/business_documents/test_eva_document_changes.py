@@ -31,7 +31,11 @@ from api.apps.business_documents.errors import BusinessDocumentError
 from api.apps.business_documents.eva_changes import EvaChangeState, EvaDocumentChangeService
 from api.db.db_models import BusinessDocumentEvaChange, BusinessDocumentEvaChangeEvent, Connector
 from api.db.services.connector_service import ConnectorService
-from api.db.services.user_external_credential_service import ExternalCredentialMissingError
+from api.db.services.user_external_credential_service import (
+    ExternalCredentialDecryptionError,
+    ExternalCredentialMissingError,
+    UserExternalCredentialService,
+)
 from common.time_utils import current_timestamp
 
 
@@ -127,6 +131,100 @@ def _create(client):
         )
 
 
+def _eva_connector(credentials):
+    return SimpleNamespace(
+        id="connector-1",
+        name="EVA Wiki",
+        source="eva_wiki",
+        config={
+            "api_base_url": "https://eva.example.com/api",
+            "web_base_url": "https://eva.example.com",
+            "project_id": "CmfProject:portal",
+            "credentials": credentials,
+        },
+    )
+
+
+def _patch_accessible_connector(monkeypatch, connector):
+    monkeypatch.setattr(
+        ConnectorService,
+        "get_by_id",
+        staticmethod(lambda connector_id: (connector_id == connector.id, connector)),
+    )
+    monkeypatch.setattr(
+        ConnectorService,
+        "accessible",
+        staticmethod(lambda connector_id, actor_id: connector_id == connector.id and actor_id == AUTHOR),
+    )
+
+
+@pytest.mark.parametrize(
+    "credentials",
+    [
+        {},
+        {"eva_api_token": ""},
+        {"eva_api_token": "   "},
+    ],
+)
+def test_eva_reader_falls_back_to_personal_token_when_shared_token_is_blank(monkeypatch, credentials):
+    connector = _eva_connector(credentials)
+    _patch_accessible_connector(monkeypatch, connector)
+    credential_requests = []
+
+    def get_personal_token(actor_id, api_base_url):
+        credential_requests.append((actor_id, api_base_url))
+        return SimpleNamespace(secret="personal-token")
+
+    monkeypatch.setattr(UserExternalCredentialService, "get_eva_wiki_token", staticmethod(get_personal_token))
+
+    _, reader = EvaDocumentChangeService._connector(connector.id, AUTHOR)
+
+    assert reader._session.headers["X-Eva-Token"] == "personal-token"
+    assert credential_requests == [(AUTHOR, "https://eva.example.com/api")]
+
+
+def test_eva_reader_prefers_shared_token_without_loading_personal_credential(monkeypatch):
+    connector = _eva_connector({"eva_api_token": "shared-token"})
+    _patch_accessible_connector(monkeypatch, connector)
+
+    def reject_personal_lookup(*_args):
+        raise AssertionError("personal credential must not be loaded when the shared token is configured")
+
+    monkeypatch.setattr(UserExternalCredentialService, "get_eva_wiki_token", staticmethod(reject_personal_lookup))
+
+    _, reader = EvaDocumentChangeService._connector(connector.id, AUTHOR)
+
+    assert reader._session.headers["X-Eva-Token"] == "shared-token"
+
+
+@pytest.mark.parametrize(
+    ("credential_error", "expected_code", "expected_status"),
+    [
+        (ExternalCredentialMissingError("missing"), "EVA_CREDENTIALS_MISSING", 422),
+        (ExternalCredentialDecryptionError("unavailable"), "EVA_USER_TOKEN_UNAVAILABLE", 503),
+    ],
+)
+def test_eva_reader_maps_missing_and_unavailable_personal_credentials(
+    monkeypatch,
+    credential_error,
+    expected_code,
+    expected_status,
+):
+    connector = _eva_connector({})
+    _patch_accessible_connector(monkeypatch, connector)
+
+    def fail_personal_lookup(*_args):
+        raise credential_error
+
+    monkeypatch.setattr(UserExternalCredentialService, "get_eva_wiki_token", staticmethod(fail_personal_lookup))
+
+    with pytest.raises(BusinessDocumentError) as exc_info:
+        EvaDocumentChangeService.search_sources(AUTHOR, connector_id=connector.id)
+
+    assert exc_info.value.code == expected_code
+    assert exc_info.value.status == expected_status
+
+
 def test_resolve_page_url_materializes_connectors_before_nested_access_queries(monkeypatch):
     connector = SimpleNamespace(id="connector-1", name="EVA Wiki")
 
@@ -164,6 +262,57 @@ def test_resolve_page_url_materializes_connectors_before_nested_access_queries(m
 
     assert binding["status"] == "LINK_ONLY"
     assert binding["capabilities"] == ["OPEN"]
+
+
+def test_resolve_page_url_accepts_configured_api_origin_and_returns_web_url(monkeypatch):
+    connector = SimpleNamespace(id="connector-1", name="EVA Wiki")
+
+    class Query:
+        def where(self, *_args):
+            return self
+
+        def order_by(self, *_args):
+            return self
+
+        def __iter__(self):
+            yield connector
+
+    client = SimpleNamespace(
+        api_base_url="http://host.docker.internal:8084",
+        web_base_url="https://eva.example.com",
+        search_documents=lambda query, _limit: [
+            {
+                "id": "CmfDocument:doc-1",
+                "code": query,
+                "web_url": f"https://eva.example.com/project/Document/{query}",
+            }
+        ],
+        get_document_for_edit=lambda _document_id: {
+            "id": "CmfDocument:doc-1",
+            "code": "DOC-001883",
+            "name": "Документ1",
+            "project_id": "CmfProject:business-documents",
+            "web_url": "https://eva.example.com/project/Document/DOC-001883",
+            "version": "1",
+            "html": "<p>Требования</p>",
+        },
+    )
+    monkeypatch.setattr(Connector, "select", lambda *_args, **_kwargs: Query())
+    monkeypatch.setattr(ConnectorService, "accessible", staticmethod(lambda *_args: True))
+    monkeypatch.setattr(
+        EvaDocumentChangeService,
+        "_connector",
+        classmethod(lambda _cls, _connector_id, _actor_id: (connector, client)),
+    )
+
+    binding = EvaDocumentChangeService.resolve_page_url(
+        AUTHOR,
+        "http://host.docker.internal:8084//project/Document/DOC-001883",
+    )
+
+    assert binding["status"] == "CONNECTED"
+    assert binding["page_url"] == "https://eva.example.com/project/Document/DOC-001883"
+    assert binding["document_id"] == "CmfDocument:doc-1"
 
 
 def test_resolve_page_url_rejects_embedded_credentials():

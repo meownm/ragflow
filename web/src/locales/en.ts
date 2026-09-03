@@ -1695,15 +1695,15 @@ Example: Virtual Hosted Style`,
       evaTokenNotConfigured: 'Personal token not configured',
       evaTokenHowToGet:
         'How to get it: open your profile settings in EVA, find API tokens, select Create token, set its lifetime, and copy the value immediately. If the section is unavailable, contact your EVA administrator.',
-      evaTokenWriteOnlyDescription:
-        'This token is used only to save a draft and publish changes in EVA. Reads and synchronization continue to use the connector service account.',
+      evaTokenUsageDescription:
+        'Document management uses the EVA connector service token first and falls back to your personal token when the service token is absent. Your personal token is also used to save drafts and publish changes; background synchronization still requires the service token.',
       evaTokenAdd: 'Add EVA token',
       evaTokenReplace: 'Replace EVA token',
       evaTokenAddAction: 'Add',
       evaTokenReplaceAction: 'Replace',
       evaTokenDelete: 'Delete EVA token',
       evaTokenDeleteConfirmation:
-        'Saving and publishing EVA changes will be unavailable until you add the token again.',
+        'Reading EVA without a connector service token, saving drafts, and publishing changes will be unavailable until you add your personal token again.',
       evaTokenSaved: 'EVA token saved.',
       evaTokenDeleted: 'EVA token deleted.',
       evaTokenLoadFailed: 'Failed to load EVA token status.',

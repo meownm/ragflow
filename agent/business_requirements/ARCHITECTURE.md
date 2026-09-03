@@ -42,9 +42,8 @@ into a job snapshot. The model returns a schema-valid AST. Deterministic code
 then verifies the exact template outline, per-section block types, required
 content, and pinned versions before creating immutable revision 1. Section
 4.1 must include a bounded PlantUML diagram. Section 4.3 must include both
-accompanying text and safe BPMN 2.0 XML with process/start/end nodes and an
-explicitly named unsuccessful alternative path. The normative BPMN requirement
-takes precedence over the source's illustrative PlantUML swimlane example. Questions
+accompanying text and a bounded PlantUML activity diagram with start/end nodes,
+an if/else decision, and an explicitly named unsuccessful alternative path. Questions
 and proposals are stored outside the body, and lifecycle changes to `REVIEW`.
 
 ### Review

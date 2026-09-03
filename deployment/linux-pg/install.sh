@@ -10,10 +10,13 @@ ADMIN_EMAIL=${ADMIN_EMAIL:-admin@ragflow.local}
 ADMIN_NICKNAME=${ADMIN_NICKNAME:-RAGFlow Admin}
 SECRETS_DIR=${SECRETS_DIR:-/etc/ragflow-pg}
 ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
-ALLOW_DIRTY_SOURCE=${ALLOW_DIRTY_SOURCE:-0}
+OFFLINE_INSTALL=${OFFLINE_INSTALL:-0}
+DOCKER_DNF_REPO=${DOCKER_DNF_REPO:-cifra-docker}
+MIN_DOCKER_VERSION=24.0.0
+MIN_COMPOSE_VERSION=2.26.1
 
 if [[ $(uname -m) != "x86_64" ]]; then
-  echo "Only x86_64 Linux is supported by this deployment repository." >&2
+  echo "Only x86_64 Linux is supported by this release package." >&2
   exit 1
 fi
 
@@ -22,27 +25,40 @@ if [[ ! -r /etc/os-release ]]; then
   exit 1
 fi
 . /etc/os-release
-if [[ ${ID:-} != "ubuntu" && ${ID:-} != "debian" ]]; then
-  echo "Supported distributions: Ubuntu and Debian; found ${ID:-unknown}." >&2
-  exit 1
-fi
+case ${ID:-} in
+  ubuntu|debian)
+    PACKAGE_FAMILY=deb
+    ;;
+  rocky)
+    if [[ ${VERSION_ID:-} != 9 && ${VERSION_ID:-} != 9.* ]]; then
+      echo "Rocky Linux 9.x is required; found ${VERSION_ID:-unknown}." >&2
+      exit 1
+    fi
+    PACKAGE_FAMILY=rpm
+    ;;
+  *)
+    echo "Supported distributions: Ubuntu, Debian, and Rocky Linux 9.x; found ${ID:-unknown}." >&2
+    exit 1
+    ;;
+esac
 
-if ! git -C "${SOURCE_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  echo "Run this installer from a Git clone of the deployment repository." >&2
+SOURCE_MANIFEST=${SOURCE_ROOT}/DEPLOYMENT-SOURCE.env
+if [[ ! -r ${SOURCE_MANIFEST} ]]; then
+  echo "DEPLOYMENT-SOURCE.env is missing. Extract the approved release archive before installation." >&2
   exit 1
 fi
-SOURCE_COMMIT=$(git -C "${SOURCE_ROOT}" rev-parse HEAD)
-SOURCE_REF=$(git -C "${SOURCE_ROOT}" describe --tags --exact-match HEAD 2>/dev/null || \
-  git -C "${SOURCE_ROOT}" branch --show-current)
-SOURCE_REF=${SOURCE_REF:-${SOURCE_COMMIT:0:12}}
-SOURCE_STATUS=$(git -C "${SOURCE_ROOT}" status --porcelain=v1 --untracked-files=all)
-if [[ -n ${SOURCE_STATUS} && ${ALLOW_DIRTY_SOURCE} != "1" ]]; then
-  echo "Refusing to install from a dirty Git checkout:" >&2
-  printf '%s\n' "${SOURCE_STATUS}" >&2
+manifest_value() {
+  local key=$1
+  awk -F= -v key="${key}" '$1 == key { sub(/^[^=]*=/, ""); print; exit }' "${SOURCE_MANIFEST}"
+}
+RELEASE_VERSION=$(manifest_value RELEASE_VERSION)
+PACKAGE_FORMAT=$(manifest_value PACKAGE_FORMAT)
+if [[ -z ${RELEASE_VERSION} || ${PACKAGE_FORMAT} != "tar.gz" ]]; then
+  echo "DEPLOYMENT-SOURCE.env does not describe a supported release archive." >&2
   exit 1
 fi
 if [[ ${SOURCE_ROOT} == ${INSTALL_DIR} ]]; then
-  echo "INSTALL_DIR must differ from the Git checkout so runtime files do not dirty the repository." >&2
+  echo "INSTALL_DIR must differ from the extracted source directory." >&2
   exit 1
 fi
 sudo -v
@@ -56,14 +72,62 @@ if sudo test -e "${INSTALL_DIR}"; then
     exit 1
   fi
 fi
-sudo apt-get update
-sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \
-  ca-certificates curl git jq openssl rsync tar docker.io docker-compose-v2
+if [[ ${OFFLINE_INSTALL} == "1" ]]; then
+  if [[ ${ID} != "rocky" || (${VERSION_ID:-} != 9 && ${VERSION_ID:-} != 9.*) ]]; then
+    echo "The offline package supports Rocky Linux 9.x only; found ${ID} ${VERSION_ID:-unknown}." >&2
+    exit 1
+  fi
+  for command_name in curl docker jq openssl rsync tar; do
+    command -v "${command_name}" >/dev/null || {
+      echo "Required offline prerequisite is missing: ${command_name}" >&2
+      exit 1
+    }
+  done
+  sudo docker compose version >/dev/null
+else
+  case ${PACKAGE_FAMILY} in
+    deb)
+      sudo apt-get update
+      sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        ca-certificates curl jq openssl rsync tar docker.io docker-compose-v2
+      ;;
+    rpm)
+      ENABLED_DNF_REPOS=$(sudo dnf -q repolist --enabled | awk 'NR > 1 { print $1 }')
+      if ! grep -Fxq "${DOCKER_DNF_REPO}" <<<"${ENABLED_DNF_REPOS}"; then
+        echo "Required Docker DNF repository is not enabled: ${DOCKER_DNF_REPO}" >&2
+        exit 1
+      fi
+      sudo dnf install -y --enablerepo="${DOCKER_DNF_REPO}" \
+        ca-certificates curl jq openssl rsync tar \
+        docker-ce docker-ce-cli containerd.io \
+        docker-buildx-plugin docker-compose-plugin
+      ;;
+  esac
+fi
 sudo systemctl enable --now docker
 
-printf 'vm.max_map_count=262144\n' | sudo tee /etc/sysctl.d/99-ragflow-pg.conf >/dev/null
+version_at_least() {
+  local actual=$1 minimum=$2
+  [[ $(printf '%s\n%s\n' "${minimum}" "${actual}" | sort -V | head -n 1) == "${minimum}" ]]
+}
+
+DOCKER_VERSION=$(sudo docker version --format '{{.Server.Version}}')
+COMPOSE_VERSION=$(sudo docker compose version --short)
+COMPOSE_VERSION=${COMPOSE_VERSION#v}
+if ! version_at_least "${DOCKER_VERSION}" "${MIN_DOCKER_VERSION}"; then
+  echo "Docker ${DOCKER_VERSION} is too old; ${MIN_DOCKER_VERSION} or newer is required." >&2
+  exit 1
+fi
+if ! version_at_least "${COMPOSE_VERSION}" "${MIN_COMPOSE_VERSION}"; then
+  echo "Docker Compose ${COMPOSE_VERSION} is too old; ${MIN_COMPOSE_VERSION} or newer is required." >&2
+  exit 1
+fi
+
+printf 'vm.max_map_count=262144\nnet.ipv4.ip_forward=1\n' | \
+  sudo tee /etc/sysctl.d/99-ragflow-pg.conf >/dev/null
 sudo sysctl --system >/dev/null
 test "$(sysctl -n vm.max_map_count)" -ge 262144
+test "$(sysctl -n net.ipv4.ip_forward)" -eq 1
 
 sudo install -d -m 0755 "${INSTALL_DIR}"
 sudo rsync -a --delete \
@@ -71,22 +135,26 @@ sudo rsync -a --delete \
   --exclude node_modules --exclude output --exclude docker/ragflow-logs \
   "${SOURCE_ROOT}/" "${INSTALL_DIR}/"
 
-FRONTEND_DEPS_VOLUME="${PROJECT_NAME}_frontend_build_deps_$$"
-cleanup_frontend_deps() {
-  sudo docker volume rm -f "${FRONTEND_DEPS_VOLUME}" >/dev/null 2>&1 || true
-}
-trap cleanup_frontend_deps ERR INT TERM
-sudo docker volume create "${FRONTEND_DEPS_VOLUME}" >/dev/null
-sudo docker run --rm \
-  -e NODE_OPTIONS=--max-old-space-size=8192 \
-  -e npm_config_cache=/tmp/npm-cache \
-  -v "${INSTALL_DIR}:/workspace" \
-  -v "${FRONTEND_DEPS_VOLUME}:/workspace/web/node_modules" \
-  -w /workspace/web \
-  node:20-bookworm-slim \
-  sh -lc 'npm ci && npm run build'
-cleanup_frontend_deps
-trap - ERR INT TERM
+if [[ ${OFFLINE_INSTALL} == "1" ]]; then
+  test -s "${INSTALL_DIR}/web/dist/index.html"
+else
+  FRONTEND_DEPS_VOLUME="${PROJECT_NAME}_frontend_build_deps_$$"
+  cleanup_frontend_deps() {
+    sudo docker volume rm -f "${FRONTEND_DEPS_VOLUME}" >/dev/null 2>&1 || true
+  }
+  trap cleanup_frontend_deps ERR INT TERM
+  sudo docker volume create "${FRONTEND_DEPS_VOLUME}" >/dev/null
+  sudo docker run --rm \
+    -e NODE_OPTIONS=--max-old-space-size=8192 \
+    -e npm_config_cache=/tmp/npm-cache \
+    -v "${INSTALL_DIR}:/workspace" \
+    -v "${FRONTEND_DEPS_VOLUME}:/workspace/web/node_modules" \
+    -w /workspace/web \
+    node:20-bookworm-slim \
+    sh -lc 'npm ci && npm run build'
+  cleanup_frontend_deps
+  trap - ERR INT TERM
+fi
 
 sudo chown -R root:root "${INSTALL_DIR}"
 sudo find "${INSTALL_DIR}" -type d -exec chmod 0755 {} +
@@ -120,11 +188,9 @@ ADMIN_EMAIL=${ADMIN_EMAIL}
 ADMIN_PASSWORD=${ADMIN_PASSWORD}
 EOF
 sudo install -m 0644 /dev/null "${SECRETS_DIR}/deployed-source.env"
-sudo tee "${SECRETS_DIR}/deployed-source.env" >/dev/null <<EOF
-SOURCE_COMMIT=${SOURCE_COMMIT}
-SOURCE_REF=${SOURCE_REF}
-INSTALLED_AT_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-EOF
+sudo tee "${SECRETS_DIR}/deployed-source.env" < "${SOURCE_MANIFEST}" >/dev/null
+printf 'INSTALLED_AT_UTC=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | \
+  sudo tee -a "${SECRETS_DIR}/deployed-source.env" >/dev/null
 
 cd "${INSTALL_DIR}/docker"
 COMPOSE=(sudo docker compose --env-file .env -p "${PROJECT_NAME}" \
@@ -142,7 +208,11 @@ fi
 grep -qx postgres <<<"${services}"
 grep -qx t-one-asr <<<"${services}"
 
-"${COMPOSE[@]}" up -d --build
+if [[ ${OFFLINE_INSTALL} == "1" ]]; then
+  "${COMPOSE[@]}" up -d --no-build --pull never
+else
+  "${COMPOSE[@]}" up -d --build
+fi
 
 deadline=$((SECONDS + 600))
 until curl -fsS --max-time 10 "http://127.0.0.1:${RAGFLOW_PORT}/api/v1/system/healthz" | jq -e '.status == "ok"' >/dev/null; do
@@ -192,6 +262,7 @@ PY
 "${COMPOSE[@]}" ps
 echo
 echo "RAGFlow installation completed."
+echo "Release: ${RELEASE_VERSION}"
 echo "URL: http://127.0.0.1:${RAGFLOW_PORT}/"
 echo "Admin email: ${ADMIN_EMAIL}"
 echo "Admin password is stored in ${SECRETS_DIR}/admin.env (mode 0600)."

@@ -1,7 +1,7 @@
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { MessageSquareText, Quote, Send } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   BusinessDocumentCommandType,
   BusinessDocumentReviewCycle,
@@ -21,6 +21,7 @@ const dispositionLabels = {
 interface ProtocolPaneProps {
   reviewCycle: BusinessDocumentReviewCycle | null;
   reviewCycleNumber: number;
+  proposalDecisionsOpen: boolean;
   revision: BusinessDocumentRevision | null;
   selection: BusinessDocumentSelection | null;
   allowedCommands: BusinessDocumentCommandType[];
@@ -36,6 +37,7 @@ interface ProtocolPaneProps {
 export function ProtocolPane({
   reviewCycle,
   reviewCycleNumber,
+  proposalDecisionsOpen,
   revision,
   selection,
   allowedCommands,
@@ -44,12 +46,79 @@ export function ProtocolPane({
   onClearSelection,
 }: ProtocolPaneProps) {
   const [comment, setComment] = useState('');
+  const [expandedQuestionId, setExpandedQuestionId] = useState<string | null>(
+    null,
+  );
+  const [questionToFocus, setQuestionToFocus] = useState<string | null>(null);
+  const questionTriggerRefs = useRef(new Map<string, HTMLButtonElement>());
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const allowed = useMemo(() => new Set(allowedCommands), [allowedCommands]);
   const canComment = allowed.has('ADD_COMMENT');
 
   useEffect(() => {
     if (!revision) onClearSelection();
   }, [onClearSelection, revision]);
+
+  useEffect(() => {
+    const questions = reviewCycle?.questions ?? [];
+    setExpandedQuestionId((currentQuestionId) => {
+      const currentQuestion = questions.find(
+        (question) => question.question_id === currentQuestionId,
+      );
+      if (currentQuestion?.status === 'OPEN') return currentQuestionId;
+      return (
+        questions.find((question) => question.status === 'OPEN')?.question_id ??
+        null
+      );
+    });
+  }, [reviewCycle?.questions]);
+
+  useEffect(() => {
+    if (!questionToFocus || expandedQuestionId !== questionToFocus) return;
+
+    const trigger = questionTriggerRefs.current.get(questionToFocus);
+    if (!trigger) return;
+
+    trigger.focus({ preventScroll: true });
+    const scrollContainer = scrollContainerRef.current;
+    if (scrollContainer) {
+      const triggerRect = trigger.getBoundingClientRect();
+      const containerRect = scrollContainer.getBoundingClientRect();
+      const isOutsideViewport =
+        triggerRect.top < containerRect.top ||
+        triggerRect.bottom > containerRect.bottom;
+      if (isOutsideViewport) {
+        trigger.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
+      }
+    }
+    setQuestionToFocus(null);
+  }, [expandedQuestionId, questionToFocus]);
+
+  const advanceToNextQuestion = useCallback(
+    (answeredQuestionId: string) => {
+      const questions = reviewCycle?.questions ?? [];
+      const answeredIndex = questions.findIndex(
+        (question) => question.question_id === answeredQuestionId,
+      );
+      const orderedCandidates =
+        answeredIndex >= 0
+          ? [
+              ...questions.slice(answeredIndex + 1),
+              ...questions.slice(0, answeredIndex),
+            ]
+          : questions;
+      const nextQuestion = orderedCandidates.find(
+        (question) =>
+          question.question_id !== answeredQuestionId &&
+          question.status === 'OPEN',
+      );
+      const nextQuestionId = nextQuestion?.question_id ?? null;
+
+      setExpandedQuestionId(nextQuestionId);
+      setQuestionToFocus(nextQuestionId);
+    },
+    [reviewCycle?.questions],
+  );
 
   const submitComment = () => {
     const text = comment.trim();
@@ -94,7 +163,11 @@ export function ProtocolPane({
         )}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto scrollbar-auto">
+      <div
+        ref={scrollContainerRef}
+        className="min-h-0 flex-1 overflow-y-auto scrollbar-auto"
+        data-testid="business-document-protocol-scroll"
+      >
         {!hasProtocolEntries && (
           <div
             className="px-5 py-10 text-center"
@@ -116,7 +189,22 @@ export function ProtocolPane({
             question={question}
             canAnswer={allowed.has('ANSWER_QUESTION')}
             pending={pending}
-            onAnswer={(payload) => onCommand('ANSWER_QUESTION', payload)}
+            expanded={expandedQuestionId === question.question_id}
+            triggerRef={(trigger) => {
+              if (trigger) {
+                questionTriggerRefs.current.set(question.question_id, trigger);
+              } else {
+                questionTriggerRefs.current.delete(question.question_id);
+              }
+            }}
+            onExpandedChange={(expanded) =>
+              setExpandedQuestionId(expanded ? question.question_id : null)
+            }
+            onAnswer={(payload) =>
+              onCommand('ANSWER_QUESTION', payload, () =>
+                advanceToNextQuestion(question.question_id),
+              )
+            }
           />
         ))}
 
@@ -124,6 +212,7 @@ export function ProtocolPane({
           <ProposalItem
             key={proposal.proposal_id}
             proposal={proposal}
+            proposalDecisionsOpen={proposalDecisionsOpen}
             canDecide={allowed.has('DECIDE_PROPOSAL')}
             pending={pending}
             onDecide={(payload) => onCommand('DECIDE_PROPOSAL', payload)}

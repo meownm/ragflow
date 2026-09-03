@@ -57,11 +57,13 @@ function unwrap<T>(payload: T | ApiEnvelope<T>): T {
 
 export class BusinessDocumentConflictError extends Error {
   readonly code: string;
+  readonly details: unknown;
 
-  constructor(message: string, code = 'CONFLICT') {
+  constructor(message: string, code = 'CONFLICT', details?: unknown) {
     super(message);
     this.name = 'BusinessDocumentConflictError';
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -75,6 +77,7 @@ function rethrowBusinessDocumentError(error: unknown): never {
       throw new BusinessDocumentConflictError(
         message || 'Команда конфликтует с состоянием документа.',
         payload?.data?.error_code || 'CONFLICT',
+        payload?.data?.details,
       );
     }
     throw new Error(
@@ -294,13 +297,15 @@ export async function saveEvaDocumentChangeDraft(
 async function submitEvaDocumentChangeAction(
   url: string,
   expectedStateVersion: number,
+  forceOverwrite = false,
 ) {
   try {
-    const response = await request.post(
-      url,
-      { expected_state_version: expectedStateVersion },
-      requestConfig(),
-    );
+    const input: {
+      expected_state_version: number;
+      force_overwrite?: boolean;
+    } = { expected_state_version: expectedStateVersion };
+    if (forceOverwrite) input.force_overwrite = true;
+    const response = await request.post(url, input, requestConfig());
     return unwrap<EvaDocumentChange>(response.data);
   } catch (error) {
     return rethrowBusinessDocumentError(error);
@@ -319,17 +324,21 @@ export const approveEvaDocumentChange = (
 export const prepareEvaDocumentChange = (
   changeId: string,
   expectedStateVersion: number,
+  forceOverwrite = false,
 ) =>
   submitEvaDocumentChangeAction(
     api.evaBusinessDocumentChangePrepare(changeId),
     expectedStateVersion,
+    forceOverwrite,
   );
 
 export const publishEvaDocumentChange = (
   changeId: string,
   expectedStateVersion: number,
+  forceOverwrite = false,
 ) =>
   submitEvaDocumentChangeAction(
     api.evaBusinessDocumentChangePublish(changeId),
     expectedStateVersion,
+    forceOverwrite,
   );

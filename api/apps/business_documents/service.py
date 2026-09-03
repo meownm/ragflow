@@ -419,6 +419,7 @@ class BusinessDocumentService:
             {
                 "connector_id": binding["connector_id"],
                 "document_id": binding["document_id"],
+                "document_name": document.title,
                 "change_summary": change_summary[:50_000],
                 "draft_markdown": revision.body_markdown,
             },

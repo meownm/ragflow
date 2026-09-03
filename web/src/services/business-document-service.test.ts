@@ -1,6 +1,7 @@
 import {
   createEvaDocumentChange,
   listBusinessDocuments,
+  prepareEvaDocumentChange,
   publishEvaDocumentChange,
   saveEvaDocumentChangeDraft,
   searchEvaDocumentSources,
@@ -80,6 +81,7 @@ test('reads the domain error code from the backend error envelope', async () => 
     name: 'BusinessDocumentConflictError',
     code: 'OPEN_REVIEW_QUESTIONS',
     message: 'Есть открытые вопросы',
+    details: { question_ids: ['question-1'] },
   });
   expect(mockedPost).toHaveBeenCalledWith(
     api.businessDocumentCommands('doc-1'),
@@ -115,6 +117,7 @@ test('uses explicit EVA source, draft and publish endpoints', async () => {
   mockedGet.mockResolvedValueOnce({ data: { code: 0, data: sourceResult } });
   mockedPost
     .mockResolvedValueOnce({ data: { code: 0, data: change } })
+    .mockResolvedValueOnce({ data: { code: 0, data: change } })
     .mockResolvedValueOnce({ data: { code: 0, data: change } });
   mockedPut.mockResolvedValueOnce({ data: { code: 0, data: change } });
 
@@ -130,6 +133,7 @@ test('uses explicit EVA source, draft and publish endpoints', async () => {
     expected_state_version: 2,
     draft_markdown: '# Draft',
   });
+  await prepareEvaDocumentChange('change-1', 4, true);
   await publishEvaDocumentChange('change-1', 5);
 
   expect(mockedGet).toHaveBeenCalledWith(api.evaBusinessDocumentSources, {
@@ -153,6 +157,12 @@ test('uses explicit EVA source, draft and publish endpoints', async () => {
   );
   expect(mockedPost).toHaveBeenNthCalledWith(
     2,
+    api.evaBusinessDocumentChangePrepare('change-1'),
+    { expected_state_version: 4, force_overwrite: true },
+    { skipErrorNotification: true },
+  );
+  expect(mockedPost).toHaveBeenNthCalledWith(
+    3,
     api.evaBusinessDocumentChangePublish('change-1'),
     { expected_state_version: 5 },
     { skipErrorNotification: true },

@@ -1891,3 +1891,42 @@ test('shows a section diff and saves EVA changes only in the local draft', async
   expect(mockedPublishEva).not.toHaveBeenCalled();
   expect(mockedApproveEva).not.toHaveBeenCalled();
 });
+
+test('asks for confirmation and force-overwrites a changed EVA document', async () => {
+  const approvedChange: EvaDocumentChange = {
+    ...evaChange,
+    state_version: 4,
+    workflow_state: 'APPROVED',
+    allowed_actions: ['SAVE_DRAFT', 'PREPARE_EVA_DRAFT'],
+  };
+  mockedFetchEva.mockResolvedValue(approvedChange);
+  mockedPrepareEva
+    .mockRejectedValueOnce(
+      new BusinessDocumentConflictError(
+        'The published EVA document changed after this change request was created',
+        'EVA_SOURCE_VERSION_CONFLICT',
+        {
+          confirmation_required: true,
+          confirmation_action: 'OVERWRITE_EVA_DOCUMENT',
+        },
+      ),
+    )
+    .mockResolvedValueOnce({
+      ...approvedChange,
+      state_version: 6,
+      workflow_state: 'EVA_DRAFT_READY',
+      allowed_actions: ['PUBLISH_EVA'],
+    });
+
+  renderPage('/business-documents/eva/change-1');
+  fireEvent.click(await screen.findByTestId('prepare-eva-draft'));
+
+  expect(await screen.findByText('Перезаписать документ EVA?')).toBeVisible();
+  expect(mockedPrepareEva).toHaveBeenNthCalledWith(1, 'change-1', 4, false);
+
+  fireEvent.click(screen.getByTestId('confirm-eva-overwrite'));
+
+  await waitFor(() =>
+    expect(mockedPrepareEva).toHaveBeenNthCalledWith(2, 'change-1', 4, true),
+  );
+});

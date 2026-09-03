@@ -63,9 +63,11 @@ class FakeEvaClient:
         assert document_id == self.document["id"]
         return dict(self.document)
 
-    def update_document_draft(self, document_id, html):
+    def update_document_draft(self, document_id, html, name=None):
         assert document_id == self.document["id"]
         self.document["draft_html"] = html
+        if name is not None:
+            self.document["name"] = name
         return True
 
     def publish_document(self, document_id):
@@ -82,10 +84,12 @@ class FakeEvaMutationClient:
         self.update_calls = 0
         self.publish_calls = 0
 
-    def update_document_draft(self, document_id, html):
+    def update_document_draft(self, document_id, html, name=None):
         assert document_id == self.document["id"]
         self.update_calls += 1
         self.document["draft_html"] = html
+        if name is not None:
+            self.document["name"] = name
         return True
 
     def publish_document(self, document_id):
@@ -485,6 +489,7 @@ def test_change_can_start_from_an_agreed_business_document_revision(database):
             {
                 "connector_id": CONNECTOR.id,
                 "document_id": client.document["id"],
+                "document_name": "Новые бизнес-требования",
                 "change_summary": "Синхронизация согласованной ревизии.",
                 "draft_markdown": "# Бизнес-требования\n\n## Цель\n\nТекст из конструктора.",
             },
@@ -494,6 +499,126 @@ def test_change_can_start_from_an_agreed_business_document_revision(database):
     assert created["diff"]["changed"] is True
     assert "APPROVE" in created["allowed_actions"]
     assert created["draft_markdown"].endswith("Текст из конструктора.")
+    assert created["source"]["document_name"] == "Новые бизнес-требования"
+
+
+def test_agreed_business_document_can_initialize_and_publish_empty_eva_page(database):
+    client = FakeEvaClient()
+    client.document["html"] = ""
+    client.document["draft_html"] = ""
+    client.document["version"] = "1||2026-08-26T09:00:00+03:00"
+    CONNECTOR.mutation_client = client
+
+    with patch.object(EvaDocumentChangeService, "_connector", return_value=(CONNECTOR, client)):
+        created = EvaDocumentChangeService.create_change(
+            TENANT,
+            AUTHOR,
+            {
+                "connector_id": CONNECTOR.id,
+                "document_id": client.document["id"],
+                "document_name": "Первоначальные бизнес-требования",
+                "change_summary": "Первоначальная публикация согласованной ревизии.",
+                "draft_markdown": ("# Бизнес-требования\n\n## Цель\n\nПервоначальный текст.\n\n```plantuml\n@startuml\nПользователь -> Система: Войти\n@enduml\n```"),
+            },
+        )
+
+    assert created["base_markdown"] == ""
+    assert created["diff"]["changed"] is True
+    assert "APPROVE" in created["allowed_actions"]
+
+    approved = EvaDocumentChangeService.approve(
+        TENANT,
+        AUTHOR,
+        created["change_id"],
+        {"expected_state_version": created["state_version"]},
+    )
+    with patch.object(EvaDocumentChangeService, "_connector", return_value=(CONNECTOR, client)):
+        prepared = EvaDocumentChangeService.prepare_eva_draft(
+            TENANT,
+            AUTHOR,
+            created["change_id"],
+            {"expected_state_version": approved["state_version"]},
+        )
+        published = EvaDocumentChangeService.publish(
+            TENANT,
+            AUTHOR,
+            created["change_id"],
+            {"expected_state_version": prepared["state_version"]},
+        )
+
+    assert published["workflow_state"] == "PUBLISHED"
+    assert client.document["name"] == "Первоначальные бизнес-требования"
+    assert "Первоначальный текст" in client.document["html"]
+
+
+def test_empty_eva_initial_publish_recovers_after_prior_verification_failure(database):
+    client = FakeEvaClient()
+    client.document["html"] = ""
+    client.document["draft_html"] = ""
+    client.document["version"] = "1||2026-08-26T09:00:00+03:00"
+    CONNECTOR.mutation_client = client
+
+    with patch.object(EvaDocumentChangeService, "_connector", return_value=(CONNECTOR, client)):
+        created = EvaDocumentChangeService.create_change(
+            TENANT,
+            AUTHOR,
+            {
+                "connector_id": CONNECTOR.id,
+                "document_id": client.document["id"],
+                "change_summary": "Повтор первоначальной публикации.",
+                "draft_markdown": "# Документ\n\n```plantuml\n@startuml\nA -> B\n@enduml\n```",
+            },
+        )
+    approved = EvaDocumentChangeService.approve(
+        TENANT,
+        AUTHOR,
+        created["change_id"],
+        {"expected_state_version": created["state_version"]},
+    )
+
+    stored = BusinessDocumentEvaChange.get_by_id(created["change_id"])
+    client.document["draft_html"] = stored.draft_html
+    client.document["html"] = stored.draft_html
+    client.document["version"] = "2|CmfVersion:v2|2026-08-26T10:00:00+03:00"
+
+    with patch.object(EvaDocumentChangeService, "_connector", return_value=(CONNECTOR, client)):
+        prepared = EvaDocumentChangeService.prepare_eva_draft(
+            TENANT,
+            AUTHOR,
+            created["change_id"],
+            {"expected_state_version": approved["state_version"]},
+        )
+        published = EvaDocumentChangeService.publish(
+            TENANT,
+            AUTHOR,
+            created["change_id"],
+            {"expected_state_version": prepared["state_version"]},
+        )
+
+    assert prepared["workflow_state"] == "EVA_DRAFT_READY"
+    assert published["workflow_state"] == "PUBLISHED"
+    assert client.publish_calls == 0
+
+
+def test_empty_eva_page_still_requires_an_initial_draft(database):
+    client = FakeEvaClient()
+    client.document["html"] = ""
+
+    with (
+        patch.object(EvaDocumentChangeService, "_connector", return_value=(CONNECTOR, client)),
+        pytest.raises(BusinessDocumentError) as exc_info,
+    ):
+        EvaDocumentChangeService.create_change(
+            TENANT,
+            AUTHOR,
+            {
+                "connector_id": CONNECTOR.id,
+                "document_id": client.document["id"],
+                "change_summary": "Изменение без исходного текста.",
+            },
+        )
+
+    assert exc_info.value.code == "EVA_DOCUMENT_EMPTY"
 
 
 def test_prepare_rejects_changed_published_source_and_keeps_it_untouched(database):
@@ -528,10 +653,187 @@ def test_prepare_rejects_changed_published_source_and_keeps_it_untouched(databas
         )
 
     assert exc_info.value.code == "EVA_SOURCE_VERSION_CONFLICT"
+    assert exc_info.value.details["confirmation_required"] is True
+    assert exc_info.value.details["confirmation_action"] == "OVERWRITE_EVA_DOCUMENT"
     restored = EvaDocumentChangeService.get_change(TENANT, AUTHOR, created["change_id"])
     assert restored["workflow_state"] == "APPROVED"
     assert restored["last_error"]["code"] == "EVA_SOURCE_VERSION_CONFLICT"
     assert client.document["draft_html"] == ""
+
+
+def test_prepare_force_overwrites_changed_published_source(database):
+    client = FakeEvaClient()
+    created = _create(client)
+    draft = EvaDocumentChangeService.save_draft(
+        TENANT,
+        AUTHOR,
+        created["change_id"],
+        {
+            "expected_state_version": created["state_version"],
+            "draft_markdown": "# Бизнес-требования\n\n## Цель\n\nПодтверждённая перезапись.",
+        },
+    )
+    approved = EvaDocumentChangeService.approve(
+        TENANT,
+        AUTHOR,
+        created["change_id"],
+        {"expected_state_version": draft["state_version"]},
+    )
+    client.document["html"] = "<h1>Чужое изменение</h1>"
+
+    with patch.object(EvaDocumentChangeService, "_connector", return_value=(CONNECTOR, client)):
+        prepared = EvaDocumentChangeService.prepare_eva_draft(
+            TENANT,
+            AUTHOR,
+            created["change_id"],
+            {
+                "expected_state_version": approved["state_version"],
+                "force_overwrite": True,
+            },
+        )
+
+    assert prepared["workflow_state"] == "EVA_DRAFT_READY"
+    assert "Подтверждённая перезапись" in client.document["draft_html"]
+
+
+def test_force_overwrite_must_be_boolean(database):
+    client = FakeEvaClient()
+    created = _create(client)
+    draft = EvaDocumentChangeService.save_draft(
+        TENANT,
+        AUTHOR,
+        created["change_id"],
+        {
+            "expected_state_version": created["state_version"],
+            "draft_markdown": "# Бизнес-требования\n\nИзменение.",
+        },
+    )
+    approved = EvaDocumentChangeService.approve(
+        TENANT,
+        AUTHOR,
+        created["change_id"],
+        {"expected_state_version": draft["state_version"]},
+    )
+
+    with pytest.raises(BusinessDocumentError) as exc_info:
+        EvaDocumentChangeService.prepare_eva_draft(
+            TENANT,
+            AUTHOR,
+            created["change_id"],
+            {
+                "expected_state_version": approved["state_version"],
+                "force_overwrite": "true",
+            },
+        )
+
+    assert exc_info.value.code == "INVALID_EVA_CHANGE"
+
+
+def test_publish_changed_source_requires_confirmation_and_force_overwrites(database):
+    client = FakeEvaClient()
+    created = _create(client)
+    draft = EvaDocumentChangeService.save_draft(
+        TENANT,
+        AUTHOR,
+        created["change_id"],
+        {
+            "expected_state_version": created["state_version"],
+            "draft_markdown": "# Бизнес-требования\n\n## Цель\n\nПодтверждённая публикация.",
+        },
+    )
+    approved = EvaDocumentChangeService.approve(
+        TENANT,
+        AUTHOR,
+        created["change_id"],
+        {"expected_state_version": draft["state_version"]},
+    )
+    with patch.object(EvaDocumentChangeService, "_connector", return_value=(CONNECTOR, client)):
+        prepared = EvaDocumentChangeService.prepare_eva_draft(
+            TENANT,
+            AUTHOR,
+            created["change_id"],
+            {"expected_state_version": approved["state_version"]},
+        )
+
+    client.document["html"] = "<h1>Чужое изменение после подготовки</h1>"
+    client.document["version"] = "2|CmfVersion:external|2026-08-26T10:00:00+03:00"
+
+    with (
+        patch.object(EvaDocumentChangeService, "_connector", return_value=(CONNECTOR, client)),
+        pytest.raises(BusinessDocumentError) as exc_info,
+    ):
+        EvaDocumentChangeService.publish(
+            TENANT,
+            AUTHOR,
+            created["change_id"],
+            {"expected_state_version": prepared["state_version"]},
+        )
+
+    assert exc_info.value.code == "EVA_SOURCE_VERSION_CONFLICT"
+    assert exc_info.value.details["confirmation_required"] is True
+    restored = EvaDocumentChangeService.get_change(TENANT, AUTHOR, created["change_id"])
+    assert restored["workflow_state"] == "EVA_DRAFT_READY"
+
+    with patch.object(EvaDocumentChangeService, "_connector", return_value=(CONNECTOR, client)):
+        published = EvaDocumentChangeService.publish(
+            TENANT,
+            AUTHOR,
+            created["change_id"],
+            {
+                "expected_state_version": restored["state_version"],
+                "force_overwrite": True,
+            },
+        )
+
+    assert published["workflow_state"] == "PUBLISHED"
+    assert "Подтверждённая публикация" in client.document["html"]
+    assert client.document["name"] == created["source"]["document_name"]
+
+
+def test_publish_requires_confirmation_when_only_eva_name_changed(database):
+    client = FakeEvaClient()
+    created = _create(client)
+    draft = EvaDocumentChangeService.save_draft(
+        TENANT,
+        AUTHOR,
+        created["change_id"],
+        {
+            "expected_state_version": created["state_version"],
+            "draft_markdown": "# Бизнес-требования\n\n## Цель\n\nУже опубликованный текст.",
+        },
+    )
+    approved = EvaDocumentChangeService.approve(
+        TENANT,
+        AUTHOR,
+        created["change_id"],
+        {"expected_state_version": draft["state_version"]},
+    )
+    with patch.object(EvaDocumentChangeService, "_connector", return_value=(CONNECTOR, client)):
+        prepared = EvaDocumentChangeService.prepare_eva_draft(
+            TENANT,
+            AUTHOR,
+            created["change_id"],
+            {"expected_state_version": approved["state_version"]},
+        )
+
+    client.document["html"] = client.document["draft_html"]
+    client.document["name"] = "Чужое название"
+    client.document["version"] = "2|CmfVersion:external|2026-08-26T10:00:00+03:00"
+
+    with (
+        patch.object(EvaDocumentChangeService, "_connector", return_value=(CONNECTOR, client)),
+        pytest.raises(BusinessDocumentError) as exc_info,
+    ):
+        EvaDocumentChangeService.publish(
+            TENANT,
+            AUTHOR,
+            created["change_id"],
+            {"expected_state_version": prepared["state_version"]},
+        )
+
+    assert exc_info.value.code == "EVA_SOURCE_VERSION_CONFLICT"
+    assert exc_info.value.details["actual_name"] == "Чужое название"
+    assert client.publish_calls == 0
 
 
 def test_markdown_html_is_sanitized_before_eva_draft(database):

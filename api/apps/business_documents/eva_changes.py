@@ -401,9 +401,14 @@ class EvaDocumentChangeService:
             raise cls._map_external_error(error) from error
         base_html = str(source.get("html") or "")
         base_markdown = _html_to_markdown(base_html)
-        if not base_markdown:
-            raise ValidationError("EVA_DOCUMENT_EMPTY", "The selected EVA document has no published content")
         requested_draft = raw.get("draft_markdown")
+        if not base_markdown and requested_draft is None:
+            raise ValidationError("EVA_DOCUMENT_EMPTY", "The selected EVA document has no published content")
+        document_name = (
+            cls._validate_text(raw.get("document_name"), "document_name", maximum=255)
+            if raw.get("document_name") is not None
+            else cls._validate_text(str(source.get("name") or ""), "document_name", maximum=255)
+        )
         draft_markdown = base_markdown if requested_draft is None else cls._validate_text(requested_draft, "draft_markdown", maximum=_MAX_DRAFT_SIZE)
         draft_html = _markdown_to_html(draft_markdown)
         change_id = get_uuid()
@@ -416,7 +421,7 @@ class EvaDocumentChangeService:
                 eva_project_id=source["project_id"],
                 eva_document_id=source["id"],
                 eva_document_code=source.get("code") or None,
-                eva_document_name=source["name"],
+                eva_document_name=document_name,
                 eva_web_url=source.get("web_url") or None,
                 change_summary=change_summary,
                 base_version=source["version"],
@@ -519,6 +524,7 @@ class EvaDocumentChangeService:
     @classmethod
     def prepare_eva_draft(cls, tenant_id: str, actor_id: str, change_id: str, raw: object) -> dict[str, Any]:
         expected = cls._expected_version(raw)
+        force_overwrite = cls._force_overwrite(raw)
         change = cls._reserve(tenant_id, actor_id, change_id, expected, EvaChangeState.APPROVED, EvaChangeState.PREPARING_EVA_DRAFT)
         reservation_version = change.state_version
         reader: EvaWikiConnector | None = None
@@ -527,19 +533,27 @@ class EvaDocumentChangeService:
         try:
             connector, reader = cls._connector(change.connector_id, actor_id)
             remote = reader.get_document_for_edit(change.eva_document_id)
-            cls._ensure_source_unchanged(change, remote)
+            if not force_overwrite:
+                try:
+                    cls._ensure_source_unchanged(change, remote)
+                except ConflictError:
+                    if cls._remote_published_hash(remote) != cls._serialized_draft_hash(change):
+                        raise
             user_token_operation = True
             mutation_client, credential_version = cls._mutation_client(connector, actor_id)
-            mutation_client.update_document_draft(change.eva_document_id, change.draft_html)
+            mutation_client.update_document_draft(change.eva_document_id, change.draft_html, change.eva_document_name)
             user_token_operation = False
             verified = reader.get_document_for_edit(change.eva_document_id)
-            if _content_hash(_html_to_markdown(str(verified.get("draft_html") or ""))) != change.draft_content_hash:
-                raise ConflictError("EVA_DRAFT_VERIFICATION_FAILED", "EVA returned a different draft after saving")
+            if str(verified.get("name") or "").strip() != change.eva_document_name:
+                raise ConflictError(
+                    "EVA_NAME_VERIFICATION_FAILED",
+                    "EVA returned a different document name after saving",
+                    {"expected": change.eva_document_name, "actual": str(verified.get("name") or "").strip()},
+                )
         except Exception as error:
-            if reader is None or not cls._remote_draft_matches(reader, change):
-                mapped = cls._map_user_token_error(error) if user_token_operation else cls._map_external_error(error)
-                cls._restore_after_external_failure(change.id, reservation_version, EvaChangeState.PREPARING_EVA_DRAFT, EvaChangeState.APPROVED, mapped)
-                raise mapped from error
+            mapped = cls._map_user_token_error(error) if user_token_operation else cls._map_external_error(error)
+            cls._restore_after_external_failure(change.id, reservation_version, EvaChangeState.PREPARING_EVA_DRAFT, EvaChangeState.APPROVED, mapped)
+            raise mapped from error
         with BusinessDocumentEvaChange._meta.database.atomic():
             change = cls._get_change(tenant_id, actor_id, change_id)
             if change.workflow_state != EvaChangeState.PREPARING_EVA_DRAFT.value or change.state_version != reservation_version:
@@ -555,6 +569,7 @@ class EvaDocumentChangeService:
     @classmethod
     def publish(cls, tenant_id: str, actor_id: str, change_id: str, raw: object) -> dict[str, Any]:
         expected = cls._expected_version(raw)
+        force_overwrite = cls._force_overwrite(raw)
         change = cls._reserve(tenant_id, actor_id, change_id, expected, EvaChangeState.EVA_DRAFT_READY, EvaChangeState.PUBLISHING)
         reservation_version = change.state_version
         reader: EvaWikiConnector | None = None
@@ -564,28 +579,44 @@ class EvaDocumentChangeService:
         try:
             connector, reader = cls._connector(change.connector_id, actor_id)
             remote = reader.get_document_for_edit(change.eva_document_id)
-            if cls._remote_published_hash(remote) == change.draft_content_hash:
+            serialized_draft_hash = cls._serialized_draft_hash(change)
+            published_hash = cls._remote_published_hash(remote)
+            name_matches = cls._remote_name_matches(remote, change)
+            if published_hash == serialized_draft_hash and name_matches:
                 published = remote
             else:
-                cls._ensure_source_unchanged(change, remote)
-                remote_draft_hash = _content_hash(_html_to_markdown(str(remote.get("draft_html") or "")))
-                if remote_draft_hash != change.draft_content_hash:
-                    raise ConflictError(
-                        "EVA_DRAFT_CONFLICT",
-                        "The EVA draft changed after it was prepared",
-                        {"expected": change.draft_content_hash, "actual": remote_draft_hash},
-                    )
-                user_token_operation = True
-                mutation_client, credential_version = cls._mutation_client(connector, actor_id)
+                if force_overwrite:
+                    user_token_operation = True
+                    mutation_client, credential_version = cls._mutation_client(connector, actor_id)
+                    mutation_client.update_document_draft(change.eva_document_id, change.draft_html, change.eva_document_name)
+                else:
+                    if published_hash == serialized_draft_hash and not name_matches:
+                        cls._raise_source_conflict(change, remote, published_hash)
+                    cls._ensure_source_unchanged(change, remote)
+                    remote_draft_hash = _content_hash(_html_to_markdown(str(remote.get("draft_html") or "")))
+                    if remote_draft_hash != serialized_draft_hash:
+                        raise ConflictError(
+                            "EVA_DRAFT_CONFLICT",
+                            "The EVA draft changed after it was prepared",
+                            {"expected": serialized_draft_hash, "actual": remote_draft_hash},
+                        )
+                    user_token_operation = True
+                    mutation_client, credential_version = cls._mutation_client(connector, actor_id)
                 mutation_client.publish_document(change.eva_document_id)
                 user_token_operation = False
                 published = reader.get_document_for_edit(change.eva_document_id)
                 published_hash = cls._remote_published_hash(published)
-                if published_hash != change.draft_content_hash:
+                if published_hash != serialized_draft_hash:
                     raise ConflictError(
                         "EVA_PUBLISH_VERIFICATION_FAILED",
                         "EVA published content does not match the approved draft",
-                        {"expected": change.draft_content_hash, "actual": published_hash},
+                        {"expected": serialized_draft_hash, "actual": published_hash},
+                    )
+                if str(published.get("name") or "").strip() != change.eva_document_name:
+                    raise ConflictError(
+                        "EVA_NAME_VERIFICATION_FAILED",
+                        "EVA returned a different document name after publishing",
+                        {"expected": change.eva_document_name, "actual": str(published.get("name") or "").strip()},
                     )
         except Exception as error:
             recovered = cls._published_remote_if_matching(reader, change)
@@ -663,25 +694,24 @@ class EvaDocumentChangeService:
     def _ensure_source_unchanged(cls, change: BusinessDocumentEvaChange, remote: dict[str, Any]) -> None:
         actual_hash = cls._remote_published_hash(remote)
         if actual_hash != change.base_content_hash:
-            raise ConflictError(
-                "EVA_SOURCE_VERSION_CONFLICT",
-                "The published EVA document changed after this change request was created",
-                {
-                    "expected_version": change.base_version,
-                    "actual_version": remote.get("version"),
-                    "expected_hash": change.base_content_hash,
-                    "actual_hash": actual_hash,
-                },
-            )
+            cls._raise_source_conflict(change, remote, actual_hash)
 
-    @classmethod
-    def _remote_draft_matches(cls, client: EvaWikiConnector, change: BusinessDocumentEvaChange) -> bool:
-        try:
-            remote = client.get_document_for_edit(change.eva_document_id)
-            cls._ensure_source_unchanged(change, remote)
-            return _content_hash(_html_to_markdown(str(remote.get("draft_html") or ""))) == change.draft_content_hash
-        except Exception:
-            return False
+    @staticmethod
+    def _raise_source_conflict(change: BusinessDocumentEvaChange, remote: dict[str, Any], actual_hash: str) -> None:
+        raise ConflictError(
+            "EVA_SOURCE_VERSION_CONFLICT",
+            "The published EVA document changed after this change request was created",
+            {
+                "expected_version": change.base_version,
+                "actual_version": remote.get("version"),
+                "expected_hash": change.base_content_hash,
+                "actual_hash": actual_hash,
+                "expected_name": change.eva_document_name,
+                "actual_name": str(remote.get("name") or "").strip(),
+                "confirmation_required": True,
+                "confirmation_action": "OVERWRITE_EVA_DOCUMENT",
+            },
+        )
 
     @classmethod
     def _published_remote_if_matching(cls, client: EvaWikiConnector | None, change: BusinessDocumentEvaChange) -> dict[str, Any] | None:
@@ -691,7 +721,17 @@ class EvaDocumentChangeService:
             remote = client.get_document_for_edit(change.eva_document_id)
         except Exception:
             return None
-        return remote if cls._remote_published_hash(remote) == change.draft_content_hash else None
+        return remote if cls._remote_published_hash(remote) == cls._serialized_draft_hash(change) and cls._remote_name_matches(remote, change) else None
+
+    @staticmethod
+    def _remote_name_matches(remote: dict[str, Any], change: BusinessDocumentEvaChange) -> bool:
+        return str(remote.get("name") or "").strip() == change.eva_document_name
+
+    @staticmethod
+    def _serialized_draft_hash(change: BusinessDocumentEvaChange) -> str:
+        """Hash the representation that is actually sent to and returned by EVA."""
+
+        return _content_hash(_html_to_markdown(change.draft_html))
 
     @staticmethod
     def _remote_published_hash(remote: dict[str, Any]) -> str:
@@ -702,6 +742,15 @@ class EvaDocumentChangeService:
         if not isinstance(raw, dict) or isinstance(raw.get("expected_state_version"), bool) or not isinstance(raw.get("expected_state_version"), int):
             raise ValidationError("INVALID_EVA_CHANGE", "expected_state_version must be an integer")
         return raw["expected_state_version"]
+
+    @staticmethod
+    def _force_overwrite(raw: object) -> bool:
+        if not isinstance(raw, dict):
+            raise ValidationError("INVALID_EVA_CHANGE", "Request body must be an object")
+        value = raw.get("force_overwrite", False)
+        if not isinstance(value, bool):
+            raise ValidationError("INVALID_EVA_CHANGE", "force_overwrite must be a boolean", {"field": "force_overwrite"})
+        return value
 
     @staticmethod
     def _require_version(change: BusinessDocumentEvaChange, expected: int) -> None:

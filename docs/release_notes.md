@@ -9,6 +9,17 @@ sidebar_custom_props: {
 
 Key features, improvements and bug fixes in the latest releases.
 
+## v1.7.0
+
+Released on September 4, 2026.
+
+### Improvements and bug fixes
+
+- Allows an approved business-document revision to initialize an empty EVA page instead of rejecting it for missing published content.
+- Saves the business-document title as the EVA page name together with the draft.
+- Removes the unreliable post-save HTML content comparison while retaining publication verification.
+- Requires explicit confirmation before overwriting an EVA page changed after the request was created; confirmed writes replace both its draft and name.
+
 ## v1.6.0
 
 Released on September 3, 2026.

@@ -80,6 +80,8 @@ export function EvaChangeWorkbench({ changeId }: { changeId: string }) {
   const [loadedDraftKey, setLoadedDraftKey] = useState<string | null>(null);
   const [view, setView] = useState<'draft' | 'diff'>('draft');
   const [hasConflict, setHasConflict] = useState(false);
+  const [overwriteAction, setOverwriteAction] =
+    useState<EvaDocumentChangeAction | null>(null);
   const changeQuery = useQuery({
     queryKey: ['eva-document-change', changeId],
     queryFn: () => fetchEvaDocumentChange(changeId),
@@ -120,22 +122,46 @@ export function EvaChangeWorkbench({ changeId }: { changeId: string }) {
     },
   });
   const actionMutation = useMutation({
-    mutationFn: (action: EvaDocumentChangeAction) => {
+    mutationFn: ({
+      action,
+      forceOverwrite = false,
+    }: {
+      action: EvaDocumentChangeAction;
+      forceOverwrite?: boolean;
+    }) => {
       if (!change) throw new Error('Доработка не загружена');
       if (action === 'APPROVE')
         return approveEvaDocumentChange(changeId, change.state_version);
       if (action === 'PREPARE_EVA_DRAFT')
-        return prepareEvaDocumentChange(changeId, change.state_version);
+        return prepareEvaDocumentChange(
+          changeId,
+          change.state_version,
+          forceOverwrite,
+        );
       if (action === 'PUBLISH_EVA')
-        return publishEvaDocumentChange(changeId, change.state_version);
+        return publishEvaDocumentChange(
+          changeId,
+          change.state_version,
+          forceOverwrite,
+        );
       throw new Error('Неизвестное действие');
     },
     onSuccess: (updated) => {
       setHasConflict(false);
+      setOverwriteAction(null);
       updateCachedChange(queryClient, changeId, updated);
     },
-    onError: (error) => {
+    onError: async (error, variables) => {
       if (error instanceof BusinessDocumentConflictError) {
+        if (
+          error.code === 'EVA_SOURCE_VERSION_CONFLICT' &&
+          ['PREPARE_EVA_DRAFT', 'PUBLISH_EVA'].includes(variables.action)
+        ) {
+          setHasConflict(false);
+          await changeQuery.refetch();
+          setOverwriteAction(variables.action);
+          return;
+        }
         setHasConflict(true);
         void changeQuery.refetch();
       }
@@ -257,7 +283,7 @@ export function EvaChangeWorkbench({ changeId }: { changeId: string }) {
             </Button>
           </div>
         )}
-        {mutationError && !hasConflict && (
+        {mutationError && !hasConflict && !overwriteAction && (
           <div
             className="flex items-center gap-3 border-b border-state-error/40 bg-state-error/5 px-5 py-2.5 text-sm text-state-error"
             role="alert"
@@ -551,7 +577,9 @@ export function EvaChangeWorkbench({ changeId }: { changeId: string }) {
                   <AlertDialogFooter>
                     <AlertDialogCancel>Отмена</AlertDialogCancel>
                     <AlertDialogAction
-                      onClick={() => actionMutation.mutate('APPROVE')}
+                      onClick={() =>
+                        actionMutation.mutate({ action: 'APPROVE' })
+                      }
                     >
                       Согласовать
                     </AlertDialogAction>
@@ -565,7 +593,9 @@ export function EvaChangeWorkbench({ changeId }: { changeId: string }) {
                 variant="accent"
                 loading={actionMutation.isPending}
                 disabled={isPending}
-                onClick={() => actionMutation.mutate('PREPARE_EVA_DRAFT')}
+                onClick={() =>
+                  actionMutation.mutate({ action: 'PREPARE_EVA_DRAFT' })
+                }
                 data-testid="prepare-eva-draft"
               >
                 <Send className="size-4" />
@@ -602,7 +632,9 @@ export function EvaChangeWorkbench({ changeId }: { changeId: string }) {
                   <AlertDialogFooter>
                     <AlertDialogCancel>Отмена</AlertDialogCancel>
                     <AlertDialogAction
-                      onClick={() => actionMutation.mutate('PUBLISH_EVA')}
+                      onClick={() =>
+                        actionMutation.mutate({ action: 'PUBLISH_EVA' })
+                      }
                     >
                       Опубликовать
                     </AlertDialogAction>
@@ -637,6 +669,39 @@ export function EvaChangeWorkbench({ changeId }: { changeId: string }) {
           </section>
         </aside>
       </div>
+      <AlertDialog
+        open={overwriteAction !== null}
+        onOpenChange={(open) => {
+          if (!open) setOverwriteAction(null);
+        }}
+      >
+        <AlertDialogContent data-testid="eva-overwrite-confirmation">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Перезаписать документ EVA?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Опубликованный документ EVA изменился после создания этой заявки.
+              Подтверждение заменит внешние изменения согласованной версией из
+              RAGFlow.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setOverwriteAction(null)}>
+              Отмена
+            </AlertDialogCancel>
+            <AlertDialogAction
+              data-testid="confirm-eva-overwrite"
+              onClick={() => {
+                const action = overwriteAction;
+                setOverwriteAction(null);
+                if (action)
+                  actionMutation.mutate({ action, forceOverwrite: true });
+              }}
+            >
+              Перезаписать EVA
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </main>
   );
 }

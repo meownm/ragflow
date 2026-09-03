@@ -1011,14 +1011,20 @@ class EvaWikiMutationClient:
     def load_credentials(self, credentials: dict[str, Any]) -> None:
         self.__transport.load_credentials(credentials)
 
-    def update_document_draft(self, document_id: str, html: str) -> Any:
-        """Replace only EVA's unpublished draft for a page."""
+    def update_document_draft(self, document_id: str, html: str, name: str | None = None) -> Any:
+        """Replace EVA's unpublished draft and, when supplied, its page name."""
 
         self.__transport._validate_config()
         normalized_id = str(document_id or "").strip()
         if not normalized_id:
             raise ConnectorValidationError("EVA Wiki document_id is required")
-        return self.__transport._rpc("CmfDocument.update", {}, args=[normalized_id], call_kwargs={"text_draft": str(html)})
+        call_kwargs = {"text_draft": str(html)}
+        if name is not None:
+            normalized_name = str(name).strip()
+            if not normalized_name:
+                raise ConnectorValidationError("EVA Wiki document name is required")
+            call_kwargs["name"] = normalized_name
+        return self.__transport._rpc("CmfDocument.update", {}, args=[normalized_id], call_kwargs=call_kwargs)
 
     def publish_document(self, document_id: str) -> Any:
         """Publish the current EVA draft for a page."""

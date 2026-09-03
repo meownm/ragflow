@@ -183,12 +183,12 @@ def test_editable_document_draft_and_publish_use_explicit_rpc_args():
     transport = connector._EvaWikiMutationClient__transport
     transport._session.post = MagicMock(return_value=_response({"result": True}))
 
-    connector.update_document_draft("CmfDocument:doc-1", "<p>Draft</p>")
+    connector.update_document_draft("CmfDocument:doc-1", "<p>Draft</p>", "Business requirements")
     update_call = transport._session.post.call_args
     update_payload = update_call.kwargs["json"]
     assert update_payload["method"] == "CmfDocument.update"
     assert update_payload["args"] == ["CmfDocument:doc-1"]
-    assert update_payload["kwargs"] == {"text_draft": "<p>Draft</p>"}
+    assert update_payload["kwargs"] == {"text_draft": "<p>Draft</p>", "name": "Business requirements"}
     assert transport._session.headers["X-Eva-Token"] == "personal-token"
 
     connector.publish_document("CmfDocument:doc-1")

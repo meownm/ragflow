@@ -1067,6 +1067,7 @@ def test_verified_eva_binding_supports_governed_pull_and_outbound_change(databas
     assert outbound["change_id"] == "eva-change-1"
     assert captured_change["connector_id"] == "connector-1"
     assert captured_change["document_id"] == "eva-document-1"
+    assert captured_change["document_name"] == document["title"]
     assert captured_change["draft_markdown"] == document["current_revision"]["body_markdown"]
 
     class EvaClient:

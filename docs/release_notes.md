@@ -9,6 +9,20 @@ sidebar_custom_props: {
 
 Key features, improvements and bug fixes in the latest releases.
 
+## v1.5.0
+
+Released on September 3, 2026.
+
+### New features
+
+- Deployment: Adds a clean, source-traceable Linux PostgreSQL deployment repository and a single-file Git bundle transport for PuTTY/PSCP installations without a hosted Git remote.
+- Deployment: Builds the frontend on the target Linux host from the same approved source commit used by the backend overlay.
+
+### Improvements and bug fixes
+
+- Refuses dirty source checkouts and non-empty runtime directories during first installation and records the deployed Git commit for audit and rollback planning.
+- Generates a persistent credential-encryption key for per-user EVA tokens, verifies both API and UI health, and keeps MySQL and the CodeExec sandbox disabled in the release profile.
+
 ## v1.4.0
 
 Released on September 2, 2026.

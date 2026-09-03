@@ -260,6 +260,8 @@ internal/deepdoc/parser/docx/tool/
 /.codex_tmp
 /deployment/linux-pg/*.tar.gz
 /deployment/linux-pg/*.tar.gz.sha256
+/deployment/linux-pg/*.bundle
+/deployment/linux-pg/*.bundle.sha256
 /release/
 /ragflow_deps/office_oxide-*.tar.gz
 /ragflow_deps/pdf_oxide-*.tar.gz

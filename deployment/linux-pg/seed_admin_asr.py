@@ -1,4 +1,4 @@
-"""Create the initial superuser and idempotently configure bundled T-One ASR."""
+"""Create the initial superuser and idempotently configure internal T-One ASR."""
 
 import json
 import os

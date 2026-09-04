@@ -55,6 +55,7 @@ class ServiceType(Enum):
     RAGFLOW_SERVER = "ragflow_server"
     TASK_EXECUTOR = "task_executor"
     FILE_STORE = "file_store"
+    ASR = "asr"
 
 
 class MetaConfig(BaseConfig):
@@ -90,6 +91,15 @@ class PostgresConfig(MetaConfig):
         result = super().to_dict()
         if "extra" not in result:
             result["extra"] = dict()
+        return result
+
+
+class ASRConfig(BaseConfig):
+    health_path: str
+
+    def to_dict(self) -> dict[str, Any]:
+        result = super().to_dict()
+        result["extra"] = {"health_path": self.health_path}
         return result
 
 
@@ -304,6 +314,37 @@ def load_configurations(config_path: str) -> list[BaseConfig]:
                 password = v.get("password")
                 config = MySQLConfig(
                     id=id_count, name=name, host=host, port=port, username=username, password=password, service_type="meta_data", meta_type="mysql", detail_func_name="get_mysql_status"
+                )
+                configurations.append(config)
+                id_count += 1
+            case "postgres":
+                name: str = "postgres"
+                host: str = v.get("host")
+                port: int = v.get("port")
+                config = PostgresConfig(
+                    id=id_count,
+                    name=name,
+                    host=host,
+                    port=port,
+                    service_type="meta_data",
+                    meta_type="postgres",
+                    detail_func_name="get_postgres_status",
+                )
+                configurations.append(config)
+                id_count += 1
+            case "asr":
+                name: str = v.get("name", "asr")
+                host: str = v.get("host", "t-one-asr")
+                port: int = v.get("port", 9011)
+                health_path: str = v.get("health_path", "/health/ready")
+                config = ASRConfig(
+                    id=id_count,
+                    name=name,
+                    host=host,
+                    port=port,
+                    service_type="asr",
+                    health_path=health_path,
+                    detail_func_name="check_asr_alive",
                 )
                 configurations.append(config)
                 id_count += 1

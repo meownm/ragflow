@@ -263,6 +263,10 @@ class EvaWikiConnector(LoadConnector, PollConnector, SlimConnectorWithPermSync):
         return None
 
     def validate_connector_settings(self) -> None:
+        self.get_project()
+
+    def get_project(self) -> dict[str, str]:
+        """Return the configured EVA project with its display metadata."""
         self._validate_config()
         filters: list[list[Any]] = [["id", "==", self.project_id], ["cmf_deleted", "==", False]]
         if not self.include_archived:
@@ -277,6 +281,17 @@ class EvaWikiConnector(LoadConnector, PollConnector, SlimConnectorWithPermSync):
         )
         if not projects:
             raise ConnectorValidationError(f"EVA Wiki project was not found or is not accessible: {self.project_id}")
+        project = projects[0]
+        if not isinstance(project, dict):
+            raise ConnectorValidationError("Unexpected EVA Wiki project record")
+        project_id = str(project.get("id") or "").strip()
+        if project_id != self.project_id:
+            raise ConnectorValidationError("EVA Wiki returned an unexpected project")
+        return {
+            "id": project_id,
+            "name": str(project.get("name") or project.get("code") or "").strip(),
+            "code": str(project.get("code") or "").strip(),
+        }
 
     def list_projects(self) -> list[dict[str, str]]:
         """Return EVA projects accessible to the token and allowed by the archive setting."""

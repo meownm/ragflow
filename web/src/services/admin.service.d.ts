@@ -232,7 +232,7 @@ declare namespace AdminService {
   export type BusinessDocumentsEvaSpace = {
     connector_id: string;
     connector_name: string;
-    project_id: string;
+    project_name: string;
   };
 
   export type BusinessDocumentsSettings = {

@@ -42,7 +42,7 @@ function AdminBusinessDocumentsSettings() {
     () =>
       (data?.eva_spaces || []).map((space) => ({
         value: space.connector_id,
-        label: `${space.connector_name} — ${space.project_id}`,
+        label: space.project_name,
       })),
     [data?.eva_spaces],
   );

@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -39,3 +40,23 @@ def test_validate_selected_eva_connector_rejects_non_eva_connector(monkeypatch):
 
     with pytest.raises(ValueError, match="does not exist"):
         service.validate_business_documents_eva_connector_id("connector-1")
+
+
+def test_list_eva_spaces_returns_project_names_instead_of_ids(monkeypatch):
+    connector = SimpleNamespace(
+        id="connector-1",
+        name="EVA Wiki connector",
+        config={"project_id": "CmfProject:project-1"},
+    )
+    query = MagicMock()
+    query.where.return_value.order_by.return_value = [connector]
+    monkeypatch.setattr(service.Connector, "select", staticmethod(lambda: query))
+    monkeypatch.setattr(service, "_eva_project_name", lambda _connector: "Operations")
+
+    assert service.list_business_documents_eva_spaces() == [
+        {
+            "connector_id": "connector-1",
+            "connector_name": "EVA Wiki connector",
+            "project_name": "Operations",
+        }
+    ]

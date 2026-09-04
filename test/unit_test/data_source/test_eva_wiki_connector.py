@@ -106,7 +106,7 @@ def test_validation_requires_project_scope():
 
 def test_validation_uses_token_and_project_filter():
     connector = _connector()
-    connector._session.post = MagicMock(return_value=_response({"result": [{"id": PROJECT_ID}]}))
+    connector._session.post = MagicMock(return_value=_response({"result": [{"id": PROJECT_ID, "name": "Operations", "code": "ops"}]}))
 
     connector.validate_connector_settings()
 
@@ -119,6 +119,17 @@ def test_validation_uses_token_and_project_filter():
         ["cmf_archived", "==", False],
     ]
     assert connector._session.post.call_args.kwargs["allow_redirects"] is False
+
+
+def test_get_project_returns_display_metadata():
+    connector = _connector()
+    connector._session.post = MagicMock(return_value=_response({"result": [{"id": PROJECT_ID, "name": "Operations", "code": "ops"}]}))
+
+    assert connector.get_project() == {
+        "id": PROJECT_ID,
+        "name": "Operations",
+        "code": "ops",
+    }
 
 
 def test_list_projects_does_not_require_project_id_and_returns_stable_options():

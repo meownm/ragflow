@@ -273,12 +273,16 @@ class ServiceMgr:
     @staticmethod
     def get_all_services():
         doc_engine = os.getenv("DOC_ENGINE", "elasticsearch")
+        database_type = os.getenv("DB_TYPE", "mysql").lower()
         result = []
         configs = SERVICE_CONFIGS.configs
         for service_id, config in enumerate(configs):
             config_dict = config.to_dict()
             if config_dict["service_type"] == "retrieval":
                 if config_dict["extra"]["retrieval_type"] != doc_engine:
+                    continue
+            if config_dict["service_type"] == "meta_data":
+                if config_dict["extra"]["meta_type"] != database_type:
                     continue
             try:
                 service_detail = ServiceMgr.get_service_details(service_id)
@@ -313,6 +317,10 @@ class ServiceMgr:
         doc_engine = os.getenv("DOC_ENGINE", "elasticsearch")
         if service_config.service_type == "retrieval":
             if service_config.retrieval_type != doc_engine:
+                raise AdminException(f"invalid service_index: {service_idx}")
+        database_type = os.getenv("DB_TYPE", "mysql").lower()
+        if service_config.service_type == "meta_data":
+            if service_config.meta_type != database_type:
                 raise AdminException(f"invalid service_index: {service_idx}")
 
         service_info = {"name": service_config.name, "detail_func_name": service_config.detail_func_name}

@@ -25,6 +25,7 @@ from rag.utils.es_conn import ESConnection
 from rag.utils.infinity_conn import InfinityConnection
 from rag.utils.ob_conn import OBConnection
 from common import settings
+from common.config_utils import get_base_config
 
 
 def _ok_nok(ok: bool) -> str:
@@ -198,6 +199,52 @@ def get_mysql_status():
         headers = ["id", "user", "host", "db", "command", "time", "state", "info"]
         cursor.close()
         return {"status": "alive", "message": [dict(zip(headers, r)) for r in res_rows]}
+    except Exception as e:
+        return {
+            "status": "timeout",
+            "message": f"error: {str(e)}",
+        }
+
+
+def get_postgres_status():
+    try:
+        cursor = DB.execute_sql("SELECT version(), current_database(), current_user;")
+        version, database, user = cursor.fetchone()
+        cursor.close()
+        return {
+            "status": "alive",
+            "message": {
+                "database": database,
+                "user": user,
+                "version": version,
+            },
+        }
+    except Exception as e:
+        return {
+            "status": "timeout",
+            "message": f"error: {str(e)}",
+        }
+
+
+def check_asr_alive():
+    start_time = timer()
+    config = get_base_config("asr", {}) or {}
+    host = config.get("host", "t-one-asr")
+    port = config.get("port", 9011)
+    health_path = config.get("health_path", "/health/ready")
+    if not str(health_path).startswith("/"):
+        health_path = f"/{health_path}"
+    url = f"http://{host}:{port}{health_path}"
+
+    try:
+        response = requests.get(url, timeout=10)
+        try:
+            message = response.json()
+        except ValueError:
+            message = {"response": response.text}
+        message["elapsed"] = f"{(timer() - start_time) * 1000.0:.1f}"
+        status = "alive" if response.ok and message.get("status") == "ready" else "timeout"
+        return {"status": status, "message": message}
     except Exception as e:
         return {
             "status": "timeout",

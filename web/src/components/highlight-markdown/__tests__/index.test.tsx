@@ -7,6 +7,14 @@ jest.mock('@/constants/markdown-remark-plugins', () => ({
   MarkdownRemarkPlugins: [],
 }));
 
+jest.mock('mermaid', () => ({
+  __esModule: true,
+  default: {
+    initialize: jest.fn(),
+    render: jest.fn(),
+  },
+}));
+
 // Coderabbit MAJOR #3486038797: the previous mock rendered react-markdown's
 // output as a plain <div> containing `children` as text, so the spec never
 // exercised rehypeRaw or the post-preprocessLaTeX sanitization path. With

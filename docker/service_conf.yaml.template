@@ -81,6 +81,11 @@ postgres:
   port: ${POSTGRES_PORT:-5432}
   max_connections: 100
   stale_timeout: 30
+asr:
+  name: 't-one-asr'
+  host: '${ASR_SERVICE_HOST:-t-one-asr}'
+  port: ${ASR_SERVICE_PORT:-9011}
+  health_path: '/health/ready'
 # s3:
 #   access_key: 'access_key'
 #   secret_key: 'secret_key'

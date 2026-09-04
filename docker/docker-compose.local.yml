@@ -70,9 +70,11 @@ services:
       - ../api/apps/restful_apis/system_api.py:/ragflow/api/apps/restful_apis/system_api.py:ro
       - ../api/apps/restful_apis/chat_api.py:/ragflow/api/apps/restful_apis/chat_api.py:ro
       - ../api/apps/restful_apis/user_api.py:/ragflow/api/apps/restful_apis/user_api.py:ro
+      - ../api/utils/health_utils.py:/ragflow/api/utils/health_utils.py:ro
       - ../api/db/db_models.py:/ragflow/api/db/db_models.py:ro
       - ../api/db/template_utils.py:/ragflow/api/db/template_utils.py:ro
       - ../api/ragflow_server.py:/ragflow/api/ragflow_server.py:ro
+      - ../admin/server/config.py:/ragflow/admin/server/config.py:ro
       - ../admin/server/routes.py:/ragflow/admin/server/routes.py:ro
       - ../admin/server/services.py:/ragflow/admin/server/services.py:ro
       - ../agent/business_requirements:/ragflow/agent/business_requirements:ro

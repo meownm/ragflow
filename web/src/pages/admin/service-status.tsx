@@ -85,6 +85,7 @@ const SERVICE_TYPE_FILTER_OPTIONS = [
   { value: 'file_store', label: 'file_store' },
   { value: 'retrieval', label: 'retrieval' },
   { value: 'message_queue', label: 'message_queue' },
+  { value: 'asr', label: 'asr' },
 ];
 
 function AdminServiceStatus() {

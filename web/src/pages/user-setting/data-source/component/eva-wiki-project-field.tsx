@@ -11,6 +11,7 @@ import {
   useFormContext,
   useWatch,
 } from 'react-hook-form';
+import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router';
 
 type EvaWikiProjectFieldProps = {
@@ -20,6 +21,7 @@ type EvaWikiProjectFieldProps = {
 export default function EvaWikiProjectField({
   field,
 }: EvaWikiProjectFieldProps) {
+  const { t } = useTranslation();
   const form = useFormContext();
   const [searchParams] = useSearchParams();
   const connectorId = searchParams.get('id') || undefined;
@@ -71,7 +73,11 @@ export default function EvaWikiProjectField({
       !connectorId &&
       (!config.api_base_url || !config.credentials?.eva_api_token)
     ) {
-      message.error('Enter the EVA API URL and token first.');
+      message.error(
+        t('setting.evaEnterApiAndTokenFirst', {
+          defaultValue: 'Enter the EVA API URL and token first.',
+        }),
+      );
       return;
     }
 
@@ -82,7 +88,12 @@ export default function EvaWikiProjectField({
         config,
       });
       if (response.code !== 0 || !Array.isArray(response.data)) {
-        message.error(response.message || 'Unable to load EVA projects.');
+        message.error(
+          response.message ||
+            t('setting.evaProjectsLoadError', {
+              defaultValue: 'Unable to load EVA projects.',
+            }),
+        );
         return;
       }
 
@@ -93,7 +104,11 @@ export default function EvaWikiProjectField({
         if (!connectorId) {
           onProjectChange('');
         }
-        message.error('No accessible EVA projects were found.');
+        message.error(
+          t('setting.evaProjectsNotFound', {
+            defaultValue: 'No accessible EVA projects were found.',
+          }),
+        );
         return;
       }
 
@@ -102,7 +117,12 @@ export default function EvaWikiProjectField({
       );
       if (connectorId) {
         if (projectId && !currentProjectIsAccessible) {
-          message.error('The configured EVA project is no longer accessible.');
+          message.error(
+            t('setting.evaConfiguredProjectInaccessible', {
+              defaultValue:
+                'The configured EVA project is no longer accessible.',
+            }),
+          );
         }
       } else if (nextProjects.length === 1) {
         onProjectChange(nextProjects[0].id);
@@ -110,11 +130,15 @@ export default function EvaWikiProjectField({
         onProjectChange('');
       }
     } catch {
-      message.error('Unable to load EVA projects.');
+      message.error(
+        t('setting.evaProjectsLoadError', {
+          defaultValue: 'Unable to load EVA projects.',
+        }),
+      );
     } finally {
       setLoading(false);
     }
-  }, [connectorId, discoveryIdentity, form, onProjectChange, projectId]);
+  }, [connectorId, discoveryIdentity, form, onProjectChange, projectId, t]);
 
   useEffect(() => {
     if (
@@ -149,10 +173,16 @@ export default function EvaWikiProjectField({
           options={options}
           placeholder={
             projects.length > 0
-              ? 'Select an EVA project'
-              : 'Load accessible projects'
+              ? t('setting.evaProjectSelectPlaceholder', {
+                  defaultValue: 'Select an EVA project',
+                })
+              : t('setting.evaProjectLoadPlaceholder', {
+                  defaultValue: 'Load accessible projects',
+                })
           }
-          emptyData="No accessible EVA projects"
+          emptyData={t('setting.evaProjectsEmpty', {
+            defaultValue: 'No accessible EVA projects',
+          })}
           disabled={Boolean(connectorId) || loading || options.length === 0}
           testId="eva-wiki-project-select"
           optionTestIdPrefix="eva-wiki-project-option-"
@@ -165,7 +195,11 @@ export default function EvaWikiProjectField({
         disabled={loading || (!connectorId && (!apiBaseUrl || !token))}
         loading={loading}
       >
-        {projects.length > 0 ? 'Reload projects' : 'Load projects'}
+        {projects.length > 0
+          ? t('setting.evaProjectsReload', {
+              defaultValue: 'Reload projects',
+            })
+          : t('setting.evaProjectsLoad', { defaultValue: 'Load projects' })}
       </Button>
     </div>
   );

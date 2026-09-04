@@ -9,6 +9,23 @@ sidebar_custom_props: {
 
 Key features, improvements and bug fixes in the latest releases.
 
+## v1.9.0
+
+Released on September 4, 2026.
+
+### New features
+
+- Business documents: Adds configurable author and moderator roles, document assignment, owner-scoped lists, and live background-operation progress.
+- EVA Wiki: Lets administrators select the single EVA Wiki space used by the Documents section and enforces that scope for search, synchronization, and publication workflows.
+- Administration: Adds global navigation visibility controls and a dedicated Documents settings page.
+- Deployment: Adds compact registry-backed Linux PostgreSQL packages with prebuilt frontend assets, image pinning, checksum verification, and PuTTY upload tooling.
+
+### Improvements and bug fixes
+
+- Supports document-wide review comments and records the responsible user on every generated revision.
+- Publishes the local product name consistently across the web interface and keeps local Docker overlays aligned with newly added backend settings and services.
+- Removes T-One ASR from the base Linux server package so ASR can be delivered independently.
+
 ## v1.8.0
 
 Released on September 4, 2026.

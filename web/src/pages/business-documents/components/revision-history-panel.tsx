@@ -134,6 +134,12 @@ export function RevisionHistoryPanel({
                     {formatRevisionTime(revision.created_at)}
                   </span>
                 </span>
+                {(revision.author_name || revision.author_id) && (
+                  <span className="mt-1 block text-[11px] text-text-disabled">
+                    Автор изменений:{' '}
+                    {revision.author_name || revision.author_id}
+                  </span>
+                )}
                 {!revision.change_basis?.length && (
                   <span className="mt-2 block text-xs text-text-secondary">
                     Основания не сохранены.

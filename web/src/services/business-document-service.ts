@@ -1,10 +1,12 @@
 import type {
+  BusinessDocumentAssignableUser,
   BusinessDocumentCommand,
   BusinessDocumentCommandResult,
   BusinessDocumentEvaPullResult,
   BusinessDocumentList,
   BusinessDocumentProjection,
   BusinessDocumentRevision,
+  BusinessDocumentRole,
   CreateBusinessDocumentRequest,
   DeleteBusinessDocumentResult,
   EvaDocumentChange,
@@ -202,13 +204,62 @@ export async function downloadBusinessDocumentExport(
   }
 }
 
-export async function listBusinessDocuments(page = 1, pageSize = 20) {
+export async function listBusinessDocuments(
+  page = 1,
+  pageSize = 20,
+  scope: 'mine' | 'all' = 'all',
+) {
   try {
     const response = await request.get(
       api.businessDocuments,
-      requestConfig({ params: { page, page_size: pageSize } }),
+      requestConfig({ params: { page, page_size: pageSize, scope } }),
     );
     return unwrap<BusinessDocumentList>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function listBusinessDocumentAccessUsers() {
+  try {
+    const response = await request.get(
+      api.businessDocumentAccessUsers,
+      requestConfig(),
+    );
+    return unwrap<{ items: BusinessDocumentAssignableUser[] }>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function assignBusinessDocumentOwner(
+  documentId: string,
+  ownerId: string,
+  expectedStateVersion: number,
+) {
+  try {
+    const response = await request.put(
+      api.businessDocumentOwner(documentId),
+      { owner_id: ownerId, expected_state_version: expectedStateVersion },
+      requestConfig(),
+    );
+    return unwrap<BusinessDocumentProjection>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function updateBusinessDocumentUserRole(
+  userId: string,
+  role: Exclude<BusinessDocumentRole, 'ADMIN'>,
+) {
+  try {
+    const response = await request.patch(
+      api.businessDocumentAccessUser(userId),
+      { role },
+      requestConfig(),
+    );
+    return unwrap<BusinessDocumentAssignableUser>(response.data);
   } catch (error) {
     return rethrowBusinessDocumentError(error);
   }
@@ -230,17 +281,13 @@ export async function submitBusinessDocumentCommand(
   }
 }
 
-export async function searchEvaDocumentSources(
-  query: string,
-  connectorId?: string,
-) {
+export async function searchEvaDocumentSources(query: string) {
   try {
     const response = await request.get(
       api.evaBusinessDocumentSources,
       requestConfig({
         params: {
           query,
-          ...(connectorId ? { connector_id: connectorId } : {}),
         },
       }),
     );

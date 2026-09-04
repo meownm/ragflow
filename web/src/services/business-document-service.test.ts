@@ -1,11 +1,14 @@
 import {
+  assignBusinessDocumentOwner,
   createEvaDocumentChange,
+  listBusinessDocumentAccessUsers,
   listBusinessDocuments,
   prepareEvaDocumentChange,
   publishEvaDocumentChange,
   saveEvaDocumentChangeDraft,
   searchEvaDocumentSources,
   submitBusinessDocumentCommand,
+  updateBusinessDocumentUserRole,
 } from '@/services/business-document-service';
 import api from '@/utils/api';
 import request from '@/utils/next-request';
@@ -15,12 +18,14 @@ jest.mock('@/utils/next-request', () => ({
   default: {
     get: jest.fn(),
     post: jest.fn(),
+    patch: jest.fn(),
     put: jest.fn(),
   },
 }));
 
 const mockedGet = jest.mocked(request.get);
 const mockedPost = jest.mocked(request.post);
+const mockedPatch = jest.mocked(request.patch);
 const mockedPut = jest.mocked(request.put);
 
 beforeEach(() => jest.clearAllMocks());
@@ -44,11 +49,51 @@ test('loads the canonical paginated document list envelope', async () => {
   };
   mockedGet.mockResolvedValueOnce({ data: { code: 0, data: list } });
 
-  await expect(listBusinessDocuments(2, 10)).resolves.toEqual(list);
+  await expect(listBusinessDocuments(2, 10, 'mine')).resolves.toEqual(list);
   expect(mockedGet).toHaveBeenCalledWith(api.businessDocuments, {
-    params: { page: 2, page_size: 10 },
+    params: { page: 2, page_size: 10, scope: 'mine' },
     skipErrorNotification: true,
   });
+});
+
+test('uses explicit access and ownership endpoints', async () => {
+  const users = {
+    items: [
+      {
+        user_id: 'author-2',
+        nickname: 'Второй автор',
+        role: 'AUTHOR_CREATOR' as const,
+      },
+    ],
+  };
+  const assigned = { document_id: 'doc-1', owner_id: 'author-2' };
+  mockedGet.mockResolvedValueOnce({ data: { code: 0, data: users } });
+  mockedPut.mockResolvedValueOnce({ data: { code: 0, data: assigned } });
+  mockedPatch.mockResolvedValueOnce({
+    data: { code: 0, data: users.items[0] },
+  });
+
+  await expect(listBusinessDocumentAccessUsers()).resolves.toEqual(users);
+  await expect(
+    assignBusinessDocumentOwner('doc-1', 'author-2', 7),
+  ).resolves.toEqual(assigned);
+  await expect(
+    updateBusinessDocumentUserRole('author-2', 'AUTHOR_EDITOR'),
+  ).resolves.toEqual(users.items[0]);
+
+  expect(mockedGet).toHaveBeenCalledWith(api.businessDocumentAccessUsers, {
+    skipErrorNotification: true,
+  });
+  expect(mockedPut).toHaveBeenCalledWith(
+    api.businessDocumentOwner('doc-1'),
+    { owner_id: 'author-2', expected_state_version: 7 },
+    { skipErrorNotification: true },
+  );
+  expect(mockedPatch).toHaveBeenCalledWith(
+    api.businessDocumentAccessUser('author-2'),
+    { role: 'AUTHOR_EDITOR' },
+    { skipErrorNotification: true },
+  );
 });
 
 test('reads the domain error code from the backend error envelope', async () => {

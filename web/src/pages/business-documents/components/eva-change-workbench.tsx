@@ -505,7 +505,7 @@ export function EvaChangeWorkbench({ changeId }: { changeId: string }) {
               <span>
                 <span className="block font-medium">Подготовить diff</span>
                 <span className="mt-0.5 block text-xs text-text-secondary">
-                  Правки сохраняются только в RAGFlow.
+                  Правки сохраняются только в «Агент Раггер».
                 </span>
               </span>
             </li>
@@ -681,7 +681,7 @@ export function EvaChangeWorkbench({ changeId }: { changeId: string }) {
             <AlertDialogDescription>
               Опубликованный документ EVA изменился после создания этой заявки.
               Подтверждение заменит внешние изменения согласованной версией из
-              RAGFlow.
+              системы «Агент Раггер».
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

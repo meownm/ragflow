@@ -18,6 +18,8 @@ import {
 
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
+import type { NavigationSection } from '@/constants/navigation';
+import { useSystemConfig } from '@/hooks/use-system-request';
 import { cn } from '@/lib/utils';
 import { Routes } from '@/routes';
 import { supportsCssAnchor } from '@/utils/css-support';
@@ -43,33 +45,48 @@ const menuItems: Array<{
   name: string;
   icon: LucideIcon;
   fallbackName?: string;
+  section?: NavigationSection;
   'data-testid'?: string;
 }> = [
   { path: Routes.Root, name: 'header.home', icon: LucideHouse },
-  { path: Routes.Datasets, name: 'header.dataset', icon: LucideDatabase },
+  {
+    path: Routes.Datasets,
+    name: 'header.dataset',
+    icon: LucideDatabase,
+    section: 'dataset',
+  },
   {
     path: Routes.Chats,
     name: 'header.chat',
     icon: LucideMessageSquareText,
+    section: 'chat',
     'data-testid': 'nav-chat',
   },
   {
     path: Routes.Searches,
     name: 'header.search',
     icon: LucideSearch,
+    section: 'search',
     'data-testid': 'nav-search',
   },
   {
     path: Routes.Agents,
     name: 'header.flow',
     icon: LucideCpu,
+    section: 'agent',
     'data-testid': 'nav-agent',
   },
-  { path: Routes.Memories, name: 'header.memories', icon: LucideBrain },
+  {
+    path: Routes.Memories,
+    name: 'header.memories',
+    icon: LucideBrain,
+    section: 'memory',
+  },
   {
     path: Routes.OpenMetadata,
     name: 'header.openMetadata',
     icon: LucideNetwork,
+    section: 'catalog',
     'data-testid': 'nav-openmetadata',
   },
   {
@@ -77,10 +94,27 @@ const menuItems: Array<{
     name: 'header.businessDocuments',
     fallbackName: 'Business docs',
     icon: FilePenLine,
+    section: 'business_documents',
     'data-testid': 'nav-business-documents',
   },
-  { path: Routes.Files, name: 'header.fileManager', icon: LucideFolderOpen },
+  {
+    path: Routes.Files,
+    name: 'header.fileManager',
+    icon: LucideFolderOpen,
+    section: 'file_manager',
+  },
 ];
+
+function useVisibleMenuItems() {
+  const { config } = useSystemConfig();
+
+  return useMemo(() => {
+    const visibleSections = new Set(config?.visibleSections);
+    return menuItems.filter(
+      ({ section }) => !section || !config || visibleSections.has(section),
+    );
+  }, [config]);
+}
 
 function useActivePath() {
   const { pathname } = useLocation();
@@ -99,26 +133,28 @@ function useActivePath() {
 const DesktopNavbarWithAnchor = () => {
   const { t } = useTranslation();
   const activePath = useActivePath();
+  const visibleMenuItems = useVisibleMenuItems();
   const navbarAnchorNamePrefix = useId().replace(/:/g, '');
 
   const activePathAnchorName = `--${navbarAnchorNamePrefix}${activePath === Routes.Root ? '-root' : activePath.replace('/', '-')}`;
 
   const hasAnyActive = useMemo(
-    () => menuItems.some(({ path }) => path === activePath),
-    [activePath],
+    () => visibleMenuItems.some(({ path }) => path === activePath),
+    [activePath, visibleMenuItems],
   );
 
   return (
     <nav>
       <ul className="relative flex items-center p-1 bg-bg-card rounded-full border border-border-button">
-        {menuItems.map(({ path, name, fallbackName, icon: Icon, ...props }) => {
+        {visibleMenuItems.map((item) => {
+          const { path, name, fallbackName, icon: Icon } = item;
           const isActive = path === activePath;
           const anchorName = `--${navbarAnchorNamePrefix}${path === Routes.Root ? '-root' : path.replace('/', '-')}`;
 
           return (
             <li key={path} className="relative" style={{ anchorName }}>
               <Link
-                {...props}
+                data-testid={item['data-testid']}
                 to={path}
                 className={cn(
                   'h-10 px-4 xl:px-6 text-sm xl:text-base inline-flex items-center justify-center whitespace-nowrap',
@@ -165,17 +201,19 @@ const DesktopNavbarWithAnchor = () => {
 const DesktopNavbarFallback = () => {
   const { t } = useTranslation();
   const activePath = useActivePath();
+  const visibleMenuItems = useVisibleMenuItems();
 
   return (
     <nav>
       <ul className="flex items-center p-1 bg-bg-card rounded-full border border-border-button">
-        {menuItems.map(({ path, name, fallbackName, icon: Icon, ...props }) => {
+        {visibleMenuItems.map((item) => {
+          const { path, name, fallbackName, icon: Icon } = item;
           const isActive = path === activePath;
 
           return (
             <li key={path}>
               <Link
-                {...props}
+                data-testid={item['data-testid']}
                 to={path}
                 className={cn(
                   'h-10 px-4 xl:px-6 text-sm xl:text-base inline-flex items-center justify-center whitespace-nowrap',
@@ -248,6 +286,7 @@ type MobileNavbarProps = {
 export function MobileNavbar({ renderFooter }: MobileNavbarProps) {
   const { t } = useTranslation();
   const activePath = useActivePath();
+  const visibleMenuItems = useVisibleMenuItems();
   const [open, setOpen] = useState(false);
 
   const close = () => setOpen(false);
@@ -271,19 +310,21 @@ export function MobileNavbar({ renderFooter }: MobileNavbarProps) {
         className="flex w-[min(85vw,18rem)] flex-col gap-0 p-0 sm:w-72"
       >
         <div className="flex shrink-0 justify-center py-5">
-          <img src="/logo.svg" alt="RAGFlow logo" className="size-9" />
+          <img src="/logo.svg" alt="Логотип Агент Раггер" className="size-9" />
         </div>
 
         <nav className="min-h-0 flex-1 overflow-y-auto py-3">
           <ul className="space-y-1">
-            {menuItems.map(({ path, name, fallbackName, icon, ...props }) => (
-              <li key={path}>
+            {visibleMenuItems.map((item) => (
+              <li key={item.path}>
                 <MobileNavItem
-                  {...props}
-                  to={path}
-                  label={t(name, { defaultValue: fallbackName ?? name })}
-                  icon={icon}
-                  isActive={path === activePath}
+                  data-testid={item['data-testid']}
+                  to={item.path}
+                  label={t(item.name, {
+                    defaultValue: item.fallbackName ?? item.name,
+                  })}
+                  icon={item.icon}
+                  isActive={item.path === activePath}
                   onClick={close}
                 />
               </li>

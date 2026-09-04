@@ -65,6 +65,50 @@ def _active_change_input_event_ids(job_payload: dict[str, Any]) -> list[str]:
     return list(dict.fromkeys(event_ids))
 
 
+def _closed_review_question_context(job_payload: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Return compact answered-question constraints for review reassessment."""
+
+    protocol = job_payload.get("protocol")
+    if not isinstance(protocol, dict):
+        return [], []
+    closed: list[dict[str, Any]] = []
+    closed_by_id: dict[str, dict[str, Any]] = {}
+    for question in protocol.get("questions", []):
+        if not isinstance(question, dict) or not isinstance(question.get("question_id"), str) or not isinstance(question.get("semantic_tag"), str):
+            continue
+        answer = question.get("answer")
+        if question.get("status") != "ANSWERED" and not isinstance(answer, dict):
+            continue
+        item = {
+            "question_id": question["question_id"],
+            "semantic_tag": question["semantic_tag"],
+            "target_section_id": question.get("target_section_id"),
+            "answer": answer if isinstance(answer, dict) else None,
+        }
+        closed.append(item)
+        closed_by_id[item["question_id"]] = item
+
+    resolved_comment_questions: list[dict[str, Any]] = []
+    for comment in protocol.get("comments", []):
+        if not isinstance(comment, dict) or not isinstance(comment.get("source_event_id"), str):
+            continue
+        disposition = comment.get("disposition")
+        if not isinstance(disposition, dict) or disposition.get("disposition") != "NEEDS_QUESTION":
+            continue
+        question = closed_by_id.get(disposition.get("question_id"))
+        if question is None:
+            continue
+        resolved_comment_questions.append(
+            {
+                "comment_event_id": comment["source_event_id"],
+                "question_id": question["question_id"],
+                "question_semantic_tag": question["semantic_tag"],
+                "answer": question["answer"],
+            }
+        )
+    return closed, resolved_comment_questions
+
+
 class BusinessDocumentAIAdapter(Protocol):
     def generate(self, tenant_id: str, system_prompt: str, input_payload: dict[str, Any]) -> str | dict[str, Any]: ...
 
@@ -171,6 +215,23 @@ class BusinessDocumentAI:
                 "proposals соответствует массиву proposals из review_plan."
             )
         job_input = deepcopy(job.payload)
+        if job.job_type == "ASSESS_REVIEW":
+            closed_questions, resolved_comment_questions = _closed_review_question_context(job_input)
+            if closed_questions:
+                closed_tags = list(dict.fromkeys(question["semantic_tag"] for question in closed_questions))
+                job_input["closed_review_question_semantic_tags"] = closed_tags
+                job_input["resolved_comment_questions"] = resolved_comment_questions
+                system += (
+                    "\n\n# Закрытые вопросы текущего цикла\n"
+                    "Следующие semantic_tag уже имеют неизменяемый ответ и закрыты: "
+                    f"{json.dumps(closed_tags, ensure_ascii=False)}. "
+                    "Не добавляй questions с этими semantic_tag, не перефразируй закрытые вопросы и не используй "
+                    "закрытый semantic_tag в NEEDS_QUESTION. Если прежний NEEDS_QUESTION комментария уже получил "
+                    "ответ, выбери для комментария CONFIRMED_CHANGE или NO_CHANGE на основании ответа. Только если "
+                    "после ответа осталась другая конкретная неопределённость, создай новый релевантный вопрос с новым "
+                    "semantic_tag. Связи комментариев с отвеченными вопросами находятся в "
+                    "job_input.resolved_comment_questions."
+                )
         if job.attempt > 1 and isinstance(job.error, dict):
             job_input["retry_feedback"] = deepcopy(job.error)
             system += (
@@ -197,8 +258,10 @@ class BusinessDocumentAI:
                 "\n\n# Активные основания текущего цикла\n"
                 "В operations.source_event_ids и acknowledged_no_change_event_ids используй только event_id из "
                 f"job_input.active_change_input_event_ids: {json.dumps(active_event_ids, ensure_ascii=False)}. "
-                "События из прошлых циклов не включай. Распредели каждый перечисленный event_id ровно один раз: "
-                "как основание операции или как осознанное подтверждение отсутствия изменения. "
+                "События из прошлых циклов не включай. Каждый перечисленный event_id используй как основание "
+                "хотя бы одной операции или как осознанное подтверждение отсутствия изменения. Общий комментарий "
+                "с section_id=null может быть основанием нескольких операций по разным разделам; не подтверждай "
+                "отсутствие изменения для события, уже использованного в операции. "
                 "Не используй question_id, proposal_id и comment_id вместо event_id."
             )
         return PromptBundle(

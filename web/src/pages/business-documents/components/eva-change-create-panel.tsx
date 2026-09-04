@@ -78,8 +78,8 @@ export function EvaChangeCreatePanel() {
         Документ EVA
       </h2>
       <p className="mt-2 text-sm leading-6 text-text-secondary">
-        Найдите опубликованный документ. RAGFlow закрепит исходную версию и не
-        изменит EVA до отдельного подтверждения.
+        Найдите опубликованный документ. Агент Раггер закрепит исходную версию и
+        не изменит EVA до отдельного подтверждения.
       </p>
 
       <form className="mt-6" onSubmit={search}>

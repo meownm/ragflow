@@ -134,7 +134,7 @@ export default {
     openMetadata: {
       title: 'OpenMetadata Copilot',
       subtitle:
-        'Search metadata, owners and domains, inspect the OpenMetadata knowledge graph, and make governed changes from RAGFlow.',
+        'Search metadata, owners and domains, inspect the OpenMetadata knowledge graph, and make governed changes from Агент Раггер.',
       unavailable: 'OpenMetadata Copilot is unavailable',
       retry: 'Retry',
       refresh: 'Refresh snapshot',
@@ -561,7 +561,7 @@ Example: A 1 KB message with 1024-dim embedding uses ~9 KB. The 5 MB default lim
       testSetting: 'Setting',
       retrievalTesting: 'Retrieval testing',
       retrievalTestingDescription:
-        'Conduct a retrieval test to check if RAGFlow can recover the intended content for the LLM.',
+        'Conduct a retrieval test to check if Агент Раггер can recover the intended content for the LLM.',
       Parse: 'Parse',
       dataset: 'Dataset',
       testing: 'Retrieval testing',
@@ -595,10 +595,10 @@ Example: A 1 KB message with 1024-dim embedding uses ~9 KB. The 5 MB default lim
       noTestResultsForNotRuned:
         'No test has been run yet. Results will appear here.',
       testingDescription:
-        'Conduct a retrieval test to check if RAGFlow can recover the intended content for the LLM. If you have adjusted the default settings, such as keyword similarity weight or similarity threshold, to achieve the optimal results, be aware that these changes will not be automatically saved. You must apply them to your chat assistant settings or the Retrieval agent component settings.',
+        'Conduct a retrieval test to check if Агент Раггер can recover the intended content for the LLM. If you have adjusted the default settings, such as keyword similarity weight or similarity threshold, to achieve the optimal results, be aware that these changes will not be automatically saved. You must apply them to your chat assistant settings or the Retrieval agent component settings.',
       similarityThreshold: 'Similarity threshold',
       similarityThresholdTip:
-        'RAGFlow employs either a combination of weighted keyword similarity and weighted vector cosine similarity, or a combination of weighted keyword similarity and weighted reranking score during retrieval. This parameter sets the threshold for similarities between the user query and chunks. Any chunk with a similarity score below this threshold will be excluded from the results. By default, the threshold is set to 0.2. This means that only chunks with hybrid similarity score of 20 or higher will be retrieved.',
+        'Агент Раггер employs either a combination of weighted keyword similarity and weighted vector cosine similarity, or a combination of weighted keyword similarity and weighted reranking score during retrieval. This parameter sets the threshold for similarities between the user query and chunks. Any chunk with a similarity score below this threshold will be excluded from the results. By default, the threshold is set to 0.2. This means that only chunks with hybrid similarity score of 20 or higher will be retrieved.',
       vectorSimilarityWeight: 'Vector similarity weight',
       vectorSimilarityWeightTip:
         'This sets the weight of keyword similarity in the combined similarity score, either used with vector cosine similarity or with reranking score. The total of the two weights must equal 1.0.',
@@ -642,14 +642,14 @@ Example: A 1 KB message with 1024-dim embedding uses ~9 KB. The 5 MB default lim
       changeSpecificCategory: 'Change specific category',
       uploadTitle: 'Drag and drop your file here to upload',
       uploadDescription:
-        'Supports single or batch file upload. For a locally deployed RAGFlow: the total file size limit per upload is 1GB, with a batch upload limit of 32 files. There is no cap on the total number of files per account. For cloud.ragflow.io, the total file size limit per upload is 10MB, with each file not exceeding 10MB and a maximum of 128 files per account.',
+        'Supports single or batch file upload. For a locally deployed Агент Раггер: the total file size limit per upload is 1GB, with a batch upload limit of 32 files. There is no cap on the total number of files per account. For cloud.ragflow.io, the total file size limit per upload is 10MB, with each file not exceeding 10MB and a maximum of 128 files per account.',
       chunk: 'Chunk',
       bulk: 'Bulk',
       cancel: 'Cancel',
       close: 'Close',
       rerankModel: 'Rerank model',
       rerankPlaceholder: 'Select value',
-      rerankTip: `Optional. If left empty, RAGFlow will use a combination of weighted keyword similarity and weighted vector cosine similarity; if a rerank model is selected, a weighted reranking score will replace the weighted vector cosine similarity. Please be aware that using a rerank model will significantly increase the system's response time. If you wish to use a rerank model, ensure you use a SaaS reranker; if you prefer a locally deployed rerank model, ensure you start RAGFlow with docker-compose-gpu.yml.`,
+      rerankTip: `Optional. If left empty, Агент Раггер will use a combination of weighted keyword similarity and weighted vector cosine similarity; if a rerank model is selected, a weighted reranking score will replace the weighted vector cosine similarity. Please be aware that using a rerank model will significantly increase the system's response time. If you wish to use a rerank model, ensure you use a SaaS reranker; if you prefer a locally deployed rerank model, ensure you start Агент Раггер with docker-compose-gpu.yml.`,
       topK: 'Top-K',
       topKTip: `Used together with the Rerank model, this setting defines the number of text chunks to be sent to the specified reranking model.`,
       delimiter: `Delimiter for text`,
@@ -804,7 +804,7 @@ Example: A 1 KB message with 1024-dim embedding uses ~9 KB. The 5 MB default lim
       tableColumnModeAuto: 'Auto',
       tableColumnModeManual: 'Manual',
       tableColumnModeAutoDescription:
-        'All columns are included in chunk text and stored as metadata (RAGFlow default).',
+        'All columns are included in chunk text and stored as metadata (Агент Раггер default).',
       tableColumnRoles: 'Column roles',
       tableColumnRolesTip:
         'Choose which columns to include in chunk text (indexed for vector and full-text search), in metadata only (filterable), or both. Changes apply to new parses; re-parse existing documents for roles to take effect.',
@@ -1102,7 +1102,7 @@ This auto-tagging feature enhances retrieval by adding another layer of domain-s
       topN: 'Top N',
       topNTip: `Not all chunks with similarity score above the 'similarity threshold' will be sent to the LLM. This selects 'Top N' chunks from the retrieved ones.`,
       variable: 'Variable',
-      variableTip: `Used together with RAGFlow's chat assistant management APIs, variables can help develop more flexible system prompt strategies. The defined variables will be used by 'System prompt' as part of the prompts for the LLM. {knowledge} is a reserved special variable representing chunks retrieved from specified dataset(s), and all variables should be enclosed in curly braces {} in the 'System prompt'. See https://ragflow.io/docs/dev/set_chat_variables for details.`,
+      variableTip: `Used together with Агент Раггер's chat assistant management APIs, variables can help develop more flexible system prompt strategies. The defined variables will be used by 'System prompt' as part of the prompts for the LLM. {knowledge} is a reserved special variable representing chunks retrieved from specified dataset(s), and all variables should be enclosed in curly braces {} in the 'System prompt'. See https://ragflow.io/docs/dev/set_chat_variables for details.`,
       add: 'Add',
       key: 'Key',
       optional: 'Optional',
@@ -1186,7 +1186,7 @@ This auto-tagging feature enhances retrieval by adding another layer of domain-s
       extensionTitle: 'Chrome extension',
       tokenError: 'Please create API key first.',
       betaError:
-        'Please acquire a RAGFlow API key from the System Settings page first.',
+        'Please acquire a Агент Раггер API key from the System Settings page first.',
       searching: 'Searching...',
       parsing: 'Parsing',
       uploading: 'Uploading',
@@ -1781,7 +1781,7 @@ Example: Virtual Hosted Style`,
       chatModelTip: 'The default LLM for each newly created dataset.',
       embeddingModel: 'Embedding',
       embeddingModelTip:
-        'The default embedding model for each newly created dataset. If you cannot find an embedding model from the dropdown, check if you are using RAGFlow slim edition (which does not include embedding models) or check https://ragflow.io/docs/dev/supported_models to see if your model provider supports this model.',
+        'The default embedding model for each newly created dataset. If you cannot find an embedding model from the dropdown, check if you are using Агент Раггер slim edition (which does not include embedding models) or check https://ragflow.io/docs/dev/supported_models to see if your model provider supports this model.',
       img2txtModel: 'VLM',
       img2txtModelTip:
         'The default VLM for each newly created dataset. It describes a picture or video. If you cannot find a model from the dropdown, check https://ragflow.io/docs/dev/supported_models to see if your model provider supports this model.',
@@ -2069,7 +2069,7 @@ Example: Virtual Hosted Style`,
       directory: 'Directory',
       uploadTitle: 'Drag and drop your file here to upload',
       uploadDescription:
-        'Supports single or batch file upload. For a locally deployed RAGFlow: the total file size limit per upload is 1GB, with a batch upload limit of 32 files. There is no cap on the total number of files per account. For cloud.ragflow.io, the total file size limit per upload is 10MB, with each file not exceeding 10MB and a maximum of 128 files per account.',
+        'Supports single or batch file upload. For a locally deployed Агент Раггер: the total file size limit per upload is 1GB, with a batch upload limit of 32 files. There is no cap on the total number of files per account. For cloud.ragflow.io, the total file size limit per upload is 10MB, with each file not exceeding 10MB and a maximum of 128 files per account.',
       local: 'Local uploads',
       s3: 'S3 uploads',
       preview: 'Preview',
@@ -3260,7 +3260,7 @@ Important structured information may include: names, dates, locations, events, k
 
     admin: {
       loginTitle: 'Admin console',
-      title: 'RAGFlow',
+      title: 'Агент Раггер',
       confirm: 'Confirm',
       close: 'Close',
       yes: 'Yes',
@@ -3293,9 +3293,38 @@ Important structured information may include: names, dates, locations, events, k
       serviceStatus: 'Service status',
       userManagement: 'User management',
       sandboxSettings: 'Sandbox settings',
+      navigationVisibility: 'Section visibility',
+      businessDocumentsSettings: 'Documents',
       registrationWhitelist: 'Registration whitelist',
       roles: 'Roles',
       monitoring: 'Monitoring',
+
+      navigationVisibilityPage: {
+        description:
+          'Globally choose which sections appear in the main menu for all users.',
+        visibleCount: 'Visible: {{count}} of {{total}}',
+        showAll: 'Show all',
+        hideAll: 'Hide all',
+        save: 'Save',
+        saving: 'Saving...',
+        saved: 'Section visibility updated.',
+      },
+
+      businessDocumentsSettingsPage: {
+        description: 'Choose the EVA Wiki space used by the Documents section.',
+        evaSpace: 'EVA Wiki space',
+        evaSpacePlaceholder: 'Select a space',
+        evaSpacesEmpty: 'No EVA Wiki spaces are configured',
+        evaSpaceHelp:
+          'EVA document search, opening, and editing are restricted to the selected space.',
+        selectedUnavailable:
+          'The previously selected space is no longer available. Select another one.',
+        createConnectorFirst:
+          'Create an EVA Wiki connector and select its space first.',
+        save: 'Save',
+        saving: 'Saving...',
+        saved: 'The EVA Wiki space for Documents was updated.',
+      },
 
       sandboxSettingsPage: {
         description:

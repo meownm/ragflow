@@ -60,6 +60,7 @@ def test_system_config_no_auth_required(rest_client_noauth):
     assert payload["code"] == 0, payload
     assert "registerEnabled" in payload["data"], payload
     assert "disablePasswordLogin" in payload["data"], payload
+    assert "visibleSections" in payload["data"], payload
 
 
 @pytest.mark.p2

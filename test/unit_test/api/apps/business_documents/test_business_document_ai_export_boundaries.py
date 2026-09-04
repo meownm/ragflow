@@ -29,6 +29,7 @@ from api.apps.business_documents.ai import BusinessDocumentAI
 from api.apps.business_documents.assets import (
     apply_change_plan,
     bind_change_plan_section_hashes,
+    prompt_descriptor,
     prompt_text,
     published_template,
     render_document_ast,
@@ -455,6 +456,52 @@ def test_ai_retry_prompt_contains_previous_validation_error(database):
     assert prompt.input_payload["job_input"]["retry_feedback"] == job.error
     assert "Исправление предыдущей попытки" in prompt.system
     assert "retry_feedback" not in job.payload
+
+
+@pytest.mark.p0
+def test_review_prompt_forbids_reusing_answered_question_tags_for_comments():
+    job = SimpleNamespace(
+        job_type="ASSESS_REVIEW",
+        attempt=1,
+        error=None,
+        payload={
+            "prompt": prompt_descriptor("ASSESS_REVIEW"),
+            "protocol": {
+                "questions": [
+                    {
+                        "question_id": "question-1",
+                        "semantic_tag": "eva_sync_completeness",
+                        "target_section_id": "4.3",
+                        "status": "ANSWERED",
+                        "answer": {"selected_option_id": "negative_path_absent_or_incomplete"},
+                    }
+                ],
+                "comments": [
+                    {
+                        "source_event_id": "comment-event-1",
+                        "disposition": {
+                            "disposition": "NEEDS_QUESTION",
+                            "question_id": "question-1",
+                            "question_semantic_tag": "eva_sync_completeness",
+                        },
+                    }
+                ],
+            },
+        },
+    )
+
+    prompt = BusinessDocumentAI._prompt(job)
+
+    assert prompt.input_payload["job_input"]["closed_review_question_semantic_tags"] == ["eva_sync_completeness"]
+    assert prompt.input_payload["job_input"]["resolved_comment_questions"] == [
+        {
+            "comment_event_id": "comment-event-1",
+            "question_id": "question-1",
+            "question_semantic_tag": "eva_sync_completeness",
+            "answer": {"selected_option_id": "negative_path_absent_or_incomplete"},
+        }
+    ]
+    assert "не используй закрытый semantic_tag в NEEDS_QUESTION" in prompt.system
 
 
 @pytest.mark.p0

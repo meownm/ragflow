@@ -53,6 +53,8 @@ services:
       - "0.0.0.0:9380:80"
     volumes:
       - ../api/db/services/connector_service.py:/ragflow/api/db/services/connector_service.py:ro
+      - ../api/db/services/business_document_settings_service.py:/ragflow/api/db/services/business_document_settings_service.py:ro
+      - ../api/db/services/navigation_visibility_service.py:/ragflow/api/db/services/navigation_visibility_service.py:ro
       - ../api/db/services/user_external_credential_service.py:/ragflow/api/db/services/user_external_credential_service.py:ro
       - ../api/apps/restful_apis/connector_api.py:/ragflow/api/apps/restful_apis/connector_api.py:ro
       - ../api/apps/restful_apis/agent_api.py:/ragflow/api/apps/restful_apis/agent_api.py:ro
@@ -65,11 +67,14 @@ services:
       - ../api/apps/services/dataset_api_service.py:/ragflow/api/apps/services/dataset_api_service.py:ro
       - ../api/apps/business_documents:/ragflow/api/apps/business_documents:ro
       - ../api/apps/restful_apis/business_document_api.py:/ragflow/api/apps/restful_apis/business_document_api.py:ro
+      - ../api/apps/restful_apis/system_api.py:/ragflow/api/apps/restful_apis/system_api.py:ro
       - ../api/apps/restful_apis/chat_api.py:/ragflow/api/apps/restful_apis/chat_api.py:ro
       - ../api/apps/restful_apis/user_api.py:/ragflow/api/apps/restful_apis/user_api.py:ro
       - ../api/db/db_models.py:/ragflow/api/db/db_models.py:ro
       - ../api/db/template_utils.py:/ragflow/api/db/template_utils.py:ro
       - ../api/ragflow_server.py:/ragflow/api/ragflow_server.py:ro
+      - ../admin/server/routes.py:/ragflow/admin/server/routes.py:ro
+      - ../admin/server/services.py:/ragflow/admin/server/services.py:ro
       - ../agent/business_requirements:/ragflow/agent/business_requirements:ro
       - ../agent/canvas.py:/ragflow/agent/canvas.py:ro
       - ../agent/templates/mrz_document_reader.json:/ragflow/agent/templates/mrz_document_reader.json:ro
@@ -89,6 +94,7 @@ services:
       - ../rag/app/audio.py:/ragflow/rag/app/audio.py:ro
       - ../rag/app/picture.py:/ragflow/rag/app/picture.py:ro
       - ../rag/llm/chat_model.py:/ragflow/rag/llm/chat_model.py:ro
+      - ../conf/system_settings.json:/ragflow/conf/system_settings.json:ro
       - ../web/dist:/ragflow/web/dist:ro
       - ./nginx/ragflow.conf.python:/etc/nginx/conf.d/ragflow.conf.python:ro
       - ./nginx/ragflow.conf.hybrid:/etc/nginx/conf.d/ragflow.conf.hybrid:ro

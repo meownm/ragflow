@@ -14,6 +14,7 @@
 #  limitations under the License.
 #
 
+import json
 import secrets
 import logging
 from typing import Any
@@ -26,6 +27,17 @@ from flask_login import current_user, login_required, logout_user
 from auth import login_verify, login_admin, check_admin_auth
 from responses import success_response, error_response
 from services import UserMgr, ServiceMgr, UserServiceMgr, SettingsMgr, ConfigMgr, EnvironmentsMgr, SandboxMgr
+from api.db.services.business_document_settings_service import (
+    BUSINESS_DOCUMENTS_EVA_CONNECTOR_SETTING,
+    get_business_documents_eva_connector_id,
+    list_business_documents_eva_spaces,
+    validate_business_documents_eva_connector_id,
+)
+from api.db.services.navigation_visibility_service import (
+    NAVIGATION_VISIBILITY_SETTING,
+    get_visible_sections,
+    validate_visible_sections,
+)
 from roles import RoleMgr
 from api.common.exceptions import AdminException
 from common.versions import get_ragflow_version
@@ -455,6 +467,66 @@ def get_variable():
         res = SettingsMgr.get_by_name(var_name)
         return success_response(res)
     except AdminException as e:
+        return error_response(str(e), 400)
+    except Exception as e:
+        return error_response(str(e), 500)
+
+
+@admin_bp.route("/navigation", methods=["GET"])
+@login_required
+@check_admin_auth
+def get_navigation_visibility():
+    return success_response({"visible_sections": get_visible_sections()})
+
+
+@admin_bp.route("/navigation", methods=["PUT"])
+@login_required
+@check_admin_auth
+def set_navigation_visibility():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or "visible_sections" not in data:
+        return error_response("visible_sections is required", 400)
+
+    try:
+        visible_sections = validate_visible_sections(data["visible_sections"])
+        SettingsMgr.update_by_name(NAVIGATION_VISIBILITY_SETTING, json.dumps(visible_sections))
+        return success_response({"visible_sections": visible_sections})
+    except (AdminException, ValueError) as e:
+        return error_response(str(e), 400)
+    except Exception as e:
+        return error_response(str(e), 500)
+
+
+def _business_documents_settings_response():
+    selected_connector_id = get_business_documents_eva_connector_id()
+    spaces = list_business_documents_eva_spaces()
+    return {
+        "eva_connector_id": selected_connector_id,
+        "eva_spaces": spaces,
+        "selected_space_available": any(space["connector_id"] == selected_connector_id for space in spaces),
+    }
+
+
+@admin_bp.route("/business-documents", methods=["GET"])
+@login_required
+@check_admin_auth
+def get_business_documents_settings():
+    return success_response(_business_documents_settings_response())
+
+
+@admin_bp.route("/business-documents", methods=["PUT"])
+@login_required
+@check_admin_auth
+def set_business_documents_settings():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or "eva_connector_id" not in data:
+        return error_response("eva_connector_id is required", 400)
+
+    try:
+        connector_id = validate_business_documents_eva_connector_id(data["eva_connector_id"])
+        SettingsMgr.update_by_name(BUSINESS_DOCUMENTS_EVA_CONNECTOR_SETTING, connector_id or "")
+        return success_response(_business_documents_settings_response())
+    except (AdminException, ValueError) as e:
         return error_response(str(e), 400)
     except Exception as e:
         return error_response(str(e), 500)

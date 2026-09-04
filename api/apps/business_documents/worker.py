@@ -68,6 +68,9 @@ class BusinessDocumentJobQueue:
                 changed = (
                     BusinessDocumentJob.update(
                         status="RUNNING",
+                        progress=0.05,
+                        progress_stage="STARTING",
+                        progress_message="Запускаем обработку",
                         attempt=BusinessDocumentJob.attempt + 1,
                         lease_owner=worker_id,
                         lease_token=lease_token,
@@ -103,6 +106,9 @@ class BusinessDocumentJobQueue:
         changed = (
             BusinessDocumentJob.update(
                 status="RETRY",
+                progress=0.02,
+                progress_stage="RETRY_WAIT",
+                progress_message="Ожидает повторного запуска",
                 available_at=now_ms + max(0, delay_ms),
                 lease_owner=None,
                 lease_token=None,
@@ -128,6 +134,39 @@ class BusinessDocumentJobQueue:
         changed = (
             BusinessDocumentJob.update(
                 lease_expires_at=now_ms + lease_ms,
+                update_time=now_ms,
+                update_date=datetime.now(),
+            )
+            .where(
+                (BusinessDocumentJob.id == job_id)
+                & (BusinessDocumentJob.status == "RUNNING")
+                & (BusinessDocumentJob.lease_owner == worker_id)
+                & (BusinessDocumentJob.lease_token == lease_token)
+                & (BusinessDocumentJob.lease_expires_at > now_ms)
+            )
+            .execute()
+        )
+        return changed == 1
+
+    @classmethod
+    def update_progress(
+        cls,
+        job_id: str,
+        worker_id: str,
+        lease_token: str,
+        progress: float,
+        stage: str,
+        message: str,
+    ) -> bool:
+        """Persist a user-facing milestone while the worker still owns the job."""
+
+        progress = min(max(float(progress), 0.0), 0.99)
+        now_ms = current_timestamp()
+        changed = (
+            BusinessDocumentJob.update(
+                progress=progress,
+                progress_stage=stage,
+                progress_message=message,
                 update_time=now_ms,
                 update_date=datetime.now(),
             )
@@ -184,6 +223,9 @@ class BusinessDocumentJobQueue:
             changed = (
                 BusinessDocumentJob.update(
                     status="RETRY",
+                    progress=0.02,
+                    progress_stage="RETRY_WAIT",
+                    progress_message="Ожидает повторного запуска",
                     available_at=now_ms,
                     lease_owner=None,
                     lease_token=None,
@@ -264,6 +306,12 @@ class BusinessDocumentWorker:
     def recover_stale(self, *, now_ms: int | None = None) -> tuple[int, int]:
         return BusinessDocumentJobQueue.recover_stale(now_ms=now_ms)
 
+    def _set_progress(self, job: BusinessDocumentJob, progress: float, stage: str, message: str) -> None:
+        if not job.lease_token:
+            raise RuntimeError("Claimed job has no lease token")
+        if not BusinessDocumentJobQueue.update_progress(job.id, self.worker_id, job.lease_token, progress, stage, message):
+            logging.warning("Unable to update progress for business document job %s", job.id)
+
     def run_once(self, *, now_ms: int | None = None) -> bool:
         job = BusinessDocumentJobQueue.claim(self.worker_id, lease_ms=self.lease_ms, now_ms=now_ms)
         if job is None:
@@ -272,17 +320,24 @@ class BusinessDocumentWorker:
             heartbeat = _LeaseHeartbeat(job, self.worker_id, self.lease_ms)
             heartbeat.start()
             if job.job_type == "GENERATE_EXPORT":
+                self._set_progress(job, 0.35, "EXPORTING", "Формируем файл")
                 output = self.export_service.generate(job, storage=self.storage)
                 execution_audit = None
             else:
                 dataset_ids = job.payload.get("dataset_ids", []) if isinstance(job.payload, dict) else []
                 if dataset_ids and related_file_search_enabled():
+                    self._set_progress(job, 0.15, "RETRIEVING", "Подбираем связанные материалы")
                     evidence_snapshot = self.evidence.retrieve(job)
+                    self._set_progress(job, 0.32, "RETRIEVED", "Связанные материалы подготовлены")
                     execution_audit = self.evidence.audit(evidence_snapshot, job.attempt)
+                    self._set_progress(job, 0.4, "GENERATING", "Формируем результат")
                     output = self.ai.process(job, evidence_snapshot)
                 else:
                     execution_audit = None
+                    self._set_progress(job, 0.4, "GENERATING", "Формируем результат")
                     output = self.ai.process(job)
+                self._set_progress(job, 0.82, "VALIDATING", "Проверяем результат")
+            self._set_progress(job, 0.92, "PERSISTING", "Сохраняем результат")
             heartbeat.stop()
             BusinessDocumentService.complete_job(
                 job.tenant_id,

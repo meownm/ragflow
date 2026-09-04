@@ -1,16 +1,34 @@
 services:
+  plantuml-server:
+    image: ${PLANTUML_IMAGE:-plantuml/plantuml-server:jetty-v1.2026.6}
+
+  es01:
+    image: ${ELASTICSEARCH_IMAGE:-elasticsearch:8.11.3}
+
+  redis:
+    image: ${VALKEY_IMAGE:-valkey/valkey:8}
+
+  minio:
+    image: ${MINIO_IMAGE:-pgsty/minio:RELEASE.2026-03-25T00-00-00Z}
+
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:16-alpine}
+
   ragflow-cpu:
+    image: ${RAGFLOW_IMAGE:-infiniflow/ragflow:v0.26.4}
+    depends_on: !override
+      postgres:
+        condition: service_healthy
+      plantuml-server:
+        condition: service_healthy
     ports: !override
-      - "127.0.0.1:${SVR_WEB_HTTP_PORT:-9380}:80"
+      - "0.0.0.0:${SVR_WEB_HTTP_PORT:-80}:80"
     environment:
       RAGFLOW_CREDENTIALS_KEY: ${RAGFLOW_CREDENTIALS_KEY:?RAGFLOW_CREDENTIALS_KEY is required}
 
   t-one-asr:
-    environment:
-      ASR_FFMPEG_PATH: ffmpeg
-      ASR_SOX_PATH: sox
-      ASR_OLLAMA_BASE_URL: http://host.docker.internal:11434
-      ASR_OLLAMA_MODEL: ${T_ONE_ASR_OLLAMA_MODEL-}
+    profiles: !override
+      - t-one-disabled
 
   mysql:
     profiles: !override

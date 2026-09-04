@@ -7,7 +7,7 @@ export const openMetadataConstant: FormFieldConfig[] = [
     type: FormFieldType.Text,
     required: true,
     placeholder: 'http://host.docker.internal:8585',
-    tooltip: 'Server-side URL reachable from the RAGFlow container.',
+    tooltip: 'Server-side URL reachable from the Агент Раггер container.',
   },
   {
     label: 'OpenMetadata Public URL',

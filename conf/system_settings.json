@@ -83,6 +83,18 @@
       "source": "variable",
       "data_type": "json",
       "value": "{}"
+    },
+    {
+      "name": "navigation.visible_sections",
+      "source": "admin",
+      "data_type": "json",
+      "value": "[\"dataset\", \"chat\", \"search\", \"agent\", \"memory\", \"catalog\", \"business_documents\", \"file_manager\"]"
+    },
+    {
+      "name": "business_documents.eva_connector_id",
+      "source": "admin",
+      "data_type": "string",
+      "value": ""
     }
   ]
 }

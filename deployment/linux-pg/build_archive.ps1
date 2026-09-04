@@ -74,6 +74,7 @@ try {
     )
     $excludedDirectoryPaths = @(
         'build', 'dist', 'release', 'web/dist',
+        'services/asr-online-service',
         'services/asr-online-service/uploads',
         'test/playwright/artifacts',
         'ragflow_deps/huggingface.co', 'ragflow_deps/nltk_data'
@@ -119,6 +120,7 @@ try {
                 $normalizedPath -match '\.(tar\.gz|bundle)(\.sha256)?$' -or
                 $item.Name -eq '.DS_Store' -or
                 $normalizedPath -match '\.(log|dump|sqlite|sqlite3)$' -or
+                $normalizedPath -match '^deployment/linux-pg/registry-images-.*\.env$' -or
                 (
                     $normalizedPath -match '^ragflow_deps/' -and
                     $normalizedPath -notin @(
@@ -154,9 +156,8 @@ try {
     $requiredPaths = @(
         'deployment/linux-pg/install.sh',
         'deployment/linux-pg/docker-compose.release.yml',
-        'deployment/linux-pg/seed_admin_asr.py',
+        'deployment/linux-pg/seed_admin.py',
         'deployment/linux-pg/env.template',
-        'services/asr-online-service/Dockerfile',
         'DEPLOYMENT-SOURCE.env'
     )
     foreach ($relativePath in $requiredPaths) {
@@ -172,7 +173,9 @@ try {
                 $relativePath -in @('docker/.env', 'docker/.env.local') -or
                 $relativePath -match '(^|/)(\.git|\.venv|\.codex_tmp|\.playwright-cli|node_modules|__pycache__|ragflow-logs|output|build|dist|release)(/|$)' -or
                 $relativePath -match '^services/asr-online-service/uploads/' -or
+                $relativePath -match '^services/asr-online-service/' -or
                 $relativePath -match '^test/playwright/artifacts/' -or
+                $relativePath -match '^deployment/linux-pg/registry-images-.*\.env$' -or
                 $relativePath -match '^ragflow_deps/(?!Dockerfile$|download_deps\.py$|download_go_deps\.py$)' -or
                 $relativePath -match '\.(tar\.gz|bundle)(\.sha256)?$'
             ) {

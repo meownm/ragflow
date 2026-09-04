@@ -36,9 +36,9 @@ from api.apps.business_documents.assets import (
     validate_contract,
     validate_document_ast,
 )
-from api.apps.business_documents.authorization import BusinessDocumentAccess
+from api.apps.business_documents.authorization import BusinessDocumentAccess, BusinessDocumentRole
 from api.apps.business_documents.contracts import CommandEnvelope, CommandType, LifecycleState, OperationState
-from api.apps.business_documents.errors import BusinessDocumentError, ConflictError, NotFoundError, ValidationError
+from api.apps.business_documents.errors import BusinessDocumentError, ConflictError, NotFoundError, PermissionDeniedError, ValidationError
 from api.apps.business_documents.evidence import ensure_dataset_access, ensure_dataset_embedding_compatibility, related_file_search_enabled
 from api.db.db_models import (
     BusinessDocument,
@@ -53,6 +53,7 @@ from api.db.db_models import (
     BusinessDocumentProposalDecision,
     BusinessDocumentQuestion,
     BusinessDocumentRevision,
+    User,
 )
 from common.misc_utils import get_uuid
 from common.time_utils import current_timestamp
@@ -134,7 +135,16 @@ class BusinessDocumentService:
         return _MODEL_TABLES
 
     @classmethod
-    def create_document(cls, tenant_id: str, actor_id: str, raw: object, is_admin: bool = False) -> dict[str, Any]:
+    def create_document(
+        cls,
+        tenant_id: str,
+        actor_id: str,
+        raw: object,
+        is_admin: bool = False,
+        access_role: BusinessDocumentRole | str = BusinessDocumentRole.AUTHOR_CREATOR,
+    ) -> dict[str, Any]:
+        access = BusinessDocumentAccess(actor_id, access_role, is_admin)
+        access.require_create()
         if not isinstance(raw, dict):
             raise ValidationError("INVALID_DOCUMENT", "Request body must be a JSON object")
         if "chat_id" in raw:
@@ -203,43 +213,159 @@ class BusinessDocumentService:
                 },
                 correlation_id=document_id,
             )
-        return cls.get_document(tenant_id, document_id, actor_id, is_admin)
+        return cls.get_document(tenant_id, document_id, actor_id, is_admin, access_role)
 
     @classmethod
-    def get_document(cls, tenant_id: str, document_id: str, actor_id: str, is_admin: bool = False) -> dict[str, Any]:
-        access = BusinessDocumentAccess(actor_id, is_admin)
+    def get_document(
+        cls,
+        tenant_id: str,
+        document_id: str,
+        actor_id: str,
+        is_admin: bool = False,
+        access_role: BusinessDocumentRole | str = BusinessDocumentRole.AUTHOR_CREATOR,
+    ) -> dict[str, Any]:
+        access = BusinessDocumentAccess(actor_id, access_role, is_admin)
         document = cls._get_accessible_document(document_id)
         return cls._project(document, access)
 
     @classmethod
-    def list_documents(cls, tenant_id: str, actor_id: str, page: int = 1, page_size: int = 20, is_admin: bool = False) -> dict[str, Any]:
+    def list_documents(
+        cls,
+        tenant_id: str,
+        actor_id: str,
+        page: int = 1,
+        page_size: int = 20,
+        is_admin: bool = False,
+        access_role: BusinessDocumentRole | str = BusinessDocumentRole.AUTHOR_CREATOR,
+        scope: str = "all",
+    ) -> dict[str, Any]:
         if not isinstance(page, int) or not isinstance(page_size, int) or page < 1 or not 1 <= page_size <= 100:
             raise ValidationError("INVALID_PAGINATION", "page must be positive and page_size must be between 1 and 100")
-        access = BusinessDocumentAccess(actor_id, is_admin)
+        if scope not in {"mine", "all"}:
+            raise ValidationError("INVALID_DOCUMENT_SCOPE", "scope must be mine or all")
+        access = BusinessDocumentAccess(actor_id, access_role, is_admin)
         query = BusinessDocument.select()
+        if scope == "mine":
+            query = query.where(BusinessDocument.owner_id == actor_id)
         total = query.count()
-        rows = query.order_by(BusinessDocument.update_time.desc()).paginate(page, page_size)
+        rows = list(query.order_by(BusinessDocument.update_time.desc()).paginate(page, page_size))
+        owner_ids = {row.owner_id for row in rows if row.owner_id}
+        owner_names = {owner_id: cls._user_display_name(owner_id) for owner_id in owner_ids}
         return {
             "items": [
                 {
                     "document_id": row.id,
                     "owner_id": row.owner_id,
+                    "owner_name": owner_names.get(row.owner_id),
                     "title": row.title,
                     "lifecycle_state": row.lifecycle_state,
                     "operation_state": row.operation_state,
                     "state_version": row.state_version,
                     "current_revision_number": (BusinessDocumentRevision.get_by_id(row.current_revision_id).revision_number if row.current_revision_id else None),
                     "eva_page_url": (cls._eva_binding(row) or {}).get("page_url"),
+                    "latest_job": cls._latest_job(row.id),
                     "update_time": row.update_time,
                     "access_role": access.role.value,
-                    "permissions": access.permissions(),
+                    "permissions": access.permissions(row.owner_id),
                 }
                 for row in rows
             ],
             "page": page,
             "page_size": page_size,
             "total": total,
+            "scope": scope,
+            "access_role": access.role.value,
+            "capabilities": access.capabilities(),
         }
+
+    @classmethod
+    def list_access_users(
+        cls,
+        actor_id: str,
+        is_admin: bool = False,
+        access_role: BusinessDocumentRole | str = BusinessDocumentRole.AUTHOR_CREATOR,
+    ) -> dict[str, Any]:
+        access = BusinessDocumentAccess(actor_id, access_role, is_admin)
+        access.require_assign()
+        users = User.select(User.id, User.nickname, User.business_document_role, User.is_superuser).where((User.status == "1") & (User.is_active == "1"))
+        return {
+            "items": [
+                {
+                    "user_id": user.id,
+                    "nickname": user.nickname,
+                    "role": (BusinessDocumentRole.ADMIN.value if user.is_superuser else cls._normalized_access_role(user.business_document_role).value),
+                }
+                for user in users.order_by(User.nickname.asc(), User.id.asc())
+            ]
+        }
+
+    @classmethod
+    def update_user_access_role(cls, actor_id: str, user_id: str, raw: object, is_admin: bool = False) -> dict[str, Any]:
+        if not is_admin:
+            raise PermissionDeniedError("Only an administrator can change business document roles")
+        if not isinstance(raw, dict):
+            raise ValidationError("INVALID_ACCESS_ROLE", "Request body must be a JSON object")
+        try:
+            role = BusinessDocumentRole(raw.get("role"))
+        except (TypeError, ValueError) as exc:
+            raise ValidationError("INVALID_ACCESS_ROLE", "Unknown business document role") from exc
+        if role == BusinessDocumentRole.ADMIN:
+            raise ValidationError("INVALID_ACCESS_ROLE", "Administrator access is controlled by the superuser flag")
+        user = User.get_or_none(User.id == user_id)
+        if user is None:
+            raise BusinessDocumentError("USER_NOT_FOUND", "User not found", 404)
+        if user.is_superuser:
+            raise ConflictError("ADMIN_ROLE_MANAGED_SEPARATELY", "A superuser always has administrator access")
+        User.update(business_document_role=role.value, update_time=current_timestamp(), update_date=datetime.now()).where(User.id == user_id).execute()
+        return {"user_id": user_id, "nickname": user.nickname, "role": role.value}
+
+    @classmethod
+    def assign_document(
+        cls,
+        actor_id: str,
+        document_id: str,
+        raw: object,
+        is_admin: bool = False,
+        access_role: BusinessDocumentRole | str = BusinessDocumentRole.AUTHOR_CREATOR,
+    ) -> dict[str, Any]:
+        access = BusinessDocumentAccess(actor_id, access_role, is_admin)
+        access.require_assign()
+        if not isinstance(raw, dict):
+            raise ValidationError("INVALID_DOCUMENT_ASSIGNMENT", "Request body must be a JSON object")
+        owner_id = raw.get("owner_id")
+        expected_state_version = raw.get("expected_state_version")
+        if not isinstance(owner_id, str) or not owner_id.strip():
+            raise ValidationError("INVALID_DOCUMENT_ASSIGNMENT", "owner_id must be a non-empty string")
+        if isinstance(expected_state_version, bool) or not isinstance(expected_state_version, int):
+            raise ValidationError("INVALID_DOCUMENT_ASSIGNMENT", "expected_state_version must be an integer")
+        new_owner = User.get_or_none((User.id == owner_id.strip()) & (User.status == "1") & (User.is_active == "1"))
+        if new_owner is None:
+            raise BusinessDocumentError("USER_NOT_FOUND", "Assigned user not found", 404)
+
+        database = BusinessDocument._meta.database
+        with database.atomic():
+            document = cls._get_accessible_document(document_id)
+            if document.state_version != expected_state_version:
+                raise ConflictError(
+                    "STATE_VERSION_CONFLICT",
+                    "The document changed since it was loaded",
+                    {"expected": expected_state_version, "actual": document.state_version},
+                )
+            if document.owner_id == new_owner.id:
+                return cls._project(document, access)
+            previous_owner_id = document.owner_id
+            new_version = document.state_version + 1
+            cls._optimistic_update(document, {"owner_id": new_owner.id, "state_version": new_version})
+            cls._create_event(
+                document.id,
+                new_version,
+                "DocumentAssigned",
+                "USER",
+                actor_id,
+                {"previous_owner_id": previous_owner_id, "owner_id": new_owner.id},
+                get_uuid(),
+            )
+        return cls._project(cls._get_accessible_document(document_id), access)
 
     @classmethod
     def list_revisions(cls, tenant_id: str, document_id: str, actor_id: str, is_admin: bool = False) -> list[dict[str, Any]]:
@@ -256,7 +382,15 @@ class BusinessDocumentService:
         return cls._revision_dict(row)
 
     @classmethod
-    def pull_from_eva(cls, tenant_id: str, actor_id: str, document_id: str, raw: object, is_admin: bool = False) -> dict[str, Any]:
+    def pull_from_eva(
+        cls,
+        tenant_id: str,
+        actor_id: str,
+        document_id: str,
+        raw: object,
+        is_admin: bool = False,
+        access_role: BusinessDocumentRole | str = BusinessDocumentRole.AUTHOR_CREATOR,
+    ) -> dict[str, Any]:
         """Bring a newer EVA page into the governed review protocol.
 
         The remote content is recorded as an immutable review input. It never
@@ -267,9 +401,9 @@ class BusinessDocumentService:
         if not isinstance(raw, dict) or isinstance(raw.get("expected_state_version"), bool) or not isinstance(raw.get("expected_state_version"), int):
             raise ValidationError("INVALID_EVA_SYNC", "expected_state_version must be an integer")
         expected = raw["expected_state_version"]
-        document = cls._get_editable_document(document_id)
+        access = BusinessDocumentAccess(actor_id, access_role, is_admin)
+        document = cls._get_editable_document(document_id, access)
         document_tenant_id = document.tenant_id
-        access = BusinessDocumentAccess(actor_id, is_admin)
         if document.state_version != expected:
             raise ConflictError("STATE_VERSION_CONFLICT", "The document changed since it was loaded", {"expected": expected, "actual": document.state_version})
         cls._require_idle(document)
@@ -307,7 +441,7 @@ class BusinessDocumentService:
 
         database = BusinessDocument._meta.database
         with database.atomic():
-            document = cls._get_editable_document(document_id)
+            document = cls._get_editable_document(document_id, access)
             if document.state_version != expected:
                 raise ConflictError("STATE_VERSION_CONFLICT", "The document changed during EVA synchronization", {"expected": expected, "actual": document.state_version})
             current_binding = cls._eva_binding(document)
@@ -349,15 +483,23 @@ class BusinessDocumentService:
         }
 
     @classmethod
-    def rebind_eva(cls, tenant_id: str, actor_id: str, document_id: str, raw: object, is_admin: bool = False) -> dict[str, Any]:
+    def rebind_eva(
+        cls,
+        tenant_id: str,
+        actor_id: str,
+        document_id: str,
+        raw: object,
+        is_admin: bool = False,
+        access_role: BusinessDocumentRole | str = BusinessDocumentRole.AUTHOR_CREATOR,
+    ) -> dict[str, Any]:
         """Re-resolve an existing EVA link without rewriting its creation event."""
 
         if not isinstance(raw, dict) or isinstance(raw.get("expected_state_version"), bool) or not isinstance(raw.get("expected_state_version"), int):
             raise ValidationError("INVALID_EVA_BINDING", "expected_state_version must be an integer")
         expected = raw["expected_state_version"]
-        document = cls._get_editable_document(document_id)
+        access = BusinessDocumentAccess(actor_id, access_role, is_admin)
+        document = cls._get_editable_document(document_id, access)
         document_tenant_id = document.tenant_id
-        access = BusinessDocumentAccess(actor_id, is_admin)
         if document.state_version != expected:
             raise ConflictError("STATE_VERSION_CONFLICT", "The document changed since it was loaded", {"expected": expected, "actual": document.state_version})
         cls._require_idle(document)
@@ -379,7 +521,7 @@ class BusinessDocumentService:
 
         database = BusinessDocument._meta.database
         with database.atomic():
-            document = cls._get_editable_document(document_id)
+            document = cls._get_editable_document(document_id, access)
             if document.state_version != expected:
                 raise ConflictError("STATE_VERSION_CONFLICT", "The document changed during EVA reconnection", {"expected": expected, "actual": document.state_version})
             latest_binding = cls._eva_binding(document)
@@ -399,12 +541,21 @@ class BusinessDocumentService:
         return cls._project(cls._get_document(document_tenant_id, document_id), access)
 
     @classmethod
-    def create_eva_change_from_revision(cls, tenant_id: str, actor_id: str, document_id: str, raw: object) -> dict[str, Any]:
+    def create_eva_change_from_revision(
+        cls,
+        tenant_id: str,
+        actor_id: str,
+        document_id: str,
+        raw: object,
+        is_admin: bool = False,
+        access_role: BusinessDocumentRole | str = BusinessDocumentRole.AUTHOR_CREATOR,
+    ) -> dict[str, Any]:
         """Open the existing EVA approval workflow with the agreed local revision."""
 
         if not isinstance(raw, dict) or isinstance(raw.get("expected_state_version"), bool) or not isinstance(raw.get("expected_state_version"), int):
             raise ValidationError("INVALID_EVA_SYNC", "expected_state_version must be an integer")
-        document = cls._get_editable_document(document_id)
+        access = BusinessDocumentAccess(actor_id, access_role, is_admin)
+        document = cls._get_editable_document(document_id, access)
         expected = raw["expected_state_version"]
         if document.state_version != expected:
             raise ConflictError("STATE_VERSION_CONFLICT", "The document changed since it was loaded", {"expected": expected, "actual": document.state_version})
@@ -443,16 +594,21 @@ class BusinessDocumentService:
         return [cls._job_dict(row) for row in rows]
 
     @classmethod
-    def delete_document(cls, actor_id: str, document_id: str, is_admin: bool = False, storage=None) -> dict[str, Any]:
-        access = BusinessDocumentAccess(actor_id, is_admin)
+    def delete_document(
+        cls,
+        actor_id: str,
+        document_id: str,
+        is_admin: bool = False,
+        access_role: BusinessDocumentRole | str = BusinessDocumentRole.AUTHOR_CREATOR,
+        storage=None,
+    ) -> dict[str, Any]:
+        access = BusinessDocumentAccess(actor_id, access_role, is_admin)
         access.require_delete()
         document = BusinessDocument.get_or_none(BusinessDocument.id == document_id)
         if document is None:
             raise NotFoundError()
 
-        active_job = BusinessDocumentJob.select().where(
-            (BusinessDocumentJob.document_id == document_id) & (BusinessDocumentJob.status.in_(("PENDING", "RUNNING", "RETRY")))
-        )
+        active_job = BusinessDocumentJob.select().where((BusinessDocumentJob.document_id == document_id) & (BusinessDocumentJob.status.in_(("PENDING", "RUNNING", "RETRY"))))
         if document.operation_state not in {OperationState.IDLE.value, OperationState.FAILED.value} or active_job.exists():
             raise ConflictError("OPERATION_IN_PROGRESS", "A document with an active operation cannot be deleted")
 
@@ -462,9 +618,7 @@ class BusinessDocumentService:
             document = BusinessDocument.get_or_none(BusinessDocument.id == document_id)
             if document is None:
                 raise NotFoundError()
-            active_job = BusinessDocumentJob.select().where(
-                (BusinessDocumentJob.document_id == document_id) & (BusinessDocumentJob.status.in_(("PENDING", "RUNNING", "RETRY")))
-            )
+            active_job = BusinessDocumentJob.select().where((BusinessDocumentJob.document_id == document_id) & (BusinessDocumentJob.status.in_(("PENDING", "RUNNING", "RETRY"))))
             if document.operation_state not in {OperationState.IDLE.value, OperationState.FAILED.value} or active_job.exists():
                 raise ConflictError("OPERATION_IN_PROGRESS", "A document with an active operation cannot be deleted")
             for model in (
@@ -507,7 +661,15 @@ class BusinessDocumentService:
         }
 
     @classmethod
-    def execute_command(cls, tenant_id: str, actor_id: str, document_id: str, raw: object) -> dict[str, Any]:
+    def execute_command(
+        cls,
+        tenant_id: str,
+        actor_id: str,
+        document_id: str,
+        raw: object,
+        is_admin: bool = False,
+        access_role: BusinessDocumentRole | str = BusinessDocumentRole.AUTHOR_CREATOR,
+    ) -> dict[str, Any]:
         envelope = CommandEnvelope.parse(raw)
         request_hash = _stable_hash(
             {
@@ -524,7 +686,8 @@ class BusinessDocumentService:
         document_tenant_id = tenant_id
         try:
             with database.atomic():
-                document = cls._get_editable_document(document_id)
+                access = BusinessDocumentAccess(actor_id, access_role, is_admin)
+                document = cls._get_editable_document(document_id, access)
                 document_tenant_id = document.tenant_id
                 existing = BusinessDocumentCommand.get_or_none(
                     (BusinessDocumentCommand.tenant_id == document_tenant_id)
@@ -569,9 +732,7 @@ class BusinessDocumentService:
             # initial lookup. Only that exact ledger collision is replayable;
             # unrelated integrity failures keep their original traceback.
             existing = BusinessDocumentCommand.get_or_none(
-                (BusinessDocumentCommand.tenant_id == document_tenant_id)
-                & (BusinessDocumentCommand.document_id == document_id)
-                & (BusinessDocumentCommand.idempotency_key == envelope.idempotency_key)
+                (BusinessDocumentCommand.tenant_id == document_tenant_id) & (BusinessDocumentCommand.document_id == document_id) & (BusinessDocumentCommand.idempotency_key == envelope.idempotency_key)
             )
             if existing is None:
                 raise
@@ -637,6 +798,9 @@ class BusinessDocumentService:
             prompt_audit = cls._job_prompt_audit(job)
             BusinessDocumentJob.update(
                 status="COMPLETED",
+                progress=1.0,
+                progress_stage="COMPLETED",
+                progress_message="Обработка завершена",
                 lease_owner=None,
                 lease_token=None,
                 lease_expires_at=None,
@@ -673,6 +837,8 @@ class BusinessDocumentService:
             cls._create_event(document.id, new_version, "BusinessDocumentJobFailed", "SYSTEM", actor_id, {"job_id": job.id, "error": error}, job.correlation_id)
             BusinessDocumentJob.update(
                 status="DEAD",
+                progress_stage="FAILED",
+                progress_message="Не удалось завершить обработку",
                 lease_owner=None,
                 lease_token=None,
                 lease_expires_at=None,
@@ -792,6 +958,9 @@ class BusinessDocumentService:
             tenant_id=document.tenant_id,
             job_type=job_type,
             status="PENDING",
+            progress=0.02,
+            progress_stage="QUEUED",
+            progress_message="Ожидает запуска",
             dedupe_key=dedupe_key,
             source_state_version=new_version,
             base_revision_id=document.current_revision_id,
@@ -1068,7 +1237,7 @@ class BusinessDocumentService:
         question_comment_sources: dict[str, list[str]] = {}
         for disposition in dispositions:
             if disposition["disposition"] == "NEEDS_QUESTION":
-                question_comment_sources.setdefault(disposition["question_semantic_tag"], []).append(disposition["comment_event_id"])
+                question_comment_sources.setdefault(_canonical_semantic_tag(disposition["question_semantic_tag"]), []).append(disposition["comment_event_id"])
         inserted_question_count = 0
         for question in questions:
             cls._validate_evidence_refs(execution, question.get("evidence_refs", []))
@@ -1078,15 +1247,15 @@ class BusinessDocumentService:
                 "REVIEW",
                 document.active_review_cycle,
                 event_id,
-                question_comment_sources.get(question["semantic_tag"], []),
+                question_comment_sources.get(_canonical_semantic_tag(question["semantic_tag"]), []),
             )
-            question_ids_by_tag.setdefault(question["semantic_tag"], question_id)
+            question_ids_by_tag.setdefault(_canonical_semantic_tag(question["semantic_tag"]), question_id)
             inserted_question_count += int(inserted)
         normalized_dispositions = []
         for disposition in dispositions:
             normalized = dict(disposition)
             if disposition["disposition"] == "NEEDS_QUESTION":
-                question_id = question_ids_by_tag[disposition["question_semantic_tag"]]
+                question_id = question_ids_by_tag[_canonical_semantic_tag(disposition["question_semantic_tag"])]
                 if BusinessDocumentAnswer.select().where((BusinessDocumentAnswer.document_id == document.id) & (BusinessDocumentAnswer.question_id == question_id)).exists():
                     raise ValidationError(
                         "COMMENT_DISPOSITION_QUESTION_CLOSED",
@@ -1158,6 +1327,7 @@ class BusinessDocumentService:
             draft,
             body,
             [event_id, *intake_answer_event_ids],
+            cls._job_request_author(job, document.owner_id),
         )
         inserted_question_count = 0
         for question in questions:
@@ -1308,7 +1478,14 @@ class BusinessDocumentService:
         next_number = (BusinessDocumentRevision.select(fn.MAX(BusinessDocumentRevision.revision_number)).where(BusinessDocumentRevision.document_id == document.id).scalar() or 0) + 1
         new_version = document.state_version + 1
         event_id = get_uuid()
-        revision_id = cls._insert_revision(document.id, next_number, draft, body, list(dict.fromkeys([event_id, *source_event_ids])))
+        revision_id = cls._insert_revision(
+            document.id,
+            next_number,
+            draft,
+            body,
+            list(dict.fromkeys([event_id, *source_event_ids])),
+            cls._job_request_author(job, document.owner_id),
+        )
         cls._optimistic_update(
             document,
             {
@@ -1328,6 +1505,7 @@ class BusinessDocumentService:
                 "job_id": job.id,
                 "base_revision_id": job.base_revision_id,
                 "revision_id": revision_id,
+                "requested_by_actor_id": cls._job_request_author(job, document.owner_id),
                 "source_event_ids": source_event_ids,
                 "acknowledged_no_change_event_ids": acknowledged_no_change_event_ids,
                 "evidence_refs": list(dict.fromkeys(evidence_refs)),
@@ -1471,11 +1649,12 @@ class BusinessDocumentService:
         return proposal_id, True
 
     @classmethod
-    def _insert_revision(cls, document_id, revision_number, document_ast, body, source_event_ids):
+    def _insert_revision(cls, document_id, revision_number, document_ast, body, source_event_ids, author_id=None):
         revision_id = get_uuid()
         BusinessDocumentRevision.create(
             id=revision_id,
             document_id=document_id,
+            author_id=author_id,
             revision_number=revision_number,
             document_ast=document_ast,
             body_markdown=body,
@@ -1531,13 +1710,47 @@ class BusinessDocumentService:
                 "Review assessment must classify every and only active-cycle comments",
                 {"missing_event_ids": missing, "unknown_event_ids": unknown},
             )
-        question_tags = {question.get("semantic_tag") for question in output["questions"] if isinstance(question, dict) and isinstance(question.get("semantic_tag"), str)}
+        question_tags = {
+            _canonical_semantic_tag(question["semantic_tag"])
+            for question in output["questions"]
+            if isinstance(question, dict) and isinstance(question.get("semantic_tag"), str)
+        }
         for disposition in dispositions:
-            if disposition["disposition"] == "NEEDS_QUESTION" and disposition.get("question_semantic_tag") not in question_tags:
+            if disposition["disposition"] != "NEEDS_QUESTION":
+                continue
+            semantic_tag = _canonical_semantic_tag(disposition.get("question_semantic_tag", ""))
+            if semantic_tag not in question_tags:
                 raise ValidationError(
                     "COMMENT_DISPOSITION_QUESTION_NOT_FOUND",
                     "NEEDS_QUESTION must reference a concrete question from the same review plan",
                     {"comment_event_id": disposition["comment_event_id"]},
+                )
+            existing_question = BusinessDocumentQuestion.get_or_none(
+                (BusinessDocumentQuestion.document_id == document.id)
+                & (BusinessDocumentQuestion.stage == "REVIEW")
+                & (BusinessDocumentQuestion.review_cycle == document.active_review_cycle)
+                & (BusinessDocumentQuestion.semantic_tag == semantic_tag)
+            )
+            existing_answer = (
+                BusinessDocumentAnswer.get_or_none(
+                    (BusinessDocumentAnswer.document_id == document.id) & (BusinessDocumentAnswer.question_id == existing_question.id)
+                )
+                if existing_question is not None
+                else None
+            )
+            if existing_answer is not None:
+                raise ValidationError(
+                    "COMMENT_DISPOSITION_QUESTION_CLOSED",
+                    "NEEDS_QUESTION must reference an open question",
+                    {
+                        "comment_event_id": disposition["comment_event_id"],
+                        "question_id": existing_question.id,
+                        "question_semantic_tag": semantic_tag,
+                        "required_action": (
+                            "Use CONFIRMED_CHANGE or NO_CHANGE if the existing answer resolves the comment; "
+                            "otherwise emit a different question with a new semantic_tag"
+                        ),
+                    },
                 )
         return dispositions
 
@@ -1705,7 +1918,7 @@ class BusinessDocumentService:
     @classmethod
     def _project(cls, document, access: BusinessDocumentAccess | None = None):
         access = access or BusinessDocumentAccess(document.owner_id)
-        permissions = access.permissions()
+        permissions = access.permissions(document.owner_id)
         revision = None
         if document.current_revision_id:
             revision = cls._revision_dict(BusinessDocumentRevision.get_by_id(document.current_revision_id))
@@ -1923,9 +2136,12 @@ class BusinessDocumentService:
     @classmethod
     def _revision_dict(cls, row):
         sections = row.document_ast.get("sections", []) if isinstance(row.document_ast, dict) else []
+        author_id = row.author_id or cls._legacy_revision_author(row)
         return {
             "revision_id": row.id,
             "revision_number": row.revision_number,
+            "author_id": author_id,
+            "author_name": cls._user_display_name(author_id),
             "document_ast": row.document_ast,
             "body_markdown": row.body_markdown,
             "section_texts": {
@@ -1936,6 +2152,53 @@ class BusinessDocumentService:
             "created_at": row.create_time,
             "change_basis": cls._revision_change_basis(row),
         }
+
+    @staticmethod
+    def _job_request_author(job: BusinessDocumentJob, fallback: str) -> str:
+        requested_by = job.payload.get("requested_by_actor_id") if isinstance(job.payload, dict) else None
+        return requested_by if isinstance(requested_by, str) and requested_by else fallback
+
+    @staticmethod
+    def _normalized_access_role(value: object) -> BusinessDocumentRole:
+        try:
+            role = BusinessDocumentRole(value)
+        except (TypeError, ValueError):
+            return BusinessDocumentRole.AUTHOR_EDITOR
+        return BusinessDocumentRole.AUTHOR_EDITOR if role == BusinessDocumentRole.ADMIN else role
+
+    @staticmethod
+    def _legacy_revision_author(row: BusinessDocumentRevision) -> str | None:
+        events = BusinessDocumentEvent.select().where(BusinessDocumentEvent.document_id == row.document_id).order_by(BusinessDocumentEvent.sequence.asc())
+        for event in events:
+            if event.event_type not in {"DraftCreated", "ChangesApplied"} or not isinstance(event.payload, dict):
+                continue
+            if event.payload.get("revision_id") != row.id:
+                continue
+            requested_by = event.payload.get("requested_by_actor_id")
+            if isinstance(requested_by, str) and requested_by:
+                return requested_by
+            job_id = event.payload.get("job_id")
+            if isinstance(job_id, str) and job_id:
+                job = BusinessDocumentJob.get_or_none(BusinessDocumentJob.id == job_id)
+                if job and isinstance(job.payload, dict):
+                    requested_by = job.payload.get("requested_by_actor_id")
+                    if isinstance(requested_by, str) and requested_by:
+                        return requested_by
+            if event.actor_type == "USER":
+                return event.actor_id
+        return None
+
+    @staticmethod
+    def _user_display_name(user_id: str | None) -> str | None:
+        if not user_id:
+            return None
+        if User._meta.database is not BusinessDocumentRevision._meta.database:
+            return user_id
+        try:
+            user = User.get_or_none(User.id == user_id)
+        except Exception:
+            return user_id
+        return user.nickname if user and user.nickname else user_id
 
     @classmethod
     def _revision_change_basis(cls, row: BusinessDocumentRevision) -> list[dict[str, Any]]:
@@ -2079,6 +2342,9 @@ class BusinessDocumentService:
             "job_id": row.id,
             "job_type": row.job_type,
             "status": row.status,
+            "progress": row.progress,
+            "progress_stage": row.progress_stage,
+            "progress_message": row.progress_message,
             "attempt": row.attempt,
             "max_attempts": row.max_attempts,
             "available_at": row.available_at,
@@ -2193,10 +2459,11 @@ class BusinessDocumentService:
         return document
 
     @staticmethod
-    def _get_editable_document(document_id):
+    def _get_editable_document(document_id, access: BusinessDocumentAccess):
         document = BusinessDocument.get_or_none(BusinessDocument.id == document_id)
         if document is None:
             raise NotFoundError()
+        access.require_edit(document.owner_id)
         return document
 
     @staticmethod

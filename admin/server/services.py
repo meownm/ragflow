@@ -45,11 +45,13 @@ class UserMgr:
         for user in users:
             result.append(
                 {
+                    "id": user.id,
                     "email": user.email,
                     "nickname": user.nickname,
                     "create_date": user.create_date,
                     "is_active": user.is_active,
                     "is_superuser": user.is_superuser,
+                    "business_document_role": user.business_document_role,
                 }
             )
         return result
@@ -365,7 +367,7 @@ class SettingsMgr:
 
     @staticmethod
     def _infer_data_type(name: str):
-        if name.startswith("sandbox."):
+        if name.startswith(("sandbox.", "navigation.")):
             return "json"
         if name.endswith(".enabled"):
             return "bool"

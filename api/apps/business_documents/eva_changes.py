@@ -33,6 +33,7 @@ from peewee import fn
 
 from api.apps.business_documents.errors import BusinessDocumentError, ConflictError, ValidationError
 from api.db.db_models import BusinessDocumentEvaChange, BusinessDocumentEvaChangeEvent, Connector
+from api.db.services.business_document_settings_service import get_business_documents_eva_connector_id
 from api.db.services.connector_service import ConnectorService
 from api.db.services.user_external_credential_service import (
     ExternalCredentialDecryptionError,
@@ -187,6 +188,35 @@ def _section_diff(base_markdown: str, draft_markdown: str) -> dict[str, Any]:
 
 
 class EvaDocumentChangeService:
+    @staticmethod
+    def _configured_connector_id() -> str:
+        connector_id = get_business_documents_eva_connector_id()
+        if not connector_id:
+            raise BusinessDocumentError(
+                "EVA_SPACE_NOT_CONFIGURED",
+                "EVA Wiki space is not configured for the Documents section",
+                409,
+            )
+        return connector_id
+
+    @classmethod
+    def _require_configured_connector(cls, connector_id: object, actor_id: str | None = None) -> str:
+        normalized = str(connector_id or "").strip()
+        configured = cls._configured_connector_id()
+        if normalized != configured:
+            raise BusinessDocumentError(
+                "EVA_SPACE_SCOPE_VIOLATION",
+                "The EVA document is outside the space configured for the Documents section",
+                403,
+            )
+        if actor_id is not None and not ConnectorService.accessible(configured, actor_id):
+            raise BusinessDocumentError(
+                "EVA_SPACE_FORBIDDEN",
+                "The EVA Wiki space configured for the Documents section is not accessible",
+                403,
+            )
+        return configured
+
     @classmethod
     def _connector(cls, connector_id: str, actor_id: str) -> tuple[Connector, EvaWikiConnector]:
         """Build the EVA reader used by interactive document management.
@@ -197,7 +227,8 @@ class EvaDocumentChangeService:
         boundary while the current user can still browse EVA documents.
         """
 
-        exists, connector = ConnectorService.get_by_id(str(connector_id or "").strip())
+        configured_connector_id = cls._require_configured_connector(connector_id, actor_id)
+        exists, connector = ConnectorService.get_by_id(configured_connector_id)
         if not exists or connector.source != DocumentSource.EVA_WIKI.value:
             raise BusinessDocumentError("EVA_CONNECTOR_NOT_FOUND", "EVA Wiki connector not found", 404)
         if not ConnectorService.accessible(connector.id, actor_id):
@@ -282,33 +313,21 @@ class EvaDocumentChangeService:
         return normalized if required else value
 
     @classmethod
-    def search_sources(cls, actor_id: str, query: str = "", connector_id: str | None = None, limit: int = 20) -> dict[str, Any]:
+    def search_sources(cls, actor_id: str, query: str = "", limit: int = 20) -> dict[str, Any]:
         normalized_query = str(query or "").strip()
         if len(normalized_query) > 500:
             raise ValidationError("INVALID_EVA_SEARCH", "query is too long", {"maximum": 500})
         safe_limit = min(max(int(limit), 1), 100)
-        if connector_id:
-            connector_rows = [cls._connector(connector_id, actor_id)[0]]
-        else:
-            connector_rows = [
-                connector
-                for connector in Connector.select().where(Connector.source == DocumentSource.EVA_WIKI.value).order_by(Connector.name.asc())
-                if ConnectorService.accessible(connector.id, actor_id)
-            ]
-        items: list[dict[str, Any]] = []
-        connector_summaries: list[dict[str, str]] = []
-        for connector in connector_rows:
-            _, client = cls._connector(connector.id, actor_id)
-            connector_summaries.append({"connector_id": connector.id, "connector_name": connector.name})
-            try:
-                documents = client.search_documents(normalized_query, safe_limit - len(items))
-            except Exception as error:
-                raise cls._map_external_error(error) from error
-            for document in documents:
-                items.append({**document, "connector_id": connector.id, "connector_name": connector.name})
-            if len(items) >= safe_limit:
-                break
-        return {"items": items, "connectors": connector_summaries}
+        connector_id = cls._configured_connector_id()
+        connector, client = cls._connector(connector_id, actor_id)
+        try:
+            documents = client.search_documents(normalized_query, safe_limit)
+        except Exception as error:
+            raise cls._map_external_error(error) from error
+        return {
+            "items": [{**document, "connector_id": connector.id, "connector_name": connector.name} for document in documents],
+            "connectors": [{"connector_id": connector.id, "connector_name": connector.name}],
+        }
 
     @classmethod
     def resolve_page_url(cls, actor_id: str, page_url: object) -> dict[str, Any]:
@@ -346,46 +365,43 @@ class EvaDocumentChangeService:
             "remote_content_hash": None,
             "last_pulled_content_hash": None,
         }
-        connector_candidates = list(Connector.select().where(Connector.source == DocumentSource.EVA_WIKI.value).order_by(Connector.name.asc()))
-        connectors = [connector for connector in connector_candidates if ConnectorService.accessible(connector.id, actor_id)]
-        for connector in connectors:
-            try:
-                _, client = cls._connector(connector.id, actor_id)
-                page_origin = EvaWikiConnector._url_origin(normalized_url)
-                configured_origins = {EvaWikiConnector._url_origin(base_url) for base_url in (client.web_base_url, client.api_base_url) if str(base_url or "").strip()}
-                if page_origin not in configured_origins:
-                    continue
-                candidates = client.search_documents(code, 100) if code else []
-                source = next(
-                    (
-                        candidate
-                        for candidate in candidates
-                        if str(candidate.get("web_url") or "").rstrip("/").casefold() == canonical_url.casefold() or (code and str(candidate.get("code") or "").casefold() == code.casefold())
-                    ),
-                    None,
-                )
-                if source is None:
-                    continue
-                remote = client.get_document_for_edit(str(source["id"]))
-                remote_markdown = _html_to_markdown(str(remote.get("html") or ""))
-                return {
-                    **binding,
-                    "page_url": str(remote.get("web_url") or canonical_url),
-                    "status": "CONNECTED",
-                    "capabilities": ["OPEN", "PULL_FROM_EVA", "CREATE_EVA_CHANGE"],
-                    "connector_id": connector.id,
-                    "project_id": str(remote.get("project_id") or "") or None,
-                    "document_id": str(remote.get("id") or "") or None,
-                    "document_code": str(remote.get("code") or "") or None,
-                    "document_name": str(remote.get("name") or "") or None,
-                    "remote_version": str(remote.get("version") or "") or None,
-                    "remote_content_hash": _content_hash(remote_markdown) if remote_markdown else None,
-                }
-            except Exception:
-                # Optional linking must not make document creation depend on EVA
-                # availability; the URL remains an explicit read-only link.
-                continue
-        return binding
+        try:
+            connector_id = cls._configured_connector_id()
+            connector, client = cls._connector(connector_id, actor_id)
+            page_origin = EvaWikiConnector._url_origin(normalized_url)
+            configured_origins = {EvaWikiConnector._url_origin(base_url) for base_url in (client.web_base_url, client.api_base_url) if str(base_url or "").strip()}
+            if page_origin not in configured_origins:
+                return binding
+            candidates = client.search_documents(code, 100) if code else []
+            source = next(
+                (
+                    candidate
+                    for candidate in candidates
+                    if str(candidate.get("web_url") or "").rstrip("/").casefold() == canonical_url.casefold() or (code and str(candidate.get("code") or "").casefold() == code.casefold())
+                ),
+                None,
+            )
+            if source is None:
+                return binding
+            remote = client.get_document_for_edit(str(source["id"]))
+            remote_markdown = _html_to_markdown(str(remote.get("html") or ""))
+            return {
+                **binding,
+                "page_url": str(remote.get("web_url") or canonical_url),
+                "status": "CONNECTED",
+                "capabilities": ["OPEN", "PULL_FROM_EVA", "CREATE_EVA_CHANGE"],
+                "connector_id": connector.id,
+                "project_id": str(remote.get("project_id") or "") or None,
+                "document_id": str(remote.get("id") or "") or None,
+                "document_code": str(remote.get("code") or "") or None,
+                "document_name": str(remote.get("name") or "") or None,
+                "remote_version": str(remote.get("version") or "") or None,
+                "remote_content_hash": _content_hash(remote_markdown) if remote_markdown else None,
+            }
+        except Exception:
+            # Optional linking must not make document creation depend on EVA
+            # availability; the URL remains an explicit read-only link.
+            return binding
 
     @classmethod
     def create_change(cls, tenant_id: str, actor_id: str, raw: object) -> dict[str, Any]:
@@ -443,9 +459,11 @@ class EvaDocumentChangeService:
     def list_changes(cls, tenant_id: str, actor_id: str, page: int = 1, page_size: int = 20) -> dict[str, Any]:
         if page < 1 or page_size < 1 or page_size > 100:
             raise ValidationError("INVALID_PAGINATION", "page must be positive and page_size must be between 1 and 100")
+        connector_id = cls._require_configured_connector(cls._configured_connector_id(), actor_id)
         query = BusinessDocumentEvaChange.select().where(
             BusinessDocumentEvaChange.tenant_id == tenant_id,
             BusinessDocumentEvaChange.owner_id == actor_id,
+            BusinessDocumentEvaChange.connector_id == connector_id,
         )
         total = query.count()
         rows = query.order_by(BusinessDocumentEvaChange.update_time.desc()).paginate(page, page_size)
@@ -771,8 +789,8 @@ class EvaDocumentChangeService:
         if updated != 1:
             raise ConflictError("STATE_VERSION_CONFLICT", "The EVA change request changed concurrently")
 
-    @staticmethod
-    def _get_change(tenant_id: str, actor_id: str, change_id: str) -> BusinessDocumentEvaChange:
+    @classmethod
+    def _get_change(cls, tenant_id: str, actor_id: str, change_id: str) -> BusinessDocumentEvaChange:
         change = BusinessDocumentEvaChange.get_or_none(
             BusinessDocumentEvaChange.id == str(change_id or "").strip(),
             BusinessDocumentEvaChange.tenant_id == tenant_id,
@@ -780,6 +798,7 @@ class EvaDocumentChangeService:
         )
         if change is None:
             raise BusinessDocumentError("EVA_CHANGE_NOT_FOUND", "EVA document change request not found", 404)
+        cls._require_configured_connector(change.connector_id, actor_id)
         return change
 
     @staticmethod

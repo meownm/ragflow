@@ -243,6 +243,38 @@ def test_expired_lease_is_fenced_and_reclaimed_without_duplicate_completion(data
 
 
 @pytest.mark.p0
+def test_job_progress_is_fenced_and_projected_in_list_and_detail(database):
+    document = _create()
+    requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
+
+    queued = BusinessDocumentJob.get_by_id(requested["job_id"])
+    assert (queued.progress, queued.progress_stage, queued.progress_message) == (0.02, "QUEUED", "Ожидает запуска")
+    list_item = BusinessDocumentService.list_documents(TENANT, AUTHOR)["items"][0]
+    assert list_item["latest_job"]["progress"] == 0.02
+    assert list_item["latest_job"]["progress_stage"] == "QUEUED"
+
+    claimed = BusinessDocumentJobQueue.claim("progress-worker", lease_ms=60_000)
+    assert claimed is not None and claimed.lease_token
+    assert claimed.progress_stage == "STARTING"
+    assert BusinessDocumentJobQueue.update_progress(claimed.id, "wrong-worker", claimed.lease_token, 0.4, "GENERATING", "Формируем результат") is False
+    assert BusinessDocumentJobQueue.update_progress(claimed.id, "progress-worker", claimed.lease_token, 0.4, "GENERATING", "Формируем результат") is True
+
+    detail = BusinessDocumentService.get_document(TENANT, document["document_id"], AUTHOR)
+    assert detail["latest_job"]["progress"] == 0.4
+    assert detail["latest_job"]["progress_message"] == "Формируем результат"
+
+    completed = BusinessDocumentService.complete_job(
+        TENANT,
+        "progress-worker",
+        claimed.id,
+        {"schema_version": "1", "outcome": "COMPLETE", "questions": []},
+        claimed.lease_token,
+    )
+    assert completed["latest_job"]["progress"] == 1.0
+    assert completed["latest_job"]["progress_stage"] == "COMPLETED"
+
+
+@pytest.mark.p0
 def test_expired_exhausted_lease_is_dead_lettered_with_persistable_system_identity(database):
     document = _create()
     requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
@@ -446,15 +478,11 @@ def test_export_generation_is_idempotent_listable_downloadable_and_hash_verified
     metadata, content = BusinessDocumentExportService.download(TENANT, AUTHOR, document["document_id"], artifact["artifact_id"], storage=storage)
     assert metadata == artifact
     assert f"sha256:{hashlib.sha256(content).hexdigest()}" == artifact["content_hash"]
-    collaborator_metadata, collaborator_content = BusinessDocumentExportService.download(
-        "another-tenant", "another-author", document["document_id"], artifact["artifact_id"], storage=storage
-    )
+    collaborator_metadata, collaborator_content = BusinessDocumentExportService.download("another-tenant", "another-author", document["document_id"], artifact["artifact_id"], storage=storage)
     assert collaborator_metadata == artifact
     assert collaborator_content == content
     assert BusinessDocumentExportService.list_artifacts("admin-tenant", "admin-user", document["document_id"], is_admin=True) == [artifact]
-    admin_metadata, admin_content = BusinessDocumentExportService.download(
-        "admin-tenant", "admin-user", document["document_id"], artifact["artifact_id"], storage=storage, is_admin=True
-    )
+    admin_metadata, admin_content = BusinessDocumentExportService.download("admin-tenant", "admin-user", document["document_id"], artifact["artifact_id"], storage=storage, is_admin=True)
     assert admin_metadata == artifact
     assert admin_content == content
 

@@ -1,3 +1,4 @@
+import { SelectWithSearch } from '@/components/originui/select-with-search';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -15,12 +16,14 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Routes } from '@/routes';
 import {
+  assignBusinessDocumentOwner,
   BusinessDocumentConflictError,
   createBusinessDocument,
   createEvaChangeFromBusinessDocument,
   deleteBusinessDocument,
   downloadBusinessDocumentExport,
   fetchBusinessDocument,
+  listBusinessDocumentAccessUsers,
   listBusinessDocumentRevisions,
   listBusinessDocuments,
   pullBusinessDocumentFromEva,
@@ -66,6 +69,10 @@ import {
 } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { DocumentPane } from './components/document-pane';
+import {
+  BusinessDocumentProgress,
+  isBusinessDocumentOperationActive,
+} from './components/document-progress';
 import { EvaChangeCreatePanel } from './components/eva-change-create-panel';
 import { EvaChangeWorkbench } from './components/eva-change-workbench';
 import { ProtocolPane } from './components/protocol-pane';
@@ -128,8 +135,10 @@ const exportLabels = {
 } as const;
 
 const BusinessDocumentKeys = {
-  list: (page: number) => ['business-documents', page] as const,
+  list: (page: number, scope: 'mine' | 'all') =>
+    ['business-documents', scope, page] as const,
   detail: (documentId?: string) => ['business-document', documentId] as const,
+  accessUsers: () => ['business-document-access-users'] as const,
 };
 
 function CreateBusinessDocumentPage() {
@@ -140,11 +149,19 @@ function CreateBusinessDocumentPage() {
   const [idea, setIdea] = useState('');
   const [evaPageUrl, setEvaPageUrl] = useState('');
   const [page, setPage] = useState(1);
+  const [scope, setScope] = useState<'mine' | 'all'>('mine');
   const documentsQuery = useQuery({
-    queryKey: BusinessDocumentKeys.list(page),
-    queryFn: () => listBusinessDocuments(page, 20),
+    queryKey: BusinessDocumentKeys.list(page, scope),
+    queryFn: () => listBusinessDocuments(page, 20, scope),
     retry: false,
+    refetchInterval: (query) =>
+      query.state.data?.items.some((item) =>
+        isBusinessDocumentOperationActive(item.operation_state),
+      )
+        ? 2000
+        : false,
   });
+  const canCreate = documentsQuery.data?.capabilities?.create !== false;
   const createMutation = useMutation({
     mutationFn: createBusinessDocument,
     onSuccess: async (document) => {
@@ -208,13 +225,43 @@ function CreateBusinessDocumentPage() {
           data-testid="business-document-list"
           aria-label="Сохранённые документы"
         >
-          <div className="flex h-11 items-center justify-between border-b border-border-button px-6">
-            <h2 className="text-sm font-medium">Сохранённые документы</h2>
-            {documentsQuery.data && (
-              <span className="text-xs text-text-secondary">
-                {documentsQuery.data.total}
-              </span>
-            )}
+          <div className="flex min-h-11 flex-wrap items-center justify-between gap-3 border-b border-border-button px-6 py-2">
+            <div className="flex items-center gap-3">
+              <h2 className="text-sm font-medium">Сохранённые документы</h2>
+              {documentsQuery.data && (
+                <span className="text-xs text-text-secondary">
+                  {documentsQuery.data.total}
+                </span>
+              )}
+            </div>
+            <div
+              className="flex items-center gap-1"
+              role="group"
+              aria-label="Фильтр документов"
+            >
+              <Button
+                size="sm"
+                variant={scope === 'mine' ? 'secondary' : 'ghost'}
+                onClick={() => {
+                  setScope('mine');
+                  setPage(1);
+                }}
+                data-testid="business-documents-filter-mine"
+              >
+                Мои
+              </Button>
+              <Button
+                size="sm"
+                variant={scope === 'all' ? 'secondary' : 'ghost'}
+                onClick={() => {
+                  setScope('all');
+                  setPage(1);
+                }}
+                data-testid="business-documents-filter-all"
+              >
+                Все
+              </Button>
+            </div>
           </div>
 
           {documentsQuery.isLoading && (
@@ -261,9 +308,15 @@ function CreateBusinessDocumentPage() {
                 data-testid="business-document-list-empty"
               >
                 <FilePlus2 className="mx-auto size-7 stroke-[1.25] text-text-disabled" />
-                <p className="mt-3 text-sm font-medium">Документов пока нет</p>
+                <p className="mt-3 text-sm font-medium">
+                  {scope === 'mine'
+                    ? 'У вас пока нет назначенных документов'
+                    : 'Документов пока нет'}
+                </p>
                 <p className="mt-1 text-xs text-text-secondary">
-                  Первый документ можно создать в форме справа.
+                  {canCreate
+                    ? 'Новый документ можно создать в форме справа.'
+                    : 'Откройте фильтр «Все», чтобы просмотреть доступные документы.'}
                 </p>
               </div>
             )}
@@ -291,9 +344,9 @@ function CreateBusinessDocumentPage() {
                     >
                       {lifecycleLabels[item.lifecycle_state]}
                     </Badge>
-                    {item.owner_id && (
+                    {item.owner_name && (
                       <span className="text-xs text-text-secondary">
-                        Владелец: {item.owner_id}
+                        Владелец: {item.owner_name}
                       </span>
                     )}
                   </div>
@@ -305,9 +358,12 @@ function CreateBusinessDocumentPage() {
                         : 'Без черновика'}
                     </span>
                     {item.operation_state !== 'IDLE' && (
-                      <span className="text-accent-primary">
-                        {operationLabels[item.operation_state]}
-                      </span>
+                      <BusinessDocumentProgress
+                        compact
+                        job={item.latest_job}
+                        operationState={item.operation_state}
+                        operationLabel={operationLabels[item.operation_state]}
+                      />
                     )}
                   </div>
                 </div>
@@ -388,6 +444,7 @@ function CreateBusinessDocumentPage() {
               size="sm"
               variant={mode === 'new' ? 'secondary' : 'ghost'}
               onClick={() => setMode('new')}
+              disabled={!canCreate}
               data-testid="new-document-mode"
             >
               <FilePlus2 className="size-4" />
@@ -404,7 +461,20 @@ function CreateBusinessDocumentPage() {
             </Button>
           </div>
 
-          {mode === 'new' ? (
+          {mode === 'new' && !canCreate ? (
+            <div
+              className="px-6 py-10 lg:px-8"
+              data-testid="business-document-create-denied"
+            >
+              <h2 className="text-lg font-semibold text-text-primary">
+                Создание документов недоступно
+              </h2>
+              <p className="mt-2 text-sm leading-6 text-text-secondary">
+                Ваша роль позволяет читать доступные документы и редактировать
+                назначенные вам, но не создавать новые.
+              </p>
+            </div>
+          ) : mode === 'new' ? (
             <form onSubmit={submit} className="px-6 py-7 lg:px-8">
               <div className="flex items-center gap-2 text-sm font-medium text-accent-primary">
                 <FilePlus2 className="size-4" />
@@ -525,6 +595,7 @@ export default function BusinessDocumentsPage() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [selectedRevisionId, setSelectedRevisionId] = useState<string>();
   const [evaSyncNotice, setEvaSyncNotice] = useState<string>();
+  const [ownerSelection, setOwnerSelection] = useState('');
   const clearSelection = useCallback(() => setSelection(null), []);
 
   const documentQuery = useQuery({
@@ -539,6 +610,36 @@ export default function BusinessDocumentsPage() {
   });
 
   const document = documentQuery.data;
+  useEffect(() => {
+    setOwnerSelection(document?.owner_id ?? '');
+  }, [document?.owner_id]);
+  const accessUsersQuery = useQuery({
+    queryKey: BusinessDocumentKeys.accessUsers(),
+    queryFn: listBusinessDocumentAccessUsers,
+    enabled: Boolean(document?.permissions?.assign),
+    retry: false,
+  });
+  const assignOwnerMutation = useMutation({
+    mutationFn: () => {
+      if (!documentId || !document || !ownerSelection) {
+        throw new Error('Выберите пользователя');
+      }
+      return assignBusinessDocumentOwner(
+        documentId,
+        ownerSelection,
+        document.state_version,
+      );
+    },
+    onSuccess: async (updatedDocument) => {
+      queryClient.setQueryData(
+        BusinessDocumentKeys.detail(documentId),
+        updatedDocument,
+      );
+      await queryClient.invalidateQueries({
+        queryKey: ['business-documents'],
+      });
+    },
+  });
   const deleteMutation = useMutation({
     mutationFn: () => {
       if (!documentId) throw new Error('Документ не загружен');
@@ -648,8 +749,13 @@ export default function BusinessDocumentsPage() {
   );
 
   const allowed = useMemo(
-    () => new Set(document?.allowed_commands ?? []),
-    [document?.allowed_commands],
+    () =>
+      new Set(
+        document?.permissions?.edit === false
+          ? []
+          : (document?.allowed_commands ?? []),
+      ),
+    [document?.allowed_commands, document?.permissions?.edit],
   );
   const isBusy =
     commandMutation.isPending ||
@@ -846,6 +952,52 @@ export default function BusinessDocumentsPage() {
           <p className="mt-1 text-xs text-text-secondary">
             {operationLabels[document.operation_state]}
           </p>
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-text-secondary">
+            <span>Владелец: {document.owner_id || 'не назначен'}</span>
+            {document.permissions?.assign && (
+              <>
+                <div className="min-w-56">
+                  <SelectWithSearch
+                    value={ownerSelection}
+                    onChange={setOwnerSelection}
+                    options={(accessUsersQuery.data?.items ?? []).map(
+                      (user) => ({
+                        value: user.user_id,
+                        label: `${user.nickname} (${user.user_id})`,
+                      }),
+                    )}
+                    placeholder="Выберите владельца"
+                    emptyData="Нет доступных пользователей"
+                    disabled={
+                      accessUsersQuery.isLoading ||
+                      assignOwnerMutation.isPending
+                    }
+                    testId="business-document-owner-select"
+                    optionTestIdPrefix="business-document-owner-option-"
+                  />
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={
+                    !ownerSelection ||
+                    ownerSelection === document.owner_id ||
+                    assignOwnerMutation.isPending
+                  }
+                  loading={assignOwnerMutation.isPending}
+                  onClick={() => assignOwnerMutation.mutate()}
+                  data-testid="business-document-assign-owner"
+                >
+                  Назначить
+                </Button>
+              </>
+            )}
+          </div>
+          {(accessUsersQuery.error || assignOwnerMutation.error) && (
+            <p className="mt-1 text-xs text-state-error" role="alert">
+              {(accessUsersQuery.error || assignOwnerMutation.error)?.message}
+            </p>
+          )}
         </div>
 
         <div
@@ -1156,35 +1308,13 @@ export default function BusinessDocumentsPage() {
             {commandMutation.error.message}
           </div>
         )}
-        {document.operation_state !== 'IDLE' &&
-          document.operation_state !== 'FAILED' && (
-            <div
-              className="flex items-center gap-2 border-b border-accent-primary/20 bg-accent-primary/5 px-5 py-2 text-xs text-text-secondary"
-              data-testid="business-document-operation"
-              role="status"
-            >
-              <LoaderCircle className="size-3.5 animate-spin text-accent-primary" />
-              <span>
-                {operationLabels[document.operation_state]}.
-                {document.latest_job && document.latest_job.attempt > 0
-                  ? ` Попытка ${document.latest_job.attempt} из ${document.latest_job.max_attempts}.`
-                  : ''}
-                {document.latest_job?.error &&
-                (typeof document.latest_job.error === 'string' ||
-                  document.latest_job.error.message ||
-                  document.latest_job.error.code)
-                  ? ` Предыдущая ошибка: ${
-                      typeof document.latest_job.error === 'string'
-                        ? document.latest_job.error
-                        : document.latest_job.error.message ||
-                          document.latest_job.error.code
-                    }.`
-                  : ''}{' '}
-                Можно оставить страницу открытой — состояние обновится
-                автоматически.
-              </span>
-            </div>
-          )}
+        {isBusinessDocumentOperationActive(document.operation_state) && (
+          <BusinessDocumentProgress
+            job={document.latest_job}
+            operationState={document.operation_state}
+            operationLabel={operationLabels[document.operation_state]}
+          />
+        )}
         {document.operation_state === 'FAILED' && document.last_error && (
           <div className="flex items-center gap-2 border-b border-state-error/30 bg-state-error/5 px-5 py-2 text-xs text-state-error">
             <Archive className="size-3.5" />
@@ -1259,7 +1389,7 @@ export default function BusinessDocumentsPage() {
             proposalDecisionsOpen={document.lifecycle_state === 'REVIEW'}
             revision={document.current_revision}
             selection={selection}
-            allowedCommands={document.allowed_commands}
+            allowedCommands={[...allowed]}
             pending={isBusy}
             onCommand={submitCommand}
             onClearSelection={clearSelection}

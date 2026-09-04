@@ -9,6 +9,79 @@ SHA-256 файлом, а версия и происхождение записа
 Полный пошаговый документ:
 [`docs/administrator/linux_sources_runbook_ru.md`](../../docs/administrator/linux_sources_runbook_ru.md).
 
+## Компактная поставка через registry Цифры
+
+Этот вариант не включает `docker-images.tar` и не собирает образы на сервере.
+Шесть стандартных образов заранее публикуются в доступный серверу OCI registry,
+а в архив входят только исходники, готовый `web/dist`, список образов и
+контрольные суммы. T-One ASR в серверную поставку не входит.
+
+Сначала авторизоваться в registry через `docker login`, подготовить и
+опубликовать образы:
+
+```powershell
+./deployment/linux-pg/publish_registry_images.ps1 `
+  -RegistryPrefix registry.example.org/cifra `
+  -ReleaseVersion v1.6.0 `
+  -Push
+```
+
+Затем собрать компактный архив с точными ссылками на опубликованные образы:
+
+```powershell
+./deployment/linux-pg/build_registry_archive.ps1 `
+  -ReleaseVersion v1.6.0 `
+  -ImagesEnvPath ./deployment/linux-pg/registry-images-v1.6.0.env
+```
+
+Повторную упаковку уже проверенного `web/dist` можно ускорить явным параметром
+`-UseExistingFrontend`. Без него production frontend всегда собирается заново.
+
+Если `ImagesEnvPath` не указан, сборщик положит в архив шаблон. Тогда при
+установке нужно передать `REGISTRY_PREFIX`, а registry должен сохранять
+стандартную структуру путей из шаблона.
+
+Все адреса `*.example` ниже являются только примерами и намеренно не работают.
+Нужно получить реальный DNS-адрес OCI registry у администратора инфраструктуры.
+
+Загрузка через PuTTY с PPK-ключом:
+
+```powershell
+./deployment/linux-pg/upload_registry_release.ps1 `
+  -PackagePath ./deployment/linux-pg/ragflow-linux-pg-v1.6.0-registry.tar.gz `
+  -HostName ragflow.example.org `
+  -UserName deploy `
+  -PrivateKeyPath C:\Keys\ragflow.ppk `
+  -HostKey 'ssh-ed25519 255 SHA256:REPLACE_WITH_PIN'
+```
+
+На сервере:
+
+```bash
+cd /tmp/ragflow-registry-release
+sha256sum -c ragflow-linux-pg-v1.6.0-registry.tar.gz.sha256
+tar -xzf ragflow-linux-pg-v1.6.0-registry.tar.gz
+
+sudo env \
+  ADMIN_EMAIL=admin@example.org \
+  ADMIN_NICKNAME='RAGFlow Administrator' \
+  REGISTRY_PREFIX=registry.example.org/cifra \
+  bash install_registry.sh
+```
+
+До установки комплект можно проверить без изменений системы. Проверка требует,
+чтобы реальный registry разрешался через DNS, а его HTTPS `/v2/` отвечал `200`
+или `401`:
+
+```bash
+REGISTRY_PREFIX=registry.example.org/cifra bash install_registry.sh --check
+```
+
+Для закрытого registry добавить `REGISTRY_USERNAME` и
+`REGISTRY_PASSWORD_FILE`. Пароль передаётся Docker через stdin и не должен
+входить в архив поставки. Если архив собран с `ImagesEnvPath`,
+`REGISTRY_PREFIX` при установке не требуется.
+
 ## Офлайн-поставка образов для Rocky Linux 9.x x86_64
 
 Рекомендуемый вариант для текущего Rocky-сервера без доступа к Docker Hub. На
@@ -21,8 +94,8 @@ Windows из `S:\ragflow` выполнить:
 Сборщик не вызывает Git. Он создаёт один архив и checksum, содержащие:
 
 - source snapshot и готовый `web/dist`;
-- семь Linux/amd64 Docker-образов: RAGFlow, T-One, PostgreSQL, Elasticsearch,
-  Valkey, MinIO и PlantUML;
+- шесть Linux/amd64 Docker-образов: RAGFlow, PostgreSQL, Elasticsearch, Valkey,
+  MinIO и PlantUML;
 - внутренний `SHA256SUMS` для каждого payload-файла.
 
 Результат:
@@ -52,9 +125,8 @@ Offline installer проверяет все суммы, устанавливае
 Docker Hub на сервере не используется. Требуются Rocky Linux 9.x x86_64,
 доступные корпоративные DNF-репозитории, `sudo`, `tar` и `sha256sum`.
 
-Chat LLM и embedding-модели не входят в базовую поставку: RAGFlow запускается
-без них, а нужные модели добавляются отдельным согласованным пакетом. T-One ASR
-и его веса уже находятся внутри Docker-образа.
+Chat LLM, embedding-модели и T-One ASR не входят в базовую поставку. RAGFlow
+запускается без них, а нужные модели и ASR добавляются отдельно.
 
 ## Компактная поставка с загрузкой зависимостей на сервере
 
@@ -69,11 +141,11 @@ Chat LLM и embedding-модели не входят в базовую пост�
 - frontend, собранный из этого же дерева в контейнере Node.js 20;
 - PostgreSQL 16 вместо MySQL;
 - Elasticsearch, Valkey, MinIO и PlantUML;
-- T-One ASR из `services/asr-online-service` во внутренней сети;
-- первого пользователя с `is_superuser=true` и T-One как ASR по умолчанию.
+- первого пользователя с `is_superuser=true`.
 
-MySQL и sandbox в этом профиле выключены. Интерфейс публикуется только на
-`127.0.0.1` и доступен удалённо через SSH-туннель или TLS reverse proxy.
+MySQL и sandbox в этом профиле выключены. Интерфейс публикуется на
+`0.0.0.0:80` и доступен по IP или DNS-имени сервера. Сетевой доступ должен быть
+ограничен корпоративным firewall или TLS reverse proxy.
 
 ## 1. Собрать файл поставки на Windows
 
@@ -142,7 +214,7 @@ sudo env \
   ADMIN_NICKNAME='RAGFlow Administrator' \
   INSTALL_DIR=/opt/ragflow-pg \
   PROJECT_NAME=ragflow-pg \
-  RAGFLOW_PORT=9380 \
+  RAGFLOW_PORT=80 \
   DOCKER_DNF_REPO=cifra-docker \
   bash deployment/linux-pg/install.sh
 ```
@@ -152,8 +224,8 @@ sudo env \
 секреты генерируются на сервере и не входят в архив.
 
 `install.sh` предназначен только для первой установки в пустой `INSTALL_DIR`.
-Он собирает frontend, запускает Compose, проверяет health RAGFlow, PostgreSQL,
-T-One, superuser и tenant default ASR. Версия установленного архива сохраняется
-в `/etc/ragflow-pg/deployed-source.env`. Размер диска и число CPU установщик
+Он собирает frontend, запускает Compose и проверяет health RAGFlow, PostgreSQL и
+superuser. Версия установленного архива сохраняется в
+`/etc/ragflow-pg/deployed-source.env`. Размер диска и число CPU установщик
 намеренно не используют как блокирующие проверки; ёмкость контролируется
 эксплуатационным мониторингом.

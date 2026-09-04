@@ -72,8 +72,7 @@ $dockerImages = @(
     'valkey/valkey:8',
     'elasticsearch:8.11.3',
     'plantuml/plantuml-server:jetty-v1.2026.6',
-    'pgsty/minio:RELEASE.2026-03-25T00-00-00Z',
-    'ragflow-pg-t-one-asr:latest'
+    'pgsty/minio:RELEASE.2026-03-25T00-00-00Z'
 )
 
 $tempBase = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
@@ -110,23 +109,6 @@ try {
     }
     if (-not (Test-Path -LiteralPath (Join-Path $sourceRoot 'web\dist\index.html') -PathType Leaf)) {
         throw 'Frontend build did not create web/dist/index.html.'
-    }
-
-    Push-Location (Join-Path $sourceRoot 'docker')
-    try {
-        & docker compose `
-            --env-file .env `
-            -p ragflow-pg `
-            -f docker-compose.yml `
-            -f docker-compose.local.yml `
-            -f docker-compose.linux.local.yml `
-            build t-one-asr
-        if ($LASTEXITCODE -ne 0) {
-            throw 'T-One image build failed.'
-        }
-    }
-    finally {
-        Pop-Location
     }
 
     foreach ($imageName in $dockerImages) {

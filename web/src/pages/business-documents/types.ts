@@ -54,6 +54,8 @@ export interface BusinessDocumentAst {
 export interface BusinessDocumentRevision {
   revision_id: string;
   revision_number: number;
+  author_id?: string | null;
+  author_name?: string | null;
   document_ast: BusinessDocumentAst;
   section_texts: Record<string, string>;
   body_markdown: string;
@@ -188,6 +190,9 @@ export interface BusinessDocumentJobSummary {
   job_id: string;
   job_type: string;
   status: 'PENDING' | 'RUNNING' | 'RETRY' | 'COMPLETED' | 'DEAD';
+  progress?: number;
+  progress_stage?: string;
+  progress_message?: string | null;
   attempt: number;
   max_attempts: number;
   available_at?: number | null;
@@ -203,7 +208,7 @@ export interface BusinessDocumentJobSummary {
 export interface BusinessDocumentProjection {
   document_id: string;
   owner_id?: string;
-  access_role?: 'AUTHOR' | 'ADMIN';
+  access_role?: BusinessDocumentRole;
   permissions?: BusinessDocumentPermissions;
   title: string;
   document_type?: string;
@@ -225,7 +230,8 @@ export interface BusinessDocumentProjection {
 export interface BusinessDocumentSummary {
   document_id: string;
   owner_id?: string;
-  access_role?: 'AUTHOR' | 'ADMIN';
+  owner_name?: string | null;
+  access_role?: BusinessDocumentRole;
   permissions?: BusinessDocumentPermissions;
   title: string;
   lifecycle_state: BusinessDocumentLifecycleState;
@@ -233,6 +239,7 @@ export interface BusinessDocumentSummary {
   state_version: number;
   current_revision_number: number | null;
   eva_page_url?: string | null;
+  latest_job?: BusinessDocumentJobSummary | null;
   update_time: number | null;
 }
 
@@ -240,6 +247,29 @@ export interface BusinessDocumentPermissions {
   read: boolean;
   edit: boolean;
   delete: boolean;
+  assign?: boolean;
+}
+
+export type BusinessDocumentRole =
+  | 'AUTHOR_CREATOR'
+  | 'AUTHOR_EDITOR'
+  | 'MODERATOR_CREATOR'
+  | 'EXTENDED_MODERATOR'
+  | 'ADMIN';
+
+export interface BusinessDocumentCapabilities {
+  read: boolean;
+  create: boolean;
+  edit_own: boolean;
+  edit_all: boolean;
+  delete: boolean;
+  assign: boolean;
+}
+
+export interface BusinessDocumentAssignableUser {
+  user_id: string;
+  nickname: string;
+  role: BusinessDocumentRole;
 }
 
 export interface DeleteBusinessDocumentResult {
@@ -254,6 +284,9 @@ export interface BusinessDocumentList {
   total: number;
   page: number;
   page_size: number;
+  scope?: 'mine' | 'all';
+  access_role?: BusinessDocumentRole;
+  capabilities?: BusinessDocumentCapabilities;
 }
 
 export interface CreateBusinessDocumentRequest {

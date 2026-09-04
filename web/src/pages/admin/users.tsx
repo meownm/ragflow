@@ -78,6 +78,7 @@ import { LucideFilter, LucideSearch } from 'lucide-react';
 import useChangePasswordForm from './forms/change-password-form';
 import useCreateUserForm from './forms/user-form';
 
+import type { BusinessDocumentRole } from '@/pages/business-documents/types';
 import {
   createUser,
   deleteUser,
@@ -89,6 +90,7 @@ import {
   updateUserRole,
   updateUserStatus,
 } from '@/services/admin-service';
+import { updateBusinessDocumentUserRole } from '@/services/business-document-service';
 
 import {
   createColumnFilterFn,
@@ -119,6 +121,16 @@ const STATUS_FILTER_OPTIONS = [
   { value: 'active', label: 'admin.active' },
   { value: 'inactive', label: 'admin.inactive' },
 ];
+
+const BUSINESS_DOCUMENT_ROLE_LABELS: Record<
+  Exclude<BusinessDocumentRole, 'ADMIN'>,
+  string
+> = {
+  AUTHOR_CREATOR: 'Автор-создатель',
+  AUTHOR_EDITOR: 'Автор-редактор',
+  MODERATOR_CREATOR: 'Модератор-создатель',
+  EXTENDED_MODERATOR: 'Расширенный модератор',
+};
 
 function AdminUserManagement() {
   const [{ userInfo }] = useContext(CurrentUserInfoContext);
@@ -221,6 +233,20 @@ function AdminUserManagement() {
     }) => {
       return type === 'grant' ? grantSuperuser(email) : revokeSuperuser(email);
     },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin/listUsers'] });
+    },
+    retry: false,
+  });
+
+  const updateBusinessDocumentRoleMutation = useMutation({
+    mutationFn: ({
+      userId,
+      role,
+    }: {
+      userId: string;
+      role: Exclude<BusinessDocumentRole, 'ADMIN'>;
+    }) => updateBusinessDocumentUserRole(userId, role),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin/listUsers'] });
     },
@@ -386,6 +412,43 @@ function AdminUserManagement() {
         },
       }),
 
+      columnHelper.accessor('business_document_role', {
+        header: 'Роль в документах',
+        cell: ({ cell, row }) => {
+          if (row.original.is_superuser) {
+            return <Badge variant="secondary">Администратор</Badge>;
+          }
+
+          return (
+            <Select
+              disabled={updateBusinessDocumentRoleMutation.isPending}
+              value={cell.getValue()}
+              onValueChange={(value) =>
+                updateBusinessDocumentRoleMutation.mutate({
+                  userId: row.original.id,
+                  role: value as Exclude<BusinessDocumentRole, 'ADMIN'>,
+                })
+              }
+            >
+              <SelectTrigger
+                aria-label={`Роль в документах: ${row.original.email}`}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {Object.entries(BUSINESS_DOCUMENT_ROLE_LABELS).map(
+                  ([role, label]) => (
+                    <SelectItem key={role} value={role}>
+                      {label}
+                    </SelectItem>
+                  ),
+                )}
+              </SelectContent>
+            </Select>
+          );
+        },
+      }),
+
       columnHelper.display({
         id: 'actions',
         header: t('admin.actions'),
@@ -445,6 +508,7 @@ function AdminUserManagement() {
       userInfo?.email,
       updateUserStatusMutation,
       setSuperuserMutation,
+      updateBusinessDocumentRoleMutation,
       navigate,
     ],
   );

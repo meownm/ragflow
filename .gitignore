@@ -262,6 +262,9 @@ internal/deepdoc/parser/docx/tool/
 /deployment/linux-pg/*.tar.gz.sha256
 /deployment/linux-pg/*.bundle
 /deployment/linux-pg/*.bundle.sha256
+/deployment/linux-pg/registry-images-*.env
+/services/asr-online-service/uploads/
+/services/asr-online-service/uv.lock
 /release/
 /ragflow_deps/office_oxide-*.tar.gz
 /ragflow_deps/pdf_oxide-*.tar.gz

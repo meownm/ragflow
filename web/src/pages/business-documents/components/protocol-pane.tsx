@@ -227,9 +227,12 @@ export function ProtocolPane({
           >
             <div className="flex items-center justify-between gap-2 text-xs text-text-secondary">
               <span>Комментарий автора</span>
-              {item.section_id && (
-                <span className="font-mono">§ {item.section_id}</span>
-              )}
+              <span
+                className={item.section_id ? 'font-mono' : undefined}
+                data-testid="business-document-comment-scope"
+              >
+                {item.section_id ? `§ ${item.section_id}` : 'Весь документ'}
+              </span>
             </div>
             {item.anchor?.selected_text && (
               <div className="mt-2">
@@ -271,6 +274,17 @@ export function ProtocolPane({
         className="shrink-0 border-t border-border-button bg-bg-component p-4"
         data-testid="business-document-comment-composer"
       >
+        <div
+          className="mb-2 flex items-center gap-2 text-xs text-text-secondary"
+          data-testid="business-document-comment-scope-selector"
+        >
+          <span>Область:</span>
+          <span className="rounded-full bg-bg-card px-2 py-0.5 font-medium text-text-primary">
+            {selection
+              ? `выделенный фрагмент · § ${selection.section_id}`
+              : 'весь документ'}
+          </span>
+        </div>
         {selection && (
           <div className="mb-3 flex items-start gap-2 rounded-md bg-accent-primary/5 px-3 py-2 text-xs text-text-secondary">
             <Quote className="mt-0.5 size-3.5 shrink-0 text-accent-primary" />
@@ -293,7 +307,11 @@ export function ProtocolPane({
               value={comment}
               autoSize={{ minRows: 2, maxRows: 6 }}
               aria-label="Комментарий"
-              placeholder="Оставить комментарий"
+              placeholder={
+                selection
+                  ? 'Комментарий к выделенному фрагменту'
+                  : 'Комментарий ко всему документу'
+              }
               className="pe-11"
               disabled={!canComment || pending}
               onChange={(event) => setComment(event.target.value)}
@@ -330,7 +348,9 @@ export function ProtocolPane({
         </div>
         <p className="mt-2 text-[11px] text-text-disabled">
           {canComment
-            ? 'Ctrl + Enter — отправить'
+            ? selection
+              ? 'Уберите привязку, чтобы оставить комментарий ко всему документу · Ctrl + Enter — отправить'
+              : 'Чтобы привязать комментарий к месту, выделите текст в документе · Ctrl + Enter — отправить'
             : 'Комментарии сейчас недоступны'}
         </p>
       </div>

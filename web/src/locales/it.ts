@@ -482,7 +482,7 @@ Esempio: un messaggio di 1 KB con embedding a 1024 dimensioni usa ~9 KB. Il limi
       testSetting: 'Impostazioni',
       retrievalTesting: 'Test di recupero',
       retrievalTestingDescription:
-        'Esegui un test di recupero per verificare se RAGFlow riesce a recuperare il contenuto previsto per il LLM.',
+        'Esegui un test di recupero per verificare se Агент Раггер riesce a recuperare il contenuto previsto per il LLM.',
       Parse: 'Analizza',
       dataset: 'Dataset',
       testing: 'Test di recupero',
@@ -516,10 +516,10 @@ Esempio: un messaggio di 1 KB con embedding a 1024 dimensioni usa ~9 KB. Il limi
       noTestResultsForNotRuned:
         'Nessun test eseguito. I risultati appariranno qui.',
       testingDescription:
-        'Esegui un test di recupero per verificare se RAGFlow riesce a recuperare il contenuto previsto per il LLM. Se hai modificato le impostazioni predefinite, come il peso della similarità delle parole chiave o la soglia di similarità, per ottenere i risultati ottimali, tieni presente che queste modifiche non saranno salvate automaticamente. Devi applicarle alle impostazioni del tuo assistente chat o alle impostazioni del componente agente Recupero.',
+        'Esegui un test di recupero per verificare se Агент Раггер riesce a recuperare il contenuto previsto per il LLM. Se hai modificato le impostazioni predefinite, come il peso della similarità delle parole chiave o la soglia di similarità, per ottenere i risultati ottimali, tieni presente che queste modifiche non saranno salvate automaticamente. Devi applicarle alle impostazioni del tuo assistente chat o alle impostazioni del componente agente Recupero.',
       similarityThreshold: 'Soglia di similarità',
       similarityThresholdTip:
-        'RAGFlow utilizza una combinazione di similarità delle parole chiave ponderata e similarità coseno vettoriale ponderata, o una combinazione di similarità delle parole chiave ponderata e punteggio di reranking ponderato durante il recupero. Questo parametro imposta la soglia per le similarità tra la query utente e i chunk. Qualsiasi chunk con un punteggio di similarità inferiore a questa soglia sarà escluso dai risultati. Per impostazione predefinita, la soglia è impostata a 0.2. Ciò significa che solo i chunk con punteggio di similarità ibrida di 20 o superiore saranno recuperati.',
+        'Агент Раггер utilizza una combinazione di similarità delle parole chiave ponderata e similarità coseno vettoriale ponderata, o una combinazione di similarità delle parole chiave ponderata e punteggio di reranking ponderato durante il recupero. Questo parametro imposta la soglia per le similarità tra la query utente e i chunk. Qualsiasi chunk con un punteggio di similarità inferiore a questa soglia sarà escluso dai risultati. Per impostazione predefinita, la soglia è impostata a 0.2. Ciò significa che solo i chunk con punteggio di similarità ibrida di 20 o superiore saranno recuperati.',
       vectorSimilarityWeight: 'Peso similarità vettoriale',
       vectorSimilarityWeightTip:
         'Imposta il peso della similarità delle parole chiave nel punteggio di similarità combinato, usato con la similarità coseno vettoriale o con il punteggio di reranking. Il totale dei due pesi deve essere uguale a 1.0.',
@@ -563,14 +563,14 @@ Esempio: un messaggio di 1 KB con embedding a 1024 dimensioni usa ~9 KB. Il limi
       changeSpecificCategory: 'Cambia categoria specifica',
       uploadTitle: 'Trascina e rilascia il tuo file qui per caricarlo',
       uploadDescription:
-        "Supporta caricamento singolo o multiplo. Per un RAGFlow distribuito localmente: il limite di dimensione totale dei file per caricamento è 1GB, con un limite batch di 32 file. Non c'è limite al numero totale di file per account. Per cloud.ragflow.io, il limite di dimensione totale dei file per caricamento è 10MB, con ogni file non superiore a 10MB e un massimo di 128 file per account.",
+        "Supporta caricamento singolo o multiplo. Per un Агент Раггер distribuito localmente: il limite di dimensione totale dei file per caricamento è 1GB, con un limite batch di 32 file. Non c'è limite al numero totale di file per account. Per cloud.ragflow.io, il limite di dimensione totale dei file per caricamento è 10MB, con ogni file non superiore a 10MB e un massimo di 128 file per account.",
       chunk: 'Chunk',
       bulk: 'Multiplo',
       cancel: 'Annulla',
       close: 'Chiudi',
       rerankModel: 'Modello rerank',
       rerankPlaceholder: 'Seleziona valore',
-      rerankTip: `Opzionale. Se lasciato vuoto, RAGFlow userà una combinazione di similarità delle parole chiave ponderata e similarità coseno vettoriale ponderata; se viene selezionato un modello rerank, un punteggio di reranking ponderato sostituirà la similarità coseno vettoriale ponderata. Tieni presente che l'uso di un modello rerank aumenterà significativamente il tempo di risposta del sistema. Se desideri usare un modello rerank, assicurati di usare un reranker SaaS; se preferisci un modello rerank distribuito localmente, assicurati di avviare RAGFlow con docker-compose-gpu.yml.`,
+      rerankTip: `Opzionale. Se lasciato vuoto, Агент Раггер userà una combinazione di similarità delle parole chiave ponderata e similarità coseno vettoriale ponderata; se viene selezionato un modello rerank, un punteggio di reranking ponderato sostituirà la similarità coseno vettoriale ponderata. Tieni presente che l'uso di un modello rerank aumenterà significativamente il tempo di risposta del sistema. Se desideri usare un modello rerank, assicurati di usare un reranker SaaS; se preferisci un modello rerank distribuito localmente, assicurati di avviare Агент Раггер con docker-compose-gpu.yml.`,
       topK: 'Top-K',
       topKTip: `Usato insieme al modello Rerank, questa impostazione definisce il numero di chunk di testo da inviare al modello di reranking specificato.`,
       delimiter: `Delimitatore per testo`,
@@ -731,7 +731,7 @@ Esempio: un messaggio di 1 KB con embedding a 1024 dimensioni usa ~9 KB. Il limi
       tableColumnModeAuto: 'Auto',
       tableColumnModeManual: 'Manuale',
       tableColumnModeAutoDescription:
-        'Tutte le colonne sono incluse nel testo del chunk e memorizzate come metadati (predefinito RAGFlow).',
+        'Tutte le colonne sono incluse nel testo del chunk e memorizzate come metadati (predefinito Агент Раггер).',
       tableColumnRoles: 'Ruoli colonna',
       tableColumnRolesTip:
         'Scegli quali colonne includere nel testo del chunk (indicizzate per la ricerca vettoriale e full-text), solo nei metadati (filtrabili), o entrambi. Le modifiche si applicano alle nuove analisi; rianalizza i documenti esistenti affinché i ruoli abbiano effetto.',
@@ -1029,7 +1029,7 @@ Questa funzionalità di auto-tagging migliora il recupero aggiungendo un ulterio
       topN: 'Top N',
       topNTip: `Non tutti i chunk con punteggio di similarità sopra la 'soglia di similarità' saranno inviati all'LLM. Questo seleziona 'Top N' chunk da quelli recuperati.`,
       variable: 'Variabile',
-      variableTip: `Usate insieme alle API di gestione dell'assistente chat di RAGFlow, le variabili possono aiutare a sviluppare strategie di prompt di sistema più flessibili. Le variabili definite saranno usate dal 'Prompt di sistema' come parte dei prompt per l'LLM. {knowledge} è una variabile speciale riservata che rappresenta i chunk recuperati dal/i dataset specificato/i, e tutte le variabili devono essere racchiuse tra parentesi graffe {} nel 'Prompt di sistema'. Vedi https://ragflow.io/docs/dev/set_chat_variables per i dettagli.`,
+      variableTip: `Usate insieme alle API di gestione dell'assistente chat di Агент Раггер, le variabili possono aiutare a sviluppare strategie di prompt di sistema più flessibili. Le variabili definite saranno usate dal 'Prompt di sistema' come parte dei prompt per l'LLM. {knowledge} è una variabile speciale riservata che rappresenta i chunk recuperati dal/i dataset specificato/i, e tutte le variabili devono essere racchiuse tra parentesi graffe {} nel 'Prompt di sistema'. Vedi https://ragflow.io/docs/dev/set_chat_variables per i dettagli.`,
       add: 'Aggiungi',
       key: 'Chiave',
       optional: 'Opzionale',
@@ -1107,7 +1107,7 @@ Questa funzionalità di auto-tagging migliora il recupero aggiungendo un ulterio
       extensionTitle: 'Estensione Chrome',
       tokenError: 'Per favore crea prima la chiave API.',
       betaError:
-        'Per favore acquisisci prima una chiave API RAGFlow dalla pagina Impostazioni di sistema.',
+        'Per favore acquisisci prima una chiave API Агент Раггер dalla pagina Impostazioni di sistema.',
       searching: 'Ricerca in corso...',
       parsing: 'Analisi',
       uploading: 'Caricamento',
@@ -1581,7 +1581,7 @@ Esempio: Virtual Hosted Style`,
       chatModelTip: 'Il LLM predefinito per ogni nuovo dataset creato.',
       embeddingModel: 'Embedding',
       embeddingModelTip:
-        'Il modello di embedding predefinito per ogni nuovo dataset creato. Se non riesci a trovare un modello di embedding dal menu a discesa, controlla se stai usando la versione slim di RAGFlow (che non include modelli di embedding) o controlla https://ragflow.io/docs/dev/supported_models per vedere se il tuo fornitore di modelli supporta questo modello.',
+        'Il modello di embedding predefinito per ogni nuovo dataset creato. Se non riesci a trovare un modello di embedding dal menu a discesa, controlla se stai usando la versione slim di Агент Раггер (che non include modelli di embedding) o controlla https://ragflow.io/docs/dev/supported_models per vedere se il tuo fornitore di modelli supporta questo modello.',
       img2txtModel: 'VLM',
       img2txtModelTip:
         "Il VLM predefinito per ogni nuovo dataset creato. Descrive un'immagine o un video. Se non riesci a trovare un modello dal menu a discesa, controlla https://ragflow.io/docs/dev/supported_models per vedere se il tuo fornitore di modelli supporta questo modello.",
@@ -1822,7 +1822,7 @@ Esempio: Virtual Hosted Style`,
       directory: 'Directory',
       uploadTitle: 'Trascina e rilascia il tuo file qui per caricarlo',
       uploadDescription:
-        "Supporta caricamento singolo o multiplo. Per un RAGFlow distribuito localmente: il limite di dimensione totale dei file per caricamento è 1GB, con un limite batch di 32 file. Non c'è limite al numero totale di file per account. Per cloud.ragflow.io, il limite di dimensione totale dei file per caricamento è 10MB, con ogni file non superiore a 10MB e un massimo di 128 file per account.",
+        "Supporta caricamento singolo o multiplo. Per un Агент Раггер distribuito localmente: il limite di dimensione totale dei file per caricamento è 1GB, con un limite batch di 32 file. Non c'è limite al numero totale di file per account. Per cloud.ragflow.io, il limite di dimensione totale dei file per caricamento è 10MB, con ogni file non superiore a 10MB e un massimo di 128 file per account.",
       local: 'Caricamenti locali',
       s3: 'Caricamenti S3',
       preview: 'Anteprima',
@@ -2990,7 +2990,7 @@ Le informazioni strutturate importanti possono includere: nomi, date, luoghi, ev
 
     admin: {
       loginTitle: 'Console admin',
-      title: 'RAGFlow',
+      title: 'Агент Раггер',
       confirm: 'Conferma',
       close: 'Chiudi',
       yes: 'Sì',

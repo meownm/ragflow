@@ -218,10 +218,13 @@ def get_config():
                         type: integer 0 means disabled, 1 means enabled
                         description: Whether user registration is enabled
     """
+    from api.db.services.navigation_visibility_service import get_visible_sections
+
     return get_json_result(
         data={
             "registerEnabled": settings.REGISTER_ENABLED,
             "disablePasswordLogin": settings.DISABLE_PASSWORD_LOGIN,
+            "visibleSections": get_visible_sections(),
         }
     )
 

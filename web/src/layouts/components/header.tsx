@@ -80,7 +80,11 @@ export function Header({
               aria-current={pathname === Routes.Root ? 'page' : undefined}
               className="flex size-10 shrink-0 items-center justify-center"
             >
-              <img src={'/logo.svg'} alt="RAGFlow logo" className="size-10" />
+              <img
+                src={'/logo.svg'}
+                alt="Логотип Агент Раггер"
+                className="size-10"
+              />
             </Link>
           </div>
         </div>

@@ -42,6 +42,7 @@ from common.time_utils import current_timestamp
 TENANT = "tenant-1"
 AUTHOR = "author-1"
 CONNECTOR = SimpleNamespace(id="connector-1", name="EVA Wiki", config={})
+EVA_CHANGES_MODULE = sys.modules[EvaDocumentChangeService.__module__]
 
 
 class FakeEvaClient:
@@ -121,6 +122,20 @@ def personal_mutation_client(monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def configured_documents_eva_space(monkeypatch):
+    monkeypatch.setattr(
+        EVA_CHANGES_MODULE,
+        "get_business_documents_eva_connector_id",
+        lambda: CONNECTOR.id,
+    )
+    monkeypatch.setattr(
+        ConnectorService,
+        "accessible",
+        staticmethod(lambda _connector_id, _actor_id: True),
+    )
+
+
 def _create(client):
     CONNECTOR.mutation_client = client
     with patch.object(EvaDocumentChangeService, "_connector", return_value=(CONNECTOR, client)):
@@ -160,6 +175,34 @@ def _patch_accessible_connector(monkeypatch, connector):
         "accessible",
         staticmethod(lambda connector_id, actor_id: connector_id == connector.id and actor_id == AUTHOR),
     )
+
+
+def test_eva_search_requires_configured_documents_space(monkeypatch):
+    monkeypatch.setattr(
+        EVA_CHANGES_MODULE,
+        "get_business_documents_eva_connector_id",
+        lambda: None,
+    )
+
+    with pytest.raises(BusinessDocumentError) as exc_info:
+        EvaDocumentChangeService.search_sources(AUTHOR)
+
+    assert exc_info.value.code == "EVA_SPACE_NOT_CONFIGURED"
+    assert exc_info.value.status == 409
+
+
+def test_eva_connector_rejects_document_outside_configured_space(monkeypatch):
+    monkeypatch.setattr(
+        EVA_CHANGES_MODULE,
+        "get_business_documents_eva_connector_id",
+        lambda: "connector-documents",
+    )
+
+    with pytest.raises(BusinessDocumentError) as exc_info:
+        EvaDocumentChangeService._connector("connector-other", AUTHOR)
+
+    assert exc_info.value.code == "EVA_SPACE_SCOPE_VIOLATION"
+    assert exc_info.value.status == 403
 
 
 @pytest.mark.parametrize(
@@ -223,7 +266,7 @@ def test_eva_reader_maps_missing_and_unavailable_personal_credentials(
     monkeypatch.setattr(UserExternalCredentialService, "get_eva_wiki_token", staticmethod(fail_personal_lookup))
 
     with pytest.raises(BusinessDocumentError) as exc_info:
-        EvaDocumentChangeService.search_sources(AUTHOR, connector_id=connector.id)
+        EvaDocumentChangeService.search_sources(AUTHOR)
 
     assert exc_info.value.code == expected_code
     assert exc_info.value.status == expected_status

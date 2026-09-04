@@ -83,16 +83,16 @@ async def test_routes_pass_tenant_and_owner_in_service_contract_order(route_app,
     app, module = route_app
     calls = []
 
-    def create_document(tenant_id, actor_id, data, is_admin):
-        calls.append(("create", tenant_id, actor_id, data, is_admin))
+    def create_document(tenant_id, actor_id, data, is_admin, access_role):
+        calls.append(("create", tenant_id, actor_id, data, is_admin, access_role))
         return {"document_id": "doc-1"}
 
-    def execute_command(tenant_id, actor_id, document_id, data):
-        calls.append(("command", tenant_id, actor_id, document_id, data))
+    def execute_command(tenant_id, actor_id, document_id, data, is_admin, access_role):
+        calls.append(("command", tenant_id, actor_id, document_id, data, is_admin, access_role))
         return {"accepted": True, "document_id": document_id}
 
-    def get_document(tenant_id, document_id, actor_id, is_admin):
-        calls.append(("get", tenant_id, document_id, actor_id, is_admin))
+    def get_document(tenant_id, document_id, actor_id, is_admin, access_role):
+        calls.append(("get", tenant_id, document_id, actor_id, is_admin, access_role))
         return {
             "document_id": document_id,
             "owner_id": actor_id,
@@ -119,9 +119,9 @@ async def test_routes_pass_tenant_and_owner_in_service_contract_order(route_app,
     assert get_response.status_code == 200
     assert (await get_response.get_json())["data"]["current_revision"]["section_texts"] == {"5.5": "Метрика"}
     assert calls == [
-        ("create", ACTOR, ACTOR, create_payload, False),
-        ("command", ACTOR, ACTOR, "doc-1", command_payload),
-        ("get", ACTOR, "doc-1", ACTOR, False),
+        ("create", ACTOR, ACTOR, create_payload, False, "AUTHOR_CREATOR"),
+        ("command", ACTOR, ACTOR, "doc-1", command_payload, False, "AUTHOR_CREATOR"),
+        ("get", ACTOR, "doc-1", ACTOR, False, "AUTHOR_CREATOR"),
     ]
 
 
@@ -132,8 +132,8 @@ async def test_delete_route_passes_admin_role_to_service(route_app, monkeypatch)
     module.current_user.is_superuser = True
     calls = []
 
-    def delete_document(actor_id, document_id, is_admin):
-        calls.append((actor_id, document_id, is_admin))
+    def delete_document(actor_id, document_id, is_admin, access_role):
+        calls.append((actor_id, document_id, is_admin, access_role))
         return {"document_id": document_id, "deleted": True}
 
     monkeypatch.setattr(module.BusinessDocumentService, "delete_document", staticmethod(delete_document))
@@ -141,4 +141,41 @@ async def test_delete_route_passes_admin_role_to_service(route_app, monkeypatch)
 
     assert response.status_code == 200
     assert (await response.get_json())["data"] == {"document_id": "doc-1", "deleted": True}
-    assert calls == [(ACTOR, "doc-1", True)]
+    assert calls == [(ACTOR, "doc-1", True, "AUTHOR_CREATOR")]
+
+
+@pytest.mark.p0
+@pytest.mark.asyncio
+async def test_access_filter_and_assignment_routes_pass_role_and_scope(route_app, monkeypatch):
+    app, module = route_app
+    module.current_user.business_document_role = "EXTENDED_MODERATOR"
+    calls = []
+
+    def list_documents(tenant_id, actor_id, page, page_size, is_admin, access_role, scope):
+        calls.append(("list", tenant_id, actor_id, page, page_size, is_admin, access_role, scope))
+        return {"items": [], "scope": scope}
+
+    def list_access_users(actor_id, is_admin, access_role):
+        calls.append(("users", actor_id, is_admin, access_role))
+        return {"items": []}
+
+    def assign_document(actor_id, document_id, data, is_admin, access_role):
+        calls.append(("assign", actor_id, document_id, data, is_admin, access_role))
+        return {"document_id": document_id, "owner_id": data["owner_id"]}
+
+    monkeypatch.setattr(module.BusinessDocumentService, "list_documents", staticmethod(list_documents))
+    monkeypatch.setattr(module.BusinessDocumentService, "list_access_users", staticmethod(list_access_users))
+    monkeypatch.setattr(module.BusinessDocumentService, "assign_document", staticmethod(assign_document))
+    client = app.test_client()
+
+    assert (await client.get("/business-documents?page=2&page_size=5&scope=mine")).status_code == 200
+    assert (await client.get("/business-documents/access/users")).status_code == 200
+    assignment = {"owner_id": "author-2", "expected_state_version": 7}
+    response = await client.put("/business-documents/doc-1/owner", json=assignment)
+
+    assert response.status_code == 200
+    assert calls == [
+        ("list", ACTOR, ACTOR, 2, 5, False, "EXTENDED_MODERATOR", "mine"),
+        ("users", ACTOR, False, "EXTENDED_MODERATOR"),
+        ("assign", ACTOR, "doc-1", assignment, False, "EXTENDED_MODERATOR"),
+    ]

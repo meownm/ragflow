@@ -5,12 +5,18 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 SOURCE_ROOT=$(cd -- "${SCRIPT_DIR}/../.." && pwd)
 INSTALL_DIR=${INSTALL_DIR:-/opt/ragflow-pg}
 PROJECT_NAME=${PROJECT_NAME:-ragflow-pg}
-RAGFLOW_PORT=${RAGFLOW_PORT:-9380}
+RAGFLOW_PORT=${RAGFLOW_PORT:-80}
 ADMIN_EMAIL=${ADMIN_EMAIL:-admin@ragflow.local}
 ADMIN_NICKNAME=${ADMIN_NICKNAME:-RAGFlow Admin}
 SECRETS_DIR=${SECRETS_DIR:-/etc/ragflow-pg}
 ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
 OFFLINE_INSTALL=${OFFLINE_INSTALL:-0}
+REGISTRY_INSTALL=${REGISTRY_INSTALL:-0}
+PREBUILT_FRONTEND=${PREBUILT_FRONTEND:-${OFFLINE_INSTALL}}
+IMAGE_ENV_FILE=${IMAGE_ENV_FILE:-}
+REGISTRY_HOST=${REGISTRY_HOST:-}
+REGISTRY_USERNAME=${REGISTRY_USERNAME:-}
+REGISTRY_PASSWORD_FILE=${REGISTRY_PASSWORD_FILE:-}
 DOCKER_DNF_REPO=${DOCKER_DNF_REPO:-cifra-docker}
 MIN_DOCKER_VERSION=24.0.0
 MIN_COMPOSE_VERSION=2.26.1
@@ -106,6 +112,18 @@ else
 fi
 sudo systemctl enable --now docker
 
+if [[ ${REGISTRY_INSTALL} == "1" && -n ${REGISTRY_USERNAME} ]]; then
+  if [[ -z ${REGISTRY_HOST} || -z ${REGISTRY_PASSWORD_FILE} ]]; then
+    echo "REGISTRY_HOST and REGISTRY_PASSWORD_FILE are required when REGISTRY_USERNAME is set." >&2
+    exit 1
+  fi
+  if [[ ! -r ${REGISTRY_PASSWORD_FILE} ]]; then
+    echo "Registry password file is not readable: ${REGISTRY_PASSWORD_FILE}" >&2
+    exit 1
+  fi
+  sudo docker login "${REGISTRY_HOST}" --username "${REGISTRY_USERNAME}" --password-stdin < "${REGISTRY_PASSWORD_FILE}"
+fi
+
 version_at_least() {
   local actual=$1 minimum=$2
   [[ $(printf '%s\n%s\n' "${minimum}" "${actual}" | sort -V | head -n 1) == "${minimum}" ]]
@@ -135,7 +153,7 @@ sudo rsync -a --delete \
   --exclude node_modules --exclude output --exclude docker/ragflow-logs \
   "${SOURCE_ROOT}/" "${INSTALL_DIR}/"
 
-if [[ ${OFFLINE_INSTALL} == "1" ]]; then
+if [[ ${PREBUILT_FRONTEND} == "1" ]]; then
   test -s "${INSTALL_DIR}/web/dist/index.html"
 else
   FRONTEND_DEPS_VOLUME="${PROJECT_NAME}_frontend_build_deps_$$"
@@ -178,6 +196,29 @@ set_env REDIS_PASSWORD "$(random_secret)"
 set_env RAGFLOW_CREDENTIALS_KEY "$(random_secret)"
 set_env SVR_WEB_HTTP_PORT "${RAGFLOW_PORT}"
 
+if [[ -n ${IMAGE_ENV_FILE} ]]; then
+  if [[ ! -r ${IMAGE_ENV_FILE} ]]; then
+    echo "Image environment file is not readable: ${IMAGE_ENV_FILE}" >&2
+    exit 1
+  fi
+  while IFS='=' read -r image_key image_value; do
+    [[ -z ${image_key} || ${image_key} == \#* ]] && continue
+    case ${image_key} in
+      POSTGRES_IMAGE|RAGFLOW_IMAGE|VALKEY_IMAGE|ELASTICSEARCH_IMAGE|PLANTUML_IMAGE|MINIO_IMAGE)
+        if [[ -z ${image_value} || ${image_value} =~ [[:space:]] ]]; then
+          echo "Invalid image reference for ${image_key}." >&2
+          exit 1
+        fi
+        set_env "${image_key}" "${image_value}"
+        ;;
+      *)
+        echo "Unsupported key in image environment file: ${image_key}" >&2
+        exit 1
+        ;;
+    esac
+  done < "${IMAGE_ENV_FILE}"
+fi
+
 sudo install -d -m 0700 "${SECRETS_DIR}"
 if [[ -z ${ADMIN_PASSWORD} ]]; then
   ADMIN_PASSWORD=$(random_secret)
@@ -206,9 +247,15 @@ if grep -qx mysql <<<"${services}"; then
   exit 1
 fi
 grep -qx postgres <<<"${services}"
-grep -qx t-one-asr <<<"${services}"
+if grep -qx t-one-asr <<<"${services}"; then
+  echo "Refusing to deploy: T-One ASR is active in the merged Compose config." >&2
+  exit 1
+fi
 
 if [[ ${OFFLINE_INSTALL} == "1" ]]; then
+  "${COMPOSE[@]}" up -d --no-build --pull never
+elif [[ ${REGISTRY_INSTALL} == "1" ]]; then
+  "${COMPOSE[@]}" pull
   "${COMPOSE[@]}" up -d --no-build --pull never
 else
   "${COMPOSE[@]}" up -d --build
@@ -228,20 +275,13 @@ curl -fsS --max-time 10 "http://127.0.0.1:${RAGFLOW_PORT}/" >/dev/null
 sudo grep -Eq '^RAGFLOW_CREDENTIALS_KEY=[0-9a-f]{64}$' "${ENV_FILE}"
 
 RAGFLOW_CONTAINER=$("${COMPOSE[@]}" ps -q ragflow-cpu)
-ASR_CONTAINER=$("${COMPOSE[@]}" ps -q t-one-asr)
 test -n "${RAGFLOW_CONTAINER}"
-test -n "${ASR_CONTAINER}"
-
-sudo docker exec "${ASR_CONTAINER}" python -c \
-  "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9011/health/ready', timeout=10)"
-sudo docker exec "${RAGFLOW_CONTAINER}" curl -fsS --max-time 10 http://t-one-asr:9011/v1/models | jq -e \
-  '.data | map(.id) | index("t-one") != null' >/dev/null
 
 sudo docker exec -i \
   -e BOOTSTRAP_ADMIN_EMAIL="${ADMIN_EMAIL}" \
   -e BOOTSTRAP_ADMIN_PASSWORD="${ADMIN_PASSWORD}" \
   -e BOOTSTRAP_ADMIN_NICKNAME="${ADMIN_NICKNAME}" \
-  "${RAGFLOW_CONTAINER}" python - < "${INSTALL_DIR}/deployment/linux-pg/seed_admin_asr.py"
+  "${RAGFLOW_CONTAINER}" python - < "${INSTALL_DIR}/deployment/linux-pg/seed_admin.py"
 
 sudo docker exec "${RAGFLOW_CONTAINER}" printenv DB_TYPE | grep -qx postgres
 sudo docker exec -i \
@@ -250,20 +290,18 @@ sudo docker exec -i \
 from common import settings
 settings.init_settings()
 from api.db.services import UserService
-from api.db.services.user_service import TenantService
 import os
 email = os.environ["BOOTSTRAP_ADMIN_EMAIL"]
 users = list(UserService.query(email=email))
 assert len(users) == 1 and users[0].is_superuser
-exists, tenant = TenantService.get_by_id(users[0].id)
-assert exists and tenant.asr_id == "t-one@t-one-local@New API"
 PY
 
 "${COMPOSE[@]}" ps
 echo
 echo "RAGFlow installation completed."
 echo "Release: ${RELEASE_VERSION}"
-echo "URL: http://127.0.0.1:${RAGFLOW_PORT}/"
+echo "Published address: 0.0.0.0:${RAGFLOW_PORT}"
+echo "Local health URL: http://127.0.0.1:${RAGFLOW_PORT}/"
 echo "Admin email: ${ADMIN_EMAIL}"
 echo "Admin password is stored in ${SECRETS_DIR}/admin.env (mode 0600)."
 echo "Database: PostgreSQL; pgvector is not required because DOC_ENGINE=elasticsearch."

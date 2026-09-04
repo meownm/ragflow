@@ -23,12 +23,18 @@ declare namespace AdminService {
   };
 
   export type ListUsersItem = {
+    id: string;
     create_date: string;
     email: string;
     is_active: '0' | '1';
     is_superuser: boolean;
     role: string;
     nickname: string;
+    business_document_role:
+      | 'AUTHOR_CREATOR'
+      | 'AUTHOR_EDITOR'
+      | 'MODERATOR_CREATOR'
+      | 'EXTENDED_MODERATOR';
   };
 
   export type UserDetail = {
@@ -217,5 +223,21 @@ declare namespace AdminService {
   export type SandboxConfig = {
     provider_type: string;
     config: Record<string, unknown>;
+  };
+
+  export type NavigationVisibility = {
+    visible_sections: import('@/constants/navigation').NavigationSection[];
+  };
+
+  export type BusinessDocumentsEvaSpace = {
+    connector_id: string;
+    connector_name: string;
+    project_id: string;
+  };
+
+  export type BusinessDocumentsSettings = {
+    eva_connector_id: string | null;
+    eva_spaces: BusinessDocumentsEvaSpace[];
+    selected_space_available: boolean;
   };
 }

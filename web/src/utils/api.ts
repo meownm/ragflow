@@ -256,6 +256,11 @@ export default {
   // business documents
   businessDocuments: `${restAPIv1}/business-documents`,
   businessDocument: (id: string) => `${restAPIv1}/business-documents/${id}`,
+  businessDocumentOwner: (id: string) =>
+    `${restAPIv1}/business-documents/${id}/owner`,
+  businessDocumentAccessUsers: `${restAPIv1}/business-documents/access/users`,
+  businessDocumentAccessUser: (userId: string) =>
+    `${restAPIv1}/business-documents/access/users/${userId}`,
   businessDocumentCommands: (id: string) =>
     `${restAPIv1}/business-documents/${id}/commands`,
   businessDocumentRevisions: (id: string) =>
@@ -448,6 +453,8 @@ export default {
   adminImportWhitelist: `${restAPIv1}/admin/whitelist/batch`,
 
   adminGetSystemVersion: `${restAPIv1}/admin/version`,
+  adminNavigationVisibility: `${restAPIv1}/admin/navigation`,
+  adminBusinessDocumentsSettings: `${restAPIv1}/admin/business-documents`,
 
   // Sandbox settings
   adminListSandboxProviders: `${restAPIv1}/admin/sandbox/providers`,

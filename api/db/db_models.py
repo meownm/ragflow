@@ -696,6 +696,13 @@ class User(DataBaseModel, AuthUser):
     login_channel = CharField(null=True, help_text="from which user login", index=True)
     status = CharField(max_length=1, null=True, help_text="is it validate(0: wasted, 1: validate)", default="1", index=True)
     is_superuser = BooleanField(null=True, help_text="is root", default=False, index=True)
+    business_document_role = CharField(
+        max_length=32,
+        null=False,
+        default="AUTHOR_CREATOR",
+        help_text="AUTHOR_CREATOR|AUTHOR_EDITOR|MODERATOR_CREATOR|EXTENDED_MODERATOR",
+        index=True,
+    )
 
     def __str__(self):
         return self.email
@@ -1445,6 +1452,7 @@ class BusinessDocumentRevision(DataBaseModel):
 
     id = CharField(max_length=32, primary_key=True)
     document_id = CharField(max_length=32, null=False, index=True)
+    author_id = CharField(max_length=32, null=True, index=True)
     revision_number = IntegerField(null=False)
     document_ast = JSONField(null=False)
     body_markdown = LongTextField(null=False)
@@ -1581,6 +1589,9 @@ class BusinessDocumentJob(DataBaseModel):
     tenant_id = CharField(max_length=32, null=False, index=True)
     job_type = CharField(max_length=32, null=False, index=True)
     status = CharField(max_length=16, null=False, default="PENDING", index=True)
+    progress = FloatField(null=False, default=0.0)
+    progress_stage = CharField(max_length=32, null=False, default="QUEUED")
+    progress_message = CharField(max_length=512, null=True)
     dedupe_key = CharField(max_length=71, null=False, unique=True)
     source_state_version = IntegerField(null=False)
     base_revision_id = CharField(max_length=32, null=True)
@@ -2018,6 +2029,16 @@ def _update_tenant_llm_to_id_primary_key_postgres():
 def migrate_db():
     logging.disable(logging.ERROR)
     migrator = DatabaseMigrator[settings.DATABASE_TYPE.upper()].value(DB)
+    alter_db_add_column(
+        migrator,
+        "user",
+        "business_document_role",
+        CharField(max_length=32, null=False, default="AUTHOR_CREATOR", index=True),
+    )
+    alter_db_add_column(migrator, "business_document_revision", "author_id", CharField(max_length=32, null=True, index=True))
+    alter_db_add_column(migrator, "business_document_job", "progress", FloatField(null=False, default=0.0))
+    alter_db_add_column(migrator, "business_document_job", "progress_stage", CharField(max_length=32, null=False, default="QUEUED"))
+    alter_db_add_column(migrator, "business_document_job", "progress_message", CharField(max_length=512, null=True))
     alter_db_add_column(migrator, "file", "source_type", CharField(max_length=128, null=False, default="", help_text="where dose this document come from", index=True))
     alter_db_add_column(migrator, "tenant", "rerank_id", CharField(max_length=128, null=False, default="BAAI/bge-reranker-v2-m3", help_text="default rerank model ID"))
     alter_db_add_column(migrator, "dialog", "rerank_id", CharField(max_length=128, null=False, default="", help_text="default rerank model ID"))

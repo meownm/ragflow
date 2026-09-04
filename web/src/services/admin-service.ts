@@ -134,6 +134,7 @@ const {
   adminImportWhitelist,
 
   adminGetSystemVersion,
+  adminNavigationVisibility,
 
   adminListSandboxProviders,
   adminGetSandboxProviderSchema,
@@ -272,6 +273,30 @@ export const importWhitelistFromExcel = (file: File) => {
 
 export const getSystemVersion = () =>
   request.get<ResponseData<{ version: string }>>(adminGetSystemVersion);
+
+export const getNavigationVisibility = () =>
+  request.get<ResponseData<AdminService.NavigationVisibility>>(
+    adminNavigationVisibility,
+  );
+
+export const setNavigationVisibility = (
+  visibleSections: AdminService.NavigationVisibility['visible_sections'],
+) =>
+  request.put<ResponseData<AdminService.NavigationVisibility>>(
+    adminNavigationVisibility,
+    { visible_sections: visibleSections },
+  );
+
+export const getBusinessDocumentsSettings = () =>
+  request.get<ResponseData<AdminService.BusinessDocumentsSettings>>(
+    api.adminBusinessDocumentsSettings,
+  );
+
+export const setBusinessDocumentsSettings = (evaConnectorId: string | null) =>
+  request.put<ResponseData<AdminService.BusinessDocumentsSettings>>(
+    api.adminBusinessDocumentsSettings,
+    { eva_connector_id: evaConnectorId },
+  );
 
 // Sandbox settings APIs
 export const listSandboxProviders = () =>

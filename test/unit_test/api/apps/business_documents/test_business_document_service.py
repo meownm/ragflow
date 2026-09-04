@@ -45,6 +45,7 @@ from api.db.db_models import (
     BusinessDocumentProposalDecision,
     BusinessDocumentQuestion,
     BusinessDocumentRevision,
+    User,
 )
 from test.unit_test.api.apps.business_documents.helpers import VALID_ACTIVITY_SCENARIO, required_section_blocks
 
@@ -56,7 +57,7 @@ AUTHOR = "author-1"
 @pytest.fixture()
 def database():
     database = SqliteDatabase(":memory:")
-    tables = BusinessDocumentService.model_tables()
+    tables = (*BusinessDocumentService.model_tables(), User)
     with database.bind_ctx(tables, bind_refs=False, bind_backrefs=False):
         database.connect()
         database.create_tables(tables)
@@ -378,7 +379,8 @@ def test_authors_can_open_foreign_documents_while_unknown_ids_stay_non_enumerabl
     document = _create()
     projection = BusinessDocumentService.get_document("another-tenant", document["document_id"], "another-author")
     assert projection["document_id"] == document["document_id"]
-    assert projection["permissions"] == {"read": True, "edit": True, "delete": False}
+    assert projection["permissions"] == {"read": True, "edit": False, "delete": False, "assign": False}
+    assert projection["allowed_commands"] == []
 
     with pytest.raises(BusinessDocumentError) as caught:
         BusinessDocumentService.get_document("another-tenant", "missing-document", AUTHOR)
@@ -388,24 +390,26 @@ def test_authors_can_open_foreign_documents_while_unknown_ids_stay_non_enumerabl
 
 @pytest.mark.p0
 def test_shared_access_list_and_server_assigned_chat(database):
+    User.create(id=AUTHOR, nickname="Первый автор", email="author-1@example.com")
     first = _create(title="Первый")
     second = _create(title="Второй")
     listing = BusinessDocumentService.list_documents(TENANT, AUTHOR, page=1, page_size=1)
     assert listing["total"] == 2
     assert len(listing["items"]) == 1
     assert listing["items"][0]["document_id"] in {first["document_id"], second["document_id"]}
+    assert listing["items"][0]["owner_name"] == "Первый автор"
     assert first["chat_id"].startswith("business-document:")
 
     shared = BusinessDocumentService.get_document("another-tenant", first["document_id"], "another-user")
     assert shared["document_id"] == first["document_id"]
-    assert shared["permissions"]["edit"] is True
+    assert shared["permissions"]["edit"] is False
     with pytest.raises(BusinessDocumentError) as caught:
         _create(chat_id="client-controlled")
     assert caught.value.code == "CHAT_ID_NOT_ALLOWED"
 
 
 @pytest.mark.p0
-def test_authors_share_read_and_edit_access_while_only_admin_can_delete(database):
+def test_business_document_role_matrix_controls_create_edit_delete_and_assignment(database):
     owned = _create(title="Документ автора")
     foreign = BusinessDocumentService.create_document(
         "tenant-2",
@@ -420,18 +424,41 @@ def test_authors_share_read_and_edit_access_while_only_admin_can_delete(database
 
     author_listing = BusinessDocumentService.list_documents(TENANT, AUTHOR)
     assert {item["document_id"] for item in author_listing["items"]} == {owned["document_id"], foreign["document_id"]}
-    assert all(item["access_role"] == "AUTHOR" for item in author_listing["items"])
-    assert all(item["permissions"] == {"read": True, "edit": True, "delete": False} for item in author_listing["items"])
+    assert all(item["access_role"] == "AUTHOR_CREATOR" for item in author_listing["items"])
+    permissions_by_id = {item["document_id"]: item["permissions"] for item in author_listing["items"]}
+    assert permissions_by_id[owned["document_id"]] == {"read": True, "edit": True, "delete": False, "assign": False}
+    assert permissions_by_id[foreign["document_id"]] == {"read": True, "edit": False, "delete": False, "assign": False}
+    assert author_listing["capabilities"] == {
+        "read": True,
+        "create": True,
+        "edit_own": True,
+        "edit_all": False,
+        "delete": False,
+        "assign": False,
+    }
+    mine_listing = BusinessDocumentService.list_documents(TENANT, AUTHOR, scope="mine")
+    assert [item["document_id"] for item in mine_listing["items"]] == [owned["document_id"]]
+    assert mine_listing["scope"] == "mine"
 
     foreign_projection = BusinessDocumentService.get_document(TENANT, foreign["document_id"], AUTHOR)
-    assert foreign_projection["permissions"] == {"read": True, "edit": True, "delete": False}
-    assert "REQUEST_INTAKE_ASSESSMENT" in foreign_projection["allowed_commands"]
+    assert foreign_projection["permissions"]["edit"] is False
+    assert foreign_projection["allowed_commands"] == []
+
+    with pytest.raises(BusinessDocumentError) as denied:
+        BusinessDocumentService.execute_command(
+            TENANT,
+            AUTHOR,
+            foreign["document_id"],
+            _command(foreign_projection, "REQUEST_INTAKE_ASSESSMENT", key="author-command"),
+        )
+    assert denied.value.code == "DOCUMENT_PERMISSION_DENIED"
 
     command = BusinessDocumentService.execute_command(
         TENANT,
         AUTHOR,
         foreign["document_id"],
-        _command(foreign_projection, "REQUEST_INTAKE_ASSESSMENT", key="collaborator-command"),
+        _command(foreign_projection, "REQUEST_INTAKE_ASSESSMENT", key="moderator-command"),
+        access_role="MODERATOR_CREATOR",
     )
     event = BusinessDocumentEvent.get_by_id(command["event_id"])
     job = BusinessDocumentJob.get_by_id(command["job_id"])
@@ -441,14 +468,23 @@ def test_authors_share_read_and_edit_access_while_only_admin_can_delete(database
     assert job.payload["requested_by_actor_id"] == AUTHOR
     assert ledger.tenant_id == "tenant-2"
 
+    with pytest.raises(BusinessDocumentError) as denied_create:
+        BusinessDocumentService.create_document(
+            TENANT,
+            AUTHOR,
+            {"schema_version": "1", "document_type": "business_requirements", "title": "Нельзя", "idea": "Нет права"},
+            access_role="AUTHOR_EDITOR",
+        )
+    assert denied_create.value.code == "DOCUMENT_PERMISSION_DENIED"
+
     admin_listing = BusinessDocumentService.list_documents("admin-tenant", "admin-user", is_admin=True)
     assert {item["document_id"] for item in admin_listing["items"]} == {owned["document_id"], foreign["document_id"]}
     assert all(item["access_role"] == "ADMIN" for item in admin_listing["items"])
-    assert all(item["permissions"] == {"read": True, "edit": True, "delete": True} for item in admin_listing["items"])
+    assert all(item["permissions"] == {"read": True, "edit": True, "delete": True, "assign": True} for item in admin_listing["items"])
 
     admin_projection = BusinessDocumentService.get_document("admin-tenant", foreign["document_id"], "admin-user", is_admin=True)
     assert admin_projection["access_role"] == "ADMIN"
-    assert admin_projection["permissions"] == {"read": True, "edit": True, "delete": True}
+    assert admin_projection["permissions"] == {"read": True, "edit": True, "delete": True, "assign": True}
     assert admin_projection["allowed_commands"] == []
 
     admin_created = BusinessDocumentService.create_document(
@@ -463,7 +499,53 @@ def test_authors_share_read_and_edit_access_while_only_admin_can_delete(database
         is_admin=True,
     )
     assert admin_created["access_role"] == "ADMIN"
-    assert admin_created["permissions"] == {"read": True, "edit": True, "delete": True}
+    assert admin_created["permissions"] == {"read": True, "edit": True, "delete": True, "assign": True}
+
+
+@pytest.mark.p0
+def test_extended_moderator_assigns_document_and_admin_manages_document_roles(database):
+    User.create(id=AUTHOR, nickname="Первый автор", email="author-1@example.com")
+    User.create(id="author-2", nickname="Второй автор", email="author-2@example.com")
+    document = _create()
+
+    users = BusinessDocumentService.list_access_users("moderator-1", access_role="EXTENDED_MODERATOR")
+    assert {(item["user_id"], item["role"]) for item in users["items"]} == {
+        (AUTHOR, "AUTHOR_CREATOR"),
+        ("author-2", "AUTHOR_CREATOR"),
+    }
+
+    with pytest.raises(BusinessDocumentError) as denied:
+        BusinessDocumentService.assign_document(
+            "moderator-1",
+            document["document_id"],
+            {"owner_id": "author-2", "expected_state_version": document["state_version"]},
+            access_role="MODERATOR_CREATOR",
+        )
+    assert denied.value.code == "DOCUMENT_PERMISSION_DENIED"
+
+    assigned = BusinessDocumentService.assign_document(
+        "moderator-1",
+        document["document_id"],
+        {"owner_id": "author-2", "expected_state_version": document["state_version"]},
+        access_role="EXTENDED_MODERATOR",
+    )
+    assert assigned["owner_id"] == "author-2"
+    assert assigned["state_version"] == document["state_version"] + 1
+    assignment_event = BusinessDocumentEvent.get((BusinessDocumentEvent.document_id == document["document_id"]) & (BusinessDocumentEvent.event_type == "DocumentAssigned"))
+    assert assignment_event.actor_id == "moderator-1"
+    assert assignment_event.payload == {"previous_owner_id": AUTHOR, "owner_id": "author-2"}
+
+    assert BusinessDocumentService.get_document(TENANT, document["document_id"], AUTHOR)["permissions"]["edit"] is False
+    assert BusinessDocumentService.get_document(TENANT, document["document_id"], "author-2")["permissions"]["edit"] is True
+
+    changed_role = BusinessDocumentService.update_user_access_role(
+        "admin-user",
+        "author-2",
+        {"role": "AUTHOR_EDITOR"},
+        is_admin=True,
+    )
+    assert changed_role["role"] == "AUTHOR_EDITOR"
+    assert User.get_by_id("author-2").business_document_role == "AUTHOR_EDITOR"
 
 
 @pytest.mark.p0
@@ -479,6 +561,7 @@ def test_revision_history_records_the_collaborator_who_requested_an_ai_draft(dat
         "author-2",
         document["document_id"],
         _command(document, "REQUEST_DRAFT", key="collaborator-draft"),
+        access_role="MODERATOR_CREATOR",
     )
     document = _complete(
         requested["job_id"],
@@ -490,13 +573,15 @@ def test_revision_history_records_the_collaborator_who_requested_an_ai_draft(dat
     )
 
     initial_draft = next(item for item in document["current_revision"]["change_basis"] if item["type"] == "INITIAL_DRAFT")
+    assert document["current_revision"]["author_id"] == "author-2"
+    assert document["current_revision"]["author_name"] == "author-2"
     assert initial_draft["initiated_by_actor_id"] == "author-2"
     assert initial_draft["actor_type"] == "AI"
     assert initial_draft["actor_id"] == "worker-1"
 
 
 @pytest.mark.p0
-def test_only_admin_can_delete_document_and_all_owned_rows_are_removed(database):
+def test_extended_moderator_can_delete_document_and_all_owned_rows_are_removed(database):
     document = _create()
 
     with pytest.raises(BusinessDocumentError) as caught:
@@ -518,7 +603,11 @@ def test_only_admin_can_delete_document_and_all_owned_rows_are_removed(database)
         BusinessDocumentService.delete_document(AUTHOR, foreign["document_id"])
     assert caught.value.code == "DOCUMENT_PERMISSION_DENIED"
 
-    result = BusinessDocumentService.delete_document("admin-user", document["document_id"], is_admin=True)
+    result = BusinessDocumentService.delete_document(
+        "extended-moderator",
+        document["document_id"],
+        access_role="EXTENDED_MODERATOR",
+    )
     assert result == {
         "document_id": document["document_id"],
         "deleted": True,
@@ -1049,6 +1138,7 @@ def test_confirmed_anchored_comment_may_request_a_cross_section_change(database)
                 },
             },
         ),
+        access_role="MODERATOR_CREATOR",
     )
     document = BusinessDocumentService.get_document(TENANT, response["document_id"], AUTHOR)
     comment_event = BusinessDocumentEvent.get((BusinessDocumentEvent.document_id == document["document_id"]) & (BusinessDocumentEvent.event_type == "AuthorCommentAdded"))
@@ -1098,6 +1188,67 @@ def test_confirmed_anchored_comment_may_request_a_cross_section_change(database)
             "section_id": "3.3",
         }
     ]
+
+
+@pytest.mark.p0
+def test_confirmed_document_comment_may_authorize_changes_in_multiple_sections(database):
+    document = _request_and_complete_draft(_create())
+    revision = document["current_revision"]
+    response = BusinessDocumentService.execute_command(
+        TENANT,
+        AUTHOR,
+        document["document_id"],
+        _command(
+            document,
+            "ADD_COMMENT",
+            {
+                "revision_id": revision["revision_id"],
+                "section_id": None,
+                "text": "Унифицировать терминологию во всём документе",
+                "anchor": None,
+            },
+        ),
+    )
+    document = BusinessDocumentService.get_document(TENANT, response["document_id"], AUTHOR)
+    comment_event = BusinessDocumentEvent.get((BusinessDocumentEvent.document_id == document["document_id"]) & (BusinessDocumentEvent.event_type == "AuthorCommentAdded"))
+    document = _complete_review_assessment(document)
+    requested = BusinessDocumentService.execute_command(
+        TENANT,
+        AUTHOR,
+        document["document_id"],
+        _command(document, "APPLY_CHANGES", {"base_revision_id": revision["revision_id"]}),
+    )
+    targets = {section["id"]: section for section in revision["document_ast"]["sections"] if section["id"] in {"3.3", "5.5"}}
+    changed = _complete(
+        requested["job_id"],
+        {
+            "change_plan": {
+                "schema_version": "1",
+                "base_revision_id": revision["revision_id"],
+                "source_state_version": requested["state_version"],
+                "acknowledged_no_change_event_ids": [],
+                "operations": [
+                    {
+                        "operation_id": f"op-document-comment-{section_id}",
+                        "type": "REPLACE_SECTION_CONTENT",
+                        "section_id": section_id,
+                        "expected_section_hash": section_hash(targets[section_id]),
+                        "source_event_ids": [comment_event.id],
+                        "content": {"blocks": [{"type": "paragraph", "text": text}]},
+                    }
+                    for section_id, text in (
+                        ("3.3", "Единый термин в описании потребности."),
+                        ("5.5", "Единый термин в критериях приёмки."),
+                    )
+                ],
+            }
+        },
+    )
+
+    assert changed["current_revision"]["revision_number"] == 2
+    assert "Единый термин" in changed["current_revision"]["section_texts"]["3.3"]
+    assert "Единый термин" in changed["current_revision"]["section_texts"]["5.5"]
+    assert changed["current_revision"]["change_basis"][0]["section_id"] is None
 
 
 @pytest.mark.p0
@@ -1616,6 +1767,102 @@ def test_review_plan_requires_complete_comment_dispositions(database):
         )
 
     assert caught.value.code == "COMMENT_DISPOSITION_INCOMPLETE"
+
+
+@pytest.mark.p0
+def test_review_reassessment_rejects_reused_answered_question_tag_before_insertion(database):
+    document = _request_and_complete_draft(_create())
+    response = BusinessDocumentService.execute_command(
+        TENANT,
+        AUTHOR,
+        document["document_id"],
+        _command(
+            document,
+            "ADD_COMMENT",
+            {
+                "revision_id": document["current_revision"]["revision_id"],
+                "section_id": None,
+                "text": "Добавить модераторов",
+                "anchor": None,
+            },
+        ),
+    )
+    document = BusinessDocumentService.get_document(TENANT, response["document_id"], AUTHOR)
+    comment_event = BusinessDocumentEvent.get(
+        (BusinessDocumentEvent.document_id == document["document_id"]) & (BusinessDocumentEvent.event_type == "AuthorCommentAdded")
+    )
+    requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_REVIEW_ASSESSMENT"))
+    document = _complete(
+        requested["job_id"],
+        {
+            "schema_version": "1",
+            "questions": [
+                {
+                    "semantic_tag": "MODERATOR_SCOPE",
+                    "target_section_id": "3.1",
+                    "text": "Каких модераторов добавить?",
+                    "options": [{"option_id": "all", "label": "Всех"}, {"option_id": "selected", "label": "Только отдельных"}],
+                    "allow_custom_answer": True,
+                }
+            ],
+            "proposals": [],
+            "comment_dispositions": [
+                {
+                    "comment_event_id": comment_event.id,
+                    "disposition": "NEEDS_QUESTION",
+                    "question_semantic_tag": "moderator_scope",
+                }
+            ],
+        },
+    )
+    question = document["protocol"]["questions"][0]
+    answered = BusinessDocumentService.execute_command(
+        TENANT,
+        AUTHOR,
+        document["document_id"],
+        _command(
+            document,
+            "ANSWER_QUESTION",
+            {"question_id": question["question_id"], "selected_option_id": "all", "custom_answer": None},
+        ),
+    )
+    document = BusinessDocumentService.get_document(TENANT, answered["document_id"], AUTHOR)
+    requested = BusinessDocumentService.execute_command(
+        TENANT,
+        AUTHOR,
+        document["document_id"],
+        _command(document, "REQUEST_REVIEW_ASSESSMENT", key="reassess-closed-question"),
+    )
+
+    with pytest.raises(BusinessDocumentError) as caught:
+        _complete(
+            requested["job_id"],
+            {
+                "schema_version": "1",
+                "questions": [
+                    {
+                        "semantic_tag": "MODERATOR_SCOPE",
+                        "target_section_id": "3.1",
+                        "text": "Нужно ли добавить всех модераторов без исключения?",
+                        "options": [{"option_id": "yes", "label": "Да"}, {"option_id": "no", "label": "Нет"}],
+                        "allow_custom_answer": True,
+                    }
+                ],
+                "proposals": [],
+                "comment_dispositions": [
+                    {
+                        "comment_event_id": comment_event.id,
+                        "disposition": "NEEDS_QUESTION",
+                        "question_semantic_tag": "MODERATOR_SCOPE",
+                    }
+                ],
+            },
+        )
+
+    assert caught.value.code == "COMMENT_DISPOSITION_QUESTION_CLOSED"
+    assert caught.value.details["question_semantic_tag"] == "moderator_scope"
+    assert "new semantic_tag" in caught.value.details["required_action"]
+    assert BusinessDocumentQuestion.select().where(BusinessDocumentQuestion.document_id == document["document_id"]).count() == 1
 
 
 @pytest.mark.p0

@@ -1,6 +1,7 @@
 import {
-  BusinessDocumentConflictError,
   approveEvaDocumentChange,
+  assignBusinessDocumentOwner,
+  BusinessDocumentConflictError,
   createBusinessDocument,
   createEvaChangeFromBusinessDocument,
   createEvaDocumentChange,
@@ -8,6 +9,7 @@ import {
   downloadBusinessDocumentExport,
   fetchBusinessDocument,
   fetchEvaDocumentChange,
+  listBusinessDocumentAccessUsers,
   listBusinessDocumentRevisions,
   listBusinessDocuments,
   listEvaDocumentChanges,
@@ -86,6 +88,8 @@ jest.mock('@/services/business-document-service', () => {
     fetchBusinessDocument: jest.fn(),
     listBusinessDocuments: jest.fn(),
     listBusinessDocumentRevisions: jest.fn(),
+    listBusinessDocumentAccessUsers: jest.fn(),
+    assignBusinessDocumentOwner: jest.fn(),
     submitBusinessDocumentCommand: jest.fn(),
     searchEvaDocumentSources: jest.fn(),
     createEvaDocumentChange: jest.fn(),
@@ -114,6 +118,8 @@ const mockedDownloadFileFromBlob = jest.mocked(downloadFileFromBlob);
 const mockedFetch = jest.mocked(fetchBusinessDocument);
 const mockedList = jest.mocked(listBusinessDocuments);
 const mockedListRevisions = jest.mocked(listBusinessDocumentRevisions);
+const mockedListAccessUsers = jest.mocked(listBusinessDocumentAccessUsers);
+const mockedAssignOwner = jest.mocked(assignBusinessDocumentOwner);
 const mockedSubmit = jest.mocked(submitBusinessDocumentCommand);
 const mockedSearchEva = jest.mocked(searchEvaDocumentSources);
 const mockedCreateEva = jest.mocked(createEvaDocumentChange);
@@ -212,6 +218,7 @@ const projection: BusinessDocumentProjection = {
     comments: [
       {
         comment_id: 'comment-4',
+        section_id: '1',
         text: 'Уточнить терминологию',
         anchor_status: 'ANCHORED',
         anchor: {
@@ -347,6 +354,7 @@ function mockTextSelection(
 }
 
 beforeAll(() => {
+  Element.prototype.scrollIntoView = jest.fn();
   global.ResizeObserver = class ResizeObserver {
     observe() {}
     unobserve() {}
@@ -364,6 +372,8 @@ beforeEach(() => {
     page_size: 20,
   });
   mockedListRevisions.mockResolvedValue([projection.current_revision!]);
+  mockedListAccessUsers.mockResolvedValue({ items: [] });
+  mockedAssignOwner.mockResolvedValue(projection);
   mockedListEva.mockResolvedValue({
     items: [],
     total: 0,
@@ -561,6 +571,8 @@ test('shows which comments, questions and AI proposals produced each revision', 
   mockedListRevisions.mockResolvedValueOnce([
     {
       ...projection.current_revision!,
+      author_id: 'author-4',
+      author_name: 'Мария Авторова',
       created_at: 1_788_200_000,
       change_basis: [
         {
@@ -627,6 +639,9 @@ test('shows which comments, questions and AI proposals produced each revision', 
   );
   expect(screen.getByTestId('business-document-history')).toHaveTextContent(
     'Исполнитель: ai-worker-1',
+  );
+  expect(screen.getByTestId('business-document-history')).toHaveTextContent(
+    'Автор изменений: Мария Авторова',
   );
   expect(mockedListRevisions).toHaveBeenCalledWith('doc-1');
 });
@@ -1173,6 +1188,13 @@ test('records proposal decisions and author comments as commands', async () => {
   await waitFor(() =>
     expect(screen.getByRole('textbox', { name: 'Комментарий' })).toBeEnabled(),
   );
+  expect(
+    screen.getByTestId('business-document-comment-scope-selector'),
+  ).toHaveTextContent('весь документ');
+  expect(screen.getByRole('textbox', { name: 'Комментарий' })).toHaveAttribute(
+    'placeholder',
+    'Комментарий ко всему документу',
+  );
   fireEvent.change(screen.getByRole('textbox', { name: 'Комментарий' }), {
     target: { value: 'Добавить метрику времени ответа' },
   });
@@ -1208,6 +1230,9 @@ test('binds a comment to text selected in the current revision', async () => {
 
   fireEvent.mouseUp(markdown);
   expect(
+    screen.getByTestId('business-document-comment-scope-selector'),
+  ).toHaveTextContent('выделенный фрагмент · § 1');
+  expect(
     screen.getByTestId('business-document-comment-composer'),
   ).toHaveTextContent('Сократить время перевода');
   fireEvent.change(screen.getByRole('textbox', { name: 'Комментарий' }), {
@@ -1237,6 +1262,29 @@ test('binds a comment to text selected in the current revision', async () => {
     }),
   );
   selectionSpy.mockRestore();
+});
+
+test('labels a general protocol comment as applying to the whole document', async () => {
+  mockedFetch.mockResolvedValueOnce({
+    ...projection,
+    protocol: {
+      ...projection.protocol,
+      comments: [
+        {
+          comment_id: 'comment-general',
+          section_id: null,
+          text: 'Унифицировать терминологию во всём документе',
+          anchor_status: 'GENERAL',
+          anchor: null,
+        },
+      ],
+    },
+  });
+  renderPage();
+
+  expect(
+    (await screen.findAllByTestId('business-document-comment-scope'))[0],
+  ).toHaveTextContent('Весь документ');
 });
 
 test('preserves the comment draft and anchor when submission fails', async () => {
@@ -1644,6 +1692,9 @@ test('shows the active attempt and previous validation error while retrying', as
       job_id: 'job-draft',
       job_type: 'GENERATE_DRAFT',
       status: 'RUNNING',
+      progress: 0.62,
+      progress_stage: 'GENERATING',
+      progress_message: 'Формируем структуру и разделы',
       attempt: 2,
       max_attempts: 3,
       error: {
@@ -1658,6 +1709,9 @@ test('shows the active attempt and previous validation error while retrying', as
   expect(
     await screen.findByTestId('business-document-operation'),
   ).toHaveTextContent('Попытка 2 из 3');
+  expect(screen.getByTestId('business-document-operation')).toHaveTextContent(
+    '62%',
+  );
   expect(screen.getByTestId('business-document-operation')).toHaveTextContent(
     'Предыдущая ошибка: Черновик не соответствует контракту',
   );
@@ -1815,12 +1869,127 @@ test('lists saved documents so work can be resumed', async () => {
   await waitFor(() => expect(mockedFetch).toHaveBeenCalledWith('saved-1'));
 });
 
+test('shows compact processing progress in the document list', async () => {
+  mockedList.mockResolvedValueOnce({
+    items: [
+      {
+        document_id: 'running-1',
+        title: 'Регламент закупочной деятельности',
+        lifecycle_state: 'INTAKE',
+        operation_state: 'GENERATING_DRAFT',
+        state_version: 4,
+        current_revision_number: null,
+        update_time: 1_788_451_200,
+        latest_job: {
+          job_id: 'job-running',
+          job_type: 'GENERATE_DRAFT',
+          status: 'RUNNING',
+          progress: 0.62,
+          progress_stage: 'GENERATING',
+          progress_message: 'Формируем структуру и разделы',
+          attempt: 1,
+          max_attempts: 3,
+        },
+      },
+    ],
+    total: 1,
+    page: 1,
+    page_size: 20,
+  });
+  renderPage('/business-documents');
+
+  const progress = await screen.findByTestId('business-document-list-progress');
+  expect(progress).toHaveTextContent('Формируем структуру и разделы');
+  expect(progress).toHaveTextContent('62%');
+  expect(
+    screen.getByRole('progressbar', { name: 'Прогресс обработки: 62%' }),
+  ).toBeInTheDocument();
+});
+
+test('switches between my and all documents', async () => {
+  renderPage('/business-documents');
+
+  await waitFor(() => expect(mockedList).toHaveBeenCalledWith(1, 20, 'mine'));
+  fireEvent.click(screen.getByTestId('business-documents-filter-all'));
+  await waitFor(() => expect(mockedList).toHaveBeenCalledWith(1, 20, 'all'));
+});
+
+test('does not offer document creation to an author-editor', async () => {
+  mockedList.mockResolvedValueOnce({
+    items: [],
+    total: 0,
+    page: 1,
+    page_size: 20,
+    access_role: 'AUTHOR_EDITOR',
+    capabilities: {
+      read: true,
+      create: false,
+      edit_own: true,
+      edit_all: false,
+      delete: false,
+      assign: false,
+    },
+  });
+  renderPage('/business-documents');
+
+  expect(
+    await screen.findByTestId('business-document-create-denied'),
+  ).toHaveTextContent('Создание документов недоступно');
+  expect(screen.getByTestId('new-document-mode')).toBeDisabled();
+  expect(
+    screen.queryByRole('button', { name: 'Начать работу' }),
+  ).not.toBeInTheDocument();
+});
+
+test('allows an extended moderator to assign a document owner', async () => {
+  const assigned = {
+    ...projection,
+    owner_id: 'author-2',
+    access_role: 'EXTENDED_MODERATOR' as const,
+    permissions: { read: true, edit: true, delete: true, assign: true },
+  };
+  mockedFetch.mockResolvedValueOnce({
+    ...projection,
+    owner_id: 'author-1',
+    access_role: 'EXTENDED_MODERATOR',
+    permissions: { read: true, edit: true, delete: true, assign: true },
+  });
+  mockedListAccessUsers.mockResolvedValueOnce({
+    items: [
+      {
+        user_id: 'author-1',
+        nickname: 'Первый автор',
+        role: 'AUTHOR_CREATOR',
+      },
+      {
+        user_id: 'author-2',
+        nickname: 'Второй автор',
+        role: 'AUTHOR_EDITOR',
+      },
+    ],
+  });
+  mockedAssignOwner.mockResolvedValueOnce(assigned);
+  renderPage('/business-documents/doc-1');
+
+  fireEvent.click(await screen.findByTestId('business-document-owner-select'));
+  fireEvent.click(
+    await screen.findByTestId('business-document-owner-option-author-2'),
+  );
+  fireEvent.click(screen.getByTestId('business-document-assign-owner'));
+
+  await waitFor(() =>
+    expect(mockedAssignOwner).toHaveBeenCalledWith('doc-1', 'author-2', 18),
+  );
+  expect(await screen.findByText('Владелец: author-2')).toBeVisible();
+});
+
 test('shows hard delete only for an administrator and confirms it', async () => {
   mockedList.mockResolvedValueOnce({
     items: [
       {
         document_id: 'saved-1',
         owner_id: 'author-1',
+        owner_name: 'Первый автор',
         access_role: 'ADMIN',
         permissions: { read: true, edit: true, delete: true },
         title: 'Документ другого автора',
@@ -1837,7 +2006,8 @@ test('shows hard delete only for an administrator and confirms it', async () => 
   });
   renderPage('/business-documents');
 
-  expect(await screen.findByText('Владелец: author-1')).toBeVisible();
+  expect(await screen.findByText('Владелец: Первый автор')).toBeVisible();
+  expect(screen.queryByText('Владелец: author-1')).not.toBeInTheDocument();
   fireEvent.click(
     screen.getByRole('button', {
       name: 'Удалить документ «Документ другого автора»',
@@ -1868,16 +2038,17 @@ test('keeps a foreign document editable for admin and allows deletion from its w
   await waitFor(() => expect(mockedDelete).toHaveBeenCalledWith('doc-1'));
 });
 
-test('keeps a foreign document editable for an author but hides deletion', async () => {
+test('keeps a foreign document read-only for an author', async () => {
   mockedFetch.mockResolvedValueOnce({
     ...projection,
     owner_id: 'author-1',
-    access_role: 'AUTHOR',
-    permissions: { read: true, edit: true, delete: false },
+    access_role: 'AUTHOR_CREATOR',
+    permissions: { read: true, edit: false, delete: false },
   });
   renderPage('/business-documents/doc-1');
 
-  expect(await screen.findByText('Завершить ревью')).toBeVisible();
+  expect(await screen.findByText(projection.title)).toBeVisible();
+  expect(screen.queryByText('Завершить ревью')).not.toBeInTheDocument();
   expect(
     screen.queryByTestId('business-document-delete-detail'),
   ).not.toBeInTheDocument();

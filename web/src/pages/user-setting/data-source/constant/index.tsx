@@ -873,7 +873,7 @@ export const DataSourceFormFields = {
   ],
 
   [DataSourceKey.CONFLUENCE]: confluenceConstant(t),
-  [DataSourceKey.EVA_WIKI]: evaWikiConstant,
+  [DataSourceKey.EVA_WIKI]: evaWikiConstant(t),
   [DataSourceKey.OPENMETADATA]: openMetadataConstant,
   [DataSourceKey.GOOGLE_DRIVE]: [
     {

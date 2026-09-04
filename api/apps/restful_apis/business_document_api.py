@@ -44,6 +44,10 @@ def _error(error: BusinessDocumentError):
     return jsonify(payload), error.status
 
 
+def _is_admin() -> bool:
+    return bool(getattr(current_user, "is_superuser", False))
+
+
 @manager.route("/business-documents/eva/sources", methods=["GET"])  # noqa: F821
 @login_required
 async def search_eva_business_document_sources():
@@ -168,7 +172,7 @@ async def create_business_document():
         if not data:
             raise BusinessDocumentError("INVALID_DOCUMENT", "Request body must be a valid JSON object", 422)
         actor_id = current_user.id
-        result = await thread_pool_exec(BusinessDocumentService.create_document, actor_id, actor_id, data)
+        result = await thread_pool_exec(BusinessDocumentService.create_document, actor_id, actor_id, data, _is_admin())
         return _success(result, 201)
     except (AttributeError, TypeError, BadRequest):
         return _error(BusinessDocumentError("INVALID_DOCUMENT", "Request body must be a valid JSON object", 422))
@@ -183,7 +187,7 @@ async def list_business_documents():
         actor_id = current_user.id
         page = int(request.args.get("page", 1))
         page_size = int(request.args.get("page_size", 20))
-        return _success(await thread_pool_exec(BusinessDocumentService.list_documents, actor_id, actor_id, page, page_size))
+        return _success(await thread_pool_exec(BusinessDocumentService.list_documents, actor_id, actor_id, page, page_size, _is_admin()))
     except (TypeError, ValueError):
         return _error(BusinessDocumentError("INVALID_PAGINATION", "page and page_size must be integers", 422))
     except BusinessDocumentError as error:
@@ -195,7 +199,18 @@ async def list_business_documents():
 async def get_business_document(document_id):
     try:
         tenant_id = current_user.id
-        return _success(await thread_pool_exec(BusinessDocumentService.get_document, tenant_id, document_id, tenant_id))
+        return _success(await thread_pool_exec(BusinessDocumentService.get_document, tenant_id, document_id, tenant_id, _is_admin()))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/<document_id>", methods=["DELETE"])  # noqa: F821
+@login_required
+async def delete_business_document(document_id):
+    try:
+        actor_id = current_user.id
+        result = await thread_pool_exec(BusinessDocumentService.delete_document, actor_id, document_id, _is_admin())
+        return _success(result)
     except BusinessDocumentError as error:
         return _error(error)
 
@@ -206,7 +221,7 @@ async def pull_business_document_from_eva(document_id):
     try:
         data = await get_request_json()
         actor_id = current_user.id
-        result = await thread_pool_exec(BusinessDocumentService.pull_from_eva, actor_id, actor_id, document_id, data)
+        result = await thread_pool_exec(BusinessDocumentService.pull_from_eva, actor_id, actor_id, document_id, data, _is_admin())
         return _success(result)
     except (AttributeError, TypeError, BadRequest):
         return _error(BusinessDocumentError("INVALID_EVA_SYNC", "Request body must be a valid JSON object", 422))
@@ -220,7 +235,7 @@ async def rebind_business_document_to_eva(document_id):
     try:
         data = await get_request_json()
         actor_id = current_user.id
-        result = await thread_pool_exec(BusinessDocumentService.rebind_eva, actor_id, actor_id, document_id, data)
+        result = await thread_pool_exec(BusinessDocumentService.rebind_eva, actor_id, actor_id, document_id, data, _is_admin())
         return _success(result)
     except (AttributeError, TypeError, BadRequest):
         return _error(BusinessDocumentError("INVALID_EVA_BINDING", "Request body must be a valid JSON object", 422))
@@ -265,7 +280,7 @@ async def execute_business_document_command(document_id):
 async def list_business_document_revisions(document_id):
     try:
         tenant_id = current_user.id
-        return _success(await thread_pool_exec(BusinessDocumentService.list_revisions, tenant_id, document_id, tenant_id))
+        return _success(await thread_pool_exec(BusinessDocumentService.list_revisions, tenant_id, document_id, tenant_id, _is_admin()))
     except BusinessDocumentError as error:
         return _error(error)
 
@@ -275,7 +290,7 @@ async def list_business_document_revisions(document_id):
 async def get_business_document_revision(document_id, revision_id):
     try:
         tenant_id = current_user.id
-        return _success(await thread_pool_exec(BusinessDocumentService.get_revision, tenant_id, document_id, revision_id, tenant_id))
+        return _success(await thread_pool_exec(BusinessDocumentService.get_revision, tenant_id, document_id, revision_id, tenant_id, _is_admin()))
     except BusinessDocumentError as error:
         return _error(error)
 
@@ -285,7 +300,7 @@ async def get_business_document_revision(document_id, revision_id):
 async def list_business_document_jobs(document_id):
     try:
         actor_id = current_user.id
-        return _success(await thread_pool_exec(BusinessDocumentService.list_jobs, actor_id, actor_id, document_id))
+        return _success(await thread_pool_exec(BusinessDocumentService.list_jobs, actor_id, actor_id, document_id, _is_admin()))
     except BusinessDocumentError as error:
         return _error(error)
 
@@ -295,7 +310,7 @@ async def list_business_document_jobs(document_id):
 async def list_business_document_exports(document_id):
     try:
         actor_id = current_user.id
-        return _success(await thread_pool_exec(BusinessDocumentExportService.list_artifacts, actor_id, actor_id, document_id))
+        return _success(await thread_pool_exec(BusinessDocumentExportService.list_artifacts, actor_id, actor_id, document_id, _is_admin()))
     except BusinessDocumentError as error:
         return _error(error)
 
@@ -311,6 +326,7 @@ async def download_business_document_export(document_id, artifact_id):
             actor_id,
             document_id,
             artifact_id,
+            is_admin=_is_admin(),
         )
         response = Response(content, content_type=artifact["mime_type"])
         response.headers["Content-Disposition"] = f"attachment; filename*=UTF-8''{quote(artifact['filename'])}"

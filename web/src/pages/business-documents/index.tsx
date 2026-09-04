@@ -18,6 +18,7 @@ import {
   BusinessDocumentConflictError,
   createBusinessDocument,
   createEvaChangeFromBusinessDocument,
+  deleteBusinessDocument,
   downloadBusinessDocumentExport,
   fetchBusinessDocument,
   listBusinessDocumentRevisions,
@@ -53,6 +54,7 @@ import {
   RotateCcw,
   Send,
   Sparkles,
+  Trash2,
 } from 'lucide-react';
 import {
   FormEvent,
@@ -132,6 +134,7 @@ const BusinessDocumentKeys = {
 
 function CreateBusinessDocumentPage() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [mode, setMode] = useState<'new' | 'eva'>('new');
   const [title, setTitle] = useState('');
   const [idea, setIdea] = useState('');
@@ -161,6 +164,14 @@ function CreateBusinessDocumentPage() {
         // it so the author can retry the analysis without creating a duplicate.
         navigate(`${Routes.BusinessDocuments}/${document.document_id}`);
       }
+    },
+  });
+  const deleteMutation = useMutation({
+    mutationFn: (documentId: string) => deleteBusinessDocument(documentId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: ['business-documents'],
+      });
     },
   });
 
@@ -234,6 +245,14 @@ function CreateBusinessDocumentPage() {
               </Button>
             </div>
           )}
+          {deleteMutation.error && (
+            <div
+              className="border-s-2 border-state-error px-5 py-4 text-sm text-state-error"
+              data-testid="business-document-delete-error"
+            >
+              {deleteMutation.error.message}
+            </div>
+          )}
           {!documentsQuery.isLoading &&
             !documentsQuery.error &&
             !documentsQuery.data?.items.length && (
@@ -249,43 +268,86 @@ function CreateBusinessDocumentPage() {
               </div>
             )}
           {documentsQuery.data?.items.map((item) => (
-            <Link
+            <div
               key={item.document_id}
-              to={`${Routes.BusinessDocuments}/${item.document_id}`}
-              className="group grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 border-b border-border-button px-6 py-4 transition-colors hover:bg-bg-card focus-visible:bg-bg-card focus-visible:outline-none"
-              data-testid="business-document-list-item"
+              className="group grid grid-cols-[minmax(0,1fr)_auto] items-center border-b border-border-button transition-colors hover:bg-bg-card"
             >
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="truncate text-sm font-medium text-text-primary">
-                    {item.title}
-                  </h3>
-                  <Badge
-                    variant={
-                      item.lifecycle_state === 'AGREED'
-                        ? 'success'
-                        : 'secondary'
-                    }
-                  >
-                    {lifecycleLabels[item.lifecycle_state]}
-                  </Badge>
-                </div>
-                <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-secondary">
-                  <span>{formatUpdateTime(item.update_time)}</span>
-                  <span>
-                    {item.current_revision_number
-                      ? `Ревизия ${item.current_revision_number}`
-                      : 'Без черновика'}
-                  </span>
-                  {item.operation_state !== 'IDLE' && (
-                    <span className="text-accent-primary">
-                      {operationLabels[item.operation_state]}
+              <Link
+                to={`${Routes.BusinessDocuments}/${item.document_id}`}
+                className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-6 py-4 focus-visible:outline-none"
+                data-testid="business-document-list-item"
+              >
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="truncate text-sm font-medium text-text-primary">
+                      {item.title}
+                    </h3>
+                    <Badge
+                      variant={
+                        item.lifecycle_state === 'AGREED'
+                          ? 'success'
+                          : 'secondary'
+                      }
+                    >
+                      {lifecycleLabels[item.lifecycle_state]}
+                    </Badge>
+                    {item.owner_id && (
+                      <span className="text-xs text-text-secondary">
+                        Владелец: {item.owner_id}
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-secondary">
+                    <span>{formatUpdateTime(item.update_time)}</span>
+                    <span>
+                      {item.current_revision_number
+                        ? `Ревизия ${item.current_revision_number}`
+                        : 'Без черновика'}
                     </span>
-                  )}
+                    {item.operation_state !== 'IDLE' && (
+                      <span className="text-accent-primary">
+                        {operationLabels[item.operation_state]}
+                      </span>
+                    )}
+                  </div>
                 </div>
-              </div>
-              <ArrowRight className="size-4 text-text-disabled transition-transform group-hover:translate-x-0.5 group-hover:text-text-primary" />
-            </Link>
+                <ArrowRight className="size-4 text-text-disabled transition-transform group-hover:translate-x-0.5 group-hover:text-text-primary" />
+              </Link>
+              {item.permissions?.delete && (
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      className="me-4 text-text-secondary hover:text-state-error"
+                      aria-label={`Удалить документ «${item.title}»`}
+                      disabled={deleteMutation.isPending}
+                      data-testid="business-document-delete"
+                    >
+                      <Trash2 className="size-4" />
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Удалить документ?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Документ «{item.title}», его история, задания и файлы
+                        экспорта будут удалены без возможности восстановления.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Отмена</AlertDialogCancel>
+                      <AlertDialogAction
+                        className="bg-state-error text-white hover:bg-state-error/90"
+                        onClick={() => deleteMutation.mutate(item.document_id)}
+                      >
+                        Удалить
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              )}
+            </div>
           ))}
 
           {documentsQuery.data && documentsQuery.data.total > 20 && (
@@ -477,6 +539,18 @@ export default function BusinessDocumentsPage() {
   });
 
   const document = documentQuery.data;
+  const deleteMutation = useMutation({
+    mutationFn: () => {
+      if (!documentId) throw new Error('Документ не загружен');
+      return deleteBusinessDocument(documentId);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: ['business-documents'],
+      });
+      navigate(Routes.BusinessDocuments);
+    },
+  });
   const evaPageUrl = document?.eva_binding?.page_url;
   const evaConnectorId = document?.eva_binding?.connector_id;
   const evaCredentialsQuery = useQuery<EvaUserCredentialStatus[]>({
@@ -490,7 +564,12 @@ export default function BusinessDocumentsPage() {
       }
       return data.data?.items ?? [];
     },
-    enabled: Boolean(documentId && !changeId && evaPageUrl),
+    enabled: Boolean(
+      documentId &&
+      !changeId &&
+      evaPageUrl &&
+      document?.permissions?.edit !== false,
+    ),
     retry: false,
   });
   const hasPersonalEvaToken = useMemo(
@@ -903,10 +982,49 @@ export default function BusinessDocumentsPage() {
               </AlertDialogContent>
             </AlertDialog>
           )}
+          {document.permissions?.delete && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-state-error"
+                  disabled={isBusy || deleteMutation.isPending}
+                  data-testid="business-document-delete-detail"
+                >
+                  <Trash2 className="size-4" />
+                  Удалить
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Удалить документ?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Документ «{document.title}», его история, задания и файлы
+                    экспорта будут удалены без возможности восстановления.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Отмена</AlertDialogCancel>
+                  <AlertDialogAction
+                    className="bg-state-error text-white hover:bg-state-error/90"
+                    onClick={() => deleteMutation.mutate()}
+                  >
+                    Удалить
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
         </div>
       </header>
 
       <div aria-live="polite">
+        {deleteMutation.error && (
+          <div className="border-b border-state-error/40 bg-state-error/10 px-5 py-2 text-sm text-state-error">
+            {deleteMutation.error.message}
+          </div>
+        )}
         {document.eva_binding && (
           <div
             className="flex animate-in flex-wrap items-center gap-x-4 gap-y-2 border-b border-border-button bg-bg-card/35 px-5 py-2.5 text-xs fade-in duration-200"
@@ -933,21 +1051,23 @@ export default function BusinessDocumentsPage() {
                   <span className="text-text-disabled">
                     Только ссылка — доступный коннектор не найден
                   </span>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={isBusy || rebindEvaMutation.isPending}
-                    loading={rebindEvaMutation.isPending}
-                    onClick={() => rebindEvaMutation.mutate()}
-                    data-testid="rebind-business-document-to-eva"
-                  >
-                    <RefreshCw className="size-3.5" />
-                    Подключить заново
-                  </Button>
+                  {document.permissions?.edit !== false && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={isBusy || rebindEvaMutation.isPending}
+                      loading={rebindEvaMutation.isPending}
+                      onClick={() => rebindEvaMutation.mutate()}
+                      data-testid="rebind-business-document-to-eva"
+                    >
+                      <RefreshCw className="size-3.5" />
+                      Подключить заново
+                    </Button>
+                  )}
                 </>
               )}
             </div>
-            {hasPersonalEvaToken && (
+            {document.permissions?.edit !== false && hasPersonalEvaToken && (
               <Button
                 size="sm"
                 variant="ghost"
@@ -965,7 +1085,7 @@ export default function BusinessDocumentsPage() {
                 Перечитать текущий документ из EVA
               </Button>
             )}
-            {hasPersonalEvaToken && (
+            {document.permissions?.edit !== false && hasPersonalEvaToken && (
               <Button
                 size="sm"
                 variant="ghost"

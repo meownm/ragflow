@@ -71,6 +71,8 @@ export interface BusinessDocumentRevisionBasis {
   details?: string | null;
   section_id?: string | null;
   actor_id?: string;
+  actor_type?: 'USER' | 'AI' | 'SYSTEM';
+  initiated_by_actor_id?: string | null;
   created_at?: number | null;
 }
 
@@ -200,6 +202,9 @@ export interface BusinessDocumentJobSummary {
 
 export interface BusinessDocumentProjection {
   document_id: string;
+  owner_id?: string;
+  access_role?: 'AUTHOR' | 'ADMIN';
+  permissions?: BusinessDocumentPermissions;
   title: string;
   document_type?: string;
   idea?: string;
@@ -219,6 +224,9 @@ export interface BusinessDocumentProjection {
 
 export interface BusinessDocumentSummary {
   document_id: string;
+  owner_id?: string;
+  access_role?: 'AUTHOR' | 'ADMIN';
+  permissions?: BusinessDocumentPermissions;
   title: string;
   lifecycle_state: BusinessDocumentLifecycleState;
   operation_state: BusinessDocumentOperationState;
@@ -226,6 +234,19 @@ export interface BusinessDocumentSummary {
   current_revision_number: number | null;
   eva_page_url?: string | null;
   update_time: number | null;
+}
+
+export interface BusinessDocumentPermissions {
+  read: boolean;
+  edit: boolean;
+  delete: boolean;
+}
+
+export interface DeleteBusinessDocumentResult {
+  document_id: string;
+  deleted: true;
+  deleted_artifacts: number;
+  storage_cleanup_failures: number;
 }
 
 export interface BusinessDocumentList {

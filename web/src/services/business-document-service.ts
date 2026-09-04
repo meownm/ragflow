@@ -6,6 +6,7 @@ import type {
   BusinessDocumentProjection,
   BusinessDocumentRevision,
   CreateBusinessDocumentRequest,
+  DeleteBusinessDocumentResult,
   EvaDocumentChange,
   EvaDocumentChangeList,
   EvaDocumentSourceSearchResult,
@@ -109,6 +110,18 @@ export async function fetchBusinessDocument(documentId: string) {
       requestConfig(),
     );
     return unwrap<BusinessDocumentProjection>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function deleteBusinessDocument(documentId: string) {
+  try {
+    const response = await request.delete(
+      api.businessDocument(documentId),
+      requestConfig(),
+    );
+    return unwrap<DeleteBusinessDocumentResult>(response.data);
   } catch (error) {
     return rethrowBusinessDocumentError(error);
   }

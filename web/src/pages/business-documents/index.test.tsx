@@ -4,6 +4,7 @@ import {
   createBusinessDocument,
   createEvaChangeFromBusinessDocument,
   createEvaDocumentChange,
+  deleteBusinessDocument,
   downloadBusinessDocumentExport,
   fetchBusinessDocument,
   fetchEvaDocumentChange,
@@ -21,7 +22,13 @@ import {
 import { listEvaUserCredentials } from '@/services/user-service';
 import { downloadFileFromBlob } from '@/utils/file-util';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { MemoryRouter, Route, Routes as RouterRoutes } from 'react-router';
 import BusinessDocumentsPage from '.';
 
@@ -74,6 +81,7 @@ jest.mock('@/services/business-document-service', () => {
     ...actual,
     createBusinessDocument: jest.fn(),
     createEvaChangeFromBusinessDocument: jest.fn(),
+    deleteBusinessDocument: jest.fn(),
     downloadBusinessDocumentExport: jest.fn(),
     fetchBusinessDocument: jest.fn(),
     listBusinessDocuments: jest.fn(),
@@ -100,6 +108,7 @@ const mockedCreate = jest.mocked(createBusinessDocument);
 const mockedCreateEvaFromDocument = jest.mocked(
   createEvaChangeFromBusinessDocument,
 );
+const mockedDelete = jest.mocked(deleteBusinessDocument);
 const mockedDownloadExport = jest.mocked(downloadBusinessDocumentExport);
 const mockedDownloadFileFromBlob = jest.mocked(downloadFileFromBlob);
 const mockedFetch = jest.mocked(fetchBusinessDocument);
@@ -368,6 +377,12 @@ beforeEach(() => {
   mockedPublishEva.mockResolvedValue(evaChange);
   mockedSubmit.mockResolvedValue(commandResult);
   mockedCreate.mockResolvedValue(projection);
+  mockedDelete.mockResolvedValue({
+    document_id: 'saved-1',
+    deleted: true,
+    deleted_artifacts: 0,
+    storage_cleanup_failures: 0,
+  });
   mockedCreateEvaFromDocument.mockResolvedValue(evaChange);
   mockedPullEvaDocument.mockResolvedValue({
     document: projection,
@@ -549,7 +564,18 @@ test('shows which comments, questions and AI proposals produced each revision', 
       created_at: 1_788_200_000,
       change_basis: [
         {
+          event_id: 'event-draft',
+          actor_id: 'ai-worker-1',
+          actor_type: 'AI',
+          initiated_by_actor_id: 'author-4',
+          type: 'INITIAL_DRAFT',
+          title: 'Первичный черновик',
+          summary: 'Исходная идея документа.',
+        },
+        {
           event_id: 'event-question',
+          actor_id: 'author-2',
+          actor_type: 'USER',
           type: 'QUESTION',
           title: 'Ответ на вопрос',
           summary: 'Как измеряется скорость перевода?',
@@ -558,6 +584,8 @@ test('shows which comments, questions and AI proposals produced each revision', 
         },
         {
           event_id: 'event-comment',
+          actor_id: 'author-3',
+          actor_type: 'USER',
           type: 'COMMENT',
           title: 'Комментарий автора',
           summary: 'Добавить негативный сценарий.',
@@ -587,6 +615,18 @@ test('shows which comments, questions and AI proposals produced each revision', 
   );
   expect(screen.getByTestId('business-document-history')).toHaveTextContent(
     'Принятое предложение ИИ',
+  );
+  expect(screen.getByTestId('business-document-history')).toHaveTextContent(
+    'Изменил: author-2',
+  );
+  expect(screen.getByTestId('business-document-history')).toHaveTextContent(
+    'Изменил: author-3',
+  );
+  expect(screen.getByTestId('business-document-history')).toHaveTextContent(
+    'Инициировал: author-4',
+  );
+  expect(screen.getByTestId('business-document-history')).toHaveTextContent(
+    'Исполнитель: ai-worker-1',
   );
   expect(mockedListRevisions).toHaveBeenCalledWith('doc-1');
 });
@@ -1773,6 +1813,74 @@ test('lists saved documents so work can be resumed', async () => {
   );
   fireEvent.click(screen.getByTestId('business-document-list-item'));
   await waitFor(() => expect(mockedFetch).toHaveBeenCalledWith('saved-1'));
+});
+
+test('shows hard delete only for an administrator and confirms it', async () => {
+  mockedList.mockResolvedValueOnce({
+    items: [
+      {
+        document_id: 'saved-1',
+        owner_id: 'author-1',
+        access_role: 'ADMIN',
+        permissions: { read: true, edit: true, delete: true },
+        title: 'Документ другого автора',
+        lifecycle_state: 'AGREED',
+        operation_state: 'IDLE',
+        state_version: 9,
+        current_revision_number: 2,
+        update_time: 1_787_695_200,
+      },
+    ],
+    total: 1,
+    page: 1,
+    page_size: 20,
+  });
+  renderPage('/business-documents');
+
+  expect(await screen.findByText('Владелец: author-1')).toBeVisible();
+  fireEvent.click(
+    screen.getByRole('button', {
+      name: 'Удалить документ «Документ другого автора»',
+    }),
+  );
+  fireEvent.click(await screen.findByRole('button', { name: /^Удалить$/ }));
+
+  await waitFor(() => expect(mockedDelete).toHaveBeenCalledWith('saved-1'));
+});
+
+test('keeps a foreign document editable for admin and allows deletion from its workbench', async () => {
+  mockedFetch.mockResolvedValueOnce({
+    ...projection,
+    owner_id: 'author-1',
+    access_role: 'ADMIN',
+    permissions: { read: true, edit: true, delete: true },
+  });
+  renderPage('/business-documents/doc-1');
+
+  expect(
+    await screen.findByTestId('business-document-delete-detail'),
+  ).toBeVisible();
+  expect(screen.getByText('Завершить ревью')).toBeVisible();
+  fireEvent.click(screen.getByTestId('business-document-delete-detail'));
+  const dialog = await screen.findByRole('alertdialog');
+  fireEvent.click(within(dialog).getByRole('button', { name: /^Удалить$/ }));
+
+  await waitFor(() => expect(mockedDelete).toHaveBeenCalledWith('doc-1'));
+});
+
+test('keeps a foreign document editable for an author but hides deletion', async () => {
+  mockedFetch.mockResolvedValueOnce({
+    ...projection,
+    owner_id: 'author-1',
+    access_role: 'AUTHOR',
+    permissions: { read: true, edit: true, delete: false },
+  });
+  renderPage('/business-documents/doc-1');
+
+  expect(await screen.findByText('Завершить ревью')).toBeVisible();
+  expect(
+    screen.queryByTestId('business-document-delete-detail'),
+  ).not.toBeInTheDocument();
 });
 
 test('shows the reviewed lifecycle and review operation labels', async () => {

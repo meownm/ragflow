@@ -374,16 +374,20 @@ def test_state_version_and_idempotency_payload_conflicts_are_rejected(database):
 
 
 @pytest.mark.p0
-def test_tenant_access_is_non_enumerable(database):
+def test_authors_can_open_foreign_documents_while_unknown_ids_stay_non_enumerable(database):
     document = _create()
+    projection = BusinessDocumentService.get_document("another-tenant", document["document_id"], "another-author")
+    assert projection["document_id"] == document["document_id"]
+    assert projection["permissions"] == {"read": True, "edit": True, "delete": False}
+
     with pytest.raises(BusinessDocumentError) as caught:
-        BusinessDocumentService.get_document("another-tenant", document["document_id"], AUTHOR)
+        BusinessDocumentService.get_document("another-tenant", "missing-document", AUTHOR)
     assert caught.value.status == 404
     assert caught.value.code == "DOCUMENT_NOT_FOUND"
 
 
 @pytest.mark.p0
-def test_owner_access_list_and_server_assigned_chat(database):
+def test_shared_access_list_and_server_assigned_chat(database):
     first = _create(title="Первый")
     second = _create(title="Второй")
     listing = BusinessDocumentService.list_documents(TENANT, AUTHOR, page=1, page_size=1)
@@ -392,12 +396,149 @@ def test_owner_access_list_and_server_assigned_chat(database):
     assert listing["items"][0]["document_id"] in {first["document_id"], second["document_id"]}
     assert first["chat_id"].startswith("business-document:")
 
-    with pytest.raises(BusinessDocumentError) as caught:
-        BusinessDocumentService.get_document(TENANT, first["document_id"], "another-user")
-    assert caught.value.code == "DOCUMENT_NOT_FOUND"
+    shared = BusinessDocumentService.get_document("another-tenant", first["document_id"], "another-user")
+    assert shared["document_id"] == first["document_id"]
+    assert shared["permissions"]["edit"] is True
     with pytest.raises(BusinessDocumentError) as caught:
         _create(chat_id="client-controlled")
     assert caught.value.code == "CHAT_ID_NOT_ALLOWED"
+
+
+@pytest.mark.p0
+def test_authors_share_read_and_edit_access_while_only_admin_can_delete(database):
+    owned = _create(title="Документ автора")
+    foreign = BusinessDocumentService.create_document(
+        "tenant-2",
+        "author-2",
+        {
+            "schema_version": "1",
+            "document_type": "business_requirements",
+            "title": "Чужой документ",
+            "idea": "Проверить административный доступ",
+        },
+    )
+
+    author_listing = BusinessDocumentService.list_documents(TENANT, AUTHOR)
+    assert {item["document_id"] for item in author_listing["items"]} == {owned["document_id"], foreign["document_id"]}
+    assert all(item["access_role"] == "AUTHOR" for item in author_listing["items"])
+    assert all(item["permissions"] == {"read": True, "edit": True, "delete": False} for item in author_listing["items"])
+
+    foreign_projection = BusinessDocumentService.get_document(TENANT, foreign["document_id"], AUTHOR)
+    assert foreign_projection["permissions"] == {"read": True, "edit": True, "delete": False}
+    assert "REQUEST_INTAKE_ASSESSMENT" in foreign_projection["allowed_commands"]
+
+    command = BusinessDocumentService.execute_command(
+        TENANT,
+        AUTHOR,
+        foreign["document_id"],
+        _command(foreign_projection, "REQUEST_INTAKE_ASSESSMENT", key="collaborator-command"),
+    )
+    event = BusinessDocumentEvent.get_by_id(command["event_id"])
+    job = BusinessDocumentJob.get_by_id(command["job_id"])
+    ledger = BusinessDocumentCommand.get(BusinessDocumentCommand.document_id == foreign["document_id"])
+    assert event.actor_id == AUTHOR
+    assert job.tenant_id == "tenant-2"
+    assert job.payload["requested_by_actor_id"] == AUTHOR
+    assert ledger.tenant_id == "tenant-2"
+
+    admin_listing = BusinessDocumentService.list_documents("admin-tenant", "admin-user", is_admin=True)
+    assert {item["document_id"] for item in admin_listing["items"]} == {owned["document_id"], foreign["document_id"]}
+    assert all(item["access_role"] == "ADMIN" for item in admin_listing["items"])
+    assert all(item["permissions"] == {"read": True, "edit": True, "delete": True} for item in admin_listing["items"])
+
+    admin_projection = BusinessDocumentService.get_document("admin-tenant", foreign["document_id"], "admin-user", is_admin=True)
+    assert admin_projection["access_role"] == "ADMIN"
+    assert admin_projection["permissions"] == {"read": True, "edit": True, "delete": True}
+    assert admin_projection["allowed_commands"] == []
+
+    admin_created = BusinessDocumentService.create_document(
+        "admin-user",
+        "admin-user",
+        {
+            "schema_version": "1",
+            "document_type": "business_requirements",
+            "title": "Документ администратора",
+            "idea": "Проверить роль в mutation-ответе",
+        },
+        is_admin=True,
+    )
+    assert admin_created["access_role"] == "ADMIN"
+    assert admin_created["permissions"] == {"read": True, "edit": True, "delete": True}
+
+
+@pytest.mark.p0
+def test_revision_history_records_the_collaborator_who_requested_an_ai_draft(database):
+    document = _create()
+    assessment = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
+    document = _complete(
+        assessment["job_id"],
+        {"schema_version": "1", "outcome": "COMPLETE", "questions": []},
+    )
+    requested = BusinessDocumentService.execute_command(
+        "collaborator-tenant",
+        "author-2",
+        document["document_id"],
+        _command(document, "REQUEST_DRAFT", key="collaborator-draft"),
+    )
+    document = _complete(
+        requested["job_id"],
+        {
+            "draft": _draft(),
+            "review_questions": {"schema_version": "1", "outcome": "COMPLETE", "questions": []},
+            "proposals": [],
+        },
+    )
+
+    initial_draft = next(item for item in document["current_revision"]["change_basis"] if item["type"] == "INITIAL_DRAFT")
+    assert initial_draft["initiated_by_actor_id"] == "author-2"
+    assert initial_draft["actor_type"] == "AI"
+    assert initial_draft["actor_id"] == "worker-1"
+
+
+@pytest.mark.p0
+def test_only_admin_can_delete_document_and_all_owned_rows_are_removed(database):
+    document = _create()
+
+    with pytest.raises(BusinessDocumentError) as caught:
+        BusinessDocumentService.delete_document(AUTHOR, document["document_id"])
+    assert caught.value.status == 403
+    assert caught.value.code == "DOCUMENT_PERMISSION_DENIED"
+
+    foreign = BusinessDocumentService.create_document(
+        "tenant-2",
+        "author-2",
+        {
+            "schema_version": "1",
+            "document_type": "business_requirements",
+            "title": "Чужой документ",
+            "idea": "Проверить запрет удаления",
+        },
+    )
+    with pytest.raises(BusinessDocumentError) as caught:
+        BusinessDocumentService.delete_document(AUTHOR, foreign["document_id"])
+    assert caught.value.code == "DOCUMENT_PERMISSION_DENIED"
+
+    result = BusinessDocumentService.delete_document("admin-user", document["document_id"], is_admin=True)
+    assert result == {
+        "document_id": document["document_id"],
+        "deleted": True,
+        "deleted_artifacts": 0,
+        "storage_cleanup_failures": 0,
+    }
+    assert BusinessDocument.select().where(BusinessDocument.id == document["document_id"]).count() == 0
+    assert BusinessDocumentEvent.select().where(BusinessDocumentEvent.document_id == document["document_id"]).count() == 0
+
+
+@pytest.mark.p0
+def test_admin_cannot_delete_document_while_background_operation_is_active(database):
+    document = _create()
+    BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
+
+    with pytest.raises(BusinessDocumentError) as caught:
+        BusinessDocumentService.delete_document("admin-user", document["document_id"], is_admin=True)
+    assert caught.value.status == 409
+    assert caught.value.code == "OPERATION_IN_PROGRESS"
+    assert BusinessDocument.select().where(BusinessDocument.id == document["document_id"]).exists()
 
 
 @pytest.mark.p0
@@ -887,8 +1028,8 @@ def test_confirmed_anchored_comment_may_request_a_cross_section_change(database)
     revision = document["current_revision"]
     selected_text = revision["section_texts"]["3.3"]
     response = BusinessDocumentService.execute_command(
-        TENANT,
-        AUTHOR,
+        "collaborator-tenant",
+        "author-2",
         document["document_id"],
         _command(
             document,
@@ -947,7 +1088,8 @@ def test_confirmed_anchored_comment_may_request_a_cross_section_change(database)
     assert changed["current_revision"]["change_basis"] == [
         {
             "event_id": comment_event.id,
-            "actor_id": AUTHOR,
+            "actor_id": "author-2",
+            "actor_type": "USER",
             "created_at": comment_event.create_time,
             "type": "COMMENT",
             "title": "Комментарий автора",
@@ -993,10 +1135,12 @@ def test_link_only_eva_binding_can_be_reconnected_without_rewriting_creation_eve
         AUTHOR,
         document["document_id"],
         {"expected_state_version": document["state_version"]},
+        is_admin=True,
     )
 
     assert rebound["state_version"] == document["state_version"] + 1
     assert rebound["eva_binding"] == connected
+    assert rebound["permissions"]["delete"] is True
     assert BusinessDocumentEvent.get_by_id(created_event.id).payload == original_created_payload
     resolution_event = BusinessDocumentEvent.get((BusinessDocumentEvent.document_id == document["document_id"]) & (BusinessDocumentEvent.event_type == "EvaBindingResolved"))
     assert resolution_event.payload == {"eva_binding": connected}
@@ -1089,10 +1233,12 @@ def test_verified_eva_binding_supports_governed_pull_and_outbound_change(databas
         AUTHOR,
         document["document_id"],
         {"expected_state_version": document["state_version"]},
+        is_admin=True,
     )
     assert pulled["sync"]["changed"] is True
     assert pulled["document"]["lifecycle_state"] == "REVIEW"
     assert pulled["document"]["active_review_cycle"] == document["active_review_cycle"] + 1
+    assert pulled["document"]["permissions"]["delete"] is True
     assert pulled["document"]["allowed_commands"] == [
         "DECIDE_PROPOSAL",
         "ADD_COMMENT",

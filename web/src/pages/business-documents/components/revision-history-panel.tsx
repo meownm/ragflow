@@ -157,6 +157,19 @@ export function RevisionHistoryPanel({
                                 ? ` · раздел ${basis.section_id}`
                                 : ''}
                             </span>
+                            {basis.initiated_by_actor_id && (
+                              <span className="mt-0.5 block text-[11px] text-text-disabled">
+                                Инициировал: {basis.initiated_by_actor_id}
+                              </span>
+                            )}
+                            {basis.actor_id && (
+                              <span className="mt-0.5 block text-[11px] text-text-disabled">
+                                {basis.actor_type === 'USER'
+                                  ? 'Изменил'
+                                  : 'Исполнитель'}
+                                : {basis.actor_id}
+                              </span>
+                            )}
                             <span className="mt-0.5 block whitespace-pre-wrap text-xs leading-5 text-text-secondary">
                               {basis.summary}
                             </span>

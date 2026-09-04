@@ -29,6 +29,11 @@ class NotFoundError(BusinessDocumentError):
         super().__init__("DOCUMENT_NOT_FOUND", "Business document not found", 404)
 
 
+class PermissionDeniedError(BusinessDocumentError):
+    def __init__(self, message: str = "Business document operation is not permitted"):
+        super().__init__("DOCUMENT_PERMISSION_DENIED", message, 403)
+
+
 class ConflictError(BusinessDocumentError):
     def __init__(self, code: str, message: str, details: dict | None = None):
         super().__init__(code, message, 409, details)

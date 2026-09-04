@@ -9,6 +9,20 @@ sidebar_custom_props: {
 
 Key features, improvements and bug fixes in the latest releases.
 
+## v1.8.0
+
+Released on September 4, 2026.
+
+### New features
+
+- Business documents: Adds collaborative author access so authenticated authors can discover, open, edit, review, and export documents created by other authors.
+- Administration: Adds guarded hard deletion of any business document for administrators while authors cannot delete either their own or another author's documents.
+
+### Improvements and bug fixes
+
+- Shows the responsible user in revision history and distinguishes the user who initiated an AI-generated revision from its automated executor.
+- Keeps collaborative commands, background jobs, exports, and idempotency records attached to the original document scope.
+
 ## v1.7.0
 
 Released on September 4, 2026.

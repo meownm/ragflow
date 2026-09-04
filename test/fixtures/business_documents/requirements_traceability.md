@@ -6,7 +6,7 @@ documented behavior is not considered covered by a UI rendering alone.
 
 | Requirement | Primary surface | Automated evidence | State |
 | --- | --- | --- | --- |
-| One chat maps to one idea/document | Domain persistence | `test_business_document_service.py::test_owner_access_list_and_server_assigned_chat` | covered |
+| One chat maps to one idea/document | Domain persistence | `test_business_document_service.py::test_shared_access_list_and_server_assigned_chat` | covered |
 | No draft before all intake questions are closed | Command gate | `test_business_document_service.py::test_draft_requires_complete_assessment_after_last_intake_answer` | covered |
 | Questions contain two to four answer options | JSON Schema and completion transaction | `test_business_requirements_assets.py::test_contract_schemas_compile_and_question_bounds_are_enforced`; `test_business_document_service.py::test_question_schema_boundary_rejects_five_options_and_rolls_back` | covered |
 | Author can choose an option or provide a custom answer | Domain command | `test_business_document_service.py::test_question_answers_and_proposal_decisions_are_immutable` plus negative answer-boundary tests | covered |
@@ -22,7 +22,10 @@ documented behavior is not considered covered by a UI rendering alone.
 | Section 5.5 Monitoring is mandatory | Template and AST validator | `test_business_requirements_assets.py::test_template_preserves_published_semantic_outline`; required-section test | covered |
 | Revisions are immutable and stale AI results cannot commit | Optimistic state version and hashes | `test_business_document_service.py::test_stale_worker_result_cannot_create_revision`; section-hash test | covered |
 | Same idempotency key cannot create duplicate jobs/events | Command ledger | idempotency tests in `test_business_document_service.py` | covered |
-| Tenant boundary is non-enumerable | Query scope | `test_business_document_service.py::test_tenant_access_is_non_enumerable` | covered |
+| Authenticated authors can discover, open and edit all business documents; unknown document ids remain non-enumerable | Shared document query scope | `test_business_document_service.py::test_authors_can_open_foreign_documents_while_unknown_ids_stay_non_enumerable`; `test_business_document_service.py::test_shared_access_list_and_server_assigned_chat` | covered |
+| Authors cannot delete either their own or another author's document; administrators can edit and hard-delete any document | Role policy, DELETE API and guarded UI action | `test_business_document_service.py::test_authors_share_read_and_edit_access_while_only_admin_can_delete`; `test_business_document_service.py::test_only_admin_can_delete_document_and_all_owned_rows_are_removed`; `web/src/pages/business-documents/index.test.tsx` | covered |
+| Revision history identifies the user whose answer, decision, comment or EVA synchronization contributed to the revision | Event actor audit and history UI | `test_business_document_service.py::test_confirmed_anchored_comment_may_request_a_cross_section_change`; `web/src/pages/business-documents/index.test.tsx` | covered |
+| A document with active background work cannot be deleted | Delete command gate | `test_business_document_service.py::test_admin_cannot_delete_document_while_background_operation_is_active` | covered |
 | Every REST route is authenticated | REST decorators | `test_business_document_api_contract.py::test_http_surface_is_exact_and_every_route_requires_login` | covered |
 | Export is possible only from the current agreed revision | Command gate | export lifecycle/revision tests in `test_business_document_service.py` | covered |
 | EvaWiki excludes the agreement protocol | Export worker contract | `test_business_document_worker_exports.py::test_eva_wiki_exact_shape_escapes_content_and_excludes_protocol`; executable golden G22/G23 | covered |
@@ -35,13 +38,14 @@ documented behavior is not considered covered by a UI rendering alone.
 
 ## Coverage boundaries
 
-- API inventory: nine protected routes under `/api/v1/business-documents`,
-  including paginated owned-document list, jobs, export list and owner-checked download.
+- API inventory: 21 protected routes under `/api/v1/business-documents`,
+  including role-aware paginated document list, administrator-only hard delete,
+  jobs, export list and role-checked download.
 - UI inventory: create screen plus protected workbench, document pane,
   protocol pane, loading/error/conflict/busy states.
-- Persona inventory: author and cross-tenant caller are automated at the
-  domain boundary; unauthenticated access is enforced by the shared
-  `login_required` decorator and statically guarded for every new route.
+- Persona inventory: document owner, collaborating author and administrator are
+  automated at the domain boundary; unauthenticated access is enforced by the
+  shared `login_required` decorator and statically guarded for every route.
 - Deterministic worker, pinned dataset retrieval, Markdown/DOCX/EvaWiki and
   object-storage contracts are covered with injected adapters. The scripted
   golden gate is a state-machine gate, not a model-quality claim.

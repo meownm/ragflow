@@ -446,15 +446,42 @@ def test_export_generation_is_idempotent_listable_downloadable_and_hash_verified
     metadata, content = BusinessDocumentExportService.download(TENANT, AUTHOR, document["document_id"], artifact["artifact_id"], storage=storage)
     assert metadata == artifact
     assert f"sha256:{hashlib.sha256(content).hexdigest()}" == artifact["content_hash"]
-    with pytest.raises(BusinessDocumentError) as hidden:
-        BusinessDocumentExportService.download(TENANT, "another-author", document["document_id"], artifact["artifact_id"], storage=storage)
-    assert hidden.value.code == "EXPORT_NOT_FOUND"
+    collaborator_metadata, collaborator_content = BusinessDocumentExportService.download(
+        "another-tenant", "another-author", document["document_id"], artifact["artifact_id"], storage=storage
+    )
+    assert collaborator_metadata == artifact
+    assert collaborator_content == content
+    assert BusinessDocumentExportService.list_artifacts("admin-tenant", "admin-user", document["document_id"], is_admin=True) == [artifact]
+    admin_metadata, admin_content = BusinessDocumentExportService.download(
+        "admin-tenant", "admin-user", document["document_id"], artifact["artifact_id"], storage=storage, is_admin=True
+    )
+    assert admin_metadata == artifact
+    assert admin_content == content
 
     row = BusinessDocumentExportArtifact.get_by_id(artifact["artifact_id"])
     storage.objects[(row.storage_bucket, row.storage_key)] = b"tampered"
     with pytest.raises(BusinessDocumentError) as corrupt:
         BusinessDocumentExportService.download(TENANT, AUTHOR, document["document_id"], artifact["artifact_id"], storage=storage)
     assert corrupt.value.code == "EXPORT_STORAGE_CORRUPT"
+
+
+@pytest.mark.p0
+def test_admin_delete_removes_export_bytes_and_complete_document_history(database):
+    document = _agreed_document()
+    storage = MemoryStorage()
+    artifact, _ = _request_export(document, storage, "MARKDOWN")
+    row = BusinessDocumentExportArtifact.get_by_id(artifact["artifact_id"])
+    storage_location = (row.storage_bucket, row.storage_key)
+
+    result = BusinessDocumentService.delete_document("admin-user", document["document_id"], is_admin=True, storage=storage)
+
+    assert result["deleted"] is True
+    assert result["deleted_artifacts"] == 1
+    assert result["storage_cleanup_failures"] == 0
+    assert storage_location not in storage.objects
+    for model in (BusinessDocumentEvent, BusinessDocumentExportArtifact, BusinessDocumentJob, BusinessDocumentProposal, BusinessDocumentRevision):
+        assert model.select().where(model.document_id == document["document_id"]).count() == 0
+    assert BusinessDocument.select().where(BusinessDocument.id == document["document_id"]).count() == 0
 
 
 @pytest.mark.p0

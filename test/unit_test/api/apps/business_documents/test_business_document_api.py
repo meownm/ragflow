@@ -31,7 +31,7 @@ ACTOR = "route-owner"
 
 @pytest.fixture()
 def route_app(monkeypatch):
-    monkeypatch.setattr(api_apps, "current_user", SimpleNamespace(id=ACTOR), raising=False)
+    monkeypatch.setattr(api_apps, "current_user", SimpleNamespace(id=ACTOR, is_superuser=False), raising=False)
     monkeypatch.setattr(api_apps, "login_required", lambda function: function, raising=False)
     module_name = "api.apps.restful_apis.business_document_api_boundary_test"
     spec = spec_from_file_location(module_name, REPO_ROOT / "api" / "apps" / "restful_apis" / "business_document_api.py")
@@ -83,16 +83,16 @@ async def test_routes_pass_tenant_and_owner_in_service_contract_order(route_app,
     app, module = route_app
     calls = []
 
-    def create_document(tenant_id, actor_id, data):
-        calls.append(("create", tenant_id, actor_id, data))
+    def create_document(tenant_id, actor_id, data, is_admin):
+        calls.append(("create", tenant_id, actor_id, data, is_admin))
         return {"document_id": "doc-1"}
 
     def execute_command(tenant_id, actor_id, document_id, data):
         calls.append(("command", tenant_id, actor_id, document_id, data))
         return {"accepted": True, "document_id": document_id}
 
-    def get_document(tenant_id, document_id, actor_id):
-        calls.append(("get", tenant_id, document_id, actor_id))
+    def get_document(tenant_id, document_id, actor_id, is_admin):
+        calls.append(("get", tenant_id, document_id, actor_id, is_admin))
         return {
             "document_id": document_id,
             "owner_id": actor_id,
@@ -119,7 +119,26 @@ async def test_routes_pass_tenant_and_owner_in_service_contract_order(route_app,
     assert get_response.status_code == 200
     assert (await get_response.get_json())["data"]["current_revision"]["section_texts"] == {"5.5": "Метрика"}
     assert calls == [
-        ("create", ACTOR, ACTOR, create_payload),
+        ("create", ACTOR, ACTOR, create_payload, False),
         ("command", ACTOR, ACTOR, "doc-1", command_payload),
-        ("get", ACTOR, "doc-1", ACTOR),
+        ("get", ACTOR, "doc-1", ACTOR, False),
     ]
+
+
+@pytest.mark.p0
+@pytest.mark.asyncio
+async def test_delete_route_passes_admin_role_to_service(route_app, monkeypatch):
+    app, module = route_app
+    module.current_user.is_superuser = True
+    calls = []
+
+    def delete_document(actor_id, document_id, is_admin):
+        calls.append((actor_id, document_id, is_admin))
+        return {"document_id": document_id, "deleted": True}
+
+    monkeypatch.setattr(module.BusinessDocumentService, "delete_document", staticmethod(delete_document))
+    response = await app.test_client().delete("/business-documents/doc-1")
+
+    assert response.status_code == 200
+    assert (await response.get_json())["data"] == {"document_id": "doc-1", "deleted": True}
+    assert calls == [(ACTOR, "doc-1", True)]

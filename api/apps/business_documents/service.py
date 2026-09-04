@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from datetime import datetime
 from typing import Any
 import unicodedata
@@ -35,6 +36,7 @@ from api.apps.business_documents.assets import (
     validate_contract,
     validate_document_ast,
 )
+from api.apps.business_documents.authorization import BusinessDocumentAccess
 from api.apps.business_documents.contracts import CommandEnvelope, CommandType, LifecycleState, OperationState
 from api.apps.business_documents.errors import BusinessDocumentError, ConflictError, NotFoundError, ValidationError
 from api.apps.business_documents.evidence import ensure_dataset_access, ensure_dataset_embedding_compatibility, related_file_search_enabled
@@ -132,7 +134,7 @@ class BusinessDocumentService:
         return _MODEL_TABLES
 
     @classmethod
-    def create_document(cls, tenant_id: str, actor_id: str, raw: object) -> dict[str, Any]:
+    def create_document(cls, tenant_id: str, actor_id: str, raw: object, is_admin: bool = False) -> dict[str, Any]:
         if not isinstance(raw, dict):
             raise ValidationError("INVALID_DOCUMENT", "Request body must be a JSON object")
         if "chat_id" in raw:
@@ -201,24 +203,27 @@ class BusinessDocumentService:
                 },
                 correlation_id=document_id,
             )
-        return cls.get_document(tenant_id, document_id, actor_id)
+        return cls.get_document(tenant_id, document_id, actor_id, is_admin)
 
     @classmethod
-    def get_document(cls, tenant_id: str, document_id: str, actor_id: str) -> dict[str, Any]:
-        document = cls._get_owned_document(tenant_id, actor_id, document_id)
-        return cls._project(document)
+    def get_document(cls, tenant_id: str, document_id: str, actor_id: str, is_admin: bool = False) -> dict[str, Any]:
+        access = BusinessDocumentAccess(actor_id, is_admin)
+        document = cls._get_accessible_document(document_id)
+        return cls._project(document, access)
 
     @classmethod
-    def list_documents(cls, tenant_id: str, actor_id: str, page: int = 1, page_size: int = 20) -> dict[str, Any]:
+    def list_documents(cls, tenant_id: str, actor_id: str, page: int = 1, page_size: int = 20, is_admin: bool = False) -> dict[str, Any]:
         if not isinstance(page, int) or not isinstance(page_size, int) or page < 1 or not 1 <= page_size <= 100:
             raise ValidationError("INVALID_PAGINATION", "page must be positive and page_size must be between 1 and 100")
-        query = BusinessDocument.select().where((BusinessDocument.tenant_id == tenant_id) & (BusinessDocument.owner_id == actor_id))
+        access = BusinessDocumentAccess(actor_id, is_admin)
+        query = BusinessDocument.select()
         total = query.count()
         rows = query.order_by(BusinessDocument.update_time.desc()).paginate(page, page_size)
         return {
             "items": [
                 {
                     "document_id": row.id,
+                    "owner_id": row.owner_id,
                     "title": row.title,
                     "lifecycle_state": row.lifecycle_state,
                     "operation_state": row.operation_state,
@@ -226,6 +231,8 @@ class BusinessDocumentService:
                     "current_revision_number": (BusinessDocumentRevision.get_by_id(row.current_revision_id).revision_number if row.current_revision_id else None),
                     "eva_page_url": (cls._eva_binding(row) or {}).get("page_url"),
                     "update_time": row.update_time,
+                    "access_role": access.role.value,
+                    "permissions": access.permissions(),
                 }
                 for row in rows
             ],
@@ -235,21 +242,21 @@ class BusinessDocumentService:
         }
 
     @classmethod
-    def list_revisions(cls, tenant_id: str, document_id: str, actor_id: str) -> list[dict[str, Any]]:
-        cls._get_owned_document(tenant_id, actor_id, document_id)
+    def list_revisions(cls, tenant_id: str, document_id: str, actor_id: str, is_admin: bool = False) -> list[dict[str, Any]]:
+        cls._get_accessible_document(document_id)
         rows = BusinessDocumentRevision.select().where(BusinessDocumentRevision.document_id == document_id).order_by(BusinessDocumentRevision.revision_number.asc())
         return [cls._revision_dict(row) for row in rows]
 
     @classmethod
-    def get_revision(cls, tenant_id: str, document_id: str, revision_id: str, actor_id: str) -> dict[str, Any]:
-        cls._get_owned_document(tenant_id, actor_id, document_id)
+    def get_revision(cls, tenant_id: str, document_id: str, revision_id: str, actor_id: str, is_admin: bool = False) -> dict[str, Any]:
+        cls._get_accessible_document(document_id)
         row = BusinessDocumentRevision.get_or_none((BusinessDocumentRevision.id == revision_id) & (BusinessDocumentRevision.document_id == document_id))
         if row is None:
             raise BusinessDocumentError("REVISION_NOT_FOUND", "Business document revision not found", 404)
         return cls._revision_dict(row)
 
     @classmethod
-    def pull_from_eva(cls, tenant_id: str, actor_id: str, document_id: str, raw: object) -> dict[str, Any]:
+    def pull_from_eva(cls, tenant_id: str, actor_id: str, document_id: str, raw: object, is_admin: bool = False) -> dict[str, Any]:
         """Bring a newer EVA page into the governed review protocol.
 
         The remote content is recorded as an immutable review input. It never
@@ -260,7 +267,9 @@ class BusinessDocumentService:
         if not isinstance(raw, dict) or isinstance(raw.get("expected_state_version"), bool) or not isinstance(raw.get("expected_state_version"), int):
             raise ValidationError("INVALID_EVA_SYNC", "expected_state_version must be an integer")
         expected = raw["expected_state_version"]
-        document = cls._get_owned_document(tenant_id, actor_id, document_id)
+        document = cls._get_editable_document(document_id)
+        document_tenant_id = document.tenant_id
+        access = BusinessDocumentAccess(actor_id, is_admin)
         if document.state_version != expected:
             raise ConflictError("STATE_VERSION_CONFLICT", "The document changed since it was loaded", {"expected": expected, "actual": document.state_version})
         cls._require_idle(document)
@@ -292,13 +301,13 @@ class BusinessDocumentService:
         pull_is_consumed = binding.get("last_pull_event_id") in (current_revision.source_event_ids or [])
         if binding.get("last_pulled_content_hash") == remote_hash and (pull_is_pending or pull_is_consumed):
             return {
-                "document": cls._project(document),
+                "document": cls._project(document, access),
                 "sync": {"changed": False, "direction": "FROM_EVA", "remote_version": str(remote.get("version") or "") or None},
             }
 
         database = BusinessDocument._meta.database
         with database.atomic():
-            document = cls._get_owned_document(tenant_id, actor_id, document_id)
+            document = cls._get_editable_document(document_id)
             if document.state_version != expected:
                 raise ConflictError("STATE_VERSION_CONFLICT", "The document changed during EVA synchronization", {"expected": expected, "actual": document.state_version})
             current_binding = cls._eva_binding(document)
@@ -333,20 +342,22 @@ class BusinessDocumentService:
                 },
                 get_uuid(),
             )
-        projection = cls._project(cls._get_document(tenant_id, document_id))
+        projection = cls._project(cls._get_document(document_tenant_id, document_id), access)
         return {
             "document": projection,
             "sync": {"changed": True, "direction": "FROM_EVA", "event_id": event_id, "remote_version": str(remote.get("version") or "") or None},
         }
 
     @classmethod
-    def rebind_eva(cls, tenant_id: str, actor_id: str, document_id: str, raw: object) -> dict[str, Any]:
+    def rebind_eva(cls, tenant_id: str, actor_id: str, document_id: str, raw: object, is_admin: bool = False) -> dict[str, Any]:
         """Re-resolve an existing EVA link without rewriting its creation event."""
 
         if not isinstance(raw, dict) or isinstance(raw.get("expected_state_version"), bool) or not isinstance(raw.get("expected_state_version"), int):
             raise ValidationError("INVALID_EVA_BINDING", "expected_state_version must be an integer")
         expected = raw["expected_state_version"]
-        document = cls._get_owned_document(tenant_id, actor_id, document_id)
+        document = cls._get_editable_document(document_id)
+        document_tenant_id = document.tenant_id
+        access = BusinessDocumentAccess(actor_id, is_admin)
         if document.state_version != expected:
             raise ConflictError("STATE_VERSION_CONFLICT", "The document changed since it was loaded", {"expected": expected, "actual": document.state_version})
         cls._require_idle(document)
@@ -368,7 +379,7 @@ class BusinessDocumentService:
 
         database = BusinessDocument._meta.database
         with database.atomic():
-            document = cls._get_owned_document(tenant_id, actor_id, document_id)
+            document = cls._get_editable_document(document_id)
             if document.state_version != expected:
                 raise ConflictError("STATE_VERSION_CONFLICT", "The document changed during EVA reconnection", {"expected": expected, "actual": document.state_version})
             latest_binding = cls._eva_binding(document)
@@ -385,7 +396,7 @@ class BusinessDocumentService:
                 {"eva_binding": resolved},
                 get_uuid(),
             )
-        return cls._project(cls._get_document(tenant_id, document_id))
+        return cls._project(cls._get_document(document_tenant_id, document_id), access)
 
     @classmethod
     def create_eva_change_from_revision(cls, tenant_id: str, actor_id: str, document_id: str, raw: object) -> dict[str, Any]:
@@ -393,7 +404,7 @@ class BusinessDocumentService:
 
         if not isinstance(raw, dict) or isinstance(raw.get("expected_state_version"), bool) or not isinstance(raw.get("expected_state_version"), int):
             raise ValidationError("INVALID_EVA_SYNC", "expected_state_version must be an integer")
-        document = cls._get_owned_document(tenant_id, actor_id, document_id)
+        document = cls._get_editable_document(document_id)
         expected = raw["expected_state_version"]
         if document.state_version != expected:
             raise ConflictError("STATE_VERSION_CONFLICT", "The document changed since it was loaded", {"expected": expected, "actual": document.state_version})
@@ -426,10 +437,74 @@ class BusinessDocumentService:
         )
 
     @classmethod
-    def list_jobs(cls, tenant_id: str, actor_id: str, document_id: str) -> list[dict[str, Any]]:
-        cls._get_owned_document(tenant_id, actor_id, document_id)
+    def list_jobs(cls, tenant_id: str, actor_id: str, document_id: str, is_admin: bool = False) -> list[dict[str, Any]]:
+        cls._get_accessible_document(document_id)
         rows = BusinessDocumentJob.select().where(BusinessDocumentJob.document_id == document_id).order_by(BusinessDocumentJob.create_time.desc())
         return [cls._job_dict(row) for row in rows]
+
+    @classmethod
+    def delete_document(cls, actor_id: str, document_id: str, is_admin: bool = False, storage=None) -> dict[str, Any]:
+        access = BusinessDocumentAccess(actor_id, is_admin)
+        access.require_delete()
+        document = BusinessDocument.get_or_none(BusinessDocument.id == document_id)
+        if document is None:
+            raise NotFoundError()
+
+        active_job = BusinessDocumentJob.select().where(
+            (BusinessDocumentJob.document_id == document_id) & (BusinessDocumentJob.status.in_(("PENDING", "RUNNING", "RETRY")))
+        )
+        if document.operation_state not in {OperationState.IDLE.value, OperationState.FAILED.value} or active_job.exists():
+            raise ConflictError("OPERATION_IN_PROGRESS", "A document with an active operation cannot be deleted")
+
+        artifacts = list(BusinessDocumentExportArtifact.select().where(BusinessDocumentExportArtifact.document_id == document_id))
+        database = BusinessDocument._meta.database
+        with database.atomic():
+            document = BusinessDocument.get_or_none(BusinessDocument.id == document_id)
+            if document is None:
+                raise NotFoundError()
+            active_job = BusinessDocumentJob.select().where(
+                (BusinessDocumentJob.document_id == document_id) & (BusinessDocumentJob.status.in_(("PENDING", "RUNNING", "RETRY")))
+            )
+            if document.operation_state not in {OperationState.IDLE.value, OperationState.FAILED.value} or active_job.exists():
+                raise ConflictError("OPERATION_IN_PROGRESS", "A document with an active operation cannot be deleted")
+            for model in (
+                BusinessDocumentEvidenceSnapshot,
+                BusinessDocumentExportArtifact,
+                BusinessDocumentJob,
+                BusinessDocumentCommand,
+                BusinessDocumentAnswer,
+                BusinessDocumentProposalDecision,
+                BusinessDocumentQuestion,
+                BusinessDocumentProposal,
+                BusinessDocumentComment,
+                BusinessDocumentRevision,
+                BusinessDocumentEvent,
+            ):
+                model.delete().where(model.document_id == document_id).execute()
+            deleted = BusinessDocument.delete().where(BusinessDocument.id == document_id).execute()
+            if deleted != 1:
+                raise ConflictError("DOCUMENT_DELETE_CONFLICT", "The document changed while it was being deleted")
+
+        cleanup_failures = 0
+        if artifacts:
+            if storage is None:
+                from common import settings
+
+                storage = settings.STORAGE_IMPL
+            for artifact in artifacts:
+                try:
+                    if storage is None:
+                        raise RuntimeError("storage is not initialized")
+                    storage.rm(artifact.storage_bucket, artifact.storage_key)
+                except Exception:
+                    cleanup_failures += 1
+                    logging.exception("Unable to remove business document export artifact %s", artifact.id)
+        return {
+            "document_id": document_id,
+            "deleted": True,
+            "deleted_artifacts": len(artifacts) - cleanup_failures,
+            "storage_cleanup_failures": cleanup_failures,
+        }
 
     @classmethod
     def execute_command(cls, tenant_id: str, actor_id: str, document_id: str, raw: object) -> dict[str, Any]:
@@ -446,11 +521,15 @@ class BusinessDocumentService:
         database = BusinessDocument._meta.database
         captured_error: BusinessDocumentError | None = None
         response: dict[str, Any]
+        document_tenant_id = tenant_id
         try:
             with database.atomic():
-                document = cls._get_owned_document(tenant_id, actor_id, document_id)
+                document = cls._get_editable_document(document_id)
+                document_tenant_id = document.tenant_id
                 existing = BusinessDocumentCommand.get_or_none(
-                    (BusinessDocumentCommand.tenant_id == tenant_id) & (BusinessDocumentCommand.document_id == document_id) & (BusinessDocumentCommand.idempotency_key == envelope.idempotency_key)
+                    (BusinessDocumentCommand.tenant_id == document_tenant_id)
+                    & (BusinessDocumentCommand.document_id == document_id)
+                    & (BusinessDocumentCommand.idempotency_key == envelope.idempotency_key)
                 )
                 if existing is not None:
                     return cls._replay_command(existing, request_hash)
@@ -479,7 +558,7 @@ class BusinessDocumentService:
                 BusinessDocumentCommand.create(
                     id=get_uuid(),
                     document_id=document_id,
-                    tenant_id=tenant_id,
+                    tenant_id=document_tenant_id,
                     idempotency_key=envelope.idempotency_key,
                     request_hash=request_hash,
                     response=response,
@@ -490,7 +569,9 @@ class BusinessDocumentService:
             # initial lookup. Only that exact ledger collision is replayable;
             # unrelated integrity failures keep their original traceback.
             existing = BusinessDocumentCommand.get_or_none(
-                (BusinessDocumentCommand.tenant_id == tenant_id) & (BusinessDocumentCommand.document_id == document_id) & (BusinessDocumentCommand.idempotency_key == envelope.idempotency_key)
+                (BusinessDocumentCommand.tenant_id == document_tenant_id)
+                & (BusinessDocumentCommand.document_id == document_id)
+                & (BusinessDocumentCommand.idempotency_key == envelope.idempotency_key)
             )
             if existing is None:
                 raise
@@ -605,8 +686,6 @@ class BusinessDocumentService:
     def _dispatch(cls, document: BusinessDocument, actor_id: str, envelope: CommandEnvelope) -> dict[str, Any]:
         if document.lifecycle_state == LifecycleState.ARCHIVED.value:
             raise ConflictError("DOCUMENT_ARCHIVED", "Archived documents cannot be changed")
-        if document.owner_id != actor_id:
-            raise BusinessDocumentError("AUTHOR_REQUIRED", "Only the document author can execute this command", 403)
         if envelope.type == CommandType.REQUEST_INTAKE_ASSESSMENT:
             if cls._open_questions(document, "INTAKE"):
                 raise ConflictError("OPEN_INTAKE_QUESTIONS", "Answer open intake questions before reassessment")
@@ -694,6 +773,7 @@ class BusinessDocumentService:
         job_id = get_uuid()
         snapshot = cls._job_snapshot(document, envelope.payload)
         snapshot["task_type"] = job_type
+        snapshot["requested_by_actor_id"] = actor_id
         prompt = prompt_descriptor(job_type)
         if prompt is not None:
             snapshot["prompt"] = prompt
@@ -1109,6 +1189,7 @@ class BusinessDocumentService:
             {
                 "job_id": job.id,
                 "revision_id": revision_id,
+                "requested_by_actor_id": job.payload.get("requested_by_actor_id"),
                 "question_count": inserted_question_count,
                 "proposal_count": inserted_proposal_count,
                 **cls._job_prompt_audit(job),
@@ -1622,7 +1703,9 @@ class BusinessDocumentService:
         }
 
     @classmethod
-    def _project(cls, document):
+    def _project(cls, document, access: BusinessDocumentAccess | None = None):
+        access = access or BusinessDocumentAccess(document.owner_id)
+        permissions = access.permissions()
         revision = None
         if document.current_revision_id:
             revision = cls._revision_dict(BusinessDocumentRevision.get_by_id(document.current_revision_id))
@@ -1630,6 +1713,8 @@ class BusinessDocumentService:
             "document_id": document.id,
             "tenant_id": document.tenant_id,
             "owner_id": document.owner_id,
+            "access_role": access.role.value,
+            "permissions": permissions,
             "chat_id": document.chat_id,
             "document_type": document.document_type,
             "title": document.title,
@@ -1643,7 +1728,7 @@ class BusinessDocumentService:
             "current_revision": revision,
             "active_review_cycle": document.active_review_cycle,
             "protocol": cls._protocol(document),
-            "allowed_commands": cls._allowed_commands(document),
+            "allowed_commands": cls._allowed_commands(document) if permissions["edit"] else [],
             "last_error": document.last_error,
             "latest_job": cls._latest_job(document.id),
             "latest_exports": cls._latest_exports(document.id),
@@ -1866,8 +1951,12 @@ class BusinessDocumentService:
             common = {
                 "event_id": event.id,
                 "actor_id": event.actor_id,
+                "actor_type": event.actor_type,
                 "created_at": event.create_time,
             }
+            requested_by_actor_id = event.payload.get("requested_by_actor_id") if isinstance(event.payload, dict) else None
+            if isinstance(requested_by_actor_id, str) and requested_by_actor_id:
+                common["initiated_by_actor_id"] = requested_by_actor_id
             if event.event_type == "DraftCreated":
                 document = BusinessDocument.get_by_id(row.document_id)
                 basis.append(
@@ -2104,8 +2193,15 @@ class BusinessDocumentService:
         return document
 
     @staticmethod
-    def _get_owned_document(tenant_id, actor_id, document_id):
-        document = BusinessDocument.get_or_none((BusinessDocument.id == document_id) & (BusinessDocument.tenant_id == tenant_id) & (BusinessDocument.owner_id == actor_id))
+    def _get_editable_document(document_id):
+        document = BusinessDocument.get_or_none(BusinessDocument.id == document_id)
+        if document is None:
+            raise NotFoundError()
+        return document
+
+    @staticmethod
+    def _get_accessible_document(document_id):
+        document = BusinessDocument.get_or_none(BusinessDocument.id == document_id)
         if document is None:
             raise NotFoundError()
         return document

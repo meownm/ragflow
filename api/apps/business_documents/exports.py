@@ -175,24 +175,22 @@ class BusinessDocumentExportService:
         return _artifact_dict(BusinessDocumentExportArtifact.get_by_id(artifact_id))
 
     @classmethod
-    def list_artifacts(cls, tenant_id: str, actor_id: str, document_id: str) -> list[dict[str, Any]]:
-        if not BusinessDocument.select().where((BusinessDocument.id == document_id) & (BusinessDocument.tenant_id == tenant_id) & (BusinessDocument.owner_id == actor_id)).exists():
+    def list_artifacts(cls, tenant_id: str, actor_id: str, document_id: str, is_admin: bool = False) -> list[dict[str, Any]]:
+        if not BusinessDocument.select().where(BusinessDocument.id == document_id).exists():
             raise BusinessDocumentError("DOCUMENT_NOT_FOUND", "Business document not found", 404)
         rows = (
             BusinessDocumentExportArtifact.select()
-            .where((BusinessDocumentExportArtifact.document_id == document_id) & (BusinessDocumentExportArtifact.tenant_id == tenant_id) & (BusinessDocumentExportArtifact.owner_id == actor_id))
+            .where(BusinessDocumentExportArtifact.document_id == document_id)
             .order_by(BusinessDocumentExportArtifact.create_time.desc())
         )
         return [_artifact_dict(row) for row in rows]
 
     @classmethod
-    def download(cls, tenant_id: str, actor_id: str, document_id: str, artifact_id: str, storage=None):
-        artifact = BusinessDocumentExportArtifact.get_or_none(
-            (BusinessDocumentExportArtifact.id == artifact_id)
-            & (BusinessDocumentExportArtifact.document_id == document_id)
-            & (BusinessDocumentExportArtifact.tenant_id == tenant_id)
-            & (BusinessDocumentExportArtifact.owner_id == actor_id)
-        )
+    def download(cls, tenant_id: str, actor_id: str, document_id: str, artifact_id: str, storage=None, is_admin: bool = False):
+        artifact_query = (BusinessDocumentExportArtifact.id == artifact_id) & (BusinessDocumentExportArtifact.document_id == document_id)
+        if not BusinessDocument.select().where(BusinessDocument.id == document_id).exists():
+            raise BusinessDocumentError("DOCUMENT_NOT_FOUND", "Business document not found", 404)
+        artifact = BusinessDocumentExportArtifact.get_or_none(artifact_query)
         if artifact is None:
             raise BusinessDocumentError("EXPORT_NOT_FOUND", "Export artifact not found", 404)
         storage_impl = storage or cls._default_storage()

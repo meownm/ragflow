@@ -169,7 +169,7 @@ func buildResource(ctx context.Context, cfg ProviderConfig) (*resource.Resource,
 // need TLS should set cfg.Insecure=false.
 func buildExporter(ctx context.Context, cfg ProviderConfig) (*otlptrace.Exporter, error) {
 	opts := []otlptracehttp.Option{
-		otlptracehttp.WithEndpoint(cfg.OTLPEndpoint),
+		otlptracehttp.WithEndpointURL(cfg.OTLPEndpoint),
 		otlptracehttp.WithTimeout(defaultExportTimeout),
 	}
 	if cfg.Insecure {

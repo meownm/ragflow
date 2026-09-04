@@ -240,4 +240,79 @@ declare namespace AdminService {
     eva_spaces: BusinessDocumentsEvaSpace[];
     selected_space_available: boolean;
   };
+
+  export type AuditEventSource =
+    | 'application'
+    | 'business_documents'
+    | 'ingestion'
+    | 'connectors';
+
+  export type AuditEventOutcome =
+    | 'success'
+    | 'failure'
+    | 'pending'
+    | 'cancelled';
+
+  export type AuditEvent = {
+    id: string;
+    occurred_at: number;
+    source: AuditEventSource;
+    action: string;
+    outcome: AuditEventOutcome;
+    summary: string;
+    actor: {
+      id?: string;
+      type: string;
+      email?: string;
+      nickname?: string;
+    };
+    object: {
+      type: string;
+      id: string;
+      label: string;
+    };
+    correlation_id?: string | null;
+    causation_id?: string | null;
+    request_id?: string | null;
+    trace_id?: string | null;
+    span_id?: string | null;
+    interaction_id?: string | null;
+    job_id?: string | null;
+    session_id?: string | null;
+    error_id?: string | null;
+    error?: {
+      code?: string;
+      message: string;
+    } | null;
+    details: Record<string, unknown>;
+  };
+
+  export type AuditEventQuery = {
+    page?: number;
+    page_size?: number;
+    source?: AuditEventSource | '';
+    outcome?: AuditEventOutcome | '';
+    query?: string;
+    actor?: string;
+    correlation_id?: string;
+  };
+
+  export type AuditEventPage = {
+    items: AuditEvent[];
+    page: number;
+    page_size: number;
+    total: number;
+    retention_days: number;
+    unavailable_sources: AuditEventSource[];
+    stats: {
+      failures: number;
+      sources: number;
+    };
+    observability: {
+      enabled: boolean;
+      grafana_url: string;
+      loki_datasource_uid: string;
+      tempo_datasource_uid: string;
+    };
+  };
 }

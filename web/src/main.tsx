@@ -5,7 +5,9 @@ import '../tailwind.css';
 import App from './app';
 import './global.less';
 import { initLanguage } from './locales/config';
+import { installClientTelemetry } from './utils/telemetry';
 
+installClientTelemetry();
 initLanguage().then(() => {
   ReactDOM.createRoot(document.getElementById('root')!).render(
     <React.StrictMode>

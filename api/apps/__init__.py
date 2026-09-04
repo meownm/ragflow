@@ -36,6 +36,7 @@ from api.utils.api_utils import server_error_response, get_json_result
 from api.constants import API_VERSION
 from common.exceptions import ModelException
 from common.misc_utils import get_uuid
+from common.observability import install_quart_instrumentation
 
 settings.init_settings()
 
@@ -82,6 +83,7 @@ app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("MAX_CONTENT_LENGTH", 1024
 app.config["SECRET_KEY"] = settings.get_secret_key()
 app.secret_key = settings.get_secret_key()
 commands.register_commands(app)
+install_quart_instrumentation(app, "ragflow-api")
 
 from functools import wraps
 from typing import ParamSpec, TypeVar
@@ -222,7 +224,7 @@ def _load_user(auth_types=None):
                     return user[0]
                 logging.warning(f"load_user: No user found for tenant_id={objs[0].tenant_id} from APIToken")
             else:
-                logging.warning(f"load_user: No APIToken found for token={auth_token[:10]}...")
+                logging.warning("load_user: No APIToken found for supplied credential")
         except Exception as e_api_token:
             logging.warning(f"load_user from api token got exception {e_api_token}")
 

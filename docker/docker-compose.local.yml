@@ -68,6 +68,9 @@ services:
       - ../api/apps/business_documents:/ragflow/api/apps/business_documents:ro
       - ../api/apps/restful_apis/business_document_api.py:/ragflow/api/apps/restful_apis/business_document_api.py:ro
       - ../api/apps/restful_apis/system_api.py:/ragflow/api/apps/restful_apis/system_api.py:ro
+      - ../api/apps/__init__.py:/ragflow/api/apps/__init__.py:ro
+      - ../api/utils/api_utils.py:/ragflow/api/utils/api_utils.py:ro
+      - ../api/db/services/audit_service.py:/ragflow/api/db/services/audit_service.py:ro
       - ../api/apps/restful_apis/chat_api.py:/ragflow/api/apps/restful_apis/chat_api.py:ro
       - ../api/apps/restful_apis/user_api.py:/ragflow/api/apps/restful_apis/user_api.py:ro
       - ../api/utils/health_utils.py:/ragflow/api/utils/health_utils.py:ro
@@ -76,6 +79,8 @@ services:
       - ../api/ragflow_server.py:/ragflow/api/ragflow_server.py:ro
       - ../admin/server/config.py:/ragflow/admin/server/config.py:ro
       - ../admin/server/routes.py:/ragflow/admin/server/routes.py:ro
+      - ../admin/server/audit_feed.py:/ragflow/admin/server/audit_feed.py:ro
+      - ../admin/server/admin_server.py:/ragflow/admin/server/admin_server.py:ro
       - ../admin/server/services.py:/ragflow/admin/server/services.py:ro
       - ../agent/business_requirements:/ragflow/agent/business_requirements:ro
       - ../agent/canvas.py:/ragflow/agent/canvas.py:ro
@@ -85,6 +90,9 @@ services:
       - ../api/db/services/task_service.py:/ragflow/api/db/services/task_service.py:ro
       - ../api/utils/file_utils.py:/ragflow/api/utils/file_utils.py:ro
       - ../common/constants.py:/ragflow/common/constants.py:ro
+      - ../common/config_utils.py:/ragflow/common/config_utils.py:ro
+      - ../common/log_utils.py:/ragflow/common/log_utils.py:ro
+      - ../common/observability.py:/ragflow/common/observability.py:ro
       - ../common/ssrf_guard.py:/ragflow/common/ssrf_guard.py:ro
       - ../common/openmetadata_agents.py:/ragflow/common/openmetadata_agents.py:ro
       - ../common/data_source/__init__.py:/ragflow/common/data_source/__init__.py:ro
@@ -93,6 +101,8 @@ services:
       - ../common/data_source/openmetadata_connector.py:/ragflow/common/data_source/openmetadata_connector.py:ro
       - ../common/data_source/html_utils.py:/ragflow/common/data_source/html_utils.py:ro
       - ../rag/svr/sync_data_source.py:/ragflow/rag/svr/sync_data_source.py:ro
+      - ../rag/svr/task_executor.py:/ragflow/rag/svr/task_executor.py:ro
+      - ../rag/utils/redis_conn.py:/ragflow/rag/utils/redis_conn.py:ro
       - ../rag/app/audio.py:/ragflow/rag/app/audio.py:ro
       - ../rag/app/picture.py:/ragflow/rag/app/picture.py:ro
       - ../rag/llm/chat_model.py:/ragflow/rag/llm/chat_model.py:ro

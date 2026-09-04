@@ -44,6 +44,7 @@ from common.versions import get_ragflow_version
 from common.config_utils import show_configs
 from common.mcp_tool_call_conn import shutdown_all_mcp_sessions
 from common.log_utils import init_root_logger
+from common.observability import configure_otel
 from agent.plugin import GlobalPluginManager
 from rag.utils.redis_conn import RedisDistributedLock
 
@@ -82,6 +83,7 @@ def signal_handler(sig, frame):
 if __name__ == "__main__":
     faulthandler.enable()
     init_root_logger("ragflow_server")
+    configure_otel("ragflow-api", get_ragflow_version())
     logging.info(r"""
         ____   ___    ______ ______ __
        / __ \ /   |  / ____// ____// /____  _      __
@@ -105,6 +107,14 @@ if __name__ == "__main__":
     # init db
     init_web_db()
     init_web_data()
+    try:
+        from api.db.services.audit_service import purge_expired_audit_events
+
+        purged = purge_expired_audit_events()
+        if purged:
+            logging.info("Purged %s audit events outside the 30-day retention window", purged)
+    except Exception:
+        logging.exception("Audit retention cleanup failed")
     # init runtime config
     import argparse
 

@@ -48,6 +48,7 @@ from common.connection_utils import timeout
 from common.constants import RetCode
 from common import settings
 from common.misc_utils import thread_pool_exec
+from common.observability import get_log_context, new_id
 
 requests.models.complexjson.dumps = functools.partial(json.dumps, cls=CustomJSONEncoder)
 
@@ -151,7 +152,23 @@ def server_error_response(e):
     if "not_found" in str(e):
         return get_error_data_result(message="No chunk found! Check the chunk status please!")
 
-    return get_json_result(code=RetCode.EXCEPTION_ERROR, message=repr(e))
+    error_id = new_id()
+    request_id = get_log_context().get("request_id")
+    try:
+        from quart import g
+
+        g.error_id = error_id
+    except RuntimeError:
+        pass
+    response = get_json_result(
+        code=RetCode.EXCEPTION_ERROR,
+        message="Internal server error",
+        data={"error_id": error_id, "request_id": request_id},
+    )
+    if hasattr(response, "status_code"):
+        response.status_code = 500
+        response.headers["X-Error-ID"] = error_id
+    return response
 
 
 def validate_request(*args, **kwargs):

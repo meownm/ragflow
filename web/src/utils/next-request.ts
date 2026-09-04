@@ -10,6 +10,7 @@ import axios, { AxiosError } from 'axios';
 import { convertTheKeysOfTheObjectToSnake, isFormData } from './common-util';
 import { setCachedLlmList } from './llm-cache';
 import { addTenantParams } from './llm-util';
+import { getTelemetryHeaders } from './telemetry';
 
 const FAILED_TO_FETCH = 'Failed to fetch';
 
@@ -100,6 +101,9 @@ request.interceptors.request.use(
       : addTenantParams(data, config.url);
 
     const newConfig = { ...config, data: dataWithTenantParams, params };
+    Object.entries(getTelemetryHeaders()).forEach(([key, value]) => {
+      newConfig.headers.set(key, value);
+    });
 
     // Skip token if explicitly requested
     if (!(newConfig as any).skipToken) {

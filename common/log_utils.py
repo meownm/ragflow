@@ -17,14 +17,50 @@
 import os
 import os.path
 import logging
+import json
+import re
+from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from common.file_utils import get_project_base_directory
+from common.observability import get_log_context
 
 initialized_root_logger = False
 pkg_levels = {}  # module-level to allow runtime modification
 
 
-def init_root_logger(logfile_basename: str, log_format: str = "%(asctime)-15s %(levelname)-8s %(process)d %(message)s"):
+_SECRET_PATTERNS = (
+    re.compile(r"""(?i)(authorization["']?\s*[:=]\s*["']?(?:bearer\s+)?)[^\s,"';}\]]+"""),
+    re.compile(r"""(?i)((?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password)["']?\s*[:=]\s*["']?)[^\s,"';}\]]+"""),
+)
+
+
+def redact_log_text(value: object) -> str:
+    text = str(value)
+    for pattern in _SECRET_PATTERNS:
+        text = pattern.sub(r"\1[REDACTED]", text)
+    return text
+
+
+class JsonLogFormatter(logging.Formatter):
+    """Stable JSON log envelope consumed by the local OTel collector."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {
+            "timestamp": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(timespec="milliseconds"),
+            "severity": record.levelname,
+            "message": redact_log_text(record.getMessage()),
+            "logger": record.name,
+            "service": os.getenv("OTEL_SERVICE_NAME", "ragflow"),
+            "process_id": record.process,
+            "thread_name": record.threadName,
+            **{key: value for key, value in get_log_context().items() if value},
+        }
+        if record.exc_info:
+            payload["exception"] = redact_log_text(self.formatException(record.exc_info))
+        return json.dumps(payload, ensure_ascii=False, default=str)
+
+
+def init_root_logger(logfile_basename: str, log_format: str | None = None):
     global initialized_root_logger, pkg_levels
     if initialized_root_logger:
         return
@@ -35,7 +71,8 @@ def init_root_logger(logfile_basename: str, log_format: str = "%(asctime)-15s %(
     log_path = os.path.abspath(os.path.join(get_project_base_directory(), "logs", f"{logfile_basename}.log"))
 
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
-    formatter = logging.Formatter(log_format)
+    selected_format = os.getenv("LOG_FORMAT", "json").strip().lower()
+    formatter = JsonLogFormatter() if selected_format == "json" and log_format is None else logging.Formatter(log_format or "%(asctime)-15s %(levelname)-8s %(process)d %(message)s")
 
     handler1 = RotatingFileHandler(log_path, maxBytes=10 * 1024 * 1024, backupCount=5)
     handler1.setFormatter(formatter)

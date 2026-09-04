@@ -9,6 +9,7 @@ import {
   LucideMenu,
   LucideMonitor,
   LucideServerCrash,
+  LucideScrollText,
   LucideSquareUserRound,
   LucideUserCog,
   LucideUserStar,
@@ -62,6 +63,11 @@ const AdminNavigationLayout = () => {
         path: Routes.AdminBusinessDocumentsSettings,
         name: t('admin.businessDocumentsSettings'),
         icon: <LucideFiles className="size-[1em]" />,
+      },
+      {
+        path: Routes.AdminAudit,
+        name: t('admin.audit'),
+        icon: <LucideScrollText className="size-[1em]" />,
       },
       ...(IS_ENTERPRISE
         ? [

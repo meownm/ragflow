@@ -36,12 +36,14 @@ from config import load_configurations, SERVICE_CONFIGS
 from auth import init_default_admin, setup_auth
 from flask_session import Session
 from common.versions import get_ragflow_version
+from common.observability import configure_otel, install_flask_instrumentation
 
 stop_event = threading.Event()
 
 if __name__ == "__main__":
     faulthandler.enable()
     init_root_logger("admin_service")
+    configure_otel("ragflow-admin", get_ragflow_version())
     logging.info(r"""
         ____  ___   ______________                 ___       __          _
        / __ \/   | / ____/ ____/ /___ _      __   /   | ____/ /___ ___  (_)___
@@ -51,6 +53,7 @@ if __name__ == "__main__":
     """)
 
     app = Flask(__name__)
+    install_flask_instrumentation(app, "ragflow-admin")
     app.register_blueprint(admin_bp)
     app.config["SESSION_PERMANENT"] = False
     app.config["SESSION_TYPE"] = "filesystem"

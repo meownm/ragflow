@@ -11,6 +11,7 @@ import authorizationUtil, {
 } from '@/utils/authorization-util';
 import { convertTheKeysOfTheObjectToSnake } from '@/utils/common-util';
 import { ResultCode, RetcodeMessage } from '@/utils/request';
+import { getTelemetryHeaders } from '@/utils/telemetry';
 
 const request = axios.create({
   timeout: 300000,
@@ -21,6 +22,9 @@ request.interceptors.request.use((config) => {
   const params = convertTheKeysOfTheObjectToSnake(config.params) as any;
 
   const newConfig = { ...config, data, params };
+  Object.entries(getTelemetryHeaders()).forEach(([key, value]) => {
+    newConfig.headers.set(key, value);
+  });
 
   // @ts-ignore
   if (!newConfig.skipToken) {
@@ -135,6 +139,7 @@ const {
 
   adminGetSystemVersion,
   adminNavigationVisibility,
+  adminAuditEvents,
 
   adminListSandboxProviders,
   adminGetSandboxProviderSchema,
@@ -273,6 +278,11 @@ export const importWhitelistFromExcel = (file: File) => {
 
 export const getSystemVersion = () =>
   request.get<ResponseData<{ version: string }>>(adminGetSystemVersion);
+
+export const listAuditEvents = (params: AdminService.AuditEventQuery) =>
+  request.get<ResponseData<AdminService.AuditEventPage>>(adminAuditEvents, {
+    params,
+  });
 
 export const getNavigationVisibility = () =>
   request.get<ResponseData<AdminService.NavigationVisibility>>(

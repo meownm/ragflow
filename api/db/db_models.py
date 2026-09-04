@@ -1566,6 +1566,37 @@ class BusinessDocumentEvent(DataBaseModel):
         indexes = ((("document_id", "sequence"), True),)
 
 
+class SystemAuditEvent(DataBaseModel):
+    """Append-only, privacy-safe system audit event."""
+
+    id = CharField(max_length=32, primary_key=True)
+    tenant_id = CharField(max_length=32, null=True, index=True)
+    actor_type = CharField(max_length=32, null=False, default="SYSTEM", index=True)
+    actor_id = CharField(max_length=64, null=True, index=True)
+    auth_type = CharField(max_length=16, null=True)
+    action = CharField(max_length=128, null=False, index=True)
+    object_type = CharField(max_length=64, null=False, default="system", index=True)
+    object_id = CharField(max_length=128, null=True, index=True)
+    outcome = CharField(max_length=16, null=False, index=True)
+    reason_code = CharField(max_length=64, null=True, index=True)
+    error_id = CharField(max_length=32, null=True, index=True)
+    correlation_id = CharField(max_length=128, null=False, index=True)
+    causation_id = CharField(max_length=128, null=True, index=True)
+    request_id = CharField(max_length=128, null=True, index=True)
+    trace_id = CharField(max_length=32, null=True, index=True)
+    span_id = CharField(max_length=16, null=True)
+    interaction_id = CharField(max_length=128, null=True, index=True)
+    job_id = CharField(max_length=128, null=True, index=True)
+    session_id = CharField(max_length=128, null=True, index=True)
+    service = CharField(max_length=64, null=False, default="ragflow")
+    service_version = CharField(max_length=64, null=True)
+    event_metadata = JSONField(null=False, default=dict)
+
+    class Meta:
+        db_table = "system_audit_event"
+        indexes = ((('correlation_id', 'create_time'), False),)
+
+
 class BusinessDocumentCommand(DataBaseModel):
     """Idempotency ledger for accepted and rejected commands."""
 

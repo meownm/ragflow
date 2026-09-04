@@ -22,6 +22,7 @@ import uuid
 import valkey as redis
 from common.decorator import singleton
 from common import settings
+from common.observability import inject_queue_context
 from valkey.lock import Lock
 
 REDIS = {}
@@ -404,7 +405,7 @@ class RedisDB:
     def queue_product(self, queue, message) -> bool:
         for _ in range(3):
             try:
-                payload = {"message": json.dumps(message)}
+                payload = {"message": json.dumps(inject_queue_context(message))}
                 self.REDIS.xadd(queue, payload)
                 return True
             except Exception as e:

@@ -7880,7 +7880,7 @@ wheels = [
 
 [[package]]
 name = "ragflow"
-version = "1.10.0"
+version = "1.11.0"
 source = { virtual = "." }
 dependencies = [
     { name = "agentrun-sdk" },
@@ -7962,6 +7962,9 @@ dependencies = [
     { name = "opencv-python-headless" },
     { name = "opendal" },
     { name = "opensearch-py" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-exporter-otlp-proto-http" },
+    { name = "opentelemetry-sdk" },
     { name = "ormsgpack" },
     { name = "paramiko" },
     { name = "pdfplumber" },
@@ -8117,6 +8120,9 @@ requires-dist = [
     { name = "opencv-python-headless", specifier = "==4.10.0.84" },
     { name = "opendal", specifier = ">=0.45.0,<0.46.0" },
     { name = "opensearch-py", specifier = "==2.7.1" },
+    { name = "opentelemetry-api", specifier = ">=1.39.1,<2.0.0" },
+    { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.39.1,<2.0.0" },
+    { name = "opentelemetry-sdk", specifier = ">=1.39.1,<2.0.0" },
     { name = "ormsgpack", specifier = ">=1.6.0" },
     { name = "paramiko", specifier = ">=3.5.1" },
     { name = "pdfplumber", specifier = "==0.10.4" },

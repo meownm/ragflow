@@ -22,7 +22,8 @@ from timeit import default_timer as timer
 from quart import jsonify
 
 from api.apps import login_required, current_user
-from api.utils.api_utils import get_json_result, get_data_error_result, server_error_response, generate_confirmation_token
+from api.utils.api_utils import get_json_result, get_data_error_result, get_request_json, server_error_response, generate_confirmation_token
+from api.db.services.audit_service import record_audit_event
 from api.utils.health_utils import run_health_checks, get_oceanbase_status
 from common.versions import get_ragflow_version
 from common.time_utils import current_timestamp, datetime_format
@@ -369,6 +370,33 @@ def rm(token):
         return get_json_result(data=True)
     except Exception as e:
         return server_error_response(e)
+
+
+@manager.route("/system/client-errors", methods=["POST"])  # noqa: F821
+@login_required
+async def report_client_error():
+    """Record a privacy-safe browser failure without page state or request payloads."""
+    data = await get_request_json()
+    error_name = str(data.get("name") or "ClientError")[:64]
+    message = str(data.get("message") or "")[:1000]
+    route = str(data.get("route") or "")[:512]
+    logging.error("client.error name=%s route=%s message=%s", error_name, route, message)
+    record_audit_event(
+        action="client.error",
+        outcome="failure",
+        actor_id=current_user.id,
+        actor_type="USER",
+        object_type="browser_route",
+        object_id=route,
+        reason_code=error_name,
+        metadata={
+            "browser": str(data.get("browser") or "")[:256],
+            "route": route,
+            "line": data.get("line"),
+            "column": data.get("column"),
+        },
+    )
+    return get_json_result(data=True)
 
 
 @manager.route("/system/config/log", methods=["GET"])  # noqa: F821

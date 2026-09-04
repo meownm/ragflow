@@ -1,6 +1,6 @@
 [project]
 name = "ragflow"
-version = "1.10.0"
+version = "1.11.0"
 description = "[RAGFlow](https://ragflow.io/) is an open-source RAG (Retrieval-Augmented Generation) engine based on deep document understanding. It offers a streamlined RAG workflow for businesses of any scale, combining LLM (Large Language Models) to provide truthful question-answering capabilities, backed by well-founded citations from various complex formatted data."
 authors = [{ name = "Zhichang Yu", email = "yuzhichang@gmail.com" }]
 license-files = ["LICENSE"]
@@ -81,6 +81,9 @@ dependencies = [
     "opencv-python-headless==4.10.0.84",
     "opendal>=0.45.0,<0.46.0",
     "opensearch-py==2.7.1",
+    "opentelemetry-api>=1.39.1,<2.0.0",
+    "opentelemetry-sdk>=1.39.1,<2.0.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.39.1,<2.0.0",
     "ormsgpack>=1.6.0",
     "pdfplumber==0.10.4",
     "pluginlib>=0.10.0",

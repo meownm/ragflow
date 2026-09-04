@@ -1,0 +1,82 @@
+services:
+  ragflow-cpu:
+    environment: &ragflow-observability-env
+      LOG_FORMAT: json
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_TRACES_SAMPLER_ARG: "1.0"
+      GRAFANA_PUBLIC_URL: http://localhost:${GRAFANA_PORT:-3001}
+      GRAFANA_LOKI_DATASOURCE_UID: loki
+      GRAFANA_TEMPO_DATASOURCE_UID: tempo
+
+  ragflow-gpu:
+    environment: *ragflow-observability-env
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.160.0
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./observability/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+      - ./ragflow-logs:/var/log/ragflow:ro
+    ports:
+      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:4318:4318"
+    networks: [ragflow]
+    depends_on:
+      - tempo
+      - loki
+    restart: unless-stopped
+
+  tempo:
+    image: grafana/tempo:2.10.5
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./observability/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo_data:/var/tempo
+    networks: [ragflow]
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:3.7.0
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    volumes:
+      - ./observability/loki.yaml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    networks: [ragflow]
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.11.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+    volumes:
+      - ./observability/prometheus.yaml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/alerts.yaml:/etc/prometheus/alerts.yaml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    networks: [ragflow]
+    depends_on: [otel-collector]
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:13.1.0
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3001}:3000"
+    networks: [ragflow]
+    depends_on: [prometheus, loki, tempo]
+    restart: unless-stopped
+
+volumes:
+  tempo_data:
+  loki_data:
+  prometheus_data:
+  grafana_data:

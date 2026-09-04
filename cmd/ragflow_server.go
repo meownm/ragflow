@@ -31,6 +31,7 @@ import (
 	"ragflow/internal/handler"
 	"ragflow/internal/ingestion"
 	"ragflow/internal/mcp"
+	ragotel "ragflow/internal/observability/otel"
 	"ragflow/internal/router"
 	"ragflow/internal/server/local"
 	"ragflow/internal/service"
@@ -45,6 +46,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.uber.org/zap"
 
 	_ "ragflow/internal/agent/component"
@@ -333,6 +335,33 @@ func main() {
 
 	server.SetLogger(common.Logger)
 
+	traceRatio := 1.0
+	if configured := os.Getenv("OTEL_TRACES_SAMPLER_ARG"); configured != "" {
+		if parsed, parseErr := strconv.ParseFloat(configured, 64); parseErr == nil {
+			traceRatio = parsed
+		} else {
+			common.Warn("Invalid OTEL_TRACES_SAMPLER_ARG; using 1.0", zap.String("value", configured))
+		}
+	}
+	tracerProvider, traceErr := ragotel.NewTracerProvider(context.Background(), ragotel.ProviderConfig{
+		ServiceName:    "ragflow-" + *arguments.mode,
+		ServiceVersion: utility.GetRAGFlowVersion(),
+		OTLPEndpoint:   os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+		Insecure:       strings.HasPrefix(os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"), "http://"),
+		SampleRatio:    traceRatio,
+	})
+	if traceErr != nil {
+		common.Warn("OpenTelemetry setup failed; continuing without trace export", zap.Error(traceErr))
+	} else {
+		defer func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if shutdownErr := tracerProvider.Shutdown(shutdownCtx); shutdownErr != nil {
+				common.Warn("OpenTelemetry shutdown failed", zap.Error(shutdownErr))
+			}
+		}()
+	}
+
 	// Print all configuration settings
 	common.Info(fmt.Sprintf("Starting %s server: %s, mode: %s", *arguments.mode, serverName, config.Server.Mode))
 	server.PrintAll()
@@ -428,7 +457,7 @@ func runAdmin(args *serverArgs) error {
 	addr := fmt.Sprintf(":%d", config.Admin.Port)
 	srv := &http.Server{
 		Addr:    addr,
-		Handler: ginEngine,
+		Handler: otelhttp.NewHandler(ginEngine, "ragflow-admin"),
 	}
 
 	// Print RAGFlow Admin logo
@@ -853,7 +882,7 @@ func startServer(config *server.Config) {
 	addr := fmt.Sprintf(":%d", config.Server.Port)
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           ginEngine,
+		Handler:           otelhttp.NewHandler(ginEngine, "ragflow-api"),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       60 * time.Second,
 		WriteTimeout:      120 * time.Second,

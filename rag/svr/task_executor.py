@@ -55,6 +55,7 @@ from rag.utils.raptor_utils import (
     should_skip_raptor,
 )
 from common.log_utils import init_root_logger
+from common.observability import configure_otel, consume_queue_context
 from common.config_utils import show_configs
 from rag.graphrag.utils import get_llm_cache, set_llm_cache, get_tags_from_cache, set_tags_to_cache
 from rag.prompts.generator import keyword_extraction, question_proposal, content_tagging, run_toc_from_text, gen_metadata
@@ -252,6 +253,8 @@ async def collect():
 
     task_type = msg.get("task_type", "")
     task["task_type"] = task_type
+    if isinstance(msg.get("_telemetry"), dict):
+        task["_telemetry"] = msg["_telemetry"]
     # Per-doc fan-out task types (today: doc-scoped raptor) carry their
     # participating doc id list on the Redis message but not on the DB
     # row. The KB-scoped branch above already does this for FAKE doc
@@ -1713,6 +1716,8 @@ async def handle_task():
     task_type = task["task_type"]
     pipeline_task_type = TASK_TYPE_TO_PIPELINE_TASK_TYPE.get(task_type, PipelineTaskType.PARSE) or PipelineTaskType.PARSE
     task_id = task["id"]
+    telemetry_context = consume_queue_context(task, f"task {task_type or 'ingestion'}")
+    telemetry_context.__enter__()
     try:
         CURRENT_TASKS[task["id"]] = copy.deepcopy(task)
         run_mode = os.environ.get("TE_RUN_MODE", "0")
@@ -1746,6 +1751,15 @@ async def handle_task():
         FAILED_TASKS += 1
         CURRENT_TASKS.pop(task_id, None)
         try:
+            from opentelemetry import trace
+            from opentelemetry.trace import Status, StatusCode
+
+            span = trace.get_current_span()
+            span.record_exception(e)
+            span.set_status(Status(StatusCode.ERROR))
+        except Exception:
+            logging.exception("Failed to mark ingestion trace as failed")
+        try:
             err_msg = str(e)
             while isinstance(e, exceptiongroup.ExceptionGroup):
                 e = e.exceptions[0]
@@ -1756,17 +1770,20 @@ async def handle_task():
             pass
         logging.exception(f"handle_task got exception for task {json.dumps(task)}")
     finally:
-        if not task.get("dataflow_id", ""):
-            referred_document_id = None
-            if task_type in ["graphrag", "raptor", "mindmap", "artifact", "skill"]:
-                # KB-level fan-out tasks store the participating doc list in
-                # task["doc_ids"]; the first entry is used as a referent so
-                # the pipeline operation log has something to anchor to.
-                referred_document_id = (task.get("doc_ids") or [None])[0]
-            ret = PipelineOperationLogService.record_pipeline_operation(
-                document_id=task["doc_id"], pipeline_id="", task_type=pipeline_task_type, task_id=task_id, referred_document_id=referred_document_id
-            )
-            get_recording_context().save_func_return_value("PipelineOperationLogService.record_pipeline_operation", ret)
+        try:
+            if not task.get("dataflow_id", ""):
+                referred_document_id = None
+                if task_type in ["graphrag", "raptor", "mindmap", "artifact", "skill"]:
+                    # KB-level fan-out tasks store the participating doc list in
+                    # task["doc_ids"]; the first entry is used as a referent so
+                    # the pipeline operation log has something to anchor to.
+                    referred_document_id = (task.get("doc_ids") or [None])[0]
+                ret = PipelineOperationLogService.record_pipeline_operation(
+                    document_id=task["doc_id"], pipeline_id="", task_type=pipeline_task_type, task_id=task_id, referred_document_id=referred_document_id
+                )
+                get_recording_context().save_func_return_value("PipelineOperationLogService.record_pipeline_operation", ret)
+        finally:
+            telemetry_context.__exit__(None, None, None)
 
     redis_msg.ack()
 
@@ -1940,6 +1957,7 @@ if __name__ == "__main__":
 
     faulthandler.enable()
     init_root_logger(CONSUMER_NAME)
+    configure_otel("ragflow-ingestion", get_ragflow_version())
     try:
         asyncio.run(main())
     except Exception as e:

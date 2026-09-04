@@ -15,7 +15,6 @@
 #
 
 import os
-import copy
 import logging
 import importlib
 from filelock import FileLock
@@ -75,36 +74,29 @@ def read_config(conf_name=SERVICE_CONF):
 CONFIGS = read_config()
 
 
+def _is_sensitive_config_key(key: object) -> bool:
+    normalized = str(key).strip().lower().replace("-", "_")
+    return normalized in {"password", "access_key", "secret_key", "secret", "sas_token", "client_secret", "http_secret_key", "api_key"} or normalized.endswith(
+        ("_password", "_secret", "_token", "_api_key")
+    )
+
+
+def redact_config_secrets(value, key: object = ""):
+    if _is_sensitive_config_key(key):
+        return "*" * 8
+    if isinstance(value, dict):
+        return {item_key: redact_config_secrets(item_value, item_key) for item_key, item_value in value.items()}
+    if isinstance(value, list):
+        return [redact_config_secrets(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(redact_config_secrets(item) for item in value)
+    return value
+
+
 def show_configs():
     msg = f"Current configs, from {conf_realpath(SERVICE_CONF)}:"
     for k, v in CONFIGS.items():
-        if isinstance(v, dict):
-            if "password" in v:
-                v = copy.deepcopy(v)
-                v["password"] = "*" * 8
-            if "access_key" in v:
-                v = copy.deepcopy(v)
-                v["access_key"] = "*" * 8
-            if "secret_key" in v:
-                v = copy.deepcopy(v)
-                v["secret_key"] = "*" * 8
-            if "secret" in v:
-                v = copy.deepcopy(v)
-                v["secret"] = "*" * 8
-            if "sas_token" in v:
-                v = copy.deepcopy(v)
-                v["sas_token"] = "*" * 8
-            if "oauth" in k:
-                v = copy.deepcopy(v)
-                for key, val in v.items():
-                    if "client_secret" in val:
-                        val["client_secret"] = "*" * 8
-            if "authentication" in k:
-                v = copy.deepcopy(v)
-                for key, val in v.items():
-                    if isinstance(val, dict) and "http_secret_key" in val:
-                        val["http_secret_key"] = "*" * 8
-        msg += f"\n\t{k}: {v}"
+        msg += f"\n\t{k}: {redact_config_secrets(v, k)}"
     logging.info(msg)
 
 

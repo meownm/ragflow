@@ -43,8 +43,31 @@ from api.common.exceptions import AdminException
 from common.versions import get_ragflow_version
 from api.utils.api_utils import generate_confirmation_token
 from common.log_utils import get_log_levels, set_log_level
+from audit_feed import AuditFeed
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/api/v1/admin")
+
+
+@admin_bp.route("/audit-events", methods=["GET"])
+@login_required
+@check_admin_auth
+def list_audit_events():
+    try:
+        data = AuditFeed.list_events(
+            page=request.args.get("page", default=1, type=int),
+            page_size=request.args.get("page_size", default=25, type=int),
+            source=request.args.get("source", default="", type=str),
+            outcome=request.args.get("outcome", default="", type=str),
+            query=request.args.get("query", default="", type=str),
+            actor=request.args.get("actor", default="", type=str),
+            correlation_id=request.args.get("correlation_id", default="", type=str),
+        )
+        return success_response(data, "Get audit events", 0)
+    except ValueError as exc:
+        return error_response(str(exc), 400)
+    except Exception:
+        logging.exception("Failed to load audit events")
+        return error_response("Failed to load audit events", 500)
 
 
 @admin_bp.route("/ping", methods=["GET"])

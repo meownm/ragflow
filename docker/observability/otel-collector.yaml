@@ -1,0 +1,81 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+  file_log:
+    include: [/var/log/ragflow/*.log]
+    start_at: end
+    operators:
+      - type: add
+        field: resource["service.name"]
+        value: ragflow
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 512
+  tail_sampling:
+    decision_wait: 10s
+    num_traces: 50000
+    expected_new_traces_per_sec: 100
+    policies:
+      - name: errors
+        type: status_code
+        status_code: {status_codes: [ERROR]}
+      - name: audit-mutations
+        type: string_attribute
+        string_attribute:
+          key: http.request.method
+          values: [POST, PUT, PATCH, DELETE]
+      - name: slow
+        type: latency
+        latency: {threshold_ms: 5000}
+      - name: baseline
+        type: probabilistic
+        probabilistic: {sampling_percentage: 10}
+  batch:
+    timeout: 5s
+    send_batch_size: 1024
+
+connectors:
+  span_metrics:
+    histogram:
+      explicit:
+        buckets: [5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2s, 5s, 10s, 30s]
+    dimensions:
+      - name: http.request.method
+      - name: http.response.status_code
+
+exporters:
+  otlp_http/tempo:
+    endpoint: http://tempo:4318
+  otlp_http/loki:
+    endpoint: http://loki:3100/otlp
+  prometheus:
+    endpoint: 0.0.0.0:8889
+
+service:
+  telemetry:
+    metrics:
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, tail_sampling, batch]
+      exporters: [otlp_http/tempo, span_metrics]
+    metrics:
+      receivers: [otlp, span_metrics]
+      processors: [memory_limiter, batch]
+      exporters: [prometheus]
+    logs:
+      receivers: [otlp, file_log]
+      processors: [memory_limiter, batch]
+      exporters: [otlp_http/loki]

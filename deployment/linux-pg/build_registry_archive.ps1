@@ -69,9 +69,24 @@ function Write-LfText {
     [System.IO.File]::WriteAllText($Path, (($Lines -join "`n") + "`n"), [System.Text.UTF8Encoding]::new($false))
 }
 
+function Copy-LfText {
+    param(
+        [Parameter(Mandatory = $true)][string]$Source,
+        [Parameter(Mandatory = $true)][string]$Destination
+    )
+
+    $content = [System.IO.File]::ReadAllText($Source).
+        Replace("`r`n", "`n").
+        Replace("`r", "`n")
+    [System.IO.File]::WriteAllText($Destination, $content, [System.Text.UTF8Encoding]::new($false))
+}
+
 $requiredImageKeys = @(
     'POSTGRES_IMAGE', 'RAGFLOW_IMAGE', 'VALKEY_IMAGE', 'ELASTICSEARCH_IMAGE',
-    'PLANTUML_IMAGE', 'MINIO_IMAGE'
+    'PLANTUML_IMAGE', 'MINIO_IMAGE', 'T_ONE_ASR_IMAGE', 'OTEL_COLLECTOR_IMAGE',
+    'TEMPO_IMAGE', 'LOKI_IMAGE', 'PROMETHEUS_IMAGE', 'GRAFANA_IMAGE',
+    'SANDBOX_EXECUTOR_MANAGER_IMAGE', 'SANDBOX_BASE_NODEJS_IMAGE',
+    'SANDBOX_BASE_PYTHON_IMAGE'
 )
 
 $tempBase = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
@@ -108,6 +123,7 @@ try {
     $frontendArchiveName = 'web-dist.tar.gz'
     Invoke-Tar -ArgumentList @('-czf', (Join-Path $payloadRoot $frontendArchiveName), '-C', (Join-Path $sourceRoot 'web'), 'dist') `
         -ErrorMessage 'Frontend archive creation failed.'
+    & (Join-Path $PSScriptRoot 'prepare_gvisor_bundle.ps1') -Destination (Join-Path $payloadRoot 'gvisor')
 
     if ($ImagesEnvPath) {
         $resolvedImagesEnv = [System.IO.Path]::GetFullPath($ImagesEnvPath)
@@ -143,10 +159,20 @@ try {
             'ELASTICSEARCH_IMAGE=__REGISTRY_PREFIX__/library/elasticsearch:8.11.3',
             'PLANTUML_IMAGE=__REGISTRY_PREFIX__/plantuml/plantuml-server:jetty-v1.2026.6',
             'MINIO_IMAGE=__REGISTRY_PREFIX__/pgsty/minio:RELEASE.2026-03-25T00-00-00Z'
+            "T_ONE_ASR_IMAGE=__REGISTRY_PREFIX__/ragflow/t-one-asr:$($ReleaseVersion.TrimStart('v'))"
+            'OTEL_COLLECTOR_IMAGE=__REGISTRY_PREFIX__/otel/opentelemetry-collector-contrib:0.160.0'
+            'TEMPO_IMAGE=__REGISTRY_PREFIX__/grafana/tempo:2.10.5'
+            'LOKI_IMAGE=__REGISTRY_PREFIX__/grafana/loki:3.7.0'
+            'PROMETHEUS_IMAGE=__REGISTRY_PREFIX__/prom/prometheus:v3.11.0'
+            'GRAFANA_IMAGE=__REGISTRY_PREFIX__/grafana/grafana:13.1.0'
+            'SANDBOX_EXECUTOR_MANAGER_IMAGE=__REGISTRY_PREFIX__/infiniflow/sandbox-executor-manager:latest'
+            'SANDBOX_BASE_NODEJS_IMAGE=__REGISTRY_PREFIX__/infiniflow/sandbox-base-nodejs:latest'
+            'SANDBOX_BASE_PYTHON_IMAGE=__REGISTRY_PREFIX__/infiniflow/sandbox-base-python:latest'
         )
     }
 
-    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'install_registry.sh') -Destination (Join-Path $packageRoot 'install_registry.sh') -Force
+    Copy-LfText -Source (Join-Path $PSScriptRoot 'install_registry.sh') -Destination (Join-Path $packageRoot 'install_registry.sh')
+    Copy-LfText -Source (Join-Path $PSScriptRoot 'upgrade_registry.sh') -Destination (Join-Path $packageRoot 'upgrade_registry.sh')
     Write-LfText -Path (Join-Path $packageRoot 'REGISTRY-PACKAGE.env') -Lines @(
         "RELEASE_VERSION=$ReleaseVersion",
         'PACKAGE_MODE=registry',
@@ -156,7 +182,8 @@ try {
         "SOURCE_ARCHIVE=$sourceArchiveName",
         "FRONTEND_ARCHIVE=$frontendArchiveName",
         "IMAGES_FILE=$imagesFileName",
-        'DOCKER_IMAGE_COUNT=6',
+        'GVISOR_BUNDLE=gvisor',
+        'DOCKER_IMAGE_COUNT=15',
         "PACKAGED_AT_UTC=$([DateTime]::UtcNow.ToString('o'))"
     )
 
@@ -169,7 +196,17 @@ try {
     )
     Write-LfText -Path (Join-Path $packageRoot 'SHA256SUMS') -Lines $checksumLines
 
-    Invoke-Tar -ArgumentList @('-czf', $archivePath, '-C', $packageRoot, '.') `
+    $archiveEntries = @(
+        'REGISTRY-PACKAGE.env'
+        'SHA256SUMS'
+        'install_registry.sh'
+        'upgrade_registry.sh'
+    ) + @(
+        Get-ChildItem -LiteralPath $payloadRoot -Recurse -File | Sort-Object FullName | ForEach-Object {
+            'payload/' + [System.IO.Path]::GetRelativePath($payloadRoot, $_.FullName).Replace('\', '/')
+        }
+    )
+    Invoke-Tar -ArgumentList (@('-czf', $archivePath, '-C', $packageRoot) + $archiveEntries) `
         -ErrorMessage 'Registry release archive creation failed.'
     Invoke-Tar -ArgumentList @('-tzf', $archivePath) -ErrorMessage 'Registry release archive validation failed.' -DiscardOutput
 

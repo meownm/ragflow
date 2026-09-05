@@ -31,6 +31,7 @@ PACKAGE_MODE=$(manifest_value PACKAGE_MODE)
 SOURCE_ARCHIVE=$(manifest_value SOURCE_ARCHIVE)
 FRONTEND_ARCHIVE=$(manifest_value FRONTEND_ARCHIVE)
 IMAGES_FILE=$(manifest_value IMAGES_FILE)
+GVISOR_BUNDLE=$(manifest_value GVISOR_BUNDLE)
 
 if [[ -z ${RELEASE_VERSION} || ${PACKAGE_MODE} != "registry" ]]; then
   echo "REGISTRY-PACKAGE.env does not describe a registry release." >&2
@@ -42,6 +43,7 @@ for payload_name in "${SOURCE_ARCHIVE}" "${FRONTEND_ARCHIVE}" "${IMAGES_FILE}"; 
     exit 1
   fi
 done
+[[ ${GVISOR_BUNDLE} == "gvisor" && -d ${PAYLOAD_DIR}/${GVISOR_BUNDLE} ]] || { echo "Pinned gVisor bundle is missing." >&2; exit 1; }
 
 (cd "${PACKAGE_ROOT}" && sha256sum -c SHA256SUMS)
 
@@ -91,7 +93,7 @@ declare -A seen_image_keys=()
 while IFS='=' read -r image_key image_value; do
   [[ -z ${image_key} || ${image_key} == \#* ]] && continue
   case ${image_key} in
-    POSTGRES_IMAGE|RAGFLOW_IMAGE|VALKEY_IMAGE|ELASTICSEARCH_IMAGE|PLANTUML_IMAGE|MINIO_IMAGE)
+    POSTGRES_IMAGE|RAGFLOW_IMAGE|VALKEY_IMAGE|ELASTICSEARCH_IMAGE|PLANTUML_IMAGE|MINIO_IMAGE|T_ONE_ASR_IMAGE|OTEL_COLLECTOR_IMAGE|TEMPO_IMAGE|LOKI_IMAGE|PROMETHEUS_IMAGE|GRAFANA_IMAGE|SANDBOX_EXECUTOR_MANAGER_IMAGE|SANDBOX_BASE_NODEJS_IMAGE|SANDBOX_BASE_PYTHON_IMAGE)
       if [[ -z ${image_value} || ${image_value} =~ [[:space:]] ]]; then
         echo "Invalid image reference for ${image_key}." >&2
         exit 1
@@ -104,8 +106,8 @@ while IFS='=' read -r image_key image_value; do
       ;;
   esac
 done < "${IMAGE_ENV_FILE}"
-if [[ ${#seen_image_keys[@]} -ne 6 ]]; then
-  echo "The image environment must define exactly six supported images." >&2
+if [[ ${#seen_image_keys[@]} -ne 15 ]]; then
+  echo "The image environment must define exactly 15 supported images." >&2
   exit 1
 fi
 
@@ -143,7 +145,6 @@ sudo install -d -m 0755 "${SOURCE_DIR}/web"
 sudo tar -xzf "${PAYLOAD_DIR}/${FRONTEND_ARCHIVE}" -C "${SOURCE_DIR}/web"
 sudo find "${SOURCE_DIR}" -type f -name '*.sh' -exec chmod 0755 {} +
 sudo test -s "${SOURCE_DIR}/web/dist/index.html"
-
 sudo env \
   REGISTRY_INSTALL=1 \
   PREBUILT_FRONTEND=1 \
@@ -158,4 +159,5 @@ sudo env \
   ADMIN_NICKNAME="${ADMIN_NICKNAME}" \
   ADMIN_PASSWORD="${ADMIN_PASSWORD}" \
   DOCKER_DNF_REPO="${DOCKER_DNF_REPO}" \
+  GVISOR_BUNDLE_DIR="${PAYLOAD_DIR}/${GVISOR_BUNDLE}" \
   bash "${SOURCE_DIR}/deployment/linux-pg/install.sh"

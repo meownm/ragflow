@@ -18,6 +18,7 @@ REGISTRY_HOST=${REGISTRY_HOST:-}
 REGISTRY_USERNAME=${REGISTRY_USERNAME:-}
 REGISTRY_PASSWORD_FILE=${REGISTRY_PASSWORD_FILE:-}
 DOCKER_DNF_REPO=${DOCKER_DNF_REPO:-cifra-docker}
+GVISOR_BUNDLE_DIR=${GVISOR_BUNDLE_DIR:-}
 MIN_DOCKER_VERSION=24.0.0
 MIN_COMPOSE_VERSION=2.26.1
 
@@ -111,6 +112,10 @@ else
   esac
 fi
 sudo systemctl enable --now docker
+if ! sudo docker info --format '{{json .Runtimes}}' | grep -q '"runsc"'; then
+  [[ -n ${GVISOR_BUNDLE_DIR} ]] || { echo 'Docker runsc runtime is not registered and no gVisor bundle was provided.' >&2; exit 1; }
+  sudo env GVISOR_BUNDLE_DIR="${GVISOR_BUNDLE_DIR}" bash "${SCRIPT_DIR}/install_gvisor.sh"
+fi
 
 if [[ ${REGISTRY_INSTALL} == "1" && -n ${REGISTRY_USERNAME} ]]; then
   if [[ -z ${REGISTRY_HOST} || -z ${REGISTRY_PASSWORD_FILE} ]]; then
@@ -194,6 +199,7 @@ set_env OPENSEARCH_PASSWORD "$(random_secret)"
 set_env MINIO_PASSWORD "$(random_secret)"
 set_env REDIS_PASSWORD "$(random_secret)"
 set_env RAGFLOW_CREDENTIALS_KEY "$(random_secret)"
+set_env GRAFANA_ADMIN_PASSWORD "$(random_secret)"
 set_env SVR_WEB_HTTP_PORT "${RAGFLOW_PORT}"
 
 if [[ -n ${IMAGE_ENV_FILE} ]]; then
@@ -204,7 +210,7 @@ if [[ -n ${IMAGE_ENV_FILE} ]]; then
   while IFS='=' read -r image_key image_value; do
     [[ -z ${image_key} || ${image_key} == \#* ]] && continue
     case ${image_key} in
-      POSTGRES_IMAGE|RAGFLOW_IMAGE|VALKEY_IMAGE|ELASTICSEARCH_IMAGE|PLANTUML_IMAGE|MINIO_IMAGE)
+      POSTGRES_IMAGE|RAGFLOW_IMAGE|VALKEY_IMAGE|ELASTICSEARCH_IMAGE|PLANTUML_IMAGE|MINIO_IMAGE|T_ONE_ASR_IMAGE|OTEL_COLLECTOR_IMAGE|TEMPO_IMAGE|LOKI_IMAGE|PROMETHEUS_IMAGE|GRAFANA_IMAGE|SANDBOX_EXECUTOR_MANAGER_IMAGE|SANDBOX_BASE_NODEJS_IMAGE|SANDBOX_BASE_PYTHON_IMAGE)
         if [[ -z ${image_value} || ${image_value} =~ [[:space:]] ]]; then
           echo "Invalid image reference for ${image_key}." >&2
           exit 1
@@ -238,6 +244,7 @@ COMPOSE=(sudo docker compose --env-file .env -p "${PROJECT_NAME}" \
   -f docker-compose.yml \
   -f docker-compose.local.yml \
   -f docker-compose.linux.local.yml \
+  -f docker-compose.observability.yml \
   -f ../deployment/linux-pg/docker-compose.release.yml)
 
 "${COMPOSE[@]}" config --quiet
@@ -247,10 +254,10 @@ if grep -qx mysql <<<"${services}"; then
   exit 1
 fi
 grep -qx postgres <<<"${services}"
-if grep -qx t-one-asr <<<"${services}"; then
-  echo "Refusing to deploy: T-One ASR is active in the merged Compose config." >&2
-  exit 1
-fi
+for required_service in t-one-asr sandbox-executor-manager otel-collector tempo loki prometheus grafana; do
+  grep -qx "${required_service}" <<<"${services}" || { echo "Required service is absent: ${required_service}" >&2; exit 1; }
+done
+sudo docker info --format '{{json .Runtimes}}' | grep -q '"runsc"' || { echo 'Docker runsc runtime is not registered.' >&2; exit 1; }
 
 if [[ ${OFFLINE_INSTALL} == "1" ]]; then
   "${COMPOSE[@]}" up -d --no-build --pull never
@@ -272,7 +279,16 @@ until curl -fsS --max-time 10 "http://127.0.0.1:${RAGFLOW_PORT}/api/v1/system/he
   sleep 5
 done
 curl -fsS --max-time 10 "http://127.0.0.1:${RAGFLOW_PORT}/" >/dev/null
+curl -fsS --max-time 10 http://127.0.0.1:3001/api/health | jq -e '.database == "ok"' >/dev/null
+curl -fsS --max-time 10 http://127.0.0.1:9090/-/ready >/dev/null
+ASR_CONTAINER=$("${COMPOSE[@]}" ps -q t-one-asr)
+SANDBOX_CONTAINER=$("${COMPOSE[@]}" ps -q sandbox-executor-manager)
+test -n "${ASR_CONTAINER}" -a -n "${SANDBOX_CONTAINER}"
+sudo docker exec "${ASR_CONTAINER}" python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9011/health/ready', timeout=10)"
+sudo docker exec "${SANDBOX_CONTAINER}" curl -fsS http://127.0.0.1:9385/healthz >/dev/null
+sudo docker logs "${SANDBOX_CONTAINER}" 2>&1 | grep -Eq 'Container pool initialization complete: [1-9][0-9]*/[1-9][0-9]* available'
 sudo grep -Eq '^RAGFLOW_CREDENTIALS_KEY=[0-9a-f]{64}$' "${ENV_FILE}"
+sudo grep -Eq '^GRAFANA_ADMIN_PASSWORD=[0-9a-f]{64}$' "${ENV_FILE}"
 
 RAGFLOW_CONTAINER=$("${COMPOSE[@]}" ps -q ragflow-cpu)
 test -n "${RAGFLOW_CONTAINER}"
@@ -282,6 +298,7 @@ sudo docker exec -i \
   -e BOOTSTRAP_ADMIN_PASSWORD="${ADMIN_PASSWORD}" \
   -e BOOTSTRAP_ADMIN_NICKNAME="${ADMIN_NICKNAME}" \
   "${RAGFLOW_CONTAINER}" python - < "${INSTALL_DIR}/deployment/linux-pg/seed_admin.py"
+sudo docker exec -i "${RAGFLOW_CONTAINER}" python - < "${INSTALL_DIR}/deployment/linux-pg/seed_asr.py"
 
 sudo docker exec "${RAGFLOW_CONTAINER}" printenv DB_TYPE | grep -qx postgres
 sudo docker exec -i \

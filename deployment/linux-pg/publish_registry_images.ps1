@@ -21,6 +21,9 @@ if (-not $projectVersionMatch.Success -or $projectVersionMatch.Groups[1].Value -
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     throw 'Docker CLI is required.'
 }
+$asrImage = "ragflow/t-one-asr:$($ReleaseVersion.TrimStart('v'))"
+& docker build --platform linux/amd64 --tag $asrImage (Join-Path $sourceRoot 'services\asr-online-service')
+if ($LASTEXITCODE -ne 0) { throw 'T-One ASR image build failed.' }
 
 $images = @(
     [pscustomobject]@{ Key = 'POSTGRES_IMAGE'; Source = 'postgres:16-alpine'; Target = "$RegistryPrefix/library/postgres:16-alpine" },
@@ -28,7 +31,16 @@ $images = @(
     [pscustomobject]@{ Key = 'VALKEY_IMAGE'; Source = 'valkey/valkey:8'; Target = "$RegistryPrefix/valkey/valkey:8" },
     [pscustomobject]@{ Key = 'ELASTICSEARCH_IMAGE'; Source = 'elasticsearch:8.11.3'; Target = "$RegistryPrefix/library/elasticsearch:8.11.3" },
     [pscustomobject]@{ Key = 'PLANTUML_IMAGE'; Source = 'plantuml/plantuml-server:jetty-v1.2026.6'; Target = "$RegistryPrefix/plantuml/plantuml-server:jetty-v1.2026.6" },
-    [pscustomobject]@{ Key = 'MINIO_IMAGE'; Source = 'pgsty/minio:RELEASE.2026-03-25T00-00-00Z'; Target = "$RegistryPrefix/pgsty/minio:RELEASE.2026-03-25T00-00-00Z" }
+    [pscustomobject]@{ Key = 'MINIO_IMAGE'; Source = 'pgsty/minio:RELEASE.2026-03-25T00-00-00Z'; Target = "$RegistryPrefix/pgsty/minio:RELEASE.2026-03-25T00-00-00Z" },
+    [pscustomobject]@{ Key = 'T_ONE_ASR_IMAGE'; Source = $asrImage; Target = "$RegistryPrefix/ragflow/t-one-asr:$($ReleaseVersion.TrimStart('v'))" },
+    [pscustomobject]@{ Key = 'OTEL_COLLECTOR_IMAGE'; Source = 'otel/opentelemetry-collector-contrib:0.160.0'; Target = "$RegistryPrefix/otel/opentelemetry-collector-contrib:0.160.0" },
+    [pscustomobject]@{ Key = 'TEMPO_IMAGE'; Source = 'grafana/tempo:2.10.5'; Target = "$RegistryPrefix/grafana/tempo:2.10.5" },
+    [pscustomobject]@{ Key = 'LOKI_IMAGE'; Source = 'grafana/loki:3.7.0'; Target = "$RegistryPrefix/grafana/loki:3.7.0" },
+    [pscustomobject]@{ Key = 'PROMETHEUS_IMAGE'; Source = 'prom/prometheus:v3.11.0'; Target = "$RegistryPrefix/prom/prometheus:v3.11.0" },
+    [pscustomobject]@{ Key = 'GRAFANA_IMAGE'; Source = 'grafana/grafana:13.1.0'; Target = "$RegistryPrefix/grafana/grafana:13.1.0" },
+    [pscustomobject]@{ Key = 'SANDBOX_EXECUTOR_MANAGER_IMAGE'; Source = 'infiniflow/sandbox-executor-manager:latest'; Target = "$RegistryPrefix/infiniflow/sandbox-executor-manager:latest" },
+    [pscustomobject]@{ Key = 'SANDBOX_BASE_NODEJS_IMAGE'; Source = 'infiniflow/sandbox-base-nodejs:latest'; Target = "$RegistryPrefix/infiniflow/sandbox-base-nodejs:latest" },
+    [pscustomobject]@{ Key = 'SANDBOX_BASE_PYTHON_IMAGE'; Source = 'infiniflow/sandbox-base-python:latest'; Target = "$RegistryPrefix/infiniflow/sandbox-base-python:latest" }
 )
 
 foreach ($image in $images) {
@@ -59,7 +71,7 @@ $lines = @($images | ForEach-Object { "$($_.Key)=$($_.Target)" })
 
 Write-Host "Images environment: $outputFullPath"
 if ($Push) {
-    Write-Host 'All six images were pushed.'
+    Write-Host 'All 15 images were pushed.'
 }
 else {
     Write-Host 'Images were prepared locally only. Re-run with -Push after docker login.'

@@ -3,7 +3,7 @@ sidebar_position: 5
 slug: /linux-sources-runbook-ru
 ---
 
-# Установка RAGFlow с PostgreSQL и T-One из архива
+# Установка и обновление RAGFlow с PostgreSQL из архива
 
 Этот runbook описывает установку текущего кастомного RAGFlow с нуля на Linux.
 Источник поставки — проверенный `tar.gz` с отдельной SHA-256 суммой. Архив
@@ -21,39 +21,28 @@ DNF-репозиторием `cifra-docker`. Интернет-инсталлят
 
 | Сервис | Назначение | Публикация на host |
 | --- | --- | --- |
-| `ragflow-cpu` | UI, API и текущий кастомный backend | `127.0.0.1:9380` |
+| `ragflow-cpu` | UI, API и текущий кастомный backend | `0.0.0.0:9380` |
 | `postgres` | метаданные RAGFlow | не публикуется |
 | `es01` | документы, полнотекстовый и векторный индекс | не публикуется |
 | `redis` | Valkey, очередь и кэш | не публикуется |
 | `minio` | внутреннее объектное хранилище | не публикуется |
 | `plantuml-server` | рендеринг диаграмм | не публикуется |
-| `t-one-asr` | OpenAI-compatible распознавание речи | не публикуется |
 
 MySQL отсутствует в итоговом Compose. PostgreSQL хранит метаданные приложения,
 а Elasticsearch — документы и векторы, поэтому `pgvector` этому профилю не
 нужен.
 
 Первый пользователь создаётся через штатный `init_superuser()` с
-`is_superuser=true` и становится владельцем своего tenant. Для этого tenant
-автоматически регистрируются:
-
-```text
-Provider: New API
-Instance: t-one-local
-Model: t-one
-Type: speech2text
-Base URL: http://t-one-asr:9011/v1
-Tenant default: t-one@t-one-local@New API
-```
+`is_superuser=true` и становится владельцем своего tenant.
 
 Регистрация новых пользователей по паролю выключена:
 `REGISTER_ENABLED=0`.
 
 ## 2. Как гарантируется установка актуального кода
 
-Архив содержит полное проверенное дерево исходников, включая встроенный
-`services/asr-online-service`. Frontend собирается на целевом сервере из этого
-же распакованного дерева в контейнере `node:20-bookworm-slim`.
+Архив содержит полное проверенное дерево исходников. Frontend собирается на
+целевом сервере из этого же распакованного дерева в контейнере
+`node:20-bookworm-slim` либо включается в offline/registry-пакет готовым.
 
 Runtime RAGFlow состоит из закреплённого upstream-образа и локального overlay:
 
@@ -65,7 +54,7 @@ Runtime RAGFlow состоит из закреплённого upstream-обра
 Второй файл монтирует текущие backend-модули и собранный `web/dist`, третий
 отключает Docker Desktop bootstrap на Linux, четвёртый убирает MySQL и
 ограничивает публикацию RAGFlow loopback-адресом. Запуск только первого
-Compose-файла означает потерю PostgreSQL-профиля, T-One и кастомного кода.
+Compose-файла означает потерю PostgreSQL-профиля и кастомного кода.
 
 Установщик принимает дерево с `DEPLOYMENT-SOURCE.env`, проверяет формат пакета,
 копирует manifest в `/etc/ragflow-pg/deployed-source.env` и отказывается
@@ -73,23 +62,23 @@ Compose-файла означает потерю PostgreSQL-профиля, T-On
 
 ## 3. Что ещё нужно решить до production
 
-В исходном списке не хватает как минимум LLM и embedding-модели. T-One только
-распознаёт речь: без chat-модели RAGFlow не отвечает, а без embedding-модели не
-может полноценно индексировать и искать знания.
+В базовую поставку не входят LLM, embedding-модели и ASR. Без chat-модели
+RAGFlow не отвечает, а без embedding-модели не может полноценно индексировать и
+искать знания.
 
 До production-приёмки зафиксировать:
 
 1. Chat/Vision LLM, embedding и, при необходимости, reranker: локальный Ollama,
    Ollama Proxy или внешний API, точные имена моделей и ключи.
-2. Нужен ли CodeExec sandbox. Текущий release-профиль его намеренно выключает;
-   для Code-компонентов потребуются gVisor/runsc и отдельная приёмка изоляции.
+2. CodeExec sandbox входит в release-профиль; поставка содержит зафиксированный
+   gVisor/runsc, а приёмка требует заполненный Python/Node.js pool и реальный запуск кода.
 3. DNS, reverse proxy, TLS и список административных IP.
 4. Backup и проверяемое восстановление PostgreSQL, MinIO, конфигурации и
    секретов; политика Elasticsearch snapshots или полного переиндексирования.
 5. Мониторинг диска, RAM/OOM, restart count, health, очередей и срока TLS.
 6. Политика пользователей: локальные учётные записи или SSO/OIDC, SMTP,
    второй аварийный суперадмин и порядок отзыва доступа.
-7. Производственная ёмкость, GPU/CPU-профиль для ASR и моделей, место под
+7. Производственная ёмкость, GPU/CPU-профиль для моделей, место под
    индексы и объекты, нагрузочный тест.
 8. Регламент обновления и отката. `install.sh` предназначен только для первой
    установки и не является upgrade-скриптом.
@@ -122,7 +111,7 @@ production.
 - 16 GB RAM для smoke; текущий Rocky-контур с 6 CPU допускается к установке;
 - ориентир 16 CPU, 32 GB RAM и 300+ GB SSD для рабочего контура;
 - исходящий HTTPS к DNF/APT и registry образов;
-- свободный loopback-порт `9380` или другой выбранный порт.
+- свободный host-порт `9380` или другой выбранный порт.
 
 Итоговые требования определяются объёмом данных и моделями. До загрузки
 production-данных подтвердить их нагрузочным тестом и ростом индекса.
@@ -137,7 +126,7 @@ lscpu
 free -h
 df -hT
 timedatectl status
-sudo ss -ltnp | grep ':9380 ' || true
+sudo ss -ltnp | grep ':80 ' || true
 ```
 
 Ожидаются `x86_64`, поддерживаемая ОС и свободный порт.
@@ -146,23 +135,23 @@ sudo ss -ltnp | grep ':9380 ' || true
 
 ### 5.1. Рекомендуемый вариант без Docker Hub на сервере
 
-Для Rocky Linux 9.x x86_64 можно собрать один архив, включающий готовый frontend
-и все семь Docker-образов:
+Для Rocky Linux 9.x x86_64 можно собрать один архив, включающий готовый frontend,
+15 Docker-образов и зафиксированный комплект gVisor/runsc:
 
 ```powershell
-./deployment/linux-pg/build_offline_archive.ps1 -ReleaseVersion v1.6.0
+./deployment/linux-pg/build_offline_archive.ps1 -ReleaseVersion v1.12.0
 ```
 
-Передать `ragflow-linux-pg-v1.6.0-offline.tar.gz` и соседний `.sha256` через
+Передать `ragflow-linux-pg-v1.12.0-offline.tar.gz` и соседний `.sha256` через
 `pscp.exe`. На сервере:
 
 ```bash
 cd /tmp
-sha256sum -c ragflow-linux-pg-v1.6.0-offline.tar.gz.sha256
-sudo install -d -m 0755 /srv/ragflow-offline-v1.6.0
-sudo tar -xzf ragflow-linux-pg-v1.6.0-offline.tar.gz \
-  -C /srv/ragflow-offline-v1.6.0
-cd /srv/ragflow-offline-v1.6.0
+sha256sum -c ragflow-linux-pg-v1.12.0-offline.tar.gz.sha256
+package_dir=$(mktemp -d /tmp/ragflow-offline-v1.12.0.XXXXXX)
+sudo tar --no-same-owner --no-same-permissions \
+  -xzf ragflow-linux-pg-v1.12.0-offline.tar.gz -C "$package_dir"
+cd "$package_dir"
 sudo env ADMIN_EMAIL=admin@example.org \
   ADMIN_NICKNAME='RAGFlow Administrator' \
   bash install_offline.sh
@@ -170,20 +159,19 @@ sudo env ADMIN_EMAIL=admin@example.org \
 
 Сценарий проверяет внутренний `SHA256SUMS`, устанавливает Docker и утилиты через
 корпоративный `cifra-docker`, выполняет `docker load` и запускает Compose с
-`--pull never --no-build`. Docker Hub на сервере не используется. T-One и его
-веса включены; chat LLM и embedding-модели поставляются отдельно после выбора
-провайдера.
+`--pull never --no-build`. Docker Hub на сервере не используется. Chat LLM,
+embedding-модели и ASR поставляются отдельно после выбора провайдера.
 
 ### 5.2. Компактный вариант с интернетом на сервере
 
 На Windows открыть PowerShell в `S:\ragflow` и выполнить:
 
 ```powershell
-./deployment/linux-pg/build_archive.ps1 -ReleaseVersion v1.6.0
+./deployment/linux-pg/build_archive.ps1 -ReleaseVersion v1.12.0
 ```
 
-Скрипт создаёт `ragflow-linux-pg-v1.6.0.tar.gz` и
-`ragflow-linux-pg-v1.6.0.tar.gz.sha256`, выполняет контрольную распаковку и
+Скрипт создаёт `ragflow-linux-pg-v1.12.0.tar.gz` и
+`ragflow-linux-pg-v1.12.0.tar.gz.sha256`, выполняет контрольную распаковку и
 проверяет обязательные файлы. В архив не входят `.git`, локальные `.env`, кэши,
 данные контейнеров, `node_modules`, `web/dist`, локальные build/test-артефакты,
 скачанные `ragflow_deps`, `output` и старые артефакты. Frontend будет собран на
@@ -201,11 +189,11 @@ Linux из исходников поставки. Скрипт Git не вызы
 
 ```powershell
 & 'C:\Program Files\PuTTY\pscp.exe' -P 22 `
-  'S:\ragflow\deployment\linux-pg\ragflow-linux-pg-v1.6.0.tar.gz' `
+  'S:\ragflow\deployment\linux-pg\ragflow-linux-pg-v1.12.0.tar.gz' `
   'admin@ragflow-server:/tmp/'
 
 & 'C:\Program Files\PuTTY\pscp.exe' -P 22 `
-  'S:\ragflow\deployment\linux-pg\ragflow-linux-pg-v1.6.0.tar.gz.sha256' `
+  'S:\ragflow\deployment\linux-pg\ragflow-linux-pg-v1.12.0.tar.gz.sha256' `
   'admin@ragflow-server:/tmp/'
 ```
 
@@ -218,10 +206,10 @@ Linux из исходников поставки. Скрипт Git не вызы
 
 ```bash
 cd /tmp
-sha256sum -c ragflow-linux-pg-v1.6.0.tar.gz.sha256
+sha256sum -c ragflow-linux-pg-v1.12.0.tar.gz.sha256
 
 sudo install -d -m 0755 /srv/ragflow-linux-pg
-sudo tar -xzf ragflow-linux-pg-v1.6.0.tar.gz -C /srv/ragflow-linux-pg
+sudo tar -xzf ragflow-linux-pg-v1.12.0.tar.gz -C /srv/ragflow-linux-pg
 cd /srv/ragflow-linux-pg
 
 cat DEPLOYMENT-SOURCE.env
@@ -269,11 +257,10 @@ sudo env \
 6. Создаёт `docker/.env` с независимыми случайными паролями PostgreSQL,
    Elasticsearch, MinIO и Valkey, а также постоянным ключом шифрования
    персональных EVA-токенов.
-7. Валидирует объединённый Compose, требует `postgres` и `t-one-asr` и аварийно
-   завершает работу, если активен сервис `mysql`.
-8. Собирает T-One, запускает все сервисы и ждёт RAGFlow health до 10 минут.
-9. Создаёт superuser, регистрирует T-One и проверяет tenant default через
-   фактические сервисы RAGFlow.
+7. Валидирует объединённый Compose, требует `postgres` и аварийно завершает
+   работу, если активны `mysql` или не входящий в профиль `t-one-asr`.
+8. Запускает все сервисы и ждёт полного RAGFlow health до 10 минут.
+9. Создаёт superuser и проверяет его через фактические сервисы RAGFlow.
 
 Получить сгенерированные credentials:
 
@@ -358,8 +345,10 @@ sudo docker ps -a \
   --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'
 ```
 
-Ожидаются ровно `es01`, `minio`, `plantuml-server`, `postgres`, `ragflow-cpu`,
-`redis` и `t-one-asr`. Не должно быть контейнера MySQL.
+Ожидаются 13 постоянных сервисов: `es01`, `minio`, `plantuml-server`, `postgres`,
+`ragflow-cpu`, `redis`, `t-one-asr`, `sandbox-executor-manager`, `otel-collector`,
+`tempo`, `loki`, `prometheus`, `grafana`, а также шесть динамических sandbox
+контейнеров пула. MySQL быть не должно.
 
 ### 10.3. Health RAGFlow и PostgreSQL
 
@@ -390,7 +379,7 @@ curl -fsS http://127.0.0.1:9380/api/v1/system/config | jq -e '
 '
 ```
 
-### 10.5. Superuser и tenant default ASR
+### 10.5. Superuser
 
 ```bash
 sudo docker exec -i \
@@ -402,59 +391,19 @@ from common import settings
 settings.init_settings()
 
 from api.db.services import UserService
-from api.db.services.user_service import TenantService
-
 email = os.environ["CHECK_ADMIN_EMAIL"]
 users = list(UserService.query(email=email))
 assert len(users) == 1
 assert users[0].is_superuser
-exists, tenant = TenantService.get_by_id(users[0].id)
-assert exists
-assert tenant.asr_id == "t-one@t-one-local@New API"
 print("superuser=ok")
-print(f"tenant_asr={tenant.asr_id}")
 PY
 ```
 
 В `CHECK_ADMIN_EMAIL` указать тот же адрес, что использовался при установке.
 
-### 10.6. T-One из сети RAGFlow
-
-```bash
-asr_id=$(rf_compose ps -q t-one-asr)
-test -n "$asr_id"
-
-sudo docker exec "$asr_id" python -c \
-  "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:9011/health/ready', timeout=10).status)"
-
-sudo docker exec "$ragflow_id" \
-  curl -fsS http://t-one-asr:9011/v1/models | jq -e \
-  '.data | map(.id) | index("t-one") != null'
-```
-
-Health и список моделей ещё не доказывают распознавание. Взять короткий WAV с
-разборчивой русской речью:
-
-```bash
-sudo docker cp /path/to/spoken-russian.wav \
-  "$ragflow_id:/tmp/asr-smoke.wav"
-
-sudo docker exec "$ragflow_id" curl -fsS \
-  -F model=t-one \
-  -F file=@/tmp/asr-smoke.wav \
-  http://t-one-asr:9011/v1/audio/transcriptions | \
-  jq -e '.text | type == "string" and length > 0'
-
-sudo docker exec "$ragflow_id" rm -f /tmp/asr-smoke.wav
-```
-
-Финальная сквозная проверка выполняется в UI: записать речь в голосовом поле,
-получить непустой текст и убедиться по логам, что вызван `t-one`, а не fallback.
-Для используемого сценария загрузки повторить тест коротким видео с речью.
-
 ## 11. Доступ к UI
 
-По умолчанию RAGFlow слушает только loopback Linux-сервера. Для первичной
+Release-профиль публикует RAGFlow на всех интерфейсах Linux-сервера. Для первичной
 приёмки открыть SSH-туннель с рабочей станции:
 
 ```bash
@@ -463,9 +412,9 @@ ssh -L 19380:127.0.0.1:9380 admin@ragflow-server
 
 Открыть `http://127.0.0.1:19380/` и войти созданным superuser.
 
-Для production поставить отдельный reverse proxy с TLS перед
-`127.0.0.1:9380`. Не публиковать PostgreSQL, Elasticsearch, Valkey, MinIO и
-T-One в LAN/WAN. Docker published ports могут обходить UFW, поэтому проверять
+Для production ограничить порт корпоративным firewall и поставить reverse proxy с TLS перед
+`127.0.0.1:9380`. Не публиковать PostgreSQL, Elasticsearch, Valkey и MinIO в
+LAN/WAN. Docker published ports могут обходить UFW, поэтому проверять
 политику также через `DOCKER-USER`, nftables или внешний firewall.
 
 ## 12. Настроить модели
@@ -478,7 +427,7 @@ T-One в LAN/WAN. Docker published ports могут обходить UFW, поэ
 | Embedding | да | индексация и retrieval тестового документа |
 | Vision | по сценариям | распознавание контрольного изображения |
 | Reranker | рекомендуется | rerank возвращает оценки и улучшает golden set |
-| ASR T-One | уже установлен | непустой transcript через RAGFlow |
+| ASR | по сценариям | непустой transcript через RAGFlow |
 
 Имена моделей, endpoint и API keys должны храниться в утверждённом secret
 контуре. Health провайдера не заменяет реальный inference. Если модели локальные,
@@ -541,18 +490,70 @@ Compose-проект.
 Не запускать `install.sh` поверх существующего контура: он генерирует новые
 инфраструктурные секреты и предназначен только для чистой установки.
 
-Для обновления требуется отдельный `upgrade.sh`, который должен:
+Утверждённая offline-поставка обновляется так:
 
-1. Проверить SHA-256 и manifest нового утверждённого архива.
-2. Сделать и проверить backup.
-3. Сохранить существующий `/opt/ragflow-pg/docker/.env`.
-4. Обновить код и пересобрать frontend/T-One без удаления volumes.
-5. Выполнить schema migrations и health/inference regression.
-6. Записать новую версию поставки и время установки.
+```bash
+cd /srv/ragflow-linux-pg-v1.12.0-offline
 
-До появления проверенного `upgrade.sh` каждое обновление проводить как
-отдельную change-процедуру. Откат образа допустим только при совместимой схеме;
-после необратимой миграции нужен restore полного backup.
+# Change gate: только проверки, без остановки приложения и миграций.
+sudo env \
+  INSTALL_DIR=/opt/ragflow-pg \
+  PROJECT_NAME=ragflow-pg \
+  RAGFLOW_PORT=80 \
+  BACKUP_ROOT=/var/backups/ragflow-pg \
+  bash ./upgrade_offline.sh --check
+
+# После подтверждения окна обслуживания.
+sudo env \
+  INSTALL_DIR=/opt/ragflow-pg \
+  PROJECT_NAME=ragflow-pg \
+  RAGFLOW_PORT=80 \
+  BACKUP_ROOT=/var/backups/ragflow-pg \
+  BACKUP_MINIO=1 \
+  bash ./upgrade_offline.sh
+```
+
+Повторный запуск уже установленной версии является проверенным `no-op`: wrapper
+проверяет полный health и таблицу `system_audit_event`, но не загружает образы,
+не создаёт backup и не запускает миграции. Архив следует распаковывать только в
+новый каталог из `mktemp`, с `--no-same-owner --no-same-permissions`.
+
+Для registry-поставки заменить точку входа на `upgrade_registry.sh` и передать
+те же проверенные параметры registry, что и при первой установке. Скрипт
+проверяет checksum/manifests, сохраняет существующие секреты, делает и проверяет
+PostgreSQL dump и MinIO archive, атомарно меняет каталог приложения, запускает
+штатные идемпотентные schema migrations и принимает контур по полному health.
+Файлы операции находятся в `/var/backups/ragflow-pg/<timestamp>-<from>-to-<to>`;
+предыдущий код — в `/opt/ragflow-pg.previous-<timestamp>`.
+
+### Автоматический возврат кода
+
+Если новый API не прошёл health за 10 минут или post-migration checks, скрипт
+останавливает новый `ragflow-cpu`, возвращает прежний release-каталог и запускает
+старый Compose. Это не является откатом данных: миграции схемы назад намеренно
+не выполняются автоматически.
+
+### Полное восстановление данных
+
+Применять только если прежний код несовместим с уже изменённой схемой. Сначала
+остановить `ragflow-cpu`, сверить `SHA256SUMS` в backup и сохранить неуспешный
+контур для разбора. Затем в отдельном PostgreSQL-контейнере той же major-версии
+выполнить тестовый `pg_restore --list` и пробное восстановление. После одобрения:
+
+1. восстановить прежний release-каталог из пути `PREVIOUS_DIR` в `UPGRADE.env`;
+2. пересоздать БД `rag_flow` и выполнить `pg_restore --clean --if-exists` из
+   `postgres.dump`;
+3. при наличии `minio-data.tar.gz` очистить только volume `minio_data` данного
+   Compose-проекта и распаковать архив в `/data`;
+4. запустить PostgreSQL, MinIO, Redis и RAGFlow;
+5. пересоздать Elasticsearch-индексы штатной переиндексацией документов из
+   PostgreSQL/MinIO; живой data directory Elasticsearch не копируется;
+6. повторить health, вход администратора, поиск по контрольной базе и проверку
+   цепочки audit/correlation событий.
+
+Откат кода без restore данных допустим только после документированной проверки
+совместимости схемы. `BACKUP_MINIO=0` разрешён лишь для отдельного согласованного
+окна без изменений объектов и создаёт явный маркер `MINIO-BACKUP-SKIPPED.env`.
 
 ## 16. Приёмочный лист
 
@@ -561,20 +562,18 @@ Compose-проект.
 - [ ] `deployed-source.env` совпадает с manifest утверждённого архива.
 - [ ] Frontend собран из того же release-архива.
 - [ ] Постоянный `RAGFLOW_CREDENTIALS_KEY` сгенерирован и входит в защищённый backup.
-- [ ] Compose config валиден и содержит семь ожидаемых сервисов.
+- [ ] Compose config валиден и содержит шесть ожидаемых сервисов.
 - [ ] Сервис и контейнер MySQL отсутствуют.
 - [ ] RAGFlow health возвращает `db/doc_engine/redis/storage=ok`.
 - [ ] PostgreSQL содержит схему RAGFlow; `DB_TYPE=postgres`.
 - [ ] UI доступен только через loopback/tunnel либо TLS reverse proxy.
 - [ ] Первый пользователь активен и `is_superuser=true`.
 - [ ] `REGISTER_ENABLED=0` подтверждён runtime API.
-- [ ] T-One healthy, виден из RAGFlow и даёт непустой русский transcript.
-- [ ] Tenant default равен `t-one@t-one-local@New API`.
 - [ ] Выбраны и проверены chat LLM и embedding; reranker/vision — по сценарию.
 - [ ] После reboot все сервисы восстанавливаются.
 - [ ] Настроены мониторинг и алерты.
 - [ ] Backup имеет checksum и тестово восстановлен.
-- [ ] Принято решение по sandbox/gVisor.
+- [ ] gVisor/runsc зарегистрирован, sandbox pool заполнен и CodeExec прошёл реальную проверку.
 - [ ] Есть второй аварийный администратор и порядок отзыва доступа.
 
 ## 17. Типовые неисправности
@@ -611,7 +610,7 @@ sudo docker compose version
 
 ```bash
 rf_compose ps
-rf_compose logs --tail=300 ragflow-cpu postgres es01 redis minio t-one-asr
+rf_compose logs --tail=300 ragflow-cpu postgres es01 redis minio
 df -hT
 free -h
 sysctl vm.max_map_count
@@ -622,12 +621,6 @@ sysctl vm.max_map_count
 Убедиться, что используется `deployment/linux-pg/docker-compose.release.yml`,
 а `COMPOSE_PROFILES` не переопределён вручную. Installer обязан остановиться
 ещё на `config --services`.
-
-### ASR healthy, но transcript пустой
-
-Использовать файл с реальной разборчивой речью, проверить аудиодорожку и формат,
-логи `t-one-asr`, прямой OpenAI-compatible вызов из `ragflow-cpu`, tenant
-`asr_id` и затем UI. Silent fixture не подтверждает интеграцию.
 
 ### Порт 9380 занят
 

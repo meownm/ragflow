@@ -14,12 +14,14 @@
 #  limitations under the License.
 #
 
+import asyncio
 import json
 import logging
 import math
 import os
 import re
 import tempfile
+import time
 from copy import deepcopy
 from types import SimpleNamespace
 
@@ -1034,10 +1036,36 @@ async def tts():
 @manager.route("/chat/audio/transcription", methods=["POST"])  # noqa: F821
 @login_required
 async def transcription():
+    started_at = time.perf_counter()
+    actor_id = current_user.id
+
     req = await request.form
     stream_mode = req.get("stream", "false").lower() == "true"
+
+    def audit_asr(outcome, reason_code=None, model=None, suffix=None, file_size_bytes=None):
+        from api.db.services.audit_service import record_audit_event
+
+        record_audit_event(
+            action="asr.transcription",
+            outcome=outcome,
+            actor_id=actor_id,
+            actor_type="USER",
+            tenant_id=actor_id,
+            object_type="asr_model",
+            object_id=model,
+            reason_code=reason_code,
+            metadata={
+                "audio_format": suffix,
+                "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
+                "file_size_bytes": file_size_bytes,
+                "model": model,
+                "stream": stream_mode,
+            },
+        )
+
     files = await request.files
     if "file" not in files:
+        audit_asr("failure", reason_code="MISSING_FILE")
         return get_data_error_result(message="Missing 'file' in multipart form-data")
 
     uploaded = files["file"]
@@ -1057,16 +1085,19 @@ async def transcription():
     filename = uploaded.filename or ""
     suffix = os.path.splitext(filename)[-1].lower()
     if suffix not in ALLOWED_EXTS:
+        audit_asr("failure", reason_code="UNSUPPORTED_FORMAT", suffix=suffix)
         return get_data_error_result(message=f"Unsupported audio format: {suffix}. Allowed: {', '.join(sorted(ALLOWED_EXTS))}")
 
     fd, temp_audio_path = tempfile.mkstemp(suffix=suffix)
     os.close(fd)
     await uploaded.save(temp_audio_path)
+    file_size_bytes = await asyncio.to_thread(os.path.getsize, temp_audio_path)
 
     if not stream_mode:
         try:
             default_asr_model_config = get_tenant_default_model_by_type(current_user.id, LLMType.SPEECH2TEXT)
         except Exception as e:
+            audit_asr("failure", reason_code="MODEL_CONFIG_ERROR", suffix=suffix, file_size_bytes=file_size_bytes)
             try:
                 os.remove(temp_audio_path)
             except Exception as cleanup_error:
@@ -1079,9 +1110,11 @@ async def transcription():
             text = asr_mdl.transcription(temp_audio_path)
             if not isinstance(text, str) or not text.strip():
                 raise ValueError(f"ASR model {model_name} returned an empty transcription")
+            audit_asr("success", model=model_name, suffix=suffix, file_size_bytes=file_size_bytes)
             return get_json_result(data={"text": text.strip(), "model": model_name})
         except Exception as e:
             logging.exception("Configured ASR model transcription failed")
+            audit_asr("failure", reason_code="TRANSCRIPTION_ERROR", model=model_name, suffix=suffix, file_size_bytes=file_size_bytes)
             return get_data_error_result(message=f"ASR transcription failed: {e}")
         finally:
             try:
@@ -1093,17 +1126,23 @@ async def transcription():
         default_asr_model_config = get_tenant_default_model_by_type(current_user.id, LLMType.SPEECH2TEXT)
         asr_mdl = LLMBundle(current_user.id, default_asr_model_config)
     except Exception as e:
+        audit_asr("failure", reason_code="MODEL_CONFIG_ERROR", suffix=suffix, file_size_bytes=file_size_bytes)
         try:
             os.remove(temp_audio_path)
         except Exception as cleanup_error:
             logging.error(f"Failed to remove temp audio file: {str(cleanup_error)}")
         return get_data_error_result(message=str(e))
 
+    model_name = default_asr_model_config.get("llm_name", "configured ASR model")
+
     async def event_stream():
         try:
             for evt in asr_mdl.stream_transcription(temp_audio_path):
                 yield f"data: {json.dumps(evt, ensure_ascii=False)}\n\n"
+            audit_asr("success", model=model_name, suffix=suffix, file_size_bytes=file_size_bytes)
         except Exception as e:
+            logging.getLogger(__name__).exception("Configured streaming ASR transcription failed")
+            audit_asr("failure", reason_code="TRANSCRIPTION_ERROR", model=model_name, suffix=suffix, file_size_bytes=file_size_bytes)
             err = {"event": "error", "text": str(e)}
             yield f"data: {json.dumps(err, ensure_ascii=False)}\n\n"
         finally:

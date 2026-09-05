@@ -31,6 +31,10 @@ _SAFE_METADATA_KEYS = {
     "route",
     "line",
     "column",
+    "audio_format",
+    "file_size_bytes",
+    "model",
+    "stream",
 }
 
 

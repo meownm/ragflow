@@ -24,11 +24,13 @@ DOCKER_DNF_REPO=$(manifest_value DOCKER_DNF_REPO)
 SOURCE_ARCHIVE=$(manifest_value SOURCE_ARCHIVE)
 FRONTEND_ARCHIVE=$(manifest_value FRONTEND_ARCHIVE)
 DOCKER_IMAGES_ARCHIVE=$(manifest_value DOCKER_IMAGES_ARCHIVE)
+GVISOR_BUNDLE=$(manifest_value GVISOR_BUNDLE)
 
 if [[ -z ${RELEASE_VERSION} || ${TARGET_OS} != "rocky" || ${TARGET_VERSION} != "9" || ${TARGET_ARCH} != "amd64" || -z ${DOCKER_DNF_REPO} ]]; then
   echo "Unsupported or incomplete offline package manifest." >&2
   exit 1
 fi
+[[ ${GVISOR_BUNDLE} == "gvisor" && -d ${PAYLOAD_DIR}/${GVISOR_BUNDLE} ]] || { echo "Pinned gVisor bundle is missing." >&2; exit 1; }
 
 if [[ $(uname -m) != "x86_64" ]]; then
   echo "The offline package supports x86_64 only." >&2
@@ -55,12 +57,6 @@ sudo dnf install -y --enablerepo="${DOCKER_DNF_REPO}" \
   docker-buildx-plugin docker-compose-plugin
 sudo systemctl enable --now docker
 
-sudo docker load -i "${PAYLOAD_DIR}/${DOCKER_IMAGES_ARCHIVE}"
-while IFS= read -r image_name; do
-  [[ -z ${image_name} ]] && continue
-  sudo docker image inspect "${image_name}" >/dev/null
-done < "${PAYLOAD_DIR}/docker-images.txt"
-
 SOURCE_DIR=${SOURCE_DIR:-/srv/ragflow-linux-pg-${RELEASE_VERSION}}
 INSTALL_DIR=${INSTALL_DIR:-/opt/ragflow-pg}
 PROJECT_NAME=${PROJECT_NAME:-ragflow-pg}
@@ -68,6 +64,12 @@ RAGFLOW_PORT=${RAGFLOW_PORT:-80}
 ADMIN_EMAIL=${ADMIN_EMAIL:-admin@ragflow.local}
 ADMIN_NICKNAME=${ADMIN_NICKNAME:-RAGFlow Admin}
 ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+
+sudo docker load -i "${PAYLOAD_DIR}/${DOCKER_IMAGES_ARCHIVE}"
+while IFS= read -r image_name; do
+  [[ -z ${image_name} ]] && continue
+  sudo docker image inspect "${image_name}" >/dev/null
+done < "${PAYLOAD_DIR}/docker-images.txt"
 
 if sudo test -e "${SOURCE_DIR}" && [[ -n $(sudo find "${SOURCE_DIR}" -mindepth 1 -maxdepth 1 -print -quit) ]]; then
   echo "SOURCE_DIR is not empty: ${SOURCE_DIR}" >&2
@@ -90,4 +92,5 @@ sudo env \
   ADMIN_NICKNAME="${ADMIN_NICKNAME}" \
   ADMIN_PASSWORD="${ADMIN_PASSWORD}" \
   DOCKER_DNF_REPO="${DOCKER_DNF_REPO}" \
+  GVISOR_BUNDLE_DIR="${PAYLOAD_DIR}/${GVISOR_BUNDLE}" \
   bash deployment/linux-pg/install.sh

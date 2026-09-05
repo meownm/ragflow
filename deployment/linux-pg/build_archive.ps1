@@ -74,7 +74,10 @@ try {
     )
     $excludedDirectoryPaths = @(
         'build', 'dist', 'release', 'web/dist',
-        'services/asr-online-service',
+        'services/asr-online-service/artifacts',
+        'services/asr-online-service/openapi',
+        'services/asr-online-service/scripts',
+        'services/asr-online-service/tests',
         'services/asr-online-service/uploads',
         'test/playwright/artifacts',
         'ragflow_deps/huggingface.co', 'ragflow_deps/nltk_data'
@@ -115,6 +118,7 @@ try {
             }
 
             if (
+                $item.Name -eq '.git' -or
                 $normalizedPath -match '(^|/)\.env\.local$' -or
                 ($item.Name -eq '.env' -and $normalizedPath -ne 'web/.env') -or
                 $normalizedPath -match '\.(tar\.gz|bundle)(\.sha256)?$' -or
@@ -144,6 +148,17 @@ try {
 
     Copy-ReleaseDirectory -SourceDirectory $sourceRoot -TargetDirectory $stageRoot
 
+    foreach ($scriptPath in Get-ChildItem -LiteralPath $stageRoot -Recurse -File -Filter '*.sh') {
+        $scriptContent = [System.IO.File]::ReadAllText($scriptPath.FullName).
+            Replace("`r`n", "`n").
+            Replace("`r", "`n")
+        [System.IO.File]::WriteAllText(
+            $scriptPath.FullName,
+            $scriptContent,
+            [System.Text.UTF8Encoding]::new($false)
+        )
+    }
+
     $manifestPath = Join-Path $stageRoot 'DEPLOYMENT-SOURCE.env'
     $manifest = @(
         "RELEASE_VERSION=$ReleaseVersion"
@@ -155,8 +170,11 @@ try {
 
     $requiredPaths = @(
         'deployment/linux-pg/install.sh',
+        'deployment/linux-pg/upgrade.sh',
+        'deployment/linux-pg/install_gvisor.sh',
         'deployment/linux-pg/docker-compose.release.yml',
         'deployment/linux-pg/seed_admin.py',
+        'deployment/linux-pg/seed_asr.py',
         'deployment/linux-pg/env.template',
         'DEPLOYMENT-SOURCE.env'
     )
@@ -164,6 +182,14 @@ try {
         if (-not (Test-Path -LiteralPath (Join-Path $stageRoot $relativePath) -PathType Leaf)) {
             throw "Required deployment file is missing: $relativePath"
         }
+    }
+    $crlfScripts = @(
+        Get-ChildItem -LiteralPath $stageRoot -Recurse -File -Filter '*.sh' |
+            Where-Object { [System.IO.File]::ReadAllText($_.FullName).Contains("`r") } |
+            ForEach-Object { [System.IO.Path]::GetRelativePath($stageRoot, $_.FullName) }
+    )
+    if ($crlfScripts.Count -gt 0) {
+        throw "Linux scripts contain CR characters:`n$($crlfScripts -join "`n")"
     }
 
     $forbiddenPaths = @(
@@ -173,7 +199,7 @@ try {
                 $relativePath -in @('docker/.env', 'docker/.env.local') -or
                 $relativePath -match '(^|/)(\.git|\.venv|\.codex_tmp|\.playwright-cli|node_modules|__pycache__|ragflow-logs|output|build|dist|release)(/|$)' -or
                 $relativePath -match '^services/asr-online-service/uploads/' -or
-                $relativePath -match '^services/asr-online-service/' -or
+                $relativePath -match '^services/asr-online-service/(\.venv|\.pytest_cache|artifacts|openapi|scripts|tests|uploads)(/|$)' -or
                 $relativePath -match '^test/playwright/artifacts/' -or
                 $relativePath -match '^deployment/linux-pg/registry-images-.*\.env$' -or
                 $relativePath -match '^ragflow_deps/(?!Dockerfile$|download_deps\.py$|download_go_deps\.py$)' -or

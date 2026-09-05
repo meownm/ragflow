@@ -3,6 +3,7 @@ param(
     [ValidatePattern('^v[0-9]+\.[0-9]+\.[0-9]+$')]
     [string]$ReleaseVersion,
     [string]$OutputDirectory = $PSScriptRoot,
+    [switch]$UseExistingFrontend,
     [switch]$Overwrite
 )
 
@@ -18,7 +19,9 @@ if (-not $Overwrite -and ((Test-Path -LiteralPath $archivePath) -or (Test-Path -
     throw "Refusing to overwrite an existing offline release: $archivePath"
 }
 
-foreach ($commandName in @('docker', 'pnpm.cmd', 'tar')) {
+$requiredCommands = @('docker', 'tar')
+if (-not $UseExistingFrontend) { $requiredCommands += 'pnpm.cmd' }
+foreach ($commandName in $requiredCommands) {
     if (-not (Get-Command $commandName -ErrorAction SilentlyContinue)) {
         throw "Required build command is missing: $commandName"
     }
@@ -58,6 +61,18 @@ function Write-LfText {
     [System.IO.File]::WriteAllText($Path, $content, [System.Text.UTF8Encoding]::new($false))
 }
 
+function Copy-LfText {
+    param(
+        [Parameter(Mandatory = $true)][string]$Source,
+        [Parameter(Mandatory = $true)][string]$Destination
+    )
+
+    $content = [System.IO.File]::ReadAllText($Source).
+        Replace("`r`n", "`n").
+        Replace("`r", "`n")
+    [System.IO.File]::WriteAllText($Destination, $content, [System.Text.UTF8Encoding]::new($false))
+}
+
 $projectVersionMatch = [regex]::Match(
     (Get-Content -LiteralPath (Join-Path $sourceRoot 'pyproject.toml') -Raw),
     '(?m)^version\s*=\s*"([^"]+)"'
@@ -66,13 +81,23 @@ if (-not $projectVersionMatch.Success -or $projectVersionMatch.Groups[1].Value -
     throw "ReleaseVersion $ReleaseVersion does not match pyproject.toml version."
 }
 
+$asrImage = "ragflow/t-one-asr:$($ReleaseVersion.TrimStart('v'))"
 $dockerImages = @(
     'postgres:16-alpine',
     'infiniflow/ragflow:v0.26.4',
     'valkey/valkey:8',
     'elasticsearch:8.11.3',
     'plantuml/plantuml-server:jetty-v1.2026.6',
-    'pgsty/minio:RELEASE.2026-03-25T00-00-00Z'
+    'pgsty/minio:RELEASE.2026-03-25T00-00-00Z',
+    $asrImage,
+    'otel/opentelemetry-collector-contrib:0.160.0',
+    'grafana/tempo:2.10.5',
+    'grafana/loki:3.7.0',
+    'prom/prometheus:v3.11.0',
+    'grafana/grafana:13.1.0',
+    'infiniflow/sandbox-executor-manager:latest',
+    'infiniflow/sandbox-base-nodejs:latest',
+    'infiniflow/sandbox-base-python:latest'
 )
 
 $tempBase = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
@@ -83,6 +108,7 @@ $sourceArchivePath = Join-Path $payloadRoot $sourceArchiveName
 $sourceChecksumPath = $sourceArchivePath + '.sha256'
 $dockerArchivePath = Join-Path $payloadRoot 'docker-images.tar'
 $frontendArchivePath = Join-Path $payloadRoot 'web-dist.tar.gz'
+$gvisorBundlePath = Join-Path $payloadRoot 'gvisor'
 
 New-Item -ItemType Directory -Path $payloadRoot -Force | Out-Null
 New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
@@ -93,23 +119,31 @@ try {
         -OutputDirectory $payloadRoot `
         -Overwrite
 
-    Push-Location (Join-Path $sourceRoot 'web')
-    try {
-        & pnpm.cmd install --frozen-lockfile --ignore-scripts
-        if ($LASTEXITCODE -ne 0) {
-            throw 'Frontend dependency installation failed.'
+    if (-not $UseExistingFrontend) {
+        Push-Location (Join-Path $sourceRoot 'web')
+        try {
+            & pnpm.cmd install --frozen-lockfile --ignore-scripts
+            if ($LASTEXITCODE -ne 0) {
+                throw 'Frontend dependency installation failed.'
+            }
+            & pnpm.cmd run build
+            if ($LASTEXITCODE -ne 0) {
+                throw 'Frontend production build failed.'
+            }
         }
-        & pnpm.cmd run build
-        if ($LASTEXITCODE -ne 0) {
-            throw 'Frontend production build failed.'
+        finally {
+            Pop-Location
         }
-    }
-    finally {
-        Pop-Location
     }
     if (-not (Test-Path -LiteralPath (Join-Path $sourceRoot 'web\dist\index.html') -PathType Leaf)) {
         throw 'Frontend build did not create web/dist/index.html.'
     }
+
+    & docker build --platform linux/amd64 --tag $asrImage (Join-Path $sourceRoot 'services\asr-online-service')
+    if ($LASTEXITCODE -ne 0) {
+        throw 'T-One ASR image build failed.'
+    }
+    & (Join-Path $PSScriptRoot 'prepare_gvisor_bundle.ps1') -Destination $gvisorBundlePath
 
     foreach ($imageName in $dockerImages) {
         $platform = (& docker image inspect $imageName --format '{{.Os}}/{{.Architecture}}').Trim()
@@ -121,7 +155,8 @@ try {
         }
     }
 
-    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'install_offline.sh') -Destination (Join-Path $packageRoot 'install_offline.sh') -Force
+    Copy-LfText -Source (Join-Path $PSScriptRoot 'install_offline.sh') -Destination (Join-Path $packageRoot 'install_offline.sh')
+    Copy-LfText -Source (Join-Path $PSScriptRoot 'upgrade_offline.sh') -Destination (Join-Path $packageRoot 'upgrade_offline.sh')
 
     Invoke-Tar -ArgumentList @('-czf', $frontendArchivePath, '-C', (Join-Path $sourceRoot 'web'), 'dist') `
         -ErrorMessage 'Frontend archive creation failed.'
@@ -143,6 +178,7 @@ try {
         "SOURCE_ARCHIVE=$sourceArchiveName"
         'FRONTEND_ARCHIVE=web-dist.tar.gz'
         'DOCKER_IMAGES_ARCHIVE=docker-images.tar'
+        'GVISOR_BUNDLE=gvisor'
         "DOCKER_IMAGE_COUNT=$($dockerImages.Count)"
         "PACKAGED_AT_UTC=$([DateTime]::UtcNow.ToString('o'))"
     )
@@ -179,7 +215,17 @@ try {
         }
     }
 
-    Invoke-Tar -ArgumentList @('-czf', $archivePath, '-C', $packageRoot, '.') `
+    $archiveEntries = @(
+        'OFFLINE-PACKAGE.env'
+        'SHA256SUMS'
+        'install_offline.sh'
+        'upgrade_offline.sh'
+    ) + @(
+        Get-ChildItem -LiteralPath $payloadRoot -Recurse -File | Sort-Object FullName | ForEach-Object {
+            'payload/' + [System.IO.Path]::GetRelativePath($payloadRoot, $_.FullName).Replace('\', '/')
+        }
+    )
+    Invoke-Tar -ArgumentList (@('-czf', $archivePath, '-C', $packageRoot) + $archiveEntries) `
         -ErrorMessage 'Offline archive creation failed.'
     Invoke-Tar -ArgumentList @('-tzf', $archivePath) `
         -ErrorMessage 'Offline archive integrity check failed.' `

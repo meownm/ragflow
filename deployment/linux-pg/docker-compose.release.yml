@@ -27,17 +27,31 @@ services:
       RAGFLOW_CREDENTIALS_KEY: ${RAGFLOW_CREDENTIALS_KEY:?RAGFLOW_CREDENTIALS_KEY is required}
 
   t-one-asr:
-    profiles: !override
-      - t-one-disabled
+    image: ${T_ONE_ASR_IMAGE:-ragflow/t-one-asr:1.12.0}
 
   mysql:
     profiles: !override
       - mysql-disabled
 
   sandbox-executor-manager:
-    profiles: !override
-      - sandbox-disabled
+    profiles: !reset []
+    image: ${SANDBOX_EXECUTOR_MANAGER_IMAGE:-infiniflow/sandbox-executor-manager:latest}
 
   sandbox-runtime-bootstrap:
     profiles: !override
       - docker-desktop-only
+
+  otel-collector:
+    image: ${OTEL_COLLECTOR_IMAGE:-otel/opentelemetry-collector-contrib:0.160.0}
+
+  tempo:
+    image: ${TEMPO_IMAGE:-grafana/tempo:2.10.5}
+
+  loki:
+    image: ${LOKI_IMAGE:-grafana/loki:3.7.0}
+
+  prometheus:
+    image: ${PROMETHEUS_IMAGE:-prom/prometheus:v3.11.0}
+
+  grafana:
+    image: ${GRAFANA_IMAGE:-grafana/grafana:13.1.0}

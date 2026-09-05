@@ -12,9 +12,9 @@ SHA-256 файлом, а версия и происхождение записа
 ## Компактная поставка через registry Цифры
 
 Этот вариант не включает `docker-images.tar` и не собирает образы на сервере.
-Шесть стандартных образов заранее публикуются в доступный серверу OCI registry,
+Пятнадцать образов заранее публикуются в доступный серверу OCI registry,
 а в архив входят только исходники, готовый `web/dist`, список образов и
-контрольные суммы. T-One ASR в серверную поставку не входит.
+контрольные суммы. В поставку входят T-One ASR, стек наблюдаемости и sandbox.
 
 Сначала авторизоваться в registry через `docker login`, подготовить и
 опубликовать образы:
@@ -22,7 +22,7 @@ SHA-256 файлом, а версия и происхождение записа
 ```powershell
 ./deployment/linux-pg/publish_registry_images.ps1 `
   -RegistryPrefix registry.example.org/cifra `
-  -ReleaseVersion v1.6.0 `
+  -ReleaseVersion v1.12.0 `
   -Push
 ```
 
@@ -30,8 +30,8 @@ SHA-256 файлом, а версия и происхождение записа
 
 ```powershell
 ./deployment/linux-pg/build_registry_archive.ps1 `
-  -ReleaseVersion v1.6.0 `
-  -ImagesEnvPath ./deployment/linux-pg/registry-images-v1.6.0.env
+  -ReleaseVersion v1.12.0 `
+  -ImagesEnvPath ./deployment/linux-pg/registry-images-v1.12.0.env
 ```
 
 Повторную упаковку уже проверенного `web/dist` можно ускорить явным параметром
@@ -48,7 +48,7 @@ SHA-256 файлом, а версия и происхождение записа
 
 ```powershell
 ./deployment/linux-pg/upload_registry_release.ps1 `
-  -PackagePath ./deployment/linux-pg/ragflow-linux-pg-v1.6.0-registry.tar.gz `
+  -PackagePath ./deployment/linux-pg/ragflow-linux-pg-v1.12.0-registry.tar.gz `
   -HostName ragflow.example.org `
   -UserName deploy `
   -PrivateKeyPath C:\Keys\ragflow.ppk `
@@ -59,8 +59,8 @@ SHA-256 файлом, а версия и происхождение записа
 
 ```bash
 cd /tmp/ragflow-registry-release
-sha256sum -c ragflow-linux-pg-v1.6.0-registry.tar.gz.sha256
-tar -xzf ragflow-linux-pg-v1.6.0-registry.tar.gz
+sha256sum -c ragflow-linux-pg-v1.12.0-registry.tar.gz.sha256
+tar -xzf ragflow-linux-pg-v1.12.0-registry.tar.gz
 
 sudo env \
   ADMIN_EMAIL=admin@example.org \
@@ -88,30 +88,36 @@ REGISTRY_PREFIX=registry.example.org/cifra bash install_registry.sh --check
 Windows из `S:\ragflow` выполнить:
 
 ```powershell
-./deployment/linux-pg/build_offline_archive.ps1 -ReleaseVersion v1.6.0
+./deployment/linux-pg/build_offline_archive.ps1 -ReleaseVersion v1.12.0
 ```
+
+После отдельно успешно проверенной production-сборки того же clean release-tree
+повторную упаковку можно выполнить с `-UseExistingFrontend`; без этого параметра
+сборщик всегда заново выполняет `pnpm install --frozen-lockfile` и `pnpm run build`.
 
 Сборщик не вызывает Git. Он создаёт один архив и checksum, содержащие:
 
 - source snapshot и готовый `web/dist`;
-- шесть Linux/amd64 Docker-образов: RAGFlow, PostgreSQL, Elasticsearch, Valkey,
-  MinIO и PlantUML;
+- 15 Linux/amd64 Docker-образов: базовые сервисы, T-One ASR,
+  Grafana/Prometheus/Loki/Tempo/OTel Collector, sandbox manager и Python/Node.js
+  sandbox base images;
+- зафиксированный gVisor/runsc `20260817.0` для изоляции CodeExec;
 - внутренний `SHA256SUMS` для каждого payload-файла.
 
 Результат:
 
-- `ragflow-linux-pg-v1.6.0-offline.tar.gz`;
-- `ragflow-linux-pg-v1.6.0-offline.tar.gz.sha256`.
+- `ragflow-linux-pg-v1.12.0-offline.tar.gz`;
+- `ragflow-linux-pg-v1.12.0-offline.tar.gz.sha256`.
 
 Передать оба файла через `pscp.exe`, затем в PuTTY:
 
 ```bash
 cd /tmp
-sha256sum -c ragflow-linux-pg-v1.6.0-offline.tar.gz.sha256
-sudo install -d -m 0755 /srv/ragflow-offline-v1.6.0
-sudo tar -xzf ragflow-linux-pg-v1.6.0-offline.tar.gz \
-  -C /srv/ragflow-offline-v1.6.0
-cd /srv/ragflow-offline-v1.6.0
+sha256sum -c ragflow-linux-pg-v1.12.0-offline.tar.gz.sha256
+package_dir=$(mktemp -d /tmp/ragflow-offline-v1.12.0.XXXXXX)
+sudo tar --no-same-owner --no-same-permissions \
+  -xzf ragflow-linux-pg-v1.12.0-offline.tar.gz -C "$package_dir"
+cd "$package_dir"
 
 sudo env \
   ADMIN_EMAIL=admin@example.org \
@@ -125,8 +131,8 @@ Offline installer проверяет все суммы, устанавливае
 Docker Hub на сервере не используется. Требуются Rocky Linux 9.x x86_64,
 доступные корпоративные DNF-репозитории, `sudo`, `tar` и `sha256sum`.
 
-Chat LLM, embedding-модели и T-One ASR не входят в базовую поставку. RAGFlow
-запускается без них, а нужные модели и ASR добавляются отдельно.
+Chat LLM и embedding-модели не входят в базовую поставку. T-One ASR входит и
+доступен RAGFlow по внутреннему адресу `http://t-one-asr:9011/v1`.
 
 ## Компактная поставка с загрузкой зависимостей на сервере
 
@@ -141,18 +147,22 @@ Chat LLM, embedding-модели и T-One ASR не входят в базову�
 - frontend, собранный из этого же дерева в контейнере Node.js 20;
 - PostgreSQL 16 вместо MySQL;
 - Elasticsearch, Valkey, MinIO и PlantUML;
+- T-One ASR;
+- Grafana, Prometheus, Loki, Tempo и OpenTelemetry Collector;
+- sandbox manager и изолированный пул CodeExec под gVisor/runsc;
 - первого пользователя с `is_superuser=true`.
 
-MySQL и sandbox в этом профиле выключены. Интерфейс публикуется на
+MySQL в этом профиле выключен. Интерфейс публикуется на
 `0.0.0.0:80` и доступен по IP или DNS-имени сервера. Сетевой доступ должен быть
-ограничен корпоративным firewall или TLS reverse proxy.
+ограничен корпоративным firewall или TLS reverse proxy. Grafana (`3001`) и
+Prometheus (`9090`) публикуются только на `127.0.0.1`.
 
 ## 1. Собрать файл поставки на Windows
 
 Из `S:\ragflow` в PowerShell:
 
 ```powershell
-./deployment/linux-pg/build_archive.ps1 -ReleaseVersion v1.6.0
+./deployment/linux-pg/build_archive.ps1 -ReleaseVersion v1.12.0
 ```
 
 Скрипт не вызывает Git и упаковывает текущее состояние файлов. В архив не
@@ -163,8 +173,8 @@ MySQL и sandbox в этом профиле выключены. Интерфей
 
 Результат:
 
-- `deployment/linux-pg/ragflow-linux-pg-v1.6.0.tar.gz`;
-- `deployment/linux-pg/ragflow-linux-pg-v1.6.0.tar.gz.sha256`.
+- `deployment/linux-pg/ragflow-linux-pg-v1.12.0.tar.gz`;
+- `deployment/linux-pg/ragflow-linux-pg-v1.12.0.tar.gz.sha256`.
 
 Скрипт сам проверяет чтение архива, выполняет контрольную распаковку и убеждается,
 что обязательные deployment-файлы присутствуют, а `.git` отсутствует.
@@ -175,11 +185,11 @@ MySQL и sandbox в этом профиле выключены. Интерфей
 
 ```powershell
 & 'C:\Program Files\PuTTY\pscp.exe' -P 22 `
-  'S:\ragflow\deployment\linux-pg\ragflow-linux-pg-v1.6.0.tar.gz' `
+  'S:\ragflow\deployment\linux-pg\ragflow-linux-pg-v1.12.0.tar.gz' `
   'admin@ragflow-server:/tmp/'
 
 & 'C:\Program Files\PuTTY\pscp.exe' -P 22 `
-  'S:\ragflow\deployment\linux-pg\ragflow-linux-pg-v1.6.0.tar.gz.sha256' `
+  'S:\ragflow\deployment\linux-pg\ragflow-linux-pg-v1.12.0.tar.gz.sha256' `
   'admin@ragflow-server:/tmp/'
 ```
 
@@ -190,10 +200,10 @@ MySQL и sandbox в этом профиле выключены. Интерфей
 
 ```bash
 cd /tmp
-sha256sum -c ragflow-linux-pg-v1.6.0.tar.gz.sha256
+sha256sum -c ragflow-linux-pg-v1.12.0.tar.gz.sha256
 
 sudo install -d -m 0755 /srv/ragflow-linux-pg
-sudo tar -xzf ragflow-linux-pg-v1.6.0.tar.gz -C /srv/ragflow-linux-pg
+sudo tar -xzf ragflow-linux-pg-v1.12.0.tar.gz -C /srv/ragflow-linux-pg
 cd /srv/ragflow-linux-pg
 
 cat DEPLOYMENT-SOURCE.env
@@ -229,3 +239,45 @@ superuser. Версия установленного архива сохраня
 `/etc/ragflow-pg/deployed-source.env`. Размер диска и число CPU установщик
 намеренно не используют как блокирующие проверки; ёмкость контролируется
 эксплуатационным мониторингом.
+
+## Обновление существующего сервера
+
+Не запускайте `install.sh`, `install_offline.sh` или `install_registry.sh` поверх
+существующего `/opt/ragflow-pg`: установщики первой инсталляции создают новые
+секреты. Пакеты обновления содержат отдельные точки входа:
+
+```bash
+# Сначала только проверка пакета, сервера, версии и Compose-конфигурации.
+sudo env INSTALL_DIR=/opt/ragflow-pg PROJECT_NAME=ragflow-pg \
+  bash ./upgrade_offline.sh --check
+
+# Затем плановое обновление с обязательным backup PostgreSQL и MinIO.
+sudo env INSTALL_DIR=/opt/ragflow-pg PROJECT_NAME=ragflow-pg \
+  BACKUP_ROOT=/var/backups/ragflow-pg BACKUP_MINIO=1 \
+  bash ./upgrade_offline.sh
+```
+
+Повторный запуск той же версии выполняет полный health-check и проверяет
+`system_audit_event`, после чего завершается успешно без backup, миграций и
+повторной загрузки образов. Для распаковки всегда используйте новый каталог из
+`mktemp`; это исключает конфликт владельца и метаданных с предыдущей попыткой.
+
+Для registry-поставки используются те же параметры и `upgrade_registry.sh`;
+при шаблонном `images.env` дополнительно задаются `REGISTRY_PREFIX` и
+`REGISTRY_HOST`. Обновление:
+
+1. повторно проверяет `SHA256SUMS` и manifests пакета;
+2. сохраняет без изменений `docker/.env`, `.env.local` и `/etc/ragflow-pg`;
+3. останавливает только `ragflow-cpu`, делает проверяемый PostgreSQL dump и
+   согласованную копию MinIO;
+4. фиксирует список Elasticsearch-индексов и считает их пересоздаваемыми из
+   PostgreSQL/MinIO вместо небезопасного файлового копирования живого индекса;
+5. атомарно меняет release-каталог, после чего штатный старт выполняет
+   идемпотентные schema migrations;
+6. проверяет полный health, `DB_TYPE=postgres` и таблицу
+   `system_audit_event`, затем записывает новую версию.
+
+Backup и предыдущий release-каталог сохраняются до закрытия приёмочного окна.
+При ошибке до прохождения health скрипт возвращает прежний код и контейнеры.
+Миграции БД автоматически назад не откатываются: если старая версия несовместима
+с новой схемой, выполняется полное восстановление по процедуре ниже.

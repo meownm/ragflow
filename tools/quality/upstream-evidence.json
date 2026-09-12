@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "verified_at": "2026-09-12T12:56:49.689090+00:00",
-  "head": "b8f7772fc165d37fba01b23b93fc869046be8767",
+  "verified_at": "2026-09-12T13:43:16.580008+00:00",
+  "head": "51d6a28ae1c71f495cc666cd9abbaf56e9f07c16",
   "official_commits": [
     {
       "sha": "cb93883f3f8c975eecb2fed81210effeb3bdb06f",
@@ -2050,6 +2050,37 @@
         "test/unit_test/tools/quality/test_architecture_workflow.py": "M",
         "tools/quality/architecture-policy.json": "M"
       }
+    },
+    {
+      "sha": "d27c9a79dd535e226e8588f70256669b8a00e147",
+      "parents": [
+        "b8f7772fc165d37fba01b23b93fc869046be8767"
+      ],
+      "tree": "45708a8636265c1198ec1c7713556e64ca663d6c",
+      "committed_at": "2026-09-12T16:06:28+03:00",
+      "subject": "docs(architecture): record enforcement preflight",
+      "changes_from_first_parent": {
+        "docs/develop/architecture-checks-ru.md": "M",
+        "docs/develop/architecture-transition-ru.md": "M",
+        "docs/develop/t3-architecture-policy-ru.md": "M",
+        "tools/quality/core-changes.yaml": "M",
+        "tools/quality/file-inventory.json": "M",
+        "tools/quality/upstream-evidence.json": "M"
+      }
+    },
+    {
+      "sha": "51d6a28ae1c71f495cc666cd9abbaf56e9f07c16",
+      "parents": [
+        "d27c9a79dd535e226e8588f70256669b8a00e147"
+      ],
+      "tree": "d77f6206d5e7b56947fe305d2c8427744ec8ce18",
+      "committed_at": "2026-09-12T16:37:12+03:00",
+      "subject": "fix(architecture): reject duplicate required contexts",
+      "changes_from_first_parent": {
+        "test/unit_test/tools/quality/test_architecture_workflow.py": "M",
+        "test/unit_test/tools/quality/test_check_architecture_policy.py": "M",
+        "tools/quality/architecture-policy.json": "M"
+      }
     }
   ],
   "local_refs_only_no_fetch": [
@@ -2063,7 +2094,7 @@
     "refs/remotes/upstream/main_backup 427e0540cab683a591a5f4a65a0b38bf9ee008b7"
   ],
   "graph_merge_base": "28ce77fe5f1e4301d3672221b509418d3c7acb77",
-  "baseline_diff_summary": "749 files changed, 161819 insertions(+), 2857 deletions(-)",
+  "baseline_diff_summary": "749 files changed, 161923 insertions(+), 2857 deletions(-)",
   "ancestry_only_merge": {
     "commit": "64f0bfdf0e724d006d61563a76964bf140bcfb4e",
     "first_parent": "268a5a9d60e19982ac329ec045d0ff9b0228b26b",

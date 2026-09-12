@@ -136,6 +136,7 @@ def python_report(plan: dict, **values) -> bytes:
             "init_process": True,
             "no_new_privileges": True,
             "producer_capabilities": ["SETGID", "SETUID"],
+            "system_runtime_mounts": ["/lib", "/lib64", "/usr"],
             "producer_uid": 1000,
             "producer_gid": runtime_gid,
             "runtime_uid": 65534,

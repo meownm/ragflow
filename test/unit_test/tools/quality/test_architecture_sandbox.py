@@ -97,6 +97,9 @@ def test_sandbox_attestation_binds_report_and_negative_probe():
     assert docker_arguments.count("--cap-drop") == 1
     assert docker_arguments.count("--cap-add") == 2
     assert "RAGFLOW_ARCHITECTURE_RUNTIME_UID=65534" in docker_arguments
+    mounts = [docker_arguments[index + 1] for index, argument in enumerate(docker_arguments) if argument == "--mount"]
+    assert any("target=/lib,readonly" in mount for mount in mounts)
+    assert any("target=/lib64,readonly" in mount for mount in mounts)
 
 
 def test_sandbox_rejects_failed_negative_probe_and_unsafe_clone_config(tmp_path):
@@ -128,3 +131,5 @@ def test_sandbox_rejects_failed_negative_probe_and_unsafe_clone_config(tmp_path)
     sandbox._create_rootfs(rootfs, producer_uid=1000, producer_gid=1001, runtime_gid=1001)
     with tarfile.open(rootfs) as archive:
         assert archive.getmember("sbin").isdir()
+        assert archive.getmember("lib").isdir()
+        assert archive.getmember("lib64").isdir()

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "verified_at": "2026-09-12T12:12:46.522028+00:00",
-  "head": "c130751d6965aa558612c4085b39189c441bbc20",
+  "verified_at": "2026-09-12T12:56:49.689090+00:00",
+  "head": "b8f7772fc165d37fba01b23b93fc869046be8767",
   "official_commits": [
     {
       "sha": "cb93883f3f8c975eecb2fed81210effeb3bdb06f",
@@ -2019,6 +2019,37 @@
         "tools/quality/file-inventory.json": "M",
         "tools/quality/python-boundaries.yaml": "M"
       }
+    },
+    {
+      "sha": "d6025f428dbdf0420bc14228f440a7df1b91f5ef",
+      "parents": [
+        "c130751d6965aa558612c4085b39189c441bbc20"
+      ],
+      "tree": "31f6d3341a9e546dd54e9165b56e1642cfff1f36",
+      "committed_at": "2026-09-12T15:21:01+03:00",
+      "subject": "docs(architecture): record T3 acceptance evidence",
+      "changes_from_first_parent": {
+        "docs/develop/architecture-checks-ru.md": "M",
+        "docs/develop/architecture-transition-ru.md": "M",
+        "docs/develop/t3-architecture-policy-ru.md": "M",
+        "tools/quality/core-changes.yaml": "M",
+        "tools/quality/file-inventory.json": "M",
+        "tools/quality/upstream-evidence.json": "M"
+      }
+    },
+    {
+      "sha": "b8f7772fc165d37fba01b23b93fc869046be8767",
+      "parents": [
+        "d6025f428dbdf0420bc14228f440a7df1b91f5ef"
+      ],
+      "tree": "62840c95b8247fa1e0fedb142f71c7a8a40530a9",
+      "committed_at": "2026-09-12T15:52:04+03:00",
+      "subject": "fix(architecture): pin trusted workflow execution",
+      "changes_from_first_parent": {
+        ".github/workflows/architecture.yml": "M",
+        "test/unit_test/tools/quality/test_architecture_workflow.py": "M",
+        "tools/quality/architecture-policy.json": "M"
+      }
     }
   ],
   "local_refs_only_no_fetch": [
@@ -2032,7 +2063,7 @@
     "refs/remotes/upstream/main_backup 427e0540cab683a591a5f4a65a0b38bf9ee008b7"
   ],
   "graph_merge_base": "28ce77fe5f1e4301d3672221b509418d3c7acb77",
-  "baseline_diff_summary": "749 files changed, 161482 insertions(+), 2857 deletions(-)",
+  "baseline_diff_summary": "749 files changed, 161819 insertions(+), 2857 deletions(-)",
   "ancestry_only_merge": {
     "commit": "64f0bfdf0e724d006d61563a76964bf140bcfb4e",
     "first_parent": "268a5a9d60e19982ac329ec045d0ff9b0228b26b",

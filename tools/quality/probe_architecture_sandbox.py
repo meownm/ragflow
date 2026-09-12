@@ -65,14 +65,15 @@ def _git_config_sanitized(workspace: Path) -> bool:
         "LANG": "C.UTF-8",
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
     }
+    git = ["git", "-c", f"safe.directory={workspace}", "-C", str(workspace)]
     config = subprocess.run(
-        ["git", "-C", str(workspace), "config", "--local", "--name-only", "--null", "--list"],
+        [*git, "config", "--local", "--name-only", "--null", "--list"],
         env=environment,
         capture_output=True,
         check=False,
     )
     remotes = subprocess.run(
-        ["git", "-C", str(workspace), "remote"],
+        [*git, "remote"],
         env=environment,
         capture_output=True,
         check=False,

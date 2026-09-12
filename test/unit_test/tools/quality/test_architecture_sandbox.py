@@ -24,6 +24,7 @@ def _load(name: str, path: Path):
 
 
 sandbox = _load("architecture_sandbox_supervisor", ROOT / "tools/quality/run_architecture_sandbox.py")
+probe = _load("architecture_sandbox_probe", ROOT / "tools/quality/probe_architecture_sandbox.py")
 policy_checker = _load("architecture_sandbox_policy_checker", ROOT / "tools/quality/check_architecture_policy.py")
 
 
@@ -160,3 +161,26 @@ def test_python_runtime_mounts_preserve_only_narrow_aliases(tmp_path):
             (runtime.resolve(), str(alias)),
             (runtime.resolve(), str(runtime.resolve())),
         )
+
+
+def test_negative_probe_allows_only_its_exact_read_only_workspace(tmp_path):
+    workspace = tmp_path / "candidate"
+    workspace.mkdir()
+    completed = probe.subprocess.CompletedProcess(args=[], returncode=0, stdout=b"", stderr=b"")
+    with patch.object(probe.subprocess, "run", side_effect=(completed, completed)) as run:
+        assert probe._git_config_sanitized(workspace)
+
+    expected_prefix = ["git", "-c", f"safe.directory={workspace}", "-C", str(workspace)]
+    assert run.call_args_list[0].args[0][:5] == expected_prefix
+    assert run.call_args_list[1].args[0][:5] == expected_prefix
+
+
+def test_failed_negative_probe_preserves_trusted_json_diagnostic():
+    completed = sandbox.subprocess.CompletedProcess(
+        args=[],
+        returncode=2,
+        stdout='{"status":"FAIL","checks":{"git_config_sanitized":false}}\n',
+        stderr="",
+    )
+    with pytest.raises(ValueError, match="git_config_sanitized"):
+        sandbox._parse_probe(completed)

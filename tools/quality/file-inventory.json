@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
-  "captured_at": "2026-09-12T10:45:41.946741+00:00",
-  "head": "f2196ea7c6370045ecbace4c6669e7b72ea8cdd7",
+  "captured_at": "2026-09-12T10:53:51.815413+00:00",
+  "head": "42e5c80d62a30627b6b817ccd75f882aff367963",
   "upstream_base": "cb93883f3f8c975eecb2fed81210effeb3bdb06f",
   "branch": "codex/t3-os-isolation",
   "shallow": true,
-  "snapshot_sha256": "d458dea795bf48aadd0646238078d4a176b60f1f5882a38ecf16b5ab2e100c01",
+  "snapshot_sha256": "34eb8d956a9b461269c21e08cf2ef114a61a84362456f017897fa4dda45247db",
   "scope": "All tracked deltas from the content baseline, staged/unstaged changes and nonignored untracked files; generated outputs explicitly listed without recursive digest",
   "rename_policy": "Renames represented by explicit delete/add paths; no paths discarded by similarity heuristics",
   "counts": {
@@ -14,7 +14,7 @@
     "index_files": 4844,
     "committed_delta": 749,
     "staged_delta": 0,
-    "unstaged_delta": 2,
+    "unstaged_delta": 3,
     "untracked": 0,
     "inventory_records": 749,
     "by_origin": {
@@ -11136,11 +11136,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "bcc31b804f7ccc29d4c2d9b46b6b31fdafc125aa"
+        "oid": "51925bd1dd5b28f27c8c60cb1f8bf4c4ee748ab1"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "bcc31b804f7ccc29d4c2d9b46b6b31fdafc125aa"
+        "oid": "51925bd1dd5b28f27c8c60cb1f8bf4c4ee748ab1"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -11149,8 +11149,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 6619,
-        "sha256": "e2f4ca82283929c1c8957f5211ba94c42ae990a64b42ec1f7b9b54ec3944140b"
+        "bytes": 7688,
+        "sha256": "f87ea653999d68413fdb9f7c98caf16824aab9fdda880c79c05bd88d2233dc35"
       }
     },
     {
@@ -12115,11 +12115,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "52087fef406bfeb983e2e20dc080051d066160d4"
+        "oid": "e61daf7e3dcf48d52bd6d7c89e96a83906a3fd42"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "52087fef406bfeb983e2e20dc080051d066160d4"
+        "oid": "e61daf7e3dcf48d52bd6d7c89e96a83906a3fd42"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -12164,11 +12164,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "b33ceede47e5ab3f9c0f580da3bcf4f2a34245f5"
+        "oid": "1ecea7871ed71fd6bfccdb250d6ccb3a7c4c547c"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "b33ceede47e5ab3f9c0f580da3bcf4f2a34245f5"
+        "oid": "1ecea7871ed71fd6bfccdb250d6ccb3a7c4c547c"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -12446,13 +12446,13 @@
       },
       "committed_change": "A",
       "staged_change": null,
-      "unstaged_change": null,
+      "unstaged_change": "M",
       "working_change_from_base": "A",
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 4589,
-        "sha256": "014abdf07aae5210755af4c6ce80f1eac983cf3591b5b95bcc5ee6ab54284f73"
+        "bytes": 4620,
+        "sha256": "4ef96589e4c7dad787315f7644801c355f01de6f529513d433f9e006ee54b375"
       }
     },
     {
@@ -12538,11 +12538,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "6453f485f2a448233055a25fba2eadcae892393c"
+        "oid": "8fddb0404543c8e4f00650acc9157c3559b6ec3d"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "6453f485f2a448233055a25fba2eadcae892393c"
+        "oid": "8fddb0404543c8e4f00650acc9157c3559b6ec3d"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -12551,8 +12551,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 34310,
-        "sha256": "06d4941dedbce7b8a5a0b2e3da478b91f2569842577bcee2e9a74539a973f392"
+        "bytes": 34386,
+        "sha256": "a6c1beace62af1964cf8d8d397f5ca965b5b9097f1a753bf52bf1ecaa7390d6a"
       }
     },
     {

@@ -402,7 +402,8 @@ def _validate_negative_probe(payload: dict) -> dict[str, bool]:
 
 def _parse_probe(completed: subprocess.CompletedProcess) -> dict[str, bool]:
     if completed.returncode != 0:
-        raise ValueError(f"Architecture sandbox negative probe exited with {completed.returncode}: {completed.stderr[-2000:]}")
+        diagnostic = completed.stderr[-2000:].strip() or completed.stdout[-2000:].strip()
+        raise ValueError(f"Architecture sandbox negative probe exited with {completed.returncode}: {diagnostic}")
     lines = [line for line in completed.stdout.splitlines() if line.strip()]
     if len(lines) != 1:
         raise ValueError("Architecture sandbox negative probe produced an ambiguous result")

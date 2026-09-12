@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "verified_at": "2026-09-12T14:03:11.090888+00:00",
-  "head": "45bfa7edbcb2da3f17ab92699ea073672a10e826",
+  "verified_at": "2026-09-12T14:06:43.718938+00:00",
+  "head": "5c50071c0391d6fe333b84d199f993fabf798c1f",
   "official_commits": [
     {
       "sha": "cb93883f3f8c975eecb2fed81210effeb3bdb06f",
@@ -2099,6 +2099,22 @@
         "tools/quality/file-inventory.json": "M",
         "tools/quality/upstream-evidence.json": "M"
       }
+    },
+    {
+      "sha": "5c50071c0391d6fe333b84d199f993fabf798c1f",
+      "parents": [
+        "45bfa7edbcb2da3f17ab92699ea073672a10e826"
+      ],
+      "tree": "05a736775d74a5f3d49af6eaaebc21b3cf16a3de",
+      "committed_at": "2026-09-12T17:06:33+03:00",
+      "subject": "docs(architecture): define external T3 receipt",
+      "changes_from_first_parent": {
+        "docs/develop/architecture-checks-ru.md": "M",
+        "docs/develop/t3-architecture-policy-ru.md": "M",
+        "tools/quality/core-changes.yaml": "M",
+        "tools/quality/file-inventory.json": "M",
+        "tools/quality/upstream-evidence.json": "M"
+      }
     }
   ],
   "local_refs_only_no_fetch": [
@@ -2112,7 +2128,7 @@
     "refs/remotes/upstream/main_backup 427e0540cab683a591a5f4a65a0b38bf9ee008b7"
   ],
   "graph_merge_base": "28ce77fe5f1e4301d3672221b509418d3c7acb77",
-  "baseline_diff_summary": "749 files changed, 161956 insertions(+), 2857 deletions(-)",
+  "baseline_diff_summary": "749 files changed, 161980 insertions(+), 2857 deletions(-)",
   "ancestry_only_merge": {
     "commit": "64f0bfdf0e724d006d61563a76964bf140bcfb4e",
     "first_parent": "268a5a9d60e19982ac329ec045d0ff9b0228b26b",

@@ -184,3 +184,12 @@ def test_failed_negative_probe_preserves_trusted_json_diagnostic():
     )
     with pytest.raises(ValueError, match="git_config_sanitized"):
         sandbox._parse_probe(completed)
+
+
+def test_negative_probe_identity_allows_only_redundant_primary_group():
+    expected_uid = 65534
+    expected_gid = 1001
+    assert probe._identity_matches({"uid": expected_uid, "gid": expected_gid, "groups": []}, expected_uid, expected_gid)
+    assert probe._identity_matches({"uid": expected_uid, "gid": expected_gid, "groups": [expected_gid]}, expected_uid, expected_gid)
+    assert not probe._identity_matches({"uid": expected_uid, "gid": expected_gid, "groups": [0]}, expected_uid, expected_gid)
+    assert not probe._identity_matches({"uid": expected_uid, "gid": expected_gid, "groups": [expected_gid, expected_gid]}, expected_uid, expected_gid)

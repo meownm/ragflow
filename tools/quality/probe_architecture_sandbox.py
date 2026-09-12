@@ -88,6 +88,10 @@ def _process_status() -> dict[str, str]:
     return {key: value.strip() for line in Path("/proc/self/status").read_text(encoding="utf-8").splitlines() if ":" in line for key, value in [line.split(":", 1)]}
 
 
+def _identity_matches(identity: dict[str, object], expected_uid: int, expected_gid: int) -> bool:
+    return identity == {"uid": expected_uid, "gid": expected_gid, "groups": []} or identity == {"uid": expected_uid, "gid": expected_gid, "groups": [expected_gid]}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workspace", type=Path, required=True)
@@ -101,6 +105,7 @@ def main(argv: list[str] | None = None) -> int:
     evidence = args.evidence.resolve()
     sentinel = evidence / args.sentinel
     status = _process_status()
+    identity = {"uid": os.geteuid(), "gid": os.getegid(), "groups": sorted(os.getgroups())}
     observed = {
         "candidate_write_denied": _operation_denied(lambda: (workspace / ".architecture-sandbox-write-probe").write_text("forbidden", encoding="utf-8")),
         "evidence_read_denied": _operation_denied(lambda: sentinel.read_bytes()),
@@ -109,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
         "forbidden_environment_absent": _forbidden_environment_absent(),
         "sensitive_paths_absent": not any(Path(path).exists() for path in SENSITIVE_PATHS),
         "git_config_sanitized": _git_config_sanitized(workspace),
-        "unprivileged_identity": os.geteuid() == args.expected_uid and os.getegid() == args.expected_gid and not os.getgroups(),
+        "unprivileged_identity": _identity_matches(identity, args.expected_uid, args.expected_gid),
         "capabilities_absent": status.get("CapEff") == "0000000000000000",
         "no_new_privileges": status.get("NoNewPrivs") == "1",
     }
@@ -118,6 +123,7 @@ def main(argv: list[str] | None = None) -> int:
         "tool": {"name": "probe_architecture_sandbox", "version": VERSION},
         "status": "PASS" if all(observed.values()) else "FAIL",
         "checks": observed,
+        "identity": identity,
     }
     print(json.dumps(result, sort_keys=True))
     return 0 if result["status"] == "PASS" else 2

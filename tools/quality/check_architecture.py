@@ -20,7 +20,7 @@ from capture_inventory import capture, git, paths, safe_path
 from inspect_python import MARKERS, analyze, collect_import_graph
 from run_isolated_python import sanitized_child_environment
 
-VERSION = "0.8.0"
+VERSION = "0.8.1"
 REPORT_ONLY = "T2_REPORT_ONLY"
 MODULE_ACCESS = "<module>"
 STATIC_IMPORT_KINDS = {"import", "literal_dynamic_import"}
@@ -1019,15 +1019,36 @@ def _profile_sources(root: Path, files: list[str], profiles: list[dict]) -> tupl
     return raw, sources
 
 
+def _resolves_to_running_python(target: Path) -> bool:
+    """Allow a venv launcher symlink only when it resolves to this interpreter."""
+
+    try:
+        resolved = target.resolve(strict=True)
+        running = Path(sys.executable).resolve(strict=True)
+    except (OSError, RuntimeError):
+        return False
+    return resolved.is_file() and resolved == running
+
+
 def _profile_python_executable(root: Path, profile: dict) -> tuple[Path | None, str | None]:
     candidates = profile["python_executable_candidates"]
     if not candidates:
         return Path(sys.executable), None
+    rejected_links = []
     for candidate in candidates:
+        target = root / candidate
+        if target.is_symlink():
+            if _resolves_to_running_python(target):
+                return target, None
+            rejected_links.append(candidate)
+            continue
         resolved = safe_path(root, candidate)
         if resolved.is_file():
             return resolved, None
-    return None, f"Profile {profile['id']} found none of its Python executable candidates: {', '.join(candidates)}"
+    reason = f"Profile {profile['id']} found none of its Python executable candidates: {', '.join(candidates)}"
+    if rejected_links:
+        reason += "; rejected launcher symlinks that do not resolve to the active interpreter: " + ", ".join(rejected_links)
+    return None, reason
 
 
 def main(argv=None) -> int:

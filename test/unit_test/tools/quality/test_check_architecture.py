@@ -266,6 +266,39 @@ class RuntimeProbeTests(unittest.TestCase):
         self.assertEqual(result["observations"][0]["module"], "owned.domain")
         self.assertFalse(result["findings"])
 
+    def test_profile_interpreter_symlink_must_resolve_to_active_python(self):
+        profile = {"id": "fixture", "python_executable_candidates": [".venv/bin/python"]}
+        candidate = self.root / ".venv/bin/python"
+        with (
+            patch.object(Path, "is_symlink", return_value=True),
+            patch.object(
+                checker,
+                "_resolves_to_running_python",
+                return_value=True,
+            ),
+        ):
+            executable, reason = checker._profile_python_executable(self.root, profile)
+        self.assertEqual(executable, candidate)
+        self.assertIsNone(reason)
+
+        with (
+            patch.object(Path, "is_symlink", return_value=True),
+            patch.object(
+                checker,
+                "_resolves_to_running_python",
+                return_value=False,
+            ),
+        ):
+            executable, reason = checker._profile_python_executable(self.root, profile)
+        self.assertIsNone(executable)
+        self.assertIn("rejected launcher symlinks", reason)
+
+    def test_profile_interpreter_target_identity_is_exact(self):
+        self.assertTrue(checker._resolves_to_running_python(Path(sys.executable)))
+        other = self.root / "other-python"
+        other.write_bytes(b"not the active interpreter")
+        self.assertFalse(checker._resolves_to_running_python(other))
+
     def test_nested_python_path_import_runs_in_fresh_process(self):
         self.write("services/fixture/src/owned/__init__.py", "")
         self.write("services/fixture/src/owned/domain.py", "Value = object()\n")

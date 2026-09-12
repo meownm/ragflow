@@ -107,6 +107,8 @@ Workflow использует read-only permissions и не получает app
 
 ## Ревью control update 2026-09-12
 
+Этот documentation-only commit используется как изолированная положительная GitHub-проба base-mode протокола; checker, policy и protected fixtures в нём не изменяются.
+
 Все затронутые checker/policy/test/docs/provenance пути отсутствуют в принятом upstream commit `cb93883f3f8c975eecb2fed81210effeb3bdb06f` и классифицированы как локальное расширение `quality-governance`; стандартное ядро в этом инкременте не меняется. `capture_inventory.py --write` зафиксировал HEAD `e9e5c608bf78fbcaa1afcbba2ba4eafb59510df2`, 744 классифицированных дельты (`346 core_change`, `398 extension`) и `unclassified=0`. Bounded `ignored-artifacts.json` оставлен последним подтверждённым снимком runtime-дерева от 2026-09-10: пустой scan отдельного worktree не использован как доказательство удаления пользовательских ресурсов.
 
 Локально выполнены `pytest -q test/unit_test/tools/quality` (`378 passed`), полный `test_check_architecture_policy.py` (`26 passed`), `ruff check` и `ruff format --check` двух изменённых Python-файлов. Bootstrap `select` выбрал четыре report lane, `compare` вернул только `BOOTSTRAP_SELF_CHECK`, а exact `fixtures` выполнил 24/24 с `fixture_source=candidate-bootstrap`; этот результат не является base-mode PASS. Отрицательная fixture с `git update-index --assume-unchanged` подтверждает, что не-CRLF расхождение Git-чистого protected source отклоняется, а реальное unstaged изменение продолжает читаться из кандидата.

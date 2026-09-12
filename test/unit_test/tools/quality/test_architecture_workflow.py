@@ -26,6 +26,21 @@ def _commands(job: dict) -> str:
     return "\n".join(step.get("run", "") for step in job["steps"])
 
 
+def _hash_locked_requirements(input_path: Path, lock_path: Path) -> tuple[list[str], set[str]]:
+    direct_requirements = [line.strip() for line in input_path.read_text(encoding="utf-8").splitlines() if line.strip() and not line.startswith("#")]
+    package_blocks = []
+    for line in lock_path.read_text(encoding="utf-8").splitlines():
+        if line and not line.startswith((" ", "#")):
+            package_blocks.append([line])
+        elif package_blocks:
+            package_blocks[-1].append(line)
+    assert package_blocks
+    assert all(re.search(r"--hash=sha256:[0-9a-f]{64}(?:\s|\\|$)", "\n".join(block)) for block in package_blocks)
+    locked_requirements = {block[0].split(" \\", 1)[0] for block in package_blocks}
+    assert set(direct_requirements) <= locked_requirements
+    return direct_requirements, {requirement.split("==", 1)[0].lower() for requirement in locked_requirements}
+
+
 def test_protected_policy_sources_are_tracked():
     policy = json.loads((ROOT / "tools/quality/architecture-policy.json").read_text(encoding="utf-8"))
     protected_sources = sorted({path for lane in policy["lanes"] for path in lane.get("protected_sources", [])})
@@ -42,7 +57,7 @@ def test_protected_policy_sources_are_tracked():
 
     requirements_input = ROOT / "services/asr-online-service/architecture-contract-requirements.in"
     requirements_lock = ROOT / "services/asr-online-service/architecture-contract-requirements.txt"
-    direct_requirements = [line.strip() for line in requirements_input.read_text(encoding="utf-8").splitlines() if line.strip() and not line.startswith("#")]
+    direct_requirements, locked_package_names = _hash_locked_requirements(requirements_input, requirements_lock)
     assert direct_requirements == [
         "fastapi==0.115.14",
         "httpx==0.27.2",
@@ -53,19 +68,33 @@ def test_protected_policy_sources_are_tracked():
         "python-multipart==0.0.9",
     ]
 
-    lock_lines = requirements_lock.read_text(encoding="utf-8").splitlines()
-    package_blocks = []
-    for line in lock_lines:
-        if line and not line.startswith((" ", "#")):
-            package_blocks.append([line])
-        elif package_blocks:
-            package_blocks[-1].append(line)
-    assert package_blocks
-    assert all(re.search(r"--hash=sha256:[0-9a-f]{64}(?:\s|\\|$)", "\n".join(block)) for block in package_blocks)
-    locked_requirements = {block[0].split(" \\", 1)[0] for block in package_blocks}
-    assert set(direct_requirements) <= locked_requirements
-    locked_package_names = {requirement.split("==", 1)[0].lower() for requirement in locked_requirements}
     assert locked_package_names.isdisjoint({"gigaam", "numpy", "tone", "torch", "transformers", "uvicorn", "watchfiles"})
+
+    root_requirements, root_locked_package_names = _hash_locked_requirements(
+        ROOT / "tools/quality/architecture-contract-requirements.in",
+        ROOT / "tools/quality/architecture-contract-requirements.txt",
+    )
+    assert root_requirements == [
+        "flask==3.1.2",
+        "jinja2==3.1.6",
+        "json-repair==0.35.0",
+        "jsonschema==4.26.0",
+        "nltk==3.9.2",
+        "pandas==2.3.3",
+        "peewee==3.19.0",
+        "pydantic==2.12.5",
+        "pyjwt==2.8.0",
+        "pymysql==1.1.2",
+        "pytest==9.0.2",
+        "pytest-asyncio==1.3.0",
+        "python-docx==1.2.0",
+        "pyyaml==6.0.3",
+        "quart==0.20.0",
+        "quart-auth==0.11.0",
+        "requests==2.32.5",
+        "xxhash==3.6.0",
+    ]
+    assert root_locked_package_names.isdisjoint({"elasticsearch", "litellm", "torch", "transformers", "xgboost"})
 
     helper_path = ROOT / "tools/quality/run_isolated_python.py"
     spec = importlib.util.spec_from_file_location("architecture_isolated_runner", helper_path)
@@ -94,6 +123,17 @@ def test_protected_policy_sources_are_tracked():
         lane = next(item for item in policy["lanes"] if item["id"] == lane_id)
         assert node_install_inputs <= set(lane["protected_sources"])
         assert node_install_inputs <= set(lane["selectors"]["paths"])
+
+    python_lane = next(item for item in policy["lanes"] if item["id"] == "python-architecture")
+    assert python_lane["requires_os_isolation"] is True
+    assert python_lane["reported_hashes"]["sandbox_runner_sha256"] == "tools/quality/run_architecture_sandbox.py"
+    assert python_lane["reported_hashes"]["sandbox_probe_sha256"] == "tools/quality/probe_architecture_sandbox.py"
+    assert python_lane["reported_hashes"]["module_map_sha256"] == "tools/quality/module-map.yaml"
+    assert python_lane["reported_hashes"]["upstream_base_sha256"] == "tools/quality/upstream-base.json"
+    for lane_id in ("python-architecture", "runtime-graph", "go-build-plan", "policy-fixtures"):
+        lane = next(item for item in policy["lanes"] if item["id"] == lane_id)
+        assert "tools/quality/run_architecture_sandbox.py" in lane["protected_sources"]
+        assert any(path == "tools/quality/run_architecture_sandbox.py" or path == "tools/quality/" for path in lane["selectors"].get("paths", []) + lane["selectors"].get("prefixes", []))
 
 
 def test_workflow_is_unconditional_report_only_and_fail_closed():
@@ -134,6 +174,7 @@ def test_workflow_is_unconditional_report_only_and_fail_closed():
             "Set up Node.js",
             "Set up Python and uv",
             "Materialize protected producer sources",
+            "Prepare isolated candidate workspace",
             "Prepare root Python contracts",
             "Prepare ASR architecture contract environment",
             "Exercise architecture policy fixtures",
@@ -232,34 +273,68 @@ def test_analysis_job_contains_candidate_lifecycle_and_publishes_reports():
     }
     assert 'if [[ "${selected}" == "true" && "${runnable}" != "true" ]]' in source_gate["run"]
     assert "Selected architecture lane has no trusted source bundle" in source_gate["run"]
-    assert "uv sync --python 3.13 --group test --frozen --no-install-project" in commands
-    assert "uv venv --clear services/asr-online-service/.architecture-venv --python 3.13" in commands
-    assert ("uv pip sync --python services/asr-online-service/.architecture-venv/bin/python --require-hashes --strict services/asr-online-service/architecture-contract-requirements.txt") in commands
+    sandbox = _step(job, "Prepare isolated candidate workspace")
+    assert sandbox["id"] == "sandbox"
+    assert sandbox["env"] == {
+        "EVIDENCE_DIR": "${{ steps.evidence.outputs.directory }}",
+        "CANDIDATE_SHA": "${{ github.sha }}",
+    }
+    assert 'run_architecture_sandbox.py" prepare' in sandbox["run"]
+    assert '--source-root "${GITHUB_WORKSPACE}"' in sandbox["run"]
+    assert '--candidate-root "${candidate_root}"' in sandbox["run"]
+    assert '--manifest "${EVIDENCE_DIR}/sandbox-manifest.json"' in sandbox["run"]
+    assert '--github-output "${GITHUB_OUTPUT}"' in sandbox["run"]
+    root_contracts = _step(job, "Prepare root Python contracts")
+    assert root_contracts["env"] == {
+        "EVIDENCE_DIR": "${{ steps.evidence.outputs.directory }}",
+        "CANDIDATE_ROOT": "${{ steps.sandbox.outputs.candidate_root }}",
+    }
+    assert 'trusted_requirements="${EVIDENCE_DIR}/protected-sources/tools/quality/architecture-contract-requirements.txt"' in root_contracts["run"]
+    assert '[[ -e "${CANDIDATE_ROOT}/.venv" || -L "${CANDIDATE_ROOT}/.venv" ]]' in root_contracts["run"]
+    assert 'uv venv "${CANDIDATE_ROOT}/.venv" --python 3.13' in root_contracts["run"]
+    assert 'uv pip sync --python "${CANDIDATE_ROOT}/.venv/bin/python" --require-hashes --strict "${trusted_requirements}"' in root_contracts["run"]
+    assert "uv sync --python 3.13 --group test --frozen --no-install-project" not in commands
+    assert '[[ -e "${asr_environment}" || -L "${asr_environment}" ]]' in commands
+    assert 'uv venv "${asr_environment}" --python 3.13' in commands
+    asr_contracts = _step(job, "Prepare ASR architecture contract environment")
+    assert 'trusted_requirements="${EVIDENCE_DIR}/protected-sources/services/asr-online-service/architecture-contract-requirements.txt"' in asr_contracts["run"]
+    assert 'uv pip sync --python "${CANDIDATE_ROOT}/services/asr-online-service/.architecture-venv/bin/python" --require-hashes --strict "${trusted_requirements}"' in asr_contracts["run"]
     assert "uv sync --project services/asr-online-service" not in commands
     assert "pnpm --dir web install" not in commands
     parser_step = _step(job, "Prepare locked TypeScript parser")
     assert 'trusted_web="${EVIDENCE_DIR}/protected-sources/web"' in parser_step["run"]
     assert 'install_web="${RUNNER_TEMP}/architecture-typescript-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"' in parser_step["run"]
-    assert 'candidate_modules="${GITHUB_WORKSPACE}/web/node_modules"' in parser_step["run"]
+    assert 'candidate_modules="${CANDIDATE_ROOT}/web/node_modules"' in parser_step["run"]
+    assert '-L "${candidate_modules}"' in parser_step["run"]
     assert "--frozen-lockfile --ignore-scripts --ignore-pnpmfile --ignore-workspace" in parser_step["run"]
     assert 'cp "${trusted_web}/package.json" "${trusted_web}/pnpm-lock.yaml" "${trusted_web}/.npmrc" "${install_web}/"' in parser_step["run"]
     assert "Refusing stale TypeScript install or pre-existing candidate node_modules" in parser_step["run"]
     assert 'cp -RL "${install_web}/node_modules/typescript" "${candidate_modules}/typescript"' in parser_step["run"]
     assert 'test -f "${candidate_modules}/typescript/lib/typescript.js"' in parser_step["run"]
-    assert "tools/quality/check_architecture.py" in commands
+    assert "tools/quality/run_architecture_sandbox.py" in commands
     assert "tools/quality/check_runtime_graph_policy.py" in commands
     assert "tools/quality/check_go_build_profiles.py" in commands
     materialize = _step(job, "Materialize protected producer sources")["run"]
     assert '"${POLICY_RUNNER}"' in materialize and " materialize " in materialize.replace("\n", " ")
     assert '--output-directory "${EVIDENCE_DIR}/protected-sources"' in materialize
-    assert commands.count('python -I -B "${isolated_runner}"') == 5
-    assert commands.count('"${trusted_root}" tools/quality/') == 5
-    assert commands.count('--root "${GITHUB_WORKSPACE}"') >= 6
+    assert commands.count('python -I -B "${isolated_runner}"') == 4
+    assert commands.count('"${trusted_root}" tools/quality/') == 4
+    assert commands.count('--root "${CANDIDATE_ROOT}"') >= 5
+    assert commands.count('--root "${GITHUB_WORKSPACE}"') == 1
+    python_check = _step(job, "Check configured Python architecture")["run"]
+    assert 'run_architecture_sandbox.py" run' in python_check
+    assert '--candidate-root "${CANDIDATE_ROOT}"' in python_check
+    assert '--trusted-root "${trusted_root}"' in python_check
+    assert '--evidence-dir "${EVIDENCE_DIR}"' in python_check
+    assert '--comparison-base "${COMPARISON_BASE}"' in python_check
+    assert "tools/quality/check_architecture.py --root" not in python_check
     assert " fixtures " in commands.replace("\n", " ")
     assert "--junit-output" in commands
     assert commands.count("--selection-sha256") == 3
     step_names = [step.get("name") for step in job["steps"]]
     fixture_index = step_names.index("Exercise architecture policy fixtures")
+    sandbox_index = step_names.index("Prepare isolated candidate workspace")
+    assert sandbox_index < step_names.index("Prepare root Python contracts")
     for name in ("Prepare locked TypeScript parser", "Classify TypeScript and Go runtime graphs", "Plan changed Go build profiles", "Check configured Python architecture"):
         assert fixture_index < step_names.index(name)
     assert _step(job, "Exercise architecture policy fixtures")["if"] == "${{ success() && needs.architecture-policy-plan.outputs.policy_fixtures == 'true' }}"

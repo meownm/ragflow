@@ -250,15 +250,51 @@ jobs:
             materialize --plan "${EVIDENCE_DIR}/selection.json" \
             --output-directory "${EVIDENCE_DIR}/protected-sources"
 
+      - name: Prepare isolated candidate workspace
+        id: sandbox
+        if: needs.architecture-policy-plan.outputs.python_architecture == 'true' || needs.architecture-policy-plan.outputs.runtime_graph == 'true' || needs.architecture-policy-plan.outputs.go_build_plan == 'true' || needs.architecture-policy-plan.outputs.policy_fixtures == 'true'
+        env:
+          EVIDENCE_DIR: ${{ steps.evidence.outputs.directory }}
+          CANDIDATE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          trusted_root="${EVIDENCE_DIR}/protected-sources"
+          candidate_root="${RUNNER_TEMP}/architecture-candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          python -I -B "${trusted_root}/tools/quality/run_architecture_sandbox.py" prepare \
+            --source-root "${GITHUB_WORKSPACE}" --candidate-root "${candidate_root}" \
+            --head "${CANDIDATE_SHA}" --manifest "${EVIDENCE_DIR}/sandbox-manifest.json" \
+            --github-output "${GITHUB_OUTPUT}"
+
       - name: Prepare root Python contracts
         if: needs.architecture-policy-plan.outputs.python_architecture == 'true' || needs.architecture-policy-plan.outputs.policy_fixtures == 'true'
-        run: uv sync --python 3.13 --group test --frozen --no-install-project
+        env:
+          EVIDENCE_DIR: ${{ steps.evidence.outputs.directory }}
+          CANDIDATE_ROOT: ${{ steps.sandbox.outputs.candidate_root }}
+        run: |
+          set -euo pipefail
+          trusted_requirements="${EVIDENCE_DIR}/protected-sources/tools/quality/architecture-contract-requirements.txt"
+          if [[ -e "${CANDIDATE_ROOT}/.venv" || -L "${CANDIDATE_ROOT}/.venv" ]]; then
+            echo "Refusing a pre-existing candidate root contract environment" >&2
+            exit 2
+          fi
+          uv venv "${CANDIDATE_ROOT}/.venv" --python 3.13
+          uv pip sync --python "${CANDIDATE_ROOT}/.venv/bin/python" --require-hashes --strict "${trusted_requirements}"
 
       - name: Prepare ASR architecture contract environment
         if: needs.architecture-policy-plan.outputs.python_architecture == 'true'
+        env:
+          EVIDENCE_DIR: ${{ steps.evidence.outputs.directory }}
+          CANDIDATE_ROOT: ${{ steps.sandbox.outputs.candidate_root }}
         run: |
-          uv venv --clear services/asr-online-service/.architecture-venv --python 3.13
-          uv pip sync --python services/asr-online-service/.architecture-venv/bin/python --require-hashes --strict services/asr-online-service/architecture-contract-requirements.txt
+          set -euo pipefail
+          trusted_requirements="${EVIDENCE_DIR}/protected-sources/services/asr-online-service/architecture-contract-requirements.txt"
+          asr_environment="${CANDIDATE_ROOT}/services/asr-online-service/.architecture-venv"
+          if [[ -e "${asr_environment}" || -L "${asr_environment}" ]]; then
+            echo "Refusing a pre-existing candidate ASR contract environment" >&2
+            exit 2
+          fi
+          uv venv "${asr_environment}" --python 3.13
+          uv pip sync --python "${CANDIDATE_ROOT}/services/asr-online-service/.architecture-venv/bin/python" --require-hashes --strict "${trusted_requirements}"
 
       - name: Exercise architecture policy fixtures
         if: ${{ success() && needs.architecture-policy-plan.outputs.policy_fixtures == 'true' }}
@@ -266,12 +302,13 @@ jobs:
           EVIDENCE_DIR: ${{ steps.evidence.outputs.directory }}
           POLICY_RUNNER: ${{ runner.temp }}/architecture-policy-plan-input/authority/tools/quality/check_architecture_policy.py
           POLICY_FILE: ${{ runner.temp }}/architecture-policy-plan-input/authority/tools/quality/architecture-policy.json
+          CANDIDATE_ROOT: ${{ steps.sandbox.outputs.candidate_root }}
         run: |
           set -euo pipefail
           uv run --no-project --with PyYAML==6.0.3 python -B "${POLICY_RUNNER}" \
-            --root "${GITHUB_WORKSPACE}" --policy "${POLICY_FILE}" \
+            --root "${CANDIDATE_ROOT}" --policy "${POLICY_FILE}" \
             --policy-repository-path tools/quality/architecture-policy.json \
-            fixtures --plan "${EVIDENCE_DIR}/selection.json" --python .venv/bin/python \
+            fixtures --plan "${EVIDENCE_DIR}/selection.json" --python "${CANDIDATE_ROOT}/.venv/bin/python" \
             --junit-output "${EVIDENCE_DIR}/policy-fixtures.xml" \
             --output "${EVIDENCE_DIR}/policy-fixtures.json"
 
@@ -279,12 +316,13 @@ jobs:
         if: ${{ success() && (needs.architecture-policy-plan.outputs.python_architecture == 'true' || needs.architecture-policy-plan.outputs.runtime_graph == 'true') }}
         env:
           EVIDENCE_DIR: ${{ steps.evidence.outputs.directory }}
+          CANDIDATE_ROOT: ${{ steps.sandbox.outputs.candidate_root }}
         run: |
           set -euo pipefail
           trusted_web="${EVIDENCE_DIR}/protected-sources/web"
           install_web="${RUNNER_TEMP}/architecture-typescript-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          candidate_modules="${GITHUB_WORKSPACE}/web/node_modules"
-          if [[ -e "${install_web}" || -e "${candidate_modules}" ]]; then
+          candidate_modules="${CANDIDATE_ROOT}/web/node_modules"
+          if [[ -e "${install_web}" || -L "${install_web}" || -e "${candidate_modules}" || -L "${candidate_modules}" ]]; then
             echo "Refusing stale TypeScript install or pre-existing candidate node_modules" >&2
             exit 2
           fi
@@ -301,13 +339,14 @@ jobs:
         env:
           EVIDENCE_DIR: ${{ steps.evidence.outputs.directory }}
           SELECTION_SHA256: ${{ needs.architecture-policy-plan.outputs.selection_sha256 }}
+          CANDIDATE_ROOT: ${{ steps.sandbox.outputs.candidate_root }}
         run: |
           set -euo pipefail
           trusted_root="${EVIDENCE_DIR}/protected-sources"
           isolated_runner="${trusted_root}/tools/quality/run_isolated_python.py"
           set +e
           uv run --no-project --with PyYAML==6.0.3 python -I -B "${isolated_runner}" \
-            "${trusted_root}" tools/quality/inspect_typescript.py --root "${GITHUB_WORKSPACE}" \
+            "${trusted_root}" tools/quality/inspect_typescript.py --root "${CANDIDATE_ROOT}" \
             --output "${EVIDENCE_DIR}/typescript-analysis.json"
           typescript_exit=$?
           set -e
@@ -315,10 +354,10 @@ jobs:
             exit "${typescript_exit}"
           fi
           uv run --no-project --with PyYAML==6.0.3 python -I -B "${isolated_runner}" \
-            "${trusted_root}" tools/quality/inspect_go.py --root "${GITHUB_WORKSPACE}" \
+            "${trusted_root}" tools/quality/inspect_go.py --root "${CANDIDATE_ROOT}" \
             --output "${EVIDENCE_DIR}/go-analysis.json"
           uv run --no-project --with PyYAML==6.0.3 python -I -B "${isolated_runner}" \
-            "${trusted_root}" tools/quality/check_runtime_graph_policy.py --root "${GITHUB_WORKSPACE}" \
+            "${trusted_root}" tools/quality/check_runtime_graph_policy.py --root "${CANDIDATE_ROOT}" \
             --typescript-report "${EVIDENCE_DIR}/typescript-analysis.json" \
             --go-report "${EVIDENCE_DIR}/go-analysis.json" \
             --selection-sha256 "${SELECTION_SHA256}" \
@@ -329,12 +368,13 @@ jobs:
         env:
           EVIDENCE_DIR: ${{ steps.evidence.outputs.directory }}
           SELECTION_SHA256: ${{ needs.architecture-policy-plan.outputs.selection_sha256 }}
+          CANDIDATE_ROOT: ${{ steps.sandbox.outputs.candidate_root }}
         run: |
           set -euo pipefail
           trusted_root="${EVIDENCE_DIR}/protected-sources"
           isolated_runner="${trusted_root}/tools/quality/run_isolated_python.py"
           uv run --no-project --with PyYAML==6.0.3 python -I -B "${isolated_runner}" \
-            "${trusted_root}" tools/quality/check_go_build_profiles.py --root "${GITHUB_WORKSPACE}" \
+            "${trusted_root}" tools/quality/check_go_build_profiles.py --root "${CANDIDATE_ROOT}" \
             --selection-sha256 "${SELECTION_SHA256}" \
             --output "${EVIDENCE_DIR}/go-build-plan.json"
 
@@ -344,14 +384,16 @@ jobs:
           EVIDENCE_DIR: ${{ steps.evidence.outputs.directory }}
           COMPARISON_BASE: ${{ needs.architecture-policy-plan.outputs.comparison_base }}
           SELECTION_SHA256: ${{ needs.architecture-policy-plan.outputs.selection_sha256 }}
+          CANDIDATE_ROOT: ${{ steps.sandbox.outputs.candidate_root }}
+          CANDIDATE_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           trusted_root="${EVIDENCE_DIR}/protected-sources"
-          isolated_runner="${trusted_root}/tools/quality/run_isolated_python.py"
-          .venv/bin/python -I -B "${isolated_runner}" \
-            "${trusted_root}" tools/quality/check_architecture.py --root "${GITHUB_WORKSPACE}" \
-            --base-ref "${COMPARISON_BASE}" --selection-sha256 "${SELECTION_SHA256}" \
-            --output "${EVIDENCE_DIR}/architecture-python.json"
+          python -I -B "${trusted_root}/tools/quality/run_architecture_sandbox.py" run \
+            --candidate-root "${CANDIDATE_ROOT}" --trusted-root "${trusted_root}" \
+            --evidence-dir "${EVIDENCE_DIR}" --manifest "${EVIDENCE_DIR}/sandbox-manifest.json" \
+            --head "${CANDIDATE_SHA}" --comparison-base "${COMPARISON_BASE}" \
+            --selection-sha256 "${SELECTION_SHA256}"
 
       - name: Upload architecture analysis
         if: always() && steps.evidence.outcome == 'success'

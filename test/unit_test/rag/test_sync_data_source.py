@@ -27,6 +27,8 @@ from pathlib import Path
 
 import pytest
 
+import common
+
 warnings.filterwarnings(
     "ignore",
     message="pkg_resources is deprecated as an API.*",
@@ -84,6 +86,113 @@ for proxy_key in ("ALL_PROXY", "all_proxy", "HTTP_PROXY", "http_proxy", "HTTPS_P
 _install_cv2_stub_if_unavailable()
 _install_xgboost_stub_if_unavailable()
 _install_ollama_stub()
+
+contract_settings = types.ModuleType("common.settings")
+contract_settings.DATABASE_TYPE = "MYSQL"
+contract_settings.DATABASE = {"name": "architecture_contract"}
+contract_settings.get_secret_key = lambda: "architecture-contract-secret"
+sys.modules[contract_settings.__name__] = contract_settings
+common.settings = contract_settings
+
+contract_config = types.ModuleType("common.config_utils")
+contract_config.show_configs = lambda: None
+sys.modules[contract_config.__name__] = contract_config
+
+services_package = types.ModuleType("api.db.services")
+services_package.__path__ = []
+sys.modules[services_package.__name__] = services_package
+for service_module_name, service_names in {
+    "connector_service": ("ConnectorService", "SyncLogsService"),
+    "document_service": ("DocumentService",),
+    "knowledgebase_service": ("KnowledgebaseService",),
+}.items():
+    service_module = types.ModuleType(f"api.db.services.{service_module_name}")
+    for service_name in service_names:
+        setattr(service_module, service_name, type(f"_Stub{service_name}", (), {}))
+    sys.modules[service_module.__name__] = service_module
+    setattr(services_package, service_module_name, service_module)
+
+data_source_package = types.ModuleType("common.data_source")
+data_source_package.__path__ = []
+for connector_name in (
+    "BlobStorageConnector",
+    "RSSConnector",
+    "EvaWikiConnector",
+    "OpenMetadataConnector",
+    "NotionConnector",
+    "DiscordConnector",
+    "GoogleDriveConnector",
+    "MoodleConnector",
+    "JiraConnector",
+    "DropboxConnector",
+    "AirtableConnector",
+    "AsanaConnector",
+    "ImapConnector",
+    "ZendeskConnector",
+    "SeaFileConnector",
+    "RDBMSConnector",
+    "BigQueryConnector",
+    "DingTalkAITableConnector",
+    "RestAPIConnector",
+    "OneDriveConnector",
+    "OutlookConnector",
+    "AzureBlobConnector",
+    "SalesforceConnector",
+    "TeamsConnector",
+    "SlackConnector",
+    "SharePointConnector",
+):
+    setattr(data_source_package, connector_name, type(connector_name, (), {}))
+sys.modules[data_source_package.__name__] = data_source_package
+common.data_source = data_source_package
+
+data_source_config = types.ModuleType("common.data_source.config")
+data_source_config.INDEX_BATCH_SIZE = 32
+sys.modules[data_source_config.__name__] = data_source_config
+
+data_source_models = types.ModuleType("common.data_source.models")
+data_source_models.ConnectorFailure = type("ConnectorFailure", (), {})
+data_source_models.SeafileSyncScope = types.SimpleNamespace(ACCOUNT="account")
+sys.modules[data_source_models.__name__] = data_source_models
+
+data_source_interfaces = types.ModuleType("common.data_source.interfaces")
+data_source_interfaces.CheckpointOutputWrapper = type("CheckpointOutputWrapper", (), {})
+sys.modules[data_source_interfaces.__name__] = data_source_interfaces
+
+data_source_exceptions = types.ModuleType("common.data_source.exceptions")
+data_source_exceptions.ConnectorValidationError = type("ConnectorValidationError", (Exception,), {})
+sys.modules[data_source_exceptions.__name__] = data_source_exceptions
+
+for connector_module_name, connector_class_name in {
+    "webdav_connector": "WebDAVConnector",
+    "confluence_connector": "ConfluenceConnector",
+    "gmail_connector": "GmailConnector",
+    "box_connector": "BoxConnector",
+    "gitlab_connector": "GitlabConnector",
+    "bitbucket_connector": "BitbucketConnector",
+}.items():
+    connector_module = types.ModuleType(f"common.data_source.{connector_module_name}")
+    setattr(connector_module, connector_class_name, type(connector_class_name, (), {}))
+    sys.modules[connector_module.__name__] = connector_module
+
+github_package = types.ModuleType("common.data_source.github")
+github_package.__path__ = []
+sys.modules[github_package.__name__] = github_package
+github_connector = types.ModuleType("common.data_source.github.connector")
+github_connector.GithubConnector = type("GithubConnector", (), {})
+sys.modules[github_connector.__name__] = github_connector
+
+bitbucket_package = types.ModuleType("common.data_source.bitbucket")
+bitbucket_package.__path__ = []
+sys.modules[bitbucket_package.__name__] = bitbucket_package
+bitbucket_connector = types.ModuleType("common.data_source.bitbucket.connector")
+bitbucket_connector.BitbucketConnector = type("BitbucketConnector", (), {})
+sys.modules[bitbucket_connector.__name__] = bitbucket_connector
+
+box_sdk = types.ModuleType("box_sdk_gen")
+for box_type in ("BoxOAuth", "OAuthConfig", "AccessToken"):
+    setattr(box_sdk, box_type, type(box_type, (), {}))
+sys.modules[box_sdk.__name__] = box_sdk
 
 sync_data_source = importlib.import_module("rag.svr.sync_data_source")
 _ROOT = Path(__file__).resolve().parents[3]

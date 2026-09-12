@@ -2,9 +2,9 @@
 
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 
 def test_retrieval_canvas_loads_through_dynamic_tool_registry(tmp_path):
@@ -48,6 +48,94 @@ def test_retrieval_canvas_loads_through_dynamic_tool_registry(tmp_path):
 import json
 import socket
 import sys
+import contextvars
+import types
+
+
+def install_infrastructure_stub(name, **attributes):
+    module = types.ModuleType(name)
+    for attribute, value in attributes.items():
+        setattr(module, attribute, value)
+    sys.modules[name] = module
+
+
+def install_infrastructure_package(name):
+    module = types.ModuleType(name)
+    module.__path__ = []
+    sys.modules[name] = module
+
+
+class StubService:
+    pass
+
+
+class StubToolCallSession:
+    pass
+
+
+class StubRedis:
+    def delete(self, *_args, **_kwargs):
+        return None
+
+
+def passthrough_timeout(*_args, **_kwargs):
+    return lambda function: function
+
+
+async def empty_cross_languages(*_args, **_kwargs):
+    return ""
+
+
+# Keep the real Retrieval class, parameter validation, registry discovery, and
+# Canvas serialization. Only infrastructure that the contract never invokes is
+# replaced, avoiding a dependency on database, search, cache, or MCP runtimes.
+install_infrastructure_stub("common.connection_utils", timeout=passthrough_timeout)
+install_infrastructure_stub(
+    "common.token_utils",
+    token_usage_sink=contextvars.ContextVar("token_usage_sink", default=None),
+    langfuse_run_attrs=contextvars.ContextVar("langfuse_run_attrs", default=None),
+)
+install_infrastructure_stub(
+    "common.llm_request_context",
+    set_llm_request_context=lambda *_args, **_kwargs: None,
+    reset_llm_request_context=lambda *_args, **_kwargs: None,
+)
+install_infrastructure_stub(
+    "common.mcp_tool_call_conn",
+    MCPToolBinding=StubToolCallSession,
+    MCPToolCallSession=StubToolCallSession,
+    ToolCallSession=StubToolCallSession,
+)
+install_infrastructure_stub("common.metadata_utils", apply_meta_data_filter=lambda *_args, **_kwargs: [])
+install_infrastructure_stub("common.settings")
+install_infrastructure_package("api.db.services")
+install_infrastructure_stub("api.db.services.doc_metadata_service", DocMetadataService=StubService)
+install_infrastructure_stub("api.db.services.file_service", FileService=StubService)
+install_infrastructure_stub("api.db.services.knowledgebase_service", KnowledgebaseService=StubService)
+install_infrastructure_stub("api.db.services.llm_service", LLMBundle=StubService)
+install_infrastructure_stub("api.db.services.memory_service", MemoryService=StubService)
+install_infrastructure_stub("api.db.services.task_service", has_canceled=lambda *_args, **_kwargs: False)
+install_infrastructure_stub(
+    "api.db.joint_services.memory_message_service",
+    queue_save_to_memory_task=lambda *_args, **_kwargs: None,
+    query_message=lambda *_args, **_kwargs: [],
+)
+install_infrastructure_stub(
+    "api.db.joint_services.tenant_model_service",
+    get_tenant_default_model_by_type=lambda *_args, **_kwargs: None,
+    get_model_config_from_provider_instance=lambda *_args, **_kwargs: None,
+)
+install_infrastructure_stub("api.utils.file_utils", is_video_filename=lambda *_args, **_kwargs: False)
+install_infrastructure_stub("rag.app.tag", label_question=lambda *_args, **_kwargs: None)
+install_infrastructure_stub(
+    "rag.prompts.generator",
+    chunks_format=lambda *_args, **_kwargs: [],
+    cross_languages=empty_cross_languages,
+    kb_prompt=lambda *_args, **_kwargs: "",
+    memory_prompt=lambda *_args, **_kwargs: [],
+)
+install_infrastructure_stub("rag.utils.redis_conn", REDIS_CONN=StubRedis())
+install_infrastructure_stub("rag.utils.tts_cache", synthesize_with_cache=lambda *_args, **_kwargs: None)
 
 blocked_network = []
 socketpair_code = getattr(socket.socketpair, "__code__", None)

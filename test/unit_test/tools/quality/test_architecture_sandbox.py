@@ -1,0 +1,124 @@
+"""Exact positive and negative contracts for the T3 Docker supervisor."""
+
+from __future__ import annotations
+
+import copy
+import importlib.util
+import os
+import sys
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+
+ROOT = Path(os.environ.get("ARCHITECTURE_CANDIDATE_ROOT", Path(__file__).resolve().parents[4])).resolve()
+
+
+def _load(name: str, path: Path):
+    with patch.object(sys, "path", [str(ROOT / "tools/quality"), *sys.path]):
+        spec = importlib.util.spec_from_file_location(name, path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+
+sandbox = _load("architecture_sandbox_supervisor", ROOT / "tools/quality/run_architecture_sandbox.py")
+policy_checker = _load("architecture_sandbox_policy_checker", ROOT / "tools/quality/check_architecture_policy.py")
+
+
+def _producer_report() -> dict:
+    return {
+        "schema_version": 1,
+        "tool": {"name": "check_architecture", "version": "fixture"},
+        "policy_status": "PASS",
+        "exit_code": 0,
+        "input": {
+            "candidate_sha": "b" * 40,
+            "pr_base_sha": "a" * 40,
+            "selection_sha256": "c" * 64,
+            "runtime_execution": {
+                "mode": "os-sandbox-unprivileged",
+                "verified": True,
+                "child_uid": 65534,
+                "child_gid": 1001,
+                "supplementary_groups": [],
+                "effective_capabilities": "0000000000000000",
+                "no_new_privileges": True,
+            },
+        },
+        "findings": [],
+    }
+
+
+def _negative_checks() -> dict[str, bool]:
+    return {name: True for name in sandbox.REQUIRED_NEGATIVE_CHECKS}
+
+
+def test_sandbox_attestation_binds_report_and_negative_probe():
+    report = sandbox._inject_attestation(
+        _producer_report(),
+        candidate_head="b" * 40,
+        candidate_tree="d" * 40,
+        comparison_base="a" * 40,
+        selection_sha256="c" * 64,
+        producer_exit_code=0,
+        producer_uid=1000,
+        producer_gid=1001,
+        runtime_gid=1001,
+        rootfs_sha256="e" * 64,
+        negative_checks=_negative_checks(),
+        sandbox_runner_sha256="f" * 64,
+        sandbox_probe_sha256="1" * 64,
+    )
+    assert policy_checker._os_isolation_problem(report) is None
+    assert report["input"]["sandbox_runner_sha256"] == "f" * 64
+    assert report["input"]["sandbox_probe_sha256"] == "1" * 64
+
+    forged = copy.deepcopy(report)
+    forged["findings"].append({"kind": "forged-after-attestation"})
+    assert policy_checker._os_isolation_problem(forged) == "architecture OS-isolation attestation does not bind the producer payload"
+
+    docker_arguments = sandbox._docker_security_arguments(
+        image="fixture:latest",
+        name="fixture",
+        candidate_root=Path("/candidate"),
+        trusted_root=Path("/trusted-source"),
+        evidence_dir=Path("/supervisor-evidence"),
+        python_prefix=None,
+        uid=1000,
+        gid=1001,
+        runtime_producer=True,
+    )
+    assert ["--network", "none"] == docker_arguments[docker_arguments.index("--network") : docker_arguments.index("--network") + 2]
+    assert ["--security-opt", "no-new-privileges:true"] == docker_arguments[docker_arguments.index("--security-opt") : docker_arguments.index("--security-opt") + 2]
+    assert "--read-only" in docker_arguments
+    assert "--init" in docker_arguments
+    assert docker_arguments.count("--cap-drop") == 1
+    assert docker_arguments.count("--cap-add") == 2
+    assert "RAGFLOW_ARCHITECTURE_RUNTIME_UID=65534" in docker_arguments
+
+
+def test_sandbox_rejects_failed_negative_probe_and_unsafe_clone_config(tmp_path):
+    payload = {
+        "schema_version": 1,
+        "tool": {"name": "probe_architecture_sandbox", "version": "fixture"},
+        "status": "PASS",
+        "checks": _negative_checks(),
+    }
+    assert sandbox._validate_negative_probe(payload) == _negative_checks()
+
+    failed = copy.deepcopy(payload)
+    failed["checks"]["network_denied"] = False
+    with pytest.raises(ValueError, match="omitted or failed"):
+        sandbox._validate_negative_probe(failed)
+
+    unsafe = b"core.repositoryformatversion\0http.https://example.invalid/.extraheader\0credential.helper\0"
+    assert sandbox._unsafe_git_config_keys(unsafe) == ["credential.helper", "http.https://example.invalid/.extraheader"]
+    candidate = tmp_path / "candidate"
+    (candidate / "services/asr-online-service").mkdir(parents=True)
+    (candidate / "web").mkdir()
+    sandbox._validate_dependency_targets(candidate)
+
+    (candidate / ".venv").mkdir()
+    with pytest.raises(ValueError, match="reserved dependency path"):
+        sandbox._validate_dependency_targets(candidate)

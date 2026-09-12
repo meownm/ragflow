@@ -566,6 +566,42 @@ class ArchitecturePolicyTests(unittest.TestCase):
         self.assertTrue(selected.is_symlink())
         self.assertEqual(selected.resolve(), interpreter)
 
+    def test_candidate_blob_uses_git_content_for_clean_crlf_checkout(self):
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=root, check=True)
+        subprocess.run(["git", "config", "core.autocrlf", "true"], cwd=root, check=True)
+        source = root / "source.py"
+        source.write_bytes(b"value = 1\n")
+        subprocess.run(["git", "add", "source.py"], cwd=root, check=True)
+        subprocess.run(["git", "commit", "-qm", "source"], cwd=root, check=True)
+
+        source.write_bytes(b"value = 1\r\n")
+        self.assertEqual(checker._candidate_blob(root, "source.py"), b"value = 1\n")
+        self.assertEqual(
+            checker._candidate_fixture_paths(root, ["source.py"], {"source.py": hashlib.sha256(b"value = 1\n").hexdigest()}),
+            {"source.py": source},
+        )
+
+        source.write_bytes(b"value = 2\r\n")
+        self.assertEqual(checker._candidate_blob(root, "source.py"), b"value = 2\r\n")
+
+    def test_candidate_blob_rejects_git_clean_non_eol_divergence(self):
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=root, check=True)
+        source = root / "source.py"
+        source.write_bytes(b"value = 1\n")
+        subprocess.run(["git", "add", "source.py"], cwd=root, check=True)
+        subprocess.run(["git", "commit", "-qm", "source"], cwd=root, check=True)
+        subprocess.run(["git", "update-index", "--assume-unchanged", "source.py"], cwd=root, check=True)
+
+        source.write_bytes(b"value = 2\n")
+        with self.assertRaisesRegex(ValueError, "differs from HEAD outside CRLF normalization"):
+            checker._candidate_blob(root, "source.py")
+
     def test_protected_source_bundle_uses_base_and_blocks_changed_candidate(self):
         self.assertEqual(
             checker.BASE_GOVERNED_CONTROL_SOURCES,

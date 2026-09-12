@@ -17,7 +17,7 @@ from pathlib import Path, PurePosixPath
 import yaml
 from capture_inventory import capture, git, paths, safe_path
 
-VERSION = "0.3.1"
+VERSION = "0.3.2"
 TRUSTED_BASE_PROTOCOL = 1
 MODE = "report_only"
 POLICY_REPOSITORY_PATH = "tools/quality/architecture-policy.json"
@@ -247,6 +247,37 @@ def _base_blob(root: Path, revision: str, path: str) -> bytes | None:
         return None
 
 
+def _candidate_blob(root: Path, path: str) -> bytes:
+    """Read candidate content in Git's canonical form when the path is unchanged."""
+    repository_path = _repository_path(path, "Candidate source path")
+    target = safe_path(root, repository_path)
+    if not target.is_file():
+        raise ValueError(f"Candidate source is unavailable: {repository_path}")
+    content = target.read_bytes()
+    try:
+        git(root, "diff", "--no-ext-diff", "--quiet", "HEAD", "--", repository_path)
+    except subprocess.CalledProcessError as error:
+        if error.returncode != 1:
+            raise
+    else:
+        committed = _base_blob(root, "HEAD", repository_path)
+        if committed is not None:
+            if content == committed or content.replace(b"\r\n", b"\n") == committed:
+                return committed
+            raise ValueError(f"Git-clean candidate source differs from HEAD outside CRLF normalization: {repository_path}")
+    return content
+
+
+def _file_blob(root: Path, value: Path) -> bytes:
+    absolute_root = Path(os.path.abspath(root))
+    absolute_value = Path(os.path.abspath(value))
+    try:
+        repository_path = absolute_value.relative_to(absolute_root).as_posix()
+    except ValueError:
+        return value.read_bytes()
+    return _candidate_blob(root, repository_path)
+
+
 def _changed_paths(root: Path, base: str, head: str) -> list[str]:
     git(root, "merge-base", "--is-ancestor", base, head)
     changed = set()
@@ -313,7 +344,7 @@ def _lane_source_bundle(root: Path, base: str, lane: dict, source: str) -> tuple
     records = []
     hashes = {}
     for source_path in source_paths:
-        candidate = safe_path(root, source_path).read_bytes()
+        candidate = _candidate_blob(root, source_path)
         trusted = candidate if source == "candidate-bootstrap" else _base_blob(root, base, source_path)
         if trusted is None:
             raise ValueError(f"Comparison base omitted required architecture source: {source_path}")
@@ -336,9 +367,9 @@ def _lane_source_bundle(root: Path, base: str, lane: dict, source: str) -> tuple
 
 def create_plan(root: Path, policy_path: Path, base_ref: str, policy_repository_path: str = POLICY_REPOSITORY_PATH) -> dict:
     policy_repository_path = _repository_path(policy_repository_path, "Policy repository path")
-    policy_bytes = policy_path.read_bytes()
+    policy_bytes = _file_blob(root, policy_path)
     policy = load_policy(policy_path)
-    candidate_policy = safe_path(root, policy_repository_path).read_bytes()
+    candidate_policy = _candidate_blob(root, policy_repository_path)
     base_config = json.loads(safe_path(root, "tools/quality/upstream-base.json").read_text(encoding="utf-8"))
     mapping_path = safe_path(root, "tools/quality/module-map.yaml")
     mapping = yaml.safe_load(mapping_path.read_text(encoding="utf-8"))
@@ -351,9 +382,9 @@ def create_plan(root: Path, policy_path: Path, base_ref: str, policy_repository_
     base_owners = _module_assignments(yaml.safe_load(base_mapping_blob.decode("utf-8")))
     lanes, changes = select_lanes(policy, changed, snapshot["records"], base_owners)
 
-    candidate_tool = safe_path(root, policy["tool_path"]).read_bytes()
+    candidate_tool = _candidate_blob(root, policy["tool_path"])
     base_tool = _base_blob(root, base, policy["tool_path"])
-    evaluator_tool = Path(__file__).resolve().read_bytes()
+    evaluator_tool = _file_blob(root, Path(__file__).resolve())
     evaluator_source = _verified_content_source(evaluator_tool, candidate_tool, base_tool, "Architecture evaluator")
     base_policy = _base_blob(root, base, policy_repository_path)
     policy_source = _verified_content_source(policy_bytes, candidate_policy, base_policy, "Architecture policy")
@@ -629,7 +660,7 @@ def _candidate_fixture_paths(root: Path, fixture_paths: list[str], sources: dict
     source_paths = {}
     for fixture_path in fixture_paths:
         target = safe_path(root, fixture_path)
-        if _sha256(target.read_bytes()) != sources[fixture_path]:
+        if _sha256(_candidate_blob(root, fixture_path)) != sources[fixture_path]:
             raise ValueError(f"Candidate fixture differs from the selection plan: {fixture_path}")
         source_paths[fixture_path] = target
     return source_paths
@@ -721,8 +752,8 @@ def run_policy_fixtures(root: Path, policy_path: Path, policy: dict, python: Pat
             "head": before["head"],
             "upstream_base": before["upstream_base"],
             "snapshot_sha256": before["snapshot_sha256"],
-            "tool_sha256": _sha256(Path(__file__).resolve().read_bytes()),
-            "policy_sha256": _sha256(policy_path.read_bytes()),
+            "tool_sha256": _sha256(_file_blob(root, Path(__file__).resolve())),
+            "policy_sha256": _sha256(_file_blob(root, policy_path)),
             "selection_sha256": plan["selection_sha256"],
         },
         "fixture_source": planned["source"],
@@ -1045,15 +1076,15 @@ def _validate_plan_context(root: Path, policy_path: Path, policy_repository_path
         raise ValueError("Architecture selection plan omitted input identity")
     if plan_input.get("policy_repository_path") != policy_repository_path:
         raise ValueError("Architecture policy repository path changed after selection")
-    if plan_input.get("policy_sha256") != _sha256(policy_path.read_bytes()):
+    if plan_input.get("policy_sha256") != _sha256(_file_blob(root, policy_path)):
         raise ValueError("Architecture policy changed after selection")
-    candidate_policy = safe_path(root, policy_repository_path).read_bytes()
+    candidate_policy = _candidate_blob(root, policy_repository_path)
     if plan_input.get("candidate_policy_sha256") != _sha256(candidate_policy):
         raise ValueError("Candidate architecture policy changed after selection")
-    candidate_tool = safe_path(root, policy["tool_path"]).read_bytes()
+    candidate_tool = _candidate_blob(root, policy["tool_path"])
     if plan_input.get("candidate_tool_sha256") != _sha256(candidate_tool):
         raise ValueError("Architecture checker changed after selection")
-    evaluator_tool = Path(__file__).resolve().read_bytes()
+    evaluator_tool = _file_blob(root, Path(__file__).resolve())
     if plan_input.get("evaluator_tool_sha256") != _sha256(evaluator_tool):
         raise ValueError("Architecture evaluator changed after selection")
     validate_replanned(plan, create_plan(root, policy_path, plan_input.get("base", ""), policy_repository_path))
@@ -1068,7 +1099,7 @@ def _materialized_source_content(root: Path, base: str, record: dict) -> bytes:
         if content is None:
             raise ValueError(f"Comparison base omitted protected source: {source_path}")
     elif source == "candidate-bootstrap":
-        content = safe_path(root, source_path).read_bytes()
+        content = _candidate_blob(root, source_path)
     else:
         raise ValueError(f"Protected source {source_path} has an invalid authority: {source!r}")
     if not re.fullmatch(r"[0-9a-f]{64}", str(record.get("sha256"))) or _sha256(content) != record["sha256"]:

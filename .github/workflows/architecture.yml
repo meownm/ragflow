@@ -279,6 +279,12 @@ jobs:
           fi
           uv venv "${CANDIDATE_ROOT}/.venv" --python 3.13
           uv pip sync --python "${CANDIDATE_ROOT}/.venv/bin/python" --require-hashes --strict "${trusted_requirements}"
+          launcher="${CANDIDATE_ROOT}/.venv/bin/python"
+          runtime_python="$(readlink -f "${launcher}")"
+          printf 'T3 diagnostic launcher-link=%s\n' "$(readlink "${launcher}")"
+          printf 'T3 diagnostic runtime-python=%s\n' "${runtime_python}"
+          printf 'T3 diagnostic runtime-prefix=%s\n' "$(dirname "$(dirname "${runtime_python}")")"
+          ls -ld "${launcher}" "${runtime_python}" "$(dirname "$(dirname "${runtime_python}")")"
 
       - name: Prepare ASR architecture contract environment
         if: needs.architecture-policy-plan.outputs.python_architecture == 'true'

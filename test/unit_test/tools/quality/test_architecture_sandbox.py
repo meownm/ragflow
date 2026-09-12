@@ -6,6 +6,7 @@ import copy
 import importlib.util
 import os
 import sys
+import tarfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -122,3 +123,8 @@ def test_sandbox_rejects_failed_negative_probe_and_unsafe_clone_config(tmp_path)
     (candidate / ".venv").mkdir()
     with pytest.raises(ValueError, match="reserved dependency path"):
         sandbox._validate_dependency_targets(candidate)
+
+    rootfs = tmp_path / "rootfs.tar"
+    sandbox._create_rootfs(rootfs, producer_uid=1000, producer_gid=1001, runtime_gid=1001)
+    with tarfile.open(rootfs) as archive:
+        assert archive.getmember("sbin").isdir()

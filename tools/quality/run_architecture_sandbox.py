@@ -290,9 +290,9 @@ def _create_rootfs(path: Path, producer_uid: int, producer_gid: int, runtime_gid
     group_ids = sorted({0, producer_gid, runtime_gid})
     groups = "".join(f"sandbox{gid}:x:{gid}:\n" if gid else "root:x:0:\n" for gid in group_ids).encode()
     with tarfile.open(path, "w") as archive:
-        for directory in ("etc", "home", "opt", "root", "tmp", "usr", "workspace", "trusted", "evidence"):
+        for directory in ("etc", "home", "opt", "root", "sbin", "tmp", "usr", "workspace", "trusted", "evidence"):
             _tar_entry(archive, directory, mode=0o1777 if directory == "tmp" else 0o755)
-        for name, target in (("bin", "usr/bin"), ("sbin", "usr/sbin"), ("lib", "usr/lib"), ("lib64", "usr/lib64")):
+        for name, target in (("bin", "usr/bin"), ("lib", "usr/lib"), ("lib64", "usr/lib64")):
             _tar_entry(archive, name, link=target)
         _tar_entry(archive, "etc/passwd", mode=0o644, content=passwd)
         _tar_entry(archive, "etc/group", mode=0o644, content=groups)

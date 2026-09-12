@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "verified_at": "2026-09-12T07:06:42.944988+00:00",
-  "head": "e9e5c608bf78fbcaa1afcbba2ba4eafb59510df2",
+  "verified_at": "2026-09-12T10:07:50.388521+00:00",
+  "head": "f4188329d435671e0266b8d3641e631f54981141",
   "official_commits": [
     {
       "sha": "cb93883f3f8c975eecb2fed81210effeb3bdb06f",
@@ -1804,6 +1804,77 @@
         "web/src/utils/telemetry.test.ts": "A",
         "web/src/utils/telemetry.ts": "M"
       }
+    },
+    {
+      "sha": "4a080bf416d16521188c3398b4cb486081cd29e9",
+      "parents": [
+        "e9e5c608bf78fbcaa1afcbba2ba4eafb59510df2"
+      ],
+      "tree": "6666ba96fbedc4ac2388865fb573cba1142590c0",
+      "committed_at": "2026-09-12T10:35:05+03:00",
+      "subject": "fix(architecture): canonicalize clean candidate sources",
+      "changes_from_first_parent": {
+        "docs/develop/architecture-transition-ru.md": "M",
+        "docs/develop/t0-provenance-report-ru.md": "M",
+        "docs/develop/t3-architecture-policy-ru.md": "M",
+        "test/unit_test/tools/quality/test_check_architecture_policy.py": "M",
+        "tools/quality/architecture-policy.json": "M",
+        "tools/quality/check_architecture_policy.py": "M",
+        "tools/quality/core-changes.yaml": "M",
+        "tools/quality/file-inventory.json": "M",
+        "tools/quality/upstream-evidence.json": "M"
+      }
+    },
+    {
+      "sha": "d3a44c945c543463c0c9b707567c9cff93998772",
+      "parents": [
+        "4a080bf416d16521188c3398b4cb486081cd29e9"
+      ],
+      "tree": "cfeaf7560d45b56225a915c9f95f1b6b3f5e5e97",
+      "committed_at": "2026-09-12T11:18:30+03:00",
+      "subject": "fix(architecture): accept trusted ASR venv launcher",
+      "changes_from_first_parent": {
+        "docs/develop/architecture-transition-ru.md": "M",
+        "docs/develop/t0-provenance-report-ru.md": "M",
+        "docs/develop/t2-python-analysis-ru.md": "M",
+        "docs/develop/t3-architecture-policy-ru.md": "M",
+        "test/unit_test/tools/quality/test_check_architecture.py": "M",
+        "tools/quality/check_architecture.py": "M",
+        "tools/quality/core-changes.yaml": "M",
+        "tools/quality/file-inventory.json": "M"
+      }
+    },
+    {
+      "sha": "f4188329d435671e0266b8d3641e631f54981141",
+      "parents": [
+        "d3a44c945c543463c0c9b707567c9cff93998772"
+      ],
+      "tree": "82e7bef03900e1d0fdb440e671e40068c30d6a95",
+      "committed_at": "2026-09-12T13:07:41+03:00",
+      "subject": "feat(architecture): isolate candidate runtime contracts",
+      "changes_from_first_parent": {
+        ".github/workflows/architecture.yml": "M",
+        "test/unit_test/agent/test_openmetadata_dynamic_registration.py": "M",
+        "test/unit_test/agent/test_retrieval_dynamic_registration.py": "M",
+        "test/unit_test/api/apps/business_documents/test_business_document_adapter_contracts.py": "M",
+        "test/unit_test/api/apps/business_documents/test_business_document_worker_exports.py": "M",
+        "test/unit_test/rag/test_sync_data_source.py": "M",
+        "test/unit_test/tools/quality/test_agent_runtime_registration.py": "M",
+        "test/unit_test/tools/quality/test_architecture_sandbox.py": "A",
+        "test/unit_test/tools/quality/test_architecture_workflow.py": "M",
+        "test/unit_test/tools/quality/test_check_architecture.py": "M",
+        "test/unit_test/tools/quality/test_check_architecture_policy.py": "M",
+        "tools/quality/architecture-contract-requirements.in": "A",
+        "tools/quality/architecture-contract-requirements.txt": "A",
+        "tools/quality/architecture-policy.json": "M",
+        "tools/quality/check_architecture.py": "M",
+        "tools/quality/check_architecture_policy.py": "M",
+        "tools/quality/core-changes.yaml": "M",
+        "tools/quality/file-inventory.json": "M",
+        "tools/quality/module-map.yaml": "M",
+        "tools/quality/probe_architecture_sandbox.py": "A",
+        "tools/quality/run_architecture_sandbox.py": "A"
+      }
     }
   ],
   "local_refs_only_no_fetch": [
@@ -1812,12 +1883,12 @@
     "refs/remotes/origin/codex/t3-architecture-base-protocol 03c529786aae21db47855b8c1212ee1ace1e3ff1",
     "refs/remotes/origin/codex/t4-business-document-assignment 0f050c78cd4e09518a602f22bfa606b1132319d8",
     "refs/remotes/origin/main e9e5c608bf78fbcaa1afcbba2ba4eafb59510df2",
-    "refs/remotes/upstream/HEAD 2e6003cfd4f3bc5c849f3ca897af4e33eab3124f",
-    "refs/remotes/upstream/main 2e6003cfd4f3bc5c849f3ca897af4e33eab3124f",
+    "refs/remotes/upstream/HEAD 1f5d33333a3ff67fda2aa302c843699e994453e3",
+    "refs/remotes/upstream/main 1f5d33333a3ff67fda2aa302c843699e994453e3",
     "refs/remotes/upstream/main_backup 427e0540cab683a591a5f4a65a0b38bf9ee008b7"
   ],
   "graph_merge_base": "28ce77fe5f1e4301d3672221b509418d3c7acb77",
-  "baseline_diff_summary": "744 files changed, 157444 insertions(+), 2857 deletions(-)",
+  "baseline_diff_summary": "749 files changed, 161006 insertions(+), 2857 deletions(-)",
   "ancestry_only_merge": {
     "commit": "64f0bfdf0e724d006d61563a76964bf140bcfb4e",
     "first_parent": "268a5a9d60e19982ac329ec045d0ff9b0228b26b",

@@ -105,7 +105,7 @@ def report(plan: dict, lane_id: str, tool: str, **values) -> bytes:
 
 def python_report(plan: dict, **values) -> bytes:
     payload = json.loads(report(plan, "python-architecture", "check_architecture", **values))
-    runtime_gid = 1001
+    runtime_gid = 65534
     payload["input"]["runtime_execution"] = {
         "mode": "os-sandbox-unprivileged",
         "verified": True,
@@ -130,15 +130,19 @@ def python_report(plan: dict, **values) -> bytes:
             "candidate_mount": "read-only",
             "trusted_mount": "read-only",
             "root_filesystem": "read-only",
-            "evidence_access": "producer-only",
+            "evidence_access": "single-report-file-group-write",
+            "report_mount": "single-file",
+            "report_file_mode": "0620",
+            "evidence_owner_uid": 1000,
+            "evidence_owner_gid": 1001,
             "network": "none",
             "ipc": "none",
             "init_process": True,
             "no_new_privileges": True,
             "producer_capabilities": ["SETGID", "SETUID"],
             "system_runtime_mounts": ["/lib", "/lib64", "/usr"],
-            "producer_uid": 1000,
-            "producer_gid": runtime_gid,
+            "producer_uid": 0,
+            "producer_gid": 1001,
             "runtime_uid": 65534,
             "runtime_gid": runtime_gid,
             "runtime_supplementary_groups": [],
@@ -150,6 +154,8 @@ def python_report(plan: dict, **values) -> bytes:
             "candidate_write_denied": True,
             "evidence_read_denied": True,
             "evidence_write_denied": True,
+            "report_read_denied": True,
+            "report_write_denied": True,
             "network_denied": True,
             "forbidden_environment_absent": True,
             "sensitive_paths_absent": True,

@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import platform
+import stat
 import subprocess
 import sys
 import tempfile
@@ -25,6 +26,8 @@ REPORT_ONLY = "T2_REPORT_ONLY"
 MODULE_ACCESS = "<module>"
 STATIC_IMPORT_KINDS = {"import", "literal_dynamic_import"}
 RUNTIME_WORKER = Path(__file__).with_name("probe_python_runtime.py")
+RUNTIME_REPORT_DIRECTORY_MODE = 0o711
+RUNTIME_REPORT_MODE = 0o622
 MANUAL_RULES = [
     "ARC-02 computed reverse loading outside configured integration sources is not evaluated",
     "ARC-02 adapter behavior outside configured contract tests remains manual",
@@ -105,6 +108,25 @@ def _runtime_execution_attestation() -> dict:
         "effective_capabilities": "0000000000000000",
         "no_new_privileges": True,
     }
+
+
+def _prepare_runtime_report(path: Path) -> tuple[int, int, int, int, int]:
+    path.parent.chmod(RUNTIME_REPORT_DIRECTORY_MODE)
+    path.touch(exist_ok=False)
+    path.chmod(RUNTIME_REPORT_MODE)
+    metadata = path.lstat()
+    return metadata.st_dev, metadata.st_ino, metadata.st_uid, metadata.st_gid, stat.S_IMODE(metadata.st_mode)
+
+
+def _runtime_report_problem(path: Path, expected: tuple[int, int, int, int, int]) -> str | None:
+    try:
+        metadata = path.lstat()
+    except OSError:
+        return "Runtime contract report path disappeared"
+    observed = (metadata.st_dev, metadata.st_ino, metadata.st_uid, metadata.st_gid, stat.S_IMODE(metadata.st_mode))
+    if not stat.S_ISREG(metadata.st_mode) or observed != expected:
+        return "Runtime contract report path identity or permissions changed"
+    return None
 
 
 def _normalized_prefix(value: object) -> str:
@@ -485,9 +507,8 @@ def _evaluate_pytest_contract(
             pytest_nodes.append("::".join([str(safe_path(root, test_path)), *node]))
         with tempfile.TemporaryDirectory(prefix="ragflow-architecture-contract-") as directory:
             runtime_options = _runtime_subprocess_options()
-            if runtime_options:
-                Path(directory).chmod(0o770)
             report_path = Path(directory) / "pytest.xml"
+            report_identity = _prepare_runtime_report(report_path) if runtime_options else None
             completed = _run_runtime_subprocess(
                 [
                     str(python_executable or sys.executable),
@@ -512,6 +533,17 @@ def _evaluate_pytest_contract(
             )
             captured_stdout = completed.stdout[-4000:]
             captured_stderr = completed.stderr[-4000:]
+            report_problem = _runtime_report_problem(report_path, report_identity) if report_identity else None
+            if report_problem:
+                return {
+                    "status": "INCOMPLETE",
+                    "observations": [],
+                    "loaded_repo_modules": [],
+                    "findings": [],
+                    "captured_stdout": captured_stdout,
+                    "captured_stderr": captured_stderr,
+                    "incomplete_reasons": [{"kind": "pytest_contract_report_permissions", "message": report_problem}],
+                }
             if not report_path.is_file():
                 return {
                     "status": "INCOMPLETE",

@@ -96,6 +96,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workspace", type=Path, required=True)
     parser.add_argument("--evidence", type=Path, required=True)
+    parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--sentinel", required=True)
     parser.add_argument("--expected-uid", type=int, required=True)
     parser.add_argument("--expected-gid", type=int, required=True)
@@ -103,6 +104,7 @@ def main(argv: list[str] | None = None) -> int:
 
     workspace = args.workspace.resolve()
     evidence = args.evidence.resolve()
+    report = args.report.resolve(strict=True)
     sentinel = evidence / args.sentinel
     status = _process_status()
     identity = {"uid": os.geteuid(), "gid": os.getegid(), "groups": sorted(os.getgroups())}
@@ -110,6 +112,8 @@ def main(argv: list[str] | None = None) -> int:
         "candidate_write_denied": _operation_denied(lambda: (workspace / ".architecture-sandbox-write-probe").write_text("forbidden", encoding="utf-8")),
         "evidence_read_denied": _operation_denied(lambda: sentinel.read_bytes()),
         "evidence_write_denied": _operation_denied(lambda: (evidence / ".architecture-sandbox-evidence-probe").write_text("forbidden", encoding="utf-8")),
+        "report_read_denied": report.is_file() and _operation_denied(lambda: report.read_bytes()),
+        "report_write_denied": report.is_file() and _operation_denied(lambda: report.write_bytes(b"forbidden")),
         "network_denied": _network_denied(),
         "forbidden_environment_absent": _forbidden_environment_absent(),
         "sensitive_paths_absent": not any(Path(path).exists() for path in SENSITIVE_PATHS),

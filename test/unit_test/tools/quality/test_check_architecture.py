@@ -262,13 +262,26 @@ class RuntimeProbeTests(unittest.TestCase):
         source = (ROOT / "tools/quality/check_architecture.py").read_text(encoding="utf-8")
         self.assertEqual(source.count("subprocess.run("), 1)
         self.assertEqual(source.count("_run_runtime_subprocess("), 4)
-        dropped_identity = {"user": 65534, "group": 1001, "extra_groups": ()}
+        dropped_identity = {"user": 65534, "group": 65534, "extra_groups": ()}
         with (
             patch.object(checker, "_runtime_subprocess_options", return_value=dropped_identity),
             patch.object(checker.subprocess, "run", return_value="completed") as runtime,
         ):
             self.assertEqual(checker._run_runtime_subprocess(["python"], check=False), "completed")
         runtime.assert_called_once_with(["python"], check=False, **dropped_identity)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX modes are part of the runtime-report contract")
+    def test_runtime_report_path_detects_permission_or_identity_changes(self):
+        directory = self.root / "runtime-report"
+        directory.mkdir()
+        report = directory / "pytest.xml"
+        expected = checker._prepare_runtime_report(report)
+        self.assertEqual(directory.stat().st_mode & 0o777, checker.RUNTIME_REPORT_DIRECTORY_MODE)
+        self.assertEqual(report.stat().st_mode & 0o777, checker.RUNTIME_REPORT_MODE)
+        self.assertIsNone(checker._runtime_report_problem(report, expected))
+
+        report.chmod(0o666)
+        self.assertEqual(checker._runtime_report_problem(report, expected), "Runtime contract report path identity or permissions changed")
 
     def test_clean_import_runs_in_fresh_process(self):
         self.write("owned/__init__.py", "")

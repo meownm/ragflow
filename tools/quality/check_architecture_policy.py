@@ -517,6 +517,10 @@ def _os_isolation_constraints_problem(report_input: dict, constraints: object) -
         "trusted_mount",
         "root_filesystem",
         "evidence_access",
+        "report_mount",
+        "report_file_mode",
+        "evidence_owner_uid",
+        "evidence_owner_gid",
         "network",
         "ipc",
         "init_process",
@@ -538,14 +542,18 @@ def _os_isolation_constraints_problem(report_input: dict, constraints: object) -
         "candidate_mount": "read-only",
         "trusted_mount": "read-only",
         "root_filesystem": "read-only",
-        "evidence_access": "producer-only",
+        "evidence_access": "single-report-file-group-write",
+        "report_mount": "single-file",
+        "report_file_mode": "0620",
         "network": "none",
         "ipc": "none",
         "init_process": True,
         "no_new_privileges": True,
         "producer_capabilities": ["SETGID", "SETUID"],
         "system_runtime_mounts": ["/lib", "/lib64", "/usr"],
+        "producer_uid": 0,
         "runtime_uid": 65534,
+        "runtime_gid": 65534,
         "runtime_supplementary_groups": [],
         "pids_limit": 256,
         "memory_limit": "5g",
@@ -553,17 +561,18 @@ def _os_isolation_constraints_problem(report_input: dict, constraints: object) -
     }
     if any(constraints.get(field) != value for field, value in fixed_constraints.items()):
         return "architecture OS-isolation attestation weakens a required constraint"
-    producer_uid = constraints.get("producer_uid")
+    evidence_owner_uid = constraints.get("evidence_owner_uid")
+    evidence_owner_gid = constraints.get("evidence_owner_gid")
     producer_gid = constraints.get("producer_gid")
-    if type(producer_uid) is not int or producer_uid <= 0 or producer_uid == 65534 or type(producer_gid) is not int or producer_gid < 0:
-        return "architecture OS-isolation attestation has an invalid producer identity"
-    if constraints.get("runtime_gid") != producer_gid:
-        return "architecture OS-isolation attestation has an invalid runtime group"
+    if type(evidence_owner_uid) is not int or evidence_owner_uid <= 0 or evidence_owner_uid == 65534:
+        return "architecture OS-isolation attestation has an invalid evidence owner"
+    if type(producer_gid) is not int or producer_gid <= 0 or producer_gid == 65534 or evidence_owner_gid != producer_gid:
+        return "architecture OS-isolation attestation has an invalid producer group"
     expected_runtime = {
         "mode": "os-sandbox-unprivileged",
         "verified": True,
         "child_uid": 65534,
-        "child_gid": producer_gid,
+        "child_gid": 65534,
         "supplementary_groups": [],
         "effective_capabilities": "0000000000000000",
         "no_new_privileges": True,
@@ -578,6 +587,8 @@ def _os_isolation_negative_problem(negative_probe: object) -> str | None:
         "candidate_write_denied",
         "evidence_read_denied",
         "evidence_write_denied",
+        "report_read_denied",
+        "report_write_denied",
         "network_denied",
         "forbidden_environment_absent",
         "sensitive_paths_absent",

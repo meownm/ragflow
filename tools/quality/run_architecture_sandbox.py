@@ -10,6 +10,7 @@ import os
 import re
 import secrets
 import shutil
+import stat
 import subprocess
 import tarfile
 import tempfile
@@ -17,12 +18,17 @@ from pathlib import Path, PurePosixPath
 
 VERSION = "0.1.0"
 SCHEMA_VERSION = 1
+PRODUCER_UID = 0
 RUNTIME_UID = 65534
+RUNTIME_GID = 65534
 REPORT_NAME = "architecture-python.json"
+REPORT_MODE = 0o620
 REQUIRED_NEGATIVE_CHECKS = (
     "candidate_write_denied",
     "evidence_read_denied",
     "evidence_write_denied",
+    "report_read_denied",
+    "report_write_denied",
     "network_denied",
     "forbidden_environment_absent",
     "sensitive_paths_absent",
@@ -281,16 +287,26 @@ def _tar_entry(archive: tarfile.TarFile, name: str, *, mode: int = 0o755, conten
         archive.addfile(info)
 
 
-def _create_rootfs(path: Path, producer_uid: int, producer_gid: int, runtime_gid: int) -> str:
-    passwd = (
-        f"root:x:0:0:root:/root:/usr/sbin/nologin\n"
-        f"producer:x:{producer_uid}:{producer_gid}:architecture producer:/tmp:/usr/sbin/nologin\n"
-        f"runtime:x:{RUNTIME_UID}:{runtime_gid}:candidate runtime:/tmp:/usr/sbin/nologin\n"
-    ).encode()
-    group_ids = sorted({0, producer_gid, runtime_gid})
+def _create_rootfs(path: Path, producer_gid: int) -> str:
+    passwd = (f"root:x:0:0:root:/root:/usr/sbin/nologin\nruntime:x:{RUNTIME_UID}:{RUNTIME_GID}:candidate runtime:/tmp:/usr/sbin/nologin\n").encode()
+    group_ids = sorted({0, producer_gid, RUNTIME_GID})
     groups = "".join(f"sandbox{gid}:x:{gid}:\n" if gid else "root:x:0:\n" for gid in group_ids).encode()
     with tarfile.open(path, "w") as archive:
-        for directory in ("etc", "home", "lib", "lib64", "opt", "root", "sbin", "tmp", "usr", "workspace", "trusted", "evidence"):
+        for directory in (
+            "etc",
+            "home",
+            "lib",
+            "lib64",
+            "opt",
+            "root",
+            "sbin",
+            "tmp",
+            "usr",
+            "workspace",
+            "trusted",
+            "evidence",
+            "negative-evidence",
+        ):
             _tar_entry(archive, directory, mode=0o1777 if directory == "tmp" else 0o755)
         for name, target in (("bin", "usr/bin"),):
             _tar_entry(archive, name, link=target)
@@ -312,7 +328,7 @@ def _docker_security_arguments(
     name: str,
     candidate_root: Path,
     trusted_root: Path,
-    evidence_dir: Path,
+    evidence_mounts: tuple[tuple[Path, str], ...],
     python_runtime_mounts: tuple[tuple[Path, str], ...],
     uid: int,
     gid: int,
@@ -351,14 +367,14 @@ def _docker_security_arguments(
         "--mount",
         _bind(trusted_root, "/trusted", readonly=True),
         "--mount",
-        _bind(evidence_dir, "/evidence", readonly=False),
-        "--mount",
         _bind(Path("/lib").resolve(), "/lib", readonly=True),
         "--mount",
         _bind(Path("/lib64").resolve(), "/lib64", readonly=True),
         "--mount",
         _bind(Path("/usr"), "/usr", readonly=True),
     ]
+    for source, target in evidence_mounts:
+        command.extend(["--mount", _bind(source, target, readonly=False)])
     for source, target in python_runtime_mounts:
         command.extend(["--mount", _bind(source, target, readonly=True)])
     if runtime_producer:
@@ -378,7 +394,7 @@ def _docker_security_arguments(
         environment.update(
             {
                 "RAGFLOW_ARCHITECTURE_OS_SANDBOX": "1",
-                "RAGFLOW_ARCHITECTURE_RUNTIME_GID": str(gid),
+                "RAGFLOW_ARCHITECTURE_RUNTIME_GID": str(RUNTIME_GID),
                 "RAGFLOW_ARCHITECTURE_RUNTIME_UID": str(RUNTIME_UID),
             }
         )
@@ -422,9 +438,8 @@ def _inject_attestation(
     comparison_base: str,
     selection_sha256: str,
     producer_exit_code: int,
-    producer_uid: int,
+    evidence_owner_uid: int,
     producer_gid: int,
-    runtime_gid: int,
     rootfs_sha256: str,
     negative_checks: dict[str, bool],
     sandbox_runner_sha256: str,
@@ -448,7 +463,7 @@ def _inject_attestation(
         "mode": "os-sandbox-unprivileged",
         "verified": True,
         "child_uid": RUNTIME_UID,
-        "child_gid": runtime_gid,
+        "child_gid": RUNTIME_GID,
         "supplementary_groups": [],
         "effective_capabilities": "0000000000000000",
         "no_new_privileges": True,
@@ -474,17 +489,21 @@ def _inject_attestation(
             "candidate_mount": "read-only",
             "trusted_mount": "read-only",
             "root_filesystem": "read-only",
-            "evidence_access": "producer-only",
+            "evidence_access": "single-report-file-group-write",
+            "report_mount": "single-file",
+            "report_file_mode": "0620",
+            "evidence_owner_uid": evidence_owner_uid,
+            "evidence_owner_gid": producer_gid,
             "network": "none",
             "ipc": "none",
             "init_process": True,
             "no_new_privileges": True,
             "producer_capabilities": ["SETGID", "SETUID"],
             "system_runtime_mounts": ["/lib", "/lib64", "/usr"],
-            "producer_uid": producer_uid,
+            "producer_uid": PRODUCER_UID,
             "producer_gid": producer_gid,
             "runtime_uid": RUNTIME_UID,
-            "runtime_gid": runtime_gid,
+            "runtime_gid": RUNTIME_GID,
             "runtime_supplementary_groups": [],
             "pids_limit": 256,
             "memory_limit": "5g",
@@ -501,6 +520,7 @@ def _atomic_json_replace(path: Path, payload: dict) -> None:
         raise ValueError("Refusing stale architecture report staging path")
     try:
         temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
+        temporary.chmod(0o600)
         os.replace(temporary, path)
     finally:
         if temporary.exists():
@@ -552,12 +572,35 @@ def _validated_roots(candidate_root: Path, trusted_root: Path, evidence_dir: Pat
     candidate_root, trusted_root, evidence_dir = roots
     if evidence_dir.is_relative_to(candidate_root) or evidence_dir.is_relative_to(trusted_root):
         raise ValueError("Evidence directory must be outside candidate and trusted sources")
-    producer_uid = os.geteuid()
+    evidence_owner_uid = os.geteuid()
     producer_gid = os.getegid()
-    if producer_uid in {0, RUNTIME_UID}:
-        raise ValueError("Architecture sandbox producer requires a distinct non-root host UID")
+    if evidence_owner_uid in {0, RUNTIME_UID} or producer_gid in {0, RUNTIME_GID}:
+        raise ValueError("Architecture sandbox evidence owner requires distinct non-root host UID/GID")
     evidence_dir.chmod(0o700)
-    return candidate_root, trusted_root, evidence_dir, producer_uid, producer_gid
+    return candidate_root, trusted_root, evidence_dir, evidence_owner_uid, producer_gid
+
+
+def _validate_report_file(path: Path, owner_uid: int, owner_gid: int, *, empty: bool) -> None:
+    metadata = path.lstat()
+    if not stat.S_ISREG(metadata.st_mode):
+        raise ValueError("Architecture report staging path must be a regular file")
+    if metadata.st_uid != owner_uid or metadata.st_gid != owner_gid:
+        raise ValueError("Architecture report staging ownership changed")
+    if stat.S_IMODE(metadata.st_mode) != REPORT_MODE:
+        raise ValueError("Architecture report staging mode changed")
+    if empty and metadata.st_size != 0:
+        raise ValueError("Architecture report staging file changed before producer execution")
+    if not empty and metadata.st_size == 0:
+        raise ValueError("Python architecture producer emitted no report")
+
+
+def _prepare_report_file(path: Path, owner_uid: int, owner_gid: int) -> None:
+    if path.exists() or path.is_symlink():
+        raise ValueError("Refusing stale Python architecture evidence")
+    path.touch(exist_ok=False)
+    os.chown(path, owner_uid, owner_gid)
+    path.chmod(REPORT_MODE)
+    _validate_report_file(path, owner_uid, owner_gid, empty=True)
 
 
 def _validated_candidate_state(candidate_root: Path, manifest_path: Path, head: str, comparison_base: str) -> dict:
@@ -596,8 +639,8 @@ def _negative_probe_command(
     candidate_root: Path,
     trusted_root: Path,
     evidence_dir: Path,
+    report_path: Path,
     python_runtime_mounts: tuple[tuple[Path, str], ...],
-    runtime_gid: int,
     sentinel_name: str,
 ) -> list[str]:
     command = _docker_security_arguments(
@@ -605,10 +648,13 @@ def _negative_probe_command(
         name=name,
         candidate_root=candidate_root,
         trusted_root=trusted_root,
-        evidence_dir=evidence_dir,
+        evidence_mounts=(
+            (evidence_dir, "/negative-evidence"),
+            (report_path, f"/evidence/{REPORT_NAME}"),
+        ),
         python_runtime_mounts=python_runtime_mounts,
         uid=RUNTIME_UID,
-        gid=runtime_gid,
+        gid=RUNTIME_GID,
         runtime_producer=False,
     )
     command.extend(
@@ -620,13 +666,15 @@ def _negative_probe_command(
             "--workspace",
             "/workspace",
             "--evidence",
-            "/evidence",
+            "/negative-evidence",
+            "--report",
+            f"/evidence/{REPORT_NAME}",
             "--sentinel",
             sentinel_name,
             "--expected-uid",
             str(RUNTIME_UID),
             "--expected-gid",
-            str(runtime_gid),
+            str(RUNTIME_GID),
         ]
     )
     return command
@@ -638,9 +686,8 @@ def _producer_command(
     name: str,
     candidate_root: Path,
     trusted_root: Path,
-    evidence_dir: Path,
+    report_path: Path,
     python_runtime_mounts: tuple[tuple[Path, str], ...],
-    producer_uid: int,
     producer_gid: int,
     comparison_base: str,
     selection_sha256: str,
@@ -650,9 +697,9 @@ def _producer_command(
         name=name,
         candidate_root=candidate_root,
         trusted_root=trusted_root,
-        evidence_dir=evidence_dir,
+        evidence_mounts=((report_path, f"/evidence/{REPORT_NAME}"),),
         python_runtime_mounts=python_runtime_mounts,
-        uid=producer_uid,
+        uid=PRODUCER_UID,
         gid=producer_gid,
         runtime_producer=True,
     )
@@ -689,7 +736,7 @@ def _execute_docker_boundary(
     trusted_root: Path,
     evidence_dir: Path,
     python_runtime_mounts: tuple[tuple[Path, str], ...],
-    producer_uid: int,
+    evidence_owner_uid: int,
     producer_gid: int,
     comparison_base: str,
     selection_sha256: str,
@@ -700,11 +747,11 @@ def _execute_docker_boundary(
     image = f"ragflow-architecture-sandbox:{unique}"
     negative_name = f"ragflow-architecture-negative-{unique}"
     producer_name = f"ragflow-architecture-producer-{unique}"
-    runtime_gid = producer_gid
     with tempfile.TemporaryDirectory(prefix="ragflow-architecture-rootfs-") as directory:
         tar_path = Path(directory) / "rootfs.tar"
-        rootfs_sha256 = _create_rootfs(tar_path, producer_uid, producer_gid, runtime_gid)
+        rootfs_sha256 = _create_rootfs(tar_path, producer_gid)
         try:
+            _validate_report_file(report_path, evidence_owner_uid, producer_gid, empty=True)
             _run(["docker", "import", str(tar_path), image], timeout=300)
             negative = _negative_probe_command(
                 image=image,
@@ -712,8 +759,8 @@ def _execute_docker_boundary(
                 candidate_root=candidate_root,
                 trusted_root=trusted_root,
                 evidence_dir=evidence_dir,
+                report_path=report_path,
                 python_runtime_mounts=python_runtime_mounts,
-                runtime_gid=runtime_gid,
                 sentinel_name=sentinel_path.name,
             )
             try:
@@ -722,15 +769,15 @@ def _execute_docker_boundary(
                 mount_specs = ", ".join(f"{source} -> {target}" for source, target in python_runtime_mounts) or "system-runtime"
                 raise ValueError(f"{error}; Python runtime mounts: {mount_specs}") from error
             sentinel_path.unlink()
+            _validate_report_file(report_path, evidence_owner_uid, producer_gid, empty=True)
             producer = _run(
                 _producer_command(
                     image=image,
                     name=producer_name,
                     candidate_root=candidate_root,
                     trusted_root=trusted_root,
-                    evidence_dir=evidence_dir,
+                    report_path=report_path,
                     python_runtime_mounts=python_runtime_mounts,
-                    producer_uid=producer_uid,
                     producer_gid=producer_gid,
                     comparison_base=comparison_base,
                     selection_sha256=selection_sha256,
@@ -740,8 +787,10 @@ def _execute_docker_boundary(
             )
             if producer.returncode not in {0, 1, 2}:
                 raise ValueError(f"Python architecture producer exited unexpectedly with {producer.returncode}: {producer.stderr[-4000:]}")
-            if not report_path.is_file():
-                raise ValueError(f"Python architecture producer emitted no report: {producer.stderr[-4000:]}")
+            try:
+                _validate_report_file(report_path, evidence_owner_uid, producer_gid, empty=False)
+            except ValueError as error:
+                raise ValueError(f"{error}: {producer.stderr[-4000:]}") from error
             return rootfs_sha256, negative_checks, producer.returncode
         finally:
             for container in (negative_name, producer_name):
@@ -760,19 +809,17 @@ def run_sandbox(
     comparison_base: str,
     selection_sha256: str,
 ) -> int:
-    candidate_root, trusted_root, evidence_dir, producer_uid, producer_gid = _validated_roots(candidate_root, trusted_root, evidence_dir)
+    candidate_root, trusted_root, evidence_dir, evidence_owner_uid, producer_gid = _validated_roots(candidate_root, trusted_root, evidence_dir)
     manifest_path = manifest_path.resolve(strict=True)
     head = _commit(head, "Candidate head")
     comparison_base = _commit(comparison_base, "Comparison base")
     if not re.fullmatch(r"[0-9a-f]{64}", selection_sha256):
         raise ValueError("Selection digest must be exact SHA-256")
-    runtime_gid = producer_gid
     state = _validated_candidate_state(candidate_root, manifest_path, head, comparison_base)
     required_trusted = _trusted_sources(trusted_root)
     python_runtime_mounts = _python_runtime_mounts(candidate_root)
     report_path = evidence_dir / REPORT_NAME
-    if report_path.exists():
-        raise ValueError("Refusing stale Python architecture evidence")
+    _prepare_report_file(report_path, evidence_owner_uid, producer_gid)
     sentinel_name = f"architecture-sandbox-sentinel-{secrets.token_hex(8)}"
     sentinel_path = evidence_dir / sentinel_name
     sentinel_path.write_bytes(secrets.token_bytes(32))
@@ -782,7 +829,7 @@ def run_sandbox(
         trusted_root=trusted_root,
         evidence_dir=evidence_dir,
         python_runtime_mounts=python_runtime_mounts,
-        producer_uid=producer_uid,
+        evidence_owner_uid=evidence_owner_uid,
         producer_gid=producer_gid,
         comparison_base=comparison_base,
         selection_sha256=selection_sha256,
@@ -798,9 +845,8 @@ def run_sandbox(
         comparison_base=comparison_base,
         selection_sha256=selection_sha256,
         producer_exit_code=producer_exit,
-        producer_uid=producer_uid,
+        evidence_owner_uid=evidence_owner_uid,
         producer_gid=producer_gid,
-        runtime_gid=runtime_gid,
         rootfs_sha256=rootfs_sha256,
         negative_checks=negative_checks,
         sandbox_runner_sha256=_sha256_path(required_trusted["runner"]),

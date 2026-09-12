@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "verified_at": "2026-09-12T14:06:43.718938+00:00",
-  "head": "5c50071c0391d6fe333b84d199f993fabf798c1f",
+  "verified_at": "2026-09-12T17:10:56.629121+00:00",
+  "head": "e2dc289fd1a3f9b4547096205174eea3a4127491",
   "official_commits": [
     {
       "sha": "cb93883f3f8c975eecb2fed81210effeb3bdb06f",
@@ -1806,19 +1806,23 @@
       }
     },
     {
-      "sha": "4a080bf416d16521188c3398b4cb486081cd29e9",
+      "sha": "4a64791c0636d3f52874714b04b96e5581617318",
       "parents": [
-        "e9e5c608bf78fbcaa1afcbba2ba4eafb59510df2"
+        "e9e5c608bf78fbcaa1afcbba2ba4eafb59510df2",
+        "d3a44c945c543463c0c9b707567c9cff93998772"
       ],
-      "tree": "6666ba96fbedc4ac2388865fb573cba1142590c0",
-      "committed_at": "2026-09-12T10:35:05+03:00",
-      "subject": "fix(architecture): canonicalize clean candidate sources",
+      "tree": "cfeaf7560d45b56225a915c9f95f1b6b3f5e5e97",
+      "committed_at": "2026-09-12T19:30:07+03:00",
+      "subject": "Merge pull request #4 from meownm/codex/t3-control-update",
       "changes_from_first_parent": {
         "docs/develop/architecture-transition-ru.md": "M",
         "docs/develop/t0-provenance-report-ru.md": "M",
+        "docs/develop/t2-python-analysis-ru.md": "M",
         "docs/develop/t3-architecture-policy-ru.md": "M",
+        "test/unit_test/tools/quality/test_check_architecture.py": "M",
         "test/unit_test/tools/quality/test_check_architecture_policy.py": "M",
         "tools/quality/architecture-policy.json": "M",
+        "tools/quality/check_architecture.py": "M",
         "tools/quality/check_architecture_policy.py": "M",
         "tools/quality/core-changes.yaml": "M",
         "tools/quality/file-inventory.json": "M",
@@ -1826,34 +1830,20 @@
       }
     },
     {
-      "sha": "d3a44c945c543463c0c9b707567c9cff93998772",
+      "sha": "88c7a44f001705f0e7ab08b3c22f140fc866ba74",
       "parents": [
-        "4a080bf416d16521188c3398b4cb486081cd29e9"
+        "4a64791c0636d3f52874714b04b96e5581617318",
+        "b6f395c1507dd76ba7c310dad36c9dbe109087da"
       ],
-      "tree": "cfeaf7560d45b56225a915c9f95f1b6b3f5e5e97",
-      "committed_at": "2026-09-12T11:18:30+03:00",
-      "subject": "fix(architecture): accept trusted ASR venv launcher",
-      "changes_from_first_parent": {
-        "docs/develop/architecture-transition-ru.md": "M",
-        "docs/develop/t0-provenance-report-ru.md": "M",
-        "docs/develop/t2-python-analysis-ru.md": "M",
-        "docs/develop/t3-architecture-policy-ru.md": "M",
-        "test/unit_test/tools/quality/test_check_architecture.py": "M",
-        "tools/quality/check_architecture.py": "M",
-        "tools/quality/core-changes.yaml": "M",
-        "tools/quality/file-inventory.json": "M"
-      }
-    },
-    {
-      "sha": "f4188329d435671e0266b8d3641e631f54981141",
-      "parents": [
-        "d3a44c945c543463c0c9b707567c9cff93998772"
-      ],
-      "tree": "82e7bef03900e1d0fdb440e671e40068c30d6a95",
-      "committed_at": "2026-09-12T13:07:41+03:00",
-      "subject": "feat(architecture): isolate candidate runtime contracts",
+      "tree": "f43740c2e809b74e697ad77530aea0c126c77bdf",
+      "committed_at": "2026-09-12T19:36:53+03:00",
+      "subject": "Merge pull request #12 from meownm/codex/t3-os-isolation",
       "changes_from_first_parent": {
         ".github/workflows/architecture.yml": "M",
+        "docs/develop/architecture-checks-ru.md": "M",
+        "docs/develop/architecture-transition-ru.md": "M",
+        "docs/develop/t0-provenance-report-ru.md": "M",
+        "docs/develop/t3-architecture-policy-ru.md": "M",
         "test/unit_test/agent/test_openmetadata_dynamic_registration.py": "M",
         "test/unit_test/agent/test_retrieval_dynamic_registration.py": "M",
         "test/unit_test/api/apps/business_documents/test_business_document_adapter_contracts.py": "M",
@@ -1862,273 +1852,55 @@
         "test/unit_test/tools/quality/test_agent_runtime_registration.py": "M",
         "test/unit_test/tools/quality/test_architecture_sandbox.py": "A",
         "test/unit_test/tools/quality/test_architecture_workflow.py": "M",
+        "test/unit_test/tools/quality/test_capture_inventory.py": "M",
         "test/unit_test/tools/quality/test_check_architecture.py": "M",
         "test/unit_test/tools/quality/test_check_architecture_policy.py": "M",
         "tools/quality/architecture-contract-requirements.in": "A",
         "tools/quality/architecture-contract-requirements.txt": "A",
         "tools/quality/architecture-policy.json": "M",
+        "tools/quality/capture_inventory.py": "M",
         "tools/quality/check_architecture.py": "M",
         "tools/quality/check_architecture_policy.py": "M",
         "tools/quality/core-changes.yaml": "M",
         "tools/quality/file-inventory.json": "M",
         "tools/quality/module-map.yaml": "M",
         "tools/quality/probe_architecture_sandbox.py": "A",
-        "tools/quality/run_architecture_sandbox.py": "A"
-      }
-    },
-    {
-      "sha": "b3ab3261812a6642699f50bf5bd932d15160df0b",
-      "parents": [
-        "f4188329d435671e0266b8d3641e631f54981141"
-      ],
-      "tree": "40aef4c4c1618c33a3b8b1d0a654f5641b7306b5",
-      "committed_at": "2026-09-12T13:09:17+03:00",
-      "subject": "chore(architecture): refresh T3 provenance",
-      "changes_from_first_parent": {
-        "tools/quality/core-changes.yaml": "M",
-        "tools/quality/file-inventory.json": "M",
+        "tools/quality/python-boundaries.yaml": "M",
+        "tools/quality/run_architecture_sandbox.py": "A",
         "tools/quality/upstream-evidence.json": "M"
       }
     },
     {
-      "sha": "664d4c26cbaadf1b16a766c0c9ffd13f684e483f",
+      "sha": "e2dc289fd1a3f9b4547096205174eea3a4127491",
       "parents": [
-        "b3ab3261812a6642699f50bf5bd932d15160df0b"
+        "88c7a44f001705f0e7ab08b3c22f140fc866ba74"
       ],
-      "tree": "987797c613b420ffcb7e2093a28b04cdf3f13a27",
-      "committed_at": "2026-09-12T13:15:27+03:00",
-      "subject": "fix(architecture): keep Docker init outside usr bind",
-      "changes_from_first_parent": {
-        "test/unit_test/tools/quality/test_architecture_sandbox.py": "M",
-        "tools/quality/core-changes.yaml": "M",
-        "tools/quality/file-inventory.json": "M",
-        "tools/quality/run_architecture_sandbox.py": "M"
-      }
-    },
-    {
-      "sha": "f2196ea7c6370045ecbace4c6669e7b72ea8cdd7",
-      "parents": [
-        "664d4c26cbaadf1b16a766c0c9ffd13f684e483f"
-      ],
-      "tree": "634810424c9f1d100e02b4ccb41e2024d39102e5",
-      "committed_at": "2026-09-12T13:27:55+03:00",
-      "subject": "fix(architecture): mount host runtime loaders read-only",
-      "changes_from_first_parent": {
-        "test/unit_test/tools/quality/test_architecture_sandbox.py": "M",
-        "test/unit_test/tools/quality/test_check_architecture_policy.py": "M",
-        "tools/quality/check_architecture_policy.py": "M",
-        "tools/quality/core-changes.yaml": "M",
-        "tools/quality/file-inventory.json": "M",
-        "tools/quality/run_architecture_sandbox.py": "M"
-      }
-    },
-    {
-      "sha": "42e5c80d62a30627b6b817ccd75f882aff367963",
-      "parents": [
-        "f2196ea7c6370045ecbace4c6669e7b72ea8cdd7"
-      ],
-      "tree": "d15fbedf56b74317e9350cd0d5d304a2f11d964b",
-      "committed_at": "2026-09-12T13:45:49+03:00",
-      "subject": "fix(architecture): preserve managed Python mount aliases",
-      "changes_from_first_parent": {
-        "test/unit_test/tools/quality/test_architecture_sandbox.py": "M",
-        "tools/quality/core-changes.yaml": "M",
-        "tools/quality/file-inventory.json": "M",
-        "tools/quality/run_architecture_sandbox.py": "M"
-      }
-    },
-    {
-      "sha": "e4178111631c7f9e623caa367ec1ed040af7e729",
-      "parents": [
-        "42e5c80d62a30627b6b817ccd75f882aff367963"
-      ],
-      "tree": "73d55a80f20bf5289af3514a49bd2126a23750d3",
-      "committed_at": "2026-09-12T13:53:57+03:00",
-      "subject": "fix(architecture): authorize exact probe workspace",
-      "changes_from_first_parent": {
-        "test/unit_test/tools/quality/test_architecture_sandbox.py": "M",
-        "tools/quality/core-changes.yaml": "M",
-        "tools/quality/file-inventory.json": "M",
-        "tools/quality/probe_architecture_sandbox.py": "M",
-        "tools/quality/run_architecture_sandbox.py": "M"
-      }
-    },
-    {
-      "sha": "4b360da4b86ff9fea95c17d00b889c9032548a1f",
-      "parents": [
-        "e4178111631c7f9e623caa367ec1ed040af7e729"
-      ],
-      "tree": "6e7ef541faae6dd559b4e83d985bff3ef1164973",
-      "committed_at": "2026-09-12T13:58:33+03:00",
-      "subject": "fix(architecture): accept redundant Docker primary group",
-      "changes_from_first_parent": {
-        "test/unit_test/tools/quality/test_architecture_sandbox.py": "M",
-        "tools/quality/core-changes.yaml": "M",
-        "tools/quality/file-inventory.json": "M",
-        "tools/quality/probe_architecture_sandbox.py": "M"
-      }
-    },
-    {
-      "sha": "1def4b996dfb5d27f9c91b7222587ca2481c1cb8",
-      "parents": [
-        "4b360da4b86ff9fea95c17d00b889c9032548a1f"
-      ],
-      "tree": "0150c979877777c70e12f0d6641ad9e7f751cccc",
-      "committed_at": "2026-09-12T14:27:33+03:00",
-      "subject": "fix(architecture): separate producer and runtime identities",
-      "changes_from_first_parent": {
-        "test/unit_test/tools/quality/test_architecture_sandbox.py": "M",
-        "test/unit_test/tools/quality/test_check_architecture.py": "M",
-        "test/unit_test/tools/quality/test_check_architecture_policy.py": "M",
-        "tools/quality/architecture-policy.json": "M",
-        "tools/quality/check_architecture.py": "M",
-        "tools/quality/check_architecture_policy.py": "M",
-        "tools/quality/core-changes.yaml": "M",
-        "tools/quality/file-inventory.json": "M",
-        "tools/quality/probe_architecture_sandbox.py": "M",
-        "tools/quality/run_architecture_sandbox.py": "M"
-      }
-    },
-    {
-      "sha": "9d7ac7a8c00f05f7f0f64ab8ea44104e356987ac",
-      "parents": [
-        "1def4b996dfb5d27f9c91b7222587ca2481c1cb8"
-      ],
-      "tree": "717d845dfb08abfd8b868942f1273a8b4551acbe",
-      "committed_at": "2026-09-12T14:33:14+03:00",
-      "subject": "fix(architecture): authorize exact inventory root",
-      "changes_from_first_parent": {
-        "test/unit_test/tools/quality/test_capture_inventory.py": "M",
-        "tools/quality/capture_inventory.py": "M",
-        "tools/quality/core-changes.yaml": "M",
-        "tools/quality/file-inventory.json": "M"
-      }
-    },
-    {
-      "sha": "c130751d6965aa558612c4085b39189c441bbc20",
-      "parents": [
-        "9d7ac7a8c00f05f7f0f64ab8ea44104e356987ac"
-      ],
-      "tree": "8659ca59a758d71a71411251ef87844b53ea426d",
-      "committed_at": "2026-09-12T14:40:16+03:00",
-      "subject": "fix(architecture): route ASR contract writes to tmpfs",
-      "changes_from_first_parent": {
-        "test/unit_test/tools/quality/test_check_architecture.py": "M",
-        "tools/quality/check_architecture.py": "M",
-        "tools/quality/core-changes.yaml": "M",
-        "tools/quality/file-inventory.json": "M",
-        "tools/quality/python-boundaries.yaml": "M"
-      }
-    },
-    {
-      "sha": "d6025f428dbdf0420bc14228f440a7df1b91f5ef",
-      "parents": [
-        "c130751d6965aa558612c4085b39189c441bbc20"
-      ],
-      "tree": "31f6d3341a9e546dd54e9165b56e1642cfff1f36",
-      "committed_at": "2026-09-12T15:21:01+03:00",
-      "subject": "docs(architecture): record T3 acceptance evidence",
-      "changes_from_first_parent": {
-        "docs/develop/architecture-checks-ru.md": "M",
-        "docs/develop/architecture-transition-ru.md": "M",
-        "docs/develop/t3-architecture-policy-ru.md": "M",
-        "tools/quality/core-changes.yaml": "M",
-        "tools/quality/file-inventory.json": "M",
-        "tools/quality/upstream-evidence.json": "M"
-      }
-    },
-    {
-      "sha": "b8f7772fc165d37fba01b23b93fc869046be8767",
-      "parents": [
-        "d6025f428dbdf0420bc14228f440a7df1b91f5ef"
-      ],
-      "tree": "62840c95b8247fa1e0fedb142f71c7a8a40530a9",
-      "committed_at": "2026-09-12T15:52:04+03:00",
-      "subject": "fix(architecture): pin trusted workflow execution",
+      "tree": "2ecaedcbf1d29b6f17d3753ff000d8e63cceaf83",
+      "committed_at": "2026-09-12T20:10:52+03:00",
+      "subject": "fix(ci): resolve PR merge ref race",
       "changes_from_first_parent": {
         ".github/workflows/architecture.yml": "M",
-        "test/unit_test/tools/quality/test_architecture_workflow.py": "M",
-        "tools/quality/architecture-policy.json": "M"
-      }
-    },
-    {
-      "sha": "d27c9a79dd535e226e8588f70256669b8a00e147",
-      "parents": [
-        "b8f7772fc165d37fba01b23b93fc869046be8767"
-      ],
-      "tree": "45708a8636265c1198ec1c7713556e64ca663d6c",
-      "committed_at": "2026-09-12T16:06:28+03:00",
-      "subject": "docs(architecture): record enforcement preflight",
-      "changes_from_first_parent": {
         "docs/develop/architecture-checks-ru.md": "M",
         "docs/develop/architecture-transition-ru.md": "M",
         "docs/develop/t3-architecture-policy-ru.md": "M",
-        "tools/quality/core-changes.yaml": "M",
-        "tools/quality/file-inventory.json": "M",
-        "tools/quality/upstream-evidence.json": "M"
-      }
-    },
-    {
-      "sha": "51d6a28ae1c71f495cc666cd9abbaf56e9f07c16",
-      "parents": [
-        "d27c9a79dd535e226e8588f70256669b8a00e147"
-      ],
-      "tree": "d77f6206d5e7b56947fe305d2c8427744ec8ce18",
-      "committed_at": "2026-09-12T16:37:12+03:00",
-      "subject": "fix(architecture): reject duplicate required contexts",
-      "changes_from_first_parent": {
-        "test/unit_test/tools/quality/test_architecture_workflow.py": "M",
-        "test/unit_test/tools/quality/test_check_architecture_policy.py": "M",
-        "tools/quality/architecture-policy.json": "M"
-      }
-    },
-    {
-      "sha": "45bfa7edbcb2da3f17ab92699ea073672a10e826",
-      "parents": [
-        "51d6a28ae1c71f495cc666cd9abbaf56e9f07c16"
-      ],
-      "tree": "3386b31f755168004c55a93390aba28febb4c0d9",
-      "committed_at": "2026-09-12T16:45:52+03:00",
-      "subject": "docs(architecture): record duplicate-context preflight",
-      "changes_from_first_parent": {
-        "docs/develop/architecture-checks-ru.md": "M",
-        "docs/develop/architecture-transition-ru.md": "M",
-        "docs/develop/t0-provenance-report-ru.md": "M",
-        "docs/develop/t3-architecture-policy-ru.md": "M",
-        "tools/quality/core-changes.yaml": "M",
-        "tools/quality/file-inventory.json": "M",
-        "tools/quality/upstream-evidence.json": "M"
-      }
-    },
-    {
-      "sha": "5c50071c0391d6fe333b84d199f993fabf798c1f",
-      "parents": [
-        "45bfa7edbcb2da3f17ab92699ea073672a10e826"
-      ],
-      "tree": "05a736775d74a5f3d49af6eaaebc21b3cf16a3de",
-      "committed_at": "2026-09-12T17:06:33+03:00",
-      "subject": "docs(architecture): define external T3 receipt",
-      "changes_from_first_parent": {
-        "docs/develop/architecture-checks-ru.md": "M",
-        "docs/develop/t3-architecture-policy-ru.md": "M",
-        "tools/quality/core-changes.yaml": "M",
-        "tools/quality/file-inventory.json": "M",
-        "tools/quality/upstream-evidence.json": "M"
+        "test/unit_test/tools/quality/test_architecture_workflow.py": "M"
       }
     }
   ],
   "local_refs_only_no_fetch": [
-    "refs/remotes/origin/HEAD e9e5c608bf78fbcaa1afcbba2ba4eafb59510df2",
+    "refs/remotes/origin/HEAD 88c7a44f001705f0e7ab08b3c22f140fc866ba74",
     "refs/remotes/origin/codex/fix-t3-ci-regressions-pr 7045e856a9905264044a3f47d32cef8ac7c0e2a6",
     "refs/remotes/origin/codex/t3-architecture-base-protocol 03c529786aae21db47855b8c1212ee1ace1e3ff1",
+    "refs/remotes/origin/codex/t3-control-update d3a44c945c543463c0c9b707567c9cff93998772",
+    "refs/remotes/origin/codex/t3-os-isolation b6f395c1507dd76ba7c310dad36c9dbe109087da",
     "refs/remotes/origin/codex/t4-business-document-assignment 0f050c78cd4e09518a602f22bfa606b1132319d8",
-    "refs/remotes/origin/main e9e5c608bf78fbcaa1afcbba2ba4eafb59510df2",
+    "refs/remotes/origin/main 88c7a44f001705f0e7ab08b3c22f140fc866ba74",
     "refs/remotes/upstream/HEAD 1f5d33333a3ff67fda2aa302c843699e994453e3",
     "refs/remotes/upstream/main 1f5d33333a3ff67fda2aa302c843699e994453e3",
     "refs/remotes/upstream/main_backup 427e0540cab683a591a5f4a65a0b38bf9ee008b7"
   ],
   "graph_merge_base": "28ce77fe5f1e4301d3672221b509418d3c7acb77",
-  "baseline_diff_summary": "749 files changed, 161980 insertions(+), 2857 deletions(-)",
+  "baseline_diff_summary": "749 files changed, 162127 insertions(+), 2857 deletions(-)",
   "ancestry_only_merge": {
     "commit": "64f0bfdf0e724d006d61563a76964bf140bcfb4e",
     "first_parent": "268a5a9d60e19982ac329ec045d0ff9b0228b26b",

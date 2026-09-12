@@ -252,6 +252,7 @@
         "test_pr_probe_blocks_forbidden_architecture_finding",
         "test_pr_probe_fails_closed_for_unclassified_path_and_missing_analyzer",
         "test_workflow_is_unconditional_report_only_and_fail_closed",
+        "test_required_status_context_is_unique_across_candidate_workflows",
         "test_workflow_rejects_enforcement_downgrades",
         "test_workflow_uses_base_policy_as_authoritative_when_protocol_is_available",
         "test_analysis_job_contains_candidate_lifecycle_and_publishes_reports",
@@ -288,6 +289,7 @@
         "test/unit_test/tools/quality/test_check_architecture_policy.py::ArchitecturePolicyTests::test_pr_probe_blocks_forbidden_architecture_finding",
         "test/unit_test/tools/quality/test_check_architecture_policy.py::ArchitecturePolicyTests::test_pr_probe_fails_closed_for_unclassified_path_and_missing_analyzer",
         "test/unit_test/tools/quality/test_architecture_workflow.py::test_workflow_is_unconditional_report_only_and_fail_closed",
+        "test/unit_test/tools/quality/test_architecture_workflow.py::test_required_status_context_is_unique_across_candidate_workflows",
         "test/unit_test/tools/quality/test_architecture_workflow.py::test_workflow_rejects_enforcement_downgrades",
         "test/unit_test/tools/quality/test_architecture_workflow.py::test_workflow_uses_base_policy_as_authoritative_when_protocol_is_available",
         "test/unit_test/tools/quality/test_architecture_workflow.py::test_analysis_job_contains_candidate_lifecycle_and_publishes_reports",
@@ -307,6 +309,7 @@
           "uv.lock"
         ],
         "prefixes": [
+          ".github/workflows/",
           "tools/quality/",
           "test/unit_test/tools/quality/",
           "docs/develop/architecture",

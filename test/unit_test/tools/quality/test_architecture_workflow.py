@@ -28,6 +28,31 @@ def _workflow() -> dict:
     return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
 
 
+def _candidate_workflows() -> dict[str, dict]:
+    workflow_directory = ROOT / ".github/workflows"
+    documents = {}
+    for path in sorted(item for item in workflow_directory.iterdir() if item.is_file() and item.suffix.lower() in {".yaml", ".yml"}):
+        document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        repository_path = path.relative_to(ROOT).as_posix()
+        assert isinstance(document, dict), f"Workflow {repository_path} must contain a mapping"
+        assert isinstance(document.get("jobs"), dict), f"Workflow {repository_path} must contain jobs"
+        documents[repository_path] = document
+    return documents
+
+
+def _assert_unique_required_status_context(workflows: dict[str, dict]) -> None:
+    owners = []
+    for path, workflow in workflows.items():
+        for job_id, job in workflow["jobs"].items():
+            assert isinstance(job_id, str) and isinstance(job, dict), f"Workflow {path} has an invalid job"
+            effective_name = job.get("name", job_id)
+            assert isinstance(effective_name, str), f"Workflow {path} job {job_id} has an invalid name"
+            assert "${{" not in effective_name, f"Workflow {path} job {job_id} has a dynamic status context"
+            if effective_name == "architecture-policy":
+                owners.append((path, job_id))
+    assert owners == [(".github/workflows/architecture.yml", "architecture-policy")]
+
+
 def _step(job: dict, name: str) -> dict:
     return next(step for step in job["steps"] if step.get("name") == name)
 
@@ -249,6 +274,29 @@ def test_workflow_is_unconditional_report_only_and_fail_closed():
             "Upload final architecture evidence",
         ],
     }
+
+
+def test_required_status_context_is_unique_across_candidate_workflows():
+    policy = json.loads((ROOT / "tools/quality/architecture-policy.json").read_text(encoding="utf-8"))
+    fixture_lane = next(lane for lane in policy["lanes"] if lane["id"] == "policy-fixtures")
+    assert ".github/workflows/" in fixture_lane["selectors"]["prefixes"]
+
+    workflows = _candidate_workflows()
+    _assert_unique_required_status_context(workflows)
+
+    duplicate = copy.deepcopy(workflows)
+    duplicate[".github/workflows/candidate-spoof.yml"] = {
+        "jobs": {"spoof": {"name": "architecture-policy", "runs-on": "ubuntu-latest", "steps": []}}
+    }
+    with pytest.raises(AssertionError):
+        _assert_unique_required_status_context(duplicate)
+
+    dynamic = copy.deepcopy(workflows)
+    dynamic[".github/workflows/candidate-spoof.yml"] = {
+        "jobs": {"spoof": {"name": "${{ format('architecture-{0}', 'policy') }}", "runs-on": "ubuntu-latest", "steps": []}}
+    }
+    with pytest.raises(AssertionError):
+        _assert_unique_required_status_context(dynamic)
 
 
 def test_workflow_uses_base_policy_as_authoritative_when_protocol_is_available():

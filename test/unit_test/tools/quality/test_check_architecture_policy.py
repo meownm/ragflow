@@ -302,6 +302,7 @@ class ArchitecturePolicyTests(unittest.TestCase):
 
     def test_producer_and_control_paths_select_their_own_lanes(self):
         cases = {
+            ".github/workflows/candidate-spoof.yml": "policy-fixtures",
             "services/asr-online-service/architecture-contract-requirements.in": "python-architecture",
             "services/asr-online-service/architecture-contract-requirements.txt": "python-architecture",
             "tools/quality/check_architecture.py": "python-architecture",
@@ -364,6 +365,11 @@ class ArchitecturePolicyTests(unittest.TestCase):
             checker.select_lanes(POLICY, ["unknown/new.bin"], [], {})
 
     def test_policy_rejects_enforcement_wildcards_and_duplicate_lanes(self):
+        def unselect_architecture_workflow(value: dict) -> None:
+            fixture_lane = next(lane for lane in value["lanes"] if lane["contract"] == "policy_fixtures")
+            fixture_lane["selectors"]["paths"].remove(".github/workflows/architecture.yml")
+            fixture_lane["selectors"]["prefixes"].remove(".github/workflows/")
+
         temporary = self.enterContext(__import__("tempfile").TemporaryDirectory())
         path = Path(temporary) / "policy.json"
         for mutate in (
@@ -374,7 +380,7 @@ class ArchitecturePolicyTests(unittest.TestCase):
             lambda value: value["lanes"][2]["protected_sources"].remove("tools/quality/check_runtime_graph_policy.py"),
             lambda value: value["lanes"][2]["selectors"]["paths"].remove("tools/quality/inspect_typescript.cjs"),
             lambda value: next(lane for lane in value["lanes"] if lane["contract"] == "policy_fixtures")["protected_sources"].remove("tools/quality/check_architecture_policy.py"),
-            lambda value: next(lane for lane in value["lanes"] if lane["contract"] == "policy_fixtures")["selectors"]["paths"].remove(".github/workflows/architecture.yml"),
+            unselect_architecture_workflow,
             lambda value: next(lane for lane in value["lanes"] if lane["contract"] == "policy_fixtures").update(contract="junit"),
         ):
             with self.subTest(mutate=mutate):

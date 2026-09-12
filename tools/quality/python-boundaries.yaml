@@ -441,6 +441,9 @@ runtime_probes:
   kind: pytest_contract
   timeout_seconds: 60
   working_directory: services/asr-online-service
+  environment:
+    ASR_ARTIFACTS_DIR: /tmp/ragflow-asr-contract-artifacts
+    ASR_UPLOAD_DIR: /tmp/ragflow-asr-contract-uploads
   test_ids:
   - services/asr-online-service/tests/test_openapi_contract.py::test_runtime_route_inventory_is_exact
   - services/asr-online-service/tests/test_openapi_contract.py::test_application_lifespan_stops_worker_on_failure

@@ -483,6 +483,33 @@ class RuntimeProbeTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "PASS", result)
 
+    def test_pytest_contract_environment_allows_only_distinct_tmp_paths(self):
+        probe = {
+            "id": "asr-contract",
+            "owner_module": "asr",
+            "profile": "asr-service",
+            "rule_id": "ARC-02",
+            "kind": "pytest_contract",
+            "test_ids": ["services/asr-online-service/tests/test_contract.py::test_contract"],
+            "expected_tests": 1,
+            "environment": {
+                "ASR_ARTIFACTS_DIR": "/tmp/asr-artifacts",
+                "ASR_UPLOAD_DIR": "/tmp/asr-uploads",
+            },
+        }
+        normalized = checker._normalized_runtime_probe(probe, {"asr-service": {}}, {"asr": {}})
+        self.assertEqual(normalized["environment"], probe["environment"])
+
+        for environment in (
+            {"PYTHONPATH": "/tmp/injected"},
+            {"ASR_ARTIFACTS_DIR": "/workspace/artifacts"},
+            {"ASR_ARTIFACTS_DIR": "/tmp/../workspace/artifacts"},
+            {"ASR_ARTIFACTS_DIR": "/tmp/shared", "ASR_UPLOAD_DIR": "/tmp/shared"},
+        ):
+            with self.subTest(environment=environment):
+                with self.assertRaisesRegex(ValueError, "environment"):
+                    checker._normalized_runtime_probe({**probe, "environment": environment}, {"asr-service": {}}, {"asr": {}})
+
 
 class CommandTests(unittest.TestCase):
     def setUp(self):

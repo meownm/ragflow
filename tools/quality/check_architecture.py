@@ -28,6 +28,7 @@ STATIC_IMPORT_KINDS = {"import", "literal_dynamic_import"}
 RUNTIME_WORKER = Path(__file__).with_name("probe_python_runtime.py")
 RUNTIME_REPORT_DIRECTORY_MODE = 0o711
 RUNTIME_REPORT_MODE = 0o622
+RUNTIME_TEMP_ENVIRONMENT = {"ASR_ARTIFACTS_DIR", "ASR_UPLOAD_DIR"}
 MANUAL_RULES = [
     "ARC-02 computed reverse loading outside configured integration sources is not evaluated",
     "ARC-02 adapter behavior outside configured contract tests remains manual",
@@ -525,7 +526,11 @@ def _evaluate_pytest_contract(
                     f"--junitxml={report_path}",
                 ],
                 cwd=working_directory,
-                env=sanitized_child_environment(PYTEST_DISABLE_PLUGIN_AUTOLOAD="1", PYTHONPATH=python_path),
+                env=sanitized_child_environment(
+                    PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+                    PYTHONPATH=python_path,
+                    **probe.get("environment", {}),
+                ),
                 capture_output=True,
                 text=True,
                 timeout=probe["timeout_seconds"],
@@ -843,6 +848,28 @@ def _normalized_pytest_node(value: object, probe_id: str) -> str:
     return "::".join([path, *parts[1:]])
 
 
+def _normalized_runtime_environment(value: object, probe_id: str) -> dict[str, str]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict) or any(not isinstance(name, str) for name in value):
+        raise ValueError(f"Runtime probe {probe_id} environment must be a mapping")
+    unknown = sorted(set(value) - RUNTIME_TEMP_ENVIRONMENT)
+    if unknown:
+        raise ValueError(f"Runtime probe {probe_id} has unsupported environment keys: {', '.join(unknown)}")
+    normalized = {}
+    temporary_root = PurePosixPath("/tmp")
+    for name, raw_path in sorted(value.items()):
+        if not isinstance(raw_path, str) or "\\" in raw_path:
+            raise ValueError(f"Runtime probe {probe_id} environment {name} must be an absolute POSIX path below /tmp")
+        path = PurePosixPath(raw_path)
+        if path.as_posix() != raw_path or not path.is_absolute() or ".." in path.parts or path == temporary_root or not path.is_relative_to(temporary_root):
+            raise ValueError(f"Runtime probe {probe_id} environment {name} must be an absolute POSIX path below /tmp")
+        normalized[name] = raw_path
+    if len(set(normalized.values())) != len(normalized):
+        raise ValueError(f"Runtime probe {probe_id} environment paths must be distinct")
+    return normalized
+
+
 def _normalized_runtime_probe(value: object, profiles: dict, modules: dict) -> dict:
     if not isinstance(value, dict):
         raise ValueError("Runtime probe entries must be mappings")
@@ -879,6 +906,7 @@ def _normalized_runtime_probe(value: object, profiles: dict, modules: dict) -> d
             f"Runtime probe {probe_id} working_directory",
             allow_root=True,
         )
+        probe["environment"] = _normalized_runtime_environment(probe.get("environment"), probe_id)
         return probe
     if not isinstance(probe.get("allow_output", False), bool):
         raise ValueError(f"Runtime probe {probe_id} allow_output must be boolean")

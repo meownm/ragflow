@@ -269,7 +269,6 @@
       ],
       "selectors": {
         "paths": [
-          "AGENTS.md",
           "CLAUDE.md",
           ".github/workflows/architecture.yml",
           "pyproject.toml",

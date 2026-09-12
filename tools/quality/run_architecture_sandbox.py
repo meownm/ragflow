@@ -313,7 +313,7 @@ def _docker_security_arguments(
     candidate_root: Path,
     trusted_root: Path,
     evidence_dir: Path,
-    python_prefix: Path | None,
+    python_runtime_mounts: tuple[tuple[Path, str], ...],
     uid: int,
     gid: int,
     runtime_producer: bool,
@@ -359,8 +359,8 @@ def _docker_security_arguments(
         "--mount",
         _bind(Path("/usr"), "/usr", readonly=True),
     ]
-    if python_prefix is not None:
-        command.extend(["--mount", _bind(python_prefix, str(python_prefix), readonly=True)])
+    for source, target in python_runtime_mounts:
+        command.extend(["--mount", _bind(source, target, readonly=True)])
     if runtime_producer:
         command.extend(["--cap-add", "SETUID", "--cap-add", "SETGID"])
     environment = {
@@ -506,17 +506,34 @@ def _atomic_json_replace(path: Path, payload: dict) -> None:
             temporary.unlink()
 
 
-def _python_prefix(candidate_root: Path) -> Path | None:
+def _runtime_mounts_for_python(launcher_target: Path, real_python: Path) -> tuple[tuple[Path, str], ...]:
+    """Return narrow read-only bind aliases for one external Python installation."""
+    target_prefix = launcher_target.parent.parent
+    source_prefix = _safe_mount_path(target_prefix, "Python runtime prefix")
+    canonical_prefix = _safe_mount_path(real_python.parent.parent, "Canonical Python runtime prefix")
+    if not source_prefix.is_dir() or source_prefix != canonical_prefix:
+        raise ValueError("Python launcher does not resolve through a narrow runtime prefix")
+    mounts = [(source_prefix, str(target_prefix))]
+    canonical_target = str(source_prefix)
+    if canonical_target != str(target_prefix):
+        mounts.append((source_prefix, canonical_target))
+    return tuple(mounts)
+
+
+def _python_runtime_mounts(candidate_root: Path) -> tuple[tuple[Path, str], ...]:
     launcher = candidate_root / ".venv/bin/python"
     if not launcher.exists():
         raise ValueError("Candidate root Python contract environment is missing")
     real_python = launcher.resolve(strict=True)
     if real_python.is_relative_to(candidate_root) or real_python.is_relative_to(Path("/usr")):
-        return None
-    prefix = _safe_mount_path(real_python.parent.parent, "Python runtime prefix")
-    if not prefix.is_dir():
-        raise ValueError("Python runtime prefix is missing")
-    return prefix
+        return ()
+    if launcher.is_symlink():
+        launcher_target = launcher.readlink()
+        if not launcher_target.is_absolute():
+            launcher_target = Path(os.path.abspath(launcher.parent / launcher_target))
+    else:
+        launcher_target = real_python
+    return _runtime_mounts_for_python(launcher_target, real_python)
 
 
 def _validated_roots(candidate_root: Path, trusted_root: Path, evidence_dir: Path) -> tuple[Path, Path, Path, int, int]:
@@ -578,7 +595,7 @@ def _negative_probe_command(
     candidate_root: Path,
     trusted_root: Path,
     evidence_dir: Path,
-    python_prefix: Path | None,
+    python_runtime_mounts: tuple[tuple[Path, str], ...],
     runtime_gid: int,
     sentinel_name: str,
 ) -> list[str]:
@@ -588,7 +605,7 @@ def _negative_probe_command(
         candidate_root=candidate_root,
         trusted_root=trusted_root,
         evidence_dir=evidence_dir,
-        python_prefix=python_prefix,
+        python_runtime_mounts=python_runtime_mounts,
         uid=RUNTIME_UID,
         gid=runtime_gid,
         runtime_producer=False,
@@ -621,7 +638,7 @@ def _producer_command(
     candidate_root: Path,
     trusted_root: Path,
     evidence_dir: Path,
-    python_prefix: Path | None,
+    python_runtime_mounts: tuple[tuple[Path, str], ...],
     producer_uid: int,
     producer_gid: int,
     comparison_base: str,
@@ -633,7 +650,7 @@ def _producer_command(
         candidate_root=candidate_root,
         trusted_root=trusted_root,
         evidence_dir=evidence_dir,
-        python_prefix=python_prefix,
+        python_runtime_mounts=python_runtime_mounts,
         uid=producer_uid,
         gid=producer_gid,
         runtime_producer=True,
@@ -670,7 +687,7 @@ def _execute_docker_boundary(
     candidate_root: Path,
     trusted_root: Path,
     evidence_dir: Path,
-    python_prefix: Path | None,
+    python_runtime_mounts: tuple[tuple[Path, str], ...],
     producer_uid: int,
     producer_gid: int,
     comparison_base: str,
@@ -694,11 +711,15 @@ def _execute_docker_boundary(
                 candidate_root=candidate_root,
                 trusted_root=trusted_root,
                 evidence_dir=evidence_dir,
-                python_prefix=python_prefix,
+                python_runtime_mounts=python_runtime_mounts,
                 runtime_gid=runtime_gid,
                 sentinel_name=sentinel_path.name,
             )
-            negative_checks = _parse_probe(_run(negative, timeout=120, check=False))
+            try:
+                negative_checks = _parse_probe(_run(negative, timeout=120, check=False))
+            except ValueError as error:
+                mount_specs = ", ".join(f"{source} -> {target}" for source, target in python_runtime_mounts) or "system-runtime"
+                raise ValueError(f"{error}; Python runtime mounts: {mount_specs}") from error
             sentinel_path.unlink()
             producer = _run(
                 _producer_command(
@@ -707,7 +728,7 @@ def _execute_docker_boundary(
                     candidate_root=candidate_root,
                     trusted_root=trusted_root,
                     evidence_dir=evidence_dir,
-                    python_prefix=python_prefix,
+                    python_runtime_mounts=python_runtime_mounts,
                     producer_uid=producer_uid,
                     producer_gid=producer_gid,
                     comparison_base=comparison_base,
@@ -747,7 +768,7 @@ def run_sandbox(
     runtime_gid = producer_gid
     state = _validated_candidate_state(candidate_root, manifest_path, head, comparison_base)
     required_trusted = _trusted_sources(trusted_root)
-    python_prefix = _python_prefix(candidate_root)
+    python_runtime_mounts = _python_runtime_mounts(candidate_root)
     report_path = evidence_dir / REPORT_NAME
     if report_path.exists():
         raise ValueError("Refusing stale Python architecture evidence")
@@ -759,7 +780,7 @@ def run_sandbox(
         candidate_root=candidate_root,
         trusted_root=trusted_root,
         evidence_dir=evidence_dir,
-        python_prefix=python_prefix,
+        python_runtime_mounts=python_runtime_mounts,
         producer_uid=producer_uid,
         producer_gid=producer_gid,
         comparison_base=comparison_base,

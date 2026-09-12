@@ -85,7 +85,7 @@ def test_sandbox_attestation_binds_report_and_negative_probe():
         candidate_root=Path("/candidate"),
         trusted_root=Path("/trusted-source"),
         evidence_dir=Path("/supervisor-evidence"),
-        python_prefix=None,
+        python_runtime_mounts=((Path("/runtime/python-real"), "/runtime/python-alias"),),
         uid=1000,
         gid=1001,
         runtime_producer=True,
@@ -100,6 +100,10 @@ def test_sandbox_attestation_binds_report_and_negative_probe():
     mounts = [docker_arguments[index + 1] for index, argument in enumerate(docker_arguments) if argument == "--mount"]
     assert any("target=/lib,readonly" in mount for mount in mounts)
     assert any("target=/lib64,readonly" in mount for mount in mounts)
+    runtime_mounts = [mount for mount in mounts if "target=/runtime/python-alias" in mount]
+    assert len(runtime_mounts) == 1
+    assert runtime_mounts[0].startswith("type=bind,source=")
+    assert runtime_mounts[0].endswith(",target=/runtime/python-alias,readonly")
 
 
 def test_sandbox_rejects_failed_negative_probe_and_unsafe_clone_config(tmp_path):
@@ -133,3 +137,26 @@ def test_sandbox_rejects_failed_negative_probe_and_unsafe_clone_config(tmp_path)
         assert archive.getmember("sbin").isdir()
         assert archive.getmember("lib").isdir()
         assert archive.getmember("lib64").isdir()
+
+
+def test_python_runtime_mounts_preserve_only_narrow_aliases(tmp_path):
+    runtime = tmp_path / "managed-python"
+    runtime_bin = runtime / "bin"
+    runtime_bin.mkdir(parents=True)
+    real_python = runtime_bin / "python3.13"
+    real_python.write_bytes(b"fixture")
+
+    assert sandbox._runtime_mounts_for_python(real_python, real_python) == ((runtime.resolve(), str(runtime)),)
+
+    broad_target = tmp_path / "runner" / "bin" / "python3.13"
+    broad_target.parent.mkdir(parents=True)
+    with pytest.raises(ValueError, match="narrow runtime prefix"):
+        sandbox._runtime_mounts_for_python(broad_target, real_python)
+
+    if os.name != "nt":
+        alias = tmp_path / "managed-python-alias"
+        alias.symlink_to(runtime, target_is_directory=True)
+        assert sandbox._runtime_mounts_for_python(alias / "bin/python3.13", real_python) == (
+            (runtime.resolve(), str(alias)),
+            (runtime.resolve(), str(runtime.resolve())),
+        )

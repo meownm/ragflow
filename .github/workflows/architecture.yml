@@ -39,12 +39,62 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           EVENT_SHA: ${{ github.sha }}
           PR_MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          REPOSITORY: ${{ github.repository }}
+          SERVER_URL: ${{ github.server_url }}
           MERGE_GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
         run: |
           set -euo pipefail
           case "${EVENT_NAME}" in
             pull_request_target)
-              candidate="${PR_MERGE_SHA}"
+              if [[ ! "${PR_NUMBER}" =~ ^[1-9][0-9]*$ ]]; then
+                echo "Pull request number is invalid: ${PR_NUMBER}" >&2
+                exit 2
+              fi
+              if [[ ! "${PR_HEAD_SHA}" =~ ^[0-9a-f]{40}$ || ! "${PR_BASE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+                echo "Pull request head/base identity is invalid: ${PR_HEAD_SHA}/${PR_BASE_SHA}" >&2
+                exit 2
+              fi
+              if [[ ! "${REPOSITORY}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ || ! "${SERVER_URL}" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?$ ]]; then
+                echo "Pull request repository identity is invalid: ${SERVER_URL}/${REPOSITORY}" >&2
+                exit 2
+              fi
+              if [[ -n "${PR_MERGE_SHA}" && ! "${PR_MERGE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+                echo "Payload merge revision is invalid: ${PR_MERGE_SHA}" >&2
+                exit 2
+              fi
+
+              candidate=""
+              remote_url="${SERVER_URL}/${REPOSITORY}.git"
+              for attempt in {1..12}; do
+                if remote_row=$(
+                    GIT_CONFIG_NOSYSTEM=1 \
+                    GIT_CONFIG_GLOBAL=/dev/null \
+                    GIT_TERMINAL_PROMPT=0 \
+                      git -c credential.helper= -c core.askPass= ls-remote --exit-code \
+                        "${remote_url}" "refs/pull/${PR_NUMBER}/merge" 2>/dev/null
+                  ); then
+                  :
+                else
+                  remote_row=""
+                fi
+                read -r resolved _ <<< "${remote_row}"
+                if [[ "${resolved}" =~ ^[0-9a-f]{40}$ ]]; then
+                  if [[ -z "${PR_MERGE_SHA}" || "${PR_MERGE_SHA}" == "${resolved}" ]]; then
+                    candidate="${resolved}"
+                    break
+                  fi
+                fi
+                if (( attempt < 12 )); then
+                  sleep 2
+                fi
+              done
+              if [[ ! "${candidate}" =~ ^[0-9a-f]{40}$ ]]; then
+                echo "PR merge revision did not materialize for PR ${PR_NUMBER} and event head/base ${PR_HEAD_SHA}/${PR_BASE_SHA}" >&2
+                exit 2
+              fi
               ;;
             merge_group)
               candidate="${MERGE_GROUP_HEAD_SHA}"
@@ -97,6 +147,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           CANDIDATE_SHA: ${{ steps.candidate.outputs.sha }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
           PUSH_BEFORE_SHA: ${{ github.event.before }}
         run: |
@@ -108,6 +159,11 @@ jobs:
           fi
           case "${EVENT_NAME}" in
             pull_request_target)
+              parents=$(git --no-replace-objects show -s --format=%P "${CANDIDATE_SHA}")
+              if [[ "${parents}" != "${PR_BASE_SHA} ${PR_HEAD_SHA}" ]]; then
+                echo "PR merge revision parents do not match the event base/head: ${parents} != ${PR_BASE_SHA} ${PR_HEAD_SHA}" >&2
+                exit 2
+              fi
               base="${PR_BASE_SHA}"
               ;;
             merge_group)
@@ -545,6 +601,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           CANDIDATE_SHA: ${{ needs.architecture-policy-plan.outputs.candidate_sha }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
           PUSH_BEFORE_SHA: ${{ github.event.before }}
           PLANNED_BASE: ${{ needs.architecture-policy-plan.outputs.comparison_base }}
@@ -557,6 +614,11 @@ jobs:
           fi
           case "${EVENT_NAME}" in
             pull_request_target)
+              parents=$(git --no-replace-objects show -s --format=%P "${CANDIDATE_SHA}")
+              if [[ "${parents}" != "${PR_BASE_SHA} ${PR_HEAD_SHA}" ]]; then
+                echo "PR merge revision parents do not match the event base/head: ${parents} != ${PR_BASE_SHA} ${PR_HEAD_SHA}" >&2
+                exit 2
+              fi
               base="${PR_BASE_SHA}"
               ;;
             merge_group)

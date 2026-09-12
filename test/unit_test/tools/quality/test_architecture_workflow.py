@@ -79,10 +79,39 @@ def _assert_required_workflow_controls(workflow: dict) -> None:
     plan = jobs["architecture-policy-plan"]
     candidate = _step(plan, "Resolve candidate revision")
     assert candidate["id"] == "candidate"
-    assert set(candidate["env"]) == {"EVENT_NAME", "EVENT_SHA", "PR_MERGE_SHA", "MERGE_GROUP_HEAD_SHA"}
+    assert set(candidate["env"]) == {
+        "EVENT_NAME",
+        "EVENT_SHA",
+        "PR_MERGE_SHA",
+        "PR_NUMBER",
+        "PR_HEAD_SHA",
+        "PR_BASE_SHA",
+        "REPOSITORY",
+        "SERVER_URL",
+        "MERGE_GROUP_HEAD_SHA",
+    }
     assert all(branch in candidate["run"] for branch in ("pull_request_target)", "merge_group)", "push)"))
     assert "Candidate revision is not an immutable commit SHA" in candidate["run"]
+    for required in (
+        '"refs/pull/${PR_NUMBER}/merge"',
+        "GIT_CONFIG_NOSYSTEM=1",
+        "GIT_CONFIG_GLOBAL=/dev/null",
+        "GIT_TERMINAL_PROMPT=0",
+        "git -c credential.helper= -c core.askPass= ls-remote --exit-code",
+        'candidate="${resolved}"',
+        '[[ -z "${PR_MERGE_SHA}" || "${PR_MERGE_SHA}" == "${resolved}" ]]',
+        "for attempt in {1..12}; do",
+        "if (( attempt < 12 )); then",
+        "sleep 2",
+        "PR merge revision did not materialize",
+    ):
+        assert required in candidate["run"]
     assert plan["outputs"]["candidate_sha"] == "${{ steps.candidate.outputs.sha }}"
+
+    comparison = _step(plan, "Resolve comparison base")
+    assert "PR_HEAD_SHA" in comparison["env"]
+    assert 'git --no-replace-objects show -s --format=%P "${CANDIDATE_SHA}"' in comparison["run"]
+    assert "PR merge revision parents do not match the event base/head" in comparison["run"]
 
     checkouts = {
         job_id: next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))
@@ -99,6 +128,11 @@ def _assert_required_workflow_controls(workflow: dict) -> None:
             "persist-credentials": False,
             "ref": "${{ needs.architecture-policy-plan.outputs.candidate_sha }}",
         }
+
+    final_comparison = _step(jobs["architecture-policy"], "Resolve and verify comparison base")
+    assert "PR_HEAD_SHA" in final_comparison["env"]
+    assert 'git --no-replace-objects show -s --format=%P "${CANDIDATE_SHA}"' in final_comparison["run"]
+    assert "PR merge revision parents do not match the event base/head" in final_comparison["run"]
 
 
 def _hash_locked_requirements(input_path: Path, lock_path: Path) -> tuple[list[str], set[str]]:
@@ -311,11 +345,23 @@ def test_workflow_uses_base_policy_as_authoritative_when_protocol_is_available()
 
     candidate = _step(job, "Resolve candidate revision")
     assert candidate["id"] == "candidate"
-    assert set(candidate["env"]) == {"EVENT_NAME", "EVENT_SHA", "PR_MERGE_SHA", "MERGE_GROUP_HEAD_SHA"}
+    assert set(candidate["env"]) == {
+        "EVENT_NAME",
+        "EVENT_SHA",
+        "PR_MERGE_SHA",
+        "PR_NUMBER",
+        "PR_HEAD_SHA",
+        "PR_BASE_SHA",
+        "REPOSITORY",
+        "SERVER_URL",
+        "MERGE_GROUP_HEAD_SHA",
+    }
     assert "pull_request_target)" in candidate["run"]
     assert "merge_group)" in candidate["run"]
     assert "push)" in candidate["run"]
     assert "Candidate revision is not an immutable commit SHA" in candidate["run"]
+    assert '"refs/pull/${PR_NUMBER}/merge"' in candidate["run"]
+    assert "PR merge revision did not materialize" in candidate["run"]
     assert job["outputs"]["candidate_sha"] == "${{ steps.candidate.outputs.sha }}"
 
     comparison_step = _step(job, "Resolve comparison base")
@@ -323,12 +369,14 @@ def test_workflow_uses_base_policy_as_authoritative_when_protocol_is_available()
         "EVENT_NAME",
         "CANDIDATE_SHA",
         "PR_BASE_SHA",
+        "PR_HEAD_SHA",
         "MERGE_GROUP_BASE_SHA",
         "PUSH_BEFORE_SHA",
     }
     assert "pull_request_target)" in comparison_step["run"]
     assert "merge_group)" in comparison_step["run"]
     assert "Candidate checkout does not match the planned revision" in comparison_step["run"]
+    assert "PR merge revision parents do not match the event base/head" in comparison_step["run"]
 
     source = _step(job, "Materialize authoritative policy bundle")["run"]
     assert "git show" in source
@@ -383,6 +431,18 @@ def test_workflow_rejects_enforcement_downgrades():
     def use_unbound_event_sha(workflow: dict) -> None:
         _step(workflow["jobs"]["architecture-policy"], "Check out candidate for final static verification")["with"]["ref"] = "${{ github.sha }}"
 
+    def trust_payload_merge_sha_without_remote_resolution(workflow: dict) -> None:
+        step = _step(workflow["jobs"]["architecture-policy-plan"], "Resolve candidate revision")
+        step["run"] = step["run"].replace('candidate="${resolved}"', 'candidate="${PR_MERGE_SHA}"')
+
+    def omit_pr_merge_parent_binding(workflow: dict) -> None:
+        for job_id, step_name in (
+            ("architecture-policy-plan", "Resolve comparison base"),
+            ("architecture-policy", "Resolve and verify comparison base"),
+        ):
+            step = _step(workflow["jobs"][job_id], step_name)
+            step["run"] = step["run"].replace("PR merge revision parents do not match the event base/head", "unchecked parents")
+
     mutations = {
         "candidate-controlled pull_request trigger": use_candidate_controlled_trigger,
         "missing merge_group trigger": omit_merge_queue_trigger,
@@ -391,8 +451,10 @@ def test_workflow_rejects_enforcement_downgrades():
         "mutable action tag": use_mutable_action_tag,
         "persisted checkout credentials": persist_checkout_credentials,
         "unbound final event SHA": use_unbound_event_sha,
+        "payload-only PR merge SHA": trust_payload_merge_sha_without_remote_resolution,
+        "unbound PR merge parents": omit_pr_merge_parent_binding,
     }
-    for _name, mutate in mutations.items():
+    for mutate in mutations.values():
         candidate = copy.deepcopy(_workflow())
         mutate(candidate)
         with pytest.raises(AssertionError):
@@ -533,6 +595,7 @@ def test_final_aggregate_runs_on_fresh_trusted_job():
         "EVENT_NAME",
         "CANDIDATE_SHA",
         "PR_BASE_SHA",
+        "PR_HEAD_SHA",
         "MERGE_GROUP_BASE_SHA",
         "PUSH_BEFORE_SHA",
         "PLANNED_BASE",
@@ -540,6 +603,7 @@ def test_final_aggregate_runs_on_fresh_trusted_job():
     assert "pull_request_target)" in comparison_step["run"]
     assert "merge_group)" in comparison_step["run"]
     assert "Final checkout does not match the planned revision" in comparison_step["run"]
+    assert "PR merge revision parents do not match the event base/head" in comparison_step["run"]
 
     source = _step(job, "Re-materialize authoritative policy bundle")["run"]
     assert "git show" in source

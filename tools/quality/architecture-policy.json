@@ -224,6 +224,7 @@
         "test_fixture_interpreter_path_preserves_virtualenv_symlink",
         "test_candidate_blob_uses_git_content_for_clean_crlf_checkout",
         "test_candidate_blob_rejects_git_clean_non_eol_divergence",
+        "test_intentional_trusted_fixture_failure_probe",
         "test_protected_source_bundle_uses_base_and_blocks_changed_candidate",
         "test_trusted_base_protocol_uses_committed_evaluator_and_policy",
         "test_github_output_cannot_modify_repository_file",

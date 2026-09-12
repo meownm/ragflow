@@ -272,6 +272,7 @@
           "AGENTS.md",
           "CLAUDE.md",
           ".github/workflows/architecture.yml",
+          "docs/develop/continuous-code-simplification-ru.md",
           "pyproject.toml",
           "uv.lock"
         ],

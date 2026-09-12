@@ -12,16 +12,25 @@ from __future__ import annotations
 
 import hashlib
 import io
-from datetime import UTC, datetime as DateTime
-from pathlib import Path
 import sys
 import threading
-from types import ModuleType
 import zipfile
+from datetime import UTC
+from datetime import datetime as DateTime
+from pathlib import Path
+from types import ModuleType
 
 import pytest
 from peewee import SqliteDatabase
 
+import common
+
+contract_settings = ModuleType("common.settings")
+contract_settings.DATABASE_TYPE = "MYSQL"
+contract_settings.DATABASE = {"name": "architecture_contract"}
+contract_settings.get_secret_key = lambda: "architecture-contract-secret"
+sys.modules[contract_settings.__name__] = contract_settings
+common.settings = contract_settings
 
 if "api.apps" not in sys.modules:
     api_apps = ModuleType("api.apps")
@@ -29,11 +38,11 @@ if "api.apps" not in sys.modules:
     sys.modules["api.apps"] = api_apps
 
 from api.apps.business_documents import exports as exports_module
+from api.apps.business_documents import worker as worker_module
 from api.apps.business_documents.assets import published_template, render_document_ast
 from api.apps.business_documents.errors import BusinessDocumentError
 from api.apps.business_documents.exports import BusinessDocumentExportService
 from api.apps.business_documents.service import BusinessDocumentService
-from api.apps.business_documents import worker as worker_module
 from api.apps.business_documents.worker import BusinessDocumentJobQueue, BusinessDocumentWorker
 from api.db.db_models import (
     BusinessDocument,
@@ -44,9 +53,8 @@ from api.db.db_models import (
     BusinessDocumentProposal,
     BusinessDocumentRevision,
 )
-from test.unit_test.api.apps.business_documents.helpers import required_section_blocks
 from common.time_utils import current_timestamp
-
+from test.unit_test.api.apps.business_documents.helpers import required_section_blocks
 
 TENANT = "tenant-worker"
 AUTHOR = "author-worker"

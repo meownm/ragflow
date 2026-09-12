@@ -7,7 +7,6 @@ from types import ModuleType
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[4]
 FIXTURE_PATH = ROOT / "test/testcases/test_web_api/test_agent_app/test_agents_webhook_unit.py"
 SPEC = importlib.util.spec_from_file_location("agent_runtime_route_contract_fixture", FIXTURE_PATH)
@@ -72,6 +71,10 @@ def _load_agent(monkeypatch):
     agent_file_service = ModuleType("api.apps.services.agent_file_service")
     agent_file_service.upload_agent_files = lambda *_args, **_kwargs: None
     monkeypatch.setitem(sys.modules, agent_file_service.__name__, agent_file_service)
+    mcp_sessions = ModuleType("common.mcp_tool_call_conn")
+    mcp_sessions.MCPToolCallSession = type("_StubMCPToolCallSession", (), {})
+    mcp_sessions.close_multiple_mcp_toolcall_sessions = lambda *_args, **_kwargs: None
+    monkeypatch.setitem(sys.modules, mcp_sessions.__name__, mcp_sessions)
     monkeypatch.setattr(ROUTE_FIXTURE, "_DummyManager", _RecordingManager)
     return ROUTE_FIXTURE._load_agents_app(monkeypatch)
 

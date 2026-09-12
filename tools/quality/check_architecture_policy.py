@@ -17,7 +17,7 @@ from pathlib import Path, PurePosixPath
 import yaml
 from capture_inventory import capture, git, paths, safe_path
 
-VERSION = "0.3.2"
+VERSION = "0.4.0"
 TRUSTED_BASE_PROTOCOL = 1
 MODE = "report_only"
 POLICY_REPOSITORY_PATH = "tools/quality/architecture-policy.json"
@@ -160,6 +160,13 @@ def _validate_fixture_lane(lane_id: str, lane: dict) -> None:
             raise ValueError(f"Lane {lane_id} node ID is outside its exact fixture paths")
 
 
+def _validate_os_isolation_requirement(lane_id: str, contract: str, value: object) -> None:
+    if type(value) is not bool:
+        raise ValueError(f"Lane {lane_id} has an invalid OS-isolation requirement")
+    if value and contract != "python_architecture":
+        raise ValueError(f"Lane {lane_id} may require OS isolation only for Python architecture contracts")
+
+
 def _validate_lane(lane: object) -> tuple[str, bool, str]:
     if not isinstance(lane, dict):
         raise ValueError("Architecture lane must be an object")
@@ -174,6 +181,7 @@ def _validate_lane(lane: object) -> tuple[str, bool, str]:
     always = lane.get("always")
     if always not in (None, False, True):
         raise ValueError(f"Lane {lane_id} has an invalid always flag")
+    _validate_os_isolation_requirement(lane_id, contract, lane.get("requires_os_isolation", False))
     if contract != "inventory":
         if not isinstance(lane.get("tool"), str):
             raise ValueError(f"Lane {lane_id} requires an exact tool name")
@@ -481,7 +489,151 @@ def _identity_problem(report: dict, expected: dict) -> str | None:
     return None if observed == wanted else f"report identity mismatch: expected {wanted}, observed {observed}"
 
 
-def _python_architecture_contract(_lane: dict, report: dict) -> tuple[str, str]:
+def _os_isolation_identity_problem(report: dict, report_input: dict, attestation: dict) -> str | None:
+    expected_identity = {
+        "schema_version": 1,
+        "status": "PASS",
+        "backend": "docker",
+        "candidate_head": report_input.get("candidate_sha"),
+        "comparison_base": report_input.get("pr_base_sha"),
+        "selection_sha256": report_input.get("selection_sha256"),
+    }
+    if any(attestation.get(field) != value for field, value in expected_identity.items()):
+        return "architecture OS-isolation identity does not match the producer report"
+    if not isinstance(attestation.get("candidate_tree"), str) or not re.fullmatch(r"[0-9a-f]{40}", attestation["candidate_tree"]):
+        return "architecture OS-isolation attestation has an invalid candidate tree"
+    if not isinstance(attestation.get("rootfs_sha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", attestation["rootfs_sha256"]):
+        return "architecture OS-isolation attestation has an invalid rootfs digest"
+    payload_digest = attestation.get("producer_payload_sha256")
+    payload = {key: value for key, value in report.items() if key != "os_isolation"}
+    if not isinstance(payload_digest, str) or payload_digest != _sha256(_canonical(payload)):
+        return "architecture OS-isolation attestation does not bind the producer payload"
+    return None
+
+
+def _os_isolation_constraints_problem(report_input: dict, constraints: object) -> str | None:
+    required_constraints = {
+        "candidate_mount",
+        "trusted_mount",
+        "root_filesystem",
+        "evidence_access",
+        "report_mount",
+        "report_file_mode",
+        "evidence_owner_uid",
+        "evidence_owner_gid",
+        "network",
+        "ipc",
+        "init_process",
+        "no_new_privileges",
+        "producer_capabilities",
+        "system_runtime_mounts",
+        "producer_uid",
+        "producer_gid",
+        "runtime_uid",
+        "runtime_gid",
+        "runtime_supplementary_groups",
+        "pids_limit",
+        "memory_limit",
+        "cpu_limit",
+    }
+    if not isinstance(constraints, dict) or set(constraints) != required_constraints:
+        return "architecture OS-isolation attestation has incomplete constraints"
+    fixed_constraints = {
+        "candidate_mount": "read-only",
+        "trusted_mount": "read-only",
+        "root_filesystem": "read-only",
+        "evidence_access": "single-report-file-group-write",
+        "report_mount": "single-file",
+        "report_file_mode": "0620",
+        "network": "none",
+        "ipc": "none",
+        "init_process": True,
+        "no_new_privileges": True,
+        "producer_capabilities": ["SETGID", "SETUID"],
+        "system_runtime_mounts": ["/lib", "/lib64", "/usr"],
+        "producer_uid": 0,
+        "runtime_uid": 65534,
+        "runtime_gid": 65534,
+        "runtime_supplementary_groups": [],
+        "pids_limit": 256,
+        "memory_limit": "5g",
+        "cpu_limit": "2",
+    }
+    if any(constraints.get(field) != value for field, value in fixed_constraints.items()):
+        return "architecture OS-isolation attestation weakens a required constraint"
+    evidence_owner_uid = constraints.get("evidence_owner_uid")
+    evidence_owner_gid = constraints.get("evidence_owner_gid")
+    producer_gid = constraints.get("producer_gid")
+    if type(evidence_owner_uid) is not int or evidence_owner_uid <= 0 or evidence_owner_uid == 65534:
+        return "architecture OS-isolation attestation has an invalid evidence owner"
+    if type(producer_gid) is not int or producer_gid <= 0 or producer_gid == 65534 or evidence_owner_gid != producer_gid:
+        return "architecture OS-isolation attestation has an invalid producer group"
+    expected_runtime = {
+        "mode": "os-sandbox-unprivileged",
+        "verified": True,
+        "child_uid": 65534,
+        "child_gid": 65534,
+        "supplementary_groups": [],
+        "effective_capabilities": "0000000000000000",
+        "no_new_privileges": True,
+    }
+    if report_input.get("runtime_execution") != expected_runtime:
+        return "architecture OS-isolation runtime identity was not independently verified"
+    return None
+
+
+def _os_isolation_negative_problem(negative_probe: object) -> str | None:
+    required_negative = {
+        "candidate_write_denied",
+        "evidence_read_denied",
+        "evidence_write_denied",
+        "report_read_denied",
+        "report_write_denied",
+        "network_denied",
+        "forbidden_environment_absent",
+        "sensitive_paths_absent",
+        "git_config_sanitized",
+        "unprivileged_identity",
+        "capabilities_absent",
+        "no_new_privileges",
+    }
+    if not isinstance(negative_probe, dict) or set(negative_probe) != required_negative or any(negative_probe[field] is not True for field in required_negative):
+        return "architecture OS-isolation negative probe omitted or failed a required check"
+    return None
+
+
+def _os_isolation_problem(report: dict) -> str | None:
+    attestation = report.get("os_isolation")
+    required_fields = {
+        "schema_version",
+        "status",
+        "backend",
+        "candidate_head",
+        "candidate_tree",
+        "comparison_base",
+        "selection_sha256",
+        "producer_payload_sha256",
+        "rootfs_sha256",
+        "constraints",
+        "negative_probe",
+    }
+    if not isinstance(attestation, dict) or set(attestation) != required_fields:
+        return "architecture report omitted the exact OS-isolation attestation"
+    report_input = report.get("input")
+    if not isinstance(report_input, dict):
+        return "architecture report omitted source identity"
+    return (
+        _os_isolation_identity_problem(report, report_input, attestation)
+        or _os_isolation_constraints_problem(report_input, attestation.get("constraints"))
+        or _os_isolation_negative_problem(attestation.get("negative_probe"))
+    )
+
+
+def _python_architecture_contract(lane: dict, report: dict) -> tuple[str, str]:
+    if lane.get("requires_os_isolation") is True:
+        problem = _os_isolation_problem(report)
+        if problem:
+            return "INCOMPLETE", problem
     status = report.get("policy_status")
     findings = report.get("findings")
     if not isinstance(findings, list):
@@ -792,6 +944,8 @@ def _lane_coverage_problems(base_lane: dict, candidate_lane: dict | None) -> lis
     problems = [f"lane {lane_id} changed {key}" for key in ("contract", "tool") if candidate_lane.get(key) != base_lane.get(key)]
     if base_lane.get("always") is True and candidate_lane.get("always") is not True:
         problems.append(f"lane {lane_id} is no longer always selected")
+    if base_lane.get("requires_os_isolation") is True and candidate_lane.get("requires_os_isolation") is not True:
+        problems.append(f"lane {lane_id} no longer requires OS isolation")
     problems.extend(_removed_values(base_lane, candidate_lane, ("rules", "required_cases", "required_nodeids", "fixture_paths", "protected_sources")))
     for field, source_path in base_lane.get("reported_hashes", {}).items():
         if candidate_lane.get("reported_hashes", {}).get(field) != source_path:

@@ -4,15 +4,15 @@ permissions:
   contents: read
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review, edited]
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [main]
-  workflow_dispatch:
 
 concurrency:
-  group: architecture-policy-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: architecture-policy-${{ github.event.pull_request.number || github.event.merge_group.head_ref || github.ref }}
 
 jobs:
   architecture-policy-plan:
@@ -20,6 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
+      candidate_sha: ${{ steps.candidate.outputs.sha }}
       comparison_base: ${{ steps.comparison.outputs.base }}
       policy_source: ${{ steps.policy_source.outputs.source }}
       selection_sha256: ${{ steps.selection.outputs.selection_sha256 }}
@@ -32,13 +33,49 @@ jobs:
       policy_fixtures_selected: ${{ steps.selection.outputs.policy_fixtures_selected }}
       policy_fixtures: ${{ steps.selection.outputs.policy_fixtures }}
     steps:
+      - name: Resolve candidate revision
+        id: candidate
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SHA: ${{ github.sha }}
+          PR_MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          MERGE_GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+        run: |
+          set -euo pipefail
+          case "${EVENT_NAME}" in
+            pull_request_target)
+              candidate="${PR_MERGE_SHA}"
+              ;;
+            merge_group)
+              candidate="${MERGE_GROUP_HEAD_SHA}"
+              if [[ "${candidate}" != "${EVENT_SHA}" ]]; then
+                echo "Merge-group event SHA does not match its head SHA: ${EVENT_SHA} != ${candidate}" >&2
+                exit 2
+              fi
+              ;;
+            push)
+              candidate="${EVENT_SHA}"
+              ;;
+            *)
+              echo "Unsupported architecture-policy event: ${EVENT_NAME}" >&2
+              exit 2
+              ;;
+          esac
+          if [[ ! "${candidate}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Candidate revision is not an immutable commit SHA: ${candidate}" >&2
+            exit 2
+          fi
+          echo "sha=${candidate}" >> "${GITHUB_OUTPUT}"
+
       - name: Check out candidate for static planning
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ steps.candidate.outputs.sha }}
 
       - name: Set up policy interpreter
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           python-version: "3.13"
 
@@ -58,19 +95,38 @@ jobs:
         id: comparison
         env:
           EVENT_NAME: ${{ github.event_name }}
+          CANDIDATE_SHA: ${{ steps.candidate.outputs.sha }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
           PUSH_BEFORE_SHA: ${{ github.event.before }}
         run: |
           set -euo pipefail
-          if [[ "${EVENT_NAME}" == "pull_request" ]]; then
-            base="${PR_BASE_SHA}"
-          elif [[ "${EVENT_NAME}" == "push" && -n "${PUSH_BEFORE_SHA}" && ! "${PUSH_BEFORE_SHA}" =~ ^0+$ ]]; then
-            base="${PUSH_BEFORE_SHA}"
-          elif git rev-parse --verify HEAD^ >/dev/null 2>&1; then
-            base="HEAD^"
-          else
-            base="HEAD"
+          checked_out=$(git rev-parse HEAD)
+          if [[ "${checked_out}" != "${CANDIDATE_SHA}" ]]; then
+            echo "Candidate checkout does not match the planned revision: ${CANDIDATE_SHA} -> ${checked_out}" >&2
+            exit 2
           fi
+          case "${EVENT_NAME}" in
+            pull_request_target)
+              base="${PR_BASE_SHA}"
+              ;;
+            merge_group)
+              base="${MERGE_GROUP_BASE_SHA}"
+              ;;
+            push)
+              if [[ -n "${PUSH_BEFORE_SHA}" && ! "${PUSH_BEFORE_SHA}" =~ ^0+$ ]]; then
+                base="${PUSH_BEFORE_SHA}"
+              elif git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+                base="HEAD^"
+              else
+                base="HEAD"
+              fi
+              ;;
+            *)
+              echo "Unsupported architecture-policy event: ${EVENT_NAME}" >&2
+              exit 2
+              ;;
+          esac
           base=$(git rev-parse "${base}^{commit}")
           echo "base=${base}" >> "${GITHUB_OUTPUT}"
 
@@ -105,9 +161,11 @@ jobs:
             source="candidate-bootstrap"
             echo "Base protocol v1 is unavailable; this run remains NOT_ENABLED." >&2
           fi
-          echo "runner=${authority_dir}/check_architecture_policy.py" >> "${GITHUB_OUTPUT}"
-          echo "policy=${authority_dir}/architecture-policy.json" >> "${GITHUB_OUTPUT}"
-          echo "source=${source}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "runner=${authority_dir}/check_architecture_policy.py"
+            echo "policy=${authority_dir}/architecture-policy.json"
+            echo "source=${source}"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Select authoritative architecture lanes
         id: selection
@@ -153,7 +211,7 @@ jobs:
 
       - name: Upload architecture plan
         if: always() && steps.evidence.outcome == 'success'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: architecture-policy-plan-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.evidence.outputs.directory }}
@@ -169,20 +227,29 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Check out candidate for analysis
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ needs.architecture-policy-plan.outputs.candidate_sha }}
 
       - name: Download architecture plan
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: architecture-policy-plan-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/architecture-policy-plan-input
 
       - name: Create fresh analysis directory
         id: evidence
+        env:
+          CANDIDATE_SHA: ${{ needs.architecture-policy-plan.outputs.candidate_sha }}
         run: |
           set -euo pipefail
+          checked_out=$(git rev-parse HEAD)
+          if [[ "${checked_out}" != "${CANDIDATE_SHA}" ]]; then
+            echo "Analysis checkout does not match the planned revision: ${CANDIDATE_SHA} -> ${checked_out}" >&2
+            exit 2
+          fi
           evidence_dir="${RUNNER_TEMP}/architecture-policy-analysis-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           if [[ -e "${evidence_dir}" ]]; then
             echo "Refusing stale architecture analysis: ${evidence_dir}" >&2
@@ -218,13 +285,13 @@ jobs:
 
       - name: Set up pnpm
         if: needs.architecture-policy-plan.outputs.python_architecture == 'true' || needs.architecture-policy-plan.outputs.runtime_graph == 'true'
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 10
 
       - name: Set up Node.js
         if: needs.architecture-policy-plan.outputs.python_architecture == 'true' || needs.architecture-policy-plan.outputs.runtime_graph == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: pnpm
@@ -232,7 +299,7 @@ jobs:
 
       - name: Set up Python and uv
         if: needs.architecture-policy-plan.outputs.python_architecture == 'true' || needs.architecture-policy-plan.outputs.runtime_graph == 'true' || needs.architecture-policy-plan.outputs.go_build_plan == 'true' || needs.architecture-policy-plan.outputs.policy_fixtures == 'true'
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           python-version: "3.13"
 
@@ -250,15 +317,51 @@ jobs:
             materialize --plan "${EVIDENCE_DIR}/selection.json" \
             --output-directory "${EVIDENCE_DIR}/protected-sources"
 
+      - name: Prepare isolated candidate workspace
+        id: sandbox
+        if: needs.architecture-policy-plan.outputs.python_architecture == 'true' || needs.architecture-policy-plan.outputs.runtime_graph == 'true' || needs.architecture-policy-plan.outputs.go_build_plan == 'true' || needs.architecture-policy-plan.outputs.policy_fixtures == 'true'
+        env:
+          EVIDENCE_DIR: ${{ steps.evidence.outputs.directory }}
+          CANDIDATE_SHA: ${{ needs.architecture-policy-plan.outputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          trusted_root="${EVIDENCE_DIR}/protected-sources"
+          candidate_root="${RUNNER_TEMP}/architecture-candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          python -I -B "${trusted_root}/tools/quality/run_architecture_sandbox.py" prepare \
+            --source-root "${GITHUB_WORKSPACE}" --candidate-root "${candidate_root}" \
+            --head "${CANDIDATE_SHA}" --manifest "${EVIDENCE_DIR}/sandbox-manifest.json" \
+            --github-output "${GITHUB_OUTPUT}"
+
       - name: Prepare root Python contracts
         if: needs.architecture-policy-plan.outputs.python_architecture == 'true' || needs.architecture-policy-plan.outputs.policy_fixtures == 'true'
-        run: uv sync --python 3.13 --group test --frozen --no-install-project
+        env:
+          EVIDENCE_DIR: ${{ steps.evidence.outputs.directory }}
+          CANDIDATE_ROOT: ${{ steps.sandbox.outputs.candidate_root }}
+        run: |
+          set -euo pipefail
+          trusted_requirements="${EVIDENCE_DIR}/protected-sources/tools/quality/architecture-contract-requirements.txt"
+          if [[ -e "${CANDIDATE_ROOT}/.venv" || -L "${CANDIDATE_ROOT}/.venv" ]]; then
+            echo "Refusing a pre-existing candidate root contract environment" >&2
+            exit 2
+          fi
+          uv venv "${CANDIDATE_ROOT}/.venv" --python 3.13
+          uv pip sync --python "${CANDIDATE_ROOT}/.venv/bin/python" --require-hashes --strict "${trusted_requirements}"
 
       - name: Prepare ASR architecture contract environment
         if: needs.architecture-policy-plan.outputs.python_architecture == 'true'
+        env:
+          EVIDENCE_DIR: ${{ steps.evidence.outputs.directory }}
+          CANDIDATE_ROOT: ${{ steps.sandbox.outputs.candidate_root }}
         run: |
-          uv venv --clear services/asr-online-service/.architecture-venv --python 3.13
-          uv pip sync --python services/asr-online-service/.architecture-venv/bin/python --require-hashes --strict services/asr-online-service/architecture-contract-requirements.txt
+          set -euo pipefail
+          trusted_requirements="${EVIDENCE_DIR}/protected-sources/services/asr-online-service/architecture-contract-requirements.txt"
+          asr_environment="${CANDIDATE_ROOT}/services/asr-online-service/.architecture-venv"
+          if [[ -e "${asr_environment}" || -L "${asr_environment}" ]]; then
+            echo "Refusing a pre-existing candidate ASR contract environment" >&2
+            exit 2
+          fi
+          uv venv "${asr_environment}" --python 3.13
+          uv pip sync --python "${CANDIDATE_ROOT}/services/asr-online-service/.architecture-venv/bin/python" --require-hashes --strict "${trusted_requirements}"
 
       - name: Exercise architecture policy fixtures
         if: ${{ success() && needs.architecture-policy-plan.outputs.policy_fixtures == 'true' }}
@@ -266,12 +369,13 @@ jobs:
           EVIDENCE_DIR: ${{ steps.evidence.outputs.directory }}
           POLICY_RUNNER: ${{ runner.temp }}/architecture-policy-plan-input/authority/tools/quality/check_architecture_policy.py
           POLICY_FILE: ${{ runner.temp }}/architecture-policy-plan-input/authority/tools/quality/architecture-policy.json
+          CANDIDATE_ROOT: ${{ steps.sandbox.outputs.candidate_root }}
         run: |
           set -euo pipefail
           uv run --no-project --with PyYAML==6.0.3 python -B "${POLICY_RUNNER}" \
-            --root "${GITHUB_WORKSPACE}" --policy "${POLICY_FILE}" \
+            --root "${CANDIDATE_ROOT}" --policy "${POLICY_FILE}" \
             --policy-repository-path tools/quality/architecture-policy.json \
-            fixtures --plan "${EVIDENCE_DIR}/selection.json" --python .venv/bin/python \
+            fixtures --plan "${EVIDENCE_DIR}/selection.json" --python "${CANDIDATE_ROOT}/.venv/bin/python" \
             --junit-output "${EVIDENCE_DIR}/policy-fixtures.xml" \
             --output "${EVIDENCE_DIR}/policy-fixtures.json"
 
@@ -279,12 +383,13 @@ jobs:
         if: ${{ success() && (needs.architecture-policy-plan.outputs.python_architecture == 'true' || needs.architecture-policy-plan.outputs.runtime_graph == 'true') }}
         env:
           EVIDENCE_DIR: ${{ steps.evidence.outputs.directory }}
+          CANDIDATE_ROOT: ${{ steps.sandbox.outputs.candidate_root }}
         run: |
           set -euo pipefail
           trusted_web="${EVIDENCE_DIR}/protected-sources/web"
           install_web="${RUNNER_TEMP}/architecture-typescript-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          candidate_modules="${GITHUB_WORKSPACE}/web/node_modules"
-          if [[ -e "${install_web}" || -e "${candidate_modules}" ]]; then
+          candidate_modules="${CANDIDATE_ROOT}/web/node_modules"
+          if [[ -e "${install_web}" || -L "${install_web}" || -e "${candidate_modules}" || -L "${candidate_modules}" ]]; then
             echo "Refusing stale TypeScript install or pre-existing candidate node_modules" >&2
             exit 2
           fi
@@ -301,13 +406,14 @@ jobs:
         env:
           EVIDENCE_DIR: ${{ steps.evidence.outputs.directory }}
           SELECTION_SHA256: ${{ needs.architecture-policy-plan.outputs.selection_sha256 }}
+          CANDIDATE_ROOT: ${{ steps.sandbox.outputs.candidate_root }}
         run: |
           set -euo pipefail
           trusted_root="${EVIDENCE_DIR}/protected-sources"
           isolated_runner="${trusted_root}/tools/quality/run_isolated_python.py"
           set +e
           uv run --no-project --with PyYAML==6.0.3 python -I -B "${isolated_runner}" \
-            "${trusted_root}" tools/quality/inspect_typescript.py --root "${GITHUB_WORKSPACE}" \
+            "${trusted_root}" tools/quality/inspect_typescript.py --root "${CANDIDATE_ROOT}" \
             --output "${EVIDENCE_DIR}/typescript-analysis.json"
           typescript_exit=$?
           set -e
@@ -315,10 +421,10 @@ jobs:
             exit "${typescript_exit}"
           fi
           uv run --no-project --with PyYAML==6.0.3 python -I -B "${isolated_runner}" \
-            "${trusted_root}" tools/quality/inspect_go.py --root "${GITHUB_WORKSPACE}" \
+            "${trusted_root}" tools/quality/inspect_go.py --root "${CANDIDATE_ROOT}" \
             --output "${EVIDENCE_DIR}/go-analysis.json"
           uv run --no-project --with PyYAML==6.0.3 python -I -B "${isolated_runner}" \
-            "${trusted_root}" tools/quality/check_runtime_graph_policy.py --root "${GITHUB_WORKSPACE}" \
+            "${trusted_root}" tools/quality/check_runtime_graph_policy.py --root "${CANDIDATE_ROOT}" \
             --typescript-report "${EVIDENCE_DIR}/typescript-analysis.json" \
             --go-report "${EVIDENCE_DIR}/go-analysis.json" \
             --selection-sha256 "${SELECTION_SHA256}" \
@@ -329,12 +435,13 @@ jobs:
         env:
           EVIDENCE_DIR: ${{ steps.evidence.outputs.directory }}
           SELECTION_SHA256: ${{ needs.architecture-policy-plan.outputs.selection_sha256 }}
+          CANDIDATE_ROOT: ${{ steps.sandbox.outputs.candidate_root }}
         run: |
           set -euo pipefail
           trusted_root="${EVIDENCE_DIR}/protected-sources"
           isolated_runner="${trusted_root}/tools/quality/run_isolated_python.py"
           uv run --no-project --with PyYAML==6.0.3 python -I -B "${isolated_runner}" \
-            "${trusted_root}" tools/quality/check_go_build_profiles.py --root "${GITHUB_WORKSPACE}" \
+            "${trusted_root}" tools/quality/check_go_build_profiles.py --root "${CANDIDATE_ROOT}" \
             --selection-sha256 "${SELECTION_SHA256}" \
             --output "${EVIDENCE_DIR}/go-build-plan.json"
 
@@ -344,18 +451,20 @@ jobs:
           EVIDENCE_DIR: ${{ steps.evidence.outputs.directory }}
           COMPARISON_BASE: ${{ needs.architecture-policy-plan.outputs.comparison_base }}
           SELECTION_SHA256: ${{ needs.architecture-policy-plan.outputs.selection_sha256 }}
+          CANDIDATE_ROOT: ${{ steps.sandbox.outputs.candidate_root }}
+          CANDIDATE_SHA: ${{ needs.architecture-policy-plan.outputs.candidate_sha }}
         run: |
           set -euo pipefail
           trusted_root="${EVIDENCE_DIR}/protected-sources"
-          isolated_runner="${trusted_root}/tools/quality/run_isolated_python.py"
-          .venv/bin/python -I -B "${isolated_runner}" \
-            "${trusted_root}" tools/quality/check_architecture.py --root "${GITHUB_WORKSPACE}" \
-            --base-ref "${COMPARISON_BASE}" --selection-sha256 "${SELECTION_SHA256}" \
-            --output "${EVIDENCE_DIR}/architecture-python.json"
+          python -I -B "${trusted_root}/tools/quality/run_architecture_sandbox.py" run \
+            --candidate-root "${CANDIDATE_ROOT}" --trusted-root "${trusted_root}" \
+            --evidence-dir "${EVIDENCE_DIR}" --manifest "${EVIDENCE_DIR}/sandbox-manifest.json" \
+            --head "${CANDIDATE_SHA}" --comparison-base "${COMPARISON_BASE}" \
+            --selection-sha256 "${SELECTION_SHA256}"
 
       - name: Upload architecture analysis
         if: always() && steps.evidence.outcome == 'success'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: architecture-policy-analysis-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.evidence.outputs.directory }}
@@ -407,23 +516,25 @@ jobs:
           fi
 
       - name: Check out candidate for final static verification
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ needs.architecture-policy-plan.outputs.candidate_sha }}
 
       - name: Set up final policy interpreter
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           python-version: "3.13"
 
       - name: Download trusted plan
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: architecture-policy-plan-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/architecture-policy-plan-final-input
 
       - name: Download analysis reports
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: architecture-policy-analysis-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/architecture-policy-analysis-final-input
@@ -432,20 +543,39 @@ jobs:
         id: comparison
         env:
           EVENT_NAME: ${{ github.event_name }}
+          CANDIDATE_SHA: ${{ needs.architecture-policy-plan.outputs.candidate_sha }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
           PUSH_BEFORE_SHA: ${{ github.event.before }}
           PLANNED_BASE: ${{ needs.architecture-policy-plan.outputs.comparison_base }}
         run: |
           set -euo pipefail
-          if [[ "${EVENT_NAME}" == "pull_request" ]]; then
-            base="${PR_BASE_SHA}"
-          elif [[ "${EVENT_NAME}" == "push" && -n "${PUSH_BEFORE_SHA}" && ! "${PUSH_BEFORE_SHA}" =~ ^0+$ ]]; then
-            base="${PUSH_BEFORE_SHA}"
-          elif git rev-parse --verify HEAD^ >/dev/null 2>&1; then
-            base="HEAD^"
-          else
-            base="HEAD"
+          checked_out=$(git rev-parse HEAD)
+          if [[ "${checked_out}" != "${CANDIDATE_SHA}" ]]; then
+            echo "Final checkout does not match the planned revision: ${CANDIDATE_SHA} -> ${checked_out}" >&2
+            exit 2
           fi
+          case "${EVENT_NAME}" in
+            pull_request_target)
+              base="${PR_BASE_SHA}"
+              ;;
+            merge_group)
+              base="${MERGE_GROUP_BASE_SHA}"
+              ;;
+            push)
+              if [[ -n "${PUSH_BEFORE_SHA}" && ! "${PUSH_BEFORE_SHA}" =~ ^0+$ ]]; then
+                base="${PUSH_BEFORE_SHA}"
+              elif git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+                base="HEAD^"
+              else
+                base="HEAD"
+              fi
+              ;;
+            *)
+              echo "Unsupported architecture-policy event: ${EVENT_NAME}" >&2
+              exit 2
+              ;;
+          esac
           base=$(git rev-parse "${base}^{commit}")
           if [[ "${base}" != "${PLANNED_BASE}" ]]; then
             echo "Comparison base changed between jobs: ${PLANNED_BASE} -> ${base}" >&2
@@ -489,9 +619,11 @@ jobs:
             echo "Authority source changed between jobs: ${PLANNED_SOURCE} -> ${source}" >&2
             exit 2
           fi
-          echo "runner=${authority_dir}/check_architecture_policy.py" >> "${GITHUB_OUTPUT}"
-          echo "policy=${authority_dir}/architecture-policy.json" >> "${GITHUB_OUTPUT}"
-          echo "source=${source}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "runner=${authority_dir}/check_architecture_policy.py"
+            echo "policy=${authority_dir}/architecture-policy.json"
+            echo "source=${source}"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Recompute authoritative selection
         env:
@@ -569,7 +701,7 @@ jobs:
 
       - name: Upload final architecture evidence
         if: always() && steps.evidence.outcome == 'success'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: architecture-policy-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ steps.evidence.outputs.directory }}

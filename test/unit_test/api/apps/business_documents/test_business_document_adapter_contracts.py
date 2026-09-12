@@ -11,13 +11,20 @@ from __future__ import annotations
 
 import asyncio
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 from types import ModuleType
 
-import common
 import pytest
 
+import common
+
+contract_settings = ModuleType("common.settings")
+contract_settings.DATABASE_TYPE = "MYSQL"
+contract_settings.DATABASE = {"name": "architecture_contract"}
+contract_settings.get_secret_key = lambda: "architecture-contract-secret"
+sys.modules[contract_settings.__name__] = contract_settings
+common.settings = contract_settings
 
 if "api.apps" not in sys.modules:
     api_apps = ModuleType("api.apps")

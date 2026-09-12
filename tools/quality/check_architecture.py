@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import platform
+import stat
 import subprocess
 import sys
 import tempfile
@@ -20,11 +21,14 @@ from capture_inventory import capture, git, paths, safe_path
 from inspect_python import MARKERS, analyze, collect_import_graph
 from run_isolated_python import sanitized_child_environment
 
-VERSION = "0.8.1"
+VERSION = "0.9.0"
 REPORT_ONLY = "T2_REPORT_ONLY"
 MODULE_ACCESS = "<module>"
 STATIC_IMPORT_KINDS = {"import", "literal_dynamic_import"}
 RUNTIME_WORKER = Path(__file__).with_name("probe_python_runtime.py")
+RUNTIME_REPORT_DIRECTORY_MODE = 0o711
+RUNTIME_REPORT_MODE = 0o622
+RUNTIME_TEMP_ENVIRONMENT = {"ASR_ARTIFACTS_DIR", "ASR_UPLOAD_DIR"}
 MANUAL_RULES = [
     "ARC-02 computed reverse loading outside configured integration sources is not evaluated",
     "ARC-02 adapter behavior outside configured contract tests remains manual",
@@ -33,6 +37,97 @@ MANUAL_RULES = [
     "SIMP-01..03 require scenario review and before/after evidence",
     "UPG/POL/BUILD/DATA/TEST rules remain separate checks",
 ]
+
+
+def _runtime_subprocess_options() -> dict:
+    enabled = os.environ.get("RAGFLOW_ARCHITECTURE_OS_SANDBOX")
+    if enabled is None:
+        return {}
+    if enabled != "1":
+        raise ValueError("RAGFLOW_ARCHITECTURE_OS_SANDBOX must be exactly 1 when set")
+    if os.name != "posix" or not hasattr(os, "geteuid") or not hasattr(os, "getegid"):
+        raise ValueError("OS-isolated runtime probes require a POSIX supervisor")
+    try:
+        child_uid = int(os.environ["RAGFLOW_ARCHITECTURE_RUNTIME_UID"])
+        child_gid = int(os.environ["RAGFLOW_ARCHITECTURE_RUNTIME_GID"])
+    except (KeyError, ValueError) as error:
+        raise ValueError("OS-isolated runtime probes require numeric child UID/GID") from error
+    if child_uid <= 0 or child_uid == os.geteuid():
+        raise ValueError("OS-isolated runtime probes require a distinct unprivileged child UID")
+    if child_gid < 0:
+        raise ValueError("OS-isolated runtime probes require a nonnegative child GID")
+    return {"user": child_uid, "group": child_gid, "extra_groups": ()}
+
+
+def _run_runtime_subprocess(command: list[str], **options) -> subprocess.CompletedProcess:
+    check = options.pop("check", False)
+    return subprocess.run(command, check=check, **options, **_runtime_subprocess_options())
+
+
+def _runtime_execution_attestation() -> dict:
+    options = _runtime_subprocess_options()
+    if not options:
+        return {"mode": "process-only", "verified": False}
+    completed = _run_runtime_subprocess(
+        [
+            sys.executable,
+            "-I",
+            "-B",
+            "-c",
+            (
+                "import json, os; "
+                "status=dict(line.split(':', 1) for line in open('/proc/self/status', encoding='utf-8') if ':' in line); "
+                "print(json.dumps({'uid': os.geteuid(), 'gid': os.getegid(), 'groups': os.getgroups(), "
+                "'cap_eff': status['CapEff'].strip(), 'no_new_privs': status['NoNewPrivs'].strip()}))"
+            ),
+        ],
+        env=sanitized_child_environment(),
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    expected = {
+        "uid": options["user"],
+        "gid": options["group"],
+        "groups": [],
+        "cap_eff": "0000000000000000",
+        "no_new_privs": "1",
+    }
+    try:
+        observed = json.loads(completed.stdout.strip())
+    except json.JSONDecodeError as error:
+        raise ValueError("Unprivileged runtime identity probe returned invalid output") from error
+    if completed.returncode != 0 or observed != expected:
+        raise ValueError(f"Unprivileged runtime identity probe failed: expected {expected}, observed {observed}")
+    return {
+        "mode": "os-sandbox-unprivileged",
+        "verified": True,
+        "child_uid": options["user"],
+        "child_gid": options["group"],
+        "supplementary_groups": [],
+        "effective_capabilities": "0000000000000000",
+        "no_new_privileges": True,
+    }
+
+
+def _prepare_runtime_report(path: Path) -> tuple[int, int, int, int, int]:
+    path.parent.chmod(RUNTIME_REPORT_DIRECTORY_MODE)
+    path.touch(exist_ok=False)
+    path.chmod(RUNTIME_REPORT_MODE)
+    metadata = path.lstat()
+    return metadata.st_dev, metadata.st_ino, metadata.st_uid, metadata.st_gid, stat.S_IMODE(metadata.st_mode)
+
+
+def _runtime_report_problem(path: Path, expected: tuple[int, int, int, int, int]) -> str | None:
+    try:
+        metadata = path.lstat()
+    except OSError:
+        return "Runtime contract report path disappeared"
+    observed = (metadata.st_dev, metadata.st_ino, metadata.st_uid, metadata.st_gid, stat.S_IMODE(metadata.st_mode))
+    if not stat.S_ISREG(metadata.st_mode) or observed != expected:
+        return "Runtime contract report path identity or permissions changed"
+    return None
 
 
 def _normalized_prefix(value: object) -> str:
@@ -412,8 +507,10 @@ def _evaluate_pytest_contract(
             test_path, *node = test_id.split("::")
             pytest_nodes.append("::".join([str(safe_path(root, test_path)), *node]))
         with tempfile.TemporaryDirectory(prefix="ragflow-architecture-contract-") as directory:
+            runtime_options = _runtime_subprocess_options()
             report_path = Path(directory) / "pytest.xml"
-            completed = subprocess.run(
+            report_identity = _prepare_runtime_report(report_path) if runtime_options else None
+            completed = _run_runtime_subprocess(
                 [
                     str(python_executable or sys.executable),
                     "-B",
@@ -424,10 +521,16 @@ def _evaluate_pytest_contract(
                     "--noconftest",
                     "-p",
                     "pytest_asyncio.plugin",
+                    "-p",
+                    "no:cacheprovider",
                     f"--junitxml={report_path}",
                 ],
                 cwd=working_directory,
-                env=sanitized_child_environment(PYTEST_DISABLE_PLUGIN_AUTOLOAD="1", PYTHONPATH=python_path),
+                env=sanitized_child_environment(
+                    PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+                    PYTHONPATH=python_path,
+                    **probe.get("environment", {}),
+                ),
                 capture_output=True,
                 text=True,
                 timeout=probe["timeout_seconds"],
@@ -435,6 +538,17 @@ def _evaluate_pytest_contract(
             )
             captured_stdout = completed.stdout[-4000:]
             captured_stderr = completed.stderr[-4000:]
+            report_problem = _runtime_report_problem(report_path, report_identity) if report_identity else None
+            if report_problem:
+                return {
+                    "status": "INCOMPLETE",
+                    "observations": [],
+                    "loaded_repo_modules": [],
+                    "findings": [],
+                    "captured_stdout": captured_stdout,
+                    "captured_stderr": captured_stderr,
+                    "incomplete_reasons": [{"kind": "pytest_contract_report_permissions", "message": report_problem}],
+                }
             if not report_path.is_file():
                 return {
                     "status": "INCOMPLETE",
@@ -575,7 +689,7 @@ def evaluate_runtime_probe(
         request["observed_source_roots"] = sorted(source_roots or ())
         request["python_paths"] = list(python_paths or ())
         try:
-            completed = subprocess.run(
+            completed = _run_runtime_subprocess(
                 [str(python_executable or sys.executable), "-I", "-B", str(worker)],
                 cwd=root,
                 env=sanitized_child_environment(),
@@ -734,6 +848,28 @@ def _normalized_pytest_node(value: object, probe_id: str) -> str:
     return "::".join([path, *parts[1:]])
 
 
+def _normalized_runtime_environment(value: object, probe_id: str) -> dict[str, str]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict) or any(not isinstance(name, str) for name in value):
+        raise ValueError(f"Runtime probe {probe_id} environment must be a mapping")
+    unknown = sorted(set(value) - RUNTIME_TEMP_ENVIRONMENT)
+    if unknown:
+        raise ValueError(f"Runtime probe {probe_id} has unsupported environment keys: {', '.join(unknown)}")
+    normalized = {}
+    temporary_root = PurePosixPath("/tmp")
+    for name, raw_path in sorted(value.items()):
+        if not isinstance(raw_path, str) or "\\" in raw_path:
+            raise ValueError(f"Runtime probe {probe_id} environment {name} must be an absolute POSIX path below /tmp")
+        path = PurePosixPath(raw_path)
+        if path.as_posix() != raw_path or not path.is_absolute() or ".." in path.parts or path == temporary_root or not path.is_relative_to(temporary_root):
+            raise ValueError(f"Runtime probe {probe_id} environment {name} must be an absolute POSIX path below /tmp")
+        normalized[name] = raw_path
+    if len(set(normalized.values())) != len(normalized):
+        raise ValueError(f"Runtime probe {probe_id} environment paths must be distinct")
+    return normalized
+
+
 def _normalized_runtime_probe(value: object, profiles: dict, modules: dict) -> dict:
     if not isinstance(value, dict):
         raise ValueError("Runtime probe entries must be mappings")
@@ -770,6 +906,7 @@ def _normalized_runtime_probe(value: object, profiles: dict, modules: dict) -> d
             f"Runtime probe {probe_id} working_directory",
             allow_root=True,
         )
+        probe["environment"] = _normalized_runtime_environment(probe.get("environment"), probe_id)
         return probe
     if not isinstance(probe.get("allow_output", False), bool):
         raise ValueError(f"Runtime probe {probe_id} allow_output must be boolean")
@@ -867,6 +1004,7 @@ def _normalized_runtime_probe(value: object, profiles: dict, modules: dict) -> d
 def _load_configuration(
     root: Path,
     policy_path: Path,
+    module_map_path: Path,
     selected_boundary_ids: list[str] | None,
     selected_connection_ids: list[str] | None,
     selected_cycle_check_ids: list[str] | None,
@@ -875,7 +1013,7 @@ def _load_configuration(
     policy = yaml.safe_load(policy_path.read_text(encoding="utf-8"))
     if not isinstance(policy, dict) or policy.get("schema_version") != 1:
         raise ValueError("Unsupported Python boundary policy schema")
-    mapping = yaml.safe_load((root / "tools/quality/module-map.yaml").read_text(encoding="utf-8"))
+    mapping = yaml.safe_load(module_map_path.read_text(encoding="utf-8"))
     modules = {module["id"]: module for module in mapping["modules"]}
     raw_profiles = policy.get("profiles")
     if not isinstance(raw_profiles, list) or not raw_profiles:
@@ -1055,6 +1193,8 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[2])
     parser.add_argument("--policy", type=Path, help="Boundary policy; defaults to tools/quality/python-boundaries.yaml")
+    parser.add_argument("--module-map", type=Path, help="Provenance mapping; defaults to tools/quality/module-map.yaml")
+    parser.add_argument("--upstream-base", type=Path, help="Accepted upstream base; defaults to tools/quality/upstream-base.json")
     parser.add_argument("--base-ref", help="Optional PR base ref recorded as a resolved commit in the local report")
     parser.add_argument("--selection-sha256", help="Optional T3 selection digest binding this report to an architecture plan")
     parser.add_argument("--boundary", action="append", dest="boundaries", help="Exact configured boundary ID; repeat to select more")
@@ -1066,12 +1206,15 @@ def main(argv=None) -> int:
     root = args.root.resolve()
     output = args.output.resolve()
     policy_path = args.policy.resolve() if args.policy else root / "tools/quality/python-boundaries.yaml"
+    module_map_path = args.module_map.resolve() if args.module_map else root / "tools/quality/module-map.yaml"
+    upstream_base_path = args.upstream_base.resolve() if args.upstream_base else root / "tools/quality/upstream-base.json"
     try:
         if output.is_relative_to(root):
             git(root, "check-ignore", "--no-index", "-q", output.relative_to(root).as_posix())
         policy, mapping, boundaries, connections, cycle_checks, runtime_probes = _load_configuration(
             root,
             policy_path,
+            module_map_path,
             args.boundaries,
             args.connections,
             args.cycle_checks,
@@ -1080,7 +1223,7 @@ def main(argv=None) -> int:
         worker_probes = [probe for probe in runtime_probes if probe.get("kind") != "pytest_contract"]
         if worker_probes and not RUNTIME_WORKER.is_file():
             raise ValueError(f"Runtime probe worker is missing: {RUNTIME_WORKER}")
-        base = json.loads((root / "tools/quality/upstream-base.json").read_text(encoding="utf-8"))
+        base = json.loads(upstream_base_path.read_text(encoding="utf-8"))
         before = capture(root, base, mapping)
         pr_base_sha = git(root, "rev-parse", f"{args.base_ref}^{{commit}}").decode().strip() if args.base_ref else None
         files = paths(git(root, "ls-files", "--cached", "--others", "--exclude-standard", "-z"))
@@ -1125,6 +1268,7 @@ def main(argv=None) -> int:
 
         runtime_probe_results = []
         runtime_selected_raw = {}
+        runtime_execution = _runtime_execution_attestation() if runtime_probes else None
         for probe in runtime_probes:
             probe_profile = profiles[probe["profile"]]
             python_executable, unavailable_reason = _profile_python_executable(root, probe_profile)
@@ -1182,8 +1326,11 @@ def main(argv=None) -> int:
                 "dirty_snapshot_sha256": before["snapshot_sha256"],
                 "selection_sha256": args.selection_sha256,
                 "policy_sha256": hashlib.sha256(policy_path.read_bytes()).hexdigest(),
+                "module_map_sha256": hashlib.sha256(module_map_path.read_bytes()).hexdigest(),
+                "upstream_base_sha256": hashlib.sha256(upstream_base_path.read_bytes()).hexdigest(),
                 "tool_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                 "runtime_worker_sha256": hashlib.sha256(RUNTIME_WORKER.read_bytes()).hexdigest() if worker_probes else None,
+                "runtime_execution": runtime_execution,
                 "selected_source_sha256": dict(sorted(selected_sha.items())),
             },
             "profiles": sorted(profile_ids),

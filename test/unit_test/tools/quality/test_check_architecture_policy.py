@@ -91,12 +91,79 @@ def report(plan: dict, lane_id: str, tool: str, **values) -> bytes:
         "tool": {"name": tool},
         "input": {
             "head": IDENTITY["head"],
+            "candidate_sha": IDENTITY["head"],
+            "pr_base_sha": IDENTITY["base"],
             "upstream_base": IDENTITY["upstream_base"],
             "snapshot_sha256": IDENTITY["snapshot_sha256"],
             **planned.get("expected_report_hashes", {}),
             "selection_sha256": plan["selection_sha256"],
         },
         **values,
+    }
+    return json.dumps(payload).encode()
+
+
+def python_report(plan: dict, **values) -> bytes:
+    payload = json.loads(report(plan, "python-architecture", "check_architecture", **values))
+    runtime_gid = 65534
+    payload["input"]["runtime_execution"] = {
+        "mode": "os-sandbox-unprivileged",
+        "verified": True,
+        "child_uid": 65534,
+        "child_gid": runtime_gid,
+        "supplementary_groups": [],
+        "effective_capabilities": "0000000000000000",
+        "no_new_privileges": True,
+    }
+    payload_digest = checker._sha256(checker._canonical(payload))
+    payload["os_isolation"] = {
+        "schema_version": 1,
+        "status": "PASS",
+        "backend": "docker",
+        "candidate_head": IDENTITY["head"],
+        "candidate_tree": "2" * 40,
+        "comparison_base": IDENTITY["base"],
+        "selection_sha256": plan["selection_sha256"],
+        "producer_payload_sha256": payload_digest,
+        "rootfs_sha256": "3" * 64,
+        "constraints": {
+            "candidate_mount": "read-only",
+            "trusted_mount": "read-only",
+            "root_filesystem": "read-only",
+            "evidence_access": "single-report-file-group-write",
+            "report_mount": "single-file",
+            "report_file_mode": "0620",
+            "evidence_owner_uid": 1000,
+            "evidence_owner_gid": 1001,
+            "network": "none",
+            "ipc": "none",
+            "init_process": True,
+            "no_new_privileges": True,
+            "producer_capabilities": ["SETGID", "SETUID"],
+            "system_runtime_mounts": ["/lib", "/lib64", "/usr"],
+            "producer_uid": 0,
+            "producer_gid": 1001,
+            "runtime_uid": 65534,
+            "runtime_gid": runtime_gid,
+            "runtime_supplementary_groups": [],
+            "pids_limit": 256,
+            "memory_limit": "5g",
+            "cpu_limit": "2",
+        },
+        "negative_probe": {
+            "candidate_write_denied": True,
+            "evidence_read_denied": True,
+            "evidence_write_denied": True,
+            "report_read_denied": True,
+            "report_write_denied": True,
+            "network_denied": True,
+            "forbidden_environment_absent": True,
+            "sensitive_paths_absent": True,
+            "git_config_sanitized": True,
+            "unprivileged_identity": True,
+            "capabilities_absent": True,
+            "no_new_privileges": True,
+        },
     }
     return json.dumps(payload).encode()
 
@@ -136,7 +203,7 @@ def fixture_attestation(plan: dict, *, status: str = "PASS", pytest_exit_code: i
 
 def complete_evidence(plan: dict) -> dict[str, bytes]:
     return {
-        "python-architecture": report(plan, "python-architecture", "check_architecture", policy_status="PASS", findings=[], exit_code=0),
+        "python-architecture": python_report(plan, policy_status="PASS", findings=[], exit_code=0),
         "runtime-graph": report(
             plan,
             "runtime-graph",
@@ -235,6 +302,7 @@ class ArchitecturePolicyTests(unittest.TestCase):
 
     def test_producer_and_control_paths_select_their_own_lanes(self):
         cases = {
+            ".github/workflows/candidate-spoof.yml": "policy-fixtures",
             "services/asr-online-service/architecture-contract-requirements.in": "python-architecture",
             "services/asr-online-service/architecture-contract-requirements.txt": "python-architecture",
             "tools/quality/check_architecture.py": "python-architecture",
@@ -297,6 +365,11 @@ class ArchitecturePolicyTests(unittest.TestCase):
             checker.select_lanes(POLICY, ["unknown/new.bin"], [], {})
 
     def test_policy_rejects_enforcement_wildcards_and_duplicate_lanes(self):
+        def unselect_architecture_workflow(value: dict) -> None:
+            fixture_lane = next(lane for lane in value["lanes"] if lane["contract"] == "policy_fixtures")
+            fixture_lane["selectors"]["paths"].remove(".github/workflows/architecture.yml")
+            fixture_lane["selectors"]["prefixes"].remove(".github/workflows/")
+
         temporary = self.enterContext(__import__("tempfile").TemporaryDirectory())
         path = Path(temporary) / "policy.json"
         for mutate in (
@@ -307,7 +380,7 @@ class ArchitecturePolicyTests(unittest.TestCase):
             lambda value: value["lanes"][2]["protected_sources"].remove("tools/quality/check_runtime_graph_policy.py"),
             lambda value: value["lanes"][2]["selectors"]["paths"].remove("tools/quality/inspect_typescript.cjs"),
             lambda value: next(lane for lane in value["lanes"] if lane["contract"] == "policy_fixtures")["protected_sources"].remove("tools/quality/check_architecture_policy.py"),
-            lambda value: next(lane for lane in value["lanes"] if lane["contract"] == "policy_fixtures")["selectors"]["paths"].remove(".github/workflows/architecture.yml"),
+            unselect_architecture_workflow,
             lambda value: next(lane for lane in value["lanes"] if lane["contract"] == "policy_fixtures").update(contract="junit"),
         ):
             with self.subTest(mutate=mutate):
@@ -434,6 +507,16 @@ class ArchitecturePolicyTests(unittest.TestCase):
         )
         self.assertEqual(next(item for item in result["results"] if item["id"] == "python-architecture")["status"], "INCOMPLETE")
 
+        missing_isolation = json.loads(evidence["python-architecture"])
+        missing_isolation.pop("os_isolation")
+        result = aggregate(plan, {**evidence, "python-architecture": json.dumps(missing_isolation).encode()})
+        self.assertEqual(next(item for item in result["results"] if item["id"] == "python-architecture")["status"], "INCOMPLETE")
+
+        failed_isolation = json.loads(evidence["python-architecture"])
+        failed_isolation["os_isolation"]["negative_probe"]["network_denied"] = False
+        result = aggregate(plan, {**evidence, "python-architecture": json.dumps(failed_isolation).encode()})
+        self.assertEqual(next(item for item in result["results"] if item["id"] == "python-architecture")["status"], "INCOMPLETE")
+
         unbound_report = json.loads(evidence["runtime-graph"])
         unbound_report["input"].pop("selection_sha256")
         result = aggregate(
@@ -462,10 +545,8 @@ class ArchitecturePolicyTests(unittest.TestCase):
     def test_incomplete_takes_precedence_over_failure_and_junit_skip(self):
         plan = selected_plan(["tools/quality/module-map.yaml"])
         evidence = {
-            "python-architecture": report(
+            "python-architecture": python_report(
                 plan,
-                "python-architecture",
-                "check_architecture",
                 policy_status="INCOMPLETE",
                 findings=[{"rule": "ARC-01"}],
                 exit_code=2,
@@ -543,6 +624,12 @@ class ArchitecturePolicyTests(unittest.TestCase):
         narrowed_plan = selected_plan(changed, narrowed)
         with self.assertRaisesRegex(ValueError, "narrows trusted coverage"):
             checker.compare_policy_coverage(POLICY, narrowed, base_plan, narrowed_plan)
+
+        weakened = copy.deepcopy(POLICY)
+        next(lane for lane in weakened["lanes"] if lane["id"] == "python-architecture")["requires_os_isolation"] = False
+        weakened_plan = selected_plan(changed, weakened)
+        with self.assertRaisesRegex(ValueError, "no longer requires OS isolation"):
+            checker.compare_policy_coverage(POLICY, weakened, base_plan, weakened_plan)
 
     def test_external_evaluator_sources_must_match_base_or_candidate(self):
         self.assertEqual(checker._verified_content_source(b"base", b"candidate", b"base", "tool"), "base")
@@ -905,10 +992,8 @@ class ArchitecturePolicyTests(unittest.TestCase):
     def test_pr_probe_blocks_forbidden_architecture_finding(self):
         plan = selected_plan(["tools/quality/module-map.yaml"])
         evidence = complete_evidence(plan)
-        evidence["python-architecture"] = report(
+        evidence["python-architecture"] = python_report(
             plan,
-            "python-architecture",
-            "check_architecture",
             policy_status="FAIL",
             findings=[{"rule": "ARC-01", "message": "forbidden dependency"}],
             exit_code=1,

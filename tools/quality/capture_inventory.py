@@ -31,7 +31,13 @@ HASHED_IGNORED_NAMES = {"uv.lock"}
 
 
 def git(repo: Path, *args: str) -> bytes:
-    return subprocess.run(["git", "-c", "core.quotepath=false", *args], cwd=repo, check=True, capture_output=True).stdout
+    repo = repo.resolve()
+    return subprocess.run(
+        ["git", "-c", "core.quotepath=false", "-c", f"safe.directory={repo}", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    ).stdout
 
 
 def paths(raw: bytes) -> list[str]:

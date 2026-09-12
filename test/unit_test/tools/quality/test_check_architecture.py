@@ -258,6 +258,31 @@ class RuntimeProbeTests(unittest.TestCase):
         }
         return checker.evaluate_runtime_probe(self.root, probe, source_roots={"owned"})
 
+    def test_all_runtime_children_use_the_privilege_dropping_wrapper(self):
+        source = (ROOT / "tools/quality/check_architecture.py").read_text(encoding="utf-8")
+        self.assertEqual(source.count("subprocess.run("), 1)
+        self.assertEqual(source.count("_run_runtime_subprocess("), 4)
+        dropped_identity = {"user": 65534, "group": 65534, "extra_groups": ()}
+        with (
+            patch.object(checker, "_runtime_subprocess_options", return_value=dropped_identity),
+            patch.object(checker.subprocess, "run", return_value="completed") as runtime,
+        ):
+            self.assertEqual(checker._run_runtime_subprocess(["python"], check=False), "completed")
+        runtime.assert_called_once_with(["python"], check=False, **dropped_identity)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX modes are part of the runtime-report contract")
+    def test_runtime_report_path_detects_permission_or_identity_changes(self):
+        directory = self.root / "runtime-report"
+        directory.mkdir()
+        report = directory / "pytest.xml"
+        expected = checker._prepare_runtime_report(report)
+        self.assertEqual(directory.stat().st_mode & 0o777, checker.RUNTIME_REPORT_DIRECTORY_MODE)
+        self.assertEqual(report.stat().st_mode & 0o777, checker.RUNTIME_REPORT_MODE)
+        self.assertIsNone(checker._runtime_report_problem(report, expected))
+
+        report.chmod(0o666)
+        self.assertEqual(checker._runtime_report_problem(report, expected), "Runtime contract report path identity or permissions changed")
+
     def test_clean_import_runs_in_fresh_process(self):
         self.write("owned/__init__.py", "")
         self.write("owned/domain.py", "Value = object()\n")
@@ -457,6 +482,33 @@ class RuntimeProbeTests(unittest.TestCase):
             python_paths=["services/fixture/src"],
         )
         self.assertEqual(result["status"], "PASS", result)
+
+    def test_pytest_contract_environment_allows_only_distinct_tmp_paths(self):
+        probe = {
+            "id": "asr-contract",
+            "owner_module": "asr",
+            "profile": "asr-service",
+            "rule_id": "ARC-02",
+            "kind": "pytest_contract",
+            "test_ids": ["services/asr-online-service/tests/test_contract.py::test_contract"],
+            "expected_tests": 1,
+            "environment": {
+                "ASR_ARTIFACTS_DIR": "/tmp/asr-artifacts",
+                "ASR_UPLOAD_DIR": "/tmp/asr-uploads",
+            },
+        }
+        normalized = checker._normalized_runtime_probe(probe, {"asr-service": {}}, {"asr": {}})
+        self.assertEqual(normalized["environment"], probe["environment"])
+
+        for environment in (
+            {"PYTHONPATH": "/tmp/injected"},
+            {"ASR_ARTIFACTS_DIR": "/workspace/artifacts"},
+            {"ASR_ARTIFACTS_DIR": "/tmp/../workspace/artifacts"},
+            {"ASR_ARTIFACTS_DIR": "/tmp/shared", "ASR_UPLOAD_DIR": "/tmp/shared"},
+        ):
+            with self.subTest(environment=environment):
+                with self.assertRaisesRegex(ValueError, "environment"):
+                    checker._normalized_runtime_probe({**probe, "environment": environment}, {"asr-service": {}}, {"asr": {}})
 
 
 class CommandTests(unittest.TestCase):

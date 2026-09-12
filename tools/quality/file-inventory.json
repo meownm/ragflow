@@ -1,28 +1,28 @@
 {
   "schema_version": 1,
-  "captured_at": "2026-09-12T08:18:01.545665+00:00",
-  "head": "4a080bf416d16521188c3398b4cb486081cd29e9",
+  "captured_at": "2026-09-12T14:07:25.271210+00:00",
+  "head": "5c50071c0391d6fe333b84d199f993fabf798c1f",
   "upstream_base": "cb93883f3f8c975eecb2fed81210effeb3bdb06f",
-  "branch": "codex/t3-control-update",
+  "branch": "codex/t3-os-isolation",
   "shallow": true,
-  "snapshot_sha256": "6520369aaf8d6326605d77289886a00ea546972ca29c324e40d32b6d6e1cea59",
+  "snapshot_sha256": "579dc672d05d99bbcd6c2043863cff7df2864a59044f275eb7182702caced294",
   "scope": "All tracked deltas from the content baseline, staged/unstaged changes and nonignored untracked files; generated outputs explicitly listed without recursive digest",
   "rename_policy": "Renames represented by explicit delete/add paths; no paths discarded by similarity heuristics",
   "counts": {
     "base_files": 4441,
-    "head_files": 4839,
-    "index_files": 4839,
-    "committed_delta": 744,
-    "staged_delta": 0,
-    "unstaged_delta": 8,
+    "head_files": 4844,
+    "index_files": 4844,
+    "committed_delta": 749,
+    "staged_delta": 2,
+    "unstaged_delta": 1,
     "untracked": 0,
-    "inventory_records": 744,
+    "inventory_records": 749,
     "by_origin": {
       "core_change": 346,
-      "extension": 398
+      "extension": 403
     },
     "by_module": {
-      "quality-governance": 149,
+      "quality-governance": 154,
       "observability": 28,
       "access-policy": 44,
       "business-documents": 81,
@@ -162,11 +162,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "21d14702f15b51e7652a8167fe1c16c690e3229f"
+        "oid": "346341866df8a2e3512094126dc43440ac45f34d"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "21d14702f15b51e7652a8167fe1c16c690e3229f"
+        "oid": "346341866df8a2e3512094126dc43440ac45f34d"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -175,8 +175,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 30199,
-        "sha256": "8eddcc4b64c569870aec5ef2788e638883a1a38159a87e01bb1d3ba6ea334411"
+        "bytes": 36268,
+        "sha256": "1704bf95bf6605cd68d8af759908df6114973bb8e0f99f086278161bdf05bf27"
       }
     },
     {
@@ -4394,11 +4394,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "7aee363efb358715a630b3242e43ee6d13574943"
+        "oid": "f4ecaada011d75a25ef8e8330028ac82372b413a"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "7aee363efb358715a630b3242e43ee6d13574943"
+        "oid": "f4ecaada011d75a25ef8e8330028ac82372b413a"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -4407,8 +4407,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 52937,
-        "sha256": "83a3d284c9e911f28b8b9924426ae00a1dee854d9c167ce6521a1652bd911778"
+        "bytes": 55999,
+        "sha256": "c2f2f6e18d7c7ef9dbcccad0c07719b5d00d4e27271e77975e11963d362efce8"
       }
     },
     {
@@ -4419,21 +4419,21 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "6f0ab544510b63cd4b0360913b27d1b2118c31ba"
+        "oid": "3469b2e0ccfc5fcef8a7f5952d47600c55dc2a28"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "6f0ab544510b63cd4b0360913b27d1b2118c31ba"
+        "oid": "3469b2e0ccfc5fcef8a7f5952d47600c55dc2a28"
       },
       "committed_change": "A",
       "staged_change": null,
-      "unstaged_change": "M",
+      "unstaged_change": null,
       "working_change_from_base": "A",
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 45708,
-        "sha256": "53340f4259ae42158bb45298d18a053815c15b6c31892d7ea6e2842a17f11191"
+        "bytes": 42851,
+        "sha256": "de5bd6cbd6e33b22944c011708aacc2f3ade38e1a0b060cabc84546b1a06f009"
       }
     },
     {
@@ -4569,21 +4569,21 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "bb1a97ef8ef75daef4a85f01e4e8f2389e6f2a27"
+        "oid": "37976fedf0f3f5a83451e015515ea2029bd36a63"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "bb1a97ef8ef75daef4a85f01e4e8f2389e6f2a27"
+        "oid": "37976fedf0f3f5a83451e015515ea2029bd36a63"
       },
       "committed_change": "A",
       "staged_change": null,
-      "unstaged_change": "M",
+      "unstaged_change": null,
       "working_change_from_base": "A",
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 17591,
-        "sha256": "a0237b4a9f5b5c441e737d9e8b2629a177def8393530dbc51628464da66fb526"
+        "bytes": 17642,
+        "sha256": "bc16f29309db7f470a79581b36c68cd59f3bd585fe6d78cf8cc15b4dc3bdbf48"
       }
     },
     {
@@ -4694,21 +4694,21 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "3d6c15c031f6e2bd1c18d323cd9c7c5b22f2977d"
+        "oid": "c2a558cacf4b5778c1a11738871f622a9aec5bcd"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "3d6c15c031f6e2bd1c18d323cd9c7c5b22f2977d"
+        "oid": "c2a558cacf4b5778c1a11738871f622a9aec5bcd"
       },
       "committed_change": "A",
       "staged_change": null,
-      "unstaged_change": "M",
+      "unstaged_change": null,
       "working_change_from_base": "A",
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 43065,
-        "sha256": "f40de06d342398954dbcf37e523615634c8a54d233c8d655cb4edc45aac723d4"
+        "bytes": 43066,
+        "sha256": "370ed15e54ba17293cb3c6bf131e6a486a25b79973e43908a94918dd9c954476"
       }
     },
     {
@@ -4769,21 +4769,21 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "403115087d32f6d5af942a4608e5a960299d7b30"
+        "oid": "5de2746789d57542e0aa72fe2a8db636055d41db"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "403115087d32f6d5af942a4608e5a960299d7b30"
+        "oid": "5de2746789d57542e0aa72fe2a8db636055d41db"
       },
       "committed_change": "A",
       "staged_change": null,
-      "unstaged_change": "M",
+      "unstaged_change": null,
       "working_change_from_base": "A",
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 32529,
-        "sha256": "970e4cf35117e1b014b9fff6b005f70277c2186843ed149bef3b68593a461662"
+        "bytes": 39026,
+        "sha256": "3c23837c01894ad9eb610c303325878a3df9ffdebde5a4118b3db03ea53260f4"
       }
     },
     {
@@ -9451,11 +9451,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "9cffda8a5cecf0c3d8b0cd21aa74a0714b2b73bb"
+        "oid": "cd7a8594f95559e35c691f425616c01979b23f7e"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "9cffda8a5cecf0c3d8b0cd21aa74a0714b2b73bb"
+        "oid": "cd7a8594f95559e35c691f425616c01979b23f7e"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -9464,8 +9464,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 3699,
-        "sha256": "1b777c078edb1c8494fa323d66bb95646a85d393c52913aa036bf14ba7db37be"
+        "bytes": 5988,
+        "sha256": "ca8ed9d48d145380b3f488d97e7ea95f1cb2d963b4df5047a7e91e5c3f74f932"
       }
     },
     {
@@ -9476,11 +9476,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "550278bbf11bccf094296068054c6986381ed9f0"
+        "oid": "c2a5e47c5b5e3e159703e768235f7f561c91dccc"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "550278bbf11bccf094296068054c6986381ed9f0"
+        "oid": "c2a5e47c5b5e3e159703e768235f7f561c91dccc"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -9489,8 +9489,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 4522,
-        "sha256": "9b576cb0a44b456e3d22e4cfe0da44d7bf24f33c888c29fc02f4b7eda49514e5"
+        "bytes": 7806,
+        "sha256": "34133d4a12f13996310d776d1d0170479839dcc7b184ff35a6339a83f5fbb54b"
       }
     },
     {
@@ -9526,11 +9526,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "621886d3fc2ef2e2d25a3388237c83afcdc3da52"
+        "oid": "04450545c2b4c8bb59e94fc294d47c8545d955e9"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "621886d3fc2ef2e2d25a3388237c83afcdc3da52"
+        "oid": "04450545c2b4c8bb59e94fc294d47c8545d955e9"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -9539,8 +9539,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 13889,
-        "sha256": "1bc01a9883fe14de3abada39e090a1bd471b47b35c7053abc47a65df36f44cb8"
+        "bytes": 13816,
+        "sha256": "d692e773fb6eda8f5f465a38978f6c1432db77f04de0c93e695b996d1248822b"
       }
     },
     {
@@ -9651,11 +9651,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "0b9ed8d085786212e951bddd16582011101dc981"
+        "oid": "a2ff19c47ea1f7681fd46c35f92efd498b1e5c48"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "0b9ed8d085786212e951bddd16582011101dc981"
+        "oid": "a2ff19c47ea1f7681fd46c35f92efd498b1e5c48"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -9664,8 +9664,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 52468,
-        "sha256": "1362fa3373834cbc69d71c8d824c93440716c99c5e4411c5c5738bb71064da0a"
+        "bytes": 51658,
+        "sha256": "077cead7d3d5ae2bb8e54b711fbf6547dc3e201d43fbf0212e124c2228111c64"
       }
     },
     {
@@ -10911,11 +10911,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "762325c35db832d7b0f444207fe8c588a61a730b"
+        "oid": "62d2a9e943dd60fa42325c251f71fbacdf7bbad9"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "762325c35db832d7b0f444207fe8c588a61a730b"
+        "oid": "62d2a9e943dd60fa42325c251f71fbacdf7bbad9"
       },
       "committed_change": "M",
       "staged_change": null,
@@ -10924,8 +10924,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 36770,
-        "sha256": "979e56c1f765ce6b1573d8da7d0979484aa81033e0f94598535b3f3a9bae2ad7"
+        "bytes": 40232,
+        "sha256": "508da8690f6298c50f3e764f02cfbed6827591abc5ada27ee3f59a6a53d40b95"
       }
     },
     {
@@ -11086,11 +11086,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "9ea86ef12805c116efbf31384a5df68009559ce3"
+        "oid": "191fc3fb16385598f685cbd34a932cfe04a41659"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "9ea86ef12805c116efbf31384a5df68009559ce3"
+        "oid": "191fc3fb16385598f685cbd34a932cfe04a41659"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -11099,8 +11099,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 4088,
-        "sha256": "370601e3f828267869d2b622cc70aa5c8504af2ecf0fb15d6a7fc6325b4de0ec"
+        "bytes": 4292,
+        "sha256": "a9abcfe4b041b05a1afb6414c1ac28de2b96332ed6af2fcd1098827d0bd733c7"
       }
     },
     {
@@ -11129,18 +11129,18 @@
       }
     },
     {
-      "path": "test/unit_test/tools/quality/test_architecture_workflow.py",
+      "path": "test/unit_test/tools/quality/test_architecture_sandbox.py",
       "module": "quality-governance",
       "origin": "extension",
       "base_entry": null,
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "f2ba669440084ff833bb46dfb76bb70234933375"
+        "oid": "353073e62a3486963d07339ac9451ce33f148208"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "f2ba669440084ff833bb46dfb76bb70234933375"
+        "oid": "353073e62a3486963d07339ac9451ce33f148208"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -11149,8 +11149,33 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 18440,
-        "sha256": "52c4fc1ba4e1a33c1456e588e66e8b67d7c234fa29c2d25a8ae14348dae073e3"
+        "bytes": 11991,
+        "sha256": "fa4a7d86db5d0373b7cc7065d90155fa2ad26965e1a5f9ee239591452ff5ad17"
+      }
+    },
+    {
+      "path": "test/unit_test/tools/quality/test_architecture_workflow.py",
+      "module": "quality-governance",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "dec2fa7fd8bd4bdbbad061bcbad17b417dbcc5f2"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "dec2fa7fd8bd4bdbbad061bcbad17b417dbcc5f2"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 31751,
+        "sha256": "3eb95d557bc7ec1119572449ff50d570ac4d2c3739f6eed612605f7fc1d046b3"
       }
     },
     {
@@ -11261,11 +11286,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "d4014b8c2a8201ebf00885b28c337b8b8bfa0749"
+        "oid": "ec7e3b4dd1eaee8d9edf8de067a6b04ee6085c16"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "d4014b8c2a8201ebf00885b28c337b8b8bfa0749"
+        "oid": "ec7e3b4dd1eaee8d9edf8de067a6b04ee6085c16"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -11274,8 +11299,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 9340,
-        "sha256": "06f552a43c669e01062ab5eafcc59cbe286b46557b878fa05578fdfb5fcfe43c"
+        "bytes": 10058,
+        "sha256": "461c6f89a223d296819141a4c680800218a574416a933a3d5206110b9f5a6341"
       }
     },
     {
@@ -11286,21 +11311,21 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "9db3c15f599fba9511c026a246ce4d0b1c576da1"
+        "oid": "686403a5a8d2f409b1415567403d34df6a07db1e"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "9db3c15f599fba9511c026a246ce4d0b1c576da1"
+        "oid": "686403a5a8d2f409b1415567403d34df6a07db1e"
       },
       "committed_change": "A",
       "staged_change": null,
-      "unstaged_change": "M",
+      "unstaged_change": null,
       "working_change_from_base": "A",
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 31146,
-        "sha256": "5e7fa475c003742a93c563b5fdb7cc5e225077496adff5785b1f1934aefa0d30"
+        "bytes": 34051,
+        "sha256": "7f82f034097de65b58d21b471c1d08cb894b28022588603969209e499e686dcd"
       }
     },
     {
@@ -11311,11 +11336,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "6ffa0cb1cf142487a2caac2766f3c097f2a5f0a4"
+        "oid": "0e8bf6ef01796895a6c21957f9d7a1878e851ab1"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "6ffa0cb1cf142487a2caac2766f3c097f2a5f0a4"
+        "oid": "0e8bf6ef01796895a6c21957f9d7a1878e851ab1"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -11324,8 +11349,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 50171,
-        "sha256": "4d2462a818b382885b17ab7566ed24142fbd4ebddb4e2f9c435b382797f7b9b2"
+        "bytes": 53034,
+        "sha256": "b1011db6cad89a41298e41b0eec7114a9dcd093b18ee5bc8af4840968dafdaa2"
       }
     },
     {
@@ -11783,18 +11808,18 @@
       }
     },
     {
-      "path": "tools/quality/architecture-policy.json",
+      "path": "tools/quality/architecture-contract-requirements.in",
       "module": "quality-governance",
       "origin": "extension",
       "base_entry": null,
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "b92f5d63bfbe42aa112ce39b166283d2683a1d19"
+        "oid": "489f586417cd311ebe0ace9a0627f9975e90193b"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "b92f5d63bfbe42aa112ce39b166283d2683a1d19"
+        "oid": "489f586417cd311ebe0ace9a0627f9975e90193b"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -11803,8 +11828,58 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 14935,
-        "sha256": "3ba61ef09cf9c30514250785cbbdc3c9ff063b9d9c6f17cdfb1c783f68b5c898"
+        "bytes": 285,
+        "sha256": "a9b1362c59f54980e18fc1bfd2811a50413936a916843638ecc916f69bb6126d"
+      }
+    },
+    {
+      "path": "tools/quality/architecture-contract-requirements.txt",
+      "module": "quality-governance",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "cd4009fa6c6174a298b642f13ee517fa1352c483"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "cd4009fa6c6174a298b642f13ee517fa1352c483"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 108308,
+        "sha256": "7d0e4946b9208cf6757d70546b5490d4630ffbc4fed67d43e619806151ca749f"
+      }
+    },
+    {
+      "path": "tools/quality/architecture-policy.json",
+      "module": "quality-governance",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "16df4fc73e471ea0a685bbc9bb3417c3392c0246"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "16df4fc73e471ea0a685bbc9bb3417c3392c0246"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 17453,
+        "sha256": "d411ea6253ca9e16650cdf0c128980004d4eee67141b23132c2e17cd7d5cdcf7"
       }
     },
     {
@@ -11865,11 +11940,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "7da46fe6d43f9f077c4111986e80ab22be1a15c5"
+        "oid": "0afb5a5ec88f384ef364e56a8eaeb3aebb9a75a8"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "7da46fe6d43f9f077c4111986e80ab22be1a15c5"
+        "oid": "0afb5a5ec88f384ef364e56a8eaeb3aebb9a75a8"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -11878,8 +11953,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 15517,
-        "sha256": "734f9c378a2d3a7c3e4fd24d11e3d6abe368cc0ee9ffba46c4dfd4a0657de03f"
+        "bytes": 15620,
+        "sha256": "d5594b47764e35a704e51fced712036b28d2d47d484dd5a0b76da1e30b98d3b1"
       }
     },
     {
@@ -11890,21 +11965,21 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "9ddd673eeaa0bc474b83b8a7478c283303d5db10"
+        "oid": "3aa3ba5338f055dde4901bd3226786410596223a"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "9ddd673eeaa0bc474b83b8a7478c283303d5db10"
+        "oid": "3aa3ba5338f055dde4901bd3226786410596223a"
       },
       "committed_change": "A",
       "staged_change": null,
-      "unstaged_change": "M",
+      "unstaged_change": null,
       "working_change_from_base": "A",
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 66688,
-        "sha256": "e7e0714d7006486bfed19233a50fd2fbb35fa2fe1130878609928976d8309b52"
+        "bytes": 73945,
+        "sha256": "670eadfbe2e7018ef9e41d22fd803a27b38d47abadfc954df408bc439207222b"
       }
     },
     {
@@ -11915,11 +11990,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "ce67211d4cd9ab3c5c7cd36ae1ae07c2b528eed5"
+        "oid": "52a1df608a97aa13f62566a6fef93a85008a5ee4"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "ce67211d4cd9ab3c5c7cd36ae1ae07c2b528eed5"
+        "oid": "52a1df608a97aa13f62566a6fef93a85008a5ee4"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -11928,8 +12003,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 72304,
-        "sha256": "7addca11fb18d7ef80160626690a30d31c44cb3c2b12de30f801ca95df287945"
+        "bytes": 79183,
+        "sha256": "d12d83c5ee5daf8c7d3c1df7ca238bf49dd2b2ea21944f37943b5ae098ddaf2c"
       }
     },
     {
@@ -12040,15 +12115,15 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "fbef1cd102e76e76809fd4ce2387af80b689d5a0"
+        "oid": "c50a208760aff38fc2a48567c2393f368573ed57"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "fbef1cd102e76e76809fd4ce2387af80b689d5a0"
+        "oid": "6c7fccfef8a682330bb3b9068ed9d5bf2e0b5e78"
       },
       "committed_change": "A",
-      "staged_change": null,
-      "unstaged_change": "M",
+      "staged_change": "M",
+      "unstaged_change": null,
       "working_change_from_base": "A",
       "untracked": false,
       "working_file": {
@@ -12089,11 +12164,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "0bc50f60d13f755124b52d42acf90db495f94aac"
+        "oid": "73d960df006ce4a44073858fb9d02ced710ee23c"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "0bc50f60d13f755124b52d42acf90db495f94aac"
+        "oid": "73d960df006ce4a44073858fb9d02ced710ee23c"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -12313,11 +12388,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "0483f7a721fa6ad723df2e6379336fed87ffc828"
+        "oid": "cc4f1587ef9c29fe820850a1e71b6baaa56292cf"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "0483f7a721fa6ad723df2e6379336fed87ffc828"
+        "oid": "cc4f1587ef9c29fe820850a1e71b6baaa56292cf"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -12326,8 +12401,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 60355,
-        "sha256": "aacd600ab8cfbff9710a34381b0b45d8294e669eca3f5949b2075c3e3c33d004"
+        "bytes": 59509,
+        "sha256": "5898c6ea6dcdf6cf4672562f9e1d4a8cf2ba42b5ea779b4b7c75f85bd2c163a8"
       }
     },
     {
@@ -12353,6 +12428,31 @@
         "present": true,
         "bytes": 17388,
         "sha256": "f46055c1e4565a89e1a9cf5f1c414c7b1c837338b464ead02d8a8b705849d51a"
+      }
+    },
+    {
+      "path": "tools/quality/probe_architecture_sandbox.py",
+      "module": "quality-governance",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "435050df1b4833c4ec8abe0d182085230993480f"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "435050df1b4833c4ec8abe0d182085230993480f"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 5297,
+        "sha256": "141dc920705b3e34a6a18355354bbe95232b930144e1f80ae811ad3a50b3768a"
       }
     },
     {
@@ -12388,11 +12488,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "986e2083214bc165a57367bf7ac994e3f9a493a0"
+        "oid": "bd1af18e7eac87df181cb47e2c190955cc5748a4"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "986e2083214bc165a57367bf7ac994e3f9a493a0"
+        "oid": "bd1af18e7eac87df181cb47e2c190955cc5748a4"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -12401,8 +12501,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 26335,
-        "sha256": "545f219409b20e8390d2a9f974d65139bdbed4dd77f48d338d7450a800078a67"
+        "bytes": 26460,
+        "sha256": "f750a5e1145db32fb36a840f885c83a0f78f7175a2c4344c22a9b02b5fbb973b"
       }
     },
     {
@@ -12428,6 +12528,31 @@
         "present": true,
         "bytes": 763,
         "sha256": "ac2cf8fe2a996aa2068ae0acb6d95533ee9b33b1efa58c126e69265b65b182a7"
+      }
+    },
+    {
+      "path": "tools/quality/run_architecture_sandbox.py",
+      "module": "quality-governance",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "e86cd293220b56ee5ed45275ea4ab1fbc74acbcf"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "e86cd293220b56ee5ed45275ea4ab1fbc74acbcf"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 36321,
+        "sha256": "c42c3912f4c0bbdb8b9562c1bf940b2425eddac9d8256aafc71af09b9445c307"
       }
     },
     {
@@ -12538,21 +12663,21 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "462a2e28626d2fbf3c3c28266a413bdf18744cde"
+        "oid": "f92d0e4968fa1a6969aed33c1c3717e54fcf5d2b"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "462a2e28626d2fbf3c3c28266a413bdf18744cde"
+        "oid": "8e06ef620a630a73bb03b452fa85b34dd22b72a8"
       },
       "committed_change": "A",
-      "staged_change": null,
+      "staged_change": "M",
       "unstaged_change": null,
       "working_change_from_base": "A",
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 102482,
-        "sha256": "6c48d39a285b162d444b182504666c77606f167bc4f5090f95e64fe4d3723c57"
+        "bytes": 116201,
+        "sha256": "5a5d810dced504a226426a1e9129e81b753a1222037671d7dc0c415dc2900d25"
       }
     },
     {

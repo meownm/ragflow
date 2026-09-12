@@ -15,10 +15,13 @@
       "id": "python-architecture",
       "contract": "python_architecture",
       "tool": "check_architecture",
+      "requires_os_isolation": true,
       "rules": ["ARC-01", "ARC-02", "ARC-03", "POL-02"],
       "protected_sources": [
         ".github/workflows/architecture.yml",
         "pyproject.toml",
+        "tools/quality/architecture-contract-requirements.in",
+        "tools/quality/architecture-contract-requirements.txt",
         "services/asr-online-service/architecture-contract-requirements.in",
         "services/asr-online-service/architecture-contract-requirements.txt",
         "services/asr-online-service/pyproject.toml",
@@ -51,8 +54,10 @@
         "tools/quality/capture_inventory.py",
         "tools/quality/inspect_python.py",
         "tools/quality/module-map.yaml",
+        "tools/quality/probe_architecture_sandbox.py",
         "tools/quality/probe_python_runtime.py",
         "tools/quality/python-boundaries.yaml",
+        "tools/quality/run_architecture_sandbox.py",
         "tools/quality/run_isolated_python.py",
         "tools/quality/upstream-base.json",
         "uv.lock",
@@ -63,12 +68,18 @@
       "reported_hashes": {
         "tool_sha256": "tools/quality/check_architecture.py",
         "policy_sha256": "tools/quality/python-boundaries.yaml",
-        "runtime_worker_sha256": "tools/quality/probe_python_runtime.py"
+        "runtime_worker_sha256": "tools/quality/probe_python_runtime.py",
+        "module_map_sha256": "tools/quality/module-map.yaml",
+        "upstream_base_sha256": "tools/quality/upstream-base.json",
+        "sandbox_runner_sha256": "tools/quality/run_architecture_sandbox.py",
+        "sandbox_probe_sha256": "tools/quality/probe_architecture_sandbox.py"
       },
       "selectors": {
         "paths": [
           ".github/workflows/architecture.yml",
           "pyproject.toml",
+          "tools/quality/architecture-contract-requirements.in",
+          "tools/quality/architecture-contract-requirements.txt",
           "services/asr-online-service/architecture-contract-requirements.in",
           "services/asr-online-service/architecture-contract-requirements.txt",
           "uv.lock",
@@ -76,7 +87,9 @@
           "tools/quality/check_architecture.py",
           "tools/quality/check_architecture_policy.py",
           "tools/quality/python-boundaries.yaml",
+          "tools/quality/probe_architecture_sandbox.py",
           "tools/quality/probe_python_runtime.py",
+          "tools/quality/run_architecture_sandbox.py",
           "tools/quality/run_isolated_python.py",
           "tools/quality/module-map.yaml",
           "tools/quality/upstream-base.json",
@@ -103,6 +116,7 @@
         "tools/quality/inspect_typescript.py",
         "tools/quality/module-map.yaml",
         "tools/quality/runtime-graph-policy.yaml",
+        "tools/quality/run_architecture_sandbox.py",
         "tools/quality/run_isolated_python.py",
         "tools/quality/typescript-analysis.yaml",
         "tools/quality/upstream-base.json",
@@ -140,6 +154,7 @@
           "tools/quality/typescript-analysis.yaml",
           "tools/quality/go-analysis.yaml",
           "tools/quality/runtime-graph-policy.yaml",
+          "tools/quality/run_architecture_sandbox.py",
           "tools/quality/run_isolated_python.py",
           "tools/quality/module-map.yaml",
           "tools/quality/upstream-base.json"
@@ -162,6 +177,7 @@
         "tools/quality/check_go_build_profiles.py",
         "tools/quality/go-build-profiles.yaml",
         "tools/quality/module-map.yaml",
+        "tools/quality/run_architecture_sandbox.py",
         "tools/quality/run_isolated_python.py",
         "tools/quality/upstream-base.json"
       ],
@@ -182,6 +198,7 @@
           "tools/quality/check_go_build_profiles.py",
           "tools/quality/go-build-profiles.yaml",
           "tools/quality/module-map.yaml",
+          "tools/quality/run_architecture_sandbox.py",
           "tools/quality/run_isolated_python.py",
           "tools/quality/upstream-base.json"
         ],
@@ -201,8 +218,11 @@
         "tools/quality/capture_inventory.py",
         "tools/quality/check_architecture_policy.py",
         "tools/quality/module-map.yaml",
+        "tools/quality/probe_architecture_sandbox.py",
+        "tools/quality/run_architecture_sandbox.py",
         "tools/quality/run_isolated_python.py",
         "tools/quality/upstream-base.json",
+        "test/unit_test/tools/quality/test_architecture_sandbox.py",
         "test/unit_test/tools/quality/test_architecture_workflow.py",
         "test/unit_test/tools/quality/test_check_architecture_policy.py",
         "uv.lock"
@@ -232,12 +252,19 @@
         "test_pr_probe_blocks_forbidden_architecture_finding",
         "test_pr_probe_fails_closed_for_unclassified_path_and_missing_analyzer",
         "test_workflow_is_unconditional_report_only_and_fail_closed",
+        "test_required_status_context_is_unique_across_candidate_workflows",
+        "test_workflow_rejects_enforcement_downgrades",
         "test_workflow_uses_base_policy_as_authoritative_when_protocol_is_available",
         "test_analysis_job_contains_candidate_lifecycle_and_publishes_reports",
         "test_final_aggregate_runs_on_fresh_trusted_job",
-        "test_artifacts_flow_from_plan_and_analysis_to_fresh_final_aggregate"
+        "test_artifacts_flow_from_plan_and_analysis_to_fresh_final_aggregate",
+        "test_sandbox_attestation_binds_report_and_negative_probe",
+        "test_sandbox_commands_separate_negative_directory_from_producer_report_file",
+        "test_report_staging_file_has_exact_owner_group_and_mode",
+        "test_sandbox_rejects_failed_negative_probe_and_unsafe_clone_config"
       ],
       "fixture_paths": [
+        "test/unit_test/tools/quality/test_architecture_sandbox.py",
         "test/unit_test/tools/quality/test_architecture_workflow.py",
         "test/unit_test/tools/quality/test_check_architecture_policy.py"
       ],
@@ -262,10 +289,16 @@
         "test/unit_test/tools/quality/test_check_architecture_policy.py::ArchitecturePolicyTests::test_pr_probe_blocks_forbidden_architecture_finding",
         "test/unit_test/tools/quality/test_check_architecture_policy.py::ArchitecturePolicyTests::test_pr_probe_fails_closed_for_unclassified_path_and_missing_analyzer",
         "test/unit_test/tools/quality/test_architecture_workflow.py::test_workflow_is_unconditional_report_only_and_fail_closed",
+        "test/unit_test/tools/quality/test_architecture_workflow.py::test_required_status_context_is_unique_across_candidate_workflows",
+        "test/unit_test/tools/quality/test_architecture_workflow.py::test_workflow_rejects_enforcement_downgrades",
         "test/unit_test/tools/quality/test_architecture_workflow.py::test_workflow_uses_base_policy_as_authoritative_when_protocol_is_available",
         "test/unit_test/tools/quality/test_architecture_workflow.py::test_analysis_job_contains_candidate_lifecycle_and_publishes_reports",
         "test/unit_test/tools/quality/test_architecture_workflow.py::test_final_aggregate_runs_on_fresh_trusted_job",
-        "test/unit_test/tools/quality/test_architecture_workflow.py::test_artifacts_flow_from_plan_and_analysis_to_fresh_final_aggregate"
+        "test/unit_test/tools/quality/test_architecture_workflow.py::test_artifacts_flow_from_plan_and_analysis_to_fresh_final_aggregate",
+        "test/unit_test/tools/quality/test_architecture_sandbox.py::test_sandbox_attestation_binds_report_and_negative_probe",
+        "test/unit_test/tools/quality/test_architecture_sandbox.py::test_sandbox_commands_separate_negative_directory_from_producer_report_file",
+        "test/unit_test/tools/quality/test_architecture_sandbox.py::test_report_staging_file_has_exact_owner_group_and_mode",
+        "test/unit_test/tools/quality/test_architecture_sandbox.py::test_sandbox_rejects_failed_negative_probe_and_unsafe_clone_config"
       ],
       "selectors": {
         "paths": [
@@ -276,6 +309,7 @@
           "uv.lock"
         ],
         "prefixes": [
+          ".github/workflows/",
           "tools/quality/",
           "test/unit_test/tools/quality/",
           "docs/develop/architecture",

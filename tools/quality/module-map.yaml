@@ -1083,6 +1083,7 @@ modules:
   - Provenance evidence and no guessed upstream baseline
   - Existing checks remain distinct from future architecture gates
   tests:
+  - test/unit_test/tools/quality/test_architecture_sandbox.py
   - test/unit_test/tools/quality/test_architecture_workflow.py
   - test/unit_test/tools/quality/test_capture_inventory.py
   - test/unit_test/tools/quality/test_check_architecture.py
@@ -1111,6 +1112,8 @@ modules:
   - tools/quality/inspect_typescript.py
   - tools/quality/inspect_go.py
   - tools/quality/check_runtime_graph_policy.py
+  - tools/quality/run_architecture_sandbox.py
+  - tools/quality/probe_architecture_sandbox.py
   - run_tests.py
   - .github/workflows/tests.yml
   integration_dependencies: []
@@ -1216,6 +1219,7 @@ modules:
   - test/unit_test/tools/hooks/test_check_files.py
   - test/unit_test/tools/hooks/test_process_preparation.py
   - test/unit_test/tools/quality/test_browser_workflow.py
+  - test/unit_test/tools/quality/test_architecture_sandbox.py
   - test/unit_test/tools/quality/test_architecture_workflow.py
   - test/unit_test/tools/quality/test_build_identity.py
   - test/unit_test/tools/quality/test_candidate.py
@@ -1237,6 +1241,8 @@ modules:
   - tools/hooks/web_check.py
   - tools/quality/browser_inventory.py
   - tools/quality/architecture-policy.json
+  - tools/quality/architecture-contract-requirements.in
+  - tools/quality/architecture-contract-requirements.txt
   - tools/quality/candidate.py
   - tools/quality/capture_inventory.py
   - tools/quality/check_architecture.py
@@ -1257,6 +1263,8 @@ modules:
   - tools/quality/inspect_typescript.py
   - tools/quality/inspect_go.py
   - tools/quality/check_runtime_graph_policy.py
+  - tools/quality/probe_architecture_sandbox.py
+  - tools/quality/run_architecture_sandbox.py
   - tools/quality/run_isolated_python.py
   - tools/quality/module-map.yaml
   - tools/quality/probe_python_runtime.py

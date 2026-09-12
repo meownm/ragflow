@@ -1,6 +1,6 @@
 schema_version: 1
 upstream_base: cb93883f3f8c975eecb2fed81210effeb3bdb06f
-head: 4a080bf416d16521188c3398b4cb486081cd29e9
+head: 5c50071c0391d6fe333b84d199f993fabf798c1f
 changes:
 - id: CORE-eva-integration
   owner: fork-maintainer
@@ -1472,6 +1472,7 @@ changes:
   - Provenance evidence and no guessed upstream baseline
   - Existing checks remain distinct from future architecture gates
   tests:
+  - test/unit_test/tools/quality/test_architecture_sandbox.py
   - test/unit_test/tools/quality/test_architecture_workflow.py
   - test/unit_test/tools/quality/test_capture_inventory.py
   - test/unit_test/tools/quality/test_check_architecture.py

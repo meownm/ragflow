@@ -36,6 +36,25 @@ class CaptureInventoryTests(unittest.TestCase):
         mapping = {"modules": [{"id": "fixture", "paths": sorted(set(paths) | capture_module.GENERATED)}]}
         return capture_module.capture(self.repo, self.base, mapping)
 
+    def test_git_authorizes_only_the_exact_inventory_root(self):
+        completed = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"")
+        with patch.object(capture_module.subprocess, "run", return_value=completed) as run:
+            capture_module.git(self.repo, "status", "--porcelain")
+        run.assert_called_once_with(
+            [
+                "git",
+                "-c",
+                "core.quotepath=false",
+                "-c",
+                f"safe.directory={self.repo.resolve()}",
+                "status",
+                "--porcelain",
+            ],
+            cwd=self.repo.resolve(),
+            check=True,
+            capture_output=True,
+        )
+
     def test_staged_unstaged_and_untracked_have_distinct_fingerprints(self):
         (self.repo / "core.py").write_text("base = 2\n", encoding="utf-8")
         self.git("add", "core.py")

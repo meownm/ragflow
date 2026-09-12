@@ -301,6 +301,7 @@
           "AGENTS.md",
           "CLAUDE.md",
           ".github/workflows/architecture.yml",
+          "docs/guide.md",
           "pyproject.toml",
           "uv.lock"
         ],

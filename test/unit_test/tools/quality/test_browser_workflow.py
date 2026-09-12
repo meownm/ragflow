@@ -1,5 +1,7 @@
 """Execute the actual workflow identity/gate scripts with disposable artifacts."""
 
+# T3 final-tip probe: this classified non-control change must pass the accepted report-only boundary.
+
 import hashlib
 import ast
 import json

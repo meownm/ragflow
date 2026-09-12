@@ -1,5 +1,7 @@
 """Execute the actual workflow identity/gate scripts with disposable artifacts."""
 
+# T3 positive probe: this classified non-control Python change must select and pass the OS-isolated lane.
+
 import hashlib
 import ast
 import json

@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from enum import StrEnum
 
+import quart
+
+
+_FORBIDDEN_DEPENDENCY_PROBE = quart.__name__
+
 
 class BusinessDocumentRole(StrEnum):
     AUTHOR_CREATOR = "AUTHOR_CREATOR"

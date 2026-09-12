@@ -1,5 +1,6 @@
 """Contracts for the always-triggered T3 architecture workflow."""
 
+import copy
 import importlib.util
 import json
 import os
@@ -8,10 +9,19 @@ import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 import yaml
 
 ROOT = Path(os.environ.get("ARCHITECTURE_CANDIDATE_ROOT", Path(__file__).resolve().parents[4])).resolve()
 WORKFLOW = ROOT / ".github/workflows/architecture.yml"
+ACTION_REFS = {
+    "actions/checkout": "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
+    "actions/download-artifact": "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+    "actions/setup-node": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+    "actions/upload-artifact": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+    "astral-sh/setup-uv": "astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e",
+    "pnpm/action-setup": "pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1",
+}
 
 
 def _workflow() -> dict:
@@ -24,6 +34,46 @@ def _step(job: dict, name: str) -> dict:
 
 def _commands(job: dict) -> str:
     return "\n".join(step.get("run", "") for step in job["steps"])
+
+
+def _assert_required_workflow_controls(workflow: dict) -> None:
+    events = workflow[True]
+    assert set(events) == {"pull_request_target", "merge_group", "push"}
+    assert set(events["pull_request_target"]["types"]) == {"opened", "synchronize", "reopened", "ready_for_review", "edited"}
+    assert events["merge_group"] == {"types": ["checks_requested"]}
+    assert "paths" not in events["pull_request_target"] and "paths-ignore" not in events["pull_request_target"]
+    assert "paths" not in events["merge_group"] and "paths-ignore" not in events["merge_group"]
+    assert "paths" not in events["push"] and "paths-ignore" not in events["push"]
+    assert "cancel-in-progress" not in workflow["concurrency"]
+
+    jobs = workflow["jobs"]
+    action_uses = [step["uses"] for job in jobs.values() for step in job["steps"] if "uses" in step]
+    assert set(action_uses) == set(ACTION_REFS.values())
+    assert all(re.fullmatch(r"[^@\s]+@[0-9a-f]{40}", action) for action in action_uses)
+
+    plan = jobs["architecture-policy-plan"]
+    candidate = _step(plan, "Resolve candidate revision")
+    assert candidate["id"] == "candidate"
+    assert set(candidate["env"]) == {"EVENT_NAME", "EVENT_SHA", "PR_MERGE_SHA", "MERGE_GROUP_HEAD_SHA"}
+    assert all(branch in candidate["run"] for branch in ("pull_request_target)", "merge_group)", "push)"))
+    assert "Candidate revision is not an immutable commit SHA" in candidate["run"]
+    assert plan["outputs"]["candidate_sha"] == "${{ steps.candidate.outputs.sha }}"
+
+    checkouts = {
+        job_id: next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))
+        for job_id, job in jobs.items()
+    }
+    assert checkouts["architecture-policy-plan"]["with"] == {
+        "fetch-depth": 0,
+        "persist-credentials": False,
+        "ref": "${{ steps.candidate.outputs.sha }}",
+    }
+    for job_id in ("architecture-policy-analysis", "architecture-policy"):
+        assert checkouts[job_id]["with"] == {
+            "fetch-depth": 0,
+            "persist-credentials": False,
+            "ref": "${{ needs.architecture-policy-plan.outputs.candidate_sha }}",
+        }
 
 
 def _hash_locked_requirements(input_path: Path, lock_path: Path) -> tuple[list[str], set[str]]:
@@ -139,11 +189,7 @@ def test_protected_policy_sources_are_tracked():
 def test_workflow_is_unconditional_report_only_and_fail_closed():
     workflow = _workflow()
     assert workflow["permissions"] == {"contents": "read"}
-    events = workflow[True]
-    assert set(events) == {"pull_request", "push", "workflow_dispatch"}
-    assert set(events["pull_request"]["types"]) == {"opened", "synchronize", "reopened", "ready_for_review", "edited"}
-    assert "paths" not in events["pull_request"] and "paths-ignore" not in events["pull_request"]
-    assert "paths" not in events["push"] and "paths-ignore" not in events["push"]
+    _assert_required_workflow_controls(workflow)
 
     jobs = workflow["jobs"]
     assert list(jobs) == ["architecture-policy-plan", "architecture-policy-analysis", "architecture-policy"]
@@ -155,6 +201,7 @@ def test_workflow_is_unconditional_report_only_and_fail_closed():
     assert all("|| true" not in step.get("run", "") for job in jobs.values() for step in job["steps"])
     assert {job_id: [step.get("name") for step in job["steps"]] for job_id, job in jobs.items()} == {
         "architecture-policy-plan": [
+            "Resolve candidate revision",
             "Check out candidate for static planning",
             "Set up policy interpreter",
             "Create fresh plan directory",
@@ -210,7 +257,30 @@ def test_workflow_uses_base_policy_as_authoritative_when_protocol_is_available()
     assert job["timeout-minutes"] == 15
     checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))
     assert checkout["with"]["fetch-depth"] == 0
-    assert "astral-sh/setup-uv@v6" in {step.get("uses") for step in job["steps"]}
+    assert checkout["with"]["persist-credentials"] is False
+    assert checkout["with"]["ref"] == "${{ steps.candidate.outputs.sha }}"
+    assert ACTION_REFS["astral-sh/setup-uv"] in {step.get("uses") for step in job["steps"]}
+
+    candidate = _step(job, "Resolve candidate revision")
+    assert candidate["id"] == "candidate"
+    assert set(candidate["env"]) == {"EVENT_NAME", "EVENT_SHA", "PR_MERGE_SHA", "MERGE_GROUP_HEAD_SHA"}
+    assert "pull_request_target)" in candidate["run"]
+    assert "merge_group)" in candidate["run"]
+    assert "push)" in candidate["run"]
+    assert "Candidate revision is not an immutable commit SHA" in candidate["run"]
+    assert job["outputs"]["candidate_sha"] == "${{ steps.candidate.outputs.sha }}"
+
+    comparison_step = _step(job, "Resolve comparison base")
+    assert set(comparison_step["env"]) == {
+        "EVENT_NAME",
+        "CANDIDATE_SHA",
+        "PR_BASE_SHA",
+        "MERGE_GROUP_BASE_SHA",
+        "PUSH_BEFORE_SHA",
+    }
+    assert "pull_request_target)" in comparison_step["run"]
+    assert "merge_group)" in comparison_step["run"]
+    assert "Candidate checkout does not match the planned revision" in comparison_step["run"]
 
     source = _step(job, "Materialize authoritative policy bundle")["run"]
     assert "git show" in source
@@ -243,6 +313,44 @@ def test_workflow_uses_base_policy_as_authoritative_when_protocol_is_available()
     assert upload["with"]["include-hidden-files"] is True
 
 
+def test_workflow_rejects_enforcement_downgrades():
+    def use_candidate_controlled_trigger(workflow: dict) -> None:
+        workflow[True]["pull_request"] = workflow[True].pop("pull_request_target")
+
+    def omit_merge_queue_trigger(workflow: dict) -> None:
+        workflow[True].pop("merge_group")
+
+    def restore_manual_candidate_dispatch(workflow: dict) -> None:
+        workflow[True]["workflow_dispatch"] = None
+
+    def cancel_running_required_check(workflow: dict) -> None:
+        workflow["concurrency"]["cancel-in-progress"] = True
+
+    def use_mutable_action_tag(workflow: dict) -> None:
+        _step(workflow["jobs"]["architecture-policy-plan"], "Check out candidate for static planning")["uses"] = "actions/checkout@v6"
+
+    def persist_checkout_credentials(workflow: dict) -> None:
+        _step(workflow["jobs"]["architecture-policy-analysis"], "Check out candidate for analysis")["with"]["persist-credentials"] = True
+
+    def use_unbound_event_sha(workflow: dict) -> None:
+        _step(workflow["jobs"]["architecture-policy"], "Check out candidate for final static verification")["with"]["ref"] = "${{ github.sha }}"
+
+    mutations = {
+        "candidate-controlled pull_request trigger": use_candidate_controlled_trigger,
+        "missing merge_group trigger": omit_merge_queue_trigger,
+        "candidate workflow_dispatch": restore_manual_candidate_dispatch,
+        "cancel-in-progress": cancel_running_required_check,
+        "mutable action tag": use_mutable_action_tag,
+        "persisted checkout credentials": persist_checkout_credentials,
+        "unbound final event SHA": use_unbound_event_sha,
+    }
+    for _name, mutate in mutations.items():
+        candidate = copy.deepcopy(_workflow())
+        mutate(candidate)
+        with pytest.raises(AssertionError):
+            _assert_required_workflow_controls(candidate)
+
+
 def test_analysis_job_contains_candidate_lifecycle_and_publishes_reports():
     job = _workflow()["jobs"]["architecture-policy-analysis"]
     assert job["needs"] == "architecture-policy-plan"
@@ -251,13 +359,23 @@ def test_analysis_job_contains_candidate_lifecycle_and_publishes_reports():
     assert job["timeout-minutes"] == 45
     uses = {step.get("uses") for step in job["steps"]}
     assert {
-        "actions/checkout@v6",
-        "actions/download-artifact@v4",
-        "pnpm/action-setup@v4",
-        "actions/setup-node@v4",
-        "astral-sh/setup-uv@v6",
-        "actions/upload-artifact@v4",
+        ACTION_REFS["actions/checkout"],
+        ACTION_REFS["actions/download-artifact"],
+        ACTION_REFS["pnpm/action-setup"],
+        ACTION_REFS["actions/setup-node"],
+        ACTION_REFS["astral-sh/setup-uv"],
+        ACTION_REFS["actions/upload-artifact"],
     }.issubset(uses)
+
+    checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))
+    assert checkout["with"] == {
+        "fetch-depth": 0,
+        "persist-credentials": False,
+        "ref": "${{ needs.architecture-policy-plan.outputs.candidate_sha }}",
+    }
+    evidence = _step(job, "Create fresh analysis directory")
+    assert evidence["env"] == {"CANDIDATE_SHA": "${{ needs.architecture-policy-plan.outputs.candidate_sha }}"}
+    assert "Analysis checkout does not match the planned revision" in evidence["run"]
 
     commands = _commands(job)
     source_gate = _step(job, "Reject selected lanes with untrusted sources")
@@ -277,7 +395,7 @@ def test_analysis_job_contains_candidate_lifecycle_and_publishes_reports():
     assert sandbox["id"] == "sandbox"
     assert sandbox["env"] == {
         "EVIDENCE_DIR": "${{ steps.evidence.outputs.directory }}",
-        "CANDIDATE_SHA": "${{ github.sha }}",
+        "CANDIDATE_SHA": "${{ needs.architecture-policy-plan.outputs.candidate_sha }}",
     }
     assert 'run_architecture_sandbox.py" prepare' in sandbox["run"]
     assert '--source-root "${GITHUB_WORKSPACE}"' in sandbox["run"]
@@ -359,6 +477,21 @@ def test_final_aggregate_runs_on_fresh_trusted_job():
     assert 'if [[ "${ANALYSIS_RESULT}" != "success" ]]' in analysis_gate["run"]
     checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))
     assert checkout["with"]["fetch-depth"] == 0
+    assert checkout["with"]["persist-credentials"] is False
+    assert checkout["with"]["ref"] == "${{ needs.architecture-policy-plan.outputs.candidate_sha }}"
+
+    comparison_step = _step(job, "Resolve and verify comparison base")
+    assert set(comparison_step["env"]) == {
+        "EVENT_NAME",
+        "CANDIDATE_SHA",
+        "PR_BASE_SHA",
+        "MERGE_GROUP_BASE_SHA",
+        "PUSH_BEFORE_SHA",
+        "PLANNED_BASE",
+    }
+    assert "pull_request_target)" in comparison_step["run"]
+    assert "merge_group)" in comparison_step["run"]
+    assert "Final checkout does not match the planned revision" in comparison_step["run"]
 
     source = _step(job, "Re-materialize authoritative policy bundle")["run"]
     assert "git show" in source

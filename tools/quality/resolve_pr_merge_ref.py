@@ -40,7 +40,6 @@ class ResolverState(StrEnum):
     CHANGING = "CHANGING"
     PAYLOAD_MISMATCH = "PAYLOAD_MISMATCH"
     STABLE_CURRENT = "STABLE_CURRENT"
-    SUPERSEDED = "SUPERSEDED"
     UNAVAILABLE = "UNAVAILABLE"
 
 
@@ -51,7 +50,6 @@ class FailureReason(StrEnum):
     REF_CHANGED = "REF_CHANGED"
     PARENT_MISMATCH = "PARENT_MISMATCH"
     PAYLOAD_MISMATCH = "PAYLOAD_MISMATCH"
-    EVENT_SUPERSEDED = "EVENT_SUPERSEDED"
     AUTH_UNSUPPORTED = "AUTH_UNSUPPORTED"
     NETWORK_UNAVAILABLE = "NETWORK_UNAVAILABLE"
     CHECKOUT_UNAVAILABLE = "CHECKOUT_UNAVAILABLE"
@@ -73,10 +71,6 @@ class EventIdentity:
     @property
     def merge_ref(self) -> str:
         return f"refs/pull/{self.pr_number}/merge"
-
-    @property
-    def head_ref(self) -> str:
-        return f"refs/pull/{self.pr_number}/head"
 
     @property
     def remote_url(self) -> str:
@@ -101,7 +95,6 @@ class AttemptEvidence:
     r2: str | None = None
     object_type: str | None = None
     parents: tuple[str, ...] = ()
-    current_head_sha: str | None = None
 
 
 @dataclass(frozen=True)
@@ -475,7 +468,6 @@ def _timeout_reason(state: ResolverState) -> FailureReason:
         ResolverState.STALE: FailureReason.PARENT_MISMATCH,
         ResolverState.CHANGING: FailureReason.REF_CHANGED,
         ResolverState.PAYLOAD_MISMATCH: FailureReason.PAYLOAD_MISMATCH,
-        ResolverState.SUPERSEDED: FailureReason.EVENT_SUPERSEDED,
     }.get(state, FailureReason.TIMEOUT)
 
 
@@ -515,7 +507,6 @@ def resolve_pr_merge_ref(
         r1: str | None = None
         fetched: FetchedObject | None = None
         r2: str | None = None
-        current_head_sha: str | None = None
         state = ResolverState.ABSENT
         try:
             remaining = deadline - monotonic()
@@ -542,13 +533,6 @@ def resolve_pr_merge_ref(
                             state = ResolverState.CHANGING
                         elif fetched.parents != expected_parents:
                             state = ResolverState.STALE
-                            if len(fetched.parents) == 2 and fetched.parents[1] != identity.head_sha:
-                                remaining = deadline - monotonic()
-                                if remaining <= 0:
-                                    raise TransportFailure(ResolverState.UNAVAILABLE, FailureReason.TIMEOUT)
-                                current_head_sha = transport.read_exact_ref(identity.head_ref, remaining)
-                                if current_head_sha == fetched.parents[1]:
-                                    state = ResolverState.SUPERSEDED
                         elif identity.payload_merge_sha and identity.payload_merge_sha != fetched.sha:
                             state = ResolverState.PAYLOAD_MISMATCH
                         else:
@@ -563,7 +547,6 @@ def resolve_pr_merge_ref(
                 r2=r2,
                 object_type=fetched.object_type if fetched else None,
                 parents=fetched.parents if fetched else (),
-                current_head_sha=current_head_sha,
             )
             attempts.append(evidence)
         except TransportFailure as error:
@@ -577,7 +560,6 @@ def resolve_pr_merge_ref(
                 r2=r2,
                 object_type=fetched.object_type if fetched else None,
                 parents=fetched.parents if fetched else (),
-                current_head_sha=current_head_sha,
             )
             attempts.append(evidence)
             return ResolutionOutcome(error.state, error.reason, None, tuple(attempts), _elapsed(monotonic, started))
@@ -594,14 +576,6 @@ def resolve_pr_merge_ref(
             return ResolutionOutcome(state, None, fetched.sha, tuple(attempts), _elapsed(monotonic, started))
         if state is ResolverState.MALFORMED:
             return ResolutionOutcome(state, FailureReason.MALFORMED, None, tuple(attempts), _elapsed(monotonic, started))
-        if state is ResolverState.SUPERSEDED:
-            return ResolutionOutcome(
-                state,
-                FailureReason.EVENT_SUPERSEDED,
-                None,
-                tuple(attempts),
-                _elapsed(monotonic, started),
-            )
 
         last_state = state
         remaining = deadline - monotonic()
@@ -633,7 +607,6 @@ def build_receipt(
         in {
             FailureReason.INVALID_EVENT,
             FailureReason.MALFORMED,
-            FailureReason.EVENT_SUPERSEDED,
             FailureReason.AUTH_UNSUPPORTED,
         }
         else "incomplete"

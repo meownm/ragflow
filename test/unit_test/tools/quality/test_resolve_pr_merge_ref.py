@@ -46,7 +46,6 @@ MERGE_SHA = "3" * 40
 OTHER_SHA = "4" * 40
 NEWER_SHA = "5" * 40
 MERGE_REF = "refs/pull/31/merge"
-HEAD_REF = "refs/pull/31/head"
 RESOLVER_SOURCE = Path(__file__).resolve().parents[4] / "tools/quality/resolve_pr_merge_ref.py"
 
 
@@ -93,12 +92,10 @@ class ScriptedTransport:
         *,
         reads: list[str | None | Exception],
         fetches: list[FetchedObject | Exception],
-        head_reads: list[str | None | Exception] | None = None,
         repeat_last_read: bool = False,
         repeat_last_fetch: bool = False,
     ) -> None:
         self.reads = deque(reads)
-        self.head_reads = deque(head_reads or [])
         self.fetches = deque(fetches)
         self.repeat_last_read = repeat_last_read
         self.repeat_last_fetch = repeat_last_fetch
@@ -108,9 +105,7 @@ class ScriptedTransport:
 
     def read_exact_ref(self, exact_ref: str, timeout_seconds: float) -> str | None:
         self.calls.append(("read", exact_ref, timeout_seconds))
-        if exact_ref == HEAD_REF:
-            value = self.head_reads.popleft() if self.head_reads else None
-        elif self.reads:
+        if self.reads:
             value = self.reads.popleft()
             self.last_read = value
         elif self.repeat_last_read:
@@ -353,23 +348,22 @@ def test_persistent_stale_event_never_releases_a_candidate(fetched: FetchedObjec
     assert {attempt.state for attempt in outcome.attempts} == {ResolverState.STALE.value}
 
 
-def test_current_pr_head_proves_an_older_event_is_superseded() -> None:
-    superseding_head = OTHER_SHA
-    fetched = _commit(NEWER_SHA, (BASE_SHA, superseding_head))
+def test_stale_merge_ref_cannot_prove_event_supersession() -> None:
+    stale = _commit(NEWER_SHA, (BASE_SHA, OTHER_SHA))
     transport = ScriptedTransport(
-        reads=[fetched.sha, fetched.sha],
-        fetches=[fetched],
-        head_reads=[superseding_head],
+        reads=[stale.sha, stale.sha, MERGE_SHA, MERGE_SHA],
+        fetches=[stale, _commit()],
     )
 
     outcome = _resolve(transport)
 
-    assert not outcome.accepted
-    assert outcome.state is ResolverState.SUPERSEDED
-    assert outcome.reason is FailureReason.EVENT_SUPERSEDED
-    assert len(outcome.attempts) == 1
-    assert outcome.attempts[0].current_head_sha == superseding_head
-    assert [call[1] for call in transport.calls] == [MERGE_REF, MERGE_REF, MERGE_REF, HEAD_REF]
+    assert outcome.accepted
+    assert outcome.candidate_sha == MERGE_SHA
+    assert [attempt.state for attempt in outcome.attempts] == [
+        ResolverState.STALE.value,
+        ResolverState.STABLE_CURRENT.value,
+    ]
+    assert all(call[1] == MERGE_REF for call in transport.calls)
 
 
 def test_continuously_changing_ref_times_out_as_ref_changed() -> None:

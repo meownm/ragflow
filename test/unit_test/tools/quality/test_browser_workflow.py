@@ -1,5 +1,7 @@
 """Execute the actual workflow identity/gate scripts with disposable artifacts."""
 
+# T3 post-integration probe: a classified non-control Python change must pass the trusted-base gate.
+
 import hashlib
 import ast
 import json

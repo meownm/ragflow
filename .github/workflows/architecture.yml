@@ -21,6 +21,9 @@ jobs:
     timeout-minutes: 15
     outputs:
       candidate_sha: ${{ steps.candidate.outputs.sha }}
+      identity_receipt_sha256: ${{ steps.candidate.outputs.receipt_sha256 }}
+      identity_receipt_file_sha256: ${{ steps.candidate.outputs.receipt_file_sha256 }}
+      resolver_sha256: ${{ steps.candidate.outputs.resolver_sha256 }}
       comparison_base: ${{ steps.comparison.outputs.base }}
       policy_source: ${{ steps.policy_source.outputs.source }}
       selection_sha256: ${{ steps.selection.outputs.selection_sha256 }}
@@ -33,18 +36,55 @@ jobs:
       policy_fixtures_selected: ${{ steps.selection.outputs.policy_fixtures_selected }}
       policy_fixtures: ${{ steps.selection.outputs.policy_fixtures }}
     steps:
+      - name: Create fresh plan directory
+        id: evidence
+        run: |
+          set -euo pipefail
+          evidence_dir="${RUNNER_TEMP}/architecture-policy-plan-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          if [[ -e "${evidence_dir}" ]]; then
+            echo "Refusing stale architecture plan: ${evidence_dir}" >&2
+            exit 2
+          fi
+          mkdir -p "${evidence_dir}"
+          echo "directory=${evidence_dir}" >> "${GITHUB_OUTPUT}"
+
+      - name: Check out trusted planning revision
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.base.sha || github.event.merge_group.head_sha || github.sha }}
+
       - name: Resolve candidate revision
         id: candidate
         env:
           EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
           EVENT_SHA: ${{ github.sha }}
           PR_MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          REPOSITORY: ${{ github.repository }}
+          SERVER_URL: ${{ github.server_url }}
           MERGE_GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          EVIDENCE_DIR: ${{ steps.evidence.outputs.directory }}
         run: |
           set -euo pipefail
           case "${EVENT_NAME}" in
             pull_request_target)
-              candidate="${PR_MERGE_SHA}"
+              resolver_repository="${RUNNER_TEMP}/architecture-pr-resolver-${RUN_ID}-${RUN_ATTEMPT}"
+              python3 -B tools/quality/resolve_pr_merge_ref.py resolve \
+                --repository "${REPOSITORY}" --server-url "${SERVER_URL}" \
+                --event-name "${EVENT_NAME}" --event-action "${EVENT_ACTION}" \
+                --pr-number "${PR_NUMBER}" --base-sha "${PR_BASE_SHA}" --head-sha "${PR_HEAD_SHA}" \
+                --payload-merge-sha "${PR_MERGE_SHA}" --run-id "${RUN_ID}" --run-attempt "${RUN_ATTEMPT}" \
+                --repository-dir "${resolver_repository}" --checkout-repository "${GITHUB_WORKSPACE}" \
+                --receipt "${EVIDENCE_DIR}/identity-receipt.json" --github-output "${GITHUB_OUTPUT}" \
+                --deadline-seconds 120 --backoff-seconds 2
+              candidate=$(git rev-parse HEAD)
               ;;
             merge_group)
               candidate="${MERGE_GROUP_HEAD_SHA}"
@@ -67,29 +107,10 @@ jobs:
           fi
           echo "sha=${candidate}" >> "${GITHUB_OUTPUT}"
 
-      - name: Check out candidate for static planning
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-          ref: ${{ steps.candidate.outputs.sha }}
-
       - name: Set up policy interpreter
         uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           python-version: "3.13"
-
-      - name: Create fresh plan directory
-        id: evidence
-        run: |
-          set -euo pipefail
-          evidence_dir="${RUNNER_TEMP}/architecture-policy-plan-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          if [[ -e "${evidence_dir}" ]]; then
-            echo "Refusing stale architecture plan: ${evidence_dir}" >&2
-            exit 2
-          fi
-          mkdir -p "${evidence_dir}"
-          echo "directory=${evidence_dir}" >> "${GITHUB_OUTPUT}"
 
       - name: Resolve comparison base
         id: comparison
@@ -97,6 +118,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           CANDIDATE_SHA: ${{ steps.candidate.outputs.sha }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
           PUSH_BEFORE_SHA: ${{ github.event.before }}
         run: |
@@ -108,6 +130,11 @@ jobs:
           fi
           case "${EVENT_NAME}" in
             pull_request_target)
+              mapfile -t parents < <(git --no-replace-objects cat-file -p "${CANDIDATE_SHA}" | sed -n '/^$/q; s/^parent //p')
+              if [[ ${#parents[@]} -ne 2 || "${parents[0]}" != "${PR_BASE_SHA}" || "${parents[1]}" != "${PR_HEAD_SHA}" ]]; then
+                echo "PR merge revision parents do not match the event base/head: ${parents[*]-} != ${PR_BASE_SHA} ${PR_HEAD_SHA}" >&2
+                exit 2
+              fi
               base="${PR_BASE_SHA}"
               ;;
             merge_group)
@@ -242,7 +269,21 @@ jobs:
       - name: Create fresh analysis directory
         id: evidence
         env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
           CANDIDATE_SHA: ${{ needs.architecture-policy-plan.outputs.candidate_sha }}
+          PR_MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          REPOSITORY: ${{ github.repository }}
+          SERVER_URL: ${{ github.server_url }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          PLANNED_BASE: ${{ needs.architecture-policy-plan.outputs.comparison_base }}
+          RECEIPT_SHA256: ${{ needs.architecture-policy-plan.outputs.identity_receipt_sha256 }}
+          RECEIPT_FILE_SHA256: ${{ needs.architecture-policy-plan.outputs.identity_receipt_file_sha256 }}
+          RESOLVER_SHA256: ${{ needs.architecture-policy-plan.outputs.resolver_sha256 }}
         run: |
           set -euo pipefail
           checked_out=$(git rev-parse HEAD)
@@ -257,6 +298,34 @@ jobs:
           fi
           mkdir -p "${evidence_dir}"
           cp "${RUNNER_TEMP}/architecture-policy-plan-input/selection.json" "${evidence_dir}/selection.json"
+          if [[ "${EVENT_NAME}" == "pull_request_target" ]]; then
+            if [[ "${PLANNED_BASE}" != "${PR_BASE_SHA}" ]]; then
+              echo "Analysis comparison base does not match the event identity" >&2
+              exit 2
+            fi
+            mapfile -t parents < <(git --no-replace-objects cat-file -p "${CANDIDATE_SHA}" | sed -n '/^$/q; s/^parent //p')
+            if [[ ${#parents[@]} -ne 2 || "${parents[0]}" != "${PR_BASE_SHA}" || "${parents[1]}" != "${PR_HEAD_SHA}" ]]; then
+              echo "Analysis PR merge revision parents do not match the event identity: ${parents[*]-}" >&2
+              exit 2
+            fi
+            receipt="${RUNNER_TEMP}/architecture-policy-plan-input/identity-receipt.json"
+            trusted_resolver="${RUNNER_TEMP}/architecture-pr-resolver-analysis.py"
+            git --no-replace-objects show "${PR_BASE_SHA}:tools/quality/resolve_pr_merge_ref.py" > "${trusted_resolver}"
+            actual_resolver_sha256=$(sha256sum "${trusted_resolver}" | cut -d ' ' -f 1)
+            if [[ "${actual_resolver_sha256}" != "${RESOLVER_SHA256}" ]]; then
+              echo "Analysis resolver source digest does not match the trusted plan" >&2
+              exit 2
+            fi
+            python3 -B "${trusted_resolver}" verify-receipt \
+              --repository "${REPOSITORY}" --server-url "${SERVER_URL}" \
+              --event-name "${EVENT_NAME}" --event-action "${EVENT_ACTION}" \
+              --pr-number "${PR_NUMBER}" --base-sha "${PR_BASE_SHA}" --head-sha "${PR_HEAD_SHA}" \
+              --payload-merge-sha "${PR_MERGE_SHA}" --run-id "${RUN_ID}" --run-attempt "${RUN_ATTEMPT}" \
+              --receipt "${receipt}" --candidate-sha "${CANDIDATE_SHA}" \
+              --resolver-sha256 "${RESOLVER_SHA256}" --receipt-sha256 "${RECEIPT_SHA256}" \
+              --receipt-file-sha256 "${RECEIPT_FILE_SHA256}"
+            cp "${receipt}" "${evidence_dir}/identity-receipt.json"
+          fi
           echo "directory=${evidence_dir}" >> "${GITHUB_OUTPUT}"
 
       - name: Reject selected lanes with untrusted sources
@@ -543,11 +612,23 @@ jobs:
         id: comparison
         env:
           EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
           CANDIDATE_SHA: ${{ needs.architecture-policy-plan.outputs.candidate_sha }}
+          PR_MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REPOSITORY: ${{ github.repository }}
+          SERVER_URL: ${{ github.server_url }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RECEIPT_SHA256: ${{ needs.architecture-policy-plan.outputs.identity_receipt_sha256 }}
+          RECEIPT_FILE_SHA256: ${{ needs.architecture-policy-plan.outputs.identity_receipt_file_sha256 }}
+          RESOLVER_SHA256: ${{ needs.architecture-policy-plan.outputs.resolver_sha256 }}
           MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
           PUSH_BEFORE_SHA: ${{ github.event.before }}
           PLANNED_BASE: ${{ needs.architecture-policy-plan.outputs.comparison_base }}
+          EVIDENCE_DIR: ${{ steps.evidence.outputs.directory }}
         run: |
           set -euo pipefail
           checked_out=$(git rev-parse HEAD)
@@ -557,6 +638,35 @@ jobs:
           fi
           case "${EVENT_NAME}" in
             pull_request_target)
+              mapfile -t parents < <(git --no-replace-objects cat-file -p "${CANDIDATE_SHA}" | sed -n '/^$/q; s/^parent //p')
+              if [[ ${#parents[@]} -ne 2 || "${parents[0]}" != "${PR_BASE_SHA}" || "${parents[1]}" != "${PR_HEAD_SHA}" ]]; then
+                echo "PR merge revision parents do not match the event base/head: ${parents[*]-} != ${PR_BASE_SHA} ${PR_HEAD_SHA}" >&2
+                exit 2
+              fi
+              plan_receipt="${RUNNER_TEMP}/architecture-policy-plan-final-input/identity-receipt.json"
+              analysis_receipt="${RUNNER_TEMP}/architecture-policy-analysis-final-input/identity-receipt.json"
+              if ! cmp -s "${plan_receipt}" "${analysis_receipt}"; then
+                echo "Analysis identity receipt does not match the trusted plan" >&2
+                exit 2
+              fi
+              trusted_resolver="${RUNNER_TEMP}/architecture-pr-resolver-final.py"
+              git --no-replace-objects show "${PR_BASE_SHA}:tools/quality/resolve_pr_merge_ref.py" > "${trusted_resolver}"
+              actual_resolver_sha256=$(sha256sum "${trusted_resolver}" | cut -d ' ' -f 1)
+              if [[ "${actual_resolver_sha256}" != "${RESOLVER_SHA256}" ]]; then
+                echo "Final resolver source digest does not match the trusted plan" >&2
+                exit 2
+              fi
+              for receipt in "${plan_receipt}" "${analysis_receipt}"; do
+                python3 -B "${trusted_resolver}" verify-receipt \
+                  --repository "${REPOSITORY}" --server-url "${SERVER_URL}" \
+                  --event-name "${EVENT_NAME}" --event-action "${EVENT_ACTION}" \
+                  --pr-number "${PR_NUMBER}" --base-sha "${PR_BASE_SHA}" --head-sha "${PR_HEAD_SHA}" \
+                  --payload-merge-sha "${PR_MERGE_SHA}" --run-id "${RUN_ID}" --run-attempt "${RUN_ATTEMPT}" \
+                  --receipt "${receipt}" --candidate-sha "${CANDIDATE_SHA}" \
+                  --resolver-sha256 "${RESOLVER_SHA256}" --receipt-sha256 "${RECEIPT_SHA256}" \
+                  --receipt-file-sha256 "${RECEIPT_FILE_SHA256}"
+              done
+              cp "${plan_receipt}" "${EVIDENCE_DIR}/identity-receipt.json"
               base="${PR_BASE_SHA}"
               ;;
             merge_group)

@@ -1085,6 +1085,7 @@ modules:
   tests:
   - test/unit_test/tools/quality/test_architecture_sandbox.py
   - test/unit_test/tools/quality/test_architecture_workflow.py
+  - test/unit_test/tools/quality/test_resolve_pr_merge_ref.py
   - test/unit_test/tools/quality/test_capture_inventory.py
   - test/unit_test/tools/quality/test_check_architecture.py
   - test/unit_test/tools/quality/test_check_architecture_policy.py
@@ -1114,6 +1115,7 @@ modules:
   - tools/quality/check_runtime_graph_policy.py
   - tools/quality/run_architecture_sandbox.py
   - tools/quality/probe_architecture_sandbox.py
+  - tools/quality/resolve_pr_merge_ref.py
   - run_tests.py
   - .github/workflows/tests.yml
   integration_dependencies: []
@@ -1235,6 +1237,7 @@ modules:
   - test/unit_test/tools/quality/test_inspect_go.py
   - test/unit_test/tools/quality/test_check_runtime_graph_policy.py
   - test/unit_test/tools/quality/test_release_workflow.py
+  - test/unit_test/tools/quality/test_resolve_pr_merge_ref.py
   - test/unit_test/tools/quality/test_verify.py
   - tools/hooks/check_files.py
   - tools/hooks/prepare_web.py
@@ -1268,6 +1271,7 @@ modules:
   - tools/quality/run_isolated_python.py
   - tools/quality/module-map.yaml
   - tools/quality/probe_python_runtime.py
+  - tools/quality/resolve_pr_merge_ref.py
   - tools/quality/python-boundaries.yaml
   - tools/quality/python-dead-code.yaml
   - tools/quality/typescript-analysis.yaml

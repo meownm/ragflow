@@ -1,6 +1,6 @@
 schema_version: 1
 upstream_base: cb93883f3f8c975eecb2fed81210effeb3bdb06f
-head: e2dc289fd1a3f9b4547096205174eea3a4127491
+head: 028c61ff984b1a058106bdada04ea4c4355a988e
 changes:
 - id: CORE-eva-integration
   owner: fork-maintainer
@@ -1474,6 +1474,7 @@ changes:
   tests:
   - test/unit_test/tools/quality/test_architecture_sandbox.py
   - test/unit_test/tools/quality/test_architecture_workflow.py
+  - test/unit_test/tools/quality/test_resolve_pr_merge_ref.py
   - test/unit_test/tools/quality/test_capture_inventory.py
   - test/unit_test/tools/quality/test_check_architecture.py
   - test/unit_test/tools/quality/test_check_architecture_policy.py

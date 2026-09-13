@@ -1,6 +1,6 @@
 # T3: selector и aggregate архитектурной политики
 
-Дата: 2026-09-12. Статус: `IN_PROGRESS / NOT_ENABLED`. Отревьюированные PR #4 (`codex/t3-control-update`) и #12 (`codex/t3-os-isolation`) последовательно переведены в Ready и слиты merge-коммитами `4a64791c0636d3f52874714b04b96e5581617318` и `88c7a44f001705f0e7ab08b3c22f140fc866ba74`; последний является текущим `main`. Post-integration PR #29 подтвердил положительный base-authority путь: `REPORT_ONLY_COMPLETE / NOT_ENABLED`, compatibility `PASS`, Python `PASS`, 19/19 runtime probes, 30/30 policy fixtures и 12/12 отрицательных OS controls. Однако первичные события `opened` как draft PR #29, так и обычного Ready PR #30 получили пустой `pull_request.merge_commit_sha` и fail-closed завершились до анализа. Это воспроизводимая гонка materialization GitHub merge ref. Отдельный неслитый инкремент `codex/t3-pr-merge-sha-race` устраняет её polling доверенного `refs/pull/<number>/merge` и проверкой точных base/head родителей. Required Workflow на уровне организации недоступен personal-account repository, repository ruleset и независимый control-owner отсутствуют. Поэтому T3 не является `VERIFIED`, а T4 по этой последовательности не начинается.
+Дата обновления: 2026-09-13. Статус: `IN_PROGRESS / NOT_ENABLED`. Отревьюированные PR #4 (`codex/t3-control-update`) и #12 (`codex/t3-os-isolation`) последовательно переведены в Ready и слиты merge-коммитами `4a64791c0636d3f52874714b04b96e5581617318` и `88c7a44f001705f0e7ab08b3c22f140fc866ba74`; последний является текущим `main`. Post-integration PR #29 подтвердил положительный base-authority путь: `REPORT_ONLY_COMPLETE / NOT_ENABLED`, compatibility `PASS`, Python `PASS`, 19/19 runtime probes, 30/30 policy fixtures и 12/12 отрицательных OS controls. Однако первичные события `opened` как draft PR #29, так и обычного Ready PR #30 получили пустой `pull_request.merge_commit_sha` и fail-closed завершились до анализа. Это воспроизводимая гонка materialization GitHub merge ref. Review первого неслитого варианта `codex/t3-pr-merge-sha-race` выявил stale-ref/TOCTOU сценарий, потому что он принимал первый синтаксически корректный SHA до проверки event identity. Текущий control update для PR #31 заменяет этот путь отдельным trusted resolver: stable `read/fetch/read`, exact object/parent/payload binding, общий monotonic deadline, verified plan checkout и identity receipt проверены автоматической матрицей и живыми remote-пробами. Это закрывает локальный `CHANGES_REQUIRED` по алгоритму и делает инкремент готовым к повторному review. PR #31 сохраняется Draft; merge, deploy и изменение repository settings этим инкрементом не выполняются, а post-integration DoD до появления resolver в trusted `main` не запускается. Required Workflow на уровне организации недоступен personal-account repository, repository ruleset и независимый control-owner отсутствуют. Поэтому T3 не является `VERIFIED`, а T4 по этой последовательности не начинается.
 
 ## Контракт
 
@@ -52,7 +52,7 @@ $basePolicy = Join-Path $trustedQuality "architecture-policy.json"
 
 ## Workflow
 
-`.github/workflows/architecture.yml` запускается для `opened`, `synchronize`, `reopened`, `ready_for_review` и `edited` событий `pull_request_target`, для `merge_group/checks_requested` и при push в `main`, без метки `ci`, ручного candidate-ref dispatch и path filters. На PR workflow definition берётся из trusted default branch. Исправление гонки `opened` не полагается на потенциально пустой payload: первый trusted step с очищенной Git-конфигурацией ограниченно ожидает точный `refs/pull/<number>/merge` в base repository, сверяет его с payload SHA при наличии, а после checkout plan и final требуют, чтобы родители merge-коммита точно совпали с event base/head SHA. Отсутствующий, несогласованный или не материализовавшийся ref закрывает job кодом 2. Merge queue отдельно связывает `merge_group.head_sha` с event SHA, а push использует event SHA. Один полученный immutable SHA передаётся plan → analysis → final, каждый checkout закреплён на нём и выполняется с `persist-credentials: false`; несовпадение фактического checkout закрывает job кодом 2. Comparison base берётся соответственно из `pull_request.base.sha`, `merge_group.base_sha` или предыдущего push SHA. Concurrency group не содержит `cancel-in-progress`, чтобы выполняющийся required run нельзя было заменить отменой. В workflow три job: `architecture-policy-plan` без установки candidate dependencies и запуска candidate analyzers/tests; `architecture-policy-analysis` для выбранных environments и отчётов; финальный `architecture-policy` на новом runner. Только финальный job имеет стабильный display name `architecture-policy`.
+`.github/workflows/architecture.yml` запускается для `opened`, `synchronize`, `reopened`, `ready_for_review` и `edited` событий `pull_request_target`, для `merge_group/checks_requested` и при push в `main`, без метки `ci`, ручного candidate-ref dispatch и path filters. На PR workflow definition берётся из trusted default branch. Локальный control update больше не полагается на потенциально пустой payload: base-owned `tools/quality/resolve_pr_merge_ref.py` в новом resolver repository выполняет stable exact `read/fetch/read`, проверяет реально fetched commit и его точные event base/head parents, после чего переносит именно этот объект в plan checkout. Plan публикует SHA и identity receipt digests; analysis и final извлекают resolver из event base, сверяют source digest, exact parents и receipt, а final требует побайтового совпадения plan/analysis receipt. Последующий network checkout в analysis/final остаётся явным fail-closed exact-SHA refetch: исчезновение объекта завершает job, а временное окно записано в receipt как `exact_sha_refetch_fail_closed`. Merge queue отдельно связывает `merge_group.head_sha` с event SHA, а push использует event SHA. Один принятый immutable SHA передаётся plan → analysis → final, каждый checkout закреплён на нём и выполняется с `persist-credentials: false`; несовпадение фактического checkout закрывает job кодом 2. Comparison base берётся соответственно из `pull_request.base.sha`, `merge_group.base_sha` или предыдущего push SHA. Concurrency group не содержит `cancel-in-progress`, чтобы выполняющийся required run нельзя было заменить отменой. В workflow три job: `architecture-policy-plan` без установки candidate dependencies и запуска candidate analyzers/tests; `architecture-policy-analysis` для выбранных environments и отчётов; финальный `architecture-policy` на новом runner. Только финальный job имеет стабильный display name `architecture-policy`.
 
 Plan job извлекает `check_architecture_policy.py`, `capture_inventory.py` и `architecture-policy.json` из comparison base, строит authoritative base plan, независимо оценивает candidate policy и выпускает обязательный `policy-compatibility.json`. Только изменение candidate policy получает `BASE_FIXTURE_REVIEW`: base evaluator и source bundle остаются неизменными, а candidate policy обязана сохранить coverage. Изменённые checker или workflow закрывают затронутые lanes как обычные protected sources. Analysis job получает plan artifact и сначала отклоняет любой выбранный, но неисполняемый из-за source integrity lane; поэтому оставшийся runnable lane не запускает candidate lifecycle после неполного соседнего lane. Затем job материализует protected sources, создаёт отдельный detached candidate clone без remotes и переносит в него только подготовленные locked environments. Trusted fixtures остаются обязательным `success()`-предусловием. Статические TypeScript/Go producers используют isolated safe-path runner; только configured Python architecture producer и его 19 exact runtime probes выполняются через Docker OS-boundary. Все artifact upload явно включают hidden files, поэтому защищённые `.github/workflows/architecture.yml` и `web/.npmrc` не исчезают из evidence bundle. Дочерние Python/pytest и Node subprocesses protected producers не наследуют GitHub command files, evidence paths, tokens, `NODE_OPTIONS`/`NODE_PATH` или ambient pytest/Python injection variables; conftest discovery отключён. Финальный job не выполняет `uv sync`, pnpm, pytest или candidate analyzers: он заново checkout-ит candidate tree, повторно извлекает authority из base, проверяет неизменность base/source и selection, повторяет candidate-policy comparison, требует точного совпадения compatibility с plan artifact, загружает отчёты и передаёт compatibility в aggregate. Отсутствующий, stale или не соответствующий plan compatibility закрывает final fail-closed. Поэтому candidate lifecycle из analysis job не может изменить checker/policy, реально исполняемые финальным aggregate.
 
@@ -63,6 +63,153 @@ Workflow готовит только выбранные environments, выпол
 Все job используют `ubuntu-latest`; plan/final имеют 15-минутный, analysis — 45-минутный timeout. Все `uses:` закреплены полными 40-символьными commit SHA: `actions/checkout` `d23441a48e516b6c34aea4fa41551a30e30af803`, `actions/upload-artifact` `ea165f8d65b6e75b540449e92b4886f43607fa02`, `actions/download-artifact` `d3f86a106a0bac45b974a628896c90dbdf5c8093`, `actions/setup-node` `49933ea5288caeca8642d1e84afbd3f7d6820020`, `astral-sh/setup-uv` `d0cc045d04ccac9d8b7881df0226f9e82c39688e`, `pnpm/action-setup` `b906affcce14559ad1aafd4ab0e942779e9f58b1`; 2026-09-12 эти SHA повторно сверены с официальными GitHub refs соответствующих major tags. Node 22, pnpm 10 и dependency synchronization существуют только в analysis, Python 3.13 для policy runner устанавливается через закреплённый `astral-sh/setup-uv`. Корневое Python-окружение создаётся из tracked hash-locked requirements; выделенное ASR contract-окружение — командой `uv pip sync --require-hashes --strict`. TypeScript parser устанавливается не напрямую из candidate `web`: authoritative `package.json`, `pnpm-lock.yaml` и `.npmrc` копируются из materialized bundle в новый каталог `RUNNER_TEMP`, где pnpm запускается с `--ignore-scripts --ignore-pnpmfile --ignore-workspace`. В реальном `authority_source=base` эти inputs закреплены base; изменённый manifest/lock/config делает каждый Node-consuming lane неисполняемым и analysis не запускает candidate package-manager inputs. В `candidate-bootstrap` materialized inputs принадлежат candidate self-check и не являются доверенной supply-chain границей. Свежий candidate clone обязан не содержать `web/node_modules`; в него через dereference копируется только пакет `typescript`, после чего проверяется его реальный `lib/typescript.js`. В analysis artifact временный полный `node_modules` не попадает. Fixture-only lane не поднимает Node. Package manager и dependency preparation не входят в Docker-boundary; защита здесь основана на base-pinned inputs, отключённых scripts/hooks/workspace и отсутствии application secrets. Полный успешный base-mode цикл старой trigger-версии подтверждён runs `34691682512` и `34692464102`; post-integration `pull_request_target` цикл подтверждён run `34706026252`, но первичный `opened` path остаётся непринятым до live-проверки исправления merge-ref race. Реальная `merge_group` проба недоступна в текущем personal-account topology.
 
 Workflow использует read-only permissions и не получает application secrets. Docker-boundary защищает configured Python runtime probes, но не является общей sandbox для package manager, trusted policy-fixture harness или статических analyzers; эти поверхности ограничены отдельными base-authority и environment contracts. `BASE_FIXTURE_REVIEW` и запись в `manual_review_required` являются только evidence для ревью, а не технически обеспеченным approval. Candidate checker/workflow поэтому не входят в исключение и должны совпадать с base; их изменение, изменение protected fixtures либо сужение controls требует отдельного аудированного обновления протокола/bootstrap. Текущий report-only evidence не объявляется non-bypassable до проверенного Required Workflow и обязательного control-owner approval. Наличие YAML и успешных PR-проб не доказывает, что job обязателен для merge.
+
+## Нормативный контракт PR merge-ref resolver
+
+Этот контракт относится только к определению immutable candidate revision для `pull_request_target`. Он не доказывает корректность candidate-кода, не заменяет architecture lanes, не включает repository enforcement и не разрешает merge, deploy или изменение ruleset. Resolver работает до выполнения candidate-кода и обязан fail-closed отделять недоступность GitHub ref от принятой identity.
+
+### Граница доверия и входы
+
+Доверенными входами являются только поля текущего base-owned event и константы trusted workflow: `event_name`, PR number, `pull_request.base.sha`, `pull_request.head.sha`, опциональный `pull_request.merge_commit_sha`, `github.repository` и `github.server_url`. Название ветки, candidate-файлы, candidate environment/config, локальные remotes и произвольный URL не участвуют в выборе revision. Для текущего public repository разрешён анонимный HTTPS read exact base-repository ref; private repository, иной Git transport и GitHub Enterprise требуют отдельного спроектированного auth/host-профиля и до этого остаются `NOT_SUPPORTED`, а не молчаливым fallback.
+
+Перед сетевым обращением resolver обязан:
+
+1. Проверить event type, положительный десятичный PR number, точные repository/server values и полный Git object ID ожидаемого формата. Для текущего GitHub SHA-1 профиля это 40 lowercase hex; переход на иной object format требует отдельного изменения контракта и fixtures.
+2. Создать новый каталог под `RUNNER_TEMP` с уникальной identity run/attempt. Существующий каталог является ошибкой. Работа из candidate checkout и повторное использование `.git` запрещены.
+3. Инициализировать repository без template/hooks и очистить влияющие Git variables: system/global/local config discovery, credential helpers, askpass, interactive prompt, `GIT_DIR`, `GIT_WORK_TREE`, object/alternate directories и environment-injected config. TLS verification не отключается; URL строится без `eval` только из проверенных trusted полей.
+4. Задать явный монотонный wall-clock deadline и ограниченный backoff. Число попыток само по себе не является deadline. Выбранное значение, фактическая длительность и максимальная задержка должны быть записаны; первоначальный предел обосновывается измеренными live materialization latencies и запасом, а не объявляется гарантией GitHub.
+
+### Модель состояний
+
+| Состояние | Наблюдение | Действие |
+| --- | --- | --- |
+| `ABSENT` | exact ref не опубликован | ждать до deadline |
+| `MALFORMED` | не одна exact строка, неверный ref name/SHA или объект не commit | fail-closed; не извлекать SHA из частичного вывода |
+| `STALE` | commit существует, но родители не равны event base/head | повторить до deadline; затем `INCOMPLETE` |
+| `CHANGING` | SHA до fetch, fetched object и SHA после fetch не совпадают | отбросить попытку и повторить |
+| `PAYLOAD_MISMATCH` | непустой trusted payload SHA не равен стабильному ref | повторить до deadline; затем `INCOMPLETE` |
+| `STABLE_CURRENT` | один ref, стабильный fetched commit, payload совместим, точные родители | единственное принимаемое состояние |
+| `SUPERSEDED` | base/head event больше нельзя получить как стабильную пару, потому что PR/base изменились | failure для этого event с отдельной причиной; не переключаться на новую identity |
+| `UNAVAILABLE` | DNS/TLS/network/auth/checkout не позволяют получить доказуемый объект | `INCOMPLETE`, ненулевой exit |
+
+`ABSENT`, `STALE` и `CHANGING` являются ожидаемыми промежуточными состояниями, а не немедленным PASS или окончательным finding. Ни одно состояние кроме `STABLE_CURRENT` не выпускает `candidate_sha`.
+
+### Алгоритм одной попытки и цикла
+
+Для каждой попытки до монотонного deadline выполняется одна и та же последовательность:
+
+1. Выполнить exact `ls-remote` и получить `R1`. Ноль строк означает `ABSENT`; не одна строка или несовпадающее имя — `MALFORMED`.
+2. Fetch именно exact ref в изолированный repository/namespace без tags, submodules, hooks и credential persistence. Получить `F` из реально загруженного объекта, а не из ранее разобранной строки.
+3. Доказать `F` как commit через object database и прочитать родителей с отключёнными replace refs; свежий repository не должен содержать grafts или alternates.
+4. Повторить exact `ls-remote` и получить `R2`. При `R1 != F`, `F != R2` или `R1 != R2` классифицировать попытку как `CHANGING` и не использовать объект.
+5. Потребовать ровно двух родителей и точное упорядоченное равенство `parents == [event_base_sha, event_head_sha]`. Иное значение означает `STALE`, даже если SHA синтаксически корректен.
+6. Если payload merge SHA непуст, потребовать его равенство стабильному SHA; несоответствие означает `PAYLOAD_MISMATCH`.
+7. Только после всех проверок атомарно записать `candidate_sha=F` и identity receipt. При промежуточном состоянии дождаться backoff, не превышая deadline, и начать новую попытку с нового `R1`.
+
+Проверенный fetched object должен быть источником последующего checkout. Допустимы два варианта: resolver работает в repository, который после проверки становится workspace, либо передаёт проверенный object database/bundle с digest в checkout step. Повторное независимое получение raw SHA из сети оставляет TOCTOU-окно; если оно временно сохраняется, исчезновение объекта или checkout failure обязаны завершить run как `INCOMPLETE`, а это ограничение записывается до устранения.
+
+После checkout plan, analysis и final независимо требуют `HEAD == candidate_sha`; каждый PR job также проверяет exact event base/head parents. Plan публикует identity receipt, analysis принимает только этот SHA/receipt, а final заново сверяет SHA, parents, comparison base и receipt digests. Последующий новый PR event не меняет identity уже запущенного event: старый run может завершиться только для своего head, а новый head получает отдельный run/check.
+
+### Результат и диагностический receipt
+
+Resolver не публикует `skipped`, `neutral`, `OBSERVED` или `NOT_EVALUATED` как успешный required result. Ошибка входа/контракта, `MALFORMED` и доказанное нарушение trust boundary дают failure; отсутствие доказуемой current identity до deadline даёт fail-closed `INCOMPLETE` с ненулевым exit. Final canonical job обязан оставаться failure, если plan не выпустил `STABLE_CURRENT`.
+
+Receipt сохраняется как read-only artifact текущего run и содержит без credentials/URL query secrets:
+
+- schema version, repository, event name/action, PR number, run ID/attempt;
+- event base/head и непустой payload merge SHA;
+- deadline, backoff policy, число попыток, elapsed time;
+- для каждой попытки timestamp, state, `R1/F/R2`, object type и parents, если они доказуемы;
+- принятый SHA либо конечную причину `INVALID_EVENT`, `MALFORMED`, `TIMEOUT`, `REF_CHANGED`, `PARENT_MISMATCH`, `PAYLOAD_MISMATCH`, `EVENT_SUPERSEDED`, `AUTH_UNSUPPORTED`, `NETWORK_UNAVAILABLE` или `CHECKOUT_UNAVAILABLE`;
+- digest resolver source из trusted base и digest самого receipt.
+
+Логи не должны содержать token, authorization header, credential helper output или весь environment. Успешный receipt не является архитектурным PASS и не доказывает repository enforcement.
+
+### DoR инкремента resolver
+
+Работа над кодом resolver начинается только когда:
+
+- зафиксированы comparison base, candidate head и чистый отдельный worktree;
+- изменение классифицировано как локальное расширение `quality-governance`, application core не затрагивается;
+- сохранены live receipts минимум одного раннего `opened` failure и одного позднего успешного ref для одной event identity;
+- определены поддерживаемые repository/auth/object-format профили и все остальные объявлены ограничениями;
+- тестовый harness может детерминированно управлять ответами remote/fetch/time без обращения к production data;
+- согласованы exact deadline/backoff constants и инъекция monotonic clock/sleep для быстрых tests;
+- не требуется merge, deploy, ruleset, collaborator или organization change для локальной реализации и review.
+
+### Обязательная автоматическая матрица
+
+Положительные fixtures:
+
+1. Ref сразу `STABLE_CURRENT`, payload пуст.
+2. Ref сразу `STABLE_CURRENT`, payload совпадает.
+3. `ABSENT → STABLE_CURRENT`.
+4. `STALE → STABLE_CURRENT` после одного и нескольких наблюдений.
+5. `CHANGING → STABLE_CURRENT`, включая смену между первым read и fetch и между fetch и вторым read.
+6. Повторный `synchronize` получает отдельную event identity и не переиспользует receipt предыдущего head.
+
+Отрицательные fixtures:
+
+1. Ref отсутствует до deadline.
+2. Ref остаётся stale либо постоянно меняется.
+3. Payload malformed, all-zero для SHA-1 профиля или не совпадает со стабильным ref.
+4. Remote возвращает malformed SHA, неверное имя ref, лишнюю/вторую строку или tag/non-commit object.
+5. Commit имеет один, больше двух, переставленные либо неверные base/head parents.
+6. Fetch возвращает объект, отличный от `R1`, либо второй read отличается от `F`.
+7. Network, DNS, TLS или auth недоступны; private repository не получает неявный anonymous fallback.
+8. PR становится conflict/closed, head удалён, base изменён либо event superseded.
+9. Проверенный ref исчезает до checkout; checkout получает другой HEAD или object unavailable.
+10. Candidate пытается влиять через local Git config, hooks, credential helper, askpass, alternates, replace refs, grafts или environment-injected config.
+11. Analysis/final получают иной SHA, parents, comparison base, receipt или digest.
+12. Timeout, error и отменённый prerequisite не превращаются в `success`, `skipped` или `neutral` canonical check.
+
+Fixtures обязаны исполнять реальную resolver-логику на Linux, а не искать отдельные строки в YAML. Если реализация остаётся inline shell, harness извлекает и запускает exact step body с fake/local remote; предпочтительный вариант — один небольшой trusted resolver source, который напрямую вызывают workflow и tests. Mutation tests отдельно удаляют stable double-read, fetch binding, parent check, payload binding, sanitized environment и deadline; каждая мутация должна быть отвергнута.
+
+### DoD локального control update
+
+Инкремент готов к повторному review, когда одновременно выполнено следующее:
+
+- resolver принимает только `STABLE_CURRENT` и не завершает polling на первом stale SHA;
+- проверенный fetched object связан с checkout либо остаточное second-fetch окно явно закрывается failure и записано как временное ограничение;
+- вся положительная и отрицательная матрица проходит на Linux без skip;
+- существующие workflow/policy/sandbox/provenance suites проходят без ослабления, новых ignores или снижения coverage;
+- YAML parse, pinned `actionlint`, Ruff для затронутых Python sources, `git diff --check` и read-only T0 capture успешны;
+- exact changed paths остаются классифицированными, `unclassified=0`, provenance обновляется только после стабильного снимка;
+- review не содержит открытого P1/P2 по identity/trust path; команды, версии, exit codes, counts, mutations и ограничения записаны;
+- PR остаётся Draft/не сливается до отдельного разрешения на интеграцию control path; deploy и ruleset не выполняются.
+
+### Результат локального control update 2026-09-13
+
+Локальные критерии выше выполнены для рабочего снимка, но это означает только готовность к повторному review. Изменение относится к локальному расширению `quality-governance`; application core и upstream layout не меняются. Один production-path находится в `tools/quality/resolve_pr_merge_ref.py`; inline presence-only polling удалён из workflow. Resolver поддерживает только public `https://github.com`, anonymous HTTPS и SHA-1, создаёт новый repository без template/config/credentials/object indirections, принимает только `STABLE_CURRENT`, атомарно пишет receipt и не создаёт candidate outputs при failure. Проверенный object непосредственно материализуется в plan checkout; downstream exact-SHA refetch остаётся fail-closed ограничением, а не доказательством отсутствия второго network window.
+
+Повторный review нашёл и исправил один дефект нормализации malformed receipt: `TypeError` от неверного типа последней попытки теперь преобразуется CLI verifier в ожидаемый exit 2 и закреплён исполняемой мутацией. После исправления открытых P1/P2 в identity/trust path не обнаружено. Шесть source-mutation controls реально запускают варианты без второго read, fetch/parent/payload binding, sanitized environment и общего monotonic deadline; каждый мутант отвергается.
+
+Фактические локальные проверки финального source digest `8820e8147ec69dcdfa8fb65c6ff0acef13c5e414bc5771e020b9678fcc71cde0`:
+
+- Windows Python 3.13.12: resolver + workflow `96 passed`; policy `26 passed`;
+- полный `test/unit_test/tools/quality` на Windows Python 3.13.12: `480 passed, 2 skipped` за `231.29 s`; обе skip относятся к POSIX-only ownership/mode contracts и не засчитаны как приёмка без отдельной Linux-пробы;
+- Linux Python 3.13.11 в `infiniflow/ragflow@sha256:16d24d1968ab59e2715a85d2590f1569c9539e0362344a42f3a23e8be06a655b`: resolver `88 passed`, workflow `8 passed`, без skip;
+- отдельный read-only source / UID:GID `1000:1000` Linux probe на Python 3.12.3: sandbox `8 passed`, без skip;
+- Ruff 0.16.7 check/format-check, JSON/YAML parse, `git diff --check` и `rhysd/actionlint` 1.7.10 с digest `sha256:ef8299f97635c4c30e2298f48f30763ab782a4ad2c95b744649439a039421e36` завершились с exit 0;
+- финальный T0 обновлён plain `capture_inventory.py --write` без network/supporting refresh; повторный read-only capture содержит 751 запись и `unclassified=0`.
+
+Живая local-to-remote проба использовала открытый Draft PR #31 без изменения GitHub state. В `S:\ragflow-t3-resolver-live-evidence-v10` событие `opened` с пустым payload за одну попытку приняло `ae10b6f924dce8d49ef2736f8ad64ca3a4abb154`: `R1 == F == R2`, родители `88c7a44f001705f0e7ab08b3c22f140fc866ba74 028c61ff984b1a058106bdada04ea4c4355a988e`, elapsed `45.481170 s`; независимый `verify-receipt` успешен, payload/file digests `613b15764f4cef9f521f1fc2b69f675198995203db70ff6b758ef5ff798e6683` / `0bc5b5cb1168f134239439cda4f80cee166a8efab962a41df88c8eb720d15414`. В `S:\ragflow-t3-resolver-live-evidence-v11` старое `synchronize` для head `e2dc289fd1a3f9b4547096205174eea3a4127491` увидело тот же стабильный current object, дополнительно связало current head `028c61ff984b1a058106bdada04ea4c4355a988e` и завершилось exit 2 как `SUPERSEDED / EVENT_SUPERSEDED`; candidate output отсутствует, checkout остался на base. Его payload/file digests: `53b2b37e627cb04bfa4f60c6e26f54d8fcf8c3fe5d752b8e601861e71a8c49e0` / `a275934873eeddc3676a39e1a14085e3979ce5834e9ee79baa349eb98f4e1e52`.
+
+Эти remote-пробы проверяют алгоритм на реальном GitHub ref, но не являются GitHub Actions post-integration run, не проверяют первое реальное событие `opened`, серию быстрых push, check-run App identity, duplicate context, ruleset или merge queue. Доказательства выше сняты с Draft PR #31 на pre-publication head `028c61ff984b1a058106bdada04ea4c4355a988e` и не считаются проверкой последующего control update. PR сохраняется Draft; merge, deploy и изменение repository settings не выполняются.
+
+### DoD post-integration live-приёмки
+
+Интеграция кода сама не закрывает T3. После отдельного разрешения и появления resolver в trusted `main` новый disposable PR должен доказать:
+
+1. Самое первое событие `opened` с пустым payload проходит без `edited`/manual retrigger и принимает точный synthetic merge commit.
+2. `opened` с уже заполненным payload и `ready_for_review`/`reopened` сохраняют ту же identity semantics.
+3. Один `synchronize` и серия быстрых push не позволяют старому ref удовлетворить новый event; каждый check привязан к своему exact head SHA.
+4. Controlled stale/changing/missing/wrong-parent scenarios завершаются fail-closed; ни один отрицательный run не становится green из-за duplicate context, skip, neutral или отсутствия job.
+5. Plan, analysis и final используют один candidate SHA и comparison base; check-run API подтверждает exact head SHA, event, workflow и GitHub App identity.
+6. Artifact содержит полный resolver receipt и digests, а job logs не содержат credentials.
+7. Диагностические PR закрываются без merge после сохранения run URLs и результатов.
+
+Даже полный PASS этой матрицы доказывает только исправление trigger/identity path. Для `VERIFIED` T3 дополнительно остаются независимый control-owner approval, защищённый CODEOWNERS/control path, active ruleset или доказанный pinned external check без bypass, duplicate-context/API negative probe и merge-group acceptance в topology, где merge queue доступна. До этого `enforcement_status=NOT_ENABLED`, а T4 по последовательному goal не начинается.
 
 ## Ревью и GitHub-приёмка 2026-09-12
 
@@ -92,7 +239,7 @@ Read-only GitHub API подтвердил фактический контекс�
 
 У аккаунта есть активное членство с ролью `member`, не `owner`, в организации `Hypothesis-Lab`; read-only API показывает план `free` и разрешение участникам создавать public/private repositories. Это делает [перенос repository](https://docs.github.com/en/enterprise-cloud@latest/repositories/creating-and-managing-repositories/transferring-a-repository#repository-transfers-and-organizations) технически возможным после отдельного разрешения пользователя и проверки transfer warnings. Public organization-owned repository на Free получает repository ruleset и merge queue, но [organization-level rulesets доступны только GitHub Team/Enterprise](https://docs.github.com/en/enterprise-cloud@latest/organizations/managing-organization-settings/creating-rulesets-for-repositories-in-your-organization#introduction); следовательно, `Hypothesis-Lab` на текущем Free-плане не даёт Required Workflow. Нужны либо перенос плюс согласованное повышение плана/действие organization owner, либо доказанный эквивалент с отдельным pinned GitHub App. Ни перенос, ни изменение плана, ни ruleset здесь не выполнялись.
 
-Обычный required status check можно создать в repository ruleset, но он фиксирует context/app, а не trusted workflow contents: GitHub [не учитывает workflow, matrix и event trigger types](https://docs.github.com/en/enterprise-cloud@latest/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/troubleshooting-rules#troubleshooting-required-status-checks). Интегрированные control commits используют [pull_request_target](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request_target), immutable PR merge SHA и trusted fixture selector для всего `.github/workflows/`; единственным статическим effective job name `architecture-policy` остаётся final job канонического workflow, а прямой duplicate и динамическое конструирование имени входят в отрицательный fixture. Live-пробы выявили более раннюю границу: на обоих событиях `opened` GitHub передал пустой `pull_request.merge_commit_sha`, хотя synthetic merge ref материализовался позднее. Исправляющий candidate поэтому получает SHA из доверенного base-repository ref и после checkout связывает его с точными event base/head родителями. Это не доказывает невозможность создания одноимённого check через другой GitHub App/API path; всё ещё нужен live negative duplicate-context probe и затем отдельный pinned App либо organization Required Workflow.
+Обычный required status check можно создать в repository ruleset, но он фиксирует context/app, а не trusted workflow contents: GitHub [не учитывает workflow, matrix и event trigger types](https://docs.github.com/en/enterprise-cloud@latest/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/troubleshooting-rules#troubleshooting-required-status-checks). Интегрированные control commits используют [pull_request_target](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request_target), immutable PR merge SHA и trusted fixture selector для всего `.github/workflows/`; единственным статическим effective job name `architecture-policy` остаётся final job канонического workflow, а прямой duplicate и динамическое конструирование имени входят в отрицательный fixture. Live-пробы выявили более раннюю границу: на обоих событиях `opened` GitHub передал пустой `pull_request.merge_commit_sha`, хотя synthetic merge ref материализовался позднее. Локальный исправляющий candidate получает SHA из доверенного base-repository ref только после stable `read/fetch/read` и exact parent/payload binding, материализует проверенный object в plan checkout и повторяет identity/receipt checks в downstream jobs. Это не доказывает невозможность создания одноимённого check через другой GitHub App/API path; всё ещё нужен live negative duplicate-context probe и затем отдельный pinned App либо organization Required Workflow.
 
 `check_architecture_policy.py` намеренно не может сам подтвердить repository enforcement и оставляет `enforcement_status=NOT_ENABLED`: редактируемый candidate-флаг был бы ложным доказательством внешней настройки. Финальная приёмка T3 должна сохранить отдельный read-only receipt с identity активного ruleset/Required Workflow или pinned App, точными PR/merge-group SHA, check run/app identity, review decision и результатами всех отрицательных проб. Только после сверки receipt с live API документация этапа может получить `VERIFIED`; одна зелёная job или вручную изменённое поле отчёта недостаточны.
 
@@ -104,7 +251,7 @@ Read-only GitHub API подтвердил фактический контекс�
 
 ## Что осталось до `VERIFIED` T3
 
-1. Отревьюировать и после отдельного разрешения интегрировать исправление гонки `pull_request.merge_commit_sha`, затем на новом обычном PR доказать, что первое событие `opened` получает точный synthetic merge commit и проходит без ручного `edited` retrigger. Изменение workflow само ожидаемо не может пройти текущий `MUST_MATCH` base gate и требует аудированного control update.
+1. Опубликовать локально готовый stateful resolver в текущем Draft PR #31 как аудированный control update и провести повторный review; изменение workflow само ожидаемо не может пройти текущий `MUST_MATCH` base gate. Интеграция требует отдельного явного разрешения. Только после появления resolver в trusted `main` на новом disposable PR доказать, что первое реальное событие `opened` получает точный synthetic merge commit и проходит без ручного `edited` retrigger, после чего выполнить всю post-integration матрицу выше.
 2. Получить явный выбор topology: перенести repository в `Hypothesis-Lab` и согласовать GitHub Team/organization-owner action для Required Workflow плюс merge queue либо оставить personal ownership и предоставить внешний pinned-check механизм. Перенос в `Hypothesis-Lab` на текущем Free-плане даёт merge queue, но не Required Workflow. Base-owned `pull_request_target` допускается как candidate эквивалент только после негативной проверки связи check с PR SHA и защиты от duplicate context/API path.
 3. Получить имя независимого trusted reviewer, выдать ему необходимый доступ, добавить `.github/CODEOWNERS` для самого файла, workflow, policy/checker и fixtures, затем включить required code-owner review без bypass. Автор PR не засчитывается как собственный reviewer.
 4. После отдельного разрешения создать active repository/organization ruleset без bypass и провести protected PR probes: удалённый/переименованный candidate workflow, duplicate green context, отменённый analysis, stale head, отсутствие approval, изменение control path, обычный PR и merge-group HEAD. Каждый запрещённый сценарий должен оставаться немержабельным; `skipped`, `neutral`, `OBSERVED` и отсутствие запуска не принимаются.

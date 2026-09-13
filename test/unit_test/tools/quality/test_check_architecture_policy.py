@@ -593,6 +593,42 @@ class ArchitecturePolicyTests(unittest.TestCase):
         self.assertEqual(checker._junit_contract(lane, b'<testsuite errors="1">' + cases + b"</testsuite>")[0], "INCOMPLETE")
         self.assertEqual(checker._junit_contract(lane, b'<testsuite skipped="bad">' + cases + b"</testsuite>")[0], "INCOMPLETE")
 
+    def test_parameterized_junit_cases_preserve_exact_logical_inventory(self):
+        lane = next(item for item in POLICY["lanes"] if item["id"] == "policy-fixtures")
+        target = "test_stable_current_is_the_only_immediate_success"
+        names = [name for name in lane["required_cases"] if name != target]
+        names.extend([f"{target}[empty-payload]", f"{target}[merge-sha]"])
+
+        def junit_for(case_names):
+            cases = "".join(f'<testcase name="{name}"/>' for name in case_names)
+            return f"<testsuite>{cases}</testsuite>".encode()
+
+        content = junit_for(names)
+        self.assertEqual(checker._junit_contract(lane, content)[0], "PASS")
+
+        plan = selected_plan(["tools/quality/module-map.yaml"])
+        planned = next(item for item in plan["lanes"] if item["id"] == "policy-fixtures")
+        attestation = json.loads(fixture_attestation(plan))
+        attestation.update(
+            case_names=sorted(names),
+            case_count=len(names),
+            junit_sha256=hashlib.sha256(content).hexdigest(),
+            junit_base64=base64.b64encode(content).decode("ascii"),
+        )
+        self.assertEqual(checker._policy_fixtures_contract(lane, planned, attestation)[0], "PASS")
+
+        missing = junit_for([*names[:-2], f"{target}[unterminated"])
+        self.assertEqual(checker._junit_contract(lane, missing)[0], "INCOMPLETE")
+        unexpected = junit_for([*lane["required_cases"], "test_unexpected[param]"])
+        status, reason = checker._junit_contract(lane, unexpected)
+        self.assertEqual(status, "INCOMPLETE")
+        self.assertIn("unexpected policy fixtures", reason)
+
+        mismatched = copy.deepcopy(lane)
+        mismatched["required_cases"].append("test_unbound")
+        with self.assertRaisesRegex(ValueError, "exactly match its logical node IDs"):
+            checker._validate_fixture_lane(mismatched["id"], mismatched)
+
     def test_fixture_attestation_rejects_stale_or_incomplete_junit(self):
         plan = selected_plan(["tools/quality/module-map.yaml"])
         evidence = complete_evidence(plan)

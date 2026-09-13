@@ -147,6 +147,11 @@ def _validate_lane_sources(lane_id: str, lane: dict) -> None:
         raise ValueError(f"Lane {lane_id} reported hash sources must be protected")
 
 
+def _logical_pytest_case_name(name: str) -> str:
+    logical_name, separator, _parameter = name.partition("[")
+    return logical_name if separator and name.endswith("]") else name
+
+
 def _validate_fixture_lane(lane_id: str, lane: dict) -> None:
     fixture_paths = _string_list(lane.get("fixture_paths"), f"Lane {lane_id} fixture paths", allow_empty=False)
     for fixture_path in fixture_paths:
@@ -158,6 +163,9 @@ def _validate_fixture_lane(lane_id: str, lane: dict) -> None:
         fixture_path, separator, test_id = nodeid.partition("::")
         if not separator or not test_id or fixture_path not in fixture_paths:
             raise ValueError(f"Lane {lane_id} node ID is outside its exact fixture paths")
+    logical_nodeids = [_logical_pytest_case_name(nodeid.rsplit("::", 1)[-1]) for nodeid in required_nodeids]
+    if len(logical_nodeids) != len(set(logical_nodeids)) or set(logical_nodeids) != set(lane["required_cases"]):
+        raise ValueError(f"Lane {lane_id} required cases must exactly match its logical node IDs")
 
 
 def _validate_os_isolation_requirement(lane_id: str, contract: str, value: object) -> None:
@@ -699,8 +707,6 @@ def _decode_attested_junit(lane: dict, report: dict) -> tuple[bytes, list[str]]:
         raise ValueError(f"unreadable attested JUnit: {error}") from error
     if len(parsed_names) != len(set(parsed_names)):
         raise ValueError("attested JUnit contains duplicate test case names")
-    if len(parsed_names) != len(lane["required_nodeids"]):
-        raise ValueError("fixture attestation case inventory differs from raw JUnit")
     return content, parsed_names
 
 
@@ -712,11 +718,8 @@ def _policy_fixtures_contract(lane: dict, planned: dict, report: dict) -> tuple[
     except ValueError as error:
         return "INCOMPLETE", str(error)
     case_names = report["case_names"]
-    if case_names != parsed_names or report.get("case_count") != len(parsed_names) or len(parsed_names) != len(lane["required_nodeids"]):
+    if case_names != parsed_names or report.get("case_count") != len(parsed_names):
         return "INCOMPLETE", "fixture attestation case inventory differs from raw JUnit"
-    missing = sorted(set(lane["required_cases"]) - set(case_names))
-    if missing:
-        return "INCOMPLETE", "required policy fixtures missing: " + ", ".join(missing)
     junit_status, junit_reason = _junit_contract(lane, content)
     if junit_status != "PASS":
         return junit_status, junit_reason
@@ -785,9 +788,13 @@ def _junit_contract(lane: dict, content: bytes) -> tuple[str, str]:
     names = [case.get("name") for case in cases if case.get("name")]
     if len(names) != len(set(names)):
         return "INCOMPLETE", "JUnit contains duplicate test case names"
-    missing = sorted(set(lane["required_cases"]) - set(names))
+    logical_names = {_logical_pytest_case_name(name) for name in names}
+    missing = sorted(set(lane["required_cases"]) - logical_names)
     if missing:
         return "INCOMPLETE", "required policy fixtures missing: " + ", ".join(missing)
+    unexpected = sorted(logical_names - set(lane["required_cases"]))
+    if unexpected:
+        return "INCOMPLETE", "unexpected policy fixtures executed: " + ", ".join(unexpected)
     return "PASS", f"{len(cases)} policy fixture(s) passed"
 
 

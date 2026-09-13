@@ -833,6 +833,63 @@ class ArchitecturePolicyTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(completed.stdout.strip(), "trusted")
 
+    def test_base_fixture_materialization_includes_protected_dependency_closure(self):
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        subprocess.run(["git", "config", "user.name", "Architecture Policy Fixture"], cwd=root, check=True)
+        subprocess.run(["git", "config", "user.email", "fixture@example.invalid"], cwd=root, check=True)
+        fixture_path = "test/unit_test/tools/quality/test_fixture.py"
+        dependency_path = "tools/quality/dependency.py"
+        fixture = root / fixture_path
+        dependency = root / dependency_path
+        fixture.parent.mkdir(parents=True)
+        dependency.parent.mkdir(parents=True)
+        fixture.write_text("def test_fixture():\n    assert True\n", encoding="utf-8")
+        dependency.write_text("VALUE = 'trusted'\n", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=root, check=True)
+        subprocess.run(["git", "commit", "-qm", "trusted fixture closure"], cwd=root, check=True)
+        base = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+        lane = {
+            "id": "policy-fixtures",
+            "protected_sources": [fixture_path, dependency_path],
+            "fixture_paths": [fixture_path],
+            "required_nodeids": [f"{fixture_path}::test_fixture"],
+            "reported_hashes": {},
+        }
+        bundle, _reported, integrity = checker._lane_source_bundle(root, base, lane, "base")
+        self.assertEqual(integrity, "PASS")
+        fixture_hash = next(record["sha256"] for record in bundle if record["path"] == fixture_path)
+        planned = {
+            "id": "policy-fixtures",
+            "selected": True,
+            "contract": "policy_fixtures",
+            "source": "base",
+            "source_integrity": "PASS",
+            "source_bundle": bundle,
+            "fixture_sources": [{"path": fixture_path, "sha256": fixture_hash}],
+        }
+        junit_output = root / "evidence/policy-fixtures.xml"
+
+        nodes = checker._fixture_nodes(root, base, lane, planned, junit_output)
+
+        trusted_root = junit_output.parent / "trusted-fixtures"
+        self.assertEqual(nodes, [f"{trusted_root / fixture_path}::test_fixture"])
+        self.assertEqual((trusted_root / dependency_path).read_text(encoding="utf-8"), "VALUE = 'trusted'\n")
+        manifest = json.loads((trusted_root / "materialized-sources.json").read_text(encoding="utf-8"))
+        self.assertEqual({record["path"] for record in manifest["sources"]}, {fixture_path, dependency_path})
+
+        incomplete = copy.deepcopy(planned)
+        incomplete["source_bundle"] = [record for record in bundle if record["path"] != dependency_path]
+        with self.assertRaisesRegex(ValueError, "exact protected fixture dependency closure"):
+            checker._fixture_nodes(root, base, lane, incomplete, root / "incomplete/policy-fixtures.xml")
+
     def test_trusted_base_protocol_uses_committed_evaluator_and_policy(self):
         temporary = Path(self.enterContext(__import__("tempfile").TemporaryDirectory()))
         root = temporary / "repo"

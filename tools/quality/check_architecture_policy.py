@@ -791,19 +791,36 @@ def _junit_contract(lane: dict, content: bytes) -> tuple[str, str]:
     return "PASS", f"{len(cases)} policy fixture(s) passed"
 
 
-def _base_fixture_paths(root: Path, base: str, fixture_paths: list[str], sources: dict[str, str], fixture_root: Path) -> dict[str, Path]:
+def _base_fixture_paths(
+    root: Path,
+    base: str,
+    lane: dict,
+    planned: dict,
+    sources: dict[str, str],
+    fixture_root: Path,
+) -> dict[str, Path]:
     if fixture_root.exists():
         raise ValueError(f"Refusing stale trusted fixture directory: {fixture_root}")
+
+    source_bundle = planned.get("source_bundle")
+    if not isinstance(source_bundle, list) or any(not isinstance(record, dict) for record in source_bundle):
+        raise ValueError("Architecture plan omitted the protected fixture dependency closure")
+    bundle_paths = [record.get("path") for record in source_bundle]
+    if any(not isinstance(path, str) or not path for path in bundle_paths) or len(bundle_paths) != len(set(bundle_paths)) or set(bundle_paths) != set(lane["protected_sources"]):
+        raise ValueError("Architecture plan omitted the exact protected fixture dependency closure")
+
+    manifest = materialize_protected_sources(
+        root,
+        {"input": {"base": base}, "lanes": [planned]},
+        fixture_root,
+    )
+    materialized = {record["path"]: record["sha256"] for record in manifest["sources"]}
     source_paths = {}
-    for fixture_path in fixture_paths:
-        content = _base_blob(root, base, fixture_path)
-        if content is None or _sha256(content) != sources[fixture_path]:
+    for fixture_path in lane["fixture_paths"]:
+        target = safe_path(fixture_root, fixture_path)
+        content = target.read_bytes()
+        if materialized.get(fixture_path) != sources[fixture_path] or _sha256(content) != sources[fixture_path]:
             raise ValueError(f"Trusted fixture differs from the selection plan: {fixture_path}")
-        target = (fixture_root / PurePosixPath(fixture_path)).resolve()
-        if not target.is_relative_to(fixture_root.resolve()):
-            raise ValueError(f"Invalid trusted fixture path: {fixture_path}")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(content)
         source_paths[fixture_path] = target
     return source_paths
 
@@ -824,7 +841,7 @@ def _fixture_nodes(root: Path, base: str, lane: dict, planned: dict, junit_outpu
     if set(sources) != set(fixture_paths):
         raise ValueError("Architecture plan omitted exact fixture sources")
     if planned.get("source") == "base":
-        source_paths = _base_fixture_paths(root, base, fixture_paths, sources, junit_output.parent / "trusted-fixtures")
+        source_paths = _base_fixture_paths(root, base, lane, planned, sources, junit_output.parent / "trusted-fixtures")
     elif planned.get("source") == "candidate-bootstrap":
         source_paths = _candidate_fixture_paths(root, fixture_paths, sources)
     else:

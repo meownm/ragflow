@@ -653,6 +653,50 @@ class ArchitecturePolicyTests(unittest.TestCase):
         self.assertTrue(selected.is_symlink())
         self.assertEqual(selected.resolve(), interpreter)
 
+    def test_policy_fixture_runner_disables_pytest_cache_writes(self):
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        quality = root / "tools/quality"
+        quality.mkdir(parents=True)
+        (quality / "upstream-base.json").write_text("{}", encoding="utf-8")
+        (quality / "module-map.yaml").write_text("{}", encoding="utf-8")
+        interpreter = root / ".venv/bin/python"
+        interpreter.parent.mkdir(parents=True)
+        interpreter.write_text("fixture", encoding="utf-8")
+        junit_output = root / "evidence/policy-fixtures.xml"
+        plan = selected_plan(["tools/quality/module-map.yaml"])
+        capture = {
+            "head": plan["input"]["head"],
+            "upstream_base": plan["input"]["upstream_base"],
+            "snapshot_sha256": plan["input"]["snapshot_sha256"],
+        }
+        observed = {}
+
+        def execute(command, **_kwargs):
+            observed["command"] = command
+            junit_output.parent.mkdir(parents=True, exist_ok=True)
+            junit_output.write_bytes(junit())
+            return subprocess.CompletedProcess(command, 0)
+
+        with (
+            patch.object(checker, "capture", return_value=capture),
+            patch.object(checker, "_fixture_nodes", return_value=["fixture.py::test_fixture"]),
+            patch.object(checker.subprocess, "run", side_effect=execute),
+        ):
+            result = checker.run_policy_fixtures(
+                root,
+                ROOT / "tools/quality/architecture-policy.json",
+                POLICY,
+                interpreter,
+                junit_output,
+                plan,
+            )
+
+        command = observed["command"]
+        cache_plugin = command.index("no:cacheprovider")
+        self.assertEqual(command[cache_plugin - 1], "-p")
+        self.assertEqual(result["fixture_status"], "PASS")
+        self.assertEqual(result["pytest_exit_code"], 0)
+
     def test_candidate_blob_uses_git_content_for_clean_crlf_checkout(self):
         root = Path(self.enterContext(tempfile.TemporaryDirectory()))
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)

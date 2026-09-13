@@ -881,6 +881,8 @@ def run_policy_fixtures(root: Path, policy_path: Path, policy: dict, python: Pat
         "--noconftest",
         "-p",
         "pytest_asyncio.plugin",
+        "-p",
+        "no:cacheprovider",
         "--rootdir",
         str(root),
         "-q",

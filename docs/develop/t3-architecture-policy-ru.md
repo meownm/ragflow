@@ -290,4 +290,4 @@ Read-only GitHub API подтвердил фактический контекс�
 4. После отдельного разрешения создать active repository/organization ruleset без bypass и провести protected PR probes: удалённый/переименованный candidate workflow, duplicate green context, отменённый analysis, stale head, отсутствие approval, изменение control path, обычный PR и merge-group HEAD. Каждый запрещённый сценарий должен оставаться немержабельным; `skipped`, `neutral`, `OBSERVED` и отсутствие запуска не принимаются.
 5. Не создавать пустой `baseline.json`: текущий T2 не дал полного architecture/dead-code/build verdict. Existing exact classifications остаются в policy files до доказанного более широкого анализа.
 
-<!-- Disposable solo-maintainer ruleset probe; this branch must not be merged. -->
+<!-- Disposable solo-maintainer ruleset probe revision 2; this branch must not be merged. -->

@@ -1,6 +1,6 @@
 # T3: selector и aggregate архитектурной политики
 
-Дата обновления: 2026-09-14. Статус: `IN_PROGRESS / NOT_ENABLED`. PR #4, #12 и #31 последовательно слиты в `main`; resolver из PR #31 интегрирован merge-коммитом `7843651969329f34accf537e902fa77c7720a4ff` из exact head `216d66ce0170fb4d0613ef48c13ebf171200917a`. Первый disposable `opened` PR #32 доказал устранение прежней гонки: при пустом payload resolver в run `34777290557` стабильно принял synthetic merge commit `7d24b626030517461d81d45de3292474f64b6bf3` с точными родителями base/head и связал его с plan receipt без ручного retrigger. Последующие исправления PR #33 закрыли обнаруженные fixture dependency-closure, pytest cache и parameterized-JUnit defects; Windows subset завершился `132 passed, 1 skipped`, полный non-root Linux quality-suite — `485 passed` без skip, а локальная base-mode имитация — `121 passed` плюс `118` subtests. После публикации exact head `02bbe07842bf2d6e53e34e966dcc604bec75465f` реальный `synchronize` run `34797814944` выявил ещё один контрактный дефект: event сохранил предыдущий `payload_merge_sha=2f321e7d…`, хотя независимый stable `R1 == F == R2 == 21d15986…` уже имел точные родители `[784365196…, 02bbe078…]`. Functional follow-up `7b8bb6c21241453a99169fb61d4263abb72d51df` переводит payload в явно аттестуемое advisory-наблюдение receipt schema v2; источником candidate остаются только stable fetched object и exact event parents. Focused Python 3.13.12 matrix дала `35 passed`, полный isolated Linux Python 3.13.11 quality-suite — `487 passed in 85.80 s`, без skip; post-integration GitHub-проверка этого follow-up ещё обязательна. До отдельной интеграции control update, повторной полной post-integration матрицы, независимого control-owner и проверенного repository enforcement T3 не является `VERIFIED`; T4 по последовательному goal не начинается. Deploy и repository settings не менялись.
+Дата обновления: 2026-09-14. Статус до интеграции настоящего control receipt: `IN_PROGRESS`; целевой solo-maintainer статус — `VERIFIED_WITH_ACCEPTED_RISK`. PR #4, #12, #31, #33, #36 и #37 последовательно слиты в `main`; current trusted base — `30a8123fb1f483934dc094d6cef2135ac125a3c6`. Functional schema-v3 acceptance получена на draft PR #35, который остаётся открытым и не предназначен для merge. Active repository ruleset `main-solo-maintainer-gate-v1` (`23306934`) защищает `main` без bypass и требует strict canonical `architecture-policy` от GitHub Actions App `15368`. Protected diagnostic PR #38/#39 закрыты без merge: positive, stale-head, cancellation, control-deletion, user-status spoof, same-name/same-App duplicate и skipped-duplicate сценарии дали ожидаемые mergeability verdicts. Этот инкремент добавляет `.github/CODEOWNERS` с единственным владельцем `@meownm`, регистрирует его как protected policy source и фиксирует принятые topology/governance риски. Машинный aggregate не меняется и честно остаётся `REPORT_ONLY_COMPLETE / NOT_ENABLED`; внешний enforcement подтверждает отдельный live receipt. Deploy не выполнялся.
 
 ## Контракт
 
@@ -141,6 +141,20 @@ Receipt сохраняется как read-only artifact текущего run и
 - согласованы exact deadline/backoff constants и инъекция monotonic clock/sleep для быстрых tests;
 - не требуется merge, deploy, ruleset, collaborator или organization change для локальной реализации и review.
 
+### DoR solo-maintainer enforcement
+
+Переход к solo-профилю начинается только при одновременном выполнении следующих условий:
+
+- владелец явно принял профиль `VERIFIED_WITH_ACCEPTED_RISK`, отсутствие второго reviewer и personal-account ограничения;
+- live API подтвердил единственного write/admin actor, exact default branch, текущий trusted workflow и GitHub App identity required check;
+- функциональная post-integration матрица T3 завершена без `FAIL`, `INCOMPLETE` или засчитанных skip/neutral результатов;
+- заранее определены ruleset target, required context/App, strictness, PR requirement, deletion/non-fast-forward controls и пустой bypass list;
+- подготовлены disposable positive/negative PR, команды проверки mergeability и cleanup без merge;
+- CODEOWNERS owner существует и имеет доступ; файл регистрируется в T0 и policy-fixture protected sources до интеграции;
+- merge control-инкремента, deploy и любые дальнейшие repository settings остаются отдельными действиями в пределах явного разрешения.
+
+DoR не является DoD: наличие плана, прав администратора или созданного ruleset не даёт терминальный статус без live negative probes и post-change readback.
+
 ### Обязательная автоматическая матрица
 
 Положительные fixtures:
@@ -239,7 +253,7 @@ Commit `0296ac478` вводит единый logical-name extractor только
 6. Artifact содержит полный resolver receipt и digests, а job logs не содержат credentials.
 7. Диагностические PR закрываются без merge после сохранения run URLs и результатов.
 
-Даже полный PASS этой матрицы доказывает только исправление trigger/identity path. Для `VERIFIED` T3 дополнительно остаются независимый control-owner approval, защищённый CODEOWNERS/control path, active ruleset или доказанный pinned external check без bypass, duplicate-context/API negative probe и merge-group acceptance в topology, где merge queue доступна. До этого `enforcement_status=NOT_ENABLED`, а T4 по последовательному goal не начинается.
+Даже полный PASS этой матрицы доказывает только trigger/identity path. Обычный `VERIFIED` T3 дополнительно требует независимого control-owner approval, защищённого CODEOWNERS/control path, active no-bypass enforcement, duplicate-context/API negative probe и merge-group acceptance в topology, где merge queue доступна. Явно принятый solo-профиль может закрыть зависимость как `VERIFIED_WITH_ACCEPTED_RISK` по отдельному DoD ниже; `enforcement_status=NOT_ENABLED` внутри report-only aggregate при этом не переписывается.
 
 ## Ревью и GitHub-приёмка 2026-09-12
 
@@ -264,7 +278,7 @@ Commit `0296ac478` вводит единый logical-name extractor только
 
 Первые восемь приёмочных PR закрыты без merge; диагностические PR #29 и #30 остаются не предназначенными для merge. PR #31 интегрирован только после явного разрешения, а PR #32 закрыт без merge после сохранения evidence. Results `CLASSIFIED`, `PLANNED`, `OBSERVED` и `NOT_EVALUATED` не засчитаны как `PASS`; полный Go native build, широкий dead-code verdict и поведение исторических saved DSL этими T3 runs не доказаны. Run #32 доказал primary `opened` resolver identity, но одновременно обнаружил отдельный fixture-harness regression. Run #33 `34797814944` затем доказал, что event payload merge SHA нельзя использовать как current-authority на `synchronize`; его fail-closed результат также не является приёмкой. Весь post-integration gate остаётся незавершённым.
 
-## Enforcement-preflight 2026-09-12
+## Enforcement-preflight 2026-09-12 (исторический снимок)
 
 Read-only GitHub API подтвердил фактический контекст: `meownm/ragflow` — public repository владельца типа `User`; единственный collaborator `meownm` имеет admin, rulesets отсутствуют, `main` не защищён, workflow `architecture-policy` активен с id `354200183`. Файл `CODEOWNERS` отсутствует. GitHub разрешает repository rulesets для public personal repositories, но правило [Require workflows to pass before merging](https://docs.github.com/en/enterprise-cloud@latest/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets#require-workflows-to-pass-before-merging) настраивается только на уровне organization/enterprise. [Merge queue](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/merging-a-pull-request-with-a-merge-queue#who-can-use-this-feature) также доступна только organization-owned repositories. Поэтому Required Workflow и реальную `merge_group` acceptance невозможно включить в текущем personal-account topology.
 
@@ -274,7 +288,7 @@ Read-only GitHub API подтвердил фактический контекс�
 
 Обычный required status check можно создать в repository ruleset, но он фиксирует context/app, а не trusted workflow contents: GitHub [не учитывает workflow, matrix и event trigger types](https://docs.github.com/en/enterprise-cloud@latest/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/troubleshooting-rules#troubleshooting-required-status-checks). Интегрированные control commits используют [pull_request_target](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request_target), immutable PR merge SHA и trusted fixture selector для всего `.github/workflows/`; единственным статическим effective job name `architecture-policy` остаётся final job канонического workflow, а прямой duplicate и динамическое конструирование имени входят в отрицательный fixture. Live-пробы выявили две payload-границы: на `opened` GitHub передавал пустой `pull_request.merge_commit_sha`, а на `synchronize` — SHA предыдущего test merge, хотя current synthetic ref уже имел exact event parents. Исправляющий candidate получает SHA из доверенного base-repository ref только после stable `read/fetch/read` и exact parent binding, сохраняет payload как signed advisory observation, материализует проверенный object в plan checkout и повторяет identity/receipt checks в downstream jobs. Это не доказывает невозможность создания одноимённого check через другой GitHub App/API path; всё ещё нужен live negative duplicate-context probe и затем отдельный pinned App либо organization Required Workflow.
 
-`check_architecture_policy.py` намеренно не может сам подтвердить repository enforcement и оставляет `enforcement_status=NOT_ENABLED`: редактируемый candidate-флаг был бы ложным доказательством внешней настройки. Финальная приёмка T3 должна сохранить отдельный read-only receipt с identity активного ruleset/Required Workflow или pinned App, точными PR/merge-group SHA, check run/app identity, review decision и результатами всех отрицательных проб. Только после сверки receipt с live API документация этапа может получить `VERIFIED`; одна зелёная job или вручную изменённое поле отчёта недостаточны.
+`check_architecture_policy.py` намеренно не может сам подтвердить repository enforcement и оставляет `enforcement_status=NOT_ENABLED`: редактируемый candidate-флаг был бы ложным доказательством внешней настройки. Финальная приёмка T3 должна сохранить отдельный read-only receipt с identity активного ruleset/Required Workflow или pinned App, точными PR/merge-group SHA, check run/app identity, review decision и результатами всех отрицательных проб. Только после сверки receipt с live API документация этапа может получить `VERIFIED` либо явно ограниченный `VERIFIED_WITH_ACCEPTED_RISK`; одна зелёная job или вручную изменённое поле отчёта недостаточны.
 
 Технически обязательное approval также сейчас невозможно проверить: автор PR и единственный eligible reviewer — один аккаунт, а [автор не может одобрить собственный PR](https://docs.github.com/en/pull-requests/how-tos/review-pull-requests/reviewing-proposed-changes-in-a-pull-request#submitting-your-review). До ruleset требуется указанный пользователем второй trusted collaborator либо organization team, затем добавить и защитить `.github/CODEOWNERS`; имя владельца не выдумывается.
 
@@ -282,10 +296,72 @@ Read-only GitHub API подтвердил фактический контекс�
 
 Дополнительная exact YAML-body проверка из пустого Linux-каталога с пустым payload SHA разрешила PR #30 в `8db838cb1df53beab50c8d4ecbe7fd4aea1743a8`; malformed payload `candidate-branch` был отклонён до network access с exit 2. Попытка использовать внешнюю junction для TypeScript parser также завершилась ожидаемым `safe_path` failure и не стала обходом provenance boundary.
 
-## Что осталось до `VERIFIED` T3
+## Solo-maintainer enforcement receipt 2026-09-14
 
-1. Завершить review, provenance и CI для `codex/t3-fixture-closure-fix`; отдельным разрешением интегрировать этот control update. Затем на новом disposable PR повторить первичный `opened` и всю post-integration матрицу: успешный resolver receipt в PR #32 не заменяет провалившийся fixture/aggregate gate.
-2. Получить явный выбор topology: перенести repository в `Hypothesis-Lab` и согласовать GitHub Team/organization-owner action для Required Workflow плюс merge queue либо оставить personal ownership и предоставить внешний pinned-check механизм. Перенос в `Hypothesis-Lab` на текущем Free-плане даёт merge queue, но не Required Workflow. Base-owned `pull_request_target` допускается как candidate эквивалент только после негативной проверки связи check с PR SHA и защиты от duplicate context/API path.
-3. Получить имя независимого trusted reviewer, выдать ему необходимый доступ, добавить `.github/CODEOWNERS` для самого файла, workflow, policy/checker и fixtures, затем включить required code-owner review без bypass. Автор PR не засчитывается как собственный reviewer.
-4. После отдельного разрешения создать active repository/organization ruleset без bypass и провести protected PR probes: удалённый/переименованный candidate workflow, duplicate green context, отменённый analysis, stale head, отсутствие approval, изменение control path, обычный PR и merge-group HEAD. Каждый запрещённый сценарий должен оставаться немержабельным; `skipped`, `neutral`, `OBSERVED` и отсутствие запуска не принимаются.
-5. Не создавать пустой `baseline.json`: текущий T2 не дал полного architecture/dead-code/build verdict. Existing exact classifications остаются в policy files до доказанного более широкого анализа.
+Владелец явно выбрал personal-repository solo-профиль и принял терминальный статус `VERIFIED_WITH_ACCEPTED_RISK`. Live API подтвердил единственного collaborator/admin `meownm`. В `main` включён active repository ruleset [main-solo-maintainer-gate-v1](https://github.com/meownm/ragflow/rules/23306934), id `23306934`, target `refs/heads/main`, `bypass_actors=[]`, `current_user_can_bypass=never`. Ruleset требует pull request, strict актуальность ветки и status context `architecture-policy`, связанный с GitHub Actions integration id `15368`; deletion и non-fast-forward запрещены. Поскольку автор не может одобрить собственный PR и второго reviewer нет, `required_approving_review_count=0` и `require_code_owner_review=false`. `.github/CODEOWNERS` назначает `* @meownm` как ownership metadata и protected policy source, но не изображает независимое approval.
+
+Функциональный prerequisite доказан draft PR #35 без его merge. Stale schema-v3 run `34834573688` завершился `PARENT_MISMATCH`, не выпустил candidate и не был засчитан. Fresh runs `34835069719`, `34836369666` и body-edit run `34837242457` завершили plan/analysis/canonical final успешно; exact-head check-run создан GitHub Actions App `15368`. PR #35 остаётся draft, `BEHIND`, `merged=false` и не входит в control increment.
+
+Live enforcement-пробы выполнены после активации ruleset:
+
+| Сценарий | Evidence | Ожидаемый и фактический verdict |
+| --- | --- | --- |
+| Новый неклассифицированный path | PR #38, run `34849275993` | plan `INCOMPLETE`, canonical failure, PR `BLOCKED` |
+| Разрешённый зарегистрированный path без approval | PR #38, run `34849465366`, check `103993893027` | canonical success от App `15368`; required gate удовлетворён при approvals `0`; optional browser не входит в ruleset |
+| Новый head после старого green | PR #38, head `313353b0650b5bd7710ec22d04605b1285165270` | старый success не принят для нового head; PR `BLOCKED` |
+| Отмена analysis | PR #38, run `34849779431` | analysis `cancelled`, canonical final `failure`, PR `BLOCKED` |
+| Удаление candidate workflow | PR #39, run `34850208159` | base-owned workflow всё равно запущен; stale registry path, PR `BLOCKED` |
+| User Commit Status с тем же context | PR #39, status `54118450620` | creator `meownm`/User не удовлетворил App-bound rule; PR `BLOCKED` |
+| Поздний same-name/same-App green после trusted failure | PR #39, trusted run `34850423306`, duplicate `34850423467` | поздний duplicate success не перекрыл canonical failure; PR `BLOCKED` |
+| `skipped` duplicate | PR #39, trusted run `34850677558`, duplicate `34850681025` | skipped не стал успехом; PR `BLOCKED` |
+
+Основные команды receipt, выполняемые с явным `--repo meownm/ragflow` либо exact REST path:
+
+```powershell
+gh api repos/meownm/ragflow/rulesets/23306934
+gh api repos/meownm/ragflow/rules/branches/main
+gh api repos/meownm/ragflow/pulls/35
+gh api repos/meownm/ragflow/pulls/38
+gh api repos/meownm/ragflow/pulls/39
+gh run view 34849465366 --repo meownm/ragflow --json databaseId,event,headSha,status,conclusion,jobs,url
+gh run view 34849779431 --repo meownm/ragflow --json databaseId,event,headSha,status,conclusion,jobs,url
+gh run view 34850208159 --repo meownm/ragflow --json databaseId,event,headSha,status,conclusion,jobs,url
+gh run view 34850423306 --repo meownm/ragflow --json databaseId,event,headSha,status,conclusion,jobs,url
+gh run view 34850423467 --repo meownm/ragflow --json databaseId,event,headSha,status,conclusion,jobs,url
+gh api repos/meownm/ragflow/commits/313353b0650b5bd7710ec22d04605b1285165270/check-runs
+gh api repos/meownm/ragflow/commits/87634f17e935231a76c53c383f8d6f0947550174/check-runs
+gh api repos/meownm/ragflow/commits/87634f17e935231a76c53c383f8d6f0947550174/status
+```
+
+Ruleset создан отдельным `POST repos/meownm/ragflow/rulesets` с payload, эквивалентным полям текущего readback; после создания решение принималось только по повторному `GET`, а не по exit code записи. Для cancellation использован `gh run cancel 34849779431 --repo meownm/ragflow`; терминальный `cancelled` analysis и `failure` canonical final проверены отдельным `gh run view`.
+
+PR #38 и #39 закрыты без merge; `merged_at=null`. Отмена optional browser jobs при cleanup не засчитана как положительное доказательство и не влияет на required gate. Deploy не выполнялся. Пользовательское dirty worktree `S:\ragflow` не изменялось; проверки и control change выполнялись в отдельных worktree.
+
+### DoD `VERIFIED_WITH_ACCEPTED_RISK`
+
+T3 получает этот статус только после выполнения всех пунктов:
+
+1. Control-код, functional acceptance и exact negative fixtures находятся в trusted `main`; применимые автоматические lanes не имеют `FAIL`/`INCOMPLETE`, а `OBSERVED`, `CLASSIFIED`, `PLANNED` и `NOT_EVALUATED` не названы PASS.
+2. Active ruleset после изменения прочитан через API и точно соответствует target, PR/deletion/non-fast-forward rules, strict App-bound check и пустому bypass list.
+3. CODEOWNERS находится в `main`, назначает существующего owner и сам входит в protected selector/source bundle.
+4. Positive PR доказывает, что exact fresh head становится mergeable только после canonical success; старый success не переносится на новый head.
+5. Negative PR доказывает fail-closed для failure, cancellation, control removal, user status spoof, позднего duplicate success и skipped duplicate; все disposable PR закрыты без merge.
+6. Сохранены ruleset id, run/check/status ids, exact SHA, mergeability verdicts, команды, ограничения и cleanup result; PR #35 не слит, deploy отсутствует.
+7. Владелец явно принимает перечисленные ниже риски, а документация не сокращает статус до `VERIFIED`.
+
+После интеграции настоящего CODEOWNERS/receipt-инкремента и повторного live readback пункты 1–7 закрывают T3 только в solo-профиле. До этого статус остаётся `IN_PROGRESS`.
+
+### Принятые риски и границы
+
+- Независимого reviewer/control owner нет; CODEOWNERS не создаёт независимое approval, а semantic/manual review выполняет тот же владелец.
+- Единственный repository admin технически может изменить или удалить ruleset. Пустой bypass list запрещает bypass merge, но не делает governance неизменяемым для администратора.
+- Personal-account repository не предоставляет organization Required Workflow и merge queue; `merge_group` не исполняется и не получает PASS. Эта недоступность принимается только для solo-профиля.
+- Required status check привязан к context и App, а не криптографически к одному workflow definition. Live same-App duplicate negative уменьшает риск, но не эквивалентен organization-owned immutable Required Workflow.
+- Aggregate `REPORT_ONLY_COMPLETE / NOT_ENABLED` не переписывается вручную: external receipt доказывает enforcement отдельно и не расширяет T2 до полного architecture/dead-code/native-build verdict.
+- Исторические saved DSL, неохваченные adapters, полный Go native build и существующие T2 `INCOMPLETE`/`NOT_EVALUATED` остаются за пределами T3 gate и не объявляются успешными.
+
+### Условия обязательного пересмотра
+
+Повторная T3-приёмка обязательна при изменении write/admin/collaborator состава, owner в CODEOWNERS, default branch, ruleset/enforcement/bypass, required context или App id, architecture workflow/checker/policy/protected sources, GitHub semantics/plan/topology, появлении доступного Required Workflow/merge queue, а также перед заявлением обычного `VERIFIED`. В этих случаях downstream T4–T7 сохраняют унаследованный risk receipt до успешного пересмотра.
+
+До полного широкого verdict запрещено создавать пустой `baseline.json`: действующие exact classifications остаются в policy files и не превращаются в разрешения.

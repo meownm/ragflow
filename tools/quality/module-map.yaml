@@ -1104,6 +1104,7 @@ modules:
   - test/integration/fixtures/New-T1LocalFixtures.ps1
   public_surfaces:
   - AGENTS.md
+  - .github/CODEOWNERS
   - .github/workflows/architecture.yml
   - tools/quality/capture_inventory.py
   - tools/quality/check_architecture.py
@@ -1127,6 +1128,7 @@ modules:
   paths:
   - .dockerignore
   - .github/actionlint.yaml
+  - .github/CODEOWNERS
   - .github/copilot-instructions.md
   - .github/pull_request_template.md
   - .github/workflows/architecture.yml

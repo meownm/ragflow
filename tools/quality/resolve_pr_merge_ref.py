@@ -20,7 +20,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 SUPPORTED_EVENT = "pull_request_target"
 SUPPORTED_SERVER_URL = "https://github.com"
 DEFAULT_DEADLINE_SECONDS = 120.0
@@ -38,7 +38,6 @@ class ResolverState(StrEnum):
     MALFORMED = "MALFORMED"
     STALE = "STALE"
     CHANGING = "CHANGING"
-    PAYLOAD_MISMATCH = "PAYLOAD_MISMATCH"
     STABLE_CURRENT = "STABLE_CURRENT"
     UNAVAILABLE = "UNAVAILABLE"
 
@@ -49,7 +48,6 @@ class FailureReason(StrEnum):
     TIMEOUT = "TIMEOUT"
     REF_CHANGED = "REF_CHANGED"
     PARENT_MISMATCH = "PARENT_MISMATCH"
-    PAYLOAD_MISMATCH = "PAYLOAD_MISMATCH"
     AUTH_UNSUPPORTED = "AUTH_UNSUPPORTED"
     NETWORK_UNAVAILABLE = "NETWORK_UNAVAILABLE"
     CHECKOUT_UNAVAILABLE = "CHECKOUT_UNAVAILABLE"
@@ -108,6 +106,13 @@ class ResolutionOutcome:
     @property
     def accepted(self) -> bool:
         return self.state is ResolverState.STABLE_CURRENT and self.reason is None and self.candidate_sha is not None
+
+
+class PayloadRelation(StrEnum):
+    ABSENT = "ABSENT"
+    MATCH = "MATCH"
+    DIFFERENT = "DIFFERENT"
+    UNRESOLVED = "UNRESOLVED"
 
 
 class ResolverTransport(Protocol):
@@ -467,7 +472,6 @@ def _timeout_reason(state: ResolverState) -> FailureReason:
         ResolverState.ABSENT: FailureReason.TIMEOUT,
         ResolverState.STALE: FailureReason.PARENT_MISMATCH,
         ResolverState.CHANGING: FailureReason.REF_CHANGED,
-        ResolverState.PAYLOAD_MISMATCH: FailureReason.PAYLOAD_MISMATCH,
     }.get(state, FailureReason.TIMEOUT)
 
 
@@ -533,8 +537,6 @@ def resolve_pr_merge_ref(
                             state = ResolverState.CHANGING
                         elif fetched.parents != expected_parents:
                             state = ResolverState.STALE
-                        elif identity.payload_merge_sha and identity.payload_merge_sha != fetched.sha:
-                            state = ResolverState.PAYLOAD_MISMATCH
                         else:
                             state = ResolverState.STABLE_CURRENT
             evidence = AttemptEvidence(
@@ -592,6 +594,18 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _payload_observation(identity: EventIdentity, candidate_sha: str | None) -> dict[str, str]:
+    if not identity.payload_merge_sha:
+        relation = PayloadRelation.ABSENT
+    elif candidate_sha is None:
+        relation = PayloadRelation.UNRESOLVED
+    elif identity.payload_merge_sha == candidate_sha:
+        relation = PayloadRelation.MATCH
+    else:
+        relation = PayloadRelation.DIFFERENT
+    return {"authority": "advisory", "relation_to_candidate": relation.value}
+
+
 def build_receipt(
     identity: EventIdentity,
     outcome: ResolutionOutcome,
@@ -619,6 +633,7 @@ def build_receipt(
             "object_format": OBJECT_FORMAT,
         },
         "identity": asdict(identity),
+        "payload_observation": _payload_observation(identity, outcome.candidate_sha),
         "timing": {
             "deadline_seconds": deadline_seconds,
             "backoff": {"kind": "fixed", "seconds": backoff_seconds, "max_seconds": backoff_seconds},
@@ -675,10 +690,10 @@ def verify_receipt(
         raise ValueError("receipt payload digest mismatch")
     if validate_identity(identity) is not None:
         raise ValueError("receipt identity is invalid")
-    if identity.payload_merge_sha and identity.payload_merge_sha != candidate_sha:
-        raise ValueError("receipt payload binding mismatch")
     if receipt.get("identity") != asdict(identity):
         raise ValueError("receipt identity mismatch")
+    if receipt.get("payload_observation") != _payload_observation(identity, candidate_sha):
+        raise ValueError("receipt payload observation mismatch")
     if receipt.get("resolver_source_sha256") != resolver_source_sha256:
         raise ValueError("resolver source digest mismatch")
     result = receipt.get("result")

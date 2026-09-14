@@ -148,7 +148,7 @@ def _resolve(
     )
 
 
-@pytest.mark.parametrize("payload", ["", MERGE_SHA])
+@pytest.mark.parametrize("payload", ["", MERGE_SHA, OTHER_SHA])
 def test_stable_current_is_the_only_immediate_success(payload: str) -> None:
     transport = ScriptedTransport(reads=[MERGE_SHA, MERGE_SHA], fetches=[_commit()])
 
@@ -392,19 +392,35 @@ def test_malformed_payload_fails_before_transport(payload: str) -> None:
     assert not transport.calls
 
 
-def test_stable_ref_that_disagrees_with_payload_retries_then_fails() -> None:
-    transport = ScriptedTransport(
-        reads=[MERGE_SHA],
-        fetches=[_commit()],
-        repeat_last_read=True,
-        repeat_last_fetch=True,
+def test_stable_ref_with_stale_payload_is_accepted_and_recorded_as_advisory(tmp_path: Path) -> None:
+    identity = _identity(event_action="synchronize", payload_merge_sha=OTHER_SHA)
+    transport = ScriptedTransport(reads=[MERGE_SHA, MERGE_SHA], fetches=[_commit()])
+
+    outcome = _resolve(transport, identity=identity)
+
+    assert outcome.accepted
+    receipt = build_receipt(
+        identity,
+        outcome,
+        resolver_source_sha256="a" * 64,
+        deadline_seconds=DEFAULT_DEADLINE_SECONDS,
+        backoff_seconds=DEFAULT_BACKOFF_SECONDS,
+        checkout_status="verified",
     )
-
-    outcome = _resolve(transport, identity=_identity(payload_merge_sha=OTHER_SHA), deadline_seconds=4.0)
-
-    assert not outcome.accepted
-    assert outcome.reason is FailureReason.PAYLOAD_MISMATCH
-    assert {attempt.state for attempt in outcome.attempts} == {ResolverState.PAYLOAD_MISMATCH.value}
+    assert receipt["payload_observation"] == {
+        "authority": "advisory",
+        "relation_to_candidate": "DIFFERENT",
+    }
+    path = tmp_path / "identity-receipt.json"
+    file_digest = write_receipt_atomic(path, receipt)
+    verify_receipt(
+        path,
+        identity=identity,
+        candidate_sha=MERGE_SHA,
+        resolver_source_sha256="a" * 64,
+        receipt_payload_sha256=receipt["receipt_payload_sha256"],
+        receipt_file_sha256=file_digest,
+    )
 
 
 @pytest.mark.parametrize(
@@ -646,14 +662,6 @@ def _assert_mutation_contract(module: ModuleType, mutation: str) -> None:
             repeat_last_read=True,
             repeat_last_fetch=True,
         )
-    elif mutation == "payload binding":
-        identity = _mutant_identity(module, payload_merge_sha=OTHER_SHA)
-        transport = ScriptedTransport(
-            reads=[MERGE_SHA, MERGE_SHA],
-            fetches=[module.FetchedObject(MERGE_SHA, "commit", (BASE_SHA, HEAD_SHA))],
-            repeat_last_read=True,
-            repeat_last_fetch=True,
-        )
     else:
         assert mutation == "monotonic deadline"
         deadline_seconds = 2.0
@@ -683,11 +691,6 @@ def _assert_mutation_contract(module: ModuleType, mutation: str) -> None:
         ),
         ("fetch binding", "r1 != fetched.sha or fetched.sha != r2", "r1 != r2"),
         ("parent binding", "fetched.parents != expected_parents", "False"),
-        (
-            "payload binding",
-            "identity.payload_merge_sha and identity.payload_merge_sha != fetched.sha",
-            "False",
-        ),
         (
             "sanitized environment",
             'for key in ("PATH", "SYSTEMROOT", "WINDIR")',
@@ -772,6 +775,10 @@ def test_receipt_binds_identity_attempts_source_and_checkout(tmp_path: Path) -> 
         "elapsed_seconds": 0.5,
     }
     assert receipt["checkout"] == {"plan": "verified", "downstream": "exact_sha_refetch_fail_closed"}
+    assert receipt["payload_observation"] == {
+        "authority": "advisory",
+        "relation_to_candidate": "ABSENT",
+    }
 
 
 def test_receipt_distinguishes_contract_failure_from_incomplete_availability() -> None:
@@ -807,9 +814,20 @@ def test_receipt_distinguishes_contract_failure_from_incomplete_availability() -
         lambda receipt: receipt["attempts"][-1].__setitem__("r2", OTHER_SHA),
         lambda receipt: receipt["attempts"][-1].__setitem__("parents", [HEAD_SHA, BASE_SHA]),
         lambda receipt: receipt["checkout"].__setitem__("plan", "not_attempted"),
+        lambda receipt: receipt["payload_observation"].__setitem__("authority", "trusted"),
+        lambda receipt: receipt["payload_observation"].__setitem__("relation_to_candidate", "MATCH"),
         lambda receipt: receipt.__setitem__("resolver_source_sha256", "b" * 64),
     ],
-    ids=["identity", "candidate", "double-read", "parents", "checkout", "source"],
+    ids=[
+        "identity",
+        "candidate",
+        "double-read",
+        "parents",
+        "checkout",
+        "payload-authority",
+        "payload-relation",
+        "source",
+    ],
 )
 def test_analysis_and_final_receipt_mutations_are_rejected(tmp_path: Path, mutation) -> None:
     _path, _file_digest, receipt = _write_valid_receipt(tmp_path)

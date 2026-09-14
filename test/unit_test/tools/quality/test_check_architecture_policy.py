@@ -593,6 +593,42 @@ class ArchitecturePolicyTests(unittest.TestCase):
         self.assertEqual(checker._junit_contract(lane, b'<testsuite errors="1">' + cases + b"</testsuite>")[0], "INCOMPLETE")
         self.assertEqual(checker._junit_contract(lane, b'<testsuite skipped="bad">' + cases + b"</testsuite>")[0], "INCOMPLETE")
 
+    def test_parameterized_junit_cases_preserve_exact_logical_inventory(self):
+        lane = next(item for item in POLICY["lanes"] if item["id"] == "policy-fixtures")
+        target = "test_stable_current_is_the_only_immediate_success"
+        names = [name for name in lane["required_cases"] if name != target]
+        names.extend([f"{target}[empty-payload]", f"{target}[merge-sha]"])
+
+        def junit_for(case_names):
+            cases = "".join(f'<testcase name="{name}"/>' for name in case_names)
+            return f"<testsuite>{cases}</testsuite>".encode()
+
+        content = junit_for(names)
+        self.assertEqual(checker._junit_contract(lane, content)[0], "PASS")
+
+        plan = selected_plan(["tools/quality/module-map.yaml"])
+        planned = next(item for item in plan["lanes"] if item["id"] == "policy-fixtures")
+        attestation = json.loads(fixture_attestation(plan))
+        attestation.update(
+            case_names=sorted(names),
+            case_count=len(names),
+            junit_sha256=hashlib.sha256(content).hexdigest(),
+            junit_base64=base64.b64encode(content).decode("ascii"),
+        )
+        self.assertEqual(checker._policy_fixtures_contract(lane, planned, attestation)[0], "PASS")
+
+        missing = junit_for([*names[:-2], f"{target}[unterminated"])
+        self.assertEqual(checker._junit_contract(lane, missing)[0], "INCOMPLETE")
+        unexpected = junit_for([*lane["required_cases"], "test_unexpected[param]"])
+        status, reason = checker._junit_contract(lane, unexpected)
+        self.assertEqual(status, "INCOMPLETE")
+        self.assertIn("unexpected policy fixtures", reason)
+
+        mismatched = copy.deepcopy(lane)
+        mismatched["required_cases"].append("test_unbound")
+        with self.assertRaisesRegex(ValueError, "exactly match its logical node IDs"):
+            checker._validate_fixture_lane(mismatched["id"], mismatched)
+
     def test_fixture_attestation_rejects_stale_or_incomplete_junit(self):
         plan = selected_plan(["tools/quality/module-map.yaml"])
         evidence = complete_evidence(plan)
@@ -652,6 +688,50 @@ class ArchitecturePolicyTests(unittest.TestCase):
         self.assertEqual(selected, launcher)
         self.assertTrue(selected.is_symlink())
         self.assertEqual(selected.resolve(), interpreter)
+
+    def test_policy_fixture_runner_disables_pytest_cache_writes(self):
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        quality = root / "tools/quality"
+        quality.mkdir(parents=True)
+        (quality / "upstream-base.json").write_text("{}", encoding="utf-8")
+        (quality / "module-map.yaml").write_text("{}", encoding="utf-8")
+        interpreter = root / ".venv/bin/python"
+        interpreter.parent.mkdir(parents=True)
+        interpreter.write_text("fixture", encoding="utf-8")
+        junit_output = root / "evidence/policy-fixtures.xml"
+        plan = selected_plan(["tools/quality/module-map.yaml"])
+        capture = {
+            "head": plan["input"]["head"],
+            "upstream_base": plan["input"]["upstream_base"],
+            "snapshot_sha256": plan["input"]["snapshot_sha256"],
+        }
+        observed = {}
+
+        def execute(command, **_kwargs):
+            observed["command"] = command
+            junit_output.parent.mkdir(parents=True, exist_ok=True)
+            junit_output.write_bytes(junit())
+            return subprocess.CompletedProcess(command, 0)
+
+        with (
+            patch.object(checker, "capture", return_value=capture),
+            patch.object(checker, "_fixture_nodes", return_value=["fixture.py::test_fixture"]),
+            patch.object(checker.subprocess, "run", side_effect=execute),
+        ):
+            result = checker.run_policy_fixtures(
+                root,
+                ROOT / "tools/quality/architecture-policy.json",
+                POLICY,
+                interpreter,
+                junit_output,
+                plan,
+            )
+
+        command = observed["command"]
+        cache_plugin = command.index("no:cacheprovider")
+        self.assertEqual(command[cache_plugin - 1], "-p")
+        self.assertEqual(result["fixture_status"], "PASS")
+        self.assertEqual(result["pytest_exit_code"], 0)
 
     def test_candidate_blob_uses_git_content_for_clean_crlf_checkout(self):
         root = Path(self.enterContext(tempfile.TemporaryDirectory()))
@@ -832,6 +912,63 @@ class ArchitecturePolicyTests(unittest.TestCase):
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(completed.stdout.strip(), "trusted")
+
+    def test_base_fixture_materialization_includes_protected_dependency_closure(self):
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        subprocess.run(["git", "config", "user.name", "Architecture Policy Fixture"], cwd=root, check=True)
+        subprocess.run(["git", "config", "user.email", "fixture@example.invalid"], cwd=root, check=True)
+        fixture_path = "test/unit_test/tools/quality/test_fixture.py"
+        dependency_path = "tools/quality/dependency.py"
+        fixture = root / fixture_path
+        dependency = root / dependency_path
+        fixture.parent.mkdir(parents=True)
+        dependency.parent.mkdir(parents=True)
+        fixture.write_text("def test_fixture():\n    assert True\n", encoding="utf-8")
+        dependency.write_text("VALUE = 'trusted'\n", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=root, check=True)
+        subprocess.run(["git", "commit", "-qm", "trusted fixture closure"], cwd=root, check=True)
+        base = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+        lane = {
+            "id": "policy-fixtures",
+            "protected_sources": [fixture_path, dependency_path],
+            "fixture_paths": [fixture_path],
+            "required_nodeids": [f"{fixture_path}::test_fixture"],
+            "reported_hashes": {},
+        }
+        bundle, _reported, integrity = checker._lane_source_bundle(root, base, lane, "base")
+        self.assertEqual(integrity, "PASS")
+        fixture_hash = next(record["sha256"] for record in bundle if record["path"] == fixture_path)
+        planned = {
+            "id": "policy-fixtures",
+            "selected": True,
+            "contract": "policy_fixtures",
+            "source": "base",
+            "source_integrity": "PASS",
+            "source_bundle": bundle,
+            "fixture_sources": [{"path": fixture_path, "sha256": fixture_hash}],
+        }
+        junit_output = root / "evidence/policy-fixtures.xml"
+
+        nodes = checker._fixture_nodes(root, base, lane, planned, junit_output)
+
+        trusted_root = junit_output.parent / "trusted-fixtures"
+        self.assertEqual(nodes, [f"{trusted_root / fixture_path}::test_fixture"])
+        self.assertEqual((trusted_root / dependency_path).read_text(encoding="utf-8"), "VALUE = 'trusted'\n")
+        manifest = json.loads((trusted_root / "materialized-sources.json").read_text(encoding="utf-8"))
+        self.assertEqual({record["path"] for record in manifest["sources"]}, {fixture_path, dependency_path})
+
+        incomplete = copy.deepcopy(planned)
+        incomplete["source_bundle"] = [record for record in bundle if record["path"] != dependency_path]
+        with self.assertRaisesRegex(ValueError, "exact protected fixture dependency closure"):
+            checker._fixture_nodes(root, base, lane, incomplete, root / "incomplete/policy-fixtures.xml")
 
     def test_trusted_base_protocol_uses_committed_evaluator_and_policy(self):
         temporary = Path(self.enterContext(__import__("tempfile").TemporaryDirectory()))

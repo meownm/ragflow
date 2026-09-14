@@ -221,6 +221,64 @@ def _payload() -> dict:
     }
 
 
+def _live_omd_payload() -> dict:
+    fqn = "docker_postgres_bot.bot.public.llm_requests_log"
+    table = _table(
+        "491922b2-66ca-4c3d-9c7d-651a68d491b9",
+        fqn,
+        ("log_id", "request_timestamp_start", "duration_seconds", "is_success", "model_name"),
+    )
+    table.update(
+        {
+            "service": "docker_postgres_bot",
+            "database": "bot",
+            "schema": "public",
+        }
+    )
+    snapshot = {
+        "format": "ragflow-sql-schema-snapshot",
+        "schema_version": "1",
+        "status": "READY",
+        "original_requirements": "Покажи самые долгие успешные запросы к LLM.",
+        "source": {"stale": False},
+        "requirements": [
+            {
+                "term": "запрос к LLM",
+                "state": "CONFIRMED",
+                "decision": "USER",
+                "interpretation": None,
+                "candidates": [],
+                "selected_table": table,
+            }
+        ],
+        "warnings": [],
+    }
+    return {
+        "schema_version": "1",
+        "schema_snapshot": snapshot,
+        "accepted_requirements": snapshot["original_requirements"],
+        "accepted_schema": _accepted(snapshot),
+        "specification": {
+            "dialect": "postgres",
+            "from": {"entity_id": table["id"], "alias": "llm"},
+            "select": [
+                {
+                    "id": "duration",
+                    "kind": "column",
+                    "column_id": f"{fqn}.duration_seconds",
+                    "alias": "duration_seconds",
+                    "grain": None,
+                }
+            ],
+            "joins": [],
+            "filters": [],
+            "order_by": [{"select_item_id": "duration", "direction": "DESC"}],
+            "parameters": [{"name": "row_limit", "type": "integer", "value": 20}],
+            "limit_parameter": "row_limit",
+        },
+    }
+
+
 def test_gsql_01_compiles_the_confirmed_structure_and_separate_parameters():
     result = compile_query_payload(_payload())
 
@@ -255,6 +313,31 @@ GROUP BY
 ORDER BY month ASC, status_name ASC
 LIMIT :row_limit"""
     )
+
+
+def test_live_openmetadata_four_part_fqn_compiles_to_the_bound_postgres_relation():
+    result = compile_query_payload(_live_omd_payload())
+
+    assert result["status"] == "READY"
+    assert "FROM public.llm_requests_log AS llm" in result["sql"]
+    assert "docker_postgres_bot.bot" not in result["sql"]
+    assert result["guard"]["tables"] == ["public.llm_requests_log"]
+
+
+def test_openmetadata_fqn_must_match_the_explicit_catalog_identity():
+    payload = _live_omd_payload()
+    payload["schema_snapshot"]["requirements"][0]["selected_table"]["database"] = "other"
+
+    with pytest.raises(QuerySpecificationValidationError, match="OpenMetadata catalog identity"):
+        compile_query_payload(payload)
+
+
+def test_openmetadata_four_part_fqn_requires_a_complete_catalog_identity():
+    payload = _live_omd_payload()
+    payload["schema_snapshot"]["requirements"][0]["selected_table"]["service"] = ""
+
+    with pytest.raises(QuerySpecificationValidationError, match="requires service, database, and schema"):
+        compile_query_payload(payload)
 
 
 def test_gsql_02_open_join_decision_returns_no_executable_sql():

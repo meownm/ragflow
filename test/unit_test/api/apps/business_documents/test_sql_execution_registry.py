@@ -193,6 +193,18 @@ def test_one_common_profile_is_bound_automatically_without_exposing_connector_id
         {"binding_id": "binding-dwh", "version": 2},
         {"binding_id": "binding-ref", "version": 2},
     ]
+    assert result["selection"]["relations"] == [
+        {
+            "entity_id": "orders",
+            "catalog_fqn": "dwh.order_fact",
+            "physical_relation": "dwh.order_fact",
+        },
+        {
+            "entity_id": "statuses",
+            "catalog_fqn": "ref.order_status",
+            "physical_relation": "ref.order_status",
+        },
+    ]
 
 
 def test_multiple_common_profiles_require_explicit_selection():

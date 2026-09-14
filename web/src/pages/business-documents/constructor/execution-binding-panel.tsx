@@ -212,6 +212,24 @@ export function ExecutionBindingPanel({
           >
             Политика v{profile.version}: {profile.policy_fingerprint}
           </p>
+          {result.selection?.relations?.length ? (
+            <div
+              className="space-y-1 border-t border-state-success/20 pt-2 sm:col-span-2 lg:col-span-4"
+              data-testid="query-execution-relation-mappings"
+            >
+              <p className="font-medium text-text-primary">
+                Соответствие каталога и PostgreSQL
+              </p>
+              {result.selection.relations.map((relation) => (
+                <p
+                  key={relation.entity_id}
+                  className="break-all font-mono text-[11px] text-text-secondary"
+                >
+                  {relation.catalog_fqn} → {relation.physical_relation}
+                </p>
+              ))}
+            </div>
+          ) : null}
         </div>
       )}
     </section>

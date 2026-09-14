@@ -5,6 +5,7 @@ import {
   createBusinessDocumentSqlExecutionProfile,
   createEvaDocumentChange,
   generateEvaDocumentChangeDraft,
+  getBusinessDocumentCapabilities,
   listBusinessDocumentAccessUsers,
   listBusinessDocumentCatalog,
   listBusinessDocuments,
@@ -42,6 +43,26 @@ const mockedPatch = jest.mocked(request.patch);
 const mockedPut = jest.mocked(request.put);
 
 beforeEach(() => jest.clearAllMocks());
+
+test('loads business-document capabilities without querying the document list', async () => {
+  const access = {
+    access_role: 'AUTHOR_CREATOR' as const,
+    capabilities: {
+      read: true,
+      create: true,
+      edit_own: true,
+      edit_all: false,
+      delete: false,
+      assign: false,
+    },
+  };
+  mockedGet.mockResolvedValueOnce({ data: { code: 0, data: access } });
+
+  await expect(getBusinessDocumentCapabilities()).resolves.toEqual(access);
+  expect(mockedGet).toHaveBeenCalledWith(api.businessDocumentCapabilities, {
+    skipErrorNotification: true,
+  });
+});
 
 test('loads the canonical paginated document list envelope', async () => {
   const list = {

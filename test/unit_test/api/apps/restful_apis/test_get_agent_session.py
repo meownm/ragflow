@@ -103,6 +103,83 @@ def _load_agent_api(monkeypatch, get_by_id_result, delete_calls=None):
     return module, delete_calls
 
 
+def test_sync_switch_routes_from_graph_repairs_component_and_node_form(monkeypatch):
+    module, _ = _load_agent_api(monkeypatch, get_by_id_result=(False, None))
+    dsl = {
+        "components": {
+            "Switch:switch-1": {
+                "obj": {
+                    "component_name": "Switch",
+                    "params": {"conditions": [{"to": []}], "end_cpn_ids": []},
+                }
+            },
+            "Message:message-1": {"obj": {"component_name": "Message", "params": {}}},
+            "Agent:agent-1": {"obj": {"component_name": "Agent", "params": {}}},
+        },
+        "graph": {
+            "nodes": [
+                {
+                    "id": "Switch:switch-1",
+                    "data": {"form": {"conditions": [{"to": []}], "end_cpn_ids": []}},
+                }
+            ],
+            "edges": [
+                {"source": "Switch:switch-1", "target": "Message:message-1", "sourceHandle": "Case 1"},
+                {"source": "Switch:switch-1", "target": "Agent:agent-1", "sourceHandle": "end_cpn_ids"},
+            ],
+        },
+    }
+
+    repaired = module._sync_switch_routes_from_graph(dsl)
+
+    params = repaired["components"]["Switch:switch-1"]["obj"]["params"]
+    form = repaired["graph"]["nodes"][0]["data"]["form"]
+    assert params["conditions"][0]["to"] == ["Message:message-1"]
+    assert params["end_cpn_ids"] == ["Agent:agent-1"]
+    assert form["conditions"][0]["to"] == ["Message:message-1"]
+    assert form["end_cpn_ids"] == ["Agent:agent-1"]
+
+
+@pytest.mark.asyncio
+async def test_reset_agent_defaults_missing_runtime_path(monkeypatch):
+    module, _ = _load_agent_api(monkeypatch, get_by_id_result=(False, None))
+    saved_dsl = {"components": {}, "graph": {"nodes": [], "edges": []}}
+    saved_canvas = SimpleNamespace(
+        id="agent-1",
+        dsl=saved_dsl,
+        canvas_category="agent",
+        title="Agent",
+    )
+    updates = []
+
+    class _Canvas:
+        def __init__(self, dsl, tenant_id, canvas_id):
+            self.dsl = __import__("json").loads(dsl)
+            assert self.dsl["path"] == []
+            assert self.dsl["history"] == []
+            assert self.dsl["retrieval"] == []
+            assert tenant_id == "tenant-1"
+            assert canvas_id == "agent-1"
+
+        def reset(self):
+            self.dsl["path"] = []
+
+        def __str__(self):
+            return __import__("json").dumps(self.dsl)
+
+    _stub(monkeypatch, "agent.canvas", Canvas=_Canvas)
+    module.UserCanvasService.get_by_id = lambda _agent_id: (True, saved_canvas)
+    module.UserCanvasService.update_by_id = lambda agent_id, values: updates.append((agent_id, values))
+    module.CanvasReplicaService.normalize_dsl = lambda dsl: dict(dsl)
+    module.CanvasReplicaService.replace_for_set = lambda **_kwargs: True
+
+    result = await module.reset_agent.__wrapped__(agent_id="agent-1", tenant_id="tenant-1")
+
+    assert result["code"] == 0
+    assert result["data"]["path"] == []
+    assert updates == [("agent-1", {"dsl": result["data"]})]
+
+
 @pytest.mark.p1
 class TestGetAgentSession:
     """Regression for missing sessions and IDOR on GET /agents/<id>/sessions/<sid>."""

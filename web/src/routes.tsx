@@ -26,7 +26,7 @@ export enum Routes {
   Memories = '/memories',
   OpenMetadata = '/openmetadata',
   BusinessDocuments = '/business-documents',
-  DocumentConstructor = '/business-documents/constructor',
+  DocumentConstructor = '/document-constructor',
   Memory = '/memory',
   MemoryMessage = '/memory-message',
   MemorySetting = '/memory-setting',
@@ -249,6 +249,10 @@ const routeConfigOptions = [
       {
         path: Routes.DocumentConstructor,
         Component: () => import('@/pages/business-documents/constructor'),
+      },
+      {
+        path: `${Routes.BusinessDocuments}/constructor`,
+        element: <Navigate to={Routes.DocumentConstructor} replace />,
       },
       {
         path: `${Routes.BusinessDocuments}/:id`,

@@ -322,6 +322,12 @@ export interface SqlExecutionCatalogScope {
   table_ids: string[];
 }
 
+export interface SqlExecutionRelationMapping {
+  entity_id: string;
+  catalog_fqn: string;
+  physical_relation: string;
+}
+
 export interface SqlExecutionBindingResponse {
   schema_version: '1';
   status: 'BOUND' | 'NEEDS_SELECTION' | 'UNAVAILABLE';
@@ -339,6 +345,7 @@ export interface SqlExecutionBindingResponse {
     decision: 'user' | 'automatic_exact';
     profile: SqlExecutionProfilePolicy;
     bindings: Array<{ binding_id: string; version: number }>;
+    relations: SqlExecutionRelationMapping[];
   } | null;
 }
 
@@ -610,6 +617,11 @@ export interface BusinessDocumentCapabilities {
   edit_all: boolean;
   delete: boolean;
   assign: boolean;
+}
+
+export interface BusinessDocumentAccessContext {
+  access_role: BusinessDocumentRole;
+  capabilities: BusinessDocumentCapabilities;
 }
 
 export interface BusinessDocumentAssignableUser {

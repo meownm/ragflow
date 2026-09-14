@@ -79,6 +79,7 @@ modules:
   - agent/business_requirements/evals/rubric.v1.json
   - agent/business_requirements/golden_dialogs/v1.json
   - agent/business_requirements/golden_dialogs/v2.json
+  - agent/business_requirements/golden_dialogs/sql_query_omd.v1.json
   - agent/business_requirements/policies/process.v1.json
   - agent/business_requirements/policies/rendering.v1.json
   - agent/business_requirements/prompts/change_planner.v1.md
@@ -124,7 +125,10 @@ modules:
   - business_documents/sql_query/query_planning.py
   - business_documents/sql_query/schema_resolution.py
   - docs/develop/business-documents-eva-title-binding-ru.md
+  - docs/develop/sql-query-constructor-architecture-ru.md
+  - docs/develop/sql-query-constructor-product-ru.md
   - docs/develop/sql-query-constructor-regression-ru.md
+  - docs/develop/sql-query-constructor-ui-ux-cx-ru.md
   - test/evals/business_documents/live_quality.py
   - test/evals/business_documents/test_golden_dialogue_harness.py
   - test/evals/business_documents/test_live_model_quality.py
@@ -147,6 +151,7 @@ modules:
   - test/unit_test/api/apps/business_documents/test_business_document_service.py
   - test/unit_test/api/apps/business_documents/test_sql_execution_registry.py
   - test/unit_test/api/apps/business_documents/test_sql_execution_registry_service.py
+  - test/unit_test/api/apps/business_documents/test_sql_query_omd_cases.py
   - test/unit_test/api/apps/business_documents/test_sql_query_lifecycle.py
   - test/unit_test/api/apps/business_documents/test_sql_query_planning.py
   - test/unit_test/api/apps/business_documents/test_sql_query_schema_resolution.py
@@ -156,6 +161,7 @@ modules:
   - test/unit_test/api/db/services/test_business_document_settings_service.py
   - test/unit_test/business_documents/application/test_assign_document.py
   - test/unit_test/tools/quality/test_business_document_assignment_metadata.py
+  - tools/scripts/provision_sql_query_omd_mapping.py
   - web/src/pages/admin/business-documents-settings.test.tsx
   - web/src/pages/admin/business-documents-settings.tsx
   - web/src/pages/business-documents/components/document-pane.tsx

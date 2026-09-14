@@ -9,6 +9,22 @@ sidebar_custom_props: {
 
 Key features, improvements and bug fixes in the latest releases.
 
+## v1.21.0
+
+Released on September 14, 2026.
+
+### New features
+
+- Document constructor: Promotes the experimental constructor to a dedicated root section while exposing it only to users with the server-confirmed document-creation capability.
+- SQL catalog mapping: Supports four-part OpenMetadata identities and shows the exact mapping from `service.database.schema.table` to executable PostgreSQL `schema.table` relations.
+- SQL operations: Adds a reproducible real-catalog golden suite and an idempotent provisioning utility for the centrally managed execution profile and exact catalog bindings.
+
+### Improvements and bug fixes
+
+- Preserves Switch case and fallback destinations from canonical graph edges when agents are created, updated, or reset.
+- Keeps the old nested constructor URL as a redirect and avoids loading document lists merely to decide whether the constructor may be shown.
+- Documents the product workflow, UI/UX/CX states, architecture boundaries, and end-to-end regression contract; database execution, ResultGate, and Python sandbox execution remain future runtime stages.
+
 ## v1.20.0
 
 Released on September 14, 2026.

@@ -165,6 +165,19 @@ class SnapshotTable:
     def column(self, column_id: str) -> SnapshotColumn | None:
         return next((column for column in self.columns if column.id == column_id), None)
 
+    @property
+    def physical_relation(self) -> str:
+        """Return the PostgreSQL relation behind the catalog entity.
+
+        OpenMetadata identifies a table as ``service.database.schema.table``.
+        PostgreSQL connections are already bound to one database by the
+        execution profile, so executable SQL must use only ``schema.table``.
+        """
+
+        if self.schema:
+            return f"{self.schema}.{self.technical_name}"
+        return ".".join(self.fqn.split(".")[-2:])
+
 
 @dataclass(frozen=True, slots=True)
 class AcceptedSchemaEntry:
@@ -321,8 +334,8 @@ def _number(value: Any, field: str) -> float:
 
 def _safe_fqn(value: Any, field: str) -> str:
     result = _text(value, field, 1_000)
-    if len(result.split(".")) not in {2, 3} or any(not _IDENTIFIER.fullmatch(part) for part in result.split(".")):
-        raise QuerySpecificationValidationError(f"{field} must contain two or three safe identifier parts")
+    if len(result.split(".")) not in {2, 3, 4} or any(not _IDENTIFIER.fullmatch(part) for part in result.split(".")):
+        raise QuerySpecificationValidationError(f"{field} must contain from two to four safe identifier parts")
     return result
 
 
@@ -362,6 +375,25 @@ def _snapshot_table_constraint(value: Any, field: str) -> SnapshotTableConstrain
         referred_columns=_string_tuple(item.get("referred_columns"), f"{field}.referred_columns", 32, 1_000),
         relationship_type=_optional_text(item.get("relationship_type"), f"{field}.relationship_type", 200),
     )
+
+
+def _snapshot_table_identity(item: Mapping[str, Any], field: str) -> tuple[str, str, str, str, str]:
+    fqn = _safe_fqn(item.get("fqn"), f"{field}.fqn")
+    technical_name = _identifier(item.get("technical_name"), f"{field}.technical_name")
+    service = _optional_text(item.get("service"), f"{field}.service", 128) or ""
+    database = _optional_text(item.get("database"), f"{field}.database", 128) or ""
+    schema_value = _optional_text(item.get("schema"), f"{field}.schema", 128)
+    schema = _identifier(schema_value, f"{field}.schema") if schema_value else ""
+    fqn_parts = fqn.split(".")
+    if schema and tuple(part.casefold() for part in fqn_parts[-2:]) != (schema.casefold(), technical_name.casefold()):
+        raise QuerySpecificationValidationError(f"{field}.fqn does not match schema and technical_name")
+    if len(fqn_parts) == 4:
+        if not all((service, database, schema)):
+            raise QuerySpecificationValidationError(f"{field} requires service, database, and schema for an OpenMetadata FQN")
+        expected = (service.casefold(), database.casefold(), schema.casefold(), technical_name.casefold())
+        if tuple(part.casefold() for part in fqn_parts) != expected:
+            raise QuerySpecificationValidationError(f"{field}.fqn does not match its OpenMetadata catalog identity")
+    return fqn, technical_name, service, database, schema
 
 
 def _snapshot_table(value: Any, field: str) -> SnapshotTable:
@@ -410,14 +442,15 @@ def _snapshot_table(value: Any, field: str) -> SnapshotTable:
     fingerprint = _text(item.get("schema_fingerprint"), f"{field}.schema_fingerprint", 200)
     if not fingerprint.startswith("sha256:"):
         raise QuerySpecificationValidationError(f"{field}.schema_fingerprint must be sha256 provenance")
+    fqn, technical_name, service, database, schema = _snapshot_table_identity(item, field)
     return SnapshotTable(
         id=_text(item.get("id"), f"{field}.id", 500),
-        fqn=_safe_fqn(item.get("fqn"), f"{field}.fqn"),
-        technical_name=_identifier(item.get("technical_name"), f"{field}.technical_name"),
+        fqn=fqn,
+        technical_name=technical_name,
         description=str(item.get("description") or "").strip()[:2_000],
-        service=_optional_text(item.get("service"), f"{field}.service", 128) or "",
-        database=_optional_text(item.get("database"), f"{field}.database", 128) or "",
-        schema=(_identifier(item.get("schema"), f"{field}.schema") if _optional_text(item.get("schema"), f"{field}.schema", 128) else ""),
+        service=service,
+        database=database,
+        schema=schema,
         version=_number(item.get("version"), f"{field}.version"),
         schema_fingerprint=fingerprint,
         columns=columns,
@@ -873,14 +906,14 @@ def _compile_sql(command: CompileQueryCommand, aliases: Mapping[str, str]) -> st
     lines = ["SELECT"]
     rendered_select = [_select_sql(snapshot, aliases, item) for item in spec.select]
     lines.extend(f"    {value}{',' if index < len(rendered_select) - 1 else ''}" for index, value in enumerate(rendered_select))
-    lines.append(f"FROM {base.fqn} AS {spec.base_alias}")
+    lines.append(f"FROM {base.physical_relation} AS {spec.base_alias}")
     for join in spec.joins:
         table = snapshot.table(join.entity_id)
         assert table is not None
         keyword = "JOIN" if join.join_type == "INNER" else "LEFT JOIN"
         lines.extend(
             [
-                f"{keyword} {table.fqn} AS {join.alias}",
+                f"{keyword} {table.physical_relation} AS {join.alias}",
                 f"    ON {_column_sql(snapshot, aliases, join.left_column_id)} = {_column_sql(snapshot, aliases, join.right_column_id)}",
             ]
         )
@@ -995,7 +1028,7 @@ def compile_query(command: CompileQueryCommand) -> dict[str, Any]:
     parameter_values = {parameter.name: parameter.value for parameter in command.specification.parameters}
     guard = guard_read_only_sql(
         sql,
-        allowed_tables=[table.fqn for table in command.snapshot.tables],
+        allowed_tables=[table.physical_relation for table in command.snapshot.tables],
         parameter_names=list(parameter_values),
     )
     response.update({"sql": sql, "parameters": parameter_values, "guard": guard})

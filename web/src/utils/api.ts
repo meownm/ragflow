@@ -256,6 +256,7 @@ export default {
 
   // business documents
   businessDocuments: `${restAPIv1}/business-documents`,
+  businessDocumentCapabilities: `${restAPIv1}/business-documents/capabilities`,
   businessDocumentCatalog: `${restAPIv1}/business-documents/catalog`,
   businessDocumentSqlSchemaResolve: `${restAPIv1}/business-documents/sql-query/schema/resolve`,
   businessDocumentSqlSchemaEntities: `${restAPIv1}/business-documents/sql-query/schema/entities`,

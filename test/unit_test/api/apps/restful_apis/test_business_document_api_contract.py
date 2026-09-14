@@ -26,6 +26,7 @@ EXPECTED_ROUTES = {
     "publish_eva_business_document_change": ("/business-documents/eva/changes/<change_id>/publish", ("POST",)),
     "create_business_document": ("/business-documents", ("POST",)),
     "list_business_documents": ("/business-documents", ("GET",)),
+    "get_business_document_capabilities": ("/business-documents/capabilities", ("GET",)),
     "list_business_document_catalog": ("/business-documents/catalog", ("GET",)),
     "list_business_document_access_users": ("/business-documents/access/users", ("GET",)),
     "update_business_document_access_user": ("/business-documents/access/users/<user_id>", ("PATCH",)),
@@ -99,7 +100,10 @@ def test_mutating_routes_read_json_and_all_routes_map_domain_errors():
         handlers = [node for node in ast.walk(function) if isinstance(node, ast.ExceptHandler)]
         assert any(isinstance(handler.type, ast.Name) and handler.type.id == "BusinessDocumentError" for handler in handlers)
         assert "_error" in called_names
-        if name in {
+        if name == "get_business_document_capabilities":
+            assert "BusinessDocumentAccess" in called_names
+            assert "thread_pool_exec" not in called_names
+        elif name in {
             "resolve_business_document_sql_schema",
             "load_business_document_sql_schema_entities",
             "plan_business_document_sql_query",

@@ -450,5 +450,13 @@ def resolve_execution_profile(
             "decision": "user" if selected_id is not None else "automatic_exact",
             "profile": selected.to_public(),
             "bindings": [{"binding_id": binding.id, "version": binding.version} for binding in selected_bindings],
+            "relations": [
+                {
+                    "entity_id": table.id,
+                    "catalog_fqn": table.fqn,
+                    "physical_relation": table.physical_relation,
+                }
+                for table in command.snapshot.tables
+            ],
         },
     )

@@ -271,6 +271,9 @@ runtime_probes:
   - module: api.apps.business_documents.adapters.assignment
     symbols:
       assign_business_document: function
+  - module: api.apps.business_documents.authorization
+    symbols:
+      BusinessDocumentAccess: class
   - module: api.apps.business_documents.eva_changes
     symbols:
       EvaDocumentChangeService: class
@@ -335,6 +338,9 @@ runtime_probes:
   - path: /api/v1/business-documents
     methods: [GET]
     endpoint: list_business_documents
+  - path: /api/v1/business-documents/capabilities
+    methods: [GET]
+    endpoint: get_business_document_capabilities
   - path: /api/v1/business-documents/catalog
     methods: [GET]
     endpoint: list_business_document_catalog

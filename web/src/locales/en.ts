@@ -127,6 +127,7 @@ export default {
       memories: 'Memory',
       openMetadata: 'Catalog',
       businessDocuments: 'Business docs',
+      documentConstructor: 'Constructor',
       instruction: 'User guide',
       discord: 'Discord',
       github: 'GitHub',

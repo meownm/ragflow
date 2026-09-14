@@ -245,6 +245,28 @@ async def test_catalog_route_returns_the_service_projection(route_app, monkeypat
 
 @pytest.mark.p0
 @pytest.mark.asyncio
+async def test_capabilities_route_projects_role_without_listing_documents(route_app):
+    app, module = route_app
+    module.current_user.business_document_role = "AUTHOR_EDITOR"
+
+    response = await app.test_client().get("/business-documents/capabilities")
+
+    assert response.status_code == 200
+    assert (await response.get_json())["data"] == {
+        "access_role": "AUTHOR_EDITOR",
+        "capabilities": {
+            "read": True,
+            "create": False,
+            "edit_own": True,
+            "edit_all": False,
+            "delete": False,
+            "assign": False,
+        },
+    }
+
+
+@pytest.mark.p0
+@pytest.mark.asyncio
 async def test_sql_schema_route_passes_tenant_actor_role_and_payload(route_app, monkeypatch):
     app, module = route_app
     module.current_user.business_document_role = "MODERATOR_CREATOR"

@@ -1,4 +1,4 @@
-import { listBusinessDocuments } from '@/services/business-document-service';
+import { getBusinessDocumentCapabilities } from '@/services/business-document-service';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
@@ -14,7 +14,7 @@ jest.mock('@/hooks/use-user-setting-request', () => ({
   }),
 }));
 jest.mock('@/services/business-document-service', () => ({
-  listBusinessDocuments: jest.fn(),
+  getBusinessDocumentCapabilities: jest.fn(),
 }));
 jest.mock('./execution-registry-dialog', () => ({
   ExecutionRegistryDialog: () => (
@@ -22,7 +22,8 @@ jest.mock('./execution-registry-dialog', () => ({
   ),
 }));
 
-const mockedListBusinessDocuments = listBusinessDocuments as jest.Mock;
+const mockedGetBusinessDocumentCapabilities =
+  getBusinessDocumentCapabilities as jest.Mock;
 
 const storageKey = createDocumentConstructorStorageKey({
   userId: 'user-1',
@@ -45,12 +46,8 @@ function renderPage() {
 describe('DocumentConstructorPage', () => {
   beforeEach(() => {
     window.localStorage.clear();
-    mockedListBusinessDocuments.mockReset();
-    mockedListBusinessDocuments.mockResolvedValue({
-      items: [],
-      total: 0,
-      page: 1,
-      page_size: 20,
+    mockedGetBusinessDocumentCapabilities.mockReset();
+    mockedGetBusinessDocumentCapabilities.mockResolvedValue({
       access_role: 'AUTHOR_CREATOR',
       capabilities: {
         read: true,
@@ -76,10 +73,6 @@ describe('DocumentConstructorPage', () => {
       screen.getByText('Исходная формулировка запроса целиком'),
     ).toBeInTheDocument();
     expect(screen.getByText('Итоговый SQL-запрос целиком')).toBeInTheDocument();
-    expect(
-      screen.getByRole('link', { name: 'Вернуться к документам' }),
-    ).toHaveAttribute('href', '/business-documents');
-
     fireEvent.click(screen.getByRole('button', { name: 'Раздел' }));
     fireEvent.change(
       screen.getByRole('textbox', { name: 'Название раздела' }),
@@ -121,11 +114,7 @@ describe('DocumentConstructorPage', () => {
   });
 
   it('fails closed when the server does not grant create capability', async () => {
-    mockedListBusinessDocuments.mockResolvedValueOnce({
-      items: [],
-      total: 0,
-      page: 1,
-      page_size: 20,
+    mockedGetBusinessDocumentCapabilities.mockResolvedValueOnce({
       access_role: 'AUTHOR_EDITOR',
       capabilities: {
         read: true,
@@ -149,11 +138,7 @@ describe('DocumentConstructorPage', () => {
   });
 
   it('shows central SQL registry management only to an administrator', async () => {
-    mockedListBusinessDocuments.mockResolvedValueOnce({
-      items: [],
-      total: 0,
-      page: 1,
-      page_size: 20,
+    mockedGetBusinessDocumentCapabilities.mockResolvedValueOnce({
       access_role: 'ADMIN',
       capabilities: {
         read: true,

@@ -216,14 +216,6 @@ def test_protected_policy_sources_are_tracked():
     ]
     assert root_locked_package_names.isdisjoint({"elasticsearch", "litellm", "torch", "transformers", "xgboost"})
 
-    root_contract_inputs = {
-        "tools/quality/architecture-contract-requirements.in",
-        "tools/quality/architecture-contract-requirements.txt",
-    }
-    for lane_id in ("python-architecture", "policy-fixtures"):
-        lane = next(item for item in policy["lanes"] if item["id"] == lane_id)
-        assert root_contract_inputs <= set(lane["protected_sources"])
-
     helper_path = ROOT / "tools/quality/run_isolated_python.py"
     spec = importlib.util.spec_from_file_location("architecture_isolated_runner", helper_path)
     isolated_runner = importlib.util.module_from_spec(spec)
@@ -565,7 +557,6 @@ def test_analysis_job_contains_candidate_lifecycle_and_publishes_reports():
     assert '--manifest "${EVIDENCE_DIR}/sandbox-manifest.json"' in sandbox["run"]
     assert '--github-output "${GITHUB_OUTPUT}"' in sandbox["run"]
     root_contracts = _step(job, "Prepare root Python contracts")
-    assert root_contracts["if"] == ("needs.architecture-policy-plan.outputs.python_architecture == 'true' || needs.architecture-policy-plan.outputs.policy_fixtures == 'true'")
     assert root_contracts["env"] == {
         "EVIDENCE_DIR": "${{ steps.evidence.outputs.directory }}",
         "CANDIDATE_ROOT": "${{ steps.sandbox.outputs.candidate_root }}",

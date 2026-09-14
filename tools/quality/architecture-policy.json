@@ -220,6 +220,8 @@
       "protected_sources": [
         ".github/workflows/architecture.yml",
         "pyproject.toml",
+        "tools/quality/architecture-contract-requirements.in",
+        "tools/quality/architecture-contract-requirements.txt",
         "tools/quality/architecture-policy.json",
         "tools/quality/capture_inventory.py",
         "tools/quality/check_architecture_policy.py",

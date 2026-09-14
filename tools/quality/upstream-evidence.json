@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "verified_at": "2026-09-12T17:10:56.629121+00:00",
-  "head": "e2dc289fd1a3f9b4547096205174eea3a4127491",
+  "verified_at": "2026-09-14T06:42:49.407120+00:00",
+  "head": "dfe6bd314aa4fdacc75aa9ce0611a3e26d3d16bd",
   "official_commits": [
     {
       "sha": "cb93883f3f8c975eecb2fed81210effeb3bdb06f",
@@ -1871,36 +1871,94 @@
       }
     },
     {
-      "sha": "e2dc289fd1a3f9b4547096205174eea3a4127491",
+      "sha": "7843651969329f34accf537e902fa77c7720a4ff",
       "parents": [
-        "88c7a44f001705f0e7ab08b3c22f140fc866ba74"
+        "88c7a44f001705f0e7ab08b3c22f140fc866ba74",
+        "216d66ce0170fb4d0613ef48c13ebf171200917a"
       ],
-      "tree": "2ecaedcbf1d29b6f17d3753ff000d8e63cceaf83",
-      "committed_at": "2026-09-12T20:10:52+03:00",
-      "subject": "fix(ci): resolve PR merge ref race",
+      "tree": "26355ee9159a9bb1e37a95c461325af9c8995af3",
+      "committed_at": "2026-09-13T22:15:01+03:00",
+      "subject": "Merge pull request #31 from meownm/codex/t3-pr-merge-sha-race",
       "changes_from_first_parent": {
         ".github/workflows/architecture.yml": "M",
         "docs/develop/architecture-checks-ru.md": "M",
         "docs/develop/architecture-transition-ru.md": "M",
         "docs/develop/t3-architecture-policy-ru.md": "M",
+        "test/unit_test/tools/quality/test_architecture_workflow.py": "M",
+        "test/unit_test/tools/quality/test_resolve_pr_merge_ref.py": "A",
+        "tools/quality/architecture-policy.json": "M",
+        "tools/quality/core-changes.yaml": "M",
+        "tools/quality/file-inventory.json": "M",
+        "tools/quality/module-map.yaml": "M",
+        "tools/quality/resolve_pr_merge_ref.py": "A",
+        "tools/quality/upstream-evidence.json": "M"
+      }
+    },
+    {
+      "sha": "312c9ce8cd92163e42350537ecc906112f850017",
+      "parents": [
+        "7843651969329f34accf537e902fa77c7720a4ff",
+        "ea34a7e1a7ea9cec395f0fb8837051b68a880b56"
+      ],
+      "tree": "6429571487d975745cf0a7e4037e6cb6c95240cd",
+      "committed_at": "2026-09-14T07:57:54+03:00",
+      "subject": "Merge pull request #33 from meownm/codex/t3-fixture-closure-fix",
+      "changes_from_first_parent": {
+        "docs/develop/architecture-checks-ru.md": "M",
+        "docs/develop/architecture-transition-ru.md": "M",
+        "docs/develop/t3-architecture-policy-ru.md": "M",
+        "test/unit_test/tools/quality/test_check_architecture_policy.py": "M",
+        "test/unit_test/tools/quality/test_resolve_pr_merge_ref.py": "M",
+        "tools/quality/architecture-policy.json": "M",
+        "tools/quality/check_architecture_policy.py": "M",
+        "tools/quality/core-changes.yaml": "M",
+        "tools/quality/file-inventory.json": "M",
+        "tools/quality/resolve_pr_merge_ref.py": "M"
+      }
+    },
+    {
+      "sha": "63d5c38486278a116766e40f927baad5150c765b",
+      "parents": [
+        "312c9ce8cd92163e42350537ecc906112f850017"
+      ],
+      "tree": "cee2e410c66d44e6c1eddbee5001daa520a2e097",
+      "committed_at": "2026-09-14T09:23:30+03:00",
+      "subject": "fix(ci): materialize policy fixture contract inputs",
+      "changes_from_first_parent": {
+        "test/unit_test/tools/quality/test_architecture_workflow.py": "M",
+        "tools/quality/architecture-policy.json": "M",
+        "tools/quality/core-changes.yaml": "M",
+        "tools/quality/file-inventory.json": "M"
+      }
+    },
+    {
+      "sha": "dfe6bd314aa4fdacc75aa9ce0611a3e26d3d16bd",
+      "parents": [
+        "63d5c38486278a116766e40f927baad5150c765b"
+      ],
+      "tree": "e6cba0f49383ada413497c60bf9991598c31ca97",
+      "committed_at": "2026-09-14T09:42:39+03:00",
+      "subject": "test(quality): restore trusted architecture fixtures",
+      "changes_from_first_parent": {
         "test/unit_test/tools/quality/test_architecture_workflow.py": "M"
       }
     }
   ],
   "local_refs_only_no_fetch": [
-    "refs/remotes/origin/HEAD 88c7a44f001705f0e7ab08b3c22f140fc866ba74",
+    "refs/remotes/origin/HEAD 312c9ce8cd92163e42350537ecc906112f850017",
     "refs/remotes/origin/codex/fix-t3-ci-regressions-pr 7045e856a9905264044a3f47d32cef8ac7c0e2a6",
     "refs/remotes/origin/codex/t3-architecture-base-protocol 03c529786aae21db47855b8c1212ee1ace1e3ff1",
     "refs/remotes/origin/codex/t3-control-update d3a44c945c543463c0c9b707567c9cff93998772",
     "refs/remotes/origin/codex/t3-os-isolation b6f395c1507dd76ba7c310dad36c9dbe109087da",
     "refs/remotes/origin/codex/t4-business-document-assignment 0f050c78cd4e09518a602f22bfa606b1132319d8",
-    "refs/remotes/origin/main 88c7a44f001705f0e7ab08b3c22f140fc866ba74",
-    "refs/remotes/upstream/HEAD 1f5d33333a3ff67fda2aa302c843699e994453e3",
-    "refs/remotes/upstream/main 1f5d33333a3ff67fda2aa302c843699e994453e3",
+    "refs/remotes/origin/main 312c9ce8cd92163e42350537ecc906112f850017",
+    "refs/remotes/origin/pr-31-merge ae10b6f924dce8d49ef2736f8ad64ca3a4abb154",
+    "refs/remotes/upstream/HEAD b19a10fb70c64a2a0e29c4a3d20eaa90b969c3b9",
+    "refs/remotes/upstream/main b19a10fb70c64a2a0e29c4a3d20eaa90b969c3b9",
     "refs/remotes/upstream/main_backup 427e0540cab683a591a5f4a65a0b38bf9ee008b7"
   ],
   "graph_merge_base": "28ce77fe5f1e4301d3672221b509418d3c7acb77",
-  "baseline_diff_summary": "749 files changed, 162127 insertions(+), 2857 deletions(-)",
+  "baseline_diff_summary": "751 files changed, 164653 insertions(+), 2857 deletions(-)",
   "ancestry_only_merge": {
     "commit": "64f0bfdf0e724d006d61563a76964bf140bcfb4e",
     "first_parent": "268a5a9d60e19982ac329ec045d0ff9b0228b26b",

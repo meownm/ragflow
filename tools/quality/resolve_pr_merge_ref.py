@@ -20,7 +20,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 SUPPORTED_EVENT = "pull_request_target"
 SUPPORTED_SERVER_URL = "https://github.com"
 DEFAULT_DEADLINE_SECONDS = 120.0
@@ -60,7 +60,12 @@ class EventIdentity:
     event_name: str
     event_action: str
     pr_number: str
+    base_repository: str
+    base_ref: str
+    default_branch: str
     base_sha: str
+    workflow_sha: str
+    payload_base_sha: str
     head_sha: str
     payload_merge_sha: str
     run_id: str
@@ -146,9 +151,13 @@ def validate_identity(identity: EventIdentity) -> FailureReason | None:
         return FailureReason.INVALID_EVENT
     if not REPOSITORY_PATTERN.fullmatch(identity.repository):
         return FailureReason.INVALID_EVENT
+    if identity.base_repository != identity.repository:
+        return FailureReason.INVALID_EVENT
+    if not identity.base_ref or identity.base_ref != identity.default_branch:
+        return FailureReason.INVALID_EVENT
     if identity.server_url != SUPPORTED_SERVER_URL:
         return FailureReason.AUTH_UNSUPPORTED
-    if not _is_valid_sha(identity.base_sha) or not _is_valid_sha(identity.head_sha):
+    if not _is_valid_sha(identity.base_sha) or identity.workflow_sha != identity.base_sha or not _is_valid_sha(identity.payload_base_sha) or not _is_valid_sha(identity.head_sha):
         return FailureReason.INVALID_EVENT
     if not _is_valid_sha(identity.payload_merge_sha, allow_empty=True):
         return FailureReason.MALFORMED
@@ -606,6 +615,11 @@ def _payload_observation(identity: EventIdentity, candidate_sha: str | None) -> 
     return {"authority": "advisory", "relation_to_candidate": relation.value}
 
 
+def _base_payload_observation(identity: EventIdentity) -> dict[str, str]:
+    relation = PayloadRelation.MATCH if identity.payload_base_sha == identity.base_sha else PayloadRelation.DIFFERENT
+    return {"authority": "advisory", "relation_to_base": relation.value}
+
+
 def build_receipt(
     identity: EventIdentity,
     outcome: ResolutionOutcome,
@@ -633,6 +647,7 @@ def build_receipt(
             "object_format": OBJECT_FORMAT,
         },
         "identity": asdict(identity),
+        "base_payload_observation": _base_payload_observation(identity),
         "payload_observation": _payload_observation(identity, outcome.candidate_sha),
         "timing": {
             "deadline_seconds": deadline_seconds,
@@ -692,6 +707,8 @@ def verify_receipt(
         raise ValueError("receipt identity is invalid")
     if receipt.get("identity") != asdict(identity):
         raise ValueError("receipt identity mismatch")
+    if receipt.get("base_payload_observation") != _base_payload_observation(identity):
+        raise ValueError("receipt base payload observation mismatch")
     if receipt.get("payload_observation") != _payload_observation(identity, candidate_sha):
         raise ValueError("receipt payload observation mismatch")
     if receipt.get("resolver_source_sha256") != resolver_source_sha256:
@@ -743,7 +760,12 @@ def _identity_from_args(args: argparse.Namespace) -> EventIdentity:
         event_name=args.event_name,
         event_action=args.event_action,
         pr_number=args.pr_number,
+        base_repository=args.base_repository,
+        base_ref=args.base_ref,
+        default_branch=args.default_branch,
         base_sha=args.base_sha,
+        workflow_sha=args.workflow_sha,
+        payload_base_sha=args.payload_base_sha,
         head_sha=args.head_sha,
         payload_merge_sha=args.payload_merge_sha,
         run_id=args.run_id,
@@ -844,6 +866,7 @@ def _resolve_command(args: argparse.Namespace) -> int:
         args.github_output,
         {
             "sha": outcome.candidate_sha,
+            "base_sha": identity.base_sha,
             "receipt": str(args.receipt.absolute()),
             "receipt_sha256": receipt["receipt_payload_sha256"],
             "receipt_file_sha256": receipt_file_sha256,
@@ -876,7 +899,12 @@ def _add_identity_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--event-name", required=True)
     parser.add_argument("--event-action", required=True)
     parser.add_argument("--pr-number", required=True)
+    parser.add_argument("--base-repository", required=True)
+    parser.add_argument("--base-ref", required=True)
+    parser.add_argument("--default-branch", required=True)
     parser.add_argument("--base-sha", required=True)
+    parser.add_argument("--workflow-sha", required=True)
+    parser.add_argument("--payload-base-sha", required=True)
     parser.add_argument("--head-sha", required=True)
     parser.add_argument("--payload-merge-sha", default="")
     parser.add_argument("--run-id", required=True)

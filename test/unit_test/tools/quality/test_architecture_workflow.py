@@ -87,6 +87,11 @@ def _assert_required_workflow_controls(workflow: dict) -> None:
         "PR_NUMBER",
         "PR_HEAD_SHA",
         "PR_BASE_SHA",
+        "PR_PAYLOAD_BASE_SHA",
+        "PR_BASE_REPOSITORY",
+        "PR_BASE_REF",
+        "DEFAULT_BRANCH",
+        "WORKFLOW_SHA",
         "REPOSITORY",
         "SERVER_URL",
         "MERGE_GROUP_HEAD_SHA",
@@ -102,19 +107,32 @@ def _assert_required_workflow_controls(workflow: dict) -> None:
         '--checkout-repository "${GITHUB_WORKSPACE}"',
         '--receipt "${EVIDENCE_DIR}/identity-receipt.json"',
         '--github-output "${GITHUB_OUTPUT}"',
+        '--base-repository "${PR_BASE_REPOSITORY}"',
+        '--base-ref "${PR_BASE_REF}"',
+        '--default-branch "${DEFAULT_BRANCH}"',
+        '--workflow-sha "${WORKFLOW_SHA}"',
+        '--payload-base-sha "${PR_PAYLOAD_BASE_SHA}"',
         "--deadline-seconds 120",
         "--backoff-seconds 2",
         "candidate=$(git rev-parse HEAD)",
     ):
         assert required in candidate["run"]
     assert "ls-remote" not in candidate["run"]
+    assert candidate["env"]["PR_BASE_REPOSITORY"] == "${{ github.event.pull_request.base.repo.full_name }}"
+    assert candidate["env"]["PR_BASE_REF"] == "${{ github.event.pull_request.base.ref }}"
+    assert candidate["env"]["DEFAULT_BRANCH"] == "${{ github.event.repository.default_branch }}"
+    assert candidate["env"]["PR_BASE_SHA"] == "${{ github.sha }}"
+    assert candidate["env"]["PR_PAYLOAD_BASE_SHA"] == "${{ github.event.pull_request.base.sha }}"
+    assert candidate["env"]["WORKFLOW_SHA"] == "${{ github.workflow_sha }}"
     assert plan["outputs"]["candidate_sha"] == "${{ steps.candidate.outputs.sha }}"
+    assert plan["outputs"]["resolved_base_sha"] == "${{ steps.candidate.outputs.base_sha }}"
     assert plan["outputs"]["identity_receipt_sha256"] == "${{ steps.candidate.outputs.receipt_sha256 }}"
     assert plan["outputs"]["identity_receipt_file_sha256"] == "${{ steps.candidate.outputs.receipt_file_sha256 }}"
     assert plan["outputs"]["resolver_sha256"] == "${{ steps.candidate.outputs.resolver_sha256 }}"
 
     comparison = _step(plan, "Resolve comparison base")
     assert "PR_HEAD_SHA" in comparison["env"]
+    assert comparison["env"]["PR_BASE_SHA"] == "${{ steps.candidate.outputs.base_sha }}"
     assert 'git --no-replace-objects cat-file -p "${CANDIDATE_SHA}"' in comparison["run"]
     assert "${#parents[@]} -ne 2" in comparison["run"]
     assert "PR merge revision parents do not match the event base/head" in comparison["run"]
@@ -123,7 +141,7 @@ def _assert_required_workflow_controls(workflow: dict) -> None:
     assert checkouts["architecture-policy-plan"]["with"] == {
         "fetch-depth": 0,
         "persist-credentials": False,
-        "ref": "${{ github.event.pull_request.base.sha || github.event.merge_group.head_sha || github.sha }}",
+        "ref": "${{ github.sha }}",
     }
     for job_id in ("architecture-policy-analysis", "architecture-policy"):
         assert checkouts[job_id]["with"] == {
@@ -138,10 +156,22 @@ def _assert_required_workflow_controls(workflow: dict) -> None:
     assert "${#parents[@]} -ne 2" in final_comparison["run"]
     assert "PR merge revision parents do not match the event base/head" in final_comparison["run"]
     analysis_evidence = _step(jobs["architecture-policy-analysis"], "Create fresh analysis directory")
+    assert analysis_evidence["env"]["PR_BASE_SHA"] == "${{ needs.architecture-policy-plan.outputs.resolved_base_sha }}"
+    assert analysis_evidence["env"]["PR_BASE_REPOSITORY"] == "${{ github.event.pull_request.base.repo.full_name }}"
+    assert analysis_evidence["env"]["PR_BASE_REF"] == "${{ github.event.pull_request.base.ref }}"
+    assert analysis_evidence["env"]["DEFAULT_BRANCH"] == "${{ github.event.repository.default_branch }}"
+    assert analysis_evidence["env"]["PR_PAYLOAD_BASE_SHA"] == "${{ github.event.pull_request.base.sha }}"
+    assert analysis_evidence["env"]["WORKFLOW_SHA"] == "${{ github.workflow_sha }}"
     assert "verify-receipt" in analysis_evidence["run"]
     assert "identity-receipt.json" in analysis_evidence["run"]
     assert "Analysis resolver source digest does not match the trusted plan" in analysis_evidence["run"]
     assert "verify-receipt" in final_comparison["run"]
+    assert final_comparison["env"]["PR_BASE_SHA"] == "${{ needs.architecture-policy-plan.outputs.resolved_base_sha }}"
+    assert final_comparison["env"]["PR_BASE_REPOSITORY"] == "${{ github.event.pull_request.base.repo.full_name }}"
+    assert final_comparison["env"]["PR_BASE_REF"] == "${{ github.event.pull_request.base.ref }}"
+    assert final_comparison["env"]["DEFAULT_BRANCH"] == "${{ github.event.repository.default_branch }}"
+    assert final_comparison["env"]["PR_PAYLOAD_BASE_SHA"] == "${{ github.event.pull_request.base.sha }}"
+    assert final_comparison["env"]["WORKFLOW_SHA"] == "${{ github.workflow_sha }}"
     assert "Analysis identity receipt does not match the trusted plan" in final_comparison["run"]
     assert "Final resolver source digest does not match the trusted plan" in final_comparison["run"]
 
@@ -347,7 +377,7 @@ def test_workflow_uses_base_policy_as_authoritative_when_protocol_is_available()
     checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))
     assert checkout["with"]["fetch-depth"] == 0
     assert checkout["with"]["persist-credentials"] is False
-    assert checkout["with"]["ref"] == "${{ github.event.pull_request.base.sha || github.event.merge_group.head_sha || github.sha }}"
+    assert checkout["with"]["ref"] == "${{ github.sha }}"
     assert ACTION_REFS["astral-sh/setup-uv"] in {step.get("uses") for step in job["steps"]}
 
     candidate = _step(job, "Resolve candidate revision")
@@ -360,6 +390,11 @@ def test_workflow_uses_base_policy_as_authoritative_when_protocol_is_available()
         "PR_NUMBER",
         "PR_HEAD_SHA",
         "PR_BASE_SHA",
+        "PR_PAYLOAD_BASE_SHA",
+        "PR_BASE_REPOSITORY",
+        "PR_BASE_REF",
+        "DEFAULT_BRANCH",
+        "WORKFLOW_SHA",
         "REPOSITORY",
         "SERVER_URL",
         "MERGE_GROUP_HEAD_SHA",
@@ -374,7 +409,11 @@ def test_workflow_uses_base_policy_as_authoritative_when_protocol_is_available()
     assert "tools/quality/resolve_pr_merge_ref.py resolve" in candidate["run"]
     assert "--deadline-seconds 120 --backoff-seconds 2" in candidate["run"]
     assert '--checkout-repository "${GITHUB_WORKSPACE}"' in candidate["run"]
+    assert candidate["env"]["PR_BASE_SHA"] == "${{ github.sha }}"
+    assert candidate["env"]["PR_PAYLOAD_BASE_SHA"] == "${{ github.event.pull_request.base.sha }}"
+    assert candidate["env"]["WORKFLOW_SHA"] == "${{ github.workflow_sha }}"
     assert job["outputs"]["candidate_sha"] == "${{ steps.candidate.outputs.sha }}"
+    assert job["outputs"]["resolved_base_sha"] == "${{ steps.candidate.outputs.base_sha }}"
     assert job["outputs"]["identity_receipt_sha256"] == "${{ steps.candidate.outputs.receipt_sha256 }}"
 
     comparison_step = _step(job, "Resolve comparison base")
@@ -386,6 +425,7 @@ def test_workflow_uses_base_policy_as_authoritative_when_protocol_is_available()
         "MERGE_GROUP_BASE_SHA",
         "PUSH_BEFORE_SHA",
     }
+    assert comparison_step["env"]["PR_BASE_SHA"] == "${{ steps.candidate.outputs.base_sha }}"
     assert "pull_request_target)" in comparison_step["run"]
     assert "merge_group)" in comparison_step["run"]
     assert "Candidate checkout does not match the planned revision" in comparison_step["run"]
@@ -451,6 +491,30 @@ def test_workflow_rejects_enforcement_downgrades():
             "tools/quality/trust_payload_only.py resolve",
         )
 
+    def trust_stale_payload_base_sha(workflow: dict) -> None:
+        step = _step(workflow["jobs"]["architecture-policy-plan"], "Resolve candidate revision")
+        step["env"]["PR_BASE_SHA"] = "${{ github.event.pull_request.base.sha }}"
+
+    def detach_resolver_from_workflow_sha(workflow: dict) -> None:
+        step = _step(workflow["jobs"]["architecture-policy-plan"], "Resolve candidate revision")
+        step["env"]["WORKFLOW_SHA"] = "${{ github.event.pull_request.base.sha }}"
+
+    def self_declare_default_branch(workflow: dict) -> None:
+        step = _step(workflow["jobs"]["architecture-policy-plan"], "Resolve candidate revision")
+        step["env"]["DEFAULT_BRANCH"] = "${{ github.event.pull_request.base.ref }}"
+
+    def use_candidate_base_context_downstream(workflow: dict) -> None:
+        step = _step(workflow["jobs"]["architecture-policy-analysis"], "Create fresh analysis directory")
+        step["env"]["PR_BASE_REF"] = "${{ github.event.pull_request.head.ref }}"
+
+    def use_payload_base_downstream(workflow: dict) -> None:
+        for job_id, step_name in (
+            ("architecture-policy-analysis", "Create fresh analysis directory"),
+            ("architecture-policy", "Resolve and verify comparison base"),
+        ):
+            step = _step(workflow["jobs"][job_id], step_name)
+            step["env"]["PR_BASE_SHA"] = "${{ github.event.pull_request.base.sha }}"
+
     def omit_downstream_receipt_verification(workflow: dict) -> None:
         step = _step(workflow["jobs"]["architecture-policy"], "Resolve and verify comparison base")
         step["run"] = step["run"].replace("verify-receipt", "trust-receipt")
@@ -472,6 +536,11 @@ def test_workflow_rejects_enforcement_downgrades():
         "persisted checkout credentials": persist_checkout_credentials,
         "unbound final event SHA": use_unbound_event_sha,
         "payload-only PR merge SHA": trust_payload_merge_sha_without_remote_resolution,
+        "payload PR base SHA": trust_stale_payload_base_sha,
+        "workflow SHA detached from base": detach_resolver_from_workflow_sha,
+        "self-declared default branch": self_declare_default_branch,
+        "candidate base context downstream": use_candidate_base_context_downstream,
+        "payload base used downstream": use_payload_base_downstream,
         "unbound PR merge parents": omit_pr_merge_parent_binding,
         "unverified downstream receipt": omit_downstream_receipt_verification,
     }
@@ -513,6 +582,11 @@ def test_analysis_job_contains_candidate_lifecycle_and_publishes_reports():
         "PR_NUMBER",
         "PR_HEAD_SHA",
         "PR_BASE_SHA",
+        "PR_PAYLOAD_BASE_SHA",
+        "PR_BASE_REPOSITORY",
+        "PR_BASE_REF",
+        "DEFAULT_BRANCH",
+        "WORKFLOW_SHA",
         "REPOSITORY",
         "SERVER_URL",
         "RUN_ID",
@@ -523,6 +597,7 @@ def test_analysis_job_contains_candidate_lifecycle_and_publishes_reports():
         "RESOLVER_SHA256",
     }
     assert evidence["env"]["CANDIDATE_SHA"] == "${{ needs.architecture-policy-plan.outputs.candidate_sha }}"
+    assert evidence["env"]["PR_BASE_SHA"] == "${{ needs.architecture-policy-plan.outputs.resolved_base_sha }}"
     assert evidence["env"]["RECEIPT_SHA256"] == "${{ needs.architecture-policy-plan.outputs.identity_receipt_sha256 }}"
     assert "Analysis checkout does not match the planned revision" in evidence["run"]
     assert "Analysis comparison base does not match the event identity" in evidence["run"]
@@ -642,6 +717,11 @@ def test_final_aggregate_runs_on_fresh_trusted_job():
         "PR_MERGE_SHA",
         "PR_NUMBER",
         "PR_BASE_SHA",
+        "PR_PAYLOAD_BASE_SHA",
+        "PR_BASE_REPOSITORY",
+        "PR_BASE_REF",
+        "DEFAULT_BRANCH",
+        "WORKFLOW_SHA",
         "PR_HEAD_SHA",
         "REPOSITORY",
         "SERVER_URL",
@@ -655,6 +735,7 @@ def test_final_aggregate_runs_on_fresh_trusted_job():
         "PLANNED_BASE",
         "EVIDENCE_DIR",
     }
+    assert comparison_step["env"]["PR_BASE_SHA"] == "${{ needs.architecture-policy-plan.outputs.resolved_base_sha }}"
     assert "pull_request_target)" in comparison_step["run"]
     assert "merge_group)" in comparison_step["run"]
     assert "Final checkout does not match the planned revision" in comparison_step["run"]

@@ -56,7 +56,12 @@ def _identity(**overrides: str) -> EventIdentity:
         "event_name": "pull_request_target",
         "event_action": "opened",
         "pr_number": "31",
+        "base_repository": "meownm/ragflow",
+        "base_ref": "main",
+        "default_branch": "main",
         "base_sha": BASE_SHA,
+        "workflow_sha": BASE_SHA,
+        "payload_base_sha": BASE_SHA,
         "head_sha": HEAD_SHA,
         "payload_merge_sha": "",
         "run_id": "34705977822",
@@ -423,6 +428,37 @@ def test_stable_ref_with_stale_payload_is_accepted_and_recorded_as_advisory(tmp_
     )
 
 
+def test_current_default_branch_base_overrides_stale_payload_base_as_advisory(tmp_path: Path) -> None:
+    identity = _identity(event_action="synchronize", payload_base_sha=OTHER_SHA)
+    transport = ScriptedTransport(reads=[MERGE_SHA, MERGE_SHA], fetches=[_commit()])
+
+    outcome = _resolve(transport, identity=identity)
+
+    assert outcome.accepted
+    receipt = build_receipt(
+        identity,
+        outcome,
+        resolver_source_sha256="a" * 64,
+        deadline_seconds=DEFAULT_DEADLINE_SECONDS,
+        backoff_seconds=DEFAULT_BACKOFF_SECONDS,
+        checkout_status="verified",
+    )
+    assert receipt["base_payload_observation"] == {
+        "authority": "advisory",
+        "relation_to_base": "DIFFERENT",
+    }
+    path = tmp_path / "identity-receipt.json"
+    file_digest = write_receipt_atomic(path, receipt)
+    verify_receipt(
+        path,
+        identity=identity,
+        candidate_sha=MERGE_SHA,
+        resolver_source_sha256="a" * 64,
+        receipt_payload_sha256=receipt["receipt_payload_sha256"],
+        receipt_file_sha256=file_digest,
+    )
+
+
 @pytest.mark.parametrize(
     "remote_output",
     [
@@ -527,9 +563,14 @@ def test_git_failure_classification_is_fail_closed(stderr: str, error_type: type
         ("pr_number", "0", FailureReason.INVALID_EVENT),
         ("pr_number", "31/merge", FailureReason.INVALID_EVENT),
         ("repository", "https://attacker.invalid/repo", FailureReason.INVALID_EVENT),
+        ("base_repository", "attacker/repo", FailureReason.INVALID_EVENT),
+        ("base_ref", "release", FailureReason.INVALID_EVENT),
+        ("default_branch", "trunk", FailureReason.INVALID_EVENT),
         ("server_url", "http://github.com", FailureReason.AUTH_UNSUPPORTED),
         ("server_url", "https://github.example", FailureReason.AUTH_UNSUPPORTED),
         ("base_sha", "0" * 40, FailureReason.INVALID_EVENT),
+        ("workflow_sha", OTHER_SHA, FailureReason.INVALID_EVENT),
+        ("payload_base_sha", "short", FailureReason.INVALID_EVENT),
         ("head_sha", "short", FailureReason.INVALID_EVENT),
         ("run_id", "0", FailureReason.INVALID_EVENT),
         ("run_attempt", "latest", FailureReason.INVALID_EVENT),
@@ -622,7 +663,12 @@ def _mutant_identity(module: ModuleType, **overrides: str):
         "event_name": "pull_request_target",
         "event_action": "opened",
         "pr_number": "31",
+        "base_repository": "meownm/ragflow",
+        "base_ref": "main",
+        "default_branch": "main",
         "base_sha": BASE_SHA,
+        "workflow_sha": BASE_SHA,
+        "payload_base_sha": BASE_SHA,
         "head_sha": HEAD_SHA,
         "payload_merge_sha": "",
         "run_id": "34705977822",
@@ -779,6 +825,10 @@ def test_receipt_binds_identity_attempts_source_and_checkout(tmp_path: Path) -> 
         "authority": "advisory",
         "relation_to_candidate": "ABSENT",
     }
+    assert receipt["base_payload_observation"] == {
+        "authority": "advisory",
+        "relation_to_base": "MATCH",
+    }
 
 
 def test_receipt_distinguishes_contract_failure_from_incomplete_availability() -> None:
@@ -814,6 +864,8 @@ def test_receipt_distinguishes_contract_failure_from_incomplete_availability() -
         lambda receipt: receipt["attempts"][-1].__setitem__("r2", OTHER_SHA),
         lambda receipt: receipt["attempts"][-1].__setitem__("parents", [HEAD_SHA, BASE_SHA]),
         lambda receipt: receipt["checkout"].__setitem__("plan", "not_attempted"),
+        lambda receipt: receipt["base_payload_observation"].__setitem__("authority", "trusted"),
+        lambda receipt: receipt["base_payload_observation"].__setitem__("relation_to_base", "DIFFERENT"),
         lambda receipt: receipt["payload_observation"].__setitem__("authority", "trusted"),
         lambda receipt: receipt["payload_observation"].__setitem__("relation_to_candidate", "MATCH"),
         lambda receipt: receipt.__setitem__("resolver_source_sha256", "b" * 64),
@@ -824,6 +876,8 @@ def test_receipt_distinguishes_contract_failure_from_incomplete_availability() -
         "double-read",
         "parents",
         "checkout",
+        "base-payload-authority",
+        "base-payload-relation",
         "payload-authority",
         "payload-relation",
         "source",
@@ -919,7 +973,13 @@ def _local_merge_remote(tmp_path: Path) -> tuple[Path, Path, EventIdentity, str]
     _git(remote, "symbolic-ref", "HEAD", "refs/heads/main")
     checkout = tmp_path / "checkout"
     _git(tmp_path, "clone", "--quiet", str(remote), str(checkout))
-    identity = _identity(base_sha=base_sha, head_sha=head_sha, payload_merge_sha=merge_sha)
+    identity = _identity(
+        base_sha=base_sha,
+        workflow_sha=base_sha,
+        payload_base_sha=base_sha,
+        head_sha=head_sha,
+        payload_merge_sha=merge_sha,
+    )
     return remote, checkout, identity, merge_sha
 
 
@@ -1094,8 +1154,18 @@ def _cli_identity_arguments(identity: EventIdentity) -> list[str]:
         identity.event_action,
         "--pr-number",
         identity.pr_number,
+        "--base-repository",
+        identity.base_repository,
+        "--base-ref",
+        identity.base_ref,
+        "--default-branch",
+        identity.default_branch,
         "--base-sha",
         identity.base_sha,
+        "--workflow-sha",
+        identity.workflow_sha,
+        "--payload-base-sha",
+        identity.payload_base_sha,
         "--head-sha",
         identity.head_sha,
         "--payload-merge-sha",
@@ -1140,6 +1210,7 @@ def test_cli_publishes_only_a_verified_checkout_and_receipt(tmp_path: Path, monk
     assert exit_code == 0
     outputs = dict(line.split("=", 1) for line in github_output.read_text(encoding="utf-8").splitlines())
     assert outputs["sha"] == merge_sha
+    assert outputs["base_sha"] == identity.base_sha
     assert _git(checkout, "rev-parse", "HEAD") == merge_sha
     assert (
         main(

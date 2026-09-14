@@ -21,6 +21,7 @@ jobs:
     timeout-minutes: 15
     outputs:
       candidate_sha: ${{ steps.candidate.outputs.sha }}
+      resolved_base_sha: ${{ steps.candidate.outputs.base_sha }}
       identity_receipt_sha256: ${{ steps.candidate.outputs.receipt_sha256 }}
       identity_receipt_file_sha256: ${{ steps.candidate.outputs.receipt_file_sha256 }}
       resolver_sha256: ${{ steps.candidate.outputs.resolver_sha256 }}
@@ -53,7 +54,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: ${{ github.event.pull_request.base.sha || github.event.merge_group.head_sha || github.sha }}
+          ref: ${{ github.sha }}
 
       - name: Resolve candidate revision
         id: candidate
@@ -64,7 +65,12 @@ jobs:
           PR_MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BASE_SHA: ${{ github.sha }}
+          PR_PAYLOAD_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BASE_REPOSITORY: ${{ github.event.pull_request.base.repo.full_name }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
           REPOSITORY: ${{ github.repository }}
           SERVER_URL: ${{ github.server_url }}
           MERGE_GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
@@ -79,7 +85,10 @@ jobs:
               python3 -B tools/quality/resolve_pr_merge_ref.py resolve \
                 --repository "${REPOSITORY}" --server-url "${SERVER_URL}" \
                 --event-name "${EVENT_NAME}" --event-action "${EVENT_ACTION}" \
-                --pr-number "${PR_NUMBER}" --base-sha "${PR_BASE_SHA}" --head-sha "${PR_HEAD_SHA}" \
+                --pr-number "${PR_NUMBER}" --base-repository "${PR_BASE_REPOSITORY}" \
+                --base-ref "${PR_BASE_REF}" --default-branch "${DEFAULT_BRANCH}" \
+                --base-sha "${PR_BASE_SHA}" --workflow-sha "${WORKFLOW_SHA}" \
+                --payload-base-sha "${PR_PAYLOAD_BASE_SHA}" --head-sha "${PR_HEAD_SHA}" \
                 --payload-merge-sha "${PR_MERGE_SHA}" --run-id "${RUN_ID}" --run-attempt "${RUN_ATTEMPT}" \
                 --repository-dir "${resolver_repository}" --checkout-repository "${GITHUB_WORKSPACE}" \
                 --receipt "${EVIDENCE_DIR}/identity-receipt.json" --github-output "${GITHUB_OUTPUT}" \
@@ -117,7 +126,7 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           CANDIDATE_SHA: ${{ steps.candidate.outputs.sha }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BASE_SHA: ${{ steps.candidate.outputs.base_sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
           PUSH_BEFORE_SHA: ${{ github.event.before }}
@@ -275,7 +284,12 @@ jobs:
           PR_MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BASE_SHA: ${{ needs.architecture-policy-plan.outputs.resolved_base_sha }}
+          PR_PAYLOAD_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BASE_REPOSITORY: ${{ github.event.pull_request.base.repo.full_name }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
           REPOSITORY: ${{ github.repository }}
           SERVER_URL: ${{ github.server_url }}
           RUN_ID: ${{ github.run_id }}
@@ -319,7 +333,10 @@ jobs:
             python3 -B "${trusted_resolver}" verify-receipt \
               --repository "${REPOSITORY}" --server-url "${SERVER_URL}" \
               --event-name "${EVENT_NAME}" --event-action "${EVENT_ACTION}" \
-              --pr-number "${PR_NUMBER}" --base-sha "${PR_BASE_SHA}" --head-sha "${PR_HEAD_SHA}" \
+              --pr-number "${PR_NUMBER}" --base-repository "${PR_BASE_REPOSITORY}" \
+              --base-ref "${PR_BASE_REF}" --default-branch "${DEFAULT_BRANCH}" \
+              --base-sha "${PR_BASE_SHA}" --workflow-sha "${WORKFLOW_SHA}" \
+              --payload-base-sha "${PR_PAYLOAD_BASE_SHA}" --head-sha "${PR_HEAD_SHA}" \
               --payload-merge-sha "${PR_MERGE_SHA}" --run-id "${RUN_ID}" --run-attempt "${RUN_ATTEMPT}" \
               --receipt "${receipt}" --candidate-sha "${CANDIDATE_SHA}" \
               --resolver-sha256 "${RESOLVER_SHA256}" --receipt-sha256 "${RECEIPT_SHA256}" \
@@ -616,7 +633,12 @@ jobs:
           CANDIDATE_SHA: ${{ needs.architecture-policy-plan.outputs.candidate_sha }}
           PR_MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BASE_SHA: ${{ needs.architecture-policy-plan.outputs.resolved_base_sha }}
+          PR_PAYLOAD_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_BASE_REPOSITORY: ${{ github.event.pull_request.base.repo.full_name }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           REPOSITORY: ${{ github.repository }}
           SERVER_URL: ${{ github.server_url }}
@@ -660,7 +682,10 @@ jobs:
                 python3 -B "${trusted_resolver}" verify-receipt \
                   --repository "${REPOSITORY}" --server-url "${SERVER_URL}" \
                   --event-name "${EVENT_NAME}" --event-action "${EVENT_ACTION}" \
-                  --pr-number "${PR_NUMBER}" --base-sha "${PR_BASE_SHA}" --head-sha "${PR_HEAD_SHA}" \
+                  --pr-number "${PR_NUMBER}" --base-repository "${PR_BASE_REPOSITORY}" \
+                  --base-ref "${PR_BASE_REF}" --default-branch "${DEFAULT_BRANCH}" \
+                  --base-sha "${PR_BASE_SHA}" --workflow-sha "${WORKFLOW_SHA}" \
+                  --payload-base-sha "${PR_PAYLOAD_BASE_SHA}" --head-sha "${PR_HEAD_SHA}" \
                   --payload-merge-sha "${PR_MERGE_SHA}" --run-id "${RUN_ID}" --run-attempt "${RUN_ATTEMPT}" \
                   --receipt "${receipt}" --candidate-sha "${CANDIDATE_SHA}" \
                   --resolver-sha256 "${RESOLVER_SHA256}" --receipt-sha256 "${RECEIPT_SHA256}" \

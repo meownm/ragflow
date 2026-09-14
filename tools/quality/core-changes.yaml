@@ -1,6 +1,6 @@
 schema_version: 1
 upstream_base: cb93883f3f8c975eecb2fed81210effeb3bdb06f
-head: dfe6bd314aa4fdacc75aa9ce0611a3e26d3d16bd
+head: 278497bced14c5146eb0be19bb0fa1eb72976279
 changes:
 - id: CORE-eva-integration
   owner: fork-maintainer

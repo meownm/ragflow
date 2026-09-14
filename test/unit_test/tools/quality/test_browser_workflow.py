@@ -1,5 +1,8 @@
 """Execute the actual workflow identity/gate scripts with disposable artifacts."""
 
+# T3 post-integration v2 probe: this classified test-only delta must pass the
+# integrated trusted-base gate before the event and negative acceptance matrix.
+
 import hashlib
 import ast
 import json

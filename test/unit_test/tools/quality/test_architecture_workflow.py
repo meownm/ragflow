@@ -118,6 +118,9 @@ def _assert_required_workflow_controls(workflow: dict) -> None:
     ):
         assert required in candidate["run"]
     assert "ls-remote" not in candidate["run"]
+    assert candidate["env"]["PR_BASE_REPOSITORY"] == "${{ github.event.pull_request.base.repo.full_name }}"
+    assert candidate["env"]["PR_BASE_REF"] == "${{ github.event.pull_request.base.ref }}"
+    assert candidate["env"]["DEFAULT_BRANCH"] == "${{ github.event.repository.default_branch }}"
     assert candidate["env"]["PR_BASE_SHA"] == "${{ github.sha }}"
     assert candidate["env"]["PR_PAYLOAD_BASE_SHA"] == "${{ github.event.pull_request.base.sha }}"
     assert candidate["env"]["WORKFLOW_SHA"] == "${{ github.workflow_sha }}"
@@ -154,11 +157,21 @@ def _assert_required_workflow_controls(workflow: dict) -> None:
     assert "PR merge revision parents do not match the event base/head" in final_comparison["run"]
     analysis_evidence = _step(jobs["architecture-policy-analysis"], "Create fresh analysis directory")
     assert analysis_evidence["env"]["PR_BASE_SHA"] == "${{ needs.architecture-policy-plan.outputs.resolved_base_sha }}"
+    assert analysis_evidence["env"]["PR_BASE_REPOSITORY"] == "${{ github.event.pull_request.base.repo.full_name }}"
+    assert analysis_evidence["env"]["PR_BASE_REF"] == "${{ github.event.pull_request.base.ref }}"
+    assert analysis_evidence["env"]["DEFAULT_BRANCH"] == "${{ github.event.repository.default_branch }}"
+    assert analysis_evidence["env"]["PR_PAYLOAD_BASE_SHA"] == "${{ github.event.pull_request.base.sha }}"
+    assert analysis_evidence["env"]["WORKFLOW_SHA"] == "${{ github.workflow_sha }}"
     assert "verify-receipt" in analysis_evidence["run"]
     assert "identity-receipt.json" in analysis_evidence["run"]
     assert "Analysis resolver source digest does not match the trusted plan" in analysis_evidence["run"]
     assert "verify-receipt" in final_comparison["run"]
     assert final_comparison["env"]["PR_BASE_SHA"] == "${{ needs.architecture-policy-plan.outputs.resolved_base_sha }}"
+    assert final_comparison["env"]["PR_BASE_REPOSITORY"] == "${{ github.event.pull_request.base.repo.full_name }}"
+    assert final_comparison["env"]["PR_BASE_REF"] == "${{ github.event.pull_request.base.ref }}"
+    assert final_comparison["env"]["DEFAULT_BRANCH"] == "${{ github.event.repository.default_branch }}"
+    assert final_comparison["env"]["PR_PAYLOAD_BASE_SHA"] == "${{ github.event.pull_request.base.sha }}"
+    assert final_comparison["env"]["WORKFLOW_SHA"] == "${{ github.workflow_sha }}"
     assert "Analysis identity receipt does not match the trusted plan" in final_comparison["run"]
     assert "Final resolver source digest does not match the trusted plan" in final_comparison["run"]
 
@@ -486,6 +499,14 @@ def test_workflow_rejects_enforcement_downgrades():
         step = _step(workflow["jobs"]["architecture-policy-plan"], "Resolve candidate revision")
         step["env"]["WORKFLOW_SHA"] = "${{ github.event.pull_request.base.sha }}"
 
+    def self_declare_default_branch(workflow: dict) -> None:
+        step = _step(workflow["jobs"]["architecture-policy-plan"], "Resolve candidate revision")
+        step["env"]["DEFAULT_BRANCH"] = "${{ github.event.pull_request.base.ref }}"
+
+    def use_candidate_base_context_downstream(workflow: dict) -> None:
+        step = _step(workflow["jobs"]["architecture-policy-analysis"], "Create fresh analysis directory")
+        step["env"]["PR_BASE_REF"] = "${{ github.event.pull_request.head.ref }}"
+
     def use_payload_base_downstream(workflow: dict) -> None:
         for job_id, step_name in (
             ("architecture-policy-analysis", "Create fresh analysis directory"),
@@ -517,6 +538,8 @@ def test_workflow_rejects_enforcement_downgrades():
         "payload-only PR merge SHA": trust_payload_merge_sha_without_remote_resolution,
         "payload PR base SHA": trust_stale_payload_base_sha,
         "workflow SHA detached from base": detach_resolver_from_workflow_sha,
+        "self-declared default branch": self_declare_default_branch,
+        "candidate base context downstream": use_candidate_base_context_downstream,
         "payload base used downstream": use_payload_base_downstream,
         "unbound PR merge parents": omit_pr_merge_parent_binding,
         "unverified downstream receipt": omit_downstream_receipt_verification,

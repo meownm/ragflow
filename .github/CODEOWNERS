@@ -1,0 +1,4 @@
+# Solo-maintainer ownership metadata. GitHub cannot count an author's self-review,
+# so the active solo ruleset requires zero approvals and enforcement is provided
+# by the required architecture-policy check.
+* @meownm

@@ -302,6 +302,7 @@ class ArchitecturePolicyTests(unittest.TestCase):
 
     def test_producer_and_control_paths_select_their_own_lanes(self):
         cases = {
+            ".github/CODEOWNERS": "policy-fixtures",
             ".github/workflows/candidate-spoof.yml": "policy-fixtures",
             "services/asr-online-service/architecture-contract-requirements.in": "python-architecture",
             "services/asr-online-service/architecture-contract-requirements.txt": "python-architecture",

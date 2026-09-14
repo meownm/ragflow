@@ -218,6 +218,7 @@
       "tool": "check_architecture_policy",
       "rules": ["POL-01", "POL-02", "TEST-01"],
       "protected_sources": [
+        ".github/CODEOWNERS",
         ".github/workflows/architecture.yml",
         "pyproject.toml",
         "tools/quality/architecture-contract-requirements.in",
@@ -395,6 +396,7 @@
         "paths": [
           "AGENTS.md",
           "CLAUDE.md",
+          ".github/CODEOWNERS",
           ".github/workflows/architecture.yml",
           "pyproject.toml",
           "uv.lock"

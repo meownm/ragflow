@@ -10,11 +10,7 @@ permissions:
 jobs:
   duplicate:
     name: architecture-policy
+    if: ${{ false }}
     runs-on: ubuntu-latest
-    timeout-minutes: 3
     steps:
-      - name: Complete after the trusted negative check
-        shell: bash
-        run: |
-          sleep 50
-          echo "Disposable duplicate context probe only; never merge this branch."
+      - run: echo "This disposable duplicate must remain skipped."

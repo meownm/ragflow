@@ -51,6 +51,7 @@ import {
   FileClock,
   FilePenLine,
   FilePlus2,
+  LayoutTemplate,
   Link2,
   LoaderCircle,
   RefreshCw,
@@ -266,13 +267,26 @@ function CreateBusinessDocumentPage() {
       className="grid h-full min-h-0 grid-rows-[auto_1fr] bg-bg-base"
       data-testid="business-documents-create"
     >
-      <header className="border-b border-border-button px-6 py-5 lg:px-8">
-        <h1 className="text-2xl font-semibold tracking-tight text-text-primary">
-          Рабочие документы
-        </h1>
-        <p className="mt-1 text-sm text-text-secondary">
-          Продолжите сохранённую работу или начните новые бизнес-требования.
-        </p>
+      <header className="flex flex-wrap items-center justify-between gap-4 border-b border-border-button px-6 py-5 lg:px-8">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-text-primary">
+            Рабочие документы
+          </h1>
+          <p className="mt-1 text-sm text-text-secondary">
+            Продолжите сохранённую работу или начните новые бизнес-требования.
+          </p>
+        </div>
+        {canCreate && (
+          <Button asChild variant="outline">
+            <Link
+              to={Routes.DocumentConstructor}
+              data-testid="open-document-constructor"
+            >
+              <LayoutTemplate className="size-4" />
+              Конструктор
+            </Link>
+          </Button>
+        )}
       </header>
 
       <div

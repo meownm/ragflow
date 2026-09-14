@@ -101,12 +101,12 @@ class BrowserWorkflowTests(unittest.TestCase):
             ET.SubElement(suite, "testcase", classname=path.removesuffix(".py").replace("/", "."), name=name)
         return ET.ElementTree(root)
 
-    def test_expected_inventory_is_independent_and_covers_current_six_suites(self):
-        self.assertEqual(len(self.mandatory), 52)
+    def test_expected_inventory_is_independent_and_covers_current_seven_suites(self):
+        self.assertEqual(len(self.mandatory), 56)
         parsed = ast.parse((ROOT / "test/run_browser_regression.py").read_text())
         suites = next(ast.literal_eval(node.value) for node in parsed.body if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "SUITES" for target in node.targets))
         self.assertEqual({node.split("::", 1)[0] for node in self.mandatory}, set(suites))
-        self.assertEqual(len(suites), 6)
+        self.assertEqual(len(suites), 7)
 
     def test_actual_artifact_verifier_and_gate_accept_complete_evidence(self):
         self.verify()
@@ -205,7 +205,7 @@ class BrowserWorkflowTests(unittest.TestCase):
                     if change == "extra":
                         clone.set("name", "test_unexpected")
                     suite.append(clone)
-                    suite.set("tests", "52")
+                    suite.set("tests", str(len(self.mandatory) + 1))
                 elif change == "wrong":
                     case.set("name", "test_renamed_without_review")
                 elif change == "suite-error":
@@ -222,7 +222,7 @@ class BrowserWorkflowTests(unittest.TestCase):
     def test_actual_helper_accepts_all_cases_and_rejects_reduced_report(self):
         report = self.root / "report.xml"
         self.junit().write(report)
-        self.assertEqual(verify_junit(report), {"tests": 52, "inventory_sha256": self.inventory_digest})
+        self.assertEqual(verify_junit(report), {"tests": 56, "inventory_sha256": self.inventory_digest})
         self.junit([sorted(self.mandatory)[0]]).write(report)
         with self.assertRaisesRegex(ValueError, "inventory mismatch"):
             verify_junit(report)

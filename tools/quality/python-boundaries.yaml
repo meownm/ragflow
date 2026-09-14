@@ -61,6 +61,50 @@ connections:
     symbols:
     - normalize_title
     - title_key
+  - source: api.apps.business_documents.sql_query_schema
+    target: business_documents.sql_query.schema_resolution
+    symbols:
+    - CatalogAccessDenied
+    - CatalogCandidate
+    - CatalogLookupError
+    - CatalogResult
+    - PromptProvenance
+    - SchemaEntityDetailsScenario
+    - SchemaInterpretationError
+    - SchemaResolutionScenario
+    - SchemaResolutionValidationError
+    - catalog_result_from_mapping
+    - parse_load_schema_entities_command
+    - parse_resolve_schema_command
+  - source: api.apps.business_documents.sql_query_lifecycle
+    target: business_documents.sql_query.query_specification
+    symbols:
+    - QuerySpecificationValidationError
+    - SqlGuardError
+    - compile_query_payload
+  - source: api.apps.business_documents.sql_query_planner
+    target: business_documents.sql_query.query_planning
+    symbols:
+    - PlanQueryCommand
+    - QueryPlanner
+    - QueryPlanningScenario
+    - QueryPlanUnavailable
+    - QueryPlanValidationError
+    - parse_plan_query_command
+    - planner_context
+  - source: api.apps.business_documents.sql_execution_registry
+    target: business_documents.sql_query.execution_registry
+    symbols:
+    - CatalogBindingInput
+    - CatalogBindingRecord
+    - ExecutionProfileInput
+    - ExecutionProfileRecord
+    - ExecutionRegistryValidationError
+    - parse_catalog_binding_payload
+    - parse_execution_profile_payload
+    - parse_registry_disable_payload
+    - parse_resolve_execution_profile_command
+    - resolve_execution_profile
   - source: api.db.db_models
     target: business_documents.domain.catalog
     symbols:
@@ -165,6 +209,39 @@ runtime_probes:
     - AssignDocumentError
     - AssignmentUnitOfWork
     - AssignDocument
+  - module: business_documents.sql_query.schema_resolution
+    path: business_documents/sql_query/schema_resolution.py
+    required_symbols:
+    - LoadSchemaEntitiesCommand
+    - ResolveSchemaCommand
+    - SchemaEntityDetailsScenario
+    - SchemaResolutionScenario
+    - catalog_result_from_mapping
+    - parse_load_schema_entities_command
+    - parse_resolve_schema_command
+  - module: business_documents.sql_query.query_specification
+    path: business_documents/sql_query/query_specification.py
+    required_symbols:
+    - QuerySpecificationValidationError
+    - SqlGuardError
+    - compile_query_payload
+    - guard_read_only_sql
+  - module: business_documents.sql_query.execution_registry
+    path: business_documents/sql_query/execution_registry.py
+    required_symbols:
+    - ExecutionRegistryValidationError
+    - parse_catalog_binding_payload
+    - parse_execution_profile_payload
+    - parse_registry_disable_payload
+    - parse_resolve_execution_profile_command
+    - resolve_execution_profile
+  - module: business_documents.sql_query.query_planning
+    path: business_documents/sql_query/query_planning.py
+    required_symbols:
+    - PlanQueryCommand
+    - QueryPlanningScenario
+    - parse_plan_query_command
+    - planner_context
   forbidden_module_prefixes:
   - admin
   - agent
@@ -206,6 +283,18 @@ runtime_probes:
   - module: api.apps.business_documents.service
     symbols:
       BusinessDocumentService: class
+  - module: api.apps.business_documents.sql_execution_registry
+    symbols:
+      BusinessDocumentSqlExecutionRegistryService: class
+  - module: api.apps.business_documents.sql_query_schema
+    symbols:
+      BusinessDocumentSqlQuerySchemaService: class
+  - module: api.apps.business_documents.sql_query_lifecycle
+    symbols:
+      BusinessDocumentSqlQueryService: class
+  - module: api.apps.business_documents.sql_query_planner
+    symbols:
+      BusinessDocumentSqlQueryPlanningService: class
   - module: api.apps.business_documents.worker
     symbols:
       wake_business_document_worker: function
@@ -249,6 +338,42 @@ runtime_probes:
   - path: /api/v1/business-documents/catalog
     methods: [GET]
     endpoint: list_business_document_catalog
+  - path: /api/v1/business-documents/sql-query/schema/resolve
+    methods: [POST]
+    endpoint: resolve_business_document_sql_schema
+  - path: /api/v1/business-documents/sql-query/schema/entities
+    methods: [POST]
+    endpoint: load_business_document_sql_schema_entities
+  - path: /api/v1/business-documents/sql-query/plan
+    methods: [POST]
+    endpoint: plan_business_document_sql_query
+  - path: /api/v1/business-documents/sql-query/compile
+    methods: [POST]
+    endpoint: compile_business_document_sql_query
+  - path: /api/v1/business-documents/sql-query/execution-connectors
+    methods: [GET]
+    endpoint: list_business_document_sql_execution_connectors
+  - path: /api/v1/business-documents/sql-query/execution-profiles
+    methods: [GET]
+    endpoint: list_business_document_sql_execution_profiles
+  - path: /api/v1/business-documents/sql-query/execution-profiles
+    methods: [POST]
+    endpoint: create_business_document_sql_execution_profile
+  - path: /api/v1/business-documents/sql-query/execution-profiles/<profile_id>
+    methods: [PUT]
+    endpoint: update_business_document_sql_execution_profile
+  - path: /api/v1/business-documents/sql-query/catalog-bindings
+    methods: [GET]
+    endpoint: list_business_document_sql_catalog_bindings
+  - path: /api/v1/business-documents/sql-query/catalog-bindings
+    methods: [POST]
+    endpoint: create_business_document_sql_catalog_binding
+  - path: /api/v1/business-documents/sql-query/catalog-bindings/<binding_id>
+    methods: [PUT]
+    endpoint: update_business_document_sql_catalog_binding
+  - path: /api/v1/business-documents/sql-query/execution-binding/resolve
+    methods: [POST]
+    endpoint: resolve_business_document_sql_execution_binding
   - path: /api/v1/business-documents/access/users
     methods: [GET]
     endpoint: list_business_document_access_users
@@ -388,8 +513,30 @@ runtime_probes:
   - test/unit_test/api/apps/business_documents/test_business_document_adapter_contracts.py::test_litellm_callback_drain_does_not_stop_or_clear_the_global_worker
   - test/unit_test/api/apps/business_documents/test_business_document_adapter_contracts.py::test_storage_adapter_verifies_supported_backend_absence_without_compatibility_probes
   - test/unit_test/api/apps/business_documents/test_business_document_adapter_contracts.py::test_storage_adapter_fails_closed_on_unknown_backend_and_storage_errors
-  expected_tests: 7
-  rationale: The production adapters must preserve their exact tenant, prompt, retry, token-limit, actor, request and result contracts without external LLM or search calls; export cleanup must prove object-specific absence for every supported storage backend and fail closed on unknown responses.
+  - test/unit_test/api/apps/business_documents/test_sql_query_schema_resolution.py::test_tenant_interpreter_uses_one_bounded_json_call
+  - test/unit_test/api/apps/business_documents/test_sql_query_schema_resolution.py::test_openmetadata_adapter_reuses_shared_service_and_enforces_dataset_acl
+  - test/unit_test/api/apps/business_documents/test_sql_query_lifecycle.py::test_compile_checks_create_permission_before_reading_the_payload
+  - test/unit_test/api/apps/business_documents/test_sql_query_lifecycle.py::test_compile_authorizes_creator_and_delegates_to_pure_owner
+  - test/unit_test/api/apps/business_documents/test_sql_query_lifecycle.py::test_compile_maps_owned_validation_errors
+  - test/unit_test/api/apps/business_documents/test_sql_query_planning.py::test_tenant_planner_uses_one_bounded_contract_call
+  - test/unit_test/api/apps/business_documents/test_sql_query_planning.py::test_planning_service_checks_acl_before_payload_and_maps_invalid_request
+  - test/unit_test/api/apps/business_documents/test_sql_query_planning.py::test_planning_service_exposes_prompt_provenance_without_self_approval
+  - test/unit_test/api/apps/business_documents/test_sql_execution_registry_service.py::test_registry_requires_one_configured_central_owner
+  - test/unit_test/api/apps/business_documents/test_sql_execution_registry_service.py::test_management_requires_admin_before_parsing_or_reading_registry
+  - test/unit_test/api/apps/business_documents/test_sql_execution_registry_service.py::test_resolve_requires_catalog_acl_before_parsing_or_reading_registry
+  - test/unit_test/api/apps/business_documents/test_sql_execution_registry_service.py::test_resolve_maps_catalog_acl_failure_without_reading_registry
+  - test/unit_test/api/apps/business_documents/test_sql_execution_registry_service.py::test_profile_rejects_non_postgres_or_incomplete_connector
+  - test/unit_test/api/apps/business_documents/test_sql_execution_registry_service.py::test_profile_list_is_safe_and_never_serializes_credentials_or_ingestion_query
+  - test/unit_test/api/apps/business_documents/test_sql_execution_registry_service.py::test_binding_requires_profile_allowlist_and_uses_optimistic_versions
+  - test/unit_test/api/apps/business_documents/test_sql_execution_registry_service.py::test_profile_update_cannot_orphan_an_active_binding
+  - test/unit_test/api/apps/business_documents/test_sql_execution_registry_service.py::test_creator_resolves_registry_without_receiving_connector_identity
+  - test/unit_test/api/apps/business_documents/test_sql_execution_registry_service.py::test_deleted_connector_invalidates_resolution_without_deleting_registry_history
+  - test/unit_test/api/apps/business_documents/test_sql_execution_registry_service.py::test_deleted_connector_does_not_block_emergency_deactivation
+  - test/unit_test/api/apps/business_documents/test_sql_execution_registry_service.py::test_missing_connector_cannot_be_hidden_by_retargeting_a_disabled_profile
+  - test/unit_test/api/apps/business_documents/test_sql_execution_registry_service.py::test_connector_target_drift_requires_explicit_profile_version_update
+  - test/unit_test/api/apps/business_documents/test_sql_execution_registry_service.py::test_corrupt_stored_policy_is_visible_to_admin_but_never_resolved
+  expected_tests: 30
+  rationale: The production document, schema, catalog-bound query planner, query compiler, and SQL execution-registry adapters must preserve their exact tenant, prompt, retry, token-limit, actor, authorization, request, safe projection, optimistic-version, fail-closed, non-self-approval and error-mapping contracts without external LLM, search, or database execution calls; export cleanup must prove object-specific absence for every supported storage backend and fail closed on unknown responses.
 - id: owned-frontend-registrations
   owner_module: frontend-foundation
   profile: frontend-web

@@ -181,7 +181,7 @@ class BusinessDocumentAIAdapter(Protocol):
 class RAGFlowLLMAdapter:
     """Thin injectable adapter over the tenant's configured default chat model."""
 
-    def generate(self, tenant_id: str, system_prompt: str, input_payload: dict[str, Any]) -> str:
+    async def async_generate(self, tenant_id: str, system_prompt: str, input_payload: dict[str, Any]) -> str:
         from api.db.joint_services.tenant_model_service import get_tenant_default_model_by_type
         from api.db.services.llm_service import LLMBundle
         from common.constants import LLMType
@@ -193,18 +193,18 @@ class RAGFlowLLMAdapter:
         # The durable business-document queue owns retries and exposes each
         # failure to the user.  Provider-internal retries can otherwise keep a
         # single visible attempt inside repeated five-minute HTTP calls.
-        async def generate() -> str:
-            with LLMBundle(tenant_id, model_config, lang="Russian", max_retries=0) as bundle:
-                try:
-                    return await bundle.async_chat(
-                        system_prompt,
-                        [{"role": "user", "content": json.dumps(input_payload, ensure_ascii=False)}],
-                        {"temperature": 0, "top_p": 0.1, "max_completion_tokens": max_completion_tokens},
-                    )
-                finally:
-                    await _drain_litellm_callbacks()
+        with LLMBundle(tenant_id, model_config, lang="Russian", max_retries=0) as bundle:
+            try:
+                return await bundle.async_chat(
+                    system_prompt,
+                    [{"role": "user", "content": json.dumps(input_payload, ensure_ascii=False)}],
+                    {"temperature": 0, "top_p": 0.1, "max_completion_tokens": max_completion_tokens},
+                )
+            finally:
+                await _drain_litellm_callbacks()
 
-        return asyncio.run(generate())
+    def generate(self, tenant_id: str, system_prompt: str, input_payload: dict[str, Any]) -> str:
+        return asyncio.run(self.async_generate(tenant_id, system_prompt, input_payload))
 
 
 @dataclass(frozen=True)

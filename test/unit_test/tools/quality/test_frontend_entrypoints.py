@@ -371,6 +371,7 @@ process.stdout.write(JSON.stringify({
 EXPECTED_ROUTES = {
     ("Routes.OpenMetadata", "@/pages/openmetadata"),
     ("Routes.BusinessDocuments", "@/pages/business-documents"),
+    ("Routes.DocumentConstructor", "@/pages/business-documents/constructor"),
     ("`${Routes.BusinessDocuments}/:id`", "@/pages/business-documents"),
     ("`${Routes.BusinessDocuments}/eva/:changeId`", "@/pages/business-documents"),
     ("Routes.AdminNavigationVisibility", "@/pages/admin/navigation-visibility"),

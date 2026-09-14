@@ -74,6 +74,7 @@ services:
       - ../api/apps/services/openmetadata_copilot_service.py:/ragflow/api/apps/services/openmetadata_copilot_service.py:ro
       - ../api/apps/services/openmetadata_agent_service.py:/ragflow/api/apps/services/openmetadata_agent_service.py:ro
       - ../api/apps/services/openmetadata_dataset_retrieval.py:/ragflow/api/apps/services/openmetadata_dataset_retrieval.py:ro
+      - ../api/apps/services/openmetadata_runtime_service.py:/ragflow/api/apps/services/openmetadata_runtime_service.py:ro
       - ../api/apps/restful_apis/openmetadata_api.py:/ragflow/api/apps/restful_apis/openmetadata_api.py:ro
       - ../api/apps/services/dataset_api_service.py:/ragflow/api/apps/services/dataset_api_service.py:ro
       - ../api/apps/services/models_api_service.py:/ragflow/api/apps/services/models_api_service.py:ro

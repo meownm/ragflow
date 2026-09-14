@@ -27,6 +27,10 @@ from api.apps.business_documents.eva_changes import EvaDocumentChangeService
 from api.apps.business_documents.errors import BusinessDocumentError
 from api.apps.business_documents.exports import BusinessDocumentExportService
 from api.apps.business_documents.service import BusinessDocumentService
+from api.apps.business_documents.sql_execution_registry import BusinessDocumentSqlExecutionRegistryService
+from api.apps.business_documents.sql_query_lifecycle import BusinessDocumentSqlQueryService
+from api.apps.business_documents.sql_query_planner import BusinessDocumentSqlQueryPlanningService
+from api.apps.business_documents.sql_query_schema import BusinessDocumentSqlQuerySchemaService
 from api.apps.business_documents.worker import wake_business_document_worker
 from api.utils.api_utils import get_request_json
 from common.misc_utils import thread_pool_exec
@@ -238,6 +242,266 @@ async def list_business_documents():
 async def list_business_document_catalog():
     try:
         return _success(await thread_pool_exec(BusinessDocumentService.list_catalog))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/schema/resolve", methods=["POST"])  # noqa: F821
+@login_required
+async def resolve_business_document_sql_schema():
+    try:
+        data = await get_request_json()
+        actor_id = str(current_user.id)
+        result = await BusinessDocumentSqlQuerySchemaService.resolve(
+            actor_id,
+            actor_id,
+            data,
+            _is_admin(),
+            _access_role(),
+        )
+        return _success(result)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_SQL_SCHEMA_REQUEST", "Request body must be a valid JSON object", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/schema/entities", methods=["POST"])  # noqa: F821
+@login_required
+async def load_business_document_sql_schema_entities():
+    try:
+        data = await get_request_json()
+        actor_id = str(current_user.id)
+        result = await BusinessDocumentSqlQuerySchemaService.load_entities(
+            actor_id,
+            data,
+            _is_admin(),
+            _access_role(),
+        )
+        return _success(result)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(
+            BusinessDocumentError(
+                "INVALID_SQL_SCHEMA_ENTITY_REQUEST",
+                "Request body must be a valid JSON object",
+                422,
+            )
+        )
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/compile", methods=["POST"])  # noqa: F821
+@login_required
+async def compile_business_document_sql_query():
+    try:
+        data = await get_request_json()
+        actor_id = str(current_user.id)
+        result = await thread_pool_exec(
+            BusinessDocumentSqlQueryService.compile,
+            actor_id,
+            data,
+            _is_admin(),
+            _access_role(),
+        )
+        return _success(result)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(
+            BusinessDocumentError(
+                "INVALID_SQL_QUERY_SPECIFICATION",
+                "Request body must be a valid JSON object",
+                422,
+            )
+        )
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/plan", methods=["POST"])  # noqa: F821
+@login_required
+async def plan_business_document_sql_query():
+    try:
+        data = await get_request_json()
+        actor_id = str(current_user.id)
+        result = await BusinessDocumentSqlQueryPlanningService.plan(
+            actor_id,
+            actor_id,
+            data,
+            _is_admin(),
+            _access_role(),
+        )
+        return _success(result)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(
+            BusinessDocumentError(
+                "INVALID_SQL_QUERY_PLAN_REQUEST",
+                "Request body must be a valid JSON object",
+                422,
+            )
+        )
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/execution-connectors", methods=["GET"])  # noqa: F821
+@login_required
+async def list_business_document_sql_execution_connectors():
+    try:
+        actor_id = str(current_user.id)
+        result = await thread_pool_exec(
+            BusinessDocumentSqlExecutionRegistryService.list_connectors,
+            actor_id,
+            _is_admin(),
+        )
+        return _success(result)
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/execution-profiles", methods=["GET"])  # noqa: F821
+@login_required
+async def list_business_document_sql_execution_profiles():
+    try:
+        actor_id = str(current_user.id)
+        result = await thread_pool_exec(
+            BusinessDocumentSqlExecutionRegistryService.list_profiles,
+            actor_id,
+            _is_admin(),
+        )
+        return _success(result)
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/execution-profiles", methods=["POST"])  # noqa: F821
+@login_required
+async def create_business_document_sql_execution_profile():
+    try:
+        data = await get_request_json()
+        if not isinstance(data, dict) or not data:
+            raise BusinessDocumentError("INVALID_SQL_EXECUTION_PROFILE", "Request body must be a valid JSON object", 422)
+        actor_id = str(current_user.id)
+        result = await thread_pool_exec(
+            BusinessDocumentSqlExecutionRegistryService.create_profile,
+            actor_id,
+            data,
+            _is_admin(),
+        )
+        return _success(result, 201)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_SQL_EXECUTION_PROFILE", "Request body must be a valid JSON object", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/execution-profiles/<profile_id>", methods=["PUT"])  # noqa: F821
+@login_required
+async def update_business_document_sql_execution_profile(profile_id):
+    try:
+        data = await get_request_json()
+        if not isinstance(data, dict) or not data:
+            raise BusinessDocumentError("INVALID_SQL_EXECUTION_PROFILE", "Request body must be a valid JSON object", 422)
+        actor_id = str(current_user.id)
+        result = await thread_pool_exec(
+            BusinessDocumentSqlExecutionRegistryService.update_profile,
+            actor_id,
+            profile_id,
+            data,
+            _is_admin(),
+        )
+        return _success(result)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_SQL_EXECUTION_PROFILE", "Request body must be a valid JSON object", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/catalog-bindings", methods=["GET"])  # noqa: F821
+@login_required
+async def list_business_document_sql_catalog_bindings():
+    try:
+        actor_id = str(current_user.id)
+        result = await thread_pool_exec(
+            BusinessDocumentSqlExecutionRegistryService.list_bindings,
+            actor_id,
+            _is_admin(),
+        )
+        return _success(result)
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/catalog-bindings", methods=["POST"])  # noqa: F821
+@login_required
+async def create_business_document_sql_catalog_binding():
+    try:
+        data = await get_request_json()
+        if not isinstance(data, dict) or not data:
+            raise BusinessDocumentError("INVALID_SQL_CATALOG_BINDING", "Request body must be a valid JSON object", 422)
+        actor_id = str(current_user.id)
+        result = await thread_pool_exec(
+            BusinessDocumentSqlExecutionRegistryService.create_binding,
+            actor_id,
+            data,
+            _is_admin(),
+        )
+        return _success(result, 201)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_SQL_CATALOG_BINDING", "Request body must be a valid JSON object", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/catalog-bindings/<binding_id>", methods=["PUT"])  # noqa: F821
+@login_required
+async def update_business_document_sql_catalog_binding(binding_id):
+    try:
+        data = await get_request_json()
+        if not isinstance(data, dict) or not data:
+            raise BusinessDocumentError("INVALID_SQL_CATALOG_BINDING", "Request body must be a valid JSON object", 422)
+        actor_id = str(current_user.id)
+        result = await thread_pool_exec(
+            BusinessDocumentSqlExecutionRegistryService.update_binding,
+            actor_id,
+            binding_id,
+            data,
+            _is_admin(),
+        )
+        return _success(result)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_SQL_CATALOG_BINDING", "Request body must be a valid JSON object", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/execution-binding/resolve", methods=["POST"])  # noqa: F821
+@login_required
+async def resolve_business_document_sql_execution_binding():
+    try:
+        data = await get_request_json()
+        if not isinstance(data, dict) or not data:
+            raise BusinessDocumentError(
+                "INVALID_SQL_EXECUTION_BINDING_REQUEST",
+                "Request body must be a valid JSON object",
+                422,
+            )
+        actor_id = str(current_user.id)
+        result = await thread_pool_exec(
+            BusinessDocumentSqlExecutionRegistryService.resolve,
+            actor_id,
+            data,
+            _is_admin(),
+            _access_role(),
+        )
+        return _success(result)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(
+            BusinessDocumentError(
+                "INVALID_SQL_EXECUTION_BINDING_REQUEST",
+                "Request body must be a valid JSON object",
+                422,
+            )
+        )
     except BusinessDocumentError as error:
         return _error(error)
 

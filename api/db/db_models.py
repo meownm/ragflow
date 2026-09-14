@@ -1484,6 +1484,63 @@ class BusinessDocumentCatalog(DataBaseModel):
         indexes = ((("capability_level", "is_active", "sort_order"), False),)
 
 
+class BusinessDocumentSqlExecutionProfile(DataBaseModel):
+    """Versioned read-only SQL execution policy backed by one DB connector."""
+
+    id = CharField(max_length=32, primary_key=True)
+    tenant_id = CharField(max_length=32, null=False, index=True)
+    name = CharField(max_length=128, null=False)
+    connector_id = CharField(max_length=32, null=False, index=True)
+    connector_identity_fingerprint = CharField(max_length=71, null=False)
+    dialect = CharField(max_length=32, null=False, default="postgres")
+    allowed_schemas = JSONField(null=False, default=list)
+    statement_timeout_ms = IntegerField(null=False, default=30_000)
+    max_rows = IntegerField(null=False, default=1_000)
+    max_result_bytes = IntegerField(null=False, default=5_000_000)
+    enabled = BooleanField(null=False, default=True, index=True)
+    version = IntegerField(null=False, default=1)
+    created_by = CharField(max_length=32, null=False, index=True)
+    updated_by = CharField(max_length=32, null=False, index=True)
+
+    class Meta:
+        db_table = "business_document_sql_execution_profile"
+        indexes = (
+            (("tenant_id", "name"), True),
+            (("tenant_id", "enabled"), False),
+        )
+
+
+class BusinessDocumentSqlCatalogBinding(DataBaseModel):
+    """Exact OpenMetadata scope to SQL execution-profile mapping."""
+
+    id = CharField(max_length=32, primary_key=True)
+    tenant_id = CharField(max_length=32, null=False, index=True)
+    catalog_service = CharField(max_length=128, null=False)
+    catalog_database = CharField(max_length=128, null=False)
+    catalog_schema = CharField(max_length=128, null=False)
+    execution_profile_id = CharField(max_length=32, null=False, index=True)
+    enabled = BooleanField(null=False, default=True, index=True)
+    version = IntegerField(null=False, default=1)
+    created_by = CharField(max_length=32, null=False, index=True)
+    updated_by = CharField(max_length=32, null=False, index=True)
+
+    class Meta:
+        db_table = "business_document_sql_catalog_binding"
+        indexes = (
+            (
+                (
+                    "tenant_id",
+                    "catalog_service",
+                    "catalog_database",
+                    "catalog_schema",
+                    "execution_profile_id",
+                ),
+                True,
+            ),
+            (("tenant_id", "catalog_service", "catalog_database", "catalog_schema"), False),
+        )
+
+
 class BusinessDocument(DataBaseModel):
     """Current projection for a governed business document workflow."""
 
@@ -2060,7 +2117,7 @@ def migrate_business_document_title_key(migrator):
 
 
 def migrate_business_document_catalog():
-    """Synchronize the bundled L5 catalog after the table is available."""
+    """Replace the source catalog with the bundled L5 entries."""
 
     from business_documents.domain.catalog import load_document_catalog
 

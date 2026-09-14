@@ -29,6 +29,18 @@ EXPECTED_ROUTES = {
     "list_business_document_catalog": ("/business-documents/catalog", ("GET",)),
     "list_business_document_access_users": ("/business-documents/access/users", ("GET",)),
     "update_business_document_access_user": ("/business-documents/access/users/<user_id>", ("PATCH",)),
+    "resolve_business_document_sql_schema": ("/business-documents/sql-query/schema/resolve", ("POST",)),
+    "load_business_document_sql_schema_entities": ("/business-documents/sql-query/schema/entities", ("POST",)),
+    "plan_business_document_sql_query": ("/business-documents/sql-query/plan", ("POST",)),
+    "compile_business_document_sql_query": ("/business-documents/sql-query/compile", ("POST",)),
+    "list_business_document_sql_execution_connectors": ("/business-documents/sql-query/execution-connectors", ("GET",)),
+    "list_business_document_sql_execution_profiles": ("/business-documents/sql-query/execution-profiles", ("GET",)),
+    "create_business_document_sql_execution_profile": ("/business-documents/sql-query/execution-profiles", ("POST",)),
+    "update_business_document_sql_execution_profile": ("/business-documents/sql-query/execution-profiles/<profile_id>", ("PUT",)),
+    "list_business_document_sql_catalog_bindings": ("/business-documents/sql-query/catalog-bindings", ("GET",)),
+    "create_business_document_sql_catalog_binding": ("/business-documents/sql-query/catalog-bindings", ("POST",)),
+    "update_business_document_sql_catalog_binding": ("/business-documents/sql-query/catalog-bindings/<binding_id>", ("PUT",)),
+    "resolve_business_document_sql_execution_binding": ("/business-documents/sql-query/execution-binding/resolve", ("POST",)),
     "get_business_document": ("/business-documents/<document_id>", ("GET",)),
     "delete_business_document": ("/business-documents/<document_id>", ("DELETE",)),
     "assign_business_document_owner": ("/business-documents/<document_id>/owner", ("PUT",)),
@@ -87,7 +99,14 @@ def test_mutating_routes_read_json_and_all_routes_map_domain_errors():
         handlers = [node for node in ast.walk(function) if isinstance(node, ast.ExceptHandler)]
         assert any(isinstance(handler.type, ast.Name) and handler.type.id == "BusinessDocumentError" for handler in handlers)
         assert "_error" in called_names
-        assert "thread_pool_exec" in called_names
+        if name in {
+            "resolve_business_document_sql_schema",
+            "load_business_document_sql_schema_entities",
+            "plan_business_document_sql_query",
+        }:
+            assert any(isinstance(node, ast.Await) for node in ast.walk(function))
+        else:
+            assert "thread_pool_exec" in called_names
         if name in {
             "create_eva_business_document_change",
             "generate_eva_business_document_change_draft",
@@ -97,6 +116,15 @@ def test_mutating_routes_read_json_and_all_routes_map_domain_errors():
             "create_business_document",
             "update_business_document_access_user",
             "assign_business_document_owner",
+            "resolve_business_document_sql_schema",
+            "load_business_document_sql_schema_entities",
+            "plan_business_document_sql_query",
+            "compile_business_document_sql_query",
+            "create_business_document_sql_execution_profile",
+            "update_business_document_sql_execution_profile",
+            "create_business_document_sql_catalog_binding",
+            "update_business_document_sql_catalog_binding",
+            "resolve_business_document_sql_execution_binding",
             "pull_business_document_from_eva",
             "rebind_business_document_to_eva",
             "create_business_document_eva_change",

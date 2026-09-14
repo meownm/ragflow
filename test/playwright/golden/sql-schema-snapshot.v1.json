@@ -1,0 +1,165 @@
+{
+  "format": "ragflow-sql-schema-snapshot",
+  "schema_version": "1",
+  "status": "READY",
+  "original_requirements": "Вывести оплаченные заказы со статусом и суммой.",
+  "source": {
+    "type": "openmetadata",
+    "catalog_snapshot_at": "2026-09-14T08:00:00+00:00",
+    "checked_at": "2026-09-14T08:05:00+00:00",
+    "stale": false,
+    "retrieval": [
+      "omd_dataset_hybrid_rrf"
+    ],
+    "references": [
+      {
+        "label": "OpenMetadata",
+        "url": "https://metadata.example"
+      },
+      {
+        "label": "RAGFlow Dataset",
+        "dataset_id": "dataset-1"
+      }
+    ]
+  },
+  "requirements": [
+    {
+      "term": "Заказ",
+      "state": "CONFIRMED",
+      "decision": "USER",
+      "interpretation": {
+        "kind": "entity",
+        "normalized_term": "заказ",
+        "recommended_entity_id": "orders",
+        "recommended_column_ids": [],
+        "confidence": 0.82,
+        "reason": "Таблица содержит факты заказов.",
+        "clarification_question": "Выберите факты заказов или события заказов.",
+        "llm_status": "APPLIED",
+        "prompt": {
+          "name": "sql_schema_interpreter",
+          "version": "1",
+          "content_hash": "sha256:test-prompt"
+        },
+        "llm_warning": null
+      },
+      "candidates": [
+        {
+          "id": "orders",
+          "fqn": "dwh.order_fact",
+          "name": "order_fact",
+          "display_name": null,
+          "description": "Описание dwh.order_fact",
+          "version": 4,
+          "updated_at": "2026-09-14T08:00:00+00:00",
+          "url": "https://metadata.example/table/dwh.order_fact",
+          "matched_by": [
+            "catalog_projection",
+            "ragflow_dataset"
+          ],
+          "column_count": 3,
+          "loaded_column_count": 3,
+          "columns_truncated": false,
+          "schema_status": "LOADED",
+          "schema_fingerprint": "sha256:orders-v4"
+        },
+        {
+          "id": "events",
+          "fqn": "dwh.order_event_fact",
+          "name": "order_event_fact",
+          "display_name": null,
+          "description": "Описание dwh.order_event_fact",
+          "version": 4,
+          "updated_at": "2026-09-14T08:00:00+00:00",
+          "url": "https://metadata.example/table/dwh.order_event_fact",
+          "matched_by": [
+            "catalog_projection",
+            "ragflow_dataset"
+          ],
+          "column_count": 1,
+          "loaded_column_count": 1,
+          "columns_truncated": false,
+          "schema_status": "SUMMARY",
+          "schema_fingerprint": null
+        }
+      ],
+      "selected_table": {
+        "id": "orders",
+        "fqn": "dwh.order_fact",
+        "name": "order_fact",
+        "display_name": null,
+        "technical_name": "order_fact",
+        "description": "Описание dwh.order_fact",
+        "version": 4,
+        "updated_at": "2026-09-14T08:00:00+00:00",
+        "service": "warehouse",
+        "database": "analytics",
+        "schema": "dwh",
+        "owners": [
+          "DWH"
+        ],
+        "domains": [
+          "Sales"
+        ],
+        "tags": [
+          "gold"
+        ],
+        "glossary_terms": [
+          "Заказ"
+        ],
+        "url": "https://metadata.example/table/dwh.order_fact",
+        "matched_by": [
+          "catalog_projection",
+          "ragflow_dataset"
+        ],
+        "column_count": 3,
+        "loaded_column_count": 3,
+        "columns_truncated": false,
+        "schema_loaded": true,
+        "schema_fingerprint": "sha256:orders-v4",
+        "columns": [
+          {
+            "id": "dwh.order_fact.order_id",
+            "name": "order_id",
+            "fqn": "dwh.order_fact.order_id",
+            "data_type": "BIGINT",
+            "description": "Поле order_id",
+            "constraint": "PRIMARY_KEY",
+            "glossary_terms": [],
+            "selected": false
+          },
+          {
+            "id": "dwh.order_fact.status_id",
+            "name": "status_id",
+            "fqn": "dwh.order_fact.status_id",
+            "data_type": "BIGINT",
+            "description": "Поле status_id",
+            "constraint": "PRIMARY_KEY",
+            "glossary_terms": [],
+            "selected": true
+          },
+          {
+            "id": "dwh.order_fact.paid_amount_rub",
+            "name": "paid_amount_rub",
+            "fqn": "dwh.order_fact.paid_amount_rub",
+            "data_type": "NUMERIC(18,2)",
+            "description": "Поле paid_amount_rub",
+            "constraint": "",
+            "glossary_terms": [],
+            "selected": true
+          }
+        ],
+        "table_constraints": [
+          {
+            "constraint_type": "PRIMARY_KEY",
+            "columns": [
+              "order_id"
+            ],
+            "referred_columns": []
+          }
+        ]
+      }
+    }
+  ],
+  "warnings": []
+}

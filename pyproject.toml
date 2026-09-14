@@ -1,6 +1,6 @@
 [project]
 name = "ragflow"
-version = "1.19.0"
+version = "1.20.0"
 description = "[RAGFlow](https://ragflow.io/) is an open-source RAG (Retrieval-Augmented Generation) engine based on deep document understanding. It offers a streamlined RAG workflow for businesses of any scale, combining LLM (Large Language Models) to provide truthful question-answering capabilities, backed by well-founded citations from various complex formatted data."
 authors = [{ name = "Zhichang Yu", email = "yuzhichang@gmail.com" }]
 license-files = ["LICENSE"]
@@ -250,6 +250,9 @@ packages = [
     'agent.business_requirements.prompts',
     'agent.business_requirements.templates',
     'api',
+    'business_documents',
+    'business_documents.domain',
+    'business_documents.sql_query',
     'deepdoc',
     'rag.graphrag',
     'tools.chatgpt_on_wechat.plugins',
@@ -268,6 +271,9 @@ packages = [
 agent = [
     "business_requirements/**/*.json",
     "business_requirements/**/*.md",
+]
+business_documents = [
+    "domain/*.json",
 ]
 
 [tool.ruff]

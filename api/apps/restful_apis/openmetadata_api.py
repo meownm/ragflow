@@ -19,7 +19,6 @@
 from __future__ import annotations
 
 import logging
-import threading
 
 from quart import request
 
@@ -33,6 +32,7 @@ from api.apps.services.openmetadata_copilot_service import (
     OpenMetadataNotFoundError,
     OpenMetadataPermissionError,
 )
+from api.apps.services.openmetadata_runtime_service import get_openmetadata_service
 from api.utils.api_utils import get_json_result, get_request_json
 from common.constants import RetCode
 from common.misc_utils import thread_pool_exec
@@ -40,17 +40,12 @@ from common.misc_utils import thread_pool_exec
 
 LOGGER = logging.getLogger(__name__)
 _SERVICE: OpenMetadataCopilotService | None = None
-_SERVICE_LOCK = threading.Lock()
 
 
 def _service() -> OpenMetadataCopilotService:
-    global _SERVICE
     if _SERVICE is not None:
         return _SERVICE
-    with _SERVICE_LOCK:
-        if _SERVICE is None:
-            _SERVICE = OpenMetadataCopilotService()
-        return _SERVICE
+    return get_openmetadata_service()
 
 
 def _error_response(exc: Exception):

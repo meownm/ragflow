@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
 import sys
@@ -71,7 +72,16 @@ def test_llm_adapter_preserves_tenant_prompt_payload_and_retry_contract(monkeypa
     monkeypatch.setattr(ai_module, "_drain_litellm_callbacks", drain_litellm_callbacks)
 
     payload = {"job_input": {"task_type": task_type}, "document": {"title": "Регламент"}}
-    result = RAGFlowLLMAdapter().generate("tenant-1", "system contract", payload)
+    # The synchronous adapter is called by the production worker thread.  Keep
+    # its private asyncio.run away from pytest-asyncio's main-thread loop too,
+    # otherwise Windows can retain the displaced Proactor self-pipe until GC.
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        result = executor.submit(
+            RAGFlowLLMAdapter().generate,
+            "tenant-1",
+            "system contract",
+            payload,
+        ).result()
 
     assert result == "adapter-result"
     assert lookup_calls[0][0] == "tenant-1"
@@ -100,7 +110,14 @@ def test_dataset_search_adapter_forwards_actor_request_and_result(monkeypatch):
     monkeypatch.setitem(sys.modules, service_module.__name__, service_module)
     request = {"dataset_ids": ["dataset-1"], "question": "Как?"}
 
-    assert RAGFlowDatasetSearchAdapter().search("actor-1", request) == expected
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        result = executor.submit(
+            RAGFlowDatasetSearchAdapter().search,
+            "actor-1",
+            request,
+        ).result()
+
+    assert result == expected
     assert calls == [("actor-1", request)]
 
 

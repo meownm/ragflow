@@ -9,6 +9,20 @@ sidebar_custom_props: {
 
 Key features, improvements and bug fixes in the latest releases.
 
+## v1.20.0
+
+Released on September 14, 2026.
+
+### New features
+
+- Business documents: Adds a step-by-step SQL requirements constructor with OpenMetadata-backed entity resolution, explicit human confirmations, deterministic PostgreSQL compilation, and a dedicated Python post-processing chapter.
+- SQL governance: Adds a centrally owned execution-profile registry and exact catalog bindings for PostgreSQL connectors, schemas, timeouts, and result limits without exposing connector credentials to document authors.
+
+### Improvements and bug fixes
+
+- Rechecks Dataset access when resolving execution profiles, pins connector identity, supports optimistic profile and binding updates, and keeps emergency deactivation available when a connector or stored policy is no longer usable.
+- Adds deterministic browser golden coverage for template lifecycle, schema ambiguity, manual SQL decisions, and LLM-assisted planning. Database execution, ResultGate, and Python sandbox execution remain future runtime stages.
+
 ## v1.9.0
 
 Released on September 4, 2026.

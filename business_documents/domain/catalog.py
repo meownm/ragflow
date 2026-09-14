@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 
-_CATALOG_PATH = Path(__file__).with_name("bcm_bank_v15_l5.json")
+_CATALOG_PATH = Path(__file__).with_name("bcm_bank_v2_l5.json")
 
 
 def load_document_catalog() -> dict[str, Any]:

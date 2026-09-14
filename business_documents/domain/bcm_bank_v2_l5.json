@@ -1,0 +1,35 @@
+{
+  "source_id": "BCM_Bank",
+  "source_version": "v2",
+  "source_sha256": "6440fbafc1101201df65bae89b7fafd0969445ed200a2b3ae0e457f1e0783718",
+  "items": [
+    {
+      "id": "L2-01.01.04.01.01",
+      "title": "L2-01.01.04.01.01 Выявление и квалификация потенциальных клиентов-юридических лиц \"Цифра банка\" по клиентской базе физических лиц",
+      "title_en": "Identification & Qualification of Corporate Prospects through Retail Customer Relationships",
+      "description": "Бизнес-функция по анализу клиентской базы физических лиц, выявлению связанных с ними юридических лиц по признакам руководства, владения или иного участия, обогащению сведений о таких юридических лицах и отбору потенциальных корпоративных клиентов по установленным коммерческим критериям для последующей передачи в продажи.",
+      "capability_level": "L5",
+      "capability_type": "Core",
+      "hierarchy": {
+        "L1_ID": "L1-01",
+        "L1_RU": "L1-01 Клиент, продажи и каналы",
+        "L2_ID": "L2-01.01",
+        "L2_RU": "L2-01.01 Клиентская стратегия и сегментация",
+        "L3_ID": "L2-01.01.04",
+        "L3_RU": "L2-01.01.04 Клиентская аналитика и определение оптимального следующего действия",
+        "L4_ID": "L2-01.01.04.01",
+        "L4_RU": "L2-01.01.04.01 Анализ клиентских связей и коммерческого потенциала"
+      },
+      "details": {
+        "business_object": "Client; TIN; Legal Entity; Ownership/Management Relationship; OKVED; Qualification Criteria; Prospect",
+        "bian_indicative_service_domain": "Customer Behavior Models",
+        "source_ids": "USER-REQ-2026-09",
+        "source_urls": null,
+        "owner_function": "Клиентская аналитика + Корпоративные продажи / Client Analytics & Corporate Sales",
+        "maturity_target": "4 - Managed",
+        "criticality": "Medium",
+        "notes": "v15: L5 рассматривается как бизнес-функция. Результат функции передается в бизнес-функцию «Предквалификация лида»."
+      }
+    }
+  ]
+}

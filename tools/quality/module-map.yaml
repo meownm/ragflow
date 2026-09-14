@@ -27,18 +27,33 @@ modules:
   - test/evals/business_documents
   - test/integration/test_business_document_postgres.py
   - test/playwright/e2e/test_business_documents_ui.py
+  - test/playwright/e2e/test_document_constructor_ui.py
   - web/src/pages/business-documents/index.test.tsx
+  - web/src/pages/business-documents/constructor/draft-storage.test.ts
+  - web/src/pages/business-documents/constructor/execution-registry-dialog.test.tsx
+  - web/src/pages/business-documents/constructor/index.test.tsx
+  - web/src/pages/business-documents/constructor/model.test.ts
+  - web/src/pages/business-documents/constructor/query-specification-dialog.test.tsx
+  - web/src/pages/business-documents/constructor/query-specification.test.ts
+  - web/src/pages/business-documents/constructor/schema-workspace-dialog.test.tsx
+  - web/src/pages/business-documents/constructor/schema-workspace-storage.test.ts
+  - web/src/pages/business-documents/constructor/schema-workspace.test.ts
+  - web/src/pages/business-documents/constructor/sql-query-template.test.ts
+  - web/src/pages/business-documents/constructor/template-codec.test.ts
   - test/playwright/e2e/test_business_document_live_intake.py
   public_surfaces:
   - api/apps/restful_apis/business_document_api.py
   - api/apps/business_documents/worker.py
   - web/src/pages/business-documents/index.tsx
+  - web/src/pages/business-documents/constructor/index.tsx
   integration_dependencies:
   - persistence
   - access-policy
   - models-runtime
   - eva-integration
   - api-files-chat
+  - openmetadata
+  - ingestion-connectors
   runtime_profiles:
   - python-api-worker
   - web
@@ -58,6 +73,7 @@ modules:
   - agent/business_requirements/contracts/document_draft.v1.schema.json
   - agent/business_requirements/contracts/question_batch.v1.schema.json
   - agent/business_requirements/contracts/review_plan.v1.schema.json
+  - agent/business_requirements/contracts/sql_schema_interpretation.v1.schema.json
   - agent/business_requirements/evals/rubric.v1.json
   - agent/business_requirements/golden_dialogs/v1.json
   - agent/business_requirements/golden_dialogs/v2.json
@@ -67,6 +83,9 @@ modules:
   - agent/business_requirements/prompts/draft.v1.md
   - agent/business_requirements/prompts/intake.v1.md
   - agent/business_requirements/prompts/review.v1.md
+  - agent/business_requirements/prompts/sql_query_planner.v1.md
+  - agent/business_requirements/prompts/sql_schema_interpreter.v1.md
+  - agent/business_requirements/contracts/sql_query_plan.v1.schema.json
   - agent/business_requirements/templates/business_requirements.v1.json
   - api/apps/business_documents/__init__.py
   - api/apps/business_documents/ai.py
@@ -77,15 +96,26 @@ modules:
   - api/apps/business_documents/evidence.py
   - api/apps/business_documents/exports.py
   - api/apps/business_documents/service.py
+  - api/apps/business_documents/sql_execution_registry.py
+  - api/apps/business_documents/sql_query_lifecycle.py
+  - api/apps/business_documents/sql_query_planner.py
+  - api/apps/business_documents/sql_query_schema.py
   - api/apps/business_documents/worker.py
   - api/apps/restful_apis/business_document_api.py
   - api/db/services/business_document_settings_service.py
   - business_documents/__init__.py
   - business_documents/domain/__init__.py
   - business_documents/domain/bcm_bank_v15_l5.json
+  - business_documents/domain/bcm_bank_v2_l5.json
   - business_documents/domain/catalog.py
   - business_documents/domain/names.py
+  - business_documents/sql_query/__init__.py
+  - business_documents/sql_query/execution_registry.py
+  - business_documents/sql_query/query_specification.py
+  - business_documents/sql_query/query_planning.py
+  - business_documents/sql_query/schema_resolution.py
   - docs/develop/business-documents-eva-title-binding-ru.md
+  - docs/develop/sql-query-constructor-regression-ru.md
   - test/evals/business_documents/live_quality.py
   - test/evals/business_documents/test_golden_dialogue_harness.py
   - test/evals/business_documents/test_live_model_quality.py
@@ -96,6 +126,8 @@ modules:
   - test/playwright/e2e/test_business_document_live_intake.py
   - test/playwright/e2e/test_business_documents_access_ui.py
   - test/playwright/e2e/test_business_documents_ui.py
+  - test/playwright/e2e/test_document_constructor_ui.py
+  - test/playwright/golden/sql-schema-snapshot.v1.json
   - test/unit_test/admin/test_business_documents_settings.py
   - test/unit_test/agent/test_business_requirements_assets.py
   - test/unit_test/api/apps/business_documents/helpers.py
@@ -104,6 +136,12 @@ modules:
   - test/unit_test/api/apps/business_documents/test_business_document_api.py
   - test/unit_test/api/apps/business_documents/test_business_document_evidence.py
   - test/unit_test/api/apps/business_documents/test_business_document_service.py
+  - test/unit_test/api/apps/business_documents/test_sql_execution_registry.py
+  - test/unit_test/api/apps/business_documents/test_sql_execution_registry_service.py
+  - test/unit_test/api/apps/business_documents/test_sql_query_lifecycle.py
+  - test/unit_test/api/apps/business_documents/test_sql_query_planning.py
+  - test/unit_test/api/apps/business_documents/test_sql_query_schema_resolution.py
+  - test/unit_test/api/apps/business_documents/test_sql_query_specification.py
   - test/unit_test/api/apps/business_documents/test_business_document_worker_exports.py
   - test/unit_test/api/apps/restful_apis/test_business_document_api_contract.py
   - test/unit_test/api/db/services/test_business_document_settings_service.py
@@ -115,6 +153,36 @@ modules:
   - web/src/pages/business-documents/components/protocol-pane.tsx
   - web/src/pages/business-documents/components/question-item.tsx
   - web/src/pages/business-documents/components/revision-history-panel.tsx
+  - web/src/pages/business-documents/constructor/draft-storage.test.ts
+  - web/src/pages/business-documents/constructor/draft-storage.ts
+  - web/src/pages/business-documents/constructor/execution-binding-panel.tsx
+  - web/src/pages/business-documents/constructor/execution-registry-dialog.test.tsx
+  - web/src/pages/business-documents/constructor/execution-registry-dialog.tsx
+  - web/src/pages/business-documents/constructor/index.test.tsx
+  - web/src/pages/business-documents/constructor/index.tsx
+  - web/src/pages/business-documents/constructor/model.test.ts
+  - web/src/pages/business-documents/constructor/model.ts
+  - web/src/pages/business-documents/constructor/query-compiler-panel.tsx
+  - web/src/pages/business-documents/constructor/query-planner-panel.tsx
+  - web/src/pages/business-documents/constructor/query-specification-dialog.test.tsx
+  - web/src/pages/business-documents/constructor/query-specification-dialog.tsx
+  - web/src/pages/business-documents/constructor/query-specification.test.ts
+  - web/src/pages/business-documents/constructor/query-specification.ts
+  - web/src/pages/business-documents/constructor/schema-workspace-dialog.test.tsx
+  - web/src/pages/business-documents/constructor/schema-workspace-dialog.tsx
+  - web/src/pages/business-documents/constructor/schema-workspace-storage.test.ts
+  - web/src/pages/business-documents/constructor/schema-workspace-storage.ts
+  - web/src/pages/business-documents/constructor/schema-workspace.test.ts
+  - web/src/pages/business-documents/constructor/schema-workspace.ts
+  - web/src/pages/business-documents/constructor/section-inspector.tsx
+  - web/src/pages/business-documents/constructor/sql-query-template.test.ts
+  - web/src/pages/business-documents/constructor/sql-query-template.ts
+  - web/src/pages/business-documents/constructor/structure-editor.tsx
+  - web/src/pages/business-documents/constructor/template-codec.test.ts
+  - web/src/pages/business-documents/constructor/template-codec.ts
+  - web/src/pages/business-documents/constructor/template-preview.tsx
+  - web/src/pages/business-documents/constructor/template-settings.tsx
+  - web/src/pages/business-documents/constructor/templates/sql-query-step-by-step.v1.json
   - web/src/pages/business-documents/index.test.tsx
   - web/src/pages/business-documents/index.tsx
   - web/src/pages/business-documents/types.ts
@@ -202,6 +270,7 @@ modules:
   - api/apps/restful_apis/openmetadata_api.py
   - api/apps/services/openmetadata_agent_service.py
   - api/apps/services/openmetadata_copilot_service.py
+  - api/apps/services/openmetadata_runtime_service.py
   - common/data_source/openmetadata_connector.py
   - common/openmetadata_agents.py
   - docs/openmetadata_copilot.md
@@ -455,6 +524,7 @@ modules:
   - test/unit_test/api/utils/test_admin_service_health.py
   - test/unit_test/api/db/services/test_audit_service.py
   - test/unit_test/tools/quality/test_admin_server_bootstrap.py
+  - web/src/utils/telemetry.test.ts
   public_surfaces:
   - api/db/services/audit_service.py
   - admin/server/audit_feed.py
@@ -499,6 +569,7 @@ modules:
   - test/unit_test/common/test_observability.py
   - web/src/pages/admin/audit.tsx
   - web/src/pages/admin/service-status.tsx
+  - web/src/utils/telemetry.test.ts
   - web/src/utils/telemetry.ts
 - id: models-runtime
   title: Model reasoning and inference configuration

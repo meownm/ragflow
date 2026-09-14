@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ragflow.local/contracts/sql_query_plan.v1.schema.json",
+  "title": "Catalog-bound SQL query plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "base_entity_id",
+    "select",
+    "joins",
+    "filters",
+    "order_by",
+    "row_limit",
+    "clarification_questions"
+  ],
+  "properties": {
+    "schema_version": { "const": "1" },
+    "base_entity_id": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "select": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["column_id", "kind", "alias", "grain"],
+        "properties": {
+          "column_id": { "type": "string", "minLength": 1, "maxLength": 1000 },
+          "kind": {
+            "enum": [
+              "column",
+              "sum",
+              "avg",
+              "min",
+              "max",
+              "count",
+              "count_distinct",
+              "date_bucket"
+            ]
+          },
+          "alias": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_$]*$"
+          },
+          "grain": { "enum": [null, "day", "week", "month", "quarter", "year"] }
+        }
+      }
+    },
+    "joins": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "join_type",
+          "entity_id",
+          "left_column_id",
+          "right_column_id",
+          "description"
+        ],
+        "properties": {
+          "join_type": { "enum": ["INNER", "LEFT"] },
+          "entity_id": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "left_column_id": { "type": "string", "minLength": 1, "maxLength": 1000 },
+          "right_column_id": { "type": "string", "minLength": 1, "maxLength": 1000 },
+          "description": { "type": "string", "minLength": 1, "maxLength": 2000 }
+        }
+      }
+    },
+    "filters": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "column_id",
+          "operator",
+          "parameter_name",
+          "parameter_type",
+          "parameter_value",
+          "description"
+        ],
+        "properties": {
+          "column_id": { "type": "string", "minLength": 1, "maxLength": 1000 },
+          "operator": {
+            "enum": [
+              "eq",
+              "ne",
+              "gt",
+              "gte",
+              "lt",
+              "lte",
+              "like",
+              "ilike",
+              "in",
+              "not_in",
+              "is_null",
+              "is_not_null"
+            ]
+          },
+          "parameter_name": {
+            "type": ["string", "null"],
+            "maxLength": 128,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_$]*$"
+          },
+          "parameter_type": {
+            "enum": [
+              null,
+              "text",
+              "integer",
+              "decimal",
+              "boolean",
+              "date",
+              "datetime",
+              "text_list",
+              "integer_list"
+            ]
+          },
+          "parameter_value": {
+            "anyOf": [
+              { "type": "string", "maxLength": 5000 },
+              { "type": "integer" },
+              { "type": "number" },
+              { "type": "boolean" },
+              {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 100,
+                "items": { "type": ["string", "integer"] }
+              },
+              { "type": "null" }
+            ]
+          },
+          "description": { "type": "string", "minLength": 1, "maxLength": 2000 }
+        }
+      }
+    },
+    "order_by": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["select_alias", "direction"],
+        "properties": {
+          "select_alias": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_$]*$"
+          },
+          "direction": { "enum": ["ASC", "DESC"] }
+        }
+      }
+    },
+    "row_limit": { "type": "integer", "minimum": 1, "maximum": 10000 },
+    "clarification_questions": {
+      "type": "array",
+      "maxItems": 12,
+      "items": { "type": "string", "minLength": 1, "maxLength": 1000 }
+    }
+  }
+}

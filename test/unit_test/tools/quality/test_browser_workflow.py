@@ -4,6 +4,7 @@
 # integrated trusted-base gate before the event and negative acceptance matrix.
 # Single synchronize probe: the updated head must bind a freshly resolved merge ref.
 # Rapid synchronize probe A: this intermediate head must never authorize the final head.
+# Rapid synchronize probe B: only this final head may produce terminal acceptance evidence.
 
 import hashlib
 import ast

@@ -3,6 +3,7 @@
 # T3 post-integration v2 probe: this classified test-only delta must pass the
 # integrated trusted-base gate before the event and negative acceptance matrix.
 # Single synchronize probe: the updated head must bind a freshly resolved merge ref.
+# Rapid synchronize probe A: this intermediate head must never authorize the final head.
 
 import hashlib
 import ast

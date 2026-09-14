@@ -8,6 +8,15 @@ OpenMetadata теперь разрешается через центральны
 `SQL → БД → ResultGate → Python → документ` остаётся явным пробелом: DB-port
 ещё не подключён и ни один экран конструктора не выполняет SQL.
 
+Целевые роли, единый `QueryProject`, шесть этапов основного UX, атомарная модель
+требований, правила инвалидации, режимы выполнения, сборка документа и
+продуктовые DoR/DoD определены в
+[продуктовой спецификации конструктора](sql-query-constructor-product-ru.md).
+Целевые экраны, состояния, тексты и UX-регрессия UX-01…16 определены в
+[UI/UX/CX-спецификации](sql-query-constructor-ui-ux-cx-ru.md). Целевые слои,
+модули, persistence, транзакционные границы и этапы схлопывания текущего пути
+описаны в [архитектуре конструктора](sql-query-constructor-architecture-ru.md).
+
 ## Что именно доказывают тесты
 
 Регрессия разделена на независимые уровни. Прохождение более дешёвого уровня не
@@ -20,6 +29,101 @@ OpenMetadata теперь разрешается через центральны
 | G1 — deterministic query golden | Полный сценарий разрешения сущностей, согласования, компиляции SQL, выполнения, Python-постобработки и сборки документа | Production owners, SQL AST, параметры, ограниченные данные и итоговый document AST | compiler/planner covered; execution/assembly gap |
 | I1 — runtime integration | Read-only выполнение в одноразовой PostgreSQL-схеме и изолированном Python sandbox | Фактические запросы, ResultGate, лимиты, уничтожение sandbox и отсутствие остаточных данных | gap |
 | L1 — live model | Качество выбора сущностей и уточняющих вопросов реальной LLM | Рубрика и точность на закреплённом schema snapshot | gap, opt-in |
+
+## Живой контракт OpenMetadata → PostgreSQL
+
+На 2026-09-14 для теста закреплён отдельный набор
+`agent/business_requirements/golden_dialogs/sql_query_omd.v1.json`. Это не
+синтетическая схема: entity ID, FQN, колонки, ограничения и наличие строк
+проверены одновременно через OpenMetadata 1.12.10 и физическую PostgreSQL БД
+`bot`.
+
+Правило исполнения точное и проверяемое:
+
+```text
+OpenMetadata service.database.schema.table
+                         ↓ exact catalog binding
+PostgreSQL                  schema.table
+```
+
+Префиксы каталога `docker_postgres_bot.bot` не являются частью PostgreSQL
+relation. Компилятор принимает двух-, трёх- и четырёхчастный catalog FQN, но в
+SQL для четырёхчастной сущности выводит только проверенные
+`schema.technical_name`. Несовпадение FQN с отдельными полями
+`service/database/schema/technical_name` блокирует запрос.
+
+| OMD FQN | PostgreSQL relation | Entity ID / OMD version | Строк при проверке |
+| --- | --- | --- | ---: |
+| `docker_postgres_bot.bot.public.search_queries` | `public.search_queries` | `2bebfd51-ea82-4b8f-8b7b-eeec1d930b08` / 0.5 | 639253 |
+| `docker_postgres_bot.bot.public.search_results` | `public.search_results` | `c4757cc8-3934-480c-8203-ac4f719b18a5` / 0.5 | 639253 |
+| `docker_postgres_bot.bot.public.answer_context_metrics` | `public.answer_context_metrics` | `d170a5e5-5686-4c4e-a1d2-4442f03d93d0` / 0.3 | 905 |
+| `docker_postgres_bot.bot.public.llm_requests_log` | `public.llm_requests_log` | `491922b2-66ca-4c3d-9c7d-651a68d491b9` / 0.6 | 27017 |
+| `docker_postgres_bot.bot.imoex.moex_orders` | `imoex.moex_orders` | `1df615ec-5065-46d5-87fa-8a85a7558d4b` / 0.5 | 87 |
+| `docker_postgres_bot.bot.imoex.moex_events` | `imoex.moex_events` | `e32658b7-cd2a-456d-817c-f3731c119e24` / 0.4 | 30455 |
+
+Полные наборы колонок каждой из шести таблиц совпали между OMD и
+`information_schema`. Для основного кейса OMD также является источником двух
+FK `search_results.query_id → search_queries.id` и
+`answer_context_metrics.query_id → search_queries.id`; для MOEX — FK
+`moex_orders.event_id → moex_events.event_id`.
+
+### Пошаговый P0-диалог
+
+Основной кейс начинается с намеренно расплывчатой формулировки «Покажи, какие
+поисковые ответы были медленными и плохо использовали контекст» и проходит
+одинаковые обязательные ворота:
+
+1. Уточняется гранулярность: одна строка — один поисковый запрос.
+2. Уточняется приватность: не выводить query, answer, user/tenant и технические
+   payload-поля.
+3. Термины «медленно» и «плохо» превращаются в проверяемые пороги
+   `latency_ms >= 1500` и `noise_char_share >= 0.25`.
+4. Период фиксируется полуинтервалом `[2026-08-01, 2026-09-01)`.
+5. OMD подтверждает три таблицы, их колонки и два FK; до этого SQL отсутствует.
+6. Пользователь отдельно подтверждает оба `INNER JOIN` и смысл исключения
+   неполных строк.
+7. Согласуются SELECT, `ORDER BY latency_ms DESC, query_id ASC` и `LIMIT 50`.
+8. Для каждого из 44 разделов шаблона сохраняется итоговая улучшенная
+   формулировка и статус `accepted` либо осмысленный `not_applicable`.
+9. Snapshot разрешается exact binding-ом в один профиль выполнения; UI
+   показывает каждое соответствие catalog FQN → physical relation.
+10. Только после всех решений строится parameterized SQL и требуется
+    `SQLGuard.status=PASS`; текущий UI по-прежнему не выполняет запрос.
+
+Контрольная read-only выборка основного кейса вернула 35 строк. Два соседних
+кейса нужны против переобучения теста на одну схему:
+
+| ID | Последовательные уточнения | Живой результат |
+| --- | --- | ---: |
+| `GSQL_OMD_02_LLM_LATENCY` | отдельные успешные LLM-вызовы, порог 60 секунд, фиксированный период, LIMIT 20, исключение prompt/raw response/error | 2 строки до LIMIT |
+| `GSQL_OMD_03_MOEX_ORDERS` | заявка вместо сделки, `submitted=true`, период, FK к событию, исключение account/payload, LIMIT 100 | 84 строки до LIMIT |
+
+### Настроенный execution registry
+
+- PostgreSQL connector: `OMD bot PostgreSQL`, без ingestion query и со статусом
+  `UNSTART`.
+- Профиль: `OMD bot PostgreSQL RO`; dialect `postgres`, схемы
+  `public`, `imoex`, `rtts`, statement timeout 15 секунд, максимум 1000 строк и
+  5 МБ.
+- Физическая роль: `ragflow_sql_reader`, без superuser/create/replication/
+  bypass-RLS и без DML-привилегий; `default_transaction_read_only=on`,
+  `search_path=pg_catalog`.
+- Exact bindings: `docker_postgres_bot.bot.public`,
+  `docker_postgres_bot.bot.imoex`, `docker_postgres_bot.bot.rtts` → один профиль.
+- Идемпотентная настройка выполняется
+  `tools/scripts/provision_sql_query_omd_mapping.py`; пароль принимается только
+  через `RAGFLOW_SQL_READER_PASSWORD` и не сериализуется в результат.
+
+Во время подготовки OpenMetadata search возвращал HTTP 500, потому что
+`openmetadata_elasticsearch` был остановлен. Контейнер запущен, сейчас он
+healthy, `/api/v1/system/version` и `table_search_index` отвечают 200. Это
+операционная зависимость каталога, а не разрешение подменять OMD прямым чтением
+БД.
+
+PostgreSQL при каждом соединении предупреждает о несовпадении версии collation:
+БД создана с 2.36, текущая ОС предоставляет 2.41. В рамках SQL-конструктора
+collation не обновлялась: такой ремонт требует отдельной оценки индексов и окна
+обслуживания.
 
 ## Эпики и текущий статус
 
@@ -37,6 +141,10 @@ OpenMetadata теперь разрешается через центральны
 | E10 | Deterministic/integration golden и негативная матрица GSQL-01…06 | **IN PROGRESS**: planner/compiler и GSQL-02/06 покрыты; DB/Python части GSQL-01/03/04/05 заблокированы E7–E9 | E4–E9 |
 | E11 | LLM query planner: один bounded tenant-вызов, закрытая JSON Schema, только принятые catalog IDs, PK/FK/description evidence, максимум 400 колонок, fallback и запрет self-approval | **DONE для flat-query v1** | E4–E6 |
 | E12 | Advanced SQL: подзапросы, CTE, HAVING, оконные функции, UNION и pagination | **GAP**, шаблон требований есть, исполняемого контракта нет | E6 |
+| E13 | Единый QueryProject: серверное хранение требований, решений, snapshot, query spec, compilation, binding, runs и document revisions с optimistic concurrency | **DESIGNED / GAP** | E4–E7; схема и миграция Business Documents |
+| E14 | Основной продуктовый workspace: список проектов, шесть этапов, серверный autosave, blockers и capability-aware UI; template/registry вынесены в административные режимы | **DESIGNED / GAP** | E13, E15 |
+| E15 | Атомарный реестр требований и решений: REQ/DEC IDs, evidence, coverage, invalidation graph и автоматически собираемая traceability matrix | **DESIGNED / GAP** | E4–E6, E13 |
+| E16 | DocumentAssembler: compile-only и runtime document revisions, статусы разделов, канонические read-only блоки, annotations и честные NOT_EXECUTED/DEGRADED состояния | **DESIGNED / GAP** | E1, E2, E6, E13, E15; для runtime-ветки E7–E9 |
 
 `DONE` здесь означает наличие исполняемого продукта и автоматической проверки.
 `DONE для server-backed vertical slice` означает, что поведение доступно в
@@ -148,6 +256,7 @@ Chromium. Они доказывают компиляцию, но не выпол
 Golden проверяет точный accepted snapshot, отсутствие заранее выбранного
 profile и безопасный ответ `BOUND` с `Warehouse RO`: автор не получает
 connector ID, host, username, password или ingestion query. Затем сценарий
+проверяет видимое соответствие catalog FQN → PostgreSQL relation. Затем он
 подтверждает JOIN, создаёт отдельную WHERE-карточку с integer-параметром и
 проверяет, что кнопка компиляции заблокирована до каждого решения. После этого
 он сравнивает весь request к

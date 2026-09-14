@@ -375,6 +375,18 @@ class DocumentConstructorStub:
                     "target_database": "analytics",
                 },
                 "bindings": [{"binding_id": "binding-1", "version": 1}],
+                "relations": [
+                    {
+                        "entity_id": "orders",
+                        "catalog_fqn": "warehouse.analytics.dwh.order_fact",
+                        "physical_relation": "dwh.order_fact",
+                    },
+                    {
+                        "entity_id": "customers",
+                        "catalog_fqn": "warehouse.analytics.dwh.customer_dim",
+                        "physical_relation": "dwh.customer_dim",
+                    },
+                ],
             },
         }
 
@@ -439,6 +451,24 @@ class DocumentConstructorStub:
                         "llm_id": "",
                         "asr_id": "",
                         "embd_id": "",
+                    }
+                ),
+            )
+            return
+        if path == "/api/v1/business-documents/capabilities":
+            _fulfill_json(
+                route,
+                _envelope(
+                    {
+                        "access_role": "AUTHOR_CREATOR",
+                        "capabilities": {
+                            "read": True,
+                            "create": True,
+                            "edit_own": True,
+                            "edit_all": False,
+                            "delete": False,
+                            "assign": False,
+                        },
                     }
                 ),
             )
@@ -761,18 +791,25 @@ def _expected_execution_binding_request():
 
 
 def _open_constructor(page, base_url):
+    page.set_viewport_size({"width": 1920, "height": 1080})
     page.goto(
         f"{base_url.rstrip('/')}/business-documents",
         wait_until="commit",
         timeout=NAVIGATION_TIMEOUT_MS,
     )
-    constructor_link = page.get_by_test_id("open-document-constructor")
+    expect(page.get_by_test_id("open-document-constructor")).to_have_count(0)
+    constructor_link = page.locator(
+        "[data-testid='nav-document-constructor']:visible"
+    )
     expect(constructor_link).to_be_visible(timeout=NAVIGATION_TIMEOUT_MS)
     constructor_link.click()
     expect(page).to_have_url(
-        re.compile(r"/business-documents/constructor$"),
+        re.compile(r"/document-constructor$"),
         timeout=RESULT_TIMEOUT_MS,
     )
+    expect(
+        page.locator("[data-testid='nav-document-constructor']:visible")
+    ).to_have_attribute("aria-current", "page")
     expect(page.get_by_test_id("document-constructor-page")).to_be_visible()
     page.wait_for_load_state("load", timeout=NAVIGATION_TIMEOUT_MS)
 
@@ -991,6 +1028,9 @@ def test_document_constructor_confirms_query_decisions_and_compiles_golden(
     workspace.get_by_test_id("query-execution-binding-resolve").click()
     expect(workspace.get_by_test_id("query-execution-binding-status")).to_have_text("BOUND")
     expect(workspace.get_by_test_id("query-execution-binding-selection")).to_contain_text("Warehouse RO")
+    expect(workspace.get_by_test_id("query-execution-relation-mappings")).to_contain_text(
+        "warehouse.analytics.dwh.order_fact → dwh.order_fact"
+    )
     assert stub.execution_binding_requests == [_expected_execution_binding_request()]
 
     workspace.get_by_role("checkbox", name="Подтвердить JOIN 1").check()

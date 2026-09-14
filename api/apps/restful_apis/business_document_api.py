@@ -22,6 +22,7 @@ from quart import Response, jsonify, request
 from werkzeug.exceptions import BadRequest
 
 from api.apps import current_user, login_required
+from api.apps.business_documents.authorization import BusinessDocumentAccess
 from api.apps.business_documents.eva_changes import EvaDocumentChangeService
 from api.apps.business_documents.errors import BusinessDocumentError
 from api.apps.business_documents.exports import BusinessDocumentExportService
@@ -232,6 +233,25 @@ async def list_business_documents():
         )
     except (TypeError, ValueError):
         return _error(BusinessDocumentError("INVALID_PAGINATION", "page and page_size must be integers", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/capabilities", methods=["GET"])  # noqa: F821
+@login_required
+async def get_business_document_capabilities():
+    try:
+        access = BusinessDocumentAccess(
+            actor_id=str(current_user.id),
+            assigned_role=_access_role(),
+            is_admin=_is_admin(),
+        )
+        return _success(
+            {
+                "access_role": access.role.value,
+                "capabilities": access.capabilities(),
+            }
+        )
     except BusinessDocumentError as error:
         return _error(error)
 

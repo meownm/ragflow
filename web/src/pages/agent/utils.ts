@@ -6,6 +6,7 @@ import {
   ICategorizeForm,
   ICategorizeItem,
   ICategorizeItemResult,
+  ISwitchForm,
   RAGFlowNodeType,
 } from '@/interfaces/database/agent';
 import { buildSelectOptions } from '@/utils/component-util';
@@ -33,6 +34,7 @@ import {
   NoDebugOperatorsList,
   NodeHandleId,
   Operator,
+  SwitchElseTo,
   TitleChunkerMethod,
   TypesWithArray,
   WebhookSecurityAuthType,
@@ -161,6 +163,20 @@ function buildCategorize(edges: Edge[], nodes: Node[], nodeId: string) {
     params.category_description = nextCategoryDescription;
   }
   return omit(params, 'items');
+}
+
+function buildSwitch(edges: Edge[], nodes: Node[], nodeId: string) {
+  const node = nodes.find((x) => x.id === nodeId);
+  const params = { ...(node?.data.form ?? {}) } as ISwitchForm;
+  const subEdges = edges.filter((edge) => edge.source === nodeId);
+
+  params.conditions = (params.conditions ?? []).map((condition, index) => ({
+    ...condition,
+    to: filterTargetsBySourceHandleId(subEdges, `Case ${index + 1}`),
+  }));
+  params.end_cpn_ids = filterTargetsBySourceHandleId(subEdges, SwitchElseTo);
+
+  return params;
 }
 
 const buildOperatorParams = (operatorName: string) =>
@@ -506,6 +522,10 @@ export const buildDslComponentsByGraph = (
         }
         case Operator.Categorize:
           params = buildCategorize(edges, nodes, id);
+          break;
+
+        case Operator.Switch:
+          params = buildSwitch(edges, nodes, id);
           break;
 
         case Operator.Parser:

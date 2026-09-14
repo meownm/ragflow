@@ -198,6 +198,9 @@ runtime_probes:
   blueprint_name: business_document_api_runtime_probe
   url_prefix: /api/v1
   stub_modules:
+  - module: api.apps.business_documents.authorization
+    symbols:
+      BusinessDocumentAccess: class
   - module: api.apps.business_documents.eva_changes
     symbols:
       EvaDocumentChangeService: class
@@ -262,6 +265,9 @@ runtime_probes:
   - path: /api/v1/business-documents
     methods: [GET]
     endpoint: list_business_documents
+  - path: /api/v1/business-documents/capabilities
+    methods: [GET]
+    endpoint: get_business_document_capabilities
   - path: /api/v1/business-documents/catalog
     methods: [GET]
     endpoint: list_business_document_catalog

@@ -131,6 +131,18 @@ describe('QuerySpecificationDialog', () => {
           target_database: 'analytics',
         },
         bindings: [{ binding_id: 'binding-1', version: 1 }],
+        relations: [
+          {
+            entity_id: 'orders',
+            catalog_fqn: 'warehouse.analytics.dwh.order_fact',
+            physical_relation: 'dwh.order_fact',
+          },
+          {
+            entity_id: 'customers',
+            catalog_fqn: 'warehouse.analytics.dwh.customer_dim',
+            physical_relation: 'dwh.customer_dim',
+          },
+        ],
       },
     });
     mockedPlan.mockResolvedValue({
@@ -375,6 +387,11 @@ describe('QuerySpecificationDialog', () => {
     expect(
       screen.getByTestId('query-execution-binding-selection'),
     ).toHaveTextContent('Warehouse RO');
+    expect(
+      screen.getByTestId('query-execution-relation-mappings'),
+    ).toHaveTextContent(
+      'warehouse.analytics.dwh.order_fact → dwh.order_fact',
+    );
     expect(mockedCompile).not.toHaveBeenCalled();
   });
 });

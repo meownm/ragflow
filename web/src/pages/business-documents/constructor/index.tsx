@@ -16,12 +16,11 @@ import {
   useFetchUserInfo,
 } from '@/hooks/use-user-setting-request';
 import { Routes } from '@/routes';
-import { listBusinessDocuments } from '@/services/business-document-service';
+import { getBusinessDocumentCapabilities } from '@/services/business-document-service';
 import { useQuery } from '@tanstack/react-query';
 import {
   AlertTriangle,
   Check,
-  ChevronLeft,
   Download,
   FileJson2,
   FlaskConical,
@@ -89,13 +88,15 @@ function descendantsFor(sections: ConstructorSection[], uid: string) {
 
 export default function DocumentConstructorPage() {
   const importInputRef = useRef<HTMLInputElement>(null);
-  const accessQuery = useQuery({
-    queryKey: ['business-documents', 'mine', 1],
-    queryFn: () => listBusinessDocuments(1, 20, 'mine'),
-    retry: false,
-  });
   const { data: userInfo, loading: userInfoLoading } = useFetchUserInfo();
   const { data: tenantInfo, loading: tenantInfoLoading } = useFetchTenantInfo();
+  const actorId = userInfo.id?.trim();
+  const accessQuery = useQuery({
+    queryKey: ['business-document-capabilities', actorId],
+    queryFn: getBusinessDocumentCapabilities,
+    enabled: Boolean(actorId) && !userInfoLoading,
+    retry: false,
+  });
   const storageScope = useMemo<DocumentConstructorStorageScope | null>(() => {
     const userId = userInfo?.id?.trim();
     const tenantId = tenantInfo?.tenant_id?.trim();
@@ -391,14 +392,6 @@ export default function DocumentConstructorPage() {
       <header className="shrink-0 border-b border-border-button bg-bg-base px-4 py-4 sm:px-6 lg:px-8">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex min-w-0 items-center gap-3">
-            <Button asChild size="icon" variant="ghost">
-              <Link
-                to={Routes.BusinessDocuments}
-                aria-label="Вернуться к документам"
-              >
-                <ChevronLeft className="size-5" />
-              </Link>
-            </Button>
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <h1 className="truncate text-xl font-semibold tracking-tight sm:text-2xl">

@@ -1,6 +1,6 @@
 schema_version: 1
 upstream_base: cb93883f3f8c975eecb2fed81210effeb3bdb06f
-head: db7d6cfc22b74853790b9f5fd21a55756cc56e86
+head: 7b096442e2170acdb3eda8729557c1b08a649dd3
 changes:
 - id: CORE-eva-integration
   owner: fork-maintainer
@@ -347,7 +347,7 @@ changes:
   - path: api/db/db_models.py
     committed: M
     staged: null
-    unstaged: M
+    unstaged: null
   - path: common/time_utils.py
     committed: M
     staged: null
@@ -381,7 +381,7 @@ changes:
   - path: api/apps/restful_apis/agent_api.py
     committed: M
     staged: null
-    unstaged: null
+    unstaged: M
   - path: internal/agent/component/invoke.go
     committed: M
     staged: null
@@ -421,7 +421,7 @@ changes:
   - path: test/unit_test/api/apps/restful_apis/test_get_agent_session.py
     committed: M
     staged: null
-    unstaged: null
+    unstaged: M
   - path: test/unit_test/api/apps/restful_apis/test_rerun_agent_authorization.py
     committed: M
     staged: null
@@ -922,7 +922,7 @@ changes:
   - path: web/src/layouts/components/global-navbar.tsx
     committed: M
     staged: null
-    unstaged: null
+    unstaged: M
   - path: web/src/layouts/components/header.tsx
     committed: M
     staged: null
@@ -950,7 +950,7 @@ changes:
   - path: web/src/locales/en.ts
     committed: M
     staged: null
-    unstaged: null
+    unstaged: M
   - path: web/src/locales/es.ts
     committed: M
     staged: null
@@ -982,7 +982,7 @@ changes:
   - path: web/src/locales/ru.ts
     committed: M
     staged: null
-    unstaged: null
+    unstaged: M
   - path: web/src/locales/tr.ts
     committed: M
     staged: null
@@ -1170,7 +1170,7 @@ changes:
   - path: web/src/pages/agent/store.test.ts
     committed: M
     staged: null
-    unstaged: null
+    unstaged: M
   - path: web/src/pages/agent/store.ts
     committed: M
     staged: null
@@ -1182,7 +1182,7 @@ changes:
   - path: web/src/pages/agent/utils.ts
     committed: M
     staged: null
-    unstaged: null
+    unstaged: M
   - path: web/src/pages/agent/utils/tests/dsl-bridge.test.ts
     committed: M
     staged: null
@@ -1593,7 +1593,7 @@ changes:
   - path: test/playwright/conftest.py
     committed: M
     staged: null
-    unstaged: M
+    unstaged: null
   - path: test/playwright/e2e/test_dataset_upload_parse.py
     committed: M
     staged: null

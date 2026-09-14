@@ -4,6 +4,7 @@ import { Link, useLocation } from 'react-router';
 
 import {
   FilePenLine,
+  LayoutTemplate,
   LucideBrain,
   LucideCpu,
   LucideDatabase,
@@ -20,9 +21,12 @@ import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import type { NavigationSection } from '@/constants/navigation';
 import { useSystemConfig } from '@/hooks/use-system-request';
+import { useFetchUserInfo } from '@/hooks/use-user-setting-request';
 import { cn } from '@/lib/utils';
 import { Routes } from '@/routes';
+import { getBusinessDocumentCapabilities } from '@/services/business-document-service';
 import { supportsCssAnchor } from '@/utils/css-support';
+import { useQuery } from '@tanstack/react-query';
 
 const PathMap = {
   [Routes.Datasets]: [Routes.Datasets, Routes.DatasetBase],
@@ -32,6 +36,7 @@ const PathMap = {
   [Routes.Memories]: [Routes.Memories, Routes.Memory, Routes.MemoryMessage],
   [Routes.OpenMetadata]: [Routes.OpenMetadata],
   [Routes.BusinessDocuments]: [Routes.BusinessDocuments],
+  [Routes.DocumentConstructor]: [Routes.DocumentConstructor],
   [Routes.Files]: [Routes.Files],
 } as const;
 
@@ -46,6 +51,7 @@ const menuItems: Array<{
   icon: LucideIcon;
   fallbackName?: string;
   section?: NavigationSection;
+  requiresBusinessDocumentCreate?: boolean;
   'data-testid'?: string;
 }> = [
   {
@@ -104,6 +110,15 @@ const menuItems: Array<{
     'data-testid': 'nav-business-documents',
   },
   {
+    path: Routes.DocumentConstructor,
+    name: 'header.documentConstructor',
+    fallbackName: 'Constructor',
+    icon: LayoutTemplate,
+    section: 'business_documents',
+    requiresBusinessDocumentCreate: true,
+    'data-testid': 'nav-document-constructor',
+  },
+  {
     path: Routes.Files,
     name: 'header.fileManager',
     icon: LucideFolderOpen,
@@ -113,13 +128,28 @@ const menuItems: Array<{
 
 function useVisibleMenuItems() {
   const { config } = useSystemConfig();
+  const { data: userInfo, loading: userInfoLoading } = useFetchUserInfo();
+  const actorId = userInfo.id?.trim();
+  const businessDocumentsVisible =
+    config?.visibleSections.includes('business_documents') === true;
+  const { data: businessDocumentAccess } = useQuery({
+    queryKey: ['business-document-capabilities', actorId],
+    queryFn: getBusinessDocumentCapabilities,
+    enabled:
+      businessDocumentsVisible && Boolean(actorId) && !userInfoLoading,
+    retry: false,
+  });
+  const canCreateBusinessDocuments =
+    businessDocumentAccess?.capabilities?.create === true;
 
   return useMemo(() => {
     const visibleSections = new Set(config?.visibleSections);
     return menuItems.filter(
-      ({ section }) => !section || !config || visibleSections.has(section),
+      ({ section, requiresBusinessDocumentCreate }) =>
+        (!section || !config || visibleSections.has(section)) &&
+        (!requiresBusinessDocumentCreate || canCreateBusinessDocuments),
     );
-  }, [config]);
+  }, [canCreateBusinessDocuments, config]);
 }
 
 function useActivePath() {

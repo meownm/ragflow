@@ -9,6 +9,20 @@ sidebar_custom_props: {
 
 Key features, improvements and bug fixes in the latest releases.
 
+## v1.22.0
+
+Released on September 15, 2026.
+
+### New features
+
+- SQL document constructor: Adds a durable guided workspace that moves from natural-language requirements through schema resolution and query planning to guarded SQL and a downloadable Markdown specification.
+- SQL agents: Adds explicit human review gates for requirements, ambiguous entities, tables, fields, joins, filters, and output limits while preserving immutable accepted artifacts.
+
+### Improvements and bug fixes
+
+- Makes SQL projects the default surface of the root document-constructor section while keeping template creation available on the same page.
+- Persists agent jobs, proposals, decisions, idempotency records, tenant authorization, and optimistic state versions; query execution and Python post-processing remain disabled future stages.
+
 ## v1.21.0
 
 Released on September 14, 2026.

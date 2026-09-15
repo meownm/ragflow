@@ -1,31 +1,31 @@
 {
   "schema_version": 1,
-  "captured_at": "2026-09-14T18:24:54.569291+00:00",
-  "head": "7b096442e2170acdb3eda8729557c1b08a649dd3",
+  "captured_at": "2026-09-15T08:57:19.214478+00:00",
+  "head": "a976579af759e36631e8b933842a09de27c32b68",
   "upstream_base": "cb93883f3f8c975eecb2fed81210effeb3bdb06f",
-  "branch": "",
+  "branch": "codex/sql-document-agent-cycle",
   "shallow": true,
-  "snapshot_sha256": "ff7ab53e56a2bfaffc4df81ea0a2c5155500a0981964cef88cce8c45e84ffd1e",
+  "snapshot_sha256": "78ffa33bd62976338f30a2ebe77a5ea7e3c1c88810a2ff33a5f1b7acfebc173f",
   "scope": "All tracked deltas from the content baseline, staged/unstaged changes and nonignored untracked files; generated outputs explicitly listed without recursive digest",
   "rename_policy": "Renames represented by explicit delete/add paths; no paths discarded by similarity heuristics",
   "counts": {
     "base_files": 4441,
-    "head_files": 4882,
-    "index_files": 4882,
-    "committed_delta": 787,
+    "head_files": 4888,
+    "index_files": 4888,
+    "committed_delta": 793,
     "staged_delta": 0,
-    "unstaged_delta": 39,
-    "untracked": 6,
-    "inventory_records": 793,
+    "unstaged_delta": 21,
+    "untracked": 12,
+    "inventory_records": 805,
     "by_origin": {
       "core_change": 346,
-      "extension": 447
+      "extension": 459
     },
     "by_module": {
       "quality-governance": 149,
       "observability": 28,
       "access-policy": 44,
-      "business-documents": 129,
+      "business-documents": 141,
       "eva-integration": 18,
       "agent-runtime": 16,
       "openmetadata": 19,
@@ -845,6 +845,24 @@
       }
     },
     {
+      "path": "agent/business_requirements/contracts/sql_requirements_proposal.v1.schema.json",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": null,
+      "index_entry": null,
+      "committed_change": null,
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": true,
+      "working_file": {
+        "present": true,
+        "bytes": 1681,
+        "sha256": "0e409ed40e1839b897f24032d219edfb9bc9bf204732a342c6d6f0b219ef966c"
+      }
+    },
+    {
       "path": "agent/business_requirements/contracts/sql_schema_interpretation.v1.schema.json",
       "module": "business-documents",
       "origin": "extension",
@@ -899,17 +917,24 @@
       "module": "business-documents",
       "origin": "extension",
       "base_entry": null,
-      "head_entry": null,
-      "index_entry": null,
-      "committed_change": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "052b4a7b3324969879ff99d33e7578f2508fee63"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "052b4a7b3324969879ff99d33e7578f2508fee63"
+      },
+      "committed_change": "A",
       "staged_change": null,
       "unstaged_change": null,
       "working_change_from_base": "A",
-      "untracked": true,
+      "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 21206,
-        "sha256": "6157ee544112e1c9b37c21c4152b5bbe88b65f26a734c3ac9d1fb8c8c3acd011"
+        "bytes": 21475,
+        "sha256": "6ac00829c4dfc7a73774d291385a205d55c901a9fdb289195ee8b0d5780a031f"
       }
     },
     {
@@ -1160,6 +1185,24 @@
         "present": true,
         "bytes": 4247,
         "sha256": "979767bb06ba0a94b8d57f7d946d5cd61e5750a020ad13453070d6b3edf93316"
+      }
+    },
+    {
+      "path": "agent/business_requirements/prompts/sql_requirements_analyst.v1.md",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": null,
+      "index_entry": null,
+      "committed_change": null,
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": true,
+      "working_file": {
+        "present": true,
+        "bytes": 1983,
+        "sha256": "32fc11cfd82256f951205747783ee08b001aa62c07ad03f4dfe866bb876abece"
       }
     },
     {
@@ -1415,13 +1458,13 @@
       },
       "committed_change": "A",
       "staged_change": null,
-      "unstaged_change": null,
+      "unstaged_change": "M",
       "working_change_from_base": "A",
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 20836,
-        "sha256": "4b6d783293cd96222faa359d59d383c388a3a27d021486e2877340e75d48b407"
+        "bytes": 21049,
+        "sha256": "3eb5bcc10125767a7d1f27fc0dc5f97e825e1ce7a92c54779f208eb61f01bde9"
       }
     },
     {
@@ -1625,6 +1668,42 @@
       }
     },
     {
+      "path": "api/apps/business_documents/sql_query_agent_worker.py",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": null,
+      "index_entry": null,
+      "committed_change": null,
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": true,
+      "working_file": {
+        "present": true,
+        "bytes": 3642,
+        "sha256": "f32968bcdfca5fcb2fbac564dc9880ad2fd89485c62b93fc59985d2b2c3b9bff"
+      }
+    },
+    {
+      "path": "api/apps/business_documents/sql_query_agents.py",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": null,
+      "index_entry": null,
+      "committed_change": null,
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": true,
+      "working_file": {
+        "present": true,
+        "bytes": 30490,
+        "sha256": "a84fbb81e96de602fce5c6dc34d9e7b2af621cda60f3acebcdcaeef5b601f0d5"
+      }
+    },
+    {
       "path": "api/apps/business_documents/sql_query_lifecycle.py",
       "module": "business-documents",
       "origin": "extension",
@@ -1665,13 +1744,31 @@
       },
       "committed_change": "A",
       "staged_change": null,
-      "unstaged_change": null,
+      "unstaged_change": "M",
       "working_change_from_base": "A",
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 4374,
-        "sha256": "4203b07b6cd788dbc681f5f7bcb7312be4ac69f25ad5254e86f423f237f33cf2"
+        "bytes": 4392,
+        "sha256": "0184bc5831f6f9e7e0d487513a65393475bbf7ff790ee826600554eb2d467dab"
+      }
+    },
+    {
+      "path": "api/apps/business_documents/sql_query_requirements.py",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": null,
+      "index_entry": null,
+      "committed_change": null,
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": true,
+      "working_file": {
+        "present": true,
+        "bytes": 3017,
+        "sha256": "2ff4d12c1c98f5027c94ef5057c6ceab75cdcccb8109caa2ca22005c9b3dcb1b"
       }
     },
     {
@@ -1715,13 +1812,13 @@
       },
       "committed_change": "A",
       "staged_change": null,
-      "unstaged_change": null,
+      "unstaged_change": "M",
       "working_change_from_base": "A",
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 17904,
-        "sha256": "03d87a7eef8fb83af3a22e26d982d6b98d4c92f19b30cf494eeff13d00a44114"
+        "bytes": 19263,
+        "sha256": "100188c5f9b4ed04b821a102c2f4d9b7d12b1a4423df7aeacc86eb95aeacdcfc"
       }
     },
     {
@@ -1765,21 +1862,21 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "2c19cd0607d0aef41875947542f2a0da0087bc45"
+        "oid": "1324d04f44f855e0483c036b37fb9c930001076e"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "2c19cd0607d0aef41875947542f2a0da0087bc45"
+        "oid": "1324d04f44f855e0483c036b37fb9c930001076e"
       },
       "committed_change": "M",
       "staged_change": null,
-      "unstaged_change": "M",
+      "unstaged_change": null,
       "working_change_from_base": "M",
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 100181,
-        "sha256": "687fd39600106666584f46f4cc4ace42c701082283baab4b00cd031fb873f679"
+        "bytes": 100255,
+        "sha256": "89c495987506949cf9683d9adf136e6278f9c65a3801ff706b8065fef1c56761"
       }
     },
     {
@@ -1819,11 +1916,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "7e7f028909da8e089064ea09ad66fd2369fa6899"
+        "oid": "b95150b01f43b6aff8376b887635add7c04e9a10"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "7e7f028909da8e089064ea09ad66fd2369fa6899"
+        "oid": "b95150b01f43b6aff8376b887635add7c04e9a10"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -1832,8 +1929,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 29360,
-        "sha256": "92df83b3faba016963be09f44e40802f54f1d1701fb73cff7815d4e342276d58"
+        "bytes": 33886,
+        "sha256": "aff44269924bf87d81ab21d1387b8d32f10d15e9ad5c7055e73b154e9aecb80d"
       }
     },
     {
@@ -2383,13 +2480,13 @@
       },
       "committed_change": "M",
       "staged_change": null,
-      "unstaged_change": null,
+      "unstaged_change": "M",
       "working_change_from_base": "M",
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 119006,
-        "sha256": "222a99bf673e489dbfd5ddeaed10654cd747faec9d193e6d926420fb80e0c126"
+        "bytes": 122648,
+        "sha256": "afdb2a8ba5de4bf186d4bd2e560680cee2c188924483b95e4b423d3d5007422e"
       }
     },
     {
@@ -3012,6 +3109,24 @@
       }
     },
     {
+      "path": "business_documents/sql_query/agent_cycle.py",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": null,
+      "index_entry": null,
+      "committed_change": null,
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": true,
+      "working_file": {
+        "present": true,
+        "bytes": 3621,
+        "sha256": "ddd6957f9de661b3813c2c5f7fb4120af6d98d00fe1ea2ad40302074bda0e670"
+      }
+    },
+    {
       "path": "business_documents/sql_query/execution_registry.py",
       "module": "business-documents",
       "origin": "extension",
@@ -3019,21 +3134,21 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "2e8ba17546c118e241c32b5e0745ab5c57e9aa5f"
+        "oid": "66273573df1d66cd18f76fab26f560380d3aa916"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "2e8ba17546c118e241c32b5e0745ab5c57e9aa5f"
+        "oid": "66273573df1d66cd18f76fab26f560380d3aa916"
       },
       "committed_change": "A",
       "staged_change": null,
-      "unstaged_change": "M",
+      "unstaged_change": null,
       "working_change_from_base": "A",
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 17251,
-        "sha256": "14a6a4b93dff92b23f2da3ea0948b24131e388371b3ad5d711d1b78155401b6f"
+        "bytes": 17713,
+        "sha256": "b9ca2f7372c0e01bc81ba520d4f5eddc92584d79fae6b4faa7216cb137ae9a67"
       }
     },
     {
@@ -3069,21 +3184,39 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "b87e78e2e2d727ab57ff737f200f977630e3d8b3"
+        "oid": "56c92fb9e7b1c46d9016259e1cb2338418396ade"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "b87e78e2e2d727ab57ff737f200f977630e3d8b3"
+        "oid": "56c92fb9e7b1c46d9016259e1cb2338418396ade"
       },
       "committed_change": "A",
       "staged_change": null,
-      "unstaged_change": "M",
+      "unstaged_change": null,
       "working_change_from_base": "A",
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 45960,
-        "sha256": "96cb267e4fcdeddaa46207ca1bc6651371c0192e9494fec6ce2453d4304a5559"
+        "bytes": 47001,
+        "sha256": "384d0a45fbc1e2eb448a6c07c15f77957d9d3a5e9a7755994974297f5f792400"
+      }
+    },
+    {
+      "path": "business_documents/sql_query/requirements_analysis.py",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": null,
+      "index_entry": null,
+      "committed_change": null,
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": true,
+      "working_file": {
+        "present": true,
+        "bytes": 9950,
+        "sha256": "1777fbd4cd8110e734ec13d0aab1fc05ead9e9072e8623e17863bafc8f6f04ff"
       }
     },
     {
@@ -4734,17 +4867,24 @@
       "module": "business-documents",
       "origin": "extension",
       "base_entry": null,
-      "head_entry": null,
-      "index_entry": null,
-      "committed_change": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "3bc1e81ea1b9283bcb02c54a245fcfb2d6841df0"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "3bc1e81ea1b9283bcb02c54a245fcfb2d6841df0"
+      },
+      "committed_change": "A",
       "staged_change": null,
-      "unstaged_change": null,
+      "unstaged_change": "M",
       "working_change_from_base": "A",
-      "untracked": true,
+      "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 58321,
-        "sha256": "ffaad5db90cb1540035696f7375e60e8acbaed10a4c69fed0310273bd981ee5a"
+        "bytes": 60721,
+        "sha256": "85ebc1f33959029dced7cefe2b99de21b6e58a0fdd9281aa0150a096da5eddce"
       }
     },
     {
@@ -4752,17 +4892,24 @@
       "module": "business-documents",
       "origin": "extension",
       "base_entry": null,
-      "head_entry": null,
-      "index_entry": null,
-      "committed_change": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "1f5f1d91a69e23e419863945991aebc2c1e4c0c6"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "1f5f1d91a69e23e419863945991aebc2c1e4c0c6"
+      },
+      "committed_change": "A",
       "staged_change": null,
       "unstaged_change": null,
       "working_change_from_base": "A",
-      "untracked": true,
+      "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 53861,
-        "sha256": "32836706a0097a13968af626a5352964b83010392a5796dfaefe5b4b3513dc72"
+        "bytes": 54657,
+        "sha256": "c8c53f684b9c4b5592020feab1320cfd144cf96240b92097214089d4f0aa96a1"
       }
     },
     {
@@ -4773,11 +4920,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "8388bf56387753cc8b7454887f5d29c60f1cee44"
+        "oid": "20ef2f40b3b7528316d3f72bc02907574b385761"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "8388bf56387753cc8b7454887f5d29c60f1cee44"
+        "oid": "20ef2f40b3b7528316d3f72bc02907574b385761"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -4786,8 +4933,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 46726,
-        "sha256": "b1f1df64d46fa84ccceaf418b5deafbd02c04f5b123cf721f635f63de516d064"
+        "bytes": 48329,
+        "sha256": "368ca36df18ca9c227f5dcc9443f9e9b8c1b07a2d5c92511f67eec01ec9a9b07"
       }
     },
     {
@@ -4795,17 +4942,24 @@
       "module": "business-documents",
       "origin": "extension",
       "base_entry": null,
-      "head_entry": null,
-      "index_entry": null,
-      "committed_change": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "6e26045fef51d35c9805f44e35039a3805dbeeae"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "6e26045fef51d35c9805f44e35039a3805dbeeae"
+      },
+      "committed_change": "A",
       "staged_change": null,
       "unstaged_change": null,
       "working_change_from_base": "A",
-      "untracked": true,
+      "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 67769,
-        "sha256": "f8c399f01338ed0fc666e73bd0265f0daf740becbc2e1cfbd31ed36b674e756d"
+        "bytes": 68810,
+        "sha256": "614660a9c6ba05896e070814c708134d8e67464ad3889458fbc5522b543ea769"
       }
     },
     {
@@ -5145,11 +5299,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "ef2801448c92ea30395f89b043235bacd74b0460"
+        "oid": "5da3fcb23214af2f37f458b26cf271d7cb3cbf62"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "ef2801448c92ea30395f89b043235bacd74b0460"
+        "oid": "5da3fcb23214af2f37f458b26cf271d7cb3cbf62"
       },
       "committed_change": "M",
       "staged_change": null,
@@ -5158,8 +5312,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 78730,
-        "sha256": "382080f2d8cac3bdecc81e80502f7dc6d4142f3176760b8ca6105a3d35d415ce"
+        "bytes": 79569,
+        "sha256": "a6fda93da09519075ccb31822599dacc2bda5beaba56cdd3b7623f1d3e44b86d"
       }
     },
     {
@@ -5655,21 +5809,21 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "a874c990d795124acef92b8b4cc35a3f04752e41"
+        "oid": "be20a4d5490138545cf534e2cb3969fdf25ea22b"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "a874c990d795124acef92b8b4cc35a3f04752e41"
+        "oid": "be20a4d5490138545cf534e2cb3969fdf25ea22b"
       },
       "committed_change": "M",
       "staged_change": null,
-      "unstaged_change": "M",
+      "unstaged_change": null,
       "working_change_from_base": "M",
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 12208,
-        "sha256": "3344ce462ccbaa7c5a3e41aacb5103ab26008316373f49c25dec154265661acd"
+        "bytes": 12209,
+        "sha256": "cd98246bc7b924a1d9190d107ef4ce78c3e5aedaa311e83c15ddd02ad8c8b66a"
       }
     },
     {
@@ -8602,11 +8756,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "a5ec5190e50b109a66760b73e8ee8d1f4edadd1e"
+        "oid": "de6ca1aac65e9ab59ed2888d7addc0e74c437506"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "a5ec5190e50b109a66760b73e8ee8d1f4edadd1e"
+        "oid": "de6ca1aac65e9ab59ed2888d7addc0e74c437506"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -8615,8 +8769,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 44139,
-        "sha256": "f280a9dc597ab6fbf5228de92f19c50c1f374d64a71cefa7e8c5944bf9d50e0c"
+        "bytes": 57709,
+        "sha256": "03d05864f5d499e79ccfbbd523e6b2854b113763c2c6614e633d3d9e307dead4"
       }
     },
     {
@@ -9673,11 +9827,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "02b3a2a68a8a82ee742bd54b4c93ccbf3d8ec94a"
+        "oid": "643a04241d383a81b43acb0e2045c73134656b6a"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "02b3a2a68a8a82ee742bd54b4c93ccbf3d8ec94a"
+        "oid": "643a04241d383a81b43acb0e2045c73134656b6a"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -9686,8 +9840,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 10700,
-        "sha256": "124fef71c02c9890a12340b21aa4402f3f0ac72b73a9f1a3cb456838fc164323"
+        "bytes": 11265,
+        "sha256": "654b51597cbd744b32cdcc67a1418e4f2fdb7b18d8c2d130a603e802e1f54ed5"
       }
     },
     {
@@ -9873,11 +10027,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "c2ce1ecdaffe988dbe3965feadbf2500d77aedcb"
+        "oid": "44ec820c07a658ad60b9d4cb7ab2d7d369e6d82c"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "c2ce1ecdaffe988dbe3965feadbf2500d77aedcb"
+        "oid": "44ec820c07a658ad60b9d4cb7ab2d7d369e6d82c"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -9886,8 +10040,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 17595,
-        "sha256": "e7236dcb4e8bdcf5172711b737ca977cc2e98a708541737fcf4b216daae1a545"
+        "bytes": 22257,
+        "sha256": "0f654dc640e553f0595690b53700340c679902c86c2dfcfcfffc9781ffa21f61"
       }
     },
     {
@@ -9998,21 +10152,21 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "7c5f4609a197f3f30a0f247000f5715ea223acce"
+        "oid": "c8c9519ea1763ffd146c8b60149c98a0b8315f5d"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "7c5f4609a197f3f30a0f247000f5715ea223acce"
+        "oid": "c8c9519ea1763ffd146c8b60149c98a0b8315f5d"
       },
       "committed_change": "A",
       "staged_change": null,
-      "unstaged_change": "M",
+      "unstaged_change": null,
       "working_change_from_base": "A",
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 10271,
-        "sha256": "e2becc3de470d15d7f23dc154022f6e96919869f74f93dbef58e11e11d843418"
+        "bytes": 10563,
+        "sha256": "54792edeef2326c37d7ba55d3752e7fd56939055306b9346cd5b758214c36282"
       }
     },
     {
@@ -10038,6 +10192,42 @@
         "present": true,
         "bytes": 17323,
         "sha256": "f1088dfb7720bc033551216b800c139289383470917b2da0c7743bc29f93896b"
+      }
+    },
+    {
+      "path": "test/unit_test/api/apps/business_documents/test_sql_query_agent_cycle.py",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": null,
+      "index_entry": null,
+      "committed_change": null,
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": true,
+      "working_file": {
+        "present": true,
+        "bytes": 6788,
+        "sha256": "f5bf7b96c5530d519e7403a76acd3b21d47317951e3795e3104ca18e70a264fb"
+      }
+    },
+    {
+      "path": "test/unit_test/api/apps/business_documents/test_sql_query_agent_service.py",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": null,
+      "index_entry": null,
+      "committed_change": null,
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": true,
+      "working_file": {
+        "present": true,
+        "bytes": 8702,
+        "sha256": "7229a9ab40a79cab3a0388bf6aab1185b452780fa9f59ea9a2b23cd1414ae528"
       }
     },
     {
@@ -10070,17 +10260,24 @@
       "module": "business-documents",
       "origin": "extension",
       "base_entry": null,
-      "head_entry": null,
-      "index_entry": null,
-      "committed_change": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "7006b6ea5c2006c98d44095055aee0dad2a0e68b"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "7006b6ea5c2006c98d44095055aee0dad2a0e68b"
+      },
+      "committed_change": "A",
       "staged_change": null,
       "unstaged_change": null,
       "working_change_from_base": "A",
-      "untracked": true,
+      "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 12208,
-        "sha256": "97cbdf561f0a4daaf407e924bcaaa29acca70c3a781d666839f35236527c8dfc"
+        "bytes": 12511,
+        "sha256": "00da13395ed9cb8b5431d58f0519ecfeee5e9226b6e213059420a684911755eb"
       }
     },
     {
@@ -10141,21 +10338,21 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "46c739db6fb1320fb8463b7160f450ce89ba677e"
+        "oid": "c6c122090db03595eee7ef979406a7044bfb3b59"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "46c739db6fb1320fb8463b7160f450ce89ba677e"
+        "oid": "c6c122090db03595eee7ef979406a7044bfb3b59"
       },
       "committed_change": "A",
       "staged_change": null,
-      "unstaged_change": "M",
+      "unstaged_change": null,
       "working_change_from_base": "A",
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 16290,
-        "sha256": "6f224a25734e7c3b7ecaa5d610a7178230a12fcc8c5307e71b06eeb5a543330c"
+        "bytes": 16728,
+        "sha256": "4592f2c6b556307553cb96ba0d9fc70c1b41cb5891891a423eb489b3e81e792a"
       }
     },
     {
@@ -10224,21 +10421,21 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "5e9d3921a140936706ced9cbb3d4bb89239dca87"
+        "oid": "61016790247e4b3e60e1bef7766b978abf99974a"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "5e9d3921a140936706ced9cbb3d4bb89239dca87"
+        "oid": "61016790247e4b3e60e1bef7766b978abf99974a"
       },
       "committed_change": "A",
       "staged_change": null,
-      "unstaged_change": "M",
+      "unstaged_change": null,
       "working_change_from_base": "A",
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 8255,
-        "sha256": "5cae86838b5b902234922340e130ff3debfff6c62f96358118b8582eac7a1a53"
+        "bytes": 8389,
+        "sha256": "4b9420cb66344b61fcfea64894e3603b13177cb742da51428a8b6e81bdb60a5c"
       }
     },
     {
@@ -10253,21 +10450,21 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "2da506fdb1daccdc82b303abacd8d46bd2ebf81c"
+        "oid": "3ef4661ca84b268a3634f80f505eaaf278639ede"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "2da506fdb1daccdc82b303abacd8d46bd2ebf81c"
+        "oid": "3ef4661ca84b268a3634f80f505eaaf278639ede"
       },
       "committed_change": "M",
       "staged_change": null,
-      "unstaged_change": "M",
+      "unstaged_change": null,
       "working_change_from_base": "M",
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 10660,
-        "sha256": "f73ac247a5cf3fddf77b52f6e8c76ce0a48a0cb9f108d4473c37331e326c2985"
+        "bytes": 10749,
+        "sha256": "5cb12b2c2a0eed0b451663990b9dac0d0d32dd119f640f38b12168def69461ba"
       }
     },
     {
@@ -11726,15 +11923,15 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "3e923a55c274c5f11aa7c87f5b47fbfd716ae8df"
+        "oid": "c5e547d103301a5231f2359ed79ea903a968f8b2"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "3e923a55c274c5f11aa7c87f5b47fbfd716ae8df"
+        "oid": "c5e547d103301a5231f2359ed79ea903a968f8b2"
       },
       "committed_change": "A",
       "staged_change": null,
-      "unstaged_change": "M",
+      "unstaged_change": null,
       "working_change_from_base": "A",
       "untracked": false,
       "working_file": {
@@ -12205,21 +12402,21 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "11521db53ba52d72d27fe8fd20fce4b44851e980"
+        "oid": "12d318230b89fcc76a558f77f5b1fb74287111e9"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "11521db53ba52d72d27fe8fd20fce4b44851e980"
+        "oid": "12d318230b89fcc76a558f77f5b1fb74287111e9"
       },
       "committed_change": "A",
       "staged_change": null,
-      "unstaged_change": "M",
+      "unstaged_change": null,
       "working_change_from_base": "A",
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 14754,
-        "sha256": "cad3507f7e8bafc64247e38c550d2d15e89f13932fc1387267309986dc094712"
+        "bytes": 14762,
+        "sha256": "4561767378bfc61ac1e25a7fb34c35813753d066b23f9a2f1813d801be693208"
       }
     },
     {
@@ -12330,15 +12527,15 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "cc31b1e166517e84de21c0c000f34acc8b3422e6"
+        "oid": "7a2fdfe8f6b6df45005805331fdc2e5eb304d60b"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "cc31b1e166517e84de21c0c000f34acc8b3422e6"
+        "oid": "7a2fdfe8f6b6df45005805331fdc2e5eb304d60b"
       },
       "committed_change": "A",
       "staged_change": null,
-      "unstaged_change": "M",
+      "unstaged_change": null,
       "working_change_from_base": "A",
       "untracked": false,
       "working_file": {
@@ -12455,11 +12652,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "9ea5fe3b0a184063a629caf4e72cce784915d76e"
+        "oid": "c1359e89d6a68a0214f7476c05170337e06e7a15"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "9ea5fe3b0a184063a629caf4e72cce784915d76e"
+        "oid": "c1359e89d6a68a0214f7476c05170337e06e7a15"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -12504,11 +12701,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "262911401e26ad699ade92faebaa81400e18de47"
+        "oid": "c26a4b83ea2eed0195d70b333797efa7310b6dbd"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "262911401e26ad699ade92faebaa81400e18de47"
+        "oid": "c26a4b83ea2eed0195d70b333797efa7310b6dbd"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -12603,15 +12800,15 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "d770d3c5d9615ea80bb9b7ec752a5cdb100ac694"
+        "oid": "850d2100199fd0b170edbd8eb1ac0111a7a56e26"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "d770d3c5d9615ea80bb9b7ec752a5cdb100ac694"
+        "oid": "850d2100199fd0b170edbd8eb1ac0111a7a56e26"
       },
       "committed_change": "A",
       "staged_change": null,
-      "unstaged_change": "M",
+      "unstaged_change": null,
       "working_change_from_base": "A",
       "untracked": false,
       "working_file": {
@@ -12728,11 +12925,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "1f08f61565a2d182408b07e5ed518aa39959ff7e"
+        "oid": "ee23374b10e8cfa09d659926123f94465ae0b460"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "1f08f61565a2d182408b07e5ed518aa39959ff7e"
+        "oid": "ee23374b10e8cfa09d659926123f94465ae0b460"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -12741,8 +12938,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 64668,
-        "sha256": "3a44a2f5f65da4dc009a4dd186cfa446455cbee3c638e95c478c169183882057"
+        "bytes": 65568,
+        "sha256": "061fc7a33f399dd4e4eb00824754c63d05bbcc684c8bd0ea0f8afc514e373fe9"
       }
     },
     {
@@ -12803,11 +13000,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "518508c41994000356cee97288b51ad2d5fe7862"
+        "oid": "d27428ad295f5822098546f464b8a179dc34dc41"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "518508c41994000356cee97288b51ad2d5fe7862"
+        "oid": "d27428ad295f5822098546f464b8a179dc34dc41"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -12816,8 +13013,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 31968,
-        "sha256": "2c657eab71daf0e392b5302e50256c016e9dcf1a84ac208fede8386b17c07789"
+        "bytes": 35662,
+        "sha256": "62970bbf4bcff19b6da85d857d93ee5a1bce15ee0ab65d4803f09377cb439086"
       }
     },
     {
@@ -12953,15 +13150,15 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "45a22d7ba05f18b3b11efa55065271d312e5594a"
+        "oid": "17c5ced689aa234bc7e4ef20eaf34feb007134f3"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "45a22d7ba05f18b3b11efa55065271d312e5594a"
+        "oid": "17c5ced689aa234bc7e4ef20eaf34feb007134f3"
       },
       "committed_change": "A",
       "staged_change": null,
-      "unstaged_change": "M",
+      "unstaged_change": null,
       "working_change_from_base": "A",
       "untracked": false,
       "working_file": {
@@ -13025,17 +13222,24 @@
       "module": "business-documents",
       "origin": "extension",
       "base_entry": null,
-      "head_entry": null,
-      "index_entry": null,
-      "committed_change": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "e2be5a6b6f798a2c292f15743748ac8be6e0bfea"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "e2be5a6b6f798a2c292f15743748ac8be6e0bfea"
+      },
+      "committed_change": "A",
       "staged_change": null,
       "unstaged_change": null,
       "working_change_from_base": "A",
-      "untracked": true,
+      "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 9259,
-        "sha256": "fa73363429bed45ece22b19b529cab4e6a0026412d90df8f5bb5f2260350490a"
+        "bytes": 9495,
+        "sha256": "a277794880fecde2b3f68af4148f77adf0678e6bc1041aafcdaf62db4044dd31"
       }
     },
     {
@@ -13050,21 +13254,21 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "f80315c59710ca394418d9dee95d8dc1c776ce23"
+        "oid": "4c1f50fbd91c11409f27617bd6a546466a81d2c4"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "f80315c59710ca394418d9dee95d8dc1c776ce23"
+        "oid": "4c1f50fbd91c11409f27617bd6a546466a81d2c4"
       },
       "committed_change": "M",
       "staged_change": null,
-      "unstaged_change": "M",
+      "unstaged_change": null,
       "working_change_from_base": "M",
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 856460,
-        "sha256": "a6532c7bc333007497973e2c18aa8d7ce2332364ab03037679b5e460c76c55e4"
+        "bytes": 856463,
+        "sha256": "3f87be386cb8934eca323ed6630cc8c0d38cfc8837f0c0717fd534f3873a9a7c"
       }
     },
     {
@@ -15107,21 +15311,21 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "6a12dd23fed6c16149cc9c79374542b79f5d6af1"
+        "oid": "59fba940cb72878f0e11958ec98f6ee127bb3969"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "6a12dd23fed6c16149cc9c79374542b79f5d6af1"
+        "oid": "59fba940cb72878f0e11958ec98f6ee127bb3969"
       },
       "committed_change": "A",
       "staged_change": null,
-      "unstaged_change": "M",
+      "unstaged_change": null,
       "working_change_from_base": "A",
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 4339,
-        "sha256": "d18d84539caee5b663594496c74f0e9c2b5e5aadac5d187075094ff6ab999b86"
+        "bytes": 4485,
+        "sha256": "68b5ef2ce26f5dee1f95880ada664fec760b395184e366cd970518d20f93e65d"
       }
     },
     {
@@ -15136,21 +15340,21 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "7db57d94ee799aa35d5e49a54b91007200017ba6"
+        "oid": "60c3c1591f8a2e689b33efa199c064db372589fb"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "7db57d94ee799aa35d5e49a54b91007200017ba6"
+        "oid": "60c3c1591f8a2e689b33efa199c064db372589fb"
       },
       "committed_change": "M",
       "staged_change": null,
-      "unstaged_change": "M",
+      "unstaged_change": null,
       "working_change_from_base": "M",
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 11614,
-        "sha256": "5619e9ef5fd855909075d8f48b61c0b4a94cab9daebadbb2aacf11f289133136"
+        "bytes": 11997,
+        "sha256": "7809331e2c6abba37e00c5c622d32908d7f8f515cdcba3ba5322f8a573d9ac3d"
       }
     },
     {
@@ -15364,21 +15568,21 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "86bb1b5a3eabc62ab4da9daf065f050fb83d1a84"
+        "oid": "3fca699e05a363a7d563a84280155100ba871ff9"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "86bb1b5a3eabc62ab4da9daf065f050fb83d1a84"
+        "oid": "3fca699e05a363a7d563a84280155100ba871ff9"
       },
       "committed_change": "M",
       "staged_change": null,
-      "unstaged_change": "M",
+      "unstaged_change": null,
       "working_change_from_base": "M",
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 170917,
-        "sha256": "44a3cc6c9245eb40bd55b246cde2cde31e3b928a5263e8f7619b8d3d314a11e3"
+        "bytes": 174473,
+        "sha256": "dd98419c52dd34e3e7e680579b1d3ff0144c01bc179a84ed2d68f6ae10fcf077"
       }
     },
     {
@@ -15596,21 +15800,21 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "a56d16a168ef22b3bf8cd6e5c5e552b2ffc0f6a6"
+        "oid": "9113753befce78c849f96f95a0c210fdcde89b3f"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "a56d16a168ef22b3bf8cd6e5c5e552b2ffc0f6a6"
+        "oid": "9113753befce78c849f96f95a0c210fdcde89b3f"
       },
       "committed_change": "M",
       "staged_change": null,
-      "unstaged_change": "M",
+      "unstaged_change": null,
       "working_change_from_base": "M",
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 216722,
-        "sha256": "9adbca3b826b0f7a61364eaebff5bdb55b4c7594cebc8497f5814c341749a0b7"
+        "bytes": 219787,
+        "sha256": "0935e3ba0ae2577fc33a39d4211500c0f263d362f1bae20b5fa34cbdd0fb07e7"
       }
     },
     {
@@ -17163,21 +17367,21 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "1051fd6a5f5ae3eb59b6003bc80b6056c1221747"
+        "oid": "0974fb922d7544ae393aedc15cebd6a6700c0b13"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "1051fd6a5f5ae3eb59b6003bc80b6056c1221747"
+        "oid": "0974fb922d7544ae393aedc15cebd6a6700c0b13"
       },
       "committed_change": "M",
       "staged_change": null,
-      "unstaged_change": "M",
+      "unstaged_change": null,
       "working_change_from_base": "M",
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 6358,
-        "sha256": "4ef46b9ae69768cb492cea973ee44c68a60eb6226f0f09aa9a4b051d54a733ae"
+        "bytes": 6570,
+        "sha256": "9785c573be65b3934ca566fa5fdd766e9c2f234d36bb10949992a4c59d8de246"
       }
     },
     {
@@ -17250,21 +17454,21 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "e3a717dd310d2f34c2ada9849b096ca8dd69f888"
+        "oid": "6f2cb4a024f990583313c503505fcd8458398e4f"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "e3a717dd310d2f34c2ada9849b096ca8dd69f888"
+        "oid": "6f2cb4a024f990583313c503505fcd8458398e4f"
       },
       "committed_change": "M",
       "staged_change": null,
-      "unstaged_change": "M",
+      "unstaged_change": null,
       "working_change_from_base": "M",
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 27226,
-        "sha256": "e5ec63c40578f05735c7895f4f595ae74f6b516d8cf2bc2c6b5a75ec26c33fed"
+        "bytes": 28169,
+        "sha256": "0bb6e1643cc33ce746f79221a1e600d2a700233a71ad7e4dd548ddf74a5b2eac"
       }
     },
     {
@@ -17637,21 +17841,21 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "b05ad6c4a8a1b6dba827cacb8abcdde63910ce96"
+        "oid": "967003bdf7e818737b17fd756163716678b4c404"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "b05ad6c4a8a1b6dba827cacb8abcdde63910ce96"
+        "oid": "967003bdf7e818737b17fd756163716678b4c404"
       },
       "committed_change": "A",
       "staged_change": null,
-      "unstaged_change": "M",
+      "unstaged_change": null,
       "working_change_from_base": "A",
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 9111,
-        "sha256": "e1dedb1ab02610ab2e5c3e61f8a7588c06c8d9240f090ccd65063a34d077558f"
+        "bytes": 9348,
+        "sha256": "4f5fc21b67930770fd8841730b2ad040c1ed23fbc06ccf3373b1178be1b24f72"
       }
     },
     {
@@ -17712,11 +17916,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "7275c559610919c42d190ef913c4962009bc15e5"
+        "oid": "503221389ade9cf5bf40472db001c7f3dd8270ab"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "7275c559610919c42d190ef913c4962009bc15e5"
+        "oid": "503221389ade9cf5bf40472db001c7f3dd8270ab"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -17725,8 +17929,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 5434,
-        "sha256": "35a32d6d5c587c5524251745b2dc454b02b2e5deaf8a21b601a5498270398bc5"
+        "bytes": 5494,
+        "sha256": "99ea32560f80abf19895f45ccda55e2d4f73b6c0d144e566a9f42184bb6dcef6"
       }
     },
     {
@@ -17737,11 +17941,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "4a5990ecb1a151a4819777938b9189dad81c2f68"
+        "oid": "28b2428e4c6748eb28354f2d031e01124be2d878"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "4a5990ecb1a151a4819777938b9189dad81c2f68"
+        "oid": "28b2428e4c6748eb28354f2d031e01124be2d878"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -17750,8 +17954,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 19926,
-        "sha256": "48c9db0cefe0e56b023958a1cafd17a8894dcf0a96e3604cbe33a3e6e860f02f"
+        "bytes": 22122,
+        "sha256": "7be0fde36b92ba0a40f107c0fbaaebf0eddb8ae94df5b8e70fcdd497d3472e15"
       }
     },
     {
@@ -17862,21 +18066,21 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "111be56185956afdc4a9cf33588b99243bd94e3b"
+        "oid": "5811cdde4e6738e0885f7872ba118badf1a22403"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "111be56185956afdc4a9cf33588b99243bd94e3b"
+        "oid": "5811cdde4e6738e0885f7872ba118badf1a22403"
       },
       "committed_change": "A",
       "staged_change": null,
-      "unstaged_change": "M",
+      "unstaged_change": null,
       "working_change_from_base": "A",
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 12929,
-        "sha256": "9fcd3791b462c6d65b7e58406595360e320bcfbde2c8631d67121debc5621844"
+        "bytes": 13326,
+        "sha256": "5e0b066188124d67be3735832d00799f52907d5f810dbacd016af85424d586a1"
       }
     },
     {
@@ -18127,6 +18331,60 @@
         "present": true,
         "bytes": 13563,
         "sha256": "d3eefe75489e23edc2588ed93eb86a069d954f66abe7a1dfd8d5eaef36403b2c"
+      }
+    },
+    {
+      "path": "web/src/pages/business-documents/constructor/sql-agent-document.ts",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": null,
+      "index_entry": null,
+      "committed_change": null,
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": true,
+      "working_file": {
+        "present": true,
+        "bytes": 10553,
+        "sha256": "6f322139f600df00028a6c7522b08f46420132f1e642530454997b6fa8115183"
+      }
+    },
+    {
+      "path": "web/src/pages/business-documents/constructor/sql-agent-workbench.test.tsx",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": null,
+      "index_entry": null,
+      "committed_change": null,
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": true,
+      "working_file": {
+        "present": true,
+        "bytes": 8647,
+        "sha256": "b8aad7ee493a3fc0c2bebd34d25d688fed13a7ec3517d80e3a5d70a7010c890d"
+      }
+    },
+    {
+      "path": "web/src/pages/business-documents/constructor/sql-agent-workbench.tsx",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": null,
+      "index_entry": null,
+      "committed_change": null,
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": true,
+      "working_file": {
+        "present": true,
+        "bytes": 50237,
+        "sha256": "61abd0265d66a5088d943b0bd784142786cad8bb1ca21c7eeb56d8712e3d2496"
       }
     },
     {
@@ -18387,11 +18645,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "f888f6e2aff5578474519d4cf9a8fb880f9d4b12"
+        "oid": "ff4511b3344c0ffeb4e57e188330edf773f2b63b"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "f888f6e2aff5578474519d4cf9a8fb880f9d4b12"
+        "oid": "ff4511b3344c0ffeb4e57e188330edf773f2b63b"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -18400,8 +18658,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 20650,
-        "sha256": "5d3694f837871296b1ab4084108bc2674af55ce54edb91b346252b26626de65c"
+        "bytes": 22642,
+        "sha256": "bab07cd51d907846509651e24002118db7824af17ef5c470c7c978a0b5ffe5d6"
       }
     },
     {
@@ -20634,21 +20892,21 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "dcfa2b0cb703dbe9c0496d9a7f08162a2adaf87e"
+        "oid": "042bf4758fb99ba4a628872aed6db73d7a929d9b"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "dcfa2b0cb703dbe9c0496d9a7f08162a2adaf87e"
+        "oid": "042bf4758fb99ba4a628872aed6db73d7a929d9b"
       },
       "committed_change": "M",
       "staged_change": null,
-      "unstaged_change": "M",
+      "unstaged_change": null,
       "working_change_from_base": "M",
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 14582,
-        "sha256": "e0807e2ec596b800c3e5c0b277e3f1fe97bffe932ac54d9ba3c7972f915681f7"
+        "bytes": 15068,
+        "sha256": "cb802fb782f6b111f81134d71ff39db88be89c0a5905cc1f220dffeb2fe46895"
       }
     },
     {
@@ -20746,11 +21004,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "585ff1dc4c9b73b69f0ab41570268b4c60a2c9d3"
+        "oid": "11b3a8178f81fa8a53c158ab5cc482630bf94edb"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "585ff1dc4c9b73b69f0ab41570268b4c60a2c9d3"
+        "oid": "11b3a8178f81fa8a53c158ab5cc482630bf94edb"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -20759,8 +21017,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 17521,
-        "sha256": "4fc7a77de9d7250ab2e55483fd31fa7f20223c0af9fcd33d0999fc45604e54a3"
+        "bytes": 20007,
+        "sha256": "82c43a826410104ea1a6ca0bd542cb5e142eb31e5d72f2ea365901c31631c6f7"
       }
     },
     {
@@ -20771,11 +21029,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "f44b6a974cb39f258c5f4419b62558d1d75b3488"
+        "oid": "49a8f1e3c24e22299e8686947a4fa12282a0c5ad"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "f44b6a974cb39f258c5f4419b62558d1d75b3488"
+        "oid": "49a8f1e3c24e22299e8686947a4fa12282a0c5ad"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -20784,8 +21042,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 17689,
-        "sha256": "eda3e023adbd30eed368636e4091321c44c95b4149d1865010fabf425670ebe1"
+        "bytes": 19640,
+        "sha256": "b9bb93e294b7994e60bc9ae5c13027e313981d84ad503856ccc25993d24459d7"
       }
     },
     {
@@ -20995,11 +21253,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "9194defe9107e5ae11d64fe7738a54bfa32fa9f9"
+        "oid": "2a66465f9c1d9e89bd88b7737419585b4fe2a8a9"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "9194defe9107e5ae11d64fe7738a54bfa32fa9f9"
+        "oid": "2a66465f9c1d9e89bd88b7737419585b4fe2a8a9"
       },
       "committed_change": "M",
       "staged_change": null,
@@ -21008,8 +21266,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 23414,
-        "sha256": "77920fae7d5e9b3453d888c3d141d34c25b72f753929cf3d364d4b8e5b446764"
+        "bytes": 23960,
+        "sha256": "96460e82e9510d07990e48d03a521bf949b00b0a878ec60eda9e5b5fea2b4836"
       }
     },
     {

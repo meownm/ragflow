@@ -262,6 +262,16 @@ export default {
   businessDocumentSqlSchemaEntities: `${restAPIv1}/business-documents/sql-query/schema/entities`,
   businessDocumentSqlQueryPlan: `${restAPIv1}/business-documents/sql-query/plan`,
   businessDocumentSqlQueryCompile: `${restAPIv1}/business-documents/sql-query/compile`,
+  businessDocumentSqlQueryProjects: `${restAPIv1}/business-documents/sql-query/projects`,
+  businessDocumentSqlQueryProject: (id: string) =>
+    `${restAPIv1}/business-documents/sql-query/projects/${id}`,
+  businessDocumentSqlAgentJobs: (projectId: string) =>
+    `${restAPIv1}/business-documents/sql-query/projects/${projectId}/agent-jobs`,
+  businessDocumentSqlAgentProposalDecision: (
+    projectId: string,
+    proposalId: string,
+  ) =>
+    `${restAPIv1}/business-documents/sql-query/projects/${projectId}/proposals/${proposalId}/decision`,
   businessDocumentSqlExecutionConnectors: `${restAPIv1}/business-documents/sql-query/execution-connectors`,
   businessDocumentSqlExecutionProfiles: `${restAPIv1}/business-documents/sql-query/execution-profiles`,
   businessDocumentSqlExecutionProfile: (id: string) =>

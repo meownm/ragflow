@@ -74,6 +74,7 @@ modules:
   - agent/business_requirements/contracts/question_batch.v1.schema.json
   - agent/business_requirements/contracts/review_plan.v1.schema.json
   - agent/business_requirements/contracts/sql_schema_interpretation.v1.schema.json
+  - agent/business_requirements/contracts/sql_requirements_proposal.v1.schema.json
   - agent/business_requirements/evals/rubric.v1.json
   - agent/business_requirements/golden_dialogs/v1.json
   - agent/business_requirements/golden_dialogs/v2.json
@@ -85,6 +86,7 @@ modules:
   - agent/business_requirements/prompts/intake.v1.md
   - agent/business_requirements/prompts/review.v1.md
   - agent/business_requirements/prompts/sql_query_planner.v1.md
+  - agent/business_requirements/prompts/sql_requirements_analyst.v1.md
   - agent/business_requirements/prompts/sql_schema_interpreter.v1.md
   - agent/business_requirements/contracts/sql_query_plan.v1.schema.json
   - agent/business_requirements/templates/business_requirements.v1.json
@@ -99,7 +101,10 @@ modules:
   - api/apps/business_documents/service.py
   - api/apps/business_documents/sql_execution_registry.py
   - api/apps/business_documents/sql_query_lifecycle.py
+  - api/apps/business_documents/sql_query_agent_worker.py
+  - api/apps/business_documents/sql_query_agents.py
   - api/apps/business_documents/sql_query_planner.py
+  - api/apps/business_documents/sql_query_requirements.py
   - api/apps/business_documents/sql_query_schema.py
   - api/apps/business_documents/worker.py
   - api/apps/restful_apis/business_document_api.py
@@ -110,9 +115,11 @@ modules:
   - business_documents/domain/catalog.py
   - business_documents/domain/names.py
   - business_documents/sql_query/__init__.py
+  - business_documents/sql_query/agent_cycle.py
   - business_documents/sql_query/execution_registry.py
   - business_documents/sql_query/query_specification.py
   - business_documents/sql_query/query_planning.py
+  - business_documents/sql_query/requirements_analysis.py
   - business_documents/sql_query/schema_resolution.py
   - docs/develop/business-documents-eva-title-binding-ru.md
   - docs/develop/sql-query-constructor-architecture-ru.md
@@ -143,6 +150,8 @@ modules:
   - test/unit_test/api/apps/business_documents/test_sql_execution_registry_service.py
   - test/unit_test/api/apps/business_documents/test_sql_query_omd_cases.py
   - test/unit_test/api/apps/business_documents/test_sql_query_lifecycle.py
+  - test/unit_test/api/apps/business_documents/test_sql_query_agent_cycle.py
+  - test/unit_test/api/apps/business_documents/test_sql_query_agent_service.py
   - test/unit_test/api/apps/business_documents/test_sql_query_planning.py
   - test/unit_test/api/apps/business_documents/test_sql_query_schema_resolution.py
   - test/unit_test/api/apps/business_documents/test_sql_query_specification.py
@@ -180,6 +189,9 @@ modules:
   - web/src/pages/business-documents/constructor/schema-workspace.test.ts
   - web/src/pages/business-documents/constructor/schema-workspace.ts
   - web/src/pages/business-documents/constructor/section-inspector.tsx
+  - web/src/pages/business-documents/constructor/sql-agent-document.ts
+  - web/src/pages/business-documents/constructor/sql-agent-workbench.test.tsx
+  - web/src/pages/business-documents/constructor/sql-agent-workbench.tsx
   - web/src/pages/business-documents/constructor/sql-query-template.test.ts
   - web/src/pages/business-documents/constructor/sql-query-template.ts
   - web/src/pages/business-documents/constructor/structure-editor.tsx

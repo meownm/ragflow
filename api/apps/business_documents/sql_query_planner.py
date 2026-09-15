@@ -28,7 +28,7 @@ LOGGER = logging.getLogger(__name__)
 _LLM_TIMEOUT_SECONDS = 90.0
 
 
-def _prompt_provenance() -> dict[str, str] | None:
+def query_planner_provenance() -> dict[str, str] | None:
     try:
         return prompt_descriptor("PLAN_SQL_QUERY")
     except RuntimeError as exc:
@@ -45,7 +45,7 @@ class TenantQueryPlanner(QueryPlanner):
 
     async def propose(self, command: PlanQueryCommand) -> dict[str, Any]:
         try:
-            descriptor = _prompt_provenance()
+            descriptor = query_planner_provenance()
             if descriptor is None:
                 raise QueryPlanUnavailable("SQL query planner prompt is unavailable")
             system_prompt = prompt_text(descriptor["name"])
@@ -98,7 +98,7 @@ class BusinessDocumentSqlQueryPlanningService:
             result = await (scenario or QueryPlanningScenario(TenantQueryPlanner())).run(command)
         except QueryPlanValidationError as exc:
             raise ValidationError("INVALID_SQL_QUERY_PLAN_REQUEST", str(exc)) from exc
-        provenance = _prompt_provenance()
+        provenance = query_planner_provenance()
         return {
             **result,
             "llm": {

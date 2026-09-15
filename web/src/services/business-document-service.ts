@@ -10,10 +10,14 @@ import type {
   BusinessDocumentRevision,
   BusinessDocumentRole,
   CreateBusinessDocumentRequest,
+  CreateSqlAgentProjectRequest,
+  DecideSqlAgentProposalRequest,
   DeleteBusinessDocumentResult,
   EvaDocumentChange,
   EvaDocumentChangeList,
   EvaDocumentSourceSearchResult,
+  RequestSqlAgentRequest,
+  SqlAgentProject,
   SqlCatalogBinding,
   SqlCatalogBindingInput,
   SqlCatalogBindingUpdateInput,
@@ -22,8 +26,8 @@ import type {
   SqlExecutionConnector,
   SqlExecutionProfile,
   SqlExecutionProfileInput,
-  SqlExecutionRegistryDisableInput,
   SqlExecutionProfileUpdateInput,
+  SqlExecutionRegistryDisableInput,
   SqlExecutionRegistryList,
   SqlQueryCompileRequest,
   SqlQueryCompileResponse,
@@ -224,6 +228,78 @@ export async function planBusinessDocumentSqlQuery(input: SqlQueryPlanRequest) {
       requestConfig(),
     );
     return unwrap<SqlQueryPlanResponse>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function createBusinessDocumentSqlAgentProject(
+  input: CreateSqlAgentProjectRequest,
+) {
+  try {
+    const response = await request.post(
+      api.businessDocumentSqlQueryProjects,
+      input,
+      requestConfig(),
+    );
+    return unwrap<SqlAgentProject>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function listBusinessDocumentSqlAgentProjects() {
+  try {
+    const response = await request.get(
+      api.businessDocumentSqlQueryProjects,
+      requestConfig(),
+    );
+    return unwrap<SqlAgentProject[]>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function fetchBusinessDocumentSqlAgentProject(projectId: string) {
+  try {
+    const response = await request.get(
+      api.businessDocumentSqlQueryProject(projectId),
+      requestConfig(),
+    );
+    return unwrap<SqlAgentProject>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function requestBusinessDocumentSqlAgent(
+  projectId: string,
+  input: RequestSqlAgentRequest,
+) {
+  try {
+    const response = await request.post(
+      api.businessDocumentSqlAgentJobs(projectId),
+      input,
+      requestConfig(),
+    );
+    return unwrap<SqlAgentProject>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function decideBusinessDocumentSqlAgentProposal(
+  projectId: string,
+  proposalId: string,
+  input: DecideSqlAgentProposalRequest,
+) {
+  try {
+    const response = await request.post(
+      api.businessDocumentSqlAgentProposalDecision(projectId, proposalId),
+      input,
+      requestConfig(),
+    );
+    return unwrap<SqlAgentProject>(response.data);
   } catch (error) {
     return rethrowBusinessDocumentError(error);
   }

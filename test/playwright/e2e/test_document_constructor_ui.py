@@ -1,16 +1,15 @@
 from __future__ import annotations
 
-from copy import deepcopy
 import json
-from pathlib import Path
 import re
+from copy import deepcopy
+from pathlib import Path
 from urllib.parse import urlparse
 
 import pytest
 from playwright.sync_api import expect
 
 from test.playwright.helpers._next_apps_helpers import RESULT_TIMEOUT_MS
-
 
 ROOT = Path(__file__).resolve().parents[3]
 GOLDEN_TEMPLATE = ROOT / "web" / "src" / "pages" / "business-documents" / "constructor" / "templates" / "sql-query-step-by-step.v1.json"
@@ -76,6 +75,176 @@ class DocumentConstructorStub:
         self.query_plan_requests = []
         self.query_compile_requests = []
         self.execution_binding_requests = []
+        self.sql_agent_project = None
+
+    @staticmethod
+    def _sql_agent_capabilities():
+        return {
+            "requirements_agent": True,
+            "schema_agent": True,
+            "query_agent": True,
+            "result_agent": False,
+            "python_agent": False,
+        }
+
+    def _create_sql_agent_project(self, payload):
+        self.sql_agent_project = {
+            "schema_version": "1",
+            "id": "sql-agent-project-1",
+            "title": payload["title"],
+            "source_request": payload["source_request"],
+            "locale": payload.get("locale", "ru"),
+            "stage": "REQUIREMENTS",
+            "operation_state": "IDLE",
+            "state_version": 1,
+            "next_agent": "REQUIREMENTS",
+            "current_job": None,
+            "pending_proposal": None,
+            "artifact_ids": {"requirements": None, "schema": None, "query": None},
+            "artifacts": {"requirements": None, "schema": None, "query": None},
+            "last_error": None,
+            "capabilities": self._sql_agent_capabilities(),
+        }
+        return self.sql_agent_project
+
+    def _run_sql_agent(self, payload):
+        kind = payload["kind"]
+        project = self.sql_agent_project
+        project["state_version"] += 1
+        project["operation_state"] = "REVIEW"
+        project["next_agent"] = None
+        if kind == "REQUIREMENTS":
+            result = {
+                "schema_version": "1",
+                "status": "NEEDS_CLARIFICATION",
+                "proposal": {
+                    "requirements": [
+                        {
+                            "id": "REQ-OUT-001",
+                            "kind": "output",
+                            "statement": "Вывести идентификатор заказа и оплаченную сумму.",
+                            "source_quote": "идентификатор заказа и сумму",
+                            "rationale": "Поля явно указаны в запросе.",
+                            "status": "PROPOSED",
+                        },
+                        {
+                            "id": "REQ-FLT-001",
+                            "kind": "filter",
+                            "statement": "Ограничить выборку завершёнными заказами.",
+                            "source_quote": "завершённые заказы",
+                            "rationale": "Условие определяет состав результата.",
+                            "status": "PROPOSED",
+                        },
+                        {
+                            "id": "REQ-LIMIT-001",
+                            "kind": "limit",
+                            "statement": "Вернуть не более 1000 строк.",
+                            "source_quote": "не более 1000 строк",
+                            "rationale": "Лимит задан явно.",
+                            "status": "PROPOSED",
+                        },
+                    ],
+                    "questions": [
+                        {
+                            "id": "Q-001",
+                            "question": "Как трактовать период?",
+                            "reason": "От выбора зависит условие WHERE.",
+                            "options": ["Календарный месяц", "Последние 30 дней"],
+                            "allow_custom_answer": True,
+                            "blocking": True,
+                            "status": "OPEN",
+                        }
+                    ],
+                },
+                "warning": None,
+                "diagnostic": None,
+            }
+        elif kind == "SCHEMA":
+            result = self._schema_resolution_answer()
+        else:
+            result = {
+                "schema_version": "1",
+                "status": "PROPOSED",
+                "proposal": {
+                    "base_entity_id": "orders",
+                    "aliases": {"orders": "t1"},
+                    "select": [
+                        {
+                            "id": "select-1",
+                            "kind": "column",
+                            "column_id": "dwh.order_fact.order_id",
+                            "alias": "order_id",
+                            "grain": None,
+                        },
+                        {
+                            "id": "select-2",
+                            "kind": "sum",
+                            "column_id": "dwh.order_fact.paid_amount_rub",
+                            "alias": "paid_amount_rub",
+                            "grain": None,
+                        },
+                    ],
+                    "joins": [],
+                    "filters": [
+                        {
+                            "id": "filter-1",
+                            "column_id": "dwh.order_fact.status_id",
+                            "operator": "eq",
+                            "parameter_name": "completed_status_id",
+                            "parameter_type": "integer",
+                            "parameter_value": "9",
+                            "description": "Оставить только завершённые заказы.",
+                            "confirmed": False,
+                        }
+                    ],
+                    "order_by": [{"select_item_id": "select-2", "direction": "DESC"}],
+                    "row_limit": 1000,
+                },
+                "clarification_questions": [],
+                "warning": None,
+                "diagnostic": None,
+            }
+        project["pending_proposal"] = {
+            "id": f"proposal-{kind.lower()}",
+            "kind": kind,
+            "status": "PENDING",
+            "source_state_version": project["state_version"],
+            "payload": {"agent_result": result},
+        }
+        return project
+
+    def _decide_sql_agent(self, payload):
+        project = self.sql_agent_project
+        proposal = project["pending_proposal"]
+        kind = proposal["kind"]
+        project["state_version"] += 1
+        project["operation_state"] = "IDLE"
+        project["pending_proposal"] = None
+        if payload["decision"] == "REJECT":
+            project["next_agent"] = kind
+            return project
+        if kind == "REQUIREMENTS":
+            artifact = deepcopy(proposal["payload"]["agent_result"]["proposal"])
+            for requirement in artifact["requirements"]:
+                requirement["status"] = "ACCEPTED"
+            for question in artifact["questions"]:
+                question["answer"] = payload["artifact_payload"]["answers"].get(question["id"])
+                question["status"] = "ANSWERED"
+            project["artifacts"]["requirements"] = artifact
+            project["artifact_ids"]["requirements"] = "artifact-requirements"
+            project["stage"] = "SCHEMA"
+            project["next_agent"] = "SCHEMA"
+        elif kind == "SCHEMA":
+            project["artifacts"]["schema"] = payload["artifact_payload"]
+            project["artifact_ids"]["schema"] = "artifact-schema"
+            project["stage"] = "QUERY"
+            project["next_agent"] = "QUERY"
+        else:
+            project["artifacts"]["query"] = proposal["payload"]["agent_result"]["proposal"]
+            project["artifact_ids"]["query"] = "artifact-query"
+            project["stage"] = "COMPLETE"
+            project["next_agent"] = None
+        return project
 
     @staticmethod
     def _catalog_table(entity_id, fqn, columns):
@@ -393,6 +562,25 @@ class DocumentConstructorStub:
     def __call__(self, route):
         request = route.request
         path = urlparse(request.url).path.rstrip("/")
+        if path == "/api/v1/business-documents/sql-query/projects":
+            if request.method == "POST":
+                payload = json.loads(request.post_data or "{}")
+                _fulfill_json(route, _envelope(self._create_sql_agent_project(payload)))
+            else:
+                items = [self.sql_agent_project] if self.sql_agent_project else []
+                _fulfill_json(route, _envelope(items))
+            return
+        if re.fullmatch(r"/api/v1/business-documents/sql-query/projects/[^/]+", path) and request.method == "GET":
+            _fulfill_json(route, _envelope(self.sql_agent_project))
+            return
+        if re.fullmatch(r"/api/v1/business-documents/sql-query/projects/[^/]+/agent-jobs", path) and request.method == "POST":
+            payload = json.loads(request.post_data or "{}")
+            _fulfill_json(route, _envelope(self._run_sql_agent(payload)))
+            return
+        if re.fullmatch(r"/api/v1/business-documents/sql-query/projects/[^/]+/proposals/[^/]+/decision", path) and request.method == "POST":
+            payload = json.loads(request.post_data or "{}")
+            _fulfill_json(route, _envelope(self._decide_sql_agent(payload)))
+            return
         if path == "/api/v1/business-documents/sql-query/schema/resolve" and request.method == "POST":
             self.catalog_queries.append(json.loads(request.post_data or "{}"))
             _fulfill_json(route, _envelope(self._schema_resolution_answer()))
@@ -812,6 +1000,7 @@ def _open_constructor(page, base_url):
     ).to_have_attribute("aria-current", "page")
     expect(page.get_by_test_id("document-constructor-page")).to_be_visible()
     page.wait_for_load_state("load", timeout=NAVIGATION_TIMEOUT_MS)
+    page.get_by_test_id("document-constructor-template-surface").click()
 
 
 @pytest.mark.p1
@@ -913,6 +1102,68 @@ def test_document_constructor_build_preview_persist_export_import_golden(
     # Firefox cancels the duplicate favicon fetch during a document reload.
     actionable_request_failures = [entry for entry in page._diag["request_failed"] if not entry.endswith("/app-icon.png -> NS_BINDING_ABORTED")]
     assert actionable_request_failures == []
+
+
+@pytest.mark.p1
+@pytest.mark.auth
+def test_sql_agent_mvp_golden_from_request_to_document(page, base_url, tmp_path):
+    stub = DocumentConstructorStub()
+    _install_session(page)
+    page.route("**/api/v1/**", stub)
+
+    _open_constructor(page, base_url)
+    page.get_by_test_id("document-constructor-sql-surface").click()
+    workbench = page.get_by_test_id("sql-agent-workbench")
+    expect(workbench).to_be_visible()
+    expect(workbench).to_contain_text("Соберите SQL-запрос по требованиям")
+
+    workbench.get_by_role("button", name="Новый SQL-проект").last.click()
+    workbench.get_by_label("Название проекта").fill("Golden: завершённые заказы")
+    workbench.get_by_label("Исходные требования").fill(
+        "Вывести идентификатор и сумму завершённых заказов за месяц, не более 1000 строк."
+    )
+    workbench.get_by_role("button", name="Создать и продолжить").click()
+    expect(workbench).to_contain_text("Разобрать исходные требования")
+
+    workbench.get_by_test_id("sql-agent-run-requirements").click()
+    requirements = workbench.get_by_test_id("sql-agent-requirements-review")
+    expect(requirements).to_contain_text("Вывести идентификатор заказа")
+    requirements.get_by_role("button", name="Календарный месяц").click()
+    requirements.get_by_role("button", name="Подтвердить требования").click()
+
+    workbench.get_by_label("Сущности и понятия").fill("Заказ")
+    workbench.get_by_test_id("sql-agent-run-schema").click()
+    schema = workbench.get_by_test_id("sql-agent-schema-review")
+    expect(schema).to_contain_text("Выберите таблицы и нужные поля")
+    schema.get_by_role("button", name=re.compile(r"order_fact")).first.click()
+    expect(schema).to_contain_text("paid_amount_rub")
+    schema.get_by_role("button", name="Выбрать все").click()
+    expect(schema).to_contain_text("выбрано 3")
+    schema.get_by_role("button", name="Подтвердить схему").click()
+
+    workbench.get_by_test_id("sql-agent-run-query").click()
+    query = workbench.get_by_test_id("sql-agent-query-review")
+    expect(query).to_contain_text("Оставить только завершённые заказы")
+    query.get_by_role("button", name="Подтвердить и собрать SQL").click()
+
+    completed = workbench.get_by_test_id("sql-agent-complete")
+    expect(completed).to_contain_text("SQL и спецификация собраны")
+    expect(completed).to_contain_text("Read-only · проверка пройдена")
+    expect(completed.locator("pre")).to_contain_text("SELECT")
+    expect(completed).to_contain_text("Постобработка на Python")
+
+    with page.expect_download() as download_info:
+        completed.get_by_role("button", name="Документ .md").click()
+    artifact = tmp_path / download_info.value.suggested_filename
+    download_info.value.save_as(artifact)
+    markdown = artifact.read_text(encoding="utf-8")
+    assert "## 1. Исходные требования" in markdown
+    assert "## 5. SQL-запрос" in markdown
+    assert "## 6. Постобработка результатов на Python" in markdown
+    assert stub.sql_agent_project["stage"] == "COMPLETE"
+    assert len(stub.query_compile_requests) == 1
+    assert page._diag["page_errors"] == []
+    assert page._diag["console_errors"] == []
 
 
 @pytest.mark.p1

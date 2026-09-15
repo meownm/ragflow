@@ -42,6 +42,7 @@ _CONTRACT_FILES = {
     "eva_change_draft": "eva_change_draft.v1.schema.json",
     "sql_schema_interpretation": "sql_schema_interpretation.v1.schema.json",
     "sql_query_plan": "sql_query_plan.v1.schema.json",
+    "sql_requirements_proposal": "sql_requirements_proposal.v1.schema.json",
 }
 _PROMPT_FILES = {
     "intake": ("intake.v1.md", "1"),
@@ -51,6 +52,7 @@ _PROMPT_FILES = {
     "eva_change": ("eva_change.v1.md", "1"),
     "sql_schema_interpreter": ("sql_schema_interpreter.v1.md", "1"),
     "sql_query_planner": ("sql_query_planner.v1.md", "1"),
+    "sql_requirements_analyst": ("sql_requirements_analyst.v1.md", "1"),
 }
 _JOB_PROMPTS = {
     "ASSESS_INTAKE": "intake",
@@ -60,6 +62,7 @@ _JOB_PROMPTS = {
     "GENERATE_EVA_CHANGE": "eva_change",
     "RESOLVE_SQL_SCHEMA": "sql_schema_interpreter",
     "PLAN_SQL_QUERY": "sql_query_planner",
+    "ANALYZE_SQL_REQUIREMENTS": "sql_requirements_analyst",
 }
 _MARKDOWN_SECTION_HEADING = re.compile(r"^(#{1,6})\s+([0-9]+(?:\.[0-9]+)*)\.\s+(.+?)\s*$")
 _FENCED_CODE_BLOCK = re.compile(

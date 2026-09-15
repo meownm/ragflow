@@ -57,6 +57,13 @@ async def test_create_and_command_reject_non_object_and_malformed_json(route_app
         ("/business-documents/sql-query/schema/entities", [], "INVALID_SQL_SCHEMA_ENTITY_REQUEST"),
         ("/business-documents/sql-query/plan", [], "INVALID_SQL_QUERY_PLAN_REQUEST"),
         ("/business-documents/sql-query/compile", [], "INVALID_SQL_QUERY_SPECIFICATION"),
+        ("/business-documents/sql-query/projects", [], "INVALID_SQL_AGENT_PROJECT"),
+        ("/business-documents/sql-query/projects/project-1/agent-jobs", [], "INVALID_SQL_AGENT_REQUEST"),
+        (
+            "/business-documents/sql-query/projects/project-1/proposals/proposal-1/decision",
+            [],
+            "INVALID_SQL_AGENT_DECISION",
+        ),
         ("/business-documents/sql-query/execution-profiles", [], "INVALID_SQL_EXECUTION_PROFILE"),
         ("/business-documents/sql-query/catalog-bindings", [], "INVALID_SQL_CATALOG_BINDING"),
         ("/business-documents/sql-query/execution-binding/resolve", [], "INVALID_SQL_EXECUTION_BINDING_REQUEST"),
@@ -75,6 +82,12 @@ async def test_create_and_command_reject_non_object_and_malformed_json(route_app
         ("/business-documents/sql-query/schema/entities", "INVALID_SQL_SCHEMA_ENTITY_REQUEST"),
         ("/business-documents/sql-query/plan", "INVALID_SQL_QUERY_PLAN_REQUEST"),
         ("/business-documents/sql-query/compile", "INVALID_SQL_QUERY_SPECIFICATION"),
+        ("/business-documents/sql-query/projects", "INVALID_SQL_AGENT_PROJECT"),
+        ("/business-documents/sql-query/projects/project-1/agent-jobs", "INVALID_SQL_AGENT_REQUEST"),
+        (
+            "/business-documents/sql-query/projects/project-1/proposals/proposal-1/decision",
+            "INVALID_SQL_AGENT_DECISION",
+        ),
         ("/business-documents/sql-query/execution-profiles", "INVALID_SQL_EXECUTION_PROFILE"),
         ("/business-documents/sql-query/catalog-bindings", "INVALID_SQL_CATALOG_BINDING"),
         ("/business-documents/sql-query/execution-binding/resolve", "INVALID_SQL_EXECUTION_BINDING_REQUEST"),
@@ -286,6 +299,77 @@ async def test_sql_schema_route_passes_tenant_actor_role_and_payload(route_app, 
         ("entities", ACTOR, entity_payload, False, "MODERATOR_CREATOR"),
         ("plan", ACTOR, ACTOR, plan_payload, False, "MODERATOR_CREATOR"),
         ("compile", ACTOR, compile_payload, False, "MODERATOR_CREATOR"),
+    ]
+
+
+@pytest.mark.p0
+@pytest.mark.asyncio
+async def test_sql_agent_project_routes_are_thin_and_wake_worker_after_enqueue(route_app, monkeypatch):
+    app, module = route_app
+    module.current_user.business_document_role = "MODERATOR_CREATOR"
+    calls = []
+
+    def create_project(tenant_id, actor_id, payload, is_admin, access_role):
+        calls.append(("create", tenant_id, actor_id, payload, is_admin, access_role))
+        return {"id": "project-1"}
+
+    def list_projects(tenant_id, actor_id, is_admin, access_role):
+        calls.append(("list", tenant_id, actor_id, is_admin, access_role))
+        return [{"id": "project-1"}]
+
+    def get_project(tenant_id, actor_id, project_id, is_admin, access_role):
+        calls.append(("get", tenant_id, actor_id, project_id, is_admin, access_role))
+        return {"id": project_id}
+
+    def request_agent(tenant_id, actor_id, project_id, payload, is_admin, access_role):
+        calls.append(("request", tenant_id, actor_id, project_id, payload, is_admin, access_role))
+        return {"id": project_id, "operation_state": "RUNNING"}
+
+    def decide(tenant_id, actor_id, project_id, proposal_id, payload, is_admin, access_role):
+        calls.append(("decide", tenant_id, actor_id, project_id, proposal_id, payload, is_admin, access_role))
+        return {"id": project_id, "operation_state": "IDLE"}
+
+    service = module.BusinessDocumentSqlAgentService
+    monkeypatch.setattr(service, "create_project", staticmethod(create_project))
+    monkeypatch.setattr(service, "list_projects", staticmethod(list_projects))
+    monkeypatch.setattr(service, "get_project", staticmethod(get_project))
+    monkeypatch.setattr(service, "request_agent", staticmethod(request_agent))
+    monkeypatch.setattr(service, "decide_proposal", staticmethod(decide))
+    monkeypatch.setattr(module, "wake_business_document_worker", lambda: calls.append(("wake",)))
+    client = app.test_client()
+    project_payload = {"schema_version": "1", "title": "T", "source_request": "R", "locale": "ru"}
+    agent_payload = {
+        "schema_version": "1",
+        "expected_state_version": 1,
+        "idempotency_key": "run-1",
+        "kind": "REQUIREMENTS",
+        "payload": {},
+    }
+    decision_payload = {
+        "schema_version": "1",
+        "expected_state_version": 2,
+        "idempotency_key": "accept-1",
+        "decision": "ACCEPT",
+        "artifact_payload": None,
+    }
+
+    assert (await client.post("/business-documents/sql-query/projects", json=project_payload)).status_code == 201
+    assert (await client.get("/business-documents/sql-query/projects")).status_code == 200
+    assert (await client.get("/business-documents/sql-query/projects/project-1")).status_code == 200
+    assert (await client.post("/business-documents/sql-query/projects/project-1/agent-jobs", json=agent_payload)).status_code == 202
+    assert (
+        await client.post(
+            "/business-documents/sql-query/projects/project-1/proposals/proposal-1/decision",
+            json=decision_payload,
+        )
+    ).status_code == 200
+    assert calls == [
+        ("create", ACTOR, ACTOR, project_payload, False, "MODERATOR_CREATOR"),
+        ("list", ACTOR, ACTOR, False, "MODERATOR_CREATOR"),
+        ("get", ACTOR, ACTOR, "project-1", False, "MODERATOR_CREATOR"),
+        ("request", ACTOR, ACTOR, "project-1", agent_payload, False, "MODERATOR_CREATOR"),
+        ("wake",),
+        ("decide", ACTOR, ACTOR, "project-1", "proposal-1", decision_payload, False, "MODERATOR_CREATOR"),
     ]
 
 

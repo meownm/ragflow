@@ -579,6 +579,83 @@ export interface BusinessDocumentProjection {
   eva_binding?: BusinessDocumentEvaBinding | null;
 }
 
+export type SqlAgentKind = 'REQUIREMENTS' | 'SCHEMA' | 'QUERY';
+
+export interface SqlAgentJob {
+  id: string;
+  kind: SqlAgentKind;
+  status: 'PENDING' | 'RUNNING' | 'RETRY' | 'COMPLETED' | 'DEAD' | 'STALE';
+  progress: number;
+  progress_stage: string;
+  progress_message: string | null;
+  attempt: number;
+  max_attempts: number;
+  error: { code?: string; message?: string } | null;
+}
+
+export interface SqlAgentProposal {
+  id: string;
+  kind: SqlAgentKind;
+  status: 'PENDING' | 'ACCEPTED' | 'REJECTED';
+  source_state_version: number;
+  payload: Record<string, unknown>;
+}
+
+export interface SqlAgentProject {
+  schema_version: '1';
+  id: string;
+  title: string;
+  source_request: string | null;
+  locale: 'ru' | 'en';
+  stage: SqlAgentKind | 'COMPLETE';
+  operation_state: 'IDLE' | 'RUNNING' | 'REVIEW' | 'FAILED';
+  state_version: number;
+  next_agent: SqlAgentKind | null;
+  current_job: SqlAgentJob | null;
+  pending_proposal: SqlAgentProposal | null;
+  artifact_ids: {
+    requirements: string | null;
+    schema: string | null;
+    query: string | null;
+  };
+  artifacts: {
+    requirements: Record<string, unknown> | null;
+    schema: Record<string, unknown> | null;
+    query: Record<string, unknown> | null;
+  } | null;
+  last_error: { code?: string; message?: string } | null;
+  capabilities: {
+    requirements_agent: true;
+    schema_agent: true;
+    query_agent: true;
+    result_agent: false;
+    python_agent: false;
+  };
+}
+
+export interface CreateSqlAgentProjectRequest {
+  schema_version: '1';
+  title: string;
+  source_request: string;
+  locale: 'ru' | 'en';
+}
+
+export interface RequestSqlAgentRequest {
+  schema_version: '1';
+  expected_state_version: number;
+  idempotency_key: string;
+  kind: SqlAgentKind;
+  payload: Record<string, unknown>;
+}
+
+export interface DecideSqlAgentProposalRequest {
+  schema_version: '1';
+  expected_state_version: number;
+  idempotency_key: string;
+  decision: 'ACCEPT' | 'REJECT';
+  artifact_payload: Record<string, unknown> | null;
+}
+
 export interface BusinessDocumentSummary {
   document_id: string;
   catalog_entry_id?: string | null;

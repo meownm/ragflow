@@ -36,7 +36,7 @@ function renderPage() {
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={['/document-constructor?surface=template']}>
         <DocumentConstructorPage />
       </MemoryRouter>
     </QueryClientProvider>,

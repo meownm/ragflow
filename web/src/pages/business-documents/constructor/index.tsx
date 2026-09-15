@@ -20,6 +20,7 @@ import { getBusinessDocumentCapabilities } from '@/services/business-document-se
 import { useQuery } from '@tanstack/react-query';
 import {
   AlertTriangle,
+  Bot,
   Check,
   Download,
   FileJson2,
@@ -30,7 +31,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import {
   createDocumentConstructorStorageKey,
   loadStoredTemplate,
@@ -54,6 +55,7 @@ import {
 import { QuerySpecificationDialog } from './query-specification-dialog';
 import { SchemaWorkspaceDialog } from './schema-workspace-dialog';
 import { SectionInspector } from './section-inspector';
+import { SqlAgentWorkbench } from './sql-agent-workbench';
 import { createSqlQueryTemplate } from './sql-query-template';
 import { StructureEditor } from './structure-editor';
 import { exportTemplate, importTemplate } from './template-codec';
@@ -87,6 +89,9 @@ function descendantsFor(sections: ConstructorSection[], uid: string) {
 }
 
 export default function DocumentConstructorPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const surface =
+    searchParams.get('surface') === 'template' ? 'template' : 'sql';
   const importInputRef = useRef<HTMLInputElement>(null);
   const { data: userInfo, loading: userInfoLoading } = useFetchUserInfo();
   const { data: tenantInfo, loading: tenantInfoLoading } = useFetchTenantInfo();
@@ -120,6 +125,13 @@ export default function DocumentConstructorPage() {
     kind: 'success' | 'warning' | 'error';
     message: string;
   } | null>(null);
+
+  const showSurface = (next: 'template' | 'sql') => {
+    const params = new URLSearchParams(searchParams);
+    if (next === 'template') params.set('surface', 'template');
+    else params.delete('surface');
+    setSearchParams(params, { replace: true });
+  };
 
   const numberedSections = useMemo(
     () => numberSections(draft.sections),
@@ -403,84 +415,110 @@ export default function DocumentConstructorPage() {
                 </Badge>
               </div>
               <p className="mt-1 text-xs text-text-secondary sm:text-sm">
-                Локальный проект структуры и требований; публикация отключена
+                {surface === 'sql'
+                  ? 'Агентский мастер: требования, схема данных и SQL'
+                  : 'Шаблоны структуры и требований документов'}
               </p>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <span className="me-1 hidden items-center gap-1.5 text-xs text-text-secondary sm:flex">
-              {saveState === 'saving' && (
-                <LoaderCircle className="size-3.5 animate-spin" />
-              )}
-              {saveState === 'saved' && <Check className="size-3.5" />}
-              {saveState === 'error' && (
-                <AlertTriangle className="size-3.5 text-state-error" />
-              )}
-              {saveState === 'saving'
-                ? 'Сохраняем'
-                : saveState === 'saved'
-                  ? 'Сохранено локально'
-                  : 'Не удалось сохранить'}
-            </span>
+            <div className="flex rounded-md border border-border-button p-0.5">
+              <Button
+                size="sm"
+                variant={surface === 'sql' ? 'secondary' : 'ghost'}
+                data-testid="document-constructor-sql-surface"
+                onClick={() => showSurface('sql')}
+              >
+                <Bot className="size-4" />
+                SQL-проекты
+              </Button>
+              <Button
+                size="sm"
+                variant={surface === 'template' ? 'secondary' : 'ghost'}
+                data-testid="document-constructor-template-surface"
+                onClick={() => showSurface('template')}
+              >
+                <FileJson2 className="size-4" />
+                Шаблоны
+              </Button>
+            </div>
             {isAdmin && <ExecutionRegistryDialog />}
-            <SchemaWorkspaceDialog scope={storageScope} />
-            <QuerySpecificationDialog scope={storageScope} />
-            <input
-              ref={importInputRef}
-              type="file"
-              accept="application/json,.json"
-              className="hidden"
-              onChange={importJson}
-              aria-label="Импортировать JSON проекта конструктора"
-            />
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => importInputRef.current?.click()}
-            >
-              <Upload className="size-4" />
-              <span className="hidden sm:inline">Импорт</span>
-            </Button>
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button size="sm" variant="outline">
-                  <RotateCcw className="size-4" />
-                  <span className="hidden sm:inline">Новый</span>
+            {surface === 'template' && (
+              <>
+                <span className="me-1 hidden items-center gap-1.5 text-xs text-text-secondary sm:flex">
+                  {saveState === 'saving' && (
+                    <LoaderCircle className="size-3.5 animate-spin" />
+                  )}
+                  {saveState === 'saved' && <Check className="size-3.5" />}
+                  {saveState === 'error' && (
+                    <AlertTriangle className="size-3.5 text-state-error" />
+                  )}
+                  {saveState === 'saving'
+                    ? 'Сохраняем'
+                    : saveState === 'saved'
+                      ? 'Сохранено локально'
+                      : 'Не удалось сохранить'}
+                </span>
+                <SchemaWorkspaceDialog scope={storageScope} />
+                <QuerySpecificationDialog scope={storageScope} />
+                <input
+                  ref={importInputRef}
+                  type="file"
+                  accept="application/json,.json"
+                  className="hidden"
+                  onChange={importJson}
+                  aria-label="Импортировать JSON проекта конструктора"
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => importInputRef.current?.click()}
+                >
+                  <Upload className="size-4" />
+                  <span className="hidden sm:inline">Импорт</span>
                 </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>
-                    Создать проект из SQL-шаблона?
-                  </AlertDialogTitle>
-                  <AlertDialogDescription>
-                    Текущий локальный черновик будет заменён. Сначала
-                    экспортируйте JSON проекта, если хотите сохранить его
-                    отдельно. Новый проект начнётся с пошаговой структуры для
-                    проектирования SQL-запроса.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Отмена</AlertDialogCancel>
-                  <AlertDialogAction onClick={resetDraft}>
-                    Создать SQL-проект
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-            <Button
-              size="sm"
-              onClick={downloadJson}
-              data-testid="document-constructor-export"
-            >
-              <Download className="size-4" />
-              JSON
-            </Button>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button size="sm" variant="outline">
+                      <RotateCcw className="size-4" />
+                      <span className="hidden sm:inline">Новый</span>
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>
+                        Создать проект из SQL-шаблона?
+                      </AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Текущий локальный черновик будет заменён. Сначала
+                        экспортируйте JSON проекта, если хотите сохранить его
+                        отдельно. Новый проект начнётся с пошаговой структуры
+                        для проектирования SQL-запроса.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Отмена</AlertDialogCancel>
+                      <AlertDialogAction onClick={resetDraft}>
+                        Создать SQL-проект
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+                <Button
+                  size="sm"
+                  onClick={downloadJson}
+                  data-testid="document-constructor-export"
+                >
+                  <Download className="size-4" />
+                  JSON
+                </Button>
+              </>
+            )}
           </div>
         </div>
 
-        {(notice || issues.length > 0) && (
+        {surface === 'template' && (notice || issues.length > 0) && (
           <div
             className={`mt-3 flex items-center justify-between gap-4 border-s-2 py-1 ps-3 text-xs ${
               notice?.kind === 'error'
@@ -510,50 +548,61 @@ export default function DocumentConstructorPage() {
         )}
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto xl:grid xl:grid-cols-[280px_minmax(420px,1fr)_380px] xl:overflow-hidden">
-        <TemplateSettings draft={draft} onChange={updateDraft} />
-        <StructureEditor
-          sections={draft.sections}
-          selectedUid={selectedUid}
-          issues={issues}
-          mode={mode}
-          onModeChange={setMode}
-          onSelect={setSelectedUid}
-          onAddRoot={addRoot}
-          onAddChild={addChild}
-          onIndent={indent}
-          onOutdent={(uid) => setSections(outdentSection(draft.sections, uid))}
-          onMove={(uid, direction) =>
-            setSections(moveSection(draft.sections, uid, direction))
-          }
-          renderPreview={() => <TemplatePreview draft={draft} />}
-        />
-        <SectionInspector
-          section={selectedSection}
-          resolvedId={selectedNumberedSection?.resolvedId}
-          descendantCount={
-            selectedUid ? descendantsFor(draft.sections, selectedUid) : 0
-          }
-          issues={selectedIssues}
-          onChange={updateSelectedSection}
-          onDelete={deleteSelected}
-        />
-      </div>
+      {surface === 'sql' ? (
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <SqlAgentWorkbench />
+        </div>
+      ) : (
+        <>
+          <div className="min-h-0 flex-1 overflow-y-auto xl:grid xl:grid-cols-[280px_minmax(420px,1fr)_380px] xl:overflow-hidden">
+            <TemplateSettings draft={draft} onChange={updateDraft} />
+            <StructureEditor
+              sections={draft.sections}
+              selectedUid={selectedUid}
+              issues={issues}
+              mode={mode}
+              onModeChange={setMode}
+              onSelect={setSelectedUid}
+              onAddRoot={addRoot}
+              onAddChild={addChild}
+              onIndent={indent}
+              onOutdent={(uid) =>
+                setSections(outdentSection(draft.sections, uid))
+              }
+              onMove={(uid, direction) =>
+                setSections(moveSection(draft.sections, uid, direction))
+              }
+              renderPreview={() => <TemplatePreview draft={draft} />}
+            />
+            <SectionInspector
+              section={selectedSection}
+              resolvedId={selectedNumberedSection?.resolvedId}
+              descendantCount={
+                selectedUid ? descendantsFor(draft.sections, selectedUid) : 0
+              }
+              issues={selectedIssues}
+              onChange={updateSelectedSection}
+              onDelete={deleteSelected}
+            />
+          </div>
 
-      <footer className="hidden h-8 shrink-0 items-center justify-between border-t border-border-button bg-bg-card/40 px-5 text-[11px] text-text-secondary xl:flex">
-        <span className="flex items-center gap-1.5">
-          <FileJson2 className="size-3.5" />
-          Черновик хранится в этом браузере отдельно для пользователя и тенанта
-        </span>
-        <button
-          type="button"
-          className="flex items-center gap-1 hover:text-text-primary"
-          onClick={addRoot}
-        >
-          <Plus className="size-3.5" />
-          Добавить корневой раздел
-        </button>
-      </footer>
+          <footer className="hidden h-8 shrink-0 items-center justify-between border-t border-border-button bg-bg-card/40 px-5 text-[11px] text-text-secondary xl:flex">
+            <span className="flex items-center gap-1.5">
+              <FileJson2 className="size-3.5" />
+              Черновик хранится в этом браузере отдельно для пользователя и
+              тенанта
+            </span>
+            <button
+              type="button"
+              className="flex items-center gap-1 hover:text-text-primary"
+              onClick={addRoot}
+            >
+              <Plus className="size-3.5" />
+              Добавить корневой раздел
+            </button>
+          </footer>
+        </>
+      )}
     </main>
   );
 }

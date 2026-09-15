@@ -110,6 +110,7 @@ def test_contract_schemas_compile_and_question_bounds_are_enforced():
         "question_batch.v1.schema.json",
         "review_plan.v1.schema.json",
         "sql_query_plan.v1.schema.json",
+        "sql_requirements_proposal.v1.schema.json",
         "sql_schema_interpretation.v1.schema.json",
     }
     for schema in schemas.values():
@@ -230,6 +231,7 @@ def test_prompt_pack_is_contract_first_and_treats_evidence_as_data():
         "intake.v1.md",
         "review.v1.md",
         "sql_query_planner.v1.md",
+        "sql_requirements_analyst.v1.md",
         "sql_schema_interpreter.v1.md",
     }
     for name, prompt in prompts.items():
@@ -249,3 +251,5 @@ def test_prompt_pack_is_contract_first_and_treats_evidence_as_data():
     assert "Никогда не возвращай SQL" in prompts["sql_query_planner.v1.md"]
     assert "только пользователь" in prompts["sql_query_planner.v1.md"]
     assert "не добавляй незаполненный фильтр" in prompts["sql_query_planner.v1.md"]
+    assert "пользователь подтверждает его отдельно" in prompts["sql_requirements_analyst.v1.md"]
+    assert "Не создавай SQL" in prompts["sql_requirements_analyst.v1.md"]

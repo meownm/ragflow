@@ -1,14 +1,18 @@
 import {
   assignBusinessDocumentOwner,
   compileBusinessDocumentSqlQuery,
+  createBusinessDocumentSqlAgentProject,
   createBusinessDocumentSqlCatalogBinding,
   createBusinessDocumentSqlExecutionProfile,
   createEvaDocumentChange,
+  decideBusinessDocumentSqlAgentProposal,
+  fetchBusinessDocumentSqlAgentProject,
   generateEvaDocumentChangeDraft,
   getBusinessDocumentCapabilities,
   listBusinessDocumentAccessUsers,
   listBusinessDocumentCatalog,
   listBusinessDocuments,
+  listBusinessDocumentSqlAgentProjects,
   listBusinessDocumentSqlCatalogBindings,
   listBusinessDocumentSqlExecutionConnectors,
   listBusinessDocumentSqlExecutionProfiles,
@@ -16,6 +20,7 @@ import {
   planBusinessDocumentSqlQuery,
   prepareEvaDocumentChange,
   publishEvaDocumentChange,
+  requestBusinessDocumentSqlAgent,
   resolveBusinessDocumentSqlExecutionBinding,
   resolveBusinessDocumentSqlSchema,
   searchEvaDocumentSources,
@@ -220,6 +225,84 @@ test('requests a catalog-bound SQL plan through the tenant LLM endpoint', async 
   expect(mockedPost).toHaveBeenCalledWith(
     api.businessDocumentSqlQueryPlan,
     input,
+    { skipErrorNotification: true },
+  );
+});
+
+test('uses the durable SQL agent project endpoints as one versioned cycle', async () => {
+  const createInput = {
+    schema_version: '1' as const,
+    title: 'Заказы',
+    source_request: 'Покажи заказы',
+    locale: 'ru' as const,
+  };
+  const project = {
+    id: 'project-1',
+    state_version: 1,
+    next_agent: 'REQUIREMENTS' as const,
+  };
+  const runInput = {
+    schema_version: '1' as const,
+    expected_state_version: 1,
+    idempotency_key: 'run-1',
+    kind: 'REQUIREMENTS' as const,
+    payload: {},
+  };
+  const decisionInput = {
+    schema_version: '1' as const,
+    expected_state_version: 2,
+    idempotency_key: 'accept-1',
+    decision: 'ACCEPT' as const,
+    artifact_payload: null,
+  };
+  mockedPost
+    .mockResolvedValueOnce({ data: { code: 0, data: project } })
+    .mockResolvedValueOnce({
+      data: { code: 0, data: { ...project, state_version: 2 } },
+    })
+    .mockResolvedValueOnce({
+      data: { code: 0, data: { ...project, state_version: 3 } },
+    });
+  mockedGet
+    .mockResolvedValueOnce({ data: { code: 0, data: [project] } })
+    .mockResolvedValueOnce({ data: { code: 0, data: project } });
+
+  await createBusinessDocumentSqlAgentProject(createInput);
+  await listBusinessDocumentSqlAgentProjects();
+  await fetchBusinessDocumentSqlAgentProject('project-1');
+  await requestBusinessDocumentSqlAgent('project-1', runInput);
+  await decideBusinessDocumentSqlAgentProposal(
+    'project-1',
+    'proposal-1',
+    decisionInput,
+  );
+
+  expect(mockedPost).toHaveBeenNthCalledWith(
+    1,
+    api.businessDocumentSqlQueryProjects,
+    createInput,
+    { skipErrorNotification: true },
+  );
+  expect(mockedGet).toHaveBeenNthCalledWith(
+    1,
+    api.businessDocumentSqlQueryProjects,
+    { skipErrorNotification: true },
+  );
+  expect(mockedGet).toHaveBeenNthCalledWith(
+    2,
+    api.businessDocumentSqlQueryProject('project-1'),
+    { skipErrorNotification: true },
+  );
+  expect(mockedPost).toHaveBeenNthCalledWith(
+    2,
+    api.businessDocumentSqlAgentJobs('project-1'),
+    runInput,
+    { skipErrorNotification: true },
+  );
+  expect(mockedPost).toHaveBeenNthCalledWith(
+    3,
+    api.businessDocumentSqlAgentProposalDecision('project-1', 'proposal-1'),
+    decisionInput,
     { skipErrorNotification: true },
   );
 });

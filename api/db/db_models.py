@@ -1541,6 +1541,83 @@ class BusinessDocumentSqlCatalogBinding(DataBaseModel):
         )
 
 
+class BusinessDocumentSqlQueryProject(DataBaseModel):
+    """Current projection for one durable SQL document-construction cycle."""
+
+    id = CharField(max_length=32, primary_key=True)
+    tenant_id = CharField(max_length=32, null=False, index=True)
+    owner_id = CharField(max_length=32, null=False, index=True)
+    title = CharField(max_length=255, null=False)
+    source_request = LongTextField(null=False)
+    locale = CharField(max_length=8, null=False, default="ru")
+    stage = CharField(max_length=32, null=False, default="REQUIREMENTS", index=True)
+    operation_state = CharField(max_length=16, null=False, default="IDLE", index=True)
+    state_version = IntegerField(null=False, default=1)
+    requirements_artifact_id = CharField(max_length=32, null=True, index=True)
+    schema_artifact_id = CharField(max_length=32, null=True, index=True)
+    query_artifact_id = CharField(max_length=32, null=True, index=True)
+    current_job_id = CharField(max_length=32, null=True, index=True)
+    last_error = JSONField(null=True)
+
+    class Meta:
+        db_table = "business_document_sql_query_project"
+        indexes = ((("tenant_id", "owner_id", "create_time"), False),)
+
+
+class BusinessDocumentSqlQueryArtifact(DataBaseModel):
+    """Immutable user-accepted artifact produced by one SQL agent stage."""
+
+    id = CharField(max_length=32, primary_key=True)
+    project_id = CharField(max_length=32, null=False, index=True)
+    tenant_id = CharField(max_length=32, null=False, index=True)
+    kind = CharField(max_length=32, null=False, index=True)
+    revision = IntegerField(null=False)
+    schema_version = CharField(max_length=16, null=False, default="1")
+    payload = JSONField(null=False)
+    content_hash = CharField(max_length=71, null=False)
+    source_proposal_id = CharField(max_length=32, null=False, index=True)
+    accepted_by = CharField(max_length=32, null=False, index=True)
+
+    class Meta:
+        db_table = "business_document_sql_query_artifact"
+        indexes = ((("project_id", "kind", "revision"), True),)
+
+
+class BusinessDocumentSqlAgentProposal(DataBaseModel):
+    """Agent output with immutable payload and explicit human decision metadata."""
+
+    id = CharField(max_length=32, primary_key=True)
+    project_id = CharField(max_length=32, null=False, index=True)
+    tenant_id = CharField(max_length=32, null=False, index=True)
+    job_id = CharField(max_length=32, null=False, unique=True)
+    kind = CharField(max_length=32, null=False, index=True)
+    source_state_version = IntegerField(null=False)
+    payload = JSONField(null=False)
+    content_hash = CharField(max_length=71, null=False)
+    status = CharField(max_length=16, null=False, default="PENDING", index=True)
+    decided_by = CharField(max_length=32, null=True, index=True)
+    decided_at = BigIntegerField(null=True)
+
+    class Meta:
+        db_table = "business_document_sql_agent_proposal"
+        indexes = ((("project_id", "status", "create_time"), False),)
+
+
+class BusinessDocumentSqlAgentCommand(DataBaseModel):
+    """Idempotency ledger for SQL project commands."""
+
+    id = CharField(max_length=32, primary_key=True)
+    project_id = CharField(max_length=32, null=False, index=True)
+    tenant_id = CharField(max_length=32, null=False, index=True)
+    idempotency_key = CharField(max_length=128, null=False)
+    request_hash = CharField(max_length=71, null=False)
+    response = JSONField(null=False)
+
+    class Meta:
+        db_table = "business_document_sql_agent_command"
+        indexes = ((("tenant_id", "project_id", "idempotency_key"), True),)
+
+
 class BusinessDocument(DataBaseModel):
     """Current projection for a governed business document workflow."""
 

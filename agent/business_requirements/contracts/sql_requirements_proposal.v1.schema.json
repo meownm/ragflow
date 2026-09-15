@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ragflow.local/contracts/sql_requirements_proposal.v1.schema.json",
+  "title": "SQL requirements analyst proposal",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "requirements", "questions"],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "requirements": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "statement", "source_quote", "rationale"],
+        "properties": {
+          "kind": {"enum": ["output", "join", "filter", "sort", "limit", "context"]},
+          "statement": {"type": "string", "minLength": 1, "maxLength": 2000},
+          "source_quote": {"type": "string", "maxLength": 1000},
+          "rationale": {"type": "string", "maxLength": 2000}
+        }
+      }
+    },
+    "questions": {
+      "type": "array",
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["question", "reason", "options", "allow_custom_answer", "blocking"],
+        "properties": {
+          "question": {"type": "string", "minLength": 1, "maxLength": 1000},
+          "reason": {"type": "string", "minLength": 1, "maxLength": 1000},
+          "options": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 4,
+            "items": {"type": "string", "minLength": 1, "maxLength": 500}
+          },
+          "allow_custom_answer": {"type": "boolean"},
+          "blocking": {"type": "boolean"}
+        }
+      }
+    }
+  }
+}

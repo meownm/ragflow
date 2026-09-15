@@ -92,6 +92,47 @@ connections:
     - QueryPlanValidationError
     - parse_plan_query_command
     - planner_context
+  - source: api.apps.business_documents.sql_query_requirements
+    target: business_documents.sql_query.requirements_analysis
+    symbols:
+    - AnalyzeRequirementsCommand
+    - RequirementsAnalyst
+    - RequirementsAnalystUnavailable
+    - analyst_context
+  - source: api.apps.business_documents.sql_query_agents
+    target: business_documents.sql_query.agent_cycle
+    symbols:
+    - AgentCycleConflict
+    - AgentCycleValidationError
+    - ProjectAgentState
+    - next_agent_kind
+    - parse_request_agent_command
+    - require_next_agent
+  - source: api.apps.business_documents.sql_query_agents
+    target: business_documents.sql_query.query_planning
+    symbols:
+    - QueryPlanValidationError
+    - parse_plan_query_command
+  - source: api.apps.business_documents.sql_query_agents
+    target: business_documents.sql_query.requirements_analysis
+    symbols:
+    - RequirementsAnalysisValidationError
+    - accept_requirements_proposal
+  - source: api.apps.business_documents.sql_query_agent_worker
+    target: business_documents.sql_query.requirements_analysis
+    symbols:
+    - RequirementsAnalysisScenario
+    - parse_analyze_requirements_command
+  - source: api.apps.business_documents.sql_query_agent_worker
+    target: business_documents.sql_query.schema_resolution
+    symbols:
+    - SchemaResolutionScenario
+    - parse_resolve_schema_command
+  - source: api.apps.business_documents.sql_query_agent_worker
+    target: business_documents.sql_query.query_planning
+    symbols:
+    - QueryPlanningScenario
+    - parse_plan_query_command
   - source: api.apps.business_documents.sql_execution_registry
     target: business_documents.sql_query.execution_registry
     symbols:
@@ -242,6 +283,21 @@ runtime_probes:
     - QueryPlanningScenario
     - parse_plan_query_command
     - planner_context
+  - module: business_documents.sql_query.requirements_analysis
+    path: business_documents/sql_query/requirements_analysis.py
+    required_symbols:
+    - AnalyzeRequirementsCommand
+    - RequirementsAnalysisScenario
+    - accept_requirements_proposal
+    - normalize_requirements_proposal
+    - parse_analyze_requirements_command
+  - module: business_documents.sql_query.agent_cycle
+    path: business_documents/sql_query/agent_cycle.py
+    required_symbols:
+    - ProjectAgentState
+    - next_agent_kind
+    - parse_request_agent_command
+    - require_next_agent
   forbidden_module_prefixes:
   - admin
   - agent
@@ -298,6 +354,9 @@ runtime_probes:
   - module: api.apps.business_documents.sql_query_planner
     symbols:
       BusinessDocumentSqlQueryPlanningService: class
+  - module: api.apps.business_documents.sql_query_agents
+    symbols:
+      BusinessDocumentSqlAgentService: class
   - module: api.apps.business_documents.worker
     symbols:
       wake_business_document_worker: function
@@ -344,6 +403,21 @@ runtime_probes:
   - path: /api/v1/business-documents/catalog
     methods: [GET]
     endpoint: list_business_document_catalog
+  - path: /api/v1/business-documents/sql-query/projects
+    methods: [POST]
+    endpoint: create_business_document_sql_query_project
+  - path: /api/v1/business-documents/sql-query/projects
+    methods: [GET]
+    endpoint: list_business_document_sql_query_projects
+  - path: /api/v1/business-documents/sql-query/projects/<project_id>
+    methods: [GET]
+    endpoint: get_business_document_sql_query_project
+  - path: /api/v1/business-documents/sql-query/projects/<project_id>/agent-jobs
+    methods: [POST]
+    endpoint: request_business_document_sql_agent
+  - path: /api/v1/business-documents/sql-query/projects/<project_id>/proposals/<proposal_id>/decision
+    methods: [POST]
+    endpoint: decide_business_document_sql_agent_proposal
   - path: /api/v1/business-documents/sql-query/schema/resolve
     methods: [POST]
     endpoint: resolve_business_document_sql_schema
@@ -527,6 +601,10 @@ runtime_probes:
   - test/unit_test/api/apps/business_documents/test_sql_query_planning.py::test_tenant_planner_uses_one_bounded_contract_call
   - test/unit_test/api/apps/business_documents/test_sql_query_planning.py::test_planning_service_checks_acl_before_payload_and_maps_invalid_request
   - test/unit_test/api/apps/business_documents/test_sql_query_planning.py::test_planning_service_exposes_prompt_provenance_without_self_approval
+  - test/unit_test/api/apps/business_documents/test_sql_query_agent_service.py::test_tenant_requirements_analyst_uses_one_bounded_contract_call
+  - test/unit_test/api/apps/business_documents/test_sql_query_agent_service.py::test_durable_requirements_agent_cycle_is_idempotent_and_human_gated
+  - test/unit_test/api/apps/business_documents/test_sql_query_agent_service.py::test_rejected_proposal_can_be_rerun_without_creating_an_artifact
+  - test/unit_test/api/apps/business_documents/test_sql_query_agent_service.py::test_stale_agent_result_cannot_publish_a_proposal
   - test/unit_test/api/apps/business_documents/test_sql_execution_registry_service.py::test_registry_requires_one_configured_central_owner
   - test/unit_test/api/apps/business_documents/test_sql_execution_registry_service.py::test_management_requires_admin_before_parsing_or_reading_registry
   - test/unit_test/api/apps/business_documents/test_sql_execution_registry_service.py::test_resolve_requires_catalog_acl_before_parsing_or_reading_registry
@@ -541,8 +619,8 @@ runtime_probes:
   - test/unit_test/api/apps/business_documents/test_sql_execution_registry_service.py::test_missing_connector_cannot_be_hidden_by_retargeting_a_disabled_profile
   - test/unit_test/api/apps/business_documents/test_sql_execution_registry_service.py::test_connector_target_drift_requires_explicit_profile_version_update
   - test/unit_test/api/apps/business_documents/test_sql_execution_registry_service.py::test_corrupt_stored_policy_is_visible_to_admin_but_never_resolved
-  expected_tests: 30
-  rationale: The production document, schema, catalog-bound query planner, query compiler, and SQL execution-registry adapters must preserve their exact tenant, prompt, retry, token-limit, actor, authorization, request, safe projection, optimistic-version, fail-closed, non-self-approval and error-mapping contracts without external LLM, search, or database execution calls; export cleanup must prove object-specific absence for every supported storage backend and fail closed on unknown responses.
+  expected_tests: 34
+  rationale: The production document, schema, catalog-bound query planner, query compiler, SQL agent, and SQL execution-registry adapters must preserve their exact tenant, prompt, retry, token-limit, actor, authorization, request, safe projection, optimistic-version, fail-closed, non-self-approval and error-mapping contracts without external LLM, search, or database execution calls; export cleanup must prove object-specific absence for every supported storage backend and fail closed on unknown responses.
 - id: owned-frontend-registrations
   owner_module: frontend-foundation
   profile: frontend-web

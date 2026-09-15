@@ -1210,17 +1210,30 @@ Capability profile сообщает фактический режим; UI не �
 
 ## 30. Текущий разрыв до целевой архитектуры
 
-На момент проектирования уже есть полезные pure capabilities для schema
-resolution, query planning/specification/compilation/SQLGuard и registry
-resolution, а также frontend vertical slice. Но это ещё не целевая архитектура:
+На текущем инкременте есть persisted `SqlQueryProject`, immutable accepted
+artifacts для Requirements/Schema/Query, human-gated proposals и три bounded
+agent capability поверх общей lease-очереди Business Documents. Pure
+capabilities schema resolution, query planning/specification/compilation,
+SQLGuard и registry resolution остаются их владельцами. Но это ещё не вся
+целевая архитектура:
 
-- нет persisted `QueryProject` и единой версии состояния;
+- единая версия состояния уже покрывает Requirements/Schema/Query agent cycle,
+  но ещё не включает compilation, binding, runs и document revisions;
 - template остаётся frontend-asset, а не server-owned version;
-- HTTP-сценарии stateless и не создают lineage artifacts;
-- orchestration добавляется в уже крупный Business Documents service;
-- крупные frontend dialogs смешивают stages, API и локальное состояние;
+- guided MVP читает server projection проекта, принимает предложения агентов и
+  компилирует подтверждённый Query artifact; прежние schema/plan/compile
+  HTTP-сценарии сохранены для детерминированной детализации и совместимости;
+- orchestration выделена в `sql_query_agents.py`, а общий worker получил только
+  узкую диспетчеризацию `SQL_AGENT_*`;
+- новый `sql-agent-workbench.tsx` отделяет server-backed продуктовый цикл от
+  прежних localStorage-диалогов, оставленных в соседнем режиме шаблонов;
 - выполнение БД, ResultGate, object result, enrichment и sandbox отсутствуют;
-- assembler и governed publication не замыкают путь до документа.
+- MVP собирает скачиваемый compile-only Markdown в браузере, но server-owned
+  DocumentAssembler, document revisions и governed publication ещё не замыкают
+  путь до документа.
 
-Поэтому текущий вертикальный срез следует считать основой для A3, а не
-альтернативной архитектурой, которую нужно поддерживать параллельно.
+Requirements, Schema и Query agents вместе с guided UI считаются первым
+продуктовым срезом A3/E13/E14. LocalStorage используется только редактором
+шаблонов; состояние агентского SQL-проекта принадлежит backend aggregate.
+Следующий срез должен включить compilation revision, execution binding, run,
+ResultGate и server-owned DocumentAssembler в тот же aggregate.

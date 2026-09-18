@@ -15,12 +15,27 @@
 #
 """Regression tests for agent session GET/DELETE (api/apps/restful_apis/agent_api.py)."""
 
+import asyncio
 import importlib.util
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
+
+
+@pytest.mark.asyncio
+async def test_sse_heartbeat_keeps_slow_agent_stream_alive(monkeypatch):
+    module, _ = _load_agent_api(monkeypatch, get_by_id_result=(False, None))
+
+    async def delayed_source():
+        await asyncio.sleep(0.03)
+        yield "data: result\n\n"
+
+    chunks = [chunk async for chunk in module._iter_sse_with_heartbeat(delayed_source(), interval_seconds=0.01)]
+
+    assert chunks[0] == ": heartbeat\n\n"
+    assert chunks[-1] == "data: result\n\n"
 
 
 class _PassthroughManager:

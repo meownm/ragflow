@@ -9,6 +9,14 @@ sidebar_custom_props: {
 
 Key features, improvements and bug fixes in the latest releases.
 
+## v1.23.1
+
+Released on September 18, 2026.
+
+### Improvements and bug fixes
+
+- Keeps long-running agent SSE connections alive with periodic heartbeat comments while uploaded audio is being transcribed, preventing idle client disconnects before the final transcript and download appear.
+
 ## v1.23.0
 
 Released on September 18, 2026.

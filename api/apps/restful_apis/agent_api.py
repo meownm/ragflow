@@ -23,6 +23,7 @@ import inspect
 import ipaddress
 import json
 import logging
+import os
 import time
 from functools import partial, wraps
 from typing import Set
@@ -193,8 +194,45 @@ def _get_user_nickname(user_id: str) -> str:
     return str(getattr(user, "nickname", "") or user_id)
 
 
+async def _iter_sse_with_heartbeat(body, interval_seconds=None):
+    interval = interval_seconds
+    if interval is None:
+        interval = float(os.getenv("AGENT_SSE_HEARTBEAT_SECONDS", "15"))
+
+    if not hasattr(body, "__aiter__"):
+        for chunk in body:
+            yield chunk
+        return
+
+    if interval <= 0:
+        async for chunk in body:
+            yield chunk
+        return
+
+    iterator = body.__aiter__()
+    pending = None
+    try:
+        while True:
+            if pending is None:
+                pending = asyncio.create_task(anext(iterator))
+            done, _ = await asyncio.wait({pending}, timeout=interval)
+            if not done:
+                yield ": heartbeat\n\n"
+                continue
+            try:
+                chunk = pending.result()
+            except StopAsyncIteration:
+                return
+            pending = None
+            yield chunk
+    finally:
+        if pending is not None and not pending.done():
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+
+
 def _build_sse_response(body):
-    resp = Response(body, mimetype="text/event-stream")
+    resp = Response(_iter_sse_with_heartbeat(body), mimetype="text/event-stream")
     resp.headers.add_header("Cache-control", "no-cache")
     resp.headers.add_header("Connection", "keep-alive")
     resp.headers.add_header("X-Accel-Buffering", "no")

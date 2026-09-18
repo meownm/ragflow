@@ -9,6 +9,19 @@ sidebar_custom_props: {
 
 Key features, improvements and bug fixes in the latest releases.
 
+## v1.23.0
+
+Released on September 18, 2026.
+
+### New features
+
+- Streaming ASR: Streams T-One progress, partial transcripts, heartbeats, final results, and structured errors through the OpenAI-compatible endpoint and RAGFlow chat UI.
+
+### Improvements and bug fixes
+
+- Keeps synchronous transcription compatible while replacing the fixed request deadline with the job lifecycle and configurable stream idle heartbeats.
+- Updates the voice-input UI as transcript deltas arrive and guarantees temporary audio cleanup even when a streaming iterator cannot be closed cleanly.
+
 ## v1.22.0
 
 Released on September 15, 2026.

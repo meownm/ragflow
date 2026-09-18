@@ -2,10 +2,11 @@ from enum import Enum
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from asr_service.jobs.job_models import CreateJobRequest, CreateJobResponse, Job, JobStatus
+from asr_service.jobs.job_events import iter_job_sse
 from asr_service.jobs.job_queue import JobQueue
 from asr_service.jobs.job_store import JobStore
 from asr_service.models.model_registry import RegistryView
@@ -154,6 +155,22 @@ def get_job(job_id: str, store: JobStore = Depends(get_job_store)) -> Job:
     if not job:
         raise HTTPException(status_code=404, detail={"error_code": "Q-ASR-JOB-NOT-FOUND", "message": "Job not found", "details": {"job_id": job_id}})
     return job
+
+
+@router.get("/jobs/{job_id}/events")
+def stream_job_events(job_id: str, store: JobStore = Depends(get_job_store)) -> StreamingResponse:
+    if not store.get(job_id):
+        raise HTTPException(status_code=404, detail={"error_code": "Q-ASR-JOB-NOT-FOUND", "message": "Job not found", "details": {"job_id": job_id}})
+    return StreamingResponse(
+        iter_job_sse(
+            store,
+            job_id,
+            poll_seconds=settings.stream_poll_seconds,
+            heartbeat_seconds=settings.stream_heartbeat_seconds,
+        ),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 @router.get("/jobs/{job_id}/result", response_model=JobResultResponse)
 def get_result(job_id: str, store: JobStore = Depends(get_job_store)) -> JobResultResponse:

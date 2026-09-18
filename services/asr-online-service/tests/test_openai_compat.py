@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
@@ -23,7 +24,10 @@ def test_openai_transcription_runs_tone_job(monkeypatch, tmp_path: Path) -> None
     descriptor = next(item for item in app.state.registry.items if item.key == "t-one")
     previous_available = descriptor.available
     descriptor.available = True
-    monkeypatch.setattr("asr_service.api.routes_openai.settings.upload_dir", str(tmp_path / "uploads"))
+    monkeypatch.setattr(
+        "asr_service.api.routes_openai.settings",
+        SimpleNamespace(upload_dir=str(tmp_path / "uploads")),
+    )
     monkeypatch.setattr("asr_service.jobs.worker.preprocess_audio", lambda source_uri, settings, output_dir: (Path(source_uri), None))
     monkeypatch.setattr("asr_service.models.engines.tone_engine.ToneEngine.load", lambda self: setattr(self, "_loaded", True))
     monkeypatch.setattr(
@@ -41,6 +45,45 @@ def test_openai_transcription_runs_tone_job(monkeypatch, tmp_path: Path) -> None
 
         assert response.status_code == 200
         assert response.json() == {"text": "проверка t-one"}
+        assert list((tmp_path / "uploads").iterdir()) == []
+    finally:
+        descriptor.available = previous_available
+
+
+def test_openai_transcription_streams_tone_events(monkeypatch, tmp_path: Path) -> None:
+    descriptor = next(item for item in app.state.registry.items if item.key == "t-one")
+    previous_available = descriptor.available
+    descriptor.available = True
+    monkeypatch.setattr("asr_service.api.routes_openai.settings.upload_dir", str(tmp_path / "uploads"))
+    monkeypatch.setattr("asr_service.api.routes_openai.settings.stream_poll_seconds", 0.001)
+    monkeypatch.setattr("asr_service.api.routes_openai.settings.stream_heartbeat_seconds", 1.0)
+    monkeypatch.setattr("asr_service.jobs.worker.preprocess_audio", lambda source_uri, settings, output_dir: (Path(source_uri), None))
+    monkeypatch.setattr("asr_service.models.engines.tone_engine.ToneEngine.load", lambda self: setattr(self, "_loaded", True))
+    monkeypatch.setattr(
+        "asr_service.models.engines.tone_engine.ToneEngine.stream_transcribe",
+        lambda self, audio_path, language: iter(
+            [
+                {"transcript": "проверка", "segments": [], "percent": 50},
+                {"transcript": "проверка потока", "segments": [], "percent": 100},
+            ]
+        ),
+    )
+
+    try:
+        with TestClient(app) as client:
+            with client.stream(
+                "POST",
+                "/v1/audio/transcriptions",
+                files={"file": ("sample.wav", b"RIFF", "audio/wav")},
+                data={"model": "t-one", "stream": "true"},
+            ) as response:
+                body = "\n".join(response.iter_lines())
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+        assert '"event": "delta"' in body
+        assert '"event": "final"' in body
+        assert '"transcript": "проверка потока"' in body
         assert list((tmp_path / "uploads").iterdir()) == []
     finally:
         descriptor.available = previous_available

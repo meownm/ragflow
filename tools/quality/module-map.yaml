@@ -374,6 +374,7 @@ modules:
   - services/asr-online-service/src/asr_service/http/request_id.py
   - services/asr-online-service/src/asr_service/jobs/__init__.py
   - services/asr-online-service/src/asr_service/jobs/job_models.py
+  - services/asr-online-service/src/asr_service/jobs/job_events.py
   - services/asr-online-service/src/asr_service/jobs/job_queue.py
   - services/asr-online-service/src/asr_service/jobs/job_store.py
   - services/asr-online-service/src/asr_service/jobs/worker.py
@@ -403,6 +404,7 @@ modules:
   - services/asr-online-service/tests/test_gigaam_engine_load.py
   - services/asr-online-service/tests/test_health_ready_checks.py
   - services/asr-online-service/tests/test_install_contract.py
+  - services/asr-online-service/tests/test_job_events.py
   - services/asr-online-service/tests/test_job_status_transitions.py
   - services/asr-online-service/tests/test_openai_compat.py
   - services/asr-online-service/tests/test_openapi_contract.py
@@ -619,6 +621,7 @@ modules:
   - test/testcases/restful_api/test_user_tenant_routes_unit.py
   public_surfaces:
   - rag/llm/chat_model.py
+  - rag/llm/sequence2txt_model.py
   - internal/entity/models/ollama.go
   - api/apps/restful_apis/models_api.py
   - api/apps/restful_apis/provider_api.py
@@ -639,9 +642,11 @@ modules:
   - internal/entity/models/ollama.go
   - internal/entity/models/ollama_test.go
   - rag/llm/chat_model.py
+  - rag/llm/sequence2txt_model.py
   - test/unit_test/api/apps/services/test_models_api_service_list_tenant_added_models.py
   - test/unit_test/api/db/joint_services/test_tenant_model_service_max_tokens.py
   - test/unit_test/rag/llm/test_chat_model_thinking_policy.py
+  - test/unit_test/rag/llm/test_sequence2txt_streaming.py
   - test/unit_test/tools/quality/test_models_runtime_registration.py
   - web/src/pages/user-setting/setting-model/components/system-setting.tsx
 - id: persistence
@@ -1002,6 +1007,8 @@ modules:
   - web/src/components/similarity-slider/index.tsx
   - web/src/components/svg-icon.tsx
   - web/src/components/ui/audio-button.tsx
+  - web/src/components/ui/audio-stream.test.ts
+  - web/src/components/ui/audio-stream.ts
   - web/src/components/ui/sidebar.tsx
   - web/src/conf.json
   - web/src/constants/agent.tsx

@@ -130,7 +130,19 @@ class Worker:
             prepared_audio_path, normalized_wav = preprocess_audio(job.source_uri, self._settings, job_dir)
             if self._finish_canceled(job):
                 return
-            raw = engine.transcribe(audio_path=prepared_audio_path, language=job.language)
+            stream_transcribe = getattr(engine, "stream_transcribe", None)
+            if job.options.streaming.enabled and callable(stream_transcribe):
+                raw = {"transcript": "", "segments": []}
+                job.stage = "transcribing"
+                for partial in stream_transcribe(audio_path=prepared_audio_path, language=job.language):
+                    raw = partial
+                    job.result = self._apply_output_contract(partial, job.options.output.include_segments)
+                    job.percent = min(95, 15 + round(partial.get("percent", 0) * 0.8))
+                    self._store.update(job)
+                    if self._finish_canceled(job):
+                        return
+            else:
+                raw = engine.transcribe(audio_path=prepared_audio_path, language=job.language)
             # Engines expose a synchronous contract and cannot all be interrupted
             # safely.  A cancel received during inference must still win at the
             # next stage boundary instead of being overwritten by ``done``.
@@ -172,6 +184,8 @@ class Worker:
         finally:
             if engine is not None:
                 self._manager.release(descriptor, engine)
+            if job.options.delete_source_on_finish and not job.source_uri.startswith("memory://"):
+                Path(job.source_uri).unlink(missing_ok=True)
             self._store.update(job)
 
     def _write_artifacts(self, job_id: str, result: dict, requested_formats: list[str], normalized_wav: Path | None) -> dict[str, str]:

@@ -189,6 +189,11 @@ def _load_chat_module(monkeypatch):
     common_pkg.__path__ = [str(repo_root / "common")]
     monkeypatch.setitem(sys.modules, "common", common_pkg)
 
+    common_settings_mod = ModuleType("common.settings")
+    common_settings_mod.STORAGE_IMPL = SimpleNamespace(rm=lambda *_args, **_kwargs: None)
+    monkeypatch.setitem(sys.modules, "common.settings", common_settings_mod)
+    common_pkg.settings = common_settings_mod
+
     common_constants_mod = ModuleType("common.constants")
 
     class _StubLLMType(str, Enum):
@@ -215,6 +220,7 @@ def _load_chat_module(monkeypatch):
 
     common_constants_mod.MAXIMUM_PAGE_NUMBER = _MPN
     common_constants_mod.MAXIMUM_TASK_PAGE_NUMBER = _MTPN
+    common_constants_mod.RAG_FLOW_SERVICE_NAME = "ragflow"
     monkeypatch.setitem(sys.modules, "common.constants", common_constants_mod)
 
     misc_utils_mod = ModuleType("common.misc_utils")
@@ -365,9 +371,15 @@ def _load_chat_module(monkeypatch):
     search_service_mod.SearchService = SimpleNamespace()
     monkeypatch.setitem(sys.modules, "api.db.services.search_service", search_service_mod)
 
+    audit_service_mod = ModuleType("api.db.services.audit_service")
+    audit_service_mod.record_audit_event = lambda **_kwargs: None
+    monkeypatch.setitem(sys.modules, "api.db.services.audit_service", audit_service_mod)
+
     tenant_model_service_mod = ModuleType("api.db.joint_services.tenant_model_service")
     tenant_model_service_mod.get_model_config_from_provider_instance = lambda *_args, **_kwargs: {}
+    tenant_model_service_mod.get_model_type_by_name = lambda *_args, **_kwargs: None
     tenant_model_service_mod.get_tenant_default_model_by_type = lambda *_args, **_kwargs: {}
+    tenant_model_service_mod.split_model_name = lambda model_name: (model_name, None)
     monkeypatch.setitem(sys.modules, "api.db.joint_services.tenant_model_service", tenant_model_service_mod)
 
     user_service_mod = ModuleType("api.db.services.user_service")
@@ -1035,6 +1047,7 @@ def test_chat_audio_transcription_routes_unit(monkeypatch):
     monkeypatch.setattr(module, "Response", _StubResponse)
     monkeypatch.setattr(module.tempfile, "mkstemp", lambda suffix: (11, f"/tmp/audio{suffix}"))
     monkeypatch.setattr(module.os, "close", lambda _fd: None)
+    monkeypatch.setattr(module.os.path, "getsize", lambda _path: 4)
 
     def _set_request(form, files):
         monkeypatch.setattr(
@@ -1100,6 +1113,35 @@ def test_chat_audio_transcription_routes_unit(monkeypatch):
     assert resp.content_type == "text/event-stream"
     chunks = _run(_collect_stream(resp.body))
     assert any('"event": "partial"' in chunk for chunk in chunks)
+
+    class _CloseErrorIterator:
+        def __init__(self):
+            self._done = False
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            if self._done:
+                raise StopIteration
+            self._done = True
+            return {"event": "final", "text": "hello", "transcript": "hello"}
+
+        def close(self):
+            raise RuntimeError("close failed")
+
+    class _CloseErrorASR:
+        def stream_transcription(self, _path):
+            return _CloseErrorIterator()
+
+    removed_paths = []
+    _set_request({"stream": "true"}, {"file": _DummyUploadFile("audio.wav")})
+    monkeypatch.setattr(module, "LLMBundle", lambda *_args, **_kwargs: _CloseErrorASR())
+    monkeypatch.setattr(module.os, "remove", removed_paths.append)
+    resp = _run(module.transcription.__wrapped__())
+    chunks = _run(_collect_stream(resp.body))
+    assert any('"event": "final"' in chunk for chunk in chunks)
+    assert removed_paths == ["/tmp/audio.wav"]
 
     class _ErrorASR:
         def transcription(self, _path):

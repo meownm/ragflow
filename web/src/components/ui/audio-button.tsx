@@ -9,6 +9,7 @@ import notification from '@/utils/notification';
 import { chain, sum } from 'lodash';
 import { Loader2, Mic, Square } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { consumeAsrStream } from './audio-stream';
 import { Input } from './input';
 import { Popover, PopoverContent, PopoverTrigger } from './popover';
 
@@ -216,12 +217,14 @@ const VoiceInputBox = ({
 };
 export const AudioButton = ({
   onOk,
+  onPartial,
   onError,
   testId,
   ariaLabel = 'Голосовой ввод',
   disabled = false,
 }: {
   onOk?: (transcript: string) => void;
+  onPartial?: (transcript: string) => void;
   onError?: (message: string) => void;
   testId?: string;
   ariaLabel?: string;
@@ -259,7 +262,7 @@ export const AudioButton = ({
 
       const formData = new FormData();
       formData.append('file', audioFile);
-      formData.append('stream', 'false');
+      formData.append('stream', 'true');
 
       const response = await fetch(api.chatsTranscriptions, {
         method: 'POST',
@@ -270,12 +273,15 @@ export const AudioButton = ({
         body: formData,
       });
 
-      const payload = await response.json();
-      if (!response.ok || payload.code !== 0) {
-        throw new Error(payload.message || `HTTP ${response.status}`);
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.message || `HTTP ${response.status}`);
       }
 
-      const recognizedText = payload.data?.text?.trim();
+      const recognizedText = await consumeAsrStream(response, (text) => {
+        setTranscript(text);
+        onPartial?.(text);
+      });
       if (!recognizedText) {
         throw new Error('ASR-модель вернула пустой результат');
       }

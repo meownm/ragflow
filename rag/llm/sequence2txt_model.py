@@ -57,6 +57,8 @@ class GPTSeq2txt(Base):
         if not base_url:
             base_url = "https://api.openai.com/v1"
         self.client = OpenAI(api_key=key, base_url=base_url)
+        self.base_url = base_url.rstrip("/")
+        self.key = key
         self.model_name = model_name
 
 
@@ -402,3 +404,47 @@ class NewAPISeq2txt(GPTSeq2txt):
             raise ValueError("url cannot be None")
         model_name = model_name.split("___")[0]
         super().__init__(key, model_name=model_name, base_url=base_url, **kwargs)
+
+    def transcription(self, audio_path, **kwargs):
+        transcript = ""
+        for event in self.stream_transcription(audio_path):
+            if event.get("event") in {"delta", "final"}:
+                transcript = event.get("transcript") or event.get("text") or transcript
+        transcript = transcript.strip()
+        return transcript, num_tokens_from_string(transcript)
+
+    def stream_transcription(self, audio_path):
+        idle_timeout = float(os.environ.get("RAGFLOW_ASR_STREAM_IDLE_TIMEOUT_SECONDS", "120"))
+        headers = {"Authorization": f"Bearer {self.key}"} if self.key else {}
+        with open(audio_path, "rb") as audio_file:
+            with requests.post(
+                f"{self.base_url}/audio/transcriptions",
+                headers=headers,
+                files={"file": (os.path.basename(audio_path), audio_file)},
+                data={"model": self.model_name, "response_format": "json", "stream": "true"},
+                stream=True,
+                timeout=(10, idle_timeout),
+            ) as response:
+                try:
+                    response.raise_for_status()
+                except requests.HTTPError:
+                    if response.status_code not in {400, 404, 405, 422}:
+                        raise
+                    text, _used_tokens = super().transcription(audio_path)
+                    yield {"event": "final", "text": text, "transcript": text}
+                    return
+                if "text/event-stream" not in response.headers.get("Content-Type", ""):
+                    text = str(response.json().get("text", "")).strip()
+                    yield {"event": "final", "text": text, "transcript": text}
+                    return
+
+                for line in response.iter_lines(chunk_size=1, decode_unicode=True):
+                    if not line or not line.startswith("data:"):
+                        continue
+                    payload = line[len("data:") :].strip()
+                    if not payload or payload == "[DONE]":
+                        continue
+                    event = json.loads(payload)
+                    if event.get("event") == "error":
+                        raise RuntimeError(event.get("text") or event.get("code") or "ASR streaming failed")
+                    yield event

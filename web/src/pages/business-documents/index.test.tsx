@@ -42,7 +42,18 @@ type EvaDocumentChange = import('./types').EvaDocumentChange;
 
 jest.mock('react-markdown', () => ({
   __esModule: true,
-  default: ({ children }: { children?: string }) => children ?? null,
+  default: ({ children }: { children?: string }) =>
+    (children ?? '')
+      .replace(/\*\*(.*?)\*\*/g, '$1')
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1'),
+}));
+
+jest.mock('@/hooks/use-user-setting-request', () => ({
+  useFetchUserInfo: () => ({ data: { id: 'user-1' }, loading: false }),
+  useFetchTenantInfo: () => ({
+    data: { tenant_id: 'tenant-1' },
+    loading: false,
+  }),
 }));
 
 jest.mock('remark-gfm', () => ({
@@ -1370,6 +1381,53 @@ test('maps browser-normalized whitespace back to the canonical section text', as
   selectionSpy.mockRestore();
 });
 
+test('maps rendered Markdown text back to canonical source offsets', async () => {
+  const canonicalText = 'Правило **адреса** и [имя](https://example.test)';
+  mockedFetch.mockResolvedValueOnce({
+    ...projection,
+    current_revision: {
+      ...projection.current_revision!,
+      document_ast: {
+        ...projection.current_revision!.document_ast,
+        sections: [
+          {
+            id: '4',
+            title: 'Логика',
+            blocks: [{ type: 'paragraph', text: canonicalText }],
+          },
+        ],
+      },
+      section_texts: { '4': canonicalText },
+      body_markdown: `## 4. Логика\n${canonicalText}`,
+    },
+  });
+  renderPage();
+  const markdown = await screen.findByTestId('business-document-markdown');
+  const [section] = await screen.findAllByTestId('business-document-section');
+  const selectionSpy = mockTextSelection('имя', section);
+
+  fireEvent.mouseUp(markdown);
+  fireEvent.change(screen.getByRole('textbox', { name: 'Комментарий' }), {
+    target: { value: 'Уточнить имя' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Добавить комментарий' }));
+
+  await waitFor(() => expect(mockedSubmit).toHaveBeenCalledTimes(1));
+  const startOffset = canonicalText.indexOf('имя');
+  expect(mockedSubmit.mock.calls[0][1]).toEqual(
+    expect.objectContaining({
+      payload: expect.objectContaining({
+        anchor: expect.objectContaining({
+          selected_text: 'имя',
+          start_offset: startOffset,
+          end_offset: startOffset + 'имя'.length,
+        }),
+      }),
+    }),
+  );
+  selectionSpy.mockRestore();
+});
+
 test('keeps the prompt editable while work is running and saves it for later', async () => {
   mockedFetch.mockResolvedValueOnce({
     ...projection,
@@ -1403,9 +1461,14 @@ test('keeps the prompt editable while work is running and saves it for later', a
   ).toBeDisabled();
   expect(
     window.localStorage.getItem(
-      'ragflow.business-documents.saved-prompts.doc-1',
+      'ragflow.business-documents.saved-prompts.tenant-1.user-1.doc-1',
     ),
   ).toContain('Добавить это в следующей версии');
+  expect(
+    window.localStorage.getItem(
+      'ragflow.business-documents.saved-prompts.doc-1',
+    ),
+  ).toBeNull();
 });
 
 test('resizes the discussion rail with the keyboard and remembers the width', async () => {
@@ -1423,6 +1486,13 @@ test('resizes the discussion rail with the keyboard and remembers the width', as
       'ragflow.business-documents.protocol-pane-width',
     ),
   ).toBe('454');
+
+  Object.defineProperty(window, 'innerWidth', {
+    configurable: true,
+    value: 800,
+  });
+  fireEvent(window, new Event('resize'));
+  expect(resizer).toHaveAttribute('aria-valuenow', '360');
 });
 
 test('labels a general protocol comment as applying to the whole document', async () => {

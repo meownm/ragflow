@@ -191,6 +191,20 @@ def test_document_ast_allows_added_subsection_without_changing_template_outline(
 
 
 @pytest.mark.p0
+def test_eva_import_ignores_numbered_headings_inside_plantuml_fences(database):
+    draft = _draft()
+    conceptual = next(item for item in draft["sections"] if item["id"] == "4.1")
+    diagram = next(block for block in conceptual["blocks"] if block["type"] == "plantuml")
+    diagram["source"] = "@startuml\n### 4.4. Not a document section\nA -> B\n@enduml"
+
+    restored = import_document_markdown(render_document_ast(draft))
+
+    restored_conceptual = next(item for item in restored["sections"] if item["id"] == "4.1")
+    assert next(block for block in restored_conceptual["blocks"] if block["type"] == "plantuml")["source"] == diagram["source"]
+    assert all(item["id"] != "4.4" for item in restored["sections"])
+
+
+@pytest.mark.p0
 def test_document_ast_rejects_subsection_that_replaces_template_section(database):
     draft = _draft()
     section = next(item for item in draft["sections"] if item["id"] == "4.3")

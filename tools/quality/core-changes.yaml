@@ -1,6 +1,6 @@
 schema_version: 1
 upstream_base: cb93883f3f8c975eecb2fed81210effeb3bdb06f
-head: 7bec718a6b87e0e53794b17a6f486692a33beab8
+head: b2358ef89a57d90d7b745924823e9dabffcbfa76
 changes:
 - id: CORE-eva-integration
   owner: fork-maintainer
@@ -511,7 +511,7 @@ changes:
   - path: test/unit_test/rag/test_sync_data_source.py
     committed: M
     staged: null
-    unstaged: null
+    unstaged: M
 - id: CORE-api-files-chat
   owner: fork-maintainer
   reason: Keep file handling, chat/search contracts and HTTP plumbing working with

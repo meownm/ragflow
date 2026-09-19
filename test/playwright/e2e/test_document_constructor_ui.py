@@ -997,6 +997,10 @@ def _open_constructor(page, base_url):
     expect(page.get_by_test_id("document-constructor-page")).to_be_visible()
     page.wait_for_load_state("load", timeout=NAVIGATION_TIMEOUT_MS)
     page.get_by_test_id("document-constructor-template-surface").click()
+    expect(page).to_have_url(
+        re.compile(r"/document-constructor\?surface=template$"),
+        timeout=RESULT_TIMEOUT_MS,
+    )
 
 
 @pytest.mark.p1

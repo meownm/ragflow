@@ -31,11 +31,10 @@ from business_documents.sql_query.execution_registry import (
     parse_resolve_execution_profile_command,
     resolve_execution_profile,
 )
-from common.data_source.config import DocumentSource
 from common.misc_utils import get_uuid
 
 
-_POSTGRES_SOURCE = DocumentSource.POSTGRESQL.value
+_POSTGRES_SOURCE = "postgresql"
 
 
 @dataclass(frozen=True, slots=True)

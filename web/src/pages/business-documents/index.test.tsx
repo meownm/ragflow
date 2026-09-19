@@ -42,7 +42,18 @@ type EvaDocumentChange = import('./types').EvaDocumentChange;
 
 jest.mock('react-markdown', () => ({
   __esModule: true,
-  default: ({ children }: { children?: string }) => children ?? null,
+  default: ({ children }: { children?: string }) =>
+    (children ?? '')
+      .replace(/\*\*(.*?)\*\*/g, '$1')
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1'),
+}));
+
+jest.mock('@/hooks/use-user-setting-request', () => ({
+  useFetchUserInfo: () => ({ data: { id: 'user-1' }, loading: false }),
+  useFetchTenantInfo: () => ({
+    data: { tenant_id: 'tenant-1' },
+    loading: false,
+  }),
 }));
 
 jest.mock('remark-gfm', () => ({
@@ -390,6 +401,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  window.localStorage.clear();
   mockedFetch.mockResolvedValue(projection);
   mockedList.mockResolvedValue({
     items: [],
@@ -1321,6 +1333,166 @@ test('binds a comment to text selected in the current revision', async () => {
     }),
   );
   selectionSpy.mockRestore();
+});
+
+test('maps browser-normalized whitespace back to the canonical section text', async () => {
+  const canonicalText = 'Правило адреса:\n  Группа  А';
+  mockedFetch.mockResolvedValueOnce({
+    ...projection,
+    current_revision: {
+      ...projection.current_revision!,
+      document_ast: {
+        ...projection.current_revision!.document_ast,
+        sections: [
+          {
+            id: '4',
+            title: 'Логика',
+            blocks: [{ type: 'paragraph', text: canonicalText }],
+          },
+        ],
+      },
+      section_texts: { '4': canonicalText },
+      body_markdown: `## 4. Логика\n${canonicalText}`,
+    },
+  });
+  renderPage();
+  const markdown = await screen.findByTestId('business-document-markdown');
+  const [section] = await screen.findAllByTestId('business-document-section');
+  const selectionSpy = mockTextSelection('Правило адреса: Группа А', section);
+
+  fireEvent.mouseUp(markdown);
+  fireEvent.change(screen.getByRole('textbox', { name: 'Комментарий' }), {
+    target: { value: 'Уточнить правило' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Добавить комментарий' }));
+
+  await waitFor(() => expect(mockedSubmit).toHaveBeenCalledTimes(1));
+  expect(mockedSubmit.mock.calls[0][1]).toEqual(
+    expect.objectContaining({
+      payload: expect.objectContaining({
+        anchor: expect.objectContaining({
+          selected_text: canonicalText,
+          start_offset: 0,
+          end_offset: canonicalText.length,
+        }),
+      }),
+    }),
+  );
+  selectionSpy.mockRestore();
+});
+
+test('maps rendered Markdown text back to canonical source offsets', async () => {
+  const canonicalText = 'Правило **адреса** и [имя](https://example.test)';
+  mockedFetch.mockResolvedValueOnce({
+    ...projection,
+    current_revision: {
+      ...projection.current_revision!,
+      document_ast: {
+        ...projection.current_revision!.document_ast,
+        sections: [
+          {
+            id: '4',
+            title: 'Логика',
+            blocks: [{ type: 'paragraph', text: canonicalText }],
+          },
+        ],
+      },
+      section_texts: { '4': canonicalText },
+      body_markdown: `## 4. Логика\n${canonicalText}`,
+    },
+  });
+  renderPage();
+  const markdown = await screen.findByTestId('business-document-markdown');
+  const [section] = await screen.findAllByTestId('business-document-section');
+  const selectionSpy = mockTextSelection('имя', section);
+
+  fireEvent.mouseUp(markdown);
+  fireEvent.change(screen.getByRole('textbox', { name: 'Комментарий' }), {
+    target: { value: 'Уточнить имя' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Добавить комментарий' }));
+
+  await waitFor(() => expect(mockedSubmit).toHaveBeenCalledTimes(1));
+  const startOffset = canonicalText.indexOf('имя');
+  expect(mockedSubmit.mock.calls[0][1]).toEqual(
+    expect.objectContaining({
+      payload: expect.objectContaining({
+        anchor: expect.objectContaining({
+          selected_text: 'имя',
+          start_offset: startOffset,
+          end_offset: startOffset + 'имя'.length,
+        }),
+      }),
+    }),
+  );
+  selectionSpy.mockRestore();
+});
+
+test('keeps the prompt editable while work is running and saves it for later', async () => {
+  mockedFetch.mockResolvedValueOnce({
+    ...projection,
+    operation_state: 'ANALYZING_REVIEW',
+    latest_job: {
+      job_id: 'job-running',
+      job_type: 'ASSESS_REVIEW',
+      status: 'RUNNING',
+      attempt: 1,
+      max_attempts: 3,
+      progress_stage: 'MODEL_REQUEST',
+      progress_message: 'Анализируем замечания',
+    },
+  });
+  renderPage();
+
+  const comment = await screen.findByRole('textbox', { name: 'Комментарий' });
+  expect(comment).toBeEnabled();
+  fireEvent.change(comment, {
+    target: { value: 'Добавить это в следующей версии' },
+  });
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Сохранить промпт на будущее' }),
+  );
+
+  expect(
+    screen.getByTestId('business-document-saved-prompts'),
+  ).toHaveTextContent('Добавить это в следующей версии');
+  expect(
+    screen.getByRole('button', { name: 'Добавить комментарий' }),
+  ).toBeDisabled();
+  expect(
+    window.localStorage.getItem(
+      'ragflow.business-documents.saved-prompts.tenant-1.user-1.doc-1',
+    ),
+  ).toContain('Добавить это в следующей версии');
+  expect(
+    window.localStorage.getItem(
+      'ragflow.business-documents.saved-prompts.doc-1',
+    ),
+  ).toBeNull();
+});
+
+test('resizes the discussion rail with the keyboard and remembers the width', async () => {
+  renderPage();
+  const resizer = await screen.findByRole('separator', {
+    name: 'Изменить ширину обсуждения',
+  });
+
+  expect(resizer).toHaveAttribute('aria-valuenow', '430');
+  fireEvent.keyDown(resizer, { key: 'ArrowLeft' });
+
+  expect(resizer).toHaveAttribute('aria-valuenow', '454');
+  expect(
+    window.localStorage.getItem(
+      'ragflow.business-documents.protocol-pane-width',
+    ),
+  ).toBe('454');
+
+  Object.defineProperty(window, 'innerWidth', {
+    configurable: true,
+    value: 800,
+  });
+  fireEvent(window, new Event('resize'));
+  expect(resizer).toHaveAttribute('aria-valuenow', '360');
 });
 
 test('labels a general protocol comment as applying to the whole document', async () => {

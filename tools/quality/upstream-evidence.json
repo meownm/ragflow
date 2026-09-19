@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "verified_at": "2026-09-19T20:39:05.435691+00:00",
-  "head": "1baae7e7d0253ed79522aa5d71afdd746b5a83f6",
+  "verified_at": "2026-09-19T20:53:48.799107+00:00",
+  "head": "d31d859675a3f72bd35d037ff3b8656782a8709c",
   "official_commits": [
     {
       "sha": "cb93883f3f8c975eecb2fed81210effeb3bdb06f",
@@ -2167,6 +2167,25 @@
         "tools/quality/ignored-artifacts.json": "M",
         "tools/quality/upstream-evidence.json": "M"
       }
+    },
+    {
+      "sha": "d31d859675a3f72bd35d037ff3b8656782a8709c",
+      "parents": [
+        "1baae7e7d0253ed79522aa5d71afdd746b5a83f6"
+      ],
+      "tree": "b4a4378ea9994f300917c03ded24849c01bfafaf",
+      "committed_at": "2026-09-19T23:40:47+03:00",
+      "subject": "fix(architecture): repair business document contract environment",
+      "changes_from_first_parent": {
+        "api/apps/business_documents/sql_execution_registry.py": "M",
+        "test/unit_test/tools/quality/test_architecture_workflow.py": "M",
+        "tools/quality/architecture-contract-requirements.in": "M",
+        "tools/quality/architecture-contract-requirements.txt": "M",
+        "tools/quality/core-changes.yaml": "M",
+        "tools/quality/file-inventory.json": "M",
+        "tools/quality/ignored-artifacts.json": "M",
+        "tools/quality/upstream-evidence.json": "M"
+      }
     }
   ],
   "local_refs_only_no_fetch": [
@@ -2184,7 +2203,7 @@
     "refs/remotes/upstream/main_backup 427e0540cab683a591a5f4a65a0b38bf9ee008b7"
   ],
   "graph_merge_base": "28ce77fe5f1e4301d3672221b509418d3c7acb77",
-  "baseline_diff_summary": "828 files changed, 197845 insertions(+), 2870 deletions(-)",
+  "baseline_diff_summary": "828 files changed, 197871 insertions(+), 2870 deletions(-)",
   "ancestry_only_merge": {
     "commit": "64f0bfdf0e724d006d61563a76964bf140bcfb4e",
     "first_parent": "268a5a9d60e19982ac329ec045d0ff9b0228b26b",

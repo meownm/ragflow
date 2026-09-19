@@ -29,6 +29,7 @@ from api.apps.business_documents.ai import BusinessDocumentAI
 from api.apps.business_documents.assets import (
     apply_change_plan,
     bind_change_plan_section_hashes,
+    import_document_markdown,
     prompt_descriptor,
     prompt_text,
     published_template,
@@ -157,6 +158,80 @@ def test_document_ast_preserves_plantuml_source_without_parsing_it(database):
     scenario = next(section for section in validated["sections"] if section["id"] == "4.3")
     assert next(block for block in conceptual["blocks"] if block["type"] == "plantuml")["source"] == conceptual_source
     assert next(block for block in scenario["blocks"] if block["type"] == "plantuml")["source"] == activity_source
+
+
+@pytest.mark.p0
+def test_document_ast_allows_added_subsection_without_changing_template_outline(database):
+    draft = _draft()
+    section = next(item for item in draft["sections"] if item["id"] == "4")
+    section["blocks"].append(
+        {
+            "id": "4.4",
+            "title": "Формирование и обновление рассылок",
+            "blocks": [
+                {
+                    "type": "table",
+                    "headers": ["Тип", "Адрес", "Наименование", "Участники"],
+                    "rows": [["Информационная", "По правилу", "По событию", "Получатели"]],
+                }
+            ],
+        }
+    )
+
+    validated = validate_document_ast(draft)
+    rendered = render_document_ast(validated)
+    restored = import_document_markdown(rendered)
+
+    template_ids = [item["id"] for item in published_template()["sections"]]
+    assert [item["id"] for item in validated["sections"] if item["id"] in template_ids] == template_ids
+    assert [item["id"] for item in validated["sections"]][8:11] == ["4.2", "4.3", "4.4"]
+    assert "### 4.4. Формирование и обновление рассылок" in rendered
+    assert "| Тип | Адрес | Наименование | Участники |" in rendered
+    assert next(item for item in restored["sections"] if item["id"] == "4.4")["title"] == "Формирование и обновление рассылок"
+
+
+@pytest.mark.p0
+def test_document_ast_rejects_subsection_that_replaces_template_section(database):
+    draft = _draft()
+    section = next(item for item in draft["sections"] if item["id"] == "4.3")
+    section["title"] = "Подмена обязательного раздела"
+
+    with pytest.raises(BusinessDocumentError, match="сохранять все разделы опубликованного шаблона") as caught:
+        validate_document_ast(draft)
+
+    assert caught.value.code == "TEMPLATE_STRUCTURE_MISMATCH"
+
+
+@pytest.mark.p0
+def test_change_plan_can_add_a_numbered_subsection_to_an_existing_parent(database):
+    base = _draft()
+    parent = next(item for item in base["sections"] if item["id"] == "4")
+    child = {
+        "id": "4.4",
+        "title": "Логика рассылок",
+        "blocks": [{"type": "list", "items": ["Адрес формируется по бизнес-правилу."]}],
+    }
+    plan = {
+        "schema_version": "1",
+        "base_revision_id": "revision-1",
+        "source_state_version": 7,
+        "acknowledged_no_change_event_ids": [],
+        "operations": [
+            {
+                "operation_id": "add-subsection",
+                "type": "REPLACE_SECTION_CONTENT",
+                "section_id": "4",
+                "expected_section_hash": section_hash(parent),
+                "source_event_ids": ["event-1"],
+                "content": {"blocks": [*parent["blocks"], child]},
+            }
+        ],
+    }
+
+    changed = apply_change_plan(base, plan)
+
+    assert next(item for item in changed["sections"] if item["id"] == "4.4") == child
+    assert next(item for item in changed["sections"] if item["id"] == "4")["blocks"] == parent["blocks"]
 
 
 @pytest.mark.p0

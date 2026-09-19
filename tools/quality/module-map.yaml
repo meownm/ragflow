@@ -106,7 +106,6 @@ modules:
   - api/db/services/business_document_settings_service.py
   - business_documents/__init__.py
   - business_documents/domain/__init__.py
-  - business_documents/domain/bcm_bank_v15_l5.json
   - business_documents/domain/bcm_bank_v2_l5.json
   - business_documents/domain/catalog.py
   - business_documents/domain/names.py
@@ -116,7 +115,10 @@ modules:
   - business_documents/sql_query/query_planning.py
   - business_documents/sql_query/schema_resolution.py
   - docs/develop/business-documents-eva-title-binding-ru.md
+  - docs/develop/sql-query-constructor-architecture-ru.md
+  - docs/develop/sql-query-constructor-product-ru.md
   - docs/develop/sql-query-constructor-regression-ru.md
+  - docs/develop/sql-query-constructor-ui-ux-cx-ru.md
   - test/evals/business_documents/live_quality.py
   - test/evals/business_documents/test_golden_dialogue_harness.py
   - test/evals/business_documents/test_live_model_quality.py
@@ -616,6 +618,7 @@ modules:
   - internal/entity/models/ollama.go
   - internal/entity/models/ollama_test.go
   - rag/llm/chat_model.py
+  - rag/llm/sequence2txt_model.py
   - test/unit_test/api/apps/services/test_models_api_service_list_tenant_added_models.py
   - test/unit_test/api/db/joint_services/test_tenant_model_service_max_tokens.py
   - test/unit_test/rag/llm/test_chat_model_thinking_policy.py

@@ -1,6 +1,12 @@
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { MessageSquareText, Quote, Send } from 'lucide-react';
+import {
+  BookmarkPlus,
+  MessageSquareText,
+  Quote,
+  Send,
+  Trash2,
+} from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   BusinessDocumentCommandType,
@@ -19,6 +25,7 @@ const dispositionLabels = {
 } as const;
 
 interface ProtocolPaneProps {
+  documentId: string;
   reviewCycle: BusinessDocumentReviewCycle | null;
   reviewCycleNumber: number;
   proposalDecisionsOpen: boolean;
@@ -26,6 +33,7 @@ interface ProtocolPaneProps {
   selection: BusinessDocumentSelection | null;
   allowedCommands: BusinessDocumentCommandType[];
   pending: boolean;
+  editable: boolean;
   onCommand: (
     type: BusinessDocumentCommandType,
     payload: Record<string, unknown>,
@@ -35,6 +43,7 @@ interface ProtocolPaneProps {
 }
 
 export function ProtocolPane({
+  documentId,
   reviewCycle,
   reviewCycleNumber,
   proposalDecisionsOpen,
@@ -42,10 +51,12 @@ export function ProtocolPane({
   selection,
   allowedCommands,
   pending,
+  editable,
   onCommand,
   onClearSelection,
 }: ProtocolPaneProps) {
   const [comment, setComment] = useState('');
+  const [savedPrompts, setSavedPrompts] = useState<string[]>([]);
   const [expandedQuestionId, setExpandedQuestionId] = useState<string | null>(
     null,
   );
@@ -54,6 +65,8 @@ export function ProtocolPane({
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const allowed = useMemo(() => new Set(allowedCommands), [allowedCommands]);
   const canComment = allowed.has('ADD_COMMENT');
+  const draftStorageKey = `ragflow.business-documents.prompt-draft.${documentId}`;
+  const savedStorageKey = `ragflow.business-documents.saved-prompts.${documentId}`;
   const questions = reviewCycle?.questions ?? [];
   const proposals = reviewCycle?.proposals ?? [];
   const answeredCount = questions.filter((q) => q.status === 'ANSWERED').length;
@@ -66,6 +79,49 @@ export function ProtocolPane({
   useEffect(() => {
     if (!revision) onClearSelection();
   }, [onClearSelection, revision]);
+
+  useEffect(() => {
+    try {
+      setComment(window.localStorage.getItem(draftStorageKey) ?? '');
+      const stored = JSON.parse(
+        window.localStorage.getItem(savedStorageKey) ?? '[]',
+      );
+      setSavedPrompts(
+        Array.isArray(stored)
+          ? stored.filter((item): item is string => typeof item === 'string')
+          : [],
+      );
+    } catch {
+      setSavedPrompts([]);
+    }
+  }, [draftStorageKey, savedStorageKey]);
+
+  useEffect(() => {
+    try {
+      if (comment) window.localStorage.setItem(draftStorageKey, comment);
+      else window.localStorage.removeItem(draftStorageKey);
+    } catch {
+      // Draft persistence is best-effort; the editor must remain usable when
+      // storage is unavailable or its quota is exhausted.
+    }
+  }, [comment, draftStorageKey]);
+
+  const persistSavedPrompts = (items: string[]) => {
+    setSavedPrompts(items);
+    try {
+      window.localStorage.setItem(savedStorageKey, JSON.stringify(items));
+    } catch {
+      // Keep the in-memory notes usable for the current page session.
+    }
+  };
+
+  const savePromptForLater = () => {
+    const text = comment.trim();
+    if (!text || !editable) return;
+    persistSavedPrompts(
+      [text, ...savedPrompts.filter((item) => item !== text)].slice(0, 20),
+    );
+  };
 
   useEffect(() => {
     const questions = reviewCycle?.questions ?? [];
@@ -371,6 +427,7 @@ export function ProtocolPane({
             <Textarea
               value={comment}
               autoSize={{ minRows: 2, maxRows: 6 }}
+              resize="vertical"
               aria-label="Комментарий"
               placeholder={
                 selection
@@ -378,7 +435,7 @@ export function ProtocolPane({
                   : 'Комментарий ко всему документу'
               }
               className="pe-11"
-              disabled={!canComment || pending}
+              disabled={!editable}
               onChange={(event) => setComment(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
@@ -390,7 +447,7 @@ export function ProtocolPane({
             <div className="absolute end-2 top-2">
               <VoiceInput
                 label="Замечание к документу"
-                disabled={!canComment || pending}
+                disabled={!editable || pending}
                 onTranscript={(transcript) =>
                   setComment((value) =>
                     appendVoiceTranscript(value, transcript),
@@ -402,6 +459,17 @@ export function ProtocolPane({
           </div>
           <Button
             size="icon-lg"
+            variant="ghost"
+            aria-label="Сохранить промпт на будущее"
+            title="Сохранить промпт на будущее"
+            disabled={!comment.trim() || !editable}
+            onClick={savePromptForLater}
+            data-testid="business-document-save-prompt"
+          >
+            <BookmarkPlus className="size-4" />
+          </Button>
+          <Button
+            size="icon-lg"
             variant="accent"
             aria-label="Добавить комментарий"
             disabled={!comment.trim() || !canComment || pending}
@@ -411,12 +479,54 @@ export function ProtocolPane({
             <Send className="size-4" />
           </Button>
         </div>
+        {savedPrompts.length > 0 && (
+          <div
+            className="mt-3 max-h-40 overflow-y-auto rounded-md border border-border-button bg-bg-base scrollbar-auto"
+            data-testid="business-document-saved-prompts"
+          >
+            <div className="border-b border-border-button px-3 py-2 text-[11px] font-medium text-text-secondary">
+              Промпты на будущее
+            </div>
+            {savedPrompts.map((prompt, index) => (
+              <div
+                key={`${prompt}-${index}`}
+                className="flex items-start gap-2 border-b border-border-button px-3 py-2 last:border-b-0"
+              >
+                <button
+                  type="button"
+                  className="line-clamp-2 min-w-0 flex-1 text-start text-xs leading-5 text-text-primary hover:text-accent-primary"
+                  onClick={() => setComment(prompt)}
+                >
+                  {prompt}
+                </button>
+                <button
+                  type="button"
+                  className="mt-0.5 shrink-0 text-text-disabled hover:text-state-error"
+                  aria-label={`Удалить сохранённый промпт ${index + 1}`}
+                  onClick={() =>
+                    persistSavedPrompts(
+                      savedPrompts.filter(
+                        (_, itemIndex) => itemIndex !== index,
+                      ),
+                    )
+                  }
+                >
+                  <Trash2 className="size-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         <p className="mt-2 text-[11px] text-text-disabled">
           {canComment
-            ? selection
-              ? 'Уберите привязку, чтобы оставить комментарий ко всему документу · Ctrl + Enter — отправить'
-              : 'Чтобы привязать комментарий к месту, выделите текст в документе · Ctrl + Enter — отправить'
-            : 'Комментарии сейчас недоступны'}
+            ? pending
+              ? 'Можно подготовить и сохранить следующий промпт, пока обрабатывается текущий запрос'
+              : selection
+                ? 'Уберите привязку, чтобы оставить комментарий ко всему документу · Ctrl + Enter — отправить'
+                : 'Чтобы привязать комментарий к месту, выделите текст в документе · Ctrl + Enter — отправить'
+            : editable
+              ? 'Промпт можно подготовить и сохранить на будущее; отправка сейчас недоступна'
+              : 'Комментарии сейчас недоступны'}
         </p>
       </div>
     </aside>

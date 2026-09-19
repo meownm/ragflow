@@ -1,6 +1,6 @@
 schema_version: 1
 upstream_base: cb93883f3f8c975eecb2fed81210effeb3bdb06f
-head: db7d6cfc22b74853790b9f5fd21a55756cc56e86
+head: 95e1d58b30cab6248a1e2bba3a3db6c54c38accb
 changes:
 - id: CORE-eva-integration
   owner: fork-maintainer
@@ -305,9 +305,9 @@ changes:
     staged: null
     unstaged: null
   - path: rag/llm/sequence2txt_model.py
-    committed: null
+    committed: M
     staged: null
-    unstaged: M
+    unstaged: null
   - path: test/unit_test/api/apps/services/test_models_api_service_list_tenant_added_models.py
     committed: M
     staged: null
@@ -351,7 +351,7 @@ changes:
   - path: api/db/db_models.py
     committed: M
     staged: null
-    unstaged: M
+    unstaged: null
   - path: common/time_utils.py
     committed: M
     staged: null
@@ -385,7 +385,7 @@ changes:
   - path: api/apps/restful_apis/agent_api.py
     committed: M
     staged: null
-    unstaged: M
+    unstaged: null
   - path: internal/agent/component/invoke.go
     committed: M
     staged: null
@@ -425,7 +425,7 @@ changes:
   - path: test/unit_test/api/apps/restful_apis/test_get_agent_session.py
     committed: M
     staged: null
-    unstaged: M
+    unstaged: null
   - path: test/unit_test/api/apps/restful_apis/test_rerun_agent_authorization.py
     committed: M
     staged: null
@@ -926,7 +926,7 @@ changes:
   - path: web/src/layouts/components/global-navbar.tsx
     committed: M
     staged: null
-    unstaged: M
+    unstaged: null
   - path: web/src/layouts/components/header.tsx
     committed: M
     staged: null
@@ -954,7 +954,7 @@ changes:
   - path: web/src/locales/en.ts
     committed: M
     staged: null
-    unstaged: M
+    unstaged: null
   - path: web/src/locales/es.ts
     committed: M
     staged: null
@@ -986,7 +986,7 @@ changes:
   - path: web/src/locales/ru.ts
     committed: M
     staged: null
-    unstaged: M
+    unstaged: null
   - path: web/src/locales/tr.ts
     committed: M
     staged: null
@@ -1174,7 +1174,7 @@ changes:
   - path: web/src/pages/agent/store.test.ts
     committed: M
     staged: null
-    unstaged: M
+    unstaged: null
   - path: web/src/pages/agent/store.ts
     committed: M
     staged: null
@@ -1186,7 +1186,7 @@ changes:
   - path: web/src/pages/agent/utils.ts
     committed: M
     staged: null
-    unstaged: M
+    unstaged: null
   - path: web/src/pages/agent/utils/tests/dsl-bridge.test.ts
     committed: M
     staged: null
@@ -1414,7 +1414,7 @@ changes:
   - path: web/src/routes.tsx
     committed: M
     staged: null
-    unstaged: M
+    unstaged: null
   - path: web/src/services/admin-service.ts
     committed: M
     staged: null
@@ -1446,7 +1446,7 @@ changes:
   - path: web/src/utils/api.ts
     committed: M
     staged: null
-    unstaged: M
+    unstaged: null
   - path: web/src/utils/chat.ts
     committed: M
     staged: null
@@ -1541,7 +1541,7 @@ changes:
   - path: docs/release_notes.md
     committed: M
     staged: null
-    unstaged: M
+    unstaged: null
   - path: internal/storage/minio_test.go
     committed: M
     staged: null
@@ -1553,7 +1553,7 @@ changes:
   - path: pyproject.toml
     committed: M
     staged: null
-    unstaged: M
+    unstaged: null
   - path: ragflow_deps/download_deps.py
     committed: M
     staged: null
@@ -1597,7 +1597,7 @@ changes:
   - path: test/playwright/conftest.py
     committed: M
     staged: null
-    unstaged: M
+    unstaged: null
   - path: test/playwright/e2e/test_dataset_upload_parse.py
     committed: M
     staged: null
@@ -1673,4 +1673,4 @@ changes:
   - path: uv.lock
     committed: M
     staged: null
-    unstaged: M
+    unstaged: null

@@ -60,9 +60,11 @@ import {
   Trash2,
 } from 'lucide-react';
 import {
+  CSSProperties,
   FormEvent,
   MouseEvent,
   ReactNode,
+  PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -111,6 +113,37 @@ const staleConflictCodes = new Set([
   'STATE_VERSION_CONFLICT',
   'BASE_REVISION_CONFLICT',
 ]);
+
+const protocolPaneWidthStorageKey =
+  'ragflow.business-documents.protocol-pane-width';
+const defaultProtocolPaneWidth = 430;
+const minProtocolPaneWidth = 360;
+const maxProtocolPaneWidth = 760;
+
+function clampProtocolPaneWidth(width: number) {
+  const viewportMaximum =
+    typeof window === 'undefined'
+      ? maxProtocolPaneWidth
+      : Math.max(minProtocolPaneWidth, window.innerWidth - 480);
+  return Math.min(
+    maxProtocolPaneWidth,
+    viewportMaximum,
+    Math.max(minProtocolPaneWidth, width),
+  );
+}
+
+function readProtocolPaneWidth() {
+  try {
+    const stored = Number(
+      window.localStorage.getItem(protocolPaneWidthStorageKey),
+    );
+    return Number.isFinite(stored) && stored > 0
+      ? clampProtocolPaneWidth(stored)
+      : defaultProtocolPaneWidth;
+  } catch {
+    return defaultProtocolPaneWidth;
+  }
+}
 
 function makeId(prefix: string) {
   const randomPart = Math.random().toString(36).slice(2, 10);
@@ -753,7 +786,47 @@ export default function BusinessDocumentsPage() {
   const [selectedRevisionId, setSelectedRevisionId] = useState<string>();
   const [evaSyncNotice, setEvaSyncNotice] = useState<string>();
   const [ownerSelection, setOwnerSelection] = useState('');
+  const [protocolPaneWidth, setProtocolPaneWidth] = useState(
+    readProtocolPaneWidth,
+  );
   const clearSelection = useCallback(() => setSelection(null), []);
+
+  const resizeProtocolPane = useCallback((width: number) => {
+    const nextWidth = clampProtocolPaneWidth(width);
+    setProtocolPaneWidth(nextWidth);
+    try {
+      window.localStorage.setItem(
+        protocolPaneWidthStorageKey,
+        String(nextWidth),
+      );
+    } catch {
+      // Width persistence is optional; resizing remains available in-session.
+    }
+  }, []);
+
+  const startProtocolPaneResize = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      const onPointerMove = (moveEvent: PointerEvent) => {
+        resizeProtocolPane(window.innerWidth - moveEvent.clientX);
+      };
+      const stop = () => {
+        window.removeEventListener('pointermove', onPointerMove);
+        window.removeEventListener('pointerup', stop);
+        window.removeEventListener('pointercancel', stop);
+        window.removeEventListener('blur', stop);
+        window.document.body.style.removeProperty('cursor');
+        window.document.body.style.removeProperty('user-select');
+      };
+      window.document.body.style.cursor = 'col-resize';
+      window.document.body.style.userSelect = 'none';
+      window.addEventListener('pointermove', onPointerMove);
+      window.addEventListener('pointerup', stop, { once: true });
+      window.addEventListener('pointercancel', stop, { once: true });
+      window.addEventListener('blur', stop, { once: true });
+    },
+    [resizeProtocolPane],
+  );
 
   const documentQuery = useQuery({
     queryKey: BusinessDocumentKeys.detail(documentId),
@@ -1514,13 +1587,42 @@ export default function BusinessDocumentsPage() {
         )}
       </div>
 
-      <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_minmax(360px,430px)] max-lg:grid-cols-1 max-lg:grid-rows-[minmax(360px,1fr)_minmax(320px,0.8fr)]">
+      <div
+        className="grid min-h-0 grid-cols-[minmax(0,1fr)_4px_var(--business-document-protocol-width)] max-lg:grid-cols-1 max-lg:grid-rows-[minmax(360px,1fr)_minmax(320px,0.8fr)]"
+        style={
+          {
+            '--business-document-protocol-width': `${protocolPaneWidth}px`,
+          } as CSSProperties
+        }
+      >
         <DocumentPane
           revision={displayedRevision}
           onSelectionChange={(nextSelection) => {
             if (!historyOpen) setSelection(nextSelection);
           }}
         />
+        <div
+          role="separator"
+          aria-label="Изменить ширину обсуждения"
+          aria-orientation="vertical"
+          aria-valuemin={minProtocolPaneWidth}
+          aria-valuemax={maxProtocolPaneWidth}
+          aria-valuenow={protocolPaneWidth}
+          tabIndex={0}
+          className="group relative z-10 cursor-col-resize bg-border-button outline-none hover:bg-accent-primary focus-visible:bg-accent-primary max-lg:hidden"
+          data-testid="business-document-protocol-resizer"
+          onPointerDown={startProtocolPaneResize}
+          onDoubleClick={() => resizeProtocolPane(defaultProtocolPaneWidth)}
+          onKeyDown={(event) => {
+            if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+            event.preventDefault();
+            resizeProtocolPane(
+              protocolPaneWidth + (event.key === 'ArrowLeft' ? 24 : -24),
+            );
+          }}
+        >
+          <span className="absolute inset-y-0 -start-1 -end-1" />
+        </div>
         {historyOpen ? (
           <RevisionHistoryPanel
             revisions={revisionsQuery.data ?? []}
@@ -1541,6 +1643,7 @@ export default function BusinessDocumentsPage() {
           />
         ) : (
           <ProtocolPane
+            documentId={document.document_id}
             reviewCycle={document.protocol}
             reviewCycleNumber={document.active_review_cycle}
             proposalDecisionsOpen={document.lifecycle_state === 'REVIEW'}
@@ -1548,6 +1651,10 @@ export default function BusinessDocumentsPage() {
             selection={selection}
             allowedCommands={[...allowed]}
             pending={isBusy}
+            editable={
+              document.permissions?.edit !== false &&
+              (allowed.has('ADD_COMMENT') || isBusy)
+            }
             onCommand={submitCommand}
             onClearSelection={clearSelection}
           />

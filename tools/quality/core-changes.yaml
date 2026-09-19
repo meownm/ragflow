@@ -1,6 +1,6 @@
 schema_version: 1
 upstream_base: cb93883f3f8c975eecb2fed81210effeb3bdb06f
-head: 278497bced14c5146eb0be19bb0fa1eb72976279
+head: b3edcad1a19e15505e32c8f93713ab651aa71c72
 changes:
 - id: CORE-eva-integration
   owner: fork-maintainer
@@ -305,8 +305,8 @@ changes:
     staged: null
     unstaged: null
   - path: rag/llm/sequence2txt_model.py
-    committed: null
-    staged: M
+    committed: M
+    staged: null
     unstaged: null
   - path: test/unit_test/api/apps/services/test_models_api_service_list_tenant_added_models.py
     committed: M
@@ -542,8 +542,8 @@ changes:
     unstaged: null
   - path: api/apps/restful_apis/chat_api.py
     committed: M
-    staged: M
-    unstaged: M
+    staged: null
+    unstaged: null
   - path: api/apps/restful_apis/chat_channel_api.py
     committed: M
     staged: null
@@ -583,7 +583,7 @@ changes:
   - path: test/testcases/test_http_api/test_chat_assistant_management/test_chat_sdk_routes_unit.py
     committed: M
     staged: null
-    unstaged: M
+    unstaged: null
   - path: test/testcases/test_web_api/test_search_app/test_search_routes_unit.py
     committed: M
     staged: null
@@ -837,7 +837,7 @@ changes:
     unstaged: null
   - path: web/src/components/message-input/next.tsx
     committed: M
-    staged: M
+    staged: null
     unstaged: null
   - path: web/src/components/message-item/index.tsx
     committed: M
@@ -873,7 +873,7 @@ changes:
     unstaged: null
   - path: web/src/components/ui/audio-button.tsx
     committed: M
-    staged: M
+    staged: null
     unstaged: null
   - path: web/src/components/ui/sidebar.tsx
     committed: M
@@ -1543,7 +1543,7 @@ changes:
   - path: docs/release_notes.md
     committed: M
     staged: null
-    unstaged: M
+    unstaged: null
   - path: internal/storage/minio_test.go
     committed: M
     staged: null
@@ -1555,7 +1555,7 @@ changes:
   - path: pyproject.toml
     committed: M
     staged: null
-    unstaged: M
+    unstaged: null
   - path: ragflow_deps/download_deps.py
     committed: M
     staged: null
@@ -1675,4 +1675,4 @@ changes:
   - path: uv.lock
     committed: M
     staged: null
-    unstaged: M
+    unstaged: null

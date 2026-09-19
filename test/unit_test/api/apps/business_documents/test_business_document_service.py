@@ -147,7 +147,7 @@ def test_catalog_sync_replaces_previous_source_rows_and_v3_derives_the_title(dat
     first_sync_timestamps = {row.id: (row.update_time, row.update_date) for row in BusinessDocumentCatalog.select()}
     migrate_business_document_catalog()
     first = catalog["items"][0]
-    assert BusinessDocumentCatalog.select().count() == len(catalog["items"])
+    assert BusinessDocumentCatalog.select().where(BusinessDocumentCatalog.is_active == True).count() == len(catalog["items"])  # noqa: E712
     assert {row.id: (row.update_time, row.update_date) for row in BusinessDocumentCatalog.select()} == first_sync_timestamps
     obsolete_catalog_entry = BusinessDocumentCatalog.get_by_id("obsolete-from-prior-catalog")
     assert obsolete_catalog_entry.is_active is False

@@ -986,18 +986,14 @@ def _open_constructor(page, base_url):
         timeout=NAVIGATION_TIMEOUT_MS,
     )
     expect(page.get_by_test_id("open-document-constructor")).to_have_count(0)
-    constructor_link = page.locator(
-        "[data-testid='nav-document-constructor']:visible"
-    )
+    constructor_link = page.locator("[data-testid='nav-document-constructor']:visible")
     expect(constructor_link).to_be_visible(timeout=NAVIGATION_TIMEOUT_MS)
     constructor_link.click()
     expect(page).to_have_url(
         re.compile(r"/document-constructor$"),
         timeout=RESULT_TIMEOUT_MS,
     )
-    expect(
-        page.locator("[data-testid='nav-document-constructor']:visible")
-    ).to_have_attribute("aria-current", "page")
+    expect(page.locator("[data-testid='nav-document-constructor']:visible")).to_have_attribute("aria-current", "page")
     expect(page.get_by_test_id("document-constructor-page")).to_be_visible()
     page.wait_for_load_state("load", timeout=NAVIGATION_TIMEOUT_MS)
     page.get_by_test_id("document-constructor-template-surface").click()
@@ -1119,9 +1115,7 @@ def test_sql_agent_mvp_golden_from_request_to_document(page, base_url, tmp_path)
 
     workbench.get_by_role("button", name="Новый SQL-проект").last.click()
     workbench.get_by_label("Название проекта").fill("Golden: завершённые заказы")
-    workbench.get_by_label("Исходные требования").fill(
-        "Вывести идентификатор и сумму завершённых заказов за месяц, не более 1000 строк."
-    )
+    workbench.get_by_label("Исходные требования").fill("Вывести идентификатор и сумму завершённых заказов за месяц, не более 1000 строк.")
     workbench.get_by_role("button", name="Создать и продолжить").click()
     expect(workbench).to_contain_text("Разобрать исходные требования")
 
@@ -1279,9 +1273,7 @@ def test_document_constructor_confirms_query_decisions_and_compiles_golden(
     workspace.get_by_test_id("query-execution-binding-resolve").click()
     expect(workspace.get_by_test_id("query-execution-binding-status")).to_have_text("BOUND")
     expect(workspace.get_by_test_id("query-execution-binding-selection")).to_contain_text("Warehouse RO")
-    expect(workspace.get_by_test_id("query-execution-relation-mappings")).to_contain_text(
-        "warehouse.analytics.dwh.order_fact → dwh.order_fact"
-    )
+    expect(workspace.get_by_test_id("query-execution-relation-mappings")).to_contain_text("warehouse.analytics.dwh.order_fact → dwh.order_fact")
     assert stub.execution_binding_requests == [_expected_execution_binding_request()]
 
     workspace.get_by_role("checkbox", name="Подтвердить JOIN 1").check()

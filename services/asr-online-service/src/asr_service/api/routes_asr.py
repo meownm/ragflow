@@ -172,6 +172,7 @@ def stream_job_events(job_id: str, store: JobStore = Depends(get_job_store)) -> 
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
+
 @router.get("/jobs/{job_id}/result", response_model=JobResultResponse)
 def get_result(job_id: str, store: JobStore = Depends(get_job_store)) -> JobResultResponse:
     job = store.get(job_id)

@@ -10,7 +10,7 @@ from typing import Any
 
 from peewee import IntegrityError
 
-from api.apps.business_documents.authorization import BusinessDocumentAccess, BusinessDocumentRole
+from api.apps.business_documents.authorization import BusinessDocumentAccess
 from api.apps.business_documents.errors import BusinessDocumentError, ConflictError, ValidationError
 from api.db.db_models import (
     BusinessDocumentJob,
@@ -19,6 +19,7 @@ from api.db.db_models import (
     BusinessDocumentSqlQueryArtifact,
     BusinessDocumentSqlQueryProject,
 )
+from business_documents.domain.access import BusinessDocumentRole
 from business_documents.sql_query.agent_cycle import (
     AgentCycleConflict,
     AgentCycleValidationError,

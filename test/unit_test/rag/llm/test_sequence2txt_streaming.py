@@ -115,6 +115,4 @@ def test_new_api_stream_transcription_falls_back_when_provider_rejects_stream(mo
     model = module.NewAPISeq2txt("", model_name="other-asr", base_url="http://provider/v1")
     monkeypatch.setattr(module.GPTSeq2txt, "transcription", lambda _self, _path: ("sync fallback", 2))
 
-    assert list(model.stream_transcription(str(audio_path))) == [
-        {"event": "final", "text": "sync fallback", "transcript": "sync fallback"}
-    ]
+    assert list(model.stream_transcription(str(audio_path))) == [{"event": "final", "text": "sync fallback", "transcript": "sync fallback"}]

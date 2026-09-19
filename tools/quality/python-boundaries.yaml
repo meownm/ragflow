@@ -100,6 +100,10 @@ connections:
     - RequirementsAnalystUnavailable
     - analyst_context
   - source: api.apps.business_documents.sql_query_agents
+    target: business_documents.domain.access
+    symbols:
+    - BusinessDocumentRole
+  - source: api.apps.business_documents.sql_query_agents
     target: business_documents.sql_query.agent_cycle
     symbols:
     - AgentCycleConflict

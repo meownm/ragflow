@@ -147,6 +147,15 @@ jobs:
           uv sync --python 3.13 --group test --frozen
           uv pip install -e sdk/python
 
+      - name: Set up pnpm for Python quality tests
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10
+
+      - name: Install locked frontend parser dependencies
+        working-directory: web
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
       - name: Run unit test
         run: |
           source .venv/bin/activate
@@ -248,7 +257,7 @@ jobs:
           sudo docker pull ubuntu:24.04
           build_version=$(git describe --tags --match='v*' --first-parent --always)
           source_revision=$(git rev-parse HEAD)
-          sudo DOCKER_BUILDKIT=1 docker build --build-arg "RAGFLOW_BUILD_VERSION=${build_version}" --build-arg "RAGFLOW_SOURCE_REVISION=${source_revision}" --build-arg NEED_MIRROR=1 --build-arg HTTPS_PROXY=${HTTPS_PROXY} --build-arg HTTP_PROXY=${HTTP_PROXY} -f Dockerfile -t ${RAGFLOW_IMAGE} .
+          sudo DOCKER_BUILDKIT=1 docker build --build-arg "RAGFLOW_BUILD_VERSION=${build_version}" --build-arg "RAGFLOW_SOURCE_REVISION=${source_revision}" --build-arg NEED_MIRROR=1 --build-arg "HTTPS_PROXY=${HTTPS_PROXY:-}" --build-arg "HTTP_PROXY=${HTTP_PROXY:-}" -f Dockerfile -t "${RAGFLOW_IMAGE}" .
 
       - name: Prepare Python test environment
         run: |
@@ -691,7 +700,7 @@ jobs:
           sudo docker pull ubuntu:24.04
           build_version=$(git describe --tags --match='v*' --first-parent --always)
           source_revision=$(git rev-parse HEAD)
-          sudo DOCKER_BUILDKIT=1 docker build --build-arg "RAGFLOW_BUILD_VERSION=${build_version}" --build-arg "RAGFLOW_SOURCE_REVISION=${source_revision}" --build-arg NEED_MIRROR=1 --build-arg HTTPS_PROXY=${HTTPS_PROXY} --build-arg HTTP_PROXY=${HTTP_PROXY} -f Dockerfile -t ${RAGFLOW_IMAGE} .
+          sudo DOCKER_BUILDKIT=1 docker build --build-arg "RAGFLOW_BUILD_VERSION=${build_version}" --build-arg "RAGFLOW_SOURCE_REVISION=${source_revision}" --build-arg NEED_MIRROR=1 --build-arg "HTTPS_PROXY=${HTTPS_PROXY:-}" --build-arg "HTTP_PROXY=${HTTP_PROXY:-}" -f Dockerfile -t "${RAGFLOW_IMAGE}" .
 
       - name: Prepare Python test environment
         run: |

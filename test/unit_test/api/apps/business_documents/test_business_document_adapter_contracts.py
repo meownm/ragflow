@@ -182,7 +182,8 @@ def test_litellm_callback_drain_does_not_stop_or_clear_the_global_worker(monkeyp
     logging_worker.GLOBAL_LOGGING_WORKER = FakeWorker()
     monkeypatch.setitem(sys.modules, logging_worker.__name__, logging_worker)
 
-    asyncio.run(ai_module._drain_litellm_callbacks())
+    with asyncio.Runner() as runner:
+        runner.run(ai_module._drain_litellm_callbacks())
 
     assert calls == ["flush"]
 

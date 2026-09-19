@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "verified_at": "2026-09-19T21:17:52.948238+00:00",
-  "head": "11f9c0fc67d49782c8afd49c003d8fb504a3da61",
+  "verified_at": "2026-09-19T23:11:40.023791+00:00",
+  "head": "a61bf40b983f21ab859ce60f1898da3b6a616fbf",
   "official_commits": [
     {
       "sha": "cb93883f3f8c975eecb2fed81210effeb3bdb06f",
@@ -2104,14 +2104,44 @@
       }
     },
     {
-      "sha": "cd6c9e441887c22c7459cf667e988d9b723e0b71",
+      "sha": "b2358ef89a57d90d7b745924823e9dabffcbfa76",
       "parents": [
-        "7bec718a6b87e0e53794b17a6f486692a33beab8",
-        "1dd3210f23e2ba479f077558299a3a24df56eaee"
+        "7bec718a6b87e0e53794b17a6f486692a33beab8"
       ],
-      "tree": "107769a17ab9eec9a2f36993bd4dee4362bee1df",
-      "committed_at": "2026-09-20T00:03:12+03:00",
-      "subject": "Merge pull request #42 from meownm/codex/push-v1.24.0-main",
+      "tree": "d10e12df81631e2ae08c0a928138cda20f0ae17d",
+      "committed_at": "2026-09-19T23:35:39+03:00",
+      "subject": "fix(ci): isolate business document settings stubs",
+      "changes_from_first_parent": {
+        "test/unit_test/api/apps/business_documents/helpers.py": "M",
+        "test/unit_test/api/apps/business_documents/test_business_document_adapter_contracts.py": "M",
+        "test/unit_test/api/apps/business_documents/test_business_document_worker_exports.py": "M",
+        "tools/quality/core-changes.yaml": "M",
+        "tools/quality/file-inventory.json": "M"
+      }
+    },
+    {
+      "sha": "284dabfd92773a843f8636a1d647238de2648f6c",
+      "parents": [
+        "b2358ef89a57d90d7b745924823e9dabffcbfa76"
+      ],
+      "tree": "a0f3bc284929d33a28e8b40e9c479e1ce69b48a4",
+      "committed_at": "2026-09-20T00:09:43+03:00",
+      "subject": "test: isolate sync data source import stubs",
+      "changes_from_first_parent": {
+        "test/unit_test/rag/test_sync_data_source.py": "M",
+        "tools/quality/core-changes.yaml": "M",
+        "tools/quality/file-inventory.json": "M"
+      }
+    },
+    {
+      "sha": "58e5ce51cfaed1c7b3ed19d0f14907b2cd18c2ed",
+      "parents": [
+        "284dabfd92773a843f8636a1d647238de2648f6c",
+        "cd6c9e441887c22c7459cf667e988d9b723e0b71"
+      ],
+      "tree": "b6d708388251076863ab2bfc1cc88254e4fa7ac1",
+      "committed_at": "2026-09-20T00:11:59+03:00",
+      "subject": "Merge origin/main into codex/stabilize-ci-v1.23.1",
       "changes_from_first_parent": {
         "agent/business_requirements/prompts/change_planner.v1.md": "M",
         "agent/business_requirements/prompts/draft.v1.md": "M",
@@ -2136,22 +2166,56 @@
       }
     },
     {
-      "sha": "9f6612726efe3f293f80326788f983933cece764",
+      "sha": "0a2a86ddd2c725154b6f5ab21b66bcb3972a0ac2",
       "parents": [
-        "cd6c9e441887c22c7459cf667e988d9b723e0b71"
+        "58e5ce51cfaed1c7b3ed19d0f14907b2cd18c2ed"
       ],
-      "tree": "aa8d9060b1c46aa4c362ccb54596ed15d9638d0c",
-      "committed_at": "2026-09-20T00:17:15+03:00",
-      "subject": "feat: detect EVA document updates",
+      "tree": "ebd7d8c64d1689016395bdc38ce7e26f641b9b24",
+      "committed_at": "2026-09-20T00:33:26+03:00",
+      "subject": "fix(ci): close Linux unit suite prerequisites",
       "changes_from_first_parent": {
+        ".github/workflows/sep-tests.yml": "M",
+        ".github/workflows/tests.yml": "M",
+        "agent/component/message.py": "M",
+        "api/apps/business_documents/ai.py": "M",
+        "api/apps/business_documents/evidence.py": "M",
+        "pyproject.toml": "M",
+        "test/unit_test/api/apps/business_documents/test_business_document_adapter_contracts.py": "M",
+        "tools/quality/core-changes.yaml": "M",
+        "tools/quality/file-inventory.json": "M",
+        "tools/quality/ignored-artifacts.json": "M",
+        "tools/quality/module-map.yaml": "M",
+        "tools/quality/upstream-evidence.json": "M",
+        "uv.lock": "M"
+      }
+    },
+    {
+      "sha": "0a66d5601234b05f1cb477e446d6fe0be29eab8d",
+      "parents": [
+        "0a2a86ddd2c725154b6f5ab21b66bcb3972a0ac2",
+        "5a4a7b14e8723aa7c8d2f580cfa56b466db453fd"
+      ],
+      "tree": "88ea5692f64bcbfb9cf2e36568281c773454d331",
+      "committed_at": "2026-09-20T00:34:02+03:00",
+      "subject": "Merge remote-tracking branch 'origin/main' into codex/stabilize-ci-v1.23.1",
+      "changes_from_first_parent": {
+        "AGENTS.md": "M",
         "api/apps/business_documents/service.py": "M",
         "api/apps/restful_apis/business_document_api.py": "M",
+        "deployment/local/README.md": "A",
+        "deployment/local/deploy.ps1": "A",
         "docs/develop/business-documents-eva-title-binding-ru.md": "M",
         "docs/release_notes.md": "M",
         "docs/user-guide-ru/index.md": "M",
         "test/unit_test/api/apps/business_documents/test_business_document_service.py": "M",
         "test/unit_test/api/apps/restful_apis/test_business_document_api_contract.py": "M",
+        "test/unit_test/deployment/test_local_deploy_process.py": "A",
+        "tools/quality/core-changes.yaml": "M",
+        "tools/quality/file-inventory.json": "M",
+        "tools/quality/ignored-artifacts.json": "M",
+        "tools/quality/module-map.yaml": "M",
         "tools/quality/python-boundaries.yaml": "M",
+        "tools/quality/upstream-evidence.json": "M",
         "web/src/pages/business-documents/index.test.tsx": "M",
         "web/src/pages/business-documents/index.tsx": "M",
         "web/src/pages/business-documents/types.ts": "M",
@@ -2161,64 +2225,112 @@
       }
     },
     {
-      "sha": "3d10c00ae195e38cc3d6a51cfb1fb135ff2f9efa",
+      "sha": "70d645a1428b1eae1351a23243d5996db39ab6f6",
       "parents": [
-        "9f6612726efe3f293f80326788f983933cece764"
+        "0a66d5601234b05f1cb477e446d6fe0be29eab8d"
       ],
-      "tree": "4c7f50e17130677e34684988f67f29a8c1b4e477",
-      "committed_at": "2026-09-20T00:17:27+03:00",
-      "subject": "build: add branch-independent local deploy",
+      "tree": "29009777d27e5241a7146d00a738507b131aa2d1",
+      "committed_at": "2026-09-20T00:34:23+03:00",
+      "subject": "chore: refresh CI stabilization provenance",
       "changes_from_first_parent": {
-        "AGENTS.md": "M",
-        "deployment/local/README.md": "A",
-        "deployment/local/deploy.ps1": "A",
-        "test/unit_test/deployment/test_local_deploy_process.py": "A",
-        "tools/quality/module-map.yaml": "M"
+        "tools/quality/core-changes.yaml": "M",
+        "tools/quality/file-inventory.json": "M",
+        "tools/quality/ignored-artifacts.json": "M",
+        "tools/quality/upstream-evidence.json": "M"
       }
     },
     {
-      "sha": "2717c5c4001ed1f0d00e5181714c16613d7ba27a",
+      "sha": "cffc3dc39ca1bae0d41007391e8be6fb11c0c1e5",
       "parents": [
-        "3d10c00ae195e38cc3d6a51cfb1fb135ff2f9efa"
+        "70d645a1428b1eae1351a23243d5996db39ab6f6"
       ],
-      "tree": "c25dd37198195f3e2defe1df08dadc04b5681871",
-      "committed_at": "2026-09-20T00:17:40+03:00",
-      "subject": "fix(ci): isolate business document settings stubs",
+      "tree": "bf99d589687823b07b56e20a851ad69e64033029",
+      "committed_at": "2026-09-20T00:47:31+03:00",
+      "subject": "test: use verified storage cleanup contract",
       "changes_from_first_parent": {
-        "test/unit_test/api/apps/business_documents/helpers.py": "M",
-        "test/unit_test/api/apps/business_documents/test_business_document_adapter_contracts.py": "M",
-        "test/unit_test/api/apps/business_documents/test_business_document_worker_exports.py": "M"
+        "test/integration/test_business_document_postgres.py": "M",
+        "tools/quality/core-changes.yaml": "M",
+        "tools/quality/file-inventory.json": "M",
+        "tools/quality/ignored-artifacts.json": "M",
+        "tools/quality/upstream-evidence.json": "M"
       }
     },
     {
-      "sha": "11f9c0fc67d49782c8afd49c003d8fb504a3da61",
+      "sha": "c4a6932ad7ac8544df8d34fbd68069af7b2c6104",
       "parents": [
-        "2717c5c4001ed1f0d00e5181714c16613d7ba27a"
+        "cffc3dc39ca1bae0d41007391e8be6fb11c0c1e5"
       ],
-      "tree": "201821a718ab392b0486fd4e06e8012240f596db",
-      "committed_at": "2026-09-20T00:17:46+03:00",
-      "subject": "test: isolate sync data source import stubs",
+      "tree": "8176f1d81d6cb3b1e020ffd7fa97be708723ab2f",
+      "committed_at": "2026-09-20T00:47:47+03:00",
+      "subject": "chore: refresh storage cleanup provenance",
       "changes_from_first_parent": {
-        "test/unit_test/rag/test_sync_data_source.py": "M"
+        "tools/quality/core-changes.yaml": "M",
+        "tools/quality/file-inventory.json": "M",
+        "tools/quality/ignored-artifacts.json": "M",
+        "tools/quality/upstream-evidence.json": "M"
+      }
+    },
+    {
+      "sha": "f7943baccad814b304467d262e48f3ab0eb5a811",
+      "parents": [
+        "c4a6932ad7ac8544df8d34fbd68069af7b2c6104"
+      ],
+      "tree": "e7c2cb47dfc0b18bb5edf383c59daeb4ede5c665",
+      "committed_at": "2026-09-20T01:21:00+03:00",
+      "subject": "fix(ci): allow builds without proxy variables",
+      "changes_from_first_parent": {
+        ".github/workflows/sep-tests.yml": "M",
+        ".github/workflows/tests.yml": "M",
+        "tools/quality/core-changes.yaml": "M",
+        "tools/quality/file-inventory.json": "M"
+      }
+    },
+    {
+      "sha": "b8a6b9d79ab1b8045911c30183e2e9e934c0d7fb",
+      "parents": [
+        "f7943baccad814b304467d262e48f3ab0eb5a811"
+      ],
+      "tree": "e0814f43d9e1a6dd5e81395a53e4c97e13bef86b",
+      "committed_at": "2026-09-20T01:21:27+03:00",
+      "subject": "chore: refresh proxy build provenance",
+      "changes_from_first_parent": {
+        "tools/quality/core-changes.yaml": "M",
+        "tools/quality/file-inventory.json": "M",
+        "tools/quality/ignored-artifacts.json": "M",
+        "tools/quality/upstream-evidence.json": "M"
+      }
+    },
+    {
+      "sha": "a61bf40b983f21ab859ce60f1898da3b6a616fbf",
+      "parents": [
+        "b8a6b9d79ab1b8045911c30183e2e9e934c0d7fb"
+      ],
+      "tree": "abda699b2d3b651d2426f938966a4912a250c1a2",
+      "committed_at": "2026-09-20T02:11:35+03:00",
+      "subject": "fix(ci): fall back from unavailable resource mirror",
+      "changes_from_first_parent": {
+        "Dockerfile": "M",
+        "tools/quality/core-changes.yaml": "M",
+        "tools/quality/file-inventory.json": "M"
       }
     }
   ],
   "local_refs_only_no_fetch": [
-    "refs/remotes/origin/HEAD cd6c9e441887c22c7459cf667e988d9b723e0b71",
+    "refs/remotes/origin/HEAD 5a4a7b14e8723aa7c8d2f580cfa56b466db453fd",
     "refs/remotes/origin/codex/fix-t3-ci-regressions-pr 7045e856a9905264044a3f47d32cef8ac7c0e2a6",
     "refs/remotes/origin/codex/integrate-v1.23.1 b060fe7718212808ddc26bb034d243dd0f0eaf17",
     "refs/remotes/origin/codex/t3-architecture-base-protocol 03c529786aae21db47855b8c1212ee1ace1e3ff1",
     "refs/remotes/origin/codex/t3-control-update d3a44c945c543463c0c9b707567c9cff93998772",
     "refs/remotes/origin/codex/t3-os-isolation b6f395c1507dd76ba7c310dad36c9dbe109087da",
     "refs/remotes/origin/codex/t4-business-document-assignment 0f050c78cd4e09518a602f22bfa606b1132319d8",
-    "refs/remotes/origin/main cd6c9e441887c22c7459cf667e988d9b723e0b71",
+    "refs/remotes/origin/main 5a4a7b14e8723aa7c8d2f580cfa56b466db453fd",
     "refs/remotes/origin/pr-31-merge ae10b6f924dce8d49ef2736f8ad64ca3a4abb154",
     "refs/remotes/upstream/HEAD fa258db6a3b4ad07779feed91cd73859c4aea93a",
     "refs/remotes/upstream/main fa258db6a3b4ad07779feed91cd73859c4aea93a",
     "refs/remotes/upstream/main_backup 427e0540cab683a591a5f4a65a0b38bf9ee008b7"
   ],
   "graph_merge_base": "28ce77fe5f1e4301d3672221b509418d3c7acb77",
-  "baseline_diff_summary": "831 files changed, 198614 insertions(+), 2871 deletions(-)",
+  "baseline_diff_summary": "832 files changed, 198849 insertions(+), 2884 deletions(-)",
   "ancestry_only_merge": {
     "commit": "64f0bfdf0e724d006d61563a76964bf140bcfb4e",
     "first_parent": "268a5a9d60e19982ac329ec045d0ff9b0228b26b",

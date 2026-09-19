@@ -119,7 +119,8 @@ class RAGFlowDatasetSearchAdapter:
     def search(self, actor_id: str, request: dict[str, Any]) -> tuple[bool, dict[str, Any] | str]:
         from api.apps.services.dataset_api_service import search_datasets
 
-        return asyncio.run(search_datasets(actor_id, request))
+        with asyncio.Runner() as runner:
+            return runner.run(search_datasets(actor_id, request))
 
 
 class BusinessDocumentEvidence:

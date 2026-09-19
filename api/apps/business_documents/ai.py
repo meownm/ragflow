@@ -204,7 +204,8 @@ class RAGFlowLLMAdapter:
                 await _drain_litellm_callbacks()
 
     def generate(self, tenant_id: str, system_prompt: str, input_payload: dict[str, Any]) -> str:
-        return asyncio.run(self.async_generate(tenant_id, system_prompt, input_payload))
+        with asyncio.Runner() as runner:
+            return runner.run(self.async_generate(tenant_id, system_prompt, input_payload))
 
 
 @dataclass(frozen=True)

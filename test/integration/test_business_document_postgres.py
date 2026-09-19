@@ -911,8 +911,8 @@ def test_real_minio_blob_is_reconciled_after_interruption_immediately_after_put(
         def get(self, bucket, key):
             return minio_storage.get(bucket, key)
 
-        def rm(self, bucket, key):
-            return minio_storage.rm(bucket, key)
+        def remove_and_confirm_absent(self, bucket, key):
+            return minio_storage.remove_and_confirm_absent(bucket, key)
 
         def health(self):
             return minio_storage.health()
@@ -947,7 +947,7 @@ def test_real_minio_blob_is_reconciled_after_interruption_immediately_after_put(
         assert minio_storage.get(*location) is None
     finally:
         if location is not None:
-            minio_storage.rm(*location)
+            assert minio_storage.remove_and_confirm_absent(*location) is True
 
 
 @pytest.mark.p0

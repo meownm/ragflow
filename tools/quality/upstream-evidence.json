@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "verified_at": "2026-09-19T21:34:08.422002+00:00",
-  "head": "0a66d5601234b05f1cb477e446d6fe0be29eab8d",
+  "verified_at": "2026-09-19T21:47:04.390135+00:00",
+  "head": "70d645a1428b1eae1351a23243d5996db39ab6f6",
   "official_commits": [
     {
       "sha": "cb93883f3f8c975eecb2fed81210effeb3bdb06f",
@@ -2223,6 +2223,21 @@
         "web/src/services/business-document-service.ts": "M",
         "web/src/utils/api.ts": "M"
       }
+    },
+    {
+      "sha": "70d645a1428b1eae1351a23243d5996db39ab6f6",
+      "parents": [
+        "0a66d5601234b05f1cb477e446d6fe0be29eab8d"
+      ],
+      "tree": "29009777d27e5241a7146d00a738507b131aa2d1",
+      "committed_at": "2026-09-20T00:34:23+03:00",
+      "subject": "chore: refresh CI stabilization provenance",
+      "changes_from_first_parent": {
+        "tools/quality/core-changes.yaml": "M",
+        "tools/quality/file-inventory.json": "M",
+        "tools/quality/ignored-artifacts.json": "M",
+        "tools/quality/upstream-evidence.json": "M"
+      }
     }
   ],
   "local_refs_only_no_fetch": [
@@ -2240,7 +2255,7 @@
     "refs/remotes/upstream/main_backup 427e0540cab683a591a5f4a65a0b38bf9ee008b7"
   ],
   "graph_merge_base": "28ce77fe5f1e4301d3672221b509418d3c7acb77",
-  "baseline_diff_summary": "832 files changed, 198737 insertions(+), 2883 deletions(-)",
+  "baseline_diff_summary": "832 files changed, 198784 insertions(+), 2883 deletions(-)",
   "ancestry_only_merge": {
     "commit": "64f0bfdf0e724d006d61563a76964bf140bcfb4e",
     "first_parent": "268a5a9d60e19982ac329ec045d0ff9b0228b26b",

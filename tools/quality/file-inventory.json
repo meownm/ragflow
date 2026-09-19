@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
-  "captured_at": "2026-09-19T21:34:16.529219+00:00",
-  "head": "0a66d5601234b05f1cb477e446d6fe0be29eab8d",
+  "captured_at": "2026-09-19T21:47:19.173326+00:00",
+  "head": "70d645a1428b1eae1351a23243d5996db39ab6f6",
   "upstream_base": "cb93883f3f8c975eecb2fed81210effeb3bdb06f",
   "branch": "codex/stabilize-ci-v1.23.1",
   "shallow": true,
-  "snapshot_sha256": "7a817433d4b68e6f1b92289783c0a6ffcc1f0e9e0f87ef76fea3f9de6675f325",
+  "snapshot_sha256": "a1755514d1062c916cdb4cbfe04c3979c99b849adbd026d694a14b1e08236e51",
   "scope": "All tracked deltas from the content baseline, staged/unstaged changes and nonignored untracked files; generated outputs explicitly listed without recursive digest",
   "rename_policy": "Renames represented by explicit delete/add paths; no paths discarded by similarity heuristics",
   "counts": {
@@ -14,7 +14,7 @@
     "index_files": 4925,
     "committed_delta": 832,
     "staged_delta": 0,
-    "unstaged_delta": 2,
+    "unstaged_delta": 3,
     "untracked": 0,
     "inventory_records": 832,
     "by_origin": {
@@ -8635,13 +8635,13 @@
       },
       "committed_change": "A",
       "staged_change": null,
-      "unstaged_change": null,
+      "unstaged_change": "M",
       "working_change_from_base": "A",
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 58237,
-        "sha256": "e71f4fc12273f797c2a4f797bfdaad746a099c71a42dd2c987191802af97e487"
+        "bytes": 58316,
+        "sha256": "74948b9c5bb652742a86c15f2983296cd03ea1964e96a4586b3b530ed8abbde3"
       }
     },
     {
@@ -13273,11 +13273,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "66cf317cb9cf459d89082f6ff6f18e3eabd50df6"
+        "oid": "1dea646d318bbd856cbff97c12b36c33f17259e5"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "66cf317cb9cf459d89082f6ff6f18e3eabd50df6"
+        "oid": "1dea646d318bbd856cbff97c12b36c33f17259e5"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -13322,11 +13322,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "06f441ae896516a7fb1b9e4f346249c0f49f31a1"
+        "oid": "8b91f473d278616f48669812d5a2c2e6746a5764"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "06f441ae896516a7fb1b9e4f346249c0f49f31a1"
+        "oid": "8b91f473d278616f48669812d5a2c2e6746a5764"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -13421,11 +13421,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "d812faa549ccbcf9b888a7cc2df53e09a843ffff"
+        "oid": "49a67b532a075e76cc3023a86624764c017e4b6e"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "d812faa549ccbcf9b888a7cc2df53e09a843ffff"
+        "oid": "49a67b532a075e76cc3023a86624764c017e4b6e"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -13435,7 +13435,7 @@
       "working_file": {
         "present": true,
         "bytes": 769,
-        "sha256": "fc1f235db2e6e173bac640e6f09e72031ef58878af694e02c8d383db20ee63a6"
+        "sha256": "01a5cb7ce97e34d7e41c2621d9f05f4966f674155122e3a74eb98704cc870682"
       }
     },
     {
@@ -13846,11 +13846,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "5136bc331988b2e674e367012270c325b58fc636"
+        "oid": "801fc3618611cd33eb81c7af2e8fbf05038150c2"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "5136bc331988b2e674e367012270c325b58fc636"
+        "oid": "801fc3618611cd33eb81c7af2e8fbf05038150c2"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -13859,8 +13859,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 126452,
-        "sha256": "9dd6f9dcae27f622d225e04bce4fe6cc4e8214ad67f02add7b3805db6d904ca9"
+        "bytes": 127036,
+        "sha256": "ea5e2aa4eab5b4f0aa8f4fa4f2e4d6d0439668a073f750f8608da9fd5eb75664"
       }
     },
     {

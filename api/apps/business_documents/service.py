@@ -587,17 +587,14 @@ class BusinessDocumentService:
         refreshed_binding, _ = EvaDocumentChangeService.read_connected_page(actor_id, binding)
         remote_hash = refreshed_binding.get("remote_content_hash")
         baseline_hash = binding.get("last_pulled_content_hash") or binding.get("remote_content_hash")
+        can_pull = bool(access.permissions(document.owner_id)["edit"] and document.current_revision_id and document.lifecycle_state in {LifecycleState.AGREED.value, LifecycleState.REVIEW.value})
         return {
             "document_id": document.id,
             "changed": bool(remote_hash and remote_hash != baseline_hash),
             "direction": "FROM_EVA",
             "remote_version": refreshed_binding.get("remote_version"),
             "baseline_version": binding.get("remote_version"),
-            "can_pull": bool(
-                access.permissions(document.owner_id)["edit"]
-                and document.current_revision_id
-                and document.lifecycle_state in {LifecycleState.AGREED.value, LifecycleState.REVIEW.value}
-            ),
+            "can_pull": can_pull,
         }
 
     @classmethod

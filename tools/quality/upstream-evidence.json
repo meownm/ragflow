@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "verified_at": "2026-09-19T20:53:48.799107+00:00",
-  "head": "d31d859675a3f72bd35d037ff3b8656782a8709c",
+  "verified_at": "2026-09-19T21:17:52.948238+00:00",
+  "head": "11f9c0fc67d49782c8afd49c003d8fb504a3da61",
   "official_commits": [
     {
       "sha": "cb93883f3f8c975eecb2fed81210effeb3bdb06f",
@@ -2104,106 +2104,121 @@
       }
     },
     {
-      "sha": "a52d627679f512c006e40d0f04b781fcac1924d5",
+      "sha": "cd6c9e441887c22c7459cf667e988d9b723e0b71",
       "parents": [
-        "7bec718a6b87e0e53794b17a6f486692a33beab8"
+        "7bec718a6b87e0e53794b17a6f486692a33beab8",
+        "1dd3210f23e2ba479f077558299a3a24df56eaee"
       ],
-      "tree": "0a78939b1a7506a7a73ae0a207310143ce5f5af6",
-      "committed_at": "2026-09-19T23:07:35+03:00",
-      "subject": "feat: improve business document review workflow",
+      "tree": "107769a17ab9eec9a2f36993bd4dee4362bee1df",
+      "committed_at": "2026-09-20T00:03:12+03:00",
+      "subject": "Merge pull request #42 from meownm/codex/push-v1.24.0-main",
       "changes_from_first_parent": {
         "agent/business_requirements/prompts/change_planner.v1.md": "M",
         "agent/business_requirements/prompts/draft.v1.md": "M",
         "agent/business_requirements/prompts/intake.v1.md": "M",
         "agent/business_requirements/prompts/review.v1.md": "M",
         "api/apps/business_documents/assets.py": "M",
-        "test/unit_test/api/apps/business_documents/test_business_document_ai_export_boundaries.py": "M",
-        "web/src/pages/business-documents/components/document-pane.tsx": "M",
-        "web/src/pages/business-documents/components/protocol-pane.tsx": "M",
-        "web/src/pages/business-documents/index.test.tsx": "M",
-        "web/src/pages/business-documents/index.tsx": "M"
-      }
-    },
-    {
-      "sha": "a10db430cb1720a4bf11c36895816a017ccae871",
-      "parents": [
-        "a52d627679f512c006e40d0f04b781fcac1924d5"
-      ],
-      "tree": "f012b62aa6e75375ff5c07b92880b25efe50f113",
-      "committed_at": "2026-09-19T23:08:17+03:00",
-      "subject": "fix: harden business document review interactions",
-      "changes_from_first_parent": {
-        "api/apps/business_documents/assets.py": "M",
-        "test/unit_test/api/apps/business_documents/test_business_document_ai_export_boundaries.py": "M",
-        "web/src/pages/business-documents/components/document-pane.tsx": "M",
-        "web/src/pages/business-documents/components/protocol-pane.tsx": "M",
-        "web/src/pages/business-documents/index.test.tsx": "M",
-        "web/src/pages/business-documents/index.tsx": "M"
-      }
-    },
-    {
-      "sha": "53d6bc788c463ef07b400062ab99891a9b67789f",
-      "parents": [
-        "a10db430cb1720a4bf11c36895816a017ccae871"
-      ],
-      "tree": "fbc3a7f08c585e2cefec9f81790f5f743a622857",
-      "committed_at": "2026-09-19T23:08:32+03:00",
-      "subject": "chore: finalize v1.24.0 candidate",
-      "changes_from_first_parent": {
-        "web/package-lock.json": "M"
-      }
-    },
-    {
-      "sha": "1baae7e7d0253ed79522aa5d71afdd746b5a83f6",
-      "parents": [
-        "53d6bc788c463ef07b400062ab99891a9b67789f"
-      ],
-      "tree": "651c7295fad2c8111df4e628f9a3f7a31caaacd2",
-      "committed_at": "2026-09-19T23:18:37+03:00",
-      "subject": "chore: refresh v1.24.0 integration provenance",
-      "changes_from_first_parent": {
-        "tools/quality/core-changes.yaml": "M",
-        "tools/quality/file-inventory.json": "M",
-        "tools/quality/ignored-artifacts.json": "M",
-        "tools/quality/upstream-evidence.json": "M"
-      }
-    },
-    {
-      "sha": "d31d859675a3f72bd35d037ff3b8656782a8709c",
-      "parents": [
-        "1baae7e7d0253ed79522aa5d71afdd746b5a83f6"
-      ],
-      "tree": "b4a4378ea9994f300917c03ded24849c01bfafaf",
-      "committed_at": "2026-09-19T23:40:47+03:00",
-      "subject": "fix(architecture): repair business document contract environment",
-      "changes_from_first_parent": {
         "api/apps/business_documents/sql_execution_registry.py": "M",
+        "test/playwright/e2e/test_document_constructor_ui.py": "M",
+        "test/unit_test/api/apps/business_documents/test_business_document_ai_export_boundaries.py": "M",
         "test/unit_test/tools/quality/test_architecture_workflow.py": "M",
         "tools/quality/architecture-contract-requirements.in": "M",
         "tools/quality/architecture-contract-requirements.txt": "M",
         "tools/quality/core-changes.yaml": "M",
         "tools/quality/file-inventory.json": "M",
         "tools/quality/ignored-artifacts.json": "M",
-        "tools/quality/upstream-evidence.json": "M"
+        "tools/quality/upstream-evidence.json": "M",
+        "web/package-lock.json": "M",
+        "web/src/pages/business-documents/components/document-pane.tsx": "M",
+        "web/src/pages/business-documents/components/protocol-pane.tsx": "M",
+        "web/src/pages/business-documents/index.test.tsx": "M",
+        "web/src/pages/business-documents/index.tsx": "M"
+      }
+    },
+    {
+      "sha": "9f6612726efe3f293f80326788f983933cece764",
+      "parents": [
+        "cd6c9e441887c22c7459cf667e988d9b723e0b71"
+      ],
+      "tree": "aa8d9060b1c46aa4c362ccb54596ed15d9638d0c",
+      "committed_at": "2026-09-20T00:17:15+03:00",
+      "subject": "feat: detect EVA document updates",
+      "changes_from_first_parent": {
+        "api/apps/business_documents/service.py": "M",
+        "api/apps/restful_apis/business_document_api.py": "M",
+        "docs/develop/business-documents-eva-title-binding-ru.md": "M",
+        "docs/release_notes.md": "M",
+        "docs/user-guide-ru/index.md": "M",
+        "test/unit_test/api/apps/business_documents/test_business_document_service.py": "M",
+        "test/unit_test/api/apps/restful_apis/test_business_document_api_contract.py": "M",
+        "tools/quality/python-boundaries.yaml": "M",
+        "web/src/pages/business-documents/index.test.tsx": "M",
+        "web/src/pages/business-documents/index.tsx": "M",
+        "web/src/pages/business-documents/types.ts": "M",
+        "web/src/services/business-document-service.test.ts": "M",
+        "web/src/services/business-document-service.ts": "M",
+        "web/src/utils/api.ts": "M"
+      }
+    },
+    {
+      "sha": "3d10c00ae195e38cc3d6a51cfb1fb135ff2f9efa",
+      "parents": [
+        "9f6612726efe3f293f80326788f983933cece764"
+      ],
+      "tree": "4c7f50e17130677e34684988f67f29a8c1b4e477",
+      "committed_at": "2026-09-20T00:17:27+03:00",
+      "subject": "build: add branch-independent local deploy",
+      "changes_from_first_parent": {
+        "AGENTS.md": "M",
+        "deployment/local/README.md": "A",
+        "deployment/local/deploy.ps1": "A",
+        "test/unit_test/deployment/test_local_deploy_process.py": "A",
+        "tools/quality/module-map.yaml": "M"
+      }
+    },
+    {
+      "sha": "2717c5c4001ed1f0d00e5181714c16613d7ba27a",
+      "parents": [
+        "3d10c00ae195e38cc3d6a51cfb1fb135ff2f9efa"
+      ],
+      "tree": "c25dd37198195f3e2defe1df08dadc04b5681871",
+      "committed_at": "2026-09-20T00:17:40+03:00",
+      "subject": "fix(ci): isolate business document settings stubs",
+      "changes_from_first_parent": {
+        "test/unit_test/api/apps/business_documents/helpers.py": "M",
+        "test/unit_test/api/apps/business_documents/test_business_document_adapter_contracts.py": "M",
+        "test/unit_test/api/apps/business_documents/test_business_document_worker_exports.py": "M"
+      }
+    },
+    {
+      "sha": "11f9c0fc67d49782c8afd49c003d8fb504a3da61",
+      "parents": [
+        "2717c5c4001ed1f0d00e5181714c16613d7ba27a"
+      ],
+      "tree": "201821a718ab392b0486fd4e06e8012240f596db",
+      "committed_at": "2026-09-20T00:17:46+03:00",
+      "subject": "test: isolate sync data source import stubs",
+      "changes_from_first_parent": {
+        "test/unit_test/rag/test_sync_data_source.py": "M"
       }
     }
   ],
   "local_refs_only_no_fetch": [
-    "refs/remotes/origin/HEAD 7bec718a6b87e0e53794b17a6f486692a33beab8",
+    "refs/remotes/origin/HEAD cd6c9e441887c22c7459cf667e988d9b723e0b71",
     "refs/remotes/origin/codex/fix-t3-ci-regressions-pr 7045e856a9905264044a3f47d32cef8ac7c0e2a6",
     "refs/remotes/origin/codex/integrate-v1.23.1 b060fe7718212808ddc26bb034d243dd0f0eaf17",
     "refs/remotes/origin/codex/t3-architecture-base-protocol 03c529786aae21db47855b8c1212ee1ace1e3ff1",
     "refs/remotes/origin/codex/t3-control-update d3a44c945c543463c0c9b707567c9cff93998772",
     "refs/remotes/origin/codex/t3-os-isolation b6f395c1507dd76ba7c310dad36c9dbe109087da",
     "refs/remotes/origin/codex/t4-business-document-assignment 0f050c78cd4e09518a602f22bfa606b1132319d8",
-    "refs/remotes/origin/main 7bec718a6b87e0e53794b17a6f486692a33beab8",
+    "refs/remotes/origin/main cd6c9e441887c22c7459cf667e988d9b723e0b71",
     "refs/remotes/origin/pr-31-merge ae10b6f924dce8d49ef2736f8ad64ca3a4abb154",
     "refs/remotes/upstream/HEAD fa258db6a3b4ad07779feed91cd73859c4aea93a",
     "refs/remotes/upstream/main fa258db6a3b4ad07779feed91cd73859c4aea93a",
     "refs/remotes/upstream/main_backup 427e0540cab683a591a5f4a65a0b38bf9ee008b7"
   ],
   "graph_merge_base": "28ce77fe5f1e4301d3672221b509418d3c7acb77",
-  "baseline_diff_summary": "828 files changed, 197871 insertions(+), 2870 deletions(-)",
+  "baseline_diff_summary": "831 files changed, 198614 insertions(+), 2871 deletions(-)",
   "ancestry_only_merge": {
     "commit": "64f0bfdf0e724d006d61563a76964bf140bcfb4e",
     "first_parent": "268a5a9d60e19982ac329ec045d0ff9b0228b26b",

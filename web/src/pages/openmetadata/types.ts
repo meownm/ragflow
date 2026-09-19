@@ -47,6 +47,8 @@ export type CatalogEntity = {
   url: string;
   score?: number;
   matched_by?: string[];
+  schema_loaded?: boolean;
+  schema_fingerprint?: string | null;
 };
 
 export type LineageEdge = {
@@ -156,6 +158,12 @@ export type CatalogAnswer = {
   question: string;
   answer: string;
   freshness: Freshness;
+  retrieval?: string;
+  sources?: Array<{
+    label: string;
+    url?: string;
+    dataset_id?: string;
+  }>;
   warnings?: string[];
   entities?: CatalogEntity[];
   entity?: CatalogEntity;

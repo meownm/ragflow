@@ -114,17 +114,40 @@ def test_eva_import_rejects_a_page_outside_the_business_document_template():
 
 
 @pytest.mark.p0
-def test_catalog_sync_exposes_only_active_l5_entries_and_v3_derives_the_title(database, monkeypatch):
+def test_catalog_sync_replaces_previous_source_rows_and_v3_derives_the_title(database, monkeypatch):
     from api.apps.business_documents.eva_changes import EvaDocumentChangeService
 
     catalog = load_document_catalog()
     from api.db.db_models import migrate_business_document_catalog
 
     monkeypatch.setattr(EvaDocumentChangeService, "find_title_matches", staticmethod(lambda *_args: []))
+    BusinessDocumentCatalog.create(
+        id="obsolete-from-prior-catalog",
+        title="Устаревшая запись",
+        capability_level="L5",
+        hierarchy={},
+        details={},
+        source_id=catalog["source_id"],
+        source_version="v15_L5",
+        source_sha256="0" * 64,
+        sort_order=99,
+    )
+    prior_document = BusinessDocumentService.create_document(
+        TENANT,
+        AUTHOR,
+        {
+            "schema_version": "3",
+            "document_type": "business_requirements",
+            "catalog_entry_id": "obsolete-from-prior-catalog",
+            "idea": "Сохранить документ после замены справочника",
+        },
+    )
     migrate_business_document_catalog()
     migrate_business_document_catalog()
     first = catalog["items"][0]
     assert BusinessDocumentCatalog.select().count() == len(catalog["items"])
+    assert BusinessDocumentCatalog.get_or_none(BusinessDocumentCatalog.id == "obsolete-from-prior-catalog") is None
+    assert BusinessDocument.get_by_id(prior_document["document_id"]).title == "Устаревшая запись"
     BusinessDocumentCatalog.create(
         id="L4-test",
         title="Не разрешённый уровень",
@@ -136,7 +159,18 @@ def test_catalog_sync_exposes_only_active_l5_entries_and_v3_derives_the_title(da
         source_sha256="0" * 64,
         sort_order=99,
     )
-    BusinessDocumentCatalog.update(is_active=False).where(BusinessDocumentCatalog.id == catalog["items"][-1]["id"]).execute()
+    BusinessDocumentCatalog.create(
+        id="inactive-l5-test",
+        title="Неактивная запись L5",
+        capability_level="L5",
+        hierarchy={},
+        details={},
+        source_id="test",
+        source_version="1",
+        source_sha256="0" * 64,
+        sort_order=100,
+        is_active=False,
+    )
 
     listed = BusinessDocumentService.list_catalog()
     created = BusinessDocumentService.create_document(
@@ -150,8 +184,8 @@ def test_catalog_sync_exposes_only_active_l5_entries_and_v3_derives_the_title(da
         },
     )
 
-    assert len(catalog["items"]) == 8
-    assert listed["total"] == 7
+    assert [item["id"] for item in catalog["items"]] == ["L2-01.01.04.01.01"]
+    assert listed["total"] == 1
     assert all(item["capability_level"] == "L5" for item in listed["items"])
     assert created["catalog_entry_id"] == first["id"]
     assert created["title"] == first["title"]

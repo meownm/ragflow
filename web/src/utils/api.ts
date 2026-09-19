@@ -256,7 +256,20 @@ export default {
 
   // business documents
   businessDocuments: `${restAPIv1}/business-documents`,
+  businessDocumentCapabilities: `${restAPIv1}/business-documents/capabilities`,
   businessDocumentCatalog: `${restAPIv1}/business-documents/catalog`,
+  businessDocumentSqlSchemaResolve: `${restAPIv1}/business-documents/sql-query/schema/resolve`,
+  businessDocumentSqlSchemaEntities: `${restAPIv1}/business-documents/sql-query/schema/entities`,
+  businessDocumentSqlQueryPlan: `${restAPIv1}/business-documents/sql-query/plan`,
+  businessDocumentSqlQueryCompile: `${restAPIv1}/business-documents/sql-query/compile`,
+  businessDocumentSqlExecutionConnectors: `${restAPIv1}/business-documents/sql-query/execution-connectors`,
+  businessDocumentSqlExecutionProfiles: `${restAPIv1}/business-documents/sql-query/execution-profiles`,
+  businessDocumentSqlExecutionProfile: (id: string) =>
+    `${restAPIv1}/business-documents/sql-query/execution-profiles/${id}`,
+  businessDocumentSqlCatalogBindings: `${restAPIv1}/business-documents/sql-query/catalog-bindings`,
+  businessDocumentSqlCatalogBinding: (id: string) =>
+    `${restAPIv1}/business-documents/sql-query/catalog-bindings/${id}`,
+  businessDocumentSqlExecutionBindingResolve: `${restAPIv1}/business-documents/sql-query/execution-binding/resolve`,
   businessDocument: (id: string) => `${restAPIv1}/business-documents/${id}`,
   businessDocumentOwner: (id: string) =>
     `${restAPIv1}/business-documents/${id}/owner`,

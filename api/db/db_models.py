@@ -1484,6 +1484,63 @@ class BusinessDocumentCatalog(DataBaseModel):
         indexes = ((("capability_level", "is_active", "sort_order"), False),)
 
 
+class BusinessDocumentSqlExecutionProfile(DataBaseModel):
+    """Versioned read-only SQL execution policy backed by one DB connector."""
+
+    id = CharField(max_length=32, primary_key=True)
+    tenant_id = CharField(max_length=32, null=False, index=True)
+    name = CharField(max_length=128, null=False)
+    connector_id = CharField(max_length=32, null=False, index=True)
+    connector_identity_fingerprint = CharField(max_length=71, null=False)
+    dialect = CharField(max_length=32, null=False, default="postgres")
+    allowed_schemas = JSONField(null=False, default=list)
+    statement_timeout_ms = IntegerField(null=False, default=30_000)
+    max_rows = IntegerField(null=False, default=1_000)
+    max_result_bytes = IntegerField(null=False, default=5_000_000)
+    enabled = BooleanField(null=False, default=True, index=True)
+    version = IntegerField(null=False, default=1)
+    created_by = CharField(max_length=32, null=False, index=True)
+    updated_by = CharField(max_length=32, null=False, index=True)
+
+    class Meta:
+        db_table = "business_document_sql_execution_profile"
+        indexes = (
+            (("tenant_id", "name"), True),
+            (("tenant_id", "enabled"), False),
+        )
+
+
+class BusinessDocumentSqlCatalogBinding(DataBaseModel):
+    """Exact OpenMetadata scope to SQL execution-profile mapping."""
+
+    id = CharField(max_length=32, primary_key=True)
+    tenant_id = CharField(max_length=32, null=False, index=True)
+    catalog_service = CharField(max_length=128, null=False)
+    catalog_database = CharField(max_length=128, null=False)
+    catalog_schema = CharField(max_length=128, null=False)
+    execution_profile_id = CharField(max_length=32, null=False, index=True)
+    enabled = BooleanField(null=False, default=True, index=True)
+    version = IntegerField(null=False, default=1)
+    created_by = CharField(max_length=32, null=False, index=True)
+    updated_by = CharField(max_length=32, null=False, index=True)
+
+    class Meta:
+        db_table = "business_document_sql_catalog_binding"
+        indexes = (
+            (
+                (
+                    "tenant_id",
+                    "catalog_service",
+                    "catalog_database",
+                    "catalog_schema",
+                    "execution_profile_id",
+                ),
+                True,
+            ),
+            (("tenant_id", "catalog_service", "catalog_database", "catalog_schema"), False),
+        )
+
+
 class BusinessDocument(DataBaseModel):
     """Current projection for a governed business document workflow."""
 
@@ -1671,7 +1728,7 @@ class SystemAuditEvent(DataBaseModel):
 
     class Meta:
         db_table = "system_audit_event"
-        indexes = ((('correlation_id', 'create_time'), False),)
+        indexes = ((("correlation_id", "create_time"), False),)
 
 
 class BusinessDocumentCommand(DataBaseModel):
@@ -2030,7 +2087,7 @@ def migrate_business_document_title_key(migrator):
 
 
 def migrate_business_document_catalog():
-    """Synchronize the bundled L5 catalog after the table is available."""
+    """Replace the source catalog with the bundled L5 entries."""
 
     from business_documents.domain.catalog import load_document_catalog
 
@@ -2059,7 +2116,7 @@ def migrate_business_document_catalog():
                 BusinessDocumentCatalog.create(id=item["id"], **values)
             else:
                 BusinessDocumentCatalog.update(**values).where(BusinessDocumentCatalog.id == item["id"]).execute()
-        BusinessDocumentCatalog.update(is_active=False).where((BusinessDocumentCatalog.source_id == source_id) & ~BusinessDocumentCatalog.id.in_(active_ids)).execute()
+        BusinessDocumentCatalog.delete().where((BusinessDocumentCatalog.source_id == source_id) & ~BusinessDocumentCatalog.id.in_(active_ids)).execute()
 
 
 def migrate_business_document_eva_bindings():
@@ -2068,11 +2125,7 @@ def migrate_business_document_eva_bindings():
     if not BusinessDocumentEvaBinding.table_exists():
         return
     linked_document_ids = set(BusinessDocumentEvaBinding.select(BusinessDocumentEvaBinding.document_id).scalars())
-    created_events = (
-        BusinessDocumentEvent.select()
-        .where(BusinessDocumentEvent.event_type == "DocumentCreated")
-        .order_by(BusinessDocumentEvent.document_id, BusinessDocumentEvent.sequence)
-    )
+    created_events = BusinessDocumentEvent.select().where(BusinessDocumentEvent.event_type == "DocumentCreated").order_by(BusinessDocumentEvent.document_id, BusinessDocumentEvent.sequence)
     for created in created_events:
         if created.document_id in linked_document_ids or not isinstance(created.payload, dict):
             continue
@@ -2081,10 +2134,7 @@ def migrate_business_document_eva_bindings():
             continue
         latest_resolution = (
             BusinessDocumentEvent.select()
-            .where(
-                (BusinessDocumentEvent.document_id == created.document_id)
-                & (BusinessDocumentEvent.event_type == "EvaBindingResolved")
-            )
+            .where((BusinessDocumentEvent.document_id == created.document_id) & (BusinessDocumentEvent.event_type == "EvaBindingResolved"))
             .order_by(BusinessDocumentEvent.sequence.desc())
             .first()
         )
@@ -2094,18 +2144,11 @@ def migrate_business_document_eva_bindings():
                 binding = resolved
         latest_pull = (
             BusinessDocumentEvent.select()
-            .where(
-                (BusinessDocumentEvent.document_id == created.document_id)
-                & (BusinessDocumentEvent.event_type == "EvaDocumentPulled")
-            )
+            .where((BusinessDocumentEvent.document_id == created.document_id) & (BusinessDocumentEvent.event_type == "EvaDocumentPulled"))
             .order_by(BusinessDocumentEvent.sequence.desc())
             .first()
         )
-        if (
-            latest_pull is not None
-            and isinstance(latest_pull.payload, dict)
-            and (latest_resolution is None or latest_pull.sequence > latest_resolution.sequence)
-        ):
+        if latest_pull is not None and isinstance(latest_pull.payload, dict) and (latest_resolution is None or latest_pull.sequence > latest_resolution.sequence):
             binding = dict(binding)
             binding.update(
                 {
@@ -2127,15 +2170,11 @@ def migrate_business_document_eva_bindings():
                 document_id=created.document_id,
                 status=str(binding.get("status") or "LINK_ONLY"),
                 page_url_key=hashlib.sha256(page_url.encode("utf-8")).hexdigest(),
-                eva_identity_key=hashlib.sha256(identity.encode("utf-8")).hexdigest()
-                if origin and project_id and document_id
-                else None,
+                eva_identity_key=hashlib.sha256(identity.encode("utf-8")).hexdigest() if origin and project_id and document_id else None,
                 binding=dict(binding),
             )
         except IntegrityError as ex:
-            raise RuntimeError(
-                f"EVA page linked to multiple business documents; resolve document {created.document_id} before migration"
-            ) from ex
+            raise RuntimeError(f"EVA page linked to multiple business documents; resolve document {created.document_id} before migration") from ex
 
 
 def update_tenant_llm_to_id_primary_key():

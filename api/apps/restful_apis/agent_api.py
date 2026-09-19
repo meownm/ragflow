@@ -23,6 +23,7 @@ import inspect
 import ipaddress
 import json
 import logging
+import os
 import time
 from functools import partial, wraps
 from typing import Set
@@ -90,6 +91,54 @@ def _canvas_json_default(obj):
     raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 
+def _sync_switch_routes_from_graph(dsl):
+    """Keep persisted Switch params aligned with the canonical graph edges."""
+    graph = dsl.get("graph")
+    components = dsl.get("components")
+    if not isinstance(graph, dict) or not isinstance(components, dict):
+        return dsl
+
+    edges = graph.get("edges")
+    if not isinstance(edges, list):
+        return dsl
+
+    switch_routes = {}
+    for component_id, component in components.items():
+        obj = component.get("obj") if isinstance(component, dict) else None
+        if not isinstance(obj, dict) or obj.get("component_name") != "Switch":
+            continue
+        params = obj.get("params")
+        if not isinstance(params, dict):
+            continue
+
+        outgoing = [edge for edge in edges if isinstance(edge, dict) and edge.get("source") == component_id and edge.get("target") in components]
+        conditions = params.get("conditions")
+        if isinstance(conditions, list):
+            for index, condition in enumerate(conditions, start=1):
+                if isinstance(condition, dict):
+                    condition["to"] = [edge["target"] for edge in outgoing if edge.get("sourceHandle") == f"Case {index}"]
+        params["end_cpn_ids"] = [edge["target"] for edge in outgoing if edge.get("sourceHandle") == "end_cpn_ids"]
+        switch_routes[component_id] = params
+
+    nodes = graph.get("nodes")
+    if isinstance(nodes, list):
+        for node in nodes:
+            if not isinstance(node, dict) or node.get("id") not in switch_routes:
+                continue
+            data = node.get("data")
+            form = data.get("form") if isinstance(data, dict) else None
+            if not isinstance(form, dict):
+                continue
+            params = switch_routes[node["id"]]
+            if isinstance(params.get("conditions"), list):
+                for index, condition in enumerate(form.get("conditions", [])):
+                    if isinstance(condition, dict) and index < len(params["conditions"]):
+                        condition["to"] = list(params["conditions"][index].get("to", []))
+            form["end_cpn_ids"] = list(params.get("end_cpn_ids", []))
+
+    return dsl
+
+
 def _require_canvas_access_sync(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
@@ -145,8 +194,45 @@ def _get_user_nickname(user_id: str) -> str:
     return str(getattr(user, "nickname", "") or user_id)
 
 
+async def _iter_sse_with_heartbeat(body, interval_seconds=None):
+    """Keep an agent SSE response alive while its next event is still running."""
+    if not hasattr(body, "__aiter__"):
+        for chunk in body:
+            yield chunk
+        return
+
+    interval = interval_seconds
+    if interval is None:
+        interval = float(os.environ.get("AGENT_SSE_HEARTBEAT_SECONDS", "15"))
+    if interval <= 0:
+        async for chunk in body:
+            yield chunk
+        return
+
+    iterator = body.__aiter__()
+    pending = None
+    try:
+        while True:
+            if pending is None:
+                pending = asyncio.create_task(anext(iterator))
+            done, _ = await asyncio.wait({pending}, timeout=interval)
+            if not done:
+                yield ": heartbeat\n\n"
+                continue
+            try:
+                chunk = pending.result()
+            except StopAsyncIteration:
+                return
+            pending = None
+            yield chunk
+    finally:
+        if pending is not None and not pending.done():
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+
+
 def _build_sse_response(body):
-    resp = Response(body, mimetype="text/event-stream")
+    resp = Response(_iter_sse_with_heartbeat(body), mimetype="text/event-stream")
     resp.headers.add_header("Cache-control", "no-cache")
     resp.headers.add_header("Connection", "keep-alive")
     resp.headers.add_header("X-Accel-Buffering", "no")
@@ -796,7 +882,7 @@ async def create_agent(tenant_id):
         )
 
     try:
-        req["dsl"] = CanvasReplicaService.normalize_dsl(req["dsl"])
+        req["dsl"] = _sync_switch_routes_from_graph(CanvasReplicaService.normalize_dsl(req["dsl"]))
     except ValueError as exc:
         return get_json_result(
             data=False,
@@ -1036,7 +1122,7 @@ async def update_agent(agent_id, tenant_id):
 
     if req.get("dsl") is not None:
         try:
-            req["dsl"] = CanvasReplicaService.normalize_dsl(req["dsl"])
+            req["dsl"] = _sync_switch_routes_from_graph(CanvasReplicaService.normalize_dsl(req["dsl"]))
         except ValueError as exc:
             return get_json_result(
                 data=False,
@@ -1091,7 +1177,11 @@ async def reset_agent(agent_id, tenant_id):
         if not exists:
             return get_data_error_result(message="canvas not found.")
 
-        canvas = Canvas(json.dumps(user_canvas.dsl), tenant_id, canvas_id=user_canvas.id)
+        dsl = _sync_switch_routes_from_graph(CanvasReplicaService.normalize_dsl(user_canvas.dsl))
+        dsl.setdefault("path", [])
+        dsl.setdefault("history", [])
+        dsl.setdefault("retrieval", [])
+        canvas = Canvas(json.dumps(dsl), tenant_id, canvas_id=user_canvas.id)
         canvas.reset()
         dsl = json.loads(str(canvas))
         UserCanvasService.update_by_id(agent_id, {"dsl": dsl})
@@ -1107,6 +1197,12 @@ async def reset_agent(agent_id, tenant_id):
             return get_data_error_result(message="agent reset, but replica sync failed.")
         return get_json_result(data=dsl)
     except Exception as exc:
+        if isinstance(exc, ValueError):
+            return get_json_result(
+                data=False,
+                message=str(exc),
+                code=RetCode.ARGUMENT_ERROR,
+            )
         return server_error_response(exc)
 
 

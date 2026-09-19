@@ -1136,9 +1136,17 @@ async def transcription():
     model_name = default_asr_model_config.get("llm_name", "configured ASR model")
 
     async def event_stream():
+        stream_iterator = iter(asr_mdl.stream_transcription(temp_audio_path))
+        stream_end = object()
         try:
-            for evt in asr_mdl.stream_transcription(temp_audio_path):
+            while True:
+                evt = await asyncio.to_thread(next, stream_iterator, stream_end)
+                if evt is stream_end:
+                    break
                 yield f"data: {json.dumps(evt, ensure_ascii=False)}\n\n"
+                if evt.get("event") == "error":
+                    audit_asr("failure", reason_code="TRANSCRIPTION_ERROR", model=model_name, suffix=suffix, file_size_bytes=file_size_bytes)
+                    return
             audit_asr("success", model=model_name, suffix=suffix, file_size_bytes=file_size_bytes)
         except Exception as e:
             logging.getLogger(__name__).exception("Configured streaming ASR transcription failed")
@@ -1146,12 +1154,19 @@ async def transcription():
             err = {"event": "error", "text": str(e)}
             yield f"data: {json.dumps(err, ensure_ascii=False)}\n\n"
         finally:
+            close_stream = getattr(stream_iterator, "close", None)
+            if callable(close_stream):
+                await asyncio.to_thread(close_stream)
             try:
                 os.remove(temp_audio_path)
             except Exception as e:
                 logging.error(f"Failed to remove temp audio file: {str(e)}")
 
-    return Response(event_stream(), content_type="text/event-stream")
+    response = Response(event_stream(), content_type="text/event-stream")
+    response.headers.add_header("Cache-Control", "no-cache")
+    response.headers.add_header("Connection", "keep-alive")
+    response.headers.add_header("X-Accel-Buffering", "no")
+    return response
 
 
 @manager.route("/chat/mindmap", methods=["POST"])  # noqa: F821

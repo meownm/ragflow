@@ -1,7 +1,8 @@
 import { RAGFlowNodeType } from '@/interfaces/database/agent';
 import { Edge } from '@xyflow/react';
-import { NodeHandleId, Operator } from './constant';
+import { NodeHandleId, Operator, SwitchElseTo } from './constant';
 import useGraphStore from './store';
+import { buildDslComponentsByGraph } from './utils';
 
 function baseNode(id: string, label: Operator): RAGFlowNodeType {
   return {
@@ -159,5 +160,53 @@ describe('useGraphStore.deleteIterationNodeById', () => {
 
     expect(state.nodes.map((node) => node.id)).toEqual(['begin', 'rewrite:0']);
     expect(state.edges.map((edge) => edge.id)).toEqual(['branch-edge']);
+  });
+});
+
+describe('buildDslComponentsByGraph', () => {
+  it('rebuilds switch destinations from graph edges', () => {
+    const switchId = 'Switch:switch-1';
+    const caseTarget = 'Message:message-1';
+    const elseTarget = 'Agent:agent-1';
+    const nodes = [
+      createNode(switchId, Operator.Switch, {
+        data: {
+          label: Operator.Switch,
+          name: 'Switch_0',
+          form: {
+            conditions: [
+              {
+                items: [{ cpn_id: 'sys.query', operator: 'empty' }],
+                logical_operator: 'or',
+                to: [],
+              },
+            ],
+            end_cpn_ids: [],
+          },
+        },
+      }),
+      createNode(caseTarget, Operator.Message),
+      createNode(elseTarget, Operator.Agent, {
+        data: {
+          label: Operator.Agent,
+          name: 'Agent_0',
+          form: { tools: [] },
+        },
+      }),
+    ];
+    const edges = [
+      createEdge('case-edge', switchId, caseTarget, {
+        sourceHandle: 'Case 1',
+      }),
+      createEdge('else-edge', switchId, elseTarget, {
+        sourceHandle: SwitchElseTo,
+      }),
+    ];
+
+    const components = buildDslComponentsByGraph(nodes, edges, {});
+    const switchParams = components[switchId].obj.params as any;
+
+    expect(switchParams.conditions[0].to).toEqual([caseTarget]);
+    expect(switchParams.end_cpn_ids).toEqual([elseTarget]);
   });
 });

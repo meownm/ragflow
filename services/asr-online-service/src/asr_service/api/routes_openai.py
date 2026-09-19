@@ -4,11 +4,12 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel
 
 from asr_service.api.routes_asr import get_job_queue, get_job_store, get_registry
 from asr_service.jobs.job_models import CreateJobRequest, JobStatus
+from asr_service.jobs.job_events import iter_job_sse
 from asr_service.jobs.job_queue import JobQueue
 from asr_service.jobs.job_store import JobStore
 from asr_service.models.model_registry import RegistryView
@@ -67,6 +68,7 @@ def create_transcription(
     model: str = Form(default="t-one"),
     language: str | None = Form(default=None),
     response_format: Literal["json", "text"] = Form(default="json"),
+    stream: bool = Form(default=False),
     store: JobStore = Depends(get_job_store),
     queue: JobQueue = Depends(get_job_queue),
     registry: RegistryView = Depends(_get_registry),
@@ -91,15 +93,30 @@ def create_transcription(
             model_key=model_key,
             language=selected_language,
             source_uri=str(upload_path),
-            options={"output": {"include_segments": False}},
+            options={
+                "output": {"include_segments": False},
+                "streaming": {"enabled": stream},
+                "delete_source_on_finish": True,
+            },
         )
     )
     queue.put(job.id)
 
-    deadline = time.monotonic() + settings.openai_timeout_seconds
+    if stream:
+        return StreamingResponse(
+            iter_job_sse(
+                store,
+                job.id,
+                poll_seconds=settings.stream_poll_seconds,
+                heartbeat_seconds=settings.stream_heartbeat_seconds,
+            ),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     current = job
     try:
-        while time.monotonic() < deadline:
+        while True:
             current = store.get(job.id) or current
             if current.status == JobStatus.done:
                 text = str((current.result or {}).get("transcript", "")).strip()
@@ -118,12 +135,6 @@ def create_transcription(
                     },
                 )
             time.sleep(0.05)
-
-        current = store.cancel(job.id) or current
-        raise HTTPException(
-            status_code=504,
-            detail={"error": {"code": "transcription_timeout", "message": "Transcription timed out."}},
-        )
     finally:
         if current.status in {JobStatus.done, JobStatus.error, JobStatus.canceled, JobStatus.expired}:
             upload_path.unlink(missing_ok=True)

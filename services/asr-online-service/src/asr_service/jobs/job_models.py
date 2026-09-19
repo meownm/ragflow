@@ -21,9 +21,15 @@ class OutputOptions(BaseModel):
     include_segments: bool = True
 
 
+class StreamingOptions(BaseModel):
+    enabled: bool = False
+
+
 class JobOptions(BaseModel):
     enrich: EnrichOptions = Field(default_factory=EnrichOptions)
     output: OutputOptions = Field(default_factory=OutputOptions)
+    streaming: StreamingOptions = Field(default_factory=StreamingOptions)
+    delete_source_on_finish: bool = False
 
 
 class CreateJobRequest(BaseModel):

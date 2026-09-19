@@ -5,7 +5,17 @@
 - `ASR_LOG_LEVEL`, `LOG_DATA_MODE=plain|masked`
 - `ASR_MAX_CONCURRENT_JOBS`, `ASR_JOB_TTL_SECONDS`
 - `ASR_ARTIFACTS_DIR`, `ASR_UPLOAD_DIR`
-- `ASR_OPENAI_TIMEOUT_SECONDS` — timeout for the synchronous OpenAI-compatible transcription endpoint.
+
+The synchronous OpenAI-compatible transcription endpoint has no independent
+wall-clock timeout. It waits until the job reaches a terminal state; use
+`ASR_JOB_TTL_SECONDS` as the upper bound for abandoned or stuck jobs.
+- `ASR_STREAM_POLL_SECONDS` — job-state polling interval for SSE (default `0.1`).
+- `ASR_STREAM_HEARTBEAT_SECONDS` — maximum quiet period between SSE events
+  (default `15` seconds).
+
+The RAGFlow `New API` adapter uses `RAGFLOW_ASR_STREAM_IDLE_TIMEOUT_SECONDS`
+as its SSE read-idle timeout (default `120` seconds). Heartbeats reset this
+idle timer; it is not a total transcription deadline.
 
 ## Audio preprocess
 - `ASR_FFMPEG_PATH` — ffmpeg binary used for conversion to WAV PCM s16le mono 16k.

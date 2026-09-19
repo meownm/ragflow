@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "captured_at": "2026-09-19T21:47:44.850292+00:00",
+  "captured_at": "2026-09-19T22:21:12.804442+00:00",
   "scopes": [
     "deployment/linux-pg",
     "agent/business_requirements",

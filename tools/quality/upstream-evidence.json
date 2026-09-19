@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "verified_at": "2026-09-19T21:47:38.697890+00:00",
-  "head": "cffc3dc39ca1bae0d41007391e8be6fb11c0c1e5",
+  "verified_at": "2026-09-19T22:21:06.599472+00:00",
+  "head": "f7943baccad814b304467d262e48f3ab0eb5a811",
   "official_commits": [
     {
       "sha": "cb93883f3f8c975eecb2fed81210effeb3bdb06f",
@@ -2254,6 +2254,36 @@
         "tools/quality/ignored-artifacts.json": "M",
         "tools/quality/upstream-evidence.json": "M"
       }
+    },
+    {
+      "sha": "c4a6932ad7ac8544df8d34fbd68069af7b2c6104",
+      "parents": [
+        "cffc3dc39ca1bae0d41007391e8be6fb11c0c1e5"
+      ],
+      "tree": "8176f1d81d6cb3b1e020ffd7fa97be708723ab2f",
+      "committed_at": "2026-09-20T00:47:47+03:00",
+      "subject": "chore: refresh storage cleanup provenance",
+      "changes_from_first_parent": {
+        "tools/quality/core-changes.yaml": "M",
+        "tools/quality/file-inventory.json": "M",
+        "tools/quality/ignored-artifacts.json": "M",
+        "tools/quality/upstream-evidence.json": "M"
+      }
+    },
+    {
+      "sha": "f7943baccad814b304467d262e48f3ab0eb5a811",
+      "parents": [
+        "c4a6932ad7ac8544df8d34fbd68069af7b2c6104"
+      ],
+      "tree": "e7c2cb47dfc0b18bb5edf383c59daeb4ede5c665",
+      "committed_at": "2026-09-20T01:21:00+03:00",
+      "subject": "fix(ci): allow builds without proxy variables",
+      "changes_from_first_parent": {
+        ".github/workflows/sep-tests.yml": "M",
+        ".github/workflows/tests.yml": "M",
+        "tools/quality/core-changes.yaml": "M",
+        "tools/quality/file-inventory.json": "M"
+      }
     }
   ],
   "local_refs_only_no_fetch": [
@@ -2271,7 +2301,7 @@
     "refs/remotes/upstream/main_backup 427e0540cab683a591a5f4a65a0b38bf9ee008b7"
   ],
   "graph_merge_base": "28ce77fe5f1e4301d3672221b509418d3c7acb77",
-  "baseline_diff_summary": "832 files changed, 198799 insertions(+), 2883 deletions(-)",
+  "baseline_diff_summary": "832 files changed, 198815 insertions(+), 2883 deletions(-)",
   "ancestry_only_merge": {
     "commit": "64f0bfdf0e724d006d61563a76964bf140bcfb4e",
     "first_parent": "268a5a9d60e19982ac329ec045d0ff9b0228b26b",

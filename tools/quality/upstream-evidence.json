@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "verified_at": "2026-09-19T12:43:00.997003+00:00",
-  "head": "b3edcad1a19e15505e32c8f93713ab651aa71c72",
+  "verified_at": "2026-09-19T13:23:22.497851+00:00",
+  "head": "810e21c268d7977bd37b54787240273b78748c49",
   "official_commits": [
     {
       "sha": "cb93883f3f8c975eecb2fed81210effeb3bdb06f",
@@ -2199,6 +2199,42 @@
         "test/unit_test/api/apps/restful_apis/test_get_agent_session.py": "M",
         "uv.lock": "M"
       }
+    },
+    {
+      "sha": "7bf9aa0381cb50b1e0c9a7117098fba1256ef370",
+      "parents": [
+        "b3edcad1a19e15505e32c8f93713ab651aa71c72"
+      ],
+      "tree": "c988f42d3b58637967ef9f30b7730efbb7d435d9",
+      "committed_at": "2026-09-19T15:43:28+03:00",
+      "subject": "chore: refresh integrated provenance",
+      "changes_from_first_parent": {
+        "tools/quality/core-changes.yaml": "M",
+        "tools/quality/file-inventory.json": "M",
+        "tools/quality/ignored-artifacts.json": "M",
+        "tools/quality/upstream-evidence.json": "M"
+      }
+    },
+    {
+      "sha": "810e21c268d7977bd37b54787240273b78748c49",
+      "parents": [
+        "7bf9aa0381cb50b1e0c9a7117098fba1256ef370"
+      ],
+      "tree": "a1b9a754dc3cd61ee122d4ba0a9606906f98db1d",
+      "committed_at": "2026-09-19T16:23:15+03:00",
+      "subject": "fix: reconcile release features with current main",
+      "changes_from_first_parent": {
+        "api/apps/business_documents/sql_query_agents.py": "M",
+        "services/asr-online-service/src/asr_service/api/routes_asr.py": "M",
+        "test/playwright/e2e/test_document_constructor_ui.py": "M",
+        "test/playwright/mandatory-browser-cases.json": "M",
+        "test/unit_test/api/apps/business_documents/test_business_document_service.py": "M",
+        "test/unit_test/api/apps/restful_apis/test_business_document_api_contract.py": "M",
+        "test/unit_test/rag/llm/test_sequence2txt_streaming.py": "M",
+        "test/unit_test/tools/quality/test_browser_workflow.py": "M",
+        "test/unit_test/tools/quality/test_business_document_assignment_metadata.py": "M",
+        "tools/quality/python-boundaries.yaml": "M"
+      }
     }
   ],
   "local_refs_only_no_fetch": [
@@ -2215,7 +2251,7 @@
     "refs/remotes/upstream/main_backup 427e0540cab683a591a5f4a65a0b38bf9ee008b7"
   ],
   "graph_merge_base": "28ce77fe5f1e4301d3672221b509418d3c7acb77",
-  "baseline_diff_summary": "828 files changed, 194995 insertions(+), 2865 deletions(-)",
+  "baseline_diff_summary": "828 files changed, 197190 insertions(+), 2865 deletions(-)",
   "ancestry_only_merge": {
     "commit": "64f0bfdf0e724d006d61563a76964bf140bcfb4e",
     "first_parent": "268a5a9d60e19982ac329ec045d0ff9b0228b26b",

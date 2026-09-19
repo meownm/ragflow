@@ -1,6 +1,6 @@
 schema_version: 1
 upstream_base: cb93883f3f8c975eecb2fed81210effeb3bdb06f
-head: b8a6b9d79ab1b8045911c30183e2e9e934c0d7fb
+head: a61bf40b983f21ab859ce60f1898da3b6a616fbf
 changes:
 - id: CORE-eva-integration
   owner: fork-maintainer
@@ -1539,7 +1539,7 @@ changes:
   - path: Dockerfile
     committed: M
     staged: null
-    unstaged: M
+    unstaged: null
   - path: build.sh
     committed: M
     staged: null

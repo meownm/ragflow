@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "verified_at": "2026-09-19T22:21:06.599472+00:00",
-  "head": "f7943baccad814b304467d262e48f3ab0eb5a811",
+  "verified_at": "2026-09-19T23:11:40.023791+00:00",
+  "head": "a61bf40b983f21ab859ce60f1898da3b6a616fbf",
   "official_commits": [
     {
       "sha": "cb93883f3f8c975eecb2fed81210effeb3bdb06f",
@@ -2284,6 +2284,35 @@
         "tools/quality/core-changes.yaml": "M",
         "tools/quality/file-inventory.json": "M"
       }
+    },
+    {
+      "sha": "b8a6b9d79ab1b8045911c30183e2e9e934c0d7fb",
+      "parents": [
+        "f7943baccad814b304467d262e48f3ab0eb5a811"
+      ],
+      "tree": "e0814f43d9e1a6dd5e81395a53e4c97e13bef86b",
+      "committed_at": "2026-09-20T01:21:27+03:00",
+      "subject": "chore: refresh proxy build provenance",
+      "changes_from_first_parent": {
+        "tools/quality/core-changes.yaml": "M",
+        "tools/quality/file-inventory.json": "M",
+        "tools/quality/ignored-artifacts.json": "M",
+        "tools/quality/upstream-evidence.json": "M"
+      }
+    },
+    {
+      "sha": "a61bf40b983f21ab859ce60f1898da3b6a616fbf",
+      "parents": [
+        "b8a6b9d79ab1b8045911c30183e2e9e934c0d7fb"
+      ],
+      "tree": "abda699b2d3b651d2426f938966a4912a250c1a2",
+      "committed_at": "2026-09-20T02:11:35+03:00",
+      "subject": "fix(ci): fall back from unavailable resource mirror",
+      "changes_from_first_parent": {
+        "Dockerfile": "M",
+        "tools/quality/core-changes.yaml": "M",
+        "tools/quality/file-inventory.json": "M"
+      }
     }
   ],
   "local_refs_only_no_fetch": [
@@ -2301,7 +2330,7 @@
     "refs/remotes/upstream/main_backup 427e0540cab683a591a5f4a65a0b38bf9ee008b7"
   ],
   "graph_merge_base": "28ce77fe5f1e4301d3672221b509418d3c7acb77",
-  "baseline_diff_summary": "832 files changed, 198815 insertions(+), 2883 deletions(-)",
+  "baseline_diff_summary": "832 files changed, 198849 insertions(+), 2884 deletions(-)",
   "ancestry_only_merge": {
     "commit": "64f0bfdf0e724d006d61563a76964bf140bcfb4e",
     "first_parent": "268a5a9d60e19982ac329ec045d0ff9b0228b26b",

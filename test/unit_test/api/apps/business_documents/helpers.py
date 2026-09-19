@@ -1,3 +1,33 @@
+from contextlib import contextmanager
+import sys
+from types import ModuleType
+from typing import Iterator
+
+import common
+
+
+@contextmanager
+def temporary_common_settings(settings_module: ModuleType) -> Iterator[None]:
+    """Install a collection-time settings stub without leaking it to other tests."""
+
+    missing = object()
+    previous_module = sys.modules.get(settings_module.__name__, missing)
+    previous_attribute = getattr(common, "settings", missing)
+    sys.modules[settings_module.__name__] = settings_module
+    common.settings = settings_module
+    try:
+        yield
+    finally:
+        if previous_module is missing:
+            sys.modules.pop(settings_module.__name__, None)
+        else:
+            sys.modules[settings_module.__name__] = previous_module
+        if previous_attribute is missing:
+            delattr(common, "settings")
+        else:
+            common.settings = previous_attribute
+
+
 VALID_ACTIVITY_SCENARIO = """@startuml
 start
 :Основное действие;

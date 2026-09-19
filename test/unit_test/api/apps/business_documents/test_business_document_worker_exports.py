@@ -23,38 +23,36 @@ from types import ModuleType
 import pytest
 from peewee import SqliteDatabase
 
-import common
+from test.unit_test.api.apps.business_documents.helpers import required_section_blocks, temporary_common_settings
 
 contract_settings = ModuleType("common.settings")
 contract_settings.DATABASE_TYPE = "MYSQL"
 contract_settings.DATABASE = {"name": "architecture_contract"}
 contract_settings.get_secret_key = lambda: "architecture-contract-secret"
-sys.modules[contract_settings.__name__] = contract_settings
-common.settings = contract_settings
 
-if "api.apps" not in sys.modules:
-    api_apps = ModuleType("api.apps")
-    api_apps.__path__ = [str(Path(__file__).resolve().parents[5] / "api" / "apps")]
-    sys.modules["api.apps"] = api_apps
+with temporary_common_settings(contract_settings):
+    if "api.apps" not in sys.modules:
+        api_apps = ModuleType("api.apps")
+        api_apps.__path__ = [str(Path(__file__).resolve().parents[5] / "api" / "apps")]
+        sys.modules["api.apps"] = api_apps
 
-from api.apps.business_documents import exports as exports_module
-from api.apps.business_documents import worker as worker_module
-from api.apps.business_documents.assets import published_template, render_document_ast
-from api.apps.business_documents.errors import BusinessDocumentError
-from api.apps.business_documents.exports import BusinessDocumentExportService
-from api.apps.business_documents.service import BusinessDocumentService
-from api.apps.business_documents.worker import BusinessDocumentJobQueue, BusinessDocumentWorker
-from api.db.db_models import (
-    BusinessDocument,
-    BusinessDocumentEvent,
-    BusinessDocumentExportArtifact,
-    BusinessDocumentExportStage,
-    BusinessDocumentJob,
-    BusinessDocumentProposal,
-    BusinessDocumentRevision,
-)
-from common.time_utils import current_timestamp
-from test.unit_test.api.apps.business_documents.helpers import required_section_blocks
+    from api.apps.business_documents import exports as exports_module
+    from api.apps.business_documents import worker as worker_module
+    from api.apps.business_documents.assets import published_template, render_document_ast
+    from api.apps.business_documents.errors import BusinessDocumentError
+    from api.apps.business_documents.exports import BusinessDocumentExportService
+    from api.apps.business_documents.service import BusinessDocumentService
+    from api.apps.business_documents.worker import BusinessDocumentJobQueue, BusinessDocumentWorker
+    from api.db.db_models import (
+        BusinessDocument,
+        BusinessDocumentEvent,
+        BusinessDocumentExportArtifact,
+        BusinessDocumentExportStage,
+        BusinessDocumentJob,
+        BusinessDocumentProposal,
+        BusinessDocumentRevision,
+    )
+    from common.time_utils import current_timestamp
 
 TENANT = "tenant-worker"
 AUTHOR = "author-worker"

@@ -221,6 +221,17 @@ jobs:
           uv sync --python 3.13 --group test --frozen
           uv pip install -e sdk/python
 
+      - name: Set up pnpm for Python quality tests
+        if: steps.detect_changes.outputs.has_python_changes == 'true'
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 10
+
+      - name: Install locked frontend parser dependencies
+        if: steps.detect_changes.outputs.has_python_changes == 'true'
+        working-directory: web
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
       - name: Run unit test
         if: steps.detect_changes.outputs.has_python_changes == 'true'
         run: |

@@ -721,6 +721,7 @@ modules:
     in docs/develop/t1-regression-results.json; feature-specific gaps remain, not
     full T1 or release acceptance
   paths:
+  - agent/component/message.py
   - agent/canvas.py
   - api/apps/restful_apis/agent_api.py
   - internal/agent/component/invoke.go

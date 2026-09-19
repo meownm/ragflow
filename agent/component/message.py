@@ -14,13 +14,6 @@
 #  limitations under the License.
 #
 import asyncio
-
-try:
-    import nest_asyncio
-
-    nest_asyncio.apply()
-except Exception:
-    pass
 import inspect
 import json
 import os
@@ -161,7 +154,8 @@ class Message(ComponentBase):
             if isinstance(v, partial):
                 iter_obj = v()
                 if inspect.isasyncgen(iter_obj):
-                    ans = asyncio.run(self._consume_async_gen(iter_obj))
+                    with asyncio.Runner() as runner:
+                        ans = runner.run(self._consume_async_gen(iter_obj))
                 else:
                     for t in iter_obj:
                         ans += t
@@ -283,7 +277,8 @@ class Message(ComponentBase):
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            asyncio.run(self._save_to_memory(content))
+            with asyncio.Runner() as runner:
+                runner.run(self._save_to_memory(content))
         else:
             asyncio.run_coroutine_threadsafe(self._save_to_memory(content), loop)
 

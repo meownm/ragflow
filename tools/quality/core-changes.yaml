@@ -1,6 +1,6 @@
 schema_version: 1
 upstream_base: cb93883f3f8c975eecb2fed81210effeb3bdb06f
-head: 284dabfd92773a843f8636a1d647238de2648f6c
+head: 58e5ce51cfaed1c7b3ed19d0f14907b2cd18c2ed
 changes:
 - id: CORE-eva-integration
   owner: fork-maintainer
@@ -382,6 +382,10 @@ changes:
     committed: M
     staged: null
     unstaged: null
+  - path: agent/component/message.py
+    committed: null
+    staged: null
+    unstaged: M
   - path: api/apps/restful_apis/agent_api.py
     committed: M
     staged: null
@@ -709,7 +713,7 @@ changes:
     unstaged: null
   - path: web/package-lock.json
     committed: M
-    staged: M
+    staged: null
     unstaged: null
   - path: web/package.json
     committed: M
@@ -1519,11 +1523,11 @@ changes:
   - path: .github/workflows/sep-tests.yml
     committed: M
     staged: null
-    unstaged: null
+    unstaged: M
   - path: .github/workflows/tests.yml
     committed: M
     staged: null
-    unstaged: null
+    unstaged: M
   - path: .gitignore
     committed: M
     staged: null
@@ -1555,7 +1559,7 @@ changes:
   - path: pyproject.toml
     committed: M
     staged: null
-    unstaged: null
+    unstaged: M
   - path: ragflow_deps/download_deps.py
     committed: M
     staged: null
@@ -1675,4 +1679,4 @@ changes:
   - path: uv.lock
     committed: M
     staged: null
-    unstaged: null
+    unstaged: M

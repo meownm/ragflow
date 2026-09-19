@@ -117,7 +117,6 @@ dependencies = [
     "slack-sdk==3.37.0",
     "socksio==1.0.0",
     "agentrun-sdk>=0.0.51,<1.0.0",
-    "nest-asyncio>=1.6.0,<2.0.0",  # Needed for agent/component/message.py
     "sqlglotrs==0.9.0",
     "tavily-python==0.5.1",
     "tencentcloud-sdk-python==3.0.1478",

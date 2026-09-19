@@ -26,6 +26,7 @@ const dispositionLabels = {
 
 interface ProtocolPaneProps {
   documentId: string;
+  storageIdentity: string | null;
   reviewCycle: BusinessDocumentReviewCycle | null;
   reviewCycleNumber: number;
   proposalDecisionsOpen: boolean;
@@ -44,6 +45,7 @@ interface ProtocolPaneProps {
 
 export function ProtocolPane({
   documentId,
+  storageIdentity,
   reviewCycle,
   reviewCycleNumber,
   proposalDecisionsOpen,
@@ -57,6 +59,9 @@ export function ProtocolPane({
 }: ProtocolPaneProps) {
   const [comment, setComment] = useState('');
   const [savedPrompts, setSavedPrompts] = useState<string[]>([]);
+  const [loadedDraftStorageKey, setLoadedDraftStorageKey] = useState<
+    string | null
+  >(null);
   const [expandedQuestionId, setExpandedQuestionId] = useState<string | null>(
     null,
   );
@@ -65,8 +70,12 @@ export function ProtocolPane({
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const allowed = useMemo(() => new Set(allowedCommands), [allowedCommands]);
   const canComment = allowed.has('ADD_COMMENT');
-  const draftStorageKey = `ragflow.business-documents.prompt-draft.${documentId}`;
-  const savedStorageKey = `ragflow.business-documents.saved-prompts.${documentId}`;
+  const draftStorageKey = storageIdentity
+    ? `ragflow.business-documents.prompt-draft.${storageIdentity}.${documentId}`
+    : null;
+  const savedStorageKey = storageIdentity
+    ? `ragflow.business-documents.saved-prompts.${storageIdentity}.${documentId}`
+    : null;
   const questions = reviewCycle?.questions ?? [];
   const proposals = reviewCycle?.proposals ?? [];
   const answeredCount = questions.filter((q) => q.status === 'ANSWERED').length;
@@ -81,7 +90,19 @@ export function ProtocolPane({
   }, [onClearSelection, revision]);
 
   useEffect(() => {
+    if (!draftStorageKey || !savedStorageKey || !editable) {
+      setComment('');
+      setSavedPrompts([]);
+      setLoadedDraftStorageKey(null);
+      return;
+    }
     try {
+      window.localStorage.removeItem(
+        `ragflow.business-documents.prompt-draft.${documentId}`,
+      );
+      window.localStorage.removeItem(
+        `ragflow.business-documents.saved-prompts.${documentId}`,
+      );
       setComment(window.localStorage.getItem(draftStorageKey) ?? '');
       const stored = JSON.parse(
         window.localStorage.getItem(savedStorageKey) ?? '[]',
@@ -91,12 +112,20 @@ export function ProtocolPane({
           ? stored.filter((item): item is string => typeof item === 'string')
           : [],
       );
+      setLoadedDraftStorageKey(draftStorageKey);
     } catch {
       setSavedPrompts([]);
+      setLoadedDraftStorageKey(draftStorageKey);
     }
-  }, [draftStorageKey, savedStorageKey]);
+  }, [documentId, draftStorageKey, editable, savedStorageKey]);
 
   useEffect(() => {
+    if (
+      !draftStorageKey ||
+      !editable ||
+      loadedDraftStorageKey !== draftStorageKey
+    )
+      return;
     try {
       if (comment) window.localStorage.setItem(draftStorageKey, comment);
       else window.localStorage.removeItem(draftStorageKey);
@@ -104,9 +133,10 @@ export function ProtocolPane({
       // Draft persistence is best-effort; the editor must remain usable when
       // storage is unavailable or its quota is exhausted.
     }
-  }, [comment, draftStorageKey]);
+  }, [comment, draftStorageKey, editable, loadedDraftStorageKey]);
 
   const persistSavedPrompts = (items: string[]) => {
+    if (!savedStorageKey || !editable) return;
     setSavedPrompts(items);
     try {
       window.localStorage.setItem(savedStorageKey, JSON.stringify(items));

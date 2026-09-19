@@ -13,6 +13,10 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  useFetchTenantInfo,
+  useFetchUserInfo,
+} from '@/hooks/use-user-setting-request';
 import { Routes } from '@/routes';
 import {
   assignBusinessDocumentOwner,
@@ -792,6 +796,8 @@ export default function BusinessDocumentsPage() {
   }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { data: userInfo } = useFetchUserInfo();
+  const { data: tenantInfo } = useFetchTenantInfo();
   const [selection, setSelection] = useState<BusinessDocumentSelection | null>(
     null,
   );
@@ -804,6 +810,11 @@ export default function BusinessDocumentsPage() {
     readProtocolPaneWidth,
   );
   const clearSelection = useCallback(() => setSelection(null), []);
+  const promptStorageIdentity = useMemo(() => {
+    const userId = userInfo?.id?.trim();
+    const tenantId = tenantInfo?.tenant_id?.trim();
+    return userId && tenantId ? `${tenantId}.${userId}` : null;
+  }, [tenantInfo?.tenant_id, userInfo?.id]);
 
   const resizeProtocolPane = useCallback((width: number) => {
     const nextWidth = clampProtocolPaneWidth(width);
@@ -841,6 +852,14 @@ export default function BusinessDocumentsPage() {
     },
     [resizeProtocolPane],
   );
+
+  useEffect(() => {
+    const reflowProtocolPane = () => {
+      setProtocolPaneWidth((width) => clampProtocolPaneWidth(width));
+    };
+    window.addEventListener('resize', reflowProtocolPane);
+    return () => window.removeEventListener('resize', reflowProtocolPane);
+  }, []);
 
   const documentQuery = useQuery({
     queryKey: BusinessDocumentKeys.detail(documentId),
@@ -1658,6 +1677,7 @@ export default function BusinessDocumentsPage() {
         ) : (
           <ProtocolPane
             documentId={document.document_id}
+            storageIdentity={promptStorageIdentity}
             reviewCycle={document.protocol}
             reviewCycleNumber={document.active_review_cycle}
             proposalDecisionsOpen={document.lifecycle_state === 'REVIEW'}
@@ -1666,6 +1686,7 @@ export default function BusinessDocumentsPage() {
             allowedCommands={[...allowed]}
             pending={isBusy}
             editable={
+              Boolean(promptStorageIdentity) &&
               document.permissions?.edit !== false &&
               (allowed.has('ADD_COMMENT') || isBusy)
             }

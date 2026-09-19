@@ -71,6 +71,7 @@ _FENCED_CODE_BLOCK = re.compile(
     r"```(?P<language>[A-Za-z0-9_-]*)[ \t]*\n(?P<source>.*?)(?:\n)?```",
     re.DOTALL,
 )
+_FENCE_LINE = re.compile(r"^[ \t]{0,3}(?P<marker>`{3,}|~{3,})")
 _MAX_PARAGRAPH_SIZE = 20_000
 
 
@@ -219,9 +220,21 @@ def import_document_markdown(markdown: object) -> dict[str, Any]:
 
     found: list[tuple[str, str, int, int]] = []
     offset = 0
+    active_fence: tuple[str, int] | None = None
     for line in normalized.splitlines(keepends=True):
-        heading = _MARKDOWN_SECTION_HEADING.match(line.rstrip("\n"))
-        if heading:
+        stripped_line = line.rstrip("\n")
+        fence = _FENCE_LINE.match(stripped_line)
+        if fence:
+            marker = fence.group("marker")
+            fence_kind = marker[0]
+            if active_fence is None:
+                active_fence = (fence_kind, len(marker))
+            elif fence_kind == active_fence[0] and len(marker) >= active_fence[1]:
+                active_fence = None
+            offset += len(line)
+            continue
+        heading = _MARKDOWN_SECTION_HEADING.match(stripped_line)
+        if active_fence is None and heading:
             section_id = heading.group(2)
             expected_level = base_level + section_id.count(".")
             title = heading.group(3).strip()

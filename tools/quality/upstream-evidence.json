@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "verified_at": "2026-09-19T13:23:22.497851+00:00",
-  "head": "810e21c268d7977bd37b54787240273b78748c49",
+  "verified_at": "2026-09-19T13:36:57.425249+00:00",
+  "head": "090abfb9ed1bb912556ff14d972fdc259b9d4ae1",
   "official_commits": [
     {
       "sha": "cb93883f3f8c975eecb2fed81210effeb3bdb06f",
@@ -2235,6 +2235,34 @@
         "test/unit_test/tools/quality/test_business_document_assignment_metadata.py": "M",
         "tools/quality/python-boundaries.yaml": "M"
       }
+    },
+    {
+      "sha": "f0f9dc68e6659ea403f423c419c85c0bfc6eb40f",
+      "parents": [
+        "810e21c268d7977bd37b54787240273b78748c49"
+      ],
+      "tree": "b1c1e87634877c21b877347e7af0b6a653eb2a0c",
+      "committed_at": "2026-09-19T16:24:05+03:00",
+      "subject": "chore: refresh final integration provenance",
+      "changes_from_first_parent": {
+        "tools/quality/core-changes.yaml": "M",
+        "tools/quality/file-inventory.json": "M",
+        "tools/quality/ignored-artifacts.json": "M",
+        "tools/quality/upstream-evidence.json": "M"
+      }
+    },
+    {
+      "sha": "090abfb9ed1bb912556ff14d972fdc259b9d4ae1",
+      "parents": [
+        "f0f9dc68e6659ea403f423c419c85c0bfc6eb40f"
+      ],
+      "tree": "17f9ac9dfc2c3dc1cfc2dbefdd0a9652568fa1d1",
+      "committed_at": "2026-09-19T16:36:51+03:00",
+      "subject": "fix: harden agent SSE heartbeat fallback",
+      "changes_from_first_parent": {
+        "api/apps/restful_apis/agent_api.py": "M",
+        "test/unit_test/api/apps/restful_apis/test_get_agent_session.py": "M"
+      }
     }
   ],
   "local_refs_only_no_fetch": [
@@ -2251,7 +2279,7 @@
     "refs/remotes/upstream/main_backup 427e0540cab683a591a5f4a65a0b38bf9ee008b7"
   ],
   "graph_merge_base": "28ce77fe5f1e4301d3672221b509418d3c7acb77",
-  "baseline_diff_summary": "828 files changed, 197190 insertions(+), 2865 deletions(-)",
+  "baseline_diff_summary": "828 files changed, 197241 insertions(+), 2865 deletions(-)",
   "ancestry_only_merge": {
     "commit": "64f0bfdf0e724d006d61563a76964bf140bcfb4e",
     "first_parent": "268a5a9d60e19982ac329ec045d0ff9b0228b26b",

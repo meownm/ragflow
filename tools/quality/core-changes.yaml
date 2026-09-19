@@ -1,6 +1,6 @@
 schema_version: 1
 upstream_base: cb93883f3f8c975eecb2fed81210effeb3bdb06f
-head: 0a2a86ddd2c725154b6f5ab21b66bcb3972a0ac2
+head: 0a66d5601234b05f1cb477e446d6fe0be29eab8d
 changes:
 - id: CORE-eva-integration
   owner: fork-maintainer
@@ -1449,7 +1449,7 @@ changes:
     unstaged: null
   - path: web/src/utils/api.ts
     committed: M
-    staged: M
+    staged: null
     unstaged: null
   - path: web/src/utils/chat.ts
     committed: M
@@ -1534,7 +1534,7 @@ changes:
     unstaged: null
   - path: AGENTS.md
     committed: M
-    staged: M
+    staged: null
     unstaged: null
   - path: Dockerfile
     committed: M
@@ -1546,7 +1546,7 @@ changes:
     unstaged: null
   - path: docs/release_notes.md
     committed: M
-    staged: M
+    staged: null
     unstaged: null
   - path: internal/storage/minio_test.go
     committed: M

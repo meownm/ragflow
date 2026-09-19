@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "verified_at": "2026-09-19T21:33:46.382018+00:00",
-  "head": "0a2a86ddd2c725154b6f5ab21b66bcb3972a0ac2",
+  "verified_at": "2026-09-19T21:34:08.422002+00:00",
+  "head": "0a66d5601234b05f1cb477e446d6fe0be29eab8d",
   "official_commits": [
     {
       "sha": "cb93883f3f8c975eecb2fed81210effeb3bdb06f",
@@ -2188,6 +2188,41 @@
         "tools/quality/upstream-evidence.json": "M",
         "uv.lock": "M"
       }
+    },
+    {
+      "sha": "0a66d5601234b05f1cb477e446d6fe0be29eab8d",
+      "parents": [
+        "0a2a86ddd2c725154b6f5ab21b66bcb3972a0ac2",
+        "5a4a7b14e8723aa7c8d2f580cfa56b466db453fd"
+      ],
+      "tree": "88ea5692f64bcbfb9cf2e36568281c773454d331",
+      "committed_at": "2026-09-20T00:34:02+03:00",
+      "subject": "Merge remote-tracking branch 'origin/main' into codex/stabilize-ci-v1.23.1",
+      "changes_from_first_parent": {
+        "AGENTS.md": "M",
+        "api/apps/business_documents/service.py": "M",
+        "api/apps/restful_apis/business_document_api.py": "M",
+        "deployment/local/README.md": "A",
+        "deployment/local/deploy.ps1": "A",
+        "docs/develop/business-documents-eva-title-binding-ru.md": "M",
+        "docs/release_notes.md": "M",
+        "docs/user-guide-ru/index.md": "M",
+        "test/unit_test/api/apps/business_documents/test_business_document_service.py": "M",
+        "test/unit_test/api/apps/restful_apis/test_business_document_api_contract.py": "M",
+        "test/unit_test/deployment/test_local_deploy_process.py": "A",
+        "tools/quality/core-changes.yaml": "M",
+        "tools/quality/file-inventory.json": "M",
+        "tools/quality/ignored-artifacts.json": "M",
+        "tools/quality/module-map.yaml": "M",
+        "tools/quality/python-boundaries.yaml": "M",
+        "tools/quality/upstream-evidence.json": "M",
+        "web/src/pages/business-documents/index.test.tsx": "M",
+        "web/src/pages/business-documents/index.tsx": "M",
+        "web/src/pages/business-documents/types.ts": "M",
+        "web/src/services/business-document-service.test.ts": "M",
+        "web/src/services/business-document-service.ts": "M",
+        "web/src/utils/api.ts": "M"
+      }
     }
   ],
   "local_refs_only_no_fetch": [
@@ -2205,7 +2240,7 @@
     "refs/remotes/upstream/main_backup 427e0540cab683a591a5f4a65a0b38bf9ee008b7"
   ],
   "graph_merge_base": "28ce77fe5f1e4301d3672221b509418d3c7acb77",
-  "baseline_diff_summary": "829 files changed, 198036 insertions(+), 2883 deletions(-)",
+  "baseline_diff_summary": "832 files changed, 198737 insertions(+), 2883 deletions(-)",
   "ancestry_only_merge": {
     "commit": "64f0bfdf0e724d006d61563a76964bf140bcfb4e",
     "first_parent": "268a5a9d60e19982ac329ec045d0ff9b0228b26b",

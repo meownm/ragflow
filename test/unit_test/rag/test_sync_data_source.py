@@ -36,6 +36,70 @@ warnings.filterwarnings(
 )
 
 
+_MISSING = object()
+_TEMPORARY_MODULE_NAMES = (
+    "cv2",
+    "xgboost",
+    "ollama",
+    "common.settings",
+    "common.config_utils",
+    "api.db.services",
+    "api.db.services.connector_service",
+    "api.db.services.document_service",
+    "api.db.services.knowledgebase_service",
+    "common.data_source",
+    "common.data_source.config",
+    "common.data_source.models",
+    "common.data_source.interfaces",
+    "common.data_source.exceptions",
+    "common.data_source.webdav_connector",
+    "common.data_source.confluence_connector",
+    "common.data_source.gmail_connector",
+    "common.data_source.box_connector",
+    "common.data_source.gitlab_connector",
+    "common.data_source.bitbucket_connector",
+    "common.data_source.github",
+    "common.data_source.github.connector",
+    "common.data_source.bitbucket",
+    "common.data_source.bitbucket.connector",
+    "box_sdk_gen",
+    "rag.svr.sync_data_source",
+)
+
+
+def _capture_module_state(module_names):
+    modules = {name: sys.modules.get(name, _MISSING) for name in module_names}
+    parent_attributes = {}
+    for name in module_names:
+        parent_name, separator, attribute = name.rpartition(".")
+        if not separator:
+            continue
+        parent = sys.modules.get(parent_name)
+        parent_attributes[(parent_name, attribute)] = getattr(parent, attribute, _MISSING) if parent is not None else _MISSING
+    return modules, parent_attributes
+
+
+def _restore_module_state(modules, parent_attributes):
+    for name, original in modules.items():
+        if original is _MISSING:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = original
+
+    for (parent_name, attribute), original in parent_attributes.items():
+        parent = sys.modules.get(parent_name)
+        if parent is None:
+            continue
+        if original is _MISSING:
+            if hasattr(parent, attribute):
+                delattr(parent, attribute)
+        else:
+            setattr(parent, attribute, original)
+
+
+_ORIGINAL_MODULES, _ORIGINAL_PARENT_ATTRIBUTES = _capture_module_state(_TEMPORARY_MODULE_NAMES)
+
+
 def _install_cv2_stub_if_unavailable():
     try:
         importlib.import_module("cv2")
@@ -101,6 +165,12 @@ sys.modules[contract_config.__name__] = contract_config
 services_package = types.ModuleType("api.db.services")
 services_package.__path__ = []
 sys.modules[services_package.__name__] = services_package
+service_methods = {
+    "ConnectorService": ("cleanup_stale_documents_for_task", "update_by_id"),
+    "DocumentService": ("list_doc_headers_by_kb_and_source_type", "list_id_content_hash_map_by_kb_and_source_type"),
+    "KnowledgebaseService": ("get_by_id",),
+    "SyncLogsService": ("done", "duplicate_and_parse", "increase_docs", "schedule", "start", "update_by_id"),
+}
 for service_module_name, service_names in {
     "connector_service": ("ConnectorService", "SyncLogsService"),
     "document_service": ("DocumentService",),
@@ -108,7 +178,8 @@ for service_module_name, service_names in {
 }.items():
     service_module = types.ModuleType(f"api.db.services.{service_module_name}")
     for service_name in service_names:
-        setattr(service_module, service_name, type(f"_Stub{service_name}", (), {}))
+        stub_methods = {method_name: None for method_name in service_methods[service_name]}
+        setattr(service_module, service_name, type(f"_Stub{service_name}", (), stub_methods))
     sys.modules[service_module.__name__] = service_module
     setattr(services_package, service_module_name, service_module)
 
@@ -194,7 +265,10 @@ for box_type in ("BoxOAuth", "OAuthConfig", "AccessToken"):
     setattr(box_sdk, box_type, type(box_type, (), {}))
 sys.modules[box_sdk.__name__] = box_sdk
 
-sync_data_source = importlib.import_module("rag.svr.sync_data_source")
+try:
+    sync_data_source = importlib.import_module("rag.svr.sync_data_source")
+finally:
+    _restore_module_state(_ORIGINAL_MODULES, _ORIGINAL_PARENT_ATTRIBUTES)
 _ROOT = Path(__file__).resolve().parents[3]
 
 

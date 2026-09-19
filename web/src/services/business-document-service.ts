@@ -5,6 +5,7 @@ import type {
   BusinessDocumentCommand,
   BusinessDocumentCommandResult,
   BusinessDocumentEvaPullResult,
+  BusinessDocumentEvaUpdateStatus,
   BusinessDocumentList,
   BusinessDocumentProjection,
   BusinessDocumentRevision,
@@ -467,6 +468,18 @@ export async function pullBusinessDocumentFromEva(
       requestConfig(),
     );
     return unwrap<BusinessDocumentEvaPullResult>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function checkBusinessDocumentEvaUpdate(documentId: string) {
+  try {
+    const response = await request.get(
+      api.businessDocumentEvaStatus(documentId),
+      requestConfig(),
+    );
+    return unwrap<BusinessDocumentEvaUpdateStatus>(response.data);
   } catch (error) {
     return rethrowBusinessDocumentError(error);
   }

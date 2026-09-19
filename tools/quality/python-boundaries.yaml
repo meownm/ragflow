@@ -476,6 +476,9 @@ runtime_probes:
   - path: /api/v1/business-documents/<document_id>/eva/pull
     methods: [POST]
     endpoint: pull_business_document_from_eva
+  - path: /api/v1/business-documents/<document_id>/eva/status
+    methods: [GET]
+    endpoint: check_business_document_eva_update
   - path: /api/v1/business-documents/<document_id>/eva/rebind
     methods: [POST]
     endpoint: rebind_business_document_to_eva

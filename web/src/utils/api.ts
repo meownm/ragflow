@@ -292,6 +292,8 @@ export default {
     `${restAPIv1}/business-documents/${id}/revisions`,
   businessDocumentEvaPull: (id: string) =>
     `${restAPIv1}/business-documents/${id}/eva/pull`,
+  businessDocumentEvaStatus: (id: string) =>
+    `${restAPIv1}/business-documents/${id}/eva/status`,
   businessDocumentEvaRebind: (id: string) =>
     `${restAPIv1}/business-documents/${id}/eva/rebind`,
   businessDocumentEvaChanges: (id: string) =>

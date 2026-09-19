@@ -1,5 +1,6 @@
 import {
   assignBusinessDocumentOwner,
+  checkBusinessDocumentEvaUpdate,
   compileBusinessDocumentSqlQuery,
   createBusinessDocumentSqlAgentProject,
   createBusinessDocumentSqlCatalogBinding,
@@ -93,6 +94,26 @@ test('loads the canonical paginated document list envelope', async () => {
     params: { page: 2, page_size: 10, scope: 'mine' },
     skipErrorNotification: true,
   });
+});
+
+test('checks the linked EVA page without mutating the business document', async () => {
+  const status = {
+    document_id: 'doc-1',
+    changed: true,
+    direction: 'FROM_EVA' as const,
+    remote_version: '2',
+    baseline_version: '1',
+    can_pull: true,
+  };
+  mockedGet.mockResolvedValueOnce({ data: { code: 0, data: status } });
+
+  await expect(checkBusinessDocumentEvaUpdate('doc-1')).resolves.toEqual(
+    status,
+  );
+  expect(mockedGet).toHaveBeenCalledWith(
+    api.businessDocumentEvaStatus('doc-1'),
+    { skipErrorNotification: true },
+  );
 });
 
 test('loads the L5 document catalog from its dedicated endpoint', async () => {

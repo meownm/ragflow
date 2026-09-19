@@ -715,6 +715,24 @@ async def pull_business_document_from_eva(document_id):
         return _error(error)
 
 
+@manager.route("/business-documents/<document_id>/eva/status", methods=["GET"])  # noqa: F821
+@login_required
+async def check_business_document_eva_update(document_id):
+    try:
+        actor_id = current_user.id
+        result = await thread_pool_exec(
+            BusinessDocumentService.check_eva_update,
+            actor_id,
+            actor_id,
+            document_id,
+            _is_admin(),
+            _access_role(),
+        )
+        return _success(result)
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
 @manager.route("/business-documents/<document_id>/eva/rebind", methods=["POST"])  # noqa: F821
 @login_required
 async def rebind_business_document_to_eva(document_id):

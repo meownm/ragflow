@@ -195,14 +195,15 @@ def _get_user_nickname(user_id: str) -> str:
 
 
 async def _iter_sse_with_heartbeat(body, interval_seconds=None):
-    interval = interval_seconds
-    if interval is None:
-        interval = float(os.getenv("AGENT_SSE_HEARTBEAT_SECONDS", "15"))
-
+    """Keep an agent SSE response alive while its next event is still running."""
     if not hasattr(body, "__aiter__"):
         for chunk in body:
             yield chunk
         return
+
+    interval = interval_seconds
+    if interval is None:
+        interval = float(os.getenv("AGENT_SSE_HEARTBEAT_SECONDS", "15"))
 
     if interval <= 0:
         async for chunk in body:

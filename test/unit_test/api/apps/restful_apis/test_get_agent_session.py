@@ -27,15 +27,29 @@ import pytest
 @pytest.mark.asyncio
 async def test_sse_heartbeat_keeps_slow_agent_stream_alive(monkeypatch):
     module, _ = _load_agent_api(monkeypatch, get_by_id_result=(False, None))
+    release = asyncio.Event()
 
     async def delayed_source():
-        await asyncio.sleep(0.03)
+        await release.wait()
         yield "data: result\n\n"
 
-    chunks = [chunk async for chunk in module._iter_sse_with_heartbeat(delayed_source(), interval_seconds=0.01)]
+    stream = module._iter_sse_with_heartbeat(delayed_source(), interval_seconds=0.01)
 
-    assert chunks[0] == ": heartbeat\n\n"
-    assert chunks[-1] == "data: result\n\n"
+    assert await anext(stream) == ": heartbeat\n\n"
+    release.set()
+    assert await anext(stream) == "data: result\n\n"
+    with pytest.raises(StopAsyncIteration):
+        await anext(stream)
+
+
+@pytest.mark.asyncio
+async def test_sse_sync_body_does_not_require_heartbeat_configuration(monkeypatch):
+    module, _ = _load_agent_api(monkeypatch, get_by_id_result=(False, None))
+    monkeypatch.setenv("AGENT_SSE_HEARTBEAT_SECONDS", "invalid")
+
+    chunks = [chunk async for chunk in module._iter_sse_with_heartbeat(["data: result\n\n"])]
+
+    assert chunks == ["data: result\n\n"]
 
 
 class _PassthroughManager:

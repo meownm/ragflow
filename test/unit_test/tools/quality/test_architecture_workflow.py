@@ -242,6 +242,8 @@ def test_protected_policy_sources_are_tracked():
         "quart==0.20.0",
         "quart-auth==0.11.0",
         "requests==2.32.5",
+        "sqlglot==28.4.0",
+        "tenacity==8.5.0",
         "xxhash==3.6.0",
     ]
     assert root_locked_package_names.isdisjoint({"elasticsearch", "litellm", "torch", "transformers", "xgboost"})

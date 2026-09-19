@@ -56,13 +56,92 @@ function sectionForNode(node: Node | null) {
   return element?.closest<HTMLElement>(SECTION_SELECTOR) ?? null;
 }
 
-function findUniqueOffset(sectionText: string, selectedText: string) {
-  const startOffset = sectionText.indexOf(selectedText);
-  if (startOffset < 0) return { error: 'NOT_EXACT' as const };
-  if (sectionText.indexOf(selectedText, startOffset + 1) >= 0) {
+interface NormalizedText {
+  text: string;
+  starts: number[];
+  ends: number[];
+}
+
+function normalizeRenderedText(value: string): NormalizedText {
+  let text = '';
+  const starts: number[] = [];
+  const ends: number[] = [];
+  let whitespaceStart: number | null = null;
+
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (/\s/u.test(character) || character === '\u00a0') {
+      whitespaceStart ??= index;
+      continue;
+    }
+    if (whitespaceStart !== null && text.length > 0) {
+      text += ' ';
+      starts.push(whitespaceStart);
+      ends.push(index);
+    }
+    whitespaceStart = null;
+    text += character;
+    starts.push(index);
+    ends.push(index + 1);
+  }
+
+  return { text, starts, ends };
+}
+
+function projectRenderedSection(
+  section: HTMLElement,
+  sectionText: string,
+): NormalizedText | null {
+  const body = section.querySelector<HTMLElement>('[data-section-body]');
+  if (!body) return null;
+
+  let text = '';
+  const starts: number[] = [];
+  const ends: number[] = [];
+  let sourceCursor = 0;
+  const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+  let node = walker.nextNode();
+  while (node) {
+    const value = node.textContent ?? '';
+    for (const match of value.matchAll(/\S+/gu)) {
+      const token = match[0];
+      const sourceStart = sectionText.indexOf(token, sourceCursor);
+      if (sourceStart < 0) return null;
+      if (text && /\s/u.test(sectionText.slice(sourceCursor, sourceStart))) {
+        text += ' ';
+        starts.push(sourceCursor);
+        ends.push(sourceStart);
+      }
+      for (let index = 0; index < token.length; index += 1) {
+        text += token[index];
+        starts.push(sourceStart + index);
+        ends.push(sourceStart + index + 1);
+      }
+      sourceCursor = sourceStart + token.length;
+    }
+    node = walker.nextNode();
+  }
+  return { text, starts, ends };
+}
+
+function findUniqueOffset(
+  section: HTMLElement,
+  sectionText: string,
+  selectedText: string,
+) {
+  const canonical = projectRenderedSection(section, sectionText);
+  if (!canonical) return { error: 'NOT_EXACT' as const };
+  const selected = normalizeRenderedText(selectedText).text;
+  const normalizedStart = canonical.text.indexOf(selected);
+  if (!selected || normalizedStart < 0) return { error: 'NOT_EXACT' as const };
+  if (canonical.text.indexOf(selected, normalizedStart + 1) >= 0) {
     return { error: 'AMBIGUOUS' as const };
   }
-  return { startOffset };
+  const normalizedEnd = normalizedStart + selected.length - 1;
+  return {
+    startOffset: canonical.starts[normalizedStart],
+    endOffset: canonical.ends[normalizedEnd],
+  };
 }
 
 export function DocumentPane({
@@ -112,7 +191,7 @@ export function DocumentPane({
       return;
     }
 
-    const match = findUniqueOffset(sectionText, selectedText);
+    const match = findUniqueOffset(startSection, sectionText, selectedText);
     if ('error' in match) {
       rejectSelection(
         match.error === 'AMBIGUOUS'
@@ -122,7 +201,7 @@ export function DocumentPane({
       return;
     }
 
-    const endOffset = match.startOffset + selectedText.length;
+    const endOffset = match.endOffset;
     if (
       !isUtf16Boundary(sectionText, match.startOffset) ||
       !isUtf16Boundary(sectionText, endOffset)
@@ -137,10 +216,14 @@ export function DocumentPane({
       match.startOffset,
       endOffset,
     );
+    const canonicalSelectedText = sectionText.slice(
+      match.startOffset,
+      endOffset,
+    );
     onSelectionChange({
       revision_id: revision!.revision_id,
       section_id: sectionId,
-      selected_text: selectedText,
+      selected_text: canonicalSelectedText,
       prefix: context.prefix,
       suffix: context.suffix,
       start_offset: match.startOffset,
@@ -200,8 +283,7 @@ export function DocumentPane({
                 6,
                 2 + section.id.split('.').length - 1,
               );
-              const markdown = `${'#'.repeat(headingLevel)} ${section.id}. ${section.title}\n\n${displayedSectionText}`;
-
+              const headingMarkdown = `${'#'.repeat(headingLevel)} ${section.id}. ${section.title}`;
               return (
                 <section
                   key={section.id}
@@ -210,7 +292,6 @@ export function DocumentPane({
                   data-testid="business-document-section"
                 >
                   <ReactMarkdown
-                    remarkPlugins={[remarkGfm]}
                     components={{
                       h2: ({ children }) => (
                         <h2 className="mb-3 mt-9 border-b border-border-button pb-2 text-xl font-semibold tracking-tight first:mt-0">
@@ -222,86 +303,94 @@ export function DocumentPane({
                           {children}
                         </h3>
                       ),
-                      p: ({ children }) => <p className="mb-4">{children}</p>,
-                      ul: ({ children }) => (
-                        <ul className="mb-4 list-disc space-y-1 ps-6">
-                          {children}
-                        </ul>
-                      ),
-                      ol: ({ children }) => (
-                        <ol className="mb-4 list-decimal space-y-1 ps-6">
-                          {children}
-                        </ol>
-                      ),
-                      blockquote: ({ children }) => (
-                        <blockquote className="my-5 border-s-2 border-accent-primary ps-4 text-text-secondary">
-                          {children}
-                        </blockquote>
-                      ),
-                      table: ({ children }) => (
-                        <div className="mb-5 overflow-x-auto">
-                          <table className="w-full border-collapse text-sm">
-                            {children}
-                          </table>
-                        </div>
-                      ),
-                      th: ({ children }) => (
-                        <th className="border-b border-border-default bg-bg-card px-3 py-2 text-start font-medium">
-                          {children}
-                        </th>
-                      ),
-                      td: ({ children }) => (
-                        <td className="border-b border-border-button px-3 py-2 align-top">
-                          {children}
-                        </td>
-                      ),
-                      pre: ({ children }) => {
-                        const code = isValidElement<{
-                          className?: string;
-                          children?: unknown;
-                        }>(children)
-                          ? children
-                          : null;
-                        if (
-                          code?.props.className
-                            ?.split(/\s+/)
-                            .includes('language-plantuml')
-                        ) {
-                          return (
-                            <DiagramCodeBlock
-                              language="plantuml"
-                              source={String(code.props.children ?? '').replace(
-                                /\n$/,
-                                '',
-                              )}
-                            />
-                          );
-                        }
-                        return (
-                          <pre className="mb-4 overflow-x-auto rounded bg-bg-card p-3 text-sm">
-                            {children}
-                          </pre>
-                        );
-                      },
-                      code: ({ children }) => (
-                        <code className="rounded bg-bg-card px-1.5 py-0.5 font-mono text-[0.9em]">
-                          {children}
-                        </code>
-                      ),
-                      a: ({ children, href }) => (
-                        <a
-                          href={href}
-                          target="_blank"
-                          rel="noreferrer noopener"
-                          className="text-accent-primary underline-offset-4 hover:underline"
-                        >
-                          {children}
-                        </a>
-                      ),
                     }}
                   >
-                    {markdown}
+                    {headingMarkdown}
                   </ReactMarkdown>
+                  <div data-section-body>
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        p: ({ children }) => <p className="mb-4">{children}</p>,
+                        ul: ({ children }) => (
+                          <ul className="mb-4 list-disc space-y-1 ps-6">
+                            {children}
+                          </ul>
+                        ),
+                        ol: ({ children }) => (
+                          <ol className="mb-4 list-decimal space-y-1 ps-6">
+                            {children}
+                          </ol>
+                        ),
+                        blockquote: ({ children }) => (
+                          <blockquote className="my-5 border-s-2 border-accent-primary ps-4 text-text-secondary">
+                            {children}
+                          </blockquote>
+                        ),
+                        table: ({ children }) => (
+                          <div className="mb-5 overflow-x-auto">
+                            <table className="w-full border-collapse text-sm">
+                              {children}
+                            </table>
+                          </div>
+                        ),
+                        th: ({ children }) => (
+                          <th className="border-b border-border-default bg-bg-card px-3 py-2 text-start font-medium">
+                            {children}
+                          </th>
+                        ),
+                        td: ({ children }) => (
+                          <td className="border-b border-border-button px-3 py-2 align-top">
+                            {children}
+                          </td>
+                        ),
+                        pre: ({ children }) => {
+                          const code = isValidElement<{
+                            className?: string;
+                            children?: unknown;
+                          }>(children)
+                            ? children
+                            : null;
+                          if (
+                            code?.props.className
+                              ?.split(/\s+/)
+                              .includes('language-plantuml')
+                          ) {
+                            return (
+                              <DiagramCodeBlock
+                                language="plantuml"
+                                source={String(
+                                  code.props.children ?? '',
+                                ).replace(/\n$/, '')}
+                              />
+                            );
+                          }
+                          return (
+                            <pre className="mb-4 overflow-x-auto rounded bg-bg-card p-3 text-sm">
+                              {children}
+                            </pre>
+                          );
+                        },
+                        code: ({ children }) => (
+                          <code className="rounded bg-bg-card px-1.5 py-0.5 font-mono text-[0.9em]">
+                            {children}
+                          </code>
+                        ),
+                        a: ({ children, href }) => (
+                          <a
+                            href={href}
+                            target="_blank"
+                            rel="noreferrer noopener"
+                            className="text-accent-primary underline-offset-4 hover:underline"
+                          >
+                            {children}
+                          </a>
+                        ),
+                      }}
+                    >
+                      {displayedSectionText}
+                    </ReactMarkdown>
+                  </div>
                 </section>
               );
             })}

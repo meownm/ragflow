@@ -19,24 +19,24 @@ from types import ModuleType
 import pytest
 
 import common
+from test.unit_test.api.apps.business_documents.helpers import temporary_common_settings
 
 contract_settings = ModuleType("common.settings")
 contract_settings.DATABASE_TYPE = "MYSQL"
 contract_settings.DATABASE = {"name": "architecture_contract"}
 contract_settings.get_secret_key = lambda: "architecture-contract-secret"
-sys.modules[contract_settings.__name__] = contract_settings
-common.settings = contract_settings
 
-if "api.apps" not in sys.modules:
-    api_apps = ModuleType("api.apps")
-    api_apps.__path__ = [str(Path(__file__).resolve().parents[5] / "api" / "apps")]
-    sys.modules["api.apps"] = api_apps
+with temporary_common_settings(contract_settings):
+    if "api.apps" not in sys.modules:
+        api_apps = ModuleType("api.apps")
+        api_apps.__path__ = [str(Path(__file__).resolve().parents[5] / "api" / "apps")]
+        sys.modules["api.apps"] = api_apps
 
-from api.apps.business_documents import ai as ai_module
-from api.apps.business_documents.adapters.storage import BusinessDocumentStorageAdapter, StorageRemovalVerificationError
-from api.apps.business_documents.ai import BusinessDocumentAI, RAGFlowLLMAdapter
-from api.apps.business_documents.evidence import BusinessDocumentEvidence, RAGFlowDatasetSearchAdapter
-from api.apps.business_documents.exports import BusinessDocumentExportService
+    from api.apps.business_documents import ai as ai_module
+    from api.apps.business_documents.adapters.storage import BusinessDocumentStorageAdapter, StorageRemovalVerificationError
+    from api.apps.business_documents.ai import BusinessDocumentAI, RAGFlowLLMAdapter
+    from api.apps.business_documents.evidence import BusinessDocumentEvidence, RAGFlowDatasetSearchAdapter
+    from api.apps.business_documents.exports import BusinessDocumentExportService
 
 
 @pytest.mark.p1
@@ -150,7 +150,7 @@ def test_default_and_injected_adapters_keep_one_production_boundary(monkeypatch)
     settings_module.STORAGE_IMPL = raw_storage
     settings_module.STORAGE_IMPL_TYPE = "MINIO"
     monkeypatch.setitem(sys.modules, settings_module.__name__, settings_module)
-    monkeypatch.setattr(common, "settings", settings_module)
+    monkeypatch.setattr(common, "settings", settings_module, raising=False)
 
     assert isinstance(BusinessDocumentAI()._adapter, RAGFlowLLMAdapter)
     assert BusinessDocumentAI(custom_llm)._adapter is custom_llm

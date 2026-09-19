@@ -1484,6 +1484,140 @@ class BusinessDocumentCatalog(DataBaseModel):
         indexes = ((("capability_level", "is_active", "sort_order"), False),)
 
 
+class BusinessDocumentSqlExecutionProfile(DataBaseModel):
+    """Versioned read-only SQL execution policy backed by one DB connector."""
+
+    id = CharField(max_length=32, primary_key=True)
+    tenant_id = CharField(max_length=32, null=False, index=True)
+    name = CharField(max_length=128, null=False)
+    connector_id = CharField(max_length=32, null=False, index=True)
+    connector_identity_fingerprint = CharField(max_length=71, null=False)
+    dialect = CharField(max_length=32, null=False, default="postgres")
+    allowed_schemas = JSONField(null=False, default=list)
+    statement_timeout_ms = IntegerField(null=False, default=30_000)
+    max_rows = IntegerField(null=False, default=1_000)
+    max_result_bytes = IntegerField(null=False, default=5_000_000)
+    enabled = BooleanField(null=False, default=True, index=True)
+    version = IntegerField(null=False, default=1)
+    created_by = CharField(max_length=32, null=False, index=True)
+    updated_by = CharField(max_length=32, null=False, index=True)
+
+    class Meta:
+        db_table = "business_document_sql_execution_profile"
+        indexes = (
+            (("tenant_id", "name"), True),
+            (("tenant_id", "enabled"), False),
+        )
+
+
+class BusinessDocumentSqlCatalogBinding(DataBaseModel):
+    """Exact OpenMetadata scope to SQL execution-profile mapping."""
+
+    id = CharField(max_length=32, primary_key=True)
+    tenant_id = CharField(max_length=32, null=False, index=True)
+    catalog_service = CharField(max_length=128, null=False)
+    catalog_database = CharField(max_length=128, null=False)
+    catalog_schema = CharField(max_length=128, null=False)
+    execution_profile_id = CharField(max_length=32, null=False, index=True)
+    enabled = BooleanField(null=False, default=True, index=True)
+    version = IntegerField(null=False, default=1)
+    created_by = CharField(max_length=32, null=False, index=True)
+    updated_by = CharField(max_length=32, null=False, index=True)
+
+    class Meta:
+        db_table = "business_document_sql_catalog_binding"
+        indexes = (
+            (
+                (
+                    "tenant_id",
+                    "catalog_service",
+                    "catalog_database",
+                    "catalog_schema",
+                    "execution_profile_id",
+                ),
+                True,
+            ),
+            (("tenant_id", "catalog_service", "catalog_database", "catalog_schema"), False),
+        )
+
+
+class BusinessDocumentSqlQueryProject(DataBaseModel):
+    """Current projection for one durable SQL document-construction cycle."""
+
+    id = CharField(max_length=32, primary_key=True)
+    tenant_id = CharField(max_length=32, null=False, index=True)
+    owner_id = CharField(max_length=32, null=False, index=True)
+    title = CharField(max_length=255, null=False)
+    source_request = LongTextField(null=False)
+    locale = CharField(max_length=8, null=False, default="ru")
+    stage = CharField(max_length=32, null=False, default="REQUIREMENTS", index=True)
+    operation_state = CharField(max_length=16, null=False, default="IDLE", index=True)
+    state_version = IntegerField(null=False, default=1)
+    requirements_artifact_id = CharField(max_length=32, null=True, index=True)
+    schema_artifact_id = CharField(max_length=32, null=True, index=True)
+    query_artifact_id = CharField(max_length=32, null=True, index=True)
+    current_job_id = CharField(max_length=32, null=True, index=True)
+    last_error = JSONField(null=True)
+
+    class Meta:
+        db_table = "business_document_sql_query_project"
+        indexes = ((("tenant_id", "owner_id", "create_time"), False),)
+
+
+class BusinessDocumentSqlQueryArtifact(DataBaseModel):
+    """Immutable user-accepted artifact produced by one SQL agent stage."""
+
+    id = CharField(max_length=32, primary_key=True)
+    project_id = CharField(max_length=32, null=False, index=True)
+    tenant_id = CharField(max_length=32, null=False, index=True)
+    kind = CharField(max_length=32, null=False, index=True)
+    revision = IntegerField(null=False)
+    schema_version = CharField(max_length=16, null=False, default="1")
+    payload = JSONField(null=False)
+    content_hash = CharField(max_length=71, null=False)
+    source_proposal_id = CharField(max_length=32, null=False, index=True)
+    accepted_by = CharField(max_length=32, null=False, index=True)
+
+    class Meta:
+        db_table = "business_document_sql_query_artifact"
+        indexes = ((("project_id", "kind", "revision"), True),)
+
+
+class BusinessDocumentSqlAgentProposal(DataBaseModel):
+    """Agent output with immutable payload and explicit human decision metadata."""
+
+    id = CharField(max_length=32, primary_key=True)
+    project_id = CharField(max_length=32, null=False, index=True)
+    tenant_id = CharField(max_length=32, null=False, index=True)
+    job_id = CharField(max_length=32, null=False, unique=True)
+    kind = CharField(max_length=32, null=False, index=True)
+    source_state_version = IntegerField(null=False)
+    payload = JSONField(null=False)
+    content_hash = CharField(max_length=71, null=False)
+    status = CharField(max_length=16, null=False, default="PENDING", index=True)
+    decided_by = CharField(max_length=32, null=True, index=True)
+    decided_at = BigIntegerField(null=True)
+
+    class Meta:
+        db_table = "business_document_sql_agent_proposal"
+        indexes = ((("project_id", "status", "create_time"), False),)
+
+
+class BusinessDocumentSqlAgentCommand(DataBaseModel):
+    """Idempotency ledger for SQL project commands."""
+
+    id = CharField(max_length=32, primary_key=True)
+    project_id = CharField(max_length=32, null=False, index=True)
+    tenant_id = CharField(max_length=32, null=False, index=True)
+    idempotency_key = CharField(max_length=128, null=False)
+    request_hash = CharField(max_length=71, null=False)
+    response = JSONField(null=False)
+
+    class Meta:
+        db_table = "business_document_sql_agent_command"
+        indexes = ((("tenant_id", "project_id", "idempotency_key"), True),)
+
+
 class BusinessDocument(DataBaseModel):
     """Current projection for a governed business document workflow."""
 
@@ -2060,7 +2194,7 @@ def migrate_business_document_title_key(migrator):
 
 
 def migrate_business_document_catalog():
-    """Synchronize the bundled L5 catalog after the table is available."""
+    """Replace the source catalog with the bundled L5 entries."""
 
     from business_documents.domain.catalog import load_document_catalog
 

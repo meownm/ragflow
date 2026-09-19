@@ -1,5 +1,6 @@
 import gc
 import os
+from collections.abc import Iterator
 from pathlib import Path
 
 ENGINE_TYPE = "t_one"
@@ -61,6 +62,46 @@ class ToneEngine:
             return {"transcript": transcript, "segments": segments}
 
         return {"transcript": str(output).strip(), "segments": []}
+
+    def stream_transcribe(self, audio_path: Path, language: str) -> Iterator[dict]:
+        """Decode one native T-One chunk at a time while preserving model state."""
+
+        if not self._loaded or self._pipeline is None:
+            raise RuntimeError("engine is not loaded")
+
+        import numpy as np
+        from tone import read_audio
+
+        audio = read_audio(audio_path)
+        audio = np.pad(audio, (self._pipeline.PADDING, self._pipeline.PADDING))
+        audio = np.pad(audio, (0, -len(audio) % self._pipeline.CHUNK_SIZE))
+        chunks = np.split(audio, len(audio) // self._pipeline.CHUNK_SIZE)
+
+        state = None
+        segments: list[dict] = []
+        transcript_parts: list[str] = []
+        for index, audio_chunk in enumerate(chunks):
+            phrases, state = self._pipeline.forward(audio_chunk, state, is_last=index == len(chunks) - 1)
+            new_segments = [
+                {
+                    "start": phrase.start_time,
+                    "end": phrase.end_time,
+                    "text": phrase.text.strip(),
+                }
+                for phrase in phrases
+                if getattr(phrase, "text", "").strip()
+            ]
+            if new_segments:
+                segments.extend(new_segments)
+                transcript_parts.extend(segment["text"] for segment in new_segments)
+                yield {
+                    "transcript": " ".join(transcript_parts),
+                    "segments": list(segments),
+                    "percent": round((index + 1) * 100 / len(chunks)),
+                }
+
+        if not segments:
+            yield {"transcript": "", "segments": [], "percent": 100}
 
     def unload(self) -> None:
         self._pipeline = None

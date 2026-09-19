@@ -83,6 +83,14 @@ def _load_route(monkeypatch, *, user, payload=None, args=None, catalog_access=Tr
             OpenMetadataConflictError=OMConflictError,
         ),
     )
+    monkeypatch.setitem(
+        sys.modules,
+        "api.apps.services.openmetadata_runtime_service",
+        _module(
+            "api.apps.services.openmetadata_runtime_service",
+            get_openmetadata_service=lambda: None,
+        ),
+    )
 
     async def get_request_json():
         return {} if payload is None else payload

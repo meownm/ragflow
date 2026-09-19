@@ -28,6 +28,8 @@ from api.apps.business_documents.errors import BusinessDocumentError, ConflictEr
 from api.apps.business_documents.evidence import BusinessDocumentEvidence, related_file_search_enabled
 from api.apps.business_documents.exports import BusinessDocumentExportService
 from api.apps.business_documents.service import BusinessDocumentService
+from api.apps.business_documents.sql_query_agent_worker import BusinessDocumentSqlAgentRunner
+from api.apps.business_documents.sql_query_agents import BusinessDocumentSqlAgentService
 from api.db.db_models import BusinessDocumentJob
 from common.misc_utils import get_uuid
 from common.time_utils import current_timestamp
@@ -216,7 +218,11 @@ class BusinessDocumentJobQueue:
                 if claimed != 1:
                     continue
                 try:
-                    BusinessDocumentService.fail_job(job.tenant_id, recovery_owner, job.id, error, recovery_token)
+                    if job.job_type.startswith("SQL_AGENT_"):
+                        recovered_job = BusinessDocumentJob.get_by_id(job.id)
+                        BusinessDocumentSqlAgentService.fail_job(recovered_job, recovery_owner, recovery_token, error)
+                    else:
+                        BusinessDocumentService.fail_job(job.tenant_id, recovery_owner, job.id, error, recovery_token)
                     dead_count += 1
                 except BusinessDocumentError:
                     logging.exception("Unable to dead-letter stale business document job %s", job.id)
@@ -300,6 +306,7 @@ class BusinessDocumentWorker:
         evidence: BusinessDocumentEvidence | None = None,
         export_service: type[BusinessDocumentExportService] = BusinessDocumentExportService,
         storage=None,
+        sql_agent_runner: BusinessDocumentSqlAgentRunner | None = None,
         lease_ms: int = 900_000,
         retry_base_ms: int = 5_000,
         maintenance_interval_seconds: float = 60.0,
@@ -309,6 +316,7 @@ class BusinessDocumentWorker:
         self.evidence = evidence or BusinessDocumentEvidence()
         self.export_service = export_service
         self.storage = storage
+        self.sql_agent_runner = sql_agent_runner or BusinessDocumentSqlAgentRunner()
         self.lease_ms = lease_ms
         self.retry_base_ms = retry_base_ms
         self.maintenance_interval_seconds = max(1.0, maintenance_interval_seconds)
@@ -335,7 +343,11 @@ class BusinessDocumentWorker:
         try:
             heartbeat = _LeaseHeartbeat(job, self.worker_id, self.lease_ms)
             heartbeat.start()
-            if job.job_type == "GENERATE_EXPORT":
+            if job.job_type.startswith("SQL_AGENT_"):
+                self._set_progress(job, 0.4, "GENERATING", "Агент анализирует подтверждённый контекст")
+                output = self.sql_agent_runner.process(job)
+                execution_audit = None
+            elif job.job_type == "GENERATE_EXPORT":
                 self._set_progress(job, 0.35, "EXPORTING", "Формируем файл")
                 prepared_export = self.export_service.generate(
                     job,
@@ -360,14 +372,17 @@ class BusinessDocumentWorker:
                 self._set_progress(job, 0.82, "VALIDATING", "Проверяем результат")
             self._set_progress(job, 0.92, "PERSISTING", "Сохраняем результат")
             heartbeat.ensure_current()
-            BusinessDocumentService.complete_job(
-                job.tenant_id,
-                self.worker_id,
-                job.id,
-                output,
-                job.lease_token,
-                execution_audit,
-            )
+            if job.job_type.startswith("SQL_AGENT_"):
+                BusinessDocumentSqlAgentService.complete_job(job, self.worker_id, job.lease_token, output)
+            else:
+                BusinessDocumentService.complete_job(
+                    job.tenant_id,
+                    self.worker_id,
+                    job.id,
+                    output,
+                    job.lease_token,
+                    execution_audit,
+                )
         except Exception as error:
             if not isinstance(error, BusinessDocumentError) or error.code != "JOB_LEASE_LOST":
                 payload = _error_payload(error)
@@ -375,13 +390,21 @@ class BusinessDocumentWorker:
                 if current_job is not None and current_job.lease_owner == self.worker_id and current_job.lease_token == claimed_lease_token:
                     if current_job.attempt >= current_job.max_attempts:
                         try:
-                            BusinessDocumentService.fail_job(
-                                current_job.tenant_id,
-                                self.worker_id,
-                                current_job.id,
-                                payload,
-                                claimed_lease_token,
-                            )
+                            if current_job.job_type.startswith("SQL_AGENT_"):
+                                BusinessDocumentSqlAgentService.fail_job(
+                                    current_job,
+                                    self.worker_id,
+                                    claimed_lease_token,
+                                    payload,
+                                )
+                            else:
+                                BusinessDocumentService.fail_job(
+                                    current_job.tenant_id,
+                                    self.worker_id,
+                                    current_job.id,
+                                    payload,
+                                    claimed_lease_token,
+                                )
                         except BusinessDocumentError:
                             logging.exception("Unable to dead-letter business document job %s", current_job.id)
                     else:

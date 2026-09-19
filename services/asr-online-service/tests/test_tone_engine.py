@@ -48,3 +48,30 @@ def test_tone_engine_uses_bundled_model_and_returns_clean_phrases(monkeypatch) -
             {"start": 1.3, "end": 2.4, "text": "вторая фраза"},
         ],
     }
+
+
+class FakeStreamingPipeline:
+    CHUNK_SIZE = 4
+    PADDING = 0
+
+    def forward(self, audio_chunk, state, *, is_last=False):
+        index = 0 if state is None else state
+        phrase = SimpleNamespace(text=f" фраза {index + 1} ", start_time=float(index), end_time=float(index + 1))
+        return [phrase], index + 1
+
+
+def test_tone_engine_streams_cumulative_native_decoder_results(monkeypatch) -> None:
+    fake_numpy = SimpleNamespace(
+        pad=lambda audio, padding: list(audio) + [0] * padding[1],
+        split=lambda audio, count: [audio[index * len(audio) // count : (index + 1) * len(audio) // count] for index in range(count)],
+    )
+    monkeypatch.setitem(sys.modules, "numpy", fake_numpy)
+    monkeypatch.setitem(sys.modules, "tone", SimpleNamespace(read_audio=lambda _path: list(range(8))))
+    engine = ToneEngine("t-tech/T-one")
+    engine._loaded = True
+    engine._pipeline = FakeStreamingPipeline()
+
+    events = list(engine.stream_transcribe(Path("audio.wav"), "ru"))
+
+    assert [event["transcript"] for event in events] == ["фраза 1", "фраза 1 фраза 2"]
+    assert events[-1]["percent"] == 100

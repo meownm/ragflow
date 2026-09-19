@@ -118,6 +118,7 @@ export default {
       memories: 'Память',
       openMetadata: 'Каталог',
       businessDocuments: 'Документы',
+      documentConstructor: 'Конструктор',
       instruction: 'Инструкция',
     },
     openMetadata: {

@@ -26,6 +26,7 @@ EXPECTED_RUNTIME_ROUTES = {
     ("/v1/asr/jobs/{job_id}", ("DELETE",), "cancel_job", "APIRoute"),
     ("/v1/asr/jobs/{job_id}", ("GET",), "get_job", "APIRoute"),
     ("/v1/asr/jobs/{job_id}/artifacts/{kind}", ("GET",), "download_artifact", "APIRoute"),
+    ("/v1/asr/jobs/{job_id}/events", ("GET",), "stream_job_events", "APIRoute"),
     ("/v1/asr/jobs/{job_id}/result", ("GET",), "get_result", "APIRoute"),
     ("/v1/asr/languages", ("GET",), "get_languages", "APIRoute"),
     ("/v1/asr/models", ("GET",), "get_models", "APIRoute"),

@@ -2160,6 +2160,9 @@ test('hides the creation and EVA sidebar from an author-editor', async () => {
   expect(
     screen.queryByRole('button', { name: 'Начать работу' }),
   ).not.toBeInTheDocument();
+  expect(
+    screen.queryByTestId('open-document-constructor'),
+  ).not.toBeInTheDocument();
 });
 
 test('allows an extended moderator to assign a document owner', async () => {

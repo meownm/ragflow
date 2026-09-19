@@ -53,6 +53,20 @@ async def test_json_routes_reject_non_object_and_malformed_json(route_app):
     client = app.test_client()
     cases = (
         ("post", "/business-documents", "INVALID_DOCUMENT"),
+        ("post", "/business-documents/sql-query/schema/resolve", "INVALID_SQL_SCHEMA_REQUEST"),
+        ("post", "/business-documents/sql-query/schema/entities", "INVALID_SQL_SCHEMA_ENTITY_REQUEST"),
+        ("post", "/business-documents/sql-query/plan", "INVALID_SQL_QUERY_PLAN_REQUEST"),
+        ("post", "/business-documents/sql-query/compile", "INVALID_SQL_QUERY_SPECIFICATION"),
+        ("post", "/business-documents/sql-query/projects", "INVALID_SQL_AGENT_PROJECT"),
+        ("post", "/business-documents/sql-query/projects/project-1/agent-jobs", "INVALID_SQL_AGENT_REQUEST"),
+        (
+            "post",
+            "/business-documents/sql-query/projects/project-1/proposals/proposal-1/decision",
+            "INVALID_SQL_AGENT_DECISION",
+        ),
+        ("post", "/business-documents/sql-query/execution-profiles", "INVALID_SQL_EXECUTION_PROFILE"),
+        ("post", "/business-documents/sql-query/catalog-bindings", "INVALID_SQL_CATALOG_BINDING"),
+        ("post", "/business-documents/sql-query/execution-binding/resolve", "INVALID_SQL_EXECUTION_BINDING_REQUEST"),
         ("post", "/business-documents/doc-1/commands", "INVALID_COMMAND_REQUEST"),
         ("put", "/business-documents/doc-1/owner", "INVALID_DOCUMENT_ASSIGNMENT"),
     )
@@ -234,3 +248,221 @@ async def test_catalog_route_returns_the_service_projection(route_app, monkeypat
 
     assert response.status_code == 200
     assert (await response.get_json())["data"] == catalog
+
+
+@pytest.mark.p0
+@pytest.mark.asyncio
+async def test_capabilities_route_projects_role_without_listing_documents(route_app):
+    app, module = route_app
+    module.current_user.business_document_role = "AUTHOR_EDITOR"
+
+    response = await app.test_client().get("/business-documents/capabilities")
+
+    assert response.status_code == 200
+    assert (await response.get_json())["data"] == {
+        "access_role": "AUTHOR_EDITOR",
+        "capabilities": {
+            "read": True,
+            "create": False,
+            "edit_own": True,
+            "edit_all": False,
+            "delete": False,
+            "assign": False,
+        },
+    }
+
+
+@pytest.mark.p0
+@pytest.mark.asyncio
+async def test_sql_schema_route_passes_tenant_actor_role_and_payload(route_app, monkeypatch):
+    app, module = route_app
+    module.current_user.business_document_role = "MODERATOR_CREATOR"
+    calls = []
+
+    async def resolve(tenant_id, actor_id, payload, is_admin, access_role):
+        calls.append(("resolve", tenant_id, actor_id, payload, is_admin, access_role))
+        return {"schema_version": "1", "status": "READY", "resolutions": [], "llm": {"status": "SKIPPED"}}
+
+    async def load_entities(actor_id, payload, is_admin, access_role):
+        calls.append(("entities", actor_id, payload, is_admin, access_role))
+        return {"schema_version": "1", "status": "READY", "entities": []}
+
+    def compile_query(actor_id, payload, is_admin, access_role):
+        calls.append(("compile", actor_id, payload, is_admin, access_role))
+        return {"schema_version": "1", "status": "NEEDS_CLARIFICATION", "sql": None}
+
+    async def plan_query(tenant_id, actor_id, payload, is_admin, access_role):
+        calls.append(("plan", tenant_id, actor_id, payload, is_admin, access_role))
+        return {"schema_version": "1", "status": "FALLBACK", "proposal": None}
+
+    monkeypatch.setattr(module.BusinessDocumentSqlQuerySchemaService, "resolve", staticmethod(resolve))
+    monkeypatch.setattr(module.BusinessDocumentSqlQuerySchemaService, "load_entities", staticmethod(load_entities))
+    monkeypatch.setattr(module.BusinessDocumentSqlQueryPlanningService, "plan", staticmethod(plan_query))
+    monkeypatch.setattr(module.BusinessDocumentSqlQueryService, "compile", staticmethod(compile_query))
+    payload = {"terms": ["Заказ"], "requirements": "Нужны заказы", "locale": "ru"}
+    entity_payload = {"entity_ids": ["orders"], "locale": "ru"}
+    compile_payload = {"schema_version": "1"}
+    plan_payload = {"schema_version": "1", "locale": "ru"}
+
+    response = await app.test_client().post("/business-documents/sql-query/schema/resolve", json=payload)
+    entity_response = await app.test_client().post("/business-documents/sql-query/schema/entities", json=entity_payload)
+    plan_response = await app.test_client().post("/business-documents/sql-query/plan", json=plan_payload)
+    compile_response = await app.test_client().post("/business-documents/sql-query/compile", json=compile_payload)
+
+    assert response.status_code == 200
+    assert entity_response.status_code == 200
+    assert plan_response.status_code == 200
+    assert compile_response.status_code == 200
+    assert (await response.get_json())["data"]["status"] == "READY"
+    assert calls == [
+        ("resolve", ACTOR, ACTOR, payload, False, "MODERATOR_CREATOR"),
+        ("entities", ACTOR, entity_payload, False, "MODERATOR_CREATOR"),
+        ("plan", ACTOR, ACTOR, plan_payload, False, "MODERATOR_CREATOR"),
+        ("compile", ACTOR, compile_payload, False, "MODERATOR_CREATOR"),
+    ]
+
+
+@pytest.mark.p0
+@pytest.mark.asyncio
+async def test_sql_agent_project_routes_are_thin_and_wake_worker_after_enqueue(route_app, monkeypatch):
+    app, module = route_app
+    module.current_user.business_document_role = "MODERATOR_CREATOR"
+    calls = []
+
+    def create_project(tenant_id, actor_id, payload, is_admin, access_role):
+        calls.append(("create", tenant_id, actor_id, payload, is_admin, access_role))
+        return {"id": "project-1"}
+
+    def list_projects(tenant_id, actor_id, is_admin, access_role):
+        calls.append(("list", tenant_id, actor_id, is_admin, access_role))
+        return [{"id": "project-1"}]
+
+    def get_project(tenant_id, actor_id, project_id, is_admin, access_role):
+        calls.append(("get", tenant_id, actor_id, project_id, is_admin, access_role))
+        return {"id": project_id}
+
+    def request_agent(tenant_id, actor_id, project_id, payload, is_admin, access_role):
+        calls.append(("request", tenant_id, actor_id, project_id, payload, is_admin, access_role))
+        return {"id": project_id, "operation_state": "RUNNING"}
+
+    def decide(tenant_id, actor_id, project_id, proposal_id, payload, is_admin, access_role):
+        calls.append(("decide", tenant_id, actor_id, project_id, proposal_id, payload, is_admin, access_role))
+        return {"id": project_id, "operation_state": "IDLE"}
+
+    service = module.BusinessDocumentSqlAgentService
+    monkeypatch.setattr(service, "create_project", staticmethod(create_project))
+    monkeypatch.setattr(service, "list_projects", staticmethod(list_projects))
+    monkeypatch.setattr(service, "get_project", staticmethod(get_project))
+    monkeypatch.setattr(service, "request_agent", staticmethod(request_agent))
+    monkeypatch.setattr(service, "decide_proposal", staticmethod(decide))
+    monkeypatch.setattr(module, "wake_business_document_worker", lambda: calls.append(("wake",)))
+    client = app.test_client()
+    project_payload = {"schema_version": "1", "title": "T", "source_request": "R", "locale": "ru"}
+    agent_payload = {
+        "schema_version": "1",
+        "expected_state_version": 1,
+        "idempotency_key": "run-1",
+        "kind": "REQUIREMENTS",
+        "payload": {},
+    }
+    decision_payload = {
+        "schema_version": "1",
+        "expected_state_version": 2,
+        "idempotency_key": "accept-1",
+        "decision": "ACCEPT",
+        "artifact_payload": None,
+    }
+
+    assert (await client.post("/business-documents/sql-query/projects", json=project_payload)).status_code == 201
+    assert (await client.get("/business-documents/sql-query/projects")).status_code == 200
+    assert (await client.get("/business-documents/sql-query/projects/project-1")).status_code == 200
+    assert (await client.post("/business-documents/sql-query/projects/project-1/agent-jobs", json=agent_payload)).status_code == 202
+    assert (
+        await client.post(
+            "/business-documents/sql-query/projects/project-1/proposals/proposal-1/decision",
+            json=decision_payload,
+        )
+    ).status_code == 200
+    assert calls == [
+        ("create", ACTOR, ACTOR, project_payload, False, "MODERATOR_CREATOR"),
+        ("list", ACTOR, ACTOR, False, "MODERATOR_CREATOR"),
+        ("get", ACTOR, ACTOR, "project-1", False, "MODERATOR_CREATOR"),
+        ("request", ACTOR, ACTOR, "project-1", agent_payload, False, "MODERATOR_CREATOR"),
+        ("wake",),
+        ("decide", ACTOR, ACTOR, "project-1", "proposal-1", decision_payload, False, "MODERATOR_CREATOR"),
+    ]
+
+
+@pytest.mark.p0
+@pytest.mark.asyncio
+async def test_sql_execution_registry_routes_keep_admin_and_author_contracts_separate(route_app, monkeypatch):
+    app, module = route_app
+    module.current_user.is_superuser = True
+    module.current_user.business_document_role = "MODERATOR_CREATOR"
+    calls = []
+
+    def list_connectors(actor_id, is_admin):
+        calls.append(("connectors", actor_id, is_admin))
+        return {"schema_version": "1", "items": []}
+
+    def list_profiles(actor_id, is_admin):
+        calls.append(("profiles", actor_id, is_admin))
+        return {"schema_version": "1", "items": []}
+
+    def create_profile(actor_id, payload, is_admin):
+        calls.append(("profile.create", actor_id, payload, is_admin))
+        return {"id": "profile-1", "version": 1}
+
+    def update_profile(actor_id, profile_id, payload, is_admin):
+        calls.append(("profile.update", actor_id, profile_id, payload, is_admin))
+        return {"id": profile_id, "version": 2}
+
+    def list_bindings(actor_id, is_admin):
+        calls.append(("bindings", actor_id, is_admin))
+        return {"schema_version": "1", "items": []}
+
+    def create_binding(actor_id, payload, is_admin):
+        calls.append(("binding.create", actor_id, payload, is_admin))
+        return {"id": "binding-1", "version": 1}
+
+    def update_binding(actor_id, binding_id, payload, is_admin):
+        calls.append(("binding.update", actor_id, binding_id, payload, is_admin))
+        return {"id": binding_id, "version": 2}
+
+    def resolve_binding(actor_id, payload, is_admin, access_role):
+        calls.append(("binding.resolve", actor_id, payload, is_admin, access_role))
+        return {"schema_version": "1", "status": "BOUND", "selection": {"profile": {"id": "profile-1"}}}
+
+    service = module.BusinessDocumentSqlExecutionRegistryService
+    monkeypatch.setattr(service, "list_connectors", staticmethod(list_connectors))
+    monkeypatch.setattr(service, "list_profiles", staticmethod(list_profiles))
+    monkeypatch.setattr(service, "create_profile", staticmethod(create_profile))
+    monkeypatch.setattr(service, "update_profile", staticmethod(update_profile))
+    monkeypatch.setattr(service, "list_bindings", staticmethod(list_bindings))
+    monkeypatch.setattr(service, "create_binding", staticmethod(create_binding))
+    monkeypatch.setattr(service, "update_binding", staticmethod(update_binding))
+    monkeypatch.setattr(service, "resolve", staticmethod(resolve_binding))
+    client = app.test_client()
+    profile_payload = {"schema_version": "1", "name": "Warehouse RO"}
+    binding_payload = {"schema_version": "1", "catalog_schema": "dwh"}
+    resolve_payload = {"schema_version": "1", "schema_snapshot": {"status": "READY"}}
+
+    assert (await client.get("/business-documents/sql-query/execution-connectors")).status_code == 200
+    assert (await client.get("/business-documents/sql-query/execution-profiles")).status_code == 200
+    assert (await client.post("/business-documents/sql-query/execution-profiles", json=profile_payload)).status_code == 201
+    assert (await client.put("/business-documents/sql-query/execution-profiles/profile-1", json=profile_payload)).status_code == 200
+    assert (await client.get("/business-documents/sql-query/catalog-bindings")).status_code == 200
+    assert (await client.post("/business-documents/sql-query/catalog-bindings", json=binding_payload)).status_code == 201
+    assert (await client.put("/business-documents/sql-query/catalog-bindings/binding-1", json=binding_payload)).status_code == 200
+    assert (await client.post("/business-documents/sql-query/execution-binding/resolve", json=resolve_payload)).status_code == 200
+
+    assert calls == [
+        ("connectors", ACTOR, True),
+        ("profiles", ACTOR, True),
+        ("profile.create", ACTOR, profile_payload, True),
+        ("profile.update", ACTOR, "profile-1", profile_payload, True),
+        ("bindings", ACTOR, True),
+        ("binding.create", ACTOR, binding_payload, True),
+        ("binding.update", ACTOR, "binding-1", binding_payload, True),
+        ("binding.resolve", ACTOR, resolve_payload, True, "MODERATOR_CREATOR"),
+    ]

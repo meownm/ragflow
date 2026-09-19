@@ -1,8 +1,353 @@
+import type {
+  CatalogAnswer,
+  CatalogEntity,
+  Freshness,
+} from '@/pages/openmetadata/types';
+
 export type BusinessDocumentLifecycleState =
   | 'INTAKE'
   | 'REVIEW'
   | 'AGREED'
   | 'ARCHIVED';
+
+export interface SqlSchemaResolutionResponse {
+  schema_version: '1';
+  status: 'READY' | 'NEEDS_CLARIFICATION' | 'DEGRADED';
+  resolutions: Array<{
+    term: string;
+    lookup: SqlSchemaLookupState;
+    catalog_answer: CatalogAnswer;
+    interpretation: {
+      term: string;
+      kind: 'entity' | 'field' | 'unknown';
+      normalized_term: string;
+      recommended_entity_id: string | null;
+      recommended_column_ids: string[];
+      confidence: number | null;
+      reason: string;
+      clarification_question: string | null;
+    };
+    needs_clarification: boolean;
+  }>;
+  llm: {
+    status: 'APPLIED' | 'FALLBACK' | 'SKIPPED';
+    prompt: {
+      name: string;
+      version: string;
+      content_hash: string;
+    } | null;
+    warning: string | null;
+  };
+}
+
+export interface SqlSchemaLookupState {
+  status: 'OK' | 'ERROR';
+  error_code: string | null;
+  retryable: boolean;
+  message: string | null;
+}
+
+export interface SqlSchemaEntityDetailsResponse {
+  schema_version: '1';
+  status: 'READY' | 'DEGRADED';
+  entities: Array<{
+    entity_id: string;
+    lookup: SqlSchemaLookupState;
+    entity: CatalogEntity | null;
+    freshness: Freshness | null;
+    retrieval: string;
+    sources: Array<{ label: string; url?: string; dataset_id?: string }>;
+    warnings: string[];
+  }>;
+}
+
+export interface SqlQueryCompileRequest {
+  schema_version: '1';
+  schema_snapshot: Record<string, unknown>;
+  accepted_requirements: string;
+  accepted_schema: Array<{
+    entity_id: string;
+    version: number;
+    schema_fingerprint: string;
+  }>;
+  specification: {
+    dialect: 'postgres';
+    from: { entity_id: string; alias: string };
+    select: Array<{
+      id: string;
+      kind:
+        | 'column'
+        | 'sum'
+        | 'avg'
+        | 'min'
+        | 'max'
+        | 'count'
+        | 'count_distinct'
+        | 'date_bucket';
+      column_id: string;
+      alias: string;
+      grain: 'day' | 'week' | 'month' | 'quarter' | 'year' | null;
+    }>;
+    joins: Array<{
+      id: string;
+      join_type: 'INNER' | 'LEFT';
+      entity_id: string;
+      alias: string;
+      left_column_id: string;
+      right_column_id: string;
+      description: string;
+      decision: 'user' | 'automatic_exact' | null;
+      confirmed: boolean;
+    }>;
+    filters: Array<{
+      id: string;
+      column_id: string;
+      operator:
+        | 'eq'
+        | 'ne'
+        | 'gt'
+        | 'gte'
+        | 'lt'
+        | 'lte'
+        | 'like'
+        | 'ilike'
+        | 'in'
+        | 'not_in'
+        | 'is_null'
+        | 'is_not_null';
+      parameter: string | null;
+      description: string;
+      decision: 'user' | 'automatic_exact' | null;
+      confirmed: boolean;
+    }>;
+    order_by: Array<{
+      select_item_id: string;
+      direction: 'ASC' | 'DESC';
+    }>;
+    parameters: Array<{
+      name: string;
+      type:
+        | 'text'
+        | 'integer'
+        | 'decimal'
+        | 'boolean'
+        | 'date'
+        | 'datetime'
+        | 'text_list'
+        | 'integer_list';
+      value: unknown;
+    }>;
+    limit_parameter: string;
+  };
+}
+
+export interface SqlQueryCompileResponse {
+  schema_version: '1';
+  status: 'READY' | 'NEEDS_CLARIFICATION';
+  snapshot_fingerprint: string;
+  blocking_issues: Array<{ code: string; path: string; message: string }>;
+  sql: string | null;
+  parameters: Record<string, unknown>;
+  guard:
+    | { status: 'NOT_RUN' }
+    | {
+        status: 'PASS';
+        dialect: 'postgres';
+        statement_count: 1;
+        read_only: true;
+        tables: string[];
+        parameters: string[];
+      };
+}
+
+export type SqlQueryPlanRequest = Pick<
+  SqlQueryCompileRequest,
+  | 'schema_version'
+  | 'schema_snapshot'
+  | 'accepted_requirements'
+  | 'accepted_schema'
+> & {
+  locale: 'ru' | 'en';
+};
+
+export interface SqlQueryPlanProposal {
+  base_entity_id: string;
+  aliases: Record<string, string>;
+  select: SqlQueryCompileRequest['specification']['select'];
+  joins: Array<{
+    id: string;
+    join_type: 'INNER' | 'LEFT';
+    entity_id: string;
+    alias: string;
+    left_column_id: string;
+    right_column_id: string;
+    description: string;
+    confirmed: boolean;
+  }>;
+  filters: Array<{
+    id: string;
+    column_id: string;
+    operator: SqlQueryCompileRequest['specification']['filters'][number]['operator'];
+    parameter_name: string;
+    parameter_type: SqlQueryCompileRequest['specification']['parameters'][number]['type'];
+    parameter_value: string;
+    description: string;
+    confirmed: boolean;
+  }>;
+  order_by: SqlQueryCompileRequest['specification']['order_by'];
+  row_limit: number;
+}
+
+export interface SqlQueryPlanResponse {
+  schema_version: '1';
+  status: 'PROPOSED' | 'NEEDS_CLARIFICATION' | 'FALLBACK';
+  proposal: SqlQueryPlanProposal | null;
+  clarification_questions: string[];
+  warning: string | null;
+  diagnostic: string | null;
+  llm: {
+    status: 'APPLIED' | 'FALLBACK';
+    prompt: {
+      name: string;
+      version: string;
+      content_hash: string;
+    } | null;
+    warning: string | null;
+  };
+}
+
+export interface SqlExecutionConnector {
+  id: string;
+  name: string;
+  source: 'postgresql';
+  database: string;
+  available: boolean;
+}
+
+export interface SqlExecutionProfilePolicy {
+  id: string;
+  name: string;
+  dialect: 'postgres';
+  statement_timeout_ms: number;
+  max_rows: number;
+  max_result_bytes: number;
+  version: number;
+  policy_fingerprint: string;
+  target_database: string;
+}
+
+export interface SqlExecutionProfile extends SqlExecutionProfilePolicy {
+  allowed_schemas: string[];
+  enabled: boolean;
+  available: boolean;
+  policy_valid: boolean;
+  connector_available: boolean;
+  connector_identity_matches: boolean;
+  connector: {
+    id: string;
+    name: string;
+    source: string;
+    database: string;
+  };
+  created_by: string;
+  updated_by: string;
+}
+
+export interface SqlExecutionProfileInput {
+  schema_version: '1';
+  name: string;
+  connector_id: string;
+  dialect: 'postgres';
+  allowed_schemas: string[];
+  statement_timeout_ms: number;
+  max_rows: number;
+  max_result_bytes: number;
+  enabled: boolean;
+}
+
+export type SqlExecutionProfileUpdateInput = SqlExecutionProfileInput & {
+  expected_version: number;
+};
+
+export interface SqlExecutionRegistryDisableInput {
+  schema_version: '1';
+  enabled: false;
+  expected_version: number;
+}
+
+export interface SqlCatalogBinding {
+  id: string;
+  catalog_service: string;
+  catalog_database: string;
+  catalog_schema: string;
+  execution_profile_id: string;
+  enabled: boolean;
+  version: number;
+  created_by: string;
+  updated_by: string;
+}
+
+export interface SqlCatalogBindingInput {
+  schema_version: '1';
+  catalog_service: string;
+  catalog_database: string;
+  catalog_schema: string;
+  execution_profile_id: string;
+  enabled: boolean;
+}
+
+export type SqlCatalogBindingUpdateInput = SqlCatalogBindingInput & {
+  expected_version: number;
+};
+
+export interface SqlExecutionRegistryList<T> {
+  schema_version: '1';
+  items: T[];
+}
+
+export type SqlExecutionBindingRequest = Pick<
+  SqlQueryCompileRequest,
+  | 'schema_version'
+  | 'schema_snapshot'
+  | 'accepted_requirements'
+  | 'accepted_schema'
+> & {
+  selected_profile_id: string | null;
+};
+
+export interface SqlExecutionCatalogScope {
+  service: string;
+  database: string;
+  schema: string;
+  table_ids: string[];
+}
+
+export interface SqlExecutionRelationMapping {
+  entity_id: string;
+  catalog_fqn: string;
+  physical_relation: string;
+}
+
+export interface SqlExecutionBindingResponse {
+  schema_version: '1';
+  status: 'BOUND' | 'NEEDS_SELECTION' | 'UNAVAILABLE';
+  reason:
+    | 'CATALOG_IDENTITY_MISSING'
+    | 'CATALOG_BINDING_MISSING'
+    | 'CROSS_PROFILE_QUERY_UNSUPPORTED'
+    | 'MULTIPLE_EXECUTION_PROFILES'
+    | null;
+  snapshot_fingerprint: string;
+  catalog_scopes: SqlExecutionCatalogScope[];
+  unresolved_catalog_scopes: SqlExecutionCatalogScope[];
+  candidates: SqlExecutionProfilePolicy[];
+  selection: {
+    decision: 'user' | 'automatic_exact';
+    profile: SqlExecutionProfilePolicy;
+    bindings: Array<{ binding_id: string; version: number }>;
+    relations: SqlExecutionRelationMapping[];
+  } | null;
+}
 
 export type BusinessDocumentOperationState =
   | 'IDLE'
@@ -234,6 +579,83 @@ export interface BusinessDocumentProjection {
   eva_binding?: BusinessDocumentEvaBinding | null;
 }
 
+export type SqlAgentKind = 'REQUIREMENTS' | 'SCHEMA' | 'QUERY';
+
+export interface SqlAgentJob {
+  id: string;
+  kind: SqlAgentKind;
+  status: 'PENDING' | 'RUNNING' | 'RETRY' | 'COMPLETED' | 'DEAD' | 'STALE';
+  progress: number;
+  progress_stage: string;
+  progress_message: string | null;
+  attempt: number;
+  max_attempts: number;
+  error: { code?: string; message?: string } | null;
+}
+
+export interface SqlAgentProposal {
+  id: string;
+  kind: SqlAgentKind;
+  status: 'PENDING' | 'ACCEPTED' | 'REJECTED';
+  source_state_version: number;
+  payload: Record<string, unknown>;
+}
+
+export interface SqlAgentProject {
+  schema_version: '1';
+  id: string;
+  title: string;
+  source_request: string | null;
+  locale: 'ru' | 'en';
+  stage: SqlAgentKind | 'COMPLETE';
+  operation_state: 'IDLE' | 'RUNNING' | 'REVIEW' | 'FAILED';
+  state_version: number;
+  next_agent: SqlAgentKind | null;
+  current_job: SqlAgentJob | null;
+  pending_proposal: SqlAgentProposal | null;
+  artifact_ids: {
+    requirements: string | null;
+    schema: string | null;
+    query: string | null;
+  };
+  artifacts: {
+    requirements: Record<string, unknown> | null;
+    schema: Record<string, unknown> | null;
+    query: Record<string, unknown> | null;
+  } | null;
+  last_error: { code?: string; message?: string } | null;
+  capabilities: {
+    requirements_agent: true;
+    schema_agent: true;
+    query_agent: true;
+    result_agent: false;
+    python_agent: false;
+  };
+}
+
+export interface CreateSqlAgentProjectRequest {
+  schema_version: '1';
+  title: string;
+  source_request: string;
+  locale: 'ru' | 'en';
+}
+
+export interface RequestSqlAgentRequest {
+  schema_version: '1';
+  expected_state_version: number;
+  idempotency_key: string;
+  kind: SqlAgentKind;
+  payload: Record<string, unknown>;
+}
+
+export interface DecideSqlAgentProposalRequest {
+  schema_version: '1';
+  expected_state_version: number;
+  idempotency_key: string;
+  decision: 'ACCEPT' | 'REJECT';
+  artifact_payload: Record<string, unknown> | null;
+}
+
 export interface BusinessDocumentSummary {
   document_id: string;
   catalog_entry_id?: string | null;
@@ -272,6 +694,11 @@ export interface BusinessDocumentCapabilities {
   edit_all: boolean;
   delete: boolean;
   assign: boolean;
+}
+
+export interface BusinessDocumentAccessContext {
+  access_role: BusinessDocumentRole;
+  capabilities: BusinessDocumentCapabilities;
 }
 
 export interface BusinessDocumentAssignableUser {

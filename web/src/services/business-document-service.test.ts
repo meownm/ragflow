@@ -1,14 +1,32 @@
 import {
   assignBusinessDocumentOwner,
+  compileBusinessDocumentSqlQuery,
+  createBusinessDocumentSqlAgentProject,
+  createBusinessDocumentSqlCatalogBinding,
+  createBusinessDocumentSqlExecutionProfile,
   createEvaDocumentChange,
+  decideBusinessDocumentSqlAgentProposal,
+  fetchBusinessDocumentSqlAgentProject,
   generateEvaDocumentChangeDraft,
+  getBusinessDocumentCapabilities,
   listBusinessDocumentAccessUsers,
   listBusinessDocumentCatalog,
   listBusinessDocuments,
+  listBusinessDocumentSqlAgentProjects,
+  listBusinessDocumentSqlCatalogBindings,
+  listBusinessDocumentSqlExecutionConnectors,
+  listBusinessDocumentSqlExecutionProfiles,
+  loadBusinessDocumentSqlSchemaEntities,
+  planBusinessDocumentSqlQuery,
   prepareEvaDocumentChange,
   publishEvaDocumentChange,
+  requestBusinessDocumentSqlAgent,
+  resolveBusinessDocumentSqlExecutionBinding,
+  resolveBusinessDocumentSqlSchema,
   searchEvaDocumentSources,
   submitBusinessDocumentCommand,
+  updateBusinessDocumentSqlCatalogBinding,
+  updateBusinessDocumentSqlExecutionProfile,
   updateBusinessDocumentUserRole,
 } from '@/services/business-document-service';
 import api from '@/utils/api';
@@ -30,6 +48,26 @@ const mockedPatch = jest.mocked(request.patch);
 const mockedPut = jest.mocked(request.put);
 
 beforeEach(() => jest.clearAllMocks());
+
+test('loads business-document capabilities without querying the document list', async () => {
+  const access = {
+    access_role: 'AUTHOR_CREATOR' as const,
+    capabilities: {
+      read: true,
+      create: true,
+      edit_own: true,
+      edit_all: false,
+      delete: false,
+      assign: false,
+    },
+  };
+  mockedGet.mockResolvedValueOnce({ data: { code: 0, data: access } });
+
+  await expect(getBusinessDocumentCapabilities()).resolves.toEqual(access);
+  expect(mockedGet).toHaveBeenCalledWith(api.businessDocumentCapabilities, {
+    skipErrorNotification: true,
+  });
+});
 
 test('loads the canonical paginated document list envelope', async () => {
   const list = {
@@ -75,6 +113,369 @@ test('loads the L5 document catalog from its dedicated endpoint', async () => {
   expect(mockedGet).toHaveBeenCalledWith(api.businessDocumentCatalog, {
     skipErrorNotification: true,
   });
+});
+
+test('resolves all SQL schema terms through one business-document request', async () => {
+  const input = {
+    terms: ['Заказ', 'Клиент'],
+    requirements: 'Нужны заказы корпоративных клиентов',
+    locale: 'ru' as const,
+  };
+  const result = {
+    schema_version: '1',
+    status: 'NEEDS_CLARIFICATION',
+    resolutions: [],
+    llm: {
+      status: 'APPLIED',
+      prompt: {
+        name: 'sql_schema_interpreter',
+        version: '1',
+        content_hash: 'sha256:test',
+      },
+      warning: null,
+    },
+  };
+  mockedPost.mockResolvedValueOnce({ data: { code: 0, data: result } });
+
+  await expect(resolveBusinessDocumentSqlSchema(input)).resolves.toEqual(
+    result,
+  );
+  expect(mockedPost).toHaveBeenCalledWith(
+    api.businessDocumentSqlSchemaResolve,
+    input,
+    { skipErrorNotification: true },
+  );
+});
+
+test('loads full schemas only for selected table IDs', async () => {
+  const input = { entity_ids: ['orders'], locale: 'ru' as const };
+  const result = {
+    schema_version: '1',
+    status: 'READY',
+    entities: [],
+  };
+  mockedPost.mockResolvedValueOnce({ data: { code: 0, data: result } });
+
+  await expect(loadBusinessDocumentSqlSchemaEntities(input)).resolves.toEqual(
+    result,
+  );
+  expect(mockedPost).toHaveBeenCalledWith(
+    api.businessDocumentSqlSchemaEntities,
+    input,
+    { skipErrorNotification: true },
+  );
+});
+
+test('compiles a structured SQL specification through the guarded endpoint', async () => {
+  const input = {
+    schema_version: '1' as const,
+    schema_snapshot: {},
+    accepted_requirements: 'Нужны заказы',
+    accepted_schema: [],
+    specification: {
+      dialect: 'postgres' as const,
+      from: { entity_id: 'orders', alias: 'o' },
+      select: [],
+      joins: [],
+      filters: [],
+      order_by: [],
+      parameters: [],
+      limit_parameter: 'row_limit',
+    },
+  };
+  const result = {
+    schema_version: '1',
+    status: 'NEEDS_CLARIFICATION',
+    snapshot_fingerprint: 'sha256:test',
+    blocking_issues: [],
+    sql: null,
+    parameters: {},
+    guard: { status: 'NOT_RUN' },
+  };
+  mockedPost.mockResolvedValueOnce({ data: { code: 0, data: result } });
+
+  await expect(compileBusinessDocumentSqlQuery(input)).resolves.toEqual(result);
+  expect(mockedPost).toHaveBeenCalledWith(
+    api.businessDocumentSqlQueryCompile,
+    input,
+    { skipErrorNotification: true },
+  );
+});
+
+test('requests a catalog-bound SQL plan through the tenant LLM endpoint', async () => {
+  const input = {
+    schema_version: '1' as const,
+    schema_snapshot: {},
+    accepted_requirements: 'Нужны заказы',
+    accepted_schema: [],
+    locale: 'ru' as const,
+  };
+  const result = {
+    schema_version: '1',
+    status: 'FALLBACK',
+    proposal: null,
+    clarification_questions: [],
+    warning: 'Продолжите вручную',
+    diagnostic: 'QueryPlanUnavailable',
+    llm: { status: 'FALLBACK', prompt: null, warning: 'Продолжите вручную' },
+  };
+  mockedPost.mockResolvedValueOnce({ data: { code: 0, data: result } });
+
+  await expect(planBusinessDocumentSqlQuery(input)).resolves.toEqual(result);
+  expect(mockedPost).toHaveBeenCalledWith(
+    api.businessDocumentSqlQueryPlan,
+    input,
+    { skipErrorNotification: true },
+  );
+});
+
+test('uses the durable SQL agent project endpoints as one versioned cycle', async () => {
+  const createInput = {
+    schema_version: '1' as const,
+    title: 'Заказы',
+    source_request: 'Покажи заказы',
+    locale: 'ru' as const,
+  };
+  const project = {
+    id: 'project-1',
+    state_version: 1,
+    next_agent: 'REQUIREMENTS' as const,
+  };
+  const runInput = {
+    schema_version: '1' as const,
+    expected_state_version: 1,
+    idempotency_key: 'run-1',
+    kind: 'REQUIREMENTS' as const,
+    payload: {},
+  };
+  const decisionInput = {
+    schema_version: '1' as const,
+    expected_state_version: 2,
+    idempotency_key: 'accept-1',
+    decision: 'ACCEPT' as const,
+    artifact_payload: null,
+  };
+  mockedPost
+    .mockResolvedValueOnce({ data: { code: 0, data: project } })
+    .mockResolvedValueOnce({
+      data: { code: 0, data: { ...project, state_version: 2 } },
+    })
+    .mockResolvedValueOnce({
+      data: { code: 0, data: { ...project, state_version: 3 } },
+    });
+  mockedGet
+    .mockResolvedValueOnce({ data: { code: 0, data: [project] } })
+    .mockResolvedValueOnce({ data: { code: 0, data: project } });
+
+  await createBusinessDocumentSqlAgentProject(createInput);
+  await listBusinessDocumentSqlAgentProjects();
+  await fetchBusinessDocumentSqlAgentProject('project-1');
+  await requestBusinessDocumentSqlAgent('project-1', runInput);
+  await decideBusinessDocumentSqlAgentProposal(
+    'project-1',
+    'proposal-1',
+    decisionInput,
+  );
+
+  expect(mockedPost).toHaveBeenNthCalledWith(
+    1,
+    api.businessDocumentSqlQueryProjects,
+    createInput,
+    { skipErrorNotification: true },
+  );
+  expect(mockedGet).toHaveBeenNthCalledWith(
+    1,
+    api.businessDocumentSqlQueryProjects,
+    { skipErrorNotification: true },
+  );
+  expect(mockedGet).toHaveBeenNthCalledWith(
+    2,
+    api.businessDocumentSqlQueryProject('project-1'),
+    { skipErrorNotification: true },
+  );
+  expect(mockedPost).toHaveBeenNthCalledWith(
+    2,
+    api.businessDocumentSqlAgentJobs('project-1'),
+    runInput,
+    { skipErrorNotification: true },
+  );
+  expect(mockedPost).toHaveBeenNthCalledWith(
+    3,
+    api.businessDocumentSqlAgentProposalDecision('project-1', 'proposal-1'),
+    decisionInput,
+    { skipErrorNotification: true },
+  );
+});
+
+test('uses the central SQL execution registry and a separate resolution endpoint', async () => {
+  const connectors = {
+    schema_version: '1' as const,
+    items: [
+      {
+        id: 'connector-1',
+        name: 'Warehouse',
+        source: 'postgresql' as const,
+        database: 'analytics',
+        available: true,
+      },
+    ],
+  };
+  const profileInput = {
+    schema_version: '1' as const,
+    name: 'Warehouse RO',
+    connector_id: 'connector-1',
+    dialect: 'postgres' as const,
+    allowed_schemas: ['dwh'],
+    statement_timeout_ms: 30000,
+    max_rows: 1000,
+    max_result_bytes: 5000000,
+    enabled: true,
+  };
+  const profile = {
+    id: 'profile-1',
+    ...profileInput,
+    policy_fingerprint: 'sha256:policy',
+    target_database: 'analytics',
+    version: 1,
+    available: true,
+    policy_valid: true,
+    connector_available: true,
+    connector_identity_matches: true,
+    connector: connectors.items[0],
+    created_by: 'admin-1',
+    updated_by: 'admin-1',
+  };
+  const bindingInput = {
+    schema_version: '1' as const,
+    catalog_service: 'warehouse',
+    catalog_database: 'analytics',
+    catalog_schema: 'dwh',
+    execution_profile_id: 'profile-1',
+    enabled: true,
+  };
+  const binding = {
+    id: 'binding-1',
+    ...bindingInput,
+    version: 1,
+    created_by: 'admin-1',
+    updated_by: 'admin-1',
+  };
+  const resolveInput = {
+    schema_version: '1' as const,
+    schema_snapshot: {},
+    accepted_requirements: 'Нужны заказы',
+    accepted_schema: [],
+    selected_profile_id: null,
+  };
+  const resolved = {
+    schema_version: '1' as const,
+    status: 'BOUND' as const,
+    reason: null,
+    snapshot_fingerprint: 'sha256:snapshot',
+    catalog_scopes: [],
+    unresolved_catalog_scopes: [],
+    candidates: [],
+    selection: null,
+  };
+
+  mockedGet
+    .mockResolvedValueOnce({ data: { code: 0, data: connectors } })
+    .mockResolvedValueOnce({
+      data: { code: 0, data: { schema_version: '1', items: [profile] } },
+    })
+    .mockResolvedValueOnce({
+      data: { code: 0, data: { schema_version: '1', items: [binding] } },
+    });
+  mockedPost
+    .mockResolvedValueOnce({ data: { code: 0, data: profile } })
+    .mockResolvedValueOnce({ data: { code: 0, data: binding } })
+    .mockResolvedValueOnce({ data: { code: 0, data: resolved } });
+  mockedPut
+    .mockResolvedValueOnce({
+      data: { code: 0, data: { ...profile, version: 2 } },
+    })
+    .mockResolvedValueOnce({
+      data: { code: 0, data: { ...binding, version: 2 } },
+    });
+
+  await expect(listBusinessDocumentSqlExecutionConnectors()).resolves.toEqual(
+    connectors,
+  );
+  await expect(listBusinessDocumentSqlExecutionProfiles()).resolves.toEqual({
+    schema_version: '1',
+    items: [profile],
+  });
+  await expect(
+    createBusinessDocumentSqlExecutionProfile(profileInput),
+  ).resolves.toEqual(profile);
+  await expect(
+    updateBusinessDocumentSqlExecutionProfile('profile-1', {
+      ...profileInput,
+      expected_version: 1,
+    }),
+  ).resolves.toEqual({ ...profile, version: 2 });
+  await expect(listBusinessDocumentSqlCatalogBindings()).resolves.toEqual({
+    schema_version: '1',
+    items: [binding],
+  });
+  await expect(
+    createBusinessDocumentSqlCatalogBinding(bindingInput),
+  ).resolves.toEqual(binding);
+  await expect(
+    updateBusinessDocumentSqlCatalogBinding('binding-1', {
+      ...bindingInput,
+      expected_version: 1,
+    }),
+  ).resolves.toEqual({ ...binding, version: 2 });
+  await expect(
+    resolveBusinessDocumentSqlExecutionBinding(resolveInput),
+  ).resolves.toEqual(resolved);
+
+  expect(mockedGet).toHaveBeenNthCalledWith(
+    1,
+    api.businessDocumentSqlExecutionConnectors,
+    { skipErrorNotification: true },
+  );
+  expect(mockedGet).toHaveBeenNthCalledWith(
+    2,
+    api.businessDocumentSqlExecutionProfiles,
+    { skipErrorNotification: true },
+  );
+  expect(mockedPost).toHaveBeenNthCalledWith(
+    1,
+    api.businessDocumentSqlExecutionProfiles,
+    profileInput,
+    { skipErrorNotification: true },
+  );
+  expect(mockedPut).toHaveBeenNthCalledWith(
+    1,
+    api.businessDocumentSqlExecutionProfile('profile-1'),
+    { ...profileInput, expected_version: 1 },
+    { skipErrorNotification: true },
+  );
+  expect(mockedGet).toHaveBeenNthCalledWith(
+    3,
+    api.businessDocumentSqlCatalogBindings,
+    { skipErrorNotification: true },
+  );
+  expect(mockedPost).toHaveBeenNthCalledWith(
+    2,
+    api.businessDocumentSqlCatalogBindings,
+    bindingInput,
+    { skipErrorNotification: true },
+  );
+  expect(mockedPut).toHaveBeenNthCalledWith(
+    2,
+    api.businessDocumentSqlCatalogBinding('binding-1'),
+    { ...bindingInput, expected_version: 1 },
+    { skipErrorNotification: true },
+  );
+  expect(mockedPost).toHaveBeenNthCalledWith(
+    3,
+    api.businessDocumentSqlExecutionBindingResolve,
+    resolveInput,
+    { skipErrorNotification: true },
+  );
 });
 
 test('uses explicit access and ownership endpoints', async () => {

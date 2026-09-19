@@ -38,6 +38,7 @@ def test_assignment_packages_data_and_coverage_roots_are_explicit():
         "business_documents",
         "business_documents.domain",
         "business_documents.application",
+        "business_documents.sql_query",
     }
     assert project["tool"]["setuptools"]["package-data"]["business_documents"] == ["domain/*.json"]
     assert "business_documents/" in project["tool"]["coverage"]["run"]["source"]

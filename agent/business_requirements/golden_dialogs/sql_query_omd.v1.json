@@ -1,0 +1,269 @@
+{
+  "schema_version": "1",
+  "suite_id": "sql-query-step-by-step-omd-postgres",
+  "suite_version": "1.0.0",
+  "language": "ru",
+  "catalog_identity": {
+    "service": "docker_postgres_bot",
+    "database": "bot",
+    "physical_database": "bot",
+    "mapping_rule": "OpenMetadata service.database.schema.table maps through an exact registry binding to PostgreSQL schema.table; the table technical name is preserved"
+  },
+  "execution_profile": {
+    "name": "OMD bot PostgreSQL RO",
+    "dialect": "postgres",
+    "allowed_schemas": ["public", "imoex", "rtts"],
+    "statement_timeout_ms": 15000,
+    "max_rows": 1000,
+    "max_result_bytes": 5000000,
+    "database_role": "ragflow_sql_reader",
+    "default_transaction_read_only": true
+  },
+  "cases": [
+    {
+      "id": "GSQL_OMD_01_CONTEXT_QUALITY",
+      "priority": "P0",
+      "initial_request": "Покажи, какие поисковые ответы были медленными и плохо использовали контекст.",
+      "accepted_requirements": "За период [2026-08-01, 2026-09-01) вывести не более 50 поисковых ответов с задержкой не менее 1500 мс и долей шумового контекста не менее 0,25. Одна строка соответствует одному поисковому запросу. Показать время запроса, технический query_id, задержку, число использованных чанков, эффективный режим, долю шума и число процитированных источников; текст запроса и ответа не выводить. Сортировать по задержке по убыванию, затем по query_id по возрастанию.",
+      "observed_at": "2026-09-14",
+      "observed_matching_rows": 35,
+      "tables": [
+        {
+          "entity_id": "2bebfd51-ea82-4b8f-8b7b-eeec1d930b08",
+          "catalog_fqn": "docker_postgres_bot.bot.public.search_queries",
+          "catalog_version": 0.5,
+          "physical_relation": "public.search_queries",
+          "observed_rows": 639253,
+          "minimum_rows": 1,
+          "selected_columns": ["id", "created_at"],
+          "excluded_sensitive_columns": ["query", "user_id", "tenant_id"]
+        },
+        {
+          "entity_id": "c4757cc8-3934-480c-8203-ac4f719b18a5",
+          "catalog_fqn": "docker_postgres_bot.bot.public.search_results",
+          "catalog_version": 0.5,
+          "physical_relation": "public.search_results",
+          "observed_rows": 639253,
+          "minimum_rows": 1,
+          "selected_columns": ["query_id", "latency_ms", "used_chunks"],
+          "excluded_sensitive_columns": ["answer", "citations", "graph_context", "explainability"]
+        },
+        {
+          "entity_id": "d170a5e5-5686-4c4e-a1d2-4442f03d93d0",
+          "catalog_fqn": "docker_postgres_bot.bot.public.answer_context_metrics",
+          "catalog_version": 0.3,
+          "physical_relation": "public.answer_context_metrics",
+          "observed_rows": 905,
+          "minimum_rows": 1,
+          "selected_columns": ["query_id", "effective_mode", "noise_char_share", "cited_source_count"],
+          "excluded_sensitive_columns": ["user_id", "tenant_id", "request_id", "conversation_id", "metrics"]
+        }
+      ],
+      "joins": [
+        {
+          "left": "docker_postgres_bot.bot.public.search_queries.id",
+          "right": "docker_postgres_bot.bot.public.search_results.query_id",
+          "type": "INNER",
+          "evidence": "OpenMetadata FOREIGN_KEY, ONE_TO_ONE"
+        },
+        {
+          "left": "docker_postgres_bot.bot.public.search_queries.id",
+          "right": "docker_postgres_bot.bot.public.answer_context_metrics.query_id",
+          "type": "INNER",
+          "evidence": "OpenMetadata FOREIGN_KEY, ONE_TO_ONE"
+        }
+      ],
+      "turns": [
+        {
+          "role": "author",
+          "text": "Покажи, какие поисковые ответы были медленными и плохо использовали контекст.",
+          "changes_sections": ["1.1", "1.4"]
+        },
+        {
+          "role": "agent",
+          "text": "Одна строка должна описывать отдельный запрос, день, режим или пользователя?",
+          "changes_sections": ["1.2", "2"]
+        },
+        {
+          "role": "author",
+          "text": "Один поисковый запрос. Пользователя и тексты запроса/ответа не показывай.",
+          "changes_sections": ["1.2", "2.1.1", "4.3", "4.4"]
+        },
+        {
+          "role": "agent",
+          "text": "Что считать медленным ответом и плохим использованием контекста?",
+          "changes_sections": ["1.4.2", "3.1"]
+        },
+        {
+          "role": "author",
+          "text": "Медленно — от 1500 мс. Плохо — доля шумового контекста от 0,25.",
+          "changes_sections": ["1.4.2", "3.2", "3.2.1"]
+        },
+        {
+          "role": "agent",
+          "text": "За какой период и как трактовать границы?",
+          "changes_sections": ["3.4"]
+        },
+        {
+          "role": "author",
+          "text": "С 1 августа 2026 включительно до 1 сентября 2026 не включительно.",
+          "changes_sections": ["3.2", "3.4"]
+        },
+        {
+          "role": "agent",
+          "text": "OMD подтверждает два соединения по query_id. Использовать INNER JOIN, чтобы исключить запросы без результата или метрик?",
+          "changes_sections": ["2.4", "2.4.1", "2.4.2"]
+        },
+        {
+          "role": "author",
+          "text": "Да, только записи, у которых есть и результат, и метрики контекста.",
+          "changes_sections": ["2.3", "2.4", "5.1"]
+        },
+        {
+          "role": "agent",
+          "text": "Предлагаю сортировку latency_ms DESC, query_id ASC и лимит 50. Подтвердить?",
+          "changes_sections": ["4.1", "4.2"]
+        },
+        {
+          "role": "author",
+          "text": "Подтверждаю. Python-постобработка не нужна.",
+          "changes_sections": ["4.1", "4.2", "6", "6.1", "6.2", "6.3", "6.4", "6.5", "6.6"]
+        }
+      ],
+      "section_refinements": [
+        {"section_id": "1", "status": "accepted", "wording": "Read-only отчёт о медленных поисковых ответах с повышенной долей шумового контекста; все пороги и источники подтверждены."},
+        {"section_id": "1.1", "status": "accepted", "wording": "Исходный текст сохранён дословно: «Покажи, какие поисковые ответы были медленными и плохо использовали контекст»."},
+        {"section_id": "1.2", "status": "accepted", "wording": "Одна строка результата — один поисковый запрос, имеющий и результат, и метрики контекста; дубли не допускаются."},
+        {"section_id": "1.3", "status": "accepted", "wording": "PostgreSQL; OMD-контур docker_postgres_bot.bot.public; выполнение через профиль OMD bot PostgreSQL RO в физической БД bot."},
+        {"section_id": "1.4", "status": "accepted", "wording": "Сущности: поисковый запрос, результат поиска, метрики использования контекста; показатели: latency_ms и noise_char_share."},
+        {"section_id": "1.4.1", "status": "accepted", "wording": "OMD search_queries → public.search_queries; search_results → public.search_results; answer_context_metrics → public.answer_context_metrics."},
+        {"section_id": "1.4.2", "status": "accepted", "wording": "«Медленно» уточнено как latency_ms ≥ 1500; «плохо использовали контекст» — noise_char_share ≥ 0,25."},
+        {"section_id": "1.5", "status": "accepted", "wording": "search_queries.id соединяется один-к-одному с search_results.query_id и answer_context_metrics.query_id по подтверждённым OMD FK."},
+        {"section_id": "2", "status": "accepted", "wording": "Вывести только диагностические показатели без текста запроса, текста ответа и пользовательских идентификаторов."},
+        {"section_id": "2.1", "status": "accepted", "wording": "Таблицы: public.search_queries q, public.search_results r, public.answer_context_metrics m."},
+        {"section_id": "2.1.1", "status": "accepted", "wording": "Поля: q.id, q.created_at, r.latency_ms, r.used_chunks, m.effective_mode, m.noise_char_share, m.cited_source_count."},
+        {"section_id": "2.1.2", "status": "not_applicable", "wording": "Подзапросы и CTE не требуются: плоский запрос выражает согласованную гранулярность."},
+        {"section_id": "2.2", "status": "accepted", "wording": "SELECT содержит query_id, requested_at, latency_ms, used_chunks, effective_mode, noise_char_share и cited_source_count."},
+        {"section_id": "2.2.1", "status": "not_applicable", "wording": "Вычисляемые поля и агрегаты не требуются; используются сохранённые метрики."},
+        {"section_id": "2.3", "status": "accepted", "wording": "GROUP BY и DISTINCT не нужны: PK/FK дают не более одной строки результата и метрик на query_id."},
+        {"section_id": "2.4", "status": "accepted", "wording": "Оба соединения INNER JOIN подтверждены пользователем; строки без результата или метрик исключаются."},
+        {"section_id": "2.4.1", "status": "accepted", "wording": "q.id = r.query_id; q.id = m.query_id."},
+        {"section_id": "2.4.2", "status": "accepted", "wording": "Альтернативных подтверждённых путей соединения в выбранном контуре OMD нет."},
+        {"section_id": "2.4.3", "status": "not_applicable", "wording": "Справочник для расшифровки query_id не требуется; ID остаётся техническим ключом трассировки."},
+        {"section_id": "3", "status": "accepted", "wording": "Фильтры задают полуоткрытый период, нижний порог задержки и нижний порог доли шума."},
+        {"section_id": "3.1", "status": "accepted", "wording": "F1: created_at ≥ :date_from; F2: created_at < :date_to; F3: latency_ms ≥ :latency_min_ms; F4: noise_char_share ≥ :noise_min_share."},
+        {"section_id": "3.2", "status": "accepted", "wording": "Все четыре условия объединены AND; скрытых OR или неявных фильтров нет."},
+        {"section_id": "3.2.1", "status": "accepted", "wording": "Каждая WHERE-карточка содержит поле из snapshot, оператор, типизированный параметр, смысл и явное подтверждение пользователя."},
+        {"section_id": "3.3", "status": "not_applicable", "wording": "HAVING отсутствует, потому что агрегатов нет."},
+        {"section_id": "3.4", "status": "accepted", "wording": "date_from=2026-08-01 включительно, date_to=2026-09-01 исключительно; NULL в latency_ms или noise_char_share условие не проходит."},
+        {"section_id": "4", "status": "accepted", "wording": "Результат ограничен, детерминированно отсортирован и не содержит чувствительных текстовых полей."},
+        {"section_id": "4.1", "status": "accepted", "wording": "ORDER BY latency_ms DESC, query_id ASC."},
+        {"section_id": "4.2", "status": "accepted", "wording": "LIMIT :row_limit, row_limit=50; пагинация в этом тесте не нужна."},
+        {"section_id": "4.3", "status": "accepted", "wording": "Табличный результат с устойчивыми алиасами query_id, requested_at, latency_ms, used_chunks, effective_mode, noise_char_share, cited_source_count."},
+        {"section_id": "4.4", "status": "accepted", "wording": "Только SELECT, без SELECT *, timeout 15 секунд, максимум 1000 строк и 5 МБ; профиль использует роль default_transaction_read_only."},
+        {"section_id": "5", "status": "accepted", "wording": "SQL формируется только после READY snapshot, exact binding, подтверждения JOIN/WHERE и прохождения SQLGuard."},
+        {"section_id": "5.1", "status": "accepted", "wording": "Открытых решений нет; schema, execution binding, JOIN, WHERE, ORDER BY и LIMIT подтверждены."},
+        {"section_id": "5.2", "status": "accepted", "wording": "Цель → SELECT; гранулярность → PK/FK; определения «медленно/плохо» → F3/F4; период → F1/F2; приватность → исключённые поля."},
+        {"section_id": "5.3", "status": "accepted", "wording": "Проверить точные границы 1500 и 0,25, отсутствие метрик, NULL, обе границы периода и более 50 совпадений."},
+        {"section_id": "5.4", "status": "accepted", "wording": "Проверить entity version и schema fingerprint, exact OMD→DB mapping, параметры, одну read-only инструкцию и SQLGuard PASS."},
+        {"section_id": "5.5", "status": "accepted", "wording": "Итоговый parameterized SQL совпадает с golden expected_sql; OMD service/database не попадают в PostgreSQL relation name."},
+        {"section_id": "5.6", "status": "accepted", "wording": "Профиль OMD bot PostgreSQL RO; параметры передаются отдельно; реквизиты подключения не экспортируются."},
+        {"section_id": "6", "status": "not_applicable", "wording": "Python-постобработка для данного результата отключена."},
+        {"section_id": "6.1", "status": "not_applicable", "wording": "Назначение отсутствует: SQL уже возвращает требуемую форму."},
+        {"section_id": "6.2", "status": "not_applicable", "wording": "Отдельный контракт df → result_df не создаётся."},
+        {"section_id": "6.3", "status": "not_applicable", "wording": "План Python-преобразований отсутствует."},
+        {"section_id": "6.4", "status": "not_applicable", "wording": "Python-код отсутствует."},
+        {"section_id": "6.5", "status": "not_applicable", "wording": "Sandbox не запускается и ресурсы не выделяются."},
+        {"section_id": "6.6", "status": "not_applicable", "wording": "Fallback не нужен; при ошибке SQL возвращается ошибка без частичного документа."}
+      ],
+      "expected_sql": "SELECT\n    q.id AS query_id,\n    q.created_at AS requested_at,\n    r.latency_ms AS latency_ms,\n    r.used_chunks AS used_chunks,\n    m.effective_mode AS effective_mode,\n    m.noise_char_share AS noise_char_share,\n    m.cited_source_count AS cited_source_count\nFROM public.search_queries AS q\nJOIN public.search_results AS r\n    ON q.id = r.query_id\nJOIN public.answer_context_metrics AS m\n    ON q.id = m.query_id\nWHERE q.created_at >= :date_from\n  AND q.created_at < :date_to\n  AND r.latency_ms >= :latency_min_ms\n  AND m.noise_char_share >= :noise_min_share\nORDER BY latency_ms DESC, query_id ASC\nLIMIT :row_limit",
+      "parameters": {
+        "date_from": "2026-08-01",
+        "date_to": "2026-09-01",
+        "latency_min_ms": 1500,
+        "noise_min_share": "0.25",
+        "row_limit": 50
+      },
+      "assertions": [
+        "all_44_template_sections_have_an_explicit_status",
+        "catalog_fqn_maps_to_schema_table_without_service_or_database_prefix",
+        "both_joins_are_backed_by_openmetadata_foreign_keys",
+        "no_sql_before_all_human_decisions_are_confirmed",
+        "sensitive_query_and_answer_text_are_not_selected",
+        "sqlguard_status=PASS"
+      ]
+    },
+    {
+      "id": "GSQL_OMD_02_LLM_LATENCY",
+      "priority": "P1",
+      "initial_request": "Покажи самые долгие успешные запросы к LLM.",
+      "accepted_requirements": "Одна строка — один успешный LLM-запрос за [2026-08-01, 2026-09-04) длительностью не менее 60 секунд; вывести время, модель, тип и длительность, исключить prompt/raw_response/error_message, сортировать по длительности DESC и log_id ASC, LIMIT 20.",
+      "observed_at": "2026-09-14",
+      "observed_matching_rows": 2,
+      "tables": [
+        {
+          "entity_id": "491922b2-66ca-4c3d-9c7d-651a68d491b9",
+          "catalog_fqn": "docker_postgres_bot.bot.public.llm_requests_log",
+          "catalog_version": 0.6,
+          "physical_relation": "public.llm_requests_log",
+          "observed_rows": 27017,
+          "minimum_rows": 1,
+          "selected_columns": ["log_id", "request_timestamp_start", "model_name", "request_type", "duration_seconds"],
+          "excluded_sensitive_columns": ["prompt", "raw_response", "error_message", "tenant_id", "doc_id", "conversation_id"]
+        }
+      ],
+      "clarifications": [
+        "Отдельные запросы, а не агрегат по модели",
+        "Только успешные запросы",
+        "Порог 60 секунд",
+        "Полуоткрытый период и LIMIT 20",
+        "Чувствительные payload-поля исключены"
+      ]
+    },
+    {
+      "id": "GSQL_OMD_03_MOEX_ORDERS",
+      "priority": "P1",
+      "initial_request": "Покажи отправленные биржевые заявки и источник события.",
+      "accepted_requirements": "Одна строка — одна отправленная заявка MOEX за [2026-04-28, 2026-05-01); вывести время, ticker, direction, lots, status, event_type и source_component, не выводить account_id и payload, соединить заявку с событием по подтверждённому OMD FK event_id, сортировать по времени DESC и event_id ASC, LIMIT 100.",
+      "observed_at": "2026-09-14",
+      "observed_matching_rows": 84,
+      "tables": [
+        {
+          "entity_id": "1df615ec-5065-46d5-87fa-8a85a7558d4b",
+          "catalog_fqn": "docker_postgres_bot.bot.imoex.moex_orders",
+          "catalog_version": 0.5,
+          "physical_relation": "imoex.moex_orders",
+          "observed_rows": 87,
+          "minimum_rows": 1,
+          "selected_columns": ["event_id", "emitted_at", "ticker", "direction", "lots", "status", "submitted"],
+          "excluded_sensitive_columns": ["account_id", "payload"]
+        },
+        {
+          "entity_id": "e32658b7-cd2a-456d-817c-f3731c119e24",
+          "catalog_fqn": "docker_postgres_bot.bot.imoex.moex_events",
+          "catalog_version": 0.4,
+          "physical_relation": "imoex.moex_events",
+          "observed_rows": 30455,
+          "minimum_rows": 1,
+          "selected_columns": ["event_id", "event_type", "source_component"],
+          "excluded_sensitive_columns": ["payload"]
+        }
+      ],
+      "joins": [
+        {
+          "left": "docker_postgres_bot.bot.imoex.moex_orders.event_id",
+          "right": "docker_postgres_bot.bot.imoex.moex_events.event_id",
+          "type": "INNER",
+          "evidence": "OpenMetadata FOREIGN_KEY, ONE_TO_ONE"
+        }
+      ],
+      "clarifications": [
+        "Заявка, а не исполнение сделки",
+        "Только submitted=true",
+        "Фиксированный период из фактического диапазона данных",
+        "Источник берётся из moex_events по подтверждённому FK",
+        "account_id и JSON payload исключены"
+      ]
+    }
+  ]
+}

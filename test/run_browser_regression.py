@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 SUITES = [
+    "test/playwright/e2e/test_document_constructor_ui.py",
     "test/playwright/e2e/test_business_documents_access_ui.py",
     "test/playwright/e2e/test_navigation_visibility_admin.py",
     "test/playwright/e2e/test_auth_boundaries_ui.py",
@@ -25,6 +26,11 @@ SUITES = [
 class SPAServer(ThreadingHTTPServer):
     request_queue_size = 128
     daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        if isinstance(sys.exc_info()[1], (BrokenPipeError, ConnectionResetError)):
+            return
+        super().handle_error(request, client_address)
 
 
 class SPAHandler(SimpleHTTPRequestHandler):

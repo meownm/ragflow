@@ -1,44 +1,44 @@
 {
   "schema_version": 1,
-  "captured_at": "2026-09-14T08:41:22.511826+00:00",
-  "head": "278497bced14c5146eb0be19bb0fa1eb72976279",
+  "captured_at": "2026-09-19T13:37:06.529545+00:00",
+  "head": "090abfb9ed1bb912556ff14d972fdc259b9d4ae1",
   "upstream_base": "cb93883f3f8c975eecb2fed81210effeb3bdb06f",
-  "branch": "codex/t3-base-tip-resolution",
+  "branch": "codex/integrate-v1.23.1",
   "shallow": true,
-  "snapshot_sha256": "8dc89a5ef5be66cd61725ba55a48d32860aaeff3b9e67c0a22d496768d73d0a1",
+  "snapshot_sha256": "c3527968014b1a49abacc8ec8ec00302ae26ad1958e87ec8d556253c79372dde",
   "scope": "All tracked deltas from the content baseline, staged/unstaged changes and nonignored untracked files; generated outputs explicitly listed without recursive digest",
   "rename_policy": "Renames represented by explicit delete/add paths; no paths discarded by similarity heuristics",
   "counts": {
     "base_files": 4441,
-    "head_files": 4846,
-    "index_files": 4846,
-    "committed_delta": 751,
+    "head_files": 4922,
+    "index_files": 4922,
+    "committed_delta": 828,
     "staged_delta": 0,
-    "unstaged_delta": 1,
+    "unstaged_delta": 2,
     "untracked": 0,
-    "inventory_records": 751,
+    "inventory_records": 828,
     "by_origin": {
-      "core_change": 346,
-      "extension": 405
+      "core_change": 347,
+      "extension": 481
     },
     "by_module": {
       "quality-governance": 156,
       "observability": 28,
       "access-policy": 44,
-      "business-documents": 81,
+      "business-documents": 151,
       "eva-integration": 18,
       "agent-runtime": 16,
-      "openmetadata": 18,
+      "openmetadata": 19,
       "mrz-assets": 7,
-      "models-runtime": 13,
+      "models-runtime": 15,
       "api-files-chat": 20,
       "ingestion-connectors": 20,
       "persistence": 6,
       "deployment": 35,
-      "frontend-foundation": 216,
-      "asr": 73
+      "frontend-foundation": 218,
+      "asr": 75
     },
-    "unchanged_upstream_index_paths": 4095,
+    "unchanged_upstream_index_paths": 4094,
     "unclassified": 0
   },
   "records": [
@@ -175,8 +175,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 45958,
-        "sha256": "57964d912b2868be5ba0ef79c62bc5dc376eacf356bbaf2ae0d217263b9ef091"
+        "bytes": 46803,
+        "sha256": "746b5fd88d752ac7d2ff543e53b68271de6bcfcafe0c13fae0b0700b0fdd3491"
       }
     },
     {
@@ -820,6 +820,81 @@
       }
     },
     {
+      "path": "agent/business_requirements/contracts/sql_query_plan.v1.schema.json",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "539ed435dcacb7f8475bc37f426a349eed392990"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "539ed435dcacb7f8475bc37f426a349eed392990"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 4853,
+        "sha256": "db862d6dd0a3a0d814611251f7e75e960efb664e04c108a098044ff5d0a25181"
+      }
+    },
+    {
+      "path": "agent/business_requirements/contracts/sql_requirements_proposal.v1.schema.json",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "130db38bb34bdc05728833f9e416d79ec49962fc"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "130db38bb34bdc05728833f9e416d79ec49962fc"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 1729,
+        "sha256": "d13d3b4abaf1449374cd9bc2e496cc4afca7651e21e9ba0dc04fd1fdc45bbe82"
+      }
+    },
+    {
+      "path": "agent/business_requirements/contracts/sql_schema_interpretation.v1.schema.json",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "db1bdcc8230c3bcbb5a27555cd35abe4eb3d353a"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "db1bdcc8230c3bcbb5a27555cd35abe4eb3d353a"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 1634,
+        "sha256": "21199219d313a3264348600a0704f31871f26fe40730738a6f1aa26f54a03841"
+      }
+    },
+    {
       "path": "agent/business_requirements/evals/rubric.v1.json",
       "module": "business-documents",
       "origin": "extension",
@@ -842,6 +917,31 @@
         "present": true,
         "bytes": 2546,
         "sha256": "48697d7c91103f4163ad0479049ced28c2d39c3e45ccf8f41f50a723cf5ffb97"
+      }
+    },
+    {
+      "path": "agent/business_requirements/golden_dialogs/sql_query_omd.v1.json",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "052b4a7b3324969879ff99d33e7578f2508fee63"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "052b4a7b3324969879ff99d33e7578f2508fee63"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 21475,
+        "sha256": "6ac00829c4dfc7a73774d291385a205d55c901a9fdb289195ee8b0d5780a031f"
       }
     },
     {
@@ -1067,6 +1167,81 @@
         "present": true,
         "bytes": 3063,
         "sha256": "2febd53915c9296f7cb8ab38378328ed90d12eb414be345dee9ce02a37c3fb47"
+      }
+    },
+    {
+      "path": "agent/business_requirements/prompts/sql_query_planner.v1.md",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "087f2e83a82613b50e369518cd86c3f1711a4e15"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "087f2e83a82613b50e369518cd86c3f1711a4e15"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 4247,
+        "sha256": "979767bb06ba0a94b8d57f7d946d5cd61e5750a020ad13453070d6b3edf93316"
+      }
+    },
+    {
+      "path": "agent/business_requirements/prompts/sql_requirements_analyst.v1.md",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "893d5d8aae8e80f9320af768ca8558cf1c54f121"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "893d5d8aae8e80f9320af768ca8558cf1c54f121"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 2016,
+        "sha256": "aa8ce051749526ff6b415c53c76726ff885dadc5b8e666d895ad0f8197f4ec32"
+      }
+    },
+    {
+      "path": "agent/business_requirements/prompts/sql_schema_interpreter.v1.md",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "5e64c873268f516c9269031dd4d82ace31c09451"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "5e64c873268f516c9269031dd4d82ace31c09451"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 1932,
+        "sha256": "27d95dc52549601b9656ffc76e162fc8fad8ba5052ba118c137857fc923fd0ca"
       }
     },
     {
@@ -1339,11 +1514,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "2bdd29f61ee675a5d309782e59c8b81d653a6999"
+        "oid": "45ff429e95f67a2b41047e776b2045da13b5365e"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "2bdd29f61ee675a5d309782e59c8b81d653a6999"
+        "oid": "45ff429e95f67a2b41047e776b2045da13b5365e"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -1352,8 +1527,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 48488,
-        "sha256": "8386daef8a5b87d620a51106028425451ec78b4d0ef2b062e286cdae9967413d"
+        "bytes": 48575,
+        "sha256": "0e50ce52f7f157b42bf61543847e7059f91ef3f8e55d3bf2040b29e188ef0bef"
       }
     },
     {
@@ -1364,11 +1539,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "1965bf0659c26c7692fad476a41f908b21d2ad33"
+        "oid": "39933c2d4e4ae401be3647162cbe94afab643117"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "1965bf0659c26c7692fad476a41f908b21d2ad33"
+        "oid": "39933c2d4e4ae401be3647162cbe94afab643117"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -1377,8 +1552,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 20475,
-        "sha256": "24507249465120db3debdbca266cfbc9d4379242ffba6d5ddcb22891217dbd5b"
+        "bytes": 21049,
+        "sha256": "3eb5bcc10125767a7d1f27fc0dc5f97e825e1ce7a92c54779f208eb61f01bde9"
       }
     },
     {
@@ -1557,18 +1732,18 @@
       }
     },
     {
-      "path": "api/apps/business_documents/worker.py",
+      "path": "api/apps/business_documents/sql_execution_registry.py",
       "module": "business-documents",
       "origin": "extension",
       "base_entry": null,
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "e7b2a8ef353dbbec08bc4568487f48d128d6012d"
+        "oid": "8edf85f94dafa8bcb3abe16487d4db8d0b1d39b8"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "e7b2a8ef353dbbec08bc4568487f48d128d6012d"
+        "oid": "8edf85f94dafa8bcb3abe16487d4db8d0b1d39b8"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -1577,8 +1752,183 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 21011,
-        "sha256": "6be3b5bfdae097f43be802cdd2b00a973035bb89a8fb7a5b8806783e3abed706"
+        "bytes": 27765,
+        "sha256": "8ae89e77c4063e93bedcdd1cd4f15869a48aeeb80a8cb7517617ec5f403d0f2c"
+      }
+    },
+    {
+      "path": "api/apps/business_documents/sql_query_agent_worker.py",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "2a3c372bf0c5c3fa9436949512db21e7b3559c83"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "2a3c372bf0c5c3fa9436949512db21e7b3559c83"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 3709,
+        "sha256": "c9fc5f42d3b5d7c1b2ea6abe6caac3e3f805170fc9125455f934c328073d92a0"
+      }
+    },
+    {
+      "path": "api/apps/business_documents/sql_query_agents.py",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "b2365926fe4482c31606fbd26f46dfc43bcb1807"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "b2365926fe4482c31606fbd26f46dfc43bcb1807"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 31184,
+        "sha256": "51ec467556e2defc225fa0df82785a348c953a5f8c0894f77fa937d259d4b729"
+      }
+    },
+    {
+      "path": "api/apps/business_documents/sql_query_lifecycle.py",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "408992645ea87fea2dfc6a380a96d760af9f0ab1"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "408992645ea87fea2dfc6a380a96d760af9f0ab1"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 1258,
+        "sha256": "94c6dd3309caf606d10868e11b78f303fb543258883d7da2e561c5b99aaa83ed"
+      }
+    },
+    {
+      "path": "api/apps/business_documents/sql_query_planner.py",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "488d84ccf61db4263b5ce25a09e1a126bbe2cc1a"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "488d84ccf61db4263b5ce25a09e1a126bbe2cc1a"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 4392,
+        "sha256": "0184bc5831f6f9e7e0d487513a65393475bbf7ff790ee826600554eb2d467dab"
+      }
+    },
+    {
+      "path": "api/apps/business_documents/sql_query_requirements.py",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "3da403f84597b4b50d7cf640dc070858f549de91"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "3da403f84597b4b50d7cf640dc070858f549de91"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 3087,
+        "sha256": "4e8f925265e44e5679fdd8b71989d0c92d609a6defa041b33ef8fca5145361c1"
+      }
+    },
+    {
+      "path": "api/apps/business_documents/sql_query_schema.py",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "b1fafdb910dafff26ef453d469d9b5972193b4fb"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "b1fafdb910dafff26ef453d469d9b5972193b4fb"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 12570,
+        "sha256": "fc4769f19d3185e7ba57bb34e611ace5ef704218140660c7b79b638d572c20ea"
+      }
+    },
+    {
+      "path": "api/apps/business_documents/worker.py",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "de7130e29f1c90c9b0e89a3cbbb189c158ceb298"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "de7130e29f1c90c9b0e89a3cbbb189c158ceb298"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 22622,
+        "sha256": "a36427fd588a5c9c31ff6e73e83824bb7b4ac42839b04dded4fdd04180b29c2b"
       }
     },
     {
@@ -1622,11 +1972,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "2c19cd0607d0aef41875947542f2a0da0087bc45"
+        "oid": "35ee6cde85ace9af8300eda3ee5ed955a4f2d836"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "2c19cd0607d0aef41875947542f2a0da0087bc45"
+        "oid": "35ee6cde85ace9af8300eda3ee5ed955a4f2d836"
       },
       "committed_change": "M",
       "staged_change": null,
@@ -1635,8 +1985,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 97559,
-        "sha256": "a271fb66c420cf8e69a619eaa7c9289c3702f1172c525a0867e3147c8213efe9"
+        "bytes": 101480,
+        "sha256": "f52fc4e8f4808654a25e2307c6b45c200c6dc90f2a8fdab2be6cf8661f36d906"
       }
     },
     {
@@ -1676,11 +2026,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "c15ea5e68d7a0ded350ab03d432d1769b90aff35"
+        "oid": "9dd475cc53fce727df5c4912b83dc60f5d693fb8"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "c15ea5e68d7a0ded350ab03d432d1769b90aff35"
+        "oid": "9dd475cc53fce727df5c4912b83dc60f5d693fb8"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -1689,8 +2039,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 19372,
-        "sha256": "e94e8308cc5ed1d9021dcd121a280c816e5ec233cad6b1355dac75db097f0253"
+        "bytes": 33966,
+        "sha256": "097b2bf15c9f65abd5011df629afe63f6634fe524276ca6d0001d5dd831ac116"
       }
     },
     {
@@ -1705,11 +2055,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "ac1a0402fbccd93f94a8240ab6b3b92421c64e32"
+        "oid": "f20e13f312a0d575ac61e21a634437bede33cde1"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "ac1a0402fbccd93f94a8240ab6b3b92421c64e32"
+        "oid": "f20e13f312a0d575ac61e21a634437bede33cde1"
       },
       "committed_change": "M",
       "staged_change": null,
@@ -1718,8 +2068,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 59565,
-        "sha256": "f0718be38538d3e85a716aaee768bfeed2a74025c18ff30ad873e08f3deacfb6"
+        "bytes": 60631,
+        "sha256": "99e1e54bc26faaa096352c51456fa3b4be19dbc45232803baed6a0240f30f377"
       }
     },
     {
@@ -1904,11 +2254,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "973d65606b204a3742fe35e792e4cc38fdb4d333"
+        "oid": "363d0d32e058f3546971a4d70a238f69db4d5116"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "973d65606b204a3742fe35e792e4cc38fdb4d333"
+        "oid": "363d0d32e058f3546971a4d70a238f69db4d5116"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -1917,8 +2267,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 12139,
-        "sha256": "ebdb9ac4fd05cd645a738380b2b9083bccf1ac69f418db654c84f88bceb08fed"
+        "bytes": 12057,
+        "sha256": "b0f6bab2f5a3dc3f90e986f60c3c5da04860290f32a6ed2335dab6fea1895138"
       }
     },
     {
@@ -2196,6 +2546,31 @@
       }
     },
     {
+      "path": "api/apps/services/openmetadata_runtime_service.py",
+      "module": "openmetadata",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "9107e86b13380035b5f21016a7260f26ac84e9d7"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "9107e86b13380035b5f21016a7260f26ac84e9d7"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 1071,
+        "sha256": "e55e46d851e71b4c66d191c20fc5a3ba5c50ea9dd7e2652e0190d61158110a53"
+      }
+    },
+    {
       "path": "api/db/db_models.py",
       "module": "persistence",
       "origin": "core_change",
@@ -2207,11 +2582,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "0703116345b6ef8bf655e599ae2dd7a4ebe58ee8"
+        "oid": "fe822a406ee11b33d89fd0311b5d137a7f6e5546"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "0703116345b6ef8bf655e599ae2dd7a4ebe58ee8"
+        "oid": "fe822a406ee11b33d89fd0311b5d137a7f6e5546"
       },
       "committed_change": "M",
       "staged_change": null,
@@ -2220,8 +2595,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 118398,
-        "sha256": "96148ba6a7e32eecbb8c4d0831588ab94d978c0e628d2410b9f08a15cbff9f50"
+        "bytes": 124529,
+        "sha256": "c908471367d191b76e7033707bab3e4a7613cd23f5ccd641377c2ab183207ea1"
       }
     },
     {
@@ -2844,18 +3219,18 @@
       }
     },
     {
-      "path": "business_documents/domain/bcm_bank_v15_l5.json",
+      "path": "business_documents/domain/bcm_bank_v2_l5.json",
       "module": "business-documents",
       "origin": "extension",
       "base_entry": null,
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "22fef5d9886e0a9f319d92ff649dcd0d5dcd1704"
+        "oid": "166156c6511d9436dd0f06a4af8f1be84f98789f"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "22fef5d9886e0a9f319d92ff649dcd0d5dcd1704"
+        "oid": "166156c6511d9436dd0f06a4af8f1be84f98789f"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -2864,8 +3239,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 16910,
-        "sha256": "42b4ccb798e15ffdd1c9a95c347da0389920b4f64eb782701e9a4e4b1cb73471"
+        "bytes": 2653,
+        "sha256": "be528962f520a5fa7d91649a820006cfbc68e7db38c64e881f1a1779614815c2"
       }
     },
     {
@@ -2876,11 +3251,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "1cd467385a4bc50e246b3d67cca312d4419f1d3c"
+        "oid": "82f25a2bdea781187c535abb83035475e19d0c9a"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "1cd467385a4bc50e246b3d67cca312d4419f1d3c"
+        "oid": "82f25a2bdea781187c535abb83035475e19d0c9a"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -2889,8 +3264,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 1305,
-        "sha256": "158ec9080bf91dc92bde919f355ab7e8915e34313ca96577ec9b33be7231b5a8"
+        "bytes": 1304,
+        "sha256": "b746ca28f1b7eda17237df03cda30f7fd6672616025046cf391baffa0ec69ae6"
       }
     },
     {
@@ -2941,6 +3316,181 @@
         "present": true,
         "bytes": 875,
         "sha256": "3491235756702f490eb926bfd50246a37e51aa1303528e65c5bb62b9ad04bf70"
+      }
+    },
+    {
+      "path": "business_documents/sql_query/__init__.py",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "3d92b5012a8546c5ec703f25d931e158691fa421"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "3d92b5012a8546c5ec703f25d931e158691fa421"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 73,
+        "sha256": "3bfd73c70e5ac31baf30d1ce4de4e7c567be0a7ef89e41c87b28cb8ca97d5088"
+      }
+    },
+    {
+      "path": "business_documents/sql_query/agent_cycle.py",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "584dfff54908af5ee3db23b3e9d22ff0db23af45"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "584dfff54908af5ee3db23b3e9d22ff0db23af45"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 3720,
+        "sha256": "f89af73f9cf2421be7a4670b706a4acaeabeec61ef94e53564e1009914dad7ad"
+      }
+    },
+    {
+      "path": "business_documents/sql_query/execution_registry.py",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "66273573df1d66cd18f76fab26f560380d3aa916"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "66273573df1d66cd18f76fab26f560380d3aa916"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 17713,
+        "sha256": "b9ca2f7372c0e01bc81ba520d4f5eddc92584d79fae6b4faa7216cb137ae9a67"
+      }
+    },
+    {
+      "path": "business_documents/sql_query/query_planning.py",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "78d6e673c1842d211dee9ed77dcf9061f9adf806"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "78d6e673c1842d211dee9ed77dcf9061f9adf806"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 18848,
+        "sha256": "bcd342edff0b39eb3933c200b9ff6858ea6f17b7f1a6282fb95c3474da9000cb"
+      }
+    },
+    {
+      "path": "business_documents/sql_query/query_specification.py",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "56c92fb9e7b1c46d9016259e1cb2338418396ade"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "56c92fb9e7b1c46d9016259e1cb2338418396ade"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 47001,
+        "sha256": "384d0a45fbc1e2eb448a6c07c15f77957d9d3a5e9a7755994974297f5f792400"
+      }
+    },
+    {
+      "path": "business_documents/sql_query/requirements_analysis.py",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "8ce5207de0c349e90a6d15c8c680e548a781f68b"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "8ce5207de0c349e90a6d15c8c680e548a781f68b"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 10174,
+        "sha256": "478df434e79bd1632db1b2ad965b2d21895def68976b353d6f73e2718a2baac5"
+      }
+    },
+    {
+      "path": "business_documents/sql_query/schema_resolution.py",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "bd01913be28bc1868c6a895ec6038097d0390c78"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "bd01913be28bc1868c6a895ec6038097d0390c78"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 41397,
+        "sha256": "cb5a62af937038737856cd336bbacad8dbbc662792de15130420b8476bde881c"
       }
     },
     {
@@ -3845,11 +4395,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "f1bfb25a88183b965268607086639686ad38c194"
+        "oid": "e85caae2cecc519ea90580c363f44527e4ec7b40"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "f1bfb25a88183b965268607086639686ad38c194"
+        "oid": "e85caae2cecc519ea90580c363f44527e4ec7b40"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -3858,8 +4408,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 9599,
-        "sha256": "3914249f936f0a466b79f7e84ac4669e3bffeb34923138e1fab9a44487134739"
+        "bytes": 9807,
+        "sha256": "d8fb5a6b35ae7922030d5a62e410fe767bd08adde4e24f1e3ddd8f5f37425e03"
       }
     },
     {
@@ -4562,6 +5112,106 @@
       }
     },
     {
+      "path": "docs/develop/sql-query-constructor-architecture-ru.md",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "a622b2dae636e53bf142c438beb1a5815a9f49db"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "a622b2dae636e53bf142c438beb1a5815a9f49db"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 60746,
+        "sha256": "497c3f2cfcd41ec1fc2c6c47b83904f56efa8b4c3330795bb69913b73fe512be"
+      }
+    },
+    {
+      "path": "docs/develop/sql-query-constructor-product-ru.md",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "1f5f1d91a69e23e419863945991aebc2c1e4c0c6"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "1f5f1d91a69e23e419863945991aebc2c1e4c0c6"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 54657,
+        "sha256": "c8c53f684b9c4b5592020feab1320cfd144cf96240b92097214089d4f0aa96a1"
+      }
+    },
+    {
+      "path": "docs/develop/sql-query-constructor-regression-ru.md",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "7fcbd9031b5ac8157c22e5a862ba27f33f5d99bc"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "7fcbd9031b5ac8157c22e5a862ba27f33f5d99bc"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 48334,
+        "sha256": "aec6b62f996541d41c48135da390dd81828a72ff64214d0d03d75729fe52e19f"
+      }
+    },
+    {
+      "path": "docs/develop/sql-query-constructor-ui-ux-cx-ru.md",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "6e26045fef51d35c9805f44e35039a3805dbeeae"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "6e26045fef51d35c9805f44e35039a3805dbeeae"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 68810,
+        "sha256": "614660a9c6ba05896e070814c708134d8e67464ad3889458fbc5522b543ea769"
+      }
+    },
+    {
       "path": "docs/develop/t0-provenance-report-ru.md",
       "module": "quality-governance",
       "origin": "extension",
@@ -4782,8 +5432,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 83944,
-        "sha256": "6817a1b16fcfb1445d1ce14c76cf3ec089fbd3d16cbf76af245a06f72bddd92f"
+        "bytes": 84235,
+        "sha256": "96c71e1b25e8af3387018fe30f77863fad2ebdba3149fe8327c542d17e99d669"
       }
     },
     {
@@ -4898,11 +5548,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "85798bee31412daeefabd7bcd32c2e0f25527f05"
+        "oid": "b88095c11d2b18c3251c5456b8fed3698eefaf39"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "85798bee31412daeefabd7bcd32c2e0f25527f05"
+        "oid": "b88095c11d2b18c3251c5456b8fed3698eefaf39"
       },
       "committed_change": "M",
       "staged_change": null,
@@ -4911,8 +5561,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 76616,
-        "sha256": "c6750cfe702bb50eea884d9450990f055cc0ab60648cffaaf4fc957311cae3b1"
+        "bytes": 80469,
+        "sha256": "6c7e69bb2b004f747b8cd7aea90d492aa7bce4ceba47d91021eae8ad2e671a22"
       }
     },
     {
@@ -5408,11 +6058,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "8a7893d7a8ee554bcd829d470e90b6b08706e48d"
+        "oid": "f48566afe7b4b62a254ed80dcd730e6a39d8e7d7"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "8a7893d7a8ee554bcd829d470e90b6b08706e48d"
+        "oid": "f48566afe7b4b62a254ed80dcd730e6a39d8e7d7"
       },
       "committed_change": "M",
       "staged_change": null,
@@ -5421,8 +6071,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 12234,
-        "sha256": "c5d3a10cd667f8a95f8487c57035c524ffb73c2d9715cb3382b4efbd8270a708"
+        "bytes": 12271,
+        "sha256": "ec6962429d15ea423ab22aa1b202ae258df137d45a5ebdbf0514f19face56638"
       }
     },
     {
@@ -5510,6 +6160,35 @@
         "present": true,
         "bytes": 101367,
         "sha256": "fa9d7f168e1225c945314d95f05c5a0d3d363c8797786723c941c60cd222c0f1"
+      }
+    },
+    {
+      "path": "rag/llm/sequence2txt_model.py",
+      "module": "models-runtime",
+      "origin": "core_change",
+      "base_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "e41c48159ece1135b3aa866654fbb91c5e9bac23"
+      },
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "bd65f52291bb28c628a3a1a087c3a358086c2d68"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "bd65f52291bb28c628a3a1a087c3a358086c2d68"
+      },
+      "committed_change": "M",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "M",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 17338,
+        "sha256": "23aaf9fb34e7cec8dbdc8a6c9e8058f173e423fd41ece3f3a91f945e7179300a"
       }
     },
     {
@@ -5769,11 +6448,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "8007d7150520d45f677bd31635fab1e749f44686"
+        "oid": "92e321c0429dc73dce214818af74c5f89a4f7a82"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "8007d7150520d45f677bd31635fab1e749f44686"
+        "oid": "92e321c0429dc73dce214818af74c5f89a4f7a82"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -5782,8 +6461,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 522,
-        "sha256": "47a8736b2edad1139d9747bfc58112f1b593e8273436298c44afbe9861f3e18e"
+        "bytes": 584,
+        "sha256": "6b67e93fec9b030fe9c8ce012da282a29efe9d2c253458f79ca301f95b3125ca"
       }
     },
     {
@@ -5944,11 +6623,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "af6b53edf6deb898e1e976ae0f611d1b52a9b640"
+        "oid": "8f5c7622efd4f0141e2a94a98db38f8421a22003"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "af6b53edf6deb898e1e976ae0f611d1b52a9b640"
+        "oid": "8f5c7622efd4f0141e2a94a98db38f8421a22003"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -5957,8 +6636,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 1160,
-        "sha256": "f18e4ade35bd87e9bde3063f0c5b7d2d9c78fcbfa14049d37927bc6a32eaf6e9"
+        "bytes": 1680,
+        "sha256": "f6acf82a40023a5d526141b6c35ec52fd61ccccd9ea7a1a4d73e945a8db7cef4"
       }
     },
     {
@@ -6044,11 +6723,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "9dc908cbff39af603129161b85e03e8f4a0fdbc0"
+        "oid": "390cee4d63deda957b27b44277cc682fb8abf0f5"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "9dc908cbff39af603129161b85e03e8f4a0fdbc0"
+        "oid": "390cee4d63deda957b27b44277cc682fb8abf0f5"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -6057,8 +6736,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 7044,
-        "sha256": "14fd9654cdb7f8daa27f219ddcdba323acbbb5246c6c70d3a0730fdb4ee2f6b0"
+        "bytes": 7808,
+        "sha256": "b089e819abb5d72957f868f04236f4333adbba12aa13e380cb05f3bbdf973319"
       }
     },
     {
@@ -6244,11 +6923,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "7d7f855c01b7b253a4452cc53409d6187c967380"
+        "oid": "ec316b3e69d43b070938f6467f7943a2e01fb3a8"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "7d7f855c01b7b253a4452cc53409d6187c967380"
+        "oid": "ec316b3e69d43b070938f6467f7943a2e01fb3a8"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -6257,8 +6936,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 7355,
-        "sha256": "c3f2f806f6df4c1ecd9dbaf40c499e852a2c34bfa38d38d046b3a95228128498"
+        "bytes": 8106,
+        "sha256": "ac59af09cf4b235847f05c262663d4301dda3c76c6ca34af69ca09a0c47bc76f"
       }
     },
     {
@@ -6319,11 +6998,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "831851bc30b9c84beeac2573490b29ed2f115404"
+        "oid": "55bed93874821accc901bcbadf3919e32d2f1221"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "831851bc30b9c84beeac2573490b29ed2f115404"
+        "oid": "55bed93874821accc901bcbadf3919e32d2f1221"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -6332,8 +7011,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 4911,
-        "sha256": "39857e97451ffee43e46859aac0439d29e6c4d87fd01b2d3dcb541c55f1e39be"
+        "bytes": 5250,
+        "sha256": "86c2272fcc3b3fb4b14d1af35c64c9a6e729a0f01dda20bbfcb6f6e194f52b1f"
       }
     },
     {
@@ -6437,18 +7116,18 @@
       }
     },
     {
-      "path": "services/asr-online-service/src/asr_service/jobs/job_models.py",
+      "path": "services/asr-online-service/src/asr_service/jobs/job_events.py",
       "module": "asr",
       "origin": "extension",
       "base_entry": null,
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "dd30c3b2fb4f309ff71aef90123ccf8c6df007b2"
+        "oid": "1e409b116cb70e2e75204ade9c880d86c07d6ad0"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "dd30c3b2fb4f309ff71aef90123ccf8c6df007b2"
+        "oid": "1e409b116cb70e2e75204ade9c880d86c07d6ad0"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -6457,8 +7136,33 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 1355,
-        "sha256": "f67778622dad35227085bbc0d0814c7347fba9cece8ba77e5d805bd9c3b368db"
+        "bytes": 3139,
+        "sha256": "bab78da96157852e23d63e1318ff007f7e1adb09a604761fb0e4e1c8ef12105b"
+      }
+    },
+    {
+      "path": "services/asr-online-service/src/asr_service/jobs/job_models.py",
+      "module": "asr",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "1a03dcadf057e675f3159f120691cc4c452fe0f1"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "1a03dcadf057e675f3159f120691cc4c452fe0f1"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 1540,
+        "sha256": "8f8bad615f986badfad2aca43919fc5496f9d9ef3c478c06ba9c192f7d07487b"
       }
     },
     {
@@ -6519,11 +7223,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "b52685694766b4ffb623680c377f267178dad78d"
+        "oid": "7926d99fc370cb586fa606fe0d73414ae2fe06e7"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "b52685694766b4ffb623680c377f267178dad78d"
+        "oid": "7926d99fc370cb586fa606fe0d73414ae2fe06e7"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -6532,8 +7236,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 8401,
-        "sha256": "7cf27c66c363a12f9b1cca976f3e9d323b17fcddc9fb08ddd186c157c78887ee"
+        "bytes": 9309,
+        "sha256": "886d039a5a7b67060dbd4ee7abe2a819e083104b3e73e8f2ee6ec31e14219234"
       }
     },
     {
@@ -6694,11 +7398,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "58e1f3abeeb7b73e6bfed5dad9f158366c1431ce"
+        "oid": "7f7affb700dee952e90e6d861931ce85cc6bcac3"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "58e1f3abeeb7b73e6bfed5dad9f158366c1431ce"
+        "oid": "7f7affb700dee952e90e6d861931ce85cc6bcac3"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -6707,8 +7411,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 2202,
-        "sha256": "6d1eaf1c78c5435ba53df20a3f61673662ea0b6fd7ac2e3789af8dd445f1f831"
+        "bytes": 3941,
+        "sha256": "55d957551ac51bf9ac324d11155c97be0d80b2f1b699316468c07862559fcfb2"
       }
     },
     {
@@ -6894,11 +7598,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "a39f42d4cdf4292d0d0e534a847a21bdd65700ef"
+        "oid": "b1cd96a003fcbd5e7598eb56a1460072cee1075e"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "a39f42d4cdf4292d0d0e534a847a21bdd65700ef"
+        "oid": "b1cd96a003fcbd5e7598eb56a1460072cee1075e"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -6907,8 +7611,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 1874,
-        "sha256": "0afc5cfef73330686ccca250b2e43a8a519a11d5d153d494bb5d22af59db89fd"
+        "bytes": 1969,
+        "sha256": "1bf0dc3dc789ba42a593f0950e4e9c64e9f93ee15e241a7ac8a5c7ccc2691859"
       }
     },
     {
@@ -7187,6 +7891,31 @@
       }
     },
     {
+      "path": "services/asr-online-service/tests/test_job_events.py",
+      "module": "asr",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "9f591858c08c5b16d2b432eda8177c9b1bd9c920"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "9f591858c08c5b16d2b432eda8177c9b1bd9c920"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 1415,
+        "sha256": "7b69811e06867fe376851e9236e99af90465c274e04834f98b73eb539fef3d8e"
+      }
+    },
+    {
       "path": "services/asr-online-service/tests/test_job_status_transitions.py",
       "module": "asr",
       "origin": "extension",
@@ -7219,11 +7948,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "ceda463535de347880b65c87f20030db8b3a92ae"
+        "oid": "baec9dd7cec6dcae6c7106dcbd78d2bf123d954b"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "ceda463535de347880b65c87f20030db8b3a92ae"
+        "oid": "baec9dd7cec6dcae6c7106dcbd78d2bf123d954b"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -7232,8 +7961,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 1951,
-        "sha256": "a4e1e0579280409fc81159c6ce104dd2932ef580846c516578a2b279900e5f4b"
+        "bytes": 4021,
+        "sha256": "ab99860d8d2f2b12c77269fc79d5aead39e2d8ae226e18fc3f53e5ff0eae0895"
       }
     },
     {
@@ -7244,11 +7973,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "a4c482d905f0298b2b57e990e334d238d7881db8"
+        "oid": "dbda9ac9ed688c42debe109b94736c54ddb89aec"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "a4c482d905f0298b2b57e990e334d238d7881db8"
+        "oid": "dbda9ac9ed688c42debe109b94736c54ddb89aec"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -7257,8 +7986,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 10356,
-        "sha256": "44f23b5db9b4a6e58913211c887b4b0be21cf825abd8153891638f8c9d51dc2e"
+        "bytes": 10438,
+        "sha256": "6e5a8a4d8d50b0be170f91ac90f5c67b15e5db9701690fcd75049a08cfc6c0b4"
       }
     },
     {
@@ -7344,11 +8073,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "86f5ed80c6ecb3df792bd042fe6a3dc315ac7fc5"
+        "oid": "c3bca534063dd4a32239b7384396c5723e024131"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "86f5ed80c6ecb3df792bd042fe6a3dc315ac7fc5"
+        "oid": "c3bca534063dd4a32239b7384396c5723e024131"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -7357,8 +8086,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 1533,
-        "sha256": "ae72f75adc7f6f2c6e3c1488a8f80cf66082697dae7c9b5f1e1ec2587684817a"
+        "bytes": 2704,
+        "sha256": "170fa09885c4e9beef4bc18c9ed761a4c4ec5b3f4c581c68a6a04fb2e40f228d"
       }
     },
     {
@@ -8348,6 +9077,31 @@
       }
     },
     {
+      "path": "test/playwright/e2e/test_document_constructor_ui.py",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "9d8b0c20f8a09239b3f5867eaf35dff574c12a24"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "9d8b0c20f8a09239b3f5867eaf35dff574c12a24"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 57916,
+        "sha256": "97a06f150ff000e89b8e0f865a8ebe39032bd4d7fd1e7b6a60c0f2cdb02d479a"
+      }
+    },
+    {
       "path": "test/playwright/e2e/test_live_document_roundtrip.py",
       "module": "quality-governance",
       "origin": "extension",
@@ -8589,6 +9343,31 @@
       }
     },
     {
+      "path": "test/playwright/golden/sql-schema-snapshot.v1.json",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "de80e6c008dc6db36b1309da6b148276dc1bf17e"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "de80e6c008dc6db36b1309da6b148276dc1bf17e"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 5118,
+        "sha256": "82545e16286377ca893352e245ede96bea019c269f9208eadff4384d19078285"
+      }
+    },
+    {
       "path": "test/playwright/helpers/_auth_helpers.py",
       "module": "quality-governance",
       "origin": "core_change",
@@ -8737,11 +9516,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "acdb93d01e86868eb208c71d81507980f2fb8df0"
+        "oid": "3a73cfb5ff0b6ebb1ae5c1f839eb1d119286ac99"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "acdb93d01e86868eb208c71d81507980f2fb8df0"
+        "oid": "3a73cfb5ff0b6ebb1ae5c1f839eb1d119286ac99"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -8750,8 +9529,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 7203,
-        "sha256": "4fbc537c7bdf7955e35b6a115f80e7939a9671615e97248c1319bf6f22757ea9"
+        "bytes": 7784,
+        "sha256": "2bb4335257561a5f98488cf2ad31a6629223e89c3598f783135da50ebdbe08ed"
       }
     },
     {
@@ -8762,11 +9541,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "5a4e4a4e88c2565b44a16e0a4341ca411cdbd9f4"
+        "oid": "ec7920322154131149a3e680e32c5877e70cb074"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "5a4e4a4e88c2565b44a16e0a4341ca411cdbd9f4"
+        "oid": "ec7920322154131149a3e680e32c5877e70cb074"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -8775,8 +9554,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 2345,
-        "sha256": "c50d3ef56764c5061148cf0c460426bbf741d5ba8a540f956c204e468de48ead"
+        "bytes": 2620,
+        "sha256": "de0e459ebd1af85f4d6e591fbac1c26afb2a01582e28847d9c95b3acb695c9d2"
       }
     },
     {
@@ -9077,11 +9856,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "e54a03e76bc8ebdcbb34b5740f45bab462d61f1b"
+        "oid": "9285d7d7cf7ece7d1b7a57264fb5d57faee37b1b"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "e54a03e76bc8ebdcbb34b5740f45bab462d61f1b"
+        "oid": "9285d7d7cf7ece7d1b7a57264fb5d57faee37b1b"
       },
       "committed_change": "M",
       "staged_change": null,
@@ -9090,8 +9869,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 43445,
-        "sha256": "8fe1b7d7ab5fcdae7a7459a61ca72509d3fccd86bd2bc512c073a176f6c5d6c5"
+        "bytes": 45278,
+        "sha256": "30927bcc078c4d6add41bc526aaa7ba14b0c23573e8aa057c43b61d789c563f9"
       }
     },
     {
@@ -9376,11 +10155,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "4379399db4989b34e8600d4684e5d69485da9a28"
+        "oid": "1d23ee265036b7746a49606909e01f1f7dc7953d"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "4379399db4989b34e8600d4684e5d69485da9a28"
+        "oid": "1d23ee265036b7746a49606909e01f1f7dc7953d"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -9389,8 +10168,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 8749,
-        "sha256": "9a8373f994fbc4c413acef87368f96229c09388a638e10834fab56b8e552812e"
+        "bytes": 11265,
+        "sha256": "654b51597cbd744b32cdcc67a1418e4f2fdb7b18d8c2d130a603e802e1f54ed5"
       }
     },
     {
@@ -9526,11 +10305,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "04450545c2b4c8bb59e94fc294d47c8545d955e9"
+        "oid": "f63c8658d228ff8d12610f35b664607aec6a9a5a"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "04450545c2b4c8bb59e94fc294d47c8545d955e9"
+        "oid": "f63c8658d228ff8d12610f35b664607aec6a9a5a"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -9539,8 +10318,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 14222,
-        "sha256": "a3ebd4606612c3a5b21364764a046c10af9ad95d0e4dd9bace31f3bc205179ef"
+        "bytes": 14824,
+        "sha256": "dbe84ddf9079362714dd8fa1909245263057866ff3871a195a2bbfea929ce346"
       }
     },
     {
@@ -9576,11 +10355,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "f13be9d945064ec206b8640e3abedfc45bf2212d"
+        "oid": "945c2498c105054296b209ff35b2b32c34e5c728"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "f13be9d945064ec206b8640e3abedfc45bf2212d"
+        "oid": "945c2498c105054296b209ff35b2b32c34e5c728"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -9589,8 +10368,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 9956,
-        "sha256": "122a7abd8ba97463053a993acd7830045bc3e330d29042c122754a02b0387364"
+        "bytes": 22488,
+        "sha256": "32ba593094b10da77d07c61f4954481f13f9febd19683bb8f366a8496d6ba459"
       }
     },
     {
@@ -9626,11 +10405,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "6e320d6b7f1d2236233b1a79663c7ecf24b30ddd"
+        "oid": "e4790cdb0b44365598fc26cee10b54b165cf5185"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "6e320d6b7f1d2236233b1a79663c7ecf24b30ddd"
+        "oid": "e4790cdb0b44365598fc26cee10b54b165cf5185"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -9639,8 +10418,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 138473,
-        "sha256": "deff2399cf380e0e5c4f4b364814c5cc50e289257be706445518c55c956cb715"
+        "bytes": 139795,
+        "sha256": "1d8dfff2d50e25c831454d2d13d9ae33973f805756fd464ff8a40b820808d00a"
       }
     },
     {
@@ -9691,6 +10470,231 @@
         "present": true,
         "bytes": 47690,
         "sha256": "0e1230a2658ab812e68eb423daa3047446c8a3f353af21c148e650cb4d3ef8e6"
+      }
+    },
+    {
+      "path": "test/unit_test/api/apps/business_documents/test_sql_execution_registry.py",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "c8c9519ea1763ffd146c8b60149c98a0b8315f5d"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "c8c9519ea1763ffd146c8b60149c98a0b8315f5d"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 10563,
+        "sha256": "54792edeef2326c37d7ba55d3752e7fd56939055306b9346cd5b758214c36282"
+      }
+    },
+    {
+      "path": "test/unit_test/api/apps/business_documents/test_sql_execution_registry_service.py",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "d357e2c62e0f9cba2635be40d66938b2d8ef3f0b"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "d357e2c62e0f9cba2635be40d66938b2d8ef3f0b"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 17323,
+        "sha256": "f1088dfb7720bc033551216b800c139289383470917b2da0c7743bc29f93896b"
+      }
+    },
+    {
+      "path": "test/unit_test/api/apps/business_documents/test_sql_query_agent_cycle.py",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "fd38e0281865e8bce1f67f0eb74a1a77d5f6180d"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "fd38e0281865e8bce1f67f0eb74a1a77d5f6180d"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 6973,
+        "sha256": "54984bbd76562e9a05eb7ddeb5c21112dc2dc77bd14b389667bdc36463123a4f"
+      }
+    },
+    {
+      "path": "test/unit_test/api/apps/business_documents/test_sql_query_agent_service.py",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "3507e2f37d895f4497aaa497f6c2786d766d4e1b"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "3507e2f37d895f4497aaa497f6c2786d766d4e1b"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 8944,
+        "sha256": "8b2e913ec1e8c88a411e663e6880ea54429befa3a9843c0b4d4b8c1c0bfe33bd"
+      }
+    },
+    {
+      "path": "test/unit_test/api/apps/business_documents/test_sql_query_lifecycle.py",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "62c96f635496cdc346048bc88e0ee7f7f9cd2315"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "62c96f635496cdc346048bc88e0ee7f7f9cd2315"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 2485,
+        "sha256": "bfd1ba79e927d4fef5e42fe1dd1af23397a9f8c976aa600b2c78ce15f4155f50"
+      }
+    },
+    {
+      "path": "test/unit_test/api/apps/business_documents/test_sql_query_omd_cases.py",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "7006b6ea5c2006c98d44095055aee0dad2a0e68b"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "7006b6ea5c2006c98d44095055aee0dad2a0e68b"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 12511,
+        "sha256": "00da13395ed9cb8b5431d58f0519ecfeee5e9226b6e213059420a684911755eb"
+      }
+    },
+    {
+      "path": "test/unit_test/api/apps/business_documents/test_sql_query_planning.py",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "f79f0db6430b85f570dda8573ee0569b9e1de2b1"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "f79f0db6430b85f570dda8573ee0569b9e1de2b1"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 12454,
+        "sha256": "9b017c358488e05a2002c00d1845bbe4731412d305be32279a9dae48225cdcf8"
+      }
+    },
+    {
+      "path": "test/unit_test/api/apps/business_documents/test_sql_query_schema_resolution.py",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "0d7416003f2b9c0ecd8e0a033c4630bef6e008d3"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "0d7416003f2b9c0ecd8e0a033c4630bef6e008d3"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 18060,
+        "sha256": "3ba798048de06f0d4aba417c7a4b402abacd0f720e86ea8eb33dc5751e88fa89"
+      }
+    },
+    {
+      "path": "test/unit_test/api/apps/business_documents/test_sql_query_specification.py",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "c6c122090db03595eee7ef979406a7044bfb3b59"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "c6c122090db03595eee7ef979406a7044bfb3b59"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 16728,
+        "sha256": "4592f2c6b556307553cb96ba0d9fc70c1b41cb5891891a423eb489b3e81e792a"
       }
     },
     {
@@ -9759,11 +10763,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "086b91e12baf2a6b2959feec40e84d97e274e581"
+        "oid": "e2a691a8a7ac9045bd75367833e2f0978940f410"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "086b91e12baf2a6b2959feec40e84d97e274e581"
+        "oid": "e2a691a8a7ac9045bd75367833e2f0978940f410"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -9772,8 +10776,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 6462,
-        "sha256": "f9eaefc8369e2ed67d8567dadb02f8b0a7091a5e50a1957c046ee941552323df"
+        "bytes": 9741,
+        "sha256": "c07e2e09c56cdb2f7803145436099fae0b59228938c7074e9792f4a6f4c2da00"
       }
     },
     {
@@ -9788,11 +10792,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "2da506fdb1daccdc82b303abacd8d46bd2ebf81c"
+        "oid": "7fe918e1d2fc36bbc521a71d75080f56ad4ff0fd"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "2da506fdb1daccdc82b303abacd8d46bd2ebf81c"
+        "oid": "7fe918e1d2fc36bbc521a71d75080f56ad4ff0fd"
       },
       "committed_change": "M",
       "staged_change": null,
@@ -9801,8 +10805,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 7660,
-        "sha256": "8d453aa1ecdd9ffded974e62edb432dba16ba84e2517c722afada8dbdb71b264"
+        "bytes": 11761,
+        "sha256": "d0cc9c80c767fe220b45e5030256b76cfcbe221ad2db94b94cee53a1e17e7314"
       }
     },
     {
@@ -9813,11 +10817,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "d5d0799d837974ce33aa07ca7cd94c491274896e"
+        "oid": "f530616a85bc57eed2a0abaa033583d86a59f728"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "d5d0799d837974ce33aa07ca7cd94c491274896e"
+        "oid": "f530616a85bc57eed2a0abaa033583d86a59f728"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -9826,8 +10830,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 13895,
-        "sha256": "8321e68e558009e1715a33be68d5443aeb03a6df3a240426164af8bd74a73506"
+        "bytes": 14154,
+        "sha256": "8129ae1f3879ad7c8ccc4a1324480310edbcd4bbe6a830ec999825158a459e68"
       }
     },
     {
@@ -10900,6 +11904,31 @@
       }
     },
     {
+      "path": "test/unit_test/rag/llm/test_sequence2txt_streaming.py",
+      "module": "models-runtime",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "bc7a2061b37979bff035781a200dbcdcbbe00c09"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "bc7a2061b37979bff035781a200dbcdcbbe00c09"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 4664,
+        "sha256": "0f611ac3ac2432289d61abef7be52df1013108d9c8d716da5c72d2f574866ada"
+      }
+    },
+    {
       "path": "test/unit_test/rag/test_sync_data_source.py",
       "module": "ingestion-connectors",
       "origin": "core_change",
@@ -11161,21 +12190,21 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "44514298b31d91ea2f7ff353b5017241340e114a"
+        "oid": "ea12b7f337d3362d51df7896966239d87bc30758"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "44514298b31d91ea2f7ff353b5017241340e114a"
+        "oid": "ea12b7f337d3362d51df7896966239d87bc30758"
       },
       "committed_change": "A",
       "staged_change": null,
-      "unstaged_change": "M",
+      "unstaged_change": null,
       "working_change_from_base": "A",
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 42807,
-        "sha256": "9f1b504253306bea41b68ef99ba027122e526d5ed8b18dcd643a502f40dd4a6a"
+        "bytes": 43610,
+        "sha256": "8777382376b9e3cabca3199455440be0d64f202bfdeb1e593a7fb0bc11bd9903"
       }
     },
     {
@@ -11186,11 +12215,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "a1ade61816717b7335fce600f5e381141e4345ff"
+        "oid": "3d907874ac054afa859fee30cdc7bf97dbf0c295"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "a1ade61816717b7335fce600f5e381141e4345ff"
+        "oid": "3d907874ac054afa859fee30cdc7bf97dbf0c295"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -11199,8 +12228,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 12769,
-        "sha256": "7183ba4a81826eac7c784b5bf7c93e26fb5c3ce9b46893ad21abe9ea3ffa93d5"
+        "bytes": 12795,
+        "sha256": "e4dc471f7abb8199f8dcd4902de9c96fb7863eb650c914a7e9bffef6ab670ea2"
       }
     },
     {
@@ -11236,11 +12265,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "5f7c85e42783f9219162a0b58079c9a9d0e205e6"
+        "oid": "47e16702c078e36a47a4167b4a151f334ede79a4"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "5f7c85e42783f9219162a0b58079c9a9d0e205e6"
+        "oid": "47e16702c078e36a47a4167b4a151f334ede79a4"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -11249,8 +12278,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 7407,
-        "sha256": "9ac2ef4bcab8332a9c2949ac5fd5d529bfc0a0f8aa6073544b344bc52d98bc56"
+        "bytes": 7448,
+        "sha256": "3963d4b81d78314c0c31f57104bc6195877a61961b4df9d333546010cadd4999"
       }
     },
     {
@@ -11349,8 +12378,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 61082,
-        "sha256": "9b86ec286855ea197f34b97bcec79db27132522a5f0cdb6cc2dd88f796f0dfc9"
+        "bytes": 61076,
+        "sha256": "099e7018486664eccdf04f2abc1ba14dfe5c51ea9e81c02cad1d2a5bf0524626"
       }
     },
     {
@@ -11511,11 +12540,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "5c8648e04cd8bbc1a603c37e244307cbb13bf22e"
+        "oid": "99dbb10a12ccb997a7415d5712454d3dcded88ec"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "5c8648e04cd8bbc1a603c37e244307cbb13bf22e"
+        "oid": "99dbb10a12ccb997a7415d5712454d3dcded88ec"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -11524,8 +12553,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 19609,
-        "sha256": "dceaa4d9b22210a95f8cb6dd0d43cb6535a22db72a050d06e19c955da3b57191"
+        "bytes": 19688,
+        "sha256": "a31b07dc93b9c7db6e44d30bc0cf97f56f1c6ba2b3f61cd60e106fc4b6b68e4e"
       }
     },
     {
@@ -11903,8 +12932,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 26021,
-        "sha256": "4a12f7084f91831d2202473d09eaba65125b8af0a5d91a49784a5739737f9864"
+        "bytes": 26429,
+        "sha256": "b31868b05786779756a466441e5b123ae21a2538694f277fe43e4ea705b15581"
       }
     },
     {
@@ -12028,8 +13057,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 80283,
-        "sha256": "5e9ffa443819be43016ed0345e56d119f6e7e717ff5cba82f5eb566f152797b2"
+        "bytes": 80282,
+        "sha256": "d640a96e9d63839218ae0ee1e926745314f561424a0c05bdaf8068f6b12f5344"
       }
     },
     {
@@ -12140,11 +13169,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "6e61cbe5b6771fcfb62f92b7f9ca13c074931534"
+        "oid": "0ba0ba92ac7f59dfc100534e4cd64ab4c70b5f6b"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "6e61cbe5b6771fcfb62f92b7f9ca13c074931534"
+        "oid": "0ba0ba92ac7f59dfc100534e4cd64ab4c70b5f6b"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -12189,11 +13218,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "0fec9f1447c282b938633bca62faddd7b4a2877b"
+        "oid": "31d7912d7b5973747a5b1c8a50964900a5845532"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "0fec9f1447c282b938633bca62faddd7b4a2877b"
+        "oid": "31d7912d7b5973747a5b1c8a50964900a5845532"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -12288,21 +13317,21 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "624ff19e8320815f975978a03633bcabeb9183e7"
+        "oid": "740ff56885a38fc48790bd38a8ab0feefc5aeaa8"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "624ff19e8320815f975978a03633bcabeb9183e7"
+        "oid": "740ff56885a38fc48790bd38a8ab0feefc5aeaa8"
       },
       "committed_change": "A",
       "staged_change": null,
-      "unstaged_change": null,
+      "unstaged_change": "M",
       "working_change_from_base": "A",
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 12970,
-        "sha256": "7f0cebebac8bb8c2080fc1c2e438d58b9cdaf6cb222b1be51dbed7926019aed1"
+        "bytes": 769,
+        "sha256": "397cf1ce167b7a1153630230c7afbe1dcefd0b9386b9fb072d23270092262701"
       }
     },
     {
@@ -12413,11 +13442,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "db85d098d13f2326df2cef121c7dbcc869437be3"
+        "oid": "74a3536c2ac027131cc56039be66aa2f257a1643"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "db85d098d13f2326df2cef121c7dbcc869437be3"
+        "oid": "74a3536c2ac027131cc56039be66aa2f257a1643"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -12426,8 +13455,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 61000,
-        "sha256": "3a8f63a1db395348c33797db6144ac273a334b261c8842bdce8c8f87b648207a"
+        "bytes": 67250,
+        "sha256": "1a4f28dddd736084ef94fd5036395649bb38b3257da74dcdc4669beb7cdade18"
       }
     },
     {
@@ -12513,11 +13542,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "bd1af18e7eac87df181cb47e2c190955cc5748a4"
+        "oid": "d6bb0c9f42618542ea6fb06645ea139be3be2af2"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "bd1af18e7eac87df181cb47e2c190955cc5748a4"
+        "oid": "d6bb0c9f42618542ea6fb06645ea139be3be2af2"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -12526,8 +13555,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 26466,
-        "sha256": "23ffb8dd5bc16eeb9e3699d0eb9bfc0c8ce4c4ab33daccfc84ef64743f4b3165"
+        "bytes": 38200,
+        "sha256": "f8b5c69305d4530e2f0b1f9d53dca2ef7a7ba226228e4a1c153e29bb120a9588"
       }
     },
     {
@@ -12713,21 +13742,21 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "95b9c5129ffec73744a2dfb6f2c897109ba72aa1"
+        "oid": "fc7ceed176f5dc334a22b5a16d9a0169bb8c293f"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "95b9c5129ffec73744a2dfb6f2c897109ba72aa1"
+        "oid": "fc7ceed176f5dc334a22b5a16d9a0169bb8c293f"
       },
       "committed_change": "A",
       "staged_change": null,
-      "unstaged_change": null,
+      "unstaged_change": "M",
       "working_change_from_base": "A",
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 109508,
-        "sha256": "0ebf8586bb3cacae5736265af0210c3a9b4ce3db12773be9cfededf50edf0743"
+        "bytes": 127878,
+        "sha256": "cd0977948281917f0b45c3dc00bfec2d6569199ed15f29fad668bcf349c0ea2c"
       }
     },
     {
@@ -12781,6 +13810,31 @@
       }
     },
     {
+      "path": "tools/scripts/provision_sql_query_omd_mapping.py",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "e2be5a6b6f798a2c292f15743748ac8be6e0bfea"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "e2be5a6b6f798a2c292f15743748ac8be6e0bfea"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 9495,
+        "sha256": "a277794880fecde2b3f68af4148f77adf0678e6bc1041aafcdaf62db4044dd31"
+      }
+    },
+    {
       "path": "uv.lock",
       "module": "quality-governance",
       "origin": "core_change",
@@ -12792,11 +13846,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "bc81a19c99de1cac226357f668db309e2207c63d"
+        "oid": "bf4677e039eb405f8c2dbd30e36e777e0cfd5dcf"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "bc81a19c99de1cac226357f668db309e2207c63d"
+        "oid": "bf4677e039eb405f8c2dbd30e36e777e0cfd5dcf"
       },
       "committed_change": "M",
       "staged_change": null,
@@ -12806,7 +13860,7 @@
       "working_file": {
         "present": true,
         "bytes": 856463,
-        "sha256": "4b102d68794a0de094b5184c1230f2191c9d24a287d692019b3c3e0db41a644b"
+        "sha256": "0e6b440c9c82932d7ed54bb3a41a4b0fd7c89c7a1a64e277ca8af02f1450b602"
       }
     },
     {
@@ -14165,11 +15219,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "4cec1d884e8a5699ad253c471b84369ea6812fce"
+        "oid": "b0d374b0a292bc88e1c532b745bece68b23154f7"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "4cec1d884e8a5699ad253c471b84369ea6812fce"
+        "oid": "b0d374b0a292bc88e1c532b745bece68b23154f7"
       },
       "committed_change": "M",
       "staged_change": null,
@@ -14178,8 +15232,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 9648,
-        "sha256": "5336cc32b456d04eb422a573a8275132bb7b7e1af5c8ac3e2a84429c29546dd3"
+        "bytes": 9755,
+        "sha256": "562a3a39fb5c4cc0c233f8eaa590dcdaf9379eab91225c1ccb76cc25beabdee4"
       }
     },
     {
@@ -14426,11 +15480,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "690f4d3acf333941a57946822a7f4c47a88412f9"
+        "oid": "750065f5eeb3f0431829a169ae98762ba26ba862"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "690f4d3acf333941a57946822a7f4c47a88412f9"
+        "oid": "750065f5eeb3f0431829a169ae98762ba26ba862"
       },
       "committed_change": "M",
       "staged_change": null,
@@ -14439,8 +15493,58 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 14129,
-        "sha256": "62e983a2a8b111f49f77a2b61dc0ffb747082afe0aa05259d309cf8781d7ebc0"
+        "bytes": 14324,
+        "sha256": "d61e61e1f44d38e165d10f98ff8ae1786bc9bd28d27d0994f4186eb852b2e4ca"
+      }
+    },
+    {
+      "path": "web/src/components/ui/audio-stream.test.ts",
+      "module": "frontend-foundation",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "34bacebb3368a1c5436ad60de43f9ccbf06185aa"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "34bacebb3368a1c5436ad60de43f9ccbf06185aa"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 1487,
+        "sha256": "1c5550d5720cb9e8eb07a02fa96c70fd6ae6984b9d3ac922208f53ff806f5a19"
+      }
+    },
+    {
+      "path": "web/src/components/ui/audio-stream.ts",
+      "module": "frontend-foundation",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "f0f64a06e575cbec3c0d559fd2c7eb37e3c1c297"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "f0f64a06e575cbec3c0d559fd2c7eb37e3c1c297"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 1689,
+        "sha256": "42e8fc42ad78b63ceb3a27cbe796baf208a2bcfcaefb10688aa4470bb7755416"
       }
     },
     {
@@ -14849,11 +15953,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "6a12dd23fed6c16149cc9c79374542b79f5d6af1"
+        "oid": "59fba940cb72878f0e11958ec98f6ee127bb3969"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "6a12dd23fed6c16149cc9c79374542b79f5d6af1"
+        "oid": "59fba940cb72878f0e11958ec98f6ee127bb3969"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -14862,8 +15966,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 1411,
-        "sha256": "f78c8828b3479641194db9e9a4a23e45adee8fc4c3cdd59da92b1d3a5996d6fa"
+        "bytes": 4485,
+        "sha256": "68b5ef2ce26f5dee1f95880ada664fec760b395184e366cd970518d20f93e65d"
       }
     },
     {
@@ -14878,11 +15982,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "7db57d94ee799aa35d5e49a54b91007200017ba6"
+        "oid": "60c3c1591f8a2e689b33efa199c064db372589fb"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "7db57d94ee799aa35d5e49a54b91007200017ba6"
+        "oid": "60c3c1591f8a2e689b33efa199c064db372589fb"
       },
       "committed_change": "M",
       "staged_change": null,
@@ -14891,8 +15995,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 10639,
-        "sha256": "9339e12a2780dfab027b729508f1296bd94bec691a00c3ad11393fd9915a4be5"
+        "bytes": 11997,
+        "sha256": "7809331e2c6abba37e00c5c622d32908d7f8f515cdcba3ba5322f8a573d9ac3d"
       }
     },
     {
@@ -15106,11 +16210,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "86bb1b5a3eabc62ab4da9daf065f050fb83d1a84"
+        "oid": "3fca699e05a363a7d563a84280155100ba871ff9"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "86bb1b5a3eabc62ab4da9daf065f050fb83d1a84"
+        "oid": "3fca699e05a363a7d563a84280155100ba871ff9"
       },
       "committed_change": "M",
       "staged_change": null,
@@ -15119,8 +16223,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 174430,
-        "sha256": "aa15c1803ab26d9e160a8f1bcd573b8e04b46a7edbca7f787d11b37f79f28f15"
+        "bytes": 174473,
+        "sha256": "dd98419c52dd34e3e7e680579b1d3ff0144c01bc179a84ed2d68f6ae10fcf077"
       }
     },
     {
@@ -15338,11 +16442,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "a56d16a168ef22b3bf8cd6e5c5e552b2ffc0f6a6"
+        "oid": "9113753befce78c849f96f95a0c210fdcde89b3f"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "a56d16a168ef22b3bf8cd6e5c5e552b2ffc0f6a6"
+        "oid": "9113753befce78c849f96f95a0c210fdcde89b3f"
       },
       "committed_change": "M",
       "staged_change": null,
@@ -15351,8 +16455,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 219733,
-        "sha256": "000d96dd537837fdd75944f0a0954f265b31dbe292a0255eb66ff5656933b5c8"
+        "bytes": 219787,
+        "sha256": "0935e3ba0ae2577fc33a39d4211500c0f263d362f1bae20b5fa34cbdd0fb07e7"
       }
     },
     {
@@ -16905,11 +18009,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "1051fd6a5f5ae3eb59b6003bc80b6056c1221747"
+        "oid": "0974fb922d7544ae393aedc15cebd6a6700c0b13"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "1051fd6a5f5ae3eb59b6003bc80b6056c1221747"
+        "oid": "0974fb922d7544ae393aedc15cebd6a6700c0b13"
       },
       "committed_change": "M",
       "staged_change": null,
@@ -16918,8 +18022,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 5066,
-        "sha256": "c88d0f52b4ffc475f542fca227d946f763972e1cc1a12883d81ed09a8f91a5ec"
+        "bytes": 6570,
+        "sha256": "9785c573be65b3934ca566fa5fdd766e9c2f234d36bb10949992a4c59d8de246"
       }
     },
     {
@@ -16992,11 +18096,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "e3a717dd310d2f34c2ada9849b096ca8dd69f888"
+        "oid": "6f2cb4a024f990583313c503505fcd8458398e4f"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "e3a717dd310d2f34c2ada9849b096ca8dd69f888"
+        "oid": "6f2cb4a024f990583313c503505fcd8458398e4f"
       },
       "committed_change": "M",
       "staged_change": null,
@@ -17005,8 +18109,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 27497,
-        "sha256": "e786b4c3316444653c534dad43d94aa118f8cd7fe378267549d47bd8e09f3f7e"
+        "bytes": 28169,
+        "sha256": "0bb6e1643cc33ce746f79221a1e600d2a700233a71ad7e4dd548ddf74a5b2eac"
       }
     },
     {
@@ -17322,18 +18426,18 @@
       }
     },
     {
-      "path": "web/src/pages/business-documents/index.test.tsx",
+      "path": "web/src/pages/business-documents/constructor/draft-storage.test.ts",
       "module": "business-documents",
       "origin": "extension",
       "base_entry": null,
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "f66b43c888db1f6bf0155dcd859aa75a5c3ce909"
+        "oid": "50a348f04e9bbad98d8fb5286ac80006698ace38"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "f66b43c888db1f6bf0155dcd859aa75a5c3ce909"
+        "oid": "50a348f04e9bbad98d8fb5286ac80006698ace38"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -17342,8 +18446,833 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 87648,
-        "sha256": "48b88a3e08c599d4acf05321271f24b5c97a9adec991f518a3fc97810afea0b9"
+        "bytes": 3206,
+        "sha256": "1d9a4d5c4a919a75c46fa64aaa47ed0547d9d403f0b11b4eac5ee64ef649bb83"
+      }
+    },
+    {
+      "path": "web/src/pages/business-documents/constructor/draft-storage.ts",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "6f477df13728cfb4f69134f24fcc7c7039a9ac57"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "6f477df13728cfb4f69134f24fcc7c7039a9ac57"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 5474,
+        "sha256": "f11f4dc52c606f82fba8adecae7e6bd6149636b8c3be40d580b9590c257b5993"
+      }
+    },
+    {
+      "path": "web/src/pages/business-documents/constructor/execution-binding-panel.tsx",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "967003bdf7e818737b17fd756163716678b4c404"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "967003bdf7e818737b17fd756163716678b4c404"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 9348,
+        "sha256": "4f5fc21b67930770fd8841730b2ad040c1ed23fbc06ccf3373b1178be1b24f72"
+      }
+    },
+    {
+      "path": "web/src/pages/business-documents/constructor/execution-registry-dialog.test.tsx",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "274eabc2b55a320f8835e33cc80d1c92960dc27c"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "274eabc2b55a320f8835e33cc80d1c92960dc27c"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 8886,
+        "sha256": "be64de478d4a53f9ba3df008306c433180e3376353da29daea506c252ff89c10"
+      }
+    },
+    {
+      "path": "web/src/pages/business-documents/constructor/execution-registry-dialog.tsx",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "f2167df9edc556a2a5ed9b4c969298d8b396fcac"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "f2167df9edc556a2a5ed9b4c969298d8b396fcac"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 32299,
+        "sha256": "10382a0c045ade58a07decc7da75881336ac9e79c4a65d3be37ed6656ec2e5e8"
+      }
+    },
+    {
+      "path": "web/src/pages/business-documents/constructor/index.test.tsx",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "f7703337f76fe425df5807fda5a348d099454711"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "f7703337f76fe425df5807fda5a348d099454711"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 5653,
+        "sha256": "e59178b8be66606e41eb3a043a6b9037ef7a384ab6d147cd710eb7db50d8cb78"
+      }
+    },
+    {
+      "path": "web/src/pages/business-documents/constructor/index.tsx",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "7287ec56fd5f336bf4dfa865d18c109652e8ac29"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "7287ec56fd5f336bf4dfa865d18c109652e8ac29"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 22730,
+        "sha256": "d2745a45fad4a2b7d63ab4594506854d52828658994f8aa64fc7eed4927dcc14"
+      }
+    },
+    {
+      "path": "web/src/pages/business-documents/constructor/model.test.ts",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "5a895cd4f001bd79c6ffc988aa63faf33b9b1a2a"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "5a895cd4f001bd79c6ffc988aa63faf33b9b1a2a"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 5199,
+        "sha256": "770393c2a3dbbae4823432cd9b2968114b65e65b2a5ab2ebd4d3bd017be93057"
+      }
+    },
+    {
+      "path": "web/src/pages/business-documents/constructor/model.ts",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "fff49c8d28553aa25f38eb0e3cf85dab35900d54"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "fff49c8d28553aa25f38eb0e3cf85dab35900d54"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 14527,
+        "sha256": "55636b4cf463a2498127d8d643ee716d00127333f4f008f2f7774b2584e31ff7"
+      }
+    },
+    {
+      "path": "web/src/pages/business-documents/constructor/query-compiler-panel.tsx",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "1b71a19605e3a9c5703603088ef285c0ecececd0"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "1b71a19605e3a9c5703603088ef285c0ecececd0"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 4018,
+        "sha256": "d0bfd19d680a344e55b7dc851adb5e050664afc26e36b80aa565dc6ae9f2e983"
+      }
+    },
+    {
+      "path": "web/src/pages/business-documents/constructor/query-planner-panel.tsx",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "1bf3722cac85760a2ed761133bdd808af99dc0b7"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "1bf3722cac85760a2ed761133bdd808af99dc0b7"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 3427,
+        "sha256": "13f85c839925929f74173559278d1bc634b129931d316fef2d0090a1b846a8b7"
+      }
+    },
+    {
+      "path": "web/src/pages/business-documents/constructor/query-specification-dialog.test.tsx",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "5811cdde4e6738e0885f7872ba118badf1a22403"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "5811cdde4e6738e0885f7872ba118badf1a22403"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 13326,
+        "sha256": "5e0b066188124d67be3735832d00799f52907d5f810dbacd016af85424d586a1"
+      }
+    },
+    {
+      "path": "web/src/pages/business-documents/constructor/query-specification-dialog.tsx",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "28b39f5f7bd7eb6f4dfd91d0fa09f3328c8b5948"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "28b39f5f7bd7eb6f4dfd91d0fa09f3328c8b5948"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 55995,
+        "sha256": "140733cf0fe667b5a4d24e4d018695f6a5762abd8bdf6e858e1983cc067e8b63"
+      }
+    },
+    {
+      "path": "web/src/pages/business-documents/constructor/query-specification.test.ts",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "ef6ea3a9e363c3cccf3519c15ed4d181bd9a3776"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "ef6ea3a9e363c3cccf3519c15ed4d181bd9a3776"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 7664,
+        "sha256": "f810c56fb05c7035ecc48046f73956963666cc8b573d48bfcba78af8805c6a49"
+      }
+    },
+    {
+      "path": "web/src/pages/business-documents/constructor/query-specification.ts",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "04240280922dac17071c94e590c620d93c66eb89"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "04240280922dac17071c94e590c620d93c66eb89"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 19266,
+        "sha256": "3ebdbf1a02919447f8582deaa34d1703042b0c5b8a0c714d78185091a65efd2f"
+      }
+    },
+    {
+      "path": "web/src/pages/business-documents/constructor/schema-workspace-dialog.test.tsx",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "36e84bd9ce785f512dc124dd0b23bcf4958b74c8"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "36e84bd9ce785f512dc124dd0b23bcf4958b74c8"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 19370,
+        "sha256": "de3ec6e8d133770a94c7db41f8d6d60ccb6ca02543662f3a9724d1608c6a2833"
+      }
+    },
+    {
+      "path": "web/src/pages/business-documents/constructor/schema-workspace-dialog.tsx",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "c7f0396a30f16889e0b4f074bbc84ebf847fc041"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "c7f0396a30f16889e0b4f074bbc84ebf847fc041"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 35672,
+        "sha256": "41bef16d5431442cb8df08238c83a432397131cfeac92951efbd1db90db043a0"
+      }
+    },
+    {
+      "path": "web/src/pages/business-documents/constructor/schema-workspace-storage.test.ts",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "ca74474e8a85988a957fb2a9fe4b889f36d594d8"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "ca74474e8a85988a957fb2a9fe4b889f36d594d8"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 6422,
+        "sha256": "aa68b8d1af6d3bba30b17ba1a33d0879e6af15efa19bfb2286867df31d867361"
+      }
+    },
+    {
+      "path": "web/src/pages/business-documents/constructor/schema-workspace-storage.ts",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "7d165f9364bdc7e13f6d8287b5500f408a4810f6"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "7d165f9364bdc7e13f6d8287b5500f408a4810f6"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 17157,
+        "sha256": "065605395da96ba427b64dc9b18464eeddbbc7d33d2fd33e4b0ecc3d47327f49"
+      }
+    },
+    {
+      "path": "web/src/pages/business-documents/constructor/schema-workspace.test.ts",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "dc1a54268a6c1f59ec90d36593f12b8b4191f4c8"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "dc1a54268a6c1f59ec90d36593f12b8b4191f4c8"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 11316,
+        "sha256": "2cef83191cbdd5d61077af9ce31fc51f6dd4e3d267ed43317078cb6c2ce9295a"
+      }
+    },
+    {
+      "path": "web/src/pages/business-documents/constructor/schema-workspace.ts",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "fec3baec1ae7952d2513a0f9137b3797cd8cd117"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "fec3baec1ae7952d2513a0f9137b3797cd8cd117"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 22596,
+        "sha256": "8325958552a56749c10ebe15e0ab27147d85f26164296532f232296b22fad90a"
+      }
+    },
+    {
+      "path": "web/src/pages/business-documents/constructor/section-inspector.tsx",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "7bf1007224694df6dafce5925000c575b6beb169"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "7bf1007224694df6dafce5925000c575b6beb169"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 13563,
+        "sha256": "d3eefe75489e23edc2588ed93eb86a069d954f66abe7a1dfd8d5eaef36403b2c"
+      }
+    },
+    {
+      "path": "web/src/pages/business-documents/constructor/sql-agent-document.ts",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "9e6f9277d69339b8f55e4da493cbc0ee0636595b"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "9e6f9277d69339b8f55e4da493cbc0ee0636595b"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 10896,
+        "sha256": "3ef089202d4dba22c0f72462aa115799ca3f29013913b81d6d6945385283df95"
+      }
+    },
+    {
+      "path": "web/src/pages/business-documents/constructor/sql-agent-workbench.test.tsx",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "92e6f2b09b34d9b97daf7e888d4bedf9fdfed7c5"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "92e6f2b09b34d9b97daf7e888d4bedf9fdfed7c5"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 8921,
+        "sha256": "7b87b23b3ba619e0f5468bfdf7bb0e2f9fb08f98f7ddc6d54e37c6c1d1a3d1db"
+      }
+    },
+    {
+      "path": "web/src/pages/business-documents/constructor/sql-agent-workbench.tsx",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "3421f9e48c4cfd2fe134f94c08cca6fdce366661"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "3421f9e48c4cfd2fe134f94c08cca6fdce366661"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 51599,
+        "sha256": "a58034f617de5a1577f14cc19ae434bac5db524db66d93043ddbd523f9205266"
+      }
+    },
+    {
+      "path": "web/src/pages/business-documents/constructor/sql-query-template.test.ts",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "6ee091345d911ac0b2524dbce64cccc9babd1301"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "6ee091345d911ac0b2524dbce64cccc9babd1301"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 6195,
+        "sha256": "ed3cbee39ed0f46f6c735c4c33132aebaaa41ae3dfebbe9db85c3421e4c16645"
+      }
+    },
+    {
+      "path": "web/src/pages/business-documents/constructor/sql-query-template.ts",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "59b5c60ee2e1afb1103b962e8472d6edba761967"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "59b5c60ee2e1afb1103b962e8472d6edba761967"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 221,
+        "sha256": "de6539c3900290b57d773897976c0c664ed3c13d3fa064072913fb8a97af651b"
+      }
+    },
+    {
+      "path": "web/src/pages/business-documents/constructor/structure-editor.tsx",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "581ca7a3f476566947e4bc753e1639bd97db09e0"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "581ca7a3f476566947e4bc753e1639bd97db09e0"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 10592,
+        "sha256": "2f92fdef15fada9a99c176dae8e25148e62724dfddab12dc2e56283c9d56f560"
+      }
+    },
+    {
+      "path": "web/src/pages/business-documents/constructor/template-codec.test.ts",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "9e4305378f29d7d463e2e80f2c4b66df916cf403"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "9e4305378f29d7d463e2e80f2c4b66df916cf403"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 4780,
+        "sha256": "c0dfd32472f2d8f775b24de3f0ad355d07371e16000b357c497af2fe4829e989"
+      }
+    },
+    {
+      "path": "web/src/pages/business-documents/constructor/template-codec.ts",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "40f4fa53352c5f239bdf5816ca76d08bf7c8150b"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "40f4fa53352c5f239bdf5816ca76d08bf7c8150b"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 10889,
+        "sha256": "be3616c832ba0516897872753469763fddf0977447d23ff13f218f181db8c6f8"
+      }
+    },
+    {
+      "path": "web/src/pages/business-documents/constructor/template-preview.tsx",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "0e525fc47c40df41178dd434f78404f1dab17a52"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "0e525fc47c40df41178dd434f78404f1dab17a52"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 5313,
+        "sha256": "af033ccd71676620a3c8730b48b7e6c6e9116a67040ed2583ddc1ef8d23864cb"
+      }
+    },
+    {
+      "path": "web/src/pages/business-documents/constructor/template-settings.tsx",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "d74925a6c5760c067374bafa6576b8f31e4f0038"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "d74925a6c5760c067374bafa6576b8f31e4f0038"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 7784,
+        "sha256": "64112288357fdedad480056a721bc8555a5fef2bc63583890e5e95c826d28a78"
+      }
+    },
+    {
+      "path": "web/src/pages/business-documents/constructor/templates/sql-query-step-by-step.v1.json",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "be9a8c3c1f29d5af2691707107dc72003d4f7a76"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "be9a8c3c1f29d5af2691707107dc72003d4f7a76"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 62761,
+        "sha256": "d3d73bdf8351180429914ef48310c8b617a5a04380308b5166057d8da79ed4a9"
+      }
+    },
+    {
+      "path": "web/src/pages/business-documents/index.test.tsx",
+      "module": "business-documents",
+      "origin": "extension",
+      "base_entry": null,
+      "head_entry": {
+        "mode": "100644",
+        "kind": "blob",
+        "oid": "cb8e1eafe3382c457972c029185b673aaa974496"
+      },
+      "index_entry": {
+        "mode": "100644",
+        "oid": "cb8e1eafe3382c457972c029185b673aaa974496"
+      },
+      "committed_change": "A",
+      "staged_change": null,
+      "unstaged_change": null,
+      "working_change_from_base": "A",
+      "untracked": false,
+      "working_file": {
+        "present": true,
+        "bytes": 87745,
+        "sha256": "3c0fe20a2f23fa486c33e08c985e9c42581412f221bd1daede1c933ca02edf4d"
       }
     },
     {
@@ -17354,11 +19283,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "4d9f79634052618b67171b588ef7ba40ff45e461"
+        "oid": "9d4fb93acf54e6c5ebaa676c4fbe57557bed882b"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "4d9f79634052618b67171b588ef7ba40ff45e461"
+        "oid": "9d4fb93acf54e6c5ebaa676c4fbe57557bed882b"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -17367,8 +19296,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 61841,
-        "sha256": "6bd8d51912f524cda9c0c176fad21ca7457222ef4ddebeaa142f7aa1586ddb83"
+        "bytes": 62305,
+        "sha256": "36afe0fbfac9a5a0f6dbc1660709e44b9d64bb4f07d8140491cbabdbc0193fe3"
       }
     },
     {
@@ -17379,11 +19308,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "b34cf4295bf4cb84afee0c72b3e5ef2b3dcfad9d"
+        "oid": "9b65f1ea4c6eb1a5032fc1ee52d073e4ac632936"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "b34cf4295bf4cb84afee0c72b3e5ef2b3dcfad9d"
+        "oid": "9b65f1ea4c6eb1a5032fc1ee52d073e4ac632936"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -17392,8 +19321,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 12837,
-        "sha256": "90302f62022eea2de3c5fb019c4ef0aef2482e0e4f37e8ab5923a111b87491c8"
+        "bytes": 23561,
+        "sha256": "394b96d43715d13ab57f2fde71ed13d800861bd373a04589a7f5fa3366e560ea"
       }
     },
     {
@@ -18900,11 +20829,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "2facd3a214cc07d2f8b7e1e60b75cf2abf8cd58e"
+        "oid": "690548aae43fc7a9a36da436a6aeb01fd2387a4b"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "2facd3a214cc07d2f8b7e1e60b75cf2abf8cd58e"
+        "oid": "690548aae43fc7a9a36da436a6aeb01fd2387a4b"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -18913,8 +20842,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 4976,
-        "sha256": "ac9acfed5f20c40547a84dce8b7bab2598766d504febdd158e32e6ba860a3fce"
+        "bytes": 5159,
+        "sha256": "81fd271b0e367c512edd6096c365111b23a9d370b7b7977c04f127c967cca0ab"
       }
     },
     {
@@ -19626,11 +21555,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "177fb0a68a33fded5f53b5d0eea26b412b8cb27c"
+        "oid": "042bf4758fb99ba4a628872aed6db73d7a929d9b"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "177fb0a68a33fded5f53b5d0eea26b412b8cb27c"
+        "oid": "042bf4758fb99ba4a628872aed6db73d7a929d9b"
       },
       "committed_change": "M",
       "staged_change": null,
@@ -19639,8 +21568,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 14731,
-        "sha256": "736cdad2522200a9f6b0f94a8454054e291efd40b18f0fa6ec88dffb1394abfe"
+        "bytes": 15068,
+        "sha256": "cb802fb782f6b111f81134d71ff39db88be89c0a5905cc1f220dffeb2fe46895"
       }
     },
     {
@@ -19738,11 +21667,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "2ffedf28a1affc28b0209a16d4526a3ca625c792"
+        "oid": "e40980b6512c6acbd5b8d22bfd3dcffc8e9702c7"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "2ffedf28a1affc28b0209a16d4526a3ca625c792"
+        "oid": "e40980b6512c6acbd5b8d22bfd3dcffc8e9702c7"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -19751,8 +21680,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 8490,
-        "sha256": "ae67d05afa20441ab78d1df6404905fe862dc5273fe0b6603e818dd9bccb74c6"
+        "bytes": 20671,
+        "sha256": "09d68f2210b32553ce8cdd493ae9556e859e5662464f077c05068ccf0b8ac65d"
       }
     },
     {
@@ -19763,11 +21692,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "f06564c3f584ab21af428de7c7f8fb15bc2a5484"
+        "oid": "763295d50b576937fa1a68d631bcaaeb4019fb5c"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "f06564c3f584ab21af428de7c7f8fb15bc2a5484"
+        "oid": "763295d50b576937fa1a68d631bcaaeb4019fb5c"
       },
       "committed_change": "A",
       "staged_change": null,
@@ -19776,8 +21705,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 12712,
-        "sha256": "886d0f30110dcc6c672257e0cdf6d2b8fd4809575020b4927c158250d1ed98dc"
+        "bytes": 20359,
+        "sha256": "fba5537e67b8008fff80806824fac2fa1eb275cd6585490f3b700570542ed7d2"
       }
     },
     {
@@ -19987,11 +21916,11 @@
       "head_entry": {
         "mode": "100644",
         "kind": "blob",
-        "oid": "5c74a76ee6aeeaa000769497053fac00c5605014"
+        "oid": "9ed889809c3d85d69cf0e5cbf7442b7153181a8e"
       },
       "index_entry": {
         "mode": "100644",
-        "oid": "5c74a76ee6aeeaa000769497053fac00c5605014"
+        "oid": "9ed889809c3d85d69cf0e5cbf7442b7153181a8e"
       },
       "committed_change": "M",
       "staged_change": null,
@@ -20000,8 +21929,8 @@
       "untracked": false,
       "working_file": {
         "present": true,
-        "bytes": 22769,
-        "sha256": "0b0159c042d4069e654fd9ec26fd976f253b163b462b698e65a78d4c6c731f7f"
+        "bytes": 24465,
+        "sha256": "479232108c5f7e54f4e19929ea917ec36580816d53a331a6cae92d034a5eaf18"
       }
     },
     {

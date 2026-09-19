@@ -1,6 +1,6 @@
 schema_version: 1
 upstream_base: cb93883f3f8c975eecb2fed81210effeb3bdb06f
-head: 278497bced14c5146eb0be19bb0fa1eb72976279
+head: 090abfb9ed1bb912556ff14d972fdc259b9d4ae1
 changes:
 - id: CORE-eva-integration
   owner: fork-maintainer
@@ -301,6 +301,10 @@ changes:
     staged: null
     unstaged: null
   - path: rag/llm/chat_model.py
+    committed: M
+    staged: null
+    unstaged: null
+  - path: rag/llm/sequence2txt_model.py
     committed: M
     staged: null
     unstaged: null

@@ -1,4 +1,5 @@
 import type {
+  BusinessDocumentAccessContext,
   BusinessDocumentAssignableUser,
   BusinessDocumentCatalog,
   BusinessDocumentCommand,
@@ -9,10 +10,31 @@ import type {
   BusinessDocumentRevision,
   BusinessDocumentRole,
   CreateBusinessDocumentRequest,
+  CreateSqlAgentProjectRequest,
+  DecideSqlAgentProposalRequest,
   DeleteBusinessDocumentResult,
   EvaDocumentChange,
   EvaDocumentChangeList,
   EvaDocumentSourceSearchResult,
+  RequestSqlAgentRequest,
+  SqlAgentProject,
+  SqlCatalogBinding,
+  SqlCatalogBindingInput,
+  SqlCatalogBindingUpdateInput,
+  SqlExecutionBindingRequest,
+  SqlExecutionBindingResponse,
+  SqlExecutionConnector,
+  SqlExecutionProfile,
+  SqlExecutionProfileInput,
+  SqlExecutionProfileUpdateInput,
+  SqlExecutionRegistryDisableInput,
+  SqlExecutionRegistryList,
+  SqlQueryCompileRequest,
+  SqlQueryCompileResponse,
+  SqlQueryPlanRequest,
+  SqlQueryPlanResponse,
+  SqlSchemaEntityDetailsResponse,
+  SqlSchemaResolutionResponse,
 } from '@/pages/business-documents/types';
 import api from '@/utils/api';
 import request from '@/utils/next-request';
@@ -133,6 +155,266 @@ export async function listBusinessDocumentCatalog() {
       requestConfig(),
     );
     return unwrap<BusinessDocumentCatalog>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function getBusinessDocumentCapabilities() {
+  try {
+    const response = await request.get(
+      api.businessDocumentCapabilities,
+      requestConfig(),
+    );
+    return unwrap<BusinessDocumentAccessContext>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function resolveBusinessDocumentSqlSchema(input: {
+  terms: string[];
+  requirements: string;
+  locale: 'ru' | 'en';
+}) {
+  try {
+    const response = await request.post(
+      api.businessDocumentSqlSchemaResolve,
+      input,
+      requestConfig(),
+    );
+    return unwrap<SqlSchemaResolutionResponse>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function loadBusinessDocumentSqlSchemaEntities(input: {
+  entity_ids: string[];
+  locale: 'ru' | 'en';
+}) {
+  try {
+    const response = await request.post(
+      api.businessDocumentSqlSchemaEntities,
+      input,
+      requestConfig(),
+    );
+    return unwrap<SqlSchemaEntityDetailsResponse>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function compileBusinessDocumentSqlQuery(
+  input: SqlQueryCompileRequest,
+) {
+  try {
+    const response = await request.post(
+      api.businessDocumentSqlQueryCompile,
+      input,
+      requestConfig(),
+    );
+    return unwrap<SqlQueryCompileResponse>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function planBusinessDocumentSqlQuery(input: SqlQueryPlanRequest) {
+  try {
+    const response = await request.post(
+      api.businessDocumentSqlQueryPlan,
+      input,
+      requestConfig(),
+    );
+    return unwrap<SqlQueryPlanResponse>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function createBusinessDocumentSqlAgentProject(
+  input: CreateSqlAgentProjectRequest,
+) {
+  try {
+    const response = await request.post(
+      api.businessDocumentSqlQueryProjects,
+      input,
+      requestConfig(),
+    );
+    return unwrap<SqlAgentProject>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function listBusinessDocumentSqlAgentProjects() {
+  try {
+    const response = await request.get(
+      api.businessDocumentSqlQueryProjects,
+      requestConfig(),
+    );
+    return unwrap<SqlAgentProject[]>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function fetchBusinessDocumentSqlAgentProject(projectId: string) {
+  try {
+    const response = await request.get(
+      api.businessDocumentSqlQueryProject(projectId),
+      requestConfig(),
+    );
+    return unwrap<SqlAgentProject>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function requestBusinessDocumentSqlAgent(
+  projectId: string,
+  input: RequestSqlAgentRequest,
+) {
+  try {
+    const response = await request.post(
+      api.businessDocumentSqlAgentJobs(projectId),
+      input,
+      requestConfig(),
+    );
+    return unwrap<SqlAgentProject>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function decideBusinessDocumentSqlAgentProposal(
+  projectId: string,
+  proposalId: string,
+  input: DecideSqlAgentProposalRequest,
+) {
+  try {
+    const response = await request.post(
+      api.businessDocumentSqlAgentProposalDecision(projectId, proposalId),
+      input,
+      requestConfig(),
+    );
+    return unwrap<SqlAgentProject>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function listBusinessDocumentSqlExecutionConnectors() {
+  try {
+    const response = await request.get(
+      api.businessDocumentSqlExecutionConnectors,
+      requestConfig(),
+    );
+    return unwrap<SqlExecutionRegistryList<SqlExecutionConnector>>(
+      response.data,
+    );
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function listBusinessDocumentSqlExecutionProfiles() {
+  try {
+    const response = await request.get(
+      api.businessDocumentSqlExecutionProfiles,
+      requestConfig(),
+    );
+    return unwrap<SqlExecutionRegistryList<SqlExecutionProfile>>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function createBusinessDocumentSqlExecutionProfile(
+  input: SqlExecutionProfileInput,
+) {
+  try {
+    const response = await request.post(
+      api.businessDocumentSqlExecutionProfiles,
+      input,
+      requestConfig(),
+    );
+    return unwrap<SqlExecutionProfile>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function updateBusinessDocumentSqlExecutionProfile(
+  profileId: string,
+  input: SqlExecutionProfileUpdateInput | SqlExecutionRegistryDisableInput,
+) {
+  try {
+    const response = await request.put(
+      api.businessDocumentSqlExecutionProfile(profileId),
+      input,
+      requestConfig(),
+    );
+    return unwrap<SqlExecutionProfile>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function listBusinessDocumentSqlCatalogBindings() {
+  try {
+    const response = await request.get(
+      api.businessDocumentSqlCatalogBindings,
+      requestConfig(),
+    );
+    return unwrap<SqlExecutionRegistryList<SqlCatalogBinding>>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function createBusinessDocumentSqlCatalogBinding(
+  input: SqlCatalogBindingInput,
+) {
+  try {
+    const response = await request.post(
+      api.businessDocumentSqlCatalogBindings,
+      input,
+      requestConfig(),
+    );
+    return unwrap<SqlCatalogBinding>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function updateBusinessDocumentSqlCatalogBinding(
+  bindingId: string,
+  input: SqlCatalogBindingUpdateInput | SqlExecutionRegistryDisableInput,
+) {
+  try {
+    const response = await request.put(
+      api.businessDocumentSqlCatalogBinding(bindingId),
+      input,
+      requestConfig(),
+    );
+    return unwrap<SqlCatalogBinding>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function resolveBusinessDocumentSqlExecutionBinding(
+  input: SqlExecutionBindingRequest,
+) {
+  try {
+    const response = await request.post(
+      api.businessDocumentSqlExecutionBindingResolve,
+      input,
+      requestConfig(),
+    );
+    return unwrap<SqlExecutionBindingResponse>(response.data);
   } catch (error) {
     return rethrowBusinessDocumentError(error);
   }

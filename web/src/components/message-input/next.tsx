@@ -285,6 +285,9 @@ export function NextMessageInput({
           ) : (
             <div className="flex items-center gap-3">
               <AudioButton
+                onPartial={(value) => {
+                  setAudioInputValue(value);
+                }}
                 onOk={(value) => {
                   setAudioInputValue(value);
                 }}

@@ -9,6 +9,71 @@ sidebar_custom_props: {
 
 Key features, improvements and bug fixes in the latest releases.
 
+## v1.23.1
+
+Released on September 18, 2026.
+
+### Improvements and bug fixes
+
+- Keeps long-running agent SSE connections alive with periodic heartbeat comments while uploaded audio is being transcribed, preventing idle client disconnects before the final transcript and download appear.
+
+## v1.23.0
+
+Released on September 18, 2026.
+
+### New features
+
+- Streaming ASR: Streams T-One progress, partial transcripts, heartbeats, final results, and structured errors through the OpenAI-compatible endpoint and RAGFlow chat UI.
+
+### Improvements and bug fixes
+
+- Keeps synchronous transcription compatible while replacing the fixed request deadline with the job lifecycle and configurable stream idle heartbeats.
+- Updates the voice-input UI as transcript deltas arrive and guarantees temporary audio cleanup even when a streaming iterator cannot be closed cleanly.
+
+## v1.22.0
+
+Released on September 15, 2026.
+
+### New features
+
+- SQL document constructor: Adds a durable guided workspace that moves from natural-language requirements through schema resolution and query planning to guarded SQL and a downloadable Markdown specification.
+- SQL agents: Adds explicit human review gates for requirements, ambiguous entities, tables, fields, joins, filters, and output limits while preserving immutable accepted artifacts.
+
+### Improvements and bug fixes
+
+- Makes SQL projects the default surface of the root document-constructor section while keeping template creation available on the same page.
+- Persists agent jobs, proposals, decisions, idempotency records, tenant authorization, and optimistic state versions; query execution and Python post-processing remain disabled future stages.
+
+## v1.21.0
+
+Released on September 14, 2026.
+
+### New features
+
+- Document constructor: Promotes the experimental constructor to a dedicated root section while exposing it only to users with the server-confirmed document-creation capability.
+- SQL catalog mapping: Supports four-part OpenMetadata identities and shows the exact mapping from `service.database.schema.table` to executable PostgreSQL `schema.table` relations.
+- SQL operations: Adds a reproducible real-catalog golden suite and an idempotent provisioning utility for the centrally managed execution profile and exact catalog bindings.
+
+### Improvements and bug fixes
+
+- Preserves Switch case and fallback destinations from canonical graph edges when agents are created, updated, or reset.
+- Keeps the old nested constructor URL as a redirect and avoids loading document lists merely to decide whether the constructor may be shown.
+- Documents the product workflow, UI/UX/CX states, architecture boundaries, and end-to-end regression contract; database execution, ResultGate, and Python sandbox execution remain future runtime stages.
+
+## v1.20.0
+
+Released on September 14, 2026.
+
+### New features
+
+- Business documents: Adds a step-by-step SQL requirements constructor with OpenMetadata-backed entity resolution, explicit human confirmations, deterministic PostgreSQL compilation, and a dedicated Python post-processing chapter.
+- SQL governance: Adds a centrally owned execution-profile registry and exact catalog bindings for PostgreSQL connectors, schemas, timeouts, and result limits without exposing connector credentials to document authors.
+
+### Improvements and bug fixes
+
+- Rechecks Dataset access when resolving execution profiles, pins connector identity, supports optimistic profile and binding updates, and keeps emergency deactivation available when a connector or stored policy is no longer usable.
+- Adds deterministic browser golden coverage for template lifecycle, schema ambiguity, manual SQL decisions, and LLM-assisted planning. Database execution, ResultGate, and Python sandbox execution remain future runtime stages.
+
 ## v1.9.0
 
 Released on September 4, 2026.

@@ -15,7 +15,8 @@ class Settings(BaseSettings):
     job_ttl_seconds: int = Field(default=3600, alias="ASR_JOB_TTL_SECONDS")
     artifacts_dir: str = Field(default="artifacts", alias="ASR_ARTIFACTS_DIR")
     upload_dir: str = Field(default="uploads", alias="ASR_UPLOAD_DIR")
-    openai_timeout_seconds: float = Field(default=300.0, gt=0, alias="ASR_OPENAI_TIMEOUT_SECONDS")
+    stream_poll_seconds: float = Field(default=0.1, gt=0, alias="ASR_STREAM_POLL_SECONDS")
+    stream_heartbeat_seconds: float = Field(default=15.0, gt=0, alias="ASR_STREAM_HEARTBEAT_SECONDS")
 
     enable_sox_normalize: bool = Field(default=False, alias="ASR_ENABLE_SOX_NORMALIZE")
     ffmpeg_path: str = Field(default="ffmpeg", alias="ASR_FFMPEG_PATH")

@@ -56,13 +56,51 @@ function sectionForNode(node: Node | null) {
   return element?.closest<HTMLElement>(SECTION_SELECTOR) ?? null;
 }
 
+interface NormalizedText {
+  text: string;
+  starts: number[];
+  ends: number[];
+}
+
+function normalizeRenderedText(value: string): NormalizedText {
+  let text = '';
+  const starts: number[] = [];
+  const ends: number[] = [];
+  let whitespaceStart: number | null = null;
+
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (/\s/u.test(character) || character === '\u00a0') {
+      whitespaceStart ??= index;
+      continue;
+    }
+    if (whitespaceStart !== null && text.length > 0) {
+      text += ' ';
+      starts.push(whitespaceStart);
+      ends.push(index);
+    }
+    whitespaceStart = null;
+    text += character;
+    starts.push(index);
+    ends.push(index + 1);
+  }
+
+  return { text, starts, ends };
+}
+
 function findUniqueOffset(sectionText: string, selectedText: string) {
-  const startOffset = sectionText.indexOf(selectedText);
-  if (startOffset < 0) return { error: 'NOT_EXACT' as const };
-  if (sectionText.indexOf(selectedText, startOffset + 1) >= 0) {
+  const canonical = normalizeRenderedText(sectionText);
+  const selected = normalizeRenderedText(selectedText).text;
+  const normalizedStart = canonical.text.indexOf(selected);
+  if (!selected || normalizedStart < 0) return { error: 'NOT_EXACT' as const };
+  if (canonical.text.indexOf(selected, normalizedStart + 1) >= 0) {
     return { error: 'AMBIGUOUS' as const };
   }
-  return { startOffset };
+  const normalizedEnd = normalizedStart + selected.length - 1;
+  return {
+    startOffset: canonical.starts[normalizedStart],
+    endOffset: canonical.ends[normalizedEnd],
+  };
 }
 
 export function DocumentPane({
@@ -122,7 +160,7 @@ export function DocumentPane({
       return;
     }
 
-    const endOffset = match.startOffset + selectedText.length;
+    const endOffset = match.endOffset;
     if (
       !isUtf16Boundary(sectionText, match.startOffset) ||
       !isUtf16Boundary(sectionText, endOffset)
@@ -137,10 +175,14 @@ export function DocumentPane({
       match.startOffset,
       endOffset,
     );
+    const canonicalSelectedText = sectionText.slice(
+      match.startOffset,
+      endOffset,
+    );
     onSelectionChange({
       revision_id: revision!.revision_id,
       section_id: sectionId,
-      selected_text: selectedText,
+      selected_text: canonicalSelectedText,
       prefix: context.prefix,
       suffix: context.suffix,
       start_offset: match.startOffset,

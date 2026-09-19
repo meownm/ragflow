@@ -65,6 +65,8 @@ _JOB_PROMPTS = {
     "ANALYZE_SQL_REQUIREMENTS": "sql_requirements_analyst",
 }
 _MARKDOWN_SECTION_HEADING = re.compile(r"^(#{1,6})\s+([0-9]+(?:\.[0-9]+)*)\.\s+(.+?)\s*$")
+_NUMBERED_SECTION_ID = re.compile(r"^[0-9]+(?:\.[0-9]+)+$")
+_CUSTOM_SECTION_ALLOWED_BLOCKS = {"paragraph", "list", "table", "image", "reference"}
 _FENCED_CODE_BLOCK = re.compile(
     r"```(?P<language>[A-Za-z0-9_-]*)[ \t]*\n(?P<source>.*?)(?:\n)?```",
     re.DOTALL,
@@ -151,20 +153,38 @@ def validate_document_ast(document: object) -> dict[str, Any]:
     if document["template_version"] != template["template_version"]:
         raise ValidationError("TEMPLATE_VERSION_CONFLICT", "Draft does not use the document template version")
     expected = [(section["id"], section["title"]) for section in template["sections"]]
+    expected_ids = {item[0] for item in expected}
     actual = [(section["id"], section["title"]) for section in document["sections"]]
-    if actual != expected:
+    actual_template_outline = [item for item in actual if item[0] in expected_ids]
+    if actual_template_outline != expected:
         raise ValidationError(
             "TEMPLATE_STRUCTURE_MISMATCH",
-            "Draft sections must exactly match the published semantic template",
+            "Черновик должен сохранять все разделы опубликованного шаблона, их названия и порядок",
             {"expected_section_ids": [item[0] for item in expected], "actual_section_ids": [item[0] for item in actual]},
         )
+    all_section_ids = {item[0] for item in actual}
+    for section_id, _ in actual:
+        if section_id in expected_ids:
+            continue
+        parent_id = section_id.rsplit(".", 1)[0] if "." in section_id else ""
+        if not _NUMBERED_SECTION_ID.fullmatch(section_id) or parent_id not in all_section_ids:
+            raise ValidationError(
+                "INVALID_SUBSECTION",
+                "Новый подраздел должен иметь уникальный номер и существующий родительский раздел",
+                {"section_id": section_id, "parent_section_id": parent_id or None},
+            )
     required_ids = {section["id"] for section in template["sections"] if section["required"]}
     allowed_blocks = {section["id"]: set(section["allowed_blocks"]) for section in template["sections"]}
-    disallowed = [{"section_id": section["id"], "block_type": block["type"]} for section in document["sections"] for block in section["blocks"] if block["type"] not in allowed_blocks[section["id"]]]
+    disallowed = [
+        {"section_id": section["id"], "block_type": block["type"]}
+        for section in document["sections"]
+        for block in section["blocks"]
+        if block["type"] not in allowed_blocks.get(section["id"], _CUSTOM_SECTION_ALLOWED_BLOCKS)
+    ]
     if disallowed:
         raise ValidationError(
             "BLOCK_TYPE_NOT_ALLOWED",
-            "Document block type is not allowed in the target template section",
+            "Этот тип содержимого нельзя использовать в выбранном разделе шаблона",
             {"blocks": disallowed},
         )
     empty_required = [section["id"] for section in document["sections"] if section["id"] in required_ids and not any(_block_has_content(block) for block in section["blocks"])]
@@ -197,19 +217,19 @@ def import_document_markdown(markdown: object) -> dict[str, Any]:
     expected = {section["id"]: section for section in template_sections}
     base_level = int(template.get("rendering", {}).get("body_heading_base_level", 2))
 
-    found: list[tuple[str, int, int]] = []
+    found: list[tuple[str, str, int, int]] = []
     offset = 0
     for line in normalized.splitlines(keepends=True):
         heading = _MARKDOWN_SECTION_HEADING.match(line.rstrip("\n"))
         if heading:
             section_id = heading.group(2)
-            template_section = expected.get(section_id)
             expected_level = base_level + section_id.count(".")
-            if template_section is not None and len(heading.group(1)) == expected_level and heading.group(3).strip() == template_section["title"]:
-                found.append((section_id, offset, offset + len(line)))
+            title = heading.group(3).strip()
+            if len(heading.group(1)) == expected_level:
+                found.append((section_id, title, offset, offset + len(line)))
         offset += len(line)
 
-    actual_ids = [item[0] for item in found]
+    actual_ids = [item[0] for item in found if item[0] in expected]
     expected_ids = [section["id"] for section in template_sections]
     if actual_ids != expected_ids:
         raise ValidationError(
@@ -217,20 +237,20 @@ def import_document_markdown(markdown: object) -> dict[str, Any]:
             "Страница EVA не соответствует текущему шаблону бизнес-документа",
             {"expected_section_ids": expected_ids, "actual_section_ids": actual_ids},
         )
-    if normalized[: found[0][1]].strip():
+    if normalized[: found[0][2]].strip():
         raise ValidationError(
             "EVA_DOCUMENT_TEMPLATE_MISMATCH",
             "Перед первым разделом страницы EVA найден текст вне шаблона",
         )
 
     sections = []
-    for index, (section_id, _, body_start) in enumerate(found):
-        body_end = found[index + 1][1] if index + 1 < len(found) else len(normalized)
+    for index, (section_id, title, _, body_start) in enumerate(found):
+        body_end = found[index + 1][2] if index + 1 < len(found) else len(normalized)
         body = normalized[body_start:body_end].strip()
         sections.append(
             {
                 "id": section_id,
-                "title": expected[section_id]["title"],
+                "title": title,
                 "blocks": _import_markdown_blocks(body),
             }
         )
@@ -291,7 +311,6 @@ def normalize_document_ast(document: object) -> object:
     if not all(isinstance(section, dict) and isinstance(section.get("id"), str) for section in actual_sections):
         return document
     expected_ids = [section["id"] for section in template_sections]
-    expected_id_set = set(expected_ids)
     flattened_sections = []
     for section in actual_sections:
         section = deepcopy(section)
@@ -299,14 +318,14 @@ def normalize_document_ast(document: object) -> object:
         if isinstance(blocks, list):
             content_blocks = []
             for block in blocks:
-                if isinstance(block, dict) and block.get("id") in expected_id_set and isinstance(block.get("blocks"), list):
+                if isinstance(block, dict) and isinstance(block.get("id"), str) and isinstance(block.get("title"), str) and isinstance(block.get("blocks"), list) and "type" not in block:
                     flattened_sections.append(block)
                 else:
                     content_blocks.append(block)
             section["blocks"] = content_blocks
         flattened_sections.append(section)
     actual_ids = [section["id"] for section in flattened_sections]
-    if len(actual_ids) != len(set(actual_ids)) or not set(actual_ids).issubset(expected_ids):
+    if len(actual_ids) != len(set(actual_ids)):
         return document
     by_id = {section["id"]: section for section in flattened_sections}
     normalized = deepcopy(document)
@@ -336,6 +355,14 @@ def normalize_document_ast(document: object) -> object:
         for template_only_field in ("parent_id", "required", "allowed_blocks", "semantic_requirements"):
             section.pop(template_only_field, None)
         normalized_sections.append(section)
+    for section in flattened_sections:
+        if section["id"] in expected_ids:
+            continue
+        section = deepcopy(section)
+        for template_only_field in ("parent_id", "required", "allowed_blocks", "semantic_requirements"):
+            section.pop(template_only_field, None)
+        normalized_sections.append(section)
+    normalized_sections.sort(key=lambda section: _section_sort_key(section["id"]))
     normalized["sections"] = normalized_sections
     return normalized
 
@@ -426,6 +453,13 @@ def apply_change_plan(base_document: dict[str, Any], change_plan: dict[str, Any]
         if "evidence_refs" in operation:
             section["evidence_refs"] = deepcopy(operation["evidence_refs"])
     return validate_document_ast(result)
+
+
+def _section_sort_key(section_id: str) -> tuple[int, ...]:
+    try:
+        return tuple(int(part) for part in section_id.split("."))
+    except ValueError:
+        return (2**31 - 1,)
 
 
 def render_section_text(section: dict[str, Any]) -> str:

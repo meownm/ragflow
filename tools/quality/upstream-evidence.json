@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "verified_at": "2026-09-19T21:29:40.410283+00:00",
-  "head": "58e5ce51cfaed1c7b3ed19d0f14907b2cd18c2ed",
+  "verified_at": "2026-09-19T21:33:46.382018+00:00",
+  "head": "0a2a86ddd2c725154b6f5ab21b66bcb3972a0ac2",
   "official_commits": [
     {
       "sha": "cb93883f3f8c975eecb2fed81210effeb3bdb06f",
@@ -2164,24 +2164,48 @@
         "web/src/pages/business-documents/index.test.tsx": "M",
         "web/src/pages/business-documents/index.tsx": "M"
       }
+    },
+    {
+      "sha": "0a2a86ddd2c725154b6f5ab21b66bcb3972a0ac2",
+      "parents": [
+        "58e5ce51cfaed1c7b3ed19d0f14907b2cd18c2ed"
+      ],
+      "tree": "ebd7d8c64d1689016395bdc38ce7e26f641b9b24",
+      "committed_at": "2026-09-20T00:33:26+03:00",
+      "subject": "fix(ci): close Linux unit suite prerequisites",
+      "changes_from_first_parent": {
+        ".github/workflows/sep-tests.yml": "M",
+        ".github/workflows/tests.yml": "M",
+        "agent/component/message.py": "M",
+        "api/apps/business_documents/ai.py": "M",
+        "api/apps/business_documents/evidence.py": "M",
+        "pyproject.toml": "M",
+        "test/unit_test/api/apps/business_documents/test_business_document_adapter_contracts.py": "M",
+        "tools/quality/core-changes.yaml": "M",
+        "tools/quality/file-inventory.json": "M",
+        "tools/quality/ignored-artifacts.json": "M",
+        "tools/quality/module-map.yaml": "M",
+        "tools/quality/upstream-evidence.json": "M",
+        "uv.lock": "M"
+      }
     }
   ],
   "local_refs_only_no_fetch": [
-    "refs/remotes/origin/HEAD cd6c9e441887c22c7459cf667e988d9b723e0b71",
+    "refs/remotes/origin/HEAD 5a4a7b14e8723aa7c8d2f580cfa56b466db453fd",
     "refs/remotes/origin/codex/fix-t3-ci-regressions-pr 7045e856a9905264044a3f47d32cef8ac7c0e2a6",
     "refs/remotes/origin/codex/integrate-v1.23.1 b060fe7718212808ddc26bb034d243dd0f0eaf17",
     "refs/remotes/origin/codex/t3-architecture-base-protocol 03c529786aae21db47855b8c1212ee1ace1e3ff1",
     "refs/remotes/origin/codex/t3-control-update d3a44c945c543463c0c9b707567c9cff93998772",
     "refs/remotes/origin/codex/t3-os-isolation b6f395c1507dd76ba7c310dad36c9dbe109087da",
     "refs/remotes/origin/codex/t4-business-document-assignment 0f050c78cd4e09518a602f22bfa606b1132319d8",
-    "refs/remotes/origin/main cd6c9e441887c22c7459cf667e988d9b723e0b71",
+    "refs/remotes/origin/main 5a4a7b14e8723aa7c8d2f580cfa56b466db453fd",
     "refs/remotes/origin/pr-31-merge ae10b6f924dce8d49ef2736f8ad64ca3a4abb154",
     "refs/remotes/upstream/HEAD fa258db6a3b4ad07779feed91cd73859c4aea93a",
     "refs/remotes/upstream/main fa258db6a3b4ad07779feed91cd73859c4aea93a",
     "refs/remotes/upstream/main_backup 427e0540cab683a591a5f4a65a0b38bf9ee008b7"
   ],
   "graph_merge_base": "28ce77fe5f1e4301d3672221b509418d3c7acb77",
-  "baseline_diff_summary": "828 files changed, 197943 insertions(+), 2871 deletions(-)",
+  "baseline_diff_summary": "829 files changed, 198036 insertions(+), 2883 deletions(-)",
   "ancestry_only_merge": {
     "commit": "64f0bfdf0e724d006d61563a76964bf140bcfb4e",
     "first_parent": "268a5a9d60e19982ac329ec045d0ff9b0228b26b",

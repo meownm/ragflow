@@ -1,6 +1,6 @@
 schema_version: 1
 upstream_base: cb93883f3f8c975eecb2fed81210effeb3bdb06f
-head: 58e5ce51cfaed1c7b3ed19d0f14907b2cd18c2ed
+head: 0a2a86ddd2c725154b6f5ab21b66bcb3972a0ac2
 changes:
 - id: CORE-eva-integration
   owner: fork-maintainer
@@ -383,9 +383,9 @@ changes:
     staged: null
     unstaged: null
   - path: agent/component/message.py
-    committed: null
+    committed: M
     staged: null
-    unstaged: M
+    unstaged: null
   - path: api/apps/restful_apis/agent_api.py
     committed: M
     staged: null
@@ -1449,7 +1449,7 @@ changes:
     unstaged: null
   - path: web/src/utils/api.ts
     committed: M
-    staged: null
+    staged: M
     unstaged: null
   - path: web/src/utils/chat.ts
     committed: M
@@ -1523,18 +1523,18 @@ changes:
   - path: .github/workflows/sep-tests.yml
     committed: M
     staged: null
-    unstaged: M
+    unstaged: null
   - path: .github/workflows/tests.yml
     committed: M
     staged: null
-    unstaged: M
+    unstaged: null
   - path: .gitignore
     committed: M
     staged: null
     unstaged: null
   - path: AGENTS.md
     committed: M
-    staged: null
+    staged: M
     unstaged: null
   - path: Dockerfile
     committed: M
@@ -1546,7 +1546,7 @@ changes:
     unstaged: null
   - path: docs/release_notes.md
     committed: M
-    staged: null
+    staged: M
     unstaged: null
   - path: internal/storage/minio_test.go
     committed: M
@@ -1559,7 +1559,7 @@ changes:
   - path: pyproject.toml
     committed: M
     staged: null
-    unstaged: M
+    unstaged: null
   - path: ragflow_deps/download_deps.py
     committed: M
     staged: null
@@ -1679,4 +1679,4 @@ changes:
   - path: uv.lock
     committed: M
     staged: null
-    unstaged: M
+    unstaged: null

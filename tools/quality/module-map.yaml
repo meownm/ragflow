@@ -864,6 +864,8 @@ modules:
   - services/asr-online-service/tests/test_install_contract.py
   - test/unit_test/tools/quality/test_ragflow_server_bootstrap.py
   public_surfaces:
+  - deployment/local/README.md
+  - deployment/local/deploy.ps1
   - deployment/linux-pg/README.md
   - deployment/linux-pg/docker-compose.release.yml
   - docker/docker-compose.local.yml
@@ -884,6 +886,8 @@ modules:
   - cmd/ragflow_server.go
   - common/config_utils.py
   - conf/system_settings.json
+  - deployment/local/README.md
+  - deployment/local/deploy.ps1
   - deployment/linux-pg/README.md
   - deployment/linux-pg/build_archive.ps1
   - deployment/linux-pg/build_offline_archive.ps1
@@ -912,6 +916,7 @@ modules:
   - docker/nginx/ragflow.conf.hybrid
   - docker/nginx/ragflow.conf.python
   - docker/service_conf.yaml.template
+  - test/unit_test/deployment/test_local_deploy_process.py
   - docs/administrator/linux_sources_runbook_ru.md
   - docs/administrator/local_windows_sources_runbook_ru.md
   - test/unit_test/tools/quality/test_ragflow_server_bootstrap.py

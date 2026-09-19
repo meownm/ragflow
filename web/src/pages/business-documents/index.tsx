@@ -21,6 +21,7 @@ import { Routes } from '@/routes';
 import {
   assignBusinessDocumentOwner,
   BusinessDocumentConflictError,
+  checkBusinessDocumentEvaUpdate,
   createBusinessDocument,
   createEvaChangeFromBusinessDocument,
   deleteBusinessDocument,
@@ -181,6 +182,8 @@ const BusinessDocumentKeys = {
   catalog: () => ['business-document-catalog'] as const,
   detail: (documentId?: string) => ['business-document', documentId] as const,
   accessUsers: () => ['business-document-access-users'] as const,
+  evaUpdate: (documentId?: string) =>
+    ['business-document-eva-update', documentId] as const,
 };
 
 function BusinessDocumentCreationSidebar({
@@ -953,6 +956,20 @@ export default function BusinessDocumentsPage() {
     [evaConnectorId, evaCredentialsQuery.data, evaPageUrl],
   );
   const currentRevisionId = document?.current_revision?.revision_id;
+  const evaUpdateQuery = useQuery({
+    queryKey: BusinessDocumentKeys.evaUpdate(documentId),
+    queryFn: () => checkBusinessDocumentEvaUpdate(documentId!),
+    enabled: Boolean(
+      documentId &&
+      !changeId &&
+      document?.eva_binding?.status === 'CONNECTED' &&
+      document.eva_binding.capabilities.includes('PULL_FROM_EVA') &&
+      document.current_revision &&
+      ['REVIEW', 'AGREED'].includes(document.lifecycle_state),
+    ),
+    retry: false,
+    staleTime: 0,
+  });
   useEffect(() => {
     clearSelection();
   }, [clearSelection, currentRevisionId]);
@@ -1083,6 +1100,9 @@ export default function BusinessDocumentsPage() {
       );
       await queryClient.invalidateQueries({
         queryKey: ['business-document-revisions', documentId],
+      });
+      await queryClient.invalidateQueries({
+        queryKey: BusinessDocumentKeys.evaUpdate(documentId),
       });
     },
   });
@@ -1482,7 +1502,9 @@ export default function BusinessDocumentsPage() {
                 </>
               )}
             </div>
-            {document.permissions?.edit !== false && hasPersonalEvaToken && (
+            {document.permissions?.edit !== false &&
+              evaUpdateQuery.data?.changed &&
+              evaUpdateQuery.data.can_pull && (
               <Button
                 size="sm"
                 variant="ghost"
@@ -1497,7 +1519,7 @@ export default function BusinessDocumentsPage() {
                 data-testid="pull-business-document-from-eva"
               >
                 <ArrowDownToLine className="size-3.5" />
-                Перечитать текущий документ из EVA
+                Загрузить обновление из EVA
               </Button>
             )}
             {document.permissions?.edit !== false && hasPersonalEvaToken && (
@@ -1533,6 +1555,20 @@ export default function BusinessDocumentsPage() {
             {evaSyncNotice && (
               <span className="w-full text-text-secondary">
                 {evaSyncNotice}
+              </span>
+            )}
+            {evaUpdateQuery.data?.changed && (
+              <span
+                className="w-full text-state-warning"
+                data-testid="eva-update-available"
+              >
+                В EVA есть более новая версия документа. Загрузите её, чтобы
+                добавить изменения в текущий цикл ревью.
+              </span>
+            )}
+            {evaUpdateQuery.error && (
+              <span className="w-full text-text-disabled" role="status">
+                Не удалось проверить обновления EVA: {evaUpdateQuery.error.message}
               </span>
             )}
           </div>

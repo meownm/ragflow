@@ -789,6 +789,15 @@ export interface BusinessDocumentEvaPullResult {
   };
 }
 
+export interface BusinessDocumentEvaUpdateStatus {
+  document_id: string;
+  changed: boolean;
+  direction: 'FROM_EVA';
+  remote_version?: string | null;
+  baseline_version?: string | null;
+  can_pull: boolean;
+}
+
 export interface BusinessDocumentCommand {
   schema_version: '1';
   command_id: string;

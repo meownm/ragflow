@@ -9,6 +9,15 @@ sidebar_custom_props: {
 
 Key features, improvements and bug fixes in the latest releases.
 
+## v1.25.0
+
+Released on September 19, 2026.
+
+### New features
+
+- Business documents: Checks EVA for an exact-title page before creation and requires the author to choose whether to import it.
+- EVA synchronization: Detects newer published EVA content when a linked document is opened and offers to load it into the governed review cycle.
+
 ## v1.23.1
 
 Released on September 18, 2026.

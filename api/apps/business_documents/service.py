@@ -566,6 +566,41 @@ class BusinessDocumentService:
         }
 
     @classmethod
+    def check_eva_update(
+        cls,
+        tenant_id: str,
+        actor_id: str,
+        document_id: str,
+        is_admin: bool = False,
+        access_role: BusinessDocumentRole | str = BusinessDocumentRole.AUTHOR_CREATOR,
+    ) -> dict[str, Any]:
+        """Check whether the linked EVA page changed without mutating the document."""
+
+        access = BusinessDocumentAccess(actor_id, access_role, is_admin)
+        document = cls._get_accessible_document(document_id)
+        binding = cls._eva_binding(document)
+        if not binding or "PULL_FROM_EVA" not in binding.get("capabilities", []):
+            raise ConflictError("EVA_SYNC_UNAVAILABLE", "The linked EVA page is not connected to an accessible connector")
+
+        from api.apps.business_documents.eva_changes import EvaDocumentChangeService
+
+        refreshed_binding, _ = EvaDocumentChangeService.read_connected_page(actor_id, binding)
+        remote_hash = refreshed_binding.get("remote_content_hash")
+        baseline_hash = binding.get("last_pulled_content_hash") or binding.get("remote_content_hash")
+        return {
+            "document_id": document.id,
+            "changed": bool(remote_hash and remote_hash != baseline_hash),
+            "direction": "FROM_EVA",
+            "remote_version": refreshed_binding.get("remote_version"),
+            "baseline_version": binding.get("remote_version"),
+            "can_pull": bool(
+                access.permissions(document.owner_id)["edit"]
+                and document.current_revision_id
+                and document.lifecycle_state in {LifecycleState.AGREED.value, LifecycleState.REVIEW.value}
+            ),
+        }
+
+    @classmethod
     def rebind_eva(
         cls,
         tenant_id: str,
@@ -2704,23 +2739,10 @@ class BusinessDocumentService:
         if decision_mode == "SKIP":
             return None
         matches = cls._eva_matches_with_occupancy(EvaDocumentChangeService.find_title_matches(actor_id, display_title))
-        available_matches = [match for match in matches if match.get("binding_available")]
-        if schema_version == "3" and len(available_matches) == 1:
-            binding = EvaDocumentChangeService.resolve_page_url(actor_id, available_matches[0].get("web_url"))
-            if binding.get("status") != "CONNECTED":
-                raise ConflictError("EVA_IMPORT_UNAVAILABLE", "Не удалось прочитать найденную страницу EVA для импорта")
-            remote_title = str(binding.get("document_name") or "").strip()
-            if remote_title and normalize_title(remote_title) != normalize_title(display_title):
-                raise ConflictError(
-                    "EVA_PAGE_TITLE_CHANGED",
-                    "Название найденной страницы EVA изменилось",
-                    {"actual_title": binding.get("document_name")},
-                )
-            return binding
         if matches:
             raise ConflictError(
                 "EVA_BINDING_DECISION_REQUIRED",
-                "EVA Wiki contains pages with this title. Choose an available page or continue without linking.",
+                "В EVA найдены страницы с таким названием. Загрузите подходящую страницу или продолжите без привязки.",
                 {"matches": matches},
             )
         return None

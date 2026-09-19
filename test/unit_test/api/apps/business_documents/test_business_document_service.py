@@ -196,7 +196,7 @@ def test_catalog_sync_replaces_previous_source_rows_and_v3_derives_the_title(dat
 
 
 @pytest.mark.p0
-def test_v3_imports_the_only_unbound_title_match_as_revision_one(database, monkeypatch):
+def test_v3_offers_then_imports_the_only_unbound_title_match_as_revision_one(database, monkeypatch):
     from api.apps.business_documents.eva_changes import EvaDocumentChangeService
     from api.db.db_models import migrate_business_document_catalog
 
@@ -244,14 +244,25 @@ def test_v3_imports_the_only_unbound_title_match_as_revision_one(database, monke
     monkeypatch.setattr(EvaDocumentChangeService, "resolve_page_url", staticmethod(lambda *_args: binding))
     monkeypatch.setattr(EvaDocumentChangeService, "read_connected_page", staticmethod(lambda *_args: (binding, remote_markdown)))
 
+    request = {
+        "schema_version": "3",
+        "document_type": "business_requirements",
+        "catalog_entry_id": first["id"],
+        "idea": "Проверить существующий документ EVA",
+    }
+    with pytest.raises(BusinessDocumentError) as offered:
+        BusinessDocumentService.create_document(TENANT, AUTHOR, request)
+
+    assert offered.value.code == "EVA_BINDING_DECISION_REQUIRED"
+    assert offered.value.details["matches"][0]["web_url"] == page_url
+
     created = BusinessDocumentService.create_document(
         TENANT,
         AUTHOR,
         {
-            "schema_version": "3",
-            "document_type": "business_requirements",
-            "catalog_entry_id": first["id"],
-            "idea": "Проверить существующий документ EVA",
+            **request,
+            "eva_page_url": page_url,
+            "eva_decision": {"mode": "BIND"},
         },
     )
 
@@ -363,6 +374,8 @@ def test_v3_template_mismatch_does_not_leave_a_partial_document_or_binding(datab
                 "document_type": "business_requirements",
                 "catalog_entry_id": first["id"],
                 "idea": "Импортировать страницу",
+                "eva_page_url": page_url,
+                "eva_decision": {"mode": "BIND"},
             },
         )
 
@@ -2471,6 +2484,31 @@ def test_verified_eva_binding_supports_governed_pull_and_outbound_change(databas
     )
     assert document["lifecycle_state"] == "AGREED"
     assert document["eva_binding"]["status"] == "CONNECTED"
+
+    refreshed_binding = {
+        **binding,
+        "remote_version": "2|published-2|2026-09-01",
+        "remote_content_hash": "sha256:changed",
+    }
+    monkeypatch.setattr(
+        EvaDocumentChangeService,
+        "read_connected_page",
+        staticmethod(lambda _actor_id, _binding: (refreshed_binding, "# Изменённая EVA")),
+    )
+    update_status = BusinessDocumentService.check_eva_update(
+        TENANT,
+        AUTHOR,
+        document["document_id"],
+        is_admin=True,
+    )
+    assert update_status == {
+        "document_id": document["document_id"],
+        "changed": True,
+        "direction": "FROM_EVA",
+        "remote_version": "2|published-2|2026-09-01",
+        "baseline_version": "1|published-1|2026-09-01",
+        "can_pull": True,
+    }
 
     captured_change = {}
 

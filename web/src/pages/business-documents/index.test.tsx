@@ -2,6 +2,7 @@ import {
   approveEvaDocumentChange,
   assignBusinessDocumentOwner,
   BusinessDocumentConflictError,
+  checkBusinessDocumentEvaUpdate,
   createBusinessDocument,
   createEvaChangeFromBusinessDocument,
   createEvaDocumentChange,
@@ -98,6 +99,7 @@ jest.mock('@/services/business-document-service', () => {
   return {
     ...actual,
     createBusinessDocument: jest.fn(),
+    checkBusinessDocumentEvaUpdate: jest.fn(),
     createEvaChangeFromBusinessDocument: jest.fn(),
     deleteBusinessDocument: jest.fn(),
     downloadBusinessDocumentExport: jest.fn(),
@@ -126,6 +128,7 @@ jest.mock('@/services/user-service', () => ({
 }));
 
 const mockedCreate = jest.mocked(createBusinessDocument);
+const mockedCheckEvaUpdate = jest.mocked(checkBusinessDocumentEvaUpdate);
 const mockedCreateEvaFromDocument = jest.mocked(
   createEvaChangeFromBusinessDocument,
 );
@@ -446,6 +449,12 @@ beforeEach(() => {
     document: projection,
     sync: { changed: false, direction: 'FROM_EVA' },
   });
+  mockedCheckEvaUpdate.mockResolvedValue({
+    document_id: 'doc-1',
+    changed: false,
+    direction: 'FROM_EVA',
+    can_pull: true,
+  });
   mockedListEvaUserCredentials.mockResolvedValue({
     data: {
       code: 0,
@@ -737,6 +746,14 @@ test('offers personal-token EVA actions for a verified page binding', async () =
     },
   };
   mockedFetch.mockResolvedValueOnce(linked);
+  mockedCheckEvaUpdate.mockResolvedValueOnce({
+    document_id: 'doc-1',
+    changed: true,
+    direction: 'FROM_EVA',
+    remote_version: '2',
+    baseline_version: '1',
+    can_pull: true,
+  });
   mockedPullEvaDocument.mockResolvedValueOnce({
     document: { ...linked, lifecycle_state: 'REVIEW' },
     sync: { changed: true, direction: 'FROM_EVA', event_id: 'eva-pull-1' },
@@ -753,9 +770,12 @@ test('offers personal-token EVA actions for a verified page binding', async () =
   ).toBeVisible();
   expect(
     screen.getByRole('button', {
-      name: 'Перечитать текущий документ из EVA',
+      name: 'Загрузить обновление из EVA',
     }),
   ).toBeVisible();
+  expect(screen.getByTestId('eva-update-available')).toHaveTextContent(
+    'В EVA есть более новая версия документа',
+  );
   fireEvent.click(screen.getByTestId('pull-business-document-from-eva'));
   await waitFor(() =>
     expect(mockedPullEvaDocument).toHaveBeenCalledWith('doc-1', 18),
@@ -767,7 +787,7 @@ test('offers personal-token EVA actions for a verified page binding', async () =
   ).toBeVisible();
 });
 
-test('hides document EVA actions when the personal token is absent', async () => {
+test('hides EVA write action without a personal token and does not offer an unchanged page', async () => {
   mockedFetch.mockResolvedValueOnce({
     ...projection,
     lifecycle_state: 'AGREED',
@@ -796,12 +816,12 @@ test('hides document EVA actions when the personal token is absent', async () =>
   ).not.toBeInTheDocument();
   expect(
     screen.queryByRole('button', {
-      name: 'Перечитать текущий документ из EVA',
+      name: 'Загрузить обновление из EVA',
     }),
   ).not.toBeInTheDocument();
 });
 
-test('reconnects a linked EVA page before rereading it with a personal token', async () => {
+test('reconnects a linked EVA page before offering its newer version', async () => {
   const linkOnly = {
     ...projection,
     lifecycle_state: 'AGREED' as const,
@@ -829,6 +849,12 @@ test('reconnects a linked EVA page before rereading it with a personal token', a
   };
   mockedFetch.mockResolvedValueOnce(linkOnly);
   mockedRebindEvaDocument.mockResolvedValueOnce(connected);
+  mockedCheckEvaUpdate.mockResolvedValueOnce({
+    document_id: 'doc-1',
+    changed: true,
+    direction: 'FROM_EVA',
+    can_pull: true,
+  });
   mockedPullEvaDocument.mockResolvedValueOnce({
     document: connected,
     sync: { changed: false, direction: 'FROM_EVA' },
@@ -836,13 +862,14 @@ test('reconnects a linked EVA page before rereading it with a personal token', a
 
   renderPage();
 
-  fireEvent.click(
-    await screen.findByRole('button', {
-      name: 'Перечитать текущий документ из EVA',
-    }),
-  );
+  fireEvent.click(await screen.findByTestId('rebind-business-document-to-eva'));
   await waitFor(() =>
     expect(mockedRebindEvaDocument).toHaveBeenCalledWith('doc-1', 18),
+  );
+  fireEvent.click(
+    await screen.findByRole('button', {
+      name: 'Загрузить обновление из EVA',
+    }),
   );
   await waitFor(() =>
     expect(mockedPullEvaDocument).toHaveBeenCalledWith('doc-1', 19),
@@ -896,7 +923,7 @@ test('reconnects a link-only EVA page after a connector becomes available', asyn
   );
 });
 
-test('keeps EVA pull disabled until the first local revision exists', async () => {
+test('does not check or offer EVA pull until the first local revision exists', async () => {
   mockedFetch.mockResolvedValueOnce({
     ...projection,
     lifecycle_state: 'INTAKE',
@@ -911,11 +938,11 @@ test('keeps EVA pull disabled until the first local revision exists', async () =
   });
   renderPage();
 
-  const pullButton = await screen.findByTestId(
-    'pull-business-document-from-eva',
-  );
-  expect(pullButton).toBeDisabled();
-  fireEvent.click(pullButton);
+  expect(await screen.findByTestId('business-document-eva-binding')).toBeVisible();
+  expect(
+    screen.queryByTestId('pull-business-document-from-eva'),
+  ).not.toBeInTheDocument();
+  expect(mockedCheckEvaUpdate).not.toHaveBeenCalled();
   expect(mockedPullEvaDocument).not.toHaveBeenCalled();
 });
 

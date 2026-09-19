@@ -54,6 +54,7 @@ EXPECTED_ROUTES = {
     "delete_business_document": ("/business-documents/<document_id>", ("DELETE",)),
     "assign_business_document_owner": ("/business-documents/<document_id>/owner", ("PUT",)),
     "pull_business_document_from_eva": ("/business-documents/<document_id>/eva/pull", ("POST",)),
+    "check_business_document_eva_update": ("/business-documents/<document_id>/eva/status", ("GET",)),
     "rebind_business_document_to_eva": ("/business-documents/<document_id>/eva/rebind", ("POST",)),
     "create_business_document_eva_change": ("/business-documents/<document_id>/eva/changes", ("POST",)),
     "execute_business_document_command": ("/business-documents/<document_id>/commands", ("POST",)),

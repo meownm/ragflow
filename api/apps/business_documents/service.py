@@ -20,6 +20,7 @@ import hashlib
 from itertools import chain
 import json
 import logging
+import math
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -2839,56 +2840,95 @@ class BusinessDocumentService:
             "prompt_hash": prompt.get("content_hash"),
         }
 
-    @staticmethod
-    def _validate_execution_audit(value, job):
+    @classmethod
+    def _validate_execution_audit(cls, value, job):
         if value is None:
             if job.job_type != "GENERATE_EXPORT" and job.payload.get("dataset_ids") and related_file_search_enabled():
                 raise ValidationError("EVIDENCE_AUDIT_REQUIRED", "AI jobs with datasets require a pinned evidence audit")
             return {}
-        if not isinstance(value, dict) or set(value) != {"retrieval"} or not isinstance(value["retrieval"], dict):
+        if not isinstance(value, dict) or not value or not set(value) <= {"retrieval", "ai"}:
             raise ValidationError("INVALID_EXECUTION_AUDIT", "Worker execution audit is invalid")
-        retrieval = value["retrieval"]
-        expected = {
-            "attempt",
-            "retrieved_at",
-            "dataset_ids",
-            "query_hash",
-            "evidence_hash",
-            "source_refs",
-            "chunk_count",
-            "total_chars",
+        if job.job_type != "GENERATE_EXPORT" and job.payload.get("dataset_ids") and related_file_search_enabled() and "retrieval" not in value:
+            raise ValidationError("EVIDENCE_AUDIT_REQUIRED", "AI jobs with datasets require a pinned evidence audit")
+        validated = {}
+        if "retrieval" in value:
+            retrieval = value["retrieval"]
+            expected = {
+                "attempt",
+                "retrieved_at",
+                "dataset_ids",
+                "query_hash",
+                "evidence_hash",
+                "source_refs",
+                "chunk_count",
+                "total_chars",
+            }
+            if not isinstance(retrieval, dict) or set(retrieval) != expected:
+                raise ValidationError("INVALID_EXECUTION_AUDIT", "Worker retrieval audit fields are invalid")
+            if (
+                not isinstance(retrieval["attempt"], int)
+                or retrieval["attempt"] < 1
+                or not isinstance(retrieval["retrieved_at"], str)
+                or not isinstance(retrieval["dataset_ids"], list)
+                or len(retrieval["dataset_ids"]) > 20
+                or not all(isinstance(item, str) for item in retrieval["dataset_ids"])
+                or not isinstance(retrieval["source_refs"], list)
+                or not all(isinstance(item, str) for item in retrieval["source_refs"])
+                or not isinstance(retrieval["chunk_count"], int)
+                or retrieval["chunk_count"] != len(retrieval["source_refs"])
+                or not isinstance(retrieval["total_chars"], int)
+                or retrieval["total_chars"] < 0
+                or not all(isinstance(retrieval[field], str) and len(retrieval[field]) == 71 and retrieval[field].startswith("sha256:") for field in ("query_hash", "evidence_hash"))
+            ):
+                raise ValidationError("INVALID_EXECUTION_AUDIT", "Worker retrieval audit values are invalid")
+            snapshot = BusinessDocumentEvidenceSnapshot.get_or_none(BusinessDocumentEvidenceSnapshot.job_id == job.id)
+            if snapshot is None:
+                raise ValidationError("EVIDENCE_SNAPSHOT_REQUIRED", "Retrieval audit has no pinned evidence snapshot")
+            snapshot_chunks = snapshot.snapshot.get("chunks", []) if isinstance(snapshot.snapshot, dict) else []
+            snapshot_refs = [chunk.get("source_ref") for chunk in snapshot_chunks if isinstance(chunk, dict)]
+            if (
+                retrieval["evidence_hash"] != snapshot.evidence_hash
+                or retrieval["dataset_ids"] != snapshot.dataset_ids
+                or retrieval["source_refs"] != snapshot_refs
+                or retrieval["chunk_count"] != len(snapshot_chunks)
+            ):
+                raise ValidationError("EVIDENCE_AUDIT_MISMATCH", "Retrieval audit does not match the pinned evidence snapshot")
+            validated["retrieval"] = {key: retrieval[key] for key in sorted(expected)}
+        if "ai" in value:
+            validated["ai"] = cls._validate_ai_execution_audit(value["ai"])
+        return validated
+
+    @staticmethod
+    def _validate_ai_execution_audit(ai):
+        expected = {"provider", "model", "model_type", "parameters", "duration_ms", "token_usage"}
+        if not isinstance(ai, dict) or set(ai) != expected:
+            raise ValidationError("INVALID_EXECUTION_AUDIT", "Worker AI audit fields are invalid")
+        if not all(isinstance(ai[key], str) and ai[key] for key in ("provider", "model", "model_type")):
+            raise ValidationError("INVALID_EXECUTION_AUDIT", "Worker AI identity is invalid")
+        if len(ai["provider"]) > 128 or len(ai["model"]) > 256 or len(ai["model_type"]) > 64:
+            raise ValidationError("INVALID_EXECUTION_AUDIT", "Worker AI identity is invalid")
+        parameters = ai["parameters"]
+        if not isinstance(parameters, dict) or set(parameters) != {"temperature", "top_p", "max_completion_tokens"}:
+            raise ValidationError("INVALID_EXECUTION_AUDIT", "Worker AI parameters are invalid")
+        if parameters["temperature"] != 0 or parameters["top_p"] != 0.1 or parameters["max_completion_tokens"] not in {4096, 8192}:
+            raise ValidationError("INVALID_EXECUTION_AUDIT", "Worker AI parameters are invalid")
+        duration_ms = ai["duration_ms"]
+        if isinstance(duration_ms, bool) or not isinstance(duration_ms, (int, float)) or not math.isfinite(duration_ms) or duration_ms < 0:
+            raise ValidationError("INVALID_EXECUTION_AUDIT", "Worker AI duration is invalid")
+        usage = ai["token_usage"]
+        usage_keys = {"prompt_tokens", "completion_tokens", "total_tokens"}
+        if not isinstance(usage, dict) or set(usage) != usage_keys or any(isinstance(usage[key], bool) or not isinstance(usage[key], int) or usage[key] < 0 for key in usage_keys):
+            raise ValidationError("INVALID_EXECUTION_AUDIT", "Worker AI token usage is invalid")
+        if usage["prompt_tokens"] + usage["completion_tokens"] not in {0, usage["total_tokens"]}:
+            raise ValidationError("INVALID_EXECUTION_AUDIT", "Worker AI token usage is inconsistent")
+        return {
+            "duration_ms": float(duration_ms),
+            "model": ai["model"],
+            "model_type": ai["model_type"],
+            "parameters": {key: parameters[key] for key in sorted(parameters)},
+            "provider": ai["provider"],
+            "token_usage": {key: usage[key] for key in sorted(usage)},
         }
-        if set(retrieval) != expected:
-            raise ValidationError("INVALID_EXECUTION_AUDIT", "Worker retrieval audit fields are invalid")
-        if (
-            not isinstance(retrieval["attempt"], int)
-            or retrieval["attempt"] < 1
-            or not isinstance(retrieval["retrieved_at"], str)
-            or not isinstance(retrieval["dataset_ids"], list)
-            or len(retrieval["dataset_ids"]) > 20
-            or not all(isinstance(item, str) for item in retrieval["dataset_ids"])
-            or not isinstance(retrieval["source_refs"], list)
-            or not all(isinstance(item, str) for item in retrieval["source_refs"])
-            or not isinstance(retrieval["chunk_count"], int)
-            or retrieval["chunk_count"] != len(retrieval["source_refs"])
-            or not isinstance(retrieval["total_chars"], int)
-            or retrieval["total_chars"] < 0
-            or not all(isinstance(retrieval[field], str) and len(retrieval[field]) == 71 and retrieval[field].startswith("sha256:") for field in ("query_hash", "evidence_hash"))
-        ):
-            raise ValidationError("INVALID_EXECUTION_AUDIT", "Worker retrieval audit values are invalid")
-        snapshot = BusinessDocumentEvidenceSnapshot.get_or_none(BusinessDocumentEvidenceSnapshot.job_id == job.id)
-        if snapshot is None:
-            raise ValidationError("EVIDENCE_SNAPSHOT_REQUIRED", "Retrieval audit has no pinned evidence snapshot")
-        snapshot_chunks = snapshot.snapshot.get("chunks", []) if isinstance(snapshot.snapshot, dict) else []
-        snapshot_refs = [chunk.get("source_ref") for chunk in snapshot_chunks if isinstance(chunk, dict)]
-        if (
-            retrieval["evidence_hash"] != snapshot.evidence_hash
-            or retrieval["dataset_ids"] != snapshot.dataset_ids
-            or retrieval["source_refs"] != snapshot_refs
-            or retrieval["chunk_count"] != len(snapshot_chunks)
-        ):
-            raise ValidationError("EVIDENCE_AUDIT_MISMATCH", "Retrieval audit does not match the pinned evidence snapshot")
-        return {"retrieval": {key: retrieval[key] for key in sorted(expected)}}
 
     @classmethod
     def _latest_job(cls, document_id):

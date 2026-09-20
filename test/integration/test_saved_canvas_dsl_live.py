@@ -72,14 +72,14 @@ def test_synthetic_current_and_historical_saved_dsl_round_trip_and_cleanup():
     owner = UserCanvas.select(UserCanvas.user_id).first()
     assert owner is not None, "The local contour needs one existing tenant owner"
     canvas_id = uuid4().hex
-    first = _minimal_saved_dsl("T1 saved DSL first revision")
-    second = _minimal_saved_dsl("T1 saved DSL second revision")
+    first = _minimal_saved_dsl("Regression saved DSL first revision")
+    second = _minimal_saved_dsl("Regression saved DSL second revision")
     try:
-        UserCanvasService.insert(id=canvas_id, user_id=owner.user_id, title="T1 synthetic saved DSL", dsl=first)
+        UserCanvasService.insert(id=canvas_id, user_id=owner.user_id, title="Regression synthetic saved DSL", dsl=first)
         _, first_created = UserCanvasVersionService.save_or_replace_latest(
             user_canvas_id=canvas_id,
             dsl=first,
-            title="T1 synthetic released revision",
+            title="Regression synthetic released revision",
             release=True,
         )
         assert first_created is True
@@ -87,7 +87,7 @@ def test_synthetic_current_and_historical_saved_dsl_round_trip_and_cleanup():
         _, second_created = UserCanvasVersionService.save_or_replace_latest(
             user_canvas_id=canvas_id,
             dsl=second,
-            title="T1 synthetic current revision",
+            title="Regression synthetic current revision",
             release=False,
         )
         assert second_created is True

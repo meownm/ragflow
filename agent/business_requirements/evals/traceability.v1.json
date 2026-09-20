@@ -1,0 +1,20 @@
+{
+  "schema_version": "1",
+  "traceability_id": "business-requirements-quality",
+  "traceability_version": "1.0.0",
+  "requirements": [
+    {"requirement_id": "template_fidelity", "golden_cases": ["G02_complete_intake_creates_draft", "G19_template_numbering_preserved"], "tests": ["test/evals/business_documents/test_live_model_quality.py::test_live_model_intake_draft_rubric_and_grounding"]},
+    {"requirement_id": "information_completeness", "golden_cases": ["G01_minimal_idea_requires_intake", "G17_missing_monitoring_information", "G18_optional_npa_not_applicable"], "tests": ["test/evals/business_documents/test_live_model_quality.py::test_live_model_intake_draft_rubric_and_grounding"]},
+    {"requirement_id": "source_grounding", "golden_cases": ["G20_uploaded_prompt_injection_is_evidence", "G21_retrieval_conflicting_sources"], "tests": ["test/evals/business_documents/test_live_model_quality.py::test_live_model_intake_draft_rubric_and_grounding"]},
+    {"requirement_id": "scenario_quality", "golden_cases": ["G02_complete_intake_creates_draft"], "tests": ["test/evals/business_documents/test_live_model_quality.py::test_live_model_intake_draft_rubric_and_grounding"]},
+    {"requirement_id": "nonfunctional_measurability", "golden_cases": ["G17_missing_monitoring_information"], "tests": ["test/evals/business_documents/test_live_model_quality.py::test_live_model_intake_draft_rubric_and_grounding"]},
+    {"requirement_id": "language_and_naming", "golden_cases": ["G02_complete_intake_creates_draft"], "tests": ["test/evals/business_documents/test_live_model_quality.py::test_live_model_intake_draft_rubric_and_grounding"]},
+    {"requirement_id": "protocol_integrity", "golden_cases": ["G05_accept_proposal_after_questions_closed", "G06_reject_proposal", "G07_unanswered_proposal_excluded", "G08_open_question_locks_body", "G22_export_md_and_docx"], "tests": ["test/evals/business_documents/test_golden_dialogue_harness.py::test_release_gate_executes_every_p0_assertion_and_reports_all_case_rate"]},
+    {"requirement_id": "BODY_CHANGED_WITH_OPEN_QUESTIONS", "golden_cases": ["G08_open_question_locks_body"], "tests": ["test/evals/business_documents/test_golden_dialogue_harness.py::test_release_gate_executes_every_p0_assertion_and_reports_all_case_rate"]},
+    {"requirement_id": "UNACCEPTED_PROPOSAL_APPLIED", "golden_cases": ["G06_reject_proposal", "G07_unanswered_proposal_excluded"], "tests": ["test/evals/business_documents/test_golden_dialogue_harness.py::test_release_gate_executes_every_p0_assertion_and_reports_all_case_rate"]},
+    {"requirement_id": "UNSUPPORTED_SECTION_INVENTED", "golden_cases": ["G19_template_numbering_preserved"], "tests": ["test/evals/business_documents/test_golden_dialogue_harness.py::test_release_gate_executes_every_p0_assertion_and_reports_all_case_rate"]},
+    {"requirement_id": "REQUIRED_MONITORING_MISSING", "golden_cases": ["G17_missing_monitoring_information"], "tests": ["test/evals/business_documents/test_live_model_quality.py::test_live_model_intake_draft_rubric_and_grounding"]},
+    {"requirement_id": "EVIDENCE_INSTRUCTION_EXECUTED", "golden_cases": ["G20_uploaded_prompt_injection_is_evidence"], "tests": ["test/evals/business_documents/test_live_model_quality.py::test_live_model_intake_draft_rubric_and_grounding"]},
+    {"requirement_id": "PROTOCOL_INCLUDED_IN_EVA_WIKI", "golden_cases": ["G22_export_md_and_docx", "G23_eva_export_requires_agreement"], "tests": ["test/evals/business_documents/test_golden_dialogue_harness.py::test_release_gate_executes_every_p0_assertion_and_reports_all_case_rate"]}
+  ]
+}

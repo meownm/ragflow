@@ -4,7 +4,6 @@ import re
 import pytest
 from playwright.sync_api import expect
 
-from test.playwright.helpers._auth_helpers import ensure_authed
 from test.playwright.helpers._next_apps_helpers import RESULT_TIMEOUT_MS, _goto_home
 
 
@@ -40,9 +39,7 @@ def _projection(*, allowed_commands=None):
                     }
                 ],
             },
-            "section_texts": {
-                "1": "Сократить время перевода до одной минуты."
-            },
+            "section_texts": {"1": "Сократить время перевода до одной минуты."},
             "body_markdown": "## 1. Цель\nСократить время перевода до одной минуты.",
             "content_hash": "sha256:ui-test",
         },
@@ -73,8 +70,7 @@ def _projection(*, allowed_commands=None):
             ],
             "comments": [],
         },
-        "allowed_commands": allowed_commands
-        or ["ANSWER_QUESTION", "DECIDE_PROPOSAL", "ADD_COMMENT", "APPLY_CHANGES"],
+        "allowed_commands": allowed_commands or ["ANSWER_QUESTION", "DECIDE_PROPOSAL", "ADD_COMMENT", "APPLY_CHANGES"],
         "latest_exports": [
             {
                 "artifact_id": "artifact-md-r3",
@@ -88,20 +84,86 @@ def _projection(*, allowed_commands=None):
     }
 
 
-def _authenticate(
-    page,
-    login_url,
-    active_auth_context,
-    auth_click,
-    seeded_user_credentials,
-):
-    ensure_authed(
-        page,
-        login_url,
-        active_auth_context,
-        auth_click,
-        seeded_user_credentials=seeded_user_credentials,
+def _install_session(page):
+    user_info = json.dumps(
+        {
+            "access_token": "business-documents-ui-token",
+            "id": "business-documents-ui-user",
+            "email": "business-documents-ui@example.test",
+            "nickname": "Business Documents UI",
+            "is_superuser": False,
+        }
     )
+    page.add_init_script(
+        f"""
+        (() => {{
+          const userInfo = {user_info};
+          localStorage.setItem('Authorization', 'Bearer business-documents-ui-token');
+          localStorage.setItem('token', 'business-documents-ui-token');
+          localStorage.setItem('userInfo', JSON.stringify(userInfo));
+          localStorage.setItem('lng', 'ru');
+        }})()
+        """
+    )
+
+
+def _install_common_routes(page):
+    page.route(
+        "**/api/v1/system/config",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(
+                _envelope(
+                    {
+                        "registerEnabled": 0,
+                        "disablePasswordLogin": False,
+                        "visibleSections": [
+                            "home",
+                            "dataset",
+                            "chat",
+                            "search",
+                            "agent",
+                            "memory",
+                            "catalog",
+                            "business_documents",
+                            "file_manager",
+                        ],
+                    }
+                )
+            ),
+        ),
+    )
+    page.route(
+        "**/api/v1/users/me",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(
+                _envelope(
+                    {
+                        "id": "business-documents-ui-user",
+                        "email": "business-documents-ui@example.test",
+                        "nickname": "Business Documents UI",
+                        "language": "ru",
+                        "avatar": None,
+                    }
+                )
+            ),
+        ),
+    )
+    for pattern, data in (
+        ("**/api/v1/tenants", []),
+        ("**/api/v1/users/me/eva-credentials", {"items": []}),
+    ):
+        page.route(
+            pattern,
+            lambda route, response=data: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(_envelope(response)),
+            ),
+        )
 
 
 @pytest.mark.p1
@@ -109,22 +171,38 @@ def _authenticate(
 def test_business_documents_list_validation_and_create_navigation(
     page,
     base_url,
-    login_url,
-    active_auth_context,
-    auth_click,
-    seeded_user_credentials,
 ):
-    _authenticate(
-        page,
-        login_url,
-        active_auth_context,
-        auth_click,
-        seeded_user_credentials,
-    )
+    _install_session(page)
+    _install_common_routes(page)
     created_payloads = []
 
     def route_business_documents(route):
         request = route.request
+        if request.url.split("?", 1)[0].endswith("/catalog"):
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(
+                    _envelope(
+                        {
+                            "items": [
+                                {
+                                    "id": "L2-01.01.04.01.01",
+                                    "title": "Новый регламент",
+                                    "title_en": "New regulation",
+                                    "description": "Разрешённый L5-документ",
+                                    "capability_level": "L5",
+                                    "capability_type": "Core",
+                                    "hierarchy": {},
+                                }
+                            ],
+                            "total": 1,
+                        }
+                    ),
+                    ensure_ascii=False,
+                ),
+            )
+            return
         if request.method == "GET":
             route.fulfill(
                 status=200,
@@ -145,6 +223,16 @@ def test_business_documents_list_validation_and_create_navigation(
                             "page": 1,
                             "page_size": 20,
                             "total": 1,
+                            "scope": "mine",
+                            "access_role": "AUTHOR_CREATOR",
+                            "capabilities": {
+                                "read": True,
+                                "create": True,
+                                "edit_own": True,
+                                "edit_all": False,
+                                "delete": False,
+                                "assign": False,
+                            },
                         }
                     ),
                     ensure_ascii=False,
@@ -169,30 +257,25 @@ def test_business_documents_list_validation_and_create_navigation(
     )
 
     _goto_home(page, base_url)
-    expect(page.locator("[data-testid='nav-business-documents']").first).to_have_attribute(
-        "href", "/business-documents"
-    )
+    expect(page.locator("[data-testid='nav-business-documents']").first).to_have_attribute("href", "/business-documents")
     page.goto(f"{base_url.rstrip('/')}/business-documents")
-    expect(page.locator("[data-testid='business-documents-create']")).to_be_visible(
-        timeout=RESULT_TIMEOUT_MS
-    )
-    expect(page.locator("[data-testid='business-document-list-item']")).to_contain_text(
-        "Сохранённые требования"
-    )
+    expect(page.locator("[data-testid='business-documents-create']")).to_be_visible(timeout=RESULT_TIMEOUT_MS)
+    expect(page.locator("[data-testid='business-document-list-item']")).to_contain_text("Сохранённые требования")
 
-    submit = page.get_by_role("button", name="Начать работу")
+    create_panel = page.locator("[data-testid='business-document-create-panel']")
+    submit = create_panel.locator("button[type='submit']")
     expect(submit).to_be_disabled()
-    page.get_by_label("Название документа").fill("  Новый регламент  ")
-    page.get_by_label("Описание идеи").fill("  Согласовать единый процесс.  ")
+    page.locator("[data-testid='business-document-catalog-select']").select_option("L2-01.01.04.01.01")
+    create_panel.locator("textarea").fill("  Согласовать единый процесс.  ")
     expect(submit).to_be_enabled()
     submit.click()
 
     expect(page).to_have_url(re.compile(r"/business-documents/doc-ui-1$"))
     assert created_payloads == [
         {
-            "schema_version": "2",
+            "schema_version": "3",
             "document_type": "business_requirements",
-            "title": "Новый регламент",
+            "catalog_entry_id": "L2-01.01.04.01.01",
             "idea": "Согласовать единый процесс.",
             "dataset_ids": [],
         }
@@ -204,18 +287,9 @@ def test_business_documents_list_validation_and_create_navigation(
 def test_business_document_workbench_commands_and_mobile_layout(
     page,
     base_url,
-    login_url,
-    active_auth_context,
-    auth_click,
-    seeded_user_credentials,
 ):
-    _authenticate(
-        page,
-        login_url,
-        active_auth_context,
-        auth_click,
-        seeded_user_credentials,
-    )
+    _install_session(page)
+    _install_common_routes(page)
     commands = []
 
     def route_document(route):
@@ -251,12 +325,8 @@ def test_business_document_workbench_commands_and_mobile_layout(
     workbench = page.locator("[data-testid='business-document-workbench']")
     expect(workbench).to_be_visible(timeout=RESULT_TIMEOUT_MS)
     expect(page.get_by_role("heading", name="Переводы одной кнопкой")).to_be_visible()
-    expect(page.locator("[data-testid='business-document-pane']")).to_contain_text(
-        "Сократить время перевода"
-    )
-    expect(page.locator("[data-testid='business-document-protocol']")).to_contain_text(
-        "Как измеряется успех?"
-    )
+    expect(page.locator("[data-testid='business-document-pane']")).to_contain_text("Сократить время перевода")
+    expect(page.locator("[data-testid='business-document-protocol']")).to_contain_text("Как измеряется успех?")
     expect(page.get_by_role("link", name="Markdown r3")).to_have_attribute(
         "href",
         "/api/v1/business-documents/doc-ui-1/exports/artifact-md-r3/download",

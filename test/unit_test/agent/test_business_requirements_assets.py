@@ -221,6 +221,28 @@ def test_quality_rubric_has_a_complete_weighted_gate():
     }.issubset(rubric["hard_failures"])
 
 
+def test_quality_traceability_covers_every_rubric_requirement_with_executable_evidence():
+    rubric = load_json("evals/rubric.v1.json")
+    traceability = load_json("evals/traceability.v1.json")
+    suite = load_json("golden_dialogs/v2.json")
+    known_cases = {case["id"] for case in suite["cases"]}
+    rows = traceability["requirements"]
+    by_id = {row["requirement_id"]: row for row in rows}
+    expected = {criterion["id"] for criterion in rubric["criteria"]} | set(rubric["hard_failures"])
+
+    assert traceability["traceability_id"] == rubric["rubric_id"]
+    assert len(by_id) == len(rows)
+    assert set(by_id) == expected
+    for row in rows:
+        assert row["tests"]
+        assert row["golden_cases"]
+        assert set(row["golden_cases"]) <= known_cases
+        for nodeid in row["tests"]:
+            path, separator, test_name = nodeid.partition("::")
+            assert separator and test_name.startswith("test_")
+            assert (ASSET_ROOT.parents[1] / path).is_file()
+
+
 def test_prompt_pack_is_contract_first_and_treats_evidence_as_data():
     prompts = {path.name: path.read_text(encoding="utf-8") for path in sorted((ASSET_ROOT / "prompts").glob("*.md"))}
 

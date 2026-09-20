@@ -111,8 +111,8 @@ real PostgreSQL transaction races, and a real MinIO fault boundary that raises
 `SystemExit` immediately after a successful `PUT`, then expires the lease and
 proves reconciliation. This deterministic test preserves the same durable
 cross-store state as an abrupt stop; it does not itself kill and restart an OS
-process or prove deployment-supervisor recovery. Completion of this slice does
-not by itself declare all of T4 complete.
+process or prove deployment-supervisor recovery. Deployment-supervisor recovery
+therefore remains a separate acceptance check.
 
 ### Existing EVA document change workflow
 

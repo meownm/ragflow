@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$OutputDirectory = (Join-Path $PSScriptRoot '..\..\..\.codex_tmp\t1-local-fixtures')
+    [string]$OutputDirectory = (Join-Path $PSScriptRoot '..\..\..\.codex_tmp\local-regression-fixtures')
 )
 
 $ErrorActionPreference = 'Stop'

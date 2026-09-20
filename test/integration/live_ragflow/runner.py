@@ -1,4 +1,4 @@
-"""Disposable live T1 runner; generated secrets remain in the process environment."""
+"""Disposable live regression runner; generated secrets remain in the process environment."""
 
 import argparse
 import hashlib
@@ -160,7 +160,7 @@ def main():
     (OUT / "identity.json").write_text(json.dumps(identity, indent=2), encoding="utf-8")
     exit_code = 1
     try:
-        print("Starting disposable T1 stack", flush=True)
+        print("Starting disposable regression stack", flush=True)
         command([*cmd, "up", "-d", "--pull", "never"], env=env, log="startup.log")
         deadline = time.monotonic() + 480
         while True:

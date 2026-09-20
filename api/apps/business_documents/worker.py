@@ -369,6 +369,10 @@ class BusinessDocumentWorker:
                     execution_audit = None
                     self._set_progress(job, 0.4, "GENERATING", "Формируем результат")
                     output = self.ai.process(job)
+                audit_consumer = getattr(self.ai, "consume_execution_audit", None)
+                ai_audit = audit_consumer() if callable(audit_consumer) else None
+                if ai_audit:
+                    execution_audit = {**(execution_audit or {}), "ai": ai_audit}
                 self._set_progress(job, 0.82, "VALIDATING", "Проверяем результат")
             self._set_progress(job, 0.92, "PERSISTING", "Сохраняем результат")
             heartbeat.ensure_current()

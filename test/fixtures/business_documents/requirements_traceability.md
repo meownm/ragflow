@@ -62,7 +62,7 @@ documented behavior is not considered covered by a UI rendering alone.
 - The recorded live-quality pass is one representative controlled-evidence run,
   not a claim that arbitrary models meet the rubric. The installed 7B model was
   also exercised and failed to produce a complete valid draft; that negative
-  result remains part of the T1 evidence.
+  result remains part of the regression evidence.
 - The intake-to-draft live scorer evaluates template fidelity, completeness,
   controlled-fact citation precision, scenario quality, monitoring, language
   and protocol separation. Draft-local hard failures are checked there;

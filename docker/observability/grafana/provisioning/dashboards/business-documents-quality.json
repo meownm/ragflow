@@ -1,0 +1,60 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "panels": [
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 0},
+      "id": 1,
+      "targets": [{"expr": "sum by (business_document_task_type) (rate(traces_span_metrics_calls_total{span_name=\"business_documents.ai.generate\"}[$__rate_interval]))", "legendFormat": "{{business_document_task_type}}", "refId": "A"}],
+      "title": "AI operations",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 0},
+      "id": 2,
+      "targets": [{"expr": "sum(rate(traces_span_metrics_calls_total{span_name=\"business_documents.ai.generate\",status_code=\"STATUS_CODE_ERROR\"}[$__rate_interval])) / clamp_min(sum(rate(traces_span_metrics_calls_total{span_name=\"business_documents.ai.generate\"}[$__rate_interval])), 1)", "legendFormat": "errors", "refId": "A"}],
+      "title": "AI error rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "ms"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 0},
+      "id": 3,
+      "targets": [{"expr": "histogram_quantile(0.95, sum by (le, business_document_task_type) (rate(traces_span_metrics_duration_milliseconds_bucket{span_name=\"business_documents.ai.generate\"}[$__rate_interval])))", "legendFormat": "{{business_document_task_type}}", "refId": "A"}],
+      "title": "AI latency p95",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8},
+      "id": 4,
+      "targets": [{"expr": "sum by (gen_ai_system, gen_ai_request_model) (rate(traces_span_metrics_calls_total{span_name=\"business_documents.ai.generate\"}[$__rate_interval]))", "legendFormat": "{{gen_ai_system}} / {{gen_ai_request_model}}", "refId": "A"}],
+      "title": "Active model traffic",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki"},
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 16},
+      "id": 5,
+      "options": {"dedupStrategy": "none", "enableLogDetails": true, "prettifyLogMessage": false, "showCommonLabels": false, "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": true},
+      "targets": [{"expr": "{service_name=\"ragflow\"} |= \"business_document.ai.complete\"", "refId": "A"}],
+      "title": "AI usage and completion audit",
+      "type": "logs"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 42,
+  "tags": ["ragflow", "business-documents", "ai-quality"],
+  "templating": {"list": []},
+  "time": {"from": "now-24h", "to": "now"},
+  "timezone": "browser",
+  "title": "Business Documents AI quality",
+  "uid": "business-documents-ai-quality",
+  "version": 1
+}

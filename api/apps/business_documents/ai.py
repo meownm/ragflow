@@ -20,7 +20,9 @@ import asyncio
 from copy import deepcopy
 import json
 import logging
+import math
 import re
+import time
 from dataclasses import dataclass
 from typing import Any, Protocol
 import unicodedata
@@ -181,6 +183,14 @@ class BusinessDocumentAIAdapter(Protocol):
 class RAGFlowLLMAdapter:
     """Thin injectable adapter over the tenant's configured default chat model."""
 
+    def __init__(self):
+        self._execution_audit: dict[str, Any] | None = None
+
+    def consume_execution_audit(self) -> dict[str, Any] | None:
+        audit = self._execution_audit
+        self._execution_audit = None
+        return deepcopy(audit)
+
     async def async_generate(self, tenant_id: str, system_prompt: str, input_payload: dict[str, Any]) -> str:
         from api.db.joint_services.tenant_model_service import get_tenant_default_model_by_type
         from api.db.services.llm_service import LLMBundle
@@ -189,17 +199,75 @@ class RAGFlowLLMAdapter:
         model_config = get_tenant_default_model_by_type(tenant_id, LLMType.CHAT)
         task_type = input_payload.get("job_input", {}).get("task_type")
         max_completion_tokens = 8192 if task_type in {"GENERATE_DRAFT", "GENERATE_EVA_CHANGE"} else 4096
+        generation_parameters = {
+            "temperature": 0,
+            "top_p": 0.1,
+            "max_completion_tokens": max_completion_tokens,
+        }
+        provider = " ".join(str(model_config.get("llm_factory") or "unknown").split())[:128]
+        model = " ".join(str(model_config.get("llm_name") or model_config.get("model_name") or "unknown").split())[:256]
+        model_type = " ".join(str(model_config.get("model_type") or LLMType.CHAT.value).split())[:64]
+        started_at = time.perf_counter()
+        self._execution_audit = None
 
         # The durable business-document queue owns retries and exposes each
         # failure to the user.  Provider-internal retries can otherwise keep a
         # single visible attempt inside repeated five-minute HTTP calls.
-        with LLMBundle(tenant_id, model_config, lang="Russian", max_retries=0) as bundle:
+        try:
+            from opentelemetry import trace
+
+            span_context = trace.get_tracer("ragflow.business_documents").start_as_current_span(
+                "business_documents.ai.generate",
+                attributes={
+                    "business_document.task_type": str(task_type or "unknown")[:64],
+                    "gen_ai.system": provider,
+                    "gen_ai.request.model": model,
+                },
+            )
+        except ImportError:
+            from contextlib import nullcontext
+
+            span_context = nullcontext(None)
+
+        with span_context as span, LLMBundle(tenant_id, model_config, lang="Russian", max_retries=0) as bundle:
             try:
-                return await bundle.async_chat(
+                result = await bundle.async_chat(
                     system_prompt,
                     [{"role": "user", "content": json.dumps(input_payload, ensure_ascii=False)}],
-                    {"temperature": 0, "top_p": 0.1, "max_completion_tokens": max_completion_tokens},
+                    generation_parameters,
                 )
+                raw_usage = getattr(getattr(bundle, "mdl", None), "last_usage", None) or {}
+                token_usage = {
+                    "prompt_tokens": max(0, int(raw_usage.get("prompt_tokens", 0) or 0)),
+                    "completion_tokens": max(0, int(raw_usage.get("completion_tokens", 0) or 0)),
+                    "total_tokens": max(0, int(raw_usage.get("total_tokens", 0) or 0)),
+                }
+                duration_ms = max(0.0, (time.perf_counter() - started_at) * 1000)
+                if not math.isfinite(duration_ms):
+                    duration_ms = 0.0
+                self._execution_audit = {
+                    "provider": provider,
+                    "model": model,
+                    "model_type": model_type,
+                    "parameters": generation_parameters,
+                    "duration_ms": round(duration_ms, 3),
+                    "token_usage": token_usage,
+                }
+                if span is not None:
+                    span.set_attribute("gen_ai.usage.input_tokens", token_usage["prompt_tokens"])
+                    span.set_attribute("gen_ai.usage.output_tokens", token_usage["completion_tokens"])
+                    span.set_attribute("gen_ai.usage.total_tokens", token_usage["total_tokens"])
+                logging.info(
+                    "business_document.ai.complete task_type=%s provider=%s model=%s duration_ms=%.3f prompt_tokens=%d completion_tokens=%d total_tokens=%d",
+                    task_type,
+                    provider,
+                    model,
+                    duration_ms,
+                    token_usage["prompt_tokens"],
+                    token_usage["completion_tokens"],
+                    token_usage["total_tokens"],
+                )
+                return result
             finally:
                 await _drain_litellm_callbacks()
 
@@ -217,6 +285,10 @@ class PromptBundle:
 class BusinessDocumentAI:
     def __init__(self, adapter: BusinessDocumentAIAdapter | None = None):
         self._adapter = adapter or RAGFlowLLMAdapter()
+
+    def consume_execution_audit(self) -> dict[str, Any] | None:
+        consumer = getattr(self._adapter, "consume_execution_audit", None)
+        return consumer() if callable(consumer) else None
 
     def process(self, job: BusinessDocumentJob, evidence: dict[str, Any] | None = None) -> dict[str, Any]:
         if job.job_type not in _AI_JOB_TYPES:

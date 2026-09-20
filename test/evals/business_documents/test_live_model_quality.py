@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import sys
 from types import ModuleType
+from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
@@ -276,3 +277,31 @@ def test_live_model_intake_draft_rubric_and_grounding(database, monkeypatch):
     assert score.grounded_claim_count >= 2, score
     assert score.grounded_reference_precision >= RUBRIC["live_suite_gate"]["minimum_grounded_fact_precision"], score
     assert score.weighted_score >= RUBRIC["pass_threshold"], score
+
+    report_path = os.environ.get("BUSINESS_DOCUMENT_QUALITY_REPORT", "").strip()
+    if report_path:
+        execution = draft_job.result.get("execution", {}) if isinstance(draft_job.result, dict) else {}
+        report = {
+            "schema_version": "1",
+            "status": "PASS",
+            "scoring_method": "deterministic_proxy",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "source_revision": os.environ.get("GITHUB_SHA", "unknown"),
+            "rubric_id": RUBRIC["rubric_id"],
+            "rubric_version": RUBRIC["rubric_version"],
+            "template_version": template["template_version"],
+            "prompt": draft_job.result.get("prompt_hash"),
+            "ai": execution.get("ai"),
+            "metrics": {
+                "criterion_scores": score.criterion_scores,
+                "weighted_score": score.weighted_score,
+                "grounded_reference_precision": score.grounded_reference_precision,
+                "grounded_claim_count": score.grounded_claim_count,
+                "hard_failures": list(score.hard_failures),
+            },
+        }
+        destination = Path(report_path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = destination.with_suffix(destination.suffix + ".tmp")
+        temporary.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        temporary.replace(destination)

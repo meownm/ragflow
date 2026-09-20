@@ -131,6 +131,29 @@ assertions. The deterministic runner reports both case and assertion
 denominators by P0/P1 and fails on unknown, skipped, or unexecuted P0 behavior.
 Current coverage is 24/24 cases and 78/78 hard assertions.
 
+## Model qualification
+
+The deterministic scorer is a fail-closed proxy for the published rubric, not
+a substitute for expert semantic review. A candidate model is qualified only
+by a fresh live run against the candidate revision and current prompt,
+template, and rubric:
+
+```powershell
+$env:BUSINESS_DOCUMENT_LIVE_LLM = "1"
+$env:BUSINESS_DOCUMENT_LIVE_TENANT_ID = "<tenant-id>"
+$env:BUSINESS_DOCUMENT_QUALITY_REPORT = "output/quality/business-document-live.json"
+$candidateRevision = git rev-parse HEAD
+$env:GITHUB_SHA = $candidateRevision
+uv run pytest test/evals/business_documents/test_live_model_quality.py -q
+uv run python tools/quality/verify_business_document_quality_report.py --report output/quality/business-document-live.json --expected-revision $candidateRevision
+```
+
+The report records the executed provider/model, fixed generation parameters,
+token usage, duration, asset versions, scores, and evidence precision. A
+missing live environment or report is `INCOMPLETE`; stale assets/revision or a
+threshold violation is a failed qualification. Neither may be reported as a
+pass or used to activate a model.
+
 Adding or changing a requirement requires, in the same increment:
 
 1. a traceability row;

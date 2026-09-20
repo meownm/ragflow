@@ -62,6 +62,11 @@ def test_llm_adapter_preserves_tenant_prompt_payload_and_retry_contract(monkeypa
     class FakeBundle:
         def __init__(self, *args, **kwargs):
             bundle_calls.append((args, kwargs))
+            self.mdl = type(
+                "FakeModel",
+                (),
+                {"last_usage": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18}},
+            )()
 
         def __enter__(self):
             return self
@@ -85,9 +90,10 @@ def test_llm_adapter_preserves_tenant_prompt_payload_and_retry_contract(monkeypa
     # The synchronous adapter is called by the production worker thread.  Keep
     # its private asyncio.run away from pytest-asyncio's main-thread loop too,
     # otherwise Windows can retain the displaced Proactor self-pipe until GC.
+    adapter = RAGFlowLLMAdapter()
     with ThreadPoolExecutor(max_workers=1) as executor:
         result = executor.submit(
-            RAGFlowLLMAdapter().generate,
+            adapter.generate,
             "tenant-1",
             "system contract",
             payload,
@@ -104,6 +110,15 @@ def test_llm_adapter_preserves_tenant_prompt_payload_and_retry_contract(monkeypa
     assert json.loads(messages[0]["content"]) == payload
     assert options == {"temperature": 0, "top_p": 0.1, "max_completion_tokens": expected_limit}
     assert drain_calls == [True]
+    audit = adapter.consume_execution_audit()
+    assert audit is not None
+    assert audit["provider"] == "unknown"
+    assert audit["model"] == "configured-chat"
+    assert audit["model_type"] == "chat"
+    assert audit["parameters"] == options
+    assert audit["token_usage"] == {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18}
+    assert audit["duration_ms"] >= 0
+    assert adapter.consume_execution_audit() is None
 
 
 @pytest.mark.p1

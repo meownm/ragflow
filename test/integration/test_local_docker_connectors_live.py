@@ -91,7 +91,7 @@ def test_openmetadata_live_read_write_retry_and_restore():
     client = OpenMetadataClient(client_config)
     entity_id = str(target["id"])
     original_description = client.get_table(entity_id).get("description")
-    marker = f"T1 local Docker write/recovery fixture {uuid4().hex}"
+    marker = f"Local regression write/recovery fixture {uuid4().hex}"
     restored = False
     try:
         operation = "replace" if original_description is not None else "add"
@@ -168,7 +168,7 @@ def test_eva_live_retry_create_publish_update_and_cleanup():
     )
     writer.load_credentials(credentials)
     key = uuid4().hex[:12]
-    name = f"T1 local synthetic {key}"
+    name = f"Local regression synthetic {key}"
     created = reader._rpc(
         "CmfDocument.create",
         {},

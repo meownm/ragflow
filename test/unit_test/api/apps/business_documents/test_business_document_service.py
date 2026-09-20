@@ -17,7 +17,7 @@
 from copy import deepcopy
 from pathlib import Path
 import sys
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 from peewee import IntegrityError, SqliteDatabase
@@ -63,6 +63,43 @@ from test.unit_test.api.apps.business_documents.helpers import VALID_ACTIVITY_SC
 
 TENANT = "tenant-1"
 AUTHOR = "author-1"
+
+
+def _ai_execution_audit():
+    return {
+        "provider": "Ollama",
+        "model": "qualified-model",
+        "model_type": "chat",
+        "parameters": {"temperature": 0, "top_p": 0.1, "max_completion_tokens": 8192},
+        "duration_ms": 1250.5,
+        "token_usage": {"prompt_tokens": 120, "completion_tokens": 80, "total_tokens": 200},
+    }
+
+
+def test_ai_execution_audit_is_canonicalized_for_persistence():
+    job = SimpleNamespace(job_type="GENERATE_DRAFT", payload={})
+
+    validated = BusinessDocumentService._validate_execution_audit({"ai": _ai_execution_audit()}, job)
+
+    assert validated == {"ai": _ai_execution_audit()}
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda audit: audit.update(model=""),
+        lambda audit: audit["parameters"].update(temperature=0.7),
+        lambda audit: audit.update(duration_ms=float("nan")),
+        lambda audit: audit["token_usage"].update(total_tokens=999),
+    ],
+)
+def test_ai_execution_audit_fails_closed_on_invalid_identity_parameters_timing_or_usage(mutation):
+    job = SimpleNamespace(job_type="GENERATE_DRAFT", payload={})
+    audit = _ai_execution_audit()
+    mutation(audit)
+
+    with pytest.raises(BusinessDocumentError, match="Worker AI"):
+        BusinessDocumentService._validate_execution_audit({"ai": audit}, job)
 
 
 @pytest.fixture()

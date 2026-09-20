@@ -88,7 +88,7 @@ def main():
             payload={
                 "title": "Synthetic requirements",
                 "eva_binding": {
-                    "page_url": "https://eva.example.test/project/Document/T1",
+                    "page_url": "https://eva.example.test/project/Document/regression",
                     "status": "CONNECTED",
                     "connector_id": "t1-connector",
                     "eva_origin": "https://eva-api.example.test",
@@ -269,7 +269,7 @@ def main():
             if mode == "groups":
                 from api.db.services.access_group_service import AccessGroupService
 
-                AccessGroupService.create({"name": "T1 preserved group", "user_ids": ["t1-user"], "dataset_ids": ["t1-dataset"], "sections": ["dataset", "business_documents"]})
+                AccessGroupService.create({"name": "Regression preserved group", "user_ids": ["t1-user"], "dataset_ids": ["t1-dataset"], "sections": ["dataset", "business_documents"]})
         token = UserExternalCredentialService.get_eva_wiki_token("t1-user", "https://eva.example.test")
         assert token.secret == "t1-synthetic-token" and token.credential_version == 1
         output.write_text(json.dumps(snapshot(), sort_keys=True), encoding="utf-8")

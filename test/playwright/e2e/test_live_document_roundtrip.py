@@ -26,7 +26,7 @@ BASE = os.environ.get("RAGFLOW_BASE_URL", "")
 
 
 def api(path, method="GET", data=None):
-    assert BASE == "http://127.0.0.1:19382", "Only the disposable T1 stack is accepted"
+    assert BASE == "http://127.0.0.1:19382", "Only the disposable regression stack is accepted"
     with urlopen(
         Request(BASE + path, method=method, headers={"Authorization": os.environ["QA_LIVE_TOKEN"], "Content-Type": "application/json"}, data=json.dumps(data).encode() if data is not None else None),
         timeout=180,

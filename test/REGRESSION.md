@@ -59,8 +59,8 @@ not an OS-level kill/restart or deployment-supervisor test.
 
 The standalone route-unit command is restricted to the two explicitly listed
 mock-backed modules. Do not apply its `--confcutdir` to live API suites: their
-provider and disposable-stack prerequisites still apply. T1 results and remaining
-acceptance gaps are recorded in [the T1 report](../docs/develop/t1-regression-report-ru.md).
+provider and disposable-stack prerequisites still apply. Record any remaining
+acceptance gaps in the change or release notes that produced them.
 
 The previous-release lane requires `RAGFLOW_UPGRADE_TEST_DISPOSABLE=1`,
 `RAGFLOW_UPGRADE_TEST_POSTGRES_DSN` (loopback-only disposable cluster), and
@@ -87,10 +87,10 @@ safe worker stage boundaries: a synchronous engine call may finish computing,
 but a requested cancel must prevent `done`, result and artifacts. Missing opt-in
 prerequisites are skips, never evidence that this lane passed.
 
-Generate the local T1 audio and MRZ fixtures from PowerShell with:
+Generate the local audio and MRZ fixtures from PowerShell with:
 
 ```powershell
-pwsh -File test/integration/fixtures/New-T1LocalFixtures.ps1 -OutputDirectory .codex_tmp/t1-local-fixtures
+pwsh -File test/integration/fixtures/New-LocalRegressionFixtures.ps1 -OutputDirectory .codex_tmp/local-regression-fixtures
 ```
 
 The generator requires a local Russian SAPI voice and FFmpeg. Fixtures are
@@ -105,7 +105,7 @@ The coordinated storage lane is deliberately independent of the running
 application data. It creates unique Docker resources and validates a shared
 snapshot identifier and object digest after restore. Its negative control must
 detect a PostgreSQL row whose referenced MinIO object is absent. Full installer
-and old-release recovery remain T6 work even when this data-consistency lane is
+and old-release recovery remain separate release work even when this data-consistency lane is
 green.
 
 The saved-DSL lane has two different purposes. Its synthetic test proves a

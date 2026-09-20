@@ -48,6 +48,9 @@ connectors:
     dimensions:
       - name: http.request.method
       - name: http.response.status_code
+      - name: business_document.task_type
+      - name: gen_ai.system
+      - name: gen_ai.request.model
 
 exporters:
   otlp_http/tempo:

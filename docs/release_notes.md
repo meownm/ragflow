@@ -9,6 +9,20 @@ sidebar_custom_props: {
 
 Key features, improvements and bug fixes in the latest releases.
 
+## v1.26.0
+
+Released on September 20, 2026.
+
+### New features
+
+- Business documents: Records the executed AI provider, model, controlled generation parameters, duration, and token usage with trace metrics and a provisioned Grafana dashboard.
+- Model qualification: Adds a fail-closed report verifier tied to the candidate revision and current rubric, prompt, and template assets.
+
+### Improvements and bug fixes
+
+- Replaces the staged architecture-report pipeline with focused regression lanes and direct caller/consumer review.
+- Condenses the SQL constructor architecture reference to the current runtime contracts and removes superseded transition reports, inventories, and observer tooling.
+
 ## v1.25.0
 
 Released on September 19, 2026.

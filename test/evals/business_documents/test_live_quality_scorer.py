@@ -152,6 +152,26 @@ def test_scorer_passes_template_protocol_monitoring_and_grounded_references():
     assert score.missing_fact_ids == ()
     assert score.duplicate_content_count == 0
     assert score.duplicate_content == ()
+
+
+def test_scorer_allows_confirmed_review_inputs_in_document_body():
+    document = _document_ast()
+    scenario = next(section for section in document["sections"] if section["id"] == "4.3")
+    confirmed_comment = "После подтверждения записи система отправляет клиенту номер обращения по SMS."
+    accepted_proposal = "Добавить в сценарий отправку номера обращения по SMS после подтверждения записи."
+    scenario["blocks"][0]["text"] += f" {confirmed_comment} {accepted_proposal}"
+    protocol = _protocol()
+    protocol["comments"] = [
+        {
+            "text": confirmed_comment,
+            "disposition": {"disposition": "CONFIRMED_CHANGE"},
+        }
+    ]
+    protocol["proposals"] = [{"text": accepted_proposal, "decision": "ACCEPTED"}]
+
+    score = score_document_quality(document, protocol, TEMPLATE, RUBRIC, FACTS, SNAPSHOT)
+
+    assert score.protocol_separated is True
     assert score.duplication_rate == 0.0
     assert score.misplaced_fact_count == 0
     assert score.misplacement_rate == 0.0

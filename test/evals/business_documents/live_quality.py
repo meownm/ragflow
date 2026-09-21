@@ -334,6 +334,15 @@ def _protocol_is_separate(body_text: str, protocol: dict[str, Any] | None) -> bo
         for row in rows:
             if not isinstance(row, dict):
                 continue
+            if collection == "proposals" and row.get("decision") == "ACCEPTED":
+                continue
+            disposition = row.get("disposition")
+            if (
+                collection == "comments"
+                and isinstance(disposition, dict)
+                and disposition.get("disposition") == "CONFIRMED_CHANGE"
+            ):
+                continue
             text = row.get("text")
             if isinstance(text, str) and len(text.strip()) >= 20 and _normalize(text) in body_text:
                 return False

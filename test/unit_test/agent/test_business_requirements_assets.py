@@ -212,6 +212,10 @@ def test_quality_rubric_has_a_complete_weighted_gate():
         "all_case_pass_rate": 0.9,
         "hard_failure_count": 0,
         "minimum_grounded_fact_precision": 0.95,
+        "minimum_semantic_coverage": 1.0,
+        "maximum_duplication_rate": 0.05,
+        "maximum_misplacement_rate": 0.0,
+        "maximum_contradiction_rate": 0.0,
     }
     assert {
         "BODY_CHANGED_WITH_OPEN_QUESTIONS",

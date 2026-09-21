@@ -19,11 +19,11 @@ RUBRIC = json.loads((REPO_ROOT / "agent" / "business_requirements" / "evals" / "
 MONITORING_REF = "ragflow://dataset/controlled/document/source/chunk/monitoring"
 SCENARIO_REF = "ragflow://dataset/controlled/document/source/chunk/scenario"
 FACTS = (
-    ControlledFact("availability", ("99,9%", "99.9%"), MONITORING_REF),
-    ControlledFact("latency", ("2 секунды", "2 сек."), MONITORING_REF),
-    ControlledFact("business_event", ("application_submitted",), MONITORING_REF),
-    ControlledFact("error_metric", ("application_submit_error_total",), MONITORING_REF),
-    ControlledFact("slot_hold", ("15 минут",), SCENARIO_REF),
+    ControlledFact("availability", ("99,9%", "99.9%"), MONITORING_REF, ("5.5",), ("доступност",)),
+    ControlledFact("latency", ("2 секунды", "2 сек."), MONITORING_REF, ("5.5",), ("p95", "времени ответа")),
+    ControlledFact("business_event", ("application_submitted",), MONITORING_REF, ("5.5",)),
+    ControlledFact("error_metric", ("application_submit_error_total",), MONITORING_REF, ("5.5",)),
+    ControlledFact("slot_hold", ("15 минут",), SCENARIO_REF, ("4.3",), ("слот", "удерж")),
 )
 SNAPSHOT = {
     "chunks": [
@@ -148,7 +148,80 @@ def test_scorer_passes_template_protocol_monitoring_and_grounded_references():
     assert score.grounded_claim_count == 5
     assert score.grounded_reference_precision == 1.0
     assert score.unsupported_measurable_claims == ()
+    assert score.semantic_coverage == 1.0
+    assert score.missing_fact_ids == ()
+    assert score.duplicate_content_count == 0
+    assert score.duplicate_content == ()
+    assert score.duplication_rate == 0.0
+    assert score.misplaced_fact_count == 0
+    assert score.misplacement_rate == 0.0
+    assert score.contradiction_count == 0
+    assert score.contradiction_rate == 0.0
+    assert score.contradictions == ()
     assert score.weighted_score >= RUBRIC["pass_threshold"]
+
+
+def test_scorer_penalizes_missing_duplicated_and_misplaced_information():
+    document = _document_ast()
+    by_id = {section["id"]: section for section in document["sections"]}
+    by_id["5.5"]["blocks"][0]["text"] = by_id["5.5"]["blocks"][0]["text"].replace("p95 — 2 секунды. ", "")
+    by_id["1"]["blocks"] = [deepcopy(by_id["4.3"]["blocks"][0])]
+
+    score = score_document_quality(document, _protocol(), TEMPLATE, RUBRIC, FACTS, SNAPSHOT)
+
+    assert score.semantic_coverage == pytest.approx(4 / 5)
+    assert score.missing_fact_ids == ("latency",)
+    assert score.duplicate_content_count >= 2
+    assert any(item.startswith("fact:slot_hold") for item in score.duplicate_content)
+    assert "blocks:1~4.3" in score.duplicate_content
+    assert score.duplication_rate > 0
+    assert score.misplaced_fact_count == 1
+    assert score.misplacement_rate > 0
+    assert score.criterion_scores["information_completeness"] < 4
+    assert score.criterion_scores["content_nonredundancy"] < 4
+
+
+def test_scorer_detects_semantic_paraphrase_across_sections():
+    document = _document_ast()
+    by_id = {section["id"]: section for section in document["sections"]}
+    by_id["1"]["blocks"] = [
+        {"type": "paragraph", "text": "Клиент выбирает свободный слот, после чего система подтверждает запись."}
+    ]
+    by_id["3.3"]["blocks"] = [
+        {"type": "paragraph", "text": "Пользователь выбирает доступный временной интервал, затем сервис подтверждает бронирование."}
+    ]
+
+    score = score_document_quality(document, _protocol(), TEMPLATE, RUBRIC, FACTS, SNAPSHOT)
+
+    assert score.duplicate_content_count >= 1
+    assert "blocks:1~3.3" in score.duplicate_content
+    assert score.duplication_rate > 0
+    assert score.criterion_scores["content_nonredundancy"] < 4
+
+
+def test_scorer_allows_same_fact_in_text_and_diagram_within_one_section():
+    document = _document_ast()
+    scenario = next(section for section in document["sections"] if section["id"] == "4.3")
+    scenario["blocks"].append({"type": "plantuml", "source": "@startuml\nnote right: Слот удерживается 15 минут\n@enduml"})
+
+    score = score_document_quality(document, _protocol(), TEMPLATE, RUBRIC, FACTS, SNAPSHOT)
+
+    assert not any(item.startswith("fact:slot_hold") for item in score.duplicate_content)
+    assert score.misplaced_fact_count == 0
+
+
+def test_scorer_rejects_contradictory_controlled_value():
+    document = _document_ast()
+    monitoring = next(section for section in document["sections"] if section["id"] == "5.5")
+    monitoring["blocks"][0]["text"] += " В другом описании доступность указана как 98%."
+
+    score = score_document_quality(document, _protocol(), TEMPLATE, RUBRIC, FACTS, SNAPSHOT)
+
+    assert score.contradiction_count == 1
+    assert score.contradiction_rate > 0
+    assert score.contradictions == ("availability:98%",)
+    assert "CONTRADICTORY_CONTROLLED_FACT" in score.hard_failures
+    assert score.criterion_scores["content_nonredundancy"] < 4
 
 
 def test_scorer_fails_missing_monitoring_bad_protocol_and_unsupported_claims():

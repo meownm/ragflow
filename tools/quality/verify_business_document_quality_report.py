@@ -91,6 +91,16 @@ def verify_report(report_path: Path, root: Path, expected_revision: str | None =
         "weighted_score",
         "grounded_reference_precision",
         "grounded_claim_count",
+        "semantic_coverage",
+        "missing_fact_ids",
+        "duplicate_content_count",
+        "duplicate_content",
+        "duplication_rate",
+        "misplaced_fact_count",
+        "misplacement_rate",
+        "contradiction_count",
+        "contradiction_rate",
+        "contradictions",
         "hard_failures",
     }:
         raise ValueError("Invalid quality metrics")
@@ -113,6 +123,39 @@ def verify_report(report_path: Path, root: Path, expected_revision: str | None =
         raise ValueError("Grounded fact precision is invalid")
     if grounded_precision < rubric["live_suite_gate"]["minimum_grounded_fact_precision"]:
         raise QualityGateFailed("Grounded fact precision is below the release threshold")
+    semantic_coverage = metrics["semantic_coverage"]
+    missing_fact_ids = metrics["missing_fact_ids"]
+    if isinstance(semantic_coverage, bool) or not isinstance(semantic_coverage, (int, float)) or not math.isfinite(semantic_coverage) or not 0 <= semantic_coverage <= 1:
+        raise ValueError("Semantic coverage is invalid")
+    if not isinstance(missing_fact_ids, list) or any(not isinstance(fact_id, str) or not fact_id for fact_id in missing_fact_ids):
+        raise ValueError("Missing fact identifiers are invalid")
+    if missing_fact_ids or semantic_coverage < rubric["live_suite_gate"]["minimum_semantic_coverage"]:
+        raise QualityGateFailed("Controlled semantic facts are missing")
+    for metric_name, count_name, gate_name, message in (
+        ("duplication_rate", "duplicate_content_count", "maximum_duplication_rate", "Content duplication exceeds the release threshold"),
+        ("misplacement_rate", "misplaced_fact_count", "maximum_misplacement_rate", "Misplaced facts exceed the release threshold"),
+        ("contradiction_rate", "contradiction_count", "maximum_contradiction_rate", "Contradictory facts exceed the release threshold"),
+    ):
+        rate = metrics[metric_name]
+        count = metrics[count_name]
+        if isinstance(rate, bool) or not isinstance(rate, (int, float)) or not math.isfinite(rate) or not 0 <= rate <= 1:
+            raise ValueError(f"{metric_name} is invalid")
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            raise ValueError(f"{count_name} is invalid")
+        if (count == 0) != (rate == 0):
+            raise ValueError(f"{count_name} and {metric_name} are inconsistent")
+        if rate > rubric["live_suite_gate"][gate_name]:
+            raise QualityGateFailed(message)
+    contradictions = metrics["contradictions"]
+    if not isinstance(contradictions, list) or any(not isinstance(item, str) or not item for item in contradictions):
+        raise ValueError("Contradiction details are invalid")
+    if len(contradictions) != metrics["contradiction_count"]:
+        raise ValueError("Contradiction count and details are inconsistent")
+    duplicate_content = metrics["duplicate_content"]
+    if not isinstance(duplicate_content, list) or any(not isinstance(item, str) or not item for item in duplicate_content):
+        raise ValueError("Duplicate content details are invalid")
+    if len(duplicate_content) != metrics["duplicate_content_count"]:
+        raise ValueError("Duplicate content count and details are inconsistent")
 
     return {
         "status": "PASS",
@@ -120,6 +163,10 @@ def verify_report(report_path: Path, root: Path, expected_revision: str | None =
         "provider": ai["provider"],
         "weighted_score": weighted_score,
         "grounded_reference_precision": grounded_precision,
+        "semantic_coverage": semantic_coverage,
+        "duplication_rate": metrics["duplication_rate"],
+        "misplacement_rate": metrics["misplacement_rate"],
+        "contradiction_rate": metrics["contradiction_rate"],
         "source_revision": report["source_revision"],
     }
 

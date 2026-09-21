@@ -1,10 +1,12 @@
 {
   "schema_version": "1",
   "traceability_id": "business-requirements-quality",
-  "traceability_version": "1.0.0",
+  "traceability_version": "1.1.0",
   "requirements": [
     {"requirement_id": "template_fidelity", "golden_cases": ["G02_complete_intake_creates_draft", "G19_template_numbering_preserved"], "tests": ["test/evals/business_documents/test_live_model_quality.py::test_live_model_intake_draft_rubric_and_grounding"]},
     {"requirement_id": "information_completeness", "golden_cases": ["G01_minimal_idea_requires_intake", "G17_missing_monitoring_information", "G18_optional_npa_not_applicable"], "tests": ["test/evals/business_documents/test_live_model_quality.py::test_live_model_intake_draft_rubric_and_grounding"]},
+    {"requirement_id": "content_nonredundancy", "golden_cases": ["G02_complete_intake_creates_draft"], "tests": ["test/evals/business_documents/test_live_quality_scorer.py::test_scorer_penalizes_missing_duplicated_and_misplaced_information", "test/evals/business_documents/test_live_quality_scorer.py::test_scorer_detects_semantic_paraphrase_across_sections", "test/unit_test/api/apps/business_documents/test_business_document_ai_export_boundaries.py::test_ai_rejects_semantic_duplicate_between_parent_and_child_section", "test/unit_test/api/apps/business_documents/test_business_document_ai_export_boundaries.py::test_worker_retries_duplicate_draft_with_section_feedback", "test/evals/business_documents/test_live_model_quality.py::test_live_model_intake_draft_rubric_and_grounding"]},
+    {"requirement_id": "CONTRADICTORY_CONTROLLED_FACT", "golden_cases": ["G21_retrieval_conflicting_sources"], "tests": ["test/evals/business_documents/test_live_quality_scorer.py::test_scorer_rejects_contradictory_controlled_value", "test/evals/business_documents/test_live_model_quality.py::test_live_model_intake_draft_rubric_and_grounding"]},
     {"requirement_id": "source_grounding", "golden_cases": ["G20_uploaded_prompt_injection_is_evidence", "G21_retrieval_conflicting_sources"], "tests": ["test/evals/business_documents/test_live_model_quality.py::test_live_model_intake_draft_rubric_and_grounding"]},
     {"requirement_id": "scenario_quality", "golden_cases": ["G02_complete_intake_creates_draft"], "tests": ["test/evals/business_documents/test_live_model_quality.py::test_live_model_intake_draft_rubric_and_grounding"]},
     {"requirement_id": "nonfunctional_measurability", "golden_cases": ["G17_missing_monitoring_information"], "tests": ["test/evals/business_documents/test_live_model_quality.py::test_live_model_intake_draft_rubric_and_grounding"]},

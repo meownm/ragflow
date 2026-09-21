@@ -67,11 +67,11 @@ CONTROLLED_CHUNKS = [
     },
 ]
 CONTROLLED_FACTS = (
-    ControlledFact("availability", ("99,9%", "99.9%"), MONITORING_REF),
-    ControlledFact("latency", ("2 секунды", "2 сек."), MONITORING_REF),
-    ControlledFact("business_event", ("application_submitted",), MONITORING_REF),
-    ControlledFact("error_metric", ("application_submit_error_total",), MONITORING_REF),
-    ControlledFact("slot_hold", ("15 минут",), SCENARIO_REF),
+    ControlledFact("availability", ("99,9%", "99.9%"), MONITORING_REF, ("5.5",), ("доступност",)),
+    ControlledFact("latency", ("2 секунды", "2 сек."), MONITORING_REF, ("5.5",), ("p95", "времени ответа")),
+    ControlledFact("business_event", ("application_submitted",), MONITORING_REF, ("5.5",)),
+    ControlledFact("error_metric", ("application_submit_error_total",), MONITORING_REF, ("5.5",)),
+    ControlledFact("slot_hold", ("15 минут",), SCENARIO_REF, ("4.3",), ("слот", "удерж")),
 )
 RUBRIC = json.loads((REPO_ROOT / "agent" / "business_requirements" / "evals" / "rubric.v1.json").read_text(encoding="utf-8"))
 
@@ -271,19 +271,34 @@ def test_live_model_intake_draft_rubric_and_grounding(database, monkeypatch):
         snapshot_row.snapshot,
     )
 
-    assert score.hard_failures == (), score
-    assert score.protocol_separated is True, score
-    assert score.question_bounds_valid is True, score
-    assert score.grounded_claim_count >= 2, score
-    assert score.grounded_reference_precision >= RUBRIC["live_suite_gate"]["minimum_grounded_fact_precision"], score
-    assert score.weighted_score >= RUBRIC["pass_threshold"], score
+    gate_failures = []
+    if score.hard_failures:
+        gate_failures.append(f"hard_failures={score.hard_failures}")
+    if not score.protocol_separated:
+        gate_failures.append("protocol_not_separated")
+    if not score.question_bounds_valid:
+        gate_failures.append("invalid_question_bounds")
+    if score.grounded_claim_count < 2:
+        gate_failures.append(f"grounded_claim_count={score.grounded_claim_count}")
+    if score.grounded_reference_precision < RUBRIC["live_suite_gate"]["minimum_grounded_fact_precision"]:
+        gate_failures.append(f"grounded_reference_precision={score.grounded_reference_precision}")
+    if score.semantic_coverage < RUBRIC["live_suite_gate"]["minimum_semantic_coverage"]:
+        gate_failures.append(f"missing_fact_ids={score.missing_fact_ids}")
+    if score.duplication_rate > RUBRIC["live_suite_gate"]["maximum_duplication_rate"]:
+        gate_failures.append(f"duplicate_content={score.duplicate_content}")
+    if score.misplacement_rate > RUBRIC["live_suite_gate"]["maximum_misplacement_rate"]:
+        gate_failures.append(f"misplaced_fact_count={score.misplaced_fact_count}")
+    if score.contradiction_rate > RUBRIC["live_suite_gate"]["maximum_contradiction_rate"]:
+        gate_failures.append(f"contradictions={score.contradictions}")
+    if score.weighted_score < RUBRIC["pass_threshold"]:
+        gate_failures.append(f"weighted_score={score.weighted_score}")
 
     report_path = os.environ.get("BUSINESS_DOCUMENT_QUALITY_REPORT", "").strip()
     if report_path:
         execution = draft_job.result.get("execution", {}) if isinstance(draft_job.result, dict) else {}
         report = {
             "schema_version": "1",
-            "status": "PASS",
+            "status": "FAIL" if gate_failures else "PASS",
             "scoring_method": "deterministic_proxy",
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "source_revision": os.environ.get("GITHUB_SHA", "unknown"),
@@ -297,6 +312,16 @@ def test_live_model_intake_draft_rubric_and_grounding(database, monkeypatch):
                 "weighted_score": score.weighted_score,
                 "grounded_reference_precision": score.grounded_reference_precision,
                 "grounded_claim_count": score.grounded_claim_count,
+                "semantic_coverage": score.semantic_coverage,
+                "missing_fact_ids": list(score.missing_fact_ids),
+                "duplicate_content_count": score.duplicate_content_count,
+                "duplicate_content": list(score.duplicate_content),
+                "duplication_rate": score.duplication_rate,
+                "misplaced_fact_count": score.misplaced_fact_count,
+                "misplacement_rate": score.misplacement_rate,
+                "contradiction_count": score.contradiction_count,
+                "contradiction_rate": score.contradiction_rate,
+                "contradictions": list(score.contradictions),
                 "hard_failures": list(score.hard_failures),
             },
         }
@@ -305,3 +330,5 @@ def test_live_model_intake_draft_rubric_and_grounding(database, monkeypatch):
         temporary = destination.with_suffix(destination.suffix + ".tmp")
         temporary.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         temporary.replace(destination)
+
+    assert not gate_failures, "; ".join(gate_failures)

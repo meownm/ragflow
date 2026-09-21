@@ -102,6 +102,25 @@ def _draft():
     }
 
 
+def _draft_bundle(draft=None):
+    return {
+        "draft": draft or _draft(),
+        "review_questions": {"schema_version": "1", "outcome": "COMPLETE", "questions": []},
+        "proposals": [],
+    }
+
+
+def _draft_with_parent_child_duplicate():
+    draft = _draft()
+    sections = {section["id"]: section for section in draft["sections"]}
+    sections["4"]["blocks"] = [
+        {"type": "paragraph", "text": "Клиент выбирает свободный слот, после чего система подтверждает запись."}
+    ]
+    paragraph = next(block for block in sections["4.3"]["blocks"] if block["type"] == "paragraph")
+    paragraph["text"] = "Пользователь выбирает доступный временной интервал, затем сервис подтверждает бронирование."
+    return draft
+
+
 @pytest.mark.p0
 def test_document_ast_restores_missing_optional_sections_from_published_template(database):
     draft = _draft()
@@ -425,6 +444,79 @@ def test_ai_repairs_json_validates_schema_and_persists_pinned_prompt_audit(datab
     with pytest.raises(BusinessDocumentError) as caught:
         BusinessDocumentAI(invalid).process(BusinessDocumentJob.get_by_id(next_request["job_id"]))
     assert caught.value.code == "INVALID_DRAFT_BUNDLE"
+
+
+@pytest.mark.p0
+def test_ai_rejects_semantic_duplicate_between_parent_and_child_section():
+    job = SimpleNamespace(
+        job_type="GENERATE_DRAFT",
+        payload={"template_version": published_template()["template_version"]},
+    )
+
+    with pytest.raises(BusinessDocumentError) as caught:
+        BusinessDocumentAI._validate(job, _draft_bundle(_draft_with_parent_child_duplicate()))
+
+    assert caught.value.code == "DUPLICATE_SECTION_CONTENT"
+    assert caught.value.details == {
+        "section_pairs": [{"parent_section_id": "4", "child_section_id": "4.3"}]
+    }
+
+
+@pytest.mark.p0
+def test_worker_retries_duplicate_draft_with_section_feedback(database):
+    class SequencedAdapter:
+        def __init__(self, responses):
+            self.responses = iter(responses)
+            self.calls = []
+
+        def generate(self, tenant_id, system_prompt, input_payload):
+            self.calls.append((tenant_id, system_prompt, input_payload))
+            return next(self.responses)
+
+    document = _create()
+    assessment = BusinessDocumentService.execute_command(
+        TENANT,
+        AUTHOR,
+        document["document_id"],
+        _command(document, "REQUEST_INTAKE_ASSESSMENT"),
+    )
+    completed = _claim_complete(
+        assessment["job_id"],
+        {"schema_version": "1", "outcome": "COMPLETE", "questions": []},
+    )
+    requested = BusinessDocumentService.execute_command(
+        TENANT,
+        AUTHOR,
+        completed["document_id"],
+        _command(completed, "REQUEST_DRAFT"),
+    )
+    adapter = SequencedAdapter(
+        [
+            _draft_bundle(_draft_with_parent_child_duplicate()),
+            _draft_bundle(),
+        ]
+    )
+    worker = BusinessDocumentWorker(
+        worker_id="duplicate-retry-worker",
+        ai=BusinessDocumentAI(adapter),
+        lease_ms=60_000,
+        retry_base_ms=0,
+    )
+
+    assert worker.run_once() is True
+    retried = BusinessDocumentJob.get_by_id(requested["job_id"])
+    assert retried.status == "RETRY"
+    assert retried.error["code"] == "DUPLICATE_SECTION_CONTENT"
+    assert worker.run_once() is True
+
+    finished = BusinessDocumentJob.get_by_id(requested["job_id"])
+    assert finished.status == "COMPLETED"
+    assert finished.attempt == 2
+    retry_input = adapter.calls[1][2]["job_input"]
+    assert retry_input["retry_feedback"]["code"] == "DUPLICATE_SECTION_CONTENT"
+    assert retry_input["retry_feedback"]["details"]["section_pairs"] == [
+        {"parent_section_id": "4", "child_section_id": "4.3"}
+    ]
 
 
 @pytest.mark.p0

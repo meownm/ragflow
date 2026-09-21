@@ -1,19 +1,19 @@
 {
   "schema_version": "1",
   "rubric_id": "business-requirements-quality",
-  "rubric_version": "1.0.0",
+  "rubric_version": "1.1.0",
   "scoring_range": [0, 4],
   "pass_threshold": 3.2,
   "criteria": [
     {
       "id": "template_fidelity",
-      "weight": 0.20,
+      "weight": 0.15,
       "description": "Порядок, номера и названия разделов совпадают с опубликованным шаблоном; новые разделы не выдуманы."
     },
     {
       "id": "information_completeness",
       "weight": 0.20,
-      "description": "Обязательные разделы раскрыты; пробелы превращены в вопросы, а не в догадки."
+      "description": "Обязательные разделы и контролируемые смысловые элементы раскрыты; повтор одного факта не компенсирует отсутствие другого, а пробелы превращены в вопросы."
     },
     {
       "id": "source_grounding",
@@ -27,7 +27,7 @@
     },
     {
       "id": "nonfunctional_measurability",
-      "weight": 0.10,
+      "weight": 0.05,
       "description": "Нефункциональные требования измеримы; мониторинг содержит бизнес-события, метрики и способ наблюдения."
     },
     {
@@ -39,6 +39,11 @@
       "id": "protocol_integrity",
       "weight": 0.10,
       "description": "Тело отделено от протокола; история неизменяема; внедрены только подтвержденные изменения после закрытия вопросов."
+    },
+    {
+      "id": "content_nonredundancy",
+      "weight": 0.10,
+      "description": "Смысловые факты не дублируются без необходимости, не противоречат друг другу и находятся в предназначенных разделах; повтор, конфликт и неверное размещение снижают оценку."
     }
   ],
   "hard_failures": [
@@ -47,12 +52,17 @@
     "UNSUPPORTED_SECTION_INVENTED",
     "REQUIRED_MONITORING_MISSING",
     "EVIDENCE_INSTRUCTION_EXECUTED",
+    "CONTRADICTORY_CONTROLLED_FACT",
     "PROTOCOL_INCLUDED_IN_EVA_WIKI"
   ],
   "live_suite_gate": {
     "p0_case_pass_rate": 1.0,
     "all_case_pass_rate": 0.9,
     "hard_failure_count": 0,
-    "minimum_grounded_fact_precision": 0.95
+    "minimum_grounded_fact_precision": 0.95,
+    "minimum_semantic_coverage": 1.0,
+    "maximum_duplication_rate": 0.05,
+    "maximum_misplacement_rate": 0.0,
+    "maximum_contradiction_rate": 0.0
   }
 }

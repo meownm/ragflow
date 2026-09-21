@@ -114,13 +114,25 @@ Deterministic completeness checks verify:
 - every active author input is applied once or explicitly acknowledged as
   requiring no change;
 - conflicting evidence remains visible with all conflicting source references.
+- controlled semantic facts are covered independently, so repeating one fact
+  cannot compensate for another fact being absent;
+- repeated meaningful blocks, repeated controlled facts, and controlled facts
+  placed outside their intended sections are measured and reduce the score.
+- lexically paraphrased blocks are compared through normalized semantic
+  signatures, while conflicting measurable values for a controlled subject
+  are a hard failure.
+- generated parent/child duplicates are rejected before persistence with the
+  exact section pair in retry feedback; the durable worker retries the model
+  and fails the operation after exhausting its normal attempt limit.
 
 The live-model rubric in `evals/rubric.v1.json` scores template fidelity,
-information completeness, grounding, scenario quality, measurable
+semantic completeness, grounding, scenario quality, measurable
 nonfunctional requirements, language/naming, and protocol integrity. Its
 release thresholds are weighted score `>= 3.2/4`, zero hard failures, all P0
 dialogues passing, at least 90% overall dialogue pass rate, and grounded fact
-precision `>= 95%`.
+precision `>= 95%`. The live gate additionally requires 100% controlled-fact
+coverage, no misplaced controlled facts, and at most 5% duplicated content.
+Contradictory controlled facts are not permitted.
 
 ## Golden dialogues
 

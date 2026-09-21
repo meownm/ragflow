@@ -40,6 +40,16 @@ def _report() -> dict:
             "weighted_score": 4.0,
             "grounded_reference_precision": 1.0,
             "grounded_claim_count": 5,
+            "semantic_coverage": 1.0,
+            "missing_fact_ids": [],
+            "duplicate_content_count": 0,
+            "duplicate_content": [],
+            "duplication_rate": 0.0,
+            "misplaced_fact_count": 0,
+            "misplacement_rate": 0.0,
+            "contradiction_count": 0,
+            "contradiction_rate": 0.0,
+            "contradictions": [],
             "hard_failures": [],
         },
     }
@@ -58,7 +68,7 @@ def test_quality_report_verifier_accepts_exact_current_assets(tmp_path):
     assert result["model"] == "qualified-model"
 
 
-@pytest.mark.parametrize("mutation", ["revision", "prompt", "score", "grounding", "hard_failure", "ai_audit"])
+@pytest.mark.parametrize("mutation", ["revision", "prompt", "score", "grounding", "coverage", "duplication", "misplacement", "contradiction", "hard_failure", "ai_audit"])
 def test_quality_report_verifier_fails_closed_on_stale_or_failed_evidence(tmp_path, mutation):
     report = _report()
     expected_revision = "candidate-sha"
@@ -71,6 +81,20 @@ def test_quality_report_verifier_fails_closed_on_stale_or_failed_evidence(tmp_pa
         report["metrics"]["weighted_score"] = 0.0
     elif mutation == "grounding":
         report["metrics"]["grounded_reference_precision"] = 0.5
+    elif mutation == "coverage":
+        report["metrics"]["semantic_coverage"] = 0.8
+        report["metrics"]["missing_fact_ids"] = ["latency"]
+    elif mutation == "duplication":
+        report["metrics"]["duplicate_content_count"] = 1
+        report["metrics"]["duplicate_content"] = ["blocks:1~3.3"]
+        report["metrics"]["duplication_rate"] = 0.2
+    elif mutation == "misplacement":
+        report["metrics"]["misplaced_fact_count"] = 1
+        report["metrics"]["misplacement_rate"] = 0.2
+    elif mutation == "contradiction":
+        report["metrics"]["contradiction_count"] = 1
+        report["metrics"]["contradiction_rate"] = 0.2
+        report["metrics"]["contradictions"] = ["availability:98%"]
     elif mutation == "hard_failure":
         report["metrics"]["hard_failures"] = ["EVIDENCE_INSTRUCTION_EXECUTED"]
     else:

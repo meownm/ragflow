@@ -42,6 +42,7 @@ from api.apps.business_documents.assets import (
     validate_document_ast,
 )
 from api.apps.business_documents.errors import ValidationError
+from business_documents.domain.content_quality import parent_child_section_pairs, semantic_duplicate_section_pairs
 from api.db.db_models import BusinessDocumentJob
 
 
@@ -910,6 +911,21 @@ class BusinessDocumentAI:
             draft = validate_document_ast(output["draft"])
             if draft["template_version"] != job.payload["template_version"]:
                 raise ValidationError("TEMPLATE_VERSION_CONFLICT", "Draft does not use the job's pinned template")
+            duplicate_pairs = semantic_duplicate_section_pairs(
+                draft["sections"],
+                section_pairs=parent_child_section_pairs(draft["sections"]),
+            )
+            if duplicate_pairs:
+                raise ValidationError(
+                    "DUPLICATE_SECTION_CONTENT",
+                    "A parent section repeats content already owned by a subsection",
+                    {
+                        "section_pairs": [
+                            {"parent_section_id": parent_id, "child_section_id": child_id}
+                            for parent_id, child_id in duplicate_pairs
+                        ]
+                    },
+                )
             validate_contract("question_batch", output["review_questions"])
             if any(question["stage"] != "REVIEW" for question in output["review_questions"]["questions"]):
                 raise ValidationError("QUESTION_STAGE_CONFLICT", "Draft review protocol emitted a non-review question")

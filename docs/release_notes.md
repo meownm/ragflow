@@ -9,6 +9,15 @@ sidebar_custom_props: {
 
 Key features, improvements and bug fixes in the latest releases.
 
+## v1.26.1
+
+Released on September 21, 2026.
+
+### Improvements and bug fixes
+
+- Business documents: Rejects repeated parent/subsection content before persistence and retries generation with exact section feedback.
+- Model qualification: Measures semantic coverage, duplicated or misplaced content, and contradictory controlled facts with fail-closed release thresholds.
+
 ## v1.26.0
 
 Released on September 20, 2026.

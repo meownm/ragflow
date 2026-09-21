@@ -261,8 +261,13 @@ def _validate_draft(case: dict[str, Any], document: dict[str, Any], draft_job: B
     return score, failures
 
 
-def _apply_review_change(case: dict[str, Any], tenant_id: str, document: dict[str, Any], worker: BusinessDocumentWorker):
-    audits: list[dict[str, Any]] = []
+def _apply_review_change(
+    case: dict[str, Any],
+    tenant_id: str,
+    document: dict[str, Any],
+    worker: BusinessDocumentWorker,
+    audits: list[dict[str, Any]],
+):
     original_revision = document["current_revision"]
     selected_text = original_revision["section_texts"]["4.3"]
     BusinessDocumentService.execute_command(
@@ -289,7 +294,7 @@ def _apply_review_change(case: dict[str, Any], tenant_id: str, document: dict[st
         ),
     )
     document = BusinessDocumentService.get_document(tenant_id, document["document_id"], tenant_id)
-    for _round in range(3):
+    for _round in range(6):
         document, review_job = _complete_requested_job(worker, tenant_id, document, "REQUEST_REVIEW_ASSESSMENT")
         audits.append(_ai_audit(review_job))
         for question in [item for item in document["protocol"]["questions"] if item["status"] == "OPEN"]:
@@ -342,7 +347,7 @@ def _apply_review_change(case: dict[str, Any], tenant_id: str, document: dict[st
     audits.append(_ai_audit(change_job))
     assert document["current_revision"]["revision_number"] == original_revision["revision_number"] + 1
     assert document["current_revision"]["content_hash"] != original_revision["content_hash"]
-    return document, audits
+    return document
 
 
 def _case_metrics(score: QualityScore | None) -> dict[str, Any]:
@@ -400,8 +405,7 @@ def _run_model_case(case: dict[str, Any], tenant_id: str, audits: list[dict[str,
     document, draft_job = _complete_requested_job(worker, tenant_id, document, "REQUEST_DRAFT")
     audits.append(_ai_audit(draft_job))
     if workflow == "review_change":
-        document, review_audits = _apply_review_change(case, tenant_id, document, worker)
-        audits.extend(review_audits)
+        document = _apply_review_change(case, tenant_id, document, worker, audits)
     score, failures = _validate_draft(case, document, draft_job, dataset_id)
     return CaseExecution(
         result={

@@ -1,7 +1,7 @@
 {
   "schema_version": "1",
   "suite_id": "business-requirements-live-model-quality",
-  "suite_version": "1.0.0",
+  "suite_version": "1.0.1",
   "language": "ru",
   "cases": [
     {
@@ -117,10 +117,10 @@
         "5.4": "Отдельная отчетность не требуется.",
         "5.5": "Нужны событие успешной подачи и метрика ошибок."
       },
-      "review_comment": "После принятия заявления система должна отправить клиенту номер обращения по SMS.",
+      "review_comment": "После успешного присвоения номера обращения система автоматически отправляет его по SMS на подтвержденный номер телефона клиента. Номер также отображается в личном кабинете. Если SMS не отправилась, заявление остается принятым: система повторяет отправку до 3 раз, а затем показывает клиенту предупреждение проверить номер в личном кабинете.",
       "expected": {
         "question_target_section_ids": [],
-        "required_fragments": ["claim_submitted", "claim_submit_error_total", "sms", "номер обращения"],
+        "required_fragments": ["claim_submitted", "claim_submit_error_total", "sms", "номер обращения", "3 раз", "личном кабинете"],
         "forbidden_fragments": []
       }
     },

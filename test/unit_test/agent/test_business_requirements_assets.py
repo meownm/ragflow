@@ -197,7 +197,7 @@ def test_model_golden_suite_is_self_contained_and_diverse():
     case_ids = [case["id"] for case in cases]
 
     assert suite["suite_id"] == "business-requirements-live-model-quality"
-    assert suite["suite_version"] == "1.0.0"
+    assert suite["suite_version"] == "1.0.1"
     assert len(cases) == 5
     assert len(case_ids) == len(set(case_ids))
     assert len({case["title"] for case in cases}) == len(cases)

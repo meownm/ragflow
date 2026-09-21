@@ -308,7 +308,7 @@ def _apply_review_change(case: dict[str, Any], tenant_id: str, document: dict[st
                 ),
             )
             document = BusinessDocumentService.get_document(tenant_id, document["document_id"], tenant_id)
-        for proposal in [item for item in document["protocol"]["proposals"] if item["decision"] is None]:
+        for proposal in [item for item in document["protocol"]["proposals"] if item["decision"] in {None, "PENDING"}]:
             BusinessDocumentService.execute_command(
                 tenant_id,
                 tenant_id,
@@ -319,7 +319,19 @@ def _apply_review_change(case: dict[str, Any], tenant_id: str, document: dict[st
         if "APPLY_CHANGES" in document["allowed_commands"]:
             break
     else:
-        raise AssertionError("Live model did not make the confirmed review change applicable")
+        raise AssertionError(
+            {
+                "message": "Live model did not make the confirmed review change applicable",
+                "allowed_commands": document["allowed_commands"],
+                "open_question_tags": [
+                    item["semantic_tag"] for item in document["protocol"]["questions"] if item["status"] == "OPEN"
+                ],
+                "pending_proposals": [
+                    item["text"] for item in document["protocol"]["proposals"] if item["decision"] in {None, "PENDING"}
+                ],
+                "comment_dispositions": [item["disposition"] for item in document["protocol"]["comments"]],
+            }
+        )
     document, change_job = _complete_requested_job(
         worker,
         tenant_id,

@@ -1,7 +1,7 @@
 # Business requirements agent: regression evidence
 
 Base run date: 2026-08-26; deterministic golden gate refreshed 2026-09-06;
-current-tree live-quality and regression continuation completed 2026-09-08.
+five-case live-model golden suite refreshed 2026-09-21.
 Environment: local Windows checkout `S:\ragflow`,
 in-memory SQLite, injected AI/RAGFlow dataset-search/object-storage adapters,
 mocked frontend HTTP. No production credentials or customer data were used.
@@ -21,7 +21,7 @@ snapshot and controlled Evidence recorded below.
 | --- | --- | --- |
 | Deterministic scripted state-machine gate | `uv run pytest -q test/evals/business_documents/test_golden_dialogue_harness.py` | P0 19/19 and 64/64 assertions; P1 5/5 and 14/14 assertions; all 24/24 and 78/78 |
 | Live-quality scorer unit/config | `uv run pytest -q test/evals/business_documents/test_live_quality_scorer.py` | 8 passed together with the golden harness; weighted rubric, controlled-reference precision, canonical PlantUML/BPMN fixture shape, hard-failure subset, honest config gating |
-| Real-model intake-to-draft quality | isolated opt-in execution of `test_live_model_quality.py::test_live_model_intake_draft_rubric_and_grounding` | 1 passed in 102.95 s with `qwen2.5:14b-instruct`; score 3.6, grounded precision 1.0, two grounded claims, no unsupported measurable claims or hard failures |
+| Real-model golden quality | isolated opt-in execution of `test_live_model_quality.py::test_live_model_golden_suite` | 5/5 P0 cases passed in 522.33 s with `qwen3.8:latest`; weighted score 3.95, grounded precision and semantic coverage 1.0, no duplication, misplacement, contradictions or hard failures; report source is the explicitly recorded dirty revision |
 | Domain/worker/evidence/export/API/assets | focused coverage plus full Python unit regression | 171 passed at 79.94% focused coverage; full unit run 2814 passed, 35 skipped and 167 subtests passed |
 | Frontend Workbench and client | full Jest run over current frontend | 23 suites and 170 tests passed |
 | Mocked production-build browser journeys | `test/run_browser_regression.py` | Chromium 52/52, Firefox 52/52 and WebKit 52/52 passed sequentially |
@@ -46,12 +46,14 @@ snapshot and controlled Evidence recorded below.
   links. A running-stack Playwright journey is outside this deterministic gate.
 - Golden requirements: P0 `19/19` and `64/64` assertions; P1 `5/5` and
   `14/14` assertions; all cases `24/24` and `78/78` assertions.
-- Live quality: the separate opt-in test runs the real tenant chat model
-  through at least intake and draft, validates the exact published template,
-  protocol separation, mandatory monitoring and question bounds, then computes
-  the weighted `rubric.v1` score and controlled-fact citation precision from a
-  pinned Evidence snapshot. The 2026-09-07 isolated run completed the full
-  intake-to-draft path with Qwen2.5 14B and met its configured thresholds.
+- Live quality: the separate opt-in suite runs the real tenant chat model
+  through incomplete intake, complete draft, confirmed review change, hostile
+  evidence and conflicting sources. It validates the published template,
+  protocol separation, monitoring, question bounds, grounding and controlled
+  semantic facts from pinned Evidence snapshots. The 2026-09-21 run completed
+  all five cases with Qwen3.8 and met the configured thresholds; its report is
+  bound to the dirty source revision, suite hash, ordered case IDs and prompt
+  hashes and is not evidence for a later committed candidate.
 
 ## Stop points and residual risk
 

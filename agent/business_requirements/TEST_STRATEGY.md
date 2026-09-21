@@ -143,6 +143,13 @@ assertions. The deterministic runner reports both case and assertion
 denominators by P0/P1 and fails on unknown, skipped, or unexecuted P0 behavior.
 Current coverage is 24/24 cases and 78/78 hard assertions.
 
+`golden_model_quality/v1.json` is a separate five-case, data-driven live-model
+suite. It covers incomplete intake, a complete draft, a confirmed review
+change, prompt injection inside evidence, and conflicting sources across three
+business domains. Each case owns its inputs, controlled evidence, expected
+fragments and expected outcome; the runner contains no case-specific model
+answers. Traceability must cover every case in both active suites.
+
 ## Model qualification
 
 The deterministic scorer is a fail-closed proxy for the published rubric, not
@@ -161,10 +168,15 @@ uv run python tools/quality/verify_business_document_quality_report.py --report 
 ```
 
 The report records the executed provider/model, fixed generation parameters,
-token usage, duration, asset versions, scores, and evidence precision. A
-missing live environment or report is `INCOMPLETE`; stale assets/revision or a
-threshold violation is a failed qualification. Neither may be reported as a
-pass or used to activate a model.
+token usage, duration, per-case results and criterion scores, and aggregate
+quality metrics. It is bound to the exact live-suite ID, version, SHA-256 and
+ordered case IDs, plus the template and all intake/draft/review/change prompt
+hashes. The verifier recomputes aggregate scores and pass rates from case-level
+evidence. Therefore a displayed `4.0` means that every scored live case earned
+`4.0` for that criterion; it is not an unexplained constant. A missing live
+environment or report is `INCOMPLETE`; stale assets/revision, a missing case,
+or a threshold violation is a failed qualification. Neither may be reported as
+a pass or used to activate a model.
 
 Adding or changing a requirement requires, in the same increment:
 

@@ -137,15 +137,17 @@ def score_document_quality(
     monitoring_checks = (
         bool(_section_text(section_by_id.get("5"))),
         bool(monitoring_text),
-        any("application_submitted" in _normalize(alias) for fact in controlled_facts for alias in fact.aliases) and "application_submitted" in monitoring_text,
-        any("application_submit_error_total" in _normalize(alias) for fact in controlled_facts for alias in fact.aliases) and "application_submit_error_total" in monitoring_text,
+        _controlled_fact_present("business_event", monitoring_text, controlled_facts),
+        _controlled_fact_present("error_metric", monitoring_text, controlled_facts),
     )
 
     body_text = _document_text(sections)
+    business_event_present = _controlled_fact_present("business_event", body_text, controlled_facts)
+    error_metric_present = _controlled_fact_present("error_metric", body_text, controlled_facts)
     language_and_naming_checks = (
         bool(_CYRILLIC.search(body_text)),
-        "application_submitted" in body_text,
-        "application_submit_error_total" in body_text,
+        business_event_present,
+        error_metric_present,
     )
     protocol_separated = _protocol_is_separate(body_text, protocol)
     question_bounds_valid = _question_bounds_valid(protocol)
@@ -195,6 +197,11 @@ def score_document_quality(
         protocol_separated=protocol_separated,
         question_bounds_valid=question_bounds_valid,
     )
+
+
+def _controlled_fact_present(fact_id: str, normalized_text: str, controlled_facts: Sequence[ControlledFact]) -> bool:
+    fact = next((item for item in controlled_facts if item.fact_id == fact_id), None)
+    return fact is not None and any(_normalize(alias) in normalized_text for alias in fact.aliases)
 
 
 def _fact_distribution(

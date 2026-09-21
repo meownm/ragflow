@@ -9,6 +9,16 @@ sidebar_custom_props: {
 
 Key features, improvements and bug fixes in the latest releases.
 
+## v1.26.2
+
+Released on September 21, 2026.
+
+### Improvements and bug fixes
+
+- Model qualification: Adds a versioned five-case live golden suite for intake, drafting, review changes, hostile evidence, and conflicting sources.
+- Quality evidence: Binds reports to the exact suite, ordered cases, prompts, template, and executed model, then recomputes aggregate scores from per-case evidence.
+- Business documents: Limits each intake or review iteration to four priority questions and prevents duplicated parent-section content without discarding valid facts adjacent to prompt injection.
+
 ## v1.26.1
 
 Released on September 21, 2026.

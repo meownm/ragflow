@@ -9,6 +9,7 @@
     "schema_version": {"const": "1"},
     "questions": {
       "type": "array",
+      "maxItems": 4,
       "items": {
         "type": "object",
         "additionalProperties": false,

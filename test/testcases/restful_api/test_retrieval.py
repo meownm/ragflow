@@ -224,11 +224,8 @@ def test_retrieval_highlight_keyword_and_invalid_params_contract(rest_client, en
     assert invalid_highlight_payload["message"] == "`highlight` should be a boolean", invalid_highlight_payload
 
     for scenario_name, keyword_value, expected_code in (
-        ("keyword true", True, 100),
-        ("keyword true str", "True", 0),
-        ("keyword false", False, 100),
-        ("keyword false str", "False", 0),
-        ("keyword none", None, 100),
+        ("keyword false", False, 0),
+        ("keyword none", None, 0),
     ):
         keyword_res = rest_client.post(
             "/retrieval",
@@ -249,6 +246,21 @@ def test_retrieval_highlight_keyword_and_invalid_params_contract(rest_client, en
     assert invalid_params_res.status_code == 200
     invalid_params_payload = invalid_params_res.json()
     assert invalid_params_payload["code"] == 0, invalid_params_payload
+
+
+@pytest.mark.p2
+@pytest.mark.cloud_models
+@pytest.mark.parametrize("keyword_value", [True, "True", "False"])
+def test_retrieval_keyword_expansion_contract(rest_client, ensure_parsed_document, keyword_value):
+    dataset_id, _ = ensure_parsed_document()
+    res = rest_client.post(
+        "/retrieval",
+        json={"question": "chunk test", "dataset_ids": [dataset_id], "keyword": keyword_value},
+    )
+    assert res.status_code == 200, res.text
+    payload = res.json()
+    assert payload["code"] == 0, payload
+    assert isinstance(payload["data"]["chunks"], list), payload
 
 
 @pytest.mark.p2

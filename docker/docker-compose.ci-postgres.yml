@@ -5,6 +5,9 @@ services:
         condition: service_healthy
       plantuml-server:
         condition: service_healthy
+    environment:
+      # Disposable API suites create their own isolated test account.
+      REGISTER_ENABLED: "1"
 
   mysql:
     profiles: !override

@@ -119,6 +119,7 @@ def test_ci_postgres_overlay_disables_mysql_and_gates_ragflow_on_postgres():
     assert "pg_isready" in overlay
     assert "mysql-disabled" in overlay
     assert "condition: service_healthy" in overlay
+    assert 'REGISTER_ENABLED: "1"' in overlay
 
 
 @pytest.mark.parametrize("workflow", ["tests.yml", "sep-tests.yml"])

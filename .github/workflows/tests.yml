@@ -1110,9 +1110,10 @@ jobs:
         run: |
           set -euo pipefail
           build_version=$(git describe --tags --match='v*' --first-parent --always)
+          source_revision=$(git rev-parse HEAD)
           sudo DOCKER_BUILDKIT=1 docker build \
             --build-arg "RAGFLOW_BUILD_VERSION=${build_version}" \
-            --build-arg "RAGFLOW_SOURCE_REVISION=${GITHUB_SHA}" \
+            --build-arg "RAGFLOW_SOURCE_REVISION=${source_revision}" \
             --build-arg "NEED_MIRROR=${NEED_MIRROR:-0}" \
             -f Dockerfile -t "${CANDIDATE_IMAGE}" .
 

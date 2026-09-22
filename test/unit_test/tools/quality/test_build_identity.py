@@ -72,7 +72,7 @@ def test_dockerfile_preserves_runtime_files_without_git():
     assert ".git" in (ROOT / ".dockerignore").read_text().splitlines()
 
 
-@pytest.mark.parametrize("workflow,count", [("tests.yml", 2), ("sep-tests.yml", 2), ("release.yml", 1)])
+@pytest.mark.parametrize("workflow,count", [("tests.yml", 3), ("sep-tests.yml", 2), ("release.yml", 1)])
 def test_all_main_image_ci_build_callers_supply_checkout_identity(workflow, count):
     document = yaml.safe_load((ROOT / ".github/workflows" / workflow).read_text())
     builds = []

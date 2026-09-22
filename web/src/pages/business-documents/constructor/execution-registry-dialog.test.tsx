@@ -168,7 +168,8 @@ describe('ExecutionRegistryDialog', () => {
     render(<ExecutionRegistryDialog />);
     fireEvent.click(screen.getByTestId('open-sql-execution-registry'));
 
-    const profileList = await screen.findByTestId('sql-execution-profile-list');
+    await screen.findByText('Warehouse RO');
+    const profileList = screen.getByTestId('sql-execution-profile-list');
     fireEvent.click(
       within(profileList).getByRole('button', { name: 'Изменить' }),
     );
@@ -202,7 +203,8 @@ describe('ExecutionRegistryDialog', () => {
     render(<ExecutionRegistryDialog />);
     fireEvent.click(screen.getByTestId('open-sql-execution-registry'));
 
-    const profileList = await screen.findByTestId('sql-execution-profile-list');
+    await screen.findByText('Warehouse RO');
+    const profileList = screen.getByTestId('sql-execution-profile-list');
     fireEvent.click(
       within(profileList).getByRole('button', { name: 'Отключить' }),
     );

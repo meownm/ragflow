@@ -234,7 +234,6 @@ class TestSSRFValidation:
         we override the patched ``getaddrinfo`` here to return the literal
         loopback address for the loopback hostname.
         """
-        connector = _make_connector()
         first = _mock_response([], status_code=302)
         first.headers = {"Location": "http://127.0.0.1/secret"}
 
@@ -255,6 +254,7 @@ class TestSSRFValidation:
             from unittest.mock import patch as _patch
 
             with _patch.object(rc_module.socket, "getaddrinfo", side_effect=_dns_for_host):
+                connector = _make_connector()
                 # Coderabbit MAJOR #3486038795: SSRF validation failures inside
                 # _safe_request are now wrapped to raise ConnectorValidationError
                 # (the connector's documented error contract) instead of leaking
@@ -271,7 +271,6 @@ class TestSSRFValidation:
     @patch("common.data_source.rest_api_connector.pin_dns")
     def test_post_307_preserves_body(self, mock_pin_dns, mock_safe):
         """307 redirects should keep method and JSON body."""
-        connector = _make_connector(method="POST", request_body={"hello": "world"})
         first = _mock_response([], status_code=307)
         first.headers = {"Location": "https://api.example.com/redirected"}
         second = _mock_response({"items": []}, status_code=200)
@@ -282,6 +281,7 @@ class TestSSRFValidation:
         mock_pin_dns.return_value = nullcontext()
 
         with _mocked_rest_api_requests_and_dns() as mock_rl:
+            connector = _make_connector(method="POST", request_body={"hello": "world"})
             mock_rl.post.side_effect = [first, second]
             connector._fetch_page({})
 
@@ -294,13 +294,13 @@ class TestSSRFValidation:
     @patch("common.data_source.rest_api_connector.pin_dns")
     def test_exceeds_max_redirects_raises(self, mock_pin_dns, mock_safe):
         """Too many redirects should raise a connector validation error."""
-        connector = _make_connector()
         redirect = _mock_response([], status_code=302)
         redirect.headers = {"Location": "https://api.example.com/next"}
         mock_safe.side_effect = [("api.example.com", "93.184.216.34")] * 6
         mock_pin_dns.return_value = nullcontext()
 
         with _mocked_rest_api_requests_and_dns() as mock_rl:
+            connector = _make_connector()
             mock_rl.get.side_effect = [redirect] * 6
             with pytest.raises(ConnectorValidationError, match="Exceeded 5 redirects"):
                 connector._fetch_page({})

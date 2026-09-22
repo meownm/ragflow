@@ -5,11 +5,12 @@ import { NavLink, Outlet, useNavigate } from 'react-router';
 import { useMutation, useQuery } from '@tanstack/react-query';
 
 import {
+  LucideActivity,
   LucideFiles,
   LucideMenu,
   LucideMonitor,
-  LucideServerCrash,
   LucideScrollText,
+  LucideServerCrash,
   LucideSquareUserRound,
   LucideUserCog,
   LucideUserStar,
@@ -69,6 +70,11 @@ const AdminNavigationLayout = () => {
         path: Routes.AdminBusinessDocumentsSettings,
         name: t('admin.businessDocumentsSettings'),
         icon: <LucideFiles className="size-[1em]" />,
+      },
+      {
+        path: Routes.AdminBusinessDocumentsQuality,
+        name: t('admin.businessDocumentsQuality'),
+        icon: <LucideActivity className="size-[1em]" />,
       },
       {
         path: Routes.AdminAudit,

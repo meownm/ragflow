@@ -2817,13 +2817,29 @@ export default {
         save: 'Сохранить группу',
         saved: 'Группа доступа сохранена',
         deleteConfirm: 'Удалить группу доступа?',
-        summary: 'Пользователей: {{users}}, источников: {{datasets}}, разделов: {{sections}}',
+        summary:
+          'Пользователей: {{users}}, источников: {{datasets}}, разделов: {{sections}}',
       },
       businessDocumentsSettings: 'Документы',
+      businessDocumentsQuality: 'Качество документов',
       audit: 'Аудит',
       registrationWhitelist: 'Белый список регистрации',
       roles: 'Роли',
       monitoring: 'Мониторинг',
+
+      businessDocumentsQualityPage: {
+        title: 'Качество документов',
+        description:
+          'Операции ИИ, ошибки, задержка, активные модели и аудит завершений для раздела «Документы».',
+        connected: 'Дашборд подключён',
+        unavailable: 'Дашборд недоступен',
+        unavailableDescription:
+          'Для этого экземпляра RAGFlow не настроена наблюдаемость Grafana.',
+        loadError: 'Не удалось загрузить конфигурацию дашборда.',
+        loading: 'Загрузка дашборда качества',
+        openGrafana: 'Открыть в Grafana',
+        frameTitle: 'Дашборд качества ИИ для документов',
+      },
 
       auditPage: {
         title: 'Аудит',

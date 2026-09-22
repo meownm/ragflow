@@ -3309,13 +3309,29 @@ Important structured information may include: names, dates, locations, events, k
         save: 'Save group',
         saved: 'Access group saved',
         deleteConfirm: 'Delete this access group?',
-        summary: 'Users: {{users}}, sources: {{datasets}}, sections: {{sections}}',
+        summary:
+          'Users: {{users}}, sources: {{datasets}}, sections: {{sections}}',
       },
       businessDocumentsSettings: 'Documents',
+      businessDocumentsQuality: 'Document quality',
       audit: 'Audit',
       registrationWhitelist: 'Registration whitelist',
       roles: 'Roles',
       monitoring: 'Monitoring',
+
+      businessDocumentsQualityPage: {
+        title: 'Document quality',
+        description:
+          'AI operations, errors, latency, active models, and completion audit for Business Documents.',
+        connected: 'Dashboard connected',
+        unavailable: 'Dashboard unavailable',
+        unavailableDescription:
+          'Grafana observability is not configured for this RAGFlow instance.',
+        loadError: 'Could not load the dashboard configuration.',
+        loading: 'Loading quality dashboard',
+        openGrafana: 'Open in Grafana',
+        frameTitle: 'Business Documents AI quality dashboard',
+      },
 
       auditPage: {
         title: 'Audit',

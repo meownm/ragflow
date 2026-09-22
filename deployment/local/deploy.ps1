@@ -184,7 +184,10 @@ if ($CheckOnly) {
 }
 
 if ($BuildFrontend) {
-    $npm = Get-Command npm -ErrorAction SilentlyContinue
+    $npm = Get-Command npm.cmd -ErrorAction SilentlyContinue
+    if (-not $npm) {
+        $npm = Get-Command npm -ErrorAction SilentlyContinue
+    }
     if (-not $npm) {
         throw "npm is required by -BuildFrontend."
     }
@@ -192,7 +195,8 @@ if ($BuildFrontend) {
     try {
         $previousNodeOptions = $env:NODE_OPTIONS
         $env:NODE_OPTIONS = "--max-old-space-size=8192"
-        Invoke-Native -FilePath $npm.Source -Arguments @("run", "build")
+        $npmPath = $npm.Source
+        Invoke-Native -FilePath $npmPath -Arguments @("run", "build")
     }
     finally {
         $env:NODE_OPTIONS = $previousNodeOptions

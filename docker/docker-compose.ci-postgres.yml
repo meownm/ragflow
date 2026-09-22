@@ -1,0 +1,31 @@
+services:
+  ragflow-cpu:
+    depends_on: !override
+      postgres:
+        condition: service_healthy
+      plantuml-server:
+        condition: service_healthy
+
+  mysql:
+    profiles: !override
+      - mysql-disabled
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DBNAME}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - ragflow
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DBNAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

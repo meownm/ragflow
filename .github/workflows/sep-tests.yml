@@ -450,7 +450,7 @@ jobs:
 
           # Persist computed ports into .env so docker-compose uses the correct host bindings.
           # Remove previous CI overrides first; docker compose uses the last duplicate key.
-               sed -i '/^ES_PORT=/d;/^OS_PORT=/d;/^INFINITY_THRIFT_PORT=/d;/^INFINITY_HTTP_PORT=/d;/^INFINITY_PSQL_PORT=/d;/^EXPOSE_MYSQL_PORT=/d;/^MINIO_PORT=/d;/^MINIO_CONSOLE_PORT=/d;/^REDIS_PORT=/d;/^TEI_PORT=/d;/^KIBANA_PORT=/d;/^SVR_HTTP_PORT=/d;/^ADMIN_SVR_HTTP_PORT=/d;/^SVR_MCP_PORT=/d;/^GO_HTTP_PORT=/d;/^GO_ADMIN_PORT=/d;/^SANDBOX_EXECUTOR_MANAGER_PORT=/d;/^SVR_WEB_HTTP_PORT=/d;/^SVR_WEB_HTTPS_PORT=/d;/^NATS_PORT=/d;/^COMPOSE_PROFILES=/d;/^TEI_MODEL=/d;/^RAGFLOW_IMAGE=/d;/^DOC_ENGINE=/d;/^DB_TYPE=/d' .env
+               sed -i '/^ES_PORT=/d;/^OS_PORT=/d;/^INFINITY_THRIFT_PORT=/d;/^INFINITY_HTTP_PORT=/d;/^INFINITY_PSQL_PORT=/d;/^EXPOSE_MYSQL_PORT=/d;/^MINIO_PORT=/d;/^MINIO_CONSOLE_PORT=/d;/^REDIS_PORT=/d;/^TEI_PORT=/d;/^KIBANA_PORT=/d;/^SVR_HTTP_PORT=/d;/^ADMIN_SVR_HTTP_PORT=/d;/^SVR_MCP_PORT=/d;/^GO_HTTP_PORT=/d;/^GO_ADMIN_PORT=/d;/^SANDBOX_EXECUTOR_MANAGER_PORT=/d;/^SVR_WEB_HTTP_PORT=/d;/^SVR_WEB_HTTPS_PORT=/d;/^NATS_PORT=/d;/^COMPOSE_PROFILES=/d;/^TEI_MODEL=/d;/^RAGFLOW_IMAGE=/d;/^DOC_ENGINE=/d' .env
                {
                  echo ""
                  echo "ES_PORT=${ES_PORT}"
@@ -477,7 +477,6 @@ jobs:
                  echo "TEI_MODEL=BAAI/bge-small-en-v1.5"
                  echo "RAGFLOW_IMAGE=${RAGFLOW_IMAGE}"
                  echo "DOC_ENGINE=${DOC_ENGINE}"
-                 echo "DB_TYPE=mysql"
                } >> .env
                echo "HOST_ADDRESS=http://host.docker.internal:${SVR_HTTP_PORT}" >> ${GITHUB_ENV}
                echo "RAGFLOW_BASE_URL=http://host.docker.internal:${SVR_WEB_HTTP_PORT}" >> ${GITHUB_ENV}
@@ -490,9 +489,9 @@ jobs:
       - name: Start ragflow:nightly for Infinity
         if: env.HAS_GO == 'true' || env.HAS_PYTHON == 'true' || env.HAS_WEB == 'true'
         run: |
-          sudo docker compose -f docker/docker-compose.yml -p ${COMPOSE_PROJECT_NAME} down -v || true
+          sudo docker compose -f docker/docker-compose.yml -f docker/docker-compose.ci-postgres.yml -p ${COMPOSE_PROJECT_NAME} down -v || true
           sudo docker ps -a --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" -q | xargs -r sudo docker rm -f
-          sudo docker compose -f docker/docker-compose.yml -p ${COMPOSE_PROJECT_NAME} up -d
+          sudo docker compose -f docker/docker-compose.yml -f docker/docker-compose.ci-postgres.yml -p ${COMPOSE_PROJECT_NAME} up -d
 
       - name: Run sdk tests against Infinity
         if: env.HAS_PYTHON == 'true'
@@ -682,7 +681,7 @@ jobs:
           else
             echo "ragflow_server.py not found!"
           fi
-          sudo docker compose -f docker/docker-compose.yml -p ${COMPOSE_PROJECT_NAME} stop
+          sudo docker compose -f docker/docker-compose.yml -f docker/docker-compose.ci-postgres.yml -p ${COMPOSE_PROJECT_NAME} stop
 
       - name: Generate server coverage report Infinity
         if: ${{ !cancelled() && env.HAS_PYTHON == 'true' }}
@@ -727,7 +726,7 @@ jobs:
         if: ${{ always() && (env.HAS_GO == 'true' || env.HAS_PYTHON == 'true' || env.HAS_WEB == 'true') }}
         run: |
           # Sometimes `docker compose down` fail due to hang container, heavy load etc. Need to remove such containers to release resources(for example, listen ports).
-          sudo docker compose -f docker/docker-compose.yml -p ${COMPOSE_PROJECT_NAME} down -v || true
+          sudo docker compose -f docker/docker-compose.yml -f docker/docker-compose.ci-postgres.yml -p ${COMPOSE_PROJECT_NAME} down -v || true
           sudo docker ps -a --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" -q | xargs -r sudo docker rm -f
           if [[ -n ${RAGFLOW_IMAGE} ]]; then
             sudo docker rmi -f ${RAGFLOW_IMAGE}
@@ -915,7 +914,7 @@ jobs:
 
           # Persist computed ports into .env so docker-compose uses the correct host bindings.
           # Remove previous CI overrides first; docker compose uses the last duplicate key.
-               sed -i '/^ES_PORT=/d;/^OS_PORT=/d;/^INFINITY_THRIFT_PORT=/d;/^INFINITY_HTTP_PORT=/d;/^INFINITY_PSQL_PORT=/d;/^EXPOSE_MYSQL_PORT=/d;/^MINIO_PORT=/d;/^MINIO_CONSOLE_PORT=/d;/^REDIS_PORT=/d;/^TEI_PORT=/d;/^KIBANA_PORT=/d;/^SVR_HTTP_PORT=/d;/^ADMIN_SVR_HTTP_PORT=/d;/^SVR_MCP_PORT=/d;/^GO_HTTP_PORT=/d;/^GO_ADMIN_PORT=/d;/^SANDBOX_EXECUTOR_MANAGER_PORT=/d;/^SVR_WEB_HTTP_PORT=/d;/^SVR_WEB_HTTPS_PORT=/d;/^NATS_PORT=/d;/^COMPOSE_PROFILES=/d;/^TEI_MODEL=/d;/^RAGFLOW_IMAGE=/d;/^DOC_ENGINE=/d;/^DB_TYPE=/d' .env
+               sed -i '/^ES_PORT=/d;/^OS_PORT=/d;/^INFINITY_THRIFT_PORT=/d;/^INFINITY_HTTP_PORT=/d;/^INFINITY_PSQL_PORT=/d;/^EXPOSE_MYSQL_PORT=/d;/^MINIO_PORT=/d;/^MINIO_CONSOLE_PORT=/d;/^REDIS_PORT=/d;/^TEI_PORT=/d;/^KIBANA_PORT=/d;/^SVR_HTTP_PORT=/d;/^ADMIN_SVR_HTTP_PORT=/d;/^SVR_MCP_PORT=/d;/^GO_HTTP_PORT=/d;/^GO_ADMIN_PORT=/d;/^SANDBOX_EXECUTOR_MANAGER_PORT=/d;/^SVR_WEB_HTTP_PORT=/d;/^SVR_WEB_HTTPS_PORT=/d;/^NATS_PORT=/d;/^COMPOSE_PROFILES=/d;/^TEI_MODEL=/d;/^RAGFLOW_IMAGE=/d;/^DOC_ENGINE=/d' .env
                {
                  echo ""
                  echo "ES_PORT=${ES_PORT}"
@@ -942,7 +941,6 @@ jobs:
                  echo "TEI_MODEL=BAAI/bge-small-en-v1.5"
                  echo "RAGFLOW_IMAGE=${RAGFLOW_IMAGE}"
                  echo "DOC_ENGINE=${DOC_ENGINE}"
-                 echo "DB_TYPE=mysql"
                } >> .env
                echo "HOST_ADDRESS=http://host.docker.internal:${SVR_HTTP_PORT}" >> ${GITHUB_ENV}
                echo "RAGFLOW_BASE_URL=http://host.docker.internal:${SVR_WEB_HTTP_PORT}" >> ${GITHUB_ENV}
@@ -955,9 +953,9 @@ jobs:
       - name: Start ragflow:nightly for Elasticsearch
         if: env.HAS_GO == 'true' || env.HAS_PYTHON == 'true' || env.HAS_WEB == 'true'
         run: |
-          sudo docker compose -f docker/docker-compose.yml -p ${COMPOSE_PROJECT_NAME} down -v || true
+          sudo docker compose -f docker/docker-compose.yml -f docker/docker-compose.ci-postgres.yml -p ${COMPOSE_PROJECT_NAME} down -v || true
           sudo docker ps -a --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" -q | xargs -r sudo docker rm -f
-          sudo docker compose -f docker/docker-compose.yml -p ${COMPOSE_PROJECT_NAME} up -d
+          sudo docker compose -f docker/docker-compose.yml -f docker/docker-compose.ci-postgres.yml -p ${COMPOSE_PROJECT_NAME} up -d
 
       - name: Run sdk tests against Elasticsearch
         if: env.HAS_PYTHON == 'true'
@@ -1147,7 +1145,7 @@ jobs:
           else
             echo "ragflow_server.py not found!"
           fi
-          sudo docker compose -f docker/docker-compose.yml -p ${COMPOSE_PROJECT_NAME} stop
+          sudo docker compose -f docker/docker-compose.yml -f docker/docker-compose.ci-postgres.yml -p ${COMPOSE_PROJECT_NAME} stop
 
       - name: Generate server coverage report Elasticsearch
         if: ${{ !cancelled() && env.HAS_PYTHON == 'true' }}
@@ -1185,7 +1183,7 @@ jobs:
         if: ${{ always() && (env.HAS_GO == 'true' || env.HAS_PYTHON == 'true' || env.HAS_WEB == 'true') }}
         run: |
           # Sometimes `docker compose down` fail due to hang container, heavy load etc. Need to remove such containers to release resources(for example, listen ports).
-          sudo docker compose -f docker/docker-compose.yml -p ${COMPOSE_PROJECT_NAME} down -v || true
+          sudo docker compose -f docker/docker-compose.yml -f docker/docker-compose.ci-postgres.yml -p ${COMPOSE_PROJECT_NAME} down -v || true
           sudo docker ps -a --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" -q | xargs -r sudo docker rm -f
           if [[ -n ${RAGFLOW_IMAGE} ]]; then
             sudo docker rmi -f ${RAGFLOW_IMAGE}

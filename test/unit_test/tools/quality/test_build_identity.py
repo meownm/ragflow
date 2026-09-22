@@ -89,7 +89,7 @@ def test_all_main_image_ci_build_callers_supply_checkout_identity(workflow, coun
 
 
 @pytest.mark.parametrize("workflow", ["tests.yml", "sep-tests.yml"])
-def test_upstream_compose_ci_overrides_postgres_default_with_mysql(workflow):
+def test_compose_ci_uses_isolated_postgres_overlay(workflow):
     document = yaml.safe_load((ROOT / ".github/workflows" / workflow).read_text())
     prepare_steps = [
         step["run"]
@@ -100,5 +100,22 @@ def test_upstream_compose_ci_overrides_postgres_default_with_mysql(workflow):
 
     assert len(prepare_steps) == 2
     for script in prepare_steps:
-        assert "/^DB_TYPE=/d" in script
-        assert 'echo "DB_TYPE=mysql"' in script
+        assert "/^DB_TYPE=/d" not in script
+        assert 'echo "DB_TYPE=mysql"' not in script
+
+    compose_commands = [
+        step["run"]
+        for job in document["jobs"].values()
+        for step in job.get("steps", [])
+        if "sudo docker compose " in step.get("run", "")
+    ]
+    assert compose_commands
+    assert all("-f docker/docker-compose.ci-postgres.yml" in script for script in compose_commands)
+
+
+def test_ci_postgres_overlay_disables_mysql_and_gates_ragflow_on_postgres():
+    overlay = (ROOT / "docker/docker-compose.ci-postgres.yml").read_text()
+    assert "postgres:16-alpine" in overlay
+    assert "pg_isready" in overlay
+    assert "mysql-disabled" in overlay
+    assert "condition: service_healthy" in overlay

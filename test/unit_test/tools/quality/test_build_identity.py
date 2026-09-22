@@ -119,3 +119,23 @@ def test_ci_postgres_overlay_disables_mysql_and_gates_ragflow_on_postgres():
     assert "pg_isready" in overlay
     assert "mysql-disabled" in overlay
     assert "condition: service_healthy" in overlay
+
+
+@pytest.mark.parametrize("workflow", ["tests.yml", "sep-tests.yml"])
+def test_live_api_ci_uses_provider_free_model_profile(workflow):
+    document = yaml.safe_load((ROOT / ".github/workflows" / workflow).read_text())
+    test_roots = (
+        "test/testcases/test_sdk_api",
+        "test/testcases/restful_api",
+        "test/testcases/test_web_api",
+        "test/testcases/test_admin_api",
+    )
+    commands = [
+        step["run"]
+        for job in document["jobs"].values()
+        for step in job.get("steps", [])
+        if "pytest " in step.get("run", "") and any(root in step["run"] for root in test_roots)
+    ]
+
+    assert len(commands) == 8
+    assert all("--model-profile=local" in command for command in commands)

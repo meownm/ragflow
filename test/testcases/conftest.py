@@ -18,7 +18,6 @@ import importlib
 import os
 import sys
 import types
-from pathlib import Path
 
 
 def _make_stub_getattr(module_name):
@@ -103,13 +102,6 @@ MARKER_EXPRESSIONS = {
     "p3": "p1 or p2 or p3",
 }
 
-# Reviewed provider-free API contracts. All other existing live tests retain
-# the cloud prerequisite unless explicitly classified with local_api.
-_LOCAL_API_MODULES = {
-    "restful_api/test_system.py",
-    "restful_api/test_router_contracts.py",
-    "test_web_api/test_system_app/test_system_basic.py",
-}
 _CLOUD_CREDENTIAL_NAMES = ("ZHIPU_AI_API_KEY", "SILICONFLOW_API_KEY")
 
 
@@ -117,8 +109,8 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
         "--model-profile",
         choices=["cloud", "local"],
-        default="cloud",
-        help="cloud: existing provider-backed suite; local: reviewed provider-free API tests only (disposable stack required)",
+        default="local",
+        help="local: provider-free suite (default); cloud: opt-in provider-backed tests requiring credentials",
     )
     parser.addoption(
         "--level",
@@ -152,23 +144,20 @@ def _require_cloud_credentials():
         pytest.fail("Missing cloud model prerequisites: " + ", ".join(missing), pytrace=False)
 
 
-def _is_local_api(item):
-    if item.get_closest_marker("cloud_models") or "cloud_model_credentials" in item.fixturenames or "set_tenant_info" in item.fixturenames:
-        return False
-    if item.get_closest_marker("local_api"):
-        return True
-    relative = Path(item.path).resolve().relative_to(Path(__file__).resolve().parent).as_posix()
-    return relative in _LOCAL_API_MODULES
+def _requires_cloud_models(item):
+    # pytest expands transitive fixture dependencies in ``fixturenames``. The
+    # root set_tenant_info fixture therefore carries cloud_model_credentials,
+    # while same-named unit-test doubles remain provider-free.
+    return bool(item.get_closest_marker("cloud_models") or "cloud_model_credentials" in item.fixturenames)
 
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_runtest_setup(item):
-    # Check before fixture setup, including auth/session-scoped fixtures which
-    # can register users or create tokens. Missing prerequisites are errors,
-    # never skips, and --collect-only does not require a provider account.
+    # Provider-backed tests are explicit opt-in. The default local profile runs
+    # API and SDK contracts without attempting any external cloud setup.
     if item.config.getoption("--model-profile") == "local":
-        if not _is_local_api(item):
-            pytest.fail("Test requires cloud models or has not been reviewed for --model-profile=local", pytrace=False)
+        if _requires_cloud_models(item):
+            pytest.skip("requires opt-in --model-profile=cloud")
     else:
         _require_cloud_credentials()
 

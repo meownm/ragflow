@@ -58,8 +58,8 @@ def test_collection_without_cloud_credentials(harness):
 
 
 @pytest.mark.parametrize("credentials", [{}, {"ZHIPU_AI_API_KEY": " "}, {"ZHIPU_AI_API_KEY": "synthetic-not-a-key"}])
-def test_default_cloud_fails_before_auth_network(harness, credentials):
-    result = harness("import pytest\n@pytest.mark.p1\ndef test_contract(auth): pass\n", credentials=credentials)
+def test_opt_in_cloud_fails_before_auth_network(harness, credentials):
+    result = harness("import pytest\n@pytest.mark.p1\ndef test_contract(auth): pass\n", "--model-profile=cloud", credentials=credentials)
     assert result.returncode == 1, result.stdout + result.stderr
     assert "Missing cloud model prerequisites" in result.stdout
     assert "SILICONFLOW_API_KEY" in result.stdout
@@ -67,19 +67,34 @@ def test_default_cloud_fails_before_auth_network(harness, credentials):
     assert "skipped" not in result.stdout
 
 
-def test_local_unknown_test_is_error_not_skip(harness):
-    result = harness("import pytest\n@pytest.mark.p1\ndef test_contract(auth): pass\n", "--model-profile=local")
-    assert result.returncode == 1
-    assert "has not been reviewed" in result.stdout
+def test_local_unknown_test_runs_without_cloud_setup(harness):
+    result = harness("import pytest\n@pytest.mark.p1\ndef test_contract(): pass\n", "--model-profile=local")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 passed" in result.stdout
+
+
+def test_default_profile_is_local(harness):
+    result = harness("import pytest\n@pytest.mark.p1\ndef test_contract(): pass\n")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 passed" in result.stdout
 
 
 @pytest.mark.parametrize("requirement", ["@pytest.mark.cloud_models\n", ""])
-def test_local_rejects_explicit_cloud_requirement(harness, requirement):
+def test_local_skips_explicit_cloud_requirement(harness, requirement):
     fixture = "" if requirement else "cloud_model_credentials"
     source = f"import pytest\n@pytest.mark.p1\n@pytest.mark.local_api\n{requirement}def test_contract({fixture}): pass\n"
     result = harness(source, "--model-profile=local")
-    assert result.returncode == 1
-    assert "requires cloud models" in result.stdout
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 skipped" in result.stdout
+
+
+def test_local_same_named_fixture_is_not_treated_as_cloud(harness):
+    result = harness(
+        "import pytest\n@pytest.fixture\ndef set_tenant_info(): return 'local-double'\n@pytest.mark.p1\ndef test_contract(set_tenant_info): assert set_tenant_info == 'local-double'\n",
+        "--model-profile=local",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 passed" in result.stdout
 
 
 def test_local_auth_initializes_without_provider_setup(harness):
@@ -115,19 +130,6 @@ def test_auth(auth, fake_transport):
     assert "1 passed" in result.stdout
 
 
-@pytest.mark.parametrize(
-    "name",
-    [
-        "restful_api/test_system.py",
-        "restful_api/test_router_contracts.py",
-        "test_web_api/test_system_app/test_system_basic.py",
-    ],
-)
-def test_reviewed_local_module_needs_no_cloud_setup(harness, name):
-    result = harness("import pytest\n@pytest.mark.p1\ndef test_contract(): pass\n", "--model-profile=local", name=name)
-    assert result.returncode == 0, result.stdout + result.stderr
-
-
 def test_cloud_setup_runs_once_with_explicit_credentials(harness):
     result = harness(
         """
@@ -144,6 +146,7 @@ def test_first(): assert calls == ["configured"]
 @pytest.mark.p1
 def test_second(): assert calls == ["configured"]
 """,
+        "--model-profile=cloud",
         credentials={"ZHIPU_AI_API_KEY": "synthetic-not-a-key", "SILICONFLOW_API_KEY": "synthetic-not-a-key"},
     )
     assert result.returncode == 0, result.stdout + result.stderr

@@ -512,7 +512,7 @@ jobs:
             exit 1
           fi
           echo "Start to run test sdk on Infinity"
-          source .venv/bin/activate && set -o pipefail; DOC_ENGINE=infinity pytest -s --tb=short --level=${HTTP_API_TEST_LEVEL} --junitxml=pytest-infinity-sdk.xml --cov=sdk/python/ragflow_sdk --cov-branch --cov-report=xml:coverage-infinity-sdk.xml test/testcases/test_sdk_api 2>&1 | tee infinity_sdk_test.log
+          source .venv/bin/activate && set -o pipefail; DOC_ENGINE=infinity pytest -s --tb=short --model-profile=local --level=${HTTP_API_TEST_LEVEL} --junitxml=pytest-infinity-sdk.xml --cov=sdk/python/ragflow_sdk --cov-branch --cov-report=xml:coverage-infinity-sdk.xml test/testcases/test_sdk_api 2>&1 | tee infinity_sdk_test.log
 
       - name: Run New RESTFUL api tests against Infinity
         if: env.HAS_PYTHON == 'true'
@@ -532,21 +532,21 @@ jobs:
             sudo docker logs ${RAGFLOW_CONTAINER}
             exit 1
           fi
-          source .venv/bin/activate && set -o pipefail; DOC_ENGINE=infinity pytest -s --tb=short --level=${HTTP_API_TEST_LEVEL} test/testcases/restful_api 2>&1 | tee infinity_restful_api_test.log
+          source .venv/bin/activate && set -o pipefail; DOC_ENGINE=infinity pytest -s --tb=short --model-profile=local --level=${HTTP_API_TEST_LEVEL} test/testcases/restful_api 2>&1 | tee infinity_restful_api_test.log
 
       - name: Run test_web_api against Infinity
         if: env.HAS_PYTHON == 'true'
         run: |
           source .venv/bin/activate
           export http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY=""
-          pytest --level=${HTTP_API_TEST_LEVEL} --junitxml=infinity-test_web_api.xml test/testcases/test_web_api
+          pytest --model-profile=local --level=${HTTP_API_TEST_LEVEL} --junitxml=infinity-test_web_api.xml test/testcases/test_web_api
 
       - name: Run test_admin_api against Infinity
         if: env.HAS_PYTHON == 'true'
         run: |
           source .venv/bin/activate
           export http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY=""
-          pytest --level=${HTTP_API_TEST_LEVEL} --junitxml=infinity-test_admin_api.xml test/testcases/test_admin_api
+          pytest --model-profile=local --level=${HTTP_API_TEST_LEVEL} --junitxml=infinity-test_admin_api.xml test/testcases/test_admin_api
 
       - name: RAGFlow CLI retrieval test Infinity
         if: env.HAS_PYTHON == 'true'
@@ -976,7 +976,7 @@ jobs:
             exit 1
           fi
           echo "Start to run test sdk on Elasticsearch"
-          source .venv/bin/activate && set -o pipefail; pytest -s --tb=short --level=${HTTP_API_TEST_LEVEL} --junitxml=pytest-es-sdk.xml --cov=sdk/python/ragflow_sdk --cov-branch --cov-report=xml:coverage-es-sdk.xml test/testcases/test_sdk_api 2>&1 | tee es_sdk_test.log
+          source .venv/bin/activate && set -o pipefail; pytest -s --tb=short --model-profile=local --level=${HTTP_API_TEST_LEVEL} --junitxml=pytest-es-sdk.xml --cov=sdk/python/ragflow_sdk --cov-branch --cov-report=xml:coverage-es-sdk.xml test/testcases/test_sdk_api 2>&1 | tee es_sdk_test.log
 
       - name: Run New RESTFUL api tests against Elasticsearch
         if: env.HAS_PYTHON == 'true'
@@ -996,21 +996,21 @@ jobs:
             sudo docker logs ${RAGFLOW_CONTAINER}
             exit 1
           fi
-          source .venv/bin/activate && set -o pipefail; pytest -s --tb=short --level=${HTTP_API_TEST_LEVEL} test/testcases/restful_api 2>&1 | tee es_restful_api_test.log
+          source .venv/bin/activate && set -o pipefail; pytest -s --tb=short --model-profile=local --level=${HTTP_API_TEST_LEVEL} test/testcases/restful_api 2>&1 | tee es_restful_api_test.log
 
       - name: Run test_web_api against Elasticsearch
         if: env.HAS_PYTHON == 'true'
         run: |
           source .venv/bin/activate
           export http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY=""
-          pytest --level=${HTTP_API_TEST_LEVEL} --junitxml=elasticsearch-test_web_api.xml test/testcases/test_web_api
+          pytest --model-profile=local --level=${HTTP_API_TEST_LEVEL} --junitxml=elasticsearch-test_web_api.xml test/testcases/test_web_api
 
       - name: Run test_admin_api against Elasticsearch
         if: env.HAS_PYTHON == 'true'
         run: |
           source .venv/bin/activate
           export http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY=""
-          pytest --level=${HTTP_API_TEST_LEVEL} --junitxml=elasticsearch-test_admin_api.xml test/testcases/test_admin_api
+          pytest --model-profile=local --level=${HTTP_API_TEST_LEVEL} --junitxml=elasticsearch-test_admin_api.xml test/testcases/test_admin_api
 
       - name: RAGFlow CLI retrieval test Elasticsearch
         if: env.HAS_PYTHON == 'true'

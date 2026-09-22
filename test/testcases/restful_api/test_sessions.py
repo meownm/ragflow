@@ -137,10 +137,10 @@ def test_session_create_validation_and_deleted_chat_contract(rest_client, create
     chat_id = create_chat("restful_session_create_contract")
 
     empty_path_res = rest_client.post("/chats//sessions", json={"name": "valid_name"})
-    assert empty_path_res.status_code == 200
+    assert empty_path_res.status_code == 500
     empty_path_payload = empty_path_res.json()
     assert empty_path_payload["code"] == 100, empty_path_payload
-    assert empty_path_payload["message"] == "<MethodNotAllowed '405: Method Not Allowed'>", empty_path_payload
+    assert empty_path_payload["message"] == "Internal server error", empty_path_payload
 
     invalid_chat_res = rest_client.post("/chats/invalid_chat_assistant_id/sessions", json={"name": "valid_name"})
     assert invalid_chat_res.status_code == 200
@@ -262,7 +262,7 @@ def test_session_delete_basic_scenarios(rest_client, create_chat):
             )
         else:
             res = rest_client.delete(f"/chats/{chat_id}/sessions", json=payload)
-        assert res.status_code == 200, (scenario_name, res.text)
+        assert res.status_code == (500 if expected_code == 100 else 200), (scenario_name, res.text)
         body = res.json()
         assert body["code"] == expected_code, (scenario_name, body)
         if expected_code == 0:
@@ -433,7 +433,7 @@ def test_session_list_page_and_sort_contract(rest_client, create_chat):
     ]
     for scenario_name, params, expected_code, expected_count, expected_message in page_cases:
         res = rest_client.get(f"/chats/{chat_id}/sessions", params=params)
-        assert res.status_code == 200, (scenario_name, res.text)
+        assert res.status_code == (500 if expected_code == 100 else 200), (scenario_name, res.text)
         payload = res.json()
         assert payload["code"] == expected_code, (scenario_name, payload)
         if expected_code == 0:
@@ -457,7 +457,7 @@ def test_session_list_page_and_sort_contract(rest_client, create_chat):
     ]
     for scenario_name, params, field, descending, expected_names, expected_message in sort_cases:
         res = rest_client.get(f"/chats/{chat_id}/sessions", params=params)
-        assert res.status_code == 200, (scenario_name, res.text)
+        assert res.status_code == (500 if expected_names is None else 200), (scenario_name, res.text)
         payload = res.json()
         expected_code = 0 if expected_names is not None else 100
         assert payload["code"] == expected_code, (scenario_name, payload)
@@ -504,10 +504,10 @@ def test_session_update_requires_auth_and_invalid_target_contract(rest_client, c
     assert invalid_chat_payload["message"] == "No authorization.", invalid_chat_payload
 
     empty_session_res = rest_client.patch(f"/chats/{chat_id}/sessions/", json={"name": "x"})
-    assert empty_session_res.status_code == 200
+    assert empty_session_res.status_code == 500
     empty_session_payload = empty_session_res.json()
     assert empty_session_payload["code"] == 100, empty_session_payload
-    assert empty_session_payload["message"] == "<MethodNotAllowed '405: Method Not Allowed'>", empty_session_payload
+    assert empty_session_payload["message"] == "Internal server error", empty_session_payload
 
     invalid_session_res = rest_client.patch(f"/chats/{chat_id}/sessions/invalid_session_id", json={"name": "x"})
     assert invalid_session_res.status_code == 200

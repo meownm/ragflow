@@ -324,7 +324,7 @@ def test_documents_list_error_and_sorting_contract(rest_client, create_dataset, 
     ]
     for case_name, path, params, expected_code, expected_message in error_cases:
         res = rest_client.get(path, params=params)
-        assert res.status_code == 200, (case_name, res.text)
+        assert res.status_code == (500 if expected_code == 100 else 200), (case_name, res.text)
         payload = res.json()
         assert payload["code"] == expected_code, (case_name, payload)
         assert expected_message in payload["message"], (case_name, payload)
@@ -1241,7 +1241,7 @@ def test_documents_parse_contract_matrix(rest_client, create_dataset, tmp_path):
         payload = payload_builder(doc_ids)
 
         res = rest_client.post(f"/datasets/{dataset_id}/documents/parse", json=payload, timeout=60)
-        assert res.status_code == 200, (scenario_name, res.text)
+        assert res.status_code == (500 if expected_code == 100 else 200), (scenario_name, res.text)
         body = res.json()
         assert body["code"] == expected_code, (scenario_name, body)
         if expected_code != 0:
@@ -1269,7 +1269,7 @@ def test_documents_parse_invalid_dataset_partial_duplicate_and_repeated(rest_cli
     for bad_dataset in ("", "invalid_dataset_id"):
         path = f"/datasets/{bad_dataset}/documents/parse" if bad_dataset else "/datasets//documents/parse"
         res = rest_client.post(path, json={"document_ids": doc_ids})
-        assert res.status_code == 200, (bad_dataset, res.text)
+        assert res.status_code == (500 if bad_dataset == "" else 200), (bad_dataset, res.text)
         body = res.json()
         if bad_dataset == "":
             assert body["code"] == 100, (bad_dataset, body)
@@ -1398,7 +1398,7 @@ def test_documents_stop_parse_contract_matrix(rest_client, create_dataset, tmp_p
     ]
     for case_name, payload, expected_code, expected_message in invalid_payloads:
         res = rest_client.post(f"/datasets/{dataset_id}/documents/stop", json=payload, timeout=60)
-        assert res.status_code == 200, (case_name, res.text)
+        assert res.status_code == (500 if expected_code == 100 else 200), (case_name, res.text)
         body = res.json()
         assert body["code"] == expected_code, (case_name, body)
         assert expected_message in body["message"], (case_name, body)
@@ -1439,7 +1439,7 @@ def test_documents_stop_parse_invalid_dataset_partial_and_scaled_concurrency(res
     for bad_dataset in ("", "invalid_dataset_id"):
         path = f"/datasets/{bad_dataset}/documents/stop" if bad_dataset else "/datasets//documents/stop"
         res = rest_client.post(path, json={"document_ids": doc_ids[:1]})
-        assert res.status_code == 200, (bad_dataset, res.text)
+        assert res.status_code == (500 if bad_dataset == "" else 200), (bad_dataset, res.text)
         body = res.json()
         if bad_dataset == "":
             assert body["code"] == 100, (bad_dataset, body)

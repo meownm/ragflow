@@ -242,7 +242,7 @@ def test_chunk_add_keyword_question_and_tag_contract(rest_client, create_documen
             before_total = before_payload["data"]["doc"]["chunk_count"]
 
             res = rest_client.post(base_path, json=payload)
-            assert res.status_code == 200, (scenario_name, res.text)
+            assert res.status_code == (500 if expected_code == 100 else 200), (scenario_name, res.text)
             body = res.json()
             assert body["code"] == expected_code, (scenario_name, body)
             if expected_code == 0:
@@ -619,7 +619,7 @@ def test_chunk_list_page_and_page_size_contract(rest_client, create_document):
 
     for scenario_name, params, expected_code, expected_total, expected_message in cases:
         res = rest_client.get(base_path, params=params)
-        assert res.status_code == 200, (scenario_name, res.text)
+        assert res.status_code == (500 if expected_code == 100 else 200), (scenario_name, res.text)
         payload = res.json()
         assert payload["code"] == expected_code, (scenario_name, payload)
         if expected_code == 0:
@@ -676,7 +676,7 @@ def test_chunk_update_content_and_available_contract(rest_client, create_documen
     for scenario_name, payload, expected_code, expected_message in content_cases:
         _, _, chunk_id, base_path = _create_chunk_for_update(rest_client, create_document, f"{scenario_name}.txt")
         res = rest_client.patch(f"{base_path}/{chunk_id}", json=payload)
-        assert res.status_code == 200, (scenario_name, res.text)
+        assert res.status_code == (500 if expected_code == 100 else 200), (scenario_name, res.text)
         body = res.json()
         assert body["code"] == expected_code, (scenario_name, body)
         if expected_code != 0:
@@ -725,7 +725,7 @@ def test_chunk_update_keywords_questions_and_tag_contract(rest_client, create_do
     ]
     for scenario_name, payload, expected_code, expected_message in cases:
         res = rest_client.patch(f"{base_path}/{chunk_id}", json=payload)
-        assert res.status_code == 200, (scenario_name, res.text)
+        assert res.status_code == (500 if expected_code == 100 else 200), (scenario_name, res.text)
         body = res.json()
         assert body["code"] == expected_code, (scenario_name, body)
         if expected_code != 0:

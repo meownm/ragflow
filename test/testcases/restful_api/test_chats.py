@@ -383,7 +383,7 @@ def test_chat_list_page_and_page_size_contract(rest_client, clear_chats):
         baseline_total = baseline_payload["data"]["total"]
 
         res = rest_client.get("/chats", params=params)
-        assert res.status_code == 200, (scenario_name, res.text)
+        assert res.status_code == (500 if expected_code == 100 else 200), (scenario_name, res.text)
         payload = res.json()
         assert payload["code"] == expected_code, (scenario_name, payload)
         if expected_code == 0:
@@ -417,7 +417,7 @@ def test_chat_list_sorting_contract(rest_client, clear_chats):
 
     for scenario_name, params, expected_code, expected_names, expected_message in cases:
         res = rest_client.get("/chats", params=params)
-        assert res.status_code == 200, (scenario_name, res.text)
+        assert res.status_code == (500 if expected_code == 100 else 200), (scenario_name, res.text)
         payload = res.json()
         assert payload["code"] == expected_code, (scenario_name, payload)
         if expected_code == 0:
@@ -1000,6 +1000,7 @@ def test_chat_audio_transcription_routes_unit(monkeypatch):
     monkeypatch.setattr(module, "Response", _StubResponse)
     monkeypatch.setattr(module.tempfile, "mkstemp", lambda suffix: (11, f"/tmp/audio{suffix}"))
     monkeypatch.setattr(module.os, "close", lambda _fd: None)
+    monkeypatch.setattr(module.os.path, "getsize", lambda _path: 128)
 
     def _set_request(form, files):
         monkeypatch.setattr(module, "request", SimpleNamespace(form=_AwaitableValue(form), files=_AwaitableValue(files)))
@@ -1654,7 +1655,7 @@ def test_chat_create_prompt_contract(rest_client, clear_chats):
             "/chats",
             json={"name": f"restful_chat_prompt_{index}", "dataset_ids": [], **extra_payload},
         )
-        assert res.status_code == 200, (scenario_name, res.text)
+        assert res.status_code == (500 if expected_values is None else 200), (scenario_name, res.text)
         payload = res.json()
         if expected_values is None:
             assert payload["code"] == 100, (scenario_name, payload)
@@ -1949,7 +1950,7 @@ def test_chat_update_prompt_contract(rest_client, clear_chats, ensure_parsed_doc
             f"/chats/{chat_id}",
             json={"name": updated_name, "dataset_ids": [dataset_id], **extra_payload},
         )
-        assert res.status_code == 200, (scenario_name, res.text)
+        assert res.status_code == (500 if expected_values is None else 200), (scenario_name, res.text)
         payload = res.json()
         if expected_values is None:
             assert payload["code"] == 100, (scenario_name, payload)

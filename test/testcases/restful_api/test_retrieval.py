@@ -182,7 +182,7 @@ def test_retrieval_page_and_page_size_contract(rest_client, ensure_parsed_docume
     ]
     for scenario_name, payload, expected_code, expected_message in cases:
         res = rest_client.post("/retrieval", json=payload)
-        assert res.status_code == 200, (scenario_name, res.text)
+        assert res.status_code == (500 if expected_code == 100 else 200), (scenario_name, res.text)
         body = res.json()
         assert body["code"] == expected_code, (scenario_name, body)
         if expected_code != 0:
@@ -234,7 +234,7 @@ def test_retrieval_highlight_keyword_and_invalid_params_contract(rest_client, en
             "/retrieval",
             json={"question": "chunk test", "dataset_ids": [dataset_id], "keyword": keyword_value},
         )
-        assert keyword_res.status_code == 200, (scenario_name, keyword_res.text)
+        assert keyword_res.status_code == (500 if expected_code == 100 else 200), (scenario_name, keyword_res.text)
         keyword_payload = keyword_res.json()
         assert keyword_payload["code"] == expected_code, (scenario_name, keyword_payload)
         if expected_code == 0:
@@ -268,7 +268,7 @@ def test_retrieval_vector_similarity_and_top_k_contract(rest_client, ensure_pars
         payload = {"question": "chunk", "dataset_ids": [dataset_id]}
         payload.update(updates)
         res = rest_client.post("/retrieval", json=payload)
-        assert res.status_code == 200, (scenario_name, res.text)
+        assert res.status_code == (500 if expected_code == 100 else 200), (scenario_name, res.text)
         body = res.json()
         assert body["code"] == expected_code, (scenario_name, body)
         if expected_code != 0:

@@ -14,6 +14,7 @@
 #  limitations under the License.
 #
 
+import base64
 import urllib.parse
 from typing import Any
 
@@ -56,7 +57,8 @@ def generate_user_api_key(session: requests.Session, user_name: str) -> dict[str
     Returns:
         Dict containing the full API response with keys: code, message, data
     """
-    url: str = f"{ADMIN_HOST_ADDRESS}/api/{VERSION}/admin/users/{user_name}/new_token"
+    encoded_user = base64.b64encode(user_name.encode()).decode()
+    url: str = f"{ADMIN_HOST_ADDRESS}/api/{VERSION}/admin/users/{encoded_user}/tokens"
     response: requests.Response = session.post(url)
 
     # Some error responses (e.g., 401) may return HTML instead of JSON.
@@ -77,7 +79,8 @@ def get_user_api_key(session: requests.Session, username: str) -> dict[str, Any]
     Returns:
         Dict containing the full API response with keys: code, message, data
     """
-    url: str = f"{ADMIN_HOST_ADDRESS}/api/{VERSION}/admin/users/{username}/token_list"
+    encoded_user = base64.b64encode(username.encode()).decode()
+    url: str = f"{ADMIN_HOST_ADDRESS}/api/{VERSION}/admin/users/{encoded_user}/tokens"
     response: requests.Response = session.get(url)
 
     try:
@@ -98,8 +101,9 @@ def delete_user_api_key(session: requests.Session, username: str, token: str) ->
         Dict containing the full API response with keys: code, message, data
     """
     # URL encode the token to handle special characters
+    encoded_user = base64.b64encode(username.encode()).decode()
     encoded_token: str = urllib.parse.quote(token, safe="")
-    url: str = f"{ADMIN_HOST_ADDRESS}/api/{VERSION}/admin/users/{username}/token/{encoded_token}"
+    url: str = f"{ADMIN_HOST_ADDRESS}/api/{VERSION}/admin/users/{encoded_user}/tokens/{encoded_token}"
     response: requests.Response = session.delete(url)
 
     try:

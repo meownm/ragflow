@@ -174,7 +174,7 @@ def fake_transport():
 def test_token(token, fake_transport):
     assert token == "ragflow-synthetic"
     assert any(url.endswith("/admin/login") for url in fake_transport)
-    assert any(url.endswith("/users/qa@infiniflow.org/new_token") for url in fake_transport)
+    assert any(url.endswith("/users/cWFAaW5maW5pZmxvdy5vcmc=/tokens") for url in fake_transport)
 """,
         "--model-profile=local",
     )

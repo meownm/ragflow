@@ -14,6 +14,7 @@
 #  limitations under the License.
 #
 
+import base64
 import importlib
 import os
 import sys
@@ -220,7 +221,8 @@ def token(auth):
         if authorization := response.headers.get("Authorization"):
             session.headers.update({"Authorization": authorization})
 
-        token_url = ADMIN_HOST_ADDRESS + f"/api/{VERSION}/admin/users/{EMAIL}/new_token"
+        encoded_email = base64.b64encode(EMAIL.encode()).decode()
+        token_url = ADMIN_HOST_ADDRESS + f"/api/{VERSION}/admin/users/{encoded_email}/tokens"
         response = session.post(token_url)
         res = response.json()
         if res.get("code") != 0:

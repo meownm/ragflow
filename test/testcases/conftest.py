@@ -220,6 +220,15 @@ def token(auth):
         if authorization := response.headers.get("Authorization"):
             session.headers.update({"Authorization": authorization})
 
+        # The SDK suite creates and mutates centrally managed datasets. Its
+        # account is disposable (registration is enabled only by the CI
+        # overlay), so grant that account the administrator role explicitly.
+        admin_url = ADMIN_HOST_ADDRESS + f"/api/{VERSION}/admin/users/{EMAIL}/admin"
+        response = session.put(admin_url)
+        res = response.json()
+        if res.get("code") != 0:
+            raise Exception(f"access: {admin_url}, PUT method, error code: {res.get('code')}, message: {res.get('message')}")
+
         token_url = ADMIN_HOST_ADDRESS + f"/api/{VERSION}/admin/users/{EMAIL}/keys"
         response = session.post(token_url)
         res = response.json()

@@ -158,6 +158,9 @@ def fake_transport():
         headers = {}
         def __enter__(self): return self
         def __exit__(self, *args): return None
+        def put(self, url, **kwargs):
+            calls.append(url)
+            return Response({"code": 0})
         def post(self, url, **kwargs):
             calls.append(url)
             if url.endswith("/admin/login"):
@@ -174,6 +177,7 @@ def fake_transport():
 def test_token(token, fake_transport):
     assert token == "ragflow-synthetic"
     assert any(url.endswith("/admin/login") for url in fake_transport)
+    assert any(url.endswith("/users/qa@infiniflow.org/admin") for url in fake_transport)
     assert any(url.endswith("/users/qa@infiniflow.org/keys") for url in fake_transport)
 """,
         "--model-profile=local",

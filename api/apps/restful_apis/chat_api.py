@@ -421,11 +421,7 @@ async def create():
         for field in _READONLY_FIELDS:
             req.pop(field, None)
 
-        if DialogService.query(
-            name=req["name"],
-            tenant_id=current_user.id,
-            status=StatusEnum.VALID.value,
-        ):
+        if DialogService.name_exists(current_user.id, req["name"]):
             return get_data_error_result(message="Duplicated chat name in creating chat.")
 
         req["id"] = get_uuid()
@@ -584,11 +580,7 @@ async def update_chat(chat_id):
         if (
             "name" in req
             and req["name"].lower() != current_chat["name"].lower()
-            and DialogService.query(
-                name=req["name"],
-                tenant_id=current_user.id,
-                status=StatusEnum.VALID.value,
-            )
+            and DialogService.name_exists(current_user.id, req["name"], exclude_id=chat_id)
         ):
             return get_data_error_result(message="Duplicated chat name.")
 
@@ -672,11 +664,7 @@ async def patch_chat(chat_id):
         if (
             "name" in req
             and req["name"].lower() != current_chat["name"].lower()
-            and DialogService.query(
-                name=req["name"],
-                tenant_id=current_user.id,
-                status=StatusEnum.VALID.value,
-            )
+            and DialogService.name_exists(current_user.id, req["name"], exclude_id=chat_id)
         ):
             return get_data_error_result(message="Duplicated chat name.")
 

@@ -54,7 +54,7 @@ class TestUpdatedChunk:
         [
             ({"important_keywords": ["a", "b", "c"]}, ""),
             ({"important_keywords": [""]}, ""),
-            ({"important_keywords": [1]}, "TypeError('sequence item 0: expected str instance, int found')"),
+            ({"important_keywords": [1]}, "Internal server error"),
             ({"important_keywords": ["a", "a"]}, ""),
             ({"important_keywords": "abc"}, "`important_keywords` should be a list"),
             ({"important_keywords": 123}, "`important_keywords` should be a list"),
@@ -77,7 +77,7 @@ class TestUpdatedChunk:
         [
             ({"questions": ["a", "b", "c"]}, ""),
             ({"questions": [""]}, ""),
-            ({"questions": [1]}, "TypeError('sequence item 0: expected str instance, int found')"),
+            ({"questions": [1]}, "Internal server error"),
             ({"questions": ["a", "a"]}, ""),
             ({"questions": "abc"}, "`questions` should be a list"),
             ({"questions": 123}, "`questions` should be a list"),

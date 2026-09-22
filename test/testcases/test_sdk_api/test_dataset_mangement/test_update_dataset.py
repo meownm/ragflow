@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from operator import attrgetter
 
 import pytest
-from configs import DATASET_NAME_LIMIT
+from configs import DATASET_NAME_LIMIT, DEFAULT_EMBEDDING_MODEL
 from hypothesis import HealthCheck, example, given, settings
 from ragflow_sdk import DataSet
 from utils import encode_avatar
@@ -171,7 +171,7 @@ class TestDatasetUpdate:
         "embedding_model",
         [
             "BAAI/bge-small-en-v1.5@Builtin",
-            "embedding-3@CI@ZHIPU-AI",
+            pytest.param("embedding-3@CI@ZHIPU-AI", marks=pytest.mark.cloud_models),
         ],
         ids=["builtin_baai", "tenant_zhipu"],
     )
@@ -229,10 +229,10 @@ class TestDatasetUpdate:
     def test_embedding_model_none(self, client, add_dataset_func):
         dataset = add_dataset_func
         dataset.update({"embedding_model": None})
-        assert dataset.embedding_model == "BAAI/bge-small-en-v1.5@Local@Builtin", str(dataset)
+        assert dataset.embedding_model == DEFAULT_EMBEDDING_MODEL, str(dataset)
 
         retrieved_dataset = client.get_dataset(name=dataset.name)
-        assert retrieved_dataset.embedding_model == "BAAI/bge-small-en-v1.5@Local@Builtin", str(retrieved_dataset)
+        assert retrieved_dataset.embedding_model == DEFAULT_EMBEDDING_MODEL, str(retrieved_dataset)
 
     @pytest.mark.p2
     @pytest.mark.parametrize(

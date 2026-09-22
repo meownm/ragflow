@@ -140,6 +140,18 @@ class DialogService(CommonService):
     model = Dialog
 
     @classmethod
+    def name_exists(cls, tenant_id: str, name: str, *, exclude_id: str | None = None) -> bool:
+        """Return whether an active dialog name exists, case-insensitively."""
+        query = cls.model.select(cls.model.id).where(
+            (cls.model.tenant_id == tenant_id)
+            & (cls.model.status == StatusEnum.VALID.value)
+            & (fn.LOWER(cls.model.name) == name.lower())
+        )
+        if exclude_id:
+            query = query.where(cls.model.id != exclude_id)
+        return query.exists()
+
+    @classmethod
     def save(cls, **kwargs):
         """Save a new record to database.
 

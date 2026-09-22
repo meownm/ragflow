@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from operator import attrgetter
 
 import pytest
-from configs import DATASET_NAME_LIMIT, DEFAULT_PARSER_CONFIG, HOST_ADDRESS, INVALID_API_TOKEN
+from configs import DATASET_NAME_LIMIT, DEFAULT_EMBEDDING_MODEL, DEFAULT_PARSER_CONFIG, HOST_ADDRESS, INVALID_API_TOKEN
 from hypothesis import example, given, settings
 from ragflow_sdk import DataSet, RAGFlow
 from utils import encode_avatar
@@ -184,7 +184,7 @@ class TestDatasetCreate:
         "name, embedding_model",
         [
             ("BAAI/bge-small-en-v1.5@Builtin", "BAAI/bge-small-en-v1.5@Builtin"),
-            ("embedding-3@ZHIPU-AI", "embedding-3@CI@ZHIPU-AI"),
+            pytest.param("embedding-3@ZHIPU-AI", "embedding-3@CI@ZHIPU-AI", marks=pytest.mark.cloud_models),
         ],
         ids=["builtin_baai", "tenant_zhipu"],
     )
@@ -237,13 +237,13 @@ class TestDatasetCreate:
     def test_embedding_model_unset(self, client):
         payload = {"name": "embedding_model_unset"}
         dataset = client.create_dataset(**payload)
-        assert dataset.embedding_model == "BAAI/bge-small-en-v1.5@Local@Builtin", str(dataset)
+        assert dataset.embedding_model == DEFAULT_EMBEDDING_MODEL, str(dataset)
 
     @pytest.mark.p2
     def test_embedding_model_none(self, client):
         payload = {"name": "embedding_model_none", "embedding_model": None}
         dataset = client.create_dataset(**payload)
-        assert dataset.embedding_model == "BAAI/bge-small-en-v1.5@Local@Builtin", str(dataset)
+        assert dataset.embedding_model == DEFAULT_EMBEDDING_MODEL, str(dataset)
 
     @pytest.mark.p2
     @pytest.mark.parametrize(

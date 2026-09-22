@@ -130,6 +130,58 @@ def test_auth(auth, fake_transport):
     assert "1 passed" in result.stdout
 
 
+def test_local_sdk_token_is_issued_by_admin_api(harness):
+    result = harness(
+        """
+import pytest
+import requests
+
+@pytest.fixture(scope="session", autouse=True)
+def fake_transport():
+    calls = []
+    original_post = requests.post
+    original_session = requests.Session
+
+    class Response:
+        def __init__(self, data, authorization=None):
+            self._data = data
+            self.headers = {"Authorization": authorization} if authorization else {}
+        def json(self): return self._data
+
+    def post(url, **kwargs):
+        calls.append(url)
+        if url.endswith("/users"):
+            return Response({"code": 0})
+        return Response({"code": 0}, "synthetic-session")
+
+    class Session:
+        headers = {}
+        def __enter__(self): return self
+        def __exit__(self, *args): return None
+        def post(self, url, **kwargs):
+            calls.append(url)
+            if url.endswith("/admin/login"):
+                return Response({"code": 0}, "synthetic-admin-session")
+            return Response({"code": 0, "data": {"token": "ragflow-synthetic"}})
+
+    requests.post = post
+    requests.Session = Session
+    yield calls
+    requests.post = original_post
+    requests.Session = original_session
+
+@pytest.mark.p1
+def test_token(token, fake_transport):
+    assert token == "ragflow-synthetic"
+    assert any(url.endswith("/admin/login") for url in fake_transport)
+    assert any(url.endswith("/users/qa@infiniflow.org/new_token") for url in fake_transport)
+""",
+        "--model-profile=local",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 passed" in result.stdout
+
+
 def test_cloud_setup_runs_once_with_explicit_credentials(harness):
     result = harness(
         """

@@ -94,7 +94,7 @@ _install_scholarly_stub()
 
 import pytest
 import requests
-from configs import EMAIL, HOST_ADDRESS, PASSWORD, VERSION
+from configs import ADMIN_HOST_ADDRESS, EMAIL, ENCRYPTED_ADMIN_PASSWORD, HOST_ADDRESS, PASSWORD, VERSION
 
 MARKER_EXPRESSIONS = {
     "p1": "p1",
@@ -209,14 +209,23 @@ def auth():
 
 @pytest.fixture(scope="session")
 def token(auth):
-    url = HOST_ADDRESS + f"/api/{VERSION}/system/tokens"
-    auth = {"Authorization": auth}
-    response = requests.post(url=url, headers=auth)
-    res = response.json()
-    if res.get("code") != 0:
-        error_msg = f"access: {url}, POST method, error code: {res.get('code')}, message: {res.get('message')}"
-        raise Exception(error_msg)
-    return res["data"].get("token")
+    # API-key issuance is an administrator-managed resource. ``auth`` ensures
+    # the disposable test user exists; the admin API then issues its SDK key.
+    with requests.Session() as session:
+        login_url = ADMIN_HOST_ADDRESS + f"/api/{VERSION}/admin/login"
+        response = session.post(login_url, json={"email": "admin@ragflow.io", "password": ENCRYPTED_ADMIN_PASSWORD})
+        res = response.json()
+        if res.get("code") != 0:
+            raise Exception(f"access: {login_url}, POST method, error code: {res.get('code')}, message: {res.get('message')}")
+        if authorization := response.headers.get("Authorization"):
+            session.headers.update({"Authorization": authorization})
+
+        token_url = ADMIN_HOST_ADDRESS + f"/api/{VERSION}/admin/users/{EMAIL}/new_token"
+        response = session.post(token_url)
+        res = response.json()
+        if res.get("code") != 0:
+            raise Exception(f"access: {token_url}, POST method, error code: {res.get('code')}, message: {res.get('message')}")
+        return res["data"]["token"]
 
 
 def get_added_models(auth, factory_name):

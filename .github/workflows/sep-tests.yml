@@ -336,7 +336,7 @@ jobs:
           sudo docker pull ubuntu:24.04
           build_version=$(git describe --tags --match='v*' --first-parent --always)
           source_revision=$(git rev-parse HEAD)
-          sudo DOCKER_BUILDKIT=1 docker build --build-arg "RAGFLOW_BUILD_VERSION=${build_version}" --build-arg "RAGFLOW_SOURCE_REVISION=${source_revision}" --build-arg NEED_MIRROR=${NEED_MIRROR:-0} --build-arg HTTPS_PROXY=${HTTPS_PROXY} --build-arg HTTP_PROXY=${HTTP_PROXY} -f Dockerfile -t ${RAGFLOW_IMAGE} .
+          sudo DOCKER_BUILDKIT=1 docker build --build-arg "RAGFLOW_BUILD_VERSION=${build_version}" --build-arg "RAGFLOW_SOURCE_REVISION=${source_revision}" --build-arg NEED_MIRROR=${NEED_MIRROR:-0} --build-arg HTTPS_PROXY=${HTTPS_PROXY:-} --build-arg HTTP_PROXY=${HTTP_PROXY:-} -f Dockerfile -t ${RAGFLOW_IMAGE} .
 
       - name: Prepare Python test environment
         if: env.HAS_PYTHON == 'true'
@@ -800,7 +800,7 @@ jobs:
           sudo docker pull ubuntu:24.04
           build_version=$(git describe --tags --match='v*' --first-parent --always)
           source_revision=$(git rev-parse HEAD)
-          sudo DOCKER_BUILDKIT=1 docker build --build-arg "RAGFLOW_BUILD_VERSION=${build_version}" --build-arg "RAGFLOW_SOURCE_REVISION=${source_revision}" --build-arg NEED_MIRROR=${NEED_MIRROR:-0} --build-arg HTTPS_PROXY=${HTTPS_PROXY} --build-arg HTTP_PROXY=${HTTP_PROXY} -f Dockerfile -t ${RAGFLOW_IMAGE} .
+          sudo DOCKER_BUILDKIT=1 docker build --build-arg "RAGFLOW_BUILD_VERSION=${build_version}" --build-arg "RAGFLOW_SOURCE_REVISION=${source_revision}" --build-arg NEED_MIRROR=${NEED_MIRROR:-0} --build-arg HTTPS_PROXY=${HTTPS_PROXY:-} --build-arg HTTP_PROXY=${HTTP_PROXY:-} -f Dockerfile -t ${RAGFLOW_IMAGE} .
 
       - name: Prepare Python test environment
         if: env.HAS_PYTHON == 'true'

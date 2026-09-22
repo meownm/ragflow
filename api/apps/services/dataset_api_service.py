@@ -336,7 +336,9 @@ async def update_dataset(tenant_id: str, dataset_id: str, req: dict):
         req["pipeline_id"] = ""
 
     if "name" in req and req["name"].lower() != kb.name.lower():
-        exists = KnowledgebaseService.get_or_none(name=req["name"], tenant_id=kb.tenant_id, status=StatusEnum.VALID.value)
+        exists = KnowledgebaseService.query_by_name_case_insensitive(
+            name=req["name"], tenant_id=kb.tenant_id, status=StatusEnum.VALID.value
+        )
         if exists:
             return False, f"Dataset name '{req['name']}' already exists"
 

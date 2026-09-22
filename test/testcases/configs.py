@@ -21,6 +21,7 @@ VERSION = "v1"
 ZHIPU_AI_API_KEY = os.getenv("ZHIPU_AI_API_KEY")
 SILICONFLOW_API_KEY = os.getenv("SILICONFLOW_API_KEY")
 DEFAULT_EMBEDDING_MODEL = "embedding-3@CI@ZHIPU-AI" if ZHIPU_AI_API_KEY else "BAAI/bge-small-en-v1.5"
+DEFAULT_CHAT_MODEL = "glm-4-flash@CI@ZHIPU-AI" if ZHIPU_AI_API_KEY else ""
 
 EMAIL = "qa@infiniflow.org"
 # password is "123"
@@ -48,7 +49,7 @@ DEFAULT_PARSER_CONFIG = {
     "image_context_size": 0,
     "table_context_size": 0,
     "topn_tags": 3,
-    "llm_id": "glm-4-flash@CI@ZHIPU-AI" if ZHIPU_AI_API_KEY else "",
+    "llm_id": DEFAULT_CHAT_MODEL,
     "raptor": {
         "use_raptor": True,
         "prompt": "Please summarize the following paragraphs. Be careful with the numbers, do not make things up. Paragraphs as following:\n      {cluster_content}\nThe above is the content you need to summarize.",

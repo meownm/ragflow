@@ -197,6 +197,16 @@ def _load_llm_app(monkeypatch):
     llm_service_mod.LLMService = _StubLLMService
     monkeypatch.setitem(sys.modules, "api.db.services.llm_service", llm_service_mod)
 
+    managed_resource_service_mod = ModuleType("api.db.services.managed_resource_service")
+
+    class _StubManagedResourceService:
+        @staticmethod
+        def owner_id(user_id):
+            return user_id
+
+    managed_resource_service_mod.ManagedResourceService = _StubManagedResourceService
+    monkeypatch.setitem(sys.modules, "api.db.services.managed_resource_service", managed_resource_service_mod)
+
     api_utils_mod = ModuleType("api.utils.api_utils")
     api_utils_mod.get_allowed_llm_factories = lambda: []
     api_utils_mod.get_data_error_result = lambda message="", code=400, data=None: {

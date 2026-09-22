@@ -8,6 +8,9 @@ services:
     environment:
       # Disposable API suites create their own isolated test account.
       REGISTER_ENABLED: "1"
+      # Keep managed CI resources owned by that disposable account so the
+      # provider-free REST suite can exercise them without seeded cloud users.
+      MANAGED_RESOURCE_OWNER_EMAIL: "qa@infiniflow.org"
 
   mysql:
     profiles: !override

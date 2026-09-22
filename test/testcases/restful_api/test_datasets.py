@@ -20,7 +20,7 @@ import uuid
 
 import pytest
 from configs import DATASET_NAME_LIMIT, DEFAULT_PARSER_CONFIG
-from test.testcases.configs import INVALID_API_TOKEN
+from test.testcases.configs import DEFAULT_EMBEDDING_MODEL, INVALID_API_TOKEN, ZHIPU_AI_API_KEY
 from test.testcases.restful_api.helpers.client import RestClient
 from test.testcases.utils import encode_avatar
 from test.testcases.utils.file_utils import create_image_file, create_txt_file
@@ -443,6 +443,7 @@ def test_dataset_update_embedding_model_format_contract(rest_client, clear_datas
 
 
 @pytest.mark.p1
+@pytest.mark.cloud_models
 def test_dataset_update_embedding_model_with_existing_chunks_contract(rest_client, create_document):
     dataset_id, document_id = create_document("dataset_update_embedding_with_chunks.txt")
     chunk_res = rest_client.post(
@@ -808,7 +809,12 @@ def test_dataset_update_embedding_model_invalid_and_none_contract(rest_client, c
     dataset_id = create_payload["data"]["id"]
 
     invalid_cases = [
-        ("unknown@ZHIPU-AI", "Instance default not found for model unknown@ZHIPU-AI."),
+        (
+            "unknown@ZHIPU-AI",
+            "Instance default not found for model unknown@ZHIPU-AI."
+            if ZHIPU_AI_API_KEY
+            else "Provider ZHIPU-AI not found for model unknown@ZHIPU-AI.",
+        ),
         ("embedding-3@unknown", "Provider unknown not found for model embedding-3@unknown."),
         ("text-embedding-v3@Tongyi-Qianwen", "Provider Tongyi-Qianwen not found for model text-embedding-v3@Tongyi-Qianwen."),
         ("text-embedding-3-small@OpenAI", "Provider OpenAI not found for model text-embedding-3-small@OpenAI."),
@@ -832,7 +838,7 @@ def test_dataset_update_embedding_model_invalid_and_none_contract(rest_client, c
     assert list_res.status_code == 200
     list_payload = list_res.json()
     assert list_payload["code"] == 0, list_payload
-    assert list_payload["data"][0]["embedding_model"] == "BAAI/bge-small-en-v1.5@Local@Builtin", list_payload
+    assert list_payload["data"][0]["embedding_model"] == DEFAULT_EMBEDDING_MODEL, list_payload
 
 
 @pytest.mark.p2
@@ -1160,10 +1166,27 @@ def test_dataset_create_permission_contract(rest_client, clear_datasets, name, p
     "name, embedding_model, expected_code, expected_embedding_model, expected_message, unauthorized_is_xfail",
     [
         ("builtin_baai", "BAAI/bge-small-en-v1.5@Local@Builtin", 0, "BAAI/bge-small-en-v1.5@Local@Builtin", None, False),
-        ("tenant_zhipu", "embedding-3@CI@ZHIPU-AI", 0, "embedding-3@CI@ZHIPU-AI", None, True),
-        ("embedding_model_unset", "__UNSET__", 0, "BAAI/bge-small-en-v1.5@Local@Builtin", None, False),
-        ("embedding_model_none", None, 0, "BAAI/bge-small-en-v1.5@Local@Builtin", None, False),
-        ("unknown_llm_name", "unknown@ZHIPU-AI", 102, None, "Instance default not found for model unknown@ZHIPU-AI.", False),
+        pytest.param(
+            "tenant_zhipu",
+            "embedding-3@CI@ZHIPU-AI",
+            0,
+            "embedding-3@CI@ZHIPU-AI",
+            None,
+            True,
+            marks=pytest.mark.cloud_models,
+        ),
+        ("embedding_model_unset", "__UNSET__", 0, DEFAULT_EMBEDDING_MODEL, None, False),
+        ("embedding_model_none", None, 0, DEFAULT_EMBEDDING_MODEL, None, False),
+        (
+            "unknown_llm_name",
+            "unknown@ZHIPU-AI",
+            102,
+            None,
+            "Instance default not found for model unknown@ZHIPU-AI."
+            if ZHIPU_AI_API_KEY
+            else "Provider ZHIPU-AI not found for model unknown@ZHIPU-AI.",
+            False,
+        ),
         ("unknown_llm_factory", "embedding-3@unknown", 102, None, "Provider unknown not found for model embedding-3@unknown.", False),
         (
             "tenant_no_auth_default_tenant_llm",

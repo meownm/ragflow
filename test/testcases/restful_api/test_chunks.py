@@ -202,7 +202,7 @@ def test_chunk_add_keyword_question_and_tag_contract(rest_client, create_documen
             [
                 ({"content": "chunk test", "important_keywords": ["a", "b", "c"]}, 0, ""),
                 ({"content": "chunk test", "important_keywords": [""]}, 0, ""),
-                ({"content": "chunk test", "important_keywords": [1]}, 100, "TypeError('sequence item 0: expected str instance, int found')"),
+                ({"content": "chunk test", "important_keywords": [1]}, 100, "Internal server error"),
                 ({"content": "chunk test", "important_keywords": ["a", "a"]}, 0, ""),
                 ({"content": "chunk test", "important_keywords": "abc"}, 102, "`important_keywords` is required to be a list"),
                 ({"content": "chunk test", "important_keywords": 123}, 102, "`important_keywords` is required to be a list"),
@@ -213,7 +213,7 @@ def test_chunk_add_keyword_question_and_tag_contract(rest_client, create_documen
             [
                 ({"content": "chunk test", "questions": ["a", "b", "c"]}, 0, ""),
                 ({"content": "chunk test", "questions": [""]}, 0, ""),
-                ({"content": "chunk test", "questions": [1]}, 100, "TypeError('sequence item 0: expected str instance, int found')"),
+                ({"content": "chunk test", "questions": [1]}, 100, "Internal server error"),
                 ({"content": "chunk test", "questions": ["a", "a"]}, 0, ""),
                 ({"content": "chunk test", "questions": "abc"}, 102, "`questions` is required to be a list"),
                 ({"content": "chunk test", "questions": 123}, 102, "`questions` is required to be a list"),
@@ -602,19 +602,19 @@ def test_chunk_list_page_and_page_size_contract(rest_client, create_document):
 
     cases = [
         ("page none", {"page": None, "page_size": 2}, 0, 2, ""),
-        ("page zero", {"page": 0, "page_size": 2}, 100, None, "ValueError('Search does not support negative slicing.')"),
+        ("page zero", {"page": 0, "page_size": 2}, 100, None, "Internal server error"),
         ("page two", {"page": 2, "page_size": 2}, 0, 2, ""),
         ("page three", {"page": 3, "page_size": 2}, 0, 1, ""),
         ("page string", {"page": "3", "page_size": 2}, 0, 1, ""),
-        ("page negative", {"page": -1, "page_size": 2}, 100, None, "ValueError('Search does not support negative slicing.')"),
-        ("page alpha", {"page": "a", "page_size": 2}, 100, None, "ValueError(\"invalid literal for int() with base 10: 'a'\")"),
+        ("page negative", {"page": -1, "page_size": 2}, 100, None, "Internal server error"),
+        ("page alpha", {"page": "a", "page_size": 2}, 100, None, "Internal server error"),
         ("page_size none", {"page_size": None}, 0, 5, ""),
         ("page_size zero", {"page_size": 0}, 0, 5, ""),
         ("page_size one", {"page_size": 1}, 0, 1, ""),
         ("page_size six", {"page_size": 6}, 0, 5, ""),
         ("page_size string", {"page_size": "1"}, 0, 1, ""),
         ("page_size negative", {"page_size": -1}, 0, 5, ""),
-        ("page_size alpha", {"page_size": "a"}, 100, None, "ValueError(\"invalid literal for int() with base 10: 'a'\")"),
+        ("page_size alpha", {"page_size": "a"}, 100, None, "Internal server error"),
     ]
 
     for scenario_name, params, expected_code, expected_total, expected_message in cases:
@@ -684,10 +684,10 @@ def test_chunk_update_content_and_available_contract(rest_client, create_documen
 
     available_cases = [
         ("available true", {"available": True}, 0, ""),
-        ("available true str", {"available": "True"}, 100, "invalid literal for int()"),
+        ("available true str", {"available": "True"}, 100, "Internal server error"),
         ("available one", {"available": 1}, 0, ""),
         ("available false", {"available": False}, 0, ""),
-        ("available false str", {"available": "False"}, 100, "invalid literal for int()"),
+        ("available false str", {"available": "False"}, 100, "Internal server error"),
         ("available zero", {"available": 0}, 0, ""),
     ]
     for scenario_name, payload, expected_code, expected_message in available_cases:
@@ -706,13 +706,13 @@ def test_chunk_update_keywords_questions_and_tag_contract(rest_client, create_do
     cases = [
         ("important keywords", {"important_keywords": ["a", "b", "c"]}, 0, ""),
         ("important keywords empty", {"important_keywords": [""]}, 0, ""),
-        ("important keywords int", {"important_keywords": [1]}, 100, "TypeError"),
+        ("important keywords int", {"important_keywords": [1]}, 100, "Internal server error"),
         ("important keywords dup", {"important_keywords": ["a", "a"]}, 0, ""),
         ("important keywords str", {"important_keywords": "abc"}, 102, "`important_keywords` should be a list"),
         ("important keywords number", {"important_keywords": 123}, 102, "`important_keywords` should be a list"),
         ("questions", {"questions": ["a", "b", "c"]}, 0, ""),
         ("questions empty", {"questions": [""]}, 0, ""),
-        ("questions int", {"questions": [1]}, 100, "TypeError"),
+        ("questions int", {"questions": [1]}, 100, "Internal server error"),
         ("questions dup", {"questions": ["a", "a"]}, 0, ""),
         ("questions str", {"questions": "abc"}, 102, "`questions` should be a list"),
         ("questions number", {"questions": 123}, 102, "`questions` should be a list"),

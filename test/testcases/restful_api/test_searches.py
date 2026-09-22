@@ -135,6 +135,7 @@ def test_search_completion_requires_kb_ids(rest_client, search_resource):
 
 
 @pytest.mark.p2
+@pytest.mark.cloud_models
 def test_search_completion_sse_shape_when_kb_ids_provided(rest_client, search_resource):
     search_id = search_resource
     # Even with kb_ids provided, runtime may return an error event in-stream, but

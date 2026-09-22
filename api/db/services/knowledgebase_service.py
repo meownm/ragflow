@@ -373,6 +373,16 @@ class KnowledgebaseService(CommonService):
 
     @classmethod
     @DB.connection_context()
+    def query_by_name_case_insensitive(cls, *, name, tenant_id, status):
+        """Find active tenant datasets by name using database-neutral casing."""
+        return cls.model.select().where(
+            (cls.model.tenant_id == tenant_id)
+            & (cls.model.status == status)
+            & (fn.LOWER(cls.model.name) == name.lower())
+        )
+
+    @classmethod
+    @DB.connection_context()
     def get_all_ids(cls):
         # Get all dataset IDs
         # Returns:
@@ -402,7 +412,7 @@ class KnowledgebaseService(CommonService):
 
         # Deduplicate name within tenant
         dataset_name = duplicate_name(
-            cls.query,
+            cls.query_by_name_case_insensitive,
             name=dataset_name,
             tenant_id=tenant_id,
             status=StatusEnum.VALID.value,

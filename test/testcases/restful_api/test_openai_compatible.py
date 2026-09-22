@@ -110,6 +110,7 @@ def test_openai_compatible_invalid_chat(rest_client):
 
 
 @pytest.mark.p2
+@pytest.mark.cloud_models
 def test_openai_compatible_nonstream_shape(rest_client, create_chat):
     chat_id = create_chat("restful_openai_nonstream_chat")
     res = rest_client.post(
@@ -141,6 +142,7 @@ def test_openai_compatible_nonstream_shape(rest_client, create_chat):
 
 
 @pytest.mark.p2
+@pytest.mark.cloud_models
 def test_openai_compatible_defaults_to_nonstream_when_stream_is_missing(rest_client, create_chat):
     chat_id = create_chat("restful_openai_default_nonstream_chat")
     res = rest_client.post(
@@ -161,6 +163,7 @@ def test_openai_compatible_defaults_to_nonstream_when_stream_is_missing(rest_cli
 
 
 @pytest.mark.p2
+@pytest.mark.cloud_models
 def test_openai_compatible_nonstream_with_reference_output_shape(rest_client, create_chat):
     chat_id = create_chat("restful_openai_reference_chat")
     res = rest_client.post(
@@ -211,6 +214,7 @@ def test_openai_compatible_stream_shape_and_done_semantics(rest_client, create_c
 
 
 @pytest.mark.p2
+@pytest.mark.cloud_models
 def test_openai_compatible_reference_metadata_fields_filter_accepts_array(rest_client, create_chat):
     chat_id = create_chat("restful_openai_reference_fields_array_chat")
     res = rest_client.post(

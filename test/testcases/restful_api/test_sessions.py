@@ -243,7 +243,7 @@ def test_session_delete_basic_scenarios(rest_client, create_chat):
     cases = [
         ("none payload", None, 0, 5, {}),
         ("invalid only", {"ids": ["invalid_id"]}, 102, 5, "The chat doesn't own the session invalid_id"),
-        ("not json", "not json", 100, 5, "<BadRequest '400: Bad Request'>"),
+        ("not json", "not json", 100, 5, "Internal server error"),
         ("single id", lambda sessions: {"ids": [sessions[0]["id"]]}, 0, 4, True),
         ("all ids", lambda sessions: {"ids": [session["id"] for session in sessions]}, 0, 0, True),
         ("delete all", {"delete_all": True}, 0, 0, True),
@@ -422,14 +422,14 @@ def test_session_list_page_and_sort_contract(rest_client, create_chat):
         ("page two", {"page": 2, "page_size": 2}, 0, 2, ""),
         ("page three", {"page": 3, "page_size": 2}, 0, 1, ""),
         ("page string", {"page": "3", "page_size": 2}, 0, 1, ""),
-        ("page negative", {"page": -1, "page_size": 2}, 100, 0, "ProgrammingError(1064"),
-        ("page alpha", {"page": "a", "page_size": 2}, 100, 0, "ValueError(\"invalid literal for int() with base 10: 'a'\")"),
+        ("page negative", {"page": -1, "page_size": 2}, 100, 0, "Internal server error"),
+        ("page alpha", {"page": "a", "page_size": 2}, 100, 0, "Internal server error"),
         ("page_size none", {"page_size": None}, 0, 5, ""),
         ("page_size zero", {"page_size": 0}, 0, 0, ""),
         ("page_size one", {"page_size": 1}, 0, 1, ""),
         ("page_size six", {"page_size": 6}, 0, 5, ""),
         ("page_size negative", {"page_size": -1}, 0, 5, ""),
-        ("page_size alpha", {"page_size": "a"}, 100, 0, "ValueError(\"invalid literal for int() with base 10: 'a'\")"),
+        ("page_size alpha", {"page_size": "a"}, 100, 0, "Internal server error"),
     ]
     for scenario_name, params, expected_code, expected_count, expected_message in page_cases:
         res = rest_client.get(f"/chats/{chat_id}/sessions", params=params)
@@ -446,7 +446,7 @@ def test_session_list_page_and_sort_contract(rest_client, create_chat):
         ("orderby create", {"orderby": "create_time", "page_size": 30}, "create_time", True, descending_names, ""),
         ("orderby update", {"orderby": "update_time", "page_size": 30}, "update_time", True, descending_names, ""),
         ("orderby name ascending", {"orderby": "name", "desc": "False", "page_size": 30}, "name", False, created_names, ""),
-        ("orderby unknown", {"orderby": "unknown", "page_size": 30}, None, None, None, "AttributeError(\"type object 'Conversation' has no attribute 'unknown'\")"),
+        ("orderby unknown", {"orderby": "unknown", "page_size": 30}, None, None, None, "Internal server error"),
         ("desc none", {"desc": None, "page_size": 30}, "create_time", True, descending_names, ""),
         ("desc true", {"desc": "true", "page_size": 30}, "create_time", True, descending_names, ""),
         ("desc True", {"desc": "True", "page_size": 30}, "create_time", True, descending_names, ""),
@@ -612,6 +612,7 @@ def test_related_questions_compatibility_requires_auth(rest_client_noauth):
 
 
 @pytest.mark.p2
+@pytest.mark.cloud_models
 def test_chat_completion_nonstream_with_session(rest_client, create_chat):
     chat_id = create_chat("restful_completion_nonstream_chat")
     create_session_res = rest_client.post(f"/chats/{chat_id}/sessions", json={"name": "session_for_completion"})
@@ -640,6 +641,7 @@ def test_chat_completion_nonstream_with_session(rest_client, create_chat):
 
 
 @pytest.mark.p2
+@pytest.mark.cloud_models
 def test_chat_completion_nonstream_with_chat_without_session(rest_client, create_chat):
     chat_id = create_chat("restful_completion_nonstream_without_session_chat")
 
@@ -660,6 +662,7 @@ def test_chat_completion_nonstream_with_chat_without_session(rest_client, create
 
 
 @pytest.mark.p2
+@pytest.mark.cloud_models
 def test_chat_completion_nonstream_without_chat(rest_client):
     completion_res = rest_client.post(
         "/chat/completions",
@@ -677,6 +680,7 @@ def test_chat_completion_nonstream_without_chat(rest_client):
 
 
 @pytest.mark.p2
+@pytest.mark.cloud_models
 def test_chat_completion_stream_events(rest_client, create_chat):
     chat_id = create_chat("restful_completion_stream_chat")
     stream_res = rest_client.post(

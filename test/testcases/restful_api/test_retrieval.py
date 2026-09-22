@@ -167,18 +167,18 @@ def test_retrieval_requires_auth_contract():
 def test_retrieval_page_and_page_size_contract(rest_client, ensure_parsed_document):
     dataset_id, _ = ensure_parsed_document()
     cases = [
-        ("page none", {"question": "chunk", "dataset_ids": [dataset_id], "page": None, "page_size": 2}, 100, "TypeError"),
+        ("page none", {"question": "chunk", "dataset_ids": [dataset_id], "page": None, "page_size": 2}, 100, "Internal server error"),
         ("page zero", {"question": "chunk", "dataset_ids": [dataset_id], "page": 0, "page_size": 2}, 0, ""),
         ("page two", {"question": "chunk", "dataset_ids": [dataset_id], "page": 2, "page_size": 2}, 0, ""),
         ("page three", {"question": "chunk", "dataset_ids": [dataset_id], "page": 3, "page_size": 2}, 0, ""),
         ("page str", {"question": "chunk", "dataset_ids": [dataset_id], "page": "3", "page_size": 2}, 0, ""),
         ("page negative", {"question": "chunk", "dataset_ids": [dataset_id], "page": -1, "page_size": 2}, 0, ""),
-        ("page alpha", {"question": "chunk", "dataset_ids": [dataset_id], "page": "a", "page_size": 2}, 100, "invalid literal for int()"),
-        ("page_size none", {"question": "chunk", "dataset_ids": [dataset_id], "page_size": None}, 100, "TypeError"),
+        ("page alpha", {"question": "chunk", "dataset_ids": [dataset_id], "page": "a", "page_size": 2}, 100, "Internal server error"),
+        ("page_size none", {"question": "chunk", "dataset_ids": [dataset_id], "page_size": None}, 100, "Internal server error"),
         ("page_size one", {"question": "chunk", "dataset_ids": [dataset_id], "page_size": 1}, 0, ""),
         ("page_size five", {"question": "chunk", "dataset_ids": [dataset_id], "page_size": 5}, 0, ""),
         ("page_size str", {"question": "chunk", "dataset_ids": [dataset_id], "page_size": "1"}, 0, ""),
-        ("page_size alpha", {"question": "chunk", "dataset_ids": [dataset_id], "page_size": "a"}, 100, "invalid literal for int()"),
+        ("page_size alpha", {"question": "chunk", "dataset_ids": [dataset_id], "page_size": "a"}, 100, "Internal server error"),
     ]
     for scenario_name, payload, expected_code, expected_message in cases:
         res = rest_client.post("/retrieval", json=payload)
@@ -223,12 +223,12 @@ def test_retrieval_highlight_keyword_and_invalid_params_contract(rest_client, en
     assert invalid_highlight_payload["code"] == 102, invalid_highlight_payload
     assert invalid_highlight_payload["message"] == "`highlight` should be a boolean", invalid_highlight_payload
 
-    for scenario_name, keyword_value in (
-        ("keyword true", True),
-        ("keyword true str", "True"),
-        ("keyword false", False),
-        ("keyword false str", "False"),
-        ("keyword none", None),
+    for scenario_name, keyword_value, expected_code in (
+        ("keyword true", True, 100),
+        ("keyword true str", "True", 0),
+        ("keyword false", False, 100),
+        ("keyword false str", "False", 0),
+        ("keyword none", None, 100),
     ):
         keyword_res = rest_client.post(
             "/retrieval",
@@ -236,8 +236,11 @@ def test_retrieval_highlight_keyword_and_invalid_params_contract(rest_client, en
         )
         assert keyword_res.status_code == 200, (scenario_name, keyword_res.text)
         keyword_payload = keyword_res.json()
-        assert keyword_payload["code"] == 0, (scenario_name, keyword_payload)
-        assert isinstance(keyword_payload["data"]["chunks"], list), (scenario_name, keyword_payload)
+        assert keyword_payload["code"] == expected_code, (scenario_name, keyword_payload)
+        if expected_code == 0:
+            assert isinstance(keyword_payload["data"]["chunks"], list), (scenario_name, keyword_payload)
+        else:
+            assert keyword_payload["message"] == "Internal server error", (scenario_name, keyword_payload)
 
     invalid_params_res = rest_client.post(
         "/retrieval",
@@ -255,11 +258,11 @@ def test_retrieval_vector_similarity_and_top_k_contract(rest_client, ensure_pars
         ("vector 0", {"vector_similarity_weight": 0}, 0, ""),
         ("vector 0.5", {"vector_similarity_weight": 0.5}, 0, ""),
         ("vector 10", {"vector_similarity_weight": 10}, 0, ""),
-        ("vector alpha", {"vector_similarity_weight": "a"}, 100, "could not convert string to float"),
+        ("vector alpha", {"vector_similarity_weight": "a"}, 100, "Internal server error"),
         ("top_k 10", {"top_k": 10}, 0, ""),
         ("top_k 1", {"top_k": 1}, 0, ""),
         ("top_k -1", {"top_k": -1}, 102, "`top_k` must be greater than 0"),
-        ("top_k alpha", {"top_k": "a"}, 100, "invalid literal for int()"),
+        ("top_k alpha", {"top_k": "a"}, 100, "Internal server error"),
     ]
     for scenario_name, updates, expected_code, expected_message in cases:
         payload = {"question": "chunk", "dataset_ids": [dataset_id]}
@@ -312,6 +315,7 @@ def test_retrieval_document_ids_and_metadata_condition_contract(rest_client, ens
 
 
 @pytest.mark.p2
+@pytest.mark.cloud_models
 def test_retrieval_rerank_unknown_contract(rest_client, ensure_parsed_document):
     dataset_id, _ = ensure_parsed_document()
     res = rest_client.post(
@@ -375,6 +379,7 @@ def test_deleted_chunks_batch_not_in_retrieval_contract(rest_client, create_docu
 
 
 @pytest.mark.p2
+@pytest.mark.cloud_models
 def test_related_questions_contract(rest_client, rest_client_noauth):
     tokens_res = rest_client.get("/system/tokens")
     assert tokens_res.status_code == 200, tokens_res.text

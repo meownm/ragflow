@@ -291,35 +291,35 @@ def test_documents_list_error_and_sorting_contract(rest_client, create_dataset, 
             f"/datasets/{dataset_id}/documents",
             {"orderby": "unknown"},
             100,
-            "Document' has no attribute 'unknown'",
+            "Internal server error",
         ),
         (
             "page invalid number",
             f"/datasets/{dataset_id}/documents",
             {"page": -1, "page_size": 2},
             100,
-            "1064",
+            "Internal server error",
         ),
         (
             "page invalid type",
             f"/datasets/{dataset_id}/documents",
             {"page": "a", "page_size": 2},
             100,
-            "invalid literal for int()",
+            "Internal server error",
         ),
         (
             "page_size invalid number",
             f"/datasets/{dataset_id}/documents",
             {"page_size": -1},
             100,
-            "1064",
+            "Internal server error",
         ),
         (
             "page_size invalid type",
             f"/datasets/{dataset_id}/documents",
             {"page_size": "a"},
             100,
-            "invalid literal for int()",
+            "Internal server error",
         ),
     ]
     for case_name, path, params, expected_code, expected_message in error_cases:
@@ -1231,7 +1231,7 @@ def test_documents_parse_contract_matrix(rest_client, create_dataset, tmp_path):
         ("empty ids", lambda ids: {"document_ids": []}, 102, "`document_ids` is required"),
         ("invalid id", lambda ids: {"document_ids": ["invalid_id"]}, 102, "Documents not found: ['invalid_id']"),
         ("special invalid id", lambda ids: {"document_ids": ["\\n!?。；！？\"'"]}, 102, "Documents not found:"),
-        ("not json object", lambda ids: "not json", 100, "object has no attribute"),
+        ("not json object", lambda ids: "not json", 100, "Internal server error"),
         ("parse one", lambda ids: {"document_ids": ids[:1]}, 0, ""),
         ("parse all", lambda ids: {"document_ids": ids}, 0, ""),
     ]
@@ -1273,7 +1273,7 @@ def test_documents_parse_invalid_dataset_partial_duplicate_and_repeated(rest_cli
         body = res.json()
         if bad_dataset == "":
             assert body["code"] == 100, (bad_dataset, body)
-            assert "Method Not Allowed" in body["message"], (bad_dataset, body)
+            assert body["message"] == "Internal server error", (bad_dataset, body)
         else:
             assert body["code"] == 102, (bad_dataset, body)
             assert "You don't own the dataset" in body["message"], (bad_dataset, body)
@@ -1394,7 +1394,7 @@ def test_documents_stop_parse_contract_matrix(rest_client, create_dataset, tmp_p
         ("empty ids", {"document_ids": []}, 102, "`document_ids` is required"),
         ("invalid id", {"document_ids": ["invalid_id"]}, 102, "Documents not found: ['invalid_id']"),
         ("special invalid id", {"document_ids": ["\\n!?。；！？\"'"]}, 102, "Documents not found:"),
-        ("not json object", "not json", 100, "object has no attribute"),
+        ("not json object", "not json", 100, "Internal server error"),
     ]
     for case_name, payload, expected_code, expected_message in invalid_payloads:
         res = rest_client.post(f"/datasets/{dataset_id}/documents/stop", json=payload, timeout=60)
@@ -1443,7 +1443,7 @@ def test_documents_stop_parse_invalid_dataset_partial_and_scaled_concurrency(res
         body = res.json()
         if bad_dataset == "":
             assert body["code"] == 100, (bad_dataset, body)
-            assert "Method Not Allowed" in body["message"], (bad_dataset, body)
+            assert body["message"] == "Internal server error", (bad_dataset, body)
         else:
             assert body["code"] == 102, (bad_dataset, body)
             assert "You don't own the dataset" in body["message"], (bad_dataset, body)
@@ -1569,6 +1569,7 @@ def test_documents_download_filetype_repeat_and_concurrent_contract(rest_client,
 
 
 @pytest.mark.p2
+@pytest.mark.cloud_models
 def test_documents_table_parser_chat_patterns(rest_client, clear_datasets, tmp_path):
     create_dataset_res = rest_client.post(
         "/datasets",

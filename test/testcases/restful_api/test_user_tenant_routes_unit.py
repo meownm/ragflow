@@ -1619,6 +1619,10 @@ def _load_chat_routes_unit_module(monkeypatch):
             return []
 
         @staticmethod
+        def name_exists(*_args, **_kwargs):
+            return False
+
+        @staticmethod
         def save(**_kwargs):
             return True
 

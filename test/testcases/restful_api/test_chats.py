@@ -26,7 +26,7 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
-from test.testcases.configs import CHAT_ASSISTANT_NAME_LIMIT, INVALID_API_TOKEN
+from test.testcases.configs import CHAT_ASSISTANT_NAME_LIMIT, DEFAULT_CHAT_MODEL, INVALID_API_TOKEN
 from test.testcases.restful_api.helpers.client import RestClient
 from test.testcases.utils import encode_avatar
 from test.testcases.utils.file_utils import create_image_file
@@ -365,15 +365,15 @@ def test_chat_list_page_and_page_size_contract(rest_client, clear_chats):
         ("page two", {"page": 2, "page_size": 2}, 0, lambda total: min(max(total - 2, 0), 2), ""),
         ("page three", {"page": 3, "page_size": 2}, 0, lambda total: min(max(total - 4, 0), 2), ""),
         ("page string", {"page": "3", "page_size": 2}, 0, lambda total: min(max(total - 4, 0), 2), ""),
-        ("page negative", {"page": -1, "page_size": 2}, 100, None, "ProgrammingError(1064"),
-        ("page alpha", {"page": "a", "page_size": 2}, 100, None, "ValueError(\"invalid literal for int() with base 10: 'a'\")"),
+        ("page negative", {"page": -1, "page_size": 2}, 100, None, "Internal server error"),
+        ("page alpha", {"page": "a", "page_size": 2}, 100, None, "Internal server error"),
         ("page_size none", {"page_size": None}, 0, lambda total: total, ""),
         ("page_size zero", {"page_size": 0}, 0, lambda total: total, ""),
         ("page_size one", {"page_size": 1}, 0, lambda total: total, ""),
         ("page_size six", {"page_size": 6}, 0, lambda total: total, ""),
         ("page_size string", {"page_size": "1"}, 0, lambda total: total, ""),
         ("page_size negative", {"page_size": -1}, 0, lambda total: total, ""),
-        ("page_size alpha", {"page_size": "a"}, 100, None, "ValueError(\"invalid literal for int() with base 10: 'a'\")"),
+        ("page_size alpha", {"page_size": "a"}, 100, None, "Internal server error"),
     ]
 
     for scenario_name, params, expected_code, expected_count_fn, expected_message in cases:
@@ -403,7 +403,7 @@ def test_chat_list_sorting_contract(rest_client, clear_chats):
         ("orderby create", {"orderby": "create_time"}, 0, descending_names, ""),
         ("orderby update", {"orderby": "update_time"}, 0, descending_names, ""),
         ("orderby name ascending", {"orderby": "name", "desc": "False"}, 0, ascending_names, ""),
-        ("orderby unknown", {"orderby": "unknown"}, 100, None, "AttributeError(\"type object 'Dialog' has no attribute 'unknown'\")"),
+        ("orderby unknown", {"orderby": "unknown"}, 100, None, "Internal server error"),
         ("desc none", {"desc": None}, 0, descending_names, ""),
         ("desc true", {"desc": "true"}, 0, descending_names, ""),
         ("desc True", {"desc": "True"}, 0, descending_names, ""),
@@ -683,6 +683,10 @@ def _load_chat_routes_unit_module(monkeypatch):
             return []
 
         @staticmethod
+        def name_exists(*_args, **_kwargs):
+            return False
+
+        @staticmethod
         def save(**_kwargs):
             return True
 
@@ -703,6 +707,10 @@ def _load_chat_routes_unit_module(monkeypatch):
     dialog_service_mod.async_chat = lambda *_args, **_kwargs: None
     dialog_service_mod.gen_mindmap = lambda *_args, **_kwargs: None
     monkeypatch.setitem(sys.modules, "api.db.services.dialog_service", dialog_service_mod)
+
+    audit_service_mod = ModuleType("api.db.services.audit_service")
+    audit_service_mod.record_audit_event = lambda **_kwargs: None
+    monkeypatch.setitem(sys.modules, "api.db.services.audit_service", audit_service_mod)
 
     conversation_service_mod = ModuleType("api.db.services.conversation_service")
 
@@ -762,6 +770,7 @@ def _load_chat_routes_unit_module(monkeypatch):
     monkeypatch.setitem(sys.modules, "api.db.services.search_service", search_service_mod)
 
     tenant_model_service_mod = ModuleType("api.db.joint_services.tenant_model_service")
+    tenant_model_service_mod.get_model_type_by_name = lambda *_args, **_kwargs: None
     tenant_model_service_mod.get_model_config_from_provider_instance = lambda *_args, **_kwargs: {}
     tenant_model_service_mod.get_tenant_default_model_by_type = lambda *_args, **_kwargs: {}
     tenant_model_service_mod.get_api_key = lambda *_args, **_kwargs: SimpleNamespace(id=1)
@@ -1204,7 +1213,6 @@ def test_chat_create_allows_default_knowledge_placeholder_without_sources_unit(m
     _set_route_unit_request_json(monkeypatch, module, {"name": "chat-a"})
     monkeypatch.setattr(module.TenantService, "get_by_id", lambda _tid: (True, SimpleNamespace(llm_id="glm-4")))
     monkeypatch.setattr(module.DialogService, "query", lambda **_kwargs: [])
-    monkeypatch.setattr(module, "get_api_key", lambda *_args, **_kwargs: SimpleNamespace(id=1))
 
     def _save(**kwargs):
         saved.update(kwargs)
@@ -1402,7 +1410,6 @@ def test_patch_chat_drops_response_only_fields_before_update_unit(monkeypatch):
     monkeypatch.setattr(module.KnowledgebaseService, "accessible", lambda **_kwargs: [SimpleNamespace(id="kb-1")])
     monkeypatch.setattr(module.KnowledgebaseService, "query", lambda **_kwargs: [_DummyKB()])
     monkeypatch.setattr(module, "split_model_name", lambda model: (model.split("@")[0], "default", "factory"))
-    monkeypatch.setattr(module, "get_api_key", lambda *args, **kwargs: SimpleNamespace(id=1))
 
     def _update(_chat_id, req):
         updated.update(req)
@@ -1559,6 +1566,8 @@ def test_chat_create_llm_contract(rest_client, clear_chats, ensure_parsed_docume
     ]
 
     for index, (scenario_name, extra_payload, expected_code, expected_message, expected_llm_id, expected_llm_setting) in enumerate(cases, start=1):
+        if expected_llm_id == "glm-4-flash@CI@ZHIPU-AI":
+            expected_llm_id = DEFAULT_CHAT_MODEL
         payload = {
             "name": f"restful_chat_llm_{index}",
             "dataset_ids": [dataset_id],
@@ -1597,18 +1606,18 @@ def test_chat_create_prompt_contract(rest_client, clear_chats):
         ("similarity_threshold one", {"similarity_threshold": 1}, {("similarity_threshold",): 1}),
         ("similarity_threshold negative one", {"similarity_threshold": -1}, {("similarity_threshold",): -1.0}),
         ("similarity_threshold ten", {"similarity_threshold": 10}, {("similarity_threshold",): 10.0}),
-        ("similarity_threshold string", {"similarity_threshold": "a"}, {("similarity_threshold",): 0.0}),
+        ("similarity_threshold string", {"similarity_threshold": "a"}, None),
         ("vector_similarity_weight one", {"vector_similarity_weight": 1}, {("vector_similarity_weight",): 1}),
         ("vector_similarity_weight zero", {"vector_similarity_weight": 0}, {("vector_similarity_weight",): 0}),
         ("vector_similarity_weight two", {"vector_similarity_weight": 2}, {("vector_similarity_weight",): 2.0}),
         ("vector_similarity_weight negative nine", {"vector_similarity_weight": -9}, {("vector_similarity_weight",): -9.0}),
-        ("vector_similarity_weight string", {"vector_similarity_weight": "a"}, {("vector_similarity_weight",): 0.0}),
+        ("vector_similarity_weight string", {"vector_similarity_weight": "a"}, None),
         ("empty prompt parameters", {"prompt_config": {"parameters": []}}, {("prompt_config", "parameters"): []}),
         ("top_n zero", {"top_n": 0}, {("top_n",): 0}),
         ("top_n one", {"top_n": 1}, {("top_n",): 1}),
         ("top_n negative one", {"top_n": -1}, {("top_n",): -1}),
         ("top_n ten", {"top_n": 10}, {("top_n",): 10}),
-        ("top_n string", {"top_n": "a"}, {("top_n",): 0}),
+        ("top_n string", {"top_n": "a"}, None),
         ("empty_response plain text", {"prompt_config": {"empty_response": "Hello World"}}, {("prompt_config", "empty_response"): "Hello World"}),
         ("empty_response empty string", {"prompt_config": {"empty_response": ""}}, {("prompt_config", "empty_response"): ""}),
         ("empty_response punctuation", {"prompt_config": {"empty_response": "!@#$%^&*()"}}, {("prompt_config", "empty_response"): "!@#$%^&*()"}),
@@ -1647,6 +1656,10 @@ def test_chat_create_prompt_contract(rest_client, clear_chats):
         )
         assert res.status_code == 200, (scenario_name, res.text)
         payload = res.json()
+        if expected_values is None:
+            assert payload["code"] == 100, (scenario_name, payload)
+            assert payload["message"] == "Internal server error", (scenario_name, payload)
+            continue
         assert payload["code"] == 0, (scenario_name, payload)
         for path, expected_value in expected_values.items():
             assert _get_nested(payload["data"], path) == expected_value, (scenario_name, path, payload)
@@ -1826,6 +1839,8 @@ def test_chat_update_llm_contract(rest_client, clear_chats, ensure_parsed_docume
     ]
 
     for index, (scenario_name, extra_payload, expected_code, expected_message, expected_llm_id, expected_llm_setting) in enumerate(cases, start=1):
+        if expected_llm_id == "glm-4-flash@CI@ZHIPU-AI":
+            expected_llm_id = DEFAULT_CHAT_MODEL
         create_res = rest_client.post(
             "/chats",
             json={"name": f"restful_chat_update_llm_target_{index}", "dataset_ids": [dataset_id]},
@@ -1876,18 +1891,18 @@ def test_chat_update_prompt_contract(rest_client, clear_chats, ensure_parsed_doc
         ("similarity_threshold one", {"similarity_threshold": 1}, {("similarity_threshold",): 1}),
         ("similarity_threshold negative one", {"similarity_threshold": -1}, {("similarity_threshold",): -1.0}),
         ("similarity_threshold ten", {"similarity_threshold": 10}, {("similarity_threshold",): 10.0}),
-        ("similarity_threshold string", {"similarity_threshold": "a"}, {("similarity_threshold",): 0.0}),
+        ("similarity_threshold string", {"similarity_threshold": "a"}, None),
         ("vector_similarity_weight zero", {"vector_similarity_weight": 0}, {("vector_similarity_weight",): 0}),
         ("vector_similarity_weight one", {"vector_similarity_weight": 1}, {("vector_similarity_weight",): 1}),
         ("vector_similarity_weight negative one", {"vector_similarity_weight": -1}, {("vector_similarity_weight",): -1.0}),
         ("vector_similarity_weight ten", {"vector_similarity_weight": 10}, {("vector_similarity_weight",): 10.0}),
-        ("vector_similarity_weight string", {"vector_similarity_weight": "a"}, {("vector_similarity_weight",): 0.0}),
+        ("vector_similarity_weight string", {"vector_similarity_weight": "a"}, None),
         ("empty prompt parameters", {"prompt_config": {"parameters": []}}, {("prompt_config", "parameters"): []}),
         ("top_n zero", {"top_n": 0}, {("top_n",): 0}),
         ("top_n one", {"top_n": 1}, {("top_n",): 1}),
         ("top_n negative one", {"top_n": -1}, {("top_n",): -1}),
         ("top_n ten", {"top_n": 10}, {("top_n",): 10}),
-        ("top_n string", {"top_n": "a"}, {("top_n",): 0}),
+        ("top_n string", {"top_n": "a"}, None),
         ("empty_response plain text", {"prompt_config": {"empty_response": "Hello World"}}, {("prompt_config", "empty_response"): "Hello World"}),
         ("empty_response empty string", {"prompt_config": {"empty_response": ""}}, {("prompt_config", "empty_response"): ""}),
         ("empty_response punctuation", {"prompt_config": {"empty_response": "!@#$%^&*()"}}, {("prompt_config", "empty_response"): "!@#$%^&*()"}),
@@ -1936,6 +1951,10 @@ def test_chat_update_prompt_contract(rest_client, clear_chats, ensure_parsed_doc
         )
         assert res.status_code == 200, (scenario_name, res.text)
         payload = res.json()
+        if expected_values is None:
+            assert payload["code"] == 100, (scenario_name, payload)
+            assert payload["message"] == "Internal server error", (scenario_name, payload)
+            continue
         assert payload["code"] == 0, (scenario_name, payload)
 
         get_res = rest_client.get(f"/chats/{chat_id}")

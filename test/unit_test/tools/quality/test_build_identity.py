@@ -86,3 +86,19 @@ def test_all_main_image_ci_build_callers_supply_checkout_identity(workflow, coun
                 assert '--build-arg "RAGFLOW_BUILD_VERSION=${build_version}"' in script
                 assert '--build-arg "RAGFLOW_SOURCE_REVISION=${source_revision}"' in script
     assert len(builds) == count
+
+
+@pytest.mark.parametrize("workflow", ["tests.yml", "sep-tests.yml"])
+def test_upstream_compose_ci_overrides_postgres_default_with_mysql(workflow):
+    document = yaml.safe_load((ROOT / ".github/workflows" / workflow).read_text())
+    prepare_steps = [
+        step["run"]
+        for job in document["jobs"].values()
+        for step in job.get("steps", [])
+        if step.get("name") == "Prepare function test environment"
+    ]
+
+    assert len(prepare_steps) == 2
+    for script in prepare_steps:
+        assert "/^DB_TYPE=/d" in script
+        assert 'echo "DB_TYPE=mysql"' in script

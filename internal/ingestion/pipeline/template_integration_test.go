@@ -36,6 +36,7 @@ import (
 	"ragflow/internal/tokenizer"
 
 	"github.com/signintech/gopdf"
+	"golang.org/x/image/font/gofont/goregular"
 )
 
 type fixedEmbedder struct{}
@@ -896,10 +897,6 @@ func loadTemplatePipelinePDFFixture(t *testing.T) templatePDFFixture {
 }
 
 func generateTemplatePipelinePDF() ([]byte, error) {
-	fontPath, err := findTemplatePDFFont()
-	if err != nil {
-		return nil, err
-	}
 	pages := []string{
 		"Pipeline PDF Fixture\nPage 1 explains why deepdoc parsing matters for chunking.",
 		"Pipeline PDF Fixture\nPage 2 keeps a second page in the document for integration coverage.",
@@ -911,7 +908,7 @@ func generateTemplatePipelinePDF() ([]byte, error) {
 
 	pdf := &gopdf.GoPdf{}
 	pdf.Start(gopdf.Config{PageSize: *gopdf.PageSizeA4})
-	if err := pdf.AddTTFFont("fixture", fontPath); err != nil {
+	if err := pdf.AddTTFFontData("fixture", goregular.TTF); err != nil {
 		return nil, fmt.Errorf("AddTTFFont: %w", err)
 	}
 	for _, pageText := range pages {
@@ -935,20 +932,6 @@ func generateTemplatePipelinePDF() ([]byte, error) {
 		}
 	}
 	return bytes.Clone(pdf.GetBytesPdf()), nil
-}
-
-func findTemplatePDFFont() (string, error) {
-	candidates := []string{
-		"/usr/share/fonts/truetype/LiberationSerif-Regular.ttf",
-		"/usr/share/fonts/truetype/DejaVuSerif.ttf",
-		"/usr/share/fonts/truetype/DejaVuSans.ttf",
-	}
-	for _, candidate := range candidates {
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate, nil
-		}
-	}
-	return "", fmt.Errorf("no usable TTF font found for generated PDF fixture")
 }
 
 func assertMetadataContainsString(t *testing.T, metadata map[string]any, key, want string) {

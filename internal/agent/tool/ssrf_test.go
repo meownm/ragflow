@@ -20,10 +20,21 @@ import (
 	"net"
 	"strings"
 	"testing"
-	"time"
+
+	"ragflow/internal/utility"
 )
 
+func stubPublicDNS(t *testing.T) {
+	t.Helper()
+	original := utility.LookupHost
+	utility.LookupHost = func(host string) ([]string, error) {
+		return []string{"93.184.216.34"}, nil
+	}
+	t.Cleanup(func() { utility.LookupHost = original })
+}
+
 func TestValidateURLForSSRF(t *testing.T) {
+	stubPublicDNS(t)
 	cases := []struct {
 		name    string
 		rawURL  string
@@ -85,6 +96,7 @@ func TestValidateURLForSSRF(t *testing.T) {
 // must return an error AND a nil IP, so DoPinned cannot be invoked
 // with a stale allow-list entry.
 func TestResolveAndValidate(t *testing.T) {
+	stubPublicDNS(t)
 	t.Run("literal_public_ip", func(t *testing.T) {
 		host, ip, err := ResolveAndValidate("https://1.1.1.1/foo")
 		if err != nil {
@@ -122,41 +134,18 @@ func TestResolveAndValidate(t *testing.T) {
 	})
 
 	t.Run("hostname_resolves_to_public", func(t *testing.T) {
-		// example.com is required to resolve to a public IP per RFC 2606.
-		// The DNS lookup is wrapped in a goroutine with a 2s deadline so
-		// sandboxed CI environments without upstream DNS can skip the
-		// test rather than hang the suite (the default LookupIP honours
-		// no timeout; this was the root cause of the 60s test timeout
-		// during the rebinding-hardening review).
-		type result struct {
-			host string
-			ip   net.IP
-			err  error
+		host, ip, err := ResolveAndValidate("https://example.com/")
+		if err != nil {
+			t.Fatalf("ResolveAndValidate(example.com) = %v, want nil", err)
 		}
-		ch := make(chan result, 1)
-		go func() {
-			h, ip, err := ResolveAndValidate("https://example.com/")
-			ch <- result{h, ip, err}
-		}()
-		select {
-		case r := <-ch:
-			if r.err != nil {
-				if strings.Contains(r.err.Error(), "resolve") {
-					t.Skipf("DNS unavailable in CI: %v", r.err)
-				}
-				t.Fatalf("ResolveAndValidate(example.com) = %v, want nil", r.err)
-			}
-			if r.host != "example.com" {
-				t.Errorf("host = %q, want example.com", r.host)
-			}
-			if r.ip == nil {
-				t.Fatalf("ip = nil, want non-nil")
-			}
-			if r.ip.IsLoopback() || r.ip.IsPrivate() || r.ip.IsLinkLocalUnicast() {
-				t.Errorf("ip = %s, want a public address", r.ip)
-			}
-		case <-time.After(2 * time.Second):
-			t.Skip("DNS lookup for example.com timed out — sandboxed CI without upstream DNS")
+		if host != "example.com" {
+			t.Errorf("host = %q, want example.com", host)
+		}
+		if ip == nil {
+			t.Fatal("ip = nil, want non-nil")
+		}
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() {
+			t.Errorf("ip = %s, want a public address", ip)
 		}
 	})
 

@@ -1,0 +1,6 @@
+services:
+  ragflow-cpu:
+    image: ${RAGFLOW_IMAGE:?RAGFLOW_IMAGE must name an immutable candidate image}
+    volumes: !override
+      - ./ragflow-logs:/ragflow/logs
+      - ./service_conf.yaml.template:/ragflow/conf/service_conf.yaml.template:ro

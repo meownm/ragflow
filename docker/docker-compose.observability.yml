@@ -12,6 +12,7 @@ services:
     environment: *ragflow-observability-env
 
   otel-collector:
+    profiles: [observability]
     image: otel/opentelemetry-collector-contrib:0.160.0
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
     volumes:
@@ -27,6 +28,7 @@ services:
     restart: unless-stopped
 
   tempo:
+    profiles: [observability]
     image: grafana/tempo:2.10.5
     command: ["-config.file=/etc/tempo.yaml"]
     volumes:
@@ -36,6 +38,7 @@ services:
     restart: unless-stopped
 
   loki:
+    profiles: [observability]
     image: grafana/loki:3.7.0
     command: ["-config.file=/etc/loki/local-config.yaml"]
     volumes:
@@ -45,6 +48,7 @@ services:
     restart: unless-stopped
 
   prometheus:
+    profiles: [observability]
     image: prom/prometheus:v3.11.0
     command:
       - --config.file=/etc/prometheus/prometheus.yml
@@ -61,6 +65,7 @@ services:
     restart: unless-stopped
 
   grafana:
+    profiles: [observability]
     image: grafana/grafana:13.1.0
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}

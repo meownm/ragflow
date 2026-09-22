@@ -234,7 +234,7 @@ jobs:
             -v "${PWD}/internal/binding/cpp/resource:/usr/share/infinity/resource" \
             infiniflow/infinity_builder:ubuntu22_clang20
           sudo docker exec "${BUILDER_CONTAINER}" bash -c 'git config --global safe.directory "*" && cd /ragflow && ./build.sh --cpp'
-          ./build.sh --go
+          bash deployment/runner/build-go-linux.sh
 
       - name: Run Go unit tests
         env:
@@ -248,7 +248,7 @@ jobs:
           sudo docker pull ubuntu:24.04
           build_version=$(git describe --tags --match='v*' --first-parent --always)
           source_revision=$(git rev-parse HEAD)
-          sudo DOCKER_BUILDKIT=1 docker build --build-arg "RAGFLOW_BUILD_VERSION=${build_version}" --build-arg "RAGFLOW_SOURCE_REVISION=${source_revision}" --build-arg NEED_MIRROR=1 --build-arg HTTPS_PROXY=${HTTPS_PROXY} --build-arg HTTP_PROXY=${HTTP_PROXY} -f Dockerfile -t ${RAGFLOW_IMAGE} .
+          sudo DOCKER_BUILDKIT=1 docker build --build-arg "RAGFLOW_BUILD_VERSION=${build_version}" --build-arg "RAGFLOW_SOURCE_REVISION=${source_revision}" --build-arg NEED_MIRROR=${NEED_MIRROR:-0} --build-arg HTTPS_PROXY=${HTTPS_PROXY} --build-arg HTTP_PROXY=${HTTP_PROXY} -f Dockerfile -t ${RAGFLOW_IMAGE} .
 
       - name: Prepare Python test environment
         run: |
@@ -677,7 +677,7 @@ jobs:
             -v "${PWD}/internal/binding/cpp/resource:/usr/share/infinity/resource" \
             infiniflow/infinity_builder:ubuntu22_clang20
           sudo docker exec "${BUILDER_CONTAINER}" bash -c 'git config --global safe.directory "*" && cd /ragflow && ./build.sh --cpp'
-          ./build.sh --go
+          bash deployment/runner/build-go-linux.sh
 
       - name: Run Go unit tests
         env:
@@ -691,7 +691,7 @@ jobs:
           sudo docker pull ubuntu:24.04
           build_version=$(git describe --tags --match='v*' --first-parent --always)
           source_revision=$(git rev-parse HEAD)
-          sudo DOCKER_BUILDKIT=1 docker build --build-arg "RAGFLOW_BUILD_VERSION=${build_version}" --build-arg "RAGFLOW_SOURCE_REVISION=${source_revision}" --build-arg NEED_MIRROR=1 --build-arg HTTPS_PROXY=${HTTPS_PROXY} --build-arg HTTP_PROXY=${HTTP_PROXY} -f Dockerfile -t ${RAGFLOW_IMAGE} .
+          sudo DOCKER_BUILDKIT=1 docker build --build-arg "RAGFLOW_BUILD_VERSION=${build_version}" --build-arg "RAGFLOW_SOURCE_REVISION=${source_revision}" --build-arg NEED_MIRROR=${NEED_MIRROR:-0} --build-arg HTTPS_PROXY=${HTTPS_PROXY} --build-arg HTTP_PROXY=${HTTP_PROXY} -f Dockerfile -t ${RAGFLOW_IMAGE} .
 
       - name: Prepare Python test environment
         run: |
@@ -1071,3 +1071,59 @@ jobs:
           if [[ -n ${PORT_RESERVATION:-} ]]; then
             rm -f "${PORT_RESERVATION}"
           fi
+
+  publish_candidate:
+    name: publish_candidate
+    needs:
+      - ragflow_tests_infinity
+      - ragflow_tests_elasticsearch
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    runs-on: [ "self-hosted", "ragflow-test" ]
+    env:
+      CANDIDATE_IMAGE: 192.168.1.175:5443/ragflow:${{ github.sha }}
+    steps:
+      - name: Ensure workspace ownership
+        run: sudo chown -R "${USER}" "${GITHUB_WORKSPACE}"
+
+      - name: Check out tested revision
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Build native and Go binaries
+        run: |
+          set -euo pipefail
+          builder="ragflow_candidate_cpp_${GITHUB_RUN_ID}"
+          cleanup() { sudo docker rm -f -v "${builder}" >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          sudo docker run --privileged -d --name "${builder}" \
+            -v "${PWD}:/ragflow" \
+            -v "${PWD}/internal/binding/cpp/resource:/usr/share/infinity/resource" \
+            infiniflow/infinity_builder:ubuntu22_clang20
+          sudo docker exec "${builder}" bash -c \
+            'git config --global safe.directory "*" && cd /ragflow && ./build.sh --cpp'
+          bash deployment/runner/build-go-linux.sh
+
+      - name: Build immutable candidate image
+        run: |
+          set -euo pipefail
+          build_version=$(git describe --tags --match='v*' --first-parent --always)
+          sudo DOCKER_BUILDKIT=1 docker build \
+            --build-arg "RAGFLOW_BUILD_VERSION=${build_version}" \
+            --build-arg "RAGFLOW_SOURCE_REVISION=${GITHUB_SHA}" \
+            --build-arg "NEED_MIRROR=${NEED_MIRROR:-0}" \
+            -f Dockerfile -t "${CANDIDATE_IMAGE}" .
+
+      - name: Verify and publish candidate image
+        run: |
+          set -euo pipefail
+          actual_revision=$(sudo docker run --rm --entrypoint cat \
+            "${CANDIDATE_IMAGE}" /ragflow/SOURCE_REVISION)
+          test "${actual_revision}" = "${GITHUB_SHA}"
+          sudo docker run --rm --entrypoint /ragflow/.venv/bin/python \
+            "${CANDIDATE_IMAGE}" -c 'import business_documents'
+          sudo docker push "${CANDIDATE_IMAGE}"
+          sudo docker image inspect "${CANDIDATE_IMAGE}" \
+            --format '{{json .RepoDigests}}'

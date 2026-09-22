@@ -1,0 +1,13 @@
+FROM golang:1.26.4-bookworm AS go_toolchain
+
+FROM infiniflow/infinity_builder:ubuntu22_clang20
+
+COPY --from=go_toolchain /usr/local/go /usr/local/go
+ENV PATH="/usr/local/go/bin:${PATH}"
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libpcre2-dev \
+    && ln -s "$(command -v lld)" /usr/local/bin/ld.lld \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /ragflow

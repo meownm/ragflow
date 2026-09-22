@@ -35,8 +35,18 @@ with temporary_common_settings(contract_settings):
     from api.apps.business_documents import ai as ai_module
     from api.apps.business_documents.adapters.storage import BusinessDocumentStorageAdapter, StorageRemovalVerificationError
     from api.apps.business_documents.ai import BusinessDocumentAI, RAGFlowLLMAdapter
+    from api.apps.business_documents.async_runtime import run_in_worker_loop
     from api.apps.business_documents.evidence import BusinessDocumentEvidence, RAGFlowDatasetSearchAdapter
     from api.apps.business_documents.exports import BusinessDocumentExportService
+
+
+def test_worker_loop_is_closed_after_operation_finishes():
+    async def capture_loop() -> asyncio.AbstractEventLoop:
+        return asyncio.get_running_loop()
+
+    loop = run_in_worker_loop(capture_loop())
+
+    assert loop.is_closed()
 
 
 @pytest.mark.p1

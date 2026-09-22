@@ -10,7 +10,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import math
@@ -19,6 +18,7 @@ from datetime import UTC, datetime
 from typing import Any, Callable, Protocol
 from urllib.parse import quote
 
+from api.apps.business_documents.async_runtime import run_in_worker_loop
 from api.apps.business_documents.errors import BusinessDocumentError
 from peewee import IntegrityError
 
@@ -119,7 +119,7 @@ class RAGFlowDatasetSearchAdapter:
     def search(self, actor_id: str, request: dict[str, Any]) -> tuple[bool, dict[str, Any] | str]:
         from api.apps.services.dataset_api_service import search_datasets
 
-        return asyncio.run(search_datasets(actor_id, request))
+        return run_in_worker_loop(search_datasets(actor_id, request))
 
 
 class BusinessDocumentEvidence:

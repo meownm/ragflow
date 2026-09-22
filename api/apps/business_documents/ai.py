@@ -41,6 +41,7 @@ from api.apps.business_documents.assets import (
     validate_contract,
     validate_document_ast,
 )
+from api.apps.business_documents.async_runtime import run_in_worker_loop
 from api.apps.business_documents.errors import ValidationError
 from business_documents.domain.content_quality import parent_child_section_pairs, semantic_duplicate_section_pairs
 from api.db.db_models import BusinessDocumentJob
@@ -273,7 +274,7 @@ class RAGFlowLLMAdapter:
                 await _drain_litellm_callbacks()
 
     def generate(self, tenant_id: str, system_prompt: str, input_payload: dict[str, Any]) -> str:
-        return asyncio.run(self.async_generate(tenant_id, system_prompt, input_payload))
+        return run_in_worker_loop(self.async_generate(tenant_id, system_prompt, input_payload))
 
 
 @dataclass(frozen=True)

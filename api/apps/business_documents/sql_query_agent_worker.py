@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
+from api.apps.business_documents.async_runtime import run_in_worker_loop
 from api.apps.business_documents.authorization import BusinessDocumentAccess
 from api.apps.business_documents.sql_query_planner import TenantQueryPlanner, query_planner_provenance
 from api.apps.business_documents.sql_query_requirements import TenantRequirementsAnalyst, requirements_prompt_provenance
@@ -19,7 +19,7 @@ class BusinessDocumentSqlAgentRunner:
     """Dispatch one immutable job snapshot to its bounded agent capability."""
 
     def process(self, job: BusinessDocumentJob) -> dict[str, Any]:
-        return asyncio.run(self._process(job))
+        return run_in_worker_loop(self._process(job))
 
     async def _process(self, job: BusinessDocumentJob) -> dict[str, Any]:
         payload = job.payload if isinstance(job.payload, dict) else {}

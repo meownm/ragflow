@@ -1,5 +1,6 @@
 import base64
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -499,21 +500,31 @@ def step_04_set_dataset_settings(
         save_btn = page.get_by_test_id("ds-settings-page-save-btn").first
         expect(save_btn).to_be_visible(timeout=RESULT_TIMEOUT_MS)
 
-        def trigger():
-            save_btn.click()
+        def save_settings():
+            return capture_response(
+                page,
+                save_btn.click,
+                lambda resp: resp.request.method == "PUT" and f"/api/v1/datasets/{dataset_id}" in resp.url,
+                timeout_ms=RESULT_TIMEOUT_MS * 2,
+            )
 
-        response = capture_response(
-            page,
-            trigger,
-            lambda resp: resp.request.method == "PUT" and f"/api/v1/datasets/{dataset_id}" in resp.url,
-            timeout_ms=RESULT_TIMEOUT_MS * 2,
-        )
+        response = save_settings()
         assert 200 <= response.status < 400, f"Unexpected /api/v1/datasets update status={response.status}"
         response_payload = response.json()
+        if os.getenv("DOC_ENGINE") == "infinity":
+            assert response_payload.get("code") == 102, f"Infinity accepted unsupported pagerank: {response_payload}"
+            assert "'pagerank' can only be set when doc_engine is elasticsearch" in response_payload.get("message", "")
+            assert get_request_json_payload(response).get("pagerank") == 12
+            set_number_input(page, "ds-settings-parser-page-rank-input", 0)
+            expect(page.locator("[data-sonner-toast]")).to_have_count(0, timeout=RESULT_TIMEOUT_MS)
+            response = save_settings()
+            assert 200 <= response.status < 400, f"Unexpected /api/v1/datasets update status={response.status}"
+            response_payload = response.json()
         if isinstance(response_payload, dict):
             assert response_payload.get("code") == 0, f"/api/v1/datasets update response code={response_payload.get('code')} message={response_payload.get('message')}"
 
         payload = get_request_json_payload(response)
+        assert payload.get("pagerank") == (0 if os.getenv("DOC_ENGINE") == "infinity" else 12)
         for key in ("name", "language", "parser_config"):
             assert key in payload, f"Expected key {key!r} in /api/v1/datasets update payload"
         parser_config = payload.get("parser_config") or {}

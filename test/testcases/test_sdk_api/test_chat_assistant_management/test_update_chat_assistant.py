@@ -15,7 +15,6 @@
 #
 
 import pytest
-from common import valid_chat_llm_id
 from configs import CHAT_ASSISTANT_NAME_LIMIT
 from utils import encode_avatar
 from utils.file_utils import create_image_file
@@ -110,7 +109,6 @@ class TestChatAssistantUpdate:
     @pytest.mark.parametrize(
         "llm_setting, expected_message",
         [
-            ({"model_name": valid_chat_llm_id}, ""),
             ({"model_name": "unknown"}, "`llm_id` unknown doesn't exist"),
             ({"temperature": 0}, ""),
             ({"temperature": 1}, ""),

@@ -91,6 +91,8 @@ class _KB:
         self.pagerank = pagerank
         self.graphrag_task_id = graphrag_task_id
         self.raptor_task_id = raptor_task_id
+        self.permission = "me"
+        self.pipeline_id = ""
 
     def to_dict(self):
         return {
@@ -170,6 +172,13 @@ def _load_dataset_module(monkeypatch, *, registration_only=False):
     monkeypatch.setitem(sys.modules, "api.db", db_pkg)
     api_pkg.db = db_pkg
 
+    joint_services_pkg = ModuleType("api.db.joint_services")
+    joint_services_pkg.__path__ = []
+    monkeypatch.setitem(sys.modules, "api.db.joint_services", joint_services_pkg)
+    tenant_model_service_mod = ModuleType("api.db.joint_services.tenant_model_service")
+    tenant_model_service_mod.get_model_config_from_provider_instance = lambda *_args, **_kwargs: {}
+    monkeypatch.setitem(sys.modules, "api.db.joint_services.tenant_model_service", tenant_model_service_mod)
+
     db_models_mod = ModuleType("api.db.db_models")
     db_models_mod.File = SimpleNamespace(
         source_type=_Field("source_type"),
@@ -240,7 +249,12 @@ def _load_dataset_module(monkeypatch, *, registration_only=False):
         def link_connectors(*_args, **_kwargs):
             return []
 
+        @staticmethod
+        def list_connectors(*_args, **_kwargs):
+            return []
+
     connector_service_mod.Connector2KbService = _StubConnector2KbService
+    connector_service_mod.ConnectorService = SimpleNamespace(get_by_id=lambda _connector_id: (False, None))
     monkeypatch.setitem(sys.modules, "api.db.services.connector_service", connector_service_mod)
     services_pkg.connector_service = connector_service_mod
 
@@ -266,6 +280,10 @@ def _load_dataset_module(monkeypatch, *, registration_only=False):
         @staticmethod
         def get_or_none(**_kwargs):
             return _KB()
+
+        @staticmethod
+        def query_by_name_case_insensitive(**_kwargs):
+            return []
 
         @staticmethod
         def delete_by_id(_kb_id):
@@ -532,25 +550,26 @@ def test_update_route_branch_matrix_unit(monkeypatch):
     req_state = {"name": "new"}
     _patch_json_parser(monkeypatch, module, req_state)
 
-    monkeypatch.setattr(module.KnowledgebaseService, "get_or_none", lambda **_kwargs: None)
+    monkeypatch.setattr(module.KnowledgebaseService, "accessible", lambda *_args, **_kwargs: False)
     res = _run(inspect.unwrap(module.update)("tenant-1", "kb-1"))
     assert res["code"] == module.RetCode.DATA_ERROR, res
     assert "lacks permission for dataset" in res["message"], res
 
+    monkeypatch.setattr(module.KnowledgebaseService, "accessible", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(module.KnowledgebaseService, "get_or_none", lambda **_kwargs: None)
+    res = _run(inspect.unwrap(module.update)("tenant-1", "kb-1"))
+    assert res["code"] == module.RetCode.DATA_ERROR, res
+    assert res["message"] == "Invalid Dataset ID", res
+
     kb = _KB(kb_id="kb-1", name="old", chunk_num=0)
 
-    def _get_or_none_duplicate(**kwargs):
-        if kwargs.get("id"):
-            return kb
-        if kwargs.get("name"):
-            return SimpleNamespace(id="dup")
-        return None
-
-    monkeypatch.setattr(module.KnowledgebaseService, "get_or_none", _get_or_none_duplicate)
+    monkeypatch.setattr(module.KnowledgebaseService, "get_or_none", lambda **kwargs: kb if kwargs.get("id") else None)
+    monkeypatch.setattr(module.KnowledgebaseService, "query_by_name_case_insensitive", lambda **_kwargs: [SimpleNamespace(id="dup")])
     req_state.clear()
     req_state.update({"name": "new"})
     res = _run(inspect.unwrap(module.update)("tenant-1", "kb-1"))
     assert "already exists" in res["message"], res
+    monkeypatch.setattr(module.KnowledgebaseService, "query_by_name_case_insensitive", lambda **_kwargs: [])
 
     kb_chunked = _KB(kb_id="kb-1", name="old", chunk_num=2, embd_id="embd-1")
     monkeypatch.setattr(module.KnowledgebaseService, "get_or_none", lambda **kwargs: kb_chunked if kwargs.get("id") else None)
@@ -609,7 +628,7 @@ def test_update_route_branch_matrix_unit(monkeypatch):
 
 
 @pytest.mark.p3
-def test_list_knowledge_graph_delete_kg_matrix_unit(monkeypatch):
+def test_list_knowledge_graph_matrix_unit(monkeypatch):
     module = _load_dataset_module(monkeypatch)
 
     _set_request_args(monkeypatch, module, {"id": "", "name": "", "page": 1, "page_size": 30, "orderby": "create_time", "desc": True})
@@ -628,14 +647,14 @@ def test_list_knowledge_graph_delete_kg_matrix_unit(monkeypatch):
     assert res["message"] == "Database operation failed", res
 
     monkeypatch.setattr(module.KnowledgebaseService, "accessible", lambda *_args, **_kwargs: False)
-    res = _run(inspect.unwrap(module.knowledge_graph)("tenant-1", "kb-1"))
+    res = _run(inspect.unwrap(module.get_knowledge_graph)("tenant-1", "kb-1"))
     assert res["code"] == module.RetCode.AUTHENTICATION_ERROR, res
 
     monkeypatch.setattr(module.KnowledgebaseService, "accessible", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(module.KnowledgebaseService, "get_by_id", lambda _kb_id: (True, _KB(tenant_id="tenant-1")))
     monkeypatch.setattr(module.search, "index_name", lambda _tenant_id: "idx")
     monkeypatch.setattr(module.settings, "docStoreConn", SimpleNamespace(index_exist=lambda *_args, **_kwargs: False))
-    res = _run(inspect.unwrap(module.knowledge_graph)("tenant-1", "kb-1"))
+    res = _run(inspect.unwrap(module.get_knowledge_graph)("tenant-1", "kb-1"))
     assert res["data"] == {"graph": {}, "mind_map": {}}, res
 
     monkeypatch.setattr(module.settings, "docStoreConn", SimpleNamespace(index_exist=lambda *_args, **_kwargs: True))
@@ -645,7 +664,7 @@ def test_list_knowledge_graph_delete_kg_matrix_unit(monkeypatch):
             return SimpleNamespace(ids=[], field={})
 
     monkeypatch.setattr(module.settings, "retriever", _EmptyRetriever())
-    res = _run(inspect.unwrap(module.knowledge_graph)("tenant-1", "kb-1"))
+    res = _run(inspect.unwrap(module.get_knowledge_graph)("tenant-1", "kb-1"))
     assert res["data"] == {"graph": {}, "mind_map": {}}, res
 
     class _BadRetriever:
@@ -653,7 +672,7 @@ def test_list_knowledge_graph_delete_kg_matrix_unit(monkeypatch):
             return SimpleNamespace(ids=["bad"], field={"bad": {"knowledge_graph_kwd": "graph", "content_with_weight": "{bad"}})
 
     monkeypatch.setattr(module.settings, "retriever", _BadRetriever())
-    res = _run(inspect.unwrap(module.knowledge_graph)("tenant-1", "kb-1"))
+    res = _run(inspect.unwrap(module.get_knowledge_graph)("tenant-1", "kb-1"))
     assert res["code"] == module.RetCode.SUCCESS, res
     assert res["data"]["graph"] == {}, res
 
@@ -671,14 +690,10 @@ def test_list_knowledge_graph_delete_kg_matrix_unit(monkeypatch):
             return SimpleNamespace(ids=["good"], field={"good": {"knowledge_graph_kwd": "graph", "content_with_weight": json.dumps(payload)}})
 
     monkeypatch.setattr(module.settings, "retriever", _GoodRetriever())
-    res = _run(inspect.unwrap(module.knowledge_graph)("tenant-1", "kb-1"))
+    res = _run(inspect.unwrap(module.get_knowledge_graph)("tenant-1", "kb-1"))
     assert res["code"] == module.RetCode.SUCCESS, res
     assert len(res["data"]["graph"]["nodes"]) == 2, res
     assert len(res["data"]["graph"]["edges"]) == 1, res
-
-    monkeypatch.setattr(module.KnowledgebaseService, "accessible", lambda *_args, **_kwargs: False)
-    res = inspect.unwrap(module.delete_knowledge_graph)("tenant-1", "kb-1")
-    assert res["code"] == module.RetCode.AUTHENTICATION_ERROR, res
 
 
 @pytest.mark.p3
@@ -833,6 +848,11 @@ def test_delete_index_wipe_flag_unit(monkeypatch):
     monkeypatch.setattr(module.TaskService, "delete_by_id", lambda task_id: deleted_tasks.append(task_id), raising=False)
 
     kb = _KB(kb_id="kb-1", graphrag_task_id="graph-task", raptor_task_id="raptor-task")
+    monkeypatch.setattr(module.KnowledgebaseService, "accessible", lambda *_args, **_kwargs: False)
+    res = inspect.unwrap(module.delete_index)("tenant-1", "kb-1", "graph")
+    assert res["code"] == module.RetCode.DATA_ERROR, res
+    assert res["message"] == "No authorization.", res
+
     monkeypatch.setattr(module.KnowledgebaseService, "accessible", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(module.KnowledgebaseService, "get_by_id", lambda _kb_id: (True, kb))
     monkeypatch.setattr(module.KnowledgebaseService, "update_by_id", lambda *_args, **_kwargs: True)

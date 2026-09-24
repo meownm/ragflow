@@ -806,6 +806,8 @@ def flow_context(browser, request):
     args = dict(browser_context_args)
     args.setdefault("ignore_https_errors", True)
     ctx = browser.new_context(**args)
+    if os.getenv("RAGFLOW_CI_CHAT_MODEL_URL"):
+        ctx.add_init_script("try { window.localStorage.setItem('lng', 'en') } catch {}")
     yield ctx
     ctx.close()
 
@@ -1000,8 +1002,84 @@ def ensure_auth_context(
     return page_instance
 
 
+def _ensure_ci_chat_models(base_url: str, headers: dict, ci_chat_model_url: str) -> dict:
+    provider_name = "OpenAI-API-Compatible"
+    instance_name = "CI"
+    model_names = ("ci-chat-primary", "ci-chat-secondary")
+
+    def listed_models() -> set[str]:
+        _, payload = _api_request_json(_build_url(base_url, "/api/v1/models"), headers=headers)
+        _response_data(payload)
+        models = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(models, list):
+            raise RuntimeError(f"Expected model list from /api/v1/models: {payload}")
+        return {model.get("name") for model in models if isinstance(model, dict) and model.get("provider_name") == provider_name and model.get("instance_name") == instance_name}
+
+    created_provider = False
+    if not set(model_names).issubset(listed_models()):
+        _, provider_payload = _api_request_json(
+            _build_url(base_url, "/api/v1/providers"),
+            method="PUT",
+            payload={"provider_name": provider_name},
+            headers=headers,
+        )
+        _response_data(provider_payload)
+        _, instance_payload = _api_request_json(
+            _build_url(base_url, f"/api/v1/providers/{provider_name}/instances"),
+            method="POST",
+            payload={
+                "instance_name": instance_name,
+                "api_key": "ci-only",
+                "base_url": ci_chat_model_url,
+                "region": "default",
+                "model_info": [{"model_name": name, "model_type": ["chat"], "max_tokens": 4096} for name in model_names],
+            },
+            headers=headers,
+        )
+        _response_data(instance_payload)
+        created_provider = True
+    missing_models = set(model_names) - listed_models()
+    if missing_models:
+        pytest.fail(f"CI chat models were not registered: {sorted(missing_models)}")
+
+    for model_provider, model_instance, model_name, model_type in (
+        (provider_name, instance_name, model_names[0], "chat"),
+        ("Builtin", "default", "BAAI/bge-small-en-v1.5", "embedding"),
+    ):
+        _, default_payload = _api_request_json(
+            _build_url(base_url, "/api/v1/models/default"),
+            method="PATCH",
+            payload={
+                "model_provider": model_provider,
+                "model_instance": model_instance,
+                "model_name": model_name,
+                "model_type": model_type,
+            },
+            headers=headers,
+        )
+        _response_data(default_payload)
+
+    _, default_payload = _api_request_json(_build_url(base_url, "/api/v1/models/default"), headers=headers)
+    default_models = _response_data(default_payload).get("models")
+    if not isinstance(default_models, list) or not all(
+        any(model.get("model_name") == name and model.get("model_type") == model_type for model in default_models)
+        for name, model_type in ((model_names[0], "chat"), ("BAAI/bge-small-en-v1.5", "embedding"))
+    ):
+        pytest.fail(f"CI default models were not applied: {default_payload}")
+
+    return {
+        "has_provider": True,
+        "created_provider": created_provider,
+        "normalized_defaults": True,
+        "llm_factories": [provider_name],
+    }
+
+
 def _ensure_model_provider_ready_via_api(base_url: str, auth_header: str) -> dict:
     headers = {"Authorization": auth_header}
+    ci_chat_model_url = os.getenv("RAGFLOW_CI_CHAT_MODEL_URL")
+    if ci_chat_model_url:
+        return _ensure_ci_chat_models(base_url, headers, ci_chat_model_url)
 
     _, my_llms_payload = _api_request_json(_build_url(base_url, "/v1/llm/my_llms"), headers=headers)
     my_llms_data = _response_data(my_llms_payload)

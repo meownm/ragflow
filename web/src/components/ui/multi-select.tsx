@@ -30,7 +30,6 @@ import {
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
 import { t } from 'i18next';
-import { isEmpty } from 'lodash';
 
 export type MultiSelectOptionType = {
   label: React.ReactNode;
@@ -227,20 +226,16 @@ export const MultiSelect = React.forwardRef<
     const [isAnimating, setIsAnimating] = React.useState(false);
 
     React.useEffect(() => {
-      if (isEmpty(selectedValues) && !isEmpty(props.value)) {
-        setSelectedValues(props.value as string[]);
-      }
-    }, [props.value, selectedValues]);
-
-    React.useEffect(() => {
-      if (
-        isEmpty(selectedValues) &&
-        isEmpty(props.value) &&
-        !isEmpty(defaultValue)
-      ) {
-        setSelectedValues(defaultValue);
-      }
-    }, [defaultValue, props.value, selectedValues]);
+      const nextValues = Array.isArray(props.value)
+        ? (props.value as string[])
+        : defaultValue;
+      setSelectedValues((current) =>
+        current.length === nextValues.length &&
+        current.every((value, index) => value === nextValues[index])
+          ? current
+          : nextValues,
+      );
+    }, [defaultValue, props.value]);
 
     const flatOptions = React.useMemo(() => {
       return options.flatMap((option) =>

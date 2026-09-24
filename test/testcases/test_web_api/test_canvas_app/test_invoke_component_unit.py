@@ -24,6 +24,7 @@ variable lookup (issue #13277).
 
 import importlib.util
 import json
+import socket
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -107,6 +108,17 @@ def _load_invoke_module(monkeypatch):
     invoke_mod = importlib.util.module_from_spec(invoke_spec)
     monkeypatch.setitem(sys.modules, "agent.component.invoke", invoke_mod)
     invoke_spec.loader.exec_module(invoke_mod)
+
+    # The runner's DNS may sinkhole example.com to a private address. Keep the
+    # real SSRF guard in the test and make only this mocked HTTP host deterministic.
+    original_getaddrinfo = socket.getaddrinfo
+
+    def getaddrinfo(host, port, *args, **kwargs):
+        if host == "example.com":
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", port or 0))]
+        return original_getaddrinfo(host, port, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
 
     return invoke_mod
 

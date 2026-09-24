@@ -51,17 +51,6 @@ def list_all_sessions(chat_assistant: Chat, *, limit: int | None = None, page_si
         page += 1
 
 
-def valid_chat_llm_id(client: RAGFlow) -> str:
-    # SDK tests use the tenant's configured chat model; this helper discovers test fixture state, not SDK behavior.
-    res = client.get("/users/me/models")
-    data = res.json()
-    if data.get("code") == 0:
-        llm_id = (data.get("data") or {}).get("llm_id")
-        if llm_id:
-            return llm_id
-    raise Exception("No valid chat llm_id is configured for the current tenant")
-
-
 # DATASET MANAGEMENT
 def batch_create_datasets(client: RAGFlow, num: int) -> list[DataSet]:
     return [client.create_dataset(name=f"dataset_{i}") for i in range(num)]

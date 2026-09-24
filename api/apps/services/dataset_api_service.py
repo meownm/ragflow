@@ -336,9 +336,7 @@ async def update_dataset(tenant_id: str, dataset_id: str, req: dict):
         req["pipeline_id"] = ""
 
     if "name" in req and req["name"].lower() != kb.name.lower():
-        exists = KnowledgebaseService.query_by_name_case_insensitive(
-            name=req["name"], tenant_id=kb.tenant_id, status=StatusEnum.VALID.value
-        )
+        exists = KnowledgebaseService.query_by_name_case_insensitive(name=req["name"], tenant_id=kb.tenant_id, status=StatusEnum.VALID.value)
         if exists:
             return False, f"Dataset name '{req['name']}' already exists"
 
@@ -971,7 +969,6 @@ async def search(dataset_id: str, tenant_id: str, req: dict):
     from api.db.services.doc_metadata_service import DocMetadataService
     from api.db.services.llm_service import LLMBundle
     from api.db.services.search_service import SearchService
-    from api.db.services.user_service import UserTenantService
     from common.constants import LLMType
     from common.metadata_utils import apply_meta_data_filter
     from rag.app.tag import label_question
@@ -1056,14 +1053,7 @@ async def search(dataset_id: str, tenant_id: str, req: dict):
             metas_loader=lambda: DocMetadataService.get_flatted_meta_by_kbs([dataset_id]),
         )
 
-    tenant_ids = []
-    tenants = UserTenantService.query(user_id=tenant_id)
-    for tenant in tenants:
-        if KnowledgebaseService.query(tenant_id=tenant.tenant_id, id=dataset_id):
-            tenant_ids.append(tenant.tenant_id)
-            break
-    else:
-        return False, "Only owner of dataset authorized for this operation."
+    tenant_ids = [kb.tenant_id]
 
     _question = question
     if langs:
@@ -1354,7 +1344,6 @@ async def search_datasets(tenant_id: str, req: dict):
     from api.db.services.doc_metadata_service import DocMetadataService
     from api.db.services.llm_service import LLMBundle
     from api.db.services.search_service import SearchService
-    from api.db.services.user_service import UserTenantService
     from common.constants import LLMType
     from common.metadata_utils import apply_meta_data_filter
     from rag.app.tag import label_question
@@ -1447,14 +1436,9 @@ async def search_datasets(tenant_id: str, req: dict):
             metas_loader=lambda: DocMetadataService.get_flatted_meta_by_kbs(kb_ids),
         )
 
-    tenant_ids = []
-    tenants = UserTenantService.query(user_id=tenant_id)
-    for tenant in tenants:
-        if any(KnowledgebaseService.query(tenant_id=tenant.tenant_id, id=kb_id) for kb_id in kb_ids):
-            tenant_ids.append(tenant.tenant_id)
-            break
-    else:
-        return False, "Only owner of datasets authorized for this operation."
+    # Access to every dataset was checked above. Search the indices owned by
+    # those datasets, including managed datasets owned by another account.
+    tenant_ids = list(dict.fromkeys(kb.tenant_id for kb in kbs))
 
     kb = kbs[0]
     _question = question

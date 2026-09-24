@@ -104,6 +104,9 @@ class _DummyUser:
     def to_dict(self):
         return {"id": self.id, "email": self.email}
 
+    def to_safe_dict(self, **_kwargs):
+        return self.to_json()
+
 
 class _Field:
     def __init__(self, name):
@@ -176,22 +179,6 @@ def _load_user_app(monkeypatch):
     api_pkg.db = db_mod
 
     db_models_mod = ModuleType("api.db.db_models")
-
-    class _DummyTenantLLMModel:
-        tenant_id = _Field("tenant_id")
-
-        @staticmethod
-        def delete():
-            class _DeleteQuery:
-                def where(self, *_args, **_kwargs):
-                    return self
-
-                def execute(self):
-                    return 1
-
-            return _DeleteQuery()
-
-    db_models_mod.TenantLLM = _DummyTenantLLMModel
     monkeypatch.setitem(sys.modules, "api.db.db_models", db_models_mod)
 
     services_pkg = ModuleType("api.db.services")
@@ -207,6 +194,16 @@ def _load_user_app(monkeypatch):
 
     file_service_mod.FileService = _StubFileService
     monkeypatch.setitem(sys.modules, "api.db.services.file_service", file_service_mod)
+
+    managed_resource_mod = ModuleType("api.db.services.managed_resource_service")
+
+    class _StubManagedResourceService:
+        @staticmethod
+        def owner_id(user_id):
+            return user_id
+
+    managed_resource_mod.ManagedResourceService = _StubManagedResourceService
+    monkeypatch.setitem(sys.modules, "api.db.services.managed_resource_service", managed_resource_mod)
 
     llm_service_mod = ModuleType("api.db.services.llm_service")
     llm_service_mod.get_init_tenant_llm = lambda _user_id: []
@@ -755,40 +752,26 @@ def test_logout_setting_profile_matrix_unit(monkeypatch):
 
     res = _run(module.user_profile())
     assert res["code"] == 0
-    assert res["data"] == current_user.to_dict()
+    assert res["data"] == current_user.to_safe_dict(for_self=True)
 
 
 @pytest.mark.p2
 def test_registration_helpers_and_register_route_matrix_unit(monkeypatch):
     module = _load_user_app(monkeypatch)
 
-    deleted = {"user": 0, "tenant": 0, "user_tenant": 0, "tenant_llm": 0}
+    deleted = {"user": 0, "tenant": 0, "user_tenant": 0}
     monkeypatch.setattr(module.UserService, "delete_by_id", lambda _user_id: deleted.__setitem__("user", deleted["user"] + 1))
     monkeypatch.setattr(module.TenantService, "delete_by_id", lambda _tenant_id: deleted.__setitem__("tenant", deleted["tenant"] + 1))
     monkeypatch.setattr(module.UserTenantService, "query", lambda **_kwargs: [SimpleNamespace(id="ut-1")])
     monkeypatch.setattr(module.UserTenantService, "delete_by_id", lambda _ut_id: deleted.__setitem__("user_tenant", deleted["user_tenant"] + 1))
 
-    class _DeleteQuery:
-        def where(self, *_args, **_kwargs):
-            return self
-
-        def execute(self):
-            deleted["tenant_llm"] += 1
-            return 1
-
-    monkeypatch.setattr(module.TenantLLM, "delete", lambda: _DeleteQuery())
     module.rollback_user_registration("user-1")
-    assert deleted == {"user": 1, "tenant": 1, "user_tenant": 1, "tenant_llm": 1}, deleted
+    assert deleted == {"user": 1, "tenant": 1, "user_tenant": 1}, deleted
 
     monkeypatch.setattr(module.UserService, "delete_by_id", lambda _user_id: (_ for _ in ()).throw(RuntimeError("u boom")))
     monkeypatch.setattr(module.TenantService, "delete_by_id", lambda _tenant_id: (_ for _ in ()).throw(RuntimeError("t boom")))
     monkeypatch.setattr(module.UserTenantService, "query", lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("ut boom")))
 
-    class _RaisingDeleteQuery:
-        def where(self, *_args, **_kwargs):
-            raise RuntimeError("llm boom")
-
-    monkeypatch.setattr(module.TenantLLM, "delete", lambda: _RaisingDeleteQuery())
     module.rollback_user_registration("user-2")
 
     monkeypatch.setattr(module.UserService, "save", lambda **_kwargs: False)

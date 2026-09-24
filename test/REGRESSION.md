@@ -36,6 +36,14 @@ and state fixtures. Missing prerequisites fail rather than count as skipped
 steps. Unhandled page exceptions fail the test. Failure evidence is written
 under `test/playwright/artifacts/<browser>`.
 
+In GitHub CI, the live browser lane uses the disposable Compose stack's admin
+account, Builtin embedding, and two local OpenAI-compatible chat responders.
+It exercises real browser, API, ingestion, retrieval, and chat-stream wiring;
+the deterministic chat responses do not measure model answer quality. Outside
+CI, this lane requires a configured chat provider or `ZHIPU_AI_API_KEY`.
+The Go package lane covers package behavior. The Go HTTP executable is not
+started in this PostgreSQL CI stack.
+
 The isolated browser lane covers document role controls and conflict handling,
 navigation permissions, wrong password, HTTP/envelope session expiry, logout,
 empty upload selection, removal/cancel, rejection and retry. Its upload 400/413
@@ -129,6 +137,11 @@ do not transfer a failed or stale result to the new identity.
 `tests.yml` and `sep-tests.yml` run requirements, PostgreSQL races, the document
 coverage gate, Web/admin APIs and live browser journeys alongside their existing
 unit/SDK/REST lanes. Go coverage is no longer reduced by package exclusions.
+The Infinity job starts the built Go API in its disposable application container
+and requires a Go-marked ping and healthy dependency response. This is a Go
+server smoke check; the full SDK, REST and browser journeys still use the
+configured Python API. `sep-tests.yml` selects changed lanes from the complete
+push or PR diff and runs every lane for tags, schedules and unclassified inputs.
 
 The coverage floors prevent regression from the measured baseline; they are
 not a claim that every application route or every negative case is covered.

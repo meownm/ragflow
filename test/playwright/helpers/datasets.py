@@ -29,20 +29,10 @@ def wait_for_dataset_detail_ready(page, expect, timeout_ms: int) -> None:
         except Exception:
             pass
 
-    heading = page.locator("[role='heading']").first
-    main = page.locator("[role='main']").first
-    if main.count() > 0:
-        anchor = main.locator("text=/\\b(add|upload|file|document)\\b/i").first
-    else:
-        anchor = page.locator("text=/\\b(add|upload|file|document)\\b/i").first
+    main = page.get_by_role("main")
     try:
-        if heading.count() > 0:
-            expect(heading).to_be_visible(timeout=timeout_ms)
-            return
-        if main.count() > 0:
-            expect(main).to_be_visible(timeout=timeout_ms)
-            return
-        expect(anchor).to_be_visible(timeout=timeout_ms)
+        expect(main).to_be_visible(timeout=timeout_ms)
+        expect(main.get_by_role("button", name=re.compile(r"^Add file$", re.I))).to_be_visible(timeout=timeout_ms)
     except AssertionError:
         if env_bool("PW_DEBUG_DUMP"):
             url = page.url

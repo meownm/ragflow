@@ -111,7 +111,7 @@ jobs:
         run: |
           set -euo pipefail
           uv venv --python 3.13 "${RUNNER_TEMP}/ci-hook-venv"
-          uv pip install --python "${RUNNER_TEMP}/ci-hook-venv/bin/python" 'ruff==0.15.5'
+          uv pip install --python "${RUNNER_TEMP}/ci-hook-venv/bin/python" 'ruff==0.15.5' 'PyYAML==6.0.3'
           echo "${RUNNER_TEMP}/ci-hook-venv/bin" >> "${GITHUB_PATH}"
 
       - name: Run Lefthook on changed files

@@ -597,10 +597,10 @@ jobs:
           fi
 
           run_cli "${LOG_FILE}" $CLI --type user --host "$USER_HOST" --port "$USER_PORT" --username "$EMAIL" --password "$PASS" command "show version"
-          run_cli "${LOG_FILE}" $CLI --type user --host "$USER_HOST" --port "$USER_PORT" --username "$EMAIL" --password "$PASS" command "create dataset '$DATASET' with embedding 'BAAI/bge-small-en-v1.5@Builtin' parser 'auto'"
-          run_cli "${LOG_FILE}" $CLI --type user --host "$USER_HOST" --port "$USER_PORT" --username "$EMAIL" --password "$PASS" command "import 'test/benchmark/test_docs/Doc1.pdf,test/benchmark/test_docs/Doc2.pdf' into dataset '$DATASET'"
-          run_cli "${LOG_FILE}" $CLI --type user --host "$USER_HOST" --port "$USER_PORT" --username "$EMAIL" --password "$PASS" command "parse dataset '$DATASET' sync"
-          run_cli "${LOG_FILE}" $CLI --type user --host "$USER_HOST" --port "$USER_PORT" --username "$EMAIL" --password "$PASS" command "Benchmark 16 100 search 'what are these documents about' on datasets '$DATASET'"
+          run_cli "${LOG_FILE}" $CLI --type user --host "$USER_HOST" --port "$USER_PORT" --username "admin@ragflow.io" --password "admin" command "create dataset '$DATASET' with embedding 'BAAI/bge-small-en-v1.5@Builtin' parser 'auto'"
+          run_cli "${LOG_FILE}" $CLI --type user --host "$USER_HOST" --port "$USER_PORT" --username "admin@ragflow.io" --password "admin" command "import 'test/benchmark/test_docs/Doc1.pdf,test/benchmark/test_docs/Doc2.pdf' into dataset '$DATASET'"
+          run_cli "${LOG_FILE}" $CLI --type user --host "$USER_HOST" --port "$USER_PORT" --username "admin@ragflow.io" --password "admin" command "parse dataset '$DATASET' sync"
+          run_cli "${LOG_FILE}" $CLI --type user --host "$USER_HOST" --port "$USER_PORT" --username "admin@ragflow.io" --password "admin" command "Benchmark 16 100 search 'what are these documents about' on datasets '$DATASET'"
 
       - name: Live browser upload chat and search against Infinity
         if: env.HAS_PYTHON == 'true'
@@ -1067,10 +1067,10 @@ jobs:
           fi
 
           run_cli "${LOG_FILE}" $CLI --type user --host "$USER_HOST" --port "$USER_PORT" --username "$EMAIL" --password "$PASS" command "show version"
-          run_cli "${LOG_FILE}" $CLI --type user --host "$USER_HOST" --port "$USER_PORT" --username "$EMAIL" --password "$PASS" command "create dataset '$DATASET' with embedding 'BAAI/bge-small-en-v1.5@Builtin' parser 'auto'"
-          run_cli "${LOG_FILE}" $CLI --type user --host "$USER_HOST" --port "$USER_PORT" --username "$EMAIL" --password "$PASS" command "import 'test/benchmark/test_docs/Doc1.pdf,test/benchmark/test_docs/Doc2.pdf' into dataset '$DATASET'"
-          run_cli "${LOG_FILE}" $CLI --type user --host "$USER_HOST" --port "$USER_PORT" --username "$EMAIL" --password "$PASS" command "parse dataset '$DATASET' sync"
-          run_cli "${LOG_FILE}" $CLI --type user --host "$USER_HOST" --port "$USER_PORT" --username "$EMAIL" --password "$PASS" command "Benchmark 16 100 search 'what are these documents about' on datasets '$DATASET'"
+          run_cli "${LOG_FILE}" $CLI --type user --host "$USER_HOST" --port "$USER_PORT" --username "admin@ragflow.io" --password "admin" command "create dataset '$DATASET' with embedding 'BAAI/bge-small-en-v1.5@Builtin' parser 'auto'"
+          run_cli "${LOG_FILE}" $CLI --type user --host "$USER_HOST" --port "$USER_PORT" --username "admin@ragflow.io" --password "admin" command "import 'test/benchmark/test_docs/Doc1.pdf,test/benchmark/test_docs/Doc2.pdf' into dataset '$DATASET'"
+          run_cli "${LOG_FILE}" $CLI --type user --host "$USER_HOST" --port "$USER_PORT" --username "admin@ragflow.io" --password "admin" command "parse dataset '$DATASET' sync"
+          run_cli "${LOG_FILE}" $CLI --type user --host "$USER_HOST" --port "$USER_PORT" --username "admin@ragflow.io" --password "admin" command "Benchmark 16 100 search 'what are these documents about' on datasets '$DATASET'"
 
       - name: Live browser upload chat and search against Elasticsearch
         if: env.HAS_PYTHON == 'true'

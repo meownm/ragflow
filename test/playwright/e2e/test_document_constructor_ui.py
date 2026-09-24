@@ -1001,6 +1001,7 @@ def _open_constructor(page, base_url):
         re.compile(r"/document-constructor\?surface=template$"),
         timeout=RESULT_TIMEOUT_MS,
     )
+    expect(page.get_by_test_id("document-constructor-inspector")).to_be_visible()
 
 
 @pytest.mark.p1
@@ -1113,6 +1114,7 @@ def test_sql_agent_mvp_golden_from_request_to_document(page, base_url, tmp_path)
 
     _open_constructor(page, base_url)
     page.get_by_test_id("document-constructor-sql-surface").click()
+    expect(page).to_have_url(re.compile(r"/document-constructor$"))
     workbench = page.get_by_test_id("sql-agent-workbench")
     expect(workbench).to_be_visible()
     expect(workbench).to_contain_text("Соберите SQL-запрос по требованиям")

@@ -806,6 +806,8 @@ def flow_context(browser, request):
     args = dict(browser_context_args)
     args.setdefault("ignore_https_errors", True)
     ctx = browser.new_context(**args)
+    if os.getenv("RAGFLOW_CI_CHAT_MODEL_URL"):
+        ctx.add_init_script("try { window.localStorage.setItem('lng', 'en') } catch {}")
     yield ctx
     ctx.close()
 

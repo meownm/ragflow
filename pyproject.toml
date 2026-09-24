@@ -198,6 +198,7 @@ test = [
     "requests>=2.32.2",
     "requests-toolbelt>=1.0.0",
     "pycryptodomex==3.20.0",
+    "playwright==1.61.0",
     "pytest-playwright>=0.7.2",
     "codecov>=2.1.13",
 ]
@@ -226,7 +227,7 @@ override-dependencies = [
     # attrs 23.x is backward-compatible; moodlepy works fine at runtime with it.
     "attrs>=23.2.0",
 ]
-# trio 0.26+ (Python 3.13 compatible) is not yet on the Aliyun mirror.
+# trio 0.26+ and Playwright 1.61+ are not yet on the Aliyun mirror.
 # Mark PyPI as explicit so it is used only for packages listed in [tool.uv.sources].
 [[tool.uv.index]]
 name = "pypi"
@@ -238,6 +239,7 @@ url = "https://mirrors.aliyun.com/pypi/simple"
 
 [tool.uv.sources]
 trio = [{ index = "pypi" }]
+playwright = [{ index = "pypi" }]
 
 [tool.setuptools]
 packages = [

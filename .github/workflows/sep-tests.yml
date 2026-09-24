@@ -107,6 +107,13 @@ jobs:
 #            fi
 #          fi
 
+      - name: Prepare CI hook tools
+        run: |
+          set -euo pipefail
+          uv venv --python 3.13 "${RUNNER_TEMP}/ci-hook-venv"
+          uv pip install --python "${RUNNER_TEMP}/ci-hook-venv/bin/python" 'ruff==0.15.5'
+          echo "${RUNNER_TEMP}/ci-hook-venv/bin" >> "${GITHUB_PATH}"
+
       - name: Run Lefthook on changed files
         run: |
           set -euo pipefail

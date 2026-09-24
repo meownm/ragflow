@@ -307,7 +307,7 @@ class TestDocumentMetadataUnit:
         # Call with empty dataset_id (should fail validation)
         res = document_metadata_update(WebApiAuth, "", {"dataset_id": "", "selector": {"document_ids": ["doc1"]}, "updates": []})
         assert res["code"] == 100
-        assert res["message"] == "<MethodNotAllowed '405: Method Not Allowed'>", res
+        assert res["message"] == "Internal server error", res
 
     @pytest.mark.p3
     def test_update_metadata_success(self, WebApiAuth, add_document_func):
@@ -377,8 +377,8 @@ class TestDocumentMetadataUnit:
         monkeypatch.setattr(module, "make_response", fake_make_response)
         monkeypatch.setattr(
             module,
-            "apply_safe_file_response_headers",
-            lambda response, content_type, extension: response.headers.update({"content_type": content_type, "extension": extension}),
+            "apply_preview_file_response_headers",
+            lambda response, content_type, extension, _filename: response.headers.update({"content_type": content_type, "extension": extension}),
         )
         res = _run(module.get("doc1"))
         assert isinstance(res, _DummyResponse)
@@ -392,54 +392,28 @@ class TestDocumentMetadataUnit:
         assert res["code"] == 500
         assert "get boom" in res["message"]
 
-    def test_download_attachment_success_and_exception_unit(self, document_app_module, monkeypatch):
-        module = document_app_module
-        monkeypatch.setattr(module, "request", _DummyRequest(args={"ext": "abc"}))
-
-        # Cross-tenant access is denied -> "Document not found!" (no ID enumeration).
-        accessible_calls = []
-
-        def fake_accessible_denied(doc_id, user_id):
-            accessible_calls.append((doc_id, user_id))
-            return False
-
-        monkeypatch.setattr(module.DocumentService, "accessible", fake_accessible_denied)
-        res = _run(module.download_attachment(attachment_id="att1"))
-        assert res["code"] == RetCode.DATA_ERROR
-        assert "Document not found!" in res["message"]
-        assert accessible_calls == [("att1", "user-1")]
-
-        # From here on the user is authorized; exercise the original branches.
+    def test_download_document_success_and_empty_blob_unit(self, document_rest_api_module, monkeypatch):
+        module = document_rest_api_module
+        doc = SimpleNamespace(name="report.pdf")
         monkeypatch.setattr(module.DocumentService, "accessible", lambda _doc_id, _user_id: True)
+        monkeypatch.setattr(module.DocumentService, "query", lambda **_kwargs: [doc])
+        monkeypatch.setattr(module.File2DocumentService, "get_storage_address", lambda **_kwargs: ("bucket", "object"))
+        monkeypatch.setattr(module, "_mimetype_for_document", lambda _doc: "application/pdf")
+        monkeypatch.setattr(module.settings, "STORAGE_IMPL", SimpleNamespace(get=lambda *_args: b"document"))
 
-        async def fake_thread_pool_exec(*_args, **_kwargs):
-            return b"attachment"
+        async def fake_send_file(file, **kwargs):
+            return {"body": file.read(), **kwargs}
 
-        async def fake_make_response(data):
-            return _DummyResponse(data)
+        monkeypatch.setattr(module, "send_file", fake_send_file)
+        res = _run(module.download_document("doc1"))
+        assert res["body"] == b"document"
+        assert res["attachment_filename"] == "report.pdf"
+        assert res["mimetype"] == "application/pdf"
 
-        monkeypatch.setattr(module, "thread_pool_exec", fake_thread_pool_exec)
-        monkeypatch.setattr(module, "make_response", fake_make_response)
-        monkeypatch.setattr(module.settings, "STORAGE_IMPL", SimpleNamespace(get=lambda *_args, **_kwargs: b"attachment"))
-        monkeypatch.setattr(
-            module,
-            "apply_safe_file_response_headers",
-            lambda response, content_type, extension: response.headers.update({"content_type": content_type, "extension": extension}),
-        )
-        res = _run(module.download_attachment(attachment_id="att1"))
-        assert isinstance(res, _DummyResponse)
-        assert res.data == b"attachment"
-        assert res.headers["content_type"] == "application/abc"
-        assert res.headers["extension"] == "abc"
-
-        async def raise_error(*_args, **_kwargs):
-            raise RuntimeError("download boom")
-
-        monkeypatch.setattr(module, "thread_pool_exec", raise_error)
-        monkeypatch.setattr(module, "server_error_response", lambda e: {"code": 500, "message": str(e)})
-        res = _run(module.download_attachment(attachment_id="att1"))
-        assert res["code"] == 500
-        assert "download boom" in res["message"]
+        monkeypatch.setattr(module.settings, "STORAGE_IMPL", SimpleNamespace(get=lambda *_args: None))
+        res = _run(module.download_document("doc1"))
+        assert res["code"] == RetCode.DATA_ERROR
+        assert res["message"] == "This file is empty."
 
     def test_download_document_rejects_other_tenant_unit(self, document_rest_api_module, monkeypatch):
         module = document_rest_api_module
@@ -486,6 +460,7 @@ class TestDocumentMetadataUnit:
 
         monkeypatch.setattr(module, "thread_pool_exec", fake_thread_pool_exec)
         monkeypatch.setattr(module, "make_response", fake_make_response)
+        monkeypatch.setattr(module.settings, "STORAGE_IMPL", SimpleNamespace(get=lambda *_args: png_bytes))
         res = _run(module.get_document_image("kb1-object.png"))
         assert isinstance(res, _ImageResponse)
         assert res.headers["Content-Type"] == "image/png"
@@ -518,6 +493,7 @@ class TestDocumentMetadataUnit:
 
         monkeypatch.setattr(module, "thread_pool_exec", fake_thread_pool_exec)
         monkeypatch.setattr(module, "make_response", fake_make_response)
+        monkeypatch.setattr(module.settings, "STORAGE_IMPL", SimpleNamespace(get=lambda *_args: png_bytes))
         res = _run(module.get_document_image("kb1-a1b2c3d4e5f6"))
         assert isinstance(res, _ImageResponse)
         assert res.headers["Content-Type"] == "image/png"
@@ -530,6 +506,7 @@ class TestDocumentMetadataUnit:
             return None
 
         monkeypatch.setattr(module, "thread_pool_exec", fake_thread_pool_exec)
+        monkeypatch.setattr(module.settings, "STORAGE_IMPL", SimpleNamespace(get=lambda *_args: None))
         res = _run(module.get_document_image("kb1-object-key"))
         assert res["code"] == RetCode.DATA_ERROR
         assert res["message"] == "Image not found."
@@ -549,45 +526,10 @@ class TestDocumentMetadataUnit:
         )
         monkeypatch.setattr(module.File2DocumentService, "get_storage_address", lambda **_kwargs: ("bucket", "name"))
         monkeypatch.setattr(module, "thread_pool_exec", fake_thread_pool_exec)
+        monkeypatch.setattr(module.settings, "STORAGE_IMPL", SimpleNamespace(get=lambda *_args: None))
         res = _run(module.get("doc1"))
         assert res["code"] == RetCode.DATA_ERROR
         assert res["message"] == "This file is empty."
-
-    @pytest.mark.skip(reason="Moved to /api/v1/documents/images/<image_id>")
-    def test_get_image_success_and_exception_unit(self, document_app_module, monkeypatch):
-        module = document_app_module
-
-        class _Headers(dict):
-            def set(self, key, value):
-                self[key] = value
-
-        class _ImageResponse:
-            def __init__(self, data):
-                self.data = data
-                self.headers = _Headers()
-
-        async def fake_thread_pool_exec(*_args, **_kwargs):
-            return b"image-bytes"
-
-        async def fake_make_response(data):
-            return _ImageResponse(data)
-
-        monkeypatch.setattr(module, "thread_pool_exec", fake_thread_pool_exec)
-        monkeypatch.setattr(module, "make_response", fake_make_response)
-        monkeypatch.setattr(module.settings, "STORAGE_IMPL", SimpleNamespace(get=lambda *_args, **_kwargs: b"image-bytes"))
-        res = _run(module.get_image("bucket-name"))
-        assert isinstance(res, _ImageResponse)
-        assert res.data == b"image-bytes"
-        assert res.headers["Content-Type"] == "image/JPEG"
-
-        async def raise_error(*_args, **_kwargs):
-            raise RuntimeError("image boom")
-
-        monkeypatch.setattr(module, "thread_pool_exec", raise_error)
-        monkeypatch.setattr(module, "server_error_response", lambda e: {"code": 500, "message": str(e)})
-        res = _run(module.get_image("bucket-name"))
-        assert res["code"] == 500
-        assert "image boom" in res["message"]
 
     def test_get_document_image_hyphenated_object_key(self, document_app_module, monkeypatch):
         """Hyphenated thumbnail keys are parsed with split('-', 1) and return correct MIME type."""
@@ -628,7 +570,7 @@ class TestDocumentMetadataUnit:
         assert storage_calls == [("kb12345678901234567890123456789012", "page-1.png")]
         assert res.headers["Content-Type"] == "image/png"
 
-        res = _run(module.get_document_image("only-one-part"))
+        res = _run(module.get_document_image("onlyonepart"))
         assert res["code"] == RetCode.DATA_ERROR
         assert "Image not found" in res["message"]
 
@@ -637,7 +579,9 @@ class TestDocumentMetadataUnit:
         module = document_app_module
         filename = "a1b2c3d4e5f6789012345678901234abcd.png"
 
+        monkeypatch.setattr(module, "request", _DummyRequest())
         monkeypatch.setattr(module, "_sandbox_artifact_dialog_ids_for_user", lambda *_args, **_kwargs: [])
+        monkeypatch.setattr(module, "_sandbox_artifact_session_accessible", lambda *_args, **_kwargs: False)
         res = _run(module.get_artifact(filename))
         assert res["code"] == RetCode.DATA_ERROR
         assert res["message"] == "Artifact not found."
@@ -647,8 +591,10 @@ class TestDocumentMetadataUnit:
         module = document_app_module
         filename = "a1b2c3d4e5f6789012345678901234abcd.png"
 
+        monkeypatch.setattr(module, "request", _DummyRequest())
         monkeypatch.setattr(module, "_sandbox_artifact_dialog_ids_for_user", lambda *_args, **_kwargs: ["agent-1"])
         monkeypatch.setattr(module.UserCanvasService, "accessible", lambda *_args, **_kwargs: False)
+        monkeypatch.setattr(module, "_sandbox_artifact_session_accessible", lambda *_args, **_kwargs: False)
         res = _run(module.get_artifact(filename))
         assert res["code"] == RetCode.DATA_ERROR
         assert res["message"] == "Artifact not found."
@@ -657,6 +603,8 @@ class TestDocumentMetadataUnit:
     def test_get_artifact_success_and_missing_blob_unit(self, document_app_module, monkeypatch):
         module = document_app_module
         filename = "a1b2c3d4e5f6789012345678901234abcd.png"
+
+        monkeypatch.setattr(module, "request", _DummyRequest())
 
         class _Headers(dict):
             def set(self, key, value):

@@ -433,6 +433,15 @@ def _load_agents_app(monkeypatch, *, target="rest"):
     monkeypatch.setitem(sys.modules, "api.apps.services", api_apps_services_pkg)
     api_apps_pkg.services = api_apps_services_pkg
 
+    agent_file_service_mod = ModuleType("api.apps.services.agent_file_service")
+
+    async def _stub_upload_agent_files(*_args, **_kwargs):
+        return []
+
+    agent_file_service_mod.upload_agent_files = _stub_upload_agent_files
+    monkeypatch.setitem(sys.modules, "api.apps.services.agent_file_service", agent_file_service_mod)
+    api_apps_services_pkg.agent_file_service = agent_file_service_mod
+
     canvas_replica_mod = ModuleType("api.apps.services.canvas_replica_service")
 
     class _StubCanvasReplicaService:
@@ -494,6 +503,7 @@ def _load_agents_app(monkeypatch, *, target="rest"):
     module = importlib.util.module_from_spec(spec)
     module.manager = _DummyManager()
     spec.loader.exec_module(module)
+    module.REDIS_CONN = redis_obj
     return module
 
 
@@ -521,7 +531,7 @@ def test_agents_crud_unit_branches(monkeypatch):
 
     captured = {}
 
-    def fake_get_by_tenant_ids(owner_ids, tenant_id, page, page_size, orderby, desc, keywords, canvas_category, tags):
+    def fake_get_by_tenant_ids(owner_ids, tenant_id, page, page_size, orderby, desc, keywords, canvas_category, tags, canvas_type):
         captured["owner_ids"] = owner_ids
         captured["tenant_id"] = tenant_id
         captured["page"] = page
@@ -531,6 +541,7 @@ def test_agents_crud_unit_branches(monkeypatch):
         captured["keywords"] = keywords
         captured["canvas_category"] = canvas_category
         captured["tags"] = tags
+        captured["canvas_type"] = canvas_type
         return [{"id": "agent-1"}], 1
 
     monkeypatch.setattr(module.UserCanvasService, "get_by_tenant_ids", fake_get_by_tenant_ids)
@@ -1028,7 +1039,11 @@ def test_webhook_canvas_constructor_exception(monkeypatch):
         "request",
         _DummyRequest(headers={"Content-Type": "application/json"}, json_body={}),
     )
-    monkeypatch.setattr(module, "Canvas", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("canvas init failed")))
+    monkeypatch.setattr(
+        sys.modules["agent.canvas"],
+        "Canvas",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("canvas init failed")),
+    )
 
     def fake_error_result(*, code, message):
         return SimpleNamespace(code=code, message=message)
@@ -1384,7 +1399,7 @@ def test_webhook_background_run_success_and_error_trace_paths(monkeypatch):
         def __str__(self):
             return "{}"
 
-    monkeypatch.setattr(module, "Canvas", _CanvasSuccess)
+    monkeypatch.setattr(sys.modules["agent.canvas"], "Canvas", _CanvasSuccess)
 
     params = _default_webhook_params(security=_anonymous_security(), content_types="application/json")
     cvs = _make_webhook_cvs(module, params=params)
@@ -1414,7 +1429,7 @@ def test_webhook_background_run_success_and_error_trace_paths(monkeypatch):
             raise RuntimeError("run failed")
             yield {}
 
-    monkeypatch.setattr(module, "Canvas", _CanvasError)
+    monkeypatch.setattr(sys.modules["agent.canvas"], "Canvas", _CanvasError)
     tasks.clear()
     redis_store.clear()
     cvs = _make_webhook_cvs(module, params=params)
@@ -1466,7 +1481,7 @@ def test_webhook_sse_success_and_exception_paths(monkeypatch):
             yield {"event": "message", "data": {"content": "Hello"}}
             yield {"event": "message_end", "data": {"status": "201"}}
 
-    monkeypatch.setattr(module, "Canvas", _CanvasSSESuccess)
+    monkeypatch.setattr(sys.modules["agent.canvas"], "Canvas", _CanvasSSESuccess)
     monkeypatch.setattr(
         module,
         "request",
@@ -1482,7 +1497,7 @@ def test_webhook_sse_success_and_exception_paths(monkeypatch):
             raise RuntimeError("sse failed")
             yield {}
 
-    monkeypatch.setattr(module, "Canvas", _CanvasSSEError)
+    monkeypatch.setattr(sys.modules["agent.canvas"], "Canvas", _CanvasSSEError)
     monkeypatch.setattr(
         module,
         "request",

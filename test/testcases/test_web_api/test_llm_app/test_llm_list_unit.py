@@ -192,6 +192,16 @@ def _load_llm_app(monkeypatch):
     llm_service_mod.LLMService = _StubLLMService
     monkeypatch.setitem(sys.modules, "api.db.services.llm_service", llm_service_mod)
 
+    managed_resource_mod = ModuleType("api.db.services.managed_resource_service")
+
+    class _StubManagedResourceService:
+        @staticmethod
+        def owner_id(user_id):
+            return user_id
+
+    managed_resource_mod.ManagedResourceService = _StubManagedResourceService
+    monkeypatch.setitem(sys.modules, "api.db.services.managed_resource_service", managed_resource_mod)
+
     api_utils_mod = ModuleType("api.utils.api_utils")
     api_utils_mod.get_allowed_llm_factories = lambda: []
     api_utils_mod.get_data_error_result = lambda message="", code=400, data=None: {
@@ -464,9 +474,9 @@ def test_set_api_key_model_probe_matrix_unit(monkeypatch):
             _LLMRow(llm_name="rerank", fid=factory, model_type=module.LLMType.RERANK.value, max_tokens=987),
         ],
     )
-    monkeypatch.setattr(module, "EmbeddingModel", {factory: _EmbeddingFail})
-    monkeypatch.setattr(module, "ChatModel", {factory: _ChatFail})
-    monkeypatch.setattr(module, "RerankModel", {factory: _RerankFail})
+    monkeypatch.setattr(sys.modules["rag.llm"], "EmbeddingModel", {factory: _EmbeddingFail})
+    monkeypatch.setattr(sys.modules["rag.llm"], "ChatModel", {factory: _ChatFail})
+    monkeypatch.setattr(sys.modules["rag.llm"], "RerankModel", {factory: _RerankFail})
 
     req = {"llm_factory": factory, "api_key": "k", "base_url": "http://x", "verify": True}
     _set_request_json(monkeypatch, module, req)
@@ -493,7 +503,7 @@ def test_set_api_key_model_probe_matrix_unit(monkeypatch):
         calls["save"].append(kwargs)
         return True
 
-    monkeypatch.setattr(module, "EmbeddingModel", {factory: _EmbeddingPass})
+    monkeypatch.setattr(sys.modules["rag.llm"], "EmbeddingModel", {factory: _EmbeddingPass})
     monkeypatch.setattr(module.LLMService, "query", lambda **_kwargs: [_LLMRow(llm_name="emb-pass", fid=factory, model_type=module.LLMType.EMBEDDING.value, max_tokens=2049)])
     monkeypatch.setattr(module.TenantLLMService, "filter_update", _filter_update)
     monkeypatch.setattr(module.TenantLLMService, "save", _save)
@@ -569,8 +579,8 @@ def test_add_llm_factory_specific_key_assembly_unit(monkeypatch):
         def tts(self, _text):
             yield b"ok"
 
-    monkeypatch.setattr(module, "ChatModel", {name: _ChatOK for name in allowed})
-    monkeypatch.setattr(module, "TTSModel", {"XunFei Spark": _TTSOK})
+    monkeypatch.setattr(sys.modules["rag.llm"], "ChatModel", {name: _ChatOK for name in allowed})
+    monkeypatch.setattr(sys.modules["rag.llm"], "TTSModel", {"XunFei Spark": _TTSOK})
     monkeypatch.setattr(module.TenantLLMService, "filter_update", lambda _filters, payload: captured["filter_payloads"].append(dict(payload)) or True)
 
     reject_req = {"llm_factory": "NotAllowed", "llm_name": "x", "model_type": module.LLMType.CHAT.value}
@@ -786,13 +796,13 @@ def test_add_llm_model_type_probe_and_persistence_matrix_unit(monkeypatch):
                 raise KeyError("rerank key fail")
             return super().__getitem__(key)
 
-    monkeypatch.setattr(module, "EmbeddingModel", {"FEmbFail": _EmbeddingFail, "FEmbPass": _EmbeddingPass})
-    monkeypatch.setattr(module, "ChatModel", {"FChatFail": _ChatFail, "FChatPass": _ChatPass})
-    monkeypatch.setattr(module, "RerankModel", _RerankKeyMap({"FRFail": _RerankFail}))
-    monkeypatch.setattr(module, "CvModel", {"FImgFail": _CvFail})
-    monkeypatch.setattr(module, "TTSModel", {"FTTSFail": _TTSFail})
-    monkeypatch.setattr(module, "OcrModel", {"FOcrFail": _OcrFail})
-    monkeypatch.setattr(module, "Seq2txtModel", {"FSttFail": _SttFail})
+    monkeypatch.setattr(sys.modules["rag.llm"], "EmbeddingModel", {"FEmbFail": _EmbeddingFail, "FEmbPass": _EmbeddingPass})
+    monkeypatch.setattr(sys.modules["rag.llm"], "ChatModel", {"FChatFail": _ChatFail, "FChatPass": _ChatPass})
+    monkeypatch.setattr(sys.modules["rag.llm"], "RerankModel", _RerankKeyMap({"FRFail": _RerankFail}))
+    monkeypatch.setattr(sys.modules["rag.llm"], "CvModel", {"FImgFail": _CvFail})
+    monkeypatch.setattr(sys.modules["rag.llm"], "TTSModel", {"FTTSFail": _TTSFail})
+    monkeypatch.setattr(sys.modules["rag.llm"], "OcrModel", {"FOcrFail": _OcrFail})
+    monkeypatch.setattr(sys.modules["rag.llm"], "Seq2txtModel", {"FSttFail": _SttFail})
 
     def _call(req):
         _set_request_json(monkeypatch, module, req)

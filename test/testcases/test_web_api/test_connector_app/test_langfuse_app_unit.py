@@ -150,7 +150,7 @@ def test_set_api_key_create_update_and_atomic_exception(monkeypatch):
     monkeypatch.setattr(module.TenantLangfuseService, "save", raise_save)
     res = _run(module.set_api_key.__wrapped__())
     assert res["code"] == 100
-    assert "save failed" in res["message"]
+    assert res["message"] == "Internal server error"
 
 
 @pytest.mark.p2
@@ -185,7 +185,7 @@ def test_get_api_key_no_record_invalid_auth_api_error_generic_error_success(monk
     )
     res = module.get_api_key.__wrapped__()
     assert res["code"] == 100
-    assert "generic exploded" in res["message"]
+    assert res["message"] == "Internal server error"
 
     monkeypatch.setattr(module, "Langfuse", lambda **_kwargs: _FakeLangfuseClient(auth_result=True))
     res = module.get_api_key.__wrapped__()
@@ -216,4 +216,4 @@ def test_delete_api_key_no_record_success_exception(monkeypatch):
     monkeypatch.setattr(module.TenantLangfuseService, "delete_model", raise_delete)
     res = module.delete_api_key.__wrapped__()
     assert res["code"] == 100
-    assert "delete failed" in res["message"]
+    assert res["message"] == "Internal server error"

@@ -77,7 +77,7 @@ def _load_code_exec_runtime_module():
     class _FakeFileService:
         @staticmethod
         def parse(*_args, **_kwargs):
-            return ""
+            return "parsed artifact"
 
     file_service_module.FileService = _FakeFileService
 

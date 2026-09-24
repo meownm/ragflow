@@ -67,46 +67,13 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Check workflow duplication
-        if: ${{ !cancelled() && !failure() }}
+      - name: Prepare artifacts directory
         run: |
-          if [[ ${GITHUB_EVENT_NAME} != "pull_request" && ${GITHUB_EVENT_NAME} != "schedule" ]]; then
-            HEAD=$(git rev-parse HEAD)
-            # Find a PR that introduced a given commit
-            gh auth login --with-token <<< "${{ secrets.GITHUB_TOKEN }}"
-            PR_NUMBER=$(gh pr list --search ${HEAD} --state merged --json number --jq .[0].number)
-            echo "HEAD=${HEAD}"
-            echo "PR_NUMBER=${PR_NUMBER}"
-            if [[ -n "${PR_NUMBER}" ]]; then
-              PR_SHA_FP=${RUNNER_WORKSPACE_PREFIX}/artifacts/${GITHUB_REPOSITORY}/PR_${PR_NUMBER}
-              if [[ -f "${PR_SHA_FP}" ]]; then
-                read -r PR_SHA PR_RUN_ID < "${PR_SHA_FP}"
-                # Calculate the hash of the current workspace content
-                HEAD_SHA=$(git rev-parse HEAD^{tree})
-                if [[ "${HEAD_SHA}" == "${PR_SHA}" ]]; then
-                  echo "Cancel myself since the workspace content hash is the same with PR #${PR_NUMBER} merged. See ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${PR_RUN_ID} for details."
-                  gh run cancel ${GITHUB_RUN_ID}
-                  while true; do
-                    status=$(gh run view ${GITHUB_RUN_ID} --json status -q .status)
-                    [ "${status}" = "completed" ] && break
-                    sleep 5
-                  done
-                  exit 1
-                fi
-              fi
-            fi
-          elif [[ ${GITHUB_EVENT_NAME} == "pull_request" ]]; then
-            PR_NUMBER=${{ github.event.pull_request.number }}
-            PR_SHA_FP=${RUNNER_WORKSPACE_PREFIX}/artifacts/${GITHUB_REPOSITORY}/PR_${PR_NUMBER}
-            # Calculate the hash of the current workspace content
-            PR_SHA=$(git rev-parse HEAD^{tree})
-            echo "PR #${PR_NUMBER} workspace content hash: ${PR_SHA}"
-            mkdir -p ${RUNNER_WORKSPACE_PREFIX}/artifacts/${GITHUB_REPOSITORY}
-            echo "${PR_SHA} ${GITHUB_RUN_ID}" > ${PR_SHA_FP}
-          fi
-          ARTIFACTS_DIR=${RUNNER_WORKSPACE_PREFIX}/artifacts/${GITHUB_REPOSITORY}/${GITHUB_RUN_ID}
-          echo "ARTIFACTS_DIR=${ARTIFACTS_DIR}" >> ${GITHUB_ENV}
-          rm -rf ${ARTIFACTS_DIR} && mkdir -p ${ARTIFACTS_DIR}
+          set -euo pipefail
+          ARTIFACTS_DIR="${RUNNER_WORKSPACE_PREFIX}/artifacts/${GITHUB_REPOSITORY}/${GITHUB_RUN_ID}"
+          echo "ARTIFACTS_DIR=${ARTIFACTS_DIR}" >> "${GITHUB_ENV}"
+          rm -rf -- "${ARTIFACTS_DIR}"
+          mkdir -p -- "${ARTIFACTS_DIR}"
 
 #      - name: Check comments of changed Python files
 #        if: ${{ false }}
@@ -176,44 +143,10 @@ jobs:
 
       - name: Detect changed file types
         id: detect_changes
-        run: |
-          set -euo pipefail
-          has_go=false
-          has_python=false
-          has_web=false
-
-          if [[ "${GITHUB_EVENT_NAME}" == "schedule" ]]; then
-            has_go=true
-            has_python=true
-            has_web=true
-          else
-            if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
-              CHANGED_FILES=$(git diff --name-only ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }})
-            else
-              CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD)
-            fi
-
-            while IFS= read -r file; do
-              case "$file" in
-                *.go|go.mod|go.sum)                      has_go=true ;;
-                *.py|pyproject.toml|requirements*.txt)    has_python=true ;;
-                web/*)                                    has_web=true ;;
-                Dockerfile|docker-compose*.yml)  has_go=true; has_python=true ;;
-                build.sh)                        has_go=true ;;
-              esac
-            done <<< "$CHANGED_FILES"
-
-            if [[ "$has_go" == "false" && "$has_python" == "false" && "$has_web" == "false" ]]; then
-              has_go=true
-              has_python=true
-              has_web=true
-            fi
-          fi
-
-          echo "has_go_changes=${has_go}"        >> $GITHUB_OUTPUT
-          echo "has_python_changes=${has_python}" >> $GITHUB_OUTPUT
-          echo "has_web_changes=${has_web}"       >> $GITHUB_OUTPUT
-          echo "Go: ${has_go}, Python: ${has_python}, Web: ${has_web}"
+        env:
+          CI_BEFORE: ${{ github.event.before }}
+          CI_PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: bash deployment/runner/select-ci-lanes.sh
 
       - name: Prepare Python test environment
         if: steps.detect_changes.outputs.has_python_changes == 'true'
@@ -383,7 +316,9 @@ jobs:
                  local base port
                  for base in "${PORT_BASES[@]}"; do
                    port=$((base + offset))
-                   if ss -ltnH "sport = :${port}" | grep -q .; then
+                   # The runner is containerized: ss sees its namespace, while Docker
+                   # publishes ports in the daemon's namespace.
+                   if ss -ltnH "sport = :${port}" | grep -q . || sudo docker ps --filter "publish=${port}" --format '{{.ID}}' | grep -q .; then
                      return 1
                    fi
                  done
@@ -668,6 +603,10 @@ jobs:
           python -m playwright install --with-deps chromium
           pytest test/playwright/e2e/test_dataset_upload_parse.py test/playwright/e2e/test_next_apps_chat.py test/playwright/e2e/test_next_apps_search.py
 
+      - name: Smoke Go HTTP server against Infinity
+        if: env.HAS_GO == 'true'
+        run: sudo docker exec -i "${RAGFLOW_CONTAINER}" bash -s < test/go_http_smoke.sh
+
       - name: Stop ragflow to save coverage Infinity
         if: ${{ !cancelled() && env.HAS_PYTHON == 'true' }}
         run: |
@@ -847,7 +786,9 @@ jobs:
                  local base port
                  for base in "${PORT_BASES[@]}"; do
                    port=$((base + offset))
-                   if ss -ltnH "sport = :${port}" | grep -q .; then
+                   # The runner is containerized: ss sees its namespace, while Docker
+                   # publishes ports in the daemon's namespace.
+                   if ss -ltnH "sport = :${port}" | grep -q . || sudo docker ps --filter "publish=${port}" --format '{{.ID}}' | grep -q .; then
                      return 1
                    fi
                  done

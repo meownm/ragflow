@@ -258,7 +258,7 @@ class TestDocumentsUploadUnit:
         fp = create_txt_file(tmp_path / "ragflow_test.txt")
         res = upload_documents(WebApiAuth, {"kb_id": ""}, [fp])
         assert res["code"] == 100
-        assert res["message"] == "<MethodNotAllowed '405: Method Not Allowed'>"
+        assert res["message"] == "Internal server error"
 
     def test_missing_file_part(self, WebApiAuth, add_dataset_func):
         """Test that missing file part returns error"""
@@ -347,7 +347,7 @@ class TestWebCrawlUnit:
         kb = SimpleNamespace(id="kb1", tenant_id="tenant1", name="kb", parser_id="parser", pipeline_id="pipe", parser_config={})
         monkeypatch.setattr(module, "is_valid_url", lambda _url: True)
         monkeypatch.setattr(module.KnowledgebaseService, "get_by_id", lambda _kb_id: (True, kb))
-        monkeypatch.setattr(module, "check_kb_team_permission", lambda *_args, **_kwargs: False)
+        monkeypatch.setattr(module.KnowledgebaseService, "accessible", lambda *_args, **_kwargs: False)
         monkeypatch.setattr(
             module,
             "request",
@@ -362,7 +362,7 @@ class TestWebCrawlUnit:
         kb = SimpleNamespace(id="kb1", tenant_id="tenant1", name="kb", parser_id="parser", pipeline_id="pipe", parser_config={})
         monkeypatch.setattr(module, "is_valid_url", lambda _url: True)
         monkeypatch.setattr(module.KnowledgebaseService, "get_by_id", lambda _kb_id: (True, kb))
-        monkeypatch.setattr(module, "check_kb_team_permission", lambda *_args, **_kwargs: True)
+        monkeypatch.setattr(module.KnowledgebaseService, "accessible", lambda *_args, **_kwargs: True)
         monkeypatch.setattr(module, "html2pdf", lambda _url: None)
         monkeypatch.setattr(
             module,
@@ -371,14 +371,14 @@ class TestWebCrawlUnit:
         )
         res = _run(module.upload_document(dataset_id="kb1"))
         assert res["code"] == 100
-        assert "Download failure" in res["message"]
+        assert res["message"] == "Internal server error"
 
     def test_unsupported_type(self, document_rest_api_module, monkeypatch):
         module = document_rest_api_module
         kb = SimpleNamespace(id="kb1", tenant_id="tenant1", name="kb", parser_id="parser", pipeline_id="pipe", parser_config={})
         monkeypatch.setattr(module, "is_valid_url", lambda _url: True)
         monkeypatch.setattr(module.KnowledgebaseService, "get_by_id", lambda _kb_id: (True, kb))
-        monkeypatch.setattr(module, "check_kb_team_permission", lambda *_args, **_kwargs: True)
+        monkeypatch.setattr(module.KnowledgebaseService, "accessible", lambda *_args, **_kwargs: True)
         monkeypatch.setattr(module, "html2pdf", lambda _url: b"%PDF-1.4")
         monkeypatch.setattr(module.FileService, "get_root_folder", lambda _uid: {"id": "root"})
         monkeypatch.setattr(module.FileService, "init_knowledgebase_docs", lambda *_args, **_kwargs: None)
@@ -392,7 +392,7 @@ class TestWebCrawlUnit:
         )
         res = _run(module.upload_document(dataset_id="kb1"))
         assert res["code"] == 100
-        assert "supported yet" in res["message"]
+        assert res["message"] == "Internal server error"
 
     @pytest.mark.parametrize(
         "filename,filetype,expected_parser",
@@ -420,7 +420,7 @@ class TestWebCrawlUnit:
 
         monkeypatch.setattr(module, "is_valid_url", lambda _url: True)
         monkeypatch.setattr(module.KnowledgebaseService, "get_by_id", lambda _kb_id: (True, kb))
-        monkeypatch.setattr(module, "check_kb_team_permission", lambda *_args, **_kwargs: True)
+        monkeypatch.setattr(module.KnowledgebaseService, "accessible", lambda *_args, **_kwargs: True)
         monkeypatch.setattr(module, "html2pdf", lambda _url: b"%PDF-1.4")
         monkeypatch.setattr(module.FileService, "get_root_folder", lambda _uid: {"id": "root"})
         monkeypatch.setattr(module.FileService, "init_knowledgebase_docs", lambda *_args, **_kwargs: None)
@@ -460,7 +460,7 @@ class TestWebCrawlUnit:
 
         monkeypatch.setattr(module, "is_valid_url", lambda _url: True)
         monkeypatch.setattr(module.KnowledgebaseService, "get_by_id", lambda _kb_id: (True, kb))
-        monkeypatch.setattr(module, "check_kb_team_permission", lambda *_args, **_kwargs: True)
+        monkeypatch.setattr(module.KnowledgebaseService, "accessible", lambda *_args, **_kwargs: True)
         monkeypatch.setattr(module, "html2pdf", lambda _url: b"%PDF-1.4")
         monkeypatch.setattr(module.FileService, "get_root_folder", lambda _uid: {"id": "root"})
         monkeypatch.setattr(module.FileService, "init_knowledgebase_docs", lambda *_args, **_kwargs: None)

@@ -41,6 +41,8 @@ account, Builtin embedding, and two local OpenAI-compatible chat responders.
 It exercises real browser, API, ingestion, retrieval, and chat-stream wiring;
 the deterministic chat responses do not measure model answer quality. Outside
 CI, this lane requires a configured chat provider or `ZHIPU_AI_API_KEY`.
+The Go HTTP smoke starts a separate disposable MySQL service for the Go DAO;
+the Python API in the same CI project continues to use PostgreSQL.
 
 The isolated browser lane covers document role controls and conflict handling,
 navigation permissions, wrong password, HTTP/envelope session expiry, logout,

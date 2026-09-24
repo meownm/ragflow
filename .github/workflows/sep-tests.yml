@@ -613,7 +613,10 @@ jobs:
 
       - name: Smoke Go HTTP server against Infinity
         if: env.HAS_GO == 'true'
-        run: sudo docker exec -i "${RAGFLOW_CONTAINER}" bash -s < test/go_http_smoke.sh
+        run: |
+          # Go metadata access currently uses MySQL; keep it isolated from the Python PostgreSQL stack.
+          sudo docker compose -f docker/docker-compose.yml -f docker/docker-compose.ci-postgres.yml --profile mysql-disabled -p "${COMPOSE_PROJECT_NAME}" up -d --wait mysql
+          sudo docker exec -i -e DB_TYPE=mysql "${RAGFLOW_CONTAINER}" bash -s < test/go_http_smoke.sh
 
       - name: Stop ragflow to save coverage Infinity
         if: ${{ !cancelled() && env.HAS_PYTHON == 'true' }}

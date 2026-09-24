@@ -23,3 +23,5 @@ if [[ "${ci_chat_ready}" -ne 1 ]]; then
   exit 1
 fi
 export RAGFLOW_CI_CHAT_MODEL_URL="http://${ci_chat_container}:8000/v1"
+export E2E_ADMIN_EMAIL="admin@ragflow.io"
+export E2E_ADMIN_PASSWORD="admin"

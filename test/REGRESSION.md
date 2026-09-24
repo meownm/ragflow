@@ -36,11 +36,11 @@ and state fixtures. Missing prerequisites fail rather than count as skipped
 steps. Unhandled page exceptions fail the test. Failure evidence is written
 under `test/playwright/artifacts/<browser>`.
 
-In GitHub CI, the live browser lane uses the disposable Compose stack, Builtin
-embedding, and two local OpenAI-compatible chat responders. It exercises real
-browser, API, ingestion, retrieval, and chat-stream wiring; the deterministic
-chat responses do not measure model answer quality. Outside CI, this lane
-requires a configured chat provider or `ZHIPU_AI_API_KEY`.
+In GitHub CI, the live browser lane uses the disposable Compose stack's admin
+account, Builtin embedding, and two local OpenAI-compatible chat responders.
+It exercises real browser, API, ingestion, retrieval, and chat-stream wiring;
+the deterministic chat responses do not measure model answer quality. Outside
+CI, this lane requires a configured chat provider or `ZHIPU_AI_API_KEY`.
 
 The isolated browser lane covers document role controls and conflict handling,
 navigation permissions, wrong password, HTTP/envelope session expiry, logout,

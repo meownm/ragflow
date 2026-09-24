@@ -39,7 +39,7 @@ const ChunkMethodName = 'chunk_method';
 
 export function InputForm({ onOk }: IModalProps<any>) {
   const { t } = useTranslation();
-  const defaultModelDictionary = useFetchDefaultModelDictionary();
+  const defaultModelDictionary = useFetchDefaultModelDictionary(true);
 
   const FormSchema = z
     .object({

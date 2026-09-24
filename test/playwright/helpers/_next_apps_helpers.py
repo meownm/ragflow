@@ -46,7 +46,7 @@ def _nav_click(page, testid: str) -> None:
         except Exception:
             page.goto(expected_path, wait_until="domcontentloaded")
 
-    locator = page.locator(f"[data-testid='{testid}']")
+    locator = page.locator(f"[data-testid='{testid}']:visible")
     if locator.count() > 0:
         expect(locator.first).to_be_visible(timeout=RESULT_TIMEOUT_MS)
         locator.first.click()
@@ -61,15 +61,7 @@ def _nav_click(page, testid: str) -> None:
     label = nav_text_map.get(testid)
     if label:
         pattern = re.compile(rf"^{re.escape(label)}$", re.I)
-        fallback = page.get_by_role("button", name=pattern)
-        if fallback.count() == 0:
-            top_nav = page.locator("[data-testid='top-nav']")
-            if top_nav.count() > 0:
-                fallback = top_nav.first.get_by_text(pattern)
-            else:
-                fallback = page.get_by_text(pattern)
-        if fallback.count() == 0:
-            fallback = page.locator("button, [role='button'], a, span, div").filter(has_text=pattern)
+        fallback = page.locator("button:visible, [role='button']:visible, a:visible").filter(has_text=pattern)
         expect(fallback.first).to_be_visible(timeout=RESULT_TIMEOUT_MS)
         fallback.first.click()
         _ensure_expected_path()

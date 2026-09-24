@@ -99,7 +99,7 @@ export const useSelectParserList = (): Array<{
   value: string;
   label: string;
 }> => {
-  const { data: tenantInfo } = useFetchTenantInfo(true);
+  const { data: tenantInfo } = useFetchTenantInfo();
   const { t } = useTranslation();
 
   const defaultParsers = useMemo(

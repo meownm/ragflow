@@ -870,7 +870,7 @@ jobs:
             sudo docker logs ${RAGFLOW_CONTAINER}
             exit 1
           fi
-          source .venv/bin/activate && set -o pipefail; pytest -s --tb=short --model-profile=local --level=${HTTP_API_TEST_LEVEL} test/testcases/restful_api 2>&1 | tee es_restful_api_test.log
+          source .venv/bin/activate && set -o pipefail; pytest -s --tb=short -o faulthandler_timeout=180 --model-profile=local --level=${HTTP_API_TEST_LEVEL} test/testcases/restful_api 2>&1 | tee es_restful_api_test.log
 
       - name: Run test_web_api against Elasticsearch
         run: |

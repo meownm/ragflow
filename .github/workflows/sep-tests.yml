@@ -608,6 +608,7 @@ jobs:
           source .venv/bin/activate
           export http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY=""
           python -m playwright install --with-deps chromium
+          source test/playwright/support/start_ci_chat_model.sh
           pytest test/playwright/e2e/test_dataset_upload_parse.py test/playwright/e2e/test_next_apps_chat.py test/playwright/e2e/test_next_apps_search.py
 
       - name: Smoke Go HTTP server against Infinity
@@ -1078,6 +1079,7 @@ jobs:
           source .venv/bin/activate
           export http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY=""
           python -m playwright install --with-deps chromium
+          source test/playwright/support/start_ci_chat_model.sh
           pytest test/playwright/e2e/test_dataset_upload_parse.py test/playwright/e2e/test_next_apps_chat.py test/playwright/e2e/test_next_apps_search.py
 
       - name: Stop ragflow to save coverage Elasticsearch

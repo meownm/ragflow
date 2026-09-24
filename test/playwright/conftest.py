@@ -1008,6 +1008,33 @@ def _ensure_model_provider_ready_via_api(base_url: str, auth_header: str) -> dic
     has_provider = bool(my_llms_data)
     created_provider = False
     zhipu_key = os.getenv("ZHIPU_AI_API_KEY")
+    ci_chat_model_url = os.getenv("RAGFLOW_CI_CHAT_MODEL_URL")
+
+    if ci_chat_model_url:
+        for model_name in ("ci-chat-primary", "ci-chat-secondary"):
+            if _provider_has_model(my_llms_data, "OpenAI-API-Compatible", f"{model_name}___OpenAI-API"):
+                continue
+            _, add_model_payload = _api_request_json(
+                _build_url(base_url, "/v1/llm/add_llm"),
+                method="POST",
+                payload={
+                    "llm_factory": "OpenAI-API-Compatible",
+                    "llm_name": model_name,
+                    "model_type": "chat",
+                    "api_key": "ci-only",
+                    "api_base": ci_chat_model_url,
+                    "max_tokens": 4096,
+                },
+                headers=headers,
+            )
+            _response_data(add_model_payload)
+            created_provider = True
+        _, my_llms_payload = _api_request_json(_build_url(base_url, "/v1/llm/my_llms"), headers=headers)
+        my_llms_data = _response_data(my_llms_payload)
+        for model_name in ("ci-chat-primary", "ci-chat-secondary"):
+            if not _provider_has_model(my_llms_data, "OpenAI-API-Compatible", f"{model_name}___OpenAI-API"):
+                pytest.fail(f"CI chat model {model_name} was not registered")
+        has_provider = bool(my_llms_data)
 
     if not has_provider and zhipu_key:
         _, set_key_payload = _api_request_json(
@@ -1023,7 +1050,7 @@ def _ensure_model_provider_ready_via_api(base_url: str, auth_header: str) -> dic
         my_llms_data = _response_data(my_llms_payload)
 
     if not has_provider:
-        pytest.fail("Live browser tests require a configured model provider or ZHIPU_AI_API_KEY.")
+        pytest.fail("Live browser tests require a configured model provider, RAGFLOW_CI_CHAT_MODEL_URL, or ZHIPU_AI_API_KEY.")
 
     _, tenant_payload = _api_request_json(_build_url(base_url, "/api/v1/users/me/models"), headers=headers)
     tenant_data = _response_data(tenant_payload)
@@ -1038,7 +1065,7 @@ def _ensure_model_provider_ready_via_api(base_url: str, auth_header: str) -> dic
     current_rerank = str(tenant_data.get("rerank_id") or "").strip()
     current_tts = str(tenant_data.get("tts_id") or "").strip()
 
-    target_llm = current_llm
+    target_llm = "ci-chat-primary@OpenAI-API-Compatible" if ci_chat_model_url else current_llm
     if not target_llm or _is_malformed_tenant_model_value(target_llm):
         target_llm = _normalize_tenant_model_value(current_llm)
         if not target_llm and _provider_has_model(my_llms_data, "ZHIPU-AI", "glm-4-flash"):
@@ -1046,7 +1073,7 @@ def _ensure_model_provider_ready_via_api(base_url: str, auth_header: str) -> dic
     if not target_llm:
         pytest.fail("Live browser tests require a valid default tenant llm_id.")
 
-    target_embd = current_embd
+    target_embd = "BAAI/bge-small-en-v1.5@Builtin" if ci_chat_model_url else current_embd
     if not target_embd or _is_malformed_tenant_model_value(target_embd):
         target_embd = _normalize_tenant_model_value(current_embd)
         if not target_embd and _provider_has_model(my_llms_data, "ZHIPU-AI", "embedding-2"):

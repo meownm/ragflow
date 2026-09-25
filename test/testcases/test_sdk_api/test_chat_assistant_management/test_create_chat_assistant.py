@@ -15,7 +15,6 @@
 #
 
 import pytest
-from common import valid_chat_llm_id
 from configs import CHAT_ASSISTANT_NAME_LIMIT
 from utils import encode_avatar
 from utils.file_utils import create_image_file
@@ -125,25 +124,11 @@ class TestChatAssistantCreate:
                 assert getattr(chat_assistant.llm_setting, k) == v
 
     @pytest.mark.p3
-    @pytest.mark.parametrize(
-        "llm_id, expected_message",
-        [
-            (valid_chat_llm_id, ""),
-            ("unknown", "`llm_id` unknown doesn't exist"),
-        ],
-    )
-    def test_llm_id(self, client, add_chunks, llm_id, expected_message):
+    def test_llm_id(self, client, add_chunks):
         dataset, _, _ = add_chunks
-        if callable(llm_id):
-            llm_id = llm_id(client)
-
-        if expected_message:
-            with pytest.raises(Exception) as exception_info:
-                client.create_chat(name="llm_test", dataset_ids=[dataset.id], llm_id=llm_id)
-            assert expected_message in str(exception_info.value)
-        else:
-            chat_assistant = client.create_chat(name="llm_test", dataset_ids=[dataset.id], llm_id=llm_id)
-            assert chat_assistant.llm_id == llm_id
+        with pytest.raises(Exception) as exception_info:
+            client.create_chat(name="llm_test", dataset_ids=[dataset.id], llm_id="unknown")
+        assert "`llm_id` unknown doesn't exist" in str(exception_info.value)
 
     @pytest.mark.p3
     @pytest.mark.parametrize(

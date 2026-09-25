@@ -123,6 +123,10 @@ async def update_memory(memory_id: str, new_memory_setting: dict):
         "user_prompt": str
     }
     """
+    direct_model_fields = {"tenant_llm_id", "tenant_embd_id"} & new_memory_setting.keys()
+    if direct_model_fields:
+        raise ArgumentException("Do not set tenant_llm_id or tenant_embd_id directly.")
+
     current_memory = _require_memory_access(memory_id)
 
     def _normalize_memory_type(value):

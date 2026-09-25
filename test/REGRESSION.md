@@ -129,6 +129,8 @@ do not transfer a failed or stale result to the new identity.
 `tests.yml` and `sep-tests.yml` run requirements, PostgreSQL races, the document
 coverage gate, Web/admin APIs and live browser journeys alongside their existing
 unit/SDK/REST lanes. Go coverage is no longer reduced by package exclusions.
+`sep-tests.yml` selects changed lanes from the complete
+push or PR diff and runs every lane for tags, schedules and unclassified inputs.
 
 The coverage floors prevent regression from the measured baseline; they are
 not a claim that every application route or every negative case is covered.

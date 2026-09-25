@@ -80,6 +80,20 @@ class _DummyParserType:
     NAIVE = "naive"
 
 
+class _DummyField:
+    def __eq__(self, _other):
+        return self
+
+    def __ne__(self, _other):
+        return self
+
+    def __or__(self, _other):
+        return self
+
+    def is_null(self, _value):
+        return self
+
+
 class _DummyRetriever:
     async def search(self, query, _index_name, _kb_ids, *args, highlight=None, **kwargs):
         class _SRes:
@@ -222,8 +236,16 @@ def _load_chunk_module(monkeypatch):
     constants_mod.RetCode = _DummyRetCode
     constants_mod.LLMType = _DummyLLMType
     constants_mod.ParserType = _DummyParserType
+    constants_mod.TaskStatus = SimpleNamespace(RUNNING=SimpleNamespace(value="RUNNING"))
     constants_mod.PAGERANK_FLD = "pagerank_flt"
     monkeypatch.setitem(sys.modules, "common.constants", constants_mod)
+
+    doc_store_pkg = ModuleType("common.doc_store")
+    doc_store_pkg.__path__ = []
+    monkeypatch.setitem(sys.modules, "common.doc_store", doc_store_pkg)
+    doc_store_base_mod = ModuleType("common.doc_store.doc_store_base")
+    doc_store_base_mod.OrderByExpr = type("OrderByExpr", (), {})
+    monkeypatch.setitem(sys.modules, "common.doc_store.doc_store_base", doc_store_base_mod)
 
     string_utils_mod = ModuleType("common.string_utils")
     string_utils_mod.remove_redundant_spaces = lambda text: " ".join(str(text).split())
@@ -232,6 +254,8 @@ def _load_chunk_module(monkeypatch):
 
     metadata_utils_mod = ModuleType("common.metadata_utils")
     metadata_utils_mod.apply_meta_data_filter = lambda *_args, **_kwargs: {}
+    metadata_utils_mod.convert_conditions = lambda metadata_condition: metadata_condition.get("conditions", [])
+    metadata_utils_mod.meta_filter = lambda metas, *_args, **_kwargs: list(metas)
     monkeypatch.setitem(sys.modules, "common.metadata_utils", metadata_utils_mod)
 
     misc_utils_mod = ModuleType("common.misc_utils")
@@ -283,6 +307,15 @@ def _load_chunk_module(monkeypatch):
     apps_mod.login_required = lambda func: func
     monkeypatch.setitem(sys.modules, "api.apps", apps_mod)
 
+    api_db_mod = ModuleType("api.db")
+    api_db_mod.__path__ = []
+    monkeypatch.setitem(sys.modules, "api.db", api_db_mod)
+
+    db_models_mod = ModuleType("api.db.db_models")
+    db_models_mod.Document = type("Document", (), {"id": _DummyField(), "run": _DummyField()})
+    db_models_mod.Task = type("Task", (), {"doc_id": _DummyField()})
+    monkeypatch.setitem(sys.modules, "api.db.db_models", db_models_mod)
+
     api_utils_mod = ModuleType("api.utils.api_utils")
     api_utils_mod.get_json_result = lambda data=None, message="", code=0: {"code": code, "message": message, "data": data}
     api_utils_mod.get_data_error_result = lambda message="": {"code": _DummyRetCode.DATA_ERROR, "message": message, "data": False}
@@ -292,6 +325,7 @@ def _load_chunk_module(monkeypatch):
     api_utils_mod.validate_request = lambda *_args, **_kwargs: lambda fn: fn
     api_utils_mod.add_tenant_id_to_kwargs = lambda func: func
     api_utils_mod.check_duplicate_ids = lambda ids, _kind: (list(dict.fromkeys(ids)), [] if len(ids) == len(set(ids)) else [f"Duplicate {_kind} ids"])
+    api_utils_mod.construct_json_result = lambda data=None, message="success", code=0: {"code": code, "message": message, "data": data}
     api_utils_mod.get_request_json = lambda: _AwaitableValue({})
     monkeypatch.setitem(sys.modules, "api.utils.api_utils", api_utils_mod)
 
@@ -299,15 +333,41 @@ def _load_chunk_module(monkeypatch):
     image_utils_mod.store_chunk_image = lambda *_args, **_kwargs: None
     monkeypatch.setitem(sys.modules, "api.utils.image_utils", image_utils_mod)
 
+    reference_metadata_mod = ModuleType("api.utils.reference_metadata_utils")
+    reference_metadata_mod.enrich_chunks_with_document_metadata = lambda *_args, **_kwargs: None
+    reference_metadata_mod.resolve_reference_metadata_preferences = lambda *_args, **_kwargs: (False, None)
+    monkeypatch.setitem(sys.modules, "api.utils.reference_metadata_utils", reference_metadata_mod)
+
     services_pkg = ModuleType("api.db.services")
     services_pkg.__path__ = []
     monkeypatch.setitem(sys.modules, "api.db.services", services_pkg)
+
+    file2document_service_mod = ModuleType("api.db.services.file2document_service")
+
+    class _File2DocumentService:
+        @staticmethod
+        def get_storage_address(*_args, **_kwargs):
+            return "bucket", "object"
+
+    file2document_service_mod.File2DocumentService = _File2DocumentService
+    monkeypatch.setitem(sys.modules, "api.db.services.file2document_service", file2document_service_mod)
+
+    task_service_mod = ModuleType("api.db.services.task_service")
+    task_service_mod.TaskService = type("TaskService", (), {"filter_delete": staticmethod(lambda *_args, **_kwargs: True)})
+    task_service_mod.cancel_all_task_of = lambda *_args, **_kwargs: None
+    task_service_mod.queue_tasks = lambda *_args, **_kwargs: None
+    monkeypatch.setitem(sys.modules, "api.db.services.task_service", task_service_mod)
 
     joint_services_pkg = ModuleType("api.db.joint_services")
     joint_services_pkg.__path__ = []
     monkeypatch.setitem(sys.modules, "api.db.joint_services", joint_services_pkg)
 
     tenant_model_service_mod = ModuleType("api.db.joint_services.tenant_model_service")
+    tenant_model_service_mod.split_model_name = lambda model_name: (
+        (str(model_name).rsplit("@", 2) + ["", ""])[0],
+        "",
+        "",
+    )
     tenant_model_service_mod.get_model_config_by_id = lambda *_args, **_kwargs: {"llm_name": "embed", "model_type": "embedding"}
     tenant_model_service_mod.get_model_config_from_provider_instance = lambda *_args, **_kwargs: {"llm_name": "embed", "model_type": "embedding"}
     tenant_model_service_mod.get_tenant_default_model_by_type = lambda *_args, **_kwargs: {"llm_name": "chat", "model_type": "chat"}

@@ -204,8 +204,9 @@ class TestDocumentsUpload:
 
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = [executor.submit(upload_file, fp) for fp in fps]
-        responses = list(as_completed(futures))
+        responses = [future.result() for future in as_completed(futures)]
         assert len(responses) == count, responses
+        assert all(len(documents) == 1 for documents in responses), responses
 
         retrieved_dataset = client.get_dataset(name=dataset.name)
         assert retrieved_dataset.document_count == count, str(retrieved_dataset)

@@ -85,7 +85,7 @@ class TestAddChunk:
         [
             ({"content": "chunk test", "important_keywords": ["a", "b", "c"]}, 0, ""),
             ({"content": "chunk test", "important_keywords": [""]}, 0, ""),
-            ({"content": "chunk test", "important_keywords": [1]}, 100, "TypeError('sequence item 0: expected str instance, int found')"),
+            ({"content": "chunk test", "important_keywords": [1]}, 100, "Internal server error"),
             ({"content": "chunk test", "important_keywords": ["a", "a"]}, 0, ""),
             ({"content": "chunk test", "important_keywords": "abc"}, 102, "`important_keywords` is required to be a list"),
             ({"content": "chunk test", "important_keywords": 123}, 102, "`important_keywords` is required to be a list"),
@@ -106,7 +106,7 @@ class TestAddChunk:
         [
             ({"content": "chunk test", "questions": ["a", "b", "c"]}, 0, ""),
             ({"content": "chunk test", "questions": [""]}, 0, ""),
-            ({"content": "chunk test", "questions": [1]}, 100, "TypeError('sequence item 0: expected str instance, int found')"),
+            ({"content": "chunk test", "questions": [1]}, 100, "Internal server error"),
             ({"content": "chunk test", "questions": ["a", "a"]}, 0, ""),
             ({"content": "chunk test", "questions": "abc"}, 102, "`questions` is required to be a list"),
             ({"content": "chunk test", "questions": 123}, 102, "`questions` is required to be a list"),

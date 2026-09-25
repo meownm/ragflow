@@ -32,6 +32,12 @@ class _DummyManager:
         return decorator
 
 
+def _identity_login_required(func=None, **_kwargs):
+    if func is None:
+        return lambda wrapped: wrapped
+    return func
+
+
 class _StubKBRecord(dict):
     def __getattr__(self, item):
         try:
@@ -124,12 +130,21 @@ def document_app_module(monkeypatch):
 
     deepdoc_paddleocr_module.PaddleOCRParser = _StubPaddleOCRParser
     monkeypatch.setitem(sys.modules, "deepdoc.parser.paddleocr_parser", deepdoc_paddleocr_module)
+    deepdoc_opendataloader_module = ModuleType("deepdoc.parser.opendataloader_parser")
+    deepdoc_opendataloader_module.OpenDataLoaderParser = _StubPdfParser
+    monkeypatch.setitem(sys.modules, "deepdoc.parser.opendataloader_parser", deepdoc_opendataloader_module)
+    deepdoc_somark_module = ModuleType("deepdoc.parser.somark_parser")
+    deepdoc_somark_module.SoMarkParser = _StubPdfParser
+    monkeypatch.setitem(sys.modules, "deepdoc.parser.somark_parser", deepdoc_somark_module)
     monkeypatch.setitem(sys.modules, "xgboost", ModuleType("xgboost"))
 
     stub_apps = ModuleType("api.apps")
     stub_apps.__path__ = [str(repo_root / "api" / "apps")]
     stub_apps.current_user = SimpleNamespace(id="user-1")
-    stub_apps.login_required = lambda func: func
+    stub_apps.login_required = _identity_login_required
+    stub_apps.AUTH_JWT = "JWT"
+    stub_apps.AUTH_API = "API"
+    stub_apps.AUTH_BETA = "BETA"
     monkeypatch.setitem(sys.modules, "api.apps", stub_apps)
 
     stub_apps_services = ModuleType("api.apps.services")
@@ -204,12 +219,21 @@ def document_rest_api_module(monkeypatch):
 
     deepdoc_paddleocr_module.PaddleOCRParser = _StubPaddleOCRParser
     monkeypatch.setitem(sys.modules, "deepdoc.parser.paddleocr_parser", deepdoc_paddleocr_module)
+    deepdoc_opendataloader_module = ModuleType("deepdoc.parser.opendataloader_parser")
+    deepdoc_opendataloader_module.OpenDataLoaderParser = _StubPdfParser
+    monkeypatch.setitem(sys.modules, "deepdoc.parser.opendataloader_parser", deepdoc_opendataloader_module)
+    deepdoc_somark_module = ModuleType("deepdoc.parser.somark_parser")
+    deepdoc_somark_module.SoMarkParser = _StubPdfParser
+    monkeypatch.setitem(sys.modules, "deepdoc.parser.somark_parser", deepdoc_somark_module)
     monkeypatch.setitem(sys.modules, "xgboost", ModuleType("xgboost"))
 
     stub_apps = ModuleType("api.apps")
     stub_apps.__path__ = [str(repo_root / "api" / "apps")]
     stub_apps.current_user = SimpleNamespace(id="user-1")
-    stub_apps.login_required = lambda func: func
+    stub_apps.login_required = _identity_login_required
+    stub_apps.AUTH_JWT = "JWT"
+    stub_apps.AUTH_API = "API"
+    stub_apps.AUTH_BETA = "BETA"
     monkeypatch.setitem(sys.modules, "api.apps", stub_apps)
 
     stub_apps_services = ModuleType("api.apps.services")
@@ -251,5 +275,5 @@ def document_rest_api_module(monkeypatch):
             ),
         ),
     )
-    monkeypatch.setattr(module, "check_kb_team_permission", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(module.KnowledgebaseService, "accessible", lambda *_args, **_kwargs: True)
     return module

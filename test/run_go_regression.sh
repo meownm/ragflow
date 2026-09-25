@@ -5,25 +5,29 @@ cd "$(dirname "$0")/.."
 
 resource_dir=$(mktemp -d "${RUNNER_TEMP:-/tmp}/ragflow-test-resources.XXXXXX")
 minio_id=""
+resource_container=""
 cleanup() {
   if [[ -n "$minio_id" ]]; then
     sudo docker rm -f -v "$minio_id"
   fi
+  if [[ -n "$resource_container" ]]; then
+    sudo docker rm -f "$resource_container"
+  fi
   rm -rf -- "$resource_dir"
 }
 trap cleanup EXIT
-resource_commit=0937399b60f1949267388548e33ea0d5c0cc25f7
-git -C "$resource_dir" init --quiet
-git -C "$resource_dir" remote add origin https://github.com/infiniflow/resource.git
-echo "Fetching pinned Go regression resources"
-timeout --signal=TERM --kill-after=15s 180s git -C "$resource_dir" fetch --quiet --depth 1 origin "$resource_commit" || {
-  status=$?
-  echo "Go regression resource fetch failed (exit $status)" >&2
-  exit "$status"
-}
-git -C "$resource_dir" checkout --quiet --detach FETCH_HEAD
-test "$(git -C "$resource_dir" rev-parse HEAD)" = "$resource_commit"
-test -s "$resource_dir/rag/huqie.txt"
+# The image contains rag/* from infiniflow/resource commit
+# 0937399b60f1949267388548e33ea0d5c0cc25f7. Verify every blob below.
+resource_image="192.168.1.175:5443/ragflow-go-test-resources@sha256:50d3e3e14d4434ebc7edca8f0f5f5433b8292b0980750f47e8427e2cf65e53d0"
+echo "Pulling pinned Go regression resources from the LAN registry"
+sudo docker pull "$resource_image"
+resource_container=$(sudo docker create "$resource_image" /noop)
+sudo docker cp "$resource_container:/resource/rag" - | tar -xf - -C "$resource_dir"
+sudo docker rm "$resource_container"
+resource_container=""
+test "$(git hash-object "$resource_dir/rag/huqie.trie")" = 818eb369dde299fa468d6bd991bbb5d6b853f219
+test "$(git hash-object "$resource_dir/rag/huqie.txt")" = d6e097122e59b17e7705356d26fe10f0e4a08671
+test "$(git hash-object "$resource_dir/rag/pos-id.def")" = 0c206403844a4018594bd11677933694983eba69
 export RAGFLOW_DICT_PATH="$resource_dir"
 export RAGFLOW_TEST_MINIO_USER=regression
 export RAGFLOW_TEST_MINIO_PASSWORD=regression-only-minio

@@ -15,13 +15,19 @@ trap cleanup EXIT
 resource_commit=0937399b60f1949267388548e33ea0d5c0cc25f7
 git -C "$resource_dir" init --quiet
 git -C "$resource_dir" remote add origin https://github.com/infiniflow/resource.git
-git -C "$resource_dir" fetch --quiet --depth 1 origin "$resource_commit"
+echo "Fetching pinned Go regression resources"
+timeout --signal=TERM --kill-after=15s 180s git -C "$resource_dir" fetch --quiet --depth 1 origin "$resource_commit" || {
+  status=$?
+  echo "Go regression resource fetch failed (exit $status)" >&2
+  exit "$status"
+}
 git -C "$resource_dir" checkout --quiet --detach FETCH_HEAD
 test "$(git -C "$resource_dir" rev-parse HEAD)" = "$resource_commit"
 test -s "$resource_dir/rag/huqie.txt"
 export RAGFLOW_DICT_PATH="$resource_dir"
 export RAGFLOW_TEST_MINIO_USER=regression
 export RAGFLOW_TEST_MINIO_PASSWORD=regression-only-minio
+echo "Starting disposable Go regression MinIO"
 minio_id=$(sudo docker run -d --label ragflow.regression=go \
   -p "${RAGFLOW_TEST_BIND_ADDRESS:-127.0.0.1}::9000" \
   -e MINIO_ROOT_USER="$RAGFLOW_TEST_MINIO_USER" \
@@ -39,4 +45,9 @@ for attempt in $(seq 1 60); do
   sleep 1
 done
 test "$ready" -eq 1
-./build.sh --test ./...
+echo "Running Go package tests"
+timeout --signal=TERM --kill-after=15s 900s ./build.sh --test ./... || {
+  status=$?
+  echo "Go package tests failed (exit $status)" >&2
+  exit "$status"
+}

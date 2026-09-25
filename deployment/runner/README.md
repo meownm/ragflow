@@ -84,6 +84,12 @@ After both main-branch engine jobs pass, `tests.yml` builds and publishes
 `SOURCE_REVISION` and imports `business_documents` before pushing. The registry is
 not a release publisher and the runner still has no `ragflow-release` label.
 
+The live browser jobs use the repository variable `RAGFLOW_CI_OLLAMA_URL` as
+the Ollama URL reachable from their RAGFlow containers. The endpoint must have
+`t-tech/T-lite-it-2.1:q8_0`, `qwen3.8:latest`, and `bge-m3:latest` installed.
+The fixture validates the real models and configures them only in the disposable
+CI database; it fails when the endpoint or a model is unavailable.
+
 The Go regression also pulls a digest-pinned image from this registry:
 `ragflow-go-test-resources`. It contains the `rag/`, `wordnet/`, and `opencc/`
 directories from `infiniflow/resource` commit

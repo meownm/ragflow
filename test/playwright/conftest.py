@@ -1000,6 +1000,72 @@ def ensure_auth_context(
     return page_instance
 
 
+def _configure_ollama_for_live_browser(base_url: str, auth_header: str, ollama_url: str) -> None:
+    headers = {"Authorization": auth_header}
+    models = [
+        ("t-tech/T-lite-it-2.1:q8_0", "chat"),
+        ("qwen3.8:latest", "chat"),
+        ("bge-m3:latest", "embedding"),
+    ]
+    for model_name, model_type in models:
+        _, payload = _api_request_json(
+            _build_url(base_url, "/v1/llm/add_llm"),
+            method="POST",
+            payload={"llm_factory": "Ollama", "llm_name": model_name, "model_type": model_type, "api_base": ollama_url, "max_tokens": 4096},
+            headers=headers,
+            timeout_s=120,
+        )
+        _response_data(payload)
+
+    _, payload = _api_request_json(
+        _build_url(base_url, "/api/v1/providers"), method="PUT", payload={"provider_name": "Ollama"}, headers=headers
+    )
+    if not (payload.get("code") == 102 and payload.get("message") == "Provider Ollama already exists"):
+        _response_data(payload)
+    _, payload = _api_request_json(
+        _build_url(base_url, "/api/v1/providers/Ollama/instances"),
+        method="POST",
+        payload={
+            "instance_name": "Local",
+            "api_key": "",
+            "base_url": ollama_url,
+            "region": "default",
+            "model_info": [{"model_name": name, "model_type": [kind], "max_tokens": 4096} for name, kind in models],
+        },
+        headers=headers,
+    )
+    if not (payload.get("code") == 102 and "already exists" in str(payload.get("message", ""))):
+        _response_data(payload)
+    for model_name, model_type in (models[0], models[-1]):
+        _, payload = _api_request_json(
+            _build_url(base_url, "/api/v1/models/default"),
+            method="PATCH",
+            payload={"model_provider": "Ollama", "model_instance": "Local", "model_name": model_name, "model_type": model_type},
+            headers=headers,
+        )
+        _response_data(payload)
+
+    _, payload = _api_request_json(_build_url(base_url, "/api/v1/users/me/models"), headers=headers)
+    tenant_id = _response_data(payload).get("tenant_id")
+    if not tenant_id:
+        pytest.fail("Ollama browser setup could not resolve the test tenant")
+    _, payload = _api_request_json(
+        _build_url(base_url, "/api/v1/users/me/models"),
+        method="PATCH",
+        payload={
+            "tenant_id": tenant_id,
+            "llm_id": f"{models[0][0]}@Local@Ollama",
+            "embd_id": f"{models[-1][0]}@Local@Ollama",
+            "img2txt_id": "",
+            "asr_id": "",
+            "rerank_id": "",
+            "tts_id": "",
+        },
+        headers=headers,
+    )
+    _response_data(payload)
+
+
 def _ensure_model_provider_ready_via_api(base_url: str, auth_header: str) -> dict:
     headers = {"Authorization": auth_header}
 
@@ -1008,6 +1074,14 @@ def _ensure_model_provider_ready_via_api(base_url: str, auth_header: str) -> dic
     has_provider = bool(my_llms_data)
     created_provider = False
     zhipu_key = os.getenv("ZHIPU_AI_API_KEY")
+    ollama_url = os.getenv("RAGFLOW_TEST_OLLAMA_URL", "").rstrip("/")
+
+    if not has_provider and ollama_url:
+        _configure_ollama_for_live_browser(base_url, auth_header, ollama_url)
+        created_provider = True
+        _, my_llms_payload = _api_request_json(_build_url(base_url, "/v1/llm/my_llms"), headers=headers)
+        my_llms_data = _response_data(my_llms_payload)
+        has_provider = bool(my_llms_data)
 
     if not has_provider and zhipu_key:
         _, set_key_payload = _api_request_json(

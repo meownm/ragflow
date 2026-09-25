@@ -535,6 +535,8 @@ jobs:
           run_cli "${LOG_FILE}" $CLI --type user --host "$USER_HOST" --port "$USER_PORT" --username "$EMAIL" --password "$PASS" command "Benchmark 16 100 search 'what are these documents about' on datasets '$DATASET'"
 
       - name: Live browser upload chat and search against Infinity
+        env:
+          RAGFLOW_TEST_OLLAMA_URL: ${{ vars.RAGFLOW_CI_OLLAMA_URL }}
         run: |
           source .venv/bin/activate
           export http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY=""
@@ -984,6 +986,8 @@ jobs:
           run_cli "${LOG_FILE}" $CLI --type user --host "$USER_HOST" --port "$USER_PORT" --username "$EMAIL" --password "$PASS" command "Benchmark 16 100 search 'what are these documents about' on datasets '$DATASET'"
 
       - name: Live browser upload chat and search against Elasticsearch
+        env:
+          RAGFLOW_TEST_OLLAMA_URL: ${{ vars.RAGFLOW_CI_OLLAMA_URL }}
         run: |
           source .venv/bin/activate
           export http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY=""

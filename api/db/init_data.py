@@ -29,6 +29,7 @@ from api.db.services.compilation_template_service import CompilationTemplateServ
 from api.db.services.document_service import DocumentService
 from api.db.services.knowledgebase_service import KnowledgebaseService
 from api.db.services.llm_service import LLMBundle
+from api.db.services.tenant_llm_service import LLMFactoriesService
 from api.db.services.user_service import TenantService, UserTenantService
 from api.db.services.system_settings_service import SystemSettingsService
 from api.db.template_utils import normalize_canvas_template_categories
@@ -139,7 +140,7 @@ def init_web_data():
 
     init_table()
 
-    # init_llm_factory()
+    init_llm_factory()
     update_document_number_in_init()
     # if not UserService.get_all().count():
     #    init_superuser()
@@ -150,6 +151,24 @@ def init_web_data():
     init_memory_size_cache()
     fix_missing_tokenized_memory()
     logging.info("init web data success:{}".format(time.time() - start_time))
+
+
+def init_llm_factory():
+    existing = {factory.name for factory in LLMFactoriesService.get_all()}
+    missing = [
+        {
+            "name": factory["name"],
+            "logo": factory.get("logo", ""),
+            "tags": factory["tags"],
+            "rank": int(factory.get("rank", 0)),
+            "status": factory.get("status", "1"),
+        }
+        for factory in settings.FACTORY_LLM_INFOS or []
+        if factory["name"] not in existing
+    ]
+    if missing:
+        LLMFactoriesService.insert_many(missing)
+        logging.info("Seeded %s missing LLM factories", len(missing))
 
 
 def init_table():

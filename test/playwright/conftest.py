@@ -1115,6 +1115,8 @@ def _ensure_model_provider_ready_via_api(base_url: str, auth_header: str) -> dic
     target_llm = current_llm
     if not target_llm or _is_malformed_tenant_model_value(target_llm):
         target_llm = _normalize_tenant_model_value(current_llm)
+        if not target_llm and ollama_url:
+            target_llm = "t-tech/T-lite-it-2.1:q8_0@Local@Ollama"
         if not target_llm and _provider_has_model(my_llms_data, "ZHIPU-AI", "glm-4-flash"):
             target_llm = "glm-4-flash@ZHIPU-AI"
     if not target_llm:
@@ -1123,6 +1125,8 @@ def _ensure_model_provider_ready_via_api(base_url: str, auth_header: str) -> dic
     target_embd = current_embd
     if not target_embd or _is_malformed_tenant_model_value(target_embd):
         target_embd = _normalize_tenant_model_value(current_embd)
+        if not target_embd and ollama_url:
+            target_embd = "bge-m3:latest@Local@Ollama"
         if not target_embd and _provider_has_model(my_llms_data, "ZHIPU-AI", "embedding-2"):
             target_embd = "embedding-2@ZHIPU-AI"
         if not target_embd:

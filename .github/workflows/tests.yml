@@ -513,6 +513,7 @@ jobs:
           run_cli "${LOG_FILE}" $CLI --type admin --host "$ADMIN_HOST" --port "$ADMIN_PORT" --username "admin@ragflow.io" --password "admin" command "show version"
           ALLOW_USER_EXISTS_RE='already exists|already exist|duplicate|already.*registered|exist(s)?'
           run_cli "${LOG_FILE}" --allow "${ALLOW_USER_EXISTS_RE}" $CLI --type admin --host "$ADMIN_HOST" --port "$ADMIN_PORT" --username "admin@ragflow.io" --password "admin" command "create user '$EMAIL' '$PASS'"
+          run_cli "${LOG_FILE}" $CLI --type admin --host "$ADMIN_HOST" --port "$ADMIN_PORT" --username "admin@ragflow.io" --password "admin" command "grant admin '$EMAIL'"
 
           user_ready=0
           for i in $(seq 1 30); do
@@ -960,6 +961,7 @@ jobs:
           run_cli "${LOG_FILE}" $CLI --type admin --host "$ADMIN_HOST" --port "$ADMIN_PORT" --username "admin@ragflow.io" --password "admin" command "show version"
           ALLOW_USER_EXISTS_RE='already exists|already exist|duplicate|already.*registered|exist(s)?'
           run_cli "${LOG_FILE}" --allow "${ALLOW_USER_EXISTS_RE}" $CLI --type admin --host "$ADMIN_HOST" --port "$ADMIN_PORT" --username "admin@ragflow.io" --password "admin" command "create user '$EMAIL' '$PASS'"
+          run_cli "${LOG_FILE}" $CLI --type admin --host "$ADMIN_HOST" --port "$ADMIN_PORT" --username "admin@ragflow.io" --password "admin" command "grant admin '$EMAIL'"
 
           user_ready=0
           for i in $(seq 1 30); do

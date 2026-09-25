@@ -84,15 +84,16 @@ After both main-branch engine jobs pass, `tests.yml` builds and publishes
 `SOURCE_REVISION` and imports `business_documents` before pushing. The registry is
 not a release publisher and the runner still has no `ragflow-release` label.
 
-The Go regression also pulls a small, digest-pinned image from this registry:
-`ragflow-go-test-resources`. It contains only `rag/huqie.txt`,
-`rag/huqie.trie`, and `rag/pos-id.def` from `infiniflow/resource` commit
-`0937399b60f1949267388548e33ea0d5c0cc25f7`. The test script verifies each
-Git blob hash before running Go tests. To rebuild the image, copy these three
-files from that commit into a `rag/` directory, verify the hashes listed in
-`test/run_go_regression.sh`, build a `FROM scratch` image with
-`COPY rag /resource/rag`, and push it to the LAN registry. Update the digest in
-the test script only after verifying the new image by digest.
+The Go regression also pulls a digest-pinned image from this registry:
+`ragflow-go-test-resources`. It contains the `rag/`, `wordnet/`, and `opencc/`
+directories from `infiniflow/resource` commit
+`0937399b60f1949267388548e33ea0d5c0cc25f7`. The test script verifies all
+Git blob hashes against `go-test-resource-blobs.txt` before running Go tests.
+To rebuild the image, copy these directories from that commit, verify their
+hashes against the manifest, build a `FROM scratch` image with separate
+`COPY rag /resource/rag`, `COPY wordnet /resource/wordnet`, and
+`COPY opencc /resource/opencc` steps, and push it to the LAN registry. Update
+the digest in the test script only after verifying the new image by digest.
 
 ## Verification
 

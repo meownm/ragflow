@@ -16,18 +16,22 @@ cleanup() {
   rm -rf -- "$resource_dir"
 }
 trap cleanup EXIT
-# The image contains rag/* from infiniflow/resource commit
+# The image contains rag/, wordnet/, and opencc/ from infiniflow/resource commit
 # 0937399b60f1949267388548e33ea0d5c0cc25f7. Verify every blob below.
-resource_image="192.168.1.175:5443/ragflow-go-test-resources@sha256:50d3e3e14d4434ebc7edca8f0f5f5433b8292b0980750f47e8427e2cf65e53d0"
+resource_image="192.168.1.175:5443/ragflow-go-test-resources@sha256:86f939e45aab2837be4b69e89c6f548891b404a7fd930b190830818e1e97cc9e"
 echo "Pulling pinned Go regression resources from the LAN registry"
 sudo docker pull "$resource_image"
 resource_container=$(sudo docker create "$resource_image" /noop)
-sudo docker cp "$resource_container:/resource/rag" - | tar -xf - -C "$resource_dir"
+sudo docker cp "$resource_container:/resource/." - | tar -xf - -C "$resource_dir"
 sudo docker rm "$resource_container"
 resource_container=""
-test "$(git hash-object "$resource_dir/rag/huqie.trie")" = 818eb369dde299fa468d6bd991bbb5d6b853f219
-test "$(git hash-object "$resource_dir/rag/huqie.txt")" = d6e097122e59b17e7705356d26fe10f0e4a08671
-test "$(git hash-object "$resource_dir/rag/pos-id.def")" = 0c206403844a4018594bd11677933694983eba69
+while read -r expected path; do
+  test "$(git hash-object "$resource_dir/$path")" = "$expected" || {
+    echo "Go regression resource hash mismatch: $path" >&2
+    exit 1
+  }
+done < deployment/runner/go-test-resource-blobs.txt
+test "$(find "$resource_dir" -type f | wc -l)" -eq "$(wc -l < deployment/runner/go-test-resource-blobs.txt)"
 export RAGFLOW_DICT_PATH="$resource_dir"
 export RAGFLOW_TEST_MINIO_USER=regression
 export RAGFLOW_TEST_MINIO_PASSWORD=regression-only-minio

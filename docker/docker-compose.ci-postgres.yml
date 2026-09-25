@@ -1,5 +1,9 @@
 services:
   ragflow-cpu:
+    command:
+      - --enable-adminserver
+      - --init-model-provider-tables
+      - --init-superuser
     depends_on: !override
       postgres:
         condition: service_healthy

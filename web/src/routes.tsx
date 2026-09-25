@@ -32,6 +32,7 @@ export enum Routes {
   MemorySetting = '/memory-setting',
   AgentList = '/agent-list',
   Searches = '/searches',
+  SourceWorkspaces = '/source-workspaces',
   Search = '/search',
   SearchShare = '/search/share',
   Chats = '/chats',
@@ -220,6 +221,10 @@ const routeConfigOptions = [
       {
         path: Routes.Searches,
         Component: () => import('@/pages/next-searches'),
+      },
+      {
+        path: Routes.SourceWorkspaces,
+        Component: () => import('@/pages/source-workspaces'),
       },
       {
         path: `${Routes.Search}/:id`,

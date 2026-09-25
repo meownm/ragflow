@@ -170,6 +170,16 @@ export default {
   chunkDetail: (datasetId: string, documentId: string, chunkId: string) =>
     `${restAPIv1}/datasets/${datasetId}/documents/${documentId}/chunks/${chunkId}`,
   retrievalTest: `${restAPIv1}/datasets/search`,
+  sourceWorkspaces: `${restAPIv1}/source-workspaces`,
+  sourceWorkspace: (id: string) => `${restAPIv1}/source-workspaces/${id}`,
+  sourceWorkspaceSearch: (id: string) =>
+    `${restAPIv1}/source-workspaces/${id}/search`,
+  sourceWorkspaceSelection: (id: string) =>
+    `${restAPIv1}/source-workspaces/${id}/selection`,
+  sourceWorkspaceRetrieve: (id: string) =>
+    `${restAPIv1}/source-workspaces/${id}/retrieve`,
+  sourceWorkspaceChat: (id: string) =>
+    `${restAPIv1}/source-workspaces/${id}/chat`,
 
   // document
   getDocumentList: (datasetId: string) =>

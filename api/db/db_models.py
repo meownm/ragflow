@@ -1113,6 +1113,23 @@ class Conversation(DataBaseModel):
         db_table = "conversation"
 
 
+class SourceWorkspace(DataBaseModel):
+    """A user-owned selection of knowledge-base documents for later tasks."""
+
+    id = CharField(max_length=32, primary_key=True)
+    owner_id = CharField(max_length=32, null=False, index=True)
+    title = CharField(max_length=255, null=False)
+    dataset_ids = JSONField(null=False, default=list)
+    selected_documents = JSONField(null=False, default=list)
+    search_queries = JSONField(null=False, default=list)
+    version = IntegerField(null=False, default=1)
+    created_at = DateTimeField(null=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = DateTimeField(null=False, default=lambda: datetime.now(timezone.utc))
+
+    class Meta:
+        db_table = "source_workspace"
+
+
 class APIToken(DataBaseModel):
     tenant_id = CharField(max_length=32, null=False, index=True)
     token = CharField(max_length=255, null=False, index=True)

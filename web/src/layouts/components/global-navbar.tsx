@@ -32,6 +32,7 @@ const PathMap = {
   [Routes.Datasets]: [Routes.Datasets, Routes.DatasetBase],
   [Routes.Chats]: [Routes.Chats, Routes.Chat],
   [Routes.Searches]: [Routes.Searches, Routes.Search],
+  [Routes.SourceWorkspaces]: [Routes.SourceWorkspaces],
   [Routes.Agents]: [Routes.Agents, Routes.AgentTemplates],
   [Routes.Memories]: [Routes.Memories, Routes.Memory, Routes.MemoryMessage],
   [Routes.OpenMetadata]: [Routes.OpenMetadata],
@@ -80,6 +81,14 @@ const menuItems: Array<{
     icon: LucideSearch,
     section: 'search',
     'data-testid': 'nav-search',
+  },
+  {
+    path: Routes.SourceWorkspaces,
+    name: 'header.sourceWorkspaces',
+    fallbackName: 'Работа со статьями',
+    icon: LucideFolderOpen,
+    section: 'search',
+    'data-testid': 'nav-source-workspaces',
   },
   {
     path: Routes.Agents,
@@ -135,8 +144,7 @@ function useVisibleMenuItems() {
   const { data: businessDocumentAccess } = useQuery({
     queryKey: ['business-document-capabilities', actorId],
     queryFn: getBusinessDocumentCapabilities,
-    enabled:
-      businessDocumentsVisible && Boolean(actorId) && !userInfoLoading,
+    enabled: businessDocumentsVisible && Boolean(actorId) && !userInfoLoading,
     retry: false,
   });
   const canCreateBusinessDocuments =

@@ -45,6 +45,7 @@ def test_group_payload_does_not_treat_global_home_visibility_as_an_acl_grant():
 
 def test_section_mapping_covers_protected_application_entrypoints():
     assert section_for_blueprint("dataset_api") == "dataset"
+    assert section_for_blueprint("source_workbench_api") == "search"
     assert section_for_blueprint("business_document_api") == "business_documents"
     assert section_for_blueprint("system_api") is None
 

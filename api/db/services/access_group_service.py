@@ -28,6 +28,7 @@ BLUEPRINT_SECTIONS = {
     "chunk_api": "dataset",
     "chat_api": "chat",
     "search_api": "search",
+    "source_workbench_api": "search",
     "agent_api": "agent",
     "bot_api": "agent",
     "memory_api": "memory",

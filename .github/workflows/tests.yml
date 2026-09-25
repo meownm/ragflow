@@ -366,17 +366,7 @@ jobs:
 
 
       - name: Start ragflow:nightly for Infinity
-        env:
-          CI_ADMIN_EMAIL: browser-${{ github.run_id }}-infinity@ragflow.local
         run: |
-          CI_ADMIN_PASSWORD="$(openssl rand -hex 24)"
-          echo "::add-mask::${CI_ADMIN_PASSWORD}"
-          export E2E_ADMIN_EMAIL="${CI_ADMIN_EMAIL}" E2E_ADMIN_PASSWORD="${CI_ADMIN_PASSWORD}"
-          sed -i '/^DEFAULT_SUPERUSER_EMAIL=/d;/^DEFAULT_SUPERUSER_PASSWORD=/d' docker/.env
-          printf 'DEFAULT_SUPERUSER_EMAIL=%s\nDEFAULT_SUPERUSER_PASSWORD=%s\n' "${CI_ADMIN_EMAIL}" "${CI_ADMIN_PASSWORD}" >> docker/.env
-          chmod 600 docker/.env
-          echo "E2E_ADMIN_EMAIL=${CI_ADMIN_EMAIL}" >> "${GITHUB_ENV}"
-          echo "E2E_ADMIN_PASSWORD=${CI_ADMIN_PASSWORD}" >> "${GITHUB_ENV}"
           sudo docker compose -f docker/docker-compose.yml -f docker/docker-compose.ci-postgres.yml -p ${COMPOSE_PROJECT_NAME} down -v || true
           sudo docker ps -a --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" -q | xargs -r sudo docker rm -f
           sudo docker compose -f docker/docker-compose.yml -f docker/docker-compose.ci-postgres.yml -p ${COMPOSE_PROJECT_NAME} up -d
@@ -547,6 +537,8 @@ jobs:
       - name: Live browser upload chat and search against Infinity
         env:
           RAGFLOW_TEST_OLLAMA_URL: ${{ vars.RAGFLOW_CI_OLLAMA_URL }}
+          E2E_ADMIN_EMAIL: admin@ragflow.io
+          E2E_ADMIN_PASSWORD: admin
         run: |
           source .venv/bin/activate
           export http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY=""
@@ -620,7 +612,6 @@ jobs:
           if [[ -n ${PORT_RESERVATION:-} ]]; then
             rm -f "${PORT_RESERVATION}"
           fi
-          sed -i '/^DEFAULT_SUPERUSER_EMAIL=/d;/^DEFAULT_SUPERUSER_PASSWORD=/d' docker/.env
 
 
 
@@ -828,17 +819,7 @@ jobs:
 
 
       - name: Start ragflow:nightly for Elasticsearch
-        env:
-          CI_ADMIN_EMAIL: browser-${{ github.run_id }}-elasticsearch@ragflow.local
         run: |
-          CI_ADMIN_PASSWORD="$(openssl rand -hex 24)"
-          echo "::add-mask::${CI_ADMIN_PASSWORD}"
-          export E2E_ADMIN_EMAIL="${CI_ADMIN_EMAIL}" E2E_ADMIN_PASSWORD="${CI_ADMIN_PASSWORD}"
-          sed -i '/^DEFAULT_SUPERUSER_EMAIL=/d;/^DEFAULT_SUPERUSER_PASSWORD=/d' docker/.env
-          printf 'DEFAULT_SUPERUSER_EMAIL=%s\nDEFAULT_SUPERUSER_PASSWORD=%s\n' "${CI_ADMIN_EMAIL}" "${CI_ADMIN_PASSWORD}" >> docker/.env
-          chmod 600 docker/.env
-          echo "E2E_ADMIN_EMAIL=${CI_ADMIN_EMAIL}" >> "${GITHUB_ENV}"
-          echo "E2E_ADMIN_PASSWORD=${CI_ADMIN_PASSWORD}" >> "${GITHUB_ENV}"
           sudo docker compose -f docker/docker-compose.yml -f docker/docker-compose.ci-postgres.yml -p ${COMPOSE_PROJECT_NAME} down -v || true
           sudo docker ps -a --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" -q | xargs -r sudo docker rm -f
           sudo docker compose -f docker/docker-compose.yml -f docker/docker-compose.ci-postgres.yml -p ${COMPOSE_PROJECT_NAME} up -d
@@ -1009,6 +990,8 @@ jobs:
       - name: Live browser upload chat and search against Elasticsearch
         env:
           RAGFLOW_TEST_OLLAMA_URL: ${{ vars.RAGFLOW_CI_OLLAMA_URL }}
+          E2E_ADMIN_EMAIL: admin@ragflow.io
+          E2E_ADMIN_PASSWORD: admin
         run: |
           source .venv/bin/activate
           export http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY=""
@@ -1075,7 +1058,6 @@ jobs:
           if [[ -n ${PORT_RESERVATION:-} ]]; then
             rm -f "${PORT_RESERVATION}"
           fi
-          sed -i '/^DEFAULT_SUPERUSER_EMAIL=/d;/^DEFAULT_SUPERUSER_PASSWORD=/d' docker/.env
 
   publish_candidate:
     name: publish_candidate

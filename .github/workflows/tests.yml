@@ -538,6 +538,7 @@ jobs:
         run: |
           source .venv/bin/activate
           export http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY=""
+          export PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64
           python -m playwright install --with-deps chromium
           pytest test/playwright/e2e/test_dataset_upload_parse.py test/playwright/e2e/test_next_apps_chat.py test/playwright/e2e/test_next_apps_search.py
 
@@ -986,6 +987,7 @@ jobs:
         run: |
           source .venv/bin/activate
           export http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY=""
+          export PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64
           python -m playwright install --with-deps chromium
           pytest test/playwright/e2e/test_dataset_upload_parse.py test/playwright/e2e/test_next_apps_chat.py test/playwright/e2e/test_next_apps_search.py
 

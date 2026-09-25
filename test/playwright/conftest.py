@@ -1076,7 +1076,7 @@ def _ensure_model_provider_ready_via_api(base_url: str, auth_header: str) -> dic
     zhipu_key = os.getenv("ZHIPU_AI_API_KEY")
     ollama_url = os.getenv("RAGFLOW_TEST_OLLAMA_URL", "").rstrip("/")
 
-    if not has_provider and ollama_url:
+    if ollama_url:
         _configure_ollama_for_live_browser(base_url, auth_header, ollama_url)
         created_provider = True
         _, my_llms_payload = _api_request_json(_build_url(base_url, "/v1/llm/my_llms"), headers=headers)

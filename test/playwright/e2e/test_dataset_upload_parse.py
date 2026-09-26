@@ -1,5 +1,6 @@
 import base64
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -411,7 +412,8 @@ def step_04_set_dataset_settings(
                 page.keyboard.press("Escape")
 
     with step("fill parser and metadata settings"):
-        set_number_input(page, "ds-settings-parser-page-rank-input", 12)
+        if os.getenv("DOC_ENGINE", "elasticsearch") == "elasticsearch":
+            set_number_input(page, "ds-settings-parser-page-rank-input", 12)
         pdf_parser = page.get_by_test_id("ds-settings-parser-pdf-parser-select")
         pdf_parser.click()
         page.get_by_role("dialog").get_by_text("Naive", exact=True).click()
@@ -517,6 +519,10 @@ def step_04_set_dataset_settings(
         for key in ("name", "language", "parser_config"):
             assert key in payload, f"Expected key {key!r} in /api/v1/datasets update payload"
         parser_config = payload.get("parser_config") or {}
+        if os.getenv("DOC_ENGINE", "elasticsearch") == "elasticsearch":
+            assert payload.get("pagerank") == 12, "PageRank setting did not persist on Elasticsearch"
+        else:
+            assert payload.get("pagerank", 0) == 0, "PageRank must remain unchanged on Infinity"
         assert parser_config.get("layout_recognize") == "Plain Text", "Naive PDF parser selection did not persist"
         assert parser_config.get("image_table_context_window") == parser_config.get("image_context_size") == parser_config.get("table_context_size"), (
             "Expected image/table context window transform keys to be aligned"

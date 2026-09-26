@@ -1261,6 +1261,23 @@ def test_registration_helpers_and_register_route_matrix_unit(monkeypatch):
 
 
 @pytest.mark.p2
+def test_tenant_info_uses_managed_models_without_changing_user_tenant(monkeypatch):
+    module = _load_user_app(monkeypatch)
+    model_fields = ("llm_id", "embd_id", "rerank_id", "asr_id", "img2txt_id", "tts_id", "ocr_id")
+    personal = {"tenant_id": "personal-tenant", "name": "Personal", **{field: "" for field in model_fields}}
+    managed = {"tenant_id": "managed-tenant", "name": "Managed", **{field: f"managed-{field}" for field in model_fields}}
+    monkeypatch.setattr(module.ManagedResourceService, "owner_id", lambda _fallback: "managed-user")
+    monkeypatch.setattr(module.TenantService, "get_info_by", lambda user_id: [managed if user_id == "managed-user" else personal])
+
+    res = _run(module.tenant_info())
+
+    assert res["code"] == 0, res
+    assert res["data"]["tenant_id"] == "personal-tenant"
+    assert res["data"]["name"] == "Personal"
+    assert all(res["data"][field] == managed[field] for field in model_fields)
+
+
+@pytest.mark.p2
 def test_tenant_info_and_set_tenant_info_exception_matrix_unit(monkeypatch):
     module = _load_user_app(monkeypatch)
 

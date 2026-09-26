@@ -708,7 +708,15 @@ async def tenant_info():
         tenants = TenantService.get_info_by(current_user.id)
         if not tenants:
             return get_data_error_result(message="Tenant not found!")
-        return get_json_result(data=tenants[0])
+        tenant = tenants[0]
+        managed_owner_id = ManagedResourceService.owner_id(current_user.id)
+        if managed_owner_id != current_user.id:
+            managed_tenants = TenantService.get_info_by(managed_owner_id)
+            if not managed_tenants:
+                return get_data_error_result(message="Managed resource owner tenant not found!")
+            for field in ("llm_id", "embd_id", "rerank_id", "asr_id", "img2txt_id", "tts_id", "ocr_id"):
+                tenant[field] = managed_tenants[0][field]
+        return get_json_result(data=tenant)
     except Exception as e:
         return server_error_response(e)
 

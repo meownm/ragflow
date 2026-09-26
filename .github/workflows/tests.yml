@@ -50,6 +50,7 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 10
     outputs:
       http_api_test_level: ${{ steps.test_level.outputs.http_api_test_level }}
+      has_go_changes: ${{ steps.detect_changes.outputs.has_go_changes }}
     steps:
       - name: Ensure workspace ownership
         run: |
@@ -109,6 +110,13 @@ jobs:
           echo "HTTP_API_TEST_LEVEL=${HTTP_API_TEST_LEVEL}" >> ${GITHUB_ENV}
           echo "http_api_test_level=${HTTP_API_TEST_LEVEL}" >> ${GITHUB_OUTPUT}
 
+      - name: Detect changed file types
+        id: detect_changes
+        env:
+          CI_BEFORE: ${{ github.event.before }}
+          CI_PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: bash deployment/runner/select-ci-lanes.sh
+
       - name: Prepare Python test environment
         run: |
           sudo apt-get update
@@ -131,7 +139,7 @@ jobs:
       - name: Deterministic business document requirements
         run: |
           source .venv/bin/activate
-          pytest test/evals/business_documents/test_golden_dialogue_harness.py test/evals/business_documents/test_live_quality_scorer.py
+          pytest test/evals/business_documents/test_golden_dialogue_harness.py test/evals/business_documents/test_live_quality_scorer.py test/evals/source_workbench/test_evaluate.py test/evals/source_workbench/test_live_provisioning.py
 
       - name: PostgreSQL transaction races
         env:
@@ -206,9 +214,11 @@ jobs:
           bash deployment/runner/build-go-linux.sh
 
       - name: Run Go unit tests
+        if: ${{ github.event_name != 'pull_request' || needs.ragflow_preflight.outputs.has_go_changes == 'true' }}
         env:
           RAGFLOW_TEST_DOCKER_HOST: host.docker.internal
           RAGFLOW_TEST_BIND_ADDRESS: 0.0.0.0
+          RAGFLOW_GO_TEST_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
         run: bash test/run_go_regression.sh
 
       - name: Build ragflow:nightly
@@ -659,9 +669,11 @@ jobs:
           bash deployment/runner/build-go-linux.sh
 
       - name: Run Go unit tests
+        if: ${{ github.event_name != 'pull_request' || needs.ragflow_preflight.outputs.has_go_changes == 'true' }}
         env:
           RAGFLOW_TEST_DOCKER_HOST: host.docker.internal
           RAGFLOW_TEST_BIND_ADDRESS: 0.0.0.0
+          RAGFLOW_GO_TEST_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
         run: bash test/run_go_regression.sh
 
       - name: Build ragflow:nightly
@@ -1062,6 +1074,7 @@ jobs:
   publish_candidate:
     name: publish_candidate
     needs:
+      - ragflow_preflight
       - ragflow_tests_infinity
       - ragflow_tests_elasticsearch
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
@@ -1105,6 +1118,10 @@ jobs:
             -f Dockerfile -t "${CANDIDATE_IMAGE}" .
 
       - name: Verify and publish candidate image
+        env:
+          CI_PREFLIGHT_RESULT: ${{ needs.ragflow_preflight.result }}
+          CI_INFINITY_RESULT: ${{ needs.ragflow_tests_infinity.result }}
+          CI_ELASTICSEARCH_RESULT: ${{ needs.ragflow_tests_elasticsearch.result }}
         run: |
           set -euo pipefail
           actual_revision=$(sudo docker run --rm --entrypoint cat \
@@ -1113,5 +1130,19 @@ jobs:
           sudo docker run --rm --entrypoint /ragflow/.venv/bin/python \
             "${CANDIDATE_IMAGE}" -c 'import business_documents'
           sudo docker push "${CANDIDATE_IMAGE}"
-          sudo docker image inspect "${CANDIDATE_IMAGE}" \
-            --format '{{json .RepoDigests}}'
+          repo_digests=$(sudo docker image inspect "${CANDIDATE_IMAGE}" --format '{{json .RepoDigests}}')
+          repo_digest=$(python3 -c 'import json,sys; repository=sys.argv[1].rsplit(":",1)[0]; matches=[item for item in json.loads(sys.argv[2]) if item.startswith(repository+"@sha256:")]; assert len(matches)==1, "expected exactly one pushed repository digest"; print(matches[0])' "${CANDIDATE_IMAGE}" "${repo_digests}")
+          python3 tools/quality/release_evidence.py receipt \
+            --revision "${GITHUB_SHA}" --repository "${GITHUB_REPOSITORY}" \
+            --run-id "${GITHUB_RUN_ID}" --image "${CANDIDATE_IMAGE}" \
+            --digest "${repo_digest}" --preflight "${CI_PREFLIGHT_RESULT}" \
+            --infinity "${CI_INFINITY_RESULT}" --elasticsearch "${CI_ELASTICSEARCH_RESULT}" \
+            --output candidate-receipt.json
+
+      - name: Upload candidate receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidate-receipt-${{ github.sha }}
+          path: candidate-receipt.json
+          if-no-files-found: error
+          retention-days: 30

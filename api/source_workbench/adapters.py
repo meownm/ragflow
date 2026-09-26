@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import re
 from typing import Any
 from urllib.parse import urlparse
 
@@ -13,6 +14,39 @@ from api.db.services.knowledgebase_service import KnowledgebaseService
 from common.misc_utils import get_uuid, thread_pool_exec
 
 from .service import SourceWorkspaceError, SourceWorkspaceService
+
+
+_LIST_LINE = re.compile(r"^ {0,3}(?:[-*+]|\d+[.)])[ \t]+")
+
+
+def _table_row(line: str) -> bool:
+    return "|" in line and bool(line.strip())
+
+
+def _table_separator(line: str) -> bool:
+    stripped = line.strip()
+    return "---" in stripped and "|" in stripped and set(stripped) <= set("|:- \t")
+
+
+def _starts_table(part: str) -> bool:
+    lines = part.splitlines()
+    return any(_table_row(previous) and _table_separator(current) for previous, current in zip(lines, lines[1:]))
+
+
+def _join_indexed_parts(parts: list[str]) -> str:
+    """Keep consecutive indexed table rows and list items adjacent."""
+    if not parts:
+        return ""
+    joined = [parts[0]]
+    table_open = _starts_table(parts[0]) and _table_row(parts[0].splitlines()[-1])
+    for previous, current in zip(parts, parts[1:]):
+        last = previous.splitlines()[-1].strip()
+        first = current.splitlines()[0].strip()
+        table_continues = _table_row(last) and _table_row(first) and (table_open or _table_separator(first))
+        list_continues = bool(_LIST_LINE.match(last) and _LIST_LINE.match(first))
+        joined.extend(("\n" if table_continues or list_continues else "\n\n", current))
+        table_open = (table_continues or _starts_table(current)) and _table_row(current.splitlines()[-1])
+    return "".join(joined)
 
 
 def _projection(row: SourceWorkspace) -> dict[str, Any]:
@@ -177,7 +211,7 @@ class RAGFlowSourceGateway:
         parts = [part for part in parts if part]
         if sum(len(part) for part in parts) > 2_000_000:
             raise SourceWorkspaceError("DOCUMENT_TOO_LARGE", "Document exceeds the 2 million character workflow limit", 413)
-        text = "\n\n".join(parts)
+        text = _join_indexed_parts(parts)
         if not text:
             raise SourceWorkspaceError("DOCUMENT_CONTENT_UNAVAILABLE", "Indexed document text is unavailable", 409)
         return text
@@ -193,6 +227,14 @@ class RAGFlowSourceGateway:
         if not success or not isinstance(result, dict):
             raise SourceWorkspaceError("SEARCH_FAILED", str(result), 503)
         chunks = result.get("chunks") or []
+        allowed_datasets = set(dataset_ids)
+        chunks = [
+            chunk
+            for chunk in chunks
+            if isinstance(chunk, dict)
+            and (scopes := [chunk[field] for field in ("dataset_id", "kb_id") if field in chunk])
+            and all(isinstance(scope, str) and scope in allowed_datasets for scope in scopes)
+        ]
         if document_ids is not None:
             allowed = set(document_ids)
             chunks = [chunk for chunk in chunks if (chunk.get("document_id") or chunk.get("doc_id")) in allowed]
@@ -215,6 +257,41 @@ class RAGFlowAnswerGateway:
         prompt = json.dumps({"question": question, "previous_question_for_context": previous_question, "evidence": evidence}, ensure_ascii=False)
         with LLMBundle(owner_id, model_config, lang="Russian", max_retries=0) as model:
             return await model.async_chat(system, [{"role": "user", "content": prompt}], {"temperature": 0, "max_completion_tokens": 2048})
+
+    @staticmethod
+    async def open_processor(owner_id: str):
+        from api.db.joint_services.tenant_model_service import get_tenant_default_model_by_type
+        from common.constants import LLMType
+
+        model_config = await thread_pool_exec(get_tenant_default_model_by_type, owner_id, LLMType.CHAT)
+        if not isinstance(model_config, dict):
+            raise SourceWorkspaceError("MODEL_UNAVAILABLE", "Модель чата не настроена", 503)
+        return RAGFlowProcessModel(owner_id, model_config)
+
+
+class RAGFlowProcessModel:
+    def __init__(self, owner_id: str, model_config: dict[str, Any]):
+        self.owner_id = owner_id
+        self.model_config = model_config
+        self.context_tokens = model_config.get("max_tokens")
+
+    @staticmethod
+    def count_tokens(text: str) -> int:
+        from common.token_utils import num_tokens_from_string
+
+        return num_tokens_from_string(text)
+
+    async def stream(self, system: str, payload: dict[str, Any], output_tokens: int):
+        from api.db.services.llm_service import LLMBundle
+
+        history = [{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}]
+        generation = {"temperature": 0, "max_completion_tokens": output_tokens}
+        with LLMBundle(self.owner_id, self.model_config, lang="Russian", max_retries=0) as model:
+            if not hasattr(model.mdl, "async_chat_streamly"):
+                yield await model.async_chat(system, history, generation)
+                return
+            async for delta in model.async_chat_streamly_delta(system, history, generation):
+                yield delta
 
 
 def build_source_workspace_service() -> SourceWorkspaceService:

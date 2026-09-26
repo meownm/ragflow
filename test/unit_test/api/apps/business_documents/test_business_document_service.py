@@ -233,7 +233,7 @@ def test_catalog_sync_replaces_previous_source_rows_and_v3_derives_the_title(dat
 
 
 @pytest.mark.p0
-def test_v3_offers_then_imports_the_only_unbound_title_match_as_revision_one(database, monkeypatch):
+def test_v3_imports_the_only_unbound_title_match_as_revision_one(database, monkeypatch):
     from api.apps.business_documents.eva_changes import EvaDocumentChangeService
     from api.db.db_models import migrate_business_document_catalog
 
@@ -287,21 +287,7 @@ def test_v3_offers_then_imports_the_only_unbound_title_match_as_revision_one(dat
         "catalog_entry_id": first["id"],
         "idea": "Проверить существующий документ EVA",
     }
-    with pytest.raises(BusinessDocumentError) as offered:
-        BusinessDocumentService.create_document(TENANT, AUTHOR, request)
-
-    assert offered.value.code == "EVA_BINDING_DECISION_REQUIRED"
-    assert offered.value.details["matches"][0]["web_url"] == page_url
-
-    created = BusinessDocumentService.create_document(
-        TENANT,
-        AUTHOR,
-        {
-            **request,
-            "eva_page_url": page_url,
-            "eva_decision": {"mode": "BIND"},
-        },
-    )
+    created = BusinessDocumentService.create_document(TENANT, AUTHOR, request)
 
     assert observed_titles == [first["title"]]
     assert created["lifecycle_state"] == "REVIEW"
@@ -371,6 +357,69 @@ def test_v3_requires_selection_when_multiple_unbound_eva_pages_match(database, m
 
     assert caught.value.code == "EVA_BINDING_DECISION_REQUIRED"
     assert len(caught.value.details["matches"]) == 2
+
+
+@pytest.mark.p0
+def test_v3_does_not_import_an_occupied_title_match(database, monkeypatch):
+    from api.apps.business_documents.eva_changes import EvaDocumentChangeService
+    from api.db.db_models import migrate_business_document_catalog
+
+    migrate_business_document_catalog()
+    first = load_document_catalog()["items"][0]
+    match = {
+        "name": first["title"],
+        "web_url": "https://eva.example.com/project/Document/BR-42",
+        "binding_available": False,
+        "linked_document": {"document_id": "other-document", "title": "Другой документ"},
+    }
+    monkeypatch.setattr(EvaDocumentChangeService, "find_title_matches", staticmethod(lambda *_args: [match]))
+    monkeypatch.setattr(BusinessDocumentService, "_eva_matches_with_occupancy", classmethod(lambda _cls, matches: matches))
+    monkeypatch.setattr(EvaDocumentChangeService, "resolve_page_url", staticmethod(lambda *_args: pytest.fail("Occupied page must not be imported")))
+
+    with pytest.raises(BusinessDocumentError) as caught:
+        BusinessDocumentService.create_document(
+            TENANT,
+            AUTHOR,
+            {
+                "schema_version": "3",
+                "document_type": "business_requirements",
+                "catalog_entry_id": first["id"],
+                "idea": "Проверить занятую страницу",
+            },
+        )
+
+    assert caught.value.code == "EVA_BINDING_DECISION_REQUIRED"
+    assert caught.value.details["matches"] == [match]
+    assert BusinessDocument.select().count() == 0
+
+
+@pytest.mark.p0
+def test_v3_explicit_skip_does_not_search_for_or_import_an_eva_page(database, monkeypatch):
+    from api.apps.business_documents.eva_changes import EvaDocumentChangeService
+    from api.db.db_models import migrate_business_document_catalog
+
+    migrate_business_document_catalog()
+    first = load_document_catalog()["items"][0]
+    monkeypatch.setattr(
+        EvaDocumentChangeService,
+        "find_title_matches",
+        staticmethod(lambda *_args: pytest.fail("SKIP must not search EVA")),
+    )
+
+    created = BusinessDocumentService.create_document(
+        TENANT,
+        AUTHOR,
+        {
+            "schema_version": "3",
+            "document_type": "business_requirements",
+            "catalog_entry_id": first["id"],
+            "idea": "Создать без EVA",
+            "eva_decision": {"mode": "SKIP"},
+        },
+    )
+
+    assert created["eva_binding"] is None
+    assert created["current_revision"] is None
 
 
 @pytest.mark.p0
@@ -753,6 +802,169 @@ def _complete_review_assessment(document, *, comment_disposition="CONFIRMED_CHAN
         requested["job_id"],
         {"schema_version": "1", "questions": [], "proposals": [], "comment_dispositions": dispositions},
     )
+
+
+@pytest.mark.p0
+def test_change_preview_requires_explicit_confirmation_and_shows_section_diff(database):
+    document = _request_and_complete_draft(_create())
+    base = document["current_revision"]
+    response = BusinessDocumentService.execute_command(
+        TENANT,
+        AUTHOR,
+        document["document_id"],
+        _command(document, "ADD_COMMENT", {"revision_id": base["revision_id"], "section_id": None, "text": "Уточнить контроль ошибок", "anchor": None}),
+    )
+    document = BusinessDocumentService.get_document(TENANT, response["document_id"], AUTHOR)
+    document = _complete_review_assessment(document)
+    comment_event_id = document["protocol"]["comments"][0]["source_event_id"]
+    assert "PREPARE_CHANGES" in document["allowed_commands"]
+    requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "PREPARE_CHANGES", {"base_revision_id": base["revision_id"]}))
+    before = next(section for section in base["document_ast"]["sections"] if section["id"] == "5.5")
+    document = _complete(
+        requested["job_id"],
+        {
+            "change_plan": {
+                "schema_version": "1",
+                "base_revision_id": base["revision_id"],
+                "source_state_version": requested["state_version"],
+                "acknowledged_no_change_event_ids": [],
+                "operations": [
+                    {
+                        "operation_id": "op-preview-1",
+                        "type": "REPLACE_SECTION_CONTENT",
+                        "section_id": "5.5",
+                        "expected_section_hash": section_hash(before),
+                        "source_event_ids": [comment_event_id],
+                        "content": {"blocks": [{"type": "paragraph", "text": "Новый контроль ошибок"}]},
+                    }
+                ],
+            }
+        },
+    )
+    assert document["operation_state"] == "IDLE"
+    assert document["current_revision"]["revision_id"] == base["revision_id"]
+    assert BusinessDocumentRevision.select().count() == 1
+    assert document["change_preview"]["job_id"] == requested["job_id"]
+    assert "CONFIRM_PREPARED_CHANGES" in document["allowed_commands"]
+    preview = BusinessDocumentService.get_change_preview(TENANT, AUTHOR, document["document_id"], requested["job_id"])
+    assert preview["sections"][0]["section_id"] == "5.5"
+    assert preview["sections"][0]["after"] == "Новый контроль ошибок"
+    assert preview["sections"][0]["before_evidence_refs"] == []
+    assert preview["sections"][0]["after_evidence_refs"] == []
+    assert preview["sections"][0]["source_event_ids"] == [comment_event_id]
+    assert preview["sections"][0]["sources"] == [
+        {"event_id": comment_event_id, "kind": "comment", "entity_id": document["protocol"]["comments"][0]["comment_id"], "label": "Комментарий автора", "text": "Уточнить контроль ошибок"}
+    ]
+
+    with pytest.raises(BusinessDocumentError) as bypass:
+        BusinessDocumentService.execute_command(
+            TENANT,
+            AUTHOR,
+            document["document_id"],
+            _command(document, "APPLY_CHANGES", {"base_revision_id": base["revision_id"]}, key="bypass-preview"),
+        )
+    assert bypass.value.code == "CHANGE_PREVIEW_CONFIRMATION_REQUIRED"
+
+    with pytest.raises(BusinessDocumentError) as denied:
+        BusinessDocumentService.execute_command(
+            TENANT,
+            "another-author",
+            document["document_id"],
+            _command(document, "CONFIRM_PREPARED_CHANGES", {"job_id": requested["job_id"]}, key="foreign-confirm"),
+        )
+    assert denied.value.code == "DOCUMENT_PERMISSION_DENIED"
+    assert BusinessDocumentRevision.select().count() == 1
+
+    command = _command(document, "CONFIRM_PREPARED_CHANGES", {"job_id": requested["job_id"]})
+    applied = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], command)
+    assert BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], command)["idempotent_replay"] is True
+    document = BusinessDocumentService.get_document(TENANT, applied["document_id"], AUTHOR)
+    assert document["current_revision"]["revision_number"] == 2
+    assert document["change_preview"] is None
+    assert BusinessDocumentRevision.select().count() == 2
+
+
+@pytest.mark.p0
+def test_prepared_change_can_be_discarded_without_creating_a_revision(database):
+    document = _request_and_complete_draft(_create())
+    base = document["current_revision"]
+    response = BusinessDocumentService.execute_command(
+        TENANT,
+        AUTHOR,
+        document["document_id"],
+        _command(document, "ADD_COMMENT", {"revision_id": base["revision_id"], "section_id": None, "text": "Проверить требования", "anchor": None}),
+    )
+    document = _complete_review_assessment(BusinessDocumentService.get_document(TENANT, response["document_id"], AUTHOR), comment_disposition="NO_CHANGE")
+    source_id = document["protocol"]["comments"][0]["source_event_id"]
+    requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "PREPARE_CHANGES", {"base_revision_id": base["revision_id"]}))
+    document = _complete(
+        requested["job_id"],
+        {
+            "change_plan": {
+                "schema_version": "1",
+                "base_revision_id": base["revision_id"],
+                "source_state_version": requested["state_version"],
+                "acknowledged_no_change_event_ids": [source_id],
+                "operations": [],
+            }
+        },
+    )
+    preview = BusinessDocumentService.get_change_preview(TENANT, AUTHOR, document["document_id"], requested["job_id"])
+    assert preview["sections"] == []
+    assert preview["acknowledged_no_change_sources"] == [
+        {"event_id": source_id, "kind": "comment", "entity_id": document["protocol"]["comments"][0]["comment_id"], "label": "Комментарий автора", "text": "Проверить требования"}
+    ]
+    BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "DISCARD_PREPARED_CHANGES", {"job_id": requested["job_id"]}))
+    document = BusinessDocumentService.get_document(TENANT, document["document_id"], AUTHOR)
+    assert document["change_preview"] is None
+    assert document["current_revision"]["revision_id"] == base["revision_id"]
+    with pytest.raises(BusinessDocumentError) as caught:
+        BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "CONFIRM_PREPARED_CHANGES", {"job_id": requested["job_id"]}))
+    assert caught.value.code == "CHANGE_PREVIEW_STALE"
+
+
+@pytest.mark.p0
+def test_new_feedback_invalidates_a_prepared_change(database):
+    document = _request_and_complete_draft(_create())
+    base = document["current_revision"]
+    added = BusinessDocumentService.execute_command(
+        TENANT,
+        AUTHOR,
+        document["document_id"],
+        _command(document, "ADD_COMMENT", {"revision_id": base["revision_id"], "section_id": None, "text": "Проверить текст", "anchor": None}),
+    )
+    document = _complete_review_assessment(BusinessDocumentService.get_document(TENANT, added["document_id"], AUTHOR), comment_disposition="NO_CHANGE")
+    source_id = document["protocol"]["comments"][0]["source_event_id"]
+    requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "PREPARE_CHANGES", {"base_revision_id": base["revision_id"]}))
+    document = _complete(
+        requested["job_id"],
+        {
+            "change_plan": {
+                "schema_version": "1",
+                "base_revision_id": base["revision_id"],
+                "source_state_version": requested["state_version"],
+                "acknowledged_no_change_event_ids": [source_id],
+                "operations": [],
+            }
+        },
+    )
+    BusinessDocumentService.execute_command(
+        TENANT,
+        AUTHOR,
+        document["document_id"],
+        _command(document, "ADD_COMMENT", {"revision_id": base["revision_id"], "section_id": None, "text": "Новые замечания", "anchor": None}),
+    )
+    document = BusinessDocumentService.get_document(TENANT, document["document_id"], AUTHOR)
+    assert document["change_preview"] is None
+    with pytest.raises(BusinessDocumentError) as caught:
+        BusinessDocumentService.execute_command(
+            TENANT,
+            AUTHOR,
+            document["document_id"],
+            _command(document, "CONFIRM_PREPARED_CHANGES", {"job_id": requested["job_id"]}),
+        )
+    assert caught.value.code == "CHANGE_PREVIEW_STALE"
+    assert BusinessDocumentRevision.select().count() == 1
 
 
 @pytest.mark.p0

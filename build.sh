@@ -406,6 +406,26 @@ run_go_tests() {
     if [ "$#" -eq 0 ]; then
         set -- ./...
     fi
+    if [ -n "${RAGFLOW_GO_TEST_BASE:-}" ] && [ "$#" -eq 1 ] && [ "$1" = "./..." ]; then
+        local selected_file
+        selected_file=$(mktemp)
+        if GOPROXY=${GOPROXY:-https://goproxy.cn,https://proxy.golang.org,direct} \
+            CGO_ENABLED=1 CGO_CFLAGS="$CGO_CFLAGS" CGO_LDFLAGS="$CGO_LDFLAGS" \
+            python3 tools/quality/select_go_test_packages.py "$RAGFLOW_GO_TEST_BASE" > "$selected_file"; then
+            local -a selected_packages=()
+            mapfile -d '' -t selected_packages < "$selected_file"
+            if [ "${#selected_packages[@]}" -gt 0 ]; then
+                set -- "${selected_packages[@]}"
+            else
+                echo "No Go packages selected; running the full suite"
+                set -- ./...
+            fi
+        else
+            echo "Go package selection failed; running the full suite"
+            set -- ./...
+        fi
+        rm -f -- "$selected_file"
+    fi
     GOPROXY=${GOPROXY:-https://goproxy.cn,https://proxy.golang.org,direct} CGO_ENABLED=1 \
         CGO_CFLAGS="$CGO_CFLAGS" CGO_LDFLAGS="$CGO_LDFLAGS" \
         go test -count=1 "$@"

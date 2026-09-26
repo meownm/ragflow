@@ -366,6 +366,9 @@ export type BusinessDocumentCommandType =
   | 'DECIDE_PROPOSAL'
   | 'ADD_COMMENT'
   | 'APPLY_CHANGES'
+  | 'PREPARE_CHANGES'
+  | 'CONFIRM_PREPARED_CHANGES'
+  | 'DISCARD_PREPARED_CHANGES'
   | 'START_REVIEW'
   | 'REQUEST_EXPORT'
   | 'ARCHIVE';
@@ -555,6 +558,36 @@ export interface BusinessDocumentJobSummary {
   update_time?: number | null;
 }
 
+export interface BusinessDocumentChangePreview {
+  job_id: string;
+  base_revision_id: string;
+  state_version: number;
+  sections: {
+    section_id: string;
+    title: string;
+    before: string;
+    after: string;
+    before_evidence_refs?: string[];
+    after_evidence_refs?: string[];
+    source_event_ids: string[];
+    sources?: {
+      event_id: string;
+      kind: 'question' | 'proposal' | 'comment' | 'eva';
+      entity_id: string | null;
+      label: string;
+      text: string | null;
+    }[];
+  }[];
+  acknowledged_no_change_event_ids: string[];
+  acknowledged_no_change_sources?: {
+    event_id: string;
+    kind: 'question' | 'proposal' | 'comment' | 'eva';
+    entity_id: string | null;
+    label: string;
+    text: string | null;
+  }[];
+}
+
 export interface BusinessDocumentProjection {
   document_id: string;
   catalog_entry_id?: string | null;
@@ -575,6 +608,7 @@ export interface BusinessDocumentProjection {
   allowed_commands: BusinessDocumentCommandType[];
   last_error?: { code?: string; message?: string } | string | null;
   latest_job?: BusinessDocumentJobSummary | null;
+  change_preview?: { job_id: string; base_revision_id: string } | null;
   latest_exports?: BusinessDocumentExportArtifact[];
   eva_binding?: BusinessDocumentEvaBinding | null;
 }

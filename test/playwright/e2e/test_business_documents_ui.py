@@ -349,3 +349,87 @@ def test_business_document_workbench_commands_and_mobile_layout(
     expect(page.locator("[data-testid='business-document-header']")).to_be_visible()
     expect(page.locator("[data-testid='business-document-actions']")).to_be_visible()
     expect(page.locator("[data-testid='apply-changes-button']")).to_be_visible()
+
+
+@pytest.mark.p1
+def test_prepared_document_changes_are_visible_before_confirmation(page, base_url):
+    _install_session(page)
+    _install_common_routes(page)
+    projection = _projection(allowed_commands=["PREPARE_CHANGES"])
+    submitted = []
+
+    def route_document(route):
+        nonlocal projection
+        request = route.request
+        if request.method == "GET":
+            route.fulfill(status=200, content_type="application/json", body=json.dumps(_envelope(projection), ensure_ascii=False))
+            return
+        command = request.post_data_json
+        submitted.append(command)
+        if command["type"] == "PREPARE_CHANGES":
+            projection = {
+                **projection,
+                "state_version": 20,
+                "change_preview": {"job_id": "job-preview", "base_revision_id": "revision-3"},
+                "allowed_commands": ["CONFIRM_PREPARED_CHANGES", "DISCARD_PREPARED_CHANGES"],
+            }
+        elif command["type"] == "CONFIRM_PREPARED_CHANGES":
+            revision = projection["current_revision"]
+            projection = {
+                **projection,
+                "state_version": 21,
+                "lifecycle_state": "AGREED",
+                "change_preview": None,
+                "allowed_commands": [],
+                "current_revision": {
+                    **revision,
+                    "revision_id": "revision-4",
+                    "revision_number": 4,
+                    "document_ast": {**revision["document_ast"], "sections": [{**revision["document_ast"]["sections"][0], "blocks": [{"type": "paragraph", "text": "Новая измеримая цель."}]}]},
+                    "section_texts": {"1": "Новая измеримая цель."},
+                    "body_markdown": "## 1. Цель\nНовая измеримая цель.",
+                },
+            }
+        route.fulfill(
+            status=200, content_type="application/json", body=json.dumps(_envelope({"accepted": True, "document_id": "doc-ui-1", "state_version": projection["state_version"]}), ensure_ascii=False)
+        )
+
+    def route_preview(route):
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(
+                _envelope(
+                    {
+                        "job_id": "job-preview",
+                        "base_revision_id": "revision-3",
+                        "state_version": 20,
+                        "sections": [{"section_id": "1", "title": "Цель", "before": "Сократить время перевода до одной минуты.", "after": "Новая измеримая цель.", "source_event_ids": ["event-1"]}],
+                        "acknowledged_no_change_event_ids": [],
+                    }
+                ),
+                ensure_ascii=False,
+            ),
+        )
+
+    page.route("**/api/v1/business-documents/doc-ui-1/change-previews/job-preview", route_preview)
+    page.route("**/api/v1/business-documents/doc-ui-1", route_document)
+    page.route("**/api/v1/business-documents/doc-ui-1/commands", route_document)
+    page.goto(f"{base_url.rstrip('/')}/business-documents/doc-ui-1")
+    page.get_by_role("button", name="Подготовить исправления").click()
+
+    preview = page.get_by_test_id("business-document-change-preview")
+    expect(preview).to_be_visible(timeout=RESULT_TIMEOUT_MS)
+    expect(preview).to_contain_text("ещё не применено")
+    expect(preview).to_contain_text("Новая измеримая цель.")
+    expect(page.get_by_test_id("business-document-pane")).to_contain_text("Сократить время перевода до одной минуты.")
+    assert submitted[0]["type"] == "PREPARE_CHANGES"
+    assert submitted[0]["payload"] == {"base_revision_id": "revision-3"}
+
+    page.reload()
+    expect(preview).to_be_visible(timeout=RESULT_TIMEOUT_MS)
+    expect(page.get_by_test_id("business-document-pane")).to_contain_text("Сократить время перевода до одной минуты.")
+    preview.get_by_role("button", name="Подтвердить применение").click()
+    expect(page.get_by_test_id("business-document-pane")).to_contain_text("Новая измеримая цель.", timeout=RESULT_TIMEOUT_MS)
+    assert submitted[1]["type"] == "CONFIRM_PREPARED_CHANGES"
+    assert submitted[1]["payload"] == {"job_id": "job-preview"}

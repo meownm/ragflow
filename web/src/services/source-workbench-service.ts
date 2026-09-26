@@ -1,5 +1,8 @@
+import { Authorization } from '@/constants/authorization';
 import api from '@/utils/api';
+import { getAuthorization } from '@/utils/authorization-util';
 import request from '@/utils/next-request';
+import { EventSourceParserStream } from 'eventsource-parser/stream';
 
 export interface SourceReference {
   dataset_id: string;
@@ -39,6 +42,38 @@ export interface SourceChatAnswer {
   sources: SourceCandidate[];
   version: number;
 }
+
+export type SourceProcessEvent =
+  | {
+      event: 'status';
+      stage: string;
+      message: string;
+      current: number;
+      total: number;
+      context_tokens?: number;
+      input_tokens?: number;
+      output_tokens?: number;
+      context_assumed?: boolean;
+      strategy?: string;
+    }
+  | { event: 'delta'; text: string; article?: number }
+  | {
+      event: 'step_done';
+      text: string;
+      article: number;
+      processed: number;
+      total: number;
+      strategy: string;
+      version: number;
+    }
+  | {
+      event: 'done';
+      text: string;
+      processed: number;
+      total: number;
+      version: number;
+    }
+  | { event: 'error'; code: string; message: string };
 
 interface Envelope<T> {
   code: number;
@@ -130,4 +165,50 @@ export async function chatWithSourceWorkspace(
     { question, previous_question, expected_version: workspace.version },
   );
   return unwrap(response.data);
+}
+
+export async function processSourceWorkspaceStream(
+  workspace: SourceWorkspace,
+  input: { prompt: string; draft: string; mode: 'all' | 'sequential' },
+  onEvent: (event: SourceProcessEvent) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  const response = await fetch(api.sourceWorkspaceProcess(workspace.id), {
+    method: 'POST',
+    headers: {
+      [Authorization]: getAuthorization(),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ ...input, expected_version: workspace.version }),
+    signal,
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    throw new Error(
+      body?.message || `Ошибка обработки: HTTP ${response.status}`,
+    );
+  }
+  if (!response.body) throw new Error('Сервер не открыл поток ответа');
+  const reader = response.body
+    .pipeThrough(new TextDecoderStream())
+    .pipeThrough(new EventSourceParserStream())
+    .getReader();
+  let completed = false;
+  try {
+    let next = await reader.read();
+    while (!next.done) {
+      const { value } = next;
+      const event = JSON.parse(value.data) as SourceProcessEvent;
+      if (event.event === 'error') throw new Error(event.message);
+      onEvent(event);
+      if (event.event === 'done') completed = true;
+      next = await reader.read();
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => undefined);
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+  if (!completed) throw new Error('Поток прервался до завершения обработки');
 }

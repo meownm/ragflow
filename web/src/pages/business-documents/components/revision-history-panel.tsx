@@ -12,6 +12,7 @@ import type {
   BusinessDocumentRevision,
   BusinessDocumentRevisionBasis,
 } from '../types';
+import { EvidenceRefsDiff, evidenceRefsChanged } from './evidence-refs-diff';
 
 const basisIcons: Record<
   BusinessDocumentRevisionBasis['type'],
@@ -73,6 +74,27 @@ export function RevisionHistoryPanel({
   const ordered = [...revisions].sort(
     (left, right) => right.revision_number - left.revision_number,
   );
+  const selectedRevision = ordered.find(
+    (revision) => revision.revision_id === selectedRevisionId,
+  );
+  const previousRevision = ordered.find(
+    (revision) =>
+      revision.revision_number === (selectedRevision?.revision_number ?? 0) - 1,
+  );
+  const changedSections =
+    selectedRevision && previousRevision
+      ? selectedRevision.document_ast.sections.filter(
+          (section) =>
+            selectedRevision.section_texts[section.id] !==
+              previousRevision.section_texts[section.id] ||
+            evidenceRefsChanged(
+              previousRevision.document_ast.sections.find(
+                (item) => item.id === section.id,
+              )?.evidence_refs,
+              section.evidence_refs,
+            ),
+        )
+      : [];
 
   return (
     <aside
@@ -115,6 +137,55 @@ export function RevisionHistoryPanel({
         <p className="px-5 py-8 text-sm text-text-secondary">
           Ревизий пока нет.
         </p>
+      )}
+
+      {previousRevision && changedSections.length > 0 && (
+        <section
+          className="border-b border-border-button px-5 py-4"
+          data-testid="business-document-revision-diff"
+        >
+          <h3 className="text-xs font-semibold text-text-primary">
+            Изменения ревизии {selectedRevision?.revision_number}
+          </h3>
+          <div className="mt-3 space-y-2">
+            {changedSections.map((section) => (
+              <details
+                key={section.id}
+                className="rounded-md border border-border-button"
+              >
+                <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-accent-primary">
+                  § {section.id} {section.title} · изменён
+                </summary>
+                <div className="space-y-2 border-t border-border-button p-3 text-xs">
+                  <div>
+                    <span className="font-semibold text-state-error">Было</span>
+                    <pre className="mt-1 whitespace-pre-wrap break-words font-sans leading-5 text-text-secondary">
+                      {previousRevision.section_texts[section.id] ||
+                        'Требования отсутствуют'}
+                    </pre>
+                  </div>
+                  <div>
+                    <span className="font-semibold text-state-success">
+                      Стало
+                    </span>
+                    <pre className="mt-1 whitespace-pre-wrap break-words font-sans leading-5 text-text-primary">
+                      {selectedRevision?.section_texts[section.id] ||
+                        'Требования отсутствуют'}
+                    </pre>
+                  </div>
+                  <EvidenceRefsDiff
+                    before={
+                      previousRevision.document_ast.sections.find(
+                        (item) => item.id === section.id,
+                      )?.evidence_refs
+                    }
+                    after={section.evidence_refs}
+                  />
+                </div>
+              </details>
+            ))}
+          </div>
+        </section>
       )}
 
       <ol className="px-5 py-2">

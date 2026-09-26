@@ -26,11 +26,21 @@ if [[ "$all" == false ]]; then
   else
     changed_files=$(mktemp)
     trap 'rm -f "$changed_files"' EXIT
-    git diff --name-only -z "$base" HEAD > "$changed_files"
+    # Include both sides of a rename: removing a .go file must still select Go.
+    git diff --name-only --no-renames -z "$base" HEAD > "$changed_files"
     while IFS= read -r -d '' file; do
       case "$file" in
+        docs/references/http_api_reference.md) has_web=true ;;
+        README.md|docs/*.md|docs/*.mdx) : ;;
         web/*) has_web=true ;;
         *.go|go.mod|go.sum) has_go=true ;;
+        test/evals/source_workbench/*|agent/business_requirements/golden_model_quality/*.json|agent/business_requirements/golden_dialogs/*.json|agent/business_requirements/evals/*.json|agent/business_requirements/prompts/*.md)
+          has_python=true
+          ;;
+        ragflow_deps/*.py|tools/quality/select_go_test_packages.py|test/unit_test/tools/quality/test_go_package_selection.py)
+          has_go=true
+          has_python=true
+          ;;
         *.py|pyproject.toml|requirements*.txt) has_python=true ;;
         *) all=true ;;
       esac

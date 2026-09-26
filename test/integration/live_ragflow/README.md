@@ -1,9 +1,10 @@
 # Disposable Python RAGFlow regression
 
 Run from the repository's Python environment with Docker Desktop and installed
-local Ollama models `qwen2.5:7b-instruct`, `llama3.1:8b-instruct-q4_K_M`, and
-`bge-m3:latest`. The runner validates all three through RAGFlow. Ollama must be
-reachable at `host.docker.internal:11434` from containers. It neither downloads
+proxy models `t-tech/T-lite-it-2.1:q8_0`, `qwen3.8:latest`, and
+`bge-m3:latest`. The runner validates all three through RAGFlow. The project
+Ollama proxy must be reachable at `127.0.0.1:11435` from the host and
+`host.docker.internal:11435` from containers. It neither downloads
 models nor selects cloud models.
 
 ```powershell
@@ -44,3 +45,14 @@ source/image/assets/dist identities, positive scenario proofs, and cleanup
 results. Failed prerequisites or scenarios are failures; an interrupted run is
 not passing evidence. Additional positional arguments select native pytest files
 for a focused replay, and its narrower scope must be reported.
+
+For the two AI quality baselines, select the Source Workbench live file and add
+`--business-documents-quality`. The runner mounts the test corpus only into
+its disposable app, installs pytest there, uses the synthetic tenant's real
+model, and writes separate `source-workbench-quality.json` and
+`business-documents-quality.json` files. A threshold failure stays in the
+report and makes that test fail; it does not delete either report. The model
+report records source dirty state and the proxy model digest.
+For a backend-only Business Documents model run, add `--skip-browser-tests`
+and point `--dist-root` to an empty directory outside the source snapshot; this
+mode does not provide browser or retrieval evidence.

@@ -1,5 +1,6 @@
 import { SourceChat } from '@/components/source-workbench/source-chat';
 import { SourcePicker } from '@/components/source-workbench/source-picker';
+import { SourceProcessor } from '@/components/source-workbench/source-processor';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import type { IDataset } from '@/interfaces/database/dataset';
@@ -20,6 +21,8 @@ export default function SourceWorkspacesPage() {
   const [title, setTitle] = useState('');
   const [datasetIds, setDatasetIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [selectionBusy, setSelectionBusy] = useState(false);
+  const [processingBusy, setProcessingBusy] = useState(false);
   const [error, setError] = useState('');
   const datasetNames = useMemo(
     () =>
@@ -121,6 +124,7 @@ export default function SourceWorkspacesPage() {
           <Button
             type="button"
             variant="outline"
+            disabled={processingBusy || selectionBusy}
             onClick={() => setActive(null)}
           >
             К подборкам
@@ -149,11 +153,16 @@ export default function SourceWorkspacesPage() {
             key={active.id}
             workspace={active}
             datasetNames={datasetNames}
+            selectionLocked={processingBusy}
             onChange={update}
+            onMutationChange={setSelectionBusy}
           />
-          <SourceChat
-            key={`${active.id}:${active.version}`}
+          <SourceChat key={active.id} workspace={active} />
+          <SourceProcessor
+            key={active.id}
             workspace={active}
+            selectionBusy={selectionBusy}
+            onBusyChange={setProcessingBusy}
           />
         </>
       ) : (

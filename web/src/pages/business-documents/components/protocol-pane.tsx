@@ -41,6 +41,11 @@ interface ProtocolPaneProps {
     onSuccess?: () => void,
   ) => void;
   onClearSelection: () => void;
+  focusRequest?: {
+    kind: 'question' | 'proposal' | 'comment';
+    id: string;
+    sequence: number;
+  } | null;
 }
 
 export function ProtocolPane({
@@ -56,6 +61,7 @@ export function ProtocolPane({
   editable,
   onCommand,
   onClearSelection,
+  focusRequest,
 }: ProtocolPaneProps) {
   const [comment, setComment] = useState('');
   const [savedPrompts, setSavedPrompts] = useState<string[]>([]);
@@ -84,6 +90,28 @@ export function ProtocolPane({
   ).length;
   const questionCount = questions.length - cancelledCount;
   const decidedCount = proposals.filter((p) => p.decision !== 'PENDING').length;
+
+  useEffect(() => {
+    if (!focusRequest) return;
+    const entry = Array.from(
+      scrollContainerRef.current?.querySelectorAll<HTMLElement>(
+        '[data-protocol-kind]',
+      ) ?? [],
+    ).find(
+      (candidate) =>
+        candidate.dataset.protocolKind === focusRequest.kind &&
+        candidate.dataset.protocolId === focusRequest.id,
+    );
+    if (!entry) return;
+    entry.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+    entry.classList.add('ring-2', 'ring-inset', 'ring-accent-primary');
+    const timeout = window.setTimeout(
+      () =>
+        entry.classList.remove('ring-2', 'ring-inset', 'ring-accent-primary'),
+      3000,
+    );
+    return () => window.clearTimeout(timeout);
+  }, [focusRequest]);
 
   useEffect(() => {
     if (!revision) onClearSelection();
@@ -373,6 +401,8 @@ export function ProtocolPane({
         {reviewCycle?.comments.map((item) => (
           <article
             key={item.comment_id}
+            data-protocol-kind="comment"
+            data-protocol-id={item.comment_id}
             className="border-b border-border-button px-5 py-4 last:border-b-0"
             data-testid="business-document-comment"
           >

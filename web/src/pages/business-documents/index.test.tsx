@@ -9,6 +9,7 @@ import {
   deleteBusinessDocument,
   downloadBusinessDocumentExport,
   fetchBusinessDocument,
+  fetchBusinessDocumentChangePreview,
   fetchEvaDocumentChange,
   generateEvaDocumentChangeDraft,
   listBusinessDocumentAccessUsers,
@@ -104,6 +105,7 @@ jest.mock('@/services/business-document-service', () => {
     deleteBusinessDocument: jest.fn(),
     downloadBusinessDocumentExport: jest.fn(),
     fetchBusinessDocument: jest.fn(),
+    fetchBusinessDocumentChangePreview: jest.fn(),
     listBusinessDocuments: jest.fn(),
     listBusinessDocumentRevisions: jest.fn(),
     listBusinessDocumentAccessUsers: jest.fn(),
@@ -136,6 +138,7 @@ const mockedDelete = jest.mocked(deleteBusinessDocument);
 const mockedDownloadExport = jest.mocked(downloadBusinessDocumentExport);
 const mockedDownloadFileFromBlob = jest.mocked(downloadFileFromBlob);
 const mockedFetch = jest.mocked(fetchBusinessDocument);
+const mockedFetchPreview = jest.mocked(fetchBusinessDocumentChangePreview);
 const mockedList = jest.mocked(listBusinessDocuments);
 const mockedListRevisions = jest.mocked(listBusinessDocumentRevisions);
 const mockedListAccessUsers = jest.mocked(listBusinessDocumentAccessUsers);
@@ -406,6 +409,30 @@ beforeEach(() => {
   jest.clearAllMocks();
   window.localStorage.clear();
   mockedFetch.mockResolvedValue(projection);
+  mockedFetchPreview.mockResolvedValue({
+    job_id: 'job-preview',
+    base_revision_id: 'revision-3',
+    state_version: 18,
+    sections: [
+      {
+        section_id: '1',
+        title: 'Цель',
+        before: firstSectionText,
+        after: 'Новая измеримая цель.',
+        source_event_ids: ['event-comment-4'],
+        sources: [
+          {
+            event_id: 'event-comment-4',
+            kind: 'comment',
+            entity_id: 'comment-4',
+            label: 'Комментарий автора',
+            text: 'Уточнить цель',
+          },
+        ],
+      },
+    ],
+    acknowledged_no_change_event_ids: [],
+  });
   mockedList.mockResolvedValue({
     items: [],
     total: 0,
@@ -726,6 +753,72 @@ test('shows which comments, questions and AI proposals produced each revision', 
   expect(mockedListRevisions).toHaveBeenCalledWith('doc-1');
 });
 
+test('keeps the section diff available in revision history', async () => {
+  mockedListRevisions.mockResolvedValueOnce([
+    projection.current_revision!,
+    {
+      ...projection.current_revision!,
+      revision_id: 'revision-2',
+      revision_number: 2,
+      section_texts: {
+        ...projection.current_revision!.section_texts,
+        '1': 'Старая цель.',
+      },
+    },
+  ]);
+  renderPage();
+  fireEvent.click(
+    await screen.findByTestId('business-document-history-toggle'),
+  );
+  const diff = await screen.findByTestId('business-document-revision-diff');
+  expect(diff).toHaveTextContent('Изменения ревизии 3');
+  expect(diff).toHaveTextContent('Старая цель.');
+  expect(diff).toHaveTextContent(firstSectionText);
+  expect(screen.getAllByTestId('business-document-section')[0]).toHaveClass(
+    'ring-1',
+  );
+});
+
+test('shows evidence changes in history even when section text is unchanged', async () => {
+  const current = {
+    ...projection.current_revision!,
+    document_ast: {
+      ...projection.current_revision!.document_ast,
+      sections: projection.current_revision!.document_ast.sections.map(
+        (section) =>
+          section.id === '1'
+            ? {
+                ...section,
+                evidence_refs: ['ragflow://dataset/d/document/new/chunk/1'],
+              }
+            : section,
+      ),
+    },
+  };
+  mockedFetch.mockResolvedValueOnce({
+    ...projection,
+    current_revision: current,
+  });
+  mockedListRevisions.mockResolvedValueOnce([
+    current,
+    {
+      ...projection.current_revision!,
+      revision_id: 'revision-2',
+      revision_number: 2,
+    },
+  ]);
+  renderPage();
+  fireEvent.click(
+    await screen.findByTestId('business-document-history-toggle'),
+  );
+  const diff = await screen.findByTestId('business-document-revision-diff');
+  expect(diff).toHaveTextContent('Источники до');
+  expect(diff).toHaveTextContent('ragflow://dataset/d/document/new/chunk/1');
+  expect(screen.getAllByTestId('business-document-section')[0]).toHaveClass(
+    'ring-1',
+  );
+});
+
 test('offers personal-token EVA actions for a verified page binding', async () => {
   const linked = {
     ...projection,
@@ -938,7 +1031,9 @@ test('does not check or offer EVA pull until the first local revision exists', a
   });
   renderPage();
 
-  expect(await screen.findByTestId('business-document-eva-binding')).toBeVisible();
+  expect(
+    await screen.findByTestId('business-document-eva-binding'),
+  ).toBeVisible();
   expect(
     screen.queryByTestId('pull-business-document-from-eva'),
   ).not.toBeInTheDocument();
@@ -1921,6 +2016,169 @@ test('requests review assessment before applying and exports EvaWiki explicitly'
       payload: { revision_id: 'revision-3', format: 'EVA_WIKI' },
     }),
   );
+});
+
+test('shows affected sections during review analysis and navigates to a section', async () => {
+  mockedFetch.mockResolvedValue({
+    ...projection,
+    operation_state: 'ANALYZING_REVIEW',
+    allowed_commands: [],
+  });
+  renderPage();
+  const activity = await screen.findByTestId(
+    'business-document-review-activity',
+  );
+  expect(activity).toHaveTextContent('Замечания анализируются');
+  expect(
+    within(activity).getByRole('button', { name: '§ 1 · 1' }),
+  ).toBeInTheDocument();
+  fireEvent.click(within(activity).getByRole('button', { name: '§ 1 · 1' }));
+  const section = screen.getAllByTestId('business-document-section')[0];
+  expect(section).toHaveClass('ring-2');
+  expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+});
+
+test('prepares changes, then shows before and after with explicit confirmation', async () => {
+  mockedFetch.mockResolvedValueOnce({
+    ...projection,
+    allowed_commands: ['PREPARE_CHANGES'],
+  });
+  const { unmount } = renderPage();
+  fireEvent.click(
+    await screen.findByRole('button', { name: 'Подготовить исправления' }),
+  );
+  await waitFor(() =>
+    expect(mockedSubmit).toHaveBeenCalledWith(
+      'doc-1',
+      expect.objectContaining({
+        type: 'PREPARE_CHANGES',
+        payload: { base_revision_id: 'revision-3' },
+      }),
+    ),
+  );
+  unmount();
+  jest.clearAllMocks();
+  mockedFetch.mockResolvedValue({
+    ...projection,
+    change_preview: { job_id: 'job-preview', base_revision_id: 'revision-3' },
+    allowed_commands: ['CONFIRM_PREPARED_CHANGES', 'DISCARD_PREPARED_CHANGES'],
+  });
+  mockedFetchPreview.mockResolvedValue({
+    job_id: 'job-preview',
+    base_revision_id: 'revision-3',
+    state_version: 18,
+    sections: [
+      {
+        section_id: '1',
+        title: 'Цель',
+        before: firstSectionText,
+        after: 'Новая измеримая цель.',
+        source_event_ids: ['event-comment-4'],
+        sources: [
+          {
+            event_id: 'event-comment-4',
+            kind: 'comment',
+            entity_id: 'comment-4',
+            label: 'Комментарий автора',
+            text: 'Уточнить цель',
+          },
+        ],
+      },
+    ],
+    acknowledged_no_change_event_ids: [],
+  });
+  mockedSubmit.mockResolvedValue(commandResult);
+  renderPage();
+  const preview = await screen.findByTestId('business-document-change-preview');
+  expect(preview).toHaveTextContent('ещё не применено');
+  expect(preview).toHaveTextContent(firstSectionText);
+  expect(preview).toHaveTextContent('Новая измеримая цель.');
+  fireEvent.click(
+    within(preview).getByRole('button', { name: 'Показать в документе' }),
+  );
+  expect(screen.getAllByTestId('business-document-section')[0]).toHaveClass(
+    'ring-2',
+  );
+  fireEvent.click(
+    within(preview).getByRole('button', {
+      name: /Комментарий автора: Уточнить цель/,
+    }),
+  );
+  expect(screen.getByTestId('business-document-comment')).toHaveClass('ring-2');
+  fireEvent.click(
+    within(preview).getByRole('button', { name: 'Подтвердить применение' }),
+  );
+  await waitFor(() =>
+    expect(mockedSubmit).toHaveBeenCalledWith(
+      'doc-1',
+      expect.objectContaining({
+        type: 'CONFIRM_PREPARED_CHANGES',
+        payload: { job_id: 'job-preview' },
+      }),
+    ),
+  );
+});
+
+test('shows evidence changes and named no-change inputs before confirmation', async () => {
+  mockedFetch.mockResolvedValueOnce({
+    ...projection,
+    change_preview: { job_id: 'job-preview', base_revision_id: 'revision-3' },
+    allowed_commands: ['CONFIRM_PREPARED_CHANGES', 'DISCARD_PREPARED_CHANGES'],
+  });
+  mockedFetchPreview.mockResolvedValueOnce({
+    job_id: 'job-preview',
+    base_revision_id: 'revision-3',
+    state_version: 18,
+    sections: [
+      {
+        section_id: '1',
+        title: 'Цель',
+        before: firstSectionText,
+        after: firstSectionText,
+        before_evidence_refs: ['ragflow://dataset/d/document/old/chunk/1'],
+        after_evidence_refs: ['ragflow://dataset/d/document/new/chunk/1'],
+        source_event_ids: ['event-comment-4'],
+      },
+    ],
+    acknowledged_no_change_event_ids: ['event-comment-5'],
+    acknowledged_no_change_sources: [
+      {
+        event_id: 'event-comment-5',
+        kind: 'comment',
+        entity_id: 'comment-4',
+        label: 'Комментарий автора',
+        text: 'Проверить метрику',
+      },
+    ],
+  });
+  renderPage();
+  const preview = await screen.findByTestId('business-document-change-preview');
+  fireEvent.click(within(preview).getByText(/будет изменён/));
+  expect(preview).toHaveTextContent('Источники до');
+  expect(preview).toHaveTextContent('ragflow://dataset/d/document/new/chunk/1');
+  expect(preview).toHaveTextContent('Учтено без изменения текста: 1');
+  fireEvent.click(
+    within(preview).getByRole('button', { name: /Проверить метрику/ }),
+  );
+  expect(screen.getByTestId('business-document-comment')).toHaveClass('ring-2');
+});
+
+test('keeps a prepared diff readable without offering edit actions to a viewer', async () => {
+  mockedFetch.mockResolvedValue({
+    ...projection,
+    change_preview: { job_id: 'job-preview', base_revision_id: 'revision-3' },
+    permissions: { read: true, edit: false, delete: false, assign: false },
+    allowed_commands: [],
+  });
+  renderPage();
+  const preview = await screen.findByTestId('business-document-change-preview');
+  expect(preview).toHaveTextContent('Новая измеримая цель.');
+  expect(
+    within(preview).queryByRole('button', { name: 'Подтвердить применение' }),
+  ).not.toBeInTheDocument();
+  expect(
+    within(preview).queryByRole('button', { name: 'Отказаться' }),
+  ).not.toBeInTheDocument();
 });
 
 test('renders loading and retryable error states', async () => {

@@ -51,6 +51,7 @@ EXPECTED_ROUTES = {
     "update_business_document_sql_catalog_binding": ("/business-documents/sql-query/catalog-bindings/<binding_id>", ("PUT",)),
     "resolve_business_document_sql_execution_binding": ("/business-documents/sql-query/execution-binding/resolve", ("POST",)),
     "get_business_document": ("/business-documents/<document_id>", ("GET",)),
+    "get_business_document_change_preview": ("/business-documents/<document_id>/change-previews/<job_id>", ("GET",)),
     "delete_business_document": ("/business-documents/<document_id>", ("DELETE",)),
     "assign_business_document_owner": ("/business-documents/<document_id>/owner", ("PUT",)),
     "pull_business_document_from_eva": ("/business-documents/<document_id>/eva/pull", ("POST",)),

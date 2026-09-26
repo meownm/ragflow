@@ -180,6 +180,8 @@ export default {
     `${restAPIv1}/source-workspaces/${id}/retrieve`,
   sourceWorkspaceChat: (id: string) =>
     `${restAPIv1}/source-workspaces/${id}/chat`,
+  sourceWorkspaceProcess: (id: string) =>
+    `${restAPIv1}/source-workspaces/${id}/process`,
 
   // document
   getDocumentList: (datasetId: string) =>
@@ -298,6 +300,8 @@ export default {
     `${restAPIv1}/business-documents/access/users/${userId}`,
   businessDocumentCommands: (id: string) =>
     `${restAPIv1}/business-documents/${id}/commands`,
+  businessDocumentChangePreview: (id: string, jobId: string) =>
+    `${restAPIv1}/business-documents/${id}/change-previews/${jobId}`,
   businessDocumentRevisions: (id: string) =>
     `${restAPIv1}/business-documents/${id}/revisions`,
   businessDocumentEvaPull: (id: string) =>

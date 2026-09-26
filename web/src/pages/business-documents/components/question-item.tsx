@@ -90,6 +90,8 @@ export function QuestionItem({
   return (
     <Collapsible open={expanded} onOpenChange={onExpandedChange} asChild>
       <article
+        data-protocol-kind="question"
+        data-protocol-id={question.question_id}
         className={cn(
           'relative overflow-hidden border-b border-border-button px-5 py-5 transition-colors duration-200 last:border-b-0',
           status.frameClass,

@@ -2,6 +2,7 @@ import type {
   BusinessDocumentAccessContext,
   BusinessDocumentAssignableUser,
   BusinessDocumentCatalog,
+  BusinessDocumentChangePreview,
   BusinessDocumentCommand,
   BusinessDocumentCommandResult,
   BusinessDocumentEvaPullResult,
@@ -428,6 +429,21 @@ export async function fetchBusinessDocument(documentId: string) {
       requestConfig(),
     );
     return unwrap<BusinessDocumentProjection>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function fetchBusinessDocumentChangePreview(
+  documentId: string,
+  jobId: string,
+) {
+  try {
+    const response = await request.get(
+      api.businessDocumentChangePreview(documentId, jobId),
+      requestConfig(),
+    );
+    return unwrap<BusinessDocumentChangePreview>(response.data);
   } catch (error) {
     return rethrowBusinessDocumentError(error);
   }

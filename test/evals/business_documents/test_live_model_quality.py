@@ -328,12 +328,8 @@ def _apply_review_change(
             {
                 "message": "Live model did not make the confirmed review change applicable",
                 "allowed_commands": document["allowed_commands"],
-                "open_question_tags": [
-                    item["semantic_tag"] for item in document["protocol"]["questions"] if item["status"] == "OPEN"
-                ],
-                "pending_proposals": [
-                    item["text"] for item in document["protocol"]["proposals"] if item["decision"] in {None, "PENDING"}
-                ],
+                "open_question_tags": [item["semantic_tag"] for item in document["protocol"]["questions"] if item["status"] == "OPEN"],
+                "pending_proposals": [item["text"] for item in document["protocol"]["proposals"] if item["decision"] in {None, "PENDING"}],
                 "comment_dispositions": [item["disposition"] for item in document["protocol"]["comments"]],
             }
         )
@@ -448,10 +444,7 @@ def _aggregate_ai_audits(audits: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 def _aggregate_metrics(scores: list[QualityScore], case_results: list[dict[str, Any]]) -> dict[str, Any]:
     criteria = {criterion["id"] for criterion in RUBRIC["criteria"]}
-    criterion_scores = {
-        criterion: sum(score.criterion_scores[criterion] for score in scores) / len(scores) if scores else 0.0
-        for criterion in criteria
-    }
+    criterion_scores = {criterion: sum(score.criterion_scores[criterion] for score in scores) / len(scores) if scores else 0.0 for criterion in criteria}
     p0 = [result for result in case_results if result["priority"] == "P0"]
     scored_results = [result for result in case_results if result["metrics"]]
     duplicates = [f"{result['case_id']}:{item}" for result, score in zip(scored_results, scores, strict=True) for item in score.duplicate_content]
@@ -478,10 +471,7 @@ def _aggregate_metrics(scores: list[QualityScore], case_results: list[dict[str, 
 
 
 def _asset_hashes() -> dict[str, str]:
-    return {
-        name: f"sha256:{hashlib.sha256((ASSET_ROOT / 'prompts' / name).read_bytes()).hexdigest()}"
-        for name in PROMPT_NAMES
-    }
+    return {name: f"sha256:{hashlib.sha256((ASSET_ROOT / 'prompts' / name).read_bytes()).hexdigest()}" for name in PROMPT_NAMES}
 
 
 def _write_report(path: str, suite: dict[str, Any], case_results: list[dict[str, Any]], scores: list[QualityScore], audits: list[dict[str, Any]]):
@@ -493,6 +483,8 @@ def _write_report(path: str, suite: dict[str, Any], case_results: list[dict[str,
         "scoring_method": "deterministic_proxy",
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "source_revision": os.environ.get("GITHUB_SHA", "unknown"),
+        "source_dirty": {"1": True, "0": False}.get(os.environ.get("RAGFLOW_QA_SOURCE_DIRTY")),
+        "model_weights_digest": os.environ.get("BUSINESS_DOCUMENT_MODEL_DIGEST", ""),
         "rubric_id": RUBRIC["rubric_id"],
         "rubric_version": RUBRIC["rubric_version"],
         "template_version": published_template()["template_version"],

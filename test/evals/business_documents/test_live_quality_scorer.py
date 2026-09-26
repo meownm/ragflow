@@ -204,12 +204,8 @@ def test_scorer_penalizes_missing_duplicated_and_misplaced_information():
 def test_scorer_detects_semantic_paraphrase_across_sections():
     document = _document_ast()
     by_id = {section["id"]: section for section in document["sections"]}
-    by_id["1"]["blocks"] = [
-        {"type": "paragraph", "text": "Клиент выбирает свободный слот, после чего система подтверждает запись."}
-    ]
-    by_id["3.3"]["blocks"] = [
-        {"type": "paragraph", "text": "Пользователь выбирает доступный временной интервал, затем сервис подтверждает бронирование."}
-    ]
+    by_id["1"]["blocks"] = [{"type": "paragraph", "text": "Клиент выбирает свободный слот, после чего система подтверждает запись."}]
+    by_id["3.3"]["blocks"] = [{"type": "paragraph", "text": "Пользователь выбирает доступный временной интервал, затем сервис подтверждает бронирование."}]
 
     score = score_document_quality(document, _protocol(), TEMPLATE, RUBRIC, FACTS, SNAPSHOT)
 
@@ -242,6 +238,18 @@ def test_scorer_rejects_contradictory_controlled_value():
     assert score.contradictions == ("availability:98%",)
     assert "CONTRADICTORY_CONTROLLED_FACT" in score.hard_failures
     assert score.criterion_scores["content_nonredundancy"] < 4
+
+
+def test_scorer_does_not_credit_facts_with_a_reference_outside_the_snapshot():
+    document = _document_ast()
+    monitoring = next(section for section in document["sections"] if section["id"] == "5.5")
+    monitoring["evidence_refs"] = ["ragflow://dataset/other/document/forged/chunk/monitoring"]
+
+    score = score_document_quality(document, _protocol(), TEMPLATE, RUBRIC, FACTS, SNAPSHOT)
+
+    assert score.grounded_claim_count == 1
+    assert score.grounded_reference_precision == pytest.approx(1 / 5)
+    assert score.criterion_scores["source_grounding"] < 4
 
 
 def test_scorer_fails_missing_monitoring_bad_protocol_and_unsupported_claims():

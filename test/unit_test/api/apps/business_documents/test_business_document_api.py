@@ -141,6 +141,24 @@ async def test_routes_pass_tenant_and_owner_in_service_contract_order(route_app,
 
 @pytest.mark.p0
 @pytest.mark.asyncio
+async def test_change_preview_route_passes_document_and_job_scope(route_app, monkeypatch):
+    app, module = route_app
+    calls = []
+
+    def get_change_preview(tenant_id, actor_id, document_id, job_id, is_admin):
+        calls.append((tenant_id, actor_id, document_id, job_id, is_admin))
+        return {"job_id": job_id, "sections": []}
+
+    monkeypatch.setattr(module.BusinessDocumentService, "get_change_preview", staticmethod(get_change_preview))
+    response = await app.test_client().get("/business-documents/doc-1/change-previews/job-1")
+
+    assert response.status_code == 200
+    assert (await response.get_json())["data"] == {"job_id": "job-1", "sections": []}
+    assert calls == [(ACTOR, ACTOR, "doc-1", "job-1", False)]
+
+
+@pytest.mark.p0
+@pytest.mark.asyncio
 async def test_delete_route_passes_admin_role_to_service(route_app, monkeypatch):
     app, module = route_app
     module.current_user.is_superuser = True

@@ -277,3 +277,6 @@ internal/deepdoc/parser/docx/tool/
 /intake-complete.png
 /review-revision-1.png
 /deployment/linux-pg
+/deployment/qa/.env
+/deployment/qa/models-configured.json
+/deployment/qa/setup.json

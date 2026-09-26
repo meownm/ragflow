@@ -11,6 +11,8 @@ import type {
 interface DocumentPaneProps {
   revision: BusinessDocumentRevision | null;
   onSelectionChange: (selection: BusinessDocumentSelection | null) => void;
+  highlightedSectionIds?: string[];
+  focusRequest?: { sectionId: string; sequence: number } | null;
 }
 
 const CONTEXT_WINDOW = 64;
@@ -147,11 +149,28 @@ function findUniqueOffset(
 export function DocumentPane({
   revision,
   onSelectionChange,
+  highlightedSectionIds = [],
+  focusRequest,
 }: DocumentPaneProps) {
   const paneRef = useRef<HTMLDivElement>(null);
   const [selectionError, setSelectionError] = useState<string | null>(null);
+  const [focusedSectionId, setFocusedSectionId] = useState<string | null>(null);
 
   useEffect(() => setSelectionError(null), [revision?.revision_id]);
+  useEffect(() => {
+    if (!focusRequest) return;
+    const section = [
+      ...(paneRef.current?.querySelectorAll<HTMLElement>(SECTION_SELECTOR) ??
+        []),
+    ].find(
+      (candidate) => candidate.dataset.sectionId === focusRequest.sectionId,
+    );
+    if (!section) return;
+    section.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+    setFocusedSectionId(focusRequest.sectionId);
+    const timer = window.setTimeout(() => setFocusedSectionId(null), 2500);
+    return () => window.clearTimeout(timer);
+  }, [focusRequest]);
 
   const rejectSelection = (message: string) => {
     onSelectionChange(null);
@@ -290,6 +309,13 @@ export function DocumentPane({
                   data-section-id={section.id}
                   data-section-text={sectionText}
                   data-testid="business-document-section"
+                  className={
+                    focusedSectionId === section.id
+                      ? 'rounded-md bg-accent-primary/10 ring-2 ring-accent-primary/50 ring-offset-4'
+                      : highlightedSectionIds.includes(section.id)
+                        ? 'rounded-md bg-accent-primary/5 ring-1 ring-accent-primary/20 ring-offset-4'
+                        : undefined
+                  }
                 >
                   <ReactMarkdown
                     components={{

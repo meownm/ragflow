@@ -174,7 +174,7 @@ jobs:
         if: steps.detect_changes.outputs.has_python_changes == 'true'
         run: |
           source .venv/bin/activate
-          pytest test/evals/business_documents/test_golden_dialogue_harness.py test/evals/business_documents/test_live_quality_scorer.py
+          pytest test/evals/business_documents/test_golden_dialogue_harness.py test/evals/business_documents/test_live_quality_scorer.py test/evals/source_workbench/test_evaluate.py test/evals/source_workbench/test_live_provisioning.py
 
       - name: PostgreSQL transaction races
         if: steps.detect_changes.outputs.has_python_changes == 'true'
@@ -260,6 +260,7 @@ jobs:
         env:
           RAGFLOW_TEST_DOCKER_HOST: host.docker.internal
           RAGFLOW_TEST_BIND_ADDRESS: 0.0.0.0
+          RAGFLOW_GO_TEST_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
         run: bash test/run_go_regression.sh
 
       - name: Build ragflow:nightly
@@ -724,6 +725,7 @@ jobs:
         env:
           RAGFLOW_TEST_DOCKER_HOST: host.docker.internal
           RAGFLOW_TEST_BIND_ADDRESS: 0.0.0.0
+          RAGFLOW_GO_TEST_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
         run: bash test/run_go_regression.sh
 
       - name: Build ragflow:nightly

@@ -76,6 +76,7 @@ services:
       - ../../admin:/ragflow/admin:ro
       - ../../common:/ragflow/common:ro
       - ../../agent:/ragflow/agent:ro
+      - ../../business_documents:/ragflow/business_documents:ro
       - ../../rag:/ragflow/rag:ro
       - resources:/ragflow/rag/res
       - ../../deepdoc:/ragflow/deepdoc:ro

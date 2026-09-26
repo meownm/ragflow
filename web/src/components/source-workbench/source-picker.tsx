@@ -15,7 +15,9 @@ import { buildSourceTree, sourceKey, type SourceTreeNode } from './source-tree';
 interface SourcePickerProps {
   workspace: SourceWorkspace;
   datasetNames?: Record<string, string>;
+  selectionLocked?: boolean;
   onChange(workspace: SourceWorkspace): void;
+  onMutationChange?(busy: boolean): void;
 }
 
 function CandidateNode({
@@ -93,12 +95,12 @@ function CandidateNode({
 export function SourcePicker({
   workspace,
   datasetNames = {},
+  selectionLocked = false,
   onChange,
+  onMutationChange,
 }: SourcePickerProps) {
   const [query, setQuery] = useState('');
-  const [candidates, setCandidates] = useState<SourceCandidate[]>(
-    workspace.selected_sources || [],
-  );
+  const [candidates, setCandidates] = useState<SourceCandidate[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [activeSearch, setActiveSearch] = useState<{
@@ -130,7 +132,10 @@ export function SourcePicker({
       );
       setCandidates((previous) => {
         const merged = new Map(
-          previous.map((candidate) => [sourceKey(candidate), candidate]),
+          (page === 1 ? [] : previous).map((candidate) => [
+            sourceKey(candidate),
+            candidate,
+          ]),
         );
         result.candidates.forEach((candidate) =>
           merged.set(sourceKey(candidate), candidate),
@@ -156,7 +161,7 @@ export function SourcePicker({
   };
 
   const toggle = async (candidate: SourceCandidate | SourceReference) => {
-    if (busy) return;
+    if (busy || selectionLocked) return;
     const key = sourceKey(candidate);
     const next = selected.has(key)
       ? workspace.selected_documents.filter((item) => sourceKey(item) !== key)
@@ -168,6 +173,7 @@ export function SourcePicker({
           },
         ];
     setBusy(true);
+    onMutationChange?.(true);
     setError('');
     try {
       onChange(await saveSourceSelection(workspace, next));
@@ -180,12 +186,14 @@ export function SourcePicker({
       }
     } finally {
       setBusy(false);
+      onMutationChange?.(false);
     }
   };
 
   const refreshSelection = async () => {
-    if (busy || !workspace.selected_documents.length) return;
+    if (busy || selectionLocked || !workspace.selected_documents.length) return;
     setBusy(true);
+    onMutationChange?.(true);
     setError('');
     try {
       onChange(
@@ -200,6 +208,31 @@ export function SourcePicker({
       }
     } finally {
       setBusy(false);
+      onMutationChange?.(false);
+    }
+  };
+
+  const moveSelection = async (index: number, direction: -1 | 1) => {
+    if (busy || selectionLocked) return;
+    const next = [...workspace.selected_documents];
+    const target = index + direction;
+    if (target < 0 || target >= next.length) return;
+    [next[index], next[target]] = [next[target], next[index]];
+    setBusy(true);
+    onMutationChange?.(true);
+    setError('');
+    try {
+      onChange(await saveSourceSelection(workspace, next));
+    } catch (cause) {
+      setError(sourceRequestError(cause, 'Не удалось изменить порядок статей'));
+      try {
+        onChange(await getSourceWorkspace(workspace.id));
+      } catch {
+        // Keep the current order visible when refresh is unavailable.
+      }
+    } finally {
+      setBusy(false);
+      onMutationChange?.(false);
     }
   };
 
@@ -230,9 +263,20 @@ export function SourcePicker({
         )}
         <div className="mt-5">
           <h2 className="text-base font-semibold">Найденные статьи</h2>
-          {!candidates.length && (
+          {activeSearch && (
+            <p className="mt-2 text-sm text-text-secondary">
+              Результаты запроса «{activeSearch.query}»: {candidates.length} на
+              загруженных страницах.
+            </p>
+          )}
+          {!activeSearch && (
             <p className="mt-3 text-sm text-text-secondary">
               Введите запрос, чтобы найти статьи в выбранных базах знаний.
+            </p>
+          )}
+          {activeSearch && !candidates.length && (
+            <p className="mt-3 text-sm text-text-secondary">
+              По этому запросу статьи не найдены. Уточните формулировку.
             </p>
           )}
           <ul className="mt-3 space-y-2">
@@ -252,7 +296,7 @@ export function SourcePicker({
                       key={child.key}
                       node={child}
                       selected={selected}
-                      disabled={busy}
+                      disabled={busy || selectionLocked}
                       onToggle={toggle}
                     />
                   ))}
@@ -276,11 +320,22 @@ export function SourcePicker({
       </div>
       <aside className="rounded-md border border-border-button p-4">
         <h2 className="font-semibold">Выбрано: {selected.size}</h2>
+        {selectionLocked && (
+          <p className="mt-2 text-xs text-text-secondary">
+            Подборка закреплена до завершения обработки.
+          </p>
+        )}
+        {selected.size > 1 && (
+          <p className="mt-2 text-xs text-text-secondary">
+            Статьи обрабатываются в этом порядке. Номера используются в итоговом
+            тексте.
+          </p>
+        )}
         {selected.size > 0 && (
           <button
             type="button"
             className="mt-2 text-xs text-accent-primary hover:underline"
-            disabled={busy}
+            disabled={busy || selectionLocked}
             onClick={refreshSelection}
           >
             Обновить выбранные статьи
@@ -292,7 +347,7 @@ export function SourcePicker({
           </p>
         )}
         <ul className="mt-3 space-y-3">
-          {workspace.selected_documents.map((source) => {
+          {workspace.selected_documents.map((source, index) => {
             const detail =
               candidateByKey.get(sourceKey(source)) ||
               workspace.selected_sources?.find(
@@ -304,21 +359,49 @@ export function SourcePicker({
                 className="border-b border-border-button pb-2 text-sm"
               >
                 <p className="font-medium">
-                  {detail?.title || source.document_id}
+                  {index + 1}. {detail?.title || source.document_id}
                 </p>
                 {detail?.path && detail.path.length > 1 && (
                   <p className="text-xs text-text-secondary">
                     {detail.path.join(' › ')}
                   </p>
                 )}
-                <button
-                  type="button"
-                  className="mt-1 text-xs text-accent-primary hover:underline"
-                  disabled={busy}
-                  onClick={() => toggle(source)}
-                >
-                  Убрать
-                </button>
+                <div className="mt-2 flex flex-wrap gap-3">
+                  {workspace.selected_documents.length > 1 && (
+                    <>
+                      <button
+                        type="button"
+                        className="text-xs text-accent-primary hover:underline disabled:opacity-40"
+                        disabled={busy || selectionLocked || index === 0}
+                        onClick={() => moveSelection(index, -1)}
+                        aria-label={`Поднять статью ${detail?.title || source.document_id}`}
+                      >
+                        Выше
+                      </button>
+                      <button
+                        type="button"
+                        className="text-xs text-accent-primary hover:underline disabled:opacity-40"
+                        disabled={
+                          busy ||
+                          selectionLocked ||
+                          index === workspace.selected_documents.length - 1
+                        }
+                        onClick={() => moveSelection(index, 1)}
+                        aria-label={`Опустить статью ${detail?.title || source.document_id}`}
+                      >
+                        Ниже
+                      </button>
+                    </>
+                  )}
+                  <button
+                    type="button"
+                    className="text-xs text-accent-primary hover:underline"
+                    disabled={busy || selectionLocked}
+                    onClick={() => toggle(source)}
+                  >
+                    Убрать
+                  </button>
+                </div>
               </li>
             );
           })}

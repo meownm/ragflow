@@ -55,6 +55,54 @@ class CiLaneSelectionTest(unittest.TestCase):
             {"has_go_changes": "false", "has_python_changes": "true", "has_web_changes": "true"},
         )
 
+    def test_python_and_documentation_do_not_select_go(self):
+        self.commit("api/example.py", "value = 1")
+        self.commit("docs/develop/guide.md", "guide")
+        self.assertEqual(
+            self.select(),
+            {"has_go_changes": "false", "has_python_changes": "true", "has_web_changes": "false"},
+        )
+
+    def test_documentation_embedded_in_web_selects_web(self):
+        self.commit("api/example.py", "value = 1")
+        self.commit("docs/references/http_api_reference.md", "# API")
+        self.assertEqual(
+            self.select(),
+            {"has_go_changes": "false", "has_python_changes": "true", "has_web_changes": "true"},
+        )
+
+    def test_go_rename_to_python_still_selects_go(self):
+        self.commit("internal/example.go", "package example")
+        before = self.git("rev-parse", "HEAD").stdout.strip()
+        self.git("mv", "internal/example.go", "internal/example.py")
+        self.git("commit", "-qm", "rename Go source")
+        self.assertEqual(
+            self.select(before=before),
+            {"has_go_changes": "true", "has_python_changes": "true", "has_web_changes": "false"},
+        )
+
+    def test_native_dependency_python_selects_go(self):
+        self.commit("ragflow_deps/prepare_native.py", "raise SystemExit(0)")
+        self.assertEqual(
+            self.select(),
+            {"has_go_changes": "true", "has_python_changes": "true", "has_web_changes": "false"},
+        )
+
+    def test_go_package_selector_python_selects_go(self):
+        self.commit("tools/quality/select_go_test_packages.py", "raise SystemExit(0)")
+        self.assertEqual(
+            self.select(),
+            {"has_go_changes": "true", "has_python_changes": "true", "has_web_changes": "false"},
+        )
+
+    def test_eval_corpus_change_selects_python_without_full_matrix(self):
+        self.commit("test/evals/source_workbench/cases.json", '{"cases": []}')
+        self.commit("agent/business_requirements/golden_model_quality/v1.json", '{"cases": []}')
+        self.assertEqual(
+            self.select(),
+            {"has_go_changes": "false", "has_python_changes": "true", "has_web_changes": "false"},
+        )
+
     def test_tag_and_unknown_input_run_all_lanes(self):
         self.commit("web/example.ts", "export const value = 1")
         self.assertEqual(set(self.select(ref="refs/tags/v1.2.3").values()), {"true"})

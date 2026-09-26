@@ -88,6 +88,7 @@ _MODEL_TABLES = (
 )
 
 _MAX_EVA_SYNC_MARKDOWN_SIZE = 100_000
+_CHANGE_PREVIEW_TTL_MS = 24 * 60 * 60 * 1000
 
 
 @dataclass(frozen=True)
@@ -716,6 +717,63 @@ class BusinessDocumentService:
         return [cls._job_dict(row) for row in rows]
 
     @classmethod
+    def get_change_preview(cls, tenant_id: str, actor_id: str, document_id: str, job_id: str, is_admin: bool = False) -> dict[str, Any]:
+        document = cls._get_accessible_document(document_id)
+        job = cls._require_current_change_preview(document, job_id)
+        result = job.result if isinstance(job.result, dict) else {}
+        output = result.get("output")
+        plan = output.get("change_plan") if isinstance(output, dict) else None
+        validate_contract("change_plan", plan)
+        base = BusinessDocumentRevision.get_by_id(document.current_revision_id).document_ast
+        draft = apply_change_plan(base, plan)
+        before = {section["id"]: section for section in base["sections"]}
+        after = {section["id"]: section for section in draft["sections"]}
+        return {
+            "job_id": job.id,
+            "base_revision_id": job.base_revision_id,
+            "state_version": document.state_version,
+            "sections": [
+                {
+                    "section_id": operation["section_id"],
+                    "title": before[operation["section_id"]]["title"],
+                    "before": render_section_text(before[operation["section_id"]]),
+                    "after": render_section_text(after[operation["section_id"]]),
+                    "before_evidence_refs": before[operation["section_id"]].get("evidence_refs", []),
+                    "after_evidence_refs": after[operation["section_id"]].get("evidence_refs", []),
+                    "source_event_ids": operation["source_event_ids"],
+                    "sources": cls._change_preview_sources(job, operation["source_event_ids"]),
+                }
+                for operation in plan["operations"]
+            ],
+            "acknowledged_no_change_event_ids": plan["acknowledged_no_change_event_ids"],
+            "acknowledged_no_change_sources": cls._change_preview_sources(job, plan["acknowledged_no_change_event_ids"]),
+        }
+
+    @staticmethod
+    def _change_preview_sources(job, source_event_ids):
+        snapshot = job.payload if isinstance(job.payload, dict) else {}
+        events = {event.get("event_id"): event for event in snapshot.get("source_events", []) if isinstance(event, dict)}
+        protocol = snapshot.get("protocol") if isinstance(snapshot.get("protocol"), dict) else {}
+        questions = {item.get("question_id"): item for item in protocol.get("questions", []) if isinstance(item, dict)}
+        proposals = {item.get("proposal_id"): item for item in protocol.get("proposals", []) if isinstance(item, dict)}
+        comments = {item.get("comment_id"): item for item in protocol.get("comments", []) if isinstance(item, dict)}
+        sources = []
+        for event_id in source_event_ids:
+            event = events.get(event_id) or {}
+            payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+            event_type = event.get("event_type")
+            if event_type == "QuestionAnswered":
+                kind, entity_id, label, item = "question", payload.get("question_id"), "Ответ на вопрос", questions.get(payload.get("question_id"))
+            elif event_type == "ProposalDecided":
+                kind, entity_id, label, item = "proposal", payload.get("proposal_id"), "Принятое предложение", proposals.get(payload.get("proposal_id"))
+            elif event_type == "AuthorCommentAdded":
+                kind, entity_id, label, item = "comment", payload.get("comment_id"), "Комментарий автора", comments.get(payload.get("comment_id"))
+            else:
+                kind, entity_id, label, item = "eva", None, "Загруженная версия EVA", None
+            sources.append({"event_id": event_id, "kind": kind, "entity_id": entity_id, "label": label, "text": item.get("text") if item else None})
+        return sources
+
+    @classmethod
     def delete_document(
         cls,
         actor_id: str,
@@ -926,7 +984,7 @@ class BusinessDocumentService:
             elif job.job_type == "GENERATE_DRAFT":
                 cls._complete_draft(document, job, actor_id, committed_output, execution)
             elif job.job_type == "PLAN_CHANGES":
-                cls._complete_changes(document, job, actor_id, committed_output, execution)
+                cls._complete_changes(document, job, actor_id, committed_output, execution, preview_only=job.payload.get("preview_only") is True)
             elif job.job_type == "GENERATE_EXPORT":
                 cls._complete_export(document, job, actor_id, committed_output, execution)
             else:
@@ -1038,8 +1096,10 @@ class BusinessDocumentService:
             return cls._decide_proposal(document, actor_id, envelope)
         if envelope.type == CommandType.ADD_COMMENT:
             return cls._add_comment(document, actor_id, envelope)
-        if envelope.type == CommandType.APPLY_CHANGES:
+        if envelope.type in {CommandType.APPLY_CHANGES, CommandType.PREPARE_CHANGES}:
             cls._require_lifecycle(document, LifecycleState.REVIEW)
+            if envelope.type == CommandType.APPLY_CHANGES and cls._current_change_preview_job(document) is not None:
+                raise ConflictError("CHANGE_PREVIEW_CONFIRMATION_REQUIRED", "Prepared changes must be confirmed or discarded before direct application")
             open_questions = cls._open_questions(document, "REVIEW")
             if open_questions:
                 raise ConflictError("OPEN_REVIEW_QUESTIONS", "Changes cannot be applied while review questions are open", {"question_ids": open_questions})
@@ -1059,6 +1119,25 @@ class BusinessDocumentService:
                 )
             cls._require_applicable_review_inputs(document)
             return cls._request_job(document, actor_id, envelope, "PLAN_CHANGES", OperationState.APPLYING_CHANGES)
+        if envelope.type in {CommandType.CONFIRM_PREPARED_CHANGES, CommandType.DISCARD_PREPARED_CHANGES}:
+            cls._require_lifecycle(document, LifecycleState.REVIEW)
+            cls._require_idle(document)
+            job = cls._require_current_change_preview(document, envelope.payload["job_id"])
+            if envelope.type == CommandType.CONFIRM_PREPARED_CHANGES:
+                result = job.result if isinstance(job.result, dict) else {}
+                cls._complete_changes(document, job, actor_id, result.get("output"), result.get("execution") or {}, confirmation=True)
+            else:
+                new_version = document.state_version + 1
+                cls._optimistic_update(document, {"state_version": new_version})
+                cls._create_event(document.id, new_version, "ChangePreviewDiscarded", "USER", actor_id, {"job_id": job.id}, envelope.command_id)
+            return {
+                "accepted": True,
+                "document_id": document.id,
+                "state_version": document.state_version,
+                "lifecycle_state": document.lifecycle_state,
+                "operation_state": document.operation_state,
+                "allowed_commands": cls._allowed_commands(document),
+            }
         if envelope.type == CommandType.START_REVIEW:
             cls._require_idle(document)
             cls._require_lifecycle(document, LifecycleState.AGREED)
@@ -1101,6 +1180,8 @@ class BusinessDocumentService:
         job_id = get_uuid()
         snapshot = cls._job_snapshot(document, envelope.payload)
         snapshot["task_type"] = job_type
+        if envelope.type == CommandType.PREPARE_CHANGES:
+            snapshot["preview_only"] = True
         snapshot["requested_by_actor_id"] = actor_id
         prompt = prompt_descriptor(job_type)
         if prompt is not None:
@@ -1535,14 +1616,15 @@ class BusinessDocumentService:
         )
 
     @classmethod
-    def _complete_changes(cls, document, job, actor_id, output, execution):
-        if document.operation_state != OperationState.APPLYING_CHANGES.value or document.lifecycle_state != LifecycleState.REVIEW.value:
+    def _complete_changes(cls, document, job, actor_id, output, execution, *, preview_only=False, confirmation=False):
+        required_state = OperationState.IDLE.value if confirmation else OperationState.APPLYING_CHANGES.value
+        if document.operation_state != required_state or document.lifecycle_state != LifecycleState.REVIEW.value:
             raise ConflictError("JOB_STATE_CONFLICT", "Change application is not active")
         if job.base_revision_id != document.current_revision_id:
             raise ConflictError("STALE_AI_RESULT", "Change plan targets an outdated revision")
         if cls._open_questions(document, "REVIEW"):
             raise ConflictError("OPEN_REVIEW_QUESTIONS", "Changes cannot be applied while review questions are open")
-        change_plan = output.get("change_plan")
+        change_plan = output.get("change_plan") if isinstance(output, dict) else None
         validate_contract("change_plan", change_plan)
         assert isinstance(change_plan, dict)
         if change_plan["base_revision_id"] != document.current_revision_id or change_plan["source_state_version"] != job.source_state_version:
@@ -1612,6 +1694,24 @@ class BusinessDocumentService:
         pending_proposal_ids = cls._pending_proposal_ids(document)
         review_continues = bool(pending_proposal_ids)
         next_lifecycle_state = LifecycleState.REVIEW.value if review_continues else LifecycleState.AGREED.value
+        if preview_only:
+            if operations:
+                base_revision = BusinessDocumentRevision.get_by_id(document.current_revision_id)
+                draft = apply_change_plan(base_revision.document_ast, change_plan)
+                if draft["template_version"] != document.template_version:
+                    raise ValidationError("TEMPLATE_VERSION_CONFLICT", "Updated document does not use the pinned template")
+            new_version = document.state_version + 1
+            cls._optimistic_update(document, {"operation_state": OperationState.IDLE.value, "state_version": new_version})
+            cls._create_event(
+                document.id,
+                new_version,
+                "ChangePreviewPrepared",
+                "AI",
+                actor_id,
+                {"job_id": job.id, "base_revision_id": job.base_revision_id, "review_cycle": document.active_review_cycle},
+                job.correlation_id,
+            )
+            return
         if not operations:
             new_version = document.state_version + 1
             cls._optimistic_update(
@@ -2172,6 +2272,7 @@ class BusinessDocumentService:
             "allowed_commands": cls._allowed_commands(document) if permissions["edit"] else [],
             "last_error": document.last_error,
             "latest_job": cls._latest_job(document.id),
+            "change_preview": cls._change_preview_summary(document),
             "latest_exports": cls._latest_exports(document.id),
             "eva_binding": cls._eva_binding(document),
         }
@@ -2253,7 +2354,11 @@ class BusinessDocumentService:
 
     @classmethod
     def _allowed_commands(cls, document):
-        return cls._allowed_commands_values(document.lifecycle_state, document.operation_state, document.id, document.active_review_cycle)
+        commands = cls._allowed_commands_values(document.lifecycle_state, document.operation_state, document.id, document.active_review_cycle)
+        if cls._current_change_preview_job(document) is not None:
+            commands = [command for command in commands if command not in {CommandType.APPLY_CHANGES.value, CommandType.PREPARE_CHANGES.value}]
+            commands.extend((CommandType.CONFIRM_PREPARED_CHANGES.value, CommandType.DISCARD_PREPARED_CHANGES.value))
+        return commands
 
     @classmethod
     def _allowed_commands_values(cls, lifecycle_state, operation_state, document_id, review_cycle):
@@ -2283,6 +2388,7 @@ class BusinessDocumentService:
                 pending_proposal_ids = cls._pending_proposal_ids_by_values(document_id, review_cycle)
                 if not pending_proposal_ids or cls._active_change_input_event_ids_by_values(document_id, review_cycle):
                     commands.append(CommandType.APPLY_CHANGES.value)
+                    commands.append(CommandType.PREPARE_CHANGES.value)
             else:
                 commands.append(CommandType.REQUEST_REVIEW_ASSESSMENT.value)
             return commands
@@ -2721,29 +2827,33 @@ class BusinessDocumentService:
         decision_mode = str(decision.get("mode") or "") if isinstance(decision, dict) else ""
         from api.apps.business_documents.eva_changes import EvaDocumentChangeService
 
-        if page_url:
-            binding = EvaDocumentChangeService.resolve_page_url(actor_id, page_url)
-            allowed_statuses = {"CONNECTED"} if schema_version == "3" else {"CONNECTED", "LINK_ONLY"}
-            if binding.get("status") not in allowed_statuses:
-                raise ConflictError("EVA_BINDING_UNAVAILABLE", "The selected EVA page could not be verified")
-            remote_title = str(binding.get("document_name") or "").strip()
-            if remote_title and normalize_title(remote_title) != normalize_title(display_title):
-                raise ConflictError(
-                    "EVA_PAGE_TITLE_CHANGED",
-                    "The selected EVA page no longer has the document title",
-                    {"actual_title": binding.get("document_name")},
-                )
-            return binding
         if decision_mode == "SKIP":
             return None
-        matches = cls._eva_matches_with_occupancy(EvaDocumentChangeService.find_title_matches(actor_id, display_title))
-        if matches:
+        if not page_url:
+            matches = cls._eva_matches_with_occupancy(EvaDocumentChangeService.find_title_matches(actor_id, display_title))
+            if schema_version == "3" and len(matches) == 1 and matches[0]["binding_available"]:
+                page_url = matches[0].get("web_url")
+            if not page_url:
+                if matches:
+                    raise ConflictError(
+                        "EVA_BINDING_DECISION_REQUIRED",
+                        "В EVA найдены страницы с таким названием. Загрузите подходящую страницу или продолжите без привязки.",
+                        {"matches": matches},
+                    )
+                return None
+
+        binding = EvaDocumentChangeService.resolve_page_url(actor_id, page_url)
+        allowed_statuses = {"CONNECTED"} if schema_version == "3" else {"CONNECTED", "LINK_ONLY"}
+        if binding.get("status") not in allowed_statuses:
+            raise ConflictError("EVA_BINDING_UNAVAILABLE", "The selected EVA page could not be verified")
+        remote_title = str(binding.get("document_name") or "").strip()
+        if remote_title and normalize_title(remote_title) != normalize_title(display_title):
             raise ConflictError(
-                "EVA_BINDING_DECISION_REQUIRED",
-                "В EVA найдены страницы с таким названием. Загрузите подходящую страницу или продолжите без привязки.",
-                {"matches": matches},
+                "EVA_PAGE_TITLE_CHANGED",
+                "The selected EVA page no longer has the document title",
+                {"actual_title": binding.get("document_name")},
             )
-        return None
+        return binding
 
     @staticmethod
     def _store_eva_binding(document_id: str, binding: dict[str, Any], *, replace: bool = False) -> None:
@@ -2934,6 +3044,45 @@ class BusinessDocumentService:
     def _latest_job(cls, document_id):
         row = BusinessDocumentJob.select().where(BusinessDocumentJob.document_id == document_id).order_by(BusinessDocumentJob.create_time.desc()).first()
         return cls._job_dict(row) if row else None
+
+    @staticmethod
+    def _current_change_preview_job(document):
+        if document.lifecycle_state != LifecycleState.REVIEW.value or document.operation_state != OperationState.IDLE.value:
+            return None
+        row = (
+            BusinessDocumentJob.select()
+            .where(
+                (BusinessDocumentJob.document_id == document.id)
+                & (BusinessDocumentJob.job_type == "PLAN_CHANGES")
+                & (BusinessDocumentJob.status == "COMPLETED")
+                & (BusinessDocumentJob.source_state_version == document.state_version - 1)
+                & (BusinessDocumentJob.base_revision_id == document.current_revision_id)
+            )
+            .order_by(BusinessDocumentJob.update_time.desc())
+            .first()
+        )
+        if (
+            row is None
+            or not isinstance(row.payload, dict)
+            or row.payload.get("preview_only") is not True
+            or row.payload.get("active_review_cycle") != document.active_review_cycle
+            or not isinstance(row.result, dict)
+            or current_timestamp() - row.update_time > _CHANGE_PREVIEW_TTL_MS
+        ):
+            return None
+        return row
+
+    @classmethod
+    def _change_preview_summary(cls, document):
+        job = cls._current_change_preview_job(document)
+        return {"job_id": job.id, "base_revision_id": job.base_revision_id} if job else None
+
+    @classmethod
+    def _require_current_change_preview(cls, document, job_id):
+        job = cls._current_change_preview_job(document)
+        if job is None or job.id != job_id:
+            raise ConflictError("CHANGE_PREVIEW_STALE", "The prepared changes are no longer current")
+        return job
 
     @staticmethod
     def _latest_exports(document_id):

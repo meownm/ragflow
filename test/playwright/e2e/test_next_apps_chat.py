@@ -501,7 +501,7 @@ def mm_step_10_select_models_for_two_cards(ctx: FlowContext, step, snap):
             expect(settings).to_be_visible(timeout=RESULT_TIMEOUT_MS)
             settings.locator("button[aria-haspopup='dialog']").first.click()
             options = page.get_by_role("dialog").last
-            options.get_by_text(model["name"], exact=True).click()
+            options.get_by_text(model["name"], exact=True).first.click()
             _mm_dismiss_open_popovers(page)
             expect(trigger).to_contain_text(model["name"])
             selected.append(f"{model['name']}@{model['instance_name']}@{model['provider_name']}")

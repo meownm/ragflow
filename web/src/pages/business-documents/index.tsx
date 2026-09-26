@@ -27,6 +27,7 @@ import {
   deleteBusinessDocument,
   downloadBusinessDocumentExport,
   fetchBusinessDocument,
+  fetchBusinessDocumentChangePreview,
   listBusinessDocumentAccessUsers,
   listBusinessDocumentCatalog,
   listBusinessDocumentRevisions,
@@ -77,6 +78,7 @@ import {
   useState,
 } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
+import { ChangePreviewPanel } from './components/change-preview-panel';
 import { DocumentPane } from './components/document-pane';
 import {
   BusinessDocumentProgress,
@@ -84,7 +86,9 @@ import {
 } from './components/document-progress';
 import { EvaChangeCreatePanel } from './components/eva-change-create-panel';
 import { EvaChangeWorkbench } from './components/eva-change-workbench';
+import { evidenceRefsChanged } from './components/evidence-refs-diff';
 import { ProtocolPane } from './components/protocol-pane';
+import { ReviewActivity } from './components/review-activity';
 import { RevisionHistoryPanel } from './components/revision-history-panel';
 import { appendVoiceTranscript, VoiceInput } from './components/voice-input';
 import type {
@@ -110,7 +114,7 @@ const operationLabels: Record<BusinessDocumentOperationState, string> = {
   ANALYZING: 'Анализ вводных',
   ANALYZING_REVIEW: 'Анализ замечаний',
   GENERATING_DRAFT: 'Создание черновика',
-  APPLYING_CHANGES: 'Применение изменений',
+  APPLYING_CHANGES: 'Подготовка плана исправлений',
   EXPORTING: 'Подготовка файла',
   FAILED: 'Операция завершилась с ошибкой',
 };
@@ -118,6 +122,7 @@ const operationLabels: Record<BusinessDocumentOperationState, string> = {
 const staleConflictCodes = new Set([
   'STATE_VERSION_CONFLICT',
   'BASE_REVISION_CONFLICT',
+  'CHANGE_PREVIEW_STALE',
 ]);
 
 const protocolPaneWidthStorageKey =
@@ -804,6 +809,15 @@ export default function BusinessDocumentsPage() {
   const [selection, setSelection] = useState<BusinessDocumentSelection | null>(
     null,
   );
+  const [sectionFocus, setSectionFocus] = useState<{
+    sectionId: string;
+    sequence: number;
+  } | null>(null);
+  const [sourceFocus, setSourceFocus] = useState<{
+    kind: 'question' | 'proposal' | 'comment';
+    id: string;
+    sequence: number;
+  } | null>(null);
   const [hasConflict, setHasConflict] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [selectedRevisionId, setSelectedRevisionId] = useState<string>();
@@ -876,6 +890,61 @@ export default function BusinessDocumentsPage() {
   });
 
   const document = documentQuery.data;
+  const changePreviewQuery = useQuery({
+    queryKey: [
+      'business-document-change-preview',
+      documentId,
+      document?.change_preview?.job_id,
+    ],
+    queryFn: () =>
+      fetchBusinessDocumentChangePreview(
+        documentId!,
+        document!.change_preview!.job_id,
+      ),
+    enabled: Boolean(
+      documentId && document?.change_preview?.job_id && !changeId,
+    ),
+    retry: false,
+  });
+  const focusSection = useCallback((sectionId: string) => {
+    setSectionFocus((current) => ({
+      sectionId,
+      sequence: (current?.sequence ?? 0) + 1,
+    }));
+  }, []);
+  const focusSource = useCallback(
+    (kind: 'question' | 'proposal' | 'comment', id: string) => {
+      setHistoryOpen(false);
+      setSourceFocus((current) => ({
+        kind,
+        id,
+        sequence: (current?.sequence ?? 0) + 1,
+      }));
+    },
+    [],
+  );
+  const highlightedSectionIds = useMemo(() => {
+    if (changePreviewQuery.data)
+      return changePreviewQuery.data.sections.map(
+        (section) => section.section_id,
+      );
+    if (
+      !document ||
+      !['ANALYZING_REVIEW', 'APPLYING_CHANGES'].includes(
+        document.operation_state,
+      )
+    )
+      return [];
+    return [
+      ...document.protocol.questions.map(
+        (question) => question.target_section_id,
+      ),
+      ...document.protocol.proposals.map(
+        (proposal) => proposal.target_section_id,
+      ),
+      ...document.protocol.comments.map((comment) => comment.section_id),
+    ].filter((sectionId): sectionId is string => Boolean(sectionId));
+  }, [changePreviewQuery.data, document]);
   useEffect(() => {
     setOwnerSelection(document?.owner_id ?? '');
   }, [document?.owner_id]);
@@ -1058,6 +1127,29 @@ export default function BusinessDocumentsPage() {
     revisionsQuery.data,
     selectedRevisionId,
   ]);
+  const previousDisplayedRevision = historyOpen
+    ? revisionsQuery.data?.find(
+        (revision) =>
+          revision.revision_number ===
+          (displayedRevision?.revision_number ?? 0) - 1,
+      )
+    : undefined;
+  const documentHighlightedSectionIds =
+    historyOpen && displayedRevision && previousDisplayedRevision
+      ? displayedRevision.document_ast.sections
+          .filter(
+            (section) =>
+              displayedRevision.section_texts[section.id] !==
+                previousDisplayedRevision.section_texts[section.id] ||
+              evidenceRefsChanged(
+                previousDisplayedRevision.document_ast.sections.find(
+                  (item) => item.id === section.id,
+                )?.evidence_refs,
+                section.evidence_refs,
+              ),
+          )
+          .map((section) => section.id)
+      : highlightedSectionIds;
   const ensureEvaCapability = useCallback(
     async (capability: 'PULL_FROM_EVA' | 'CREATE_EVA_CHANGE') => {
       if (!documentId || !document) throw new Error('Документ не загружен');
@@ -1186,6 +1278,7 @@ export default function BusinessDocumentsPage() {
       Record<BusinessDocumentCommandType, Record<string, unknown>>
     > = {
       APPLY_CHANGES: { base_revision_id: revisionId },
+      PREPARE_CHANGES: { base_revision_id: revisionId },
     };
     submitCommand(type, payload ?? payloadByCommand[type] ?? {});
   };
@@ -1377,7 +1470,20 @@ export default function BusinessDocumentsPage() {
               </Button>
             </>
           )}
-          {allowed.has('APPLY_CHANGES') && (
+          {allowed.has('PREPARE_CHANGES') && (
+            <Button
+              size="sm"
+              variant="accent"
+              disabled={isBusy}
+              loading={commandMutation.isPending}
+              data-testid="prepare-changes-button"
+              onClick={() => runDocumentCommand('PREPARE_CHANGES')}
+            >
+              <Sparkles className="size-4" />
+              Подготовить исправления
+            </Button>
+          )}
+          {allowed.has('APPLY_CHANGES') && !allowed.has('PREPARE_CHANGES') && (
             <Button
               size="sm"
               variant="accent"
@@ -1505,23 +1611,23 @@ export default function BusinessDocumentsPage() {
             {document.permissions?.edit !== false &&
               evaUpdateQuery.data?.changed &&
               evaUpdateQuery.data.can_pull && (
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={
-                  isBusy ||
-                  !document.current_revision ||
-                  !['REVIEW', 'AGREED'].includes(document.lifecycle_state) ||
-                  pullEvaMutation.isPending
-                }
-                loading={pullEvaMutation.isPending}
-                onClick={() => pullEvaMutation.mutate()}
-                data-testid="pull-business-document-from-eva"
-              >
-                <ArrowDownToLine className="size-3.5" />
-                Загрузить обновление из EVA
-              </Button>
-            )}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={
+                    isBusy ||
+                    !document.current_revision ||
+                    !['REVIEW', 'AGREED'].includes(document.lifecycle_state) ||
+                    pullEvaMutation.isPending
+                  }
+                  loading={pullEvaMutation.isPending}
+                  onClick={() => pullEvaMutation.mutate()}
+                  data-testid="pull-business-document-from-eva"
+                >
+                  <ArrowDownToLine className="size-3.5" />
+                  Загрузить обновление из EVA
+                </Button>
+              )}
             {document.permissions?.edit !== false && hasPersonalEvaToken && (
               <Button
                 size="sm"
@@ -1568,7 +1674,8 @@ export default function BusinessDocumentsPage() {
             )}
             {evaUpdateQuery.error && (
               <span className="w-full text-text-disabled" role="status">
-                Не удалось проверить обновления EVA: {evaUpdateQuery.error.message}
+                Не удалось проверить обновления EVA:{' '}
+                {evaUpdateQuery.error.message}
               </span>
             )}
           </div>
@@ -1613,6 +1720,43 @@ export default function BusinessDocumentsPage() {
             operationState={document.operation_state}
             operationLabel={operationLabels[document.operation_state]}
           />
+        )}
+        {['ANALYZING_REVIEW', 'APPLYING_CHANGES'].includes(
+          document.operation_state,
+        ) && (
+          <ReviewActivity
+            reviewCycle={document.protocol}
+            onFocusSection={focusSection}
+          />
+        )}
+        {document.change_preview && changePreviewQuery.data && (
+          <ChangePreviewPanel
+            preview={changePreviewQuery.data}
+            pending={isBusy}
+            canConfirm={allowed.has('CONFIRM_PREPARED_CHANGES')}
+            canDiscard={allowed.has('DISCARD_PREPARED_CHANGES')}
+            onFocusSection={focusSection}
+            onFocusSource={focusSource}
+            onConfirm={() =>
+              runDocumentCommand('CONFIRM_PREPARED_CHANGES', {
+                job_id: document.change_preview!.job_id,
+              })
+            }
+            onDiscard={() =>
+              runDocumentCommand('DISCARD_PREPARED_CHANGES', {
+                job_id: document.change_preview!.job_id,
+              })
+            }
+          />
+        )}
+        {document.change_preview && changePreviewQuery.error && (
+          <div
+            className="border-b border-state-error/30 px-5 py-2 text-xs text-state-error"
+            role="alert"
+          >
+            Не удалось загрузить предпросмотр:{' '}
+            {changePreviewQuery.error.message}
+          </div>
         )}
         {document.operation_state === 'FAILED' && document.last_error && (
           <div className="flex items-center gap-2 border-b border-state-error/30 bg-state-error/5 px-5 py-2 text-xs text-state-error">
@@ -1666,6 +1810,8 @@ export default function BusinessDocumentsPage() {
       >
         <DocumentPane
           revision={displayedRevision}
+          highlightedSectionIds={documentHighlightedSectionIds}
+          focusRequest={sectionFocus}
           onSelectionChange={(nextSelection) => {
             if (!historyOpen) setSelection(nextSelection);
           }}
@@ -1728,6 +1874,7 @@ export default function BusinessDocumentsPage() {
             }
             onCommand={submitCommand}
             onClearSelection={clearSelection}
+            focusRequest={sourceFocus}
           />
         )}
       </div>

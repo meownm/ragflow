@@ -26,6 +26,9 @@
         "ADD_COMMENT",
         "REQUEST_REVIEW_ASSESSMENT",
         "APPLY_CHANGES",
+        "PREPARE_CHANGES",
+        "CONFIRM_PREPARED_CHANGES",
+        "DISCARD_PREPARED_CHANGES",
         "START_REVIEW",
         "REQUEST_EXPORT",
         "ARCHIVE"
@@ -109,6 +112,14 @@
         "base_revision_id": {"type": "string", "minLength": 1, "maxLength": 64}
       }
     },
+    "preparedChangesPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["job_id"],
+      "properties": {
+        "job_id": {"type": "string", "minLength": 1, "maxLength": 64}
+      }
+    },
     "requestExportPayload": {
       "type": "object",
       "additionalProperties": false,
@@ -137,8 +148,12 @@
       "then": {"properties": {"payload": {"$ref": "#/$defs/addCommentPayload"}}}
     },
     {
-      "if": {"properties": {"type": {"const": "APPLY_CHANGES"}}},
+      "if": {"properties": {"type": {"enum": ["APPLY_CHANGES", "PREPARE_CHANGES"]}}},
       "then": {"properties": {"payload": {"$ref": "#/$defs/applyChangesPayload"}}}
+    },
+    {
+      "if": {"properties": {"type": {"enum": ["CONFIRM_PREPARED_CHANGES", "DISCARD_PREPARED_CHANGES"]}}},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/preparedChangesPayload"}}}
     },
     {
       "if": {"properties": {"type": {"const": "REQUEST_EXPORT"}}},

@@ -83,6 +83,8 @@ export function ProposalItem({
 
   return (
     <article
+      data-protocol-kind="proposal"
+      data-protocol-id={proposal.proposal_id}
       className={cn(
         'relative overflow-hidden border-b border-border-button px-5 py-5 transition-colors duration-200 last:border-b-0',
         status.frameClass,

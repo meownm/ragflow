@@ -11,6 +11,7 @@ import { useState, type FormEvent } from 'react';
 
 interface Turn extends SourceChatMessage {
   sources?: SourceCandidate[];
+  version: number;
 }
 
 /** A small chat surface that only uses the source workspace passed by its host. */
@@ -30,13 +31,22 @@ export function SourceChat({ workspace }: { workspace: SourceWorkspace }) {
       const answer = await chatWithSourceWorkspace(
         workspace,
         text,
-        [...turns].reverse().find((turn) => turn.role === 'user')?.content ||
-          '',
+        [...turns]
+          .reverse()
+          .find(
+            (turn) =>
+              turn.role === 'user' && turn.version === workspace.version,
+          )?.content || '',
       );
       setTurns((previous) => [
         ...previous,
-        { role: 'user', content: text },
-        { role: 'assistant', content: answer.answer, sources: answer.sources },
+        { role: 'user', content: text, version: answer.version },
+        {
+          role: 'assistant',
+          content: answer.answer,
+          sources: answer.sources,
+          version: answer.version,
+        },
       ]);
       setQuestion('');
     } catch (cause) {
@@ -57,11 +67,18 @@ export function SourceChat({ workspace }: { workspace: SourceWorkspace }) {
           Сначала выберите хотя бы одну статью.
         </p>
       )}
+      {turns.some((turn) => turn.version !== workspace.version) && (
+        <p className="mt-4 text-sm text-text-secondary">
+          Подборка изменилась. Прежние ответы сохранены для справки; новые
+          вопросы используют текущие статьи.
+        </p>
+      )}
       <ol className="mt-5 space-y-4">
         {turns.map((turn, index) => (
           <li key={index} className="rounded-md bg-bg-card p-3">
             <p className="mb-1 text-xs font-semibold text-text-secondary">
               {turn.role === 'user' ? 'Вы' : 'Ответ'}
+              {turn.version !== workspace.version ? ' · прежняя подборка' : ''}
             </p>
             <p className="whitespace-pre-wrap text-sm text-text-primary">
               {turn.content}

@@ -20,7 +20,9 @@ OUT = Path(__file__).resolve().parent
 PROJECT = "ragflow-t1-live-20260906-b-" + secrets.token_hex(4)
 BASE = "http://127.0.0.1:19382"
 SECRET_VALUES = []
-MODELS = (("qwen2.5:7b-instruct", "chat"), ("llama3.1:8b-instruct-q4_K_M", "chat"), ("bge-m3:latest", "embedding"))
+MODELS = (("t-tech/T-lite-it-2.1:q8_0", "chat"), ("qwen3.8:latest", "chat"), ("bge-m3:latest", "embedding"))
+OLLAMA_HOST_URL = "http://127.0.0.1:11435"
+OLLAMA_CONTAINER_URL = "http://host.docker.internal:11435"
 
 
 def sanitized(text):
@@ -85,15 +87,27 @@ def main():
     parser.add_argument("--source-root", type=Path, required=True)
     parser.add_argument("--dist-root", type=Path, required=True)
     parser.add_argument("--evidence-dir", type=Path, required=True)
-    parser.add_argument("--frontend-archive", type=Path, help="Verified frontend archive and adjacent .json receipt; required for frozen candidates")
+    parser.add_argument("--frontend-archive", type=Path, help="Verified frontend archive and adjacent .json receipt; required for frozen browser candidates")
+    parser.add_argument("--business-documents-quality", action="store_true", help="Run the real-model Business Documents suite in this disposable app")
+    parser.add_argument("--skip-browser-tests", action="store_true", help="Use only with Business Documents model quality; no built SPA or browser evidence")
     parser.add_argument("tests", nargs="*")
     args = parser.parse_args()
-    OUT = args.evidence_dir.resolve()
-    OUT.mkdir(parents=True, exist_ok=True)
+    if args.skip_browser_tests and not args.business_documents_quality:
+        parser.error("--skip-browser-tests requires --business-documents-quality")
+    if args.skip_browser_tests and args.tests:
+        parser.error("--skip-browser-tests cannot select browser tests")
     source = args.source_root.resolve()
     dist = args.dist_root.resolve()
+    candidate = source.parent if (source.parent / "candidate.json").is_file() else None
+    OUT = args.evidence_dir.resolve()
+    if candidate and (OUT.is_relative_to(source) or (args.skip_browser_tests and dist.is_relative_to(source))):
+        parser.error("Evidence and generated dist must stay outside the frozen source snapshot")
+    OUT.mkdir(parents=True, exist_ok=True)
     assert (source / "api/ragflow_server.py").is_file()
-    assert (dist / "index.html").is_file()
+    if not args.skip_browser_tests:
+        assert (dist / "index.html").is_file()
+    else:
+        dist.mkdir(parents=True, exist_ok=True)
     for port in (19382, 19383):
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", port))
@@ -114,8 +128,8 @@ def main():
     )
     app["volumes"] = [f"{source.as_posix()}/{item[6:]}" if item.startswith("../../") else item for item in app["volumes"]]
     app["volumes"] = [f"{dist.as_posix()}:/ragflow/web/dist:ro" if ":/ragflow/web/dist:" in item else item for item in app["volumes"]]
-    candidate = source.parent if (source.parent / "candidate.json").is_file() else None
-    assert not candidate or not OUT.is_relative_to(source), "Evidence must be outside the frozen source snapshot"
+    if args.business_documents_quality:
+        app["volumes"].extend((f"{(source / 'test').as_posix()}:/ragflow/test:ro", f"{OUT.as_posix()}:/ragflow/qa-evidence"))
     if candidate:
         input_files = json.loads((candidate / "candidate.json").read_text(encoding="utf-8"))["identity"]["files"]
     else:
@@ -141,14 +155,14 @@ def main():
         "harness_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "mounted_assets_sha256": mounted_assets,
         "dist_sha256": {path.relative_to(dist).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted(dist.rglob("*")) if path.is_file()},
-        "targets": [BASE, "http://127.0.0.1:19383", "http://host.docker.internal:11434"],
+        "targets": [BASE, "http://127.0.0.1:19383", OLLAMA_CONTAINER_URL],
         "images": {name: command(["docker", "image", "inspect", "--format", "{{.Id}}", svc["image"]], env=env, log=f"image-{name}.log").stdout.strip() for name, svc in compose["services"].items()},
     }
-    with urlopen("http://127.0.0.1:11434/api/tags", timeout=30) as response:
+    with urlopen(f"{OLLAMA_HOST_URL}/api/tags", timeout=30) as response:
         tags = {model["name"]: model for model in json.load(response)["models"]}
     identity["ollama_models"] = {name: {key: tags[name][key] for key in ("digest", "size")} for name, _ in MODELS}
     assert all(model["size"] > 1_000_000 for model in identity["ollama_models"].values()), "Only installed local model weights are allowed"
-    if candidate:
+    if candidate and not args.skip_browser_tests:
         assert args.frontend_archive, "Frozen live proof requires the matching frontend artifact"
         archive = args.frontend_archive.resolve()
         command(
@@ -190,7 +204,7 @@ def main():
         SECRET_VALUES.append(token)
         print("Synthetic superuser authenticated; configuring real local Ollama", flush=True)
         for model, kind in MODELS:
-            api("/v1/llm/add_llm", "POST", {"llm_factory": "Ollama", "llm_name": model, "model_type": kind, "api_base": "http://host.docker.internal:11434", "max_tokens": 4096}, token)
+            api("/v1/llm/add_llm", "POST", {"llm_factory": "Ollama", "llm_name": model, "model_type": kind, "api_base": OLLAMA_CONTAINER_URL, "max_tokens": 4096}, token)
             print(f"Validated local {kind} model {model}", flush=True)
         api("/api/v1/providers", "PUT", {"provider_name": "Ollama"}, token)
         api(
@@ -199,7 +213,7 @@ def main():
             {
                 "instance_name": "QA",
                 "api_key": "",
-                "base_url": "http://host.docker.internal:11434",
+                "base_url": OLLAMA_CONTAINER_URL,
                 "region": "default",
                 "model_info": [{"model_name": model, "model_type": [kind], "max_tokens": 4096} for model, kind in MODELS],
             },
@@ -211,7 +225,7 @@ def main():
         api(
             "/api/v1/users/me/models",
             "PATCH",
-            {"tenant_id": tenant["tenant_id"], "llm_id": "qwen2.5:7b-instruct@QA@Ollama", "embd_id": "bge-m3:latest@QA@Ollama", "img2txt_id": "", "asr_id": "", "rerank_id": "", "tts_id": ""},
+            {"tenant_id": tenant["tenant_id"], "llm_id": f"{MODELS[0][0]}@QA@Ollama", "embd_id": f"{MODELS[-1][0]}@QA@Ollama", "img2txt_id": "", "asr_id": "", "rerank_id": "", "tts_id": ""},
             token,
         )
         env.update(
@@ -230,7 +244,6 @@ def main():
             PW_ARTIFACTS_DIR=str(OUT / "artifacts"),
         )
         (OUT / "bootstrap.json").write_text(json.dumps({"admin_authenticated": True, "real_models_validated": True}), encoding="utf-8")
-        print("Running real browser journeys", flush=True)
         tests = args.tests or [
             str(source / "test/playwright/e2e" / filename)
             for filename in ("test_live_document_roundtrip.py", "test_dataset_upload_parse.py", "test_next_apps_chat.py", "test_next_apps_search.py", "test_business_document_live_intake.py")
@@ -248,31 +261,84 @@ def pytest_configure(config):
 """
         (OUT / "live_profile.py").write_text(profile, encoding="utf-8")
         env["PYTHONPATH"] += os.pathsep + str(OUT)
-        result = command(
-            [
-                sys.executable,
-                "-B",
-                "-m",
-                "pytest",
-                "-p",
-                "live_profile",
-                *tests,
-                "--color=no",
-                "--tb=short",
-                "-rA",
-                "-s",
-                "-o",
-                f"cache_dir={OUT / 'pytest-cache'}",
-                f"--junitxml={OUT / 'browser.xml'}",
-            ],
-            env=env,
-            log="browser.log",
-            check=False,
-            cwd=source,
-            timeout=1800,
+        result = (
+            command(
+                [
+                    sys.executable,
+                    "-B",
+                    "-m",
+                    "pytest",
+                    "-p",
+                    "live_profile",
+                    *tests,
+                    "--color=no",
+                    "--tb=short",
+                    "-rA",
+                    "-s",
+                    "-o",
+                    f"cache_dir={OUT / 'pytest-cache'}",
+                    f"--junitxml={OUT / 'browser.xml'}",
+                ],
+                env=env,
+                log="browser.log",
+                check=False,
+                cwd=source,
+                timeout=1800,
+            )
+            if not args.skip_browser_tests
+            else None
         )
-        exit_code = result.returncode
-        print(f"Live browser exit={exit_code}; see browser.log", flush=True)
+        exit_code = result.returncode if result else 0
+        if result:
+            print(f"Live browser exit={exit_code}; see browser.log", flush=True)
+        if args.business_documents_quality:
+            command(
+                [*cmd, "exec", "-T", "app", "/ragflow/.venv/bin/python", "-m", "pip", "install", "--disable-pip-version-check", "pytest==9.0.2"],
+                env=env,
+                log="business-quality-dependency.log",
+                timeout=240,
+            )
+            if candidate:
+                source_manifest = json.loads((candidate / "candidate.json").read_text(encoding="utf-8"))
+                source_revision = source_manifest["identity"]["head"]
+                source_dirty = source_manifest["identity"]["dirty"]
+            else:
+                source_revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=source, text=True).strip()
+                source_dirty = bool(subprocess.check_output(["git", "status", "--porcelain=v1", "--untracked-files=all"], cwd=source))
+            quality_result = command(
+                [
+                    *cmd,
+                    "exec",
+                    "-T",
+                    "-e",
+                    "BUSINESS_DOCUMENT_LIVE_LLM=1",
+                    "-e",
+                    f"BUSINESS_DOCUMENT_LIVE_TENANT_ID={tenant['tenant_id']}",
+                    "-e",
+                    "BUSINESS_DOCUMENT_QUALITY_REPORT=/ragflow/qa-evidence/business-documents-quality.json",
+                    "-e",
+                    f"BUSINESS_DOCUMENT_MODEL_DIGEST={identity['ollama_models'][MODELS[0][0]]['digest']}",
+                    "-e",
+                    f"GITHUB_SHA={source_revision}",
+                    "-e",
+                    f"RAGFLOW_QA_SOURCE_DIRTY={int(source_dirty)}",
+                    "app",
+                    "/ragflow/.venv/bin/python",
+                    "-m",
+                    "pytest",
+                    "-q",
+                    "-c",
+                    "/dev/null",
+                    "--confcutdir=/ragflow/test/evals/business_documents",
+                    "/ragflow/test/evals/business_documents/test_live_model_quality.py",
+                ],
+                env=env,
+                log="business-quality.log",
+                check=False,
+                timeout=1800,
+            )
+            exit_code = exit_code or quality_result.returncode
+            print(f"Business Documents real-model exit={quality_result.returncode}; see business-quality.log", flush=True)
     except Exception as exc:
         (OUT / "failure.txt").write_text(sanitized(str(exc)), encoding="utf-8")
         print(sanitized(str(exc)), flush=True)

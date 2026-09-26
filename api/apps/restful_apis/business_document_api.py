@@ -825,6 +825,16 @@ async def list_business_document_jobs(document_id):
         return _error(error)
 
 
+@manager.route("/business-documents/<document_id>/change-previews/<job_id>", methods=["GET"])  # noqa: F821
+@login_required
+async def get_business_document_change_preview(document_id, job_id):
+    try:
+        actor_id = current_user.id
+        return _success(await thread_pool_exec(BusinessDocumentService.get_change_preview, actor_id, actor_id, document_id, job_id, _is_admin()))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
 @manager.route("/business-documents/<document_id>/exports", methods=["GET"])  # noqa: F821
 @login_required
 async def list_business_document_exports(document_id):

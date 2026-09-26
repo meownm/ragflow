@@ -805,7 +805,10 @@ def flow_context(browser, request):
         browser_context_args = {}
     args = dict(browser_context_args)
     args.setdefault("ignore_https_errors", True)
+    args.setdefault("viewport", {"width": 1920, "height": 1080})
+    args.setdefault("locale", "en-US")
     ctx = browser.new_context(**args)
+    ctx.add_init_script("localStorage.setItem('lng', 'en');")
     yield ctx
     ctx.close()
 
@@ -1017,9 +1020,7 @@ def _configure_ollama_for_live_browser(base_url: str, auth_header: str, ollama_u
         )
         _response_data(payload)
 
-    _, payload = _api_request_json(
-        _build_url(base_url, "/api/v1/providers"), method="PUT", payload={"provider_name": "Ollama"}, headers=headers
-    )
+    _, payload = _api_request_json(_build_url(base_url, "/api/v1/providers"), method="PUT", payload={"provider_name": "Ollama"}, headers=headers)
     if not (payload.get("code") == 102 and payload.get("message") == "Provider Ollama already exists"):
         _response_data(payload)
     _, payload = _api_request_json(

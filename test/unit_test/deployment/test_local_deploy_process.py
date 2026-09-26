@@ -60,6 +60,16 @@ def test_candidate_image_is_pulled_and_verified_before_runtime_mutation():
     assert "COPY business_documents business_documents" in DOCKERFILE_SOURCE
 
 
+def test_release_receipt_revision_digest_and_jobs_are_checked_before_runtime_mutation():
+    receipt_required = SOURCE.index("Release mode requires the candidate receipt")
+    jobs_checked = SOURCE.index('$receiptJobs.ragflow_tests_elasticsearch -ne "success"')
+    digest_checked = SOURCE.index("Pulled candidate image digest does not match the CI receipt")
+    backup = SOURCE.index('"pg_dump -U')
+    recreate = SOURCE.index('$upArguments = @("up", "-d", "--force-recreate", "--no-deps")')
+    assert receipt_required < jobs_checked < digest_checked < backup < recreate
+    assert 'candidate_receipt_status = if ($candidateReceiptData) { "verified" }' in SOURCE
+
+
 def test_backup_reuse_requires_recent_verified_artifact():
     assert "Get-FreshVerifiedBackup" in SOURCE
     assert "Get-FileHash" in SOURCE

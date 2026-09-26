@@ -8,6 +8,7 @@ param(
     [string]$CandidateRegistry = "192.168.1.175:5443",
     [string]$CandidateRevision,
     [string]$CandidateImageReference,
+    [string]$CandidateReceipt,
     [switch]$Observability,
     [switch]$Build,
     [switch]$BuildFrontend,
@@ -354,6 +355,9 @@ if (-not $CandidateRevision) {
     $CandidateRevision = $head
 }
 $candidateImage = $null
+$candidateReceiptData = $null
+$candidateReceiptPath = $null
+$candidateReceiptHash = $null
 if ($resolvedMode -in @("Candidate", "Release")) {
     if ($CandidateRevision -notmatch '^[0-9a-f]{40}$') {
         throw "CandidateRevision must be a full 40-character Git SHA."
@@ -363,6 +367,30 @@ if ($resolvedMode -in @("Candidate", "Release")) {
     }
     else {
         "${CandidateRegistry}/ragflow:${CandidateRevision}"
+    }
+    if ($resolvedMode -eq "Release" -and -not $CandidateReceipt) {
+        throw "Release mode requires the candidate receipt from the successful CI run."
+    }
+    if ($CandidateReceipt) {
+        $candidateReceiptPath = [System.IO.Path]::GetFullPath($CandidateReceipt)
+        if (-not (Test-Path -LiteralPath $candidateReceiptPath -PathType Leaf)) {
+            throw "Candidate receipt is unavailable: $candidateReceiptPath"
+        }
+        $candidateReceiptData = Get-Content -LiteralPath $candidateReceiptPath -Raw | ConvertFrom-Json
+        $receiptJobs = $candidateReceiptData.ci.jobs
+        $imageRepository = $candidateImage.Substring(0, $candidateImage.LastIndexOf(':'))
+        if ($candidateReceiptData.schema -ne 1 -or
+            $candidateReceiptData.source_revision -ne $CandidateRevision -or
+            $candidateReceiptData.image.reference -ne $candidateImage -or
+            $candidateReceiptData.image.digest -cnotmatch ('^' + [regex]::Escape($imageRepository) + '@sha256:[0-9a-f]{64}$') -or
+            $candidateReceiptData.ci.run_id -notmatch '^[0-9]+$' -or
+            -not $candidateReceiptData.ci.repository -or
+            $receiptJobs.ragflow_preflight -ne "success" -or
+            $receiptJobs.ragflow_tests_infinity -ne "success" -or
+            $receiptJobs.ragflow_tests_elasticsearch -ne "success") {
+            throw "Candidate receipt does not prove the requested revision, image and required CI jobs."
+        }
+        $candidateReceiptHash = (Get-FileHash -LiteralPath $candidateReceiptPath -Algorithm SHA256).Hash.ToLowerInvariant()
     }
     $env:RAGFLOW_IMAGE = $candidateImage
     if (-not $composeFiles.Contains("docker-compose.candidate.yml")) {
@@ -408,6 +436,9 @@ if ($CheckOnly) {
         source = $source
         deployed_revision = $deployedRevision
         candidate_image = $candidateImage
+        candidate_receipt_path = $candidateReceiptPath
+        candidate_receipt_sha256 = $candidateReceiptHash
+        candidate_receipt_status = if ($candidateReceiptData) { "metadata_only" } elseif ($candidateImage) { "missing" } else { "not_applicable" }
         candidate_image_override = [bool]$CandidateImageReference
         change_plan = $changePlan
         compose_files = $composeFiles
@@ -417,6 +448,8 @@ if ($CheckOnly) {
     exit 0
 }
 
+$candidateImageId = $null
+$candidateRepoDigests = @()
 if ($candidateImage) {
     Invoke-Native -FilePath "docker" -Arguments @("pull", $candidateImage)
     $actualRevision = (& docker run --rm --entrypoint cat $candidateImage /ragflow/SOURCE_REVISION).Trim()
@@ -426,6 +459,15 @@ if ($candidateImage) {
     & docker run --rm --entrypoint /ragflow/.venv/bin/python $candidateImage -c "import business_documents"
     if ($LASTEXITCODE -ne 0) {
         throw "Candidate image is incomplete: business_documents cannot be imported."
+    }
+    $candidateInspection = & docker image inspect $candidateImage | ConvertFrom-Json
+    if ($LASTEXITCODE -ne 0 -or -not $candidateInspection -or -not $candidateInspection[0].Id) {
+        throw "Could not inspect the pulled candidate image identity."
+    }
+    $candidateImageId = $candidateInspection[0].Id
+    $candidateRepoDigests = @($candidateInspection[0].RepoDigests | Where-Object { $_ })
+    if ($candidateReceiptData -and $candidateRepoDigests -cnotcontains $candidateReceiptData.image.digest) {
+        throw "Pulled candidate image digest does not match the CI receipt."
     }
 }
 
@@ -526,6 +568,9 @@ foreach ($service in $Services) {
     if ($LASTEXITCODE -ne 0) {
         throw "Could not inspect deployed service '$service'."
     }
+    if ($service -eq "ragflow-cpu" -and $candidateImageId -and $inspection[0].Image -ne $candidateImageId) {
+        throw "Deployed ragflow-cpu image does not match the verified candidate image."
+    }
     $containerEvidence += [ordered]@{
         service = $service
         id = $containerId
@@ -552,7 +597,13 @@ $evidence = [ordered]@{
     observability = [bool]$Observability
     source = $source
     deployed_revision = $deployedRevision
+    candidate_revision = if ($candidateImage) { $CandidateRevision } else { $null }
     candidate_image = $candidateImage
+    candidate_image_id = $candidateImageId
+    candidate_repo_digests = $candidateRepoDigests
+    candidate_receipt_path = $candidateReceiptPath
+    candidate_receipt_sha256 = $candidateReceiptHash
+    candidate_receipt_status = if ($candidateReceiptData) { "verified" } elseif ($candidateImage) { "missing" } else { "not_applicable" }
     candidate_image_override = [bool]$CandidateImageReference
     change_plan = $changePlan
     compose_files = $composeFiles

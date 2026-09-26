@@ -22,6 +22,43 @@ chat or a future document workflow can consume the same source set.
 - `chat` accepts an optional `previous_question` (up to 500 characters) and
   requires the current selection version. It returns an answer with source and
   citation numbers. Chat turns remain in the client.
+- `POST /source-workspaces/{id}/process` emits authenticated SSE with `status`,
+  `delta`, `step_done`, `done`, and terminal `error` events plus 15-second
+  heartbeats. `all` passes complete indexed texts to one model call only when
+  the serialized request fits the configured context. `sequential` processes
+  articles in selection order and carries each completed result into the next
+  call. An article that does not fit is split at major Markdown/Setext sections
+  first, then at paragraphs and whole list/table/code blocks where they fit.
+  Only an oversized individual block is divided at item, row, sentence, or
+  line boundaries as necessary; no characters are dropped. Task-relevant notes
+  are extracted from every token-budgeted part. Continuation parts carry their
+  section path and, within a table, column names; this context is included in
+  the token budget. Notes are reduced if needed and used for the final article
+  step. This condensation can omit details and is
+  disclosed in the UI. A draft that cannot fit both input and full-answer
+  budgets is rejected before article loading. Prompts and drafts are bounded
+  at 20,000 and 100,000 characters. An answer near the model output cap is
+  reported as incomplete rather than committed as a finished step.
+  Source numbers remain stable across steps. The workflow checks ownership,
+  selection version, and source revisions before loading and after each final
+  article step. Tokens already streamed before a later source change may remain
+  visible in the browser, but that step does not complete.
+  The browser may abort the stream; completed steps stay visible there.
+  Results are not saved as documents.
+- The budget uses the model's configured `max_tokens` context, reserves output
+  and safety space, and estimates input with the repository's `cl100k_base`
+  tokenizer plus 25% headroom. The upstream stream has no finish-reason signal,
+  so the output-cap check is conservative and cannot prove semantic completeness.
+  Missing context uses a disclosed 8192-token
+  planning fallback. This is an estimate for non-cl100k providers; a provider
+  can still reject an overlong request. Model stages have a five-minute limit;
+  the interactive stream has a 30-minute deadline and retains completed steps
+  in the browser if that deadline is reached.
+  The indexed-text loader retains its existing 2-million-character-per-document
+  and 10-million-character-per-selection operational bounds. It keeps adjacent
+  table rows and list items together across indexed chunk boundaries when
+  their Markdown structure is detectable; missing source markup cannot be
+  reconstructed from the index.
 
 The pure application service is in `service.py`; `adapters.py` contains Peewee,
 RAGFlow search, document-text, and model adapters. HTTP endpoints live in
@@ -35,5 +72,4 @@ and accepts a workspace plus an `onChange` callback.
 
 Search pages through ranked chunks in groups of 100, up to ten pages. A workspace
 stores the selected documents and search query history; it does not store every
-search result. It also does not implement document comparison or compilation
-pipelines yet.
+search result. It does not implement document comparison or publication yet.

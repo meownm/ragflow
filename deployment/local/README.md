@@ -43,9 +43,25 @@ ASR пересобирается отдельно, а несмонтирован
    .\deployment\local\deploy.ps1 -Mode Candidate -CandidateRevision <full-40-char-sha>
    ```
 
+6. Для локального Release скачать `candidate-receipt.json` из artifact
+   успешного `publish_candidate` того же CI run и указать его явно:
+
+   ```powershell
+   .\deployment\local\deploy.ps1 -Mode Release -CandidateRevision <full-40-char-sha> -CandidateReceipt <candidate-receipt.json>
+   ```
+
 До пересоздания контейнеров скрипт проверяет итоговый Compose config и делает
 проверяемый PostgreSQL dump. После переключения он ждёт container health и
 `/api/v1/system/healthz`, записывает restart count, image identity и итоговый health.
+Для Candidate/Release он сверяет image ID запущенного `ragflow-cpu` с только что
+проверенным образом и записывает `candidate_revision`, `candidate_image_id` и
+доступные registry digests в `deployment.json`.
+`Release` до переключения контейнера сверяет SHA, успешность обязательных CI jobs,
+registry digest загруженного образа и затем image ID контейнера. `Candidate`
+разрешает исследовательский запуск без receipt и помечает доказательства как
+неполные. После выпуска отдельный `tools/quality/release_evidence.py verify`
+собирает `release-evidence.json` из receipt, применимых живых отчётов качества и
+`deployment.json`; отсутствие отчёта, backup или здоровья не считается успехом.
 Evidence сохраняется в `output/local-deploy/<timestamp>/`.
 
 `-SkipBackup` не отключает защиту безусловно: он разрешён только при наличии свежего

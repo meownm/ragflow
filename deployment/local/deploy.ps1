@@ -118,6 +118,8 @@ function Get-DeployedRevision {
     if ($LASTEXITCODE -ne 0 -or $revision -notmatch '^[0-9a-f]{40}$') {
         return $null
     }
+    & git -C $repoRoot cat-file -e "${revision}^{commit}" 2>$null
+    if ($LASTEXITCODE -ne 0) { return $null }
     return $revision
 }
 
@@ -145,7 +147,7 @@ function Get-ChangedPaths {
     if ($DeployedRevision) {
         & git -C $repoRoot cat-file -e "${DeployedRevision}^{commit}" 2>$null
         if ($LASTEXITCODE -eq 0) {
-            foreach ($path in @(Get-GitLines -Arguments @("diff", "--name-only", "$DeployedRevision...HEAD"))) {
+            foreach ($path in @(Get-GitLines -Arguments @("diff", "--name-only", $DeployedRevision, "HEAD"))) {
                 if ($path) { [void]$paths.Add($path.Replace('\', '/')) }
             }
         }
@@ -181,7 +183,7 @@ function Get-RagflowBindSources {
 function Test-PathCoveredByBindMount {
     param(
         [Parameter(Mandatory = $true)][string]$RepositoryPath,
-        [Parameter(Mandatory = $true)][string[]]$BindSources
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$BindSources
     )
 
     $absolutePath = [System.IO.Path]::GetFullPath((Join-Path $repoRoot $RepositoryPath.Replace('/', '\')))
@@ -196,8 +198,8 @@ function Test-PathCoveredByBindMount {
 
 function Get-ChangePlan {
     param(
-        [Parameter(Mandatory = $true)][string[]]$ChangedPaths,
-        [Parameter(Mandatory = $true)][string[]]$BindSources,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$ChangedPaths,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$BindSources,
         [bool]$DeployedRevisionKnown
     )
 

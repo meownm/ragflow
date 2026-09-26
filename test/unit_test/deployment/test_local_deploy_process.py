@@ -128,3 +128,58 @@ def test_deploy_evaluates_receipt_engine_policy_without_touching_docker(required
     result = subprocess.run([pwsh, "-NoProfile", "-Command", command], env={**os.environ, "RECEIPT_TEST_CI": json.dumps(ci)}, capture_output=True, text=True, timeout=20)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip().lower() == str(valid).lower()
+
+
+@pytest.mark.parametrize("known", [True, False])
+def test_empty_change_plan_preserves_unknown_revision_gate(known):
+    pwsh = shutil.which("pwsh") or shutil.which("powershell")
+    if not pwsh:
+        pytest.skip("PowerShell is not installed")
+    command = (
+        f"$ast=[System.Management.Automation.Language.Parser]::ParseFile('{SCRIPT}', [ref]$null, [ref]$null); "
+        "$fn=$ast.Find({param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] "
+        "-and $node.Name -eq 'Get-ChangePlan'}, $true); "
+        ". ([scriptblock]::Create($fn.Extent.Text)); Set-StrictMode -Version Latest; "
+        f"Get-ChangePlan -ChangedPaths @() -BindSources @() -DeployedRevisionKnown ${str(known).lower()} | ConvertTo-Json -Compress"
+    )
+    result = subprocess.run([pwsh, "-NoProfile", "-Command", command], capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stderr
+    plan = json.loads(result.stdout)
+    assert plan["requires_candidate"] is (not known)
+    assert plan["changed_paths"] == []
+
+
+def test_change_detection_includes_deployed_only_changes(tmp_path):
+    pwsh = shutil.which("pwsh") or shutil.which("powershell")
+    if not pwsh:
+        pytest.skip("PowerShell is not installed")
+
+    def git(*args):
+        return subprocess.check_output(["git", "-C", str(tmp_path), *args], text=True, stderr=subprocess.PIPE).strip()
+
+    git("init", "-q")
+    git("config", "user.name", "Test")
+    git("config", "user.email", "test@example.invalid")
+    (tmp_path / "base").write_text("base")
+    git("add", "base")
+    git("commit", "-qm", "base")
+    base = git("rev-parse", "HEAD")
+    (tmp_path / "deployed.py").write_text("deployed")
+    git("add", "deployed.py")
+    git("commit", "-qm", "deployed")
+    deployed = git("rev-parse", "HEAD")
+    git("checkout", "--detach", base)
+    (tmp_path / "candidate.py").write_text("candidate")
+    git("add", "candidate.py")
+    git("commit", "-qm", "candidate")
+    command = (
+        f"$repoRoot='{tmp_path}'; "
+        f"$ast=[System.Management.Automation.Language.Parser]::ParseFile('{SCRIPT}', [ref]$null, [ref]$null); "
+        "$functions=$ast.FindAll({param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] "
+        "-and $node.Name -in @('Get-GitLines','Get-ChangedPaths')}, $true); "
+        "$functions | ForEach-Object { . ([scriptblock]::Create($_.Extent.Text)) }; "
+        f"@(Get-ChangedPaths -DeployedRevision '{deployed}') | ConvertTo-Json -Compress"
+    )
+    result = subprocess.run([pwsh, "-NoProfile", "-Command", command], capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stderr
+    assert set(json.loads(result.stdout)) == {"candidate.py", "deployed.py"}

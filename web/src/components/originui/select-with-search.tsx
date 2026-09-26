@@ -178,6 +178,7 @@ export const SelectWithSearch = forwardRef<
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <Button
+            type="button"
             id={id}
             variant="outline"
             role="combobox"

@@ -348,6 +348,7 @@ export const MultiSelect = React.forwardRef<
           <Button
             ref={ref}
             {...props}
+            type="button"
             onClick={handleTogglePopover}
             className={cn(
               'flex w-full p-1 rounded-md border border-border-button min-h-10 h-auto placeholder:text-text-disabled items-center justify-between bg-bg-input focus-visible:bg-bg-input hover:bg-bg-input [&_svg]:pointer-events-auto',

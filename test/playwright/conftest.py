@@ -1006,8 +1006,8 @@ def ensure_auth_context(
 def _configure_ollama_for_live_browser(base_url: str, auth_header: str, ollama_url: str) -> None:
     headers = {"Authorization": auth_header}
     models = [
-        ("t-tech/T-lite-it-2.1:q8_0", "chat"),
         ("qwen3.8:latest", "chat"),
+        ("qwen3.6:27b", "chat"),
         ("bge-m3:latest", "embedding"),
     ]
     for model_name, model_type in models:
@@ -1117,7 +1117,7 @@ def _ensure_model_provider_ready_via_api(base_url: str, auth_header: str) -> dic
     if not target_llm or _is_malformed_tenant_model_value(target_llm):
         target_llm = _normalize_tenant_model_value(current_llm)
         if not target_llm and ollama_url:
-            target_llm = "t-tech/T-lite-it-2.1:q8_0@Local@Ollama"
+            target_llm = "qwen3.8:latest@Local@Ollama"
         if not target_llm and _provider_has_model(my_llms_data, "ZHIPU-AI", "glm-4-flash"):
             target_llm = "glm-4-flash@ZHIPU-AI"
     if not target_llm:

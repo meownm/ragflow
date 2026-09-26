@@ -18,6 +18,7 @@ import types
 import warnings
 
 import pytest
+from peewee import CharField, FloatField, IntegerField, Model, SqliteDatabase, TextField
 
 # xgboost imports pkg_resources and emits a deprecation warning that is promoted
 # to error in our pytest configuration; ignore it for this unit test module.
@@ -66,6 +67,36 @@ _install_cv2_stub_if_unavailable()
 
 from api.db.services.document_service import DocumentService  # noqa: E402
 from common.constants import TaskStatus  # noqa: E402
+
+
+@pytest.mark.p2
+def test_task_failure_does_not_replace_document_cancellation(monkeypatch):
+    class TestDocument(Model):
+        id = CharField(primary_key=True)
+        run = CharField(null=True)
+        progress = FloatField(default=0)
+        progress_msg = TextField(default="")
+        update_time = IntegerField(default=0)
+        update_date = CharField(default="")
+
+        class Meta:
+            database = SqliteDatabase(":memory:")
+
+    database = TestDocument._meta.database
+    with database:
+        database.create_tables([TestDocument])
+        TestDocument.create(id="cancelled", run=TaskStatus.CANCEL.value, progress=0, progress_msg="Stopped by user")
+        TestDocument.create(id="running", run=TaskStatus.RUNNING.value, progress=0.5)
+        monkeypatch.setattr(DocumentService, "model", TestDocument)
+        mark_failed = DocumentService.mark_failed_if_not_cancelled.__func__.__wrapped__
+
+        assert mark_failed(DocumentService, "cancelled", "Worker stopped") == 0
+        assert mark_failed(DocumentService, "running", "Worker failed") == 1
+        cancelled = TestDocument.get_by_id("cancelled")
+        running = TestDocument.get_by_id("running")
+        assert (cancelled.run, cancelled.progress, cancelled.progress_msg) == (TaskStatus.CANCEL.value, 0, "Stopped by user")
+        assert (running.run, running.progress, running.progress_msg) == (TaskStatus.FAIL.value, -1, "Worker failed")
+
 
 # ---------------------------------------------------------------------------
 # Helpers to access the original function bypassing @DB.connection_context()

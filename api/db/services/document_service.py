@@ -921,6 +921,20 @@ class DocumentService(CommonService):
 
     @classmethod
     @DB.connection_context()
+    def mark_failed_if_not_cancelled(cls, doc_id, progress_msg=None):
+        """Keep cancellation terminal when a worker reports a late failure."""
+        info = {
+            "progress": -1,
+            "run": TaskStatus.FAIL.value,
+            "update_time": current_timestamp(),
+            "update_date": get_format_time(),
+        }
+        if progress_msg is not None:
+            info["progress_msg"] = progress_msg
+        return cls.model.update(info).where((cls.model.id == doc_id) & ((cls.model.run.is_null(True)) | (cls.model.run != TaskStatus.CANCEL.value))).execute()
+
+    @classmethod
+    @DB.connection_context()
     def update_progress(cls):
         docs = cls.get_unfinished_docs()
 

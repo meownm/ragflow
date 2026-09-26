@@ -12,37 +12,45 @@ export function ChangePreviewPanel({
   onFocusSource,
   onConfirm,
   onDiscard,
+  preliminary = false,
 }: {
   preview: BusinessDocumentChangePreview;
   pending: boolean;
   canConfirm: boolean;
   canDiscard: boolean;
   onFocusSection: (sectionId: string) => void;
-  onFocusSource: (
+  onFocusSource?: (
     kind: 'question' | 'proposal' | 'comment',
     id: string,
   ) => void;
-  onConfirm: () => void;
-  onDiscard: () => void;
+  onConfirm?: () => void;
+  onDiscard?: () => void;
+  preliminary?: boolean;
 }) {
   return (
     <section
       className="max-h-[45vh] overflow-y-auto border-b border-accent-primary/30 bg-accent-primary/5 px-5 py-4 scrollbar-auto"
       data-testid="business-document-change-preview"
-      aria-label="Предпросмотр исправлений"
+      aria-label={
+        preliminary ? 'Предварительные изменения' : 'Предпросмотр исправлений'
+      }
     >
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
           <h2 className="text-sm font-semibold text-text-primary">
-            Предпросмотр исправлений · ещё не применено
+            {preliminary
+              ? 'Предварительные изменения · проверка продолжается'
+              : 'Предпросмотр исправлений · ещё не применено'}
           </h2>
           <p className="mt-1 text-xs text-text-secondary">
             {preview.sections.length
-              ? `Будет заменено разделов: ${preview.sections.length}. Проверьте текст до подтверждения.`
+              ? preliminary
+                ? `Получено разделов: ${preview.sections.length}. Они могут измениться при повторной попытке; подтвердить можно после полной проверки.`
+                : `Будет заменено разделов: ${preview.sections.length}. Проверьте текст до подтверждения.`
               : 'Изменений текста нет. Подтверждение завершит текущий цикл согласования.'}
           </p>
         </div>
-        {canDiscard && (
+        {!preliminary && canDiscard && onDiscard && (
           <Button
             size="sm"
             variant="ghost"
@@ -53,7 +61,7 @@ export function ChangePreviewPanel({
             Отказаться
           </Button>
         )}
-        {canConfirm && (
+        {!preliminary && canConfirm && onConfirm && (
           <Button
             size="sm"
             variant="accent"
@@ -73,7 +81,8 @@ export function ChangePreviewPanel({
             data-testid="business-document-change-preview-section"
           >
             <summary className="cursor-pointer px-3 py-2 text-sm font-medium text-text-primary">
-              § {section.section_id} {section.title} · будет изменён
+              § {section.section_id} {section.title} ·{' '}
+              {preliminary ? 'предварительно' : 'будет изменён'}
             </summary>
             <div className="grid gap-2 border-t border-border-button p-3 md:grid-cols-2">
               <div className="min-w-0 rounded border border-state-error/25 bg-state-error/5 p-3">
@@ -118,7 +127,7 @@ export function ChangePreviewPanel({
                       type="button"
                       className="block text-left text-accent-primary hover:underline"
                       onClick={() =>
-                        onFocusSource(
+                        onFocusSource?.(
                           source.kind as 'question' | 'proposal' | 'comment',
                           source.entity_id!,
                         )
@@ -153,7 +162,7 @@ export function ChangePreviewPanel({
                 type="button"
                 className="block text-left text-accent-primary hover:underline"
                 onClick={() =>
-                  onFocusSource(
+                  onFocusSource?.(
                     source.kind as 'question' | 'proposal' | 'comment',
                     source.entity_id!,
                   )

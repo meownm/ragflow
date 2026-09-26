@@ -16,6 +16,8 @@
 
 """HTTP boundary for governed business requirements documents."""
 
+import asyncio
+import json
 from urllib.parse import quote
 
 from quart import Response, jsonify, request
@@ -24,10 +26,14 @@ from werkzeug.exceptions import BadRequest
 from api.apps import current_user, login_required
 from api.apps.business_documents.adapters.assignment import assign_business_document
 from api.apps.business_documents.authorization import BusinessDocumentAccess
-from api.apps.business_documents.errors import BusinessDocumentError
+from business_documents.application.errors import BusinessDocumentError
 from api.apps.business_documents.eva_changes import EvaDocumentChangeService
 from api.apps.business_documents.exports import BusinessDocumentExportService
-from api.apps.business_documents.service import BusinessDocumentService
+from api.apps.business_documents.runtime import document_queries
+from api.apps.business_documents.runtime import document_commands
+from api.apps.business_documents.runtime import eva_synchronization
+from api.apps.business_documents.runtime import document_creation
+from api.apps.business_documents.runtime import document_deletion, change_user_role
 from api.apps.business_documents.sql_execution_registry import BusinessDocumentSqlExecutionRegistryService
 from api.apps.business_documents.sql_query_agents import BusinessDocumentSqlAgentService
 from api.apps.business_documents.sql_query_lifecycle import BusinessDocumentSqlQueryService
@@ -310,7 +316,7 @@ async def create_business_document():
         if not data:
             raise BusinessDocumentError("INVALID_DOCUMENT", "Request body must be a valid JSON object", 422)
         actor_id = current_user.id
-        result = await thread_pool_exec(BusinessDocumentService.create_document, actor_id, actor_id, data, _is_admin(), _access_role())
+        result = await thread_pool_exec(document_creation.execute, actor_id, actor_id, data, _is_admin(), _access_role())
         return _success(result, 201)
     except (AttributeError, TypeError, BadRequest):
         return _error(BusinessDocumentError("INVALID_DOCUMENT", "Request body must be a valid JSON object", 422))
@@ -326,18 +332,7 @@ async def list_business_documents():
         page = int(request.args.get("page", 1))
         page_size = int(request.args.get("page_size", 20))
         scope = request.args.get("scope", "all")
-        return _success(
-            await thread_pool_exec(
-                BusinessDocumentService.list_documents,
-                actor_id,
-                actor_id,
-                page,
-                page_size,
-                _is_admin(),
-                _access_role(),
-                scope,
-            )
-        )
+        return _success(await thread_pool_exec(document_queries.list_documents, actor_id, page, page_size, _is_admin(), _access_role(), scope))
     except (TypeError, ValueError):
         return _error(BusinessDocumentError("INVALID_PAGINATION", "page and page_size must be integers", 422))
     except BusinessDocumentError as error:
@@ -367,7 +362,7 @@ async def get_business_document_capabilities():
 @login_required
 async def list_business_document_catalog():
     try:
-        return _success(await thread_pool_exec(BusinessDocumentService.list_catalog))
+        return _success(await thread_pool_exec(document_queries.list_catalog))
     except BusinessDocumentError as error:
         return _error(error)
 
@@ -637,7 +632,7 @@ async def resolve_business_document_sql_execution_binding():
 async def list_business_document_access_users():
     try:
         actor_id = current_user.id
-        result = await thread_pool_exec(BusinessDocumentService.list_access_users, actor_id, _is_admin(), _access_role())
+        result = await thread_pool_exec(document_queries.list_access_users, actor_id, _is_admin(), _access_role())
         return _success(result)
     except BusinessDocumentError as error:
         return _error(error)
@@ -650,7 +645,7 @@ async def update_business_document_access_user(user_id):
         data = await get_request_json()
         if not data:
             raise BusinessDocumentError("INVALID_ACCESS_ROLE", "Request body must be a valid JSON object", 422)
-        result = await thread_pool_exec(BusinessDocumentService.update_user_access_role, current_user.id, user_id, data, _is_admin())
+        result = await thread_pool_exec(change_user_role.execute, user_id, data, _is_admin())
         return _success(result)
     except (AttributeError, TypeError, BadRequest):
         return _error(BusinessDocumentError("INVALID_ACCESS_ROLE", "Request body must be a valid JSON object", 422))
@@ -663,7 +658,7 @@ async def update_business_document_access_user(user_id):
 async def get_business_document(document_id):
     try:
         tenant_id = current_user.id
-        return _success(await thread_pool_exec(BusinessDocumentService.get_document, tenant_id, document_id, tenant_id, _is_admin(), _access_role()))
+        return _success(await thread_pool_exec(document_queries.get_document, document_id, tenant_id, _is_admin(), _access_role()))
     except BusinessDocumentError as error:
         return _error(error)
 
@@ -673,7 +668,7 @@ async def get_business_document(document_id):
 async def delete_business_document(document_id):
     try:
         actor_id = current_user.id
-        result = await thread_pool_exec(BusinessDocumentService.delete_document, actor_id, document_id, _is_admin(), _access_role())
+        result = await thread_pool_exec(document_deletion.execute, actor_id, document_id, _is_admin(), _access_role())
         return _success(result)
     except BusinessDocumentError as error:
         return _error(error)
@@ -707,7 +702,7 @@ async def pull_business_document_from_eva(document_id):
     try:
         data = await get_request_json()
         actor_id = current_user.id
-        result = await thread_pool_exec(BusinessDocumentService.pull_from_eva, actor_id, actor_id, document_id, data, _is_admin(), _access_role())
+        result = await thread_pool_exec(eva_synchronization.pull_from_eva, actor_id, actor_id, document_id, data, _is_admin(), _access_role())
         return _success(result)
     except (AttributeError, TypeError, BadRequest):
         return _error(BusinessDocumentError("INVALID_EVA_SYNC", "Request body must be a valid JSON object", 422))
@@ -721,7 +716,7 @@ async def check_business_document_eva_update(document_id):
     try:
         actor_id = current_user.id
         result = await thread_pool_exec(
-            BusinessDocumentService.check_eva_update,
+            eva_synchronization.check_eva_update,
             actor_id,
             actor_id,
             document_id,
@@ -739,7 +734,7 @@ async def rebind_business_document_to_eva(document_id):
     try:
         data = await get_request_json()
         actor_id = current_user.id
-        result = await thread_pool_exec(BusinessDocumentService.rebind_eva, actor_id, actor_id, document_id, data, _is_admin(), _access_role())
+        result = await thread_pool_exec(eva_synchronization.rebind_eva, actor_id, actor_id, document_id, data, _is_admin(), _access_role())
         return _success(result)
     except (AttributeError, TypeError, BadRequest):
         return _error(BusinessDocumentError("INVALID_EVA_BINDING", "Request body must be a valid JSON object", 422))
@@ -754,7 +749,7 @@ async def create_business_document_eva_change(document_id):
         data = await get_request_json()
         actor_id = current_user.id
         result = await thread_pool_exec(
-            BusinessDocumentService.create_eva_change_from_revision,
+            eva_synchronization.create_eva_change_from_revision,
             actor_id,
             actor_id,
             document_id,
@@ -778,7 +773,7 @@ async def execute_business_document_command(document_id):
             raise BusinessDocumentError("INVALID_COMMAND_REQUEST", "Request body must be a valid JSON object", 422)
         actor_id = current_user.id
         result = await thread_pool_exec(
-            BusinessDocumentService.execute_command,
+            document_commands.execute,
             actor_id,
             actor_id,
             document_id,
@@ -799,8 +794,7 @@ async def execute_business_document_command(document_id):
 @login_required
 async def list_business_document_revisions(document_id):
     try:
-        tenant_id = current_user.id
-        return _success(await thread_pool_exec(BusinessDocumentService.list_revisions, tenant_id, document_id, tenant_id, _is_admin()))
+        return _success(await thread_pool_exec(document_queries.list_revisions, document_id))
     except BusinessDocumentError as error:
         return _error(error)
 
@@ -809,8 +803,7 @@ async def list_business_document_revisions(document_id):
 @login_required
 async def get_business_document_revision(document_id, revision_id):
     try:
-        tenant_id = current_user.id
-        return _success(await thread_pool_exec(BusinessDocumentService.get_revision, tenant_id, document_id, revision_id, tenant_id, _is_admin()))
+        return _success(await thread_pool_exec(document_queries.get_revision, document_id, revision_id))
     except BusinessDocumentError as error:
         return _error(error)
 
@@ -819,18 +812,73 @@ async def get_business_document_revision(document_id, revision_id):
 @login_required
 async def list_business_document_jobs(document_id):
     try:
-        actor_id = current_user.id
-        return _success(await thread_pool_exec(BusinessDocumentService.list_jobs, actor_id, actor_id, document_id, _is_admin()))
+        return _success(await thread_pool_exec(document_queries.list_jobs, document_id))
     except BusinessDocumentError as error:
         return _error(error)
+
+
+def _stream_after() -> int:
+    raw = request.args.get("after") or request.headers.get("Last-Event-ID") or "0"
+    if not raw.isdecimal() or len(raw) > 12:
+        raise BusinessDocumentError("INVALID_EVENT_CURSOR", "Event cursor must be a non-negative integer", 422)
+    return int(raw)
+
+
+@manager.route("/business-documents/<document_id>/jobs/<job_id>/events", methods=["GET"])  # noqa: F821
+@login_required
+async def list_business_document_job_events(document_id, job_id):
+    try:
+        actor_id = current_user.id
+        data = await thread_pool_exec(document_queries.read_job_stream_events, actor_id, actor_id, document_id, job_id, _stream_after(), _is_admin(), _access_role())
+        return _success(data)
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/<document_id>/jobs/<job_id>/events/stream", methods=["GET"])  # noqa: F821
+@login_required
+async def stream_business_document_job_events(document_id, job_id):
+    try:
+        actor_id = current_user.id
+        is_admin = _is_admin()
+        access_role = _access_role()
+        cursor = _stream_after()
+        await thread_pool_exec(document_queries.read_job_stream_events, actor_id, actor_id, document_id, job_id, cursor, is_admin, access_role)
+    except BusinessDocumentError as error:
+        return _error(error)
+
+    async def events():
+        nonlocal cursor
+        idle_polls = 0
+        while True:
+            try:
+                batch = await thread_pool_exec(document_queries.read_job_stream_events, actor_id, actor_id, document_id, job_id, cursor, is_admin, access_role)
+            except BusinessDocumentError:
+                yield "event: access_revoked\ndata: {}\n\n"
+                return
+            for item in batch["events"]:
+                cursor = item["id"]
+                yield f"id: {cursor}\nevent: {item['type']}\ndata: {json.dumps(item, ensure_ascii=False)}\n\n"
+            if batch["status"] in {"COMPLETED", "DEAD"} and len(batch["events"]) < 100:
+                return
+            idle_polls = idle_polls + 1 if not batch["events"] else 0
+            if idle_polls >= 15:
+                yield ": heartbeat\n\n"
+                idle_polls = 0
+            await asyncio.sleep(1)
+
+    response = Response(events(), mimetype="text/event-stream")
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["X-Accel-Buffering"] = "no"
+    response.timeout = None
+    return response
 
 
 @manager.route("/business-documents/<document_id>/change-previews/<job_id>", methods=["GET"])  # noqa: F821
 @login_required
 async def get_business_document_change_preview(document_id, job_id):
     try:
-        actor_id = current_user.id
-        return _success(await thread_pool_exec(BusinessDocumentService.get_change_preview, actor_id, actor_id, document_id, job_id, _is_admin()))
+        return _success(await thread_pool_exec(document_queries.get_change_preview, document_id, job_id))
     except BusinessDocumentError as error:
         return _error(error)
 

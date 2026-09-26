@@ -1,6 +1,8 @@
 """Contracts for the branch-independent local Docker Desktop deploy entrypoint."""
 
 from pathlib import Path
+import json
+import os
 import shutil
 import subprocess
 
@@ -62,7 +64,7 @@ def test_candidate_image_is_pulled_and_verified_before_runtime_mutation():
 
 def test_release_receipt_revision_digest_and_jobs_are_checked_before_runtime_mutation():
     receipt_required = SOURCE.index("Release mode requires the candidate receipt")
-    jobs_checked = SOURCE.index('$receiptJobs.ragflow_tests_elasticsearch -ne "success"')
+    jobs_checked = SOURCE.index("-not (Test-CandidateReceiptJobs -CI $candidateReceiptData.ci)")
     digest_checked = SOURCE.index("Pulled candidate image digest does not match the CI receipt")
     backup = SOURCE.index('"pg_dump -U')
     recreate = SOURCE.index('$upArguments = @("up", "-d", "--force-recreate", "--no-deps")')
@@ -93,3 +95,36 @@ def test_powershell_script_parses():
     )
     result = subprocess.run([pwsh, "-NoProfile", "-Command", command], capture_output=True, text=True, timeout=20)
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    "required,reason,engine_result,valid",
+    [
+        (True, "engine-boundary-changed", "success", True),
+        (False, "no-engine-changes", "skipped", True),
+        (False, "no-engine-changes", "failure", False),
+        (False, "no-engine-changes", "cancelled", False),
+        (True, "engine-boundary-changed", "skipped", False),
+        (False, "baseline-unavailable", "skipped", False),
+        ("false", "no-engine-changes", "skipped", False),
+    ],
+)
+def test_deploy_evaluates_receipt_engine_policy_without_touching_docker(required, reason, engine_result, valid):
+    pwsh = shutil.which("pwsh") or shutil.which("powershell")
+    if not pwsh:
+        pytest.skip("PowerShell is not installed")
+    ci = {
+        "engine_tests_required": required,
+        "engine_test_reason": reason,
+        "jobs": {"ragflow_preflight": "success", "ragflow_tests_infinity": engine_result, "ragflow_tests_elasticsearch": engine_result},
+    }
+    command = (
+        f"$ast=[System.Management.Automation.Language.Parser]::ParseFile('{SCRIPT}', [ref]$null, [ref]$null); "
+        "$fn=$ast.Find({param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] "
+        "-and $node.Name -eq 'Test-CandidateReceiptJobs'}, $true); "
+        ". ([scriptblock]::Create($fn.Extent.Text)); Set-StrictMode -Version Latest; "
+        "Test-CandidateReceiptJobs -CI ($env:RECEIPT_TEST_CI | ConvertFrom-Json)"
+    )
+    result = subprocess.run([pwsh, "-NoProfile", "-Command", command], env={**os.environ, "RECEIPT_TEST_CI": json.dumps(ci)}, capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().lower() == str(valid).lower()

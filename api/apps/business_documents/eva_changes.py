@@ -31,7 +31,7 @@ from markdown import markdown as render_markdown
 from markdownify import markdownify
 from peewee import fn
 
-from api.apps.business_documents.errors import BusinessDocumentError, ConflictError, ValidationError
+from business_documents.application.errors import BusinessDocumentError, ConflictError, ValidationError
 from api.db.db_models import BusinessDocumentEvaChange, BusinessDocumentEvaChangeEvent, Connector
 from api.db.services.business_document_settings_service import DocumentsEvaConnection, get_business_documents_eva_connector_id, get_documents_eva_connection
 from api.db.services.connector_service import ConnectorService
@@ -453,8 +453,8 @@ class EvaDocumentChangeService:
 
         connector_id = cls._validate_text(binding.get("connector_id"), "connector_id", maximum=32)
         document_id = cls._validate_text(binding.get("document_id"), "document_id", maximum=128)
-        _, client = cls._connector(connector_id, actor_id)
         try:
+            _, client = cls._connector(connector_id, actor_id)
             remote = client.get_document_for_edit(document_id)
         except Exception as error:
             raise cls._map_external_error(error) from error

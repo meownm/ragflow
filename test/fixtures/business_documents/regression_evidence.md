@@ -10,7 +10,7 @@ mocked frontend HTTP. No production credentials or customer data were used.
 
 `pass` for the deterministic scripted state-machine gate and the recorded
 representative real-model quality lane. All 24 current golden cases
-and all 78 hard assertions execute through `BusinessDocumentService`, the
+and all 78 hard assertions execute through the composed Business Documents application scenarios, the
 leased worker, injected `BusinessDocumentAI`, pinned Evidence, or the concrete
 export service. The live-quality verdict is limited to the exact model, source
 snapshot and controlled Evidence recorded below.

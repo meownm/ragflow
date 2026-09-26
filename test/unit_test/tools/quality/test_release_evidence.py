@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from tools.quality.release_evidence import make_receipt, verify_release
+from tools.quality.release_evidence import make_receipt, validate_receipt, verify_release
 
 
 REVISION = "a" * 40
@@ -72,6 +72,8 @@ def packet(tmp_path):
 def test_quality_threshold_failure_is_recorded_without_replacing_release_identity_gate(packet):
     result = verify_release(*packet[:4])
     assert result["status"] == "pass"
+    assert result["evidence_status"] == "pass"
+    assert result["quality_status"] == "fail"
     assert result["quality_baseline"] == {"source_workbench": "fail", "business_documents": "fail"}
     assert result["source_revision"] == REVISION
     assert result["image_digest"] == DIGEST
@@ -139,11 +141,46 @@ def test_ci_job_failure_or_foreign_digest_cannot_form_receipt():
         make_receipt(REVISION, "meownm/ragflow", "123", IMAGE, f"other/ragflow@sha256:{'b' * 64}", JOBS)
 
 
+def test_explicit_engine_skip_preserves_release_identity_verification(packet):
+    receipt_path, deployment_path, workbench_path, business_path, deployment = packet
+    jobs = {**JOBS, "ragflow_tests_infinity": "skipped", "ragflow_tests_elasticsearch": "skipped"}
+    receipt = make_receipt(REVISION, "meownm/ragflow", "123", IMAGE, DIGEST, jobs, engine_tests_required=False, engine_test_reason="no-engine-changes")
+    _write(receipt_path, receipt)
+    deployment["candidate_receipt_sha256"] = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+    _write(deployment_path, deployment)
+    assert verify_release(receipt_path, deployment_path, workbench_path, business_path)["status"] == "pass"
+    assert receipt["ci"]["jobs"]["ragflow_tests_infinity"] == "skipped"
+
+
+@pytest.mark.parametrize("result", ["failure", "cancelled", "success"])
+def test_skip_policy_never_hides_a_failed_or_inconsistent_engine_run(result):
+    jobs = {**JOBS, "ragflow_tests_infinity": result, "ragflow_tests_elasticsearch": "skipped"}
+    with pytest.raises(ValueError, match="required CI jobs"):
+        make_receipt(REVISION, "meownm/ragflow", "123", IMAGE, DIGEST, jobs, engine_tests_required=False, engine_test_reason="no-engine-changes")
+
+
+def test_old_receipts_require_both_engine_successes():
+    receipt = make_receipt(REVISION, "meownm/ragflow", "123", IMAGE, DIGEST, dict(JOBS))
+    del receipt["ci"]["engine_tests_required"]
+    del receipt["ci"]["engine_test_reason"]
+    validate_receipt(receipt)
+    receipt["ci"]["jobs"]["ragflow_tests_infinity"] = "skipped"
+    with pytest.raises(ValueError, match="required CI jobs"):
+        validate_receipt(receipt)
+
+
+@pytest.mark.parametrize("required,reason", [(False, ""), (False, "baseline-unavailable"), ("false", "no-engine-changes"), (None, "no-engine-changes")])
+def test_receipt_rejects_unproven_skip_selection(required, reason):
+    with pytest.raises(ValueError, match="engine selection"):
+        make_receipt(REVISION, "meownm/ragflow", "123", IMAGE, DIGEST, JOBS, engine_tests_required=required, engine_test_reason=reason)
+
+
 def test_incomplete_quality_report_cannot_pass_release(packet):
     receipt_path, deployment_path, workbench_path, business_path, _ = packet
     _write(workbench_path, {"status": "incomplete", "failure": "index unavailable"})
     result = verify_release(receipt_path, deployment_path, workbench_path, business_path)
     assert result["status"] == "incomplete"
+    assert result["quality_status"] == "incomplete"
     assert "Source Workbench quality run is incomplete" in result["missing"]
 
 

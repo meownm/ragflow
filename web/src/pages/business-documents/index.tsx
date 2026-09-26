@@ -35,6 +35,7 @@ import {
   pullBusinessDocumentFromEva,
   rebindBusinessDocumentToEva,
   submitBusinessDocumentCommand,
+  watchBusinessDocumentJobEvents,
 } from '@/services/business-document-service';
 import {
   EvaUserCredentialStatus,
@@ -97,6 +98,7 @@ import type {
   BusinessDocumentLifecycleState,
   BusinessDocumentOperationState,
   BusinessDocumentRevision,
+  BusinessDocumentSectionStreamPreview,
   BusinessDocumentSelection,
   CreateBusinessDocumentRequest,
   EvaTitleMatch,
@@ -823,6 +825,12 @@ export default function BusinessDocumentsPage() {
   const [selectedRevisionId, setSelectedRevisionId] = useState<string>();
   const [evaSyncNotice, setEvaSyncNotice] = useState<string>();
   const [ownerSelection, setOwnerSelection] = useState('');
+  const [streamPreview, setStreamPreview] = useState<{
+    jobId: string;
+    attempt: number;
+    sections: BusinessDocumentSectionStreamPreview[];
+  } | null>(null);
+  const [streamError, setStreamError] = useState<string>();
   const [protocolPaneWidth, setProtocolPaneWidth] = useState(
     readProtocolPaneWidth,
   );
@@ -890,6 +898,70 @@ export default function BusinessDocumentsPage() {
   });
 
   const document = documentQuery.data;
+  const streamJobId =
+    document?.latest_job?.job_type === 'PLAN_CHANGES' &&
+    ['PENDING', 'RUNNING', 'RETRY'].includes(document.latest_job.status)
+      ? document.latest_job.job_id
+      : undefined;
+  useEffect(() => {
+    if (!documentId || !streamJobId || changeId) return;
+    const controller = new AbortController();
+    setStreamError(undefined);
+    setStreamPreview({ jobId: streamJobId, attempt: 0, sections: [] });
+    void watchBusinessDocumentJobEvents(
+      documentId,
+      streamJobId,
+      controller.signal,
+      (event) => {
+        if (event.type === 'retry' || event.type === 'failed') {
+          setStreamPreview({
+            jobId: streamJobId,
+            attempt: event.attempt,
+            sections: [],
+          });
+        } else if (event.type === 'section_preview') {
+          const section =
+            event.payload as unknown as BusinessDocumentSectionStreamPreview;
+          if (
+            typeof section.section_id !== 'string' ||
+            typeof section.before !== 'string' ||
+            typeof section.after !== 'string' ||
+            !Array.isArray(section.source_event_ids)
+          )
+            return;
+          setStreamPreview((current) => {
+            const sections =
+              current?.jobId === streamJobId &&
+              current.attempt === event.attempt
+                ? current.sections
+                : [];
+            return {
+              jobId: streamJobId,
+              attempt: event.attempt,
+              sections: [
+                ...sections.filter(
+                  (item) => item.section_id !== section.section_id,
+                ),
+                section,
+              ],
+            };
+          });
+        }
+        if (
+          ['preview_ready', 'failed', 'applied', 'discarded'].includes(
+            event.type,
+          )
+        ) {
+          void queryClient.invalidateQueries({
+            queryKey: BusinessDocumentKeys.detail(documentId),
+          });
+        }
+      },
+    ).catch((error: Error) => {
+      if (!controller.signal.aborted) setStreamError(error.message);
+    });
+    return () => controller.abort();
+  }, [documentId, streamJobId, changeId, queryClient]);
   const changePreviewQuery = useQuery({
     queryKey: [
       'business-document-change-preview',
@@ -928,6 +1000,10 @@ export default function BusinessDocumentsPage() {
       return changePreviewQuery.data.sections.map(
         (section) => section.section_id,
       );
+    const streamed =
+      streamPreview && streamPreview.jobId === streamJobId
+        ? streamPreview.sections.map((section) => section.section_id)
+        : [];
     if (
       !document ||
       !['ANALYZING_REVIEW', 'APPLYING_CHANGES'].includes(
@@ -936,15 +1012,20 @@ export default function BusinessDocumentsPage() {
     )
       return [];
     return [
-      ...document.protocol.questions.map(
-        (question) => question.target_section_id,
+      ...new Set(
+        [
+          ...streamed,
+          ...document.protocol.questions.map(
+            (question) => question.target_section_id,
+          ),
+          ...document.protocol.proposals.map(
+            (proposal) => proposal.target_section_id,
+          ),
+          ...document.protocol.comments.map((comment) => comment.section_id),
+        ].filter((sectionId): sectionId is string => Boolean(sectionId)),
       ),
-      ...document.protocol.proposals.map(
-        (proposal) => proposal.target_section_id,
-      ),
-      ...document.protocol.comments.map((comment) => comment.section_id),
-    ].filter((sectionId): sectionId is string => Boolean(sectionId));
-  }, [changePreviewQuery.data, document]);
+    ];
+  }, [changePreviewQuery.data, document, streamPreview, streamJobId]);
   useEffect(() => {
     setOwnerSelection(document?.owner_id ?? '');
   }, [document?.owner_id]);
@@ -1321,7 +1402,7 @@ export default function BusinessDocumentsPage() {
             >
               {lifecycleLabels[document.lifecycle_state]}
             </Badge>
-            <span className="font-mono text-[11px] text-text-disabled">
+            <span className="font-mono text-[11px] text-text-secondary">
               v{document.state_version}
             </span>
           </div>
@@ -1486,7 +1567,7 @@ export default function BusinessDocumentsPage() {
           {allowed.has('APPLY_CHANGES') && !allowed.has('PREPARE_CHANGES') && (
             <Button
               size="sm"
-              variant="accent"
+              variant="default"
               disabled={isBusy}
               loading={commandMutation.isPending}
               data-testid="apply-changes-button"
@@ -1729,6 +1810,33 @@ export default function BusinessDocumentsPage() {
             onFocusSection={focusSection}
           />
         )}
+        {streamJobId &&
+          streamPreview?.jobId === streamJobId &&
+          streamPreview.sections.length > 0 &&
+          !document.change_preview && (
+            <ChangePreviewPanel
+              preliminary
+              preview={{
+                job_id: streamJobId,
+                base_revision_id: document.current_revision?.revision_id ?? '',
+                state_version: document.state_version,
+                sections: streamPreview.sections,
+                acknowledged_no_change_event_ids: [],
+              }}
+              pending
+              canConfirm={false}
+              canDiscard={false}
+              onFocusSection={focusSection}
+            />
+          )}
+        {streamJobId && streamError && (
+          <div
+            className="border-b border-state-error/30 bg-state-error/5 px-5 py-2 text-xs text-state-error"
+            role="alert"
+          >
+            Не удалось получить предварительные изменения: {streamError}
+          </div>
+        )}
         {document.change_preview && changePreviewQuery.data && (
           <ChangePreviewPanel
             preview={changePreviewQuery.data}
@@ -1791,7 +1899,7 @@ export default function BusinessDocumentsPage() {
               >
                 <Download className="size-3.5" />
                 {exportLabels[artifact.format]}
-                <span className="font-normal text-text-disabled">
+                <span className="font-normal text-text-secondary">
                   r{artifact.revision_number ?? '—'}
                 </span>
               </a>

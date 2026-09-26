@@ -39,9 +39,14 @@ with temporary_common_settings(contract_settings):
     from api.apps.business_documents import exports as exports_module
     from api.apps.business_documents import worker as worker_module
     from api.apps.business_documents.assets import published_template, render_document_ast
-    from api.apps.business_documents.errors import BusinessDocumentError
+    from business_documents.application.errors import BusinessDocumentError
     from api.apps.business_documents.exports import BusinessDocumentExportService
-    from api.apps.business_documents.service import BusinessDocumentService
+    from api.apps.business_documents.runtime import document_queries, document_writer, job_completion
+    from api.apps.business_documents.runtime import document_commands
+    from api.apps.business_documents.runtime import document_creation
+    from api.apps.business_documents.adapters.persistence import DOCUMENT_TABLES
+    from api.apps.business_documents.adapters.cleanup import ExportCleanup
+    from business_documents.application.documents import DeleteDocument
     from api.apps.business_documents.worker import BusinessDocumentJobQueue, BusinessDocumentWorker
     from api.db.db_models import (
         BusinessDocument,
@@ -61,7 +66,7 @@ AUTHOR = "author-worker"
 @pytest.fixture()
 def database():
     database = SqliteDatabase(":memory:")
-    tables = BusinessDocumentService.model_tables()
+    tables = DOCUMENT_TABLES
     with database.bind_ctx(tables, bind_refs=False, bind_backrefs=False):
         database.connect()
         database.create_tables(tables)
@@ -104,7 +109,7 @@ class CompleteIntakeAI:
 
 
 def _create():
-    return BusinessDocumentService.create_document(
+    return document_creation.execute(
         TENANT,
         AUTHOR,
         {
@@ -151,7 +156,7 @@ def _question_batch():
 def _claim_and_complete(job_id: str, output: dict, *, worker_id="worker"):
     job = BusinessDocumentJobQueue.claim(worker_id, lease_ms=60_000)
     assert job is not None and job.id == job_id and job.lease_token
-    return BusinessDocumentService.complete_job(TENANT, worker_id, job.id, output, job.lease_token)
+    return job_completion.complete(TENANT, worker_id, job.id, output, job.lease_token)
 
 
 def _minimal_ast():
@@ -198,11 +203,11 @@ def _agreed_document():
         current_revision_id=revision_id,
         state_version=2,
     ).where(BusinessDocument.id == document.id).execute()
-    return BusinessDocumentService.get_document(TENANT, document.id, AUTHOR)
+    return document_queries.get_document(document.id, AUTHOR)
 
 
 def _request_export(document, storage: MemoryStorage, export_format="EVA_WIKI"):
-    requested = BusinessDocumentService.execute_command(
+    requested = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -218,7 +223,7 @@ def _request_export(document, storage: MemoryStorage, export_format="EVA_WIKI"):
     assert BusinessDocumentExportService.generate(job, storage=storage) == prepared
     assert BusinessDocumentExportArtifact.select().count() == 0
     assert BusinessDocumentExportStage.get_by_id(prepared.stage_id).state == "STORED"
-    projection = BusinessDocumentService.complete_job(TENANT, "export-worker", job.id, prepared, job.lease_token)
+    projection = job_completion.complete(TENANT, "export-worker", job.id, prepared, job.lease_token)
     assert BusinessDocumentExportStage.get_by_id(prepared.stage_id).state == "COMMITTED"
     BusinessDocumentExportService.discard(prepared, storage=storage)
     assert BusinessDocumentExportStage.select().count() == 0
@@ -229,7 +234,7 @@ def _request_export(document, storage: MemoryStorage, export_format="EVA_WIKI"):
 @pytest.mark.p0
 def test_expired_lease_is_fenced_and_reclaimed_without_duplicate_completion(database):
     document = _create()
-    requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
+    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
     now_ms = current_timestamp() + 10
     stale = BusinessDocumentJobQueue.claim("worker-a", lease_ms=10, now_ms=now_ms)
     assert stale is not None and stale.id == requested["job_id"]
@@ -241,7 +246,7 @@ def test_expired_lease_is_fenced_and_reclaimed_without_duplicate_completion(data
     assert current is not None and current.attempt == 2 and current.lease_token != stale_token
 
     with pytest.raises(BusinessDocumentError, match="Worker no longer owns") as lost:
-        BusinessDocumentService.complete_job(
+        job_completion.complete(
             TENANT,
             "worker-a",
             stale.id,
@@ -250,7 +255,7 @@ def test_expired_lease_is_fenced_and_reclaimed_without_duplicate_completion(data
         )
     assert lost.value.code == "JOB_LEASE_LOST"
 
-    projection = BusinessDocumentService.complete_job(
+    projection = job_completion.complete(
         TENANT,
         "worker-b",
         current.id,
@@ -265,11 +270,11 @@ def test_expired_lease_is_fenced_and_reclaimed_without_duplicate_completion(data
 @pytest.mark.p0
 def test_job_progress_is_fenced_and_projected_in_list_and_detail(database):
     document = _create()
-    requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
+    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
 
     queued = BusinessDocumentJob.get_by_id(requested["job_id"])
     assert (queued.progress, queued.progress_stage, queued.progress_message) == (0.02, "QUEUED", "Ожидает запуска")
-    list_item = BusinessDocumentService.list_documents(TENANT, AUTHOR)["items"][0]
+    list_item = document_queries.list_documents(AUTHOR)["items"][0]
     assert list_item["latest_job"]["progress"] == 0.02
     assert list_item["latest_job"]["progress_stage"] == "QUEUED"
 
@@ -279,11 +284,11 @@ def test_job_progress_is_fenced_and_projected_in_list_and_detail(database):
     assert BusinessDocumentJobQueue.update_progress(claimed.id, "wrong-worker", claimed.lease_token, 0.4, "GENERATING", "Формируем результат") is False
     assert BusinessDocumentJobQueue.update_progress(claimed.id, "progress-worker", claimed.lease_token, 0.4, "GENERATING", "Формируем результат") is True
 
-    detail = BusinessDocumentService.get_document(TENANT, document["document_id"], AUTHOR)
+    detail = document_queries.get_document(document["document_id"], AUTHOR)
     assert detail["latest_job"]["progress"] == 0.4
     assert detail["latest_job"]["progress_message"] == "Формируем результат"
 
-    completed = BusinessDocumentService.complete_job(
+    completed = job_completion.complete(
         TENANT,
         "progress-worker",
         claimed.id,
@@ -297,7 +302,7 @@ def test_job_progress_is_fenced_and_projected_in_list_and_detail(database):
 @pytest.mark.p0
 def test_heartbeat_records_lease_loss_when_renewal_is_rejected(database, monkeypatch):
     document = _create()
-    requested = BusinessDocumentService.execute_command(
+    requested = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -326,7 +331,7 @@ def test_heartbeat_records_lease_loss_when_renewal_is_rejected(database, monkeyp
 @pytest.mark.p0
 def test_worker_abandons_rejected_progress_without_export_or_retry(database, monkeypatch):
     document = _agreed_document()
-    requested = BusinessDocumentService.execute_command(
+    requested = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -358,7 +363,7 @@ def test_worker_abandons_rejected_progress_without_export_or_retry(database, mon
 @pytest.mark.p0
 def test_expired_exhausted_lease_is_dead_lettered_with_persistable_system_identity(database):
     document = _create()
-    requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
+    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
     BusinessDocumentJob.update(max_attempts=1).where(BusinessDocumentJob.id == requested["job_id"]).execute()
     now_ms = current_timestamp() + 10
     stale = BusinessDocumentJobQueue.claim("worker-a", lease_ms=10, now_ms=now_ms)
@@ -368,13 +373,13 @@ def test_expired_exhausted_lease_is_dead_lettered_with_persistable_system_identi
 
     assert (retry_count, dead_count) == (0, 1)
     assert BusinessDocumentJob.get_by_id(stale.id).status == "DEAD"
-    assert BusinessDocumentService.get_document(TENANT, document["document_id"], AUTHOR)["operation_state"] == "FAILED"
+    assert document_queries.get_document(document["document_id"], AUTHOR)["operation_state"] == "FAILED"
 
 
 @pytest.mark.p0
 def test_retry_backoff_exhaustion_dead_letters_once_and_rejects_wrong_token(database):
     document = _create()
-    requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
+    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
     claimed = BusinessDocumentJobQueue.claim("probe-worker", lease_ms=60_000)
     assert claimed is not None
     assert BusinessDocumentJobQueue.retry(claimed.id, "probe-worker", "wrong-token", {}, delay_ms=0) is False
@@ -388,7 +393,7 @@ def test_retry_backoff_exhaustion_dead_letters_once_and_rejects_wrong_token(data
     assert worker.run_once() is True
 
     job = BusinessDocumentJob.get_by_id(requested["job_id"])
-    projection = BusinessDocumentService.get_document(TENANT, document["document_id"], AUTHOR)
+    projection = document_queries.get_document(document["document_id"], AUTHOR)
     assert job.status == "DEAD"
     assert job.attempt == job.max_attempts == 3
     assert job.error == {"code": "WORKER_FAILURE", "message": "transient model failure"}
@@ -397,11 +402,11 @@ def test_retry_backoff_exhaustion_dead_letters_once_and_rejects_wrong_token(data
     assert BusinessDocumentEvent.select().where((BusinessDocumentEvent.document_id == document["document_id"]) & (BusinessDocumentEvent.event_type == "BusinessDocumentJobFailed")).count() == 1
 
     retry_command = _command(projection, "REQUEST_INTAKE_ASSESSMENT", suffix="-after-dead")
-    retried = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], retry_command)
+    retried = document_commands.execute(TENANT, AUTHOR, document["document_id"], retry_command)
     assert retried["job_id"] != requested["job_id"]
     recovery_worker = BusinessDocumentWorker(worker_id="recovery-worker", ai=CompleteIntakeAI(), retry_base_ms=0, lease_ms=60_000)
     assert recovery_worker.run_once() is True
-    recovered = BusinessDocumentService.get_document(TENANT, document["document_id"], AUTHOR)
+    recovered = document_queries.get_document(document["document_id"], AUTHOR)
     assert recovered["operation_state"] == "IDLE"
     assert BusinessDocumentJob.get_by_id(retried["job_id"]).status == "COMPLETED"
     assert BusinessDocumentJob.get_by_id(requested["job_id"]).status == "DEAD"
@@ -410,7 +415,7 @@ def test_retry_backoff_exhaustion_dead_letters_once_and_rejects_wrong_token(data
 @pytest.mark.p0
 def test_retry_error_remains_visible_while_next_attempt_is_running(database):
     document = _create()
-    requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
+    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
     first = BusinessDocumentJobQueue.claim("first-worker", lease_ms=60_000)
     assert first is not None and first.id == requested["job_id"]
     previous_error = {"code": "INVALID_MODEL_OUTPUT", "message": "Model output failed validation"}
@@ -506,10 +511,10 @@ def test_worker_reconciles_export_stages_on_busy_maintenance_interval(database, 
 @pytest.mark.p0
 def test_ai_snapshot_uses_real_answer_event_ids(database):
     document = _create()
-    requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
+    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
     document = _claim_and_complete(requested["job_id"], _question_batch())
     question = document["protocol"]["questions"][0]
-    answered = BusinessDocumentService.execute_command(
+    answered = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -520,8 +525,8 @@ def test_ai_snapshot_uses_real_answer_event_ids(database):
         ),
     )
     answer_event = BusinessDocumentEvent.get_by_id(answered["event_id"])
-    document = BusinessDocumentService.get_document(TENANT, document["document_id"], AUTHOR)
-    reassessment = BusinessDocumentService.execute_command(
+    document = document_queries.get_document(document["document_id"], AUTHOR)
+    reassessment = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -544,7 +549,7 @@ def test_ai_snapshot_uses_real_answer_event_ids(database):
 @pytest.mark.p0
 def test_draft_proposal_accepts_pinned_idea_event_and_rejects_unknown_source(database):
     def prepare(title_suffix):
-        document = BusinessDocumentService.create_document(
+        document = document_creation.execute(
             TENANT,
             AUTHOR,
             {
@@ -554,9 +559,9 @@ def test_draft_proposal_accepts_pinned_idea_event_and_rejects_unknown_source(dat
                 "idea": "Источник идеи должен быть трассируемым",
             },
         )
-        assessment = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT", suffix=title_suffix))
+        assessment = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT", suffix=title_suffix))
         document = _claim_and_complete(assessment["job_id"], {"schema_version": "1", "outcome": "COMPLETE", "questions": []})
-        requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_DRAFT", suffix=title_suffix))
+        requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_DRAFT", suffix=title_suffix))
         job = BusinessDocumentJobQueue.claim(f"draft-worker-{title_suffix}", lease_ms=60_000)
         assert job is not None and job.id == requested["job_id"]
         return document, job
@@ -575,7 +580,7 @@ def test_draft_proposal_accepts_pinned_idea_event_and_rejects_unknown_source(dat
             }
         ],
     }
-    completed = BusinessDocumentService.complete_job(TENANT, "draft-worker-valid", job.id, output, job.lease_token)
+    completed = job_completion.complete(TENANT, "draft-worker-valid", job.id, output, job.lease_token)
     proposal = BusinessDocumentProposal.get(BusinessDocumentProposal.document_id == document["document_id"])
     assert completed["lifecycle_state"] == "REVIEW"
     assert idea_event_id in proposal.source_event_ids
@@ -592,7 +597,7 @@ def test_draft_proposal_accepts_pinned_idea_event_and_rejects_unknown_source(dat
         ],
     }
     with pytest.raises(BusinessDocumentError) as unknown:
-        BusinessDocumentService.complete_job(TENANT, "draft-worker-invalid", invalid_job.id, invalid_output, invalid_job.lease_token)
+        job_completion.complete(TENANT, "draft-worker-invalid", invalid_job.id, invalid_output, invalid_job.lease_token)
     assert unknown.value.code == "SOURCE_NOT_IN_JOB_SNAPSHOT"
     assert BusinessDocumentRevision.select().where(BusinessDocumentRevision.document_id == invalid_document["document_id"]).count() == 0
     assert BusinessDocumentProposal.select().where(BusinessDocumentProposal.document_id == invalid_document["document_id"]).count() == 0
@@ -637,8 +642,8 @@ def test_valid_export_is_reused_after_document_owner_changes(database):
         owner_id=new_owner,
         state_version=projection["state_version"] + 1,
     ).where(BusinessDocument.id == document["document_id"]).execute()
-    reassigned = BusinessDocumentService.get_document(TENANT, document["document_id"], new_owner)
-    requested = BusinessDocumentService.execute_command(
+    reassigned = document_queries.get_document(document["document_id"], new_owner)
+    requested = document_commands.execute(
         TENANT,
         new_owner,
         document["document_id"],
@@ -655,7 +660,7 @@ def test_valid_export_is_reused_after_document_owner_changes(database):
     prepared = BusinessDocumentExportService.generate(job, storage=storage)
     assert prepared.created_blob is False
     assert prepared.artifact_id == artifact["artifact_id"]
-    BusinessDocumentService.complete_job(
+    job_completion.complete(
         TENANT,
         "reassigned-export-worker",
         job.id,
@@ -672,7 +677,7 @@ def test_valid_export_is_reused_after_document_owner_changes(database):
 def test_export_event_failure_rolls_back_artifact_and_discards_staged_blob(database, monkeypatch):
     document = _agreed_document()
     storage = MemoryStorage()
-    requested = BusinessDocumentService.execute_command(
+    requested = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -690,9 +695,9 @@ def test_export_event_failure_rolls_back_artifact_and_discards_staged_blob(datab
     def fail_event(*_args, **_kwargs):
         raise RuntimeError("event insert failed")
 
-    monkeypatch.setattr(BusinessDocumentService, "_create_event", fail_event)
+    monkeypatch.setattr(document_writer, "append_event", fail_event)
     with pytest.raises(RuntimeError, match="event insert failed"):
-        BusinessDocumentService.complete_job(
+        job_completion.complete(
             TENANT,
             "rollback-export-worker",
             job.id,
@@ -718,7 +723,7 @@ def test_admin_delete_removes_export_bytes_and_complete_document_history(databas
     row = BusinessDocumentExportArtifact.get_by_id(artifact["artifact_id"])
     storage_location = (row.storage_bucket, row.storage_key)
 
-    result = BusinessDocumentService.delete_document("admin-user", document["document_id"], is_admin=True, storage=storage)
+    result = DeleteDocument(document_writer, ExportCleanup(storage)).execute("admin-user", document["document_id"], is_admin=True)
 
     assert result["deleted"] is True
     assert result["deleted_artifacts"] == 1
@@ -727,6 +732,39 @@ def test_admin_delete_removes_export_bytes_and_complete_document_history(databas
     for model in (BusinessDocumentEvent, BusinessDocumentExportArtifact, BusinessDocumentJob, BusinessDocumentProposal, BusinessDocumentRevision):
         assert model.select().where(model.document_id == document["document_id"]).count() == 0
     assert BusinessDocument.select().where(BusinessDocument.id == document["document_id"]).count() == 0
+
+
+@pytest.mark.p0
+@pytest.mark.parametrize("failure_point", ["stage", "metadata"])
+def test_delete_rolls_back_metadata_and_cleanup_ledger_before_storage_access(database, monkeypatch, failure_point):
+    document = _agreed_document()
+    storage = MemoryStorage()
+    _request_export(document, storage, "MARKDOWN")
+    models = (BusinessDocument, BusinessDocumentEvent, BusinessDocumentJob, BusinessDocumentRevision, BusinessDocumentExportArtifact, BusinessDocumentExportStage)
+    before = {model: set(row.id for row in model.select(model.id)) for model in models}
+    before_objects = dict(storage.objects)
+    if failure_point == "stage":
+        original = BusinessDocumentExportService.queue_artifact_cleanup
+
+        def fail_stage(artifact):
+            original(artifact)
+            raise RuntimeError("injected deletion failure")
+
+        monkeypatch.setattr(BusinessDocumentExportService, "queue_artifact_cleanup", staticmethod(fail_stage))
+    else:
+        original = document_writer.delete_document_rows
+
+        def fail_metadata(document_id):
+            original(document_id)
+            raise RuntimeError("injected deletion failure")
+
+        monkeypatch.setattr(document_writer, "delete_document_rows", fail_metadata)
+
+    with pytest.raises(RuntimeError, match="injected deletion failure"):
+        DeleteDocument(document_writer, ExportCleanup(storage)).execute("admin-user", document["document_id"], is_admin=True)
+
+    assert {model: set(row.id for row in model.select(model.id)) for model in models} == before
+    assert storage.objects == before_objects
 
 
 @pytest.mark.p0
@@ -744,7 +782,7 @@ def test_admin_delete_retains_cleanup_ledger_until_blob_removal_is_verified(data
     row = BusinessDocumentExportArtifact.get_by_id(artifact["artifact_id"])
     storage_location = (row.storage_bucket, row.storage_key)
 
-    result = BusinessDocumentService.delete_document("admin-user", document["document_id"], is_admin=True, storage=storage)
+    result = DeleteDocument(document_writer, ExportCleanup(storage)).execute("admin-user", document["document_id"], is_admin=True)
 
     assert result == {
         "document_id": document["document_id"],
@@ -794,7 +832,7 @@ def test_admin_delete_retains_cleanup_ledger_when_storage_reports_ambiguous_abse
     storage_location = (row.storage_bucket, row.storage_key)
     storage = AmbiguousRemovalStorage(source_storage.objects)
 
-    result = BusinessDocumentService.delete_document("admin-user", document["document_id"], is_admin=True, storage=storage)
+    result = DeleteDocument(document_writer, ExportCleanup(storage)).execute("admin-user", document["document_id"], is_admin=True)
 
     assert result["storage_cleanup_failures"] == 1
     stage = BusinessDocumentExportStage.get()
@@ -817,7 +855,7 @@ def test_repeated_export_atomically_repairs_poisoned_artifact_metadata(database,
     else:
         storage.objects[original_key] = b"corrupt"
 
-    requested = BusinessDocumentService.execute_command(
+    requested = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -832,7 +870,7 @@ def test_repeated_export_atomically_repairs_poisoned_artifact_metadata(database,
     assert job is not None and job.id == requested["job_id"]
     prepared = BusinessDocumentExportService.generate(job, storage=storage)
     assert BusinessDocumentExportArtifact.get_by_id(original["artifact_id"]).id == original["artifact_id"]
-    BusinessDocumentService.complete_job(TENANT, f"repair-{damage}", job.id, prepared, job.lease_token)
+    job_completion.complete(TENANT, f"repair-{damage}", job.id, prepared, job.lease_token)
     BusinessDocumentExportService.discard(prepared, storage=storage)
     repaired = BusinessDocumentExportService.list_artifacts(TENANT, AUTHOR, document["document_id"])[0]
 
@@ -863,7 +901,7 @@ def test_reconciler_finishes_replacement_cleanup_after_committed_process_interru
     original_location = (original_row.storage_bucket, original_row.storage_key)
     storage.objects[original_location] = b"corrupt"
 
-    requested = BusinessDocumentService.execute_command(
+    requested = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -877,7 +915,7 @@ def test_reconciler_finishes_replacement_cleanup_after_committed_process_interru
     job = BusinessDocumentJobQueue.claim("replacement-worker", lease_ms=60_000)
     assert job is not None and job.id == requested["job_id"]
     prepared = BusinessDocumentExportService.generate(job, storage=storage)
-    BusinessDocumentService.complete_job(TENANT, "replacement-worker", job.id, prepared, job.lease_token)
+    job_completion.complete(TENANT, "replacement-worker", job.id, prepared, job.lease_token)
 
     stage = BusinessDocumentExportStage.get_by_id(prepared.stage_id)
     replacement_location = (prepared.storage_bucket, prepared.storage_key)
@@ -897,7 +935,7 @@ def test_reconciler_finishes_replacement_cleanup_after_committed_process_interru
 @pytest.mark.p0
 def test_interrupted_export_after_put_is_deferred_while_live_and_reconciled_after_lease_recovery(database):
     document = _agreed_document()
-    requested = BusinessDocumentService.execute_command(
+    requested = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -941,7 +979,7 @@ def test_interrupted_export_after_put_is_deferred_while_live_and_reconciled_afte
 @pytest.mark.p0
 def test_reconciler_rotates_a_deferred_live_stage_past_the_batch_limit(database):
     document = _agreed_document()
-    requested = BusinessDocumentService.execute_command(
+    requested = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -1009,7 +1047,7 @@ def test_reconciler_rotates_a_deferred_live_stage_past_the_batch_limit(database)
 @pytest.mark.p0
 def test_reclaimed_export_uses_lease_isolated_staging_keys(database, monkeypatch):
     document = _agreed_document()
-    requested = BusinessDocumentService.execute_command(
+    requested = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -1041,7 +1079,7 @@ def test_reclaimed_export_uses_lease_isolated_staging_keys(database, monkeypatch
     second_prepared = BusinessDocumentExportService.generate(second, storage=storage)
 
     with pytest.raises(BusinessDocumentError) as stale:
-        BusinessDocumentService.complete_job(
+        job_completion.complete(
             TENANT,
             "export-worker-a",
             first.id,
@@ -1054,7 +1092,7 @@ def test_reclaimed_export_uses_lease_isolated_staging_keys(database, monkeypatch
     assert second.lease_token in second_prepared.storage_key
     assert second_prepared.lease_token == second.lease_token
     assert storage.put_count == 2
-    BusinessDocumentService.complete_job(
+    job_completion.complete(
         TENANT,
         "export-worker-b",
         second.id,
@@ -1080,7 +1118,7 @@ def test_export_requires_durable_storage_write_and_docx_is_valid_zip(database):
 
     document = _agreed_document()
     storage = NoOpStorage()
-    requested = BusinessDocumentService.execute_command(
+    requested = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],

@@ -44,7 +44,14 @@ chat or a future document workflow can consume the same source set.
   article step. Tokens already streamed before a later source change may remain
   visible in the browser, but that step does not complete.
   The browser may abort the stream; completed steps stay visible there.
-  Results are not saved as documents.
+  Completed results can be saved as editable workspace drafts after review.
+- `GET/POST /source-workspaces/{id}/drafts` lists or saves drafts, and
+  `GET/PUT /source-workspaces/{id}/drafts/{draft_id}` opens or edits one.
+  The list returns metadata; it loads full text only for the opened draft.
+  Saving a new draft pins the current selection, document revisions, prompt,
+  mode, and source version on the server. A stale selection is rejected; edits
+  use a draft version to prevent overwriting another update. Drafts are owned
+  by the workspace user. They are not published into a knowledge base.
 - The budget uses the model's configured `max_tokens` context, reserves output
   and safety space, and estimates input with the repository's `cl100k_base`
   tokenizer plus 25% headroom. The upstream stream has no finish-reason signal,
@@ -72,4 +79,11 @@ and accepts a workspace plus an `onChange` callback.
 
 Search pages through ranked chunks in groups of 100, up to ten pages. A workspace
 stores the selected documents and search query history; it does not store every
-search result. It does not implement document comparison or publication yet.
+search result. The server-side `SOURCE_WORKBENCH_SIMILARITY_THRESHOLD` setting
+controls the minimum search similarity. It defaults to `0.4` and accepts a finite
+number from `0` to `1`; invalid values fail the search with a configuration
+error. Set `SOURCE_WORKBENCH_SIMILARITY_THRESHOLD=0.4` in the application
+container environment when tuning retrieval (`docker/.env`, or
+`docker/.env.local` for the local Compose overlay). Recreate the application
+container after changing it. The ordinary user interface does not expose it.
+It does not implement document comparison or publication yet.

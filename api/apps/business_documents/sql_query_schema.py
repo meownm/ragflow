@@ -12,7 +12,7 @@ from json_repair import repair_json
 from api.apps.business_documents.ai import RAGFlowLLMAdapter
 from api.apps.business_documents.assets import contract_schema, prompt_descriptor, prompt_text, validate_contract
 from api.apps.business_documents.authorization import BusinessDocumentAccess
-from api.apps.business_documents.errors import BusinessDocumentError, PermissionDeniedError, ValidationError
+from business_documents.application.errors import BusinessDocumentError, PermissionDeniedError, ValidationError
 from api.apps.services.openmetadata_dataset_retrieval import retrieve_openmetadata_dataset_hits
 from api.apps.services.openmetadata_runtime_service import get_openmetadata_service, openmetadata_catalog_accessible
 from common.misc_utils import thread_pool_exec

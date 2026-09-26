@@ -123,7 +123,7 @@ export function QuestionItem({
                       : ''}
                   </span>
                   {question.target_section_id && (
-                    <span className="font-mono text-[11px] text-text-disabled">
+                    <span className="font-mono text-[11px] text-text-secondary">
                       § {question.target_section_id}
                     </span>
                   )}

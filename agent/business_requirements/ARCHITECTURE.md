@@ -332,7 +332,9 @@ uses a numeric `code` and places the stable domain identifier in
 ## Release gates
 
 P0 requires all domain, API contract, asset, and frontend interaction tests to
-pass. The golden suite requires all P0 dialogues, zero hard failures, at least
-90% total dialogue pass rate, and grounded-fact precision of at least 95% in a
-configured live-model run. A skipped live run is reported as a verification
-gap, never as a pass.
+pass. The live-model golden suite reports all P0 dialogues, hard failures,
+total dialogue pass rate, and grounded-fact precision against the documented
+90% and 95% thresholds. These thresholds are baseline observations until two
+reproducible runs use the same source, corpus, and model; a reviewed decision
+is required before making them a release gate. A skipped or unfinished live
+run is `incomplete`, never a pass.

@@ -1,3 +1,4 @@
+import { Authorization } from '@/constants/authorization';
 import type {
   BusinessDocumentAccessContext,
   BusinessDocumentAssignableUser,
@@ -7,6 +8,7 @@ import type {
   BusinessDocumentCommandResult,
   BusinessDocumentEvaPullResult,
   BusinessDocumentEvaUpdateStatus,
+  BusinessDocumentJobStreamEvent,
   BusinessDocumentList,
   BusinessDocumentProjection,
   BusinessDocumentRevision,
@@ -39,6 +41,7 @@ import type {
   SqlSchemaResolutionResponse,
 } from '@/pages/business-documents/types';
 import api from '@/utils/api';
+import { getAuthorization } from '@/utils/authorization-util';
 import request from '@/utils/next-request';
 import axios, { AxiosRequestConfig } from 'axios';
 
@@ -446,6 +449,129 @@ export async function fetchBusinessDocumentChangePreview(
     return unwrap<BusinessDocumentChangePreview>(response.data);
   } catch (error) {
     return rethrowBusinessDocumentError(error);
+  }
+}
+
+type JobStreamBatch = {
+  events: BusinessDocumentJobStreamEvent[];
+  status: string;
+  job_id: string;
+};
+
+async function fetchBusinessDocumentJobEvents(
+  documentId: string,
+  jobId: string,
+  after: number,
+): Promise<JobStreamBatch> {
+  try {
+    const response = await request.get(
+      api.businessDocumentJobEvents(documentId, jobId),
+      requestConfig({ params: { after } }),
+    );
+    return unwrap<JobStreamBatch>(response.data);
+  } catch (error) {
+    if (
+      axios.isAxiosError(error) &&
+      [401, 403, 404].includes(error.response?.status ?? 0)
+    ) {
+      throw error;
+    }
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+async function readBusinessDocumentEventStream(
+  documentId: string,
+  jobId: string,
+  after: number,
+  signal: AbortSignal,
+  onEvent: (event: BusinessDocumentJobStreamEvent) => void,
+): Promise<void> {
+  const url = `${api.businessDocumentJobEvents(documentId, jobId)}/stream?after=${after}`;
+  const response = await fetch(url, {
+    headers: {
+      [Authorization]: getAuthorization(),
+      Accept: 'text/event-stream',
+    },
+    credentials: 'same-origin',
+    signal,
+  });
+  if (!response.ok || !response.body) {
+    throw new Error(requestFailureMessage(response.status));
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (!signal.aborted) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer = (buffer + decoder.decode(value, { stream: true })).replace(
+      /\r\n/g,
+      '\n',
+    );
+    if (buffer.length > 1_000_000)
+      throw new Error('Поток событий слишком велик');
+    let boundary = buffer.indexOf('\n\n');
+    while (boundary >= 0) {
+      const frame = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      const data = frame
+        .split('\n')
+        .filter((line) => line.startsWith('data:'))
+        .map((line) => line.slice(5).trimStart())
+        .join('\n');
+      if (frame.includes('event: access_revoked')) {
+        throw new Error('Доступ к документу изменился. Обновите страницу.');
+      }
+      if (data) onEvent(JSON.parse(data) as BusinessDocumentJobStreamEvent);
+      boundary = buffer.indexOf('\n\n');
+    }
+  }
+}
+
+export async function watchBusinessDocumentJobEvents(
+  documentId: string,
+  jobId: string,
+  signal: AbortSignal,
+  onEvent: (event: BusinessDocumentJobStreamEvent) => void,
+): Promise<void> {
+  let cursor = 0;
+  const receive = (event: BusinessDocumentJobStreamEvent) => {
+    if (event.job_id !== jobId || event.id <= cursor || signal.aborted) return;
+    cursor = event.id;
+    onEvent(event);
+  };
+  while (!signal.aborted) {
+    try {
+      await readBusinessDocumentEventStream(
+        documentId,
+        jobId,
+        cursor,
+        signal,
+        receive,
+      );
+    } catch {
+      if (signal.aborted) return;
+      // The batch endpoint is the recovery path when a proxy buffers or drops SSE.
+    }
+    if (signal.aborted) return;
+    let batch: JobStreamBatch;
+    try {
+      batch = await fetchBusinessDocumentJobEvents(documentId, jobId, cursor);
+    } catch (error) {
+      if (signal.aborted) return;
+      if (
+        axios.isAxiosError(error) &&
+        [401, 403, 404].includes(error.response?.status ?? 0)
+      ) {
+        throw new Error(requestFailureMessage(error.response?.status));
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 1500));
+      continue;
+    }
+    batch.events.forEach(receive);
+    if (batch.status === 'COMPLETED' || batch.status === 'DEAD') return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 1500));
   }
 }
 

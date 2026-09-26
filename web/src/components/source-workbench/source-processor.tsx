@@ -1,9 +1,15 @@
 import { Button } from '@/components/ui/button';
 import {
+  getSourceWorkspaceDraft,
+  listSourceWorkspaceDrafts,
   processSourceWorkspaceStream,
+  saveSourceWorkspaceDraft,
   sourceRequestError,
+  updateSourceWorkspaceDraft,
   type SourceProcessEvent,
   type SourceWorkspace,
+  type SourceWorkspaceDraft,
+  type SourceWorkspaceDraftSummary,
 } from '@/services/source-workbench-service';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 
@@ -23,9 +29,18 @@ export function SourceProcessor({
   const [prompt, setPrompt] = useState('');
   const [draft, setDraft] = useState('');
   const [result, setResult] = useState('');
+  const [editorText, setEditorText] = useState('');
+  const [savedDraft, setSavedDraft] = useState<SourceWorkspaceDraft | null>(
+    null,
+  );
+  const [drafts, setDrafts] = useState<SourceWorkspaceDraftSummary[]>([]);
+  const [completed, setCompleted] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [resultFromCurrentRun, setResultFromCurrentRun] = useState(false);
   const [liveText, setLiveText] = useState('');
   const [resultVersion, setResultVersion] = useState<number | null>(null);
+  const [resultPrompt, setResultPrompt] = useState('');
+  const [resultMode, setResultMode] = useState<Mode>('all');
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState('');
   const [budget, setBudget] = useState('');
@@ -48,6 +63,21 @@ export function SourceProcessor({
   }, [busy]);
 
   useEffect(() => () => controller.current?.abort(), []);
+
+  useEffect(() => {
+    let cancelled = false;
+    listSourceWorkspaceDrafts(workspace.id)
+      .then((items) => {
+        if (!cancelled && items.length) setDrafts(items);
+      })
+      .catch((cause) => {
+        if (!cancelled)
+          setError(sourceRequestError(cause, 'Не удалось загрузить черновики'));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [workspace.id]);
 
   useEffect(() => {
     if (liveArea.current)
@@ -73,6 +103,8 @@ export function SourceProcessor({
     setStopped(false);
     setLiveText('');
     setResultFromCurrentRun(false);
+    setSavedDraft(null);
+    setCompleted(false);
     setProgress(0);
     setElapsedSeconds(0);
     setStatus('Подготовка запроса');
@@ -92,12 +124,18 @@ export function SourceProcessor({
         setLiveText((previous) => previous + item.text);
       } else if (item.event === 'step_done' || item.event === 'done') {
         setResult(item.text);
+        setEditorText(item.text);
         setResultFromCurrentRun(true);
         setResultUsedNotes(notesUsed.current);
         setResultVersion(item.version);
         setProgress(item.processed);
         setLiveText('');
-        if (item.event === 'done') setStatus('Готово');
+        if (item.event === 'done') {
+          setCompleted(true);
+          setResultPrompt(task);
+          setResultMode(mode);
+          setStatus('Готово');
+        }
       }
     };
     try {
@@ -118,6 +156,54 @@ export function SourceProcessor({
     }
   };
 
+  const save = async () => {
+    if (busy || saving || !editorText.trim()) return;
+    setSaving(true);
+    setError('');
+    try {
+      const saved = savedDraft
+        ? await updateSourceWorkspaceDraft(savedDraft, editorText.trim())
+        : completed && resultVersion === workspace.version
+          ? await saveSourceWorkspaceDraft(workspace, {
+              content: editorText.trim(),
+              prompt: resultPrompt,
+              mode: resultMode,
+            })
+          : null;
+      if (!saved) return;
+      setSavedDraft(saved);
+      setEditorText(saved.content);
+      setDrafts(await listSourceWorkspaceDrafts(workspace.id));
+    } catch (cause) {
+      setError(sourceRequestError(cause, 'Не удалось сохранить черновик'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openDraft = async (draftId: string) => {
+    if (busy || saving) return;
+    setSaving(true);
+    setError('');
+    try {
+      const item = await getSourceWorkspaceDraft(workspace.id, draftId);
+      setSavedDraft(item);
+      setResult(item.content);
+      setEditorText(item.content);
+      setResultVersion(item.source_version);
+      setResultPrompt(item.prompt);
+      setResultMode(item.mode);
+      setResultFromCurrentRun(false);
+      setCompleted(false);
+      setPrompt(item.prompt);
+      setMode(item.mode);
+    } catch (cause) {
+      setError(sourceRequestError(cause, 'Не удалось открыть черновик'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <section className="mt-8 rounded-md border border-border-button p-5">
       <h2 className="text-lg font-semibold">Обработка выбранных статей</h2>
@@ -125,6 +211,25 @@ export function SourceProcessor({
         Создайте новый текст или вставьте существующий для правок. Итог можно
         использовать как черновик следующего запроса.
       </p>
+      {drafts.length > 0 && (
+        <div className="mt-5">
+          <h3 className="text-sm font-semibold">Сохранённые черновики</h3>
+          <ul className="mt-2 flex flex-wrap gap-2">
+            {drafts.map((item) => (
+              <li key={item.id}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={busy || saving}
+                  onClick={() => void openDraft(item.id)}
+                >
+                  Открыть черновик {new Date(item.updated_at).toLocaleString()}
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <form className="mt-5 space-y-4" onSubmit={run}>
         <fieldset disabled={busy} className="flex flex-wrap gap-4 text-sm">
           <legend className="mb-2 font-medium">Как передать статьи</legend>
@@ -258,25 +363,48 @@ export function SourceProcessor({
         <div className="mt-6">
           <div className="flex items-center justify-between gap-3">
             <h3 className="font-semibold">
-              {resultFromCurrentRun
-                ? 'Последний завершённый результат'
-                : 'Результат предыдущего запуска'}
+              {savedDraft
+                ? 'Сохранённый черновик'
+                : resultFromCurrentRun
+                  ? 'Последний завершённый результат'
+                  : 'Результат предыдущего запуска'}
             </h3>
             <Button
               type="button"
               variant="outline"
-              disabled={busy}
-              onClick={() => setDraft(result)}
+              disabled={busy || saving}
+              onClick={() => setDraft(editorText)}
             >
-              Использовать как черновик
+              Передать текст в обработку
             </Button>
           </div>
           <textarea
             aria-label="Результат обработки"
             className="mt-3 min-h-64 w-full rounded-md border border-border-button bg-bg-card p-3 text-sm"
-            value={result}
-            readOnly
+            value={editorText}
+            onChange={(event) => setEditorText(event.target.value)}
+            disabled={busy || saving}
           />
+          <Button
+            type="button"
+            className="mt-3"
+            disabled={
+              busy ||
+              saving ||
+              !editorText.trim() ||
+              (!savedDraft &&
+                (!completed || resultVersion !== workspace.version))
+            }
+            onClick={save}
+          >
+            {savedDraft ? 'Сохранить правки' : 'Сохранить черновик'}
+          </Button>
+          {savedDraft && (
+            <p className="mt-2 text-xs text-text-secondary">
+              Черновик сохранён. Источники закреплены по версии подборки{' '}
+              {savedDraft.source_version}.
+            </p>
+          )}
           {resultVersion !== workspace.version && (
             <p className="mt-2 text-sm text-text-secondary">
               Результат создан по предыдущей версии подборки.

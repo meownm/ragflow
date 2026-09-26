@@ -31,9 +31,15 @@ if "api.apps" not in sys.modules:
 from api.apps.business_documents.adapters import assignment as assignment_adapter
 from api.apps.business_documents.adapters.storage import BusinessDocumentStorageAdapter
 from api.apps.business_documents.evidence import BusinessDocumentEvidence
-from api.apps.business_documents.errors import BusinessDocumentError
+from business_documents.application.errors import BusinessDocumentError
 from api.apps.business_documents.exports import BusinessDocumentExportService
-from api.apps.business_documents.service import BusinessDocumentService
+from api.apps.business_documents.runtime import document_queries, document_writer, job_completion
+from api.apps.business_documents.runtime import document_commands
+from api.apps.business_documents.adapters.cleanup import ExportCleanup
+from business_documents.application.documents import DeleteDocument
+from api.apps.business_documents.runtime import document_creation
+from api.apps.business_documents.adapters.persistence import DOCUMENT_TABLES
+from api.apps.business_documents.runtime import document_deletion
 from api.apps.business_documents.worker import BusinessDocumentJobQueue
 from api.db.db_models import (
     BusinessDocument,
@@ -59,7 +65,7 @@ def postgres_database():
     database = connect(dsn, field_types={"LONGTEXT": "TEXT"}, options="-c statement_timeout=15000 -c lock_timeout=10000")
     assert isinstance(database, PostgresqlDatabase), "A PostgreSQL DSN is required"
     schema = "regression_business_documents_" + uuid4().hex
-    tables = (*BusinessDocumentService.model_tables(), User)
+    tables = (*DOCUMENT_TABLES, User)
     schemas = {model: model._meta.schema for model in tables}
     database.connect()
     database.execute_sql(f'CREATE SCHEMA "{schema}"')
@@ -78,7 +84,7 @@ def postgres_database():
 
 
 def _document():
-    return BusinessDocumentService.create_document(
+    return document_creation.execute(
         "pg-tenant",
         "pg-author",
         {
@@ -88,6 +94,28 @@ def _document():
             "idea": "Test concurrent commands",
         },
     )
+
+
+@pytest.mark.parametrize(
+    "case_name",
+    [
+        "test_document_page_has_a_fixed_query_budget_with_revisions_owners_jobs_and_legacy_bindings",
+        "test_binding_batch_preserves_resolution_boundary_and_prefers_saved_projection",
+        "test_revision_history_batches_sources_and_restores_legacy_authors_without_reordering",
+        "test_latest_job_does_not_drop_a_saved_row_without_a_timestamp",
+        "test_single_latest_job_matches_page_order_for_ties_and_missing_timestamps",
+    ],
+)
+def test_batched_document_queries_on_postgres(postgres_database, case_name):
+    from test.unit_test.api.apps.business_documents import test_business_document_queries as query_cases
+
+    getattr(query_cases, case_name)(postgres_database)
+
+
+def test_current_cycle_review_loading_on_postgres(postgres_database):
+    from test.unit_test.api.apps.business_documents.test_business_document_review_loading import test_current_cycle_load_preserves_published_results_and_historical_source_errors
+
+    test_current_cycle_load_preserves_published_results_and_historical_source_errors(postgres_database)
 
 
 def _agreed_document():
@@ -116,7 +144,7 @@ def _agreed_document():
         current_revision_id=revision_id,
         state_version=2,
     ).where(BusinessDocument.id == document_id).execute()
-    return BusinessDocumentService.get_document("pg-tenant", document_id, "pg-author")
+    return document_queries.get_document(document_id, "pg-author")
 
 
 class _MemoryStorage:
@@ -247,14 +275,14 @@ def _wait_for_backend_lock(database, backend_pid):
 
 def _synchronize_document_reads(monkeypatch):
     barrier = Barrier(2)
-    original = BusinessDocumentService._get_editable_document
+    original = document_writer.lock_document
 
     def get_document(*args, **kwargs):
-        document = original(*args, **kwargs)
+        # Meet before acquiring the row lock so both commands really contend.
         barrier.wait(timeout=10)
-        return document
+        return original(*args, **kwargs)
 
-    monkeypatch.setattr(BusinessDocumentService, "_get_editable_document", staticmethod(get_document))
+    monkeypatch.setattr(document_writer, "lock_document", get_document)
 
 
 @pytest.mark.p0
@@ -269,7 +297,7 @@ def test_concurrent_document_creation_enforces_normalized_title_uniqueness(postg
     monkeypatch.setattr(BusinessDocument, "create", synchronized_create)
     results = _parallel(
         postgres_database,
-        lambda index: BusinessDocumentService.create_document(
+        lambda index: document_creation.execute(
             "pg-tenant",
             "pg-author",
             {
@@ -309,10 +337,10 @@ def test_concurrent_creation_enforces_unique_eva_identity(postgres_database, mon
         }
 
     monkeypatch.setattr(BusinessDocumentEvaBinding, "create", synchronized_binding_create)
-    monkeypatch.setattr(BusinessDocumentService, "_resolve_create_eva_binding", staticmethod(resolve_binding))
+    monkeypatch.setattr(document_creation, "_resolve_binding", resolve_binding)
     results = _parallel(
         postgres_database,
-        lambda index: BusinessDocumentService.create_document(
+        lambda index: document_creation.execute(
             "pg-tenant",
             "pg-author",
             {
@@ -341,7 +369,7 @@ def test_concurrent_commands_commit_one_transition(postgres_database, monkeypatc
     _synchronize_document_reads(monkeypatch)
     results = _parallel(
         postgres_database,
-        lambda index: BusinessDocumentService.execute_command(
+        lambda index: document_commands.execute(
             "pg-tenant",
             "pg-author",
             document["document_id"],
@@ -432,7 +460,7 @@ def test_owner_assignment_rejects_active_job_without_invalidating_worker_state(p
         nickname="PostgreSQL owner active job",
         email=f"{owner_id}@example.test",
     )
-    accepted = BusinessDocumentService.execute_command(
+    accepted = document_commands.execute(
         "pg-tenant",
         "pg-author",
         document["document_id"],
@@ -587,7 +615,7 @@ def test_owner_assignment_and_delete_serialize_without_orphan_event(postgres_dat
     delete_pid_ready = Event()
     backend_pids = {}
     original_assignment_get = assignment_adapter._PeeweeAssignmentUnitOfWork.get_document
-    original_delete_get = BusinessDocumentService._get_document_for_update
+    original_delete_get = document_writer.lock_document
 
     def get_assignment_document(unit_of_work, document_id):
         result = original_assignment_get(unit_of_work, document_id)
@@ -609,9 +637,9 @@ def test_owner_assignment_and_delete_serialize_without_orphan_event(postgres_dat
         get_assignment_document,
     )
     monkeypatch.setattr(
-        BusinessDocumentService,
-        "_get_document_for_update",
-        staticmethod(get_delete_document),
+        document_writer,
+        "lock_document",
+        get_delete_document,
     )
 
     def assign_owner():
@@ -642,7 +670,7 @@ def test_owner_assignment_and_delete_serialize_without_orphan_event(postgres_dat
             backend_pid = postgres_database.execute_sql("SELECT pg_backend_pid()").fetchone()[0]
             backend_pids["delete"] = backend_pid
             delete_pid_ready.set()
-            result = BusinessDocumentService.delete_document(
+            result = document_deletion.execute(
                 "pg-moderator",
                 document["document_id"],
                 access_role="EXTENDED_MODERATOR",
@@ -691,7 +719,7 @@ def test_command_and_delete_serialize_without_orphan_ledger(postgres_database, m
     delete_pid_ready = Event()
     backend_pids = {}
     thread_state = local()
-    original_get = BusinessDocumentService._get_document_for_update
+    original_get = document_writer.lock_document
 
     def get_document_for_update(document_id):
         result = original_get(document_id)
@@ -700,11 +728,7 @@ def test_command_and_delete_serialize_without_orphan_ledger(postgres_database, m
             assert release_winner.wait(timeout=10), f"{first_operation} winner was not released"
         return result
 
-    monkeypatch.setattr(
-        BusinessDocumentService,
-        "_get_document_for_update",
-        staticmethod(get_document_for_update),
-    )
+    monkeypatch.setattr(document_writer, "lock_document", get_document_for_update)
 
     def execute_command():
         with postgres_database.connection_context():
@@ -713,7 +737,7 @@ def test_command_and_delete_serialize_without_orphan_ledger(postgres_database, m
             backend_pids["command"] = backend_pid
             command_pid_ready.set()
             try:
-                result = BusinessDocumentService.execute_command(
+                result = document_commands.execute(
                     "pg-tenant",
                     "pg-author",
                     document["document_id"],
@@ -730,7 +754,7 @@ def test_command_and_delete_serialize_without_orphan_ledger(postgres_database, m
             backend_pids["delete"] = backend_pid
             delete_pid_ready.set()
             try:
-                result = BusinessDocumentService.delete_document(
+                result = document_deletion.execute(
                     "pg-moderator",
                     document["document_id"],
                     access_role="EXTENDED_MODERATOR",
@@ -783,7 +807,7 @@ def test_command_and_delete_serialize_without_orphan_ledger(postgres_database, m
 @pytest.mark.parametrize("mutation", ["delete", "assignment"], ids=["delete", "assignment"])
 def test_stale_export_is_fenced_after_lease_recovery(postgres_database, monkeypatch, mutation):
     document = _agreed_document()
-    requested = BusinessDocumentService.execute_command(
+    requested = document_commands.execute(
         "pg-tenant",
         "pg-author",
         document["document_id"],
@@ -819,7 +843,7 @@ def test_stale_export_is_fenced_after_lease_recovery(postgres_database, monkeypa
             prepared = None
             try:
                 prepared = BusinessDocumentExportService.generate(job, storage=storage)
-                result = BusinessDocumentService.complete_job(
+                result = job_completion.complete(
                     job.tenant_id,
                     "pg-stale-export-worker",
                     job.id,
@@ -842,11 +866,10 @@ def test_stale_export_is_fenced_after_lease_recovery(postgres_database, monkeypa
         assert BusinessDocumentJobQueue.recover_stale(now_ms=expired_at + 1) == (0, 1)
 
         if mutation == "delete":
-            deleted = BusinessDocumentService.delete_document(
+            deleted = DeleteDocument(document_writer, ExportCleanup(storage)).execute(
                 "pg-moderator",
                 document["document_id"],
                 access_role="EXTENDED_MODERATOR",
-                storage=storage,
             )
             assert deleted["deleted"] is True
         else:
@@ -884,7 +907,7 @@ def test_stale_export_is_fenced_after_lease_recovery(postgres_database, monkeypa
 @pytest.mark.p0
 def test_real_minio_blob_is_reconciled_after_interruption_immediately_after_put(minio_storage, postgres_database):
     document = _agreed_document()
-    requested = BusinessDocumentService.execute_command(
+    requested = document_commands.execute(
         "pg-tenant",
         "pg-author",
         document["document_id"],
@@ -950,7 +973,7 @@ def test_real_minio_blob_is_reconciled_after_interruption_immediately_after_put(
 @pytest.mark.p0
 def test_export_artifact_is_published_atomically_with_job_completion(postgres_database, monkeypatch):
     document = _agreed_document()
-    requested = BusinessDocumentService.execute_command(
+    requested = document_commands.execute(
         "pg-tenant",
         "pg-author",
         document["document_id"],
@@ -974,23 +997,23 @@ def test_export_artifact_is_published_atomically_with_job_completion(postgres_da
     assert BusinessDocumentExportStage.get_by_id(prepared.stage_id).state == "STORED"
     artifact_staged = Event()
     release_completion = Event()
-    original_complete_export = BusinessDocumentService._complete_export
+    original_complete_export = job_completion._export
 
-    def blocked_complete_export(_service, current_document, current_job, actor_id, output, execution):
+    def blocked_complete_export(current_document, current_job, actor_id, output):
         artifact_staged.set()
         assert release_completion.wait(timeout=10), "Export completion was not released"
-        return original_complete_export(current_document, current_job, actor_id, output, execution)
+        return original_complete_export(current_document, current_job, actor_id, output)
 
     monkeypatch.setattr(
-        BusinessDocumentService,
-        "_complete_export",
-        classmethod(blocked_complete_export),
+        job_completion,
+        "_export",
+        blocked_complete_export,
     )
 
     def complete_export():
         with postgres_database.connection_context():
             try:
-                return BusinessDocumentService.complete_job(
+                return job_completion.complete(
                     "pg-tenant",
                     "pg-export-atomic-worker",
                     job.id,
@@ -1021,7 +1044,7 @@ def test_export_artifact_is_published_atomically_with_job_completion(postgres_da
 @pytest.mark.parametrize("finalizer", ["complete", "fail"], ids=["complete", "fail"])
 def test_job_finalization_serializes_against_recovery_and_reclaim(postgres_database, monkeypatch, finalizer):
     document = _document()
-    requested = BusinessDocumentService.execute_command(
+    requested = document_commands.execute(
         "pg-tenant",
         "pg-author",
         document["document_id"],
@@ -1033,7 +1056,7 @@ def test_job_finalization_serializes_against_recovery_and_reclaim(postgres_datab
     release_finalizer = Event()
     takeover_pid_ready = Event()
     backend_pids = {}
-    original_require = BusinessDocumentService._require_current_job_lease
+    original_require = job_completion._require_lease
 
     def require_current_job_lease(current_job, worker_id, lease_token):
         original_require(current_job, worker_id, lease_token)
@@ -1042,16 +1065,16 @@ def test_job_finalization_serializes_against_recovery_and_reclaim(postgres_datab
             assert release_finalizer.wait(timeout=10), "Finalizer was not released"
 
     monkeypatch.setattr(
-        BusinessDocumentService,
-        "_require_current_job_lease",
-        staticmethod(require_current_job_lease),
+        job_completion,
+        "_require_lease",
+        require_current_job_lease,
     )
 
     def finalize_job():
         with postgres_database.connection_context():
             backend_pid = postgres_database.execute_sql("SELECT pg_backend_pid()").fetchone()[0]
             if finalizer == "complete":
-                result = BusinessDocumentService.complete_job(
+                result = job_completion.complete(
                     "pg-tenant",
                     "pg-worker-a",
                     job.id,
@@ -1059,7 +1082,7 @@ def test_job_finalization_serializes_against_recovery_and_reclaim(postgres_datab
                     job.lease_token,
                 )
             else:
-                result = BusinessDocumentService.fail_job(
+                result = job_completion.fail(
                     "pg-tenant",
                     "pg-worker-a",
                     job.id,
@@ -1109,7 +1132,7 @@ def test_job_finalization_serializes_against_recovery_and_reclaim(postgres_datab
 @pytest.mark.parametrize("finalizer", ["complete", "fail"], ids=["complete", "fail"])
 def test_reclaimed_job_rejects_previous_worker_finalization(postgres_database, finalizer):
     document = _document()
-    requested = BusinessDocumentService.execute_command(
+    requested = document_commands.execute(
         "pg-tenant",
         "pg-author",
         document["document_id"],
@@ -1153,7 +1176,7 @@ def test_reclaimed_job_rejects_previous_worker_finalization(postgres_database, f
 
     with pytest.raises(BusinessDocumentError) as stale:
         if finalizer == "complete":
-            BusinessDocumentService.complete_job(
+            job_completion.complete(
                 "pg-tenant",
                 "pg-worker-a",
                 first.id,
@@ -1161,7 +1184,7 @@ def test_reclaimed_job_rejects_previous_worker_finalization(postgres_database, f
                 first_token,
             )
         else:
-            BusinessDocumentService.fail_job(
+            job_completion.fail(
                 "pg-tenant",
                 "pg-worker-a",
                 first.id,
@@ -1191,7 +1214,7 @@ def test_reclaimed_job_rejects_previous_worker_finalization(postgres_database, f
 @pytest.mark.p0
 def test_evidence_pin_and_delete_serialize_without_orphan_snapshot(postgres_database, monkeypatch):
     document = _document()
-    requested = BusinessDocumentService.execute_command(
+    requested = document_commands.execute(
         "pg-tenant",
         "pg-author",
         document["document_id"],
@@ -1231,7 +1254,7 @@ def test_evidence_pin_and_delete_serialize_without_orphan_snapshot(postgres_data
                 .execute()
             )
             recovered = BusinessDocumentJobQueue.recover_stale(now_ms=expired_at + 1)
-            deleted = BusinessDocumentService.delete_document(
+            deleted = document_deletion.execute(
                 "pg-moderator",
                 document["document_id"],
                 access_role="EXTENDED_MODERATOR",
@@ -1263,7 +1286,7 @@ def test_evidence_pin_and_delete_serialize_without_orphan_snapshot(postgres_data
 @pytest.mark.p0
 def test_recovery_and_delete_precede_stale_evidence_pin(postgres_database):
     document = _document()
-    requested = BusinessDocumentService.execute_command(
+    requested = document_commands.execute(
         "pg-tenant",
         "pg-author",
         document["document_id"],
@@ -1275,7 +1298,7 @@ def test_recovery_and_delete_precede_stale_evidence_pin(postgres_database):
     BusinessDocumentJob.update(max_attempts=1, lease_expires_at=expired_at).where(BusinessDocumentJob.id == job.id).execute()
     assert BusinessDocumentJobQueue.recover_stale(now_ms=expired_at + 1) == (0, 1)
     assert (
-        BusinessDocumentService.delete_document(
+        document_deletion.execute(
             "pg-moderator",
             document["document_id"],
             access_role="EXTENDED_MODERATOR",
@@ -1293,7 +1316,7 @@ def test_recovery_and_delete_precede_stale_evidence_pin(postgres_database):
 @pytest.mark.p0
 def test_concurrent_workers_claim_a_job_once(postgres_database, monkeypatch):
     document = _document()
-    accepted = BusinessDocumentService.execute_command("pg-tenant", "pg-author", document["document_id"], _command(document, "job"))
+    accepted = document_commands.execute("pg-tenant", "pg-author", document["document_id"], _command(document, "job"))
     barrier = Barrier(2)
     thread_state = local()
     execute = postgres_database.execute_sql
@@ -1314,3 +1337,165 @@ def test_concurrent_workers_claim_a_job_once(postgres_database, monkeypatch):
     assert persisted.lease_token == claims[0].lease_token
     assert persisted.lease_owner == claims[0].lease_owner
     assert not BusinessDocumentJobQueue.renew(persisted.id, "wrong-worker", persisted.lease_token, lease_ms=60000)
+
+
+@pytest.mark.parametrize("size", [1, 10, 100])
+def test_batched_assessment_completion_on_postgres(postgres_database, size):
+    from test.unit_test.api.apps.business_documents.test_business_document_job_completion import test_review_completion_reads_once_per_record_type_and_keeps_first_duplicates
+
+    test_review_completion_reads_once_per_record_type_and_keeps_first_duplicates(postgres_database, size)
+
+
+@pytest.mark.parametrize("failure", ["cas", "lease"])
+def test_assessment_publication_rollback_on_postgres(postgres_database, monkeypatch, failure):
+    from test.unit_test.api.apps.business_documents.test_business_document_job_completion import test_generated_protocol_and_event_roll_back_on_failed_publication
+
+    test_generated_protocol_and_event_roll_back_on_failed_publication(postgres_database, monkeypatch, failure)
+
+
+def test_assessment_identity_conflicts_on_postgres(postgres_database):
+    from test.unit_test.api.apps.business_documents.test_business_document_job_completion import test_question_uniqueness_conflict_is_replayed_but_an_unrelated_id_collision_is_not
+
+    test_question_uniqueness_conflict_is_replayed_but_an_unrelated_id_collision_is_not(postgres_database)
+
+
+@pytest.mark.parametrize(
+    "case_name",
+    [
+        "test_rejection_after_document_cas_records_and_replays_the_rolled_back_version",
+        "test_assignment_event_timestamps_survive_an_advancing_orm_clock",
+    ],
+)
+def test_command_boundary_regressions_on_postgres(postgres_database, monkeypatch, case_name):
+    from test.unit_test.api.apps.business_documents import test_business_document_service as cases
+
+    getattr(cases, case_name)(postgres_database, monkeypatch)
+
+
+@pytest.mark.parametrize("failure_point", ["stage", "metadata"])
+def test_document_deletion_rollback_on_postgres(postgres_database, monkeypatch, failure_point):
+    from test.unit_test.api.apps.business_documents.test_business_document_worker_exports import test_delete_rolls_back_metadata_and_cleanup_ledger_before_storage_access
+
+    test_delete_rolls_back_metadata_and_cleanup_ledger_before_storage_access(postgres_database, monkeypatch, failure_point)
+
+
+@pytest.mark.parametrize("failure_point", ["document", "binding", "event"])
+def test_unrelated_creation_integrity_failure_on_postgres(postgres_database, monkeypatch, failure_point):
+    from test.unit_test.api.apps.business_documents.test_business_document_service import test_creation_does_not_mask_unrelated_integrity_failures_as_eva_occupancy
+
+    test_creation_does_not_mask_unrelated_integrity_failures_as_eva_occupancy(postgres_database, monkeypatch, failure_point)
+
+
+def test_user_role_rollback_on_postgres(postgres_database, monkeypatch):
+    from test.unit_test.api.apps.business_documents.test_business_document_service import test_role_change_rolls_back_when_persistence_fails_after_update
+
+    test_role_change_rolls_back_when_persistence_fails_after_update(postgres_database, monkeypatch)
+
+
+@pytest.mark.parametrize("mutation", ["owner", "version", "rebind"])
+def test_eva_noop_rejects_changes_committed_during_network_read(postgres_database, monkeypatch, mutation):
+    from test.unit_test.api.apps.business_documents.test_business_document_eva_sync import connected_document, pull
+    from api.apps.business_documents.runtime import eva_synchronization
+
+    document, remote = connected_document(monkeypatch)
+    document = pull(document)["document"]
+    started, release = Event(), Event()
+    before = BusinessDocumentEvent.select().where(BusinessDocumentEvent.event_type == "EvaDocumentPulled").count()
+
+    def read(*_args):
+        assert not postgres_database.in_transaction()
+        started.set()
+        assert release.wait(timeout=10), "EVA read was not released"
+        return remote, "Remote content"
+
+    def concurrent_pull():
+        with postgres_database.connection_context():
+            pid = postgres_database.execute_sql("SELECT pg_backend_pid()").fetchone()[0]
+            try:
+                return pid, pull(document)
+            except BusinessDocumentError as error:
+                return pid, error
+
+    main_pid = postgres_database.execute_sql("SELECT pg_backend_pid()").fetchone()[0]
+    monkeypatch.setattr(eva_synchronization._source, "read_connected_page", read)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(concurrent_pull)
+        try:
+            assert started.wait(timeout=10), "Pull did not reach EVA"
+            if mutation == "owner":
+                User.create(id="eva-new-owner", nickname="New owner", email="eva-new-owner@example.test")
+                assignment_adapter.assign_business_document(
+                    "moderator", document["document_id"], {"owner_id": "eva-new-owner", "expected_state_version": document["state_version"]}, access_role="EXTENDED_MODERATOR"
+                )
+            elif mutation == "version":
+                from test.unit_test.api.apps.business_documents.test_business_document_service import _command, AUTHOR, TENANT
+
+                document_commands.execute(
+                    TENANT,
+                    AUTHOR,
+                    document["document_id"],
+                    _command(document, "ADD_COMMENT", {"revision_id": document["current_revision"]["revision_id"], "section_id": None, "text": "Concurrent feedback", "anchor": None}),
+                )
+            else:
+                from test.unit_test.api.apps.business_documents.test_business_document_service import AUTHOR, TENANT
+
+                eva_synchronization.rebind_eva(TENANT, AUTHOR, document["document_id"], {"expected_state_version": document["state_version"]})
+        finally:
+            release.set()
+        pid, result = future.result(timeout=15)
+    assert pid != main_pid
+    assert isinstance(result, BusinessDocumentError), result
+    assert result.code == ("DOCUMENT_PERMISSION_DENIED" if mutation == "owner" else "STATE_VERSION_CONFLICT")
+    assert BusinessDocumentEvent.select().where(BusinessDocumentEvent.event_type == "EvaDocumentPulled").count() == before
+
+
+@pytest.mark.parametrize("operation", ["pull_from_eva", "rebind_eva"])
+def test_eva_binding_rollback_on_postgres(postgres_database, monkeypatch, operation):
+    from test.unit_test.api.apps.business_documents.test_business_document_eva_sync import test_eva_binding_failure_rolls_back_version_event_and_binding
+
+    test_eva_binding_failure_rolls_back_version_event_and_binding(postgres_database, monkeypatch, operation)
+
+
+def test_stream_event_cursors_are_serialized_on_postgres(postgres_database):
+    from api.apps.business_documents.stream_events import BusinessDocumentStreamEvents
+
+    document = _document()
+    job = BusinessDocumentJob.create(
+        id="stream-race",
+        document_id=document["document_id"],
+        tenant_id="pg-tenant",
+        job_type="PLAN_CHANGES",
+        status="RUNNING",
+        dedupe_key="stream-race",
+        source_state_version=document["state_version"],
+        payload={"preview_only": True},
+        attempt=1,
+        max_attempts=3,
+        available_at=0,
+        lease_owner="worker",
+        lease_token="lease",
+        lease_expires_at=current_timestamp() + 60_000,
+        correlation_id="stream-race",
+    )
+    start = Barrier(2)
+
+    def publish(worker):
+        with postgres_database.connection_context():
+            start.wait(timeout=10)
+            for index in range(10):
+                assert BusinessDocumentStreamEvents.append(
+                    job.id,
+                    "section_preview",
+                    {"section_id": f"{worker}-{index}"},
+                    lease_token="lease",
+                    expected_attempt=1,
+                )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(publish, worker) for worker in range(2)]
+        for future in futures:
+            future.result(timeout=20)
+    events, status = BusinessDocumentStreamEvents.read(job.id, 0)
+    assert status == "RUNNING"
+    assert [event["id"] for event in events] == list(range(1, 21))
+    assert len({event["payload"]["section_id"] for event in events}) == 20

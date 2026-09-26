@@ -558,6 +558,30 @@ export interface BusinessDocumentJobSummary {
   update_time?: number | null;
 }
 
+export interface BusinessDocumentSectionStreamPreview {
+  section_id: string;
+  title: string;
+  before: string;
+  after: string;
+  source_event_ids: string[];
+}
+
+export interface BusinessDocumentJobStreamEvent {
+  id: number;
+  job_id: string;
+  attempt: number;
+  base_revision_id: string | null;
+  type:
+    | 'stage'
+    | 'section_preview'
+    | 'preview_ready'
+    | 'retry'
+    | 'failed'
+    | 'applied'
+    | 'discarded';
+  payload: Record<string, unknown>;
+}
+
 export interface BusinessDocumentChangePreview {
   job_id: string;
   base_revision_id: string;

@@ -176,6 +176,10 @@ export default {
     `${restAPIv1}/source-workspaces/${id}/search`,
   sourceWorkspaceSelection: (id: string) =>
     `${restAPIv1}/source-workspaces/${id}/selection`,
+  sourceWorkspaceDrafts: (id: string) =>
+    `${restAPIv1}/source-workspaces/${id}/drafts`,
+  sourceWorkspaceDraft: (id: string, draftId: string) =>
+    `${restAPIv1}/source-workspaces/${id}/drafts/${draftId}`,
   sourceWorkspaceRetrieve: (id: string) =>
     `${restAPIv1}/source-workspaces/${id}/retrieve`,
   sourceWorkspaceChat: (id: string) =>
@@ -302,6 +306,8 @@ export default {
     `${restAPIv1}/business-documents/${id}/commands`,
   businessDocumentChangePreview: (id: string, jobId: string) =>
     `${restAPIv1}/business-documents/${id}/change-previews/${jobId}`,
+  businessDocumentJobEvents: (id: string, jobId: string) =>
+    `${restAPIv1}/business-documents/${id}/jobs/${jobId}/events`,
   businessDocumentRevisions: (id: string) =>
     `${restAPIv1}/business-documents/${id}/revisions`,
   businessDocumentEvaPull: (id: string) =>

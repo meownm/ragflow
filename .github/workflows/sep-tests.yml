@@ -1,6 +1,7 @@
 name: sep-tests
 permissions:
   contents: read
+  actions: read
 
 on:
   workflow_call:
@@ -53,6 +54,7 @@ jobs:
       has_go_changes: ${{ steps.detect_changes.outputs.has_go_changes }}
       has_python_changes: ${{ steps.detect_changes.outputs.has_python_changes }}
       has_web_changes: ${{ steps.detect_changes.outputs.has_web_changes }}
+      run_engine_tests: ${{ steps.engine_tests.outputs.run_engine_tests }}
     steps:
       - name: Ensure workspace ownership
         run: |
@@ -141,10 +143,19 @@ jobs:
           echo "HTTP_API_TEST_LEVEL=${HTTP_API_TEST_LEVEL}" >> ${GITHUB_ENV}
           echo "http_api_test_level=${HTTP_API_TEST_LEVEL}" >> ${GITHUB_OUTPUT}
 
+      - name: Select engine regression
+        id: engine_tests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_WORKFLOW_FILE: sep-tests.yml
+          CI_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          CI_PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: python3 tools/quality/select_engine_tests.py
+
       - name: Detect changed file types
         id: detect_changes
         env:
-          CI_BEFORE: ${{ github.event.before }}
+          CI_BEFORE: ${{ steps.engine_tests.outputs.engine_test_base }}
           CI_PR_BASE: ${{ github.event.pull_request.base.sha }}
         run: bash deployment/runner/select-ci-lanes.sh
 
@@ -209,7 +220,7 @@ jobs:
   ragflow_tests_infinity:
     name: ragflow_tests_infinity
     needs: ragflow_preflight
-    if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && contains(github.event.pull_request.labels.*.name, 'ci') && (github.event.action != 'labeled' || github.event.label.name == 'ci')) }}
+    if: ${{ needs.ragflow_preflight.outputs.run_engine_tests == 'true' }}
     runs-on: [ "self-hosted", "ragflow-test" ]
     env:
       DOC_ENGINE: infinity
@@ -674,7 +685,7 @@ jobs:
   ragflow_tests_elasticsearch:
     name: ragflow_tests_elasticsearch
     needs: ragflow_preflight
-    if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && contains(github.event.pull_request.labels.*.name, 'ci') && (github.event.action != 'labeled' || github.event.label.name == 'ci')) }}
+    if: ${{ needs.ragflow_preflight.outputs.run_engine_tests == 'true' }}
     runs-on: [ "self-hosted", "ragflow-test" ]
     env:
       DOC_ENGINE: elasticsearch

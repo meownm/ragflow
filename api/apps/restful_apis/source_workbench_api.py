@@ -75,6 +75,42 @@ async def select_source_workspace_documents(workspace_id):
         return _error(error)
 
 
+@manager.route("/source-workspaces/<workspace_id>/drafts", methods=["GET"])  # noqa: F821
+@login_required
+async def list_source_workspace_drafts(workspace_id):
+    try:
+        return _success(await build_source_workspace_service().list_drafts(str(current_user.id), workspace_id))
+    except SourceWorkspaceError as error:
+        return _error(error)
+
+
+@manager.route("/source-workspaces/<workspace_id>/drafts", methods=["POST"])  # noqa: F821
+@login_required
+async def save_source_workspace_draft(workspace_id):
+    try:
+        return _success(await build_source_workspace_service().save_draft(str(current_user.id), workspace_id, await _body()), 201)
+    except SourceWorkspaceError as error:
+        return _error(error)
+
+
+@manager.route("/source-workspaces/<workspace_id>/drafts/<draft_id>", methods=["GET"])  # noqa: F821
+@login_required
+async def get_source_workspace_draft(workspace_id, draft_id):
+    try:
+        return _success(await build_source_workspace_service().get_draft(str(current_user.id), workspace_id, draft_id))
+    except SourceWorkspaceError as error:
+        return _error(error)
+
+
+@manager.route("/source-workspaces/<workspace_id>/drafts/<draft_id>", methods=["PUT"])  # noqa: F821
+@login_required
+async def update_source_workspace_draft(workspace_id, draft_id):
+    try:
+        return _success(await build_source_workspace_service().update_draft(str(current_user.id), workspace_id, draft_id, await _body()))
+    except SourceWorkspaceError as error:
+        return _error(error)
+
+
 @manager.route("/source-workspaces/<workspace_id>/retrieve", methods=["POST"])  # noqa: F821
 @login_required
 async def retrieve_source_workspace_documents(workspace_id):

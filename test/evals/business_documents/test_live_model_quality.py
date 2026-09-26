@@ -9,7 +9,8 @@ import json
 import os
 from pathlib import Path
 import sys
-from types import ModuleType
+import time
+from types import ModuleType, SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
@@ -26,7 +27,10 @@ if "api.apps" not in sys.modules:
 from api.apps.business_documents.ai import BusinessDocumentAI
 from api.apps.business_documents.assets import published_template, validate_document_ast
 from api.apps.business_documents.evidence import BusinessDocumentEvidence
-from api.apps.business_documents.service import BusinessDocumentService
+from api.apps.business_documents.runtime import document_queries
+from api.apps.business_documents.runtime import document_commands
+from api.apps.business_documents.runtime import document_creation
+from api.apps.business_documents.adapters.persistence import DOCUMENT_TABLES
 from api.apps.business_documents.worker import BusinessDocumentWorker
 from api.db.db_models import BusinessDocumentEvidenceSnapshot, BusinessDocumentJob, BusinessDocumentQuestion
 from test.evals.business_documents.live_quality import ControlledFact, QualityScore, resolve_live_quality_config, score_document_quality
@@ -59,7 +63,7 @@ class ControlledEvidenceSearch:
 @pytest.fixture()
 def database(tmp_path):
     database = SqliteDatabase(tmp_path / "live-quality.sqlite")
-    tables = BusinessDocumentService.model_tables()
+    tables = DOCUMENT_TABLES
     with database.bind_ctx(tables, bind_refs=False, bind_backrefs=False):
         database.connect()
         database.create_tables(tables)
@@ -80,7 +84,7 @@ def _command(projection, command_type, payload=None):
 
 
 def _complete_requested_job(worker, tenant_id, projection, command_type, payload=None):
-    requested = BusinessDocumentService.execute_command(
+    requested = document_commands.execute(
         tenant_id,
         tenant_id,
         projection["document_id"],
@@ -99,7 +103,7 @@ def _complete_requested_job(worker, tenant_id, projection, command_type, payload
         "attempt": job.attempt,
         "error": job.error,
     }
-    return BusinessDocumentService.get_document(tenant_id, projection["document_id"], tenant_id), job
+    return document_queries.get_document(projection["document_id"], tenant_id), job
 
 
 def _ai_audit(job: BusinessDocumentJob) -> dict[str, Any]:
@@ -146,7 +150,7 @@ def _answer_for(case: dict[str, Any], question: dict[str, Any]) -> str:
 def _create_case_runtime(case: dict[str, Any], tenant_id: str):
     dataset_id = _dataset_id(case)
     dataset_ids = [dataset_id] if case["evidence_chunks"] else []
-    document = BusinessDocumentService.create_document(
+    document = document_creation.execute(
         tenant_id,
         tenant_id,
         {
@@ -180,7 +184,7 @@ def _complete_intake(case: dict[str, Any], tenant_id: str, document: dict[str, A
         open_questions = [question for question in document["protocol"]["questions"] if question["status"] == "OPEN"]
         assert open_questions, document
         for question in open_questions:
-            BusinessDocumentService.execute_command(
+            document_commands.execute(
                 tenant_id,
                 tenant_id,
                 document["document_id"],
@@ -194,7 +198,7 @@ def _complete_intake(case: dict[str, Any], tenant_id: str, document: dict[str, A
                     },
                 ),
             )
-            document = BusinessDocumentService.get_document(tenant_id, document["document_id"], tenant_id)
+            document = document_queries.get_document(document["document_id"], tenant_id)
     raise AssertionError("Live model did not close intake after five assessment rounds")
 
 
@@ -270,7 +274,7 @@ def _apply_review_change(
 ):
     original_revision = document["current_revision"]
     selected_text = original_revision["section_texts"]["4.3"]
-    BusinessDocumentService.execute_command(
+    document_commands.execute(
         tenant_id,
         tenant_id,
         document["document_id"],
@@ -293,12 +297,12 @@ def _apply_review_change(
             },
         ),
     )
-    document = BusinessDocumentService.get_document(tenant_id, document["document_id"], tenant_id)
+    document = document_queries.get_document(document["document_id"], tenant_id)
     for _round in range(6):
         document, review_job = _complete_requested_job(worker, tenant_id, document, "REQUEST_REVIEW_ASSESSMENT")
         audits.append(_ai_audit(review_job))
         for question in [item for item in document["protocol"]["questions"] if item["status"] == "OPEN"]:
-            BusinessDocumentService.execute_command(
+            document_commands.execute(
                 tenant_id,
                 tenant_id,
                 document["document_id"],
@@ -312,15 +316,15 @@ def _apply_review_change(
                     },
                 ),
             )
-            document = BusinessDocumentService.get_document(tenant_id, document["document_id"], tenant_id)
+            document = document_queries.get_document(document["document_id"], tenant_id)
         for proposal in [item for item in document["protocol"]["proposals"] if item["decision"] in {None, "PENDING"}]:
-            BusinessDocumentService.execute_command(
+            document_commands.execute(
                 tenant_id,
                 tenant_id,
                 document["document_id"],
                 _command(document, "DECIDE_PROPOSAL", {"proposal_id": proposal["proposal_id"], "decision": "ACCEPTED"}),
             )
-            document = BusinessDocumentService.get_document(tenant_id, document["document_id"], tenant_id)
+            document = document_queries.get_document(document["document_id"], tenant_id)
         if "APPLY_CHANGES" in document["allowed_commands"]:
             break
     else:
@@ -452,8 +456,8 @@ def _aggregate_metrics(scores: list[QualityScore], case_results: list[dict[str, 
     return {
         "criterion_scores": criterion_scores,
         "weighted_score": sum(score.weighted_score for score in scores) / len(scores) if scores else 0.0,
-        "p0_case_pass_rate": sum(result["status"] == "PASS" for result in p0) / len(p0),
-        "all_case_pass_rate": sum(result["status"] == "PASS" for result in case_results) / len(case_results),
+        "p0_case_pass_rate": sum(result["status"] == "PASS" for result in p0) / len(p0) if p0 else None,
+        "all_case_pass_rate": sum(result["status"] == "PASS" for result in case_results) / len(case_results) if case_results else None,
         "grounded_reference_precision": min((score.grounded_reference_precision for score in scores), default=0.0),
         "grounded_claim_count": sum(score.grounded_claim_count for score in scores),
         "semantic_coverage": min((score.semantic_coverage for score in scores), default=0.0),
@@ -474,12 +478,24 @@ def _asset_hashes() -> dict[str, str]:
     return {name: f"sha256:{hashlib.sha256((ASSET_ROOT / 'prompts' / name).read_bytes()).hexdigest()}" for name in PROMPT_NAMES}
 
 
-def _write_report(path: str, suite: dict[str, Any], case_results: list[dict[str, Any]], scores: list[QualityScore], audits: list[dict[str, Any]]):
+def _write_report(
+    path: str,
+    suite: dict[str, Any],
+    case_results: list[dict[str, Any]],
+    scores: list[QualityScore],
+    audits: list[dict[str, Any]],
+    *,
+    active_case_id: str | None = None,
+    diagnostic_case_id: str | None = None,
+):
     suite_bytes = MODEL_GOLDEN_PATH.read_bytes()
     failures = [result for result in case_results if result["status"] != "PASS"]
+    complete = active_case_id is None and diagnostic_case_id is None and len(case_results) == len(suite["cases"])
     report = {
         "schema_version": "2",
-        "status": "FAIL" if failures else "PASS",
+        "status": "INCOMPLETE" if not complete else "FAIL" if failures else "PASS",
+        "active_case_id": active_case_id,
+        "diagnostic_case_id": diagnostic_case_id,
         "scoring_method": "deterministic_proxy",
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "source_revision": os.environ.get("GITHUB_SHA", "unknown"),
@@ -498,13 +514,24 @@ def _write_report(path: str, suite: dict[str, Any], case_results: list[dict[str,
         },
         "ai": _aggregate_ai_audits(audits),
         "case_results": case_results,
-        "metrics": _aggregate_metrics(scores, case_results),
+        "metrics": _aggregate_metrics(scores, case_results) if case_results else None,
     }
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_suffix(destination.suffix + ".tmp")
     temporary.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     temporary.replace(destination)
+
+
+def test_partial_live_report_identifies_unfinished_case(tmp_path):
+    suite = json.loads(MODEL_GOLDEN_PATH.read_text(encoding="utf-8"))
+    path = tmp_path / "quality.json"
+    _write_report(str(path), suite, [], [], [], active_case_id=suite["cases"][0]["id"])
+    report = json.loads(path.read_text(encoding="utf-8"))
+    assert report["status"] == "INCOMPLETE"
+    assert report["active_case_id"] == suite["cases"][0]["id"]
+    assert report["golden_suite"]["executed_case_ids"] == []
+    assert report["metrics"] is None
 
 
 @pytest.mark.p1
@@ -524,14 +551,36 @@ def test_live_model_golden_suite(database, monkeypatch):
         pytest.fail(str(error), pytrace=False)
     assert config is not None
     suite = json.loads(MODEL_GOLDEN_PATH.read_text(encoding="utf-8"))
+    diagnostic_case_id = os.environ.get("BUSINESS_DOCUMENT_QUALITY_CASE_ID", "").strip() or None
+    if diagnostic_case_id and diagnostic_case_id not in {case["id"] for case in suite["cases"]}:
+        pytest.fail("Unknown BUSINESS_DOCUMENT_QUALITY_CASE_ID", pytrace=False)
+    cases = [case for case in suite["cases"] if diagnostic_case_id is None or case["id"] == diagnostic_case_id]
     monkeypatch.setattr(
-        sys.modules[BusinessDocumentService.__module__],
-        "ensure_dataset_access",
-        lambda actor_id, dataset_ids: None,
+        document_creation,
+        "_datasets",
+        SimpleNamespace(ensure_dataset_access=lambda *_: None, ensure_dataset_embedding_compatibility=document_creation._datasets.ensure_dataset_embedding_compatibility),
     )
     monkeypatch.setattr(sys.modules[BusinessDocumentWorker.__module__], "related_file_search_enabled", lambda: True)
     executions: list[CaseExecution] = []
-    for case in suite["cases"]:
+    report_path = os.environ.get("BUSINESS_DOCUMENT_QUALITY_REPORT", "").strip()
+
+    def persist(active_case_id: str | None = None) -> None:
+        if not report_path:
+            return
+        _write_report(
+            report_path,
+            suite,
+            [execution.result for execution in executions],
+            [execution.score for execution in executions if execution.score is not None],
+            [audit for execution in executions for audit in execution.ai_audits],
+            active_case_id=active_case_id,
+            diagnostic_case_id=diagnostic_case_id,
+        )
+
+    persist()
+    for case in cases:
+        persist(case["id"])
+        started = time.monotonic()
         case_audits: list[dict[str, Any]] = []
         try:
             executions.append(_run_model_case(case, config.tenant_id, case_audits))
@@ -549,11 +598,9 @@ def test_live_model_golden_suite(database, monkeypatch):
                     ai_audits=tuple(case_audits),
                 )
             )
+        executions[-1].result["duration_ms"] = round((time.monotonic() - started) * 1000)
+        persist()
     case_results = [execution.result for execution in executions]
-    scores = [execution.score for execution in executions if execution.score is not None]
-    audits = [audit for execution in executions for audit in execution.ai_audits]
-    report_path = os.environ.get("BUSINESS_DOCUMENT_QUALITY_REPORT", "").strip()
-    if report_path:
-        _write_report(report_path, suite, case_results, scores, audits)
+    persist()
     failures = {result["case_id"]: result["failures"] for result in case_results if result["status"] != "PASS"}
     assert not failures, failures

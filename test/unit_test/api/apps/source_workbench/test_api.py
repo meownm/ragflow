@@ -23,6 +23,22 @@ def route_app(monkeypatch):
     calls = []
 
     class FakeService:
+        async def list_drafts(self, owner_id, workspace_id):
+            calls.append((owner_id, workspace_id, "list"))
+            return [{"id": "draft-1", "version": 1}]
+
+        async def get_draft(self, owner_id, workspace_id, draft_id):
+            calls.append((owner_id, workspace_id, draft_id, "get"))
+            return {"id": draft_id, "content": "Saved", "version": 1}
+
+        async def save_draft(self, owner_id, workspace_id, data):
+            calls.append((owner_id, workspace_id, data))
+            return {"id": "draft-1", "content": data["content"], "version": 1}
+
+        async def update_draft(self, owner_id, workspace_id, draft_id, data):
+            calls.append((owner_id, workspace_id, draft_id, data))
+            return {"id": draft_id, "content": data["content"], "version": data["expected_version"] + 1}
+
         async def chat(self, owner_id, workspace_id, data):
             calls.append((owner_id, workspace_id, data))
             if data.get("question") == "invalid citation":
@@ -119,3 +135,26 @@ async def test_process_reports_model_failure_as_terminal_stream_event(route_app)
     body = (await response.get_data()).decode()
     assert 'event: error\ndata: {"event": "error", "code": "MODEL_FAILED"' in body
     assert "event: done" not in body
+
+
+async def test_draft_routes_use_authenticated_owner_and_workspace(route_app):
+    app, calls = route_app
+    listed = await app.test_client().get("/source-workspaces/workspace-1/drafts")
+    assert (await listed.get_json())["data"] == [{"id": "draft-1", "version": 1}]
+    opened = await app.test_client().get("/source-workspaces/workspace-1/drafts/draft-1")
+    assert (await opened.get_json())["data"]["content"] == "Saved"
+    saved = await app.test_client().post(
+        "/source-workspaces/workspace-1/drafts",
+        json={"content": "Reviewed", "prompt": "Create", "mode": "all", "expected_version": 2},
+    )
+    assert saved.status_code == 201
+    assert (await saved.get_json())["data"]["id"] == "draft-1"
+    updated = await app.test_client().put(
+        "/source-workspaces/workspace-1/drafts/draft-1",
+        json={"content": "Edited", "expected_version": 1},
+    )
+    assert updated.status_code == 200
+    assert calls[0] == ("owner-a", "workspace-1", "list")
+    assert calls[1] == ("owner-a", "workspace-1", "draft-1", "get")
+    assert calls[2][0:2] == ("owner-a", "workspace-1")
+    assert calls[3] == ("owner-a", "workspace-1", "draft-1", {"content": "Edited", "expected_version": 1})

@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "purpose": "mandatory-isolated-browser-regression",
-  "expected_count": 59,
+  "expected_count": 60,
   "nodeids": [
     "test/playwright/e2e/test_document_constructor_ui.py::test_document_constructor_build_preview_persist_export_import_golden",
     "test/playwright/e2e/test_document_constructor_ui.py::test_document_constructor_resolves_schema_ambiguity_and_exports_snapshot",
@@ -30,6 +30,8 @@
     "test/playwright/e2e/test_business_documents_access_ui.py::test_revision_history_displays_named_and_unavailable_change_authors",
     "test/playwright/e2e/test_business_documents_access_ui.py::test_unauthenticated_document_list_shows_api_denial_without_mutations",
     "test/playwright/e2e/test_business_documents_ui.py::test_business_document_workbench_commands_and_mobile_layout",
+    "test/playwright/e2e/test_business_documents_ui.py::test_business_document_workbench_has_no_wcag_aa_violations",
+    "test/playwright/e2e/test_business_documents_ui.py::test_streamed_document_section_stays_preliminary_after_reload",
     "test/playwright/e2e/test_business_documents_ui.py::test_business_documents_list_validation_and_create_navigation",
     "test/playwright/e2e/test_managed_datasets_access_ui.py::test_regular_user_dataset_catalog_is_read_only_even_with_create_query",
     "test/playwright/e2e/test_managed_datasets_access_ui.py::test_regular_user_dataset_documents_are_visible_but_not_mutable",

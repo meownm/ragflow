@@ -77,6 +77,10 @@ class WorkspaceRepository(Protocol):
     def get(self, owner_id: str, workspace_id: str) -> dict[str, Any]: ...
     def replace_selection(self, owner_id: str, workspace_id: str, version: int, documents: list[dict[str, str]]) -> dict[str, Any]: ...
     def add_query(self, owner_id: str, workspace_id: str, query: str) -> None: ...
+    def list_drafts(self, owner_id: str, workspace_id: str) -> list[dict[str, Any]]: ...
+    def get_draft(self, owner_id: str, workspace_id: str, draft_id: str) -> dict[str, Any]: ...
+    def create_draft(self, owner_id: str, workspace_id: str, content: str, prompt: str, mode: str, source_version: int, sources: list[dict[str, str]]) -> dict[str, Any]: ...
+    def update_draft(self, owner_id: str, workspace_id: str, draft_id: str, expected_version: int, content: str) -> dict[str, Any]: ...
 
 
 class SourceGateway(Protocol):
@@ -135,6 +139,37 @@ class SourceWorkspaceService:
                     workspace["dataset_ids"],
                 )
         return workspace
+
+    async def list_drafts(self, owner_id: str, workspace_id: str) -> list[dict[str, Any]]:
+        workspace = await asyncio.to_thread(self.repository.get, owner_id, workspace_id)
+        await asyncio.to_thread(self.gateway.validate_datasets, owner_id, workspace["dataset_ids"])
+        return await asyncio.to_thread(self.repository.list_drafts, owner_id, workspace_id)
+
+    async def get_draft(self, owner_id: str, workspace_id: str, draft_id: str) -> dict[str, Any]:
+        workspace = await asyncio.to_thread(self.repository.get, owner_id, workspace_id)
+        await asyncio.to_thread(self.gateway.validate_datasets, owner_id, workspace["dataset_ids"])
+        return await asyncio.to_thread(self.repository.get_draft, owner_id, workspace_id, draft_id)
+
+    async def save_draft(self, owner_id: str, workspace_id: str, data: dict[str, Any]) -> dict[str, Any]:
+        content = _nonempty_string(data.get("content"), "content", MAX_PROCESS_DRAFT_LENGTH)
+        prompt = _nonempty_string(data.get("prompt"), "prompt", MAX_PROCESS_PROMPT_LENGTH)
+        mode = data.get("mode")
+        if mode not in ("all", "sequential"):
+            raise SourceWorkspaceError("INVALID_MODE", "Mode must be all or sequential")
+        version = data.get("expected_version")
+        if type(version) is not int:
+            raise SourceWorkspaceError("VERSION_CONFLICT", "Source selection version is required", 409)
+        _, sources = await self._selection(owner_id, workspace_id, version)
+        return await asyncio.to_thread(self.repository.create_draft, owner_id, workspace_id, content, prompt, mode, version, sources)
+
+    async def update_draft(self, owner_id: str, workspace_id: str, draft_id: str, data: dict[str, Any]) -> dict[str, Any]:
+        content = _nonempty_string(data.get("content"), "content", MAX_PROCESS_DRAFT_LENGTH)
+        version = data.get("expected_version")
+        if type(version) is not int:
+            raise SourceWorkspaceError("VERSION_CONFLICT", "Draft version is required", 409)
+        workspace = await asyncio.to_thread(self.repository.get, owner_id, workspace_id)
+        await asyncio.to_thread(self.gateway.validate_datasets, owner_id, workspace["dataset_ids"])
+        return await asyncio.to_thread(self.repository.update_draft, owner_id, workspace_id, draft_id, version, content)
 
     async def search(self, owner_id: str, workspace_id: str, query: str, page: int = 1) -> dict[str, Any]:
         query = _nonempty_string(query, "query", MAX_QUERY_LENGTH)

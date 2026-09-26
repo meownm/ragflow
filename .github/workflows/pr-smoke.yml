@@ -1,0 +1,144 @@
+name: pr-smoke
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-smoke-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  changed-paths:
+    runs-on: ubuntu-latest
+    outputs:
+      has_go_changes: ${{ steps.select.outputs.has_go_changes }}
+      has_python_changes: ${{ steps.select.outputs.has_python_changes }}
+      has_web_changes: ${{ steps.select.outputs.has_web_changes }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Check patch whitespace
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: git diff --check "$BASE_SHA" HEAD
+      - name: Select changed lanes
+        id: select
+        env:
+          CI_PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: bash deployment/runner/select-ci-lanes.sh
+
+  python-smoke:
+    needs: changed-paths
+    if: ${{ needs.changed-paths.outputs.has_python_changes == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.13'
+      - name: Install small check environment
+        run: |
+          uv venv --python 3.13
+          uv pip install pytest ruff
+      - name: Lint changed Python files
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          .venv/bin/python - <<'PY'
+          import os
+          from pathlib import Path
+          import subprocess
+
+          changed = subprocess.check_output([
+              "git", "diff", "--name-only", "--no-renames", "-z",
+              os.environ["BASE_SHA"], "HEAD",
+          ]).decode().split("\0")
+          files = [name for name in changed if name.endswith(".py") and Path(name).is_file()]
+          if files:
+              subprocess.run([".venv/bin/ruff", "check", *files], check=True)
+          PY
+      - name: Check owned boundaries and lane selection
+        run: >-
+          .venv/bin/python -m pytest -q
+          test/unit_test/tools/quality/test_owned_boundaries.py
+          test/unit_test/tools/quality/test_ci_lane_selection.py
+          test/unit_test/tools/quality/test_go_package_selection.py
+          test/unit_test/tools/quality/test_release_evidence.py
+
+  web-smoke:
+    needs: changed-paths
+    if: ${{ needs.changed-paths.outputs.has_web_changes == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: Install frontend dependencies
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+      - name: Lint changed frontend files
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import subprocess
+
+          changed = subprocess.check_output([
+              "git", "diff", "--name-only", "--no-renames", "-z",
+              os.environ["BASE_SHA"], "HEAD",
+          ]).decode().split("\0")
+          files = [name.removeprefix("web/") for name in changed if name.startswith("web/src/") and name.endswith((".ts", ".tsx")) and Path(name).is_file()]
+          if files:
+              subprocess.run(["pnpm", "exec", "eslint", *files, "--report-unused-disable-directives"], cwd="web", check=True)
+          PY
+      - name: Type-check frontend
+        working-directory: web
+        run: pnpm type-check
+
+  go-format:
+    needs: changed-paths
+    if: ${{ needs.changed-paths.outputs.has_go_changes == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Check changed Go formatting
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import subprocess
+
+          changed = subprocess.check_output([
+              "git", "diff", "--name-only", "--no-renames", "-z",
+              os.environ["BASE_SHA"], "HEAD",
+          ]).decode().split("\0")
+          files = [name for name in changed if name.endswith(".go") and Path(name).is_file()]
+          if files:
+              unformatted = subprocess.check_output(["gofmt", "-l", *files]).decode().strip()
+              if unformatted:
+                  raise SystemExit("gofmt required:\n" + unformatted)
+          PY

@@ -22,7 +22,7 @@ if "api.apps" not in sys.modules:
     sys.modules["api.apps"] = api_apps
 
 from api.apps.business_documents import sql_query_schema as schema_adapter_module
-from api.apps.business_documents.errors import PermissionDeniedError, ValidationError
+from business_documents.application.errors import PermissionDeniedError, ValidationError
 from api.apps.business_documents.sql_query_schema import (
     BusinessDocumentSqlQuerySchemaService,
     OpenMetadataCatalogResolver,

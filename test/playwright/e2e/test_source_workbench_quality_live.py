@@ -173,7 +173,7 @@ def test_source_workbench_retrieval_quality_on_disposable_stack():
             if result.get("query") != case["query"] or result.get("page") != 1 or not isinstance(result.get("candidates"), list):
                 raise RuntimeError(f"Unexpected search response for {case['id']}")
             observations[case["id"]] = result["candidates"]
-        report["observations"] = {case_id: [item.get("document_id") for item in candidates] for case_id, candidates in observations.items()}
+        report["observations"] = {case_id: [{"document_id": item.get("document_id"), "similarity": item.get("similarity")} for item in candidates] for case_id, candidates in observations.items()}
         report.update(score_suite(gold, bindings, observations))
         if report["status"] != "pass":
             failure = "Measured retrieval missed the declared baseline threshold"

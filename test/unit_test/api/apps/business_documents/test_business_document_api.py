@@ -105,17 +105,17 @@ async def test_routes_pass_tenant_and_owner_in_service_contract_order(route_app,
         calls.append(("command", tenant_id, actor_id, document_id, data, is_admin, access_role))
         return {"accepted": True, "document_id": document_id}
 
-    def get_document(tenant_id, document_id, actor_id, is_admin, access_role):
-        calls.append(("get", tenant_id, document_id, actor_id, is_admin, access_role))
+    def get_document(document_id, actor_id, is_admin, access_role):
+        calls.append(("get", document_id, actor_id, is_admin, access_role))
         return {
             "document_id": document_id,
             "owner_id": actor_id,
             "current_revision": {"revision_id": "revision-1", "section_texts": {"5.5": "Метрика"}},
         }
 
-    monkeypatch.setattr(module.BusinessDocumentService, "create_document", staticmethod(create_document))
-    monkeypatch.setattr(module.BusinessDocumentService, "execute_command", staticmethod(execute_command))
-    monkeypatch.setattr(module.BusinessDocumentService, "get_document", staticmethod(get_document))
+    monkeypatch.setattr(module.document_creation, "execute", create_document)
+    monkeypatch.setattr(module.document_commands, "execute", execute_command)
+    monkeypatch.setattr(module.document_queries, "get_document", staticmethod(get_document))
     client = app.test_client()
     create_payload = {"schema_version": "1", "document_type": "business_requirements", "title": "T", "idea": "I"}
     command_payload = {
@@ -135,7 +135,7 @@ async def test_routes_pass_tenant_and_owner_in_service_contract_order(route_app,
     assert calls == [
         ("create", ACTOR, ACTOR, create_payload, False, "AUTHOR_CREATOR"),
         ("command", ACTOR, ACTOR, "doc-1", command_payload, False, "AUTHOR_CREATOR"),
-        ("get", ACTOR, "doc-1", ACTOR, False, "AUTHOR_CREATOR"),
+        ("get", "doc-1", ACTOR, False, "AUTHOR_CREATOR"),
     ]
 
 
@@ -145,16 +145,43 @@ async def test_change_preview_route_passes_document_and_job_scope(route_app, mon
     app, module = route_app
     calls = []
 
-    def get_change_preview(tenant_id, actor_id, document_id, job_id, is_admin):
-        calls.append((tenant_id, actor_id, document_id, job_id, is_admin))
+    def get_change_preview(document_id, job_id):
+        calls.append((document_id, job_id))
         return {"job_id": job_id, "sections": []}
 
-    monkeypatch.setattr(module.BusinessDocumentService, "get_change_preview", staticmethod(get_change_preview))
+    monkeypatch.setattr(module.document_queries, "get_change_preview", staticmethod(get_change_preview))
     response = await app.test_client().get("/business-documents/doc-1/change-previews/job-1")
 
     assert response.status_code == 200
     assert (await response.get_json())["data"] == {"job_id": "job-1", "sections": []}
-    assert calls == [(ACTOR, ACTOR, "doc-1", "job-1", False)]
+    assert calls == [("doc-1", "job-1")]
+
+
+@pytest.mark.p0
+@pytest.mark.asyncio
+async def test_job_event_routes_replay_cursor_and_reject_invalid_cursor(route_app, monkeypatch):
+    app, module = route_app
+    calls = []
+
+    def read_events(tenant_id, actor_id, document_id, job_id, after, is_admin, access_role):
+        calls.append((tenant_id, actor_id, document_id, job_id, after, is_admin, access_role))
+        events = [] if after else [{"id": 1, "job_id": job_id, "attempt": 1, "base_revision_id": "revision-1", "type": "section_preview", "payload": {"section_id": "1"}}]
+        return {"events": events, "status": "COMPLETED", "job_id": job_id}
+
+    monkeypatch.setattr(module.document_queries, "read_job_stream_events", staticmethod(read_events))
+    client = app.test_client()
+    invalid = await client.get("/business-documents/doc-1/jobs/job-1/events?after=-1")
+    assert invalid.status_code == 422
+    assert (await invalid.get_json())["data"]["error_code"] == "INVALID_EVENT_CURSOR"
+
+    replay = await client.get("/business-documents/doc-1/jobs/job-1/events?after=0")
+    assert (await replay.get_json())["data"]["events"][0]["id"] == 1
+    stream = await client.get("/business-documents/doc-1/jobs/job-1/events/stream?after=0")
+    body = (await stream.get_data()).decode()
+    assert stream.status_code == 200
+    assert "id: 1\nevent: section_preview\n" in body
+    assert '"section_id": "1"' in body
+    assert calls[0] == (ACTOR, ACTOR, "doc-1", "job-1", 0, False, "AUTHOR_CREATOR")
 
 
 @pytest.mark.p0
@@ -168,7 +195,7 @@ async def test_delete_route_passes_admin_role_to_service(route_app, monkeypatch)
         calls.append((actor_id, document_id, is_admin, access_role))
         return {"document_id": document_id, "deleted": True}
 
-    monkeypatch.setattr(module.BusinessDocumentService, "delete_document", staticmethod(delete_document))
+    monkeypatch.setattr(module.document_deletion, "execute", delete_document)
     response = await app.test_client().delete("/business-documents/doc-1")
 
     assert response.status_code == 200
@@ -183,8 +210,8 @@ async def test_access_filter_and_assignment_routes_pass_role_and_scope(route_app
     module.current_user.business_document_role = "EXTENDED_MODERATOR"
     calls = []
 
-    def list_documents(tenant_id, actor_id, page, page_size, is_admin, access_role, scope):
-        calls.append(("list", tenant_id, actor_id, page, page_size, is_admin, access_role, scope))
+    def list_documents(actor_id, page, page_size, is_admin, access_role, scope):
+        calls.append(("list", actor_id, page, page_size, is_admin, access_role, scope))
         return {"items": [], "scope": scope}
 
     def list_access_users(actor_id, is_admin, access_role):
@@ -195,8 +222,8 @@ async def test_access_filter_and_assignment_routes_pass_role_and_scope(route_app
         calls.append(("assign", actor_id, document_id, data, is_admin, access_role))
         return {"document_id": document_id, "owner_id": data["owner_id"]}
 
-    monkeypatch.setattr(module.BusinessDocumentService, "list_documents", staticmethod(list_documents))
-    monkeypatch.setattr(module.BusinessDocumentService, "list_access_users", staticmethod(list_access_users))
+    monkeypatch.setattr(module.document_queries, "list_documents", staticmethod(list_documents))
+    monkeypatch.setattr(module.document_queries, "list_access_users", staticmethod(list_access_users))
     monkeypatch.setattr(module, "assign_business_document", assign_document)
     client = app.test_client()
 
@@ -207,7 +234,7 @@ async def test_access_filter_and_assignment_routes_pass_role_and_scope(route_app
 
     assert response.status_code == 200
     assert calls == [
-        ("list", ACTOR, ACTOR, 2, 5, False, "EXTENDED_MODERATOR", "mine"),
+        ("list", ACTOR, 2, 5, False, "EXTENDED_MODERATOR", "mine"),
         ("users", ACTOR, False, "EXTENDED_MODERATOR"),
         ("assign", ACTOR, "doc-1", assignment, False, "EXTENDED_MODERATOR"),
     ]
@@ -260,7 +287,7 @@ async def test_catalog_route_returns_the_service_projection(route_app, monkeypat
         ],
         "total": 1,
     }
-    monkeypatch.setattr(module.BusinessDocumentService, "list_catalog", staticmethod(lambda: catalog))
+    monkeypatch.setattr(module.document_queries, "list_catalog", staticmethod(lambda: catalog))
 
     response = await app.test_client().get("/business-documents/catalog")
 

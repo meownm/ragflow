@@ -7,6 +7,12 @@ from time import monotonic
 from test.integration.live_ragflow import runner
 
 
+def test_retrieval_only_run_does_not_require_unused_chat_model():
+    minimal = runner.models_for_run(["test/playwright/e2e/test_source_workbench_quality_live.py"], False)
+    assert minimal == (runner.MODELS[0], runner.MODELS[-1])
+    assert runner.models_for_run(["test/playwright/e2e/test_source_workbench_quality_live.py", "other.py"], False) == runner.MODELS
+
+
 def test_command_decodes_utf8_and_tolerates_invalid_log_bytes(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "OUT", tmp_path)
     result = runner.command(

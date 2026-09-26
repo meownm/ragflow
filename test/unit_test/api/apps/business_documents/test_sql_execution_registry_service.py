@@ -19,7 +19,7 @@ if "api.apps" not in sys.modules:
     sys.modules["api.apps"] = api_apps
 
 from api.apps.business_documents import sql_execution_registry as registry_module
-from api.apps.business_documents.errors import BusinessDocumentError, ConflictError, PermissionDeniedError, ValidationError
+from business_documents.application.errors import BusinessDocumentError, ConflictError, PermissionDeniedError, ValidationError
 from api.apps.business_documents.sql_execution_registry import BusinessDocumentSqlExecutionRegistryService
 from api.db.db_models import (
     BusinessDocumentSqlCatalogBinding,

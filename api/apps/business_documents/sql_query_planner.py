@@ -12,7 +12,7 @@ from json_repair import repair_json
 from api.apps.business_documents.ai import RAGFlowLLMAdapter
 from api.apps.business_documents.assets import contract_schema, prompt_descriptor, prompt_text, validate_contract
 from api.apps.business_documents.authorization import BusinessDocumentAccess
-from api.apps.business_documents.errors import ValidationError
+from business_documents.application.errors import ValidationError
 from business_documents.sql_query.query_planning import (
     PlanQueryCommand,
     QueryPlanner,

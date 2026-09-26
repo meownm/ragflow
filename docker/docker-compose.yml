@@ -86,6 +86,8 @@ services:
       - ./service_conf.yaml.template:/ragflow/conf/service_conf.yaml.template
       - ./entrypoint.sh:/ragflow/entrypoint.sh
     env_file: .env
+    environment:
+      SOURCE_WORKBENCH_SIMILARITY_THRESHOLD: ${SOURCE_WORKBENCH_SIMILARITY_THRESHOLD:-0.4}
     networks:
       - ragflow
       - diagram_renderer
@@ -137,6 +139,8 @@ services:
       - ./service_conf.yaml.template:/ragflow/conf/service_conf.yaml.template
       - ./entrypoint.sh:/ragflow/entrypoint.sh
     env_file: .env
+    environment:
+      SOURCE_WORKBENCH_SIMILARITY_THRESHOLD: ${SOURCE_WORKBENCH_SIMILARITY_THRESHOLD:-0.4}
     networks:
       - ragflow
       - diagram_renderer

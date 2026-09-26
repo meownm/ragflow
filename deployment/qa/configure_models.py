@@ -10,7 +10,7 @@ from Cryptodome.PublicKey import RSA
 
 
 BASE = "http://127.0.0.1:80"
-MODELS = (("t-tech/T-lite-it-2.1:q8_0", "chat"), ("qwen3.8:latest", "chat"), ("bge-m3:latest", "embedding"))
+MODELS = (("qwen3.8:latest", "chat"), ("qwen3.6:27b", "chat"), ("bge-m3:latest", "embedding"))
 
 
 def api(path, method="GET", payload=None, token=None):

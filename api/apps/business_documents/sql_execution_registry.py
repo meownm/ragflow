@@ -10,7 +10,7 @@ from typing import Any, Callable, Iterable, Mapping
 from peewee import IntegrityError
 
 from api.apps.business_documents.authorization import BusinessDocumentAccess
-from api.apps.business_documents.errors import BusinessDocumentError, ConflictError, PermissionDeniedError, ValidationError
+from business_documents.application.errors import BusinessDocumentError, ConflictError, PermissionDeniedError, ValidationError
 from api.apps.services.openmetadata_runtime_service import get_openmetadata_service, openmetadata_catalog_accessible
 from api.db.db_models import (
     BusinessDocumentSqlCatalogBinding,

@@ -136,7 +136,10 @@ candidate manifest, quality reports where applicable, and deployment evidence
 for the same source revision; check the deployed image identity, backup and
 health in `deployment.json`. Record any remaining acceptance gap explicitly.
 The CI `publish_candidate` job uploads `candidate-receipt.json` only after the
-preflight and both engine jobs succeed. Local `Release` requires this receipt
+preflight succeeds and both engine jobs either succeed when selected or are
+explicitly skipped for `no-engine-changes`. The receipt records the actual job
+statuses and `engine_tests_required`; a skip is not engine test evidence.
+Local `Release` requires this receipt
 before changing containers and verifies its revision, registry digest and the
 pulled image ID. Run `python tools/quality/release_evidence.py verify --receipt
 <candidate-receipt.json> --deployment <deployment.json> --source-workbench-report
@@ -148,16 +151,47 @@ or prerequisites yield `incomplete`. The receipt is trusted only when obtained
 from the named CI run; the verifier checks its contents and file hash, not CI
 artifact authenticity. `source_id` is recorded only for a separately verified
 source snapshot and is never inferred from the Git SHA.
+`evidence_status` and `quality_status` are separate: complete release identity
+evidence never turns a failed model-quality baseline into a quality pass.
+
+For the three-task parallel-agent pilot, pair each bounded delegated task with
+a similar single-agent task. Record start/finish time, conflicts, integration
+fixes, selected checks and outcomes, and available token/compute usage in the
+task notes. After three pairs, compare median elapsed time; make parallel
+editing routine only if it saves at least 20% with no conflicts or verification
+regressions. An incomplete sample is not evidence of that result. Review the
+first five substantive changes for CI duration, failures and post-check defects
+before changing required branch rules.
+
+The live Business Documents runner accepts `--business-documents-case-id` for
+one-case diagnosis. Its report remains `INCOMPLETE`; a full five-case run is
+needed to assess the baseline. Source Workbench uses a local similarity
+threshold of 0.4, selected from a disposable `bge-m3` corpus where positive
+top hits scored at least 0.450 and no-answer hits scored at most 0.364.
+Re-evaluate the threshold for other embedding models; do not lower the oracle
+or infer a quality gate from one run.
 
 `browser-regression.yml` runs the isolated browser matrix on pull requests.
-`tests.yml` and `sep-tests.yml` run requirements, PostgreSQL races, the document
-coverage gate, Web/admin APIs and live browser journeys alongside their existing
-unit/SDK/REST lanes. `tests.yml` runs the full Go suite on non-PR events. For a
+`pr-smoke.yml` runs without the `ci` label: it checks changed-path selection,
+patch whitespace, applicable small Python boundary/tooling checks, changed-file
+lint, frontend type-checking, and changed Go formatting. It does not replace
+the engine, live-model, or browser lanes and is not yet a required branch rule.
+`tests.yml` and `sep-tests.yml` retain their preflight checks. The two live engine
+jobs (including SDK/REST/Web/admin APIs and browser journeys) run only when
+`tools/quality/select_engine_tests.py` finds engine-boundary changes: storage,
+indexing, ingestion, retrieval/ranking, shared interfaces, dependencies or runtime
+configuration. UI and application-only changes skip both jobs. Selection uses
+the last successful run of the same branch/workflow, including earlier failed
+or cancelled changes; PR selection uses the complete base diff. Missing history
+or Actions API access selects both jobs. Scheduled/tag runs do not independently
+force the engine matrix. When selected, `tests.yml` runs the full Go suite on
+non-PR events. For a
 PR, changes unrelated to Go skip Go tests; Go changes run their packages and
 in-module consumers on both document engines. Unknown inputs fall back to the
-full suite. `sep-tests.yml` selects
-changed lanes from the complete push or PR diff and runs every lane for tags,
-schedules and unclassified inputs. Candidate
+full suite. Within selected engine jobs, `sep-tests.yml` selects changed lanes
+from the same successful baseline or PR base, with all sub-lanes for tags, schedules and
+unclassified inputs. Version-only bumps in `pyproject.toml` and the root package
+in `uv.lock` do not select engine tests; dependency changes still do. Candidate
 publication always rebuilds native and Go binaries from the tested revision.
 
 The coverage floors prevent regression from the measured baseline; they are

@@ -15,13 +15,15 @@
 #
 
 
-class BusinessDocumentError(Exception):
+from business_documents.domain.errors import RuleViolation
+
+
+class BusinessDocumentError(RuleViolation):
+    """Application failure with the status retained by the command ledger."""
+
     def __init__(self, code: str, message: str, status: int = 400, details: dict | None = None):
-        super().__init__(message)
-        self.code = code
-        self.message = message
+        super().__init__(code, message, details)
         self.status = status
-        self.details = details or {}
 
 
 class NotFoundError(BusinessDocumentError):

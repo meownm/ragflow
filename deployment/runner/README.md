@@ -79,14 +79,24 @@ Provision the LAN-only TLS registry once:
 sudo REGISTRY_HOST=192.168.1.175 bash deployment/runner/setup-candidate-registry.sh
 ```
 
-After both main-branch engine jobs pass, `tests.yml` builds and publishes
+After preflight and any selected engine jobs pass, `tests.yml` builds and publishes
 `192.168.1.175:5443/ragflow:<full-git-sha>`. The workflow verifies
 `SOURCE_REVISION` and imports `business_documents` before pushing. The registry is
 not a release publisher and the runner still has no `ragflow-release` label.
 
+Both engine jobs run only for changes to the engine boundary: index storage,
+ingestion, retrieval/ranking, shared engine interfaces, dependencies and runtime
+configuration. `tools/quality/select_engine_tests.py` owns the path list. UI and
+application-only changes skip the jobs. Selection compares with the last
+successful branch run, so a failed/cancelled engine change remains in the diff
+on the next push; PRs compare with their base. Schedule/tag events do not force
+the matrix when that source is already covered. An unavailable baseline selects
+both jobs. The receipt records the selection and actual `skipped` statuses;
+failed/cancelled jobs never satisfy publication or deployment validation.
+
 The live browser jobs use the repository variable `RAGFLOW_CI_OLLAMA_URL` as
 the Ollama URL reachable from their RAGFlow containers. The endpoint must have
-`t-tech/T-lite-it-2.1:q8_0`, `qwen3.8:latest`, and `bge-m3:latest` installed.
+`qwen3.8:latest`, `qwen3.6:27b`, and `bge-m3:latest` installed.
 The fixture validates the real models and configures them only in the disposable
 CI database; it fails when the endpoint or a model is unavailable.
 

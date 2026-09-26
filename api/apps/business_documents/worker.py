@@ -24,10 +24,11 @@ from time import monotonic
 from typing import Any
 
 from api.apps.business_documents.ai import BusinessDocumentAI
-from api.apps.business_documents.errors import BusinessDocumentError, ConflictError
+from business_documents.application.errors import BusinessDocumentError, ConflictError
 from api.apps.business_documents.evidence import BusinessDocumentEvidence, related_file_search_enabled
 from api.apps.business_documents.exports import BusinessDocumentExportService
-from api.apps.business_documents.service import BusinessDocumentService
+from api.apps.business_documents.runtime import job_completion
+from api.apps.business_documents.stream_events import BusinessDocumentStreamEvents
 from api.apps.business_documents.sql_query_agent_worker import BusinessDocumentSqlAgentRunner
 from api.apps.business_documents.sql_query_agents import BusinessDocumentSqlAgentService
 from api.db.db_models import BusinessDocumentJob
@@ -91,7 +92,12 @@ class BusinessDocumentJobQueue:
                     .execute()
                 )
                 if changed == 1:
-                    return BusinessDocumentJob.get_by_id(candidate.id)
+                    job = BusinessDocumentJob.get_by_id(candidate.id)
+                    if job.job_type == "PLAN_CHANGES":
+                        if job.attempt > 1:
+                            BusinessDocumentStreamEvents.append(job.id, "retry", {"reason": "new_attempt"}, expected_attempt=job.attempt)
+                        BusinessDocumentStreamEvents.append(job.id, "stage", {"stage": "STARTING", "message": "Запускаем обработку"}, expected_attempt=job.attempt)
+                    return job
         return None
 
     @classmethod
@@ -106,29 +112,33 @@ class BusinessDocumentJobQueue:
         now_ms: int | None = None,
     ) -> bool:
         now_ms = current_timestamp() if now_ms is None else now_ms
-        changed = (
-            BusinessDocumentJob.update(
-                status="RETRY",
-                progress=0.02,
-                progress_stage="RETRY_WAIT",
-                progress_message="Ожидает повторного запуска",
-                available_at=now_ms + max(0, delay_ms),
-                lease_owner=None,
-                lease_token=None,
-                lease_expires_at=None,
-                error=error,
-                update_time=now_ms,
-                update_date=datetime.now(),
+        database = BusinessDocumentJob._meta.database
+        with database.atomic():
+            changed = (
+                BusinessDocumentJob.update(
+                    status="RETRY",
+                    progress=0.02,
+                    progress_stage="RETRY_WAIT",
+                    progress_message="Ожидает повторного запуска",
+                    available_at=now_ms + max(0, delay_ms),
+                    lease_owner=None,
+                    lease_token=None,
+                    lease_expires_at=None,
+                    error=error,
+                    update_time=now_ms,
+                    update_date=datetime.now(),
+                )
+                .where(
+                    (BusinessDocumentJob.id == job_id)
+                    & (BusinessDocumentJob.status == "RUNNING")
+                    & (BusinessDocumentJob.lease_owner == worker_id)
+                    & (BusinessDocumentJob.lease_token == lease_token)
+                    & (BusinessDocumentJob.lease_expires_at > now_ms)
+                )
+                .execute()
             )
-            .where(
-                (BusinessDocumentJob.id == job_id)
-                & (BusinessDocumentJob.status == "RUNNING")
-                & (BusinessDocumentJob.lease_owner == worker_id)
-                & (BusinessDocumentJob.lease_token == lease_token)
-                & (BusinessDocumentJob.lease_expires_at > now_ms)
-            )
-            .execute()
-        )
+            if changed and BusinessDocumentJob.get_by_id(job_id).job_type == "PLAN_CHANGES":
+                BusinessDocumentStreamEvents.append(job_id, "retry", {"reason": error.get("code", "RETRY"), "waiting": True})
         return changed == 1
 
     @classmethod
@@ -165,23 +175,27 @@ class BusinessDocumentJobQueue:
 
         progress = min(max(float(progress), 0.0), 0.99)
         now_ms = current_timestamp()
-        changed = (
-            BusinessDocumentJob.update(
-                progress=progress,
-                progress_stage=stage,
-                progress_message=message,
-                update_time=now_ms,
-                update_date=datetime.now(),
+        database = BusinessDocumentJob._meta.database
+        with database.atomic():
+            changed = (
+                BusinessDocumentJob.update(
+                    progress=progress,
+                    progress_stage=stage,
+                    progress_message=message,
+                    update_time=now_ms,
+                    update_date=datetime.now(),
+                )
+                .where(
+                    (BusinessDocumentJob.id == job_id)
+                    & (BusinessDocumentJob.status == "RUNNING")
+                    & (BusinessDocumentJob.lease_owner == worker_id)
+                    & (BusinessDocumentJob.lease_token == lease_token)
+                    & (BusinessDocumentJob.lease_expires_at > now_ms)
+                )
+                .execute()
             )
-            .where(
-                (BusinessDocumentJob.id == job_id)
-                & (BusinessDocumentJob.status == "RUNNING")
-                & (BusinessDocumentJob.lease_owner == worker_id)
-                & (BusinessDocumentJob.lease_token == lease_token)
-                & (BusinessDocumentJob.lease_expires_at > now_ms)
-            )
-            .execute()
-        )
+            if changed and BusinessDocumentJob.get_by_id(job_id).job_type == "PLAN_CHANGES":
+                BusinessDocumentStreamEvents.append(job_id, "stage", {"stage": stage, "message": message, "progress": progress})
         return changed == 1
 
     @classmethod
@@ -222,33 +236,36 @@ class BusinessDocumentJobQueue:
                         recovered_job = BusinessDocumentJob.get_by_id(job.id)
                         BusinessDocumentSqlAgentService.fail_job(recovered_job, recovery_owner, recovery_token, error)
                     else:
-                        BusinessDocumentService.fail_job(job.tenant_id, recovery_owner, job.id, error, recovery_token)
+                        job_completion.fail(job.tenant_id, recovery_owner, job.id, error, recovery_token)
                     dead_count += 1
                 except BusinessDocumentError:
                     logging.exception("Unable to dead-letter stale business document job %s", job.id)
                 continue
-            changed = (
-                BusinessDocumentJob.update(
-                    status="RETRY",
-                    progress=0.02,
-                    progress_stage="RETRY_WAIT",
-                    progress_message="Ожидает повторного запуска",
-                    available_at=now_ms,
-                    lease_owner=None,
-                    lease_token=None,
-                    lease_expires_at=None,
-                    error=error,
-                    update_time=now_ms,
-                    update_date=datetime.now(),
+            with BusinessDocumentJob._meta.database.atomic():
+                changed = (
+                    BusinessDocumentJob.update(
+                        status="RETRY",
+                        progress=0.02,
+                        progress_stage="RETRY_WAIT",
+                        progress_message="Ожидает повторного запуска",
+                        available_at=now_ms,
+                        lease_owner=None,
+                        lease_token=None,
+                        lease_expires_at=None,
+                        error=error,
+                        update_time=now_ms,
+                        update_date=datetime.now(),
+                    )
+                    .where(
+                        (BusinessDocumentJob.id == job.id)
+                        & (BusinessDocumentJob.status == "RUNNING")
+                        & (BusinessDocumentJob.lease_token == job.lease_token)
+                        & (BusinessDocumentJob.lease_expires_at == job.lease_expires_at)
+                    )
+                    .execute()
                 )
-                .where(
-                    (BusinessDocumentJob.id == job.id)
-                    & (BusinessDocumentJob.status == "RUNNING")
-                    & (BusinessDocumentJob.lease_token == job.lease_token)
-                    & (BusinessDocumentJob.lease_expires_at == job.lease_expires_at)
-                )
-                .execute()
-            )
+                if changed == 1 and job.job_type == "PLAN_CHANGES":
+                    BusinessDocumentStreamEvents.append(job.id, "retry", {"reason": "JOB_LEASE_EXPIRED", "waiting": True})
             retry_count += int(changed == 1)
         return retry_count, dead_count
 
@@ -325,6 +342,7 @@ class BusinessDocumentWorker:
         return BusinessDocumentJobQueue.recover_stale(now_ms=now_ms)
 
     def reconcile_exports(self, *, now_ms: int | None = None) -> dict[str, int]:
+        BusinessDocumentStreamEvents.cleanup_expired()
         return self.export_service.reconcile_staging(storage=self.storage, now_ms=now_ms)
 
     def _set_progress(self, job: BusinessDocumentJob, progress: float, stage: str, message: str) -> None:
@@ -332,6 +350,19 @@ class BusinessDocumentWorker:
             raise RuntimeError("Claimed job has no lease token")
         if not BusinessDocumentJobQueue.update_progress(job.id, self.worker_id, job.lease_token, progress, stage, message):
             raise ConflictError("JOB_LEASE_LOST", "Worker no longer owns a current lease for this job")
+
+    def _process_ai(self, job: BusinessDocumentJob, evidence_snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
+        stream = getattr(self.ai, "process_stream", None)
+        if job.job_type == "PLAN_CHANGES" and job.payload.get("preview_only") is True and callable(stream):
+
+            def publish(preview: dict[str, Any]) -> None:
+                if not BusinessDocumentStreamEvents.append(job.id, "section_preview", preview, lease_token=job.lease_token, expected_attempt=job.attempt):
+                    raise ConflictError("JOB_LEASE_LOST", "Worker no longer owns a current lease for this job")
+
+            return stream(job, evidence_snapshot, publish)
+        if evidence_snapshot is None:
+            return self.ai.process(job)
+        return self.ai.process(job, evidence_snapshot)
 
     def run_once(self, *, now_ms: int | None = None) -> bool:
         job = BusinessDocumentJobQueue.claim(self.worker_id, lease_ms=self.lease_ms, now_ms=now_ms)
@@ -364,11 +395,11 @@ class BusinessDocumentWorker:
                     self._set_progress(job, 0.32, "RETRIEVED", "Связанные материалы подготовлены")
                     execution_audit = self.evidence.audit(evidence_snapshot, job.attempt)
                     self._set_progress(job, 0.4, "GENERATING", "Формируем результат")
-                    output = self.ai.process(job, evidence_snapshot)
+                    output = self._process_ai(job, evidence_snapshot)
                 else:
                     execution_audit = None
                     self._set_progress(job, 0.4, "GENERATING", "Формируем результат")
-                    output = self.ai.process(job)
+                    output = self._process_ai(job)
                 audit_consumer = getattr(self.ai, "consume_execution_audit", None)
                 ai_audit = audit_consumer() if callable(audit_consumer) else None
                 if ai_audit:
@@ -379,7 +410,7 @@ class BusinessDocumentWorker:
             if job.job_type.startswith("SQL_AGENT_"):
                 BusinessDocumentSqlAgentService.complete_job(job, self.worker_id, job.lease_token, output)
             else:
-                BusinessDocumentService.complete_job(
+                job_completion.complete(
                     job.tenant_id,
                     self.worker_id,
                     job.id,
@@ -402,7 +433,7 @@ class BusinessDocumentWorker:
                                     payload,
                                 )
                             else:
-                                BusinessDocumentService.fail_job(
+                                job_completion.fail(
                                     current_job.tenant_id,
                                     self.worker_id,
                                     current_job.id,

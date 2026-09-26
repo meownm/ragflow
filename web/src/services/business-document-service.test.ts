@@ -29,6 +29,7 @@ import {
   updateBusinessDocumentSqlCatalogBinding,
   updateBusinessDocumentSqlExecutionProfile,
   updateBusinessDocumentUserRole,
+  watchBusinessDocumentJobEvents,
 } from '@/services/business-document-service';
 import api from '@/utils/api';
 import request from '@/utils/next-request';
@@ -49,6 +50,64 @@ const mockedPatch = jest.mocked(request.patch);
 const mockedPut = jest.mocked(request.put);
 
 beforeEach(() => jest.clearAllMocks());
+
+test('replays missing job events after the stream disconnects', async () => {
+  const originalFetch = global.fetch;
+  const first = {
+    id: 1,
+    job_id: 'job-1',
+    attempt: 1,
+    base_revision_id: 'rev-1',
+    type: 'section_preview',
+    payload: { section_id: '1' },
+  };
+  const last = {
+    id: 2,
+    job_id: 'job-1',
+    attempt: 1,
+    base_revision_id: 'rev-1',
+    type: 'preview_ready',
+    payload: {},
+  };
+  const frame = `id: 1\nevent: section_preview\ndata: ${JSON.stringify(first)}\n\n`;
+  const reader = {
+    read: jest
+      .fn()
+      .mockResolvedValueOnce({
+        done: false,
+        value: Uint8Array.from(frame, (char) => char.charCodeAt(0)),
+      })
+      .mockResolvedValueOnce({ done: true }),
+  };
+  global.fetch = jest
+    .fn()
+    .mockResolvedValue({ ok: true, body: { getReader: () => reader } });
+  mockedGet.mockResolvedValueOnce({
+    data: {
+      code: 0,
+      data: { job_id: 'job-1', status: 'COMPLETED', events: [first, last] },
+    },
+  });
+  const received: number[] = [];
+  try {
+    await watchBusinessDocumentJobEvents(
+      'doc-1',
+      'job-1',
+      new AbortController().signal,
+      (event) => received.push(event.id),
+    );
+  } finally {
+    global.fetch = originalFetch;
+  }
+  expect(received).toEqual([1, 2]);
+  expect(mockedGet).toHaveBeenCalledWith(
+    api.businessDocumentJobEvents('doc-1', 'job-1'),
+    {
+      params: { after: 1 },
+      skipErrorNotification: true,
+    },
+  );
+});
 
 test('loads business-document capabilities without querying the document list', async () => {
   const access = {

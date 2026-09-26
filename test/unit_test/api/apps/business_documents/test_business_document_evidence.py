@@ -27,8 +27,9 @@ if "api.apps" not in sys.modules:
 
 from api.apps.business_documents import evidence as evidence_module
 from api.apps.business_documents.ai import BusinessDocumentAI
-from api.apps.business_documents.assets import published_template, section_hash
-from api.apps.business_documents.errors import BusinessDocumentError
+from api.apps.business_documents.assets import published_template
+from business_documents.domain.content import section_hash
+from business_documents.application.errors import BusinessDocumentError
 from api.apps.business_documents.evidence import (
     MAX_CHUNKS,
     MAX_CHUNK_CHARS,
@@ -36,7 +37,10 @@ from api.apps.business_documents.evidence import (
     MAX_TOTAL_CHARS,
     BusinessDocumentEvidence,
 )
-from api.apps.business_documents.service import BusinessDocumentService
+from api.apps.business_documents.runtime import document_queries, job_completion
+from api.apps.business_documents.runtime import document_commands
+from api.apps.business_documents.runtime import document_creation
+from api.apps.business_documents.adapters.persistence import DOCUMENT_TABLES
 from api.apps.business_documents.worker import BusinessDocumentJobQueue, BusinessDocumentWorker
 from api.db.db_models import BusinessDocument, BusinessDocumentEvidenceSnapshot, BusinessDocumentEvent, BusinessDocumentJob
 from test.unit_test.api.apps.business_documents.helpers import required_section_blocks
@@ -49,7 +53,7 @@ AUTHOR = "author-evidence"
 @pytest.fixture()
 def database(monkeypatch):
     database = SqliteDatabase(":memory:")
-    tables = BusinessDocumentService.model_tables()
+    tables = DOCUMENT_TABLES
     with database.bind_ctx(tables, bind_refs=False, bind_backrefs=False):
         database.connect()
         database.create_tables(tables)
@@ -69,11 +73,11 @@ def _create(dataset_ids=None):
     }
     if dataset_ids is not None:
         payload["dataset_ids"] = dataset_ids
-    return BusinessDocumentService.create_document(TENANT, AUTHOR, payload)
+    return document_creation.execute(TENANT, AUTHOR, payload)
 
 
 def _request_assessment(document, suffix=""):
-    return BusinessDocumentService.execute_command(
+    return document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -198,7 +202,7 @@ def test_retrieval_is_bounded_hashed_and_prompt_injection_remains_quoted_data(da
     assert audit["evidence_hash"] == ai_evidence["evidence_hash"]
     assert audit["source_refs"] == [chunk["source_ref"] for chunk in ai_evidence["chunks"]]
     assert injection not in json.dumps(job.result, ensure_ascii=False)
-    projection = BusinessDocumentService.get_document(TENANT, document["document_id"], AUTHOR)
+    projection = document_queries.get_document(document["document_id"], AUTHOR)
     assert injection not in json.dumps(projection, ensure_ascii=False)
     event = BusinessDocumentEvent.get((BusinessDocumentEvent.document_id == document["document_id"]) & (BusinessDocumentEvent.event_type == "IntakeAssessed"))
     assert event.payload["execution"]["retrieval"] == audit
@@ -416,7 +420,7 @@ def test_grounded_outputs_reject_hallucinated_refs_and_persist_per_entity_proven
     document = _create(["dataset-a"])
     requested = _request_assessment(document)
     job, _snapshot, execution = claimed(requested["job_id"], "grounding-intake")
-    document = BusinessDocumentService.complete_job(
+    document = job_completion.complete(
         TENANT,
         "grounding-intake",
         job.id,
@@ -424,7 +428,7 @@ def test_grounded_outputs_reject_hallucinated_refs_and_persist_per_entity_proven
         job.lease_token,
         execution,
     )
-    draft_request = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], command(document, "REQUEST_DRAFT"))
+    draft_request = document_commands.execute(TENANT, AUTHOR, document["document_id"], command(document, "REQUEST_DRAFT"))
     job, snapshot, execution = claimed(draft_request["job_id"], "grounding-draft")
     source_refs = [chunk["source_ref"] for chunk in snapshot["chunks"]]
     template = published_template()
@@ -469,17 +473,17 @@ def test_grounded_outputs_reject_hallucinated_refs_and_persist_per_entity_proven
     invalid_output = json.loads(json.dumps(output, ensure_ascii=False))
     invalid_output["draft"]["sections"][0]["evidence_refs"] = ["ragflow://dataset/dataset-a/document/unknown/chunk/hallucinated"]
     with pytest.raises(BusinessDocumentError) as invalid_ref:
-        BusinessDocumentService.complete_job(TENANT, "grounding-draft", job.id, invalid_output, job.lease_token, execution)
+        job_completion.complete(TENANT, "grounding-draft", job.id, invalid_output, job.lease_token, execution)
     assert invalid_ref.value.code == "EVIDENCE_REF_NOT_IN_SNAPSHOT"
 
-    document = BusinessDocumentService.complete_job(TENANT, "grounding-draft", job.id, output, job.lease_token, execution)
+    document = job_completion.complete(TENANT, "grounding-draft", job.id, output, job.lease_token, execution)
     section = next(item for item in document["current_revision"]["document_ast"]["sections"] if item["id"] == "3.1")
     assert section["evidence_refs"] == [source_refs[0]]
     assert document["protocol"]["questions"][0]["evidence_refs"] == source_refs
     assert document["protocol"]["proposals"][0]["evidence_refs"] == [source_refs[1]]
 
     question = document["protocol"]["questions"][0]
-    answer = BusinessDocumentService.execute_command(
+    answer = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -489,18 +493,18 @@ def test_grounded_outputs_reject_hallucinated_refs_and_persist_per_entity_proven
             {"question_id": question["question_id"], "selected_option_id": "one", "custom_answer": None},
         ),
     )
-    document = BusinessDocumentService.get_document(TENANT, answer["document_id"], AUTHOR)
+    document = document_queries.get_document(answer["document_id"], AUTHOR)
     proposal_row = document["protocol"]["proposals"][0]
-    decision = BusinessDocumentService.execute_command(
+    decision = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
         command(document, "DECIDE_PROPOSAL", {"proposal_id": proposal_row["proposal_id"], "decision": "ACCEPTED"}),
     )
-    document = BusinessDocumentService.get_document(TENANT, decision["document_id"], AUTHOR)
-    review_request = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], command(document, "REQUEST_REVIEW_ASSESSMENT"))
+    document = document_queries.get_document(decision["document_id"], AUTHOR)
+    review_request = document_commands.execute(TENANT, AUTHOR, document["document_id"], command(document, "REQUEST_REVIEW_ASSESSMENT"))
     review_job, _review_snapshot, review_execution = claimed(review_request["job_id"], "grounding-review")
-    document = BusinessDocumentService.complete_job(
+    document = job_completion.complete(
         TENANT,
         "grounding-review",
         review_job.id,
@@ -511,7 +515,7 @@ def test_grounded_outputs_reject_hallucinated_refs_and_persist_per_entity_proven
     answer_event = next(event for event in BusinessDocumentEvent.select().where(BusinessDocumentEvent.event_type == "QuestionAnswered") if event.payload["question_id"] == question["question_id"])
     decision_event = next(event for event in BusinessDocumentEvent.select().where(BusinessDocumentEvent.event_type == "ProposalDecided") if event.payload["proposal_id"] == proposal_row["proposal_id"])
     base_revision = document["current_revision"]
-    apply_request = BusinessDocumentService.execute_command(
+    apply_request = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -520,7 +524,7 @@ def test_grounded_outputs_reject_hallucinated_refs_and_persist_per_entity_proven
     plan_job, plan_snapshot, plan_execution = claimed(apply_request["job_id"], "grounding-plan")
     base_section = next(item for item in base_revision["document_ast"]["sections"] if item["id"] == "3.1")
     plan_ref = plan_snapshot["chunks"][0]["source_ref"]
-    document = BusinessDocumentService.complete_job(
+    document = job_completion.complete(
         TENANT,
         "grounding-plan",
         plan_job.id,

@@ -21,7 +21,7 @@ import html
 import io
 import logging
 import re
-from dataclasses import dataclass
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any, Callable
 from urllib.parse import urlsplit
@@ -30,7 +30,8 @@ from docx import Document as WordDocument
 from peewee import IntegrityError
 
 from api.apps.business_documents.assets import published_template, rendering_policy
-from api.apps.business_documents.errors import BusinessDocumentError, ConflictError, ValidationError
+from business_documents.application.export import PreparedExport
+from business_documents.application.errors import BusinessDocumentError, ConflictError, ValidationError
 from api.db.db_models import BusinessDocument, BusinessDocumentExportArtifact, BusinessDocumentExportStage, BusinessDocumentJob, BusinessDocumentRevision
 from business_documents.domain.workflow import OperationState
 from common.misc_utils import get_uuid
@@ -85,32 +86,6 @@ def _artifact_dict(row: BusinessDocumentExportArtifact) -> dict[str, Any]:
         "content_hash": row.content_hash,
         "create_time": row.create_time,
     }
-
-
-@dataclass(frozen=True, slots=True)
-class PreparedExport:
-    artifact_id: str
-    document_id: str
-    tenant_id: str
-    owner_id: str
-    revision_id: str
-    revision_number: int
-    export_format: str
-    filename: str
-    mime_type: str
-    size: int
-    content_hash: str
-    storage_bucket: str
-    storage_key: str
-    create_time: int
-    create_date: datetime
-    created_blob: bool
-    stage_id: str | None = None
-    lease_token: str | None = None
-    replaced_artifact_id: str | None = None
-    replaced_storage_bucket: str | None = None
-    replaced_storage_key: str | None = None
-    replaced_content_hash: str | None = None
 
 
 class BusinessDocumentExportService:
@@ -642,33 +617,33 @@ class BusinessDocumentExportService:
         cls,
         prepared: object,
         *,
-        document: BusinessDocument,
-        job: BusinessDocumentJob,
+        document: Mapping[str, Any],
+        job: Mapping[str, Any],
     ) -> dict[str, Any]:
         """Publish prepared metadata inside the caller's fenced DB transaction."""
 
         if not isinstance(prepared, PreparedExport):
             raise ValidationError("INVALID_EXPORT_RESULT", "Prepared export is required")
-        command_payload = job.payload.get("command_payload", {})
+        command_payload = job["payload"].get("command_payload", {})
         format_meta = _FORMAT_META.get(prepared.export_format)
         expected_extension = format_meta[0] if format_meta is not None else None
         expected_mime_type = format_meta[1] if format_meta is not None else None
-        expected_bucket = f"{document.tenant_id}-business-documents"
-        expected_storage_key = f"exports/{document.id}/{prepared.revision_id}/{prepared.artifact_id}/{prepared.lease_token}.{expected_extension}"
+        expected_bucket = f"{document['tenant_id']}-business-documents"
+        expected_storage_key = f"exports/{document['id']}/{prepared.revision_id}/{prepared.artifact_id}/{prepared.lease_token}.{expected_extension}"
         if (
             format_meta is None
-            or job.job_type != "GENERATE_EXPORT"
-            or document.lifecycle_state != "AGREED"
-            or document.operation_state != OperationState.EXPORTING.value
-            or document.state_version != job.source_state_version
-            or prepared.document_id != document.id
-            or prepared.tenant_id != document.tenant_id
-            or (prepared.created_blob and prepared.owner_id != document.owner_id)
-            or prepared.revision_id != document.current_revision_id
+            or job["job_type"] != "GENERATE_EXPORT"
+            or document["lifecycle_state"] != "AGREED"
+            or document["operation_state"] != OperationState.EXPORTING.value
+            or document["state_version"] != job["source_state_version"]
+            or prepared.document_id != document["id"]
+            or prepared.tenant_id != document["tenant_id"]
+            or (prepared.created_blob and prepared.owner_id != document["owner_id"])
+            or prepared.revision_id != document["current_revision_id"]
             or prepared.revision_id != command_payload.get("revision_id")
             or prepared.export_format != command_payload.get("format")
-            or prepared.lease_token != job.lease_token
-            or (prepared.created_blob and prepared.artifact_id != job.id)
+            or prepared.lease_token != job["lease_token"]
+            or (prepared.created_blob and prepared.artifact_id != job["id"])
             or (prepared.created_blob and prepared.storage_bucket != expected_bucket)
             or (prepared.created_blob and prepared.storage_key != expected_storage_key)
             or (prepared.created_blob and prepared.mime_type != expected_mime_type)
@@ -676,12 +651,12 @@ class BusinessDocumentExportService:
             or len(prepared.content_hash) != 71
         ):
             raise ConflictError("EXPORT_JOB_CHANGED", "Prepared export no longer matches the current export job")
-        revision = BusinessDocumentRevision.get_or_none((BusinessDocumentRevision.id == prepared.revision_id) & (BusinessDocumentRevision.document_id == document.id))
+        revision = BusinessDocumentRevision.get_or_none((BusinessDocumentRevision.id == prepared.revision_id) & (BusinessDocumentRevision.document_id == document["id"]))
         if revision is None or revision.revision_number != prepared.revision_number:
             raise BusinessDocumentError("REVISION_NOT_FOUND", "Business document revision not found", 404)
 
         current = BusinessDocumentExportArtifact.get_or_none(
-            (BusinessDocumentExportArtifact.document_id == document.id)
+            (BusinessDocumentExportArtifact.document_id == document["id"])
             & (BusinessDocumentExportArtifact.revision_id == prepared.revision_id)
             & (BusinessDocumentExportArtifact.export_format == prepared.export_format)
         )
@@ -706,12 +681,12 @@ class BusinessDocumentExportService:
             database,
         ).first()
         expected_stage = {
-            "job_id": job.id,
-            "document_id": document.id,
-            "tenant_id": document.tenant_id,
-            "owner_id": document.owner_id,
+            "job_id": job["id"],
+            "document_id": document["id"],
+            "tenant_id": document["tenant_id"],
+            "owner_id": document["owner_id"],
             "artifact_id": prepared.artifact_id,
-            "lease_token": job.lease_token,
+            "lease_token": job["lease_token"],
             "revision_id": prepared.revision_id,
             "export_format": prepared.export_format,
             "filename": prepared.filename,
@@ -755,9 +730,9 @@ class BusinessDocumentExportService:
 
         artifact = BusinessDocumentExportArtifact.create(
             id=prepared.artifact_id,
-            document_id=document.id,
-            tenant_id=document.tenant_id,
-            owner_id=document.owner_id,
+            document_id=document["id"],
+            tenant_id=document["tenant_id"],
+            owner_id=document["owner_id"],
             revision_id=revision.id,
             export_format=prepared.export_format,
             filename=prepared.filename,
@@ -779,7 +754,7 @@ class BusinessDocumentExportService:
                 update_time=timestamp,
                 update_date=datetime.now(),
             )
-            .where((BusinessDocumentExportStage.id == stage.id) & (BusinessDocumentExportStage.state == _STAGE_STORED) & (BusinessDocumentExportStage.lease_token == job.lease_token))
+            .where((BusinessDocumentExportStage.id == stage.id) & (BusinessDocumentExportStage.state == _STAGE_STORED) & (BusinessDocumentExportStage.lease_token == job["lease_token"]))
             .execute()
         )
         if changed != 1:

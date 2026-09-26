@@ -1,10 +1,14 @@
 import json
+from pathlib import Path
 import re
 
 import pytest
 from playwright.sync_api import expect
 
 from test.playwright.helpers._next_apps_helpers import RESULT_TIMEOUT_MS, _goto_home
+
+
+AXE_SCRIPT = Path(__file__).resolve().parents[3] / "web" / "node_modules" / "axe-core" / "axe.min.js"
 
 
 def _envelope(data):
@@ -349,6 +353,75 @@ def test_business_document_workbench_commands_and_mobile_layout(
     expect(page.locator("[data-testid='business-document-header']")).to_be_visible()
     expect(page.locator("[data-testid='business-document-actions']")).to_be_visible()
     expect(page.locator("[data-testid='apply-changes-button']")).to_be_visible()
+
+
+@pytest.mark.p1
+def test_business_document_workbench_has_no_wcag_aa_violations(page, base_url):
+    _install_session(page)
+    _install_common_routes(page)
+    page.route(
+        "**/api/v1/business-documents/doc-ui-1",
+        lambda route: route.fulfill(status=200, content_type="application/json", body=json.dumps(_envelope(_projection()), ensure_ascii=False)),
+    )
+    page.goto(f"{base_url.rstrip('/')}/business-documents/doc-ui-1")
+    expect(page.locator("[data-testid='business-document-workbench']")).to_be_visible(timeout=RESULT_TIMEOUT_MS)
+    assert AXE_SCRIPT.is_file(), "Install frontend dependencies before accessibility checks"
+    page.add_script_tag(path=str(AXE_SCRIPT))
+    violations = page.evaluate(
+        """async () => {
+          const root = document.querySelector('[data-testid="business-document-workbench"]');
+          const result = await axe.run(root, {
+            runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'] }
+          });
+          return result.violations.map(item => ({
+            id: item.id,
+            impact: item.impact,
+            nodes: item.nodes.map(node => ({ target: node.target, html: node.html, failure: node.failureSummary }))
+          }));
+        }"""
+    )
+    assert not violations, violations
+
+
+def test_streamed_document_section_stays_preliminary_after_reload(page, base_url):
+    _install_session(page)
+    _install_common_routes(page)
+    projection = {
+        **_projection(allowed_commands=[]),
+        "operation_state": "APPLYING_CHANGES",
+        "latest_job": {"job_id": "job-stream", "job_type": "PLAN_CHANGES", "status": "RUNNING", "attempt": 1, "max_attempts": 3},
+    }
+    item = {
+        "id": 1,
+        "job_id": "job-stream",
+        "attempt": 1,
+        "base_revision_id": "revision-3",
+        "type": "section_preview",
+        "payload": {"section_id": "1", "title": "Цель", "before": "Сократить время перевода до одной минуты.", "after": "Новая измеримая цель.", "source_event_ids": ["event-1"]},
+    }
+    stream_body = f"id: 1\nevent: section_preview\ndata: {json.dumps(item, ensure_ascii=False)}\n\n"
+    page.route(
+        "**/api/v1/business-documents/doc-ui-1/jobs/job-stream/events/stream?after=*",
+        lambda route: route.fulfill(status=200, content_type="text/event-stream", body=stream_body),
+    )
+    page.route(
+        "**/api/v1/business-documents/doc-ui-1/jobs/job-stream/events?after=*",
+        lambda route: route.fulfill(status=200, content_type="application/json", body=json.dumps(_envelope({"events": [], "status": "COMPLETED", "job_id": "job-stream"}))),
+    )
+    page.route(
+        "**/api/v1/business-documents/doc-ui-1",
+        lambda route: route.fulfill(status=200, content_type="application/json", body=json.dumps(_envelope(projection), ensure_ascii=False)),
+    )
+
+    page.goto(f"{base_url.rstrip('/')}/business-documents/doc-ui-1")
+    preview = page.get_by_test_id("business-document-change-preview")
+    expect(preview).to_contain_text("Предварительные изменения", timeout=RESULT_TIMEOUT_MS)
+    expect(preview).to_contain_text("Новая измеримая цель.")
+    expect(preview.get_by_role("button", name="Подтвердить применение")).to_have_count(0)
+    expect(page.get_by_test_id("business-document-pane")).to_contain_text("Сократить время перевода до одной минуты.")
+
+    page.reload()
+    expect(preview).to_contain_text("Новая измеримая цель.", timeout=RESULT_TIMEOUT_MS)
 
 
 @pytest.mark.p1

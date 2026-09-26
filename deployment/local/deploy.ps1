@@ -121,6 +121,23 @@ function Get-DeployedRevision {
     return $revision
 }
 
+function Test-CandidateReceiptJobs {
+    param([Parameter(Mandatory = $true)]$CI)
+
+    $requiredProperty = $CI.PSObject.Properties['engine_tests_required']
+    $required = if ($requiredProperty) { $requiredProperty.Value } else { $true }
+    if ($required -isnot [bool]) { return $false }
+    if (-not $required) {
+        $reason = $CI.PSObject.Properties['engine_test_reason']
+        if (-not $reason -or $reason.Value -ne 'no-engine-changes') { return $false }
+    }
+    $expected = if ($required) { 'success' } else { 'skipped' }
+    return ($CI.jobs.PSObject.Properties.Name.Count -eq 3 -and
+        $CI.jobs.ragflow_preflight -eq 'success' -and
+        $CI.jobs.ragflow_tests_infinity -eq $expected -and
+        $CI.jobs.ragflow_tests_elasticsearch -eq $expected)
+}
+
 function Get-ChangedPaths {
     param([string]$DeployedRevision)
 
@@ -377,7 +394,6 @@ if ($resolvedMode -in @("Candidate", "Release")) {
             throw "Candidate receipt is unavailable: $candidateReceiptPath"
         }
         $candidateReceiptData = Get-Content -LiteralPath $candidateReceiptPath -Raw | ConvertFrom-Json
-        $receiptJobs = $candidateReceiptData.ci.jobs
         $imageRepository = $candidateImage.Substring(0, $candidateImage.LastIndexOf(':'))
         if ($candidateReceiptData.schema -ne 1 -or
             $candidateReceiptData.source_revision -ne $CandidateRevision -or
@@ -385,9 +401,7 @@ if ($resolvedMode -in @("Candidate", "Release")) {
             $candidateReceiptData.image.digest -cnotmatch ('^' + [regex]::Escape($imageRepository) + '@sha256:[0-9a-f]{64}$') -or
             $candidateReceiptData.ci.run_id -notmatch '^[0-9]+$' -or
             -not $candidateReceiptData.ci.repository -or
-            $receiptJobs.ragflow_preflight -ne "success" -or
-            $receiptJobs.ragflow_tests_infinity -ne "success" -or
-            $receiptJobs.ragflow_tests_elasticsearch -ne "success") {
+            -not (Test-CandidateReceiptJobs -CI $candidateReceiptData.ci)) {
             throw "Candidate receipt does not prove the requested revision, image and required CI jobs."
         }
         $candidateReceiptHash = (Get-FileHash -LiteralPath $candidateReceiptPath -Algorithm SHA256).Hash.ToLowerInvariant()

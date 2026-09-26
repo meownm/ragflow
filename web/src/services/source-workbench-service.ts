@@ -17,6 +17,7 @@ export interface SourceCandidate extends SourceReference {
   source_url: string | null;
   content_hash: string;
   excerpts: string[];
+  similarity?: number;
   citation_numbers?: number[];
 }
 
@@ -31,6 +32,21 @@ export interface SourceWorkspace {
   created_at: string;
   updated_at: string;
 }
+
+export interface SourceWorkspaceDraft {
+  id: string;
+  workspace_id: string;
+  content: string;
+  prompt: string;
+  mode: 'all' | 'sequential';
+  source_version: number;
+  sources: SourceReference[];
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type SourceWorkspaceDraftSummary = Omit<SourceWorkspaceDraft, 'content'>;
 
 export interface SourceChatMessage {
   role: 'user' | 'assistant';
@@ -151,6 +167,47 @@ export async function saveSourceSelection(
   const response = await request.put<Envelope<SourceWorkspace>>(
     api.sourceWorkspaceSelection(workspace.id),
     { expected_version: workspace.version, selected_documents },
+  );
+  return unwrap(response.data);
+}
+
+export async function listSourceWorkspaceDrafts(
+  workspaceId: string,
+): Promise<SourceWorkspaceDraftSummary[]> {
+  const response = await request.get<Envelope<SourceWorkspaceDraftSummary[]>>(
+    api.sourceWorkspaceDrafts(workspaceId),
+  );
+  return unwrap(response.data);
+}
+
+export async function getSourceWorkspaceDraft(
+  workspaceId: string,
+  draftId: string,
+): Promise<SourceWorkspaceDraft> {
+  const response = await request.get<Envelope<SourceWorkspaceDraft>>(
+    api.sourceWorkspaceDraft(workspaceId, draftId),
+  );
+  return unwrap(response.data);
+}
+
+export async function saveSourceWorkspaceDraft(
+  workspace: SourceWorkspace,
+  input: { content: string; prompt: string; mode: 'all' | 'sequential' },
+): Promise<SourceWorkspaceDraft> {
+  const response = await request.post<Envelope<SourceWorkspaceDraft>>(
+    api.sourceWorkspaceDrafts(workspace.id),
+    { ...input, expected_version: workspace.version },
+  );
+  return unwrap(response.data);
+}
+
+export async function updateSourceWorkspaceDraft(
+  draft: SourceWorkspaceDraft,
+  content: string,
+): Promise<SourceWorkspaceDraft> {
+  const response = await request.put<Envelope<SourceWorkspaceDraft>>(
+    api.sourceWorkspaceDraft(draft.workspace_id, draft.id),
+    { content, expected_version: draft.version },
   );
   return unwrap(response.data);
 }

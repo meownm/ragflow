@@ -23,11 +23,13 @@ import {
   rebindBusinessDocumentToEva,
   searchEvaDocumentSources,
   submitBusinessDocumentCommand,
+  watchBusinessDocumentJobEvents,
 } from '@/services/business-document-service';
 import { listEvaUserCredentials } from '@/services/user-service';
 import { downloadFileFromBlob } from '@/utils/file-util';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -40,6 +42,8 @@ import BusinessDocumentsPage from '.';
 type BusinessDocumentProjection = import('./types').BusinessDocumentProjection;
 type BusinessDocumentCommandResult =
   import('./types').BusinessDocumentCommandResult;
+type BusinessDocumentJobStreamEvent =
+  import('./types').BusinessDocumentJobStreamEvent;
 type EvaDocumentChange = import('./types').EvaDocumentChange;
 
 jest.mock('react-markdown', () => ({
@@ -112,6 +116,7 @@ jest.mock('@/services/business-document-service', () => {
     listBusinessDocumentCatalog: jest.fn(),
     assignBusinessDocumentOwner: jest.fn(),
     submitBusinessDocumentCommand: jest.fn(),
+    watchBusinessDocumentJobEvents: jest.fn(),
     searchEvaDocumentSources: jest.fn(),
     createEvaDocumentChange: jest.fn(),
     listEvaDocumentChanges: jest.fn(),
@@ -145,6 +150,7 @@ const mockedListAccessUsers = jest.mocked(listBusinessDocumentAccessUsers);
 const mockedListCatalog = jest.mocked(listBusinessDocumentCatalog);
 const mockedAssignOwner = jest.mocked(assignBusinessDocumentOwner);
 const mockedSubmit = jest.mocked(submitBusinessDocumentCommand);
+const mockedWatch = jest.mocked(watchBusinessDocumentJobEvents);
 const mockedSearchEva = jest.mocked(searchEvaDocumentSources);
 const mockedCreateEva = jest.mocked(createEvaDocumentChange);
 const mockedListEva = jest.mocked(listEvaDocumentChanges);
@@ -407,6 +413,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockedWatch.mockResolvedValue(undefined);
   window.localStorage.clear();
   mockedFetch.mockResolvedValue(projection);
   mockedFetchPreview.mockResolvedValue({
@@ -2036,6 +2043,64 @@ test('shows affected sections during review analysis and navigates to a section'
   const section = screen.getAllByTestId('business-document-section')[0];
   expect(section).toHaveClass('ring-2');
   expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+});
+
+test('shows streamed sections as preliminary and clears them on retry', async () => {
+  mockedFetch.mockResolvedValue({
+    ...projection,
+    operation_state: 'APPLYING_CHANGES',
+    allowed_commands: [],
+    latest_job: {
+      job_id: 'job-stream',
+      job_type: 'PLAN_CHANGES',
+      status: 'RUNNING',
+      attempt: 1,
+      max_attempts: 3,
+    },
+  });
+  let emit: ((event: BusinessDocumentJobStreamEvent) => void) | undefined;
+  mockedWatch.mockImplementation(
+    async (_documentId, _jobId, _signal, onEvent) => {
+      emit = onEvent;
+    },
+  );
+  renderPage();
+  await waitFor(() => expect(emit).toBeDefined());
+  act(() => {
+    emit!({
+      id: 1,
+      job_id: 'job-stream',
+      attempt: 1,
+      base_revision_id: 'revision-3',
+      type: 'section_preview',
+      payload: {
+        section_id: '1',
+        title: 'Цель',
+        before: firstSectionText,
+        after: 'Новая цель.',
+        source_event_ids: ['event-1'],
+      },
+    });
+  });
+  const preview = await screen.findByTestId('business-document-change-preview');
+  expect(preview).toHaveTextContent('Предварительные изменения');
+  expect(preview).toHaveTextContent('Новая цель.');
+  expect(
+    within(preview).queryByRole('button', { name: 'Подтвердить применение' }),
+  ).not.toBeInTheDocument();
+  act(() => {
+    emit!({
+      id: 2,
+      job_id: 'job-stream',
+      attempt: 1,
+      base_revision_id: 'revision-3',
+      type: 'retry',
+      payload: { reason: 'TEST' },
+    });
+  });
+  expect(
+    screen.queryByTestId('business-document-change-preview'),
+  ).not.toBeInTheDocument();
 });
 
 test('prepares changes, then shows before and after with explicit confirmation', async () => {

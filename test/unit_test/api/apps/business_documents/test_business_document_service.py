@@ -14,6 +14,8 @@
 #  limitations under the License.
 #
 
+import json
+from common.time_utils import current_timestamp
 from copy import deepcopy
 from pathlib import Path
 import sys
@@ -30,18 +32,20 @@ if "api.apps" not in sys.modules:
     api_apps.__path__ = [str(Path(__file__).resolve().parents[5] / "api" / "apps")]
     sys.modules["api.apps"] = api_apps
 
-from api.apps.business_documents.assets import (
-    import_document_markdown,
-    published_template,
-    render_document_ast,
-    render_section_text,
-    section_hash,
-    validate_document_ast,
-)
+from api.apps.business_documents.assets import import_document_markdown, published_template, render_document_ast, validate_document_ast
+from business_documents.domain.content import render_section_text, section_hash
 from api.apps.business_documents.adapters.assignment import assign_business_document
-from api.apps.business_documents.errors import BusinessDocumentError
-from api.apps.business_documents.service import BusinessDocumentService
-from api.apps.business_documents.worker import BusinessDocumentJobQueue
+from business_documents.application.errors import BusinessDocumentError
+from api.apps.business_documents.runtime import document_queries, document_writer, job_completion
+from api.apps.business_documents.runtime import document_commands
+from api.apps.business_documents.runtime import eva_synchronization
+from test.unit_test.api.apps.business_documents.helpers import append_document_event
+from api.apps.business_documents.runtime import document_creation
+from api.apps.business_documents.adapters.persistence import DOCUMENT_TABLES
+from api.apps.business_documents.runtime import document_deletion, change_user_role
+from api.apps.business_documents.ai import BusinessDocumentAI
+from api.apps.business_documents.stream_events import BusinessDocumentStreamEvents
+from api.apps.business_documents.worker import BusinessDocumentJobQueue, BusinessDocumentWorker
 from api.db.db_models import (
     BusinessDocument,
     BusinessDocumentAnswer,
@@ -51,6 +55,7 @@ from api.db.db_models import (
     BusinessDocumentEvent,
     BusinessDocumentEvaBinding,
     BusinessDocumentJob,
+    BusinessDocumentJobStreamEvent,
     BusinessDocumentProposal,
     BusinessDocumentProposalDecision,
     BusinessDocumentQuestion,
@@ -65,47 +70,10 @@ TENANT = "tenant-1"
 AUTHOR = "author-1"
 
 
-def _ai_execution_audit():
-    return {
-        "provider": "Ollama",
-        "model": "qualified-model",
-        "model_type": "chat",
-        "parameters": {"temperature": 0, "top_p": 0.1, "max_completion_tokens": 8192},
-        "duration_ms": 1250.5,
-        "token_usage": {"prompt_tokens": 120, "completion_tokens": 80, "total_tokens": 200},
-    }
-
-
-def test_ai_execution_audit_is_canonicalized_for_persistence():
-    job = SimpleNamespace(job_type="GENERATE_DRAFT", payload={})
-
-    validated = BusinessDocumentService._validate_execution_audit({"ai": _ai_execution_audit()}, job)
-
-    assert validated == {"ai": _ai_execution_audit()}
-
-
-@pytest.mark.parametrize(
-    "mutation",
-    [
-        lambda audit: audit.update(model=""),
-        lambda audit: audit["parameters"].update(temperature=0.7),
-        lambda audit: audit.update(duration_ms=float("nan")),
-        lambda audit: audit["token_usage"].update(total_tokens=999),
-    ],
-)
-def test_ai_execution_audit_fails_closed_on_invalid_identity_parameters_timing_or_usage(mutation):
-    job = SimpleNamespace(job_type="GENERATE_DRAFT", payload={})
-    audit = _ai_execution_audit()
-    mutation(audit)
-
-    with pytest.raises(BusinessDocumentError, match="Worker AI"):
-        BusinessDocumentService._validate_execution_audit({"ai": audit}, job)
-
-
 @pytest.fixture()
 def database():
     database = SqliteDatabase(":memory:")
-    tables = (*BusinessDocumentService.model_tables(), User)
+    tables = (*DOCUMENT_TABLES, User)
     with database.bind_ctx(tables, bind_refs=False, bind_backrefs=False):
         database.connect()
         database.create_tables(tables)
@@ -122,7 +90,7 @@ def _create(**overrides):
         "idea": "Создать безопасный сервис переводов",
         **overrides,
     }
-    return BusinessDocumentService.create_document(TENANT, AUTHOR, request)
+    return document_creation.execute(TENANT, AUTHOR, request)
 
 
 def test_exported_business_document_markdown_can_be_imported_without_an_llm_rewrite():
@@ -170,7 +138,7 @@ def test_catalog_sync_replaces_previous_source_rows_and_v3_derives_the_title(dat
         source_sha256="0" * 64,
         sort_order=99,
     )
-    prior_document = BusinessDocumentService.create_document(
+    prior_document = document_creation.execute(
         TENANT,
         AUTHOR,
         {
@@ -213,8 +181,8 @@ def test_catalog_sync_replaces_previous_source_rows_and_v3_derives_the_title(dat
         is_active=False,
     )
 
-    listed = BusinessDocumentService.list_catalog()
-    created = BusinessDocumentService.create_document(
+    listed = document_queries.list_catalog()
+    created = document_creation.execute(
         TENANT,
         AUTHOR,
         {
@@ -287,7 +255,7 @@ def test_v3_imports_the_only_unbound_title_match_as_revision_one(database, monke
         "catalog_entry_id": first["id"],
         "idea": "Проверить существующий документ EVA",
     }
-    created = BusinessDocumentService.create_document(TENANT, AUTHOR, request)
+    created = document_creation.execute(TENANT, AUTHOR, request)
 
     assert observed_titles == [first["title"]]
     assert created["lifecycle_state"] == "REVIEW"
@@ -300,7 +268,7 @@ def test_v3_imports_the_only_unbound_title_match_as_revision_one(database, monke
     imported = BusinessDocumentEvent.get((BusinessDocumentEvent.document_id == created["document_id"]) & (BusinessDocumentEvent.event_type == "EvaDocumentImported"))
     assert created["current_revision"]["source_event_ids"] == [imported.id]
 
-    BusinessDocumentService.execute_command(
+    document_commands.execute(
         TENANT,
         AUTHOR,
         created["document_id"],
@@ -315,9 +283,9 @@ def test_v3_imports_the_only_unbound_title_match_as_revision_one(database, monke
             },
         ),
     )
-    commented = BusinessDocumentService.get_document(TENANT, created["document_id"], AUTHOR)
+    commented = document_queries.get_document(created["document_id"], AUTHOR)
     assert commented["protocol"]["comments"][0]["text"] == "Уточнить исходную версию из EVA"
-    requested = BusinessDocumentService.execute_command(
+    requested = document_commands.execute(
         TENANT,
         AUTHOR,
         created["document_id"],
@@ -344,7 +312,7 @@ def test_v3_requires_selection_when_multiple_unbound_eva_pages_match(database, m
     monkeypatch.setattr(EvaDocumentChangeService, "find_title_matches", staticmethod(lambda *_args: matches))
 
     with pytest.raises(BusinessDocumentError) as caught:
-        BusinessDocumentService.create_document(
+        document_creation.execute(
             TENANT,
             AUTHOR,
             {
@@ -373,11 +341,11 @@ def test_v3_does_not_import_an_occupied_title_match(database, monkeypatch):
         "linked_document": {"document_id": "other-document", "title": "Другой документ"},
     }
     monkeypatch.setattr(EvaDocumentChangeService, "find_title_matches", staticmethod(lambda *_args: [match]))
-    monkeypatch.setattr(BusinessDocumentService, "_eva_matches_with_occupancy", classmethod(lambda _cls, matches: matches))
+    monkeypatch.setattr(document_creation, "_matches_with_occupancy", lambda matches: matches)
     monkeypatch.setattr(EvaDocumentChangeService, "resolve_page_url", staticmethod(lambda *_args: pytest.fail("Occupied page must not be imported")))
 
     with pytest.raises(BusinessDocumentError) as caught:
-        BusinessDocumentService.create_document(
+        document_creation.execute(
             TENANT,
             AUTHOR,
             {
@@ -406,7 +374,7 @@ def test_v3_explicit_skip_does_not_search_for_or_import_an_eva_page(database, mo
         staticmethod(lambda *_args: pytest.fail("SKIP must not search EVA")),
     )
 
-    created = BusinessDocumentService.create_document(
+    created = document_creation.execute(
         TENANT,
         AUTHOR,
         {
@@ -452,7 +420,7 @@ def test_v3_template_mismatch_does_not_leave_a_partial_document_or_binding(datab
     )
 
     with pytest.raises(BusinessDocumentError) as caught:
-        BusinessDocumentService.create_document(
+        document_creation.execute(
             TENANT,
             AUTHOR,
             {
@@ -490,7 +458,7 @@ def test_v3_rejects_catalog_entries_that_are_not_active_l5(database, catalog_ent
     )
 
     with pytest.raises(BusinessDocumentError) as caught:
-        BusinessDocumentService.create_document(
+        document_creation.execute(
             TENANT,
             AUTHOR,
             {
@@ -615,7 +583,7 @@ def test_one_eva_page_cannot_be_linked_to_different_documents(database, monkeypa
         "document_code": "BR-42",
         "document_name": "Переводы одной кнопкой",
     }
-    monkeypatch.setattr(BusinessDocumentService, "_resolve_create_eva_binding", staticmethod(lambda *_args: binding))
+    monkeypatch.setattr(document_creation, "_resolve_binding", lambda *_args: binding)
     confirmed = {"mode": "BIND", "confirm_replace": True}
     _create(schema_version="2", eva_page_url=binding["page_url"], eva_decision=confirmed)
 
@@ -646,7 +614,7 @@ def test_legacy_event_backfill_populates_unique_eva_binding_projection(database,
         eva_page_url=binding["page_url"],
         eva_decision={"mode": "BIND", "confirm_replace": True},
     )
-    pull_event_id = BusinessDocumentService._create_event(
+    pull_event_id = append_document_event(
         created["document_id"],
         2,
         "EvaDocumentPulled",
@@ -727,7 +695,7 @@ def _command(document, command_type, payload=None, *, key=None, command_id=None,
 def _complete(job_id, output, worker="worker-1"):
     job = BusinessDocumentJobQueue.claim(worker)
     assert job is not None and job.id == job_id
-    return BusinessDocumentService.complete_job(TENANT, worker, job_id, output, job.lease_token)
+    return job_completion.complete(TENANT, worker, job_id, output, job.lease_token)
 
 
 def _question_batch(stage="INTAKE", semantic_tag="audience"):
@@ -769,12 +737,12 @@ def _draft(suffix="исходная версия"):
 
 def _request_and_complete_draft(document, *, review_questions=None, proposals=None):
     if "REQUEST_DRAFT" not in document["allowed_commands"]:
-        assessment = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
+        assessment = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
         document = _complete(
             assessment["job_id"],
             {"schema_version": "1", "outcome": "COMPLETE", "questions": []},
         )
-    requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_DRAFT"))
+    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_DRAFT"))
     created_event_id = BusinessDocumentEvent.get((BusinessDocumentEvent.document_id == document["document_id"]) & (BusinessDocumentEvent.event_type == "DocumentCreated")).id
     normalized_proposals = [
         {
@@ -796,7 +764,7 @@ def _request_and_complete_draft(document, *, review_questions=None, proposals=No
 
 
 def _complete_review_assessment(document, *, comment_disposition="CONFIRMED_CHANGE"):
-    requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_REVIEW_ASSESSMENT"))
+    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_REVIEW_ASSESSMENT"))
     dispositions = [{"comment_event_id": comment["source_event_id"], "disposition": comment_disposition} for comment in document["protocol"]["comments"]]
     return _complete(
         requested["job_id"],
@@ -808,17 +776,17 @@ def _complete_review_assessment(document, *, comment_disposition="CONFIRMED_CHAN
 def test_change_preview_requires_explicit_confirmation_and_shows_section_diff(database):
     document = _request_and_complete_draft(_create())
     base = document["current_revision"]
-    response = BusinessDocumentService.execute_command(
+    response = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
         _command(document, "ADD_COMMENT", {"revision_id": base["revision_id"], "section_id": None, "text": "Уточнить контроль ошибок", "anchor": None}),
     )
-    document = BusinessDocumentService.get_document(TENANT, response["document_id"], AUTHOR)
+    document = document_queries.get_document(response["document_id"], AUTHOR)
     document = _complete_review_assessment(document)
     comment_event_id = document["protocol"]["comments"][0]["source_event_id"]
     assert "PREPARE_CHANGES" in document["allowed_commands"]
-    requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "PREPARE_CHANGES", {"base_revision_id": base["revision_id"]}))
+    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "PREPARE_CHANGES", {"base_revision_id": base["revision_id"]}))
     before = next(section for section in base["document_ast"]["sections"] if section["id"] == "5.5")
     document = _complete(
         requested["job_id"],
@@ -846,7 +814,11 @@ def test_change_preview_requires_explicit_confirmation_and_shows_section_diff(da
     assert BusinessDocumentRevision.select().count() == 1
     assert document["change_preview"]["job_id"] == requested["job_id"]
     assert "CONFIRM_PREPARED_CHANGES" in document["allowed_commands"]
-    preview = BusinessDocumentService.get_change_preview(TENANT, AUTHOR, document["document_id"], requested["job_id"])
+    from playhouse.test_utils import count_queries
+
+    with count_queries(only_select=True) as preview_reads:
+        preview = document_queries.get_change_preview(document["document_id"], requested["job_id"])
+    assert preview_reads.count == 3
     assert preview["sections"][0]["section_id"] == "5.5"
     assert preview["sections"][0]["after"] == "Новый контроль ошибок"
     assert preview["sections"][0]["before_evidence_refs"] == []
@@ -857,7 +829,7 @@ def test_change_preview_requires_explicit_confirmation_and_shows_section_diff(da
     ]
 
     with pytest.raises(BusinessDocumentError) as bypass:
-        BusinessDocumentService.execute_command(
+        document_commands.execute(
             TENANT,
             AUTHOR,
             document["document_id"],
@@ -866,7 +838,7 @@ def test_change_preview_requires_explicit_confirmation_and_shows_section_diff(da
     assert bypass.value.code == "CHANGE_PREVIEW_CONFIRMATION_REQUIRED"
 
     with pytest.raises(BusinessDocumentError) as denied:
-        BusinessDocumentService.execute_command(
+        document_commands.execute(
             TENANT,
             "another-author",
             document["document_id"],
@@ -876,9 +848,12 @@ def test_change_preview_requires_explicit_confirmation_and_shows_section_diff(da
     assert BusinessDocumentRevision.select().count() == 1
 
     command = _command(document, "CONFIRM_PREPARED_CHANGES", {"job_id": requested["job_id"]})
-    applied = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], command)
-    assert BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], command)["idempotent_replay"] is True
-    document = BusinessDocumentService.get_document(TENANT, applied["document_id"], AUTHOR)
+    applied = document_commands.execute(TENANT, AUTHOR, document["document_id"], command)
+    assert document_commands.execute(TENANT, AUTHOR, document["document_id"], command)["idempotent_replay"] is True
+    events, _ = BusinessDocumentStreamEvents.read(requested["job_id"], 0)
+    assert [event["type"] for event in events].count("applied") == 1
+    assert events[-1]["payload"]["state_version"] == applied["state_version"]
+    document = document_queries.get_document(applied["document_id"], AUTHOR)
     assert document["current_revision"]["revision_number"] == 2
     assert document["change_preview"] is None
     assert BusinessDocumentRevision.select().count() == 2
@@ -888,15 +863,15 @@ def test_change_preview_requires_explicit_confirmation_and_shows_section_diff(da
 def test_prepared_change_can_be_discarded_without_creating_a_revision(database):
     document = _request_and_complete_draft(_create())
     base = document["current_revision"]
-    response = BusinessDocumentService.execute_command(
+    response = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
         _command(document, "ADD_COMMENT", {"revision_id": base["revision_id"], "section_id": None, "text": "Проверить требования", "anchor": None}),
     )
-    document = _complete_review_assessment(BusinessDocumentService.get_document(TENANT, response["document_id"], AUTHOR), comment_disposition="NO_CHANGE")
+    document = _complete_review_assessment(document_queries.get_document(response["document_id"], AUTHOR), comment_disposition="NO_CHANGE")
     source_id = document["protocol"]["comments"][0]["source_event_id"]
-    requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "PREPARE_CHANGES", {"base_revision_id": base["revision_id"]}))
+    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "PREPARE_CHANGES", {"base_revision_id": base["revision_id"]}))
     document = _complete(
         requested["job_id"],
         {
@@ -909,33 +884,36 @@ def test_prepared_change_can_be_discarded_without_creating_a_revision(database):
             }
         },
     )
-    preview = BusinessDocumentService.get_change_preview(TENANT, AUTHOR, document["document_id"], requested["job_id"])
+    preview = document_queries.get_change_preview(document["document_id"], requested["job_id"])
     assert preview["sections"] == []
     assert preview["acknowledged_no_change_sources"] == [
         {"event_id": source_id, "kind": "comment", "entity_id": document["protocol"]["comments"][0]["comment_id"], "label": "Комментарий автора", "text": "Проверить требования"}
     ]
-    BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "DISCARD_PREPARED_CHANGES", {"job_id": requested["job_id"]}))
-    document = BusinessDocumentService.get_document(TENANT, document["document_id"], AUTHOR)
+    document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "DISCARD_PREPARED_CHANGES", {"job_id": requested["job_id"]}))
+    document = document_queries.get_document(document["document_id"], AUTHOR)
     assert document["change_preview"] is None
     assert document["current_revision"]["revision_id"] == base["revision_id"]
     with pytest.raises(BusinessDocumentError) as caught:
-        BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "CONFIRM_PREPARED_CHANGES", {"job_id": requested["job_id"]}))
+        document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "CONFIRM_PREPARED_CHANGES", {"job_id": requested["job_id"]}))
     assert caught.value.code == "CHANGE_PREVIEW_STALE"
+    events, _ = BusinessDocumentStreamEvents.read(requested["job_id"], 0)
+    assert events[-1]["type"] == "discarded"
+    assert events[-1]["payload"]["state_version"] == document["state_version"]
 
 
 @pytest.mark.p0
 def test_new_feedback_invalidates_a_prepared_change(database):
     document = _request_and_complete_draft(_create())
     base = document["current_revision"]
-    added = BusinessDocumentService.execute_command(
+    added = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
         _command(document, "ADD_COMMENT", {"revision_id": base["revision_id"], "section_id": None, "text": "Проверить текст", "anchor": None}),
     )
-    document = _complete_review_assessment(BusinessDocumentService.get_document(TENANT, added["document_id"], AUTHOR), comment_disposition="NO_CHANGE")
+    document = _complete_review_assessment(document_queries.get_document(added["document_id"], AUTHOR), comment_disposition="NO_CHANGE")
     source_id = document["protocol"]["comments"][0]["source_event_id"]
-    requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "PREPARE_CHANGES", {"base_revision_id": base["revision_id"]}))
+    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "PREPARE_CHANGES", {"base_revision_id": base["revision_id"]}))
     document = _complete(
         requested["job_id"],
         {
@@ -948,16 +926,16 @@ def test_new_feedback_invalidates_a_prepared_change(database):
             }
         },
     )
-    BusinessDocumentService.execute_command(
+    document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
         _command(document, "ADD_COMMENT", {"revision_id": base["revision_id"], "section_id": None, "text": "Новые замечания", "anchor": None}),
     )
-    document = BusinessDocumentService.get_document(TENANT, document["document_id"], AUTHOR)
+    document = document_queries.get_document(document["document_id"], AUTHOR)
     assert document["change_preview"] is None
     with pytest.raises(BusinessDocumentError) as caught:
-        BusinessDocumentService.execute_command(
+        document_commands.execute(
             TENANT,
             AUTHOR,
             document["document_id"],
@@ -978,7 +956,7 @@ def test_create_contract_rejects_unknown_fields(database):
 @pytest.mark.p0
 def test_failed_optimistic_cas_rolls_back_child_write_but_records_rejection(database, monkeypatch):
     document = _create()
-    requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
+    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
     document = _complete(requested["job_id"], _question_batch())
     question = document["protocol"]["questions"][0]
     command = _command(
@@ -991,15 +969,37 @@ def test_failed_optimistic_cas_rolls_back_child_write_but_records_rejection(data
     def lose_cas(_document, _changes):
         raise BusinessDocumentError("STATE_VERSION_CONFLICT", "The document changed concurrently", 409)
 
-    monkeypatch.setattr(BusinessDocumentService, "_optimistic_update", staticmethod(lose_cas))
+    monkeypatch.setattr(document_writer, "update_document", lose_cas)
     with pytest.raises(BusinessDocumentError) as caught:
-        BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], command)
+        document_commands.execute(TENANT, AUTHOR, document["document_id"], command)
 
     assert caught.value.code == "STATE_VERSION_CONFLICT"
     assert BusinessDocumentAnswer.select().count() == 0
     ledger = BusinessDocumentCommand.get(BusinessDocumentCommand.idempotency_key == "cas-after-child-write")
     assert ledger.response["accepted"] is False
     assert ledger.response["error"]["code"] == "STATE_VERSION_CONFLICT"
+
+
+@pytest.mark.p0
+def test_rejection_after_document_cas_records_and_replays_the_rolled_back_version(database, monkeypatch):
+    document = _create()
+    event_count = BusinessDocumentEvent.select().count()
+    command = _command(document, "ARCHIVE", key="failure-after-document-cas")
+
+    def reject_event(*_args, **_kwargs):
+        raise BusinessDocumentError("AUDIT_REJECTED", "Forced rejection after CAS", 409)
+
+    monkeypatch.setattr(document_writer, "append_event", reject_event)
+    for _ in range(2):
+        with pytest.raises(BusinessDocumentError) as caught:
+            document_commands.execute(TENANT, AUTHOR, document["document_id"], command)
+        assert (caught.value.code, caught.value.status) == ("AUDIT_REJECTED", 409)
+    row = BusinessDocument.get_by_id(document["document_id"])
+    receipt = BusinessDocumentCommand.get(BusinessDocumentCommand.idempotency_key == command["idempotency_key"])
+    assert row.lifecycle_state == "INTAKE"
+    assert row.state_version == receipt.response["state_version"] == document["state_version"]
+    assert receipt.response["accepted"] is False
+    assert BusinessDocumentEvent.select().count() == event_count
 
 
 @pytest.mark.p0
@@ -1012,7 +1012,7 @@ def test_job_insert_failure_rolls_back_claimed_document_version(database, monkey
 
     monkeypatch.setattr(BusinessDocumentJob, "create", fail_insert)
     with pytest.raises(RuntimeError, match="job storage unavailable"):
-        BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
+        document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
     persisted = BusinessDocument.get_by_id(document["document_id"])
     assert persisted.state_version == document["state_version"]
     assert persisted.operation_state == document["operation_state"]
@@ -1025,7 +1025,7 @@ def test_job_insert_failure_rolls_back_claimed_document_version(database, monkey
 def test_concurrent_idempotency_insert_replays_winning_ledger(database, monkeypatch):
     document = _create()
     command = _command(document, "REQUEST_INTAKE_ASSESSMENT", key="same-key-race")
-    first = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], command)
+    first = document_commands.execute(TENANT, AUTHOR, document["document_id"], command)
     winner = BusinessDocumentCommand.get(BusinessDocumentCommand.idempotency_key == "same-key-race")
     original_get_or_none = BusinessDocumentCommand.get_or_none
     lookups = 0
@@ -1040,7 +1040,7 @@ def test_concurrent_idempotency_insert_replays_winning_ledger(database, monkeypa
 
     monkeypatch.setattr(BusinessDocumentCommand, "get_or_none", racing_lookup)
     monkeypatch.setattr(BusinessDocumentCommand, "create", lose_insert)
-    replay = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], command)
+    replay = document_commands.execute(TENANT, AUTHOR, document["document_id"], command)
 
     assert replay["idempotent_replay"] is True
     assert replay["job_id"] == first["job_id"]
@@ -1054,7 +1054,7 @@ def test_full_workflow_is_versioned_idempotent_and_append_only(database):
     assert document["state_version"] == 1
     assert document["current_revision"] is None
 
-    assessment = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
+    assessment = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
     document = _complete(assessment["job_id"], _question_batch())
     question = document["protocol"]["questions"][0]
     answer_command = _command(
@@ -1062,8 +1062,8 @@ def test_full_workflow_is_versioned_idempotent_and_append_only(database):
         "ANSWER_QUESTION",
         {"question_id": question["question_id"], "selected_option_id": "individuals", "custom_answer": None},
     )
-    document = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], answer_command)
-    document = BusinessDocumentService.get_document(TENANT, document["document_id"], AUTHOR)
+    document = document_commands.execute(TENANT, AUTHOR, document["document_id"], answer_command)
+    document = document_queries.get_document(document["document_id"], AUTHOR)
 
     document = _request_and_complete_draft(
         document,
@@ -1081,15 +1081,15 @@ def test_full_workflow_is_versioned_idempotent_and_append_only(database):
         (proposal_ids["Добавить метрику ошибок"], "ACCEPTED"),
         (proposal_ids["Удалить мониторинг"], "REJECTED"),
     ):
-        response = BusinessDocumentService.execute_command(
+        response = document_commands.execute(
             TENANT,
             AUTHOR,
             document["document_id"],
             _command(document, "DECIDE_PROPOSAL", {"proposal_id": proposal_id, "decision": decision}),
         )
-        document = BusinessDocumentService.get_document(TENANT, response["document_id"], AUTHOR)
+        document = document_queries.get_document(response["document_id"], AUTHOR)
 
-    response = BusinessDocumentService.execute_command(
+    response = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -1099,7 +1099,7 @@ def test_full_workflow_is_versioned_idempotent_and_append_only(database):
             {"question_id": review_question["question_id"], "selected_option_id": "individuals", "custom_answer": None},
         ),
     )
-    document = BusinessDocumentService.get_document(TENANT, response["document_id"], AUTHOR)
+    document = document_queries.get_document(response["document_id"], AUTHOR)
     document = _complete_review_assessment(document)
     accepted_event = next(
         event
@@ -1112,8 +1112,8 @@ def test_full_workflow_is_versioned_idempotent_and_append_only(database):
         if event.payload["question_id"] == review_question["question_id"]
     )
     apply_command = _command(document, "APPLY_CHANGES", {"base_revision_id": revision_one["revision_id"]}, key="apply-once")
-    apply_response = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], apply_command)
-    replay = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], apply_command)
+    apply_response = document_commands.execute(TENANT, AUTHOR, document["document_id"], apply_command)
+    replay = document_commands.execute(TENANT, AUTHOR, document["document_id"], apply_command)
     assert replay["idempotent_replay"] is True
     assert replay["job_id"] == apply_response["job_id"]
     assert BusinessDocumentJob.select().where(BusinessDocumentJob.job_type == "PLAN_CHANGES").count() == 1
@@ -1148,7 +1148,7 @@ def test_full_workflow_is_versioned_idempotent_and_append_only(database):
     after_sections = {section["id"]: section for section in document["current_revision"]["document_ast"]["sections"]}
     assert after_sections["1"] == before_sections["1"]
     assert after_sections["5.5"]["blocks"] == [{"type": "paragraph", "text": "Контроль ошибок"}]
-    revisions = BusinessDocumentService.list_revisions(TENANT, document["document_id"], AUTHOR)
+    revisions = document_queries.list_revisions(document["document_id"])
     assert revisions[0] == revision_one
     assert len(revisions) == 2
     assert BusinessDocumentAnswer.select().count() == 2
@@ -1168,7 +1168,7 @@ def test_partial_proposal_changes_keep_review_open_and_apply_each_decision_once(
     review_cycle = document["active_review_cycle"]
     proposal_ids = {proposal["text"]: proposal["proposal_id"] for proposal in document["protocol"]["proposals"]}
 
-    first_decision = BusinessDocumentService.execute_command(
+    first_decision = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -1181,7 +1181,7 @@ def test_partial_proposal_changes_keep_review_open_and_apply_each_decision_once(
             },
         ),
     )
-    document = BusinessDocumentService.get_document(TENANT, first_decision["document_id"], AUTHOR)
+    document = document_queries.get_document(first_decision["document_id"], AUTHOR)
     document = _complete_review_assessment(document)
     first_event = next(
         event
@@ -1189,7 +1189,7 @@ def test_partial_proposal_changes_keep_review_open_and_apply_each_decision_once(
         if event.payload["proposal_id"] == proposal_ids["Добавить метрику ошибок"]
     )
     first_revision = document["current_revision"]
-    first_apply = BusinessDocumentService.execute_command(
+    first_apply = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -1233,7 +1233,7 @@ def test_partial_proposal_changes_keep_review_open_and_apply_each_decision_once(
         "Добавить порог предупреждения": "PENDING",
     }
 
-    second_decision = BusinessDocumentService.execute_command(
+    second_decision = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -1246,7 +1246,7 @@ def test_partial_proposal_changes_keep_review_open_and_apply_each_decision_once(
             },
         ),
     )
-    document = BusinessDocumentService.get_document(TENANT, second_decision["document_id"], AUTHOR)
+    document = document_queries.get_document(second_decision["document_id"], AUTHOR)
     document = _complete_review_assessment(document)
     second_event = (
         BusinessDocumentEvent.select()
@@ -1255,7 +1255,7 @@ def test_partial_proposal_changes_keep_review_open_and_apply_each_decision_once(
         .get()
     )
     second_revision = document["current_revision"]
-    second_apply = BusinessDocumentService.execute_command(
+    second_apply = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -1296,7 +1296,7 @@ def test_partial_proposal_changes_keep_review_open_and_apply_each_decision_once(
     invalid_plan = deepcopy(change_plan)
     invalid_plan["operations"][0]["source_event_ids"] = [first_event.id, second_event.id]
     with pytest.raises(BusinessDocumentError) as caught:
-        BusinessDocumentService.complete_job(
+        job_completion.complete(
             TENANT,
             "worker-1",
             second_apply["job_id"],
@@ -1306,7 +1306,7 @@ def test_partial_proposal_changes_keep_review_open_and_apply_each_decision_once(
     assert caught.value.code == "CHANGE_SOURCE_NOT_ACTIVE"
     assert caught.value.details == {"event_id": first_event.id}
 
-    document = BusinessDocumentService.complete_job(
+    document = job_completion.complete(
         TENANT,
         "worker-1",
         second_apply["job_id"],
@@ -1329,7 +1329,7 @@ def test_pending_proposals_without_ready_changes_cannot_close_review(database):
     assert "DECIDE_PROPOSAL" in document["allowed_commands"]
     assert "APPLY_CHANGES" not in document["allowed_commands"]
     with pytest.raises(BusinessDocumentError) as caught:
-        BusinessDocumentService.execute_command(
+        document_commands.execute(
             TENANT,
             AUTHOR,
             document["document_id"],
@@ -1349,7 +1349,7 @@ def test_pending_proposals_without_ready_changes_cannot_close_review(database):
 def test_no_change_disposition_is_recorded_without_closing_pending_proposals(database):
     document = _request_and_complete_draft(_create(), proposals=[{"text": "Добавить метрику ошибок"}])
     revision = document["current_revision"]
-    response = BusinessDocumentService.execute_command(
+    response = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -1364,11 +1364,11 @@ def test_no_change_disposition_is_recorded_without_closing_pending_proposals(dat
             },
         ),
     )
-    document = BusinessDocumentService.get_document(TENANT, response["document_id"], AUTHOR)
+    document = document_queries.get_document(response["document_id"], AUTHOR)
     comment_event = BusinessDocumentEvent.get((BusinessDocumentEvent.document_id == document["document_id"]) & (BusinessDocumentEvent.event_type == "AuthorCommentAdded"))
     document = _complete_review_assessment(document, comment_disposition="NO_CHANGE")
     assert "APPLY_CHANGES" in document["allowed_commands"]
-    requested = BusinessDocumentService.execute_command(
+    requested = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -1409,7 +1409,7 @@ def test_partial_review_feedback_can_be_assessed_once_without_changing_revision(
     revision = deepcopy(document["current_revision"])
     assert "REQUEST_REVIEW_ASSESSMENT" not in document["allowed_commands"]
     with pytest.raises(BusinessDocumentError) as caught:
-        BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_REVIEW_ASSESSMENT"))
+        document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_REVIEW_ASSESSMENT"))
     assert caught.value.code == "OPEN_REVIEW_QUESTIONS"
 
     payload = {
@@ -1417,8 +1417,8 @@ def test_partial_review_feedback_can_be_assessed_once_without_changing_revision(
         "DECIDE_PROPOSAL": {"proposal_id": document["protocol"]["proposals"][0]["proposal_id"], "decision": "ACCEPTED"},
         "ADD_COMMENT": {"revision_id": revision["revision_id"], "section_id": None, "text": "Уточнить сроки", "anchor": None},
     }[feedback_type]
-    BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, feedback_type, payload))
-    document = BusinessDocumentService.get_document(TENANT, document["document_id"], AUTHOR)
+    document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, feedback_type, payload))
+    document = document_queries.get_document(document["document_id"], AUTHOR)
     assert "REQUEST_REVIEW_ASSESSMENT" in document["allowed_commands"]
     assert "ANSWER_QUESTION" in document["allowed_commands"]
     assert "APPLY_CHANGES" not in document["allowed_commands"]
@@ -1433,16 +1433,16 @@ def test_partial_review_feedback_can_be_assessed_once_without_changing_revision(
     assessment = BusinessDocumentEvent.get((BusinessDocumentEvent.document_id == document["document_id"]) & (BusinessDocumentEvent.event_type == "ReviewAssessed"))
     assert assessment.payload["outcome"] == "NEEDS_INPUT"
     with pytest.raises(BusinessDocumentError) as caught:
-        BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_REVIEW_ASSESSMENT"))
+        document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_REVIEW_ASSESSMENT"))
     assert caught.value.code == "OPEN_REVIEW_QUESTIONS"
 
-    BusinessDocumentService.execute_command(
+    document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
         _command(document, "ADD_COMMENT", {"revision_id": revision["revision_id"], "section_id": None, "text": "Ещё одно уточнение", "anchor": None}),
     )
-    document = BusinessDocumentService.get_document(TENANT, document["document_id"], AUTHOR)
+    document = document_queries.get_document(document["document_id"], AUTHOR)
     assert "REQUEST_REVIEW_ASSESSMENT" in document["allowed_commands"]
 
 
@@ -1453,16 +1453,16 @@ def test_apply_is_rejected_while_review_question_is_open_without_mutation_or_job
     command = _command(document, "APPLY_CHANGES", {"base_revision_id": revision["revision_id"]}, key="blocked-apply")
 
     with pytest.raises(BusinessDocumentError) as caught:
-        BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], command)
+        document_commands.execute(TENANT, AUTHOR, document["document_id"], command)
 
     assert caught.value.code == "OPEN_REVIEW_QUESTIONS"
-    after = BusinessDocumentService.get_document(TENANT, document["document_id"], AUTHOR)
+    after = document_queries.get_document(document["document_id"], AUTHOR)
     assert after["state_version"] == document["state_version"]
     assert after["current_revision"] == revision
     assert BusinessDocumentJob.select().where(BusinessDocumentJob.job_type == "PLAN_CHANGES").count() == 0
     assert BusinessDocumentCommand.get(BusinessDocumentCommand.idempotency_key == "blocked-apply").response["accepted"] is False
     with pytest.raises(BusinessDocumentError) as replayed:
-        BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], command)
+        document_commands.execute(TENANT, AUTHOR, document["document_id"], command)
     assert replayed.value.code == "OPEN_REVIEW_QUESTIONS"
 
 
@@ -1471,27 +1471,27 @@ def test_state_version_and_idempotency_payload_conflicts_are_rejected(database):
     document = _create()
     stale = _command(document, "REQUEST_DRAFT", expected=document["state_version"] + 1)
     with pytest.raises(BusinessDocumentError) as caught:
-        BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], stale)
+        document_commands.execute(TENANT, AUTHOR, document["document_id"], stale)
     assert caught.value.code == "STATE_VERSION_CONFLICT"
 
     valid = _command(document, "REQUEST_INTAKE_ASSESSMENT", key="same-key")
-    BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], valid)
+    document_commands.execute(TENANT, AUTHOR, document["document_id"], valid)
     conflicting = {**valid, "command_id": "different-command"}
     with pytest.raises(BusinessDocumentError) as caught:
-        BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], conflicting)
+        document_commands.execute(TENANT, AUTHOR, document["document_id"], conflicting)
     assert caught.value.code == "IDEMPOTENCY_CONFLICT"
 
 
 @pytest.mark.p0
 def test_authors_can_open_foreign_documents_while_unknown_ids_stay_non_enumerable(database):
     document = _create()
-    projection = BusinessDocumentService.get_document("another-tenant", document["document_id"], "another-author")
+    projection = document_queries.get_document(document["document_id"], "another-author")
     assert projection["document_id"] == document["document_id"]
     assert projection["permissions"] == {"read": True, "edit": False, "delete": False, "assign": False}
     assert projection["allowed_commands"] == []
 
     with pytest.raises(BusinessDocumentError) as caught:
-        BusinessDocumentService.get_document("another-tenant", "missing-document", AUTHOR)
+        document_queries.get_document("missing-document", AUTHOR)
     assert caught.value.status == 404
     assert caught.value.code == "DOCUMENT_NOT_FOUND"
 
@@ -1501,14 +1501,14 @@ def test_shared_access_list_and_server_assigned_chat(database):
     User.create(id=AUTHOR, nickname="Первый автор", email="author-1@example.com")
     first = _create(title="Первый")
     second = _create(title="Второй")
-    listing = BusinessDocumentService.list_documents(TENANT, AUTHOR, page=1, page_size=1)
+    listing = document_queries.list_documents(AUTHOR, page=1, page_size=1)
     assert listing["total"] == 2
     assert len(listing["items"]) == 1
     assert listing["items"][0]["document_id"] in {first["document_id"], second["document_id"]}
     assert listing["items"][0]["owner_name"] == "Первый автор"
     assert first["chat_id"].startswith("business-document:")
 
-    shared = BusinessDocumentService.get_document("another-tenant", first["document_id"], "another-user")
+    shared = document_queries.get_document(first["document_id"], "another-user")
     assert shared["document_id"] == first["document_id"]
     assert shared["owner_name"] == "Первый автор"
     assert shared["permissions"]["edit"] is False
@@ -1520,7 +1520,7 @@ def test_shared_access_list_and_server_assigned_chat(database):
 @pytest.mark.p0
 def test_business_document_role_matrix_controls_create_edit_delete_and_assignment(database):
     owned = _create(title="Документ автора")
-    foreign = BusinessDocumentService.create_document(
+    foreign = document_creation.execute(
         "tenant-2",
         "author-2",
         {
@@ -1531,7 +1531,7 @@ def test_business_document_role_matrix_controls_create_edit_delete_and_assignmen
         },
     )
 
-    author_listing = BusinessDocumentService.list_documents(TENANT, AUTHOR)
+    author_listing = document_queries.list_documents(AUTHOR)
     assert {item["document_id"] for item in author_listing["items"]} == {owned["document_id"], foreign["document_id"]}
     assert all(item["access_role"] == "AUTHOR_CREATOR" for item in author_listing["items"])
     permissions_by_id = {item["document_id"]: item["permissions"] for item in author_listing["items"]}
@@ -1545,16 +1545,16 @@ def test_business_document_role_matrix_controls_create_edit_delete_and_assignmen
         "delete": False,
         "assign": False,
     }
-    mine_listing = BusinessDocumentService.list_documents(TENANT, AUTHOR, scope="mine")
+    mine_listing = document_queries.list_documents(AUTHOR, scope="mine")
     assert [item["document_id"] for item in mine_listing["items"]] == [owned["document_id"]]
     assert mine_listing["scope"] == "mine"
 
-    foreign_projection = BusinessDocumentService.get_document(TENANT, foreign["document_id"], AUTHOR)
+    foreign_projection = document_queries.get_document(foreign["document_id"], AUTHOR)
     assert foreign_projection["permissions"]["edit"] is False
     assert foreign_projection["allowed_commands"] == []
 
     with pytest.raises(BusinessDocumentError) as denied:
-        BusinessDocumentService.execute_command(
+        document_commands.execute(
             TENANT,
             AUTHOR,
             foreign["document_id"],
@@ -1562,7 +1562,7 @@ def test_business_document_role_matrix_controls_create_edit_delete_and_assignmen
         )
     assert denied.value.code == "DOCUMENT_PERMISSION_DENIED"
 
-    command = BusinessDocumentService.execute_command(
+    command = document_commands.execute(
         TENANT,
         AUTHOR,
         foreign["document_id"],
@@ -1578,7 +1578,7 @@ def test_business_document_role_matrix_controls_create_edit_delete_and_assignmen
     assert ledger.tenant_id == "tenant-2"
 
     with pytest.raises(BusinessDocumentError) as denied_create:
-        BusinessDocumentService.create_document(
+        document_creation.execute(
             TENANT,
             AUTHOR,
             {"schema_version": "1", "document_type": "business_requirements", "title": "Нельзя", "idea": "Нет права"},
@@ -1586,17 +1586,17 @@ def test_business_document_role_matrix_controls_create_edit_delete_and_assignmen
         )
     assert denied_create.value.code == "DOCUMENT_PERMISSION_DENIED"
 
-    admin_listing = BusinessDocumentService.list_documents("admin-tenant", "admin-user", is_admin=True)
+    admin_listing = document_queries.list_documents("admin-user", is_admin=True)
     assert {item["document_id"] for item in admin_listing["items"]} == {owned["document_id"], foreign["document_id"]}
     assert all(item["access_role"] == "ADMIN" for item in admin_listing["items"])
     assert all(item["permissions"] == {"read": True, "edit": True, "delete": True, "assign": True} for item in admin_listing["items"])
 
-    admin_projection = BusinessDocumentService.get_document("admin-tenant", foreign["document_id"], "admin-user", is_admin=True)
+    admin_projection = document_queries.get_document(foreign["document_id"], "admin-user", is_admin=True)
     assert admin_projection["access_role"] == "ADMIN"
     assert admin_projection["permissions"] == {"read": True, "edit": True, "delete": True, "assign": True}
     assert admin_projection["allowed_commands"] == []
 
-    admin_created = BusinessDocumentService.create_document(
+    admin_created = document_creation.execute(
         "admin-user",
         "admin-user",
         {
@@ -1627,7 +1627,7 @@ def test_access_user_listing_uses_canonical_admin_role_normalization(database):
         is_superuser=True,
     )
 
-    users = BusinessDocumentService.list_access_users(
+    users = document_queries.list_access_users(
         "moderator-1",
         access_role="EXTENDED_MODERATOR",
     )
@@ -1645,7 +1645,7 @@ def test_extended_moderator_assigns_document_and_admin_manages_document_roles(da
     User.create(id="author-2", nickname="Второй автор", email="author-2@example.com")
     document = _create()
 
-    users = BusinessDocumentService.list_access_users("moderator-1", access_role="EXTENDED_MODERATOR")
+    users = document_queries.list_access_users("moderator-1", access_role="EXTENDED_MODERATOR")
     assert {(item["nickname"], item["email"]) for item in users["items"]} == {
         ("Первый автор", "author-1@example.com"),
         ("Второй автор", "author-2@example.com"),
@@ -1686,8 +1686,8 @@ def test_extended_moderator_assigns_document_and_admin_manages_document_roles(da
     assert assignment_event.create_time == assignment_event.update_time
     assert assignment_event.create_date == assignment_event.update_date
 
-    assert BusinessDocumentService.get_document(TENANT, document["document_id"], AUTHOR)["permissions"]["edit"] is False
-    assert BusinessDocumentService.get_document(TENANT, document["document_id"], "author-2")["permissions"]["edit"] is True
+    assert document_queries.get_document(document["document_id"], AUTHOR)["permissions"]["edit"] is False
+    assert document_queries.get_document(document["document_id"], "author-2")["permissions"]["edit"] is True
 
     persisted = BusinessDocument.get_by_id(document["document_id"])
     unchanged_update_time = persisted.update_time
@@ -1727,8 +1727,7 @@ def test_extended_moderator_assigns_document_and_admin_manages_document_roles(da
     assert reassigned["access_role"] == "ADMIN"
     assert reassigned["state_version"] == assigned["state_version"] + 1
 
-    changed_role = BusinessDocumentService.update_user_access_role(
-        "admin-user",
+    changed_role = change_user_role.execute(
         "author-2",
         {"role": "AUTHOR_EDITOR"},
         is_admin=True,
@@ -1761,7 +1760,7 @@ def test_assignment_checks_permission_before_truthy_invalid_payload(database):
 def test_changed_assignment_rejects_active_job_without_invalidating_worker_state(database):
     User.create(id="author-2", nickname="Второй автор", email="author-2-active-job@example.com")
     document = _create(title="Assignment during active job")
-    accepted = BusinessDocumentService.execute_command(
+    accepted = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -1892,10 +1891,10 @@ def test_assignment_event_failure_rolls_back_owner_and_version(database, monkeyp
     before = BusinessDocument.get_by_id(document["document_id"])
     event_count = BusinessDocumentEvent.select().where(BusinessDocumentEvent.document_id == document["document_id"]).count()
 
-    def fail_event(**_kwargs):
+    def fail_event(*_args, **_kwargs):
         raise IntegrityError("forced assignment event failure")
 
-    monkeypatch.setattr(BusinessDocumentEvent, "create", staticmethod(fail_event))
+    monkeypatch.setattr(BusinessDocumentEvent, "insert_many", staticmethod(fail_event))
     with pytest.raises(IntegrityError, match="forced assignment event failure"):
         assign_business_document(
             "moderator-1",
@@ -1918,12 +1917,12 @@ def test_assignment_event_failure_rolls_back_owner_and_version(database, monkeyp
 def test_revision_history_records_the_collaborator_who_requested_an_ai_draft(database):
     User.create(id="author-2", nickname="Второй автор", email="author-2@example.com")
     document = _create()
-    assessment = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
+    assessment = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
     document = _complete(
         assessment["job_id"],
         {"schema_version": "1", "outcome": "COMPLETE", "questions": []},
     )
-    requested = BusinessDocumentService.execute_command(
+    requested = document_commands.execute(
         "collaborator-tenant",
         "author-2",
         document["document_id"],
@@ -1955,11 +1954,11 @@ def test_extended_moderator_can_delete_document_and_all_owned_rows_are_removed(d
     document = _create()
 
     with pytest.raises(BusinessDocumentError) as caught:
-        BusinessDocumentService.delete_document(AUTHOR, document["document_id"])
+        document_deletion.execute(AUTHOR, document["document_id"])
     assert caught.value.status == 403
     assert caught.value.code == "DOCUMENT_PERMISSION_DENIED"
 
-    foreign = BusinessDocumentService.create_document(
+    foreign = document_creation.execute(
         "tenant-2",
         "author-2",
         {
@@ -1970,10 +1969,10 @@ def test_extended_moderator_can_delete_document_and_all_owned_rows_are_removed(d
         },
     )
     with pytest.raises(BusinessDocumentError) as caught:
-        BusinessDocumentService.delete_document(AUTHOR, foreign["document_id"])
+        document_deletion.execute(AUTHOR, foreign["document_id"])
     assert caught.value.code == "DOCUMENT_PERMISSION_DENIED"
 
-    result = BusinessDocumentService.delete_document(
+    result = document_deletion.execute(
         "extended-moderator",
         document["document_id"],
         access_role="EXTENDED_MODERATOR",
@@ -1991,26 +1990,138 @@ def test_extended_moderator_can_delete_document_and_all_owned_rows_are_removed(d
 @pytest.mark.p0
 def test_admin_cannot_delete_document_while_background_operation_is_active(database):
     document = _create()
-    BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
+    document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
 
     with pytest.raises(BusinessDocumentError) as caught:
-        BusinessDocumentService.delete_document("admin-user", document["document_id"], is_admin=True)
+        document_deletion.execute("admin-user", document["document_id"], is_admin=True)
     assert caught.value.status == 409
     assert caught.value.code == "OPERATION_IN_PROGRESS"
     assert BusinessDocument.select().where(BusinessDocument.id == document["document_id"]).exists()
 
 
 @pytest.mark.p0
+@pytest.mark.parametrize("status", ["PENDING", "RUNNING", "RETRY"])
+def test_active_job_blocks_delete_even_when_document_operation_is_idle(database, status):
+    document = _create()
+    command = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
+    BusinessDocumentJob.update(status=status).where(BusinessDocumentJob.id == command["job_id"]).execute()
+    BusinessDocument.update(operation_state="IDLE").where(BusinessDocument.id == document["document_id"]).execute()
+
+    with pytest.raises(BusinessDocumentError) as caught:
+        document_deletion.execute("admin-user", document["document_id"], is_admin=True)
+
+    assert caught.value.code == "OPERATION_IN_PROGRESS"
+    assert BusinessDocument.select().where(BusinessDocument.id == document["document_id"]).exists()
+    assert BusinessDocumentJob.select().where(BusinessDocumentJob.id == command["job_id"]).exists()
+
+
+@pytest.mark.parametrize(
+    ("is_admin", "raw", "exists", "superuser", "code", "status"),
+    [
+        (False, None, True, False, "DOCUMENT_PERMISSION_DENIED", 403),
+        (True, None, True, False, "INVALID_ACCESS_ROLE", 422),
+        (True, {"role": "UNKNOWN"}, True, False, "INVALID_ACCESS_ROLE", 422),
+        (True, {"role": "ADMIN"}, True, False, "INVALID_ACCESS_ROLE", 422),
+        (True, {"role": "AUTHOR_EDITOR"}, False, False, "USER_NOT_FOUND", 404),
+        (True, {"role": "AUTHOR_EDITOR"}, True, True, "ADMIN_ROLE_MANAGED_SEPARATELY", 409),
+    ],
+)
+def test_role_changes_preserve_authorization_and_managed_admin_boundaries(database, is_admin, raw, exists, superuser, code, status):
+    if exists:
+        User.create(id="role-target", nickname="Target", email="role-target@example.test", is_superuser=superuser, business_document_role="AUTHOR_CREATOR")
+
+    with pytest.raises(BusinessDocumentError) as caught:
+        change_user_role.execute("role-target", raw, is_admin=is_admin)
+
+    assert (caught.value.code, caught.value.status) == (code, status)
+    if exists:
+        assert User.get_by_id("role-target").business_document_role == "AUTHOR_CREATOR"
+
+
+@pytest.mark.parametrize("failure_point", ["document", "binding", "event"])
+def test_creation_does_not_mask_unrelated_integrity_failures_as_eva_occupancy(database, monkeypatch, failure_point):
+    from peewee import IntegrityError
+
+    binding = {"page_url": "https://eva.example.test/Document/new", "status": "LINK_ONLY"}
+    monkeypatch.setattr(document_creation, "_resolve_binding", lambda *_args: binding)
+
+    def fail_write(*_args, **_kwargs):
+        raise IntegrityError("injected unrelated integrity failure")
+
+    if failure_point == "document":
+        monkeypatch.setattr(BusinessDocument, "create", staticmethod(fail_write))
+    elif failure_point == "binding":
+        monkeypatch.setattr(BusinessDocumentEvaBinding, "create", staticmethod(fail_write))
+    else:
+        monkeypatch.setattr(document_writer, "append_event", fail_write)
+
+    with pytest.raises(IntegrityError, match="injected unrelated integrity failure"):
+        _create()
+
+    assert BusinessDocument.select().count() == 0
+    assert BusinessDocumentEvaBinding.select().count() == 0
+    assert BusinessDocumentEvent.select().count() == 0
+
+
+@pytest.mark.parametrize("size", [1, 10, 100])
+def test_creation_loads_match_occupancy_in_one_query_and_preserves_order(database, monkeypatch, size):
+    from api.apps.business_documents.eva_changes import EvaDocumentChangeService
+
+    occupied = _create(title="Occupied document")
+    matches = [{"page_url": f"https://eva.example.test/Document/{index}", "web_url": f"https://eva.example.test/Document/{index}"} for index in range(size)]
+    with database.atomic():
+        document_writer.store_binding(occupied["document_id"], {**matches[-1], "status": "LINK_ONLY"})
+    monkeypatch.setattr(EvaDocumentChangeService, "find_title_matches", staticmethod(lambda *_args: matches))
+    selects = []
+    execute_sql = database.execute_sql
+
+    def capture(sql, *args, **kwargs):
+        if sql.startswith("SELECT") and '"business_document_eva_binding"' in sql:
+            selects.append(sql)
+        return execute_sql(sql, *args, **kwargs)
+
+    monkeypatch.setattr(database, "execute_sql", capture)
+    with pytest.raises(BusinessDocumentError) as caught:
+        document_creation.execute(TENANT, AUTHOR, {"schema_version": "2", "document_type": "business_requirements", "title": "New document", "idea": "Creation"})
+
+    assert caught.value.code == "EVA_BINDING_DECISION_REQUIRED"
+    actual = caught.value.details["matches"]
+    assert [row["page_url"] for row in actual] == [row["page_url"] for row in matches]
+    assert all(row["binding_available"] for row in actual[:-1])
+    assert actual[-1]["binding_available"] is False
+    assert actual[-1]["linked_document"] == {"document_id": occupied["document_id"], "title": "Occupied document"}
+    assert len(selects) == 1
+    assert "LEFT OUTER JOIN" in selects[0]
+
+
+def test_role_change_rolls_back_when_persistence_fails_after_update(database, monkeypatch):
+    from api.apps.business_documents.adapters.access import PeeweeUserRoleWriter
+
+    User.create(id="role-target", nickname="Target", email="role-target@example.test", business_document_role="AUTHOR_CREATOR")
+    original = PeeweeUserRoleWriter.set_role
+
+    def fail_update(writer, user_id, role):
+        original(writer, user_id, role)
+        raise RuntimeError("role persistence failed")
+
+    monkeypatch.setattr(PeeweeUserRoleWriter, "set_role", fail_update)
+    with pytest.raises(RuntimeError, match="role persistence failed"):
+        change_user_role.execute("role-target", {"role": "AUTHOR_EDITOR"}, is_admin=True)
+
+    assert User.get_by_id("role-target").business_document_role == "AUTHOR_CREATOR"
+
+
+@pytest.mark.p0
 def test_draft_requires_complete_assessment_after_last_intake_answer(database):
     document = _create()
     with pytest.raises(BusinessDocumentError) as caught:
-        BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_DRAFT"))
+        document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_DRAFT"))
     assert caught.value.code == "INTAKE_ASSESSMENT_REQUIRED"
 
-    assessment = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
+    assessment = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
     document = _complete(assessment["job_id"], _question_batch(), worker="worker")
     question = document["protocol"]["questions"][0]
-    response = BusinessDocumentService.execute_command(
+    response = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -2020,9 +2131,9 @@ def test_draft_requires_complete_assessment_after_last_intake_answer(database):
             {"question_id": question["question_id"], "selected_option_id": "individuals", "custom_answer": None},
         ),
     )
-    document = BusinessDocumentService.get_document(TENANT, response["document_id"], AUTHOR)
+    document = document_queries.get_document(response["document_id"], AUTHOR)
     with pytest.raises(BusinessDocumentError) as caught:
-        BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_DRAFT"))
+        document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_DRAFT"))
     assert caught.value.code == "INTAKE_ASSESSMENT_REQUIRED"
     assert "REQUEST_INTAKE_ASSESSMENT" in document["allowed_commands"]
 
@@ -2030,7 +2141,7 @@ def test_draft_requires_complete_assessment_after_last_intake_answer(database):
 @pytest.mark.p0
 def test_question_schema_boundary_rejects_five_options_and_rolls_back(database):
     document = _create()
-    requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
+    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
     invalid = _question_batch()
     invalid["questions"][0]["options"] += [
         {"option_id": "third", "label": "Третий"},
@@ -2042,13 +2153,13 @@ def test_question_schema_boundary_rejects_five_options_and_rolls_back(database):
     assert caught.value.code == "INVALID_QUESTION_BATCH"
     job = BusinessDocumentJob.get_by_id(requested["job_id"])
     assert job.status == "RUNNING"
-    assert BusinessDocumentService.get_document(TENANT, document["document_id"], AUTHOR)["operation_state"] == "ANALYZING"
+    assert document_queries.get_document(document["document_id"], AUTHOR)["operation_state"] == "ANALYZING"
 
 
 @pytest.mark.p0
 def test_question_answers_and_proposal_decisions_are_immutable(database):
     document = _create()
-    assessment = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
+    assessment = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
     document = _complete(assessment["job_id"], _question_batch(), worker="worker")
     question_id = document["protocol"]["questions"][0]["question_id"]
     first = _command(
@@ -2056,10 +2167,10 @@ def test_question_answers_and_proposal_decisions_are_immutable(database):
         "ANSWER_QUESTION",
         {"question_id": question_id, "selected_option_id": "individuals", "custom_answer": None},
     )
-    BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], first)
-    document = BusinessDocumentService.get_document(TENANT, document["document_id"], AUTHOR)
+    document_commands.execute(TENANT, AUTHOR, document["document_id"], first)
+    document = document_queries.get_document(document["document_id"], AUTHOR)
     with pytest.raises(BusinessDocumentError) as caught:
-        BusinessDocumentService.execute_command(
+        document_commands.execute(
             TENANT,
             AUTHOR,
             document["document_id"],
@@ -2071,10 +2182,10 @@ def test_question_answers_and_proposal_decisions_are_immutable(database):
     document = _request_and_complete_draft(document, proposals=[{"text": "Добавить метрику"}])
     proposal_id = document["protocol"]["proposals"][0]["proposal_id"]
     first = _command(document, "DECIDE_PROPOSAL", {"proposal_id": proposal_id, "decision": "ACCEPTED"})
-    BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], first)
-    document = BusinessDocumentService.get_document(TENANT, document["document_id"], AUTHOR)
+    document_commands.execute(TENANT, AUTHOR, document["document_id"], first)
+    document = document_queries.get_document(document["document_id"], AUTHOR)
     with pytest.raises(BusinessDocumentError) as caught:
-        BusinessDocumentService.execute_command(
+        document_commands.execute(
             TENANT,
             AUTHOR,
             document["document_id"],
@@ -2088,16 +2199,16 @@ def test_question_answers_and_proposal_decisions_are_immutable(database):
 def test_rejected_proposal_cannot_authorize_change(database):
     document = _request_and_complete_draft(_create(), proposals=[{"text": "Удалить мониторинг"}])
     proposal_id = document["protocol"]["proposals"][0]["proposal_id"]
-    decision = BusinessDocumentService.execute_command(
+    decision = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
         _command(document, "DECIDE_PROPOSAL", {"proposal_id": proposal_id, "decision": "REJECTED"}),
     )
-    document = BusinessDocumentService.get_document(TENANT, decision["document_id"], AUTHOR)
+    document = document_queries.get_document(decision["document_id"], AUTHOR)
     document = _complete_review_assessment(document)
     rejected_event = BusinessDocumentEvent.get((BusinessDocumentEvent.document_id == document["document_id"]) & (BusinessDocumentEvent.event_type == "ProposalDecided"))
-    request = BusinessDocumentService.execute_command(
+    request = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -2132,9 +2243,9 @@ def test_rejected_proposal_cannot_authorize_change(database):
 @pytest.mark.p1
 def test_stale_worker_result_cannot_create_revision(database):
     document = _create()
-    assessment = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
+    assessment = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
     document = _complete(assessment["job_id"], {"schema_version": "1", "outcome": "COMPLETE", "questions": []}, worker="worker")
-    requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_DRAFT"))
+    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_DRAFT"))
     BusinessDocument.update(state_version=requested["state_version"] + 1).where(BusinessDocument.id == document["document_id"]).execute()
     with pytest.raises(BusinessDocumentError) as caught:
         _complete(
@@ -2197,7 +2308,7 @@ def test_required_sections_cannot_be_empty_and_child_headings_are_nested(databas
 def test_change_plan_cannot_rewrite_unlisted_sections_or_use_stale_section_hash(database):
     document = _request_and_complete_draft(_create())
     original = deepcopy(document["current_revision"])
-    comment = BusinessDocumentService.execute_command(
+    comment = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -2207,10 +2318,10 @@ def test_change_plan_cannot_rewrite_unlisted_sections_or_use_stale_section_hash(
             {"revision_id": original["revision_id"], "section_id": None, "text": "Добавить метрику ошибок", "anchor": None},
         ),
     )
-    document = BusinessDocumentService.get_document(TENANT, comment["document_id"], AUTHOR)
+    document = document_queries.get_document(comment["document_id"], AUTHOR)
     comment_event = BusinessDocumentEvent.get((BusinessDocumentEvent.document_id == document["document_id"]) & (BusinessDocumentEvent.event_type == "AuthorCommentAdded"))
     document = _complete_review_assessment(document)
-    requested = BusinessDocumentService.execute_command(
+    requested = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -2239,7 +2350,7 @@ def test_change_plan_cannot_rewrite_unlisted_sections_or_use_stale_section_hash(
             },
         )
     assert caught.value.code == "SECTION_HASH_CONFLICT"
-    assert BusinessDocumentService.list_revisions(TENANT, document["document_id"], AUTHOR) == [original]
+    assert document_queries.list_revisions(document["document_id"]) == [original]
 
 
 @pytest.mark.p0
@@ -2247,7 +2358,7 @@ def test_no_op_review_agrees_existing_revision_without_duplicate(database):
     document = _request_and_complete_draft(_create())
     original_revision = deepcopy(document["current_revision"])
     document = _complete_review_assessment(document)
-    requested = BusinessDocumentService.execute_command(
+    requested = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -2275,7 +2386,7 @@ def test_no_op_review_agrees_existing_revision_without_duplicate(database):
 def test_no_op_requires_explicit_disposition_for_current_review_inputs(database):
     document = _request_and_complete_draft(_create())
     original_revision = deepcopy(document["current_revision"])
-    response = BusinessDocumentService.execute_command(
+    response = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -2285,10 +2396,10 @@ def test_no_op_requires_explicit_disposition_for_current_review_inputs(database)
             {"revision_id": original_revision["revision_id"], "section_id": None, "text": "Проверено, менять не нужно", "anchor": None},
         ),
     )
-    document = BusinessDocumentService.get_document(TENANT, response["document_id"], AUTHOR)
+    document = document_queries.get_document(response["document_id"], AUTHOR)
     comment_event = BusinessDocumentEvent.get((BusinessDocumentEvent.document_id == document["document_id"]) & (BusinessDocumentEvent.event_type == "AuthorCommentAdded"))
     document = _complete_review_assessment(document, comment_disposition="NO_CHANGE")
-    requested = BusinessDocumentService.execute_command(
+    requested = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -2317,16 +2428,16 @@ def test_no_op_requires_explicit_disposition_for_current_review_inputs(database)
         }
     ]
     with pytest.raises(BusinessDocumentError) as caught:
-        BusinessDocumentService.complete_job(TENANT, "no-op-worker", job.id, plan, job.lease_token)
+        job_completion.complete(TENANT, "no-op-worker", job.id, plan, job.lease_token)
     assert caught.value.code == "COMMENT_CHANGE_NOT_CONFIRMED"
 
     plan["change_plan"]["operations"] = []
     with pytest.raises(BusinessDocumentError) as caught:
-        BusinessDocumentService.complete_job(TENANT, "no-op-worker", job.id, plan, job.lease_token)
+        job_completion.complete(TENANT, "no-op-worker", job.id, plan, job.lease_token)
     assert caught.value.code == "CHANGE_INPUT_OMITTED"
 
     plan["change_plan"]["acknowledged_no_change_event_ids"] = [comment_event.id]
-    agreed = BusinessDocumentService.complete_job(TENANT, "no-op-worker", job.id, plan, job.lease_token)
+    agreed = job_completion.complete(TENANT, "no-op-worker", job.id, plan, job.lease_token)
     assert agreed["lifecycle_state"] == "AGREED"
     assert agreed["current_revision"] == original_revision
     assert BusinessDocumentRevision.select().count() == 1
@@ -2336,14 +2447,14 @@ def test_no_op_requires_explicit_disposition_for_current_review_inputs(database)
 def test_accepted_proposal_cannot_be_silently_omitted(database):
     document = _request_and_complete_draft(_create(), proposals=[{"text": "Добавить метрику"}])
     proposal_id = document["protocol"]["proposals"][0]["proposal_id"]
-    response = BusinessDocumentService.execute_command(
+    response = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
         _command(document, "DECIDE_PROPOSAL", {"proposal_id": proposal_id, "decision": "ACCEPTED"}),
     )
-    document = BusinessDocumentService.get_document(TENANT, response["document_id"], AUTHOR)
-    comment = BusinessDocumentService.execute_command(
+    document = document_queries.get_document(response["document_id"], AUTHOR)
+    comment = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -2353,10 +2464,10 @@ def test_accepted_proposal_cannot_be_silently_omitted(database):
             {"revision_id": document["current_revision"]["revision_id"], "section_id": None, "text": "Уточнить описание", "anchor": None},
         ),
     )
-    document = BusinessDocumentService.get_document(TENANT, comment["document_id"], AUTHOR)
+    document = document_queries.get_document(comment["document_id"], AUTHOR)
     comment_event = BusinessDocumentEvent.get((BusinessDocumentEvent.document_id == document["document_id"]) & (BusinessDocumentEvent.event_type == "AuthorCommentAdded"))
     document = _complete_review_assessment(document)
-    requested = BusinessDocumentService.execute_command(
+    requested = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -2393,16 +2504,16 @@ def test_accepted_proposal_cannot_be_silently_omitted(database):
 def test_accepted_proposal_cannot_be_acknowledged_as_no_change(database):
     document = _request_and_complete_draft(_create(), proposals=[{"text": "Добавить метрику"}])
     proposal_id = document["protocol"]["proposals"][0]["proposal_id"]
-    response = BusinessDocumentService.execute_command(
+    response = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
         _command(document, "DECIDE_PROPOSAL", {"proposal_id": proposal_id, "decision": "ACCEPTED"}),
     )
-    document = BusinessDocumentService.get_document(TENANT, response["document_id"], AUTHOR)
+    document = document_queries.get_document(response["document_id"], AUTHOR)
     document = _complete_review_assessment(document)
     accepted_event = BusinessDocumentEvent.get((BusinessDocumentEvent.document_id == document["document_id"]) & (BusinessDocumentEvent.event_type == "ProposalDecided"))
-    requested = BusinessDocumentService.execute_command(
+    requested = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -2431,7 +2542,7 @@ def test_accepted_proposal_cannot_be_acknowledged_as_no_change(database):
 def test_change_source_must_match_active_cycle_and_target_section(database):
     document = _request_and_complete_draft(_create(), review_questions=_question_batch("REVIEW", "audience"))
     question = document["protocol"]["questions"][0]
-    response = BusinessDocumentService.execute_command(
+    response = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -2441,14 +2552,14 @@ def test_change_source_must_match_active_cycle_and_target_section(database):
             {"question_id": question["question_id"], "selected_option_id": "individuals", "custom_answer": None},
         ),
     )
-    document = BusinessDocumentService.get_document(TENANT, response["document_id"], AUTHOR)
+    document = document_queries.get_document(response["document_id"], AUTHOR)
     answer_event = next(
         event
         for event in BusinessDocumentEvent.select().where((BusinessDocumentEvent.document_id == document["document_id"]) & (BusinessDocumentEvent.event_type == "QuestionAnswered"))
         if event.payload["question_id"] == question["question_id"]
     )
     document = _complete_review_assessment(document)
-    requested = BusinessDocumentService.execute_command(
+    requested = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -2486,7 +2597,7 @@ def test_confirmed_anchored_comment_may_request_a_cross_section_change(database)
     document = _request_and_complete_draft(_create())
     revision = document["current_revision"]
     selected_text = revision["section_texts"]["3.3"]
-    response = BusinessDocumentService.execute_command(
+    response = document_commands.execute(
         "collaborator-tenant",
         "author-2",
         document["document_id"],
@@ -2510,10 +2621,10 @@ def test_confirmed_anchored_comment_may_request_a_cross_section_change(database)
         ),
         access_role="MODERATOR_CREATOR",
     )
-    document = BusinessDocumentService.get_document(TENANT, response["document_id"], AUTHOR)
+    document = document_queries.get_document(response["document_id"], AUTHOR)
     comment_event = BusinessDocumentEvent.get((BusinessDocumentEvent.document_id == document["document_id"]) & (BusinessDocumentEvent.event_type == "AuthorCommentAdded"))
     document = _complete_review_assessment(document)
-    requested = BusinessDocumentService.execute_command(
+    requested = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -2566,7 +2677,7 @@ def test_confirmed_anchored_comment_may_request_a_cross_section_change(database)
 def test_confirmed_document_comment_may_authorize_changes_in_multiple_sections(database):
     document = _request_and_complete_draft(_create())
     revision = document["current_revision"]
-    response = BusinessDocumentService.execute_command(
+    response = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -2581,10 +2692,10 @@ def test_confirmed_document_comment_may_authorize_changes_in_multiple_sections(d
             },
         ),
     )
-    document = BusinessDocumentService.get_document(TENANT, response["document_id"], AUTHOR)
+    document = document_queries.get_document(response["document_id"], AUTHOR)
     comment_event = BusinessDocumentEvent.get((BusinessDocumentEvent.document_id == document["document_id"]) & (BusinessDocumentEvent.event_type == "AuthorCommentAdded"))
     document = _complete_review_assessment(document)
-    requested = BusinessDocumentService.execute_command(
+    requested = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -2657,7 +2768,7 @@ def test_link_only_eva_binding_can_be_reconnected_without_rewriting_creation_eve
     original_created_payload = deepcopy(created_event.payload)
     monkeypatch.setattr(EvaDocumentChangeService, "resolve_page_url", staticmethod(lambda _actor_id, _page_url: connected))
 
-    rebound = BusinessDocumentService.rebind_eva(
+    rebound = eva_synchronization.rebind_eva(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -2709,7 +2820,7 @@ def test_verified_eva_binding_supports_governed_pull_and_outbound_change(databas
         )
     )
     document = _complete_review_assessment(document)
-    requested = BusinessDocumentService.execute_command(
+    requested = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -2739,12 +2850,13 @@ def test_verified_eva_binding_supports_governed_pull_and_outbound_change(databas
         "remote_version": "2|published-2|2026-09-01",
         "remote_content_hash": "sha256:changed",
     }
+    read_connected_page = EvaDocumentChangeService.read_connected_page
     monkeypatch.setattr(
         EvaDocumentChangeService,
         "read_connected_page",
         staticmethod(lambda _actor_id, _binding: (refreshed_binding, "# Изменённая EVA")),
     )
-    update_status = BusinessDocumentService.check_eva_update(
+    update_status = eva_synchronization.check_eva_update(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -2767,7 +2879,7 @@ def test_verified_eva_binding_supports_governed_pull_and_outbound_change(databas
         return {"change_id": "eva-change-1", "draft_markdown": raw["draft_markdown"]}
 
     monkeypatch.setattr(EvaDocumentChangeService, "create_change", staticmethod(create_change))
-    outbound = BusinessDocumentService.create_eva_change_from_revision(
+    outbound = eva_synchronization.create_eva_change_from_revision(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -2794,7 +2906,8 @@ def test_verified_eva_binding_supports_governed_pull_and_outbound_change(databas
         "_connector",
         staticmethod(lambda _connector_id, _actor_id: (None, EvaClient())),
     )
-    pulled = BusinessDocumentService.pull_from_eva(
+    monkeypatch.setattr(EvaDocumentChangeService, "read_connected_page", read_connected_page)
+    pulled = eva_synchronization.pull_from_eva(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -2821,7 +2934,7 @@ def test_verified_eva_binding_supports_governed_pull_and_outbound_change(databas
 def test_export_from_review_requires_agreed_revision(database):
     document = _request_and_complete_draft(_create())
     with pytest.raises(BusinessDocumentError) as caught:
-        BusinessDocumentService.execute_command(
+        document_commands.execute(
             TENANT,
             AUTHOR,
             document["document_id"],
@@ -2843,7 +2956,7 @@ def test_list_pagination_boundaries_are_rejected(database, page, page_size):
     _create()
 
     with pytest.raises(BusinessDocumentError) as caught:
-        BusinessDocumentService.list_documents(TENANT, AUTHOR, page=page, page_size=page_size)
+        document_queries.list_documents(AUTHOR, page=page, page_size=page_size)
 
     assert caught.value.code == "INVALID_PAGINATION"
 
@@ -2851,7 +2964,7 @@ def test_list_pagination_boundaries_are_rejected(database, page, page_size):
 @pytest.mark.p0
 def test_answer_requires_exactly_one_valid_option_or_custom_text(database):
     document = _create()
-    requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
+    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
     document = _complete(requested["job_id"], _question_batch(), worker="worker")
     question_id = document["protocol"]["questions"][0]["question_id"]
 
@@ -2865,7 +2978,7 @@ def test_answer_requires_exactly_one_valid_option_or_custom_text(database):
     ]
     for index, (payload, error_code) in enumerate(invalid_cases):
         with pytest.raises(BusinessDocumentError) as caught:
-            BusinessDocumentService.execute_command(
+            document_commands.execute(
                 TENANT,
                 AUTHOR,
                 document["document_id"],
@@ -2874,7 +2987,7 @@ def test_answer_requires_exactly_one_valid_option_or_custom_text(database):
         assert caught.value.code == error_code
 
     assert BusinessDocumentAnswer.select().count() == 0
-    after = BusinessDocumentService.get_document(TENANT, document["document_id"], AUTHOR)
+    after = document_queries.get_document(document["document_id"], AUTHOR)
     assert after["state_version"] == document["state_version"]
 
 
@@ -2900,7 +3013,7 @@ def test_comment_anchor_requires_current_revision_and_preserves_selected_text(da
         }
 
     with pytest.raises(BusinessDocumentError) as caught:
-        BusinessDocumentService.execute_command(
+        document_commands.execute(
             TENANT,
             AUTHOR,
             document["document_id"],
@@ -2919,7 +3032,7 @@ def test_comment_anchor_requires_current_revision_and_preserves_selected_text(da
     assert caught.value.code == "COMMENT_REVISION_CONFLICT"
 
     with pytest.raises(BusinessDocumentError) as caught:
-        BusinessDocumentService.execute_command(
+        document_commands.execute(
             TENANT,
             AUTHOR,
             document["document_id"],
@@ -2967,7 +3080,7 @@ def test_comment_anchor_requires_current_revision_and_preserves_selected_text(da
         ),
     ):
         with pytest.raises(BusinessDocumentError) as caught:
-            BusinessDocumentService.execute_command(
+            document_commands.execute(
                 TENANT,
                 AUTHOR,
                 document["document_id"],
@@ -2976,7 +3089,7 @@ def test_comment_anchor_requires_current_revision_and_preserves_selected_text(da
         assert caught.value.code in {"COMMENT_SECTION_NOT_FOUND", "INVALID_COMMENT_ANCHOR"}
 
     immutable_anchor = anchor()
-    response = BusinessDocumentService.execute_command(
+    response = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -2995,12 +3108,12 @@ def test_comment_anchor_requires_current_revision_and_preserves_selected_text(da
     stored = BusinessDocumentComment.get(BusinessDocumentComment.document_id == document["document_id"])
     assert stored.anchor == immutable_anchor
     assert response["state_version"] == document["state_version"] + 1
-    document = BusinessDocumentService.get_document(TENANT, response["document_id"], AUTHOR)
+    document = document_queries.get_document(response["document_id"], AUTHOR)
     assert document["protocol"]["comments"][0]["anchor_status"] == "ANCHORED"
 
     comment_event = BusinessDocumentEvent.get((BusinessDocumentEvent.document_id == document["document_id"]) & (BusinessDocumentEvent.event_type == "AuthorCommentAdded"))
     document = _complete_review_assessment(document)
-    requested = BusinessDocumentService.execute_command(
+    requested = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -3036,9 +3149,9 @@ def test_comment_anchor_requires_current_revision_and_preserves_selected_text(da
 @pytest.mark.p0
 def test_comment_anchor_context_window_is_utf16_surrogate_safe(database):
     document = _create()
-    assessed = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
+    assessed = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
     document = _complete(assessed["job_id"], {"schema_version": "1", "outcome": "COMPLETE", "questions": []})
-    requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_DRAFT"))
+    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_DRAFT"))
     draft = _draft()
     section = next(item for item in draft["sections"] if item["id"] == "5.5")
     section["blocks"] = [{"type": "paragraph", "text": "😀" + "a" * 63 + "SELECT"}]
@@ -3052,7 +3165,7 @@ def test_comment_anchor_context_window_is_utf16_surrogate_safe(database):
         worker="emoji-anchor-worker",
     )
     revision = document["current_revision"]
-    response = BusinessDocumentService.execute_command(
+    response = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -3083,7 +3196,7 @@ def test_review_reassessment_appends_questions_and_proposals_without_changing_bo
     document = _request_and_complete_draft(_create())
     assert document["current_revision"]["section_texts"] == {section["id"]: render_section_text(section) for section in document["current_revision"]["document_ast"]["sections"]}
     original_revision = deepcopy(document["current_revision"])
-    comment_response = BusinessDocumentService.execute_command(
+    comment_response = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -3098,9 +3211,9 @@ def test_review_reassessment_appends_questions_and_proposals_without_changing_bo
             },
         ),
     )
-    document = BusinessDocumentService.get_document(TENANT, comment_response["document_id"], AUTHOR)
+    document = document_queries.get_document(comment_response["document_id"], AUTHOR)
     comment_event = BusinessDocumentEvent.get((BusinessDocumentEvent.document_id == document["document_id"]) & (BusinessDocumentEvent.event_type == "AuthorCommentAdded"))
-    requested = BusinessDocumentService.execute_command(
+    requested = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -3157,7 +3270,7 @@ def test_review_reassessment_appends_questions_and_proposals_without_changing_bo
 @pytest.mark.p0
 def test_review_plan_requires_complete_comment_dispositions(database):
     document = _request_and_complete_draft(_create())
-    response = BusinessDocumentService.execute_command(
+    response = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -3172,8 +3285,8 @@ def test_review_plan_requires_complete_comment_dispositions(database):
             },
         ),
     )
-    document = BusinessDocumentService.get_document(TENANT, response["document_id"], AUTHOR)
-    requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_REVIEW_ASSESSMENT"))
+    document = document_queries.get_document(response["document_id"], AUTHOR)
+    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_REVIEW_ASSESSMENT"))
 
     with pytest.raises(BusinessDocumentError) as caught:
         _complete(
@@ -3187,7 +3300,7 @@ def test_review_plan_requires_complete_comment_dispositions(database):
 @pytest.mark.p0
 def test_review_reassessment_rejects_reused_answered_question_tag_before_insertion(database):
     document = _request_and_complete_draft(_create())
-    response = BusinessDocumentService.execute_command(
+    response = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -3202,9 +3315,9 @@ def test_review_reassessment_rejects_reused_answered_question_tag_before_inserti
             },
         ),
     )
-    document = BusinessDocumentService.get_document(TENANT, response["document_id"], AUTHOR)
+    document = document_queries.get_document(response["document_id"], AUTHOR)
     comment_event = BusinessDocumentEvent.get((BusinessDocumentEvent.document_id == document["document_id"]) & (BusinessDocumentEvent.event_type == "AuthorCommentAdded"))
-    requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_REVIEW_ASSESSMENT"))
+    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_REVIEW_ASSESSMENT"))
     document = _complete(
         requested["job_id"],
         {
@@ -3229,7 +3342,7 @@ def test_review_reassessment_rejects_reused_answered_question_tag_before_inserti
         },
     )
     question = document["protocol"]["questions"][0]
-    answered = BusinessDocumentService.execute_command(
+    answered = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -3239,8 +3352,8 @@ def test_review_reassessment_rejects_reused_answered_question_tag_before_inserti
             {"question_id": question["question_id"], "selected_option_id": "all", "custom_answer": None},
         ),
     )
-    document = BusinessDocumentService.get_document(TENANT, answered["document_id"], AUTHOR)
-    requested = BusinessDocumentService.execute_command(
+    document = document_queries.get_document(answered["document_id"], AUTHOR)
+    requested = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -3281,10 +3394,10 @@ def test_review_reassessment_rejects_reused_answered_question_tag_before_inserti
 @pytest.mark.p0
 def test_semantic_dedupe_keeps_questions_and_proposals_immutable(database):
     document = _create()
-    requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
+    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
     document = _complete(requested["job_id"], _question_batch(semantic_tag="AUDIENCE.USERS"))
     question = document["protocol"]["questions"][0]
-    answered = BusinessDocumentService.execute_command(
+    answered = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -3294,8 +3407,8 @@ def test_semantic_dedupe_keeps_questions_and_proposals_immutable(database):
             {"question_id": question["question_id"], "selected_option_id": "individuals", "custom_answer": None},
         ),
     )
-    document = BusinessDocumentService.get_document(TENANT, answered["document_id"], AUTHOR)
-    requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT", key="repeat-intake"))
+    document = document_queries.get_document(answered["document_id"], AUTHOR)
+    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT", key="repeat-intake"))
     document = _complete(requested["job_id"], _question_batch(semantic_tag="audience.users"))
     assert BusinessDocumentQuestion.select().where(BusinessDocumentQuestion.document_id == document["document_id"]).count() == 1
     intake_event = (
@@ -3309,7 +3422,7 @@ def test_semantic_dedupe_keeps_questions_and_proposals_immutable(database):
     assert "REQUEST_DRAFT" in document["allowed_commands"]
 
     document = _request_and_complete_draft(document)
-    comment_response = BusinessDocumentService.execute_command(
+    comment_response = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -3324,12 +3437,12 @@ def test_semantic_dedupe_keeps_questions_and_proposals_immutable(database):
             },
         ),
     )
-    document = BusinessDocumentService.get_document(TENANT, comment_response["document_id"], AUTHOR)
+    document = document_queries.get_document(comment_response["document_id"], AUTHOR)
     comment_event = BusinessDocumentEvent.get((BusinessDocumentEvent.document_id == document["document_id"]) & (BusinessDocumentEvent.event_type == "AuthorCommentAdded"))
 
     def assess(proposal_text, rationale):
         nonlocal document
-        request = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_REVIEW_ASSESSMENT"))
+        request = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_REVIEW_ASSESSMENT"))
         document = _complete(
             request["job_id"],
             {
@@ -3360,7 +3473,7 @@ def test_semantic_dedupe_keeps_questions_and_proposals_immutable(database):
 def test_export_requires_agreed_lifecycle_and_current_revision(database):
     document = _request_and_complete_draft(_create())
     with pytest.raises(BusinessDocumentError) as caught:
-        BusinessDocumentService.execute_command(
+        document_commands.execute(
             TENANT,
             AUTHOR,
             document["document_id"],
@@ -3373,3 +3486,204 @@ def test_export_requires_agreed_lifecycle_and_current_revision(database):
 
     assert caught.value.code == "AGREED_REVISION_REQUIRED"
     assert BusinessDocumentJob.select().where(BusinessDocumentJob.job_type == "GENERATE_EXPORT").count() == 0
+
+
+@pytest.mark.p0
+@pytest.mark.parametrize("command_type", ["APPLY_CHANGES", "PREPARE_CHANGES"])
+def test_eva_pull_in_current_cycle_requires_reassessment_for_direct_commands(database, monkeypatch, command_type):
+    from api.apps.business_documents.eva_changes import EvaDocumentChangeService
+
+    binding = {
+        "page_url": "https://eva.example.com/project/Document/BR-42",
+        "status": "CONNECTED",
+        "capabilities": ["OPEN", "PULL_FROM_EVA"],
+        "connector_id": "connector-1",
+        "project_id": "project-1",
+        "document_id": "eva-document-1",
+        "document_name": "Требования EVA",
+        "remote_content_hash": "sha256:initial",
+    }
+    client = SimpleNamespace(get_document_for_edit=lambda _document_id: {"html": "<h1>Требования EVA</h1><p>Новое требование</p>", "version": "2"})
+    monkeypatch.setattr(EvaDocumentChangeService, "resolve_page_url", staticmethod(lambda *_args: binding))
+    monkeypatch.setattr(EvaDocumentChangeService, "_connector", staticmethod(lambda *_args: (None, client)))
+    document = _request_and_complete_draft(_create(title=binding["document_name"], schema_version="2", eva_page_url=binding["page_url"], eva_decision={"mode": "BIND", "confirm_replace": True}))
+    document = _complete_review_assessment(document)
+    original_cycle = document["active_review_cycle"]
+    pulled = eva_synchronization.pull_from_eva(TENANT, AUTHOR, document["document_id"], {"expected_state_version": document["state_version"]})
+    document = pulled["document"]
+    assert pulled["sync"]["changed"]
+    assert document["active_review_cycle"] == original_cycle
+    assert "REQUEST_REVIEW_ASSESSMENT" in document["allowed_commands"]
+    assert command_type not in document["allowed_commands"]
+    command = _command(document, command_type, {"base_revision_id": document["current_revision"]["revision_id"]})
+    for _ in range(2):
+        with pytest.raises(BusinessDocumentError) as caught:
+            document_commands.execute(TENANT, AUTHOR, document["document_id"], command)
+        assert caught.value.code == "REVIEW_ASSESSMENT_REQUIRED"
+    assert BusinessDocument.get_by_id(document["document_id"]).state_version == document["state_version"]
+    assert not BusinessDocumentJob.select().where(BusinessDocumentJob.job_type == "PLAN_CHANGES").exists()
+
+
+def test_job_snapshot_batches_review_reads_and_plan_validation_performs_no_queries(database, monkeypatch):
+    from playhouse.test_utils import count_queries
+
+    from api.apps.business_documents.adapters.review import load_review_state
+    from business_documents.domain.change_plan import validate_change_inputs
+
+    document = _request_and_complete_draft(_create())
+    for number in range(10):
+        document_commands.execute(
+            TENANT,
+            AUTHOR,
+            document["document_id"],
+            _command(document, "ADD_COMMENT", {"revision_id": document["current_revision"]["revision_id"], "section_id": None, "text": f"Comment {number}", "anchor": None}),
+        )
+        document = document_queries.get_document(document["document_id"], AUTHOR)
+    document = _complete_review_assessment(document)
+    row = BusinessDocument.get_by_id(document["document_id"])
+
+    def unexpected_render(_section):
+        pytest.fail("A job snapshot must not render UI section texts")
+
+    with monkeypatch.context() as patches, count_queries(only_select=True) as snapshot_queries:
+        patches.setattr("business_documents.application.queries.render_section_text", unexpected_render)
+        snapshot = document_commands._job_snapshot(row.__data__, {})
+    assert snapshot_queries.count <= 10
+    assert len(snapshot["protocol"]["comments"]) == 10
+    assert "section_texts" not in snapshot["current_revision"]
+    assert {key: value for key, value in snapshot["current_revision"].items() if key != "section_hashes"} == {
+        key: value for key, value in document["current_revision"].items() if key != "section_texts"
+    }
+    from api.apps.business_documents.ai import BusinessDocumentAI
+    from api.apps.business_documents.assets import prompt_descriptor
+
+    snapshot["prompt"] = prompt_descriptor("PLAN_CHANGES")
+    new_job = SimpleNamespace(payload=snapshot, job_type="PLAN_CHANGES", attempt=1)
+    old_job = SimpleNamespace(
+        payload={**snapshot, "current_revision": {**snapshot["current_revision"], "section_texts": document["current_revision"]["section_texts"]}}, job_type="PLAN_CHANGES", attempt=1
+    )
+    assert BusinessDocumentAI._prompt(new_job).input_payload == BusinessDocumentAI._prompt(old_job).input_payload
+    with count_queries(only_select=True) as review_queries:
+        review = load_review_state(row.id, row.active_review_cycle)
+    assert review_queries.count <= 6
+    plan = {
+        "operations": [{"section_id": "3.1", "source_event_ids": [comment["source_event_id"]]} for comment in snapshot["protocol"]["comments"]],
+        "acknowledged_no_change_event_ids": [],
+    }
+    with count_queries() as validation_queries:
+        inputs = validate_change_inputs(review, plan, snapshot_source_ids=frozenset(event["event_id"] for event in snapshot["source_events"]), evidence_source_refs=frozenset())
+    assert validation_queries.count == 0
+    assert len(inputs.source_event_ids) == 10
+    assert inputs.next_lifecycle == "AGREED"
+
+
+def test_assignment_event_timestamps_survive_an_advancing_orm_clock(database, monkeypatch):
+    from common.time_utils import current_timestamp
+
+    User.create(id="author-clock", nickname="Clock author", email="clock@example.com")
+    document = _create(title="Assignment clock")
+    now = current_timestamp()
+    clock = iter(range(now, now + 100))
+    monkeypatch.setattr("api.db.db_models.current_timestamp", lambda: next(clock))
+    assigned = assign_business_document(
+        "moderator",
+        document["document_id"],
+        {"owner_id": "author-clock", "expected_state_version": document["state_version"]},
+        access_role="EXTENDED_MODERATOR",
+    )
+    event = BusinessDocumentEvent.get((BusinessDocumentEvent.document_id == document["document_id"]) & (BusinessDocumentEvent.sequence == assigned["state_version"]))
+    assert event.create_time == event.update_time
+    assert event.create_date == event.update_date
+
+
+def test_job_stream_replays_in_order_and_fences_old_worker_attempts(database):
+    document = _create()
+    job = BusinessDocumentJob.create(
+        id="stream-job",
+        document_id=document["document_id"],
+        tenant_id=TENANT,
+        job_type="PLAN_CHANGES",
+        status="RUNNING",
+        dedupe_key="stream-job-dedupe",
+        source_state_version=document["state_version"],
+        base_revision_id=None,
+        payload={"preview_only": True},
+        attempt=1,
+        max_attempts=3,
+        available_at=0,
+        lease_owner="worker-1",
+        lease_token="lease-1",
+        lease_expires_at=current_timestamp() + 60_000,
+        correlation_id="stream-correlation",
+    )
+
+    assert BusinessDocumentStreamEvents.append(job.id, "section_preview", {"section_id": "1"}, lease_token="lease-1", expected_attempt=1)
+    assert not BusinessDocumentStreamEvents.append(job.id, "section_preview", {"section_id": "2"}, lease_token="wrong", expected_attempt=1)
+    BusinessDocumentJob.update(status="RETRY", lease_owner=None, lease_token=None, lease_expires_at=None).where(BusinessDocumentJob.id == job.id).execute()
+    assert BusinessDocumentStreamEvents.append(job.id, "retry", {"reason": "TEST"})
+    BusinessDocumentJob.update(status="RUNNING", attempt=2, lease_owner="worker-2", lease_token="lease-2", lease_expires_at=current_timestamp() + 60_000).where(
+        BusinessDocumentJob.id == job.id
+    ).execute()
+    assert not BusinessDocumentStreamEvents.append(job.id, "section_preview", {"section_id": "old"}, lease_token="lease-1", expected_attempt=1)
+    assert BusinessDocumentStreamEvents.append(job.id, "section_preview", {"section_id": "3"}, lease_token="lease-2", expected_attempt=2)
+
+    replay = document_queries.read_job_stream_events(TENANT, AUTHOR, document["document_id"], job.id, 1)
+    assert [(event["id"], event["attempt"], event["type"]) for event in replay["events"]] == [(2, 1, "retry"), (3, 2, "section_preview")]
+    assert replay["status"] == "RUNNING"
+    with pytest.raises(BusinessDocumentError):
+        document_queries.read_job_stream_events(TENANT, AUTHOR, document["document_id"], "another-job", 0)
+    with pytest.raises(BusinessDocumentError):
+        document_queries.read_job_stream_events("another-tenant", AUTHOR, document["document_id"], job.id, 0)
+
+    BusinessDocumentJob.update(status="COMPLETED", lease_owner=None, lease_token=None, lease_expires_at=None).where(BusinessDocumentJob.id == job.id).execute()
+    document_deletion.execute(AUTHOR, document["document_id"], access_role="EXTENDED_MODERATOR")
+    assert BusinessDocumentJobStreamEvent.select().count() == 0
+
+
+def test_worker_publishes_checked_section_before_full_plan_is_committed(database):
+    document = _request_and_complete_draft(_create())
+    base = document["current_revision"]
+    comment = document_commands.execute(
+        TENANT,
+        AUTHOR,
+        document["document_id"],
+        _command(document, "ADD_COMMENT", {"revision_id": base["revision_id"], "section_id": None, "text": "Уточнить контроль ошибок", "anchor": None}),
+    )
+    document = _complete_review_assessment(document_queries.get_document(comment["document_id"], AUTHOR))
+    source_id = document["protocol"]["comments"][0]["source_event_id"]
+    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "PREPARE_CHANGES", {"base_revision_id": base["revision_id"]}))
+    before = next(section for section in base["document_ast"]["sections"] if section["id"] == "5.5")
+    plan = {
+        "schema_version": "1",
+        "base_revision_id": base["revision_id"],
+        "source_state_version": requested["state_version"],
+        "acknowledged_no_change_event_ids": [],
+        "operations": [
+            {
+                "operation_id": "stream-op",
+                "type": "REPLACE_SECTION_CONTENT",
+                "section_id": "5.5",
+                "expected_section_hash": section_hash(before),
+                "source_event_ids": [source_id],
+                "content": {"blocks": [{"type": "paragraph", "text": "Новый контроль ошибок"}]},
+            }
+        ],
+    }
+    observed_during_generation = []
+
+    class StreamingAdapter:
+        def generate_stream(self, tenant_id, system_prompt, input_payload, on_chunk):
+            raw = json.dumps({"change_plan": plan}, ensure_ascii=False)
+            cut = raw.rfind("}]") + 1
+            on_chunk(raw[:cut])
+            observed_during_generation.extend(BusinessDocumentStreamEvents.read(requested["job_id"], 0)[0])
+            on_chunk(raw[cut:])
+            return raw
+
+    worker = BusinessDocumentWorker(worker_id="stream-worker", ai=BusinessDocumentAI(StreamingAdapter()), lease_ms=60_000)
+    assert worker.run_once() is True
+    assert any(event["type"] == "section_preview" and event["payload"]["after"] == "Новый контроль ошибок" for event in observed_during_generation)
+    assert BusinessDocumentJob.get_by_id(requested["job_id"]).status == "COMPLETED"
+    replay = document_queries.read_job_stream_events(TENANT, AUTHOR, document["document_id"], requested["job_id"], 0)
+    assert replay["events"][-1]["type"] == "preview_ready"
+    assert document_queries.get_change_preview(document["document_id"], requested["job_id"])["sections"][0]["after"] == "Новый контроль ошибок"

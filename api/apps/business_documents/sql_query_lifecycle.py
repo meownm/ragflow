@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from api.apps.business_documents.authorization import BusinessDocumentAccess
-from api.apps.business_documents.errors import ValidationError
+from business_documents.application.errors import ValidationError
 from business_documents.sql_query.query_specification import (
     QuerySpecificationValidationError,
     SqlGuardError,

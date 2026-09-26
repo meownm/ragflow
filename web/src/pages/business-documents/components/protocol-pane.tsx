@@ -577,7 +577,7 @@ export function ProtocolPane({
             ))}
           </div>
         )}
-        <p className="mt-2 text-[11px] text-text-disabled">
+        <p className="mt-2 text-[11px] text-text-secondary">
           {canComment
             ? pending
               ? 'Можно подготовить и сохранить следующий промпт, пока обрабатывается текущий запрос'

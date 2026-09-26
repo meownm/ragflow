@@ -1,8 +1,10 @@
 # Disposable Python RAGFlow regression
 
 Run from the repository's Python environment with Docker Desktop and installed
-proxy models `t-tech/T-lite-it-2.1:q8_0`, `qwen3.8:latest`, and
+proxy models `qwen3.8:latest`, `qwen3.6:27b`, and
 `bge-m3:latest`. The runner validates all three through RAGFlow. The project
+uses `qwen3.8:latest` as the default chat model; T-lite is available for the
+two-model chat comparison scenario.
 Ollama proxy must be reachable at `127.0.0.1:11435` from the host and
 `host.docker.internal:11435` from containers. It neither downloads
 models nor selects cloud models.

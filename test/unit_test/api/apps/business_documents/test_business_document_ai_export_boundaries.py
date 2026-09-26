@@ -26,20 +26,14 @@ if "api.apps" not in sys.modules:
     sys.modules["api.apps"] = api_apps
 
 from api.apps.business_documents.ai import BusinessDocumentAI
-from api.apps.business_documents.assets import (
-    apply_change_plan,
-    bind_change_plan_section_hashes,
-    import_document_markdown,
-    prompt_descriptor,
-    prompt_text,
-    published_template,
-    render_document_ast,
-    section_hash,
-    validate_document_ast,
-)
-from api.apps.business_documents.errors import BusinessDocumentError
+from api.apps.business_documents.assets import apply_change_plan, import_document_markdown, prompt_descriptor, prompt_text, published_template, render_document_ast, validate_document_ast
+from business_documents.domain.content import bind_change_plan_section_hashes, section_hash
+from business_documents.application.errors import BusinessDocumentError
 from api.apps.business_documents.exports import BusinessDocumentExportService
-from api.apps.business_documents.service import BusinessDocumentService
+from api.apps.business_documents.runtime import document_queries, job_completion
+from api.apps.business_documents.runtime import document_commands
+from api.apps.business_documents.runtime import document_creation
+from api.apps.business_documents.adapters.persistence import DOCUMENT_TABLES
 from api.apps.business_documents.worker import BusinessDocumentJobQueue, BusinessDocumentWorker
 from api.db.db_models import BusinessDocument, BusinessDocumentEvent, BusinessDocumentExportArtifact, BusinessDocumentExportStage, BusinessDocumentJob, BusinessDocumentRevision
 from test.unit_test.api.apps.business_documents.helpers import required_section_blocks
@@ -53,7 +47,7 @@ AUTHOR = "author-ai-boundary"
 @pytest.fixture()
 def database():
     database = SqliteDatabase(":memory:")
-    tables = BusinessDocumentService.model_tables()
+    tables = DOCUMENT_TABLES
     with database.bind_ctx(tables, bind_refs=False, bind_backrefs=False):
         database.connect()
         database.create_tables(tables)
@@ -63,7 +57,7 @@ def database():
 
 
 def _create(*, title="Проверяемый документ"):
-    return BusinessDocumentService.create_document(
+    return document_creation.execute(
         TENANT,
         AUTHOR,
         {
@@ -113,9 +107,7 @@ def _draft_bundle(draft=None):
 def _draft_with_parent_child_duplicate():
     draft = _draft()
     sections = {section["id"]: section for section in draft["sections"]}
-    sections["4"]["blocks"] = [
-        {"type": "paragraph", "text": "Клиент выбирает свободный слот, после чего система подтверждает запись."}
-    ]
+    sections["4"]["blocks"] = [{"type": "paragraph", "text": "Клиент выбирает свободный слот, после чего система подтверждает запись."}]
     paragraph = next(block for block in sections["4.3"]["blocks"] if block["type"] == "paragraph")
     paragraph["text"] = "Пользователь выбирает доступный временной интервал, затем сервис подтверждает бронирование."
     return draft
@@ -351,10 +343,34 @@ def test_change_plan_drops_no_change_acknowledgements_from_old_review_cycles(dat
     assert validated["change_plan"]["acknowledged_no_change_event_ids"] == []
 
 
+def test_preliminary_section_requires_valid_content_and_active_source():
+    base = _draft()
+    job = SimpleNamespace(
+        payload={"current_revision": {"document_ast": base}, "active_change_input_event_ids": ["active-comment"]},
+        base_revision_id="revision-1",
+        source_state_version=7,
+    )
+    operation = {
+        "operation_id": "op-1",
+        "type": "REPLACE_SECTION_CONTENT",
+        "section_id": "3.3",
+        "source_event_ids": ["active-comment"],
+        "content": {"blocks": [{"type": "paragraph", "text": "Новая проверяемая потребность."}]},
+    }
+
+    preview = BusinessDocumentAI._preliminary_section(job, operation)
+
+    assert preview["section_id"] == "3.3"
+    assert preview["after"] == "Новая проверяемая потребность."
+    assert "Содержание раздела 3.3." in preview["before"]
+    assert BusinessDocumentAI._preliminary_section(job, {**operation, "source_event_ids": ["old-comment"]}) is None
+    assert BusinessDocumentAI._preliminary_section(job, {**operation, "content": {"blocks": [{"type": "unknown"}]}}) is None
+
+
 def _claim_complete(job_id, output, worker_id="boundary-worker"):
     job = BusinessDocumentJobQueue.claim(worker_id, lease_ms=60_000)
     assert job is not None and job.id == job_id
-    return BusinessDocumentService.complete_job(TENANT, worker_id, job.id, output, job.lease_token)
+    return job_completion.complete(TENANT, worker_id, job.id, output, job.lease_token)
 
 
 class CapturingAdapter:
@@ -408,7 +424,7 @@ def test_eva_change_ai_rejects_unstructured_output():
 @pytest.mark.p0
 def test_ai_repairs_json_validates_schema_and_persists_pinned_prompt_audit(database):
     document = _create()
-    requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
+    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
     adapter = CapturingAdapter("```json\n{'schema_version':'1','outcome':'COMPLETE','questions':[],}\n```")
     worker = BusinessDocumentWorker(worker_id="ai-worker", ai=BusinessDocumentAI(adapter), lease_ms=60_000)
     assert worker.run_once() is True
@@ -434,11 +450,11 @@ def test_ai_repairs_json_validates_schema_and_persists_pinned_prompt_audit(datab
     assert event.payload["prompt_version"] == prompt["version"]
     assert event.payload["prompt_hash"] == prompt["content_hash"]
 
-    next_request = BusinessDocumentService.execute_command(
+    next_request = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
-        _command(BusinessDocumentService.get_document(TENANT, document["document_id"], AUTHOR), "REQUEST_DRAFT"),
+        _command(document_queries.get_document(document["document_id"], AUTHOR), "REQUEST_DRAFT"),
     )
     invalid = CapturingAdapter("{}")
     with pytest.raises(BusinessDocumentError) as caught:
@@ -457,9 +473,7 @@ def test_ai_rejects_semantic_duplicate_between_parent_and_child_section():
         BusinessDocumentAI._validate(job, _draft_bundle(_draft_with_parent_child_duplicate()))
 
     assert caught.value.code == "DUPLICATE_SECTION_CONTENT"
-    assert caught.value.details == {
-        "section_pairs": [{"parent_section_id": "4", "child_section_id": "4.3"}]
-    }
+    assert caught.value.details == {"section_pairs": [{"parent_section_id": "4", "child_section_id": "4.3"}]}
 
 
 @pytest.mark.p0
@@ -474,7 +488,7 @@ def test_worker_retries_duplicate_draft_with_section_feedback(database):
             return next(self.responses)
 
     document = _create()
-    assessment = BusinessDocumentService.execute_command(
+    assessment = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -484,7 +498,7 @@ def test_worker_retries_duplicate_draft_with_section_feedback(database):
         assessment["job_id"],
         {"schema_version": "1", "outcome": "COMPLETE", "questions": []},
     )
-    requested = BusinessDocumentService.execute_command(
+    requested = document_commands.execute(
         TENANT,
         AUTHOR,
         completed["document_id"],
@@ -514,15 +528,13 @@ def test_worker_retries_duplicate_draft_with_section_feedback(database):
     assert finished.attempt == 2
     retry_input = adapter.calls[1][2]["job_input"]
     assert retry_input["retry_feedback"]["code"] == "DUPLICATE_SECTION_CONTENT"
-    assert retry_input["retry_feedback"]["details"]["section_pairs"] == [
-        {"parent_section_id": "4", "child_section_id": "4.3"}
-    ]
+    assert retry_input["retry_feedback"]["details"]["section_pairs"] == [{"parent_section_id": "4", "child_section_id": "4.3"}]
 
 
 @pytest.mark.p0
 def test_ai_unwraps_exact_contract_name_envelope(database):
     document = _create()
-    requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
+    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
     adapter = CapturingAdapter(
         {
             "question_batch": {
@@ -544,7 +556,7 @@ def test_ai_unwraps_exact_contract_name_envelope(database):
 @pytest.mark.p0
 def test_ai_drops_redundant_contract_name_property_when_root_contract_is_valid(database):
     document = _create()
-    requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
+    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
     contract = {"schema_version": "1", "outcome": "COMPLETE", "questions": []}
     adapter = CapturingAdapter({**contract, "question_batch": contract})
 
@@ -574,7 +586,7 @@ def test_ai_normalizes_numeric_published_schema_versions_recursively():
 @pytest.mark.p0
 def test_ai_uses_valid_named_contract_when_sibling_properties_are_invalid(database):
     document = _create()
-    requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
+    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
     contract = {"schema_version": "1", "outcome": "COMPLETE", "questions": []}
     adapter = CapturingAdapter({"question_batch": contract, "explanation": "done"})
 
@@ -589,7 +601,7 @@ def test_ai_uses_valid_named_contract_when_sibling_properties_are_invalid(databa
 @pytest.mark.p0
 def test_ai_drops_echoed_schema_and_restores_its_constant_version(database):
     document = _create()
-    requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
+    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
     contract = {"schema_version": "1", "outcome": "COMPLETE", "questions": []}
     echoed_schema = {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -650,7 +662,7 @@ def test_ai_treats_an_exact_repeated_answered_question_as_complete():
 @pytest.mark.p0
 def test_ai_retry_prompt_contains_previous_validation_error(database):
     document = _create()
-    requested = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
+    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
     job = BusinessDocumentJob.get_by_id(requested["job_id"])
     job.attempt = 2
     job.error = {"code": "REQUIRED_SECTION_EMPTY", "message": "A required section is empty", "details": {}}
@@ -1108,13 +1120,13 @@ def _agreed_document():
         state_version=2,
         current_revision_id=revision.id,
     ).where(BusinessDocument.id == projection["document_id"]).execute()
-    return BusinessDocumentService.get_document(TENANT, projection["document_id"], AUTHOR)
+    return document_queries.get_document(projection["document_id"], AUTHOR)
 
 
 @pytest.mark.p0
 def test_docx_export_requires_verified_storage_write(database):
     document = _agreed_document()
-    requested = BusinessDocumentService.execute_command(
+    requested = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -1155,7 +1167,7 @@ def test_docx_export_requires_verified_storage_write(database):
     assert job is not None and job.id == requested["job_id"]
     prepared = BusinessDocumentExportService.generate(job, storage=storage)
     assert BusinessDocumentExportArtifact.select().count() == 0
-    BusinessDocumentService.complete_job(
+    job_completion.complete(
         TENANT,
         "export-boundary-worker",
         job.id,
@@ -1184,13 +1196,13 @@ def test_dead_operation_can_be_retried_and_draft_sources_are_snapshot_bound(data
             raise RuntimeError("permanent failure")
 
     document = _create()
-    failed_request = BusinessDocumentService.execute_command(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
+    failed_request = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
     BusinessDocumentJob.update(max_attempts=1).where(BusinessDocumentJob.id == failed_request["job_id"]).execute()
     assert BusinessDocumentWorker(worker_id="dead-worker", ai=FailingAI()).run_once() is True
-    failed = BusinessDocumentService.get_document(TENANT, document["document_id"], AUTHOR)
+    failed = document_queries.get_document(document["document_id"], AUTHOR)
     assert failed["operation_state"] == "FAILED"
     assert "REQUEST_INTAKE_ASSESSMENT" in failed["allowed_commands"]
-    retried = BusinessDocumentService.execute_command(
+    retried = document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -1202,7 +1214,7 @@ def test_dead_operation_can_be_retried_and_draft_sources_are_snapshot_bound(data
         retried["job_id"],
         {"schema_version": "1", "outcome": "COMPLETE", "questions": []},
     )
-    draft_request = BusinessDocumentService.execute_command(TENANT, AUTHOR, completed["document_id"], _command(completed, "REQUEST_DRAFT"))
+    draft_request = document_commands.execute(TENANT, AUTHOR, completed["document_id"], _command(completed, "REQUEST_DRAFT"))
     job = BusinessDocumentJob.get_by_id(draft_request["job_id"])
     idea_event_id = job.payload["idea_source_event_id"]
     assert idea_event_id in {event["event_id"] for event in job.payload["source_events"]}
@@ -1223,7 +1235,7 @@ def test_dead_operation_can_be_retried_and_draft_sources_are_snapshot_bound(data
     assert idea_event_id in reviewed["protocol"]["proposals"][0]["source_event_ids"]
 
     other = _create(title="Другой проверяемый документ")
-    assessment = BusinessDocumentService.execute_command(
+    assessment = document_commands.execute(
         TENANT,
         AUTHOR,
         other["document_id"],
@@ -1233,7 +1245,7 @@ def test_dead_operation_can_be_retried_and_draft_sources_are_snapshot_bound(data
         assessment["job_id"],
         {"schema_version": "1", "outcome": "COMPLETE", "questions": []},
     )
-    requested = BusinessDocumentService.execute_command(
+    requested = document_commands.execute(
         TENANT,
         AUTHOR,
         other["document_id"],

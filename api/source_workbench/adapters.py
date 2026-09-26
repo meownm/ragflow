@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import math
+import os
 import re
 from typing import Any
 from urllib.parse import urlparse
 
-from api.db.db_models import DB, Document, SourceWorkspace
+from api.db.db_models import DB, Document, SourceWorkspace, SourceWorkspaceDraft
 from api.db.services.doc_metadata_service import DocMetadataService
 from api.db.services.knowledgebase_service import KnowledgebaseService
 from common.misc_utils import get_uuid, thread_pool_exec
@@ -17,6 +19,18 @@ from .service import SourceWorkspaceError, SourceWorkspaceService
 
 
 _LIST_LINE = re.compile(r"^ {0,3}(?:[-*+]|\d+[.)])[ \t]+")
+_DEFAULT_SOURCE_SEARCH_SIMILARITY_THRESHOLD = 0.4
+
+
+def _source_search_similarity_threshold() -> float:
+    configured = os.environ.get("SOURCE_WORKBENCH_SIMILARITY_THRESHOLD", str(_DEFAULT_SOURCE_SEARCH_SIMILARITY_THRESHOLD))
+    try:
+        value = float(configured)
+    except (TypeError, ValueError, OverflowError) as error:
+        raise SourceWorkspaceError("SEARCH_CONFIG_INVALID", "Source search similarity threshold must be a number from 0 to 1", 503) from error
+    if not math.isfinite(value) or not 0 <= value <= 1:
+        raise SourceWorkspaceError("SEARCH_CONFIG_INVALID", "Source search similarity threshold must be a number from 0 to 1", 503)
+    return value
 
 
 def _table_row(line: str) -> bool:
@@ -60,6 +74,23 @@ def _projection(row: SourceWorkspace) -> dict[str, Any]:
         "created_at": row.created_at.isoformat(),
         "updated_at": row.updated_at.isoformat(),
     }
+
+
+def _draft_projection(row: SourceWorkspaceDraft, *, include_content: bool = True) -> dict[str, Any]:
+    result = {
+        "id": row.id,
+        "workspace_id": row.workspace_id,
+        "prompt": row.prompt,
+        "mode": row.mode,
+        "source_version": row.source_version,
+        "sources": row.sources,
+        "version": row.version,
+        "created_at": row.created_at.isoformat() if isinstance(row.created_at, datetime) else str(row.created_at),
+        "updated_at": row.updated_at.isoformat() if isinstance(row.updated_at, datetime) else str(row.updated_at),
+    }
+    if include_content:
+        result["content"] = row.content
+    return result
 
 
 class SourceWorkspaceRepository:
@@ -106,6 +137,60 @@ class SourceWorkspaceRepository:
             row.search_queries = [*(row.search_queries or []), query][-20:]
             row.updated_at = datetime.now(timezone.utc)
             row.save(only=[SourceWorkspace.search_queries, SourceWorkspace.updated_at])
+
+    @staticmethod
+    @DB.connection_context()
+    def list_drafts(owner_id: str, workspace_id: str) -> list[dict[str, Any]]:
+        rows = (
+            SourceWorkspaceDraft.select(
+                SourceWorkspaceDraft.id,
+                SourceWorkspaceDraft.workspace_id,
+                SourceWorkspaceDraft.prompt,
+                SourceWorkspaceDraft.mode,
+                SourceWorkspaceDraft.source_version,
+                SourceWorkspaceDraft.sources,
+                SourceWorkspaceDraft.version,
+                SourceWorkspaceDraft.created_at,
+                SourceWorkspaceDraft.updated_at,
+            )
+            .where((SourceWorkspaceDraft.owner_id == owner_id) & (SourceWorkspaceDraft.workspace_id == workspace_id))
+            .order_by(SourceWorkspaceDraft.updated_at.desc())
+        )
+        return [_draft_projection(row, include_content=False) for row in rows]
+
+    @staticmethod
+    @DB.connection_context()
+    def get_draft(owner_id: str, workspace_id: str, draft_id: str) -> dict[str, Any]:
+        row = SourceWorkspaceDraft.get_or_none((SourceWorkspaceDraft.id == draft_id) & (SourceWorkspaceDraft.owner_id == owner_id) & (SourceWorkspaceDraft.workspace_id == workspace_id))
+        if row is None:
+            raise SourceWorkspaceError("DRAFT_NOT_FOUND", "Draft not found", 404)
+        return _draft_projection(row)
+
+    @staticmethod
+    @DB.connection_context()
+    def create_draft(owner_id: str, workspace_id: str, content: str, prompt: str, mode: str, source_version: int, sources: list[dict[str, str]]) -> dict[str, Any]:
+        row = SourceWorkspaceDraft.create(id=get_uuid(), workspace_id=workspace_id, owner_id=owner_id, content=content, prompt=prompt, mode=mode, source_version=source_version, sources=sources)
+        return _draft_projection(row)
+
+    @staticmethod
+    @DB.connection_context()
+    def update_draft(owner_id: str, workspace_id: str, draft_id: str, expected_version: int, content: str) -> dict[str, Any]:
+        changed = (
+            SourceWorkspaceDraft.update(content=content, version=expected_version + 1, updated_at=datetime.now(timezone.utc))
+            .where(
+                (SourceWorkspaceDraft.id == draft_id)
+                & (SourceWorkspaceDraft.owner_id == owner_id)
+                & (SourceWorkspaceDraft.workspace_id == workspace_id)
+                & (SourceWorkspaceDraft.version == expected_version)
+            )
+            .execute()
+        )
+        row = SourceWorkspaceDraft.get_or_none((SourceWorkspaceDraft.id == draft_id) & (SourceWorkspaceDraft.owner_id == owner_id) & (SourceWorkspaceDraft.workspace_id == workspace_id))
+        if not changed:
+            if row is None:
+                raise SourceWorkspaceError("DRAFT_NOT_FOUND", "Draft not found", 404)
+            raise SourceWorkspaceError("VERSION_CONFLICT", "Draft changed; reload it before saving", 409)
+        return _draft_projection(row)
 
 
 class RAGFlowSourceGateway:
@@ -180,6 +265,15 @@ class RAGFlowSourceGateway:
                 }
                 by_key[key] = candidate
                 candidates.append(candidate)
+            raw_score = chunk.get("similarity")
+            if raw_score is not None and not isinstance(raw_score, bool):
+                try:
+                    score = float(raw_score)
+                except (TypeError, ValueError, OverflowError):
+                    pass
+                else:
+                    if math.isfinite(score):
+                        candidate["similarity"] = max(candidate.get("similarity", score), score)
             if len(candidate["excerpts"]) < 2:
                 excerpt = str(chunk.get("content") or chunk.get("content_with_weight") or "").strip()
                 if excerpt:
@@ -220,7 +314,15 @@ class RAGFlowSourceGateway:
     async def search(owner_id: str, dataset_ids: list[str], query: str, document_ids: list[str] | None = None, page: int = 1) -> list[dict[str, Any]]:
         from api.apps.services.dataset_api_service import search_datasets
 
-        request = {"dataset_ids": dataset_ids, "question": query, "page": page, "size": 100, "top_k": 1024, "use_kg": False}
+        request = {
+            "dataset_ids": dataset_ids,
+            "question": query,
+            "page": page,
+            "size": 100,
+            "top_k": 1024,
+            "use_kg": False,
+            "similarity_threshold": _source_search_similarity_threshold(),
+        }
         if document_ids is not None:
             request["doc_ids"] = document_ids
         success, result = await search_datasets(owner_id, request)

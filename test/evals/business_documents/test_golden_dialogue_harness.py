@@ -9,7 +9,7 @@ import io
 import json
 from pathlib import Path
 import sys
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 import zipfile
@@ -24,15 +24,18 @@ if "api.apps" not in sys.modules:
     sys.modules["api.apps"] = api_apps
 
 from api.apps.business_documents.ai import BusinessDocumentAI
-from api.apps.business_documents.assets import published_template, render_section_text, section_hash
-from api.apps.business_documents.contracts import CommandType
+from api.apps.business_documents.assets import published_template
+from business_documents.domain.content import render_section_text, section_hash
+from business_documents.domain.workflow import CommandType
 from api.apps.business_documents.evidence import BusinessDocumentEvidence
-from api.apps.business_documents.errors import BusinessDocumentError
+from business_documents.application.errors import BusinessDocumentError
 from api.apps.business_documents.exports import BusinessDocumentExportService
-from api.apps.business_documents.service import BusinessDocumentService
+from api.apps.business_documents.runtime import document_queries
+from api.apps.business_documents.runtime import document_commands
+from api.apps.business_documents.runtime import document_creation
+from api.apps.business_documents.adapters.persistence import DOCUMENT_TABLES
 from api.apps.business_documents.worker import BusinessDocumentWorker
 from api.db.db_models import (
-    BusinessDocument,
     BusinessDocumentAnswer,
     BusinessDocumentComment,
     BusinessDocumentEvent,
@@ -133,7 +136,7 @@ class GoldenDialogueRunner:
         return getattr(self, f"_{case['id'].split('_', 1)[0].lower()}")(case)
 
     def _create(self, case, *, dataset_ids=None):
-        return BusinessDocumentService.create_document(
+        return document_creation.execute(
             self.tenant_id,
             self.actor_id,
             {
@@ -218,14 +221,14 @@ class GoldenDialogueRunner:
             for proposal in (proposals or [])
         ]
         adapter = ScriptedAIAdapter({"ASSESS_INTAKE": [self._complete_assessment()]})
-        BusinessDocumentService.execute_command(
+        document_commands.execute(
             self.tenant_id,
             self.actor_id,
             document["document_id"],
             self._command(document, "REQUEST_INTAKE_ASSESSMENT"),
         )
         self._work(adapter)
-        document = BusinessDocumentService.get_document(self.tenant_id, document["document_id"], self.actor_id)
+        document = document_queries.get_document(document["document_id"], self.actor_id)
         draft_adapter = ScriptedAIAdapter(
             {
                 "GENERATE_DRAFT": [
@@ -237,14 +240,14 @@ class GoldenDialogueRunner:
                 ]
             }
         )
-        BusinessDocumentService.execute_command(
+        document_commands.execute(
             self.tenant_id,
             self.actor_id,
             document["document_id"],
             self._command(document, "REQUEST_DRAFT"),
         )
         self._work(draft_adapter)
-        return BusinessDocumentService.get_document(self.tenant_id, document["document_id"], self.actor_id)
+        return document_queries.get_document(document["document_id"], self.actor_id)
 
     def _assess_review(self, document):
         dispositions = [{"comment_event_id": comment["source_event_id"], "disposition": "CONFIRMED_CHANGE"} for comment in document["protocol"]["comments"]]
@@ -260,17 +263,17 @@ class GoldenDialogueRunner:
                 ]
             }
         )
-        BusinessDocumentService.execute_command(
+        document_commands.execute(
             self.tenant_id,
             self.actor_id,
             document["document_id"],
             self._command(document, "REQUEST_REVIEW_ASSESSMENT"),
         )
         self._work(adapter)
-        return BusinessDocumentService.get_document(self.tenant_id, document["document_id"], self.actor_id)
+        return document_queries.get_document(document["document_id"], self.actor_id)
 
     def _apply(self, document, operations_factory):
-        requested = BusinessDocumentService.execute_command(
+        requested = document_commands.execute(
             self.tenant_id,
             self.actor_id,
             document["document_id"],
@@ -283,9 +286,7 @@ class GoldenDialogueRunner:
         job = BusinessDocumentJob.get_by_id(requested["job_id"])
         operations = operations_factory(job) if callable(operations_factory) else operations_factory
         used_event_ids = {event_id for operation in operations for event_id in operation.get("source_event_ids", [])}
-        active_event_ids = BusinessDocumentService._active_change_input_event_ids(  # noqa: SLF001
-            BusinessDocument.get_by_id(document["document_id"])
-        )
+        active_event_ids = set(job.payload["active_change_input_event_ids"])
         adapter = ScriptedAIAdapter(
             {
                 "PLAN_CHANGES": [
@@ -300,7 +301,7 @@ class GoldenDialogueRunner:
             }
         )
         self._work(adapter)
-        return BusinessDocumentService.get_document(self.tenant_id, document["document_id"], self.actor_id)
+        return document_queries.get_document(document["document_id"], self.actor_id)
 
     def _agree_without_changes(self, document):
         return self._apply(self._assess_review(document), [])
@@ -342,27 +343,27 @@ class GoldenDialogueRunner:
             ],
         }
         adapter = ScriptedAIAdapter({"ASSESS_INTAKE": [question_batch]})
-        BusinessDocumentService.execute_command(
+        document_commands.execute(
             self.tenant_id,
             self.actor_id,
             document["document_id"],
             self._command(document, "REQUEST_INTAKE_ASSESSMENT"),
         )
         self._work(adapter)
-        projection = BusinessDocumentService.get_document(self.tenant_id, document["document_id"], self.actor_id)
+        projection = document_queries.get_document(document["document_id"], self.actor_id)
         return projection, projection["protocol"]["questions"][0]
 
     def _g01(self, case):
         document = self._create(case)
         adapter = ScriptedAIAdapter({"ASSESS_INTAKE": [self._question_batch()]})
-        BusinessDocumentService.execute_command(
+        document_commands.execute(
             self.tenant_id,
             self.actor_id,
             document["document_id"],
             self._command(document, "REQUEST_INTAKE_ASSESSMENT"),
         )
         self._work(adapter)
-        projection = BusinessDocumentService.get_document(self.tenant_id, document["document_id"], self.actor_id)
+        projection = document_queries.get_document(document["document_id"], self.actor_id)
         questions = projection["protocol"]["questions"]
         facts = {
             "no_revision_created" if projection["current_revision"] is None else "",
@@ -389,7 +390,7 @@ class GoldenDialogueRunner:
     def _g03(self, case):
         projection, question = self._question_document(case)
         before_events = BusinessDocumentEvent.select().where(BusinessDocumentEvent.document_id == projection["document_id"]).count()
-        response = BusinessDocumentService.execute_command(
+        response = document_commands.execute(
             self.tenant_id,
             self.actor_id,
             projection["document_id"],
@@ -399,7 +400,7 @@ class GoldenDialogueRunner:
                 {"question_id": question["question_id"], "selected_option_id": "russia", "custom_answer": None},
             ),
         )
-        after = BusinessDocumentService.get_document(self.tenant_id, projection["document_id"], self.actor_id)
+        after = document_queries.get_document(projection["document_id"], self.actor_id)
         stored = BusinessDocumentAnswer.get(BusinessDocumentAnswer.question_id == question["question_id"])
         answer_event = BusinessDocumentEvent.get_by_id(response["event_id"])
         facts = {
@@ -414,7 +415,7 @@ class GoldenDialogueRunner:
     def _g04(self, case):
         projection, question = self._question_document(case)
         custom_answer = case["turns"][-1]["text"].split(":", 1)[-1].strip()
-        BusinessDocumentService.execute_command(
+        document_commands.execute(
             self.tenant_id,
             self.actor_id,
             projection["document_id"],
@@ -424,7 +425,7 @@ class GoldenDialogueRunner:
                 {"question_id": question["question_id"], "selected_option_id": None, "custom_answer": custom_answer},
             ),
         )
-        after = BusinessDocumentService.get_document(self.tenant_id, projection["document_id"], self.actor_id)
+        after = document_queries.get_document(projection["document_id"], self.actor_id)
         stored = BusinessDocumentAnswer.get(BusinessDocumentAnswer.question_id == question["question_id"])
         facts = {
             "custom_answer_preserved_verbatim" if stored.custom_answer == custom_answer else "",
@@ -445,7 +446,7 @@ class GoldenDialogueRunner:
         projection = self._to_review(case, proposals=[self._proposal()])
         proposal = projection["protocol"]["proposals"][0]
         original_revision = projection["current_revision"]
-        decision = BusinessDocumentService.execute_command(
+        decision = document_commands.execute(
             self.tenant_id,
             self.actor_id,
             projection["document_id"],
@@ -455,7 +456,7 @@ class GoldenDialogueRunner:
                 {"proposal_id": proposal["proposal_id"], "decision": "ACCEPTED"},
             ),
         )
-        projection = BusinessDocumentService.get_document(self.tenant_id, projection["document_id"], self.actor_id)
+        projection = document_queries.get_document(projection["document_id"], self.actor_id)
         projection = self._assess_review(projection)
         base_section = next(section for section in projection["current_revision"]["document_ast"]["sections"] if section["id"] == "5.5")
         applied = self._apply(
@@ -487,7 +488,7 @@ class GoldenDialogueRunner:
         projection = self._to_review(case, proposals=[self._proposal()])
         proposal = projection["protocol"]["proposals"][0]
         original = deepcopy(projection["current_revision"])
-        BusinessDocumentService.execute_command(
+        document_commands.execute(
             self.tenant_id,
             self.actor_id,
             projection["document_id"],
@@ -497,7 +498,7 @@ class GoldenDialogueRunner:
                 {"proposal_id": proposal["proposal_id"], "decision": "REJECTED"},
             ),
         )
-        projection = BusinessDocumentService.get_document(self.tenant_id, projection["document_id"], self.actor_id)
+        projection = document_queries.get_document(projection["document_id"], self.actor_id)
         agreed = self._agree_without_changes(projection)
         decision = BusinessDocumentProposalDecision.get(BusinessDocumentProposalDecision.proposal_id == proposal["proposal_id"])
         return GoldenObservation(
@@ -520,7 +521,7 @@ class GoldenDialogueRunner:
         review_cycle = projection["active_review_cycle"]
         proposals = {proposal["text"]: proposal for proposal in projection["protocol"]["proposals"]}
         original = deepcopy(projection["current_revision"])
-        decision = BusinessDocumentService.execute_command(
+        decision = document_commands.execute(
             self.tenant_id,
             self.actor_id,
             projection["document_id"],
@@ -533,7 +534,7 @@ class GoldenDialogueRunner:
                 },
             ),
         )
-        projection = BusinessDocumentService.get_document(self.tenant_id, projection["document_id"], self.actor_id)
+        projection = document_queries.get_document(projection["document_id"], self.actor_id)
         projection = self._assess_review(projection)
         base_section = next(section for section in projection["current_revision"]["document_ast"]["sections"] if section["id"] == "5.5")
         partially_applied = self._apply(
@@ -576,7 +577,7 @@ class GoldenDialogueRunner:
         before_count = BusinessDocumentRevision.select().where(BusinessDocumentRevision.document_id == projection["document_id"]).count()
         error_code = None
         try:
-            BusinessDocumentService.execute_command(
+            document_commands.execute(
                 self.tenant_id,
                 self.actor_id,
                 projection["document_id"],
@@ -584,7 +585,7 @@ class GoldenDialogueRunner:
             )
         except BusinessDocumentError as error:
             error_code = error.code
-        after = BusinessDocumentService.get_document(self.tenant_id, projection["document_id"], self.actor_id)
+        after = document_queries.get_document(projection["document_id"], self.actor_id)
         after_count = BusinessDocumentRevision.select().where(BusinessDocumentRevision.document_id == projection["document_id"]).count()
         facts = {
             "revision_unchanged" if before_count == after_count else "",
@@ -596,7 +597,7 @@ class GoldenDialogueRunner:
         projection = self._to_review(case)
         original_hash = projection["current_revision"]["content_hash"]
         direct_edit_available = "DIRECT_EDIT" in {command.value for command in CommandType}
-        response = BusinessDocumentService.execute_command(
+        response = document_commands.execute(
             self.tenant_id,
             self.actor_id,
             projection["document_id"],
@@ -611,7 +612,7 @@ class GoldenDialogueRunner:
                 },
             ),
         )
-        after = BusinessDocumentService.get_document(self.tenant_id, projection["document_id"], self.actor_id)
+        after = document_queries.get_document(projection["document_id"], self.actor_id)
         comment = BusinessDocumentComment.get(BusinessDocumentComment.document_id == projection["document_id"])
         event = BusinessDocumentEvent.get_by_id(response["event_id"])
         facts = {
@@ -625,7 +626,7 @@ class GoldenDialogueRunner:
         projection = self._to_review(case)
         revision = deepcopy(projection["current_revision"])
         selected_text = "Проверяемое содержание раздела 3.1."
-        BusinessDocumentService.execute_command(
+        document_commands.execute(
             self.tenant_id,
             self.actor_id,
             projection["document_id"],
@@ -640,7 +641,7 @@ class GoldenDialogueRunner:
                 },
             ),
         )
-        projection = BusinessDocumentService.get_document(self.tenant_id, projection["document_id"], self.actor_id)
+        projection = document_queries.get_document(projection["document_id"], self.actor_id)
         adapter = ScriptedAIAdapter(
             {
                 "ASSESS_REVIEW": [
@@ -670,14 +671,14 @@ class GoldenDialogueRunner:
                 ]
             }
         )
-        BusinessDocumentService.execute_command(
+        document_commands.execute(
             self.tenant_id,
             self.actor_id,
             projection["document_id"],
             self._command(projection, "REQUEST_REVIEW_ASSESSMENT"),
         )
         self._work(adapter)
-        after = BusinessDocumentService.get_document(self.tenant_id, projection["document_id"], self.actor_id)
+        after = document_queries.get_document(projection["document_id"], self.actor_id)
         comment = after["protocol"]["comments"][0]
         question = after["protocol"]["questions"][0]
         facts = {
@@ -692,7 +693,7 @@ class GoldenDialogueRunner:
         projection = self._to_review(case)
         original_revision = deepcopy(projection["current_revision"])
         selected_text = "Проверяемое содержание раздела 3.1."
-        comment_response = BusinessDocumentService.execute_command(
+        comment_response = document_commands.execute(
             self.tenant_id,
             self.actor_id,
             projection["document_id"],
@@ -707,7 +708,7 @@ class GoldenDialogueRunner:
                 },
             ),
         )
-        projection = BusinessDocumentService.get_document(self.tenant_id, projection["document_id"], self.actor_id)
+        projection = document_queries.get_document(projection["document_id"], self.actor_id)
         projection = self._assess_review(projection)
         base_section = next(section for section in projection["current_revision"]["document_ast"]["sections"] if section["id"] == "3.1")
         changed = self._apply(
@@ -747,12 +748,12 @@ class GoldenDialogueRunner:
     def _g12(self, case):
         document = self._create(case)
         intake_adapter = ScriptedAIAdapter({"ASSESS_INTAKE": [self._complete_assessment()]})
-        BusinessDocumentService.execute_command(self.tenant_id, self.actor_id, document["document_id"], self._command(document, "REQUEST_INTAKE_ASSESSMENT"))
+        document_commands.execute(self.tenant_id, self.actor_id, document["document_id"], self._command(document, "REQUEST_INTAKE_ASSESSMENT"))
         self._work(intake_adapter)
-        document = BusinessDocumentService.get_document(self.tenant_id, document["document_id"], self.actor_id)
+        document = document_queries.get_document(document["document_id"], self.actor_id)
         command = self._command(document, "REQUEST_DRAFT", key="golden-duplicate")
-        first = BusinessDocumentService.execute_command(self.tenant_id, self.actor_id, document["document_id"], command)
-        second = BusinessDocumentService.execute_command(self.tenant_id, self.actor_id, document["document_id"], command)
+        first = document_commands.execute(self.tenant_id, self.actor_id, document["document_id"], command)
+        second = document_commands.execute(self.tenant_id, self.actor_id, document["document_id"], command)
         draft_adapter = ScriptedAIAdapter({"GENERATE_DRAFT": [{"draft": self._draft(), "review_questions": self._complete_assessment(), "proposals": []}]})
         self._work(draft_adapter)
         comparable_second = {key: value for key, value in second.items() if key != "idempotent_replay"}
@@ -771,7 +772,7 @@ class GoldenDialogueRunner:
 
     def _g13(self, case):
         document = self._create(case)
-        BusinessDocumentService.execute_command(
+        document_commands.execute(
             self.tenant_id,
             self.actor_id,
             document["document_id"],
@@ -780,7 +781,7 @@ class GoldenDialogueRunner:
         before = BusinessDocumentEvent.select().where(BusinessDocumentEvent.document_id == document["document_id"]).count()
         error_code = status = None
         try:
-            BusinessDocumentService.execute_command(
+            document_commands.execute(
                 self.tenant_id,
                 self.actor_id,
                 document["document_id"],
@@ -796,7 +797,7 @@ class GoldenDialogueRunner:
 
     def _g14(self, case):
         projection, question = self._question_document(case)
-        first = BusinessDocumentService.execute_command(
+        first = document_commands.execute(
             self.tenant_id,
             self.actor_id,
             projection["document_id"],
@@ -806,11 +807,11 @@ class GoldenDialogueRunner:
                 {"question_id": question["question_id"], "selected_option_id": "moscow", "custom_answer": None},
             ),
         )
-        projection = BusinessDocumentService.get_document(self.tenant_id, projection["document_id"], self.actor_id)
+        projection = document_queries.get_document(projection["document_id"], self.actor_id)
         original = BusinessDocumentAnswer.get(BusinessDocumentAnswer.question_id == question["question_id"])
         error_code = None
         try:
-            BusinessDocumentService.execute_command(
+            document_commands.execute(
                 self.tenant_id,
                 self.actor_id,
                 projection["document_id"],
@@ -837,14 +838,14 @@ class GoldenDialogueRunner:
         invalid = self._question_batch(count=1)
         invalid["questions"][0]["options"] = [{"option_id": f"option-{index}", "label": f"Вариант {index}"} for index in range(1, option_count + 1)]
         adapter = ScriptedAIAdapter({"ASSESS_INTAKE": [invalid]})
-        requested = BusinessDocumentService.execute_command(
+        requested = document_commands.execute(
             self.tenant_id,
             self.actor_id,
             document["document_id"],
             self._command(document, "REQUEST_INTAKE_ASSESSMENT"),
         )
         self._work(adapter)
-        projection = BusinessDocumentService.get_document(self.tenant_id, document["document_id"], self.actor_id)
+        projection = document_queries.get_document(document["document_id"], self.actor_id)
         job = BusinessDocumentJob.get_by_id(requested["job_id"])
         facts = {
             "structured_output_rejected" if job.status == "RETRY" and job.error["code"] == "INVALID_QUESTION_BATCH" else "",
@@ -868,7 +869,7 @@ class GoldenDialogueRunner:
         question = projection["protocol"]["questions"][0]
         error_code = None
         try:
-            BusinessDocumentService.execute_command(
+            document_commands.execute(
                 self.tenant_id,
                 self.actor_id,
                 projection["document_id"],
@@ -908,10 +909,11 @@ class GoldenDialogueRunner:
 
     def _g20(self, case):
         dataset_id = "dataset-injection"
-        with patch("api.apps.business_documents.service.ensure_dataset_access", return_value=None):
+        datasets = SimpleNamespace(ensure_dataset_access=lambda *_: None, ensure_dataset_embedding_compatibility=document_creation._datasets.ensure_dataset_embedding_compatibility)
+        with patch.object(document_creation, "_datasets", datasets):
             document = self._create(case, dataset_ids=[dataset_id])
         adapter = ScriptedAIAdapter({"ASSESS_INTAKE": [self._question_batch(count=2)]})
-        requested = BusinessDocumentService.execute_command(
+        requested = document_commands.execute(
             self.tenant_id,
             self.actor_id,
             document["document_id"],
@@ -941,7 +943,7 @@ class GoldenDialogueRunner:
             lease_ms=60_000,
         )
         assert worker.run_once() is True
-        projection = BusinessDocumentService.get_document(self.tenant_id, document["document_id"], self.actor_id)
+        projection = document_queries.get_document(document["document_id"], self.actor_id)
         model_input = adapter.requests[0]
         evidence_input = model_input["evidence"]
         snapshot = BusinessDocumentEvidenceSnapshot.get(BusinessDocumentEvidenceSnapshot.job_id == requested["job_id"])
@@ -960,7 +962,8 @@ class GoldenDialogueRunner:
 
     def _g21(self, case):
         dataset_id = "dataset-conflict"
-        with patch("api.apps.business_documents.service.ensure_dataset_access", return_value=None):
+        datasets = SimpleNamespace(ensure_dataset_access=lambda *_: None, ensure_dataset_embedding_compatibility=document_creation._datasets.ensure_dataset_embedding_compatibility)
+        with patch.object(document_creation, "_datasets", datasets):
             document = self._create(case, dataset_ids=[dataset_id])
         adapter = ScriptedAIAdapter(
             {
@@ -985,7 +988,7 @@ class GoldenDialogueRunner:
                 ]
             }
         )
-        requested = BusinessDocumentService.execute_command(
+        requested = document_commands.execute(
             self.tenant_id,
             self.actor_id,
             document["document_id"],
@@ -1021,7 +1024,7 @@ class GoldenDialogueRunner:
             lease_ms=60_000,
         )
         assert worker.run_once() is True
-        projection = BusinessDocumentService.get_document(self.tenant_id, document["document_id"], self.actor_id)
+        projection = document_queries.get_document(document["document_id"], self.actor_id)
         evidence_input = adapter.requests[0]["evidence"]
         source_refs = [chunk["source_ref"] for chunk in evidence_input["chunks"]]
         completed_job = BusinessDocumentJob.get_by_id(requested["job_id"])
@@ -1036,7 +1039,7 @@ class GoldenDialogueRunner:
     def _g22(self, case):
         projection = self._to_review(case)
         protocol_text = "PROTOCOL_ONLY_DO_NOT_EXPORT"
-        comment_response = BusinessDocumentService.execute_command(
+        comment_response = document_commands.execute(
             self.tenant_id,
             self.actor_id,
             projection["document_id"],
@@ -1051,7 +1054,7 @@ class GoldenDialogueRunner:
                 },
             ),
         )
-        projection = BusinessDocumentService.get_document(self.tenant_id, projection["document_id"], self.actor_id)
+        projection = document_queries.get_document(projection["document_id"], self.actor_id)
         projection = self._assess_review(projection)
         base_section = next(section for section in projection["current_revision"]["document_ast"]["sections"] if section["id"] == "5.5")
         agreed = self._apply(
@@ -1072,7 +1075,7 @@ class GoldenDialogueRunner:
         storage = MemoryStorage()
         downloaded: dict[str, bytes] = {}
         for export_format in ("MARKDOWN", "DOCX"):
-            requested = BusinessDocumentService.execute_command(
+            requested = document_commands.execute(
                 self.tenant_id,
                 self.actor_id,
                 agreed["document_id"],
@@ -1090,7 +1093,7 @@ class GoldenDialogueRunner:
             )
             assert worker.run_once() is True
             assert BusinessDocumentJob.get_by_id(requested["job_id"]).status == "COMPLETED"
-            agreed = BusinessDocumentService.get_document(self.tenant_id, agreed["document_id"], self.actor_id)
+            agreed = document_queries.get_document(agreed["document_id"], self.actor_id)
 
         artifacts = BusinessDocumentExportService.list_artifacts(self.tenant_id, self.actor_id, agreed["document_id"])
         for artifact in artifacts:
@@ -1124,7 +1127,7 @@ class GoldenDialogueRunner:
         projection = self._to_review(case)
         error_code = None
         try:
-            BusinessDocumentService.execute_command(
+            document_commands.execute(
                 self.tenant_id,
                 self.actor_id,
                 projection["document_id"],
@@ -1147,14 +1150,14 @@ class GoldenDialogueRunner:
         document_id = agreed["document_id"]
         chat_id = agreed["chat_id"]
         before_events = [event.id for event in BusinessDocumentEvent.select().where(BusinessDocumentEvent.document_id == document_id).order_by(BusinessDocumentEvent.sequence.asc())]
-        resumed = BusinessDocumentService.get_document(self.tenant_id, document_id, self.actor_id)
-        BusinessDocumentService.execute_command(
+        resumed = document_queries.get_document(document_id, self.actor_id)
+        document_commands.execute(
             self.tenant_id,
             self.actor_id,
             document_id,
             self._command(resumed, "START_REVIEW"),
         )
-        reviewed = BusinessDocumentService.get_document(self.tenant_id, document_id, self.actor_id)
+        reviewed = document_queries.get_document(document_id, self.actor_id)
         after_events = [event.id for event in BusinessDocumentEvent.select().where(BusinessDocumentEvent.document_id == document_id).order_by(BusinessDocumentEvent.sequence.asc())]
         new_document = self._create({**case, "id": f"{case['id']}-new-chat"})
         facts = {
@@ -1202,7 +1205,7 @@ class ReleaseGateReport:
 
 def _run_isolated(case):
     database = SqliteDatabase(":memory:")
-    tables = BusinessDocumentService.model_tables()
+    tables = DOCUMENT_TABLES
     with database.bind_ctx(tables, bind_refs=False, bind_backrefs=False):
         database.connect()
         database.create_tables(tables)

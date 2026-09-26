@@ -11,7 +11,7 @@ from typing import Any
 from peewee import IntegrityError
 
 from api.apps.business_documents.authorization import BusinessDocumentAccess
-from api.apps.business_documents.errors import BusinessDocumentError, ConflictError, ValidationError
+from business_documents.application.errors import BusinessDocumentError, ConflictError, ValidationError
 from api.db.db_models import (
     BusinessDocumentJob,
     BusinessDocumentSqlAgentCommand,

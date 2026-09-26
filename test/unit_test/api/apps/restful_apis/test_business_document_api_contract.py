@@ -62,6 +62,8 @@ EXPECTED_ROUTES = {
     "list_business_document_revisions": ("/business-documents/<document_id>/revisions", ("GET",)),
     "get_business_document_revision": ("/business-documents/<document_id>/revisions/<revision_id>", ("GET",)),
     "list_business_document_jobs": ("/business-documents/<document_id>/jobs", ("GET",)),
+    "list_business_document_job_events": ("/business-documents/<document_id>/jobs/<job_id>/events", ("GET",)),
+    "stream_business_document_job_events": ("/business-documents/<document_id>/jobs/<job_id>/events/stream", ("GET",)),
     "list_business_document_exports": ("/business-documents/<document_id>/exports", ("GET",)),
     "download_business_document_export": ("/business-documents/<document_id>/exports/<artifact_id>/download", ("GET",)),
 }

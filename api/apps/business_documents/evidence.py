@@ -19,7 +19,7 @@ from typing import Any, Callable, Protocol
 from urllib.parse import quote
 
 from api.apps.business_documents.async_runtime import run_in_worker_loop
-from api.apps.business_documents.errors import BusinessDocumentError
+from business_documents.application.errors import BusinessDocumentError
 from peewee import IntegrityError
 
 from api.db.db_models import BusinessDocument, BusinessDocumentEvidenceSnapshot, BusinessDocumentJob

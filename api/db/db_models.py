@@ -1130,6 +1130,25 @@ class SourceWorkspace(DataBaseModel):
         db_table = "source_workspace"
 
 
+class SourceWorkspaceDraft(DataBaseModel):
+    """An editable result saved within one user's source workspace."""
+
+    id = CharField(max_length=32, primary_key=True)
+    workspace_id = CharField(max_length=32, null=False, index=True)
+    owner_id = CharField(max_length=32, null=False, index=True)
+    content = LongTextField(null=False)
+    prompt = TextField(null=False)
+    mode = CharField(max_length=16, null=False)
+    source_version = IntegerField(null=False)
+    sources = JSONField(null=False, default=list)
+    version = IntegerField(null=False, default=1)
+    created_at = DateTimeField(null=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = DateTimeField(null=False, default=lambda: datetime.now(timezone.utc))
+
+    class Meta:
+        db_table = "source_workspace_draft"
+
+
 class APIToken(DataBaseModel):
     tenant_id = CharField(max_length=32, null=False, index=True)
     token = CharField(max_length=255, null=False, index=True)
@@ -1868,6 +1887,24 @@ class BusinessDocumentJob(DataBaseModel):
     class Meta:
         db_table = "business_document_job"
         indexes = ((("status", "available_at"), False),)
+
+
+class BusinessDocumentJobStreamEvent(DataBaseModel):
+    """Replayable, temporary progress for one document job."""
+
+    id = CharField(max_length=32, primary_key=True)
+    job_id = CharField(max_length=32, null=False, index=True)
+    document_id = CharField(max_length=32, null=False, index=True)
+    tenant_id = CharField(max_length=32, null=False, index=True)
+    sequence = IntegerField(null=False)
+    attempt = IntegerField(null=False)
+    base_revision_id = CharField(max_length=32, null=True)
+    event_type = CharField(max_length=32, null=False)
+    payload = JSONField(null=False, default=dict)
+
+    class Meta:
+        db_table = "business_document_job_stream_event"
+        indexes = ((("job_id", "sequence"), True),)
 
 
 class BusinessDocumentExportArtifact(DataBaseModel):

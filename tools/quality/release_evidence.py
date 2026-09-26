@@ -22,11 +22,13 @@ def _artifact(path: Path) -> dict:
     return {"path": str(path.resolve()), "sha256": _sha256(path)}
 
 
-def make_receipt(revision: str, repository: str, run_id: str, image: str, digest: str, jobs: dict[str, str]) -> dict:
+def make_receipt(
+    revision: str, repository: str, run_id: str, image: str, digest: str, jobs: dict[str, str], *, engine_tests_required: bool = True, engine_test_reason: str = "engine-boundary-changed"
+) -> dict:
     receipt = {
         "schema": 1,
         "source_revision": revision,
-        "ci": {"repository": repository, "run_id": run_id, "jobs": jobs},
+        "ci": {"repository": repository, "run_id": run_id, "jobs": jobs, "engine_tests_required": engine_tests_required, "engine_test_reason": engine_test_reason},
         "image": {"reference": image, "digest": digest},
     }
     validate_receipt(receipt)
@@ -45,7 +47,11 @@ def validate_receipt(receipt: dict) -> None:
         raise ValueError("candidate receipt needs a repository")
     if not isinstance(ci.get("run_id"), str) or not ci["run_id"].isdigit():
         raise ValueError("candidate receipt needs a CI run ID")
-    if not isinstance(ci.get("jobs"), dict) or set(ci["jobs"]) != set(JOBS) or any(ci["jobs"][job] != "success" for job in JOBS):
+    required = ci.get("engine_tests_required", True)
+    if type(required) is not bool or (not required and ci.get("engine_test_reason") != "no-engine-changes"):
+        raise ValueError("candidate receipt needs an explicit engine selection")
+    expected = {JOBS[0]: "success", **{job: "success" if required else "skipped" for job in JOBS[1:]}}
+    if ci.get("jobs") != expected:
         raise ValueError("all required CI jobs must have succeeded")
     if not isinstance(image, dict) or not isinstance(image.get("reference"), str) or not isinstance(image.get("digest"), str):
         raise ValueError("candidate receipt needs image identity")
@@ -179,6 +185,9 @@ def verify_release(
     report["failures"] = failures
     report["missing"] = missing
     report["status"] = "fail" if failures else "incomplete" if missing else "pass"
+    report["evidence_status"] = report["status"]
+    observed_quality = report["quality_baseline"]
+    report["quality_status"] = "incomplete" if set(observed_quality) != {"source_workbench", "business_documents"} else "fail" if "fail" in observed_quality.values() else "pass"
     return report
 
 
@@ -188,6 +197,8 @@ def main() -> int:
     receipt = sub.add_parser("receipt")
     for name in ("revision", "repository", "run-id", "image", "digest", "preflight", "infinity", "elasticsearch", "output"):
         receipt.add_argument(f"--{name}", required=True)
+    receipt.add_argument("--engine-tests-required", choices=("true", "false"), default="true")
+    receipt.add_argument("--engine-test-reason", default="engine-boundary-changed")
     verify = sub.add_parser("verify")
     for name in ("receipt", "deployment", "source-workbench-report", "business-documents-report", "output"):
         verify.add_argument(f"--{name}", type=Path, required=True)
@@ -206,6 +217,8 @@ def main() -> int:
                     "ragflow_tests_infinity": args.infinity,
                     "ragflow_tests_elasticsearch": args.elasticsearch,
                 },
+                engine_tests_required=args.engine_tests_required == "true",
+                engine_test_reason=args.engine_test_reason,
             )
         except ValueError as error:
             parser.error(str(error))

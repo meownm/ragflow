@@ -20,7 +20,7 @@ if "api.apps" not in sys.modules:
     api_apps.__path__ = [str(Path(__file__).resolve().parents[5] / "api" / "apps")]
     sys.modules["api.apps"] = api_apps
 
-from api.apps.business_documents.errors import PermissionDeniedError, ValidationError
+from business_documents.application.errors import PermissionDeniedError, ValidationError
 from api.apps.business_documents.sql_query_planner import (
     BusinessDocumentSqlQueryPlanningService,
     TenantQueryPlanner,

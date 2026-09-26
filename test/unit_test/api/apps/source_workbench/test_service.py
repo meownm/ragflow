@@ -540,3 +540,65 @@ async def test_closing_process_stream_closes_model_generator(source_module):
         pass
     await stream.aclose()
     assert ("closed",) in calls
+
+
+@pytest.mark.asyncio
+async def test_saved_draft_pins_server_selection_and_rejects_stale_version(source_module):
+    selection = [{"dataset_id": "dataset-a", "document_id": "doc-1", "revision": "hash:1:2"}]
+    created = []
+    repository = SimpleNamespace(
+        get=lambda owner, workspace: _workspace(selection),
+        create_draft=lambda *args: created.append(args) or {"id": "draft-1", "sources": args[-1]},
+    )
+    service = source_module.SourceWorkspaceService(repository, _gateway([]))
+
+    draft = await service.save_draft("owner-a", "workspace-id", {"content": "Reviewed text", "prompt": "Create", "mode": "all", "expected_version": 3})
+    assert draft["sources"] == selection
+    assert created[0][:2] == ("owner-a", "workspace-id")
+
+    with pytest.raises(source_module.SourceWorkspaceError) as error:
+        await service.save_draft("owner-a", "workspace-id", {"content": "Old result", "prompt": "Create", "mode": "all", "expected_version": 2})
+    assert error.value.code == "VERSION_CONFLICT"
+    assert len(created) == 1
+
+
+@pytest.mark.asyncio
+async def test_draft_edit_requires_version_and_workspace_owner(source_module):
+    calls = []
+
+    def get(owner, workspace):
+        if owner != "owner-a":
+            raise source_module.SourceWorkspaceError("NOT_FOUND", "Workspace not found", 404)
+        return _workspace()
+
+    repository = SimpleNamespace(
+        get=get,
+        update_draft=lambda *args: calls.append(args) or {"id": args[2], "version": args[3] + 1},
+    )
+    service = source_module.SourceWorkspaceService(repository, _gateway([]))
+    updated = await service.update_draft("owner-a", "workspace-id", "draft-1", {"content": "Edited", "expected_version": 1})
+    assert updated["version"] == 2
+    assert calls == [("owner-a", "workspace-id", "draft-1", 1, "Edited")]
+
+    with pytest.raises(source_module.SourceWorkspaceError) as error:
+        await service.update_draft("other", "workspace-id", "draft-1", {"content": "Stolen", "expected_version": 1})
+    assert error.value.status == 404
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_revoked_dataset_access_blocks_saved_draft_reads(source_module):
+    def denied(_owner, _datasets):
+        raise source_module.SourceWorkspaceError("DATASET_UNAVAILABLE", "Dataset unavailable", 403)
+
+    repository = SimpleNamespace(
+        get=lambda owner, workspace: _workspace(),
+        list_drafts=lambda *_args: pytest.fail("Draft text must not be read"),
+    )
+    gateway = _gateway([])
+    gateway.validate_datasets = denied
+    service = source_module.SourceWorkspaceService(repository, gateway)
+
+    with pytest.raises(source_module.SourceWorkspaceError) as error:
+        await service.list_drafts("owner-a", "workspace-id")
+    assert error.value.status == 403

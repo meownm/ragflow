@@ -27,7 +27,7 @@ if "api.apps" not in sys.modules:
     api_apps.__path__ = [str(Path(__file__).resolve().parents[5] / "api" / "apps")]
     sys.modules["api.apps"] = api_apps
 
-from api.apps.business_documents.errors import BusinessDocumentError
+from business_documents.application.errors import BusinessDocumentError
 from api.apps.business_documents.eva_changes import EvaChangeState, EvaDocumentChangeService
 from api.db.db_models import BusinessDocumentEvaChange, BusinessDocumentEvaChangeEvent, Connector
 from api.db.services.connector_service import ConnectorService

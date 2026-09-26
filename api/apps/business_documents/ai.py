@@ -24,14 +24,13 @@ import math
 import re
 import time
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 import unicodedata
 
 from json_repair import repair_json
 
 from api.apps.business_documents.assets import (
     apply_change_plan,
-    bind_change_plan_section_hashes,
     contract_schema,
     prompt_descriptor,
     prompt_text,
@@ -41,8 +40,11 @@ from api.apps.business_documents.assets import (
     validate_contract,
     validate_document_ast,
 )
+from business_documents.domain.content import bind_change_plan_section_hashes
 from api.apps.business_documents.async_runtime import run_in_worker_loop
-from api.apps.business_documents.errors import ValidationError
+from business_documents.application.errors import ValidationError
+from business_documents.domain.content import render_section_text
+from business_documents.domain.change_stream import ChangeOperationStream
 from business_documents.domain.content_quality import parent_child_section_pairs, semantic_duplicate_section_pairs
 from api.db.db_models import BusinessDocumentJob
 
@@ -193,7 +195,13 @@ class RAGFlowLLMAdapter:
         self._execution_audit = None
         return deepcopy(audit)
 
-    async def async_generate(self, tenant_id: str, system_prompt: str, input_payload: dict[str, Any]) -> str:
+    async def async_generate(
+        self,
+        tenant_id: str,
+        system_prompt: str,
+        input_payload: dict[str, Any],
+        on_chunk: Callable[[str], None] | None = None,
+    ) -> str:
         from api.db.joint_services.tenant_model_service import get_tenant_default_model_by_type
         from api.db.services.llm_service import LLMBundle
         from common.constants import LLMType
@@ -233,11 +241,20 @@ class RAGFlowLLMAdapter:
 
         with span_context as span, LLMBundle(tenant_id, model_config, lang="Russian", max_retries=0) as bundle:
             try:
-                result = await bundle.async_chat(
-                    system_prompt,
-                    [{"role": "user", "content": json.dumps(input_payload, ensure_ascii=False)}],
-                    generation_parameters,
-                )
+                history = [{"role": "user", "content": json.dumps(input_payload, ensure_ascii=False)}]
+                if on_chunk is None:
+                    result = await bundle.async_chat(system_prompt, history, generation_parameters)
+                else:
+                    chunks: list[str] = []
+                    try:
+                        async for chunk in bundle.async_chat_streamly_delta(system_prompt, history, generation_parameters):
+                            chunks.append(chunk)
+                            on_chunk(chunk)
+                        result = "".join(chunks)
+                    except RuntimeError as error:
+                        if chunks or "does not implement" not in str(error):
+                            raise
+                        result = await bundle.async_chat(system_prompt, history, generation_parameters)
                 raw_usage = getattr(getattr(bundle, "mdl", None), "last_usage", None) or {}
                 token_usage = {
                     "prompt_tokens": max(0, int(raw_usage.get("prompt_tokens", 0) or 0)),
@@ -276,6 +293,9 @@ class RAGFlowLLMAdapter:
     def generate(self, tenant_id: str, system_prompt: str, input_payload: dict[str, Any]) -> str:
         return run_in_worker_loop(self.async_generate(tenant_id, system_prompt, input_payload))
 
+    def generate_stream(self, tenant_id: str, system_prompt: str, input_payload: dict[str, Any], on_chunk: Callable[[str], None]) -> str:
+        return run_in_worker_loop(self.async_generate(tenant_id, system_prompt, input_payload, on_chunk))
+
 
 @dataclass(frozen=True)
 class PromptBundle:
@@ -292,11 +312,28 @@ class BusinessDocumentAI:
         consumer = getattr(self._adapter, "consume_execution_audit", None)
         return consumer() if callable(consumer) else None
 
-    def process(self, job: BusinessDocumentJob, evidence: dict[str, Any] | None = None) -> dict[str, Any]:
+    def process(
+        self,
+        job: BusinessDocumentJob,
+        evidence: dict[str, Any] | None = None,
+        on_section_preview: Callable[[dict[str, Any]], None] | None = None,
+    ) -> dict[str, Any]:
         if job.job_type not in _AI_JOB_TYPES:
             raise ValidationError("INVALID_AI_JOB", "Job type is not handled by the AI worker", {"job_type": job.job_type})
         prompt = self._prompt(job, evidence)
-        raw = self._adapter.generate(job.tenant_id, prompt.system, prompt.input_payload)
+        stream_generate = getattr(self._adapter, "generate_stream", None)
+        if job.job_type == "PLAN_CHANGES" and job.payload.get("preview_only") is True and on_section_preview is not None and callable(stream_generate):
+            stream = ChangeOperationStream()
+
+            def on_chunk(chunk: str) -> None:
+                for operation in stream.feed(chunk):
+                    preview = self._preliminary_section(job, operation)
+                    if preview is not None:
+                        on_section_preview(preview)
+
+            raw = stream_generate(job.tenant_id, prompt.system, prompt.input_payload, on_chunk)
+        else:
+            raw = self._adapter.generate(job.tenant_id, prompt.system, prompt.input_payload)
         parsed = self._parse(raw)
         parsed = self._normalize_contract_envelope(job, parsed)
         parsed = self._normalize_schema_versions(parsed)
@@ -311,6 +348,49 @@ class BusinessDocumentAI:
         parsed = self._bind_exact_draft_evidence_refs(job, parsed, evidence)
         parsed = self._filter_evidence_refs(parsed, evidence)
         return self._validate(job, parsed)
+
+    def process_stream(
+        self,
+        job: BusinessDocumentJob,
+        evidence: dict[str, Any] | None,
+        on_section_preview: Callable[[dict[str, Any]], None],
+    ) -> dict[str, Any]:
+        return self.process(job, evidence, on_section_preview)
+
+    @staticmethod
+    def _preliminary_section(job: BusinessDocumentJob, operation: dict[str, Any]) -> dict[str, Any] | None:
+        revision = job.payload.get("current_revision")
+        base = revision.get("document_ast") if isinstance(revision, dict) else None
+        if not isinstance(base, dict):
+            return None
+        sources = operation.get("source_event_ids")
+        if not isinstance(sources, list) or not sources or not all(isinstance(source, str) for source in sources) or not set(sources) <= set(_active_change_input_event_ids(job.payload)):
+            return None
+        plan = bind_change_plan_section_hashes(
+            base,
+            {
+                "schema_version": "1",
+                "base_revision_id": job.base_revision_id,
+                "source_state_version": job.source_state_version,
+                "acknowledged_no_change_event_ids": [],
+                "operations": [operation],
+            },
+        )
+        try:
+            validate_contract("change_plan", plan)
+            draft = apply_change_plan(base, plan)
+        except ValidationError:
+            return None
+        section_id = operation["section_id"]
+        before = next(section for section in base["sections"] if section["id"] == section_id)
+        after = next(section for section in draft["sections"] if section["id"] == section_id)
+        return {
+            "section_id": section_id,
+            "title": before["title"],
+            "before": render_section_text(before),
+            "after": render_section_text(after),
+            "source_event_ids": sources,
+        }
 
     def generate_eva_change(self, tenant_id: str, base_markdown: str, change_request: str) -> dict[str, Any]:
         """Generate a private EVA draft without granting the model write access."""
@@ -920,12 +1000,7 @@ class BusinessDocumentAI:
                 raise ValidationError(
                     "DUPLICATE_SECTION_CONTENT",
                     "A parent section repeats content already owned by a subsection",
-                    {
-                        "section_pairs": [
-                            {"parent_section_id": parent_id, "child_section_id": child_id}
-                            for parent_id, child_id in duplicate_pairs
-                        ]
-                    },
+                    {"section_pairs": [{"parent_section_id": parent_id, "child_section_id": child_id} for parent_id, child_id in duplicate_pairs]},
                 )
             validate_contract("question_batch", output["review_questions"])
             if any(question["stage"] != "REVIEW" for question in output["review_questions"]["questions"]):

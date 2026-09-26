@@ -6,6 +6,14 @@ from typing import Iterator
 import common
 
 
+def append_document_event(*args, **kwargs):
+    """Insert a fixture event through the same transactional writer as runtime."""
+    from api.apps.business_documents.runtime import document_writer
+
+    with document_writer.transaction():
+        return document_writer.append_event(*args, **kwargs)
+
+
 @contextmanager
 def temporary_common_settings(settings_module: ModuleType) -> Iterator[None]:
     """Install a collection-time settings stub without leaking it to other tests."""

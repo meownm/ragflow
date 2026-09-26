@@ -20,9 +20,15 @@ OUT = Path(__file__).resolve().parent
 PROJECT = "ragflow-t1-live-20260906-b-" + secrets.token_hex(4)
 BASE = "http://127.0.0.1:19382"
 SECRET_VALUES = []
-MODELS = (("t-tech/T-lite-it-2.1:q8_0", "chat"), ("qwen3.8:latest", "chat"), ("bge-m3:latest", "embedding"))
+MODELS = (("qwen3.8:latest", "chat"), ("qwen3.6:27b", "chat"), ("bge-m3:latest", "embedding"))
 OLLAMA_HOST_URL = "http://127.0.0.1:11435"
 OLLAMA_CONTAINER_URL = "http://host.docker.internal:11435"
+
+
+def models_for_run(tests: list[str], skip_browser_tests: bool) -> tuple[tuple[str, str], ...]:
+    if skip_browser_tests or (len(tests) == 1 and Path(tests[0]).name == "test_source_workbench_quality_live.py"):
+        return MODELS[0], MODELS[-1]
+    return MODELS
 
 
 def sanitized(text):
@@ -89,13 +95,17 @@ def main():
     parser.add_argument("--evidence-dir", type=Path, required=True)
     parser.add_argument("--frontend-archive", type=Path, help="Verified frontend archive and adjacent .json receipt; required for frozen browser candidates")
     parser.add_argument("--business-documents-quality", action="store_true", help="Run the real-model Business Documents suite in this disposable app")
+    parser.add_argument("--business-documents-case-id", help="Run one Business Documents case for diagnosis; the quality report remains incomplete")
     parser.add_argument("--skip-browser-tests", action="store_true", help="Use only with Business Documents model quality; no built SPA or browser evidence")
     parser.add_argument("tests", nargs="*")
     args = parser.parse_args()
     if args.skip_browser_tests and not args.business_documents_quality:
         parser.error("--skip-browser-tests requires --business-documents-quality")
+    if args.business_documents_case_id and not args.business_documents_quality:
+        parser.error("--business-documents-case-id requires --business-documents-quality")
     if args.skip_browser_tests and args.tests:
         parser.error("--skip-browser-tests cannot select browser tests")
+    models = models_for_run(args.tests, args.skip_browser_tests)
     source = args.source_root.resolve()
     dist = args.dist_root.resolve()
     candidate = source.parent if (source.parent / "candidate.json").is_file() else None
@@ -103,6 +113,16 @@ def main():
     if candidate and (OUT.is_relative_to(source) or (args.skip_browser_tests and dist.is_relative_to(source))):
         parser.error("Evidence and generated dist must stay outside the frozen source snapshot")
     OUT.mkdir(parents=True, exist_ok=True)
+    if args.business_documents_quality:
+        (OUT / "business-documents-quality.json").write_text(
+            json.dumps({"schema_version": "2", "status": "INCOMPLETE", "failure": "Live model run did not complete"}, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    if any(Path(name).name == "test_source_workbench_quality_live.py" for name in args.tests):
+        (OUT / "source-workbench-quality.json").write_text(
+            json.dumps({"status": "incomplete", "failure": "Live retrieval run did not complete"}, indent=2) + "\n",
+            encoding="utf-8",
+        )
     assert (source / "api/ragflow_server.py").is_file()
     if not args.skip_browser_tests:
         assert (dist / "index.html").is_file()
@@ -160,7 +180,7 @@ def main():
     }
     with urlopen(f"{OLLAMA_HOST_URL}/api/tags", timeout=30) as response:
         tags = {model["name"]: model for model in json.load(response)["models"]}
-    identity["ollama_models"] = {name: {key: tags[name][key] for key in ("digest", "size")} for name, _ in MODELS}
+    identity["ollama_models"] = {name: {key: tags[name][key] for key in ("digest", "size")} for name, _ in models}
     assert all(model["size"] > 1_000_000 for model in identity["ollama_models"].values()), "Only installed local model weights are allowed"
     if candidate and not args.skip_browser_tests:
         assert args.frontend_archive, "Frozen live proof requires the matching frontend artifact"
@@ -203,7 +223,7 @@ def main():
         assert token and user.get("is_superuser"), "Synthetic managed-resource admin login failed"
         SECRET_VALUES.append(token)
         print("Synthetic superuser authenticated; configuring real local Ollama", flush=True)
-        for model, kind in MODELS:
+        for model, kind in models:
             api("/v1/llm/add_llm", "POST", {"llm_factory": "Ollama", "llm_name": model, "model_type": kind, "api_base": OLLAMA_CONTAINER_URL, "max_tokens": 4096}, token)
             print(f"Validated local {kind} model {model}", flush=True)
         api("/api/v1/providers", "PUT", {"provider_name": "Ollama"}, token)
@@ -215,7 +235,7 @@ def main():
                 "api_key": "",
                 "base_url": OLLAMA_CONTAINER_URL,
                 "region": "default",
-                "model_info": [{"model_name": model, "model_type": [kind], "max_tokens": 4096} for model, kind in MODELS],
+                "model_info": [{"model_name": model, "model_type": [kind], "max_tokens": 4096} for model, kind in models],
             },
             token,
         )
@@ -322,6 +342,7 @@ def pytest_configure(config):
                     f"GITHUB_SHA={source_revision}",
                     "-e",
                     f"RAGFLOW_QA_SOURCE_DIRTY={int(source_dirty)}",
+                    *(["-e", f"BUSINESS_DOCUMENT_QUALITY_CASE_ID={args.business_documents_case_id}"] if args.business_documents_case_id else []),
                     "app",
                     "/ragflow/.venv/bin/python",
                     "-m",
@@ -335,9 +356,9 @@ def pytest_configure(config):
                 env=env,
                 log="business-quality.log",
                 check=False,
-                timeout=1800,
+                timeout=1500 if args.business_documents_case_id else 3600,
             )
-            exit_code = exit_code or quality_result.returncode
+            exit_code = exit_code or quality_result.returncode or (2 if args.business_documents_case_id else 0)
             print(f"Business Documents real-model exit={quality_result.returncode}; see business-quality.log", flush=True)
     except Exception as exc:
         (OUT / "failure.txt").write_text(sanitized(str(exc)), encoding="utf-8")

@@ -6,8 +6,8 @@ from datetime import datetime
 from types import TracebackType
 from typing import Any
 
-from api.apps.business_documents.errors import BusinessDocumentError
-from api.apps.business_documents.service import BusinessDocumentService
+from business_documents.application.errors import BusinessDocumentError
+from api.apps.business_documents.runtime import document_queries
 from api.db.db_models import BusinessDocument, BusinessDocumentEvent, BusinessDocumentJob, User
 from business_documents.application.assign_document import (
     AssignDocument,
@@ -107,21 +107,27 @@ class _PeeweeAssignmentUnitOfWork(AssignmentUnitOfWork):
     def add_event(self, event: DocumentAssignedEvent) -> None:
         now = datetime.now()
         timestamp = current_timestamp()
-        BusinessDocumentEvent.create(
-            id=event.id,
-            document_id=event.document_id,
-            sequence=event.sequence,
-            event_type=event.event_type,
-            actor_type=event.actor_type,
-            actor_id=event.actor_id,
-            payload=event.payload,
-            correlation_id=event.correlation_id,
-            causation_id=event.causation_id,
-            create_time=timestamp,
-            create_date=now,
-            update_time=timestamp,
-            update_date=now,
-        )
+        # Bulk insert preserves the explicit instant; BaseModel.create resamples
+        # creation and update clocks separately even for an append-only event.
+        BusinessDocumentEvent.insert_many(
+            [
+                dict(
+                    id=event.id,
+                    document_id=event.document_id,
+                    sequence=event.sequence,
+                    event_type=event.event_type,
+                    actor_type=event.actor_type,
+                    actor_id=event.actor_id,
+                    payload=event.payload,
+                    correlation_id=event.correlation_id,
+                    causation_id=event.causation_id,
+                    create_time=timestamp,
+                    create_date=now,
+                    update_time=timestamp,
+                    update_date=now,
+                )
+            ]
+        ).execute()
 
 
 def assign_business_document(
@@ -154,10 +160,4 @@ def assign_business_document(
             error.details,
         ) from error
 
-    return BusinessDocumentService.get_document(
-        actor_id,
-        document_id,
-        actor_id,
-        is_admin,
-        command.access_role,
-    )
+    return document_queries.get_document(document_id, actor_id, is_admin, command.access_role)

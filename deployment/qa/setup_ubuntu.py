@@ -13,7 +13,7 @@ import time
 from urllib.request import urlopen
 
 
-MODELS = ("t-tech/T-lite-it-2.1:q8_0", "qwen3.8:latest", "bge-m3:latest")
+MODELS = ("qwen3.8:latest", "qwen3.6:27b", "bge-m3:latest")
 IMAGE = re.compile(r"^.+/ragflow:([0-9a-f]{40})$")
 ROOT = Path(__file__).resolve().parent
 

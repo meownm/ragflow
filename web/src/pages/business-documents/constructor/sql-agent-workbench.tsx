@@ -2298,7 +2298,7 @@ export function SqlAgentWorkbench() {
               )}
               {(project.blockers?.length
                 ? project.blockers
-                : project.last_error
+                : project.last_error?.code || project.last_error?.message
                   ? [
                       {
                         ...project.last_error,

@@ -1,3 +1,14 @@
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -204,11 +215,12 @@ function CreateProject({
         Новый запрос
       </p>
       <h2 className="mt-2 text-3xl font-semibold tracking-tight">
-        Опишите результат на естественном языке
+        Какой результат вам нужен?
       </h2>
       <p className="mt-2 max-w-2xl text-sm leading-6 text-text-secondary">
-        Добавьте сущности, нужные поля, период, фильтры и лимит. Неизвестные
-        детали агент вынесет в отдельные вопросы.
+        Опишите вопрос обычными словами: что посчитать, за какой период и как
+        сгруппировать ответ. Имена таблиц и полей знать не нужно — подходящие
+        данные найдём по описанию задачи.
       </p>
       <label className="mt-8 block text-sm font-medium">
         Название (необязательно)
@@ -227,7 +239,7 @@ function CreateProject({
           value={source}
           maxLength={20000}
           resize="vertical"
-          placeholder="Получить активных клиентов и сумму их заказов за последние 90 дней. Вывести клиента, регион, сумму и дату последнего заказа. Исключить тестовые аккаунты, отсортировать по сумме, вернуть не более 500 строк."
+          placeholder="За сентябрь 2026 года покажи по каждому виду импорта глоссария число успешных запусков и сколько записей загружено. Отсортируй по числу запусков."
           onChange={(event) => setSource(event.target.value)}
         />
       </label>
@@ -492,24 +504,6 @@ function SchemaReview({
     }));
   };
 
-  const selectAll = (resolutionIndex: number) => {
-    setWorkspace((current) => ({
-      ...current,
-      resolutions: current.resolutions.map((resolution, index) => {
-        if (index !== resolutionIndex) return resolution;
-        const selected = resolution.candidates.find(
-          (candidate) => candidate.id === resolution.selectedEntityId,
-        );
-        return selected
-          ? {
-              ...resolution,
-              selectedColumnIds: selected.columns.map((column) => column.id),
-            }
-          : resolution;
-      }),
-    }));
-  };
-
   return (
     <div className="space-y-7" data-testid="sql-agent-schema-review">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -518,11 +512,11 @@ function SchemaReview({
             Предложение агента схемы
           </p>
           <h3 className="mt-1 text-xl font-semibold">
-            Выберите таблицы и нужные поля
+            Проверьте найденные данные
           </h3>
           <p className="mt-1 text-sm text-text-secondary">
-            Источник истины — каталог OpenMetadata. Неоднозначные соответствия
-            подтверждаются вручную.
+            По описанию вопроса каталог предложил источники. Выберите подходящий
+            по смыслу, затем отметьте поля для расчёта и условий.
           </p>
         </div>
         <Badge
@@ -555,7 +549,7 @@ function SchemaReview({
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <p className="text-xs text-text-disabled">Сущность</p>
+                  <p className="text-xs text-text-disabled">Что ищем</p>
                   <h4 className="text-base font-semibold">{resolution.term}</h4>
                 </div>
                 {resolution.interpretation?.reason && (
@@ -582,8 +576,9 @@ function SchemaReview({
                       <span className="block truncate text-sm font-medium">
                         {candidate.displayName || candidate.name}
                       </span>
-                      <span className="block truncate text-xs text-text-disabled">
-                        {candidate.fqn}
+                      <span className="block text-xs text-text-disabled">
+                        {candidate.description ||
+                          'Описание источника не указано'}
                       </span>
                     </span>
                     {loadingEntity === candidate.id ? (
@@ -612,19 +607,15 @@ function SchemaReview({
               )}
               {selected?.schemaStatus === 'loaded' && (
                 <div className="mt-4 border-s-2 border-border-button ps-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-xs font-medium">
-                      Поля для SELECT, JOIN и WHERE · выбрано{' '}
-                      {resolution.selectedColumnIds.length}
-                    </p>
-                    <button
-                      type="button"
-                      className="text-xs text-accent-primary hover:underline"
-                      onClick={() => selectAll(resolutionIndex)}
-                    >
-                      Выбрать все
-                    </button>
-                  </div>
+                  <p className="text-xs font-medium">
+                    Поля для ответа и расчёта · выбрано{' '}
+                    {resolution.selectedColumnIds.length}
+                  </p>
+                  <p className="mt-1 text-xs text-text-secondary">
+                    Отметьте поля, по которым нужно группировать, считать или
+                    отбирать строки. Это ещё не столбцы готового ответа: их
+                    можно проверить на следующем шаге.
+                  </p>
                   <div className="mt-3 grid max-h-56 gap-x-5 gap-y-2 overflow-y-auto pe-2 sm:grid-cols-2">
                     {selected.columns.map((column) => (
                       <label
@@ -642,10 +633,12 @@ function SchemaReview({
                         />
                         <span className="min-w-0">
                           <span className="block truncate font-medium">
-                            {column.name}
+                            {column.displayName || column.name}
                           </span>
                           <span className="block truncate text-text-disabled">
-                            {column.dataType || 'тип не указан'}
+                            {column.description ||
+                              column.dataType ||
+                              'Описание не указано'}
                           </span>
                         </span>
                       </label>
@@ -697,29 +690,66 @@ function QueryReview({
       </p>
     );
   }
+  const selectedTables = (
+    (
+      project.artifacts?.schema?.schema_snapshot as
+        | {
+            requirements?: Array<{
+              selected_table?: {
+                id: string;
+                display_name?: string;
+                name: string;
+                columns: Array<{
+                  id: string;
+                  description?: string;
+                  name: string;
+                }>;
+              };
+            }>;
+          }
+        | undefined
+    )?.requirements || []
+  ).flatMap((item) => (item.selected_table ? [item.selected_table] : []));
+  const fieldName = (columnId: string) => {
+    const column = selectedTables
+      .flatMap((table) => table.columns)
+      .find((item) => item.id === columnId);
+    const description = column?.description?.split(/[.;]/)[0].trim();
+    return description && !description.startsWith('Поле `')
+      ? description
+      : column?.name || columnId.split('.').at(-1);
+  };
+  const selectName = new Map(
+    proposal.select.map((item) => [item.id, item.alias]),
+  );
   return (
     <div className="space-y-7" data-testid="sql-agent-query-review">
       <div>
         <p className="text-xs font-medium uppercase tracking-[0.14em] text-accent-primary">
-          Предложение агента SQL
+          Проверка ответа
         </p>
-        <h3 className="mt-1 text-xl font-semibold">Проверьте план запроса</h3>
+        <h3 className="mt-1 text-xl font-semibold">Что будет посчитано</h3>
         <p className="mt-1 text-sm text-text-secondary">
-          Подтверждение фиксирует JOIN и WHERE как решения пользователя. Затем
-          компилятор сформирует read-only SQL.
+          Сверьте показатели, разбивку и условия с вашим вопросом. Затем система
+          подготовит и проверит запрос.
         </p>
       </div>
       <div className="grid gap-7 lg:grid-cols-2">
         <section>
           <h4 className="flex items-center gap-2 text-sm font-semibold">
-            <Table2 className="size-4" /> SELECT
+            <Table2 className="size-4" /> Столбцы ответа
           </h4>
           <div className="mt-3 divide-y divide-border-button border-y border-border-button">
             {proposal.select.map((item) => (
               <div key={item.id} className="py-3 text-xs">
-                <span className="font-medium">{item.alias}</span>
+                <span className="font-medium">
+                  {resultOperationLabel(item.kind)}
+                </span>
                 <span className="ms-2 text-text-secondary">
-                  {item.kind} · {item.column_id}
+                  {fieldName(item.column_id)}
+                </span>
+                <span className="mt-1 block text-text-disabled">
+                  Столбец результата: {item.alias}
                 </span>
               </div>
             ))}
@@ -727,7 +757,7 @@ function QueryReview({
         </section>
         <section>
           <h4 className="flex items-center gap-2 text-sm font-semibold">
-            <Database className="size-4" /> JOIN
+            <Database className="size-4" /> Связанные данные
           </h4>
           <div className="mt-3 space-y-3">
             {proposal.joins.length ? (
@@ -737,7 +767,9 @@ function QueryReview({
                   className="border-s-2 border-border-button ps-3 text-xs"
                 >
                   <p className="font-medium">
-                    {join.join_type} · {join.entity_id}
+                    {join.join_type} ·{' '}
+                    {selectedTables.find((table) => table.id === join.entity_id)
+                      ?.display_name || join.entity_id}
                   </p>
                   <p className="mt-1 break-all text-text-secondary">
                     {join.left_column_id} = {join.right_column_id}
@@ -769,7 +801,7 @@ function QueryReview({
         </section>
         <section>
           <h4 className="flex items-center gap-2 text-sm font-semibold">
-            <Code2 className="size-4" /> WHERE
+            <Code2 className="size-4" /> Условия отбора
           </h4>
           <div className="mt-3 space-y-3">
             {proposal.filters.length ? (
@@ -779,10 +811,15 @@ function QueryReview({
                   className="border-s-2 border-border-button ps-3 text-xs"
                 >
                   <p className="font-medium">{filter.description}</p>
-                  <p className="mt-1 break-all font-mono text-text-secondary">
-                    {filter.column_id} {filter.operator}{' '}
-                    {filter.parameter_name ? `:${filter.parameter_name}` : ''}
-                  </p>
+                  <details className="mt-1 text-text-secondary">
+                    <summary className="cursor-pointer">
+                      Техническое условие
+                    </summary>
+                    <p className="mt-1 break-all font-mono">
+                      {filter.column_id} {filter.operator}{' '}
+                      {filter.parameter_name ? `:${filter.parameter_name}` : ''}
+                    </p>
+                  </details>
                   <label className="mt-2 flex items-start gap-2 text-text-secondary">
                     <Checkbox
                       checked={confirmedFilterIds.includes(filter.id)}
@@ -811,7 +848,10 @@ function QueryReview({
             <dt className="text-text-secondary">Сортировка</dt>
             <dd>
               {proposal.order_by
-                .map((item) => `${item.select_item_id} ${item.direction}`)
+                .map(
+                  (item) =>
+                    `${selectName.get(item.select_item_id) || item.select_item_id} ${item.direction === 'DESC' ? 'по убыванию' : 'по возрастанию'}`,
+                )
                 .join(', ') || 'не задана'}
             </dd>
           </dl>
@@ -833,6 +873,23 @@ function QueryReview({
         onReject={() => onDecision('REJECT', null)}
       />
     </div>
+  );
+}
+
+function resultOperationLabel(kind: string) {
+  return (
+    (
+      {
+        column: 'Поле',
+        count: 'Количество',
+        count_distinct: 'Количество уникальных значений',
+        sum: 'Сумма',
+        avg: 'Среднее',
+        min: 'Минимум',
+        max: 'Максимум',
+        date_bucket: 'Период',
+      } as Record<string, string>
+    )[kind] || kind
   );
 }
 
@@ -1469,16 +1526,38 @@ function CompletedProject({
           <div className="mt-5 flex gap-2">
             <Button disabled={busy} onClick={() => void finish()}>
               {busy && <LoaderCircle className="size-4 animate-spin" />}
-              Завершить и удалить строки
+              Завершить
             </Button>
-            <Button
-              variant="outline"
-              disabled={busy}
-              onClick={() => void cancelResult()}
-            >
-              Отменить результат
-            </Button>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="ghost" disabled={busy}>
+                  Удалить данные этого запуска
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>
+                    Удалить полученные данные?
+                  </AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Строки этого запуска будут удалены. Документ не создастся;
+                    чтобы снова увидеть данные, потребуется выполнить запрос ещё
+                    раз.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Оставить данные</AlertDialogCancel>
+                  <AlertDialogAction onClick={() => void cancelResult()}>
+                    Удалить данные
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
+          <p className="mt-2 text-xs text-text-secondary">
+            «Завершить» сохранит документ с вопросом, SQL и проверками, затем
+            очистит временные строки результата. Документ можно открыть позже.
+          </p>
           <section className="mt-5 border-t border-border-button pt-4">
             <Button
               variant="ghost"
@@ -2058,7 +2137,7 @@ export function SqlAgentWorkbench() {
       .map((item) => item.replace(/^\s*[-*•]\s+/, '').trim())
       .filter(Boolean);
     if (kind === 'SCHEMA' && !parsedTerms.length) {
-      setError('Укажите хотя бы одну сущность для поиска в каталоге.');
+      setError('Опишите, какие данные нужно найти в каталоге.');
       return;
     }
     setBusy(true);
@@ -2114,7 +2193,7 @@ export function SqlAgentWorkbench() {
             ? schemaTermsFromRequirements(updated)
             : [];
         if (updated.next_agent === 'SCHEMA' && schemaTerms.length === 0) {
-          setError('Уточните сущности для поиска в каталоге.');
+          setError('Уточните, какие данные нужно найти в каталоге.');
           return;
         }
         if (schemaTerms.length) setTerms(schemaTerms.join('\n'));
@@ -2410,27 +2489,28 @@ export function SqlAgentWorkbench() {
                     {currentAgent === 'REQUIREMENTS'
                       ? 'Разобрать исходные требования'
                       : currentAgent === 'SCHEMA'
-                        ? 'Найти сущности в каталоге'
+                        ? 'Найти подходящие данные'
                         : 'Собрать план SQL-запроса'}
                   </h3>
                   <p className="mt-2 text-sm leading-6 text-text-secondary">
                     {currentAgent === 'REQUIREMENTS'
                       ? 'Агент выделит требования к выводу, соединениям, фильтрации, сортировке и лимитам.'
                       : currentAgent === 'SCHEMA'
-                        ? 'Перечислите бизнес-сущности по одной на строку. Агент предложит соответствующие таблицы и поля.'
+                        ? 'Опишите, какие данные нужны для ответа. Каталог предложит подходящие источники и поля.'
                         : 'Агент использует только подтверждённые требования и снимок схемы.'}
                   </p>
                   {currentAgent === 'SCHEMA' && (
                     <label className="mt-5 block text-sm font-medium">
-                      Сущности и понятия
+                      Что искать в данных?
                       <Textarea
                         className="mt-2 min-h-36"
                         value={terms}
-                        placeholder={'клиент\nзаказ\nрегион'}
+                        placeholder={'запуски импорта глоссария'}
                         onChange={(event) => setTerms(event.target.value)}
                       />
                       <span className="mt-2 block text-xs text-text-disabled">
-                        До 8 сущностей за один шаг
+                        До 8 тем для поиска за один шаг. Имя таблицы не
+                        требуется.
                       </span>
                     </label>
                   )}

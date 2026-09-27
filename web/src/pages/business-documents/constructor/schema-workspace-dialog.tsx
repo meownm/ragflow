@@ -701,7 +701,9 @@ export function SchemaWorkspaceDialog({
                                 />
                                 <span className="min-w-0">
                                   <span className="block break-all text-xs font-medium">
-                                    {column.name}
+                                    {column.displayName
+                                      ? `${column.displayName} (${column.name})`
+                                      : column.name}
                                     {column.dataType
                                       ? ` · ${column.dataType}`
                                       : ''}

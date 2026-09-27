@@ -15,10 +15,11 @@
 #
 from fastapi import APIRouter
 
-from api.handlers import healthz_handler, run_code_handler
+from api.handlers import capabilities_handler, healthz_handler, run_code_handler
 
 router = APIRouter()
 
 router.get("/")(healthz_handler)
 router.get("/healthz")(healthz_handler)
+router.get("/capabilities")(capabilities_handler)
 router.post("/run")(run_code_handler)

@@ -11,7 +11,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-
 API_PATH = Path(__file__).parents[5] / "api" / "apps" / "restful_apis" / "business_document_api.py"
 
 
@@ -33,6 +32,18 @@ EXPECTED_ROUTES = {
     "create_business_document_sql_query_project": ("/business-documents/sql-query/projects", ("POST",)),
     "list_business_document_sql_query_projects": ("/business-documents/sql-query/projects", ("GET",)),
     "get_business_document_sql_query_project": ("/business-documents/sql-query/projects/<project_id>", ("GET",)),
+    "revise_business_document_sql_query_question": ("/business-documents/sql-query/projects/<project_id>/question", ("POST",)),
+    "compile_business_document_sql_project": ("/business-documents/sql-query/projects/<project_id>/compilations", ("POST",)),
+    "preflight_business_document_sql_project": ("/business-documents/sql-query/projects/<project_id>/preflight", ("GET",)),
+    "run_business_document_sql_project": ("/business-documents/sql-query/projects/<project_id>/runs", ("POST",)),
+    "save_business_document_sql_manual_query": ("/business-documents/sql-query/projects/<project_id>/manual-sql", ("POST",)),
+    "preview_business_document_sql_run": ("/business-documents/sql-query/projects/<project_id>/runs/<run_id>/preview", ("GET",)),
+    "run_business_document_sql_python": ("/business-documents/sql-query/projects/<project_id>/runs/<run_id>/python", ("POST",)),
+    "run_business_document_sql_lookup": ("/business-documents/sql-query/projects/<project_id>/runs/<run_id>/lookup", ("POST",)),
+    "propose_business_document_sql_conclusion": ("/business-documents/sql-query/projects/<project_id>/runs/<run_id>/conclusion", ("POST",)),
+    "confirm_business_document_sql_conclusion": ("/business-documents/sql-query/projects/<project_id>/runs/<run_id>/conclusion/confirm", ("POST",)),
+    "cancel_business_document_sql_run": ("/business-documents/sql-query/projects/<project_id>/runs/<run_id>/cancel", ("POST",)),
+    "complete_business_document_sql_project": ("/business-documents/sql-query/projects/<project_id>/complete", ("POST",)),
     "request_business_document_sql_agent": ("/business-documents/sql-query/projects/<project_id>/agent-jobs", ("POST",)),
     "decide_business_document_sql_agent_proposal": (
         "/business-documents/sql-query/projects/<project_id>/proposals/<proposal_id>/decision",
@@ -133,12 +144,17 @@ def test_mutating_routes_read_json_and_all_routes_map_domain_errors():
             "update_business_document_access_user",
             "assign_business_document_owner",
             "create_business_document_sql_query_project",
+            "revise_business_document_sql_query_question",
             "request_business_document_sql_agent",
             "decide_business_document_sql_agent_proposal",
             "resolve_business_document_sql_schema",
             "load_business_document_sql_schema_entities",
             "plan_business_document_sql_query",
             "compile_business_document_sql_query",
+            "compile_business_document_sql_project",
+            "run_business_document_sql_project",
+            "cancel_business_document_sql_run",
+            "complete_business_document_sql_project",
             "create_business_document_sql_execution_profile",
             "update_business_document_sql_execution_profile",
             "create_business_document_sql_catalog_binding",

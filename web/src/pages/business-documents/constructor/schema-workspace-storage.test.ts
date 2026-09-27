@@ -78,6 +78,7 @@ const workspace: SchemaWorkspaceState = {
             {
               id: 'dwh.order_fact.paid_amount_rub',
               name: 'paid_amount_rub',
+              displayName: 'Оплаченная сумма',
               fqn: 'dwh.order_fact.paid_amount_rub',
               dataType: 'NUMERIC(18,2)',
               description: 'Оплаченная сумма',
@@ -144,6 +145,28 @@ describe('schema workspace storage', () => {
     expect(migrated.requirements).toBe('');
     expect(migrated.resolutions[0].candidates[0].schemaStatus).toBe('summary');
     expect(migrated.resolutions[0].interpretation?.promptName).toBeNull();
+  });
+
+  it('requires reloading a pre-fix schema while preserving table and field choices', () => {
+    const storage = createMemoryStorage();
+    const key = createSchemaWorkspaceStorageKey(scope);
+    saveSchemaWorkspace(storage, key, scope, workspace);
+    const envelope = JSON.parse(storage.getItem(key)!);
+    envelope.schemaVersion = 2;
+    envelope.workspace.resolutions[0].candidates[0].columns[0].name =
+      'Оплаченная сумма';
+    storage.setItem(key, JSON.stringify(envelope));
+
+    const migrated = loadSchemaWorkspace(storage, key, scope);
+
+    expect(migrated.resolutions[0].selectedEntityId).toBe('orders');
+    expect(migrated.resolutions[0].selectedColumnIds).toEqual([
+      'dwh.order_fact.paid_amount_rub',
+    ]);
+    expect(migrated.resolutions[0].candidates[0]).toMatchObject({
+      schemaStatus: 'summary',
+      schemaFingerprint: null,
+    });
   });
 
   it('fails closed when a stored table selection no longer exists', () => {

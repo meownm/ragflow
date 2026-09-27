@@ -7,14 +7,13 @@
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-import sys
 import asyncio
+import json
+import sys
+from pathlib import Path
 from types import ModuleType
 
 import pytest
-
 
 if "api.apps" not in sys.modules:
     api_apps = ModuleType("api.apps")
@@ -22,12 +21,12 @@ if "api.apps" not in sys.modules:
     sys.modules["api.apps"] = api_apps
 
 from api.apps.business_documents import sql_query_schema as schema_adapter_module
-from business_documents.application.errors import PermissionDeniedError, ValidationError
 from api.apps.business_documents.sql_query_schema import (
     BusinessDocumentSqlQuerySchemaService,
     OpenMetadataCatalogResolver,
     TenantSchemaInterpreter,
 )
+from business_documents.application.errors import PermissionDeniedError, ValidationError
 from business_documents.sql_query.schema_resolution import (
     CatalogAccessDenied,
     CatalogLookupError,
@@ -71,6 +70,43 @@ def _answer(*entities: dict, needs_clarification: bool = False) -> dict:
         "needs_clarification": needs_clarification,
         "warnings": [],
     }
+
+
+def test_catalog_schema_uses_physical_identifiers_with_display_labels():
+    entity = _entity("orders", "postgres.db.public.orders")
+    entity.update(
+        service="Warehouse",
+        service_technical_name="postgres",
+        database="Analytics",
+        database_technical_name="db",
+        schema="Публичная",
+        schema_technical_name="public",
+    )
+    entity["column_details"] = [
+        {
+            "name": "Номер заказа",
+            "technical_name": "order_id",
+            "fqn": "postgres.db.public.orders.order_id",
+        }
+    ]
+
+    candidate = catalog_result_from_mapping("orders", _answer(entity), include_all_columns=True).candidates[0]
+
+    assert (candidate.service, candidate.database, candidate.schema) == ("postgres", "db", "public")
+    assert candidate.columns[0].name == "order_id"
+    assert candidate.columns[0].display_name == "Номер заказа"
+    assert candidate.columns[0].id == "postgres.db.public.orders.order_id"
+    preview = catalog_result_from_mapping("Номер заказа", _answer(entity)).candidates[0]
+    assert [column.name for column in preview.columns] == ["order_id"]
+
+
+def test_field_preview_does_not_match_table_prefix_before_exact_column():
+    entity = _entity("amounts", "postgres.db.public.amounts", column_count=13)
+    entity["column_details"] = [{"name": f"c{index}", "fqn": f"postgres.db.public.amounts.c{index}"} for index in range(12)] + [{"name": "amount", "fqn": "postgres.db.public.amounts.amount"}]
+
+    candidate = catalog_result_from_mapping("amount", _answer(entity)).candidates[0]
+
+    assert [column.name for column in candidate.columns] == ["amount"]
 
 
 class FakeCatalog:
@@ -298,9 +334,22 @@ async def test_openmetadata_adapter_reuses_shared_service_and_enforces_dataset_a
             calls.append(("catalog", question, kwargs))
             return _answer(_entity("orders", "dwh.order_fact"))
 
+    class Client:
+        def get_table(self, entity_id):
+            calls.append(("live_table", entity_id))
+            return {
+                "id": entity_id,
+                "name": "order_fact",
+                "fullyQualifiedName": "dwh.order_fact",
+                "version": 2,
+                "updatedAt": 1_790_000_000_000,
+                "columns": [{"name": "field_0", "dataType": "BIGINT"}],
+            }
+
     class Service:
-        config = type("Config", (), {"dataset_id": "dataset-1"})()
+        config = type("Config", (), {"dataset_id": "dataset-1", "public_url": "https://catalog.example"})()
         catalog = Catalog()
+        client = Client()
 
     class KnowledgebaseService:
         @staticmethod
@@ -338,8 +387,11 @@ async def test_openmetadata_adapter_reuses_shared_service_and_enforces_dataset_a
     assert calls[2][2]["dataset_hits"] == [{"content": "verified"}]
     assert calls[2][2]["forced_intent"] == "discovery"
     assert details.candidates[0].schema_loaded is True
+    assert details.candidates[0].version == 2
+    assert details.freshness.stale is False
     assert calls[3][2]["selected_entity_id"] == "orders"
     assert calls[3][2]["forced_intent"] == "discovery"
+    assert calls[4] == ("live_table", "orders")
 
 
 @pytest.mark.asyncio

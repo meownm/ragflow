@@ -5,20 +5,21 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 from json_repair import repair_json
 
 from api.apps.business_documents.ai import RAGFlowLLMAdapter
 from api.apps.business_documents.assets import contract_schema, prompt_descriptor, prompt_text, validate_contract
 from api.apps.business_documents.authorization import BusinessDocumentAccess
-from business_documents.application.errors import BusinessDocumentError, PermissionDeniedError, ValidationError
+from api.apps.services.openmetadata_copilot_service import normalize_table
 from api.apps.services.openmetadata_dataset_retrieval import retrieve_openmetadata_dataset_hits
 from api.apps.services.openmetadata_runtime_service import get_openmetadata_service, openmetadata_catalog_accessible
-from common.misc_utils import thread_pool_exec
+from business_documents.application.errors import BusinessDocumentError, PermissionDeniedError, ValidationError
 from business_documents.sql_query.schema_resolution import (
-    CatalogCandidate,
     CatalogAccessDenied,
+    CatalogCandidate,
     CatalogLookupError,
     CatalogResult,
     PromptProvenance,
@@ -30,7 +31,7 @@ from business_documents.sql_query.schema_resolution import (
     parse_load_schema_entities_command,
     parse_resolve_schema_command,
 )
-
+from common.misc_utils import thread_pool_exec
 
 LOGGER = logging.getLogger(__name__)
 _LLM_TIMEOUT_SECONDS = 90.0
@@ -47,6 +48,7 @@ def _prompt_columns(entity: CatalogCandidate, maximum: int) -> list[dict[str, st
         {
             "id": _prompt_text(column.id, 1_000),
             "name": _prompt_text(column.name, 300),
+            "display_name": _prompt_text(column.display_name, 300),
             "data_type": _prompt_text(column.data_type, 200),
             "description": _prompt_text(column.description, 500),
             "constraint": _prompt_text(column.constraint, 200),
@@ -151,6 +153,17 @@ class OpenMetadataCatalogResolver:
                 locale=locale,
                 forced_intent="discovery",
             )
+            client = getattr(self._service, "client", None)
+            if client is not None:
+                raw = await thread_pool_exec(client.get_table, entity_id)
+                current = normalize_table(raw, self._service.config.public_url)
+                if current["id"] != entity_id or current["deleted"]:
+                    raise CatalogLookupError("Selected table changed or was removed")
+                answer = {
+                    **answer,
+                    "entities": [current],
+                    "freshness": {**answer.get("freshness", {}), "stale": False},
+                }
             return catalog_result_from_mapping(entity_id, answer, include_all_columns=True)
         except Exception as exc:
             LOGGER.warning("SQL selected-table schema lookup failed: %s", type(exc).__name__)

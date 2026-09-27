@@ -35,13 +35,12 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
-
-from common.openmetadata_agents import public_agent_roles
 from urllib.parse import quote, urlparse
 
 import requests
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
+from common.openmetadata_agents import public_agent_roles
 
 LOGGER = logging.getLogger(__name__)
 
@@ -63,9 +62,7 @@ _CONTEXT_REFERENCE_MARKERS = (
     "them",
     "that table",
 )
-_CONTEXT_REFERENCE_PATTERNS = (
-    re.compile(r"(?<!\w)(?:у\s+не[её]|для\s+не[её]|о\s+не[её]|она|е[её])(?=\W|$)", re.IGNORECASE),
-)
+_CONTEXT_REFERENCE_PATTERNS = (re.compile(r"(?<!\w)(?:у\s+не[её]|для\s+не[её]|о\s+не[её]|она|е[её])(?=\W|$)", re.IGNORECASE),)
 _MISSING_DESCRIPTION_MARKERS = ("без описан", "не имеют описан", "missing description", "without description")
 _WITH_DESCRIPTION_MARKERS = ("с описан", "имеют описан", "with description")
 _RECENT_MARKERS = ("последн", "недавн", "свеж", "recent", "latest", "updated last")
@@ -133,7 +130,7 @@ class OpenMetadataConfig:
     dataset_vector_similarity_weight: float = 0.3
 
     @classmethod
-    def from_env(cls) -> "OpenMetadataConfig":
+    def from_env(cls) -> OpenMetadataConfig:
         base_url = os.getenv("OPENMETADATA_URL", "http://host.docker.internal:8585").strip().rstrip("/")
         public_url = os.getenv("OPENMETADATA_PUBLIC_URL", "http://127.0.0.1:8585").strip().rstrip("/")
         _validate_base_url(base_url, "OPENMETADATA_URL")
@@ -298,6 +295,7 @@ def normalize_table(entity: dict[str, Any], public_url: str) -> dict[str, Any]:
         column_details.append(
             {
                 "name": name,
+                "technical_name": str(column.get("name") or "").strip(),
                 "fqn": str(column.get("fullyQualifiedName") or ""),
                 "data_type": str(column.get("dataTypeDisplay") or column.get("dataType") or ""),
                 "description": column.get("description") or "",
@@ -329,8 +327,11 @@ def normalize_table(entity: dict[str, Any], public_url: str) -> dict[str, Any]:
         "updated_at_epoch": entity.get("updatedAt"),
         "updated_by": entity.get("updatedBy") or "",
         "service": service.get("displayName") or service.get("name") or "",
+        "service_technical_name": service.get("name") or "",
         "schema": schema.get("displayName") or schema.get("name") or "",
+        "schema_technical_name": schema.get("name") or "",
         "database": database.get("displayName") or database.get("name") or "",
+        "database_technical_name": database.get("name") or "",
         "owners": owners,
         "owner_keys": _unique_strings(_reference_aliases(owner_refs)),
         "domains": domains,
@@ -639,11 +640,9 @@ class CatalogProjection:
         checked_at = datetime.now(UTC).isoformat()
         if stale:
             warnings.append(
-                (
-                    f"Последнее изменение сущности OpenMetadata было {latest_iso}; это старше порога {self.config.stale_after_hours} ч. Проверьте ingestion."
-                    if latest_iso
-                    else "OpenMetadata не вернул дату изменения сущностей; проверьте ingestion."
-                )
+                f"Последнее изменение сущности OpenMetadata было {latest_iso}; это старше порога {self.config.stale_after_hours} ч. Проверьте ingestion."
+                if latest_iso
+                else "OpenMetadata не вернул дату изменения сущностей; проверьте ingestion."
             )
         if truncated:
             warnings.append(f"Каталог ограничен первыми {self.config.max_entities} сущностями")
@@ -785,7 +784,7 @@ class DatasetRetrievalAgent:
 
     name = "dataset_retrieval"
 
-    def __init__(self, service: "OpenMetadataCopilotService"):
+    def __init__(self, service: OpenMetadataCopilotService):
         self.service = service
 
     @staticmethod
@@ -840,7 +839,7 @@ class DatasetRetrievalAgent:
 class DiscoveryAgent:
     name = "discovery"
 
-    def __init__(self, service: "OpenMetadataCopilotService"):
+    def __init__(self, service: OpenMetadataCopilotService):
         self.service = service
 
     def search(
@@ -1005,7 +1004,7 @@ class DiscoveryAgent:
 class ImpactQualityAgent:
     name = "impact_quality"
 
-    def __init__(self, service: "OpenMetadataCopilotService"):
+    def __init__(self, service: OpenMetadataCopilotService):
         self.service = service
 
     def impact(
@@ -1428,7 +1427,7 @@ class ImpactQualityAgent:
 class StarterQuestionAgent:
     name = "starter_questions"
 
-    def __init__(self, service: "OpenMetadataCopilotService"):
+    def __init__(self, service: OpenMetadataCopilotService):
         self.service = service
 
     def _relationship_candidate(self, tables: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -1568,7 +1567,7 @@ class GovernanceAgent:
     )
     _DESCRIPTION_PATTERN = re.compile(r"(?:описани[ея]|description)\s*:?[ \t]*(.+)$", re.IGNORECASE)
 
-    def __init__(self, service: "OpenMetadataCopilotService", secret_key: str):
+    def __init__(self, service: OpenMetadataCopilotService, secret_key: str):
         self.service = service
         self._signer = URLSafeTimedSerializer(secret_key=secret_key, salt="ragflow-openmetadata-governance-v1")
 
@@ -1733,7 +1732,7 @@ class CatalogCopilotAgent:
     )
     _CATALOG_MARKERS = ("сколько", "статист", "покрыти", "состояние каталога", "возможност", "capabilit")
 
-    def __init__(self, service: "OpenMetadataCopilotService"):
+    def __init__(self, service: OpenMetadataCopilotService):
         self.service = service
 
     def classify(self, question: str) -> str:

@@ -19,8 +19,9 @@ import json
 import os
 import time
 import uuid
+
 from core.config import TIMEOUT
-from core.container import allocate_container_blocking, release_container
+from core.container import allocate_container_blocking, create_container, release_container
 from core.logger import logger
 from models.enums import ResourceLimitType, ResultStatus, RuntimeErrorType, SupportLanguage, UnauthorizedAccessType
 from models.schemas import ArtifactItem, CodeExecutionRequest, CodeExecutionResult, ExecutionStructuredResult
@@ -195,7 +196,11 @@ def _build_container_run_args(language: SupportLanguage, task_id: str, container
 
 async def execute_code(req: CodeExecutionRequest):
     language = req.language
-    container = await allocate_container_blocking(language)
+    private = bool(req.private)
+    container = f"sql_private_{uuid.uuid4().hex}" if private else await allocate_container_blocking(language)
+    if private and not await create_container(container, language, network_disabled=True):
+        await async_run_command("docker", "rm", "-f", container, timeout=10)
+        return CodeExecutionResult(status=ResultStatus.PROGRAM_RUNNER_ERROR, stdout="", stderr="Isolated container is unavailable", exit_code=-10, detail="isolated_container_unavailable")
     if not container:
         return CodeExecutionResult(
             status=ResultStatus.PROGRAM_RUNNER_ERROR,
@@ -255,14 +260,16 @@ async def execute_code(req: CodeExecutionRequest):
             time_used_ms = (time.time() - start_time) * 1000
 
             logger.info("----------------------------------------------")
-            logger.info(f"Code: {str(base64.b64decode(req.code_b64))}")
+            if not private:
+                logger.info(f"Code: {base64.b64decode(req.code_b64)!s}")
             logger.info(f"{returncode=}")
-            logger.info(f"{stdout=}")
-            logger.info(f"{stderr=}")
+            if not private:
+                logger.info(f"{stdout=}")
+                logger.info(f"{stderr=}")
 
             if returncode == 0:
                 clean_stdout, structured_result = _extract_result_envelope(stdout)
-                artifacts = await _collect_artifacts(container, task_id, workdir)
+                artifacts = [] if private else await _collect_artifacts(container, task_id, workdir)
                 return CodeExecutionResult(
                     status=ResultStatus.SUCCESS,
                     stdout=clean_stdout,
@@ -292,7 +299,7 @@ async def execute_code(req: CodeExecutionRequest):
                 )
             return analyze_error_result(stderr, returncode)
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             await async_run_command("docker", "exec", container, "pkill", "-9", language)
             return CodeExecutionResult(
                 status=ResultStatus.RESOURCE_LIMIT_EXCEEDED,
@@ -304,13 +311,16 @@ async def execute_code(req: CodeExecutionRequest):
             )
 
     except Exception as e:
-        logger.error(f"Execution exception: {str(e)}")
+        logger.error(f"Execution exception: {e!s}")
         return CodeExecutionResult(status=ResultStatus.PROGRAM_RUNNER_ERROR, stdout="", stderr=str(e), exit_code=-3, detail="internal_error")
 
     finally:
         cleanup_tasks = [async_run_command("docker", "exec", container, "rm", "-rf", f"/workspace/{task_id}"), async_run_command("rm", "-rf", workdir)]
         await asyncio.gather(*cleanup_tasks, return_exceptions=True)
-        await release_container(container, language)
+        if private:
+            await async_run_command("docker", "rm", "-f", container, timeout=10)
+        else:
+            await release_container(container, language)
 
 
 ALLOWED_ARTIFACT_EXTENSIONS = {

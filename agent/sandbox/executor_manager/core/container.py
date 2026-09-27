@@ -43,12 +43,13 @@ async def init_containers(size: int) -> tuple[int, int]:
         _CONTAINER_EXECUTION_SEMAPHORES[language] = asyncio.Semaphore(size)
 
     create_tasks = []
+    prefix = os.getenv("SANDBOX_CONTAINER_PREFIX", "sandbox")
     for i in range(size):
-        name = f"sandbox_python_{i}"
+        name = f"{prefix}_python_{i}"
         logger.info(f"🛠️ Creating Python container {i + 1}/{size}")
         create_tasks.append(_prepare_container(name, SupportLanguage.PYTHON))
 
-        name = f"sandbox_nodejs_{i}"
+        name = f"{prefix}_nodejs_{i}"
         logger.info(f"🛠️ Creating Node.js container {i + 1}/{size}")
         create_tasks.append(_prepare_container(name, SupportLanguage.NODEJS))
 
@@ -79,13 +80,13 @@ async def _prepare_container(name: str, language: SupportLanguage) -> bool:
     return False
 
 
-async def create_container(name: str, language: SupportLanguage) -> bool:
+async def create_container(name: str, language: SupportLanguage, *, network_disabled: bool = False) -> bool:
     """Asynchronously create a container"""
     create_args = [
         "docker",
         "run",
         "-d",
-        "--runtime=runsc",
+        f"--runtime={os.getenv('SANDBOX_PRIVATE_RUNTIME', 'runsc') if network_disabled else 'runsc'}",
         "--name",
         name,
         "--read-only",
@@ -98,6 +99,9 @@ async def create_container(name: str, language: SupportLanguage) -> bool:
         "--workdir",
         "/workspace",
     ]
+    if network_disabled:
+        create_args.extend(["--network", "none"])
+        create_args.extend(["--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--pids-limit", "64"])
     if os.getenv("SANDBOX_MAX_MEMORY"):
         memory_limit = os.getenv("SANDBOX_MAX_MEMORY") or "256m"
         if is_valid_memory_limit(memory_limit):
@@ -136,7 +140,7 @@ async def create_container(name: str, language: SupportLanguage) -> bool:
 
         return await container_is_running(name)
     except Exception as e:
-        logger.error(f"❌ Container creation exception {name}: {str(e)}")
+        logger.error(f"❌ Container creation exception {name}: {e!s}")
         return False
 
 
@@ -148,7 +152,7 @@ async def recreate_container(name: str, language: SupportLanguage) -> bool:
 
         return await create_container(name, language)
     except Exception as e:
-        logger.error(f"❌ Container {name} recreation failed: {str(e)}")
+        logger.error(f"❌ Container {name} recreation failed: {e!s}")
         return False
 
 

@@ -46,7 +46,7 @@ jobs:
       - name: Install small check environment
         run: |
           uv venv --python 3.13
-          uv pip install pytest ruff
+          uv pip install pytest pytest-asyncio ruff==0.13.3
       - name: Lint changed Python files
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -66,7 +66,7 @@ jobs:
           PY
       - name: Check owned boundaries and lane selection
         run: >-
-          .venv/bin/python -m pytest -q
+          .venv/bin/python -m pytest -q --confcutdir=test/unit_test/tools/quality
           test/unit_test/tools/quality/test_owned_boundaries.py
           test/unit_test/tools/quality/test_ci_lane_selection.py
           test/unit_test/tools/quality/test_go_package_selection.py

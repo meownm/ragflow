@@ -8,17 +8,17 @@ identifiers from an accepted schema snapshot and compiles one PostgreSQL
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import date, datetime
-from decimal import Decimal, InvalidOperation
 import hashlib
 import json
 import re
-from typing import Any, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
+from typing import Any
 
 import sqlglot
 from sqlglot import exp
-
 
 QUERY_SPECIFICATION_VERSION = "1"
 QUERY_DIALECT = "postgres"
@@ -32,6 +32,7 @@ MAX_LIST_PARAMETER_ITEMS = 100
 MAX_QUERY_ROW_LIMIT = 10_000
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
+_CATALOG_PART = re.compile(r"^[A-Za-z_][A-Za-z0-9_$-]*$")
 _PARAMETER_TYPES = {
     "text",
     "integer",
@@ -108,6 +109,7 @@ _PROHIBITED_FUNCTIONS = {
     "pg_sleep",
     "query_to_xml",
 }
+_ALLOWED_FUNCTIONS = {"and", "avg", "cast", "count", "date_trunc", "max", "min", "sum", "timestamp_trunc"}
 _PROHIBITED_SCHEMAS = {"information_schema", "pg_catalog"}
 
 
@@ -334,8 +336,9 @@ def _number(value: Any, field: str) -> float:
 
 def _safe_fqn(value: Any, field: str) -> str:
     result = _text(value, field, 1_000)
-    if len(result.split(".")) not in {2, 3, 4} or any(not _IDENTIFIER.fullmatch(part) for part in result.split(".")):
-        raise QuerySpecificationValidationError(f"{field} must contain from two to four safe identifier parts")
+    parts = result.split(".")
+    if len(parts) not in {2, 3, 4} or any(not _CATALOG_PART.fullmatch(part) for part in parts[:-2]) or any(not _IDENTIFIER.fullmatch(part) for part in parts[-2:]):
+        raise QuerySpecificationValidationError(f"{field} must contain safe catalog and SQL identifier parts")
     return result
 
 
@@ -973,8 +976,8 @@ def _guard_functions_and_literals(statement: exp.Select) -> None:
     for function in statement.find_all(exp.Func):
         sql_name = function.sql_name().casefold()
         name = str(getattr(function, "name", "") or sql_name).casefold()
-        if name in _PROHIBITED_FUNCTIONS:
-            raise SqlGuardError(f"Function {name} is prohibited")
+        if name in _PROHIBITED_FUNCTIONS or sql_name not in _ALLOWED_FUNCTIONS:
+            raise SqlGuardError(f"Function {name} is not allowed")
     allowed_literals = _DATE_GRAINS
     for literal in statement.find_all(exp.Literal):
         if not literal.is_string or str(literal.this).casefold() not in allowed_literals:
@@ -1031,11 +1034,14 @@ def compile_query(command: CompileQueryCommand) -> dict[str, Any]:
         allowed_tables=[table.physical_relation for table in command.snapshot.tables],
         parameter_names=list(parameter_values),
     )
-    response.update({"sql": sql, "parameters": parameter_values, "guard": guard})
+    response.update({"sql": sql, "parameters": parameter_values, "guard": guard, "output_columns": [item.alias for item in command.specification.select]})
     return response
 
 
 def compile_query_payload(payload: Any) -> dict[str, Any]:
     """Parse the untrusted wire payload and compile it when every gate closes."""
+    if isinstance(payload, Mapping) and "manual_sql" in payload:
+        from business_documents.sql_query.advanced_query import compile_manual_query_payload
 
+        return compile_manual_query_payload(payload)
     return compile_query(parse_compile_query_command(payload))

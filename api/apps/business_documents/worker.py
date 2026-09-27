@@ -24,17 +24,17 @@ from time import monotonic
 from typing import Any
 
 from api.apps.business_documents.ai import BusinessDocumentAI
-from business_documents.application.errors import BusinessDocumentError, ConflictError
 from api.apps.business_documents.evidence import BusinessDocumentEvidence, related_file_search_enabled
 from api.apps.business_documents.exports import BusinessDocumentExportService
 from api.apps.business_documents.runtime import job_completion
-from api.apps.business_documents.stream_events import BusinessDocumentStreamEvents
 from api.apps.business_documents.sql_query_agent_worker import BusinessDocumentSqlAgentRunner
 from api.apps.business_documents.sql_query_agents import BusinessDocumentSqlAgentService
+from api.apps.business_documents.sql_query_runs import BusinessDocumentSqlRunService
+from api.apps.business_documents.stream_events import BusinessDocumentStreamEvents
 from api.db.db_models import BusinessDocumentJob
+from business_documents.application.errors import BusinessDocumentError, ConflictError
 from common.misc_utils import get_uuid
 from common.time_utils import current_timestamp
-
 
 _ACTIVE_STATUSES = ("PENDING", "RETRY")
 _WAKE_EVENT = threading.Event()
@@ -232,7 +232,10 @@ class BusinessDocumentJobQueue:
                 if claimed != 1:
                     continue
                 try:
-                    if job.job_type.startswith("SQL_AGENT_"):
+                    if job.job_type == "SQL_QUERY_RUN":
+                        recovered_job = BusinessDocumentJob.get_by_id(job.id)
+                        BusinessDocumentSqlRunService.fail_job(recovered_job, recovery_owner, recovery_token, error)
+                    elif job.job_type.startswith("SQL_AGENT_"):
                         recovered_job = BusinessDocumentJob.get_by_id(job.id)
                         BusinessDocumentSqlAgentService.fail_job(recovered_job, recovery_owner, recovery_token, error)
                     else:
@@ -378,6 +381,10 @@ class BusinessDocumentWorker:
                 self._set_progress(job, 0.4, "GENERATING", "Агент анализирует подтверждённый контекст")
                 output = self.sql_agent_runner.process(job)
                 execution_audit = None
+            elif job.job_type == "SQL_QUERY_RUN":
+                self._set_progress(job, 0.4, "EXECUTING", "Выполняем проверенный PostgreSQL запрос")
+                output = BusinessDocumentSqlRunService.execute_job(job, self.worker_id, claimed_lease_token)
+                execution_audit = None
             elif job.job_type == "GENERATE_EXPORT":
                 self._set_progress(job, 0.35, "EXPORTING", "Формируем файл")
                 prepared_export = self.export_service.generate(
@@ -407,7 +414,9 @@ class BusinessDocumentWorker:
                 self._set_progress(job, 0.82, "VALIDATING", "Проверяем результат")
             self._set_progress(job, 0.92, "PERSISTING", "Сохраняем результат")
             heartbeat.ensure_current()
-            if job.job_type.startswith("SQL_AGENT_"):
+            if job.job_type == "SQL_QUERY_RUN":
+                BusinessDocumentSqlRunService.complete_job(job, self.worker_id, claimed_lease_token, output)
+            elif job.job_type.startswith("SQL_AGENT_"):
                 BusinessDocumentSqlAgentService.complete_job(job, self.worker_id, job.lease_token, output)
             else:
                 job_completion.complete(
@@ -425,7 +434,14 @@ class BusinessDocumentWorker:
                 if current_job is not None and current_job.lease_owner == self.worker_id and current_job.lease_token == claimed_lease_token:
                     if current_job.attempt >= current_job.max_attempts:
                         try:
-                            if current_job.job_type.startswith("SQL_AGENT_"):
+                            if current_job.job_type == "SQL_QUERY_RUN":
+                                BusinessDocumentSqlRunService.fail_job(
+                                    current_job,
+                                    self.worker_id,
+                                    claimed_lease_token,
+                                    payload,
+                                )
+                            elif current_job.job_type.startswith("SQL_AGENT_"):
                                 BusinessDocumentSqlAgentService.fail_job(
                                     current_job,
                                     self.worker_id,

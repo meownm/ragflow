@@ -37,6 +37,7 @@ from api.apps.business_documents.runtime import document_deletion, change_user_r
 from api.apps.business_documents.sql_execution_registry import BusinessDocumentSqlExecutionRegistryService
 from api.apps.business_documents.sql_query_agents import BusinessDocumentSqlAgentService
 from api.apps.business_documents.sql_query_lifecycle import BusinessDocumentSqlQueryService
+from api.apps.business_documents.sql_query_runs import BusinessDocumentSqlRunService
 from api.apps.business_documents.sql_query_planner import BusinessDocumentSqlQueryPlanningService
 from api.apps.business_documents.sql_query_schema import BusinessDocumentSqlQuerySchemaService
 from api.apps.business_documents.worker import wake_business_document_worker
@@ -434,6 +435,198 @@ async def compile_business_document_sql_query():
                 422,
             )
         )
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/projects/<project_id>/compilations", methods=["POST"])  # noqa: F821
+@login_required
+async def compile_business_document_sql_project(project_id: str):
+    try:
+        data = await get_request_json()
+        actor_id = str(current_user.id)
+        result = await thread_pool_exec(
+            BusinessDocumentSqlAgentService.compile_project,
+            actor_id,
+            actor_id,
+            project_id,
+            data,
+            _is_admin(),
+            _access_role(),
+        )
+        return _success(result)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_SQL_PROJECT_COMPILATION", "Request body must be a valid JSON object", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/projects/<project_id>/manual-sql", methods=["POST"])  # noqa: F821
+@login_required
+async def save_business_document_sql_manual_query(project_id: str):
+    try:
+        data = await get_request_json()
+        actor_id = str(current_user.id)
+        result = await thread_pool_exec(
+            BusinessDocumentSqlAgentService.save_manual_query,
+            actor_id, actor_id, project_id, data, _is_admin(), _access_role(),
+        )
+        return _success(result)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_SQL_MANUAL_QUERY", "Request body must be a valid JSON object", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/projects/<project_id>/preflight", methods=["GET"])  # noqa: F821
+@login_required
+async def preflight_business_document_sql_project(project_id: str):
+    try:
+        actor_id = str(current_user.id)
+        selected_profile_id = request.args.get("selected_profile_id")
+        result = await thread_pool_exec(
+            BusinessDocumentSqlRunService.preflight,
+            actor_id, actor_id, project_id, selected_profile_id, _is_admin(), _access_role(),
+        )
+        return _success(result)
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/projects/<project_id>/runs", methods=["POST"])  # noqa: F821
+@login_required
+async def run_business_document_sql_project(project_id: str):
+    try:
+        data = await get_request_json()
+        actor_id = str(current_user.id)
+        result = await thread_pool_exec(
+            BusinessDocumentSqlRunService.run,
+            actor_id, actor_id, project_id, data, _is_admin(), _access_role(),
+        )
+        return _success(result, 202)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_SQL_RUN_COMMAND", "Request body must be a valid JSON object", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/projects/<project_id>/runs/<run_id>/preview", methods=["GET"])  # noqa: F821
+@login_required
+async def preview_business_document_sql_run(project_id: str, run_id: str):
+    try:
+        actor_id = str(current_user.id)
+        offset = int(request.args.get("offset", "0"))
+        result = await thread_pool_exec(
+            BusinessDocumentSqlRunService.preview,
+            actor_id, actor_id, project_id, run_id, offset, _is_admin(), _access_role(),
+        )
+        return _success(result)
+    except ValueError:
+        return _error(BusinessDocumentError("INVALID_SQL_PREVIEW", "offset must be a non-negative integer", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/projects/<project_id>/runs/<run_id>/python", methods=["POST"])  # noqa: F821
+@login_required
+async def run_business_document_sql_python(project_id: str, run_id: str):
+    try:
+        data = await get_request_json()
+        actor_id = str(current_user.id)
+        result = await thread_pool_exec(
+            BusinessDocumentSqlRunService.run_python,
+            actor_id, actor_id, project_id, run_id, data, _is_admin(), _access_role(),
+        )
+        return _success(result, 201)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_SQL_PYTHON_CODE", "Request body must be a valid JSON object", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/projects/<project_id>/runs/<run_id>/lookup", methods=["POST"])  # noqa: F821
+@login_required
+async def run_business_document_sql_lookup(project_id: str, run_id: str):
+    try:
+        data = await get_request_json()
+        actor_id = str(current_user.id)
+        result = await thread_pool_exec(
+            BusinessDocumentSqlRunService.run_lookup,
+            actor_id, actor_id, project_id, run_id, data, _is_admin(), _access_role(),
+        )
+        return _success(result, 201)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_SQL_LOOKUP", "Request body must be a valid JSON object", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/projects/<project_id>/runs/<run_id>/conclusion", methods=["POST"])  # noqa: F821
+@login_required
+async def propose_business_document_sql_conclusion(project_id: str, run_id: str):
+    try:
+        data = await get_request_json()
+        actor_id = str(current_user.id)
+        result = await thread_pool_exec(
+            BusinessDocumentSqlRunService.propose_conclusion,
+            actor_id, actor_id, project_id, run_id, data, _is_admin(), _access_role(),
+        )
+        return _success(result, 201)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_SQL_CONCLUSION", "Request body must be a valid JSON object", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/projects/<project_id>/runs/<run_id>/conclusion/confirm", methods=["POST"])  # noqa: F821
+@login_required
+async def confirm_business_document_sql_conclusion(project_id: str, run_id: str):
+    try:
+        data = await get_request_json()
+        actor_id = str(current_user.id)
+        result = await thread_pool_exec(
+            BusinessDocumentSqlRunService.confirm_conclusion,
+            actor_id, actor_id, project_id, run_id, data, _is_admin(), _access_role(),
+        )
+        return _success(result, 201)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_SQL_CONCLUSION", "Request body must be a valid JSON object", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/projects/<project_id>/runs/<run_id>/cancel", methods=["POST"])  # noqa: F821
+@login_required
+async def cancel_business_document_sql_run(project_id: str, run_id: str):
+    try:
+        data = await get_request_json()
+        actor_id = str(current_user.id)
+        if not isinstance(data, dict) or data.get("run_id") != run_id:
+            return _error(BusinessDocumentError("INVALID_SQL_RUN_COMMAND", "Run identity does not match the path", 422))
+        result = await thread_pool_exec(
+            BusinessDocumentSqlRunService.cancel_result,
+            actor_id, actor_id, project_id, data, _is_admin(), _access_role(),
+        )
+        return _success(result)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_SQL_RUN_COMMAND", "Request body must be a valid JSON object", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/projects/<project_id>/complete", methods=["POST"])  # noqa: F821
+@login_required
+async def complete_business_document_sql_project(project_id: str):
+    try:
+        data = await get_request_json()
+        actor_id = str(current_user.id)
+        result = await thread_pool_exec(
+            BusinessDocumentSqlRunService.complete,
+            actor_id, actor_id, project_id, data, _is_admin(), _access_role(),
+        )
+        return _success(result)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_SQL_RUN_COMMAND", "Request body must be a valid JSON object", 422))
     except BusinessDocumentError as error:
         return _error(error)
 

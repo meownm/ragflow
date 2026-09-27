@@ -14,6 +14,9 @@
 #  limitations under the License.
 #
 import base64
+import json
+import os
+import subprocess
 
 from core.container import _CONTAINER_EXECUTION_SEMAPHORES
 from core.logger import logger
@@ -27,6 +30,19 @@ from services.security import analyze_code_security
 
 async def healthz_handler():
     return {"status": "ok"}
+
+
+async def capabilities_handler():
+    runtime = os.getenv("SANDBOX_PRIVATE_RUNTIME", "runsc")
+    try:
+        output = subprocess.run(
+            ["docker", "info", "--format", "{{json .Runtimes}}"],
+            capture_output=True, text=True, timeout=3, check=True,
+        )
+        available = runtime in json.loads(output.stdout)
+    except (subprocess.SubprocessError, ValueError, OSError):
+        available = False
+    return {"private_no_network": available, "private_content_logging": False, "private_runtime": runtime}
 
 
 @limiter.limit("5/second")

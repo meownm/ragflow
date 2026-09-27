@@ -81,6 +81,25 @@ def _raw_table(
     }
 
 
+def test_normalized_table_keeps_physical_names_beside_display_names(om_module):
+    table = _raw_table("orders", "orders", columns=["order_id"])
+    table["service"]["displayName"] = "Warehouse"
+    table["database"]["displayName"] = "Analytics"
+    table["databaseSchema"]["displayName"] = "Публичная"
+    table["columns"][0]["displayName"] = "Номер заказа"
+
+    normalized = om_module.normalize_table(table, "https://metadata.example")
+
+    assert (normalized["service"], normalized["database"], normalized["schema"]) == (
+        "Warehouse", "Analytics", "Публичная"
+    )
+    assert (normalized["service_technical_name"], normalized["database_technical_name"], normalized["schema_technical_name"]) == (
+        "postgres", "db", "public"
+    )
+    assert normalized["column_details"][0]["name"] == "Номер заказа"
+    assert normalized["column_details"][0]["technical_name"] == "order_id"
+
+
 class FakeClient:
     def __init__(self, tables):
         self.tables = {table["id"]: deepcopy(table) for table in tables}

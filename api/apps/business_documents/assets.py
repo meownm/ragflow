@@ -52,6 +52,7 @@ _PROMPT_FILES = {
     "sql_schema_interpreter": ("sql_schema_interpreter.v1.md", "1"),
     "sql_query_planner": ("sql_query_planner.v1.md", "1"),
     "sql_requirements_analyst": ("sql_requirements_analyst.v1.md", "1"),
+    "sql_conclusion": ("sql_conclusion.v1.md", "1"),
 }
 _JOB_PROMPTS = {
     "ASSESS_INTAKE": "intake",
@@ -62,6 +63,7 @@ _JOB_PROMPTS = {
     "RESOLVE_SQL_SCHEMA": "sql_schema_interpreter",
     "PLAN_SQL_QUERY": "sql_query_planner",
     "ANALYZE_SQL_REQUIREMENTS": "sql_requirements_analyst",
+    "PROPOSE_SQL_CONCLUSION": "sql_conclusion",
 }
 
 

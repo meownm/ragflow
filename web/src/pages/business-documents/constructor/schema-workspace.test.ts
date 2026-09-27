@@ -87,6 +87,19 @@ function answer(entities: CatalogEntity[], currentFreshness = freshness) {
 }
 
 describe('schema workspace', () => {
+  it('keeps a field label separate from its SQL identifier', () => {
+    const entity = table('orders', 'warehouse.analytics.dwh.orders');
+    entity.column_details![0].display_name = 'Номер заказа';
+
+    const candidate = createSchemaResolution('orders', answer([entity])).candidates[0];
+
+    expect(candidate.columns[0]).toMatchObject({
+      name: 'id',
+      displayName: 'Номер заказа',
+      id: 'warehouse.analytics.dwh.orders.id',
+    });
+  });
+
   it('normalizes a bounded list without silently truncating it', () => {
     expect(parseSchemaTerms(' - Заказ\nКлиент\nзаказ ')).toEqual({
       terms: ['Заказ', 'Клиент'],

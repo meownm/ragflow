@@ -17,7 +17,7 @@ import {
 
 const STORAGE_FORMAT = 'ragflow-sql-schema-workspace';
 const STORAGE_KEY_VERSION = 1;
-const STORAGE_SCHEMA_VERSION = 2;
+const STORAGE_SCHEMA_VERSION = 3;
 
 interface StorageLike {
   getItem(key: string): string | null;
@@ -50,6 +50,9 @@ function parseColumn(value: unknown): SchemaColumn | null {
   if (!source) return null;
   const id = stringValue(source.id, 1_000);
   const name = stringValue(source.name, 500);
+  const displayName = source.displayName === undefined
+    ? undefined
+    : stringValue(source.displayName, 500);
   const fqn = stringValue(source.fqn, 1_000);
   const dataType = stringValue(source.dataType, 500);
   const description = stringValue(source.description);
@@ -58,6 +61,7 @@ function parseColumn(value: unknown): SchemaColumn | null {
   if (
     !id ||
     !name ||
+    displayName === null ||
     fqn === null ||
     dataType === null ||
     description === null ||
@@ -66,7 +70,16 @@ function parseColumn(value: unknown): SchemaColumn | null {
   ) {
     return null;
   }
-  return { id, name, fqn, dataType, description, constraint, glossaryTerms };
+  return {
+    id,
+    name,
+    ...(displayName ? { displayName } : {}),
+    fqn,
+    dataType,
+    description,
+    constraint,
+    glossaryTerms,
+  };
 }
 
 function parseConstraint(value: unknown): SchemaTableConstraint | null {
@@ -476,7 +489,7 @@ export function loadSchemaWorkspace(
     const workspace = asRecord(envelope?.workspace);
     if (
       envelope?.format !== STORAGE_FORMAT ||
-      ![1, STORAGE_SCHEMA_VERSION].includes(Number(envelope.schemaVersion)) ||
+      ![1, 2, STORAGE_SCHEMA_VERSION].includes(Number(envelope.schemaVersion)) ||
       owner?.userId !== scope.userId ||
       owner.tenantId !== scope.tenantId ||
       !workspace ||
@@ -494,13 +507,21 @@ export function loadSchemaWorkspace(
     if (resolutions.some((resolution) => resolution === null)) {
       return emptySchemaWorkspace();
     }
+    const legacySchema = Number(envelope.schemaVersion) < STORAGE_SCHEMA_VERSION;
     return {
       input: workspace.input,
       requirements:
         typeof workspace.requirements === 'string'
           ? workspace.requirements
           : '',
-      resolutions: resolutions as SchemaTermResolution[],
+      resolutions: (resolutions as SchemaTermResolution[]).map((resolution) => ({
+        ...resolution,
+        candidates: resolution.candidates.map((candidate) =>
+          legacySchema && candidate.schemaStatus === 'loaded'
+            ? { ...candidate, schemaStatus: 'summary', schemaFingerprint: null }
+            : candidate,
+        ),
+      })),
     };
   } catch {
     return emptySchemaWorkspace();

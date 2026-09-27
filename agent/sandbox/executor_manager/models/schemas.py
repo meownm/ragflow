@@ -61,6 +61,7 @@ class CodeExecutionRequest(BaseModel):
     code_b64: str = Field(..., description="Base64 encoded code string")
     language: SupportLanguage = Field(default=SupportLanguage.PYTHON, description="Programming language")
     arguments: Optional[dict] = Field(default={}, description="Arguments")
+    private: bool = Field(default=False, description="Run in a disposable container without network access or content logging")
 
     @field_validator("code_b64")
     @classmethod

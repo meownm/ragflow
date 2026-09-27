@@ -76,6 +76,7 @@ class DocumentConstructorStub:
         self.query_compile_requests = []
         self.execution_binding_requests = []
         self.sql_agent_project = None
+        self.sql_project_commands = []
 
     @staticmethod
     def _sql_agent_capabilities():
@@ -245,6 +246,64 @@ class DocumentConstructorStub:
             project["stage"] = "COMPLETE"
             project["next_agent"] = None
         return project
+
+    def _compile_sql_project(self, payload):
+        project = self.sql_agent_project
+        self.sql_project_commands.append(("compile", payload))
+        project["state_version"] += 1
+        compilation = {
+            "schema_version": "1",
+            "status": "READY",
+            "snapshot_fingerprint": "sha256:orders-v4",
+            "blocking_issues": [],
+            "sql": "SELECT t1.order_id, t1.paid_amount_rub FROM dwh.order_fact AS t1 WHERE t1.status_id = :completed_status_id LIMIT :row_limit",
+            "parameters": {"completed_status_id": 9, "row_limit": 1000},
+            "guard": {
+                "status": "PASS",
+                "dialect": "postgres",
+                "statement_count": 1,
+                "read_only": True,
+                "tables": ["dwh.order_fact"],
+                "parameters": ["completed_status_id", "row_limit"],
+            },
+        }
+        project["compilation"] = {"id": "compilation-1", "result": compilation}
+        return {"compilation_id": "compilation-1", "compilation": compilation, "project": project}
+
+    def _run_sql_project(self, payload):
+        project = self.sql_agent_project
+        self.sql_project_commands.append(("run", payload))
+        project["state_version"] += 1
+        project["latest_run"] = {
+            "id": "run-1",
+            "status": "READY",
+            "row_count": 1,
+            "duration_ms": 12,
+            "columns": ["order_id", "paid_amount_rub"],
+            "compilation_id": "compilation-1",
+            "checks": {
+                "status": "PASS",
+                "schema": "PASS",
+                "bounds": "PASS",
+                "truncated": False,
+                "null_cells": 0,
+                "completeness": "FULL",
+            },
+        }
+        return {"run_id": "run-1", "status": "QUEUED", "state_version": project["state_version"]}
+
+    def _complete_sql_project(self, payload):
+        project = self.sql_agent_project
+        self.sql_project_commands.append(("complete", payload))
+        project["state_version"] += 1
+        project["latest_run"]["status"] = "PURGED"
+        project["document"] = {
+            "id": "document-1",
+            "revision": 1,
+            "payload": {"requirements": project["source_request"], "row_count": 1, "checks": {"completeness": "FULL"}},
+        }
+        project["next_action"] = "OPEN_DOCUMENT"
+        return {"document_id": "document-1", "revision": 1, "document": project["document"], "rows_status": "PURGED", "state_version": project["state_version"]}
 
     @staticmethod
     def _catalog_table(entity_id, fqn, columns):
@@ -581,6 +640,47 @@ class DocumentConstructorStub:
             payload = json.loads(request.post_data or "{}")
             _fulfill_json(route, _envelope(self._decide_sql_agent(payload)))
             return
+        if re.fullmatch(r"/api/v1/business-documents/sql-query/projects/[^/]+/compilations", path) and request.method == "POST":
+            _fulfill_json(route, _envelope(self._compile_sql_project(json.loads(request.post_data or "{}"))))
+            return
+        if re.fullmatch(r"/api/v1/business-documents/sql-query/projects/[^/]+/preflight", path) and request.method == "GET":
+            _fulfill_json(
+                route,
+                _envelope(
+                    {
+                        "compilation_id": "compilation-1",
+                        "state_version": self.sql_agent_project["state_version"],
+                        "binding": {"status": "BOUND", "selection": {"profile": {"id": "profile-1", "name": "PostgreSQL", "max_rows": 1000, "statement_timeout_ms": 5000}}, "candidates": []},
+                    }
+                ),
+            )
+            return
+        if re.fullmatch(r"/api/v1/business-documents/sql-query/projects/[^/]+/runs", path) and request.method == "POST":
+            _fulfill_json(route, _envelope(self._run_sql_project(json.loads(request.post_data or "{}"))))
+            return
+        if re.fullmatch(r"/api/v1/business-documents/sql-query/projects/[^/]+/runs/[^/]+/preview", path) and request.method == "GET":
+            if self.sql_agent_project["latest_run"]["status"] != "READY":
+                route.fulfill(status=410, content_type="application/json", body=json.dumps({"code": 410, "message": "Result rows have been purged"}))
+            else:
+                _fulfill_json(
+                    route,
+                    _envelope(
+                        {
+                            "run_id": "run-1",
+                            "columns": ["order_id", "paid_amount_rub"],
+                            "rows": [[42, "1250.00"]],
+                            "offset": 0,
+                            "row_count": 1,
+                            "duration_ms": 12,
+                            "result_bytes": 20,
+                            "checks": self.sql_agent_project["latest_run"]["checks"],
+                        }
+                    ),
+                )
+            return
+        if re.fullmatch(r"/api/v1/business-documents/sql-query/projects/[^/]+/complete", path) and request.method == "POST":
+            _fulfill_json(route, _envelope(self._complete_sql_project(json.loads(request.post_data or "{}"))))
+            return
         if path == "/api/v1/business-documents/sql-query/schema/resolve" and request.method == "POST":
             self.catalog_queries.append(json.loads(request.post_data or "{}"))
             _fulfill_json(route, _envelope(self._schema_resolution_answer()))
@@ -791,7 +891,7 @@ def _ready_query_workspace():
 def _install_ready_query_workspace(page):
     envelope = {
         "format": "ragflow-sql-schema-workspace",
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "owner": {"userId": ACTOR_ID, "tenantId": TENANT_ID},
         "workspace": _ready_query_workspace(),
     }
@@ -1106,7 +1206,7 @@ def test_document_constructor_build_preview_persist_export_import_golden(
 
 @pytest.mark.p1
 @pytest.mark.auth
-def test_sql_agent_mvp_golden_from_request_to_document(page, base_url, tmp_path):
+def test_sql_agent_mvp_golden_from_request_to_document(page, base_url):
     stub = DocumentConstructorStub()
     _install_session(page)
     page.route("**/api/v1/**", stub)
@@ -1115,15 +1215,13 @@ def test_sql_agent_mvp_golden_from_request_to_document(page, base_url, tmp_path)
     page.get_by_test_id("document-constructor-sql-surface").click()
     workbench = page.get_by_test_id("sql-agent-workbench")
     expect(workbench).to_be_visible()
-    expect(workbench).to_contain_text("Соберите SQL-запрос по требованиям")
+    expect(workbench).to_contain_text("Получите данные по вашему вопросу")
 
-    workbench.get_by_role("button", name="Новый SQL-проект").last.click()
-    workbench.get_by_label("Название проекта").fill("Golden: завершённые заказы")
-    workbench.get_by_label("Исходные требования").fill("Вывести идентификатор и сумму завершённых заказов за месяц, не более 1000 строк.")
+    workbench.get_by_role("button", name="Новый запрос").click()
+    workbench.get_by_label("Название (необязательно)").fill("Golden: завершённые заказы")
+    workbench.get_by_label("Какой вопрос нужно решить?").fill("Вывести идентификатор и сумму завершённых заказов за месяц, не более 1000 строк.")
     workbench.get_by_role("button", name="Создать и продолжить").click()
-    expect(workbench).to_contain_text("Разобрать исходные требования")
 
-    workbench.get_by_test_id("sql-agent-run-requirements").click()
     requirements = workbench.get_by_test_id("sql-agent-requirements-review")
     expect(requirements).to_contain_text("Вывести идентификатор заказа")
     requirements.get_by_role("button", name="Календарный месяц").click()
@@ -1139,27 +1237,36 @@ def test_sql_agent_mvp_golden_from_request_to_document(page, base_url, tmp_path)
     expect(schema).to_contain_text("выбрано 3")
     schema.get_by_role("button", name="Подтвердить схему").click()
 
-    workbench.get_by_test_id("sql-agent-run-query").click()
     query = workbench.get_by_test_id("sql-agent-query-review")
     expect(query).to_contain_text("Оставить только завершённые заказы")
     query.get_by_role("button", name="Подтвердить и собрать SQL").click()
 
     completed = workbench.get_by_test_id("sql-agent-complete")
-    expect(completed).to_contain_text("SQL и спецификация собраны")
-    expect(completed).to_contain_text("Read-only · проверка пройдена")
+    expect(completed).to_contain_text("SQL проверен. Данные ещё не получены.")
+    expect(completed.get_by_test_id("sql-result-table")).to_have_count(0)
+    completed.get_by_role("button", name="Открыть SQL").click()
     expect(completed.locator("pre")).to_contain_text("SELECT")
-    expect(completed).to_contain_text("Постобработка на Python")
+    expect(completed).to_contain_text("Read-only · проверка пройдена")
 
-    with page.expect_download() as download_info:
-        completed.get_by_role("button", name="Документ .md").click()
-    artifact = tmp_path / download_info.value.suggested_filename
-    download_info.value.save_as(artifact)
-    markdown = artifact.read_text(encoding="utf-8")
-    assert "## 1. Исходные требования" in markdown
-    assert "## 5. SQL-запрос" in markdown
-    assert "## 6. Постобработка результатов на Python" in markdown
+    completed.get_by_role("button", name="Выполнить запрос").click()
+    result = completed.get_by_test_id("sql-result-table")
+    expect(result).to_contain_text("1250.00")
+    expect(result).to_contain_text("42")
+    expect(completed).to_contain_text("Данные получены")
+    assert [kind for kind, _ in stub.sql_project_commands] == ["compile", "run"]
+
+    completed.get_by_role("button", name="Завершить и удалить строки").click()
+    document = completed.get_by_test_id("sql-completed-document")
+    expect(document).to_contain_text("Документ · ревизия 1")
+    expect(document).to_contain_text("строки удалены")
+    expect(completed.get_by_test_id("sql-result-table")).to_have_count(0)
+    assert [kind for kind, _ in stub.sql_project_commands] == ["compile", "run", "complete"]
+    assert stub.sql_agent_project["latest_run"]["status"] == "PURGED"
     assert stub.sql_agent_project["stage"] == "COMPLETE"
-    assert len(stub.query_compile_requests) == 1
+    page.reload()
+    reopened = page.get_by_test_id("sql-agent-workbench").get_by_test_id("sql-completed-document")
+    expect(reopened).to_contain_text("Документ · ревизия 1")
+    expect(page.get_by_test_id("sql-result-table")).to_have_count(0)
     assert page._diag["page_errors"] == []
     assert page._diag["console_errors"] == []
 

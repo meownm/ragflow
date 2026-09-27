@@ -1,4 +1,5 @@
 import {
+  cancelBusinessDocumentSqlRun,
   compileBusinessDocumentSqlProject,
   confirmBusinessDocumentSqlConclusion,
   createBusinessDocumentSqlAgentProject,
@@ -43,6 +44,7 @@ const mockedCompile = compileBusinessDocumentSqlProject as jest.Mock;
 const mockedPreflight = preflightBusinessDocumentSqlProject as jest.Mock;
 const mockedRun = runBusinessDocumentSqlProject as jest.Mock;
 const mockedPreview = previewBusinessDocumentSqlRun as jest.Mock;
+const mockedCancel = cancelBusinessDocumentSqlRun as jest.Mock;
 const mockedProposeConclusion =
   proposeBusinessDocumentSqlConclusion as jest.Mock;
 const mockedConfirmConclusion =
@@ -88,7 +90,9 @@ describe('SqlAgentWorkbench', () => {
 
     render(<SqlAgentWorkbench />);
 
-    expect(await screen.findByText('Разобрать исходные требования')).toBeInTheDocument();
+    expect(
+      await screen.findByText('Разобрать исходные требования'),
+    ).toBeInTheDocument();
     expect(screen.queryByText('Операция не выполнена')).not.toBeInTheDocument();
   });
 
@@ -595,6 +599,13 @@ describe('SqlAgentWorkbench', () => {
     expect(
       screen.getByText('Read-only · проверка пройдена'),
     ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Удалить данные этого запуска' }),
+    );
+    expect(screen.getByText('Удалить полученные данные?')).toBeInTheDocument();
+    expect(mockedCancel).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Оставить данные' }));
+    expect(mockedCancel).not.toHaveBeenCalled();
   });
 
   it('generates a conclusion only on request and requires confirmation', async () => {

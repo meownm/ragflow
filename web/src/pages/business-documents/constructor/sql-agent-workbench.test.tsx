@@ -81,6 +81,17 @@ describe('SqlAgentWorkbench', () => {
     mockedList.mockResolvedValue([]);
   });
 
+  it('does not show an error for an empty persisted error object', async () => {
+    const saved = project({ last_error: {} });
+    mockedList.mockResolvedValue([saved]);
+    mockedFetch.mockResolvedValue(saved);
+
+    render(<SqlAgentWorkbench />);
+
+    expect(await screen.findByText('Разобрать исходные требования')).toBeInTheDocument();
+    expect(screen.queryByText('Операция не выполнена')).not.toBeInTheDocument();
+  });
+
   it('saves the project before starting the requirements analysis automatically', async () => {
     const created = project();
     mockedCreate.mockResolvedValue(created);

@@ -137,14 +137,44 @@ describe('SqlAgentWorkbench', () => {
     const original = project();
     mockedList.mockResolvedValue([original]);
     mockedFetch.mockResolvedValue(original);
-    mockedRevise.mockResolvedValue(project({ source_request: 'Покажи новые заказы', state_version: 2 }));
-    mockedRequest.mockResolvedValue(project({ source_request: 'Покажи новые заказы', state_version: 3, operation_state: 'RUNNING', next_agent: null }));
+    mockedRevise.mockResolvedValue(
+      project({ source_request: 'Покажи новые заказы', state_version: 2 }),
+    );
+    mockedRequest.mockResolvedValue(
+      project({
+        source_request: 'Покажи новые заказы',
+        state_version: 3,
+        operation_state: 'RUNNING',
+        next_agent: null,
+      }),
+    );
     render(<SqlAgentWorkbench />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Изменить задачу' }));
-    fireEvent.change(screen.getByLabelText('Уточнённая задача'), { target: { value: 'Покажи новые заказы' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Сохранить и проанализировать' }));
-    await waitFor(() => expect(mockedRevise).toHaveBeenCalledWith('project-1', 1, expect.any(String), 'Покажи новые заказы'));
-    await waitFor(() => expect(mockedRequest).toHaveBeenCalledWith('project-1', expect.objectContaining({ kind: 'REQUIREMENTS', expected_state_version: 2 })));
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Изменить задачу' }),
+    );
+    fireEvent.change(screen.getByLabelText('Уточнённая задача'), {
+      target: { value: 'Покажи новые заказы' },
+    });
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Сохранить и проанализировать' }),
+    );
+    await waitFor(() =>
+      expect(mockedRevise).toHaveBeenCalledWith(
+        'project-1',
+        1,
+        expect.any(String),
+        'Покажи новые заказы',
+      ),
+    );
+    await waitFor(() =>
+      expect(mockedRequest).toHaveBeenCalledWith(
+        'project-1',
+        expect.objectContaining({
+          kind: 'REQUIREMENTS',
+          expected_state_version: 2,
+        }),
+      ),
+    );
   });
 
   it('requires an answer to a blocking question before accepting requirements', async () => {
@@ -191,7 +221,9 @@ describe('SqlAgentWorkbench', () => {
         state_version: 3,
         next_agent: 'SCHEMA',
         artifacts: {
-          requirements: { requirements: [{ statement: 'Вывести регион и продажи' }] },
+          requirements: {
+            requirements: [{ statement: 'Вывести регион и продажи' }],
+          },
           schema: null,
           query: null,
         },
@@ -202,7 +234,14 @@ describe('SqlAgentWorkbench', () => {
         },
       }),
     );
-    mockedRequest.mockResolvedValue(project({ stage: 'SCHEMA', operation_state: 'RUNNING', state_version: 4, next_agent: null }));
+    mockedRequest.mockResolvedValue(
+      project({
+        stage: 'SCHEMA',
+        operation_state: 'RUNNING',
+        state_version: 4,
+        next_agent: null,
+      }),
+    );
 
     render(<SqlAgentWorkbench />);
 
@@ -229,7 +268,11 @@ describe('SqlAgentWorkbench', () => {
     await waitFor(() =>
       expect(mockedRequest).toHaveBeenCalledWith(
         'project-1',
-        expect.objectContaining({ kind: 'SCHEMA', expected_state_version: 3, payload: { locale: 'ru', terms: ['регион', 'продажи'] } }),
+        expect.objectContaining({
+          kind: 'SCHEMA',
+          expected_state_version: 3,
+          payload: { locale: 'ru', terms: ['регион', 'продажи'] },
+        }),
       ),
     );
   });
@@ -247,9 +290,33 @@ describe('SqlAgentWorkbench', () => {
         payload: {
           agent_result: {
             proposal: {
-              select: [{ id: 'select-1', alias: 'value', kind: 'column', column_id: 'column-1' }],
-              joins: [{ id: 'join-1', join_type: 'INNER', entity_id: 'table-2', left_column_id: 'a', right_column_id: 'b', description: 'Связь заказов' }],
-              filters: [{ id: 'filter-1', column_id: 'column-1', operator: 'eq', parameter_name: 'period', description: 'Период' }],
+              select: [
+                {
+                  id: 'select-1',
+                  alias: 'value',
+                  kind: 'column',
+                  column_id: 'column-1',
+                },
+              ],
+              joins: [
+                {
+                  id: 'join-1',
+                  join_type: 'INNER',
+                  entity_id: 'table-2',
+                  left_column_id: 'a',
+                  right_column_id: 'b',
+                  description: 'Связь заказов',
+                },
+              ],
+              filters: [
+                {
+                  id: 'filter-1',
+                  column_id: 'column-1',
+                  operator: 'eq',
+                  parameter_name: 'period',
+                  description: 'Период',
+                },
+              ],
               order_by: [],
               row_limit: 100,
             },
@@ -259,39 +326,89 @@ describe('SqlAgentWorkbench', () => {
     });
     mockedList.mockResolvedValue([review]);
     mockedFetch.mockResolvedValue(review);
-    mockedDecide.mockResolvedValue(project({ stage: 'COMPLETE', state_version: 4, next_agent: null }));
+    mockedDecide.mockResolvedValue(
+      project({ stage: 'COMPLETE', state_version: 4, next_agent: null }),
+    );
     render(<SqlAgentWorkbench />);
-    const accept = await screen.findByRole('button', { name: 'Подтвердить и собрать SQL' });
+    const accept = await screen.findByRole('button', {
+      name: 'Подтвердить и собрать SQL',
+    });
     expect(accept).toBeDisabled();
-    fireEvent.click(screen.getByRole('checkbox', { name: /Подтверждаю связь/ }));
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: /Подтверждаю связь/ }),
+    );
     expect(accept).toBeDisabled();
-    fireEvent.click(screen.getByRole('checkbox', { name: /Подтверждаю исключение строк/ }));
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: /Подтверждаю исключение строк/ }),
+    );
     expect(accept).toBeEnabled();
     fireEvent.click(accept);
-    await waitFor(() => expect(mockedDecide).toHaveBeenCalledWith(
-      'project-1',
-      'proposal-query',
-      expect.objectContaining({ artifact_payload: { confirmed_join_ids: ['join-1'], confirmed_filter_ids: ['filter-1'] } }),
-    ));
+    await waitFor(() =>
+      expect(mockedDecide).toHaveBeenCalledWith(
+        'project-1',
+        'proposal-query',
+        expect.objectContaining({
+          artifact_payload: {
+            confirmed_join_ids: ['join-1'],
+            confirmed_filter_ids: ['filter-1'],
+          },
+        }),
+      ),
+    );
   });
 
   it('opens an earlier verified result after a later run fails', async () => {
-    const ready = { id: 'ready-run', status: 'READY', row_count: 1, duration_ms: 10, columns: ['value'], compilation_id: 'compilation-1', checks: { status: 'PASS', completeness: 'FULL' } };
-    const failed = { id: 'failed-run', status: 'FAILED', row_count: 0, duration_ms: 0, columns: [], compilation_id: 'compilation-1', checks: {}, error: { code: 'SQL_TIMEOUT', message: 'Timed out' } };
+    const ready = {
+      id: 'ready-run',
+      status: 'READY',
+      row_count: 1,
+      duration_ms: 10,
+      columns: ['value'],
+      compilation_id: 'compilation-1',
+      checks: { status: 'PASS', completeness: 'FULL' },
+    };
+    const failed = {
+      id: 'failed-run',
+      status: 'FAILED',
+      row_count: 0,
+      duration_ms: 0,
+      columns: [],
+      compilation_id: 'compilation-1',
+      checks: {},
+      error: { code: 'SQL_TIMEOUT', message: 'Timed out' },
+    };
     const current = project({
       stage: 'COMPLETE',
       next_agent: null,
       latest_run: failed,
       runs: [failed, ready],
-      compilation: { id: 'compilation-1', result: { sql: 'SELECT value FROM public.sales LIMIT :row_limit', parameters: { row_limit: 100 }, guard: { status: 'PASS' } } },
+      compilation: {
+        id: 'compilation-1',
+        result: {
+          sql: 'SELECT value FROM public.sales LIMIT :row_limit',
+          parameters: { row_limit: 100 },
+          guard: { status: 'PASS' },
+        },
+      },
     });
     mockedList.mockResolvedValue([current]);
     mockedFetch.mockResolvedValue(current);
     mockedPreflight.mockResolvedValue({ binding: { status: 'UNAVAILABLE' } });
-    mockedPreview.mockResolvedValue({ run_id: 'ready-run', columns: ['value'], rows: [[42]], row_count: 1, offset: 0, checks: { status: 'PASS', completeness: 'FULL' } });
+    mockedPreview.mockResolvedValue({
+      run_id: 'ready-run',
+      columns: ['value'],
+      rows: [[42]],
+      row_count: 1,
+      offset: 0,
+      checks: { status: 'PASS', completeness: 'FULL' },
+    });
     render(<SqlAgentWorkbench />);
-    fireEvent.click(await screen.findByRole('button', { name: /Запуск 1 · данные доступны/ }));
-    await waitFor(() => expect(mockedPreview).toHaveBeenCalledWith('project-1', 'ready-run'));
+    fireEvent.click(
+      await screen.findByRole('button', { name: /Запуск 1 · данные доступны/ }),
+    );
+    await waitFor(() =>
+      expect(mockedPreview).toHaveBeenCalledWith('project-1', 'ready-run'),
+    );
     expect(await screen.findByText('42')).toBeInTheDocument();
   });
 

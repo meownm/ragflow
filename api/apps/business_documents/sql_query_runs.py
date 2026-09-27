@@ -175,7 +175,12 @@ class BusinessDocumentSqlRunService:
         access.require_edit(project.owner_id)
         compilation, command = _source(project)
         if not access.can_execute_sql():
-            return {"compilation_id": compilation.id, "state_version": project.state_version, "binding": {"status": "UNAVAILABLE"}, "blocker": {"code": "SQL_EXECUTION_FORBIDDEN", "message": "Your role can save the verified SQL but cannot execute it"}}
+            return {
+                "compilation_id": compilation.id,
+                "state_version": project.state_version,
+                "binding": {"status": "UNAVAILABLE"},
+                "blocker": {"code": "SQL_EXECUTION_FORBIDDEN", "message": "Your role can save the verified SQL but cannot execute it"},
+            }
         catalog_age_warning = _verify_schema(command, actor_id, is_admin, access_role)
         resolution, profile, connector = _binding(actor_id, is_admin, access_role, command, selected_profile_id)
         result = {"compilation_id": compilation.id, "state_version": project.state_version, "binding": resolution}

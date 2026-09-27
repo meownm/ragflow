@@ -89,9 +89,7 @@ def test_preflight_checks_live_postgres_shape(database, monkeypatch):
 
 
 def test_editor_can_keep_compiled_sql_without_execution_right(database):
-    preflight = sql_query_runs.BusinessDocumentSqlRunService.preflight(
-        "tenant-1", "author-1", database, None, access_role="AUTHOR_EDITOR"
-    )
+    preflight = sql_query_runs.BusinessDocumentSqlRunService.preflight("tenant-1", "author-1", database, None, access_role="AUTHOR_EDITOR")
     assert preflight["blocker"]["code"] == "SQL_EXECUTION_FORBIDDEN"
     with pytest.raises(PermissionDeniedError):
         sql_query_runs.BusinessDocumentSqlRunService.run(

@@ -106,18 +106,44 @@ function schemaTermsFromRequirements(project: SqlAgentProject): string[] {
   const statements = Array.isArray(requirements)
     ? requirements
         .filter((item) => item && typeof item === 'object')
-        .map((item) => String((item as { statement?: unknown }).statement || ''))
+        .map((item) =>
+          String((item as { statement?: unknown }).statement || ''),
+        )
     : [];
   const stop = new Set([
-    'вывести', 'показать', 'получить', 'найти', 'посчитать', 'сумму',
-    'количество', 'данные', 'таблицы', 'полей', 'строки',
-    'месяц', 'период', 'последний', 'последние', 'только', 'которые',
-    'сортировать', 'ограничить', 'строк', 'для', 'или', 'the', 'from',
-    'with', 'show', 'count', 'total',
+    'вывести',
+    'показать',
+    'получить',
+    'найти',
+    'посчитать',
+    'сумму',
+    'количество',
+    'данные',
+    'таблицы',
+    'полей',
+    'строки',
+    'месяц',
+    'период',
+    'последний',
+    'последние',
+    'только',
+    'которые',
+    'сортировать',
+    'ограничить',
+    'строк',
+    'для',
+    'или',
+    'the',
+    'from',
+    'with',
+    'show',
+    'count',
+    'total',
   ]);
-  const words = (statements.join(' ') || project.source_request || '')
-    .toLocaleLowerCase()
-    .match(/[\p{L}\p{N}_]{4,}/gu) || [];
+  const words =
+    (statements.join(' ') || project.source_request || '')
+      .toLocaleLowerCase()
+      .match(/[\p{L}\p{N}_]{4,}/gu) || [];
   return [...new Set(words.filter((word) => !stop.has(word)))].slice(0, 8);
 }
 
@@ -728,7 +754,9 @@ function QueryReview({
                         )
                       }
                     />
-                    <span>Подтверждаю связь: она может изменить число строк.</span>
+                    <span>
+                      Подтверждаю связь: она может изменить число строк.
+                    </span>
                   </label>
                 </div>
               ))
@@ -883,7 +911,10 @@ function ManualSqlForm({
     }
   };
   return (
-    <section id="sql-check-query" className="mt-6 border-t border-border-button pt-4">
+    <section
+      id="sql-check-query"
+      className="mt-6 border-t border-border-button pt-4"
+    >
       <Button variant="ghost" onClick={() => setOpen((value) => !value)}>
         <Code2 className="size-4" />
         {open ? 'Скрыть ручной SQL' : 'Ручной SQL'}
@@ -1286,7 +1317,14 @@ function CompletedProject({
                 variant={run?.id === item.id ? 'default' : 'outline'}
                 onClick={() => setSelectedRunId(item.id)}
               >
-                Запуск {project.runs!.length - index} · {item.status === 'READY' ? 'данные доступны' : item.status === 'FAILED' ? 'ошибка' : item.status === 'PURGED' ? 'строки удалены' : 'выполняется'}
+                Запуск {project.runs!.length - index} ·{' '}
+                {item.status === 'READY'
+                  ? 'данные доступны'
+                  : item.status === 'FAILED'
+                    ? 'ошибка'
+                    : item.status === 'PURGED'
+                      ? 'строки удалены'
+                      : 'выполняется'}
               </Button>
             ))}
           </div>
@@ -1485,36 +1523,36 @@ function CompletedProject({
           </section>
           {project.capabilities.python_agent &&
             (run?.result_bytes ?? 0) <= 10_000_000 && (
-            <section className="mt-5 border-t border-border-button pt-4">
-              <Button
-                variant="ghost"
-                onClick={() => setPythonOpen((value) => !value)}
-              >
-                Преобразовать в Python
-              </Button>
-              {pythonOpen && (
-                <div className="mt-3 space-y-3">
-                  <p className="text-xs text-text-secondary">
-                    Код получает только копию проверенного результата. Контейнер
-                    не имеет доступа к БД и сети. Функция main(columns, rows)
-                    должна вернуть таблицу.
-                  </p>
-                  <Textarea
-                    aria-label="Код Python"
-                    value={pythonCode}
-                    onChange={(event) => setPythonCode(event.target.value)}
-                    className="min-h-36 font-mono text-xs"
-                  />
-                  <Button
-                    disabled={busy || !pythonCode.trim()}
-                    onClick={() => void runPython()}
-                  >
-                    Выполнить преобразование
-                  </Button>
-                </div>
-              )}
-            </section>
-          )}
+              <section className="mt-5 border-t border-border-button pt-4">
+                <Button
+                  variant="ghost"
+                  onClick={() => setPythonOpen((value) => !value)}
+                >
+                  Преобразовать в Python
+                </Button>
+                {pythonOpen && (
+                  <div className="mt-3 space-y-3">
+                    <p className="text-xs text-text-secondary">
+                      Код получает только копию проверенного результата.
+                      Контейнер не имеет доступа к БД и сети. Функция
+                      main(columns, rows) должна вернуть таблицу.
+                    </p>
+                    <Textarea
+                      aria-label="Код Python"
+                      value={pythonCode}
+                      onChange={(event) => setPythonCode(event.target.value)}
+                      className="min-h-36 font-mono text-xs"
+                    />
+                    <Button
+                      disabled={busy || !pythonCode.trim()}
+                      onClick={() => void runPython()}
+                    >
+                      Выполнить преобразование
+                    </Button>
+                  </div>
+                )}
+              </section>
+            )}
           {lookupTables.length > 0 && (
             <section className="mt-5 border-t border-border-button pt-4">
               <Button
@@ -1724,10 +1762,10 @@ function CompletedProject({
             )}
             {binding?.status === 'UNAVAILABLE' &&
               preflight?.blocker?.code !== 'SQL_EXECUTION_FORBIDDEN' && (
-              <p className="text-sm text-state-error">
-                Для выбранных данных нет доступного источника PostgreSQL.
-              </p>
-            )}
+                <p className="text-sm text-state-error">
+                  Для выбранных данных нет доступного источника PostgreSQL.
+                </p>
+              )}
             {preflight?.blocker && (
               <p className="text-sm text-state-error">
                 {preflight.blocker.message}
@@ -1893,7 +1931,13 @@ export function SqlAgentWorkbench() {
   useEffect(() => {
     setCompiled(null);
     setCompileError(null);
-    if (!compileProjectId || compileStage !== 'COMPLETE' || !compileVersion || !compileArtifactId) return;
+    if (
+      !compileProjectId ||
+      compileStage !== 'COMPLETE' ||
+      !compileVersion ||
+      !compileArtifactId
+    )
+      return;
     if (savedCompilation) {
       setCompiled(savedCompilation);
       return;
@@ -1923,7 +1967,13 @@ export function SqlAgentWorkbench() {
     return () => {
       cancelled = true;
     };
-  }, [compileProjectId, compileStage, compileVersion, compileArtifactId, savedCompilation]);
+  }, [
+    compileProjectId,
+    compileStage,
+    compileVersion,
+    compileArtifactId,
+    savedCompilation,
+  ]);
 
   const selectProject = async (projectId: string) => {
     setBusy(true);
@@ -2071,7 +2121,9 @@ export function SqlAgentWorkbench() {
         const started = await requestBusinessDocumentSqlAgent(updated.id, {
           schema_version: '1',
           expected_state_version: updated.state_version,
-          idempotency_key: commandKey(`run-${updated.next_agent.toLowerCase()}`),
+          idempotency_key: commandKey(
+            `run-${updated.next_agent.toLowerCase()}`,
+          ),
           kind: updated.next_agent,
           payload:
             updated.next_agent === 'SCHEMA'
@@ -2207,7 +2259,10 @@ export function SqlAgentWorkbench() {
             <main className="px-5 py-7 lg:px-7" aria-live="polite">
               {editingQuestion && (
                 <section className="mb-6 max-w-2xl space-y-3 border-y border-border-button py-4">
-                  <label className="block text-sm font-medium" htmlFor="sql-question-revision">
+                  <label
+                    className="block text-sm font-medium"
+                    htmlFor="sql-question-revision"
+                  >
                     Уточнённая задача
                   </label>
                   <Textarea
@@ -2216,13 +2271,20 @@ export function SqlAgentWorkbench() {
                     onChange={(event) => setQuestionDraft(event.target.value)}
                   />
                   <p className="text-xs text-text-secondary">
-                    Анализ начнётся заново; прежние решения останутся в истории проекта.
+                    Анализ начнётся заново; прежние решения останутся в истории
+                    проекта.
                   </p>
                   <div className="flex gap-2">
-                    <Button disabled={busy || !questionDraft.trim()} onClick={() => void saveQuestion()}>
+                    <Button
+                      disabled={busy || !questionDraft.trim()}
+                      onClick={() => void saveQuestion()}
+                    >
                       Сохранить и проанализировать
                     </Button>
-                    <Button variant="ghost" onClick={() => setEditingQuestion(false)}>
+                    <Button
+                      variant="ghost"
+                      onClick={() => setEditingQuestion(false)}
+                    >
                       Отмена
                     </Button>
                   </div>
@@ -2237,17 +2299,31 @@ export function SqlAgentWorkbench() {
               {(project.blockers?.length
                 ? project.blockers
                 : project.last_error
-                  ? [{ ...project.last_error, code: project.last_error.code || 'SQL_FAILED', message: project.last_error.message || 'Операция не выполнена' }]
+                  ? [
+                      {
+                        ...project.last_error,
+                        code: project.last_error.code || 'SQL_FAILED',
+                        message:
+                          project.last_error.message || 'Операция не выполнена',
+                      },
+                    ]
                   : []
               ).map((blocker, index) => (
-                <div key={`${blocker.code}-${index}`} className="mb-6 border-s-2 border-state-error ps-3 text-sm text-state-error">
+                <div
+                  key={`${blocker.code}-${index}`}
+                  className="mb-6 border-s-2 border-state-error ps-3 text-sm text-state-error"
+                >
                   <p>{blocker.message}</p>
                   <Button
                     size="sm"
                     variant="ghost"
                     onClick={() =>
                       document
-                        .getElementById(blocker.action === 'CHECK_QUERY' ? 'sql-check-query' : 'sql-next-action')
+                        .getElementById(
+                          blocker.action === 'CHECK_QUERY'
+                            ? 'sql-check-query'
+                            : 'sql-next-action',
+                        )
                         ?.scrollIntoView({ behavior: 'smooth' })
                     }
                   >
@@ -2317,7 +2393,10 @@ export function SqlAgentWorkbench() {
                 )}
 
               {project.operation_state === 'IDLE' && currentAgent && (
-                <section id="sql-next-action" className="mx-auto max-w-2xl py-7">
+                <section
+                  id="sql-next-action"
+                  className="mx-auto max-w-2xl py-7"
+                >
                   <div className="flex size-10 items-center justify-center rounded-full bg-accent-primary/10 text-accent-primary">
                     {currentAgent === 'REQUIREMENTS' ? (
                       <FileText className="size-5" />

@@ -160,27 +160,25 @@ class BusinessDocumentSqlAgentService:
                 raise ConflictError("SQL_PROJECT_VERSION_CONFLICT", "Question cannot be changed in the current project state")
             now = current_timestamp()
             BusinessDocumentSqlAgentProposal.update(status="REJECTED", decided_by=actor_id, decided_at=now).where(
-                (BusinessDocumentSqlAgentProposal.project_id == project_id)
-                & (BusinessDocumentSqlAgentProposal.tenant_id == tenant_id)
-                & (BusinessDocumentSqlAgentProposal.status == "PENDING")
+                (BusinessDocumentSqlAgentProposal.project_id == project_id) & (BusinessDocumentSqlAgentProposal.tenant_id == tenant_id) & (BusinessDocumentSqlAgentProposal.status == "PENDING")
             ).execute()
-            changed = BusinessDocumentSqlQueryProject.update(
-                source_request=question,
-                requirements_artifact_id=None,
-                schema_artifact_id=None,
-                query_artifact_id=None,
-                stage="REQUIREMENTS",
-                operation_state="IDLE",
-                current_job_id=None,
-                last_error=None,
-                state_version=version + 1,
-                update_time=now,
-                update_date=datetime.now(),
-            ).where(
-                (BusinessDocumentSqlQueryProject.id == project_id)
-                & (BusinessDocumentSqlQueryProject.tenant_id == tenant_id)
-                & (BusinessDocumentSqlQueryProject.state_version == version)
-            ).execute()
+            changed = (
+                BusinessDocumentSqlQueryProject.update(
+                    source_request=question,
+                    requirements_artifact_id=None,
+                    schema_artifact_id=None,
+                    query_artifact_id=None,
+                    stage="REQUIREMENTS",
+                    operation_state="IDLE",
+                    current_job_id=None,
+                    last_error=None,
+                    state_version=version + 1,
+                    update_time=now,
+                    update_date=datetime.now(),
+                )
+                .where((BusinessDocumentSqlQueryProject.id == project_id) & (BusinessDocumentSqlQueryProject.tenant_id == tenant_id) & (BusinessDocumentSqlQueryProject.state_version == version))
+                .execute()
+            )
             if changed != 1:
                 raise ConflictError("SQL_PROJECT_VERSION_CONFLICT", "Question changed while it was being saved")
             response = cls._project(BusinessDocumentSqlQueryProject.get_by_id(project_id))
@@ -814,7 +812,11 @@ class BusinessDocumentSqlAgentService:
             [
                 {"id": item.id, "kind": item.kind, "source_run_id": item.source_run_id, "status": item.status, "row_count": item.row_count, "checks": item.checks}
                 for item in BusinessDocumentSqlQueryRun.select()
-                .where((BusinessDocumentSqlQueryRun.project_id == project.id) & (BusinessDocumentSqlQueryRun.tenant_id == project.tenant_id) & (BusinessDocumentSqlQueryRun.source_run_id.in_(ready_run_ids)))
+                .where(
+                    (BusinessDocumentSqlQueryRun.project_id == project.id)
+                    & (BusinessDocumentSqlQueryRun.tenant_id == project.tenant_id)
+                    & (BusinessDocumentSqlQueryRun.source_run_id.in_(ready_run_ids))
+                )
                 .order_by(BusinessDocumentSqlQueryRun.create_time.desc())
             ]
             if ready_run_ids
@@ -822,7 +824,9 @@ class BusinessDocumentSqlAgentService:
         )
         documents = list(
             BusinessDocumentSqlQueryArtifact.select()
-            .where((BusinessDocumentSqlQueryArtifact.project_id == project.id) & (BusinessDocumentSqlQueryArtifact.tenant_id == project.tenant_id) & (BusinessDocumentSqlQueryArtifact.kind == "DOCUMENT"))
+            .where(
+                (BusinessDocumentSqlQueryArtifact.project_id == project.id) & (BusinessDocumentSqlQueryArtifact.tenant_id == project.tenant_id) & (BusinessDocumentSqlQueryArtifact.kind == "DOCUMENT")
+            )
             .order_by(BusinessDocumentSqlQueryArtifact.revision.desc())
         )
         latest_document = documents[0] if documents else None
@@ -839,11 +843,15 @@ class BusinessDocumentSqlAgentService:
         )
         conclusions_by_run = {}
         if include_payloads and ready_run_ids:
-            for item in BusinessDocumentSqlQueryArtifact.select().where(
-                (BusinessDocumentSqlQueryArtifact.project_id == project.id)
-                & (BusinessDocumentSqlQueryArtifact.tenant_id == project.tenant_id)
-                & (BusinessDocumentSqlQueryArtifact.kind == "CONCLUSION")
-            ).order_by(BusinessDocumentSqlQueryArtifact.revision.desc()):
+            for item in (
+                BusinessDocumentSqlQueryArtifact.select()
+                .where(
+                    (BusinessDocumentSqlQueryArtifact.project_id == project.id)
+                    & (BusinessDocumentSqlQueryArtifact.tenant_id == project.tenant_id)
+                    & (BusinessDocumentSqlQueryArtifact.kind == "CONCLUSION")
+                )
+                .order_by(BusinessDocumentSqlQueryArtifact.revision.desc())
+            ):
                 source_run_id = item.payload.get("source_run_id")
                 if source_run_id in ready_run_ids and source_run_id not in conclusions_by_run:
                     conclusions_by_run[source_run_id] = {"id": item.id, "payload": item.payload}

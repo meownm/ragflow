@@ -125,9 +125,7 @@ def test_revised_question_resets_decisions_and_rejects_stale_or_foreign_commands
         source_proposal_id="p" * 32,
         accepted_by=ACTOR,
     )
-    BusinessDocumentSqlQueryProject.update(stage="SCHEMA", requirements_artifact_id="r" * 32).where(
-        BusinessDocumentSqlQueryProject.id == created["id"]
-    ).execute()
+    BusinessDocumentSqlQueryProject.update(stage="SCHEMA", requirements_artifact_id="r" * 32).where(BusinessDocumentSqlQueryProject.id == created["id"]).execute()
     command = {"schema_version": "1", "expected_state_version": 1, "idempotency_key": "revise-1", "source_request": "Покажи только новые заказы"}
     revised = BusinessDocumentSqlAgentService.revise_question(TENANT, ACTOR, created["id"], command)
     assert revised["source_request"] == command["source_request"]

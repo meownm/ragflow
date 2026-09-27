@@ -280,13 +280,26 @@ describe('SqlAgentWorkbench', () => {
         }),
       ),
     );
+    const search = await screen.findByPlaceholderText(
+      'запуски импорта глоссария',
+    );
+    expect(mockedRequest).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId('sql-agent-run-schema'));
+    expect(mockedRequest).not.toHaveBeenCalled();
+    expect(
+      screen.getByText('Опишите, какие данные нужно найти в каталоге.'),
+    ).toBeInTheDocument();
+    fireEvent.change(search, {
+      target: { value: 'запуски импорта глоссария' },
+    });
+    fireEvent.click(screen.getByTestId('sql-agent-run-schema'));
     await waitFor(() =>
       expect(mockedRequest).toHaveBeenCalledWith(
         'project-1',
         expect.objectContaining({
           kind: 'SCHEMA',
           expected_state_version: 3,
-          payload: { locale: 'ru', terms: ['регион', 'продажи'] },
+          payload: { locale: 'ru', terms: ['запуски импорта глоссария'] },
         }),
       ),
     );

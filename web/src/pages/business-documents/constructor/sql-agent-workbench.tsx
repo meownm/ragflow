@@ -112,52 +112,6 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Операция не выполнена.';
 }
 
-function schemaTermsFromRequirements(project: SqlAgentProject): string[] {
-  const requirements = project.artifacts?.requirements?.requirements;
-  const statements = Array.isArray(requirements)
-    ? requirements
-        .filter((item) => item && typeof item === 'object')
-        .map((item) =>
-          String((item as { statement?: unknown }).statement || ''),
-        )
-    : [];
-  const stop = new Set([
-    'вывести',
-    'показать',
-    'получить',
-    'найти',
-    'посчитать',
-    'сумму',
-    'количество',
-    'данные',
-    'таблицы',
-    'полей',
-    'строки',
-    'месяц',
-    'период',
-    'последний',
-    'последние',
-    'только',
-    'которые',
-    'сортировать',
-    'ограничить',
-    'строк',
-    'для',
-    'или',
-    'the',
-    'from',
-    'with',
-    'show',
-    'count',
-    'total',
-  ]);
-  const words =
-    (statements.join(' ') || project.source_request || '')
-      .toLocaleLowerCase()
-      .match(/[\p{L}\p{N}_]{4,}/gu) || [];
-  return [...new Set(words.filter((word) => !stop.has(word)))].slice(0, 8);
-}
-
 function requirementsKindLabel(kind: unknown) {
   return (
     {
@@ -2058,6 +2012,7 @@ export function SqlAgentWorkbench() {
     setBusy(true);
     try {
       setProject(await fetchBusinessDocumentSqlAgentProject(projectId));
+      setTerms('');
       setEditingQuestion(false);
       setCreating(false);
       setError(null);
@@ -2184,19 +2139,10 @@ export function SqlAgentWorkbench() {
         current.map((item) => (item.id === updated.id ? updated : item)),
       );
       setError(null);
-      if (
-        decision === 'ACCEPT' &&
-        (updated.next_agent === 'SCHEMA' || updated.next_agent === 'QUERY')
-      ) {
-        const schemaTerms =
-          updated.next_agent === 'SCHEMA'
-            ? schemaTermsFromRequirements(updated)
-            : [];
-        if (updated.next_agent === 'SCHEMA' && schemaTerms.length === 0) {
-          setError('Уточните, какие данные нужно найти в каталоге.');
-          return;
-        }
-        if (schemaTerms.length) setTerms(schemaTerms.join('\n'));
+      if (decision === 'ACCEPT' && updated.next_agent === 'SCHEMA') {
+        setTerms('');
+      }
+      if (decision === 'ACCEPT' && updated.next_agent === 'QUERY') {
         const started = await requestBusinessDocumentSqlAgent(updated.id, {
           schema_version: '1',
           expected_state_version: updated.state_version,
@@ -2204,10 +2150,7 @@ export function SqlAgentWorkbench() {
             `run-${updated.next_agent.toLowerCase()}`,
           ),
           kind: updated.next_agent,
-          payload:
-            updated.next_agent === 'SCHEMA'
-              ? { locale: updated.locale, terms: schemaTerms }
-              : { locale: updated.locale },
+          payload: { locale: updated.locale },
         });
         setProject(started);
         setProjects((current) =>
@@ -2237,13 +2180,9 @@ export function SqlAgentWorkbench() {
               {projects.length} всего
             </p>
           </div>
-          <Button
-            size="icon"
-            variant="ghost"
-            aria-label="Новый SQL-проект"
-            onClick={() => setCreating(true)}
-          >
+          <Button size="sm" variant="ghost" onClick={() => setCreating(true)}>
             <Plus className="size-4" />
+            Новый запрос
           </Button>
         </div>
         <div className="divide-y divide-border-button">
@@ -2534,7 +2473,9 @@ export function SqlAgentWorkbench() {
                     ) : (
                       <Sparkles className="size-4" />
                     )}
-                    Запустить агента
+                    {currentAgent === 'SCHEMA'
+                      ? 'Найти данные'
+                      : 'Запустить агента'}
                   </Button>
                   {currentAgent === 'QUERY' && (
                     <ManualSqlForm

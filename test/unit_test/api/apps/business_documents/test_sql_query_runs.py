@@ -16,7 +16,10 @@ from api.apps.business_documents import sql_query_runs
 from api.apps.business_documents.sql_query_agents import BusinessDocumentSqlAgentService
 from api.apps.business_documents.sql_query_postgres import _dbapi_sql
 from api.apps.business_documents.worker import BusinessDocumentJobQueue
-from business_documents.application.errors import ConflictError
+from api.db.db_models import User
+from business_documents.application.errors import ConflictError, PermissionDeniedError
+
+actual_current_actor_access = sql_query_runs._current_actor_access
 
 
 @pytest.fixture()
@@ -52,6 +55,7 @@ def database(monkeypatch):
             ),
         )
         monkeypatch.setattr(sql_query_runs, "_verify_schema", lambda *args: None)
+        monkeypatch.setattr(sql_query_runs, "_current_actor_access", lambda actor_id: ("AUTHOR_CREATOR", False))
         profile = SimpleNamespace(id="profile-1", version=1, max_rows=10, statement_timeout_ms=1000, max_result_bytes=1000)
         connector = SimpleNamespace(config={})
         monkeypatch.setattr(sql_query_runs, "_binding", lambda *args: ({"status": "BOUND"}, profile, connector))
@@ -82,6 +86,69 @@ def test_preflight_checks_live_postgres_shape(database, monkeypatch):
     result = sql_query_runs.BusinessDocumentSqlRunService.preflight("tenant-1", "author-1", database, None)
     assert result["binding"]["status"] == "BOUND"
     assert checked == [("SELECT value FROM public.sales LIMIT :row_limit", {"row_limit": 2}, {"timeout_ms": 1000})]
+
+
+def test_editor_can_keep_compiled_sql_without_execution_right(database):
+    preflight = sql_query_runs.BusinessDocumentSqlRunService.preflight(
+        "tenant-1", "author-1", database, None, access_role="AUTHOR_EDITOR"
+    )
+    assert preflight["blocker"]["code"] == "SQL_EXECUTION_FORBIDDEN"
+    with pytest.raises(PermissionDeniedError):
+        sql_query_runs.BusinessDocumentSqlRunService.run(
+            "tenant-1",
+            "author-1",
+            database,
+            {"schema_version": "1", "expected_state_version": 1, "idempotency_key": "editor-run", "selected_profile_id": None},
+            access_role="AUTHOR_EDITOR",
+        )
+    assert sql_query_runs.BusinessDocumentSqlQueryRun.select().count() == 0
+
+
+def test_worker_rechecks_execution_role_before_postgres(database, monkeypatch):
+    queued = sql_query_runs.BusinessDocumentSqlRunService.run(
+        "tenant-1",
+        "author-1",
+        database,
+        {"schema_version": "1", "expected_state_version": 1, "idempotency_key": "queued-run", "selected_profile_id": None},
+    )
+    job = BusinessDocumentJobQueue.claim("revoked-role-test")
+    monkeypatch.setattr(sql_query_runs, "_current_actor_access", lambda actor_id: ("AUTHOR_EDITOR", False))
+    with pytest.raises(PermissionDeniedError):
+        sql_query_runs.BusinessDocumentSqlRunService.execute_job(job, "revoked-role-test", job.lease_token)
+    assert sql_query_runs.BusinessDocumentSqlQueryRun.get_by_id(queued["run_id"]).rows == []
+
+
+def test_current_actor_access_rejects_inactive_users(database):
+    with sql_query_runs.BusinessDocumentSqlQueryRun._meta.database.bind_ctx([User], bind_refs=False, bind_backrefs=False):
+        User.create_table()
+        User.create(id="author-1", nickname="Author", email="author@example.test", business_document_role="AUTHOR_EDITOR", is_active="1", status="1")
+        assert actual_current_actor_access("author-1") == ("AUTHOR_EDITOR", False)
+        User.update(is_active="0").where(User.id == "author-1").execute()
+        with pytest.raises(PermissionDeniedError):
+            actual_current_actor_access("author-1")
+        User.drop_table()
+
+
+def test_failed_latest_run_keeps_older_ready_run_available(database):
+    for run_id, status in (("ready-run", "READY"), ("failed-run", "FAILED")):
+        sql_query_runs.BusinessDocumentSqlQueryRun.create(
+            id=run_id,
+            project_id=database,
+            tenant_id="tenant-1",
+            compilation_id="compilation-1",
+            profile_id="profile-1",
+            profile_version=1,
+            status=status,
+            columns=["value"],
+            rows=[[42]] if status == "READY" else [],
+            row_count=1 if status == "READY" else 0,
+            checks={"status": "PASS"} if status == "READY" else {},
+            error={"code": "SQL_TIMEOUT", "message": "Timed out"} if status == "FAILED" else None,
+        )
+    project = BusinessDocumentSqlAgentService.get_project("tenant-1", "author-1", database)
+    assert {run["id"] for run in project["runs"]} == {"ready-run", "failed-run"}
+    assert project["next_action"] == "VIEW_RESULT"
+    assert sql_query_runs.BusinessDocumentSqlRunService.preview("tenant-1", "author-1", database, "ready-run")["rows"] == [[42]]
 
 
 def test_catalog_version_change_blocks_execution(monkeypatch):

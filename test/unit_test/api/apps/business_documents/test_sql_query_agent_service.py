@@ -23,7 +23,7 @@ from api.db.db_models import (
     BusinessDocumentSqlQueryArtifact,
     BusinessDocumentSqlQueryProject,
 )
-from business_documents.application.errors import ConflictError, ValidationError
+from business_documents.application.errors import BusinessDocumentError, ConflictError, ValidationError
 from business_documents.sql_query.requirements_analysis import AnalyzeRequirementsCommand
 
 TENANT = "tenant-1"
@@ -110,6 +110,59 @@ def _create_project():
             "locale": "ru",
         },
     )
+
+
+def test_revised_question_resets_decisions_and_rejects_stale_or_foreign_commands(database):
+    created = _create_project()
+    BusinessDocumentSqlQueryArtifact.create(
+        id="r" * 32,
+        project_id=created["id"],
+        tenant_id=TENANT,
+        kind="REQUIREMENTS",
+        revision=1,
+        payload={"requirements": [{"statement": "Старый вопрос"}]},
+        content_hash="sha256:old",
+        source_proposal_id="p" * 32,
+        accepted_by=ACTOR,
+    )
+    BusinessDocumentSqlQueryProject.update(stage="SCHEMA", requirements_artifact_id="r" * 32).where(
+        BusinessDocumentSqlQueryProject.id == created["id"]
+    ).execute()
+    command = {"schema_version": "1", "expected_state_version": 1, "idempotency_key": "revise-1", "source_request": "Покажи только новые заказы"}
+    revised = BusinessDocumentSqlAgentService.revise_question(TENANT, ACTOR, created["id"], command)
+    assert revised["source_request"] == command["source_request"]
+    assert revised["stage"] == "REQUIREMENTS"
+    assert revised["artifact_ids"] == {"requirements": None, "schema": None, "query": None}
+    assert revised["state_version"] == 2
+    assert BusinessDocumentSqlAgentService.revise_question(TENANT, ACTOR, created["id"], command) == revised
+    with pytest.raises(ConflictError):
+        BusinessDocumentSqlAgentService.revise_question(TENANT, ACTOR, created["id"], {**command, "idempotency_key": "revise-2"})
+    with pytest.raises(BusinessDocumentError, match="SQL query project not found"):
+        BusinessDocumentSqlAgentService.revise_question("other-tenant", ACTOR, created["id"], {**command, "idempotency_key": "revise-3"})
+
+
+def test_failed_agent_exposes_a_retry_action(database):
+    created = _create_project()
+    queued = BusinessDocumentSqlAgentService.request_agent(
+        TENANT,
+        ACTOR,
+        created["id"],
+        {"schema_version": "1", "expected_state_version": 1, "idempotency_key": "first-analysis", "kind": "REQUIREMENTS", "payload": {}},
+    )
+    assert queued["operation_state"] == "RUNNING"
+    job = BusinessDocumentJobQueue.claim("failure-test")
+    BusinessDocumentSqlAgentService.fail_job(job, "failure-test", job.lease_token, {"code": "SQL_MODEL_UNAVAILABLE", "message": "Model unavailable"})
+    failed = BusinessDocumentSqlAgentService.get_project(TENANT, ACTOR, created["id"])
+    assert failed["operation_state"] == "IDLE"
+    assert failed["next_agent"] == "REQUIREMENTS"
+    assert failed["blockers"][0]["action"] == "RETRY_ANALYSIS"
+    retried = BusinessDocumentSqlAgentService.request_agent(
+        TENANT,
+        ACTOR,
+        created["id"],
+        {"schema_version": "1", "expected_state_version": failed["state_version"], "idempotency_key": "retry-analysis", "kind": "REQUIREMENTS", "payload": {}},
+    )
+    assert retried["operation_state"] == "RUNNING"
 
 
 def test_manual_sql_uses_the_same_project_and_is_idempotent(database, monkeypatch):

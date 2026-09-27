@@ -693,11 +693,13 @@ export interface SqlAgentProject {
       | 'PURGED';
     row_count: number;
     duration_ms: number;
+    result_bytes?: number;
     columns: string[];
     compilation_id: string;
     checks?: SqlResultChecks;
     error?: { code: string; message: string } | null;
   } | null;
+  runs?: NonNullable<SqlAgentProject['latest_run']>[];
   derived_runs?: Array<{
     id: string;
     kind: 'PYTHON' | 'LOOKUP';
@@ -711,6 +713,7 @@ export interface SqlAgentProject {
     revision: number;
     payload: Record<string, unknown> | null;
   } | null;
+  documents?: NonNullable<SqlAgentProject['document']>[] | null;
   latest_conclusion?: {
     id: string;
     payload: {
@@ -720,6 +723,7 @@ export interface SqlAgentProject {
       citations: Array<{ row_index: number; column: string }>;
     };
   } | null;
+  conclusions?: NonNullable<SqlAgentProject['latest_conclusion']>[] | null;
   next_action?:
     | 'WAIT'
     | 'CONFIRM_DECISIONS'
@@ -728,7 +732,7 @@ export interface SqlAgentProject {
     | 'COMPILE'
     | 'EXECUTE'
     | 'CONTINUE';
-  blockers?: Array<{ code: string; message: string }>;
+  blockers?: Array<{ code: string; message: string; action?: string }>;
   last_error: { code?: string; message?: string } | null;
   capabilities: {
     requirements_agent: true;

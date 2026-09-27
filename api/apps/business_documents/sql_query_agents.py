@@ -132,6 +132,62 @@ class BusinessDocumentSqlAgentService:
         return cls._project(project)
 
     @classmethod
+    def revise_question(
+        cls,
+        tenant_id: str,
+        actor_id: str,
+        project_id: str,
+        raw: object,
+        is_admin: bool = False,
+        access_role: BusinessDocumentRole | str = BusinessDocumentRole.AUTHOR_CREATOR,
+    ) -> dict[str, Any]:
+        if not isinstance(raw, Mapping):
+            raise ValidationError("INVALID_SQL_QUESTION", "Request body must be an object")
+        _closed(raw, {"schema_version", "expected_state_version", "idempotency_key", "source_request"}, "question revision")
+        version = raw.get("expected_state_version")
+        if raw.get("schema_version") != "1" or isinstance(version, bool) or not isinstance(version, int) or version < 1:
+            raise ValidationError("INVALID_SQL_QUESTION", "A current project version is required")
+        key = _text(raw.get("idempotency_key"), "idempotency_key", 128)
+        question = _text(raw.get("source_request"), "source_request", 20_000)
+        request_hash = _stable_hash({"type": "REVISE_QUESTION", "request": raw})
+        with BusinessDocumentSqlQueryProject._meta.database.atomic():
+            project = cls._get_project(tenant_id, project_id)
+            BusinessDocumentAccess(actor_id, access_role, is_admin).require_edit(project.owner_id)
+            replay = cls._command_replay(tenant_id, project_id, key, request_hash)
+            if replay is not None:
+                return replay
+            if project.state_version != version or project.stage == "COMPLETE" or project.operation_state == "RUNNING":
+                raise ConflictError("SQL_PROJECT_VERSION_CONFLICT", "Question cannot be changed in the current project state")
+            now = current_timestamp()
+            BusinessDocumentSqlAgentProposal.update(status="REJECTED", decided_by=actor_id, decided_at=now).where(
+                (BusinessDocumentSqlAgentProposal.project_id == project_id)
+                & (BusinessDocumentSqlAgentProposal.tenant_id == tenant_id)
+                & (BusinessDocumentSqlAgentProposal.status == "PENDING")
+            ).execute()
+            changed = BusinessDocumentSqlQueryProject.update(
+                source_request=question,
+                requirements_artifact_id=None,
+                schema_artifact_id=None,
+                query_artifact_id=None,
+                stage="REQUIREMENTS",
+                operation_state="IDLE",
+                current_job_id=None,
+                last_error=None,
+                state_version=version + 1,
+                update_time=now,
+                update_date=datetime.now(),
+            ).where(
+                (BusinessDocumentSqlQueryProject.id == project_id)
+                & (BusinessDocumentSqlQueryProject.tenant_id == tenant_id)
+                & (BusinessDocumentSqlQueryProject.state_version == version)
+            ).execute()
+            if changed != 1:
+                raise ConflictError("SQL_PROJECT_VERSION_CONFLICT", "Question changed while it was being saved")
+            response = cls._project(BusinessDocumentSqlQueryProject.get_by_id(project_id))
+            cls._record_command(tenant_id, project_id, key, request_hash, response)
+            return response
+
+    @classmethod
     def list_projects(
         cls,
         tenant_id: str,
@@ -558,7 +614,7 @@ class BusinessDocumentSqlAgentService:
             cls._require_job_lease(current_job, worker_id, lease_token)
             project = cls._get_project(job.tenant_id, job.document_id)
             if project.current_job_id == job.id:
-                cls._update_project_after_job(project, operation_state="FAILED", last_error=dict(error))
+                cls._update_project_after_job(project, operation_state="IDLE", last_error=dict(error))
             cls._finish_job(current_job, "DEAD", error=dict(error))
 
     @staticmethod
@@ -731,43 +787,45 @@ class BusinessDocumentSqlAgentService:
             .first()
         )
         compilation_current = latest_compilation is not None and latest_compilation.payload.get("source_artifact_ids") == list(artifact_ids.values())
-        run = (
+        runs = list(
             BusinessDocumentSqlQueryRun.select()
             .where((BusinessDocumentSqlQueryRun.project_id == project.id) & (BusinessDocumentSqlQueryRun.tenant_id == project.tenant_id) & (BusinessDocumentSqlQueryRun.kind == "SQL"))
             .order_by(BusinessDocumentSqlQueryRun.create_time.desc(), BusinessDocumentSqlQueryRun.id.desc())
-            .first()
         )
-        latest_run = (
+        run = runs[0] if runs else None
+        ready_run = next((item for item in runs if item.status == "READY"), None)
+        ready_run_ids = [item.id for item in runs if item.status == "READY"]
+        run_summaries = [
             {
                 "id": run.id,
                 "status": run.status,
                 "row_count": run.row_count,
                 "duration_ms": run.duration_ms,
+                "result_bytes": run.result_bytes,
                 "columns": run.columns,
                 "compilation_id": run.compilation_id,
                 "checks": run.checks,
                 "error": run.error,
             }
-            if run is not None
-            else None
-        )
+            for run in runs
+        ]
+        latest_run = run_summaries[0] if run_summaries else None
         derived_runs = (
             [
                 {"id": item.id, "kind": item.kind, "source_run_id": item.source_run_id, "status": item.status, "row_count": item.row_count, "checks": item.checks}
                 for item in BusinessDocumentSqlQueryRun.select()
-                .where((BusinessDocumentSqlQueryRun.project_id == project.id) & (BusinessDocumentSqlQueryRun.tenant_id == project.tenant_id) & (BusinessDocumentSqlQueryRun.source_run_id == run.id))
+                .where((BusinessDocumentSqlQueryRun.project_id == project.id) & (BusinessDocumentSqlQueryRun.tenant_id == project.tenant_id) & (BusinessDocumentSqlQueryRun.source_run_id.in_(ready_run_ids)))
                 .order_by(BusinessDocumentSqlQueryRun.create_time.desc())
-                .limit(10)
             ]
-            if run is not None
+            if ready_run_ids
             else []
         )
-        latest_document = (
+        documents = list(
             BusinessDocumentSqlQueryArtifact.select()
-            .where((BusinessDocumentSqlQueryArtifact.project_id == project.id) & (BusinessDocumentSqlQueryArtifact.kind == "DOCUMENT"))
+            .where((BusinessDocumentSqlQueryArtifact.project_id == project.id) & (BusinessDocumentSqlQueryArtifact.tenant_id == project.tenant_id) & (BusinessDocumentSqlQueryArtifact.kind == "DOCUMENT"))
             .order_by(BusinessDocumentSqlQueryArtifact.revision.desc())
-            .first()
         )
+        latest_document = documents[0] if documents else None
         document = {"id": latest_document.id, "revision": latest_document.revision, "payload": latest_document.payload if include_payloads else None} if latest_document is not None else None
         latest_conclusion = (
             BusinessDocumentSqlQueryArtifact.select()
@@ -779,6 +837,16 @@ class BusinessDocumentSqlAgentService:
             .order_by(BusinessDocumentSqlQueryArtifact.revision.desc())
             .first()
         )
+        conclusions_by_run = {}
+        if include_payloads and ready_run_ids:
+            for item in BusinessDocumentSqlQueryArtifact.select().where(
+                (BusinessDocumentSqlQueryArtifact.project_id == project.id)
+                & (BusinessDocumentSqlQueryArtifact.tenant_id == project.tenant_id)
+                & (BusinessDocumentSqlQueryArtifact.kind == "CONCLUSION")
+            ).order_by(BusinessDocumentSqlQueryArtifact.revision.desc()):
+                source_run_id = item.payload.get("source_run_id")
+                if source_run_id in ready_run_ids and source_run_id not in conclusions_by_run:
+                    conclusions_by_run[source_run_id] = {"id": item.id, "payload": item.payload}
         if include_payloads:
             artifacts = {name: BusinessDocumentSqlQueryArtifact.get_by_id(artifact_id).payload if artifact_id else None for name, artifact_id in artifact_ids.items()}
             if compilation_current:
@@ -789,7 +857,7 @@ class BusinessDocumentSqlAgentService:
             else "CONFIRM_DECISIONS"
             if project.operation_state == "REVIEW"
             else "VIEW_RESULT"
-            if run is not None and run.status == "READY"
+            if ready_run is not None
             else "OPEN_DOCUMENT"
             if latest_document is not None
             else "COMPILE"
@@ -798,6 +866,13 @@ class BusinessDocumentSqlAgentService:
             if project.stage == "COMPLETE"
             else "CONTINUE"
         )
+        blockers = []
+        if project.last_error:
+            blockers.append({"code": project.last_error.get("code", "SQL_AGENT_FAILED"), "message": project.last_error.get("message", "Analysis failed"), "action": "RETRY_ANALYSIS"})
+        if run is not None and run.status == "FAILED" and run.error:
+            blockers.append({"code": run.error.get("code", "SQL_RUN_FAILED"), "message": run.error.get("message", "Query failed"), "action": "CHECK_QUERY"})
+        if project.stage == "COMPLETE" and not compilation_current:
+            blockers.append({"code": "SQL_COMPILATION_REQUIRED", "message": "Compile the accepted SQL before execution", "action": "COMPILE"})
         return {
             "schema_version": "1",
             "id": project.id,
@@ -814,8 +889,10 @@ class BusinessDocumentSqlAgentService:
             "artifacts": artifacts,
             "compilation": compilation,
             "latest_run": latest_run,
+            "runs": run_summaries,
             "derived_runs": derived_runs,
             "document": document,
+            "documents": [{"id": item.id, "revision": item.revision, "payload": item.payload} for item in documents] if include_payloads else None,
             "latest_conclusion": (
                 {"id": latest_conclusion.id, "payload": latest_conclusion.payload}
                 if latest_conclusion is not None and run is not None and latest_conclusion.payload.get("source_run_id") == run.id
@@ -823,15 +900,16 @@ class BusinessDocumentSqlAgentService:
             )
             if include_payloads
             else None,
+            "conclusions": list(conclusions_by_run.values()) if include_payloads else None,
             "next_action": next_action,
-            "blockers": [],
+            "blockers": blockers,
             "last_error": project.last_error,
             "capabilities": {
                 "requirements_agent": True,
                 "schema_agent": True,
                 "query_agent": True,
-                "result_agent": run is not None and run.status == "READY",
-                "python_agent": run is not None and run.status == "READY" and run.result_bytes <= 10_000_000,
+                "result_agent": ready_run is not None,
+                "python_agent": any(item.status == "READY" and item.result_bytes <= 10_000_000 for item in runs),
             },
         }
 

@@ -8,14 +8,13 @@
 #      http://www.apache.org/licenses/LICENSE-2.0
 #
 
+import sys
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
-import sys
 from types import ModuleType, SimpleNamespace
 
 import pytest
 from quart import Blueprint, Quart
-
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
 if "api.apps" not in sys.modules:
@@ -58,6 +57,7 @@ async def test_json_routes_reject_non_object_and_malformed_json(route_app):
         ("post", "/business-documents/sql-query/plan", "INVALID_SQL_QUERY_PLAN_REQUEST"),
         ("post", "/business-documents/sql-query/compile", "INVALID_SQL_QUERY_SPECIFICATION"),
         ("post", "/business-documents/sql-query/projects", "INVALID_SQL_AGENT_PROJECT"),
+        ("post", "/business-documents/sql-query/projects/project-1/question", "INVALID_SQL_QUESTION"),
         ("post", "/business-documents/sql-query/projects/project-1/agent-jobs", "INVALID_SQL_AGENT_REQUEST"),
         (
             "post",
@@ -137,6 +137,22 @@ async def test_routes_pass_tenant_and_owner_in_service_contract_order(route_app,
         ("command", ACTOR, ACTOR, "doc-1", command_payload, False, "AUTHOR_CREATOR"),
         ("get", "doc-1", ACTOR, False, "AUTHOR_CREATOR"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_revise_sql_question_route_passes_authenticated_scope(route_app, monkeypatch):
+    app, module = route_app
+    calls = []
+
+    def revise(tenant_id, actor_id, project_id, data, is_admin, access_role):
+        calls.append((tenant_id, actor_id, project_id, data, is_admin, access_role))
+        return {"id": project_id, "state_version": 2}
+
+    monkeypatch.setattr(module.BusinessDocumentSqlAgentService, "revise_question", revise)
+    payload = {"schema_version": "1", "expected_state_version": 1, "idempotency_key": "change-1", "source_request": "Новый вопрос"}
+    response = await app.test_client().post("/business-documents/sql-query/projects/project-1/question", json=payload)
+    assert response.status_code == 200
+    assert calls == [(ACTOR, ACTOR, "project-1", payload, False, "AUTHOR_CREATOR")]
 
 
 @pytest.mark.p0

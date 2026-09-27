@@ -25,6 +25,7 @@ import {
   previewBusinessDocumentSqlRun,
   proposeBusinessDocumentSqlConclusion,
   requestBusinessDocumentSqlAgent,
+  reviseBusinessDocumentSqlQuestion,
   runBusinessDocumentSqlLookup,
   runBusinessDocumentSqlProject,
   runBusinessDocumentSqlPython,
@@ -98,6 +99,26 @@ function commandKey(prefix: string) {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Операция не выполнена.';
+}
+
+function schemaTermsFromRequirements(project: SqlAgentProject): string[] {
+  const requirements = project.artifacts?.requirements?.requirements;
+  const statements = Array.isArray(requirements)
+    ? requirements
+        .filter((item) => item && typeof item === 'object')
+        .map((item) => String((item as { statement?: unknown }).statement || ''))
+    : [];
+  const stop = new Set([
+    'вывести', 'показать', 'получить', 'найти', 'посчитать', 'сумму',
+    'количество', 'данные', 'таблицы', 'полей', 'строки',
+    'месяц', 'период', 'последний', 'последние', 'только', 'которые',
+    'сортировать', 'ограничить', 'строк', 'для', 'или', 'the', 'from',
+    'with', 'show', 'count', 'total',
+  ]);
+  const words = (statements.join(' ') || project.source_request || '')
+    .toLocaleLowerCase()
+    .match(/[\p{L}\p{N}_]{4,}/gu) || [];
+  return [...new Set(words.filter((word) => !stop.has(word)))].slice(0, 8);
 }
 
 function requirementsKindLabel(kind: unknown) {
@@ -640,6 +661,8 @@ function QueryReview({
   ) => Promise<void>;
 }) {
   const proposal = queryProposalFromPending(project);
+  const [confirmedJoinIds, setConfirmedJoinIds] = useState<string[]>([]);
+  const [confirmedFilterIds, setConfirmedFilterIds] = useState<string[]>([]);
   if (!proposal) {
     return (
       <p className="border-s-2 border-state-error ps-3 text-sm text-state-error">
@@ -694,6 +717,19 @@ function QueryReview({
                     {join.left_column_id} = {join.right_column_id}
                   </p>
                   <p className="mt-1 text-text-disabled">{join.description}</p>
+                  <label className="mt-2 flex items-start gap-2 text-text-secondary">
+                    <Checkbox
+                      checked={confirmedJoinIds.includes(join.id)}
+                      onCheckedChange={(checked) =>
+                        setConfirmedJoinIds((current) =>
+                          checked
+                            ? [...current, join.id]
+                            : current.filter((id) => id !== join.id),
+                        )
+                      }
+                    />
+                    <span>Подтверждаю связь: она может изменить число строк.</span>
+                  </label>
                 </div>
               ))
             ) : (
@@ -719,6 +755,19 @@ function QueryReview({
                     {filter.column_id} {filter.operator}{' '}
                     {filter.parameter_name ? `:${filter.parameter_name}` : ''}
                   </p>
+                  <label className="mt-2 flex items-start gap-2 text-text-secondary">
+                    <Checkbox
+                      checked={confirmedFilterIds.includes(filter.id)}
+                      onCheckedChange={(checked) =>
+                        setConfirmedFilterIds((current) =>
+                          checked
+                            ? [...current, filter.id]
+                            : current.filter((id) => id !== filter.id),
+                        )
+                      }
+                    />
+                    <span>Подтверждаю исключение строк этим условием.</span>
+                  </label>
                 </div>
               ))
             ) : (
@@ -742,12 +791,15 @@ function QueryReview({
       </div>
       <DecisionBar
         busy={busy}
-        acceptDisabled={false}
+        acceptDisabled={
+          confirmedJoinIds.length !== proposal.joins.length ||
+          confirmedFilterIds.length !== proposal.filters.length
+        }
         acceptLabel="Подтвердить и собрать SQL"
         onAccept={() =>
           onDecision('ACCEPT', {
-            confirmed_join_ids: proposal.joins.map((join) => join.id),
-            confirmed_filter_ids: proposal.filters.map((filter) => filter.id),
+            confirmed_join_ids: confirmedJoinIds,
+            confirmed_filter_ids: confirmedFilterIds,
           })
         }
         onReject={() => onDecision('REJECT', null)}
@@ -831,7 +883,7 @@ function ManualSqlForm({
     }
   };
   return (
-    <section className="mt-6 border-t border-border-button pt-4">
+    <section id="sql-check-query" className="mt-6 border-t border-border-button pt-4">
       <Button variant="ghost" onClick={() => setOpen((value) => !value)}>
         <Code2 className="size-4" />
         {open ? 'Скрыть ручной SQL' : 'Ручной SQL'}
@@ -915,10 +967,22 @@ function CompletedProject({
   const [lookupPreview, setLookupPreview] = useState<SqlProjectPreview | null>(
     null,
   );
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [conclusionText, setConclusionText] = useState('');
-  const run = project.latest_run;
-  const document = project.document;
-  const conclusion = project.latest_conclusion;
+  const run =
+    project.runs?.find((item) => item.id === selectedRunId) ||
+    project.latest_run;
+  const runId = run?.id;
+  const runStatus = run?.status;
+  useEffect(() => setSelectedRunId(null), [project.id]);
+  const document = project.documents
+    ? project.documents.find((item) => item.payload?.run_id === runId)
+    : project.document;
+  const conclusion =
+    project.conclusions?.find((item) => item.payload.source_run_id === runId) ||
+    (project.latest_conclusion?.payload.source_run_id === runId
+      ? project.latest_conclusion
+      : null);
   useEffect(() => {
     setConclusionText(conclusion?.payload.text || '');
   }, [conclusion?.id, conclusion?.payload.text]);
@@ -977,12 +1041,12 @@ function CompletedProject({
     document?.id,
   ]);
   useEffect(() => {
-    if (!run || run.status !== 'READY') {
+    if (!runId || runStatus !== 'READY') {
       setPreview(null);
       return;
     }
     let active = true;
-    void previewBusinessDocumentSqlRun(project.id, run.id)
+    void previewBusinessDocumentSqlRun(project.id, runId)
       .then((result) => {
         if (active) setPreview(result);
       })
@@ -992,7 +1056,7 @@ function CompletedProject({
     return () => {
       active = false;
     };
-  }, [project.id, run?.id, run?.status]);
+  }, [project.id, runId, runStatus]);
   useEffect(() => {
     const derived = project.derived_runs?.find(
       (item) => item.kind === 'PYTHON' && item.status === 'READY',
@@ -1050,6 +1114,7 @@ function CompletedProject({
         commandKey('sql-run'),
         selectedProfileId,
       );
+      setSelectedRunId(null);
       await onRefresh();
     } catch (error) {
       setActionError(errorMessage(error));
@@ -1209,7 +1274,24 @@ function CompletedProject({
     !busy,
   );
   return (
-    <div data-testid="sql-agent-complete">
+    <div id="sql-next-action" data-testid="sql-agent-complete">
+      {project.runs && project.runs.length > 1 && (
+        <section className="mb-6 border-b border-border-button pb-4">
+          <h4 className="text-sm font-semibold">История запусков</h4>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {project.runs.map((item, index) => (
+              <Button
+                key={item.id}
+                size="sm"
+                variant={run?.id === item.id ? 'default' : 'outline'}
+                onClick={() => setSelectedRunId(item.id)}
+              >
+                Запуск {project.runs!.length - index} · {item.status === 'READY' ? 'данные доступны' : item.status === 'FAILED' ? 'ошибка' : item.status === 'PURGED' ? 'строки удалены' : 'выполняется'}
+              </Button>
+            ))}
+          </div>
+        </section>
+      )}
       <p className="text-xs font-medium uppercase tracking-[0.14em] text-accent-primary">
         {run?.status === 'READY'
           ? 'Результат'
@@ -1401,7 +1483,8 @@ function CompletedProject({
               <p className="mt-3 text-sm">{conclusion.payload.text}</p>
             )}
           </section>
-          {project.capabilities.python_agent && (
+          {project.capabilities.python_agent &&
+            (run?.result_bytes ?? 0) <= 10_000_000 && (
             <section className="mt-5 border-t border-border-button pt-4">
               <Button
                 variant="ghost"
@@ -1639,7 +1722,8 @@ function CompletedProject({
                 </select>
               </label>
             )}
-            {binding?.status === 'UNAVAILABLE' && (
+            {binding?.status === 'UNAVAILABLE' &&
+              preflight?.blocker?.code !== 'SQL_EXECUTION_FORBIDDEN' && (
               <p className="text-sm text-state-error">
                 Для выбранных данных нет доступного источника PostgreSQL.
               </p>
@@ -1661,10 +1745,16 @@ function CompletedProject({
                 {binding.selection.profile.statement_timeout_ms} мс
               </p>
             )}
-            <Button disabled={!canRun} onClick={() => void execute()}>
-              {busy && <LoaderCircle className="size-4 animate-spin" />}
-              Выполнить запрос
-            </Button>
+            {preflight?.blocker?.code === 'SQL_EXECUTION_FORBIDDEN' ? (
+              <Button onClick={() => setShowSql(true)}>
+                Открыть сохранённый проверенный SQL
+              </Button>
+            ) : (
+              <Button disabled={!canRun} onClick={() => void execute()}>
+                {busy && <LoaderCircle className="size-4 animate-spin" />}
+                Выполнить запрос
+              </Button>
+            )}
           </section>
         )}
       {compiled?.sql && (
@@ -1735,6 +1825,8 @@ export function SqlAgentWorkbench() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [terms, setTerms] = useState('');
+  const [editingQuestion, setEditingQuestion] = useState(false);
+  const [questionDraft, setQuestionDraft] = useState('');
   const [compiled, setCompiled] = useState<SqlQueryCompileResponse | null>(
     null,
   );
@@ -1793,21 +1885,26 @@ export function SqlAgentWorkbench() {
     };
   }, [runningProjectId]);
 
+  const compileProjectId = project?.id;
+  const compileStage = project?.stage;
+  const compileVersion = project?.state_version;
+  const compileArtifactId = project?.artifact_ids.query;
+  const savedCompilation = project?.compilation?.result;
   useEffect(() => {
     setCompiled(null);
     setCompileError(null);
-    if (!project || project.stage !== 'COMPLETE') return;
-    if (project.compilation?.result) {
-      setCompiled(project.compilation.result);
+    if (!compileProjectId || compileStage !== 'COMPLETE' || !compileVersion || !compileArtifactId) return;
+    if (savedCompilation) {
+      setCompiled(savedCompilation);
       return;
     }
     let cancelled = false;
     const compile = async () => {
       try {
         const response = await compileBusinessDocumentSqlProject(
-          project.id,
-          project.state_version,
-          `compile-${project.artifact_ids.query}`,
+          compileProjectId,
+          compileVersion,
+          `compile-${compileArtifactId}`,
         );
         if (cancelled) return;
         const result = response.compilation;
@@ -1826,13 +1923,45 @@ export function SqlAgentWorkbench() {
     return () => {
       cancelled = true;
     };
-  }, [project?.id, project?.artifact_ids.query, project?.compilation?.id]);
+  }, [compileProjectId, compileStage, compileVersion, compileArtifactId, savedCompilation]);
 
   const selectProject = async (projectId: string) => {
     setBusy(true);
     try {
       setProject(await fetchBusinessDocumentSqlAgentProject(projectId));
+      setEditingQuestion(false);
       setCreating(false);
+      setError(null);
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveQuestion = async () => {
+    if (!project || !questionDraft.trim()) return;
+    setBusy(true);
+    try {
+      const revised = await reviseBusinessDocumentSqlQuestion(
+        project.id,
+        project.state_version,
+        commandKey('revise-question'),
+        questionDraft.trim(),
+      );
+      setProject(revised);
+      setEditingQuestion(false);
+      const started = await requestBusinessDocumentSqlAgent(revised.id, {
+        schema_version: '1',
+        expected_state_version: revised.state_version,
+        idempotency_key: commandKey('run-requirements'),
+        kind: 'REQUIREMENTS',
+        payload: { locale: revised.locale },
+      });
+      setProject(started);
+      setProjects((current) =>
+        current.map((item) => (item.id === started.id ? started : item)),
+      );
       setError(null);
     } catch (nextError) {
       setError(errorMessage(nextError));
@@ -1926,13 +2055,28 @@ export function SqlAgentWorkbench() {
         current.map((item) => (item.id === updated.id ? updated : item)),
       );
       setError(null);
-      if (decision === 'ACCEPT' && updated.next_agent === 'QUERY') {
+      if (
+        decision === 'ACCEPT' &&
+        (updated.next_agent === 'SCHEMA' || updated.next_agent === 'QUERY')
+      ) {
+        const schemaTerms =
+          updated.next_agent === 'SCHEMA'
+            ? schemaTermsFromRequirements(updated)
+            : [];
+        if (updated.next_agent === 'SCHEMA' && schemaTerms.length === 0) {
+          setError('Уточните сущности для поиска в каталоге.');
+          return;
+        }
+        if (schemaTerms.length) setTerms(schemaTerms.join('\n'));
         const started = await requestBusinessDocumentSqlAgent(updated.id, {
           schema_version: '1',
           expected_state_version: updated.state_version,
-          idempotency_key: commandKey('run-query'),
-          kind: 'QUERY',
-          payload: { locale: updated.locale },
+          idempotency_key: commandKey(`run-${updated.next_agent.toLowerCase()}`),
+          kind: updated.next_agent,
+          payload:
+            updated.next_agent === 'SCHEMA'
+              ? { locale: updated.locale, terms: schemaTerms }
+              : { locale: updated.locale },
         });
         setProject(started);
         setProjects((current) =>
@@ -2033,6 +2177,20 @@ export function SqlAgentWorkbench() {
                   <p className="mt-1 line-clamp-2 max-w-3xl text-sm leading-6 text-text-secondary">
                     {project.source_request}
                   </p>
+                  {project.stage !== 'COMPLETE' &&
+                    project.operation_state !== 'RUNNING' && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={busy}
+                        onClick={() => {
+                          setQuestionDraft(project.source_request || '');
+                          setEditingQuestion(true);
+                        }}
+                      >
+                        Изменить задачу
+                      </Button>
+                    )}
                 </div>
                 <Button
                   size="sm"
@@ -2047,17 +2205,56 @@ export function SqlAgentWorkbench() {
             </header>
 
             <main className="px-5 py-7 lg:px-7" aria-live="polite">
+              {editingQuestion && (
+                <section className="mb-6 max-w-2xl space-y-3 border-y border-border-button py-4">
+                  <label className="block text-sm font-medium" htmlFor="sql-question-revision">
+                    Уточнённая задача
+                  </label>
+                  <Textarea
+                    id="sql-question-revision"
+                    value={questionDraft}
+                    onChange={(event) => setQuestionDraft(event.target.value)}
+                  />
+                  <p className="text-xs text-text-secondary">
+                    Анализ начнётся заново; прежние решения останутся в истории проекта.
+                  </p>
+                  <div className="flex gap-2">
+                    <Button disabled={busy || !questionDraft.trim()} onClick={() => void saveQuestion()}>
+                      Сохранить и проанализировать
+                    </Button>
+                    <Button variant="ghost" onClick={() => setEditingQuestion(false)}>
+                      Отмена
+                    </Button>
+                  </div>
+                </section>
+              )}
               {error && (
                 <div className="mb-6 flex items-start gap-2 border-s-2 border-state-error ps-3 text-sm text-state-error">
                   <AlertCircle className="mt-0.5 size-4 shrink-0" />
                   <span>{error}</span>
                 </div>
               )}
-              {project.last_error && (
-                <div className="mb-6 border-s-2 border-state-error ps-3 text-sm text-state-error">
-                  {project.last_error.message || project.last_error.code}
+              {(project.blockers?.length
+                ? project.blockers
+                : project.last_error
+                  ? [{ ...project.last_error, code: project.last_error.code || 'SQL_FAILED', message: project.last_error.message || 'Операция не выполнена' }]
+                  : []
+              ).map((blocker, index) => (
+                <div key={`${blocker.code}-${index}`} className="mb-6 border-s-2 border-state-error ps-3 text-sm text-state-error">
+                  <p>{blocker.message}</p>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() =>
+                      document
+                        .getElementById(blocker.action === 'CHECK_QUERY' ? 'sql-check-query' : 'sql-next-action')
+                        ?.scrollIntoView({ behavior: 'smooth' })
+                    }
+                  >
+                    Перейти к исправлению
+                  </Button>
                 </div>
-              )}
+              ))}
 
               {project.operation_state === 'RUNNING' && project.current_job && (
                 <section className="mx-auto max-w-2xl py-12 text-center">
@@ -2120,7 +2317,7 @@ export function SqlAgentWorkbench() {
                 )}
 
               {project.operation_state === 'IDLE' && currentAgent && (
-                <section className="mx-auto max-w-2xl py-7">
+                <section id="sql-next-action" className="mx-auto max-w-2xl py-7">
                   <div className="flex size-10 items-center justify-center rounded-full bg-accent-primary/10 text-accent-primary">
                     {currentAgent === 'REQUIREMENTS' ? (
                       <FileText className="size-5" />

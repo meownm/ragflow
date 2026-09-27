@@ -281,6 +281,29 @@ export async function fetchBusinessDocumentSqlAgentProject(projectId: string) {
   }
 }
 
+export async function reviseBusinessDocumentSqlQuestion(
+  projectId: string,
+  expectedStateVersion: number,
+  idempotencyKey: string,
+  sourceRequest: string,
+) {
+  try {
+    const response = await request.post(
+      `${api.businessDocumentSqlQueryProject(projectId)}/question`,
+      {
+        schema_version: '1',
+        expected_state_version: expectedStateVersion,
+        idempotency_key: idempotencyKey,
+        source_request: sourceRequest,
+      },
+      requestConfig(),
+    );
+    return unwrap<SqlAgentProject>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
 export async function compileBusinessDocumentSqlProject(
   projectId: string,
   expectedStateVersion: number,

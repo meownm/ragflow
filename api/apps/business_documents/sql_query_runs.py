@@ -28,7 +28,7 @@ from api.db.db_models import (
     User,
 )
 from api.db.services.managed_resource_service import ManagedResourceService
-from business_documents.application.errors import BusinessDocumentError, ConflictError, ValidationError
+from business_documents.application.errors import BusinessDocumentError, ConflictError, PermissionDeniedError, ValidationError
 from business_documents.sql_query.conclusion import ConclusionValidationError, validate_conclusion
 from business_documents.sql_query.project_compilation import build_project_compile_command
 from business_documents.sql_query.query_specification import compile_query_payload, guard_read_only_sql, parse_schema_snapshot
@@ -52,6 +52,13 @@ def _command(raw: object, fields: set[str]) -> tuple[int, str]:
     if isinstance(version, bool) or not isinstance(version, int) or version < 1 or not isinstance(key, str) or not 1 <= len(key) <= 128:
         raise ValidationError("INVALID_SQL_RUN_COMMAND", "Version and idempotency key are required")
     return version, key
+
+
+def _current_actor_access(actor_id: str) -> tuple[str, bool]:
+    user = User.get_or_none(User.id == actor_id)
+    if user is None or str(user.is_active) != "1" or str(user.status) != "1":
+        raise PermissionDeniedError("The query owner is no longer active")
+    return str(user.business_document_role or "AUTHOR_EDITOR"), bool(user.is_superuser)
 
 
 def _source(project: BusinessDocumentSqlQueryProject) -> tuple[BusinessDocumentSqlQueryArtifact, dict[str, Any]]:
@@ -164,8 +171,11 @@ class BusinessDocumentSqlRunService:
     @classmethod
     def preflight(cls, tenant_id: str, actor_id: str, project_id: str, selected_profile_id: str | None, is_admin: bool = False, access_role: str = "AUTHOR_CREATOR") -> dict[str, Any]:
         project = BusinessDocumentSqlAgentService._get_project(tenant_id, project_id)
-        BusinessDocumentAccess(actor_id, access_role, is_admin).require_edit(project.owner_id)
+        access = BusinessDocumentAccess(actor_id, access_role, is_admin)
+        access.require_edit(project.owner_id)
         compilation, command = _source(project)
+        if not access.can_execute_sql():
+            return {"compilation_id": compilation.id, "state_version": project.state_version, "binding": {"status": "UNAVAILABLE"}, "blocker": {"code": "SQL_EXECUTION_FORBIDDEN", "message": "Your role can save the verified SQL but cannot execute it"}}
         catalog_age_warning = _verify_schema(command, actor_id, is_admin, access_role)
         resolution, profile, connector = _binding(actor_id, is_admin, access_role, command, selected_profile_id)
         result = {"compilation_id": compilation.id, "state_version": project.state_version, "binding": resolution}
@@ -185,7 +195,9 @@ class BusinessDocumentSqlRunService:
         version, key = _command(raw, {"selected_profile_id"})
         request_hash = _stable_hash({"type": "RUN", "request": raw})
         project = BusinessDocumentSqlAgentService._get_project(tenant_id, project_id)
-        BusinessDocumentAccess(actor_id, access_role, is_admin).require_edit(project.owner_id)
+        access = BusinessDocumentAccess(actor_id, access_role, is_admin)
+        access.require_edit(project.owner_id)
+        access.require_execute_sql()
         replay = BusinessDocumentSqlAgentService._command_replay(tenant_id, project_id, key, request_hash)
         if replay is not None:
             return replay
@@ -251,7 +263,7 @@ class BusinessDocumentSqlRunService:
                 job_type="SQL_QUERY_RUN",
                 dedupe_key=_stable_hash({"project_id": project_id, "run_id": run.id}),
                 source_state_version=version + 1,
-                payload={"run_id": run.id, "actor_id": actor_id, "is_admin": is_admin, "access_role": str(access_role), "selected_profile_id": selected},
+                payload={"run_id": run.id, "actor_id": actor_id, "selected_profile_id": selected},
                 available_at=current_timestamp(),
                 max_attempts=1,
                 correlation_id=get_uuid(),
@@ -279,10 +291,11 @@ class BusinessDocumentSqlRunService:
         if changed != 1:
             raise ConflictError("SQL_RUN_STATE_CHANGED", "SQL run state changed before execution")
         actor_id = payload["actor_id"]
-        access_role = payload["access_role"]
-        is_admin = payload["is_admin"]
+        access_role, is_admin = _current_actor_access(actor_id)
         project = BusinessDocumentSqlAgentService._get_project(job.tenant_id, job.document_id)
-        BusinessDocumentAccess(actor_id, access_role, is_admin).require_edit(project.owner_id)
+        access = BusinessDocumentAccess(actor_id, access_role, is_admin)
+        access.require_edit(project.owner_id)
+        access.require_execute_sql()
         compilation, command = _source(project)
         if compilation.id != run.compilation_id:
             raise ConflictError("SQL_COMPILATION_STALE", "Compiled SQL changed before execution")

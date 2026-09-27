@@ -118,6 +118,28 @@ async def get_business_document_sql_query_project(project_id: str):
         return _error(error)
 
 
+@manager.route("/business-documents/sql-query/projects/<project_id>/question", methods=["POST"])  # noqa: F821
+@login_required
+async def revise_business_document_sql_query_question(project_id: str):
+    try:
+        data = await get_request_json()
+        actor_id = str(current_user.id)
+        result = await thread_pool_exec(
+            BusinessDocumentSqlAgentService.revise_question,
+            actor_id,
+            actor_id,
+            project_id,
+            data,
+            _is_admin(),
+            _access_role(),
+        )
+        return _success(result)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_SQL_QUESTION", "Request body must be a valid JSON object", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
 @manager.route("/business-documents/sql-query/projects/<project_id>/agent-jobs", methods=["POST"])  # noqa: F821
 @login_required
 async def request_business_document_sql_agent(project_id: str):

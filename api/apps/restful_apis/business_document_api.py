@@ -26,22 +26,18 @@ from werkzeug.exceptions import BadRequest
 from api.apps import current_user, login_required
 from api.apps.business_documents.adapters.assignment import assign_business_document
 from api.apps.business_documents.authorization import BusinessDocumentAccess
-from business_documents.application.errors import BusinessDocumentError
 from api.apps.business_documents.eva_changes import EvaDocumentChangeService
 from api.apps.business_documents.exports import BusinessDocumentExportService
-from api.apps.business_documents.runtime import document_queries
-from api.apps.business_documents.runtime import document_commands
-from api.apps.business_documents.runtime import eva_synchronization
-from api.apps.business_documents.runtime import document_creation
-from api.apps.business_documents.runtime import document_deletion, change_user_role
+from api.apps.business_documents.runtime import change_user_role, document_commands, document_creation, document_deletion, document_queries, eva_synchronization
 from api.apps.business_documents.sql_execution_registry import BusinessDocumentSqlExecutionRegistryService
 from api.apps.business_documents.sql_query_agents import BusinessDocumentSqlAgentService
 from api.apps.business_documents.sql_query_lifecycle import BusinessDocumentSqlQueryService
-from api.apps.business_documents.sql_query_runs import BusinessDocumentSqlRunService
 from api.apps.business_documents.sql_query_planner import BusinessDocumentSqlQueryPlanningService
+from api.apps.business_documents.sql_query_runs import BusinessDocumentSqlRunService
 from api.apps.business_documents.sql_query_schema import BusinessDocumentSqlQuerySchemaService
 from api.apps.business_documents.worker import wake_business_document_worker
 from api.utils.api_utils import get_request_json
+from business_documents.application.errors import BusinessDocumentError
 from common.misc_utils import thread_pool_exec
 
 
@@ -469,7 +465,12 @@ async def save_business_document_sql_manual_query(project_id: str):
         actor_id = str(current_user.id)
         result = await thread_pool_exec(
             BusinessDocumentSqlAgentService.save_manual_query,
-            actor_id, actor_id, project_id, data, _is_admin(), _access_role(),
+            actor_id,
+            actor_id,
+            project_id,
+            data,
+            _is_admin(),
+            _access_role(),
         )
         return _success(result)
     except (AttributeError, TypeError, BadRequest):
@@ -486,7 +487,12 @@ async def preflight_business_document_sql_project(project_id: str):
         selected_profile_id = request.args.get("selected_profile_id")
         result = await thread_pool_exec(
             BusinessDocumentSqlRunService.preflight,
-            actor_id, actor_id, project_id, selected_profile_id, _is_admin(), _access_role(),
+            actor_id,
+            actor_id,
+            project_id,
+            selected_profile_id,
+            _is_admin(),
+            _access_role(),
         )
         return _success(result)
     except BusinessDocumentError as error:
@@ -501,7 +507,12 @@ async def run_business_document_sql_project(project_id: str):
         actor_id = str(current_user.id)
         result = await thread_pool_exec(
             BusinessDocumentSqlRunService.run,
-            actor_id, actor_id, project_id, data, _is_admin(), _access_role(),
+            actor_id,
+            actor_id,
+            project_id,
+            data,
+            _is_admin(),
+            _access_role(),
         )
         return _success(result, 202)
     except (AttributeError, TypeError, BadRequest):
@@ -518,7 +529,13 @@ async def preview_business_document_sql_run(project_id: str, run_id: str):
         offset = int(request.args.get("offset", "0"))
         result = await thread_pool_exec(
             BusinessDocumentSqlRunService.preview,
-            actor_id, actor_id, project_id, run_id, offset, _is_admin(), _access_role(),
+            actor_id,
+            actor_id,
+            project_id,
+            run_id,
+            offset,
+            _is_admin(),
+            _access_role(),
         )
         return _success(result)
     except ValueError:
@@ -535,7 +552,13 @@ async def run_business_document_sql_python(project_id: str, run_id: str):
         actor_id = str(current_user.id)
         result = await thread_pool_exec(
             BusinessDocumentSqlRunService.run_python,
-            actor_id, actor_id, project_id, run_id, data, _is_admin(), _access_role(),
+            actor_id,
+            actor_id,
+            project_id,
+            run_id,
+            data,
+            _is_admin(),
+            _access_role(),
         )
         return _success(result, 201)
     except (AttributeError, TypeError, BadRequest):
@@ -552,7 +575,13 @@ async def run_business_document_sql_lookup(project_id: str, run_id: str):
         actor_id = str(current_user.id)
         result = await thread_pool_exec(
             BusinessDocumentSqlRunService.run_lookup,
-            actor_id, actor_id, project_id, run_id, data, _is_admin(), _access_role(),
+            actor_id,
+            actor_id,
+            project_id,
+            run_id,
+            data,
+            _is_admin(),
+            _access_role(),
         )
         return _success(result, 201)
     except (AttributeError, TypeError, BadRequest):
@@ -569,7 +598,13 @@ async def propose_business_document_sql_conclusion(project_id: str, run_id: str)
         actor_id = str(current_user.id)
         result = await thread_pool_exec(
             BusinessDocumentSqlRunService.propose_conclusion,
-            actor_id, actor_id, project_id, run_id, data, _is_admin(), _access_role(),
+            actor_id,
+            actor_id,
+            project_id,
+            run_id,
+            data,
+            _is_admin(),
+            _access_role(),
         )
         return _success(result, 201)
     except (AttributeError, TypeError, BadRequest):
@@ -586,7 +621,13 @@ async def confirm_business_document_sql_conclusion(project_id: str, run_id: str)
         actor_id = str(current_user.id)
         result = await thread_pool_exec(
             BusinessDocumentSqlRunService.confirm_conclusion,
-            actor_id, actor_id, project_id, run_id, data, _is_admin(), _access_role(),
+            actor_id,
+            actor_id,
+            project_id,
+            run_id,
+            data,
+            _is_admin(),
+            _access_role(),
         )
         return _success(result, 201)
     except (AttributeError, TypeError, BadRequest):
@@ -605,7 +646,12 @@ async def cancel_business_document_sql_run(project_id: str, run_id: str):
             return _error(BusinessDocumentError("INVALID_SQL_RUN_COMMAND", "Run identity does not match the path", 422))
         result = await thread_pool_exec(
             BusinessDocumentSqlRunService.cancel_result,
-            actor_id, actor_id, project_id, data, _is_admin(), _access_role(),
+            actor_id,
+            actor_id,
+            project_id,
+            data,
+            _is_admin(),
+            _access_role(),
         )
         return _success(result)
     except (AttributeError, TypeError, BadRequest):
@@ -622,7 +668,12 @@ async def complete_business_document_sql_project(project_id: str):
         actor_id = str(current_user.id)
         result = await thread_pool_exec(
             BusinessDocumentSqlRunService.complete,
-            actor_id, actor_id, project_id, data, _is_admin(), _access_role(),
+            actor_id,
+            actor_id,
+            project_id,
+            data,
+            _is_admin(),
+            _access_role(),
         )
         return _success(result)
     except (AttributeError, TypeError, BadRequest):

@@ -24,18 +24,17 @@ from time import monotonic
 from typing import Any
 
 from api.apps.business_documents.ai import BusinessDocumentAI
-from business_documents.application.errors import BusinessDocumentError, ConflictError
 from api.apps.business_documents.evidence import BusinessDocumentEvidence, related_file_search_enabled
 from api.apps.business_documents.exports import BusinessDocumentExportService
 from api.apps.business_documents.runtime import job_completion
-from api.apps.business_documents.stream_events import BusinessDocumentStreamEvents
 from api.apps.business_documents.sql_query_agent_worker import BusinessDocumentSqlAgentRunner
 from api.apps.business_documents.sql_query_agents import BusinessDocumentSqlAgentService
 from api.apps.business_documents.sql_query_runs import BusinessDocumentSqlRunService
+from api.apps.business_documents.stream_events import BusinessDocumentStreamEvents
 from api.db.db_models import BusinessDocumentJob
+from business_documents.application.errors import BusinessDocumentError, ConflictError
 from common.misc_utils import get_uuid
 from common.time_utils import current_timestamp
-
 
 _ACTIVE_STATUSES = ("PENDING", "RETRY")
 _WAKE_EVENT = threading.Event()
@@ -437,7 +436,10 @@ class BusinessDocumentWorker:
                         try:
                             if current_job.job_type == "SQL_QUERY_RUN":
                                 BusinessDocumentSqlRunService.fail_job(
-                                    current_job, self.worker_id, claimed_lease_token, payload,
+                                    current_job,
+                                    self.worker_id,
+                                    claimed_lease_token,
+                                    payload,
                                 )
                             elif current_job.job_type.startswith("SQL_AGENT_"):
                                 BusinessDocumentSqlAgentService.fail_job(

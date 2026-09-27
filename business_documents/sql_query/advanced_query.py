@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 import re
+from collections.abc import Mapping
 from typing import Any
 
 import sqlglot
 from sqlglot import exp
-from sqlglot.errors import ParseError
+from sqlglot.errors import OptimizeError, ParseError
 from sqlglot.optimizer.qualify import qualify
-from sqlglot.errors import OptimizeError
 
 from business_documents.sql_query.query_specification import (
     MAX_PARAMETERS,
@@ -25,17 +24,51 @@ from business_documents.sql_query.query_specification import (
     schema_acceptance_issues,
 )
 
-
 _PARAMETER_TYPES = {"text", "integer", "decimal", "boolean", "date", "datetime", "text_list", "integer_list"}
 _ALLOWED_FUNCTIONS = {
-    "and", "or", "avg", "cast", "coalesce", "count", "date_trunc", "dense_rank",
-    "first_value", "lag", "last_value", "lead", "max", "min", "nullif",
-    "rank", "round", "row_number", "sum", "timestamp_trunc",
+    "and",
+    "or",
+    "avg",
+    "cast",
+    "coalesce",
+    "count",
+    "date_trunc",
+    "dense_rank",
+    "first_value",
+    "lag",
+    "last_value",
+    "lead",
+    "max",
+    "min",
+    "nullif",
+    "rank",
+    "round",
+    "row_number",
+    "sum",
+    "timestamp_trunc",
 }
 _PROHIBITED_NODES = {
-    "Alter", "Analyze", "Call", "Command", "Copy", "Create", "Delete", "Drop",
-    "Execute", "Grant", "Insert", "LoadData", "Lock", "Merge", "Pragma",
-    "Revoke", "Set", "Transaction", "TruncateTable", "Update", "Use",
+    "Alter",
+    "Analyze",
+    "Call",
+    "Command",
+    "Copy",
+    "Create",
+    "Delete",
+    "Drop",
+    "Execute",
+    "Grant",
+    "Insert",
+    "LoadData",
+    "Lock",
+    "Merge",
+    "Pragma",
+    "Revoke",
+    "Set",
+    "Transaction",
+    "TruncateTable",
+    "Update",
+    "Use",
 }
 _PROHIBITED_SCHEMAS = {"pg_catalog", "information_schema"}
 
@@ -116,9 +149,14 @@ def guard_advanced_sql(sql: str, snapshot, parameter_names: list[str]) -> dict[s
     if len({alias.casefold() for alias in output_columns}) != len(output_columns):
         raise SqlGuardError("Output column aliases must be unique")
     return {
-        "status": "PASS", "dialect": QUERY_DIALECT, "statement_count": 1,
-        "read_only": True, "tables": sorted(observed), "parameters": sorted(placeholders),
-        "output_columns": output_columns, "mode": "manual",
+        "status": "PASS",
+        "dialect": QUERY_DIALECT,
+        "statement_count": 1,
+        "read_only": True,
+        "tables": sorted(observed),
+        "parameters": sorted(placeholders),
+        "output_columns": output_columns,
+        "mode": "manual",
     }
 
 
@@ -136,7 +174,9 @@ def compile_manual_query_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
         "status": "NEEDS_CLARIFICATION" if issues else "READY",
         "snapshot_fingerprint": snapshot.fingerprint,
         "blocking_issues": [issue.to_api() for issue in issues],
-        "sql": None, "parameters": {}, "guard": {"status": "NOT_RUN"},
+        "sql": None,
+        "parameters": {},
+        "guard": {"status": "NOT_RUN"},
     }
     if issues:
         return response

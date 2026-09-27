@@ -46,7 +46,7 @@ jobs:
       - name: Install small check environment
         run: |
           uv venv --python 3.13
-          uv pip install pytest ruff
+          uv pip install pytest ruff==0.13.3
       - name: Lint changed Python files
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}

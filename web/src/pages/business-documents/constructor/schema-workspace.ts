@@ -165,7 +165,9 @@ export function toSchemaTableCandidate(
     columns.push({
       id,
       name,
-      ...(column.display_name ? { displayName: String(column.display_name).trim() } : {}),
+      ...(column.display_name
+        ? { displayName: String(column.display_name).trim() }
+        : {}),
       fqn: String(column.fqn || '').trim(),
       dataType: String(column.data_type || '').trim(),
       description: String(column.description || '').trim(),

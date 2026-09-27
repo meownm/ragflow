@@ -14,7 +14,7 @@
 #  limitations under the License.
 #
 import base64
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -39,28 +39,28 @@ class CodeExecutionResult(BaseModel):
     stdout: str
     stderr: str
     exit_code: int
-    detail: Optional[str] = None
+    detail: str | None = None
 
     # Resource usage
-    time_used_ms: Optional[float] = None
-    memory_used_kb: Optional[float] = None
+    time_used_ms: float | None = None
+    memory_used_kb: float | None = None
 
     # Error details
-    resource_limit_type: Optional[ResourceLimitType] = None
-    unauthorized_access_type: Optional[UnauthorizedAccessType] = None
-    runtime_error_type: Optional[RuntimeErrorType] = None
+    resource_limit_type: ResourceLimitType | None = None
+    unauthorized_access_type: UnauthorizedAccessType | None = None
+    runtime_error_type: RuntimeErrorType | None = None
 
     # File artifacts produced by code execution (images, PDFs, CSVs, etc.)
     artifacts: list[ArtifactItem] = []
 
     # Structured return value produced by main()
-    result: Optional[ExecutionStructuredResult] = None
+    result: ExecutionStructuredResult | None = None
 
 
 class CodeExecutionRequest(BaseModel):
     code_b64: str = Field(..., description="Base64 encoded code string")
     language: SupportLanguage = Field(default=SupportLanguage.PYTHON, description="Programming language")
-    arguments: Optional[dict] = Field(default={}, description="Arguments")
+    arguments: dict | None = Field(default={}, description="Arguments")
     private: bool = Field(default=False, description="Run in a disposable container without network access or content logging")
 
     @field_validator("code_b64")
@@ -70,4 +70,4 @@ class CodeExecutionRequest(BaseModel):
             base64.b64decode(v, validate=True)
             return v
         except Exception as e:
-            raise ValueError(f"Invalid base64 encoding: {str(e)}")
+            raise ValueError(f"Invalid base64 encoding: {e!s}")

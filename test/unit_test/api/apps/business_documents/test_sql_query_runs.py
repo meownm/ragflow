@@ -12,8 +12,8 @@ if "api.apps" not in sys.modules:
     api_apps.__path__ = [str(Path(__file__).resolve().parents[5] / "api" / "apps")]
     sys.modules["api.apps"] = api_apps
 
-from api.apps.business_documents.sql_query_agents import BusinessDocumentSqlAgentService
 from api.apps.business_documents import sql_query_runs
+from api.apps.business_documents.sql_query_agents import BusinessDocumentSqlAgentService
 from api.apps.business_documents.sql_query_postgres import _dbapi_sql
 from api.apps.business_documents.worker import BusinessDocumentJobQueue
 from business_documents.application.errors import ConflictError
@@ -27,26 +27,46 @@ def database(monkeypatch):
         database.connect()
         database.create_tables(tables)
         project = BusinessDocumentSqlAgentService.create_project(
-            "tenant-1", "author-1",
+            "tenant-1",
+            "author-1",
             {"schema_version": "1", "title": "Продажи", "source_request": "Покажи продажи", "locale": "ru"},
         )
-        sql_query_runs.BusinessDocumentSqlQueryProject.update(stage="COMPLETE").where(
-            sql_query_runs.BusinessDocumentSqlQueryProject.id == project["id"]
-        ).execute()
-        compiled = {"sql": "SELECT value FROM public.sales LIMIT :row_limit", "parameters": {"row_limit": 2}, "snapshot_fingerprint": "sha256:sample", "guard": {"status": "PASS"}, "output_columns": ["value"]}
+        sql_query_runs.BusinessDocumentSqlQueryProject.update(stage="COMPLETE").where(sql_query_runs.BusinessDocumentSqlQueryProject.id == project["id"]).execute()
+        compiled = {
+            "sql": "SELECT value FROM public.sales LIMIT :row_limit",
+            "parameters": {"row_limit": 2},
+            "snapshot_fingerprint": "sha256:sample",
+            "guard": {"status": "PASS"},
+            "output_columns": ["value"],
+        }
         compilation = SimpleNamespace(id="compilation-1", payload={"result": compiled}, source_proposal_id="proposal-1")
-        monkeypatch.setattr(sql_query_runs, "_source", lambda _: (compilation, {
-            "accepted_requirements": "Покажи продажи",
-            "specification": {"select": [{"alias": "value"}]},
-        }))
+        monkeypatch.setattr(
+            sql_query_runs,
+            "_source",
+            lambda _: (
+                compilation,
+                {
+                    "accepted_requirements": "Покажи продажи",
+                    "specification": {"select": [{"alias": "value"}]},
+                },
+            ),
+        )
         monkeypatch.setattr(sql_query_runs, "_verify_schema", lambda *args: None)
         profile = SimpleNamespace(id="profile-1", version=1, max_rows=10, statement_timeout_ms=1000, max_result_bytes=1000)
         connector = SimpleNamespace(config={})
         monkeypatch.setattr(sql_query_runs, "_binding", lambda *args: ({"status": "BOUND"}, profile, connector))
         monkeypatch.setattr(sql_query_runs, "explain_postgres", lambda *args, **kwargs: None)
-        monkeypatch.setattr(sql_query_runs, "execute_postgres", lambda *args, **kwargs: {
-            "columns": ["value"], "rows": [[42]], "row_count": 1, "result_bytes": 4, "duration_ms": 2,
-        })
+        monkeypatch.setattr(
+            sql_query_runs,
+            "execute_postgres",
+            lambda *args, **kwargs: {
+                "columns": ["value"],
+                "rows": [[42]],
+                "row_count": 1,
+                "result_bytes": 4,
+                "duration_ms": 2,
+            },
+        )
         yield project["id"]
         database.drop_tables(tables)
         database.close()
@@ -80,7 +100,9 @@ def test_catalog_version_change_blocks_execution(monkeypatch):
 def test_run_preview_and_completion_purge_rows(database):
     project_id = database
     run = sql_query_runs.BusinessDocumentSqlRunService.run(
-        "tenant-1", "author-1", project_id,
+        "tenant-1",
+        "author-1",
+        project_id,
         {"schema_version": "1", "expected_state_version": 1, "idempotency_key": "run-1", "selected_profile_id": None},
     )
     assert run["status"] == "QUEUED"
@@ -91,7 +113,9 @@ def test_run_preview_and_completion_purge_rows(database):
     assert sql_query_runs.BusinessDocumentSqlRunService.preview("tenant-1", "author-1", project_id, run["run_id"])["rows"] == [[42]]
     assert sql_query_runs.BusinessDocumentSqlRunService.preview("tenant-1", "author-1", project_id, run["run_id"])["checks"]["status"] == "PASS"
     completed = sql_query_runs.BusinessDocumentSqlRunService.complete(
-        "tenant-1", "author-1", project_id,
+        "tenant-1",
+        "author-1",
+        project_id,
         {"schema_version": "1", "expected_state_version": 2, "idempotency_key": "complete-1", "run_id": run["run_id"]},
     )
     assert completed["rows_status"] == "PURGED"
@@ -105,11 +129,15 @@ def test_run_preview_and_completion_purge_rows(database):
 def test_cancel_result_purges_without_document(database):
     project_id = database
     run = sql_query_runs.BusinessDocumentSqlRunService.run(
-        "tenant-1", "author-1", project_id,
+        "tenant-1",
+        "author-1",
+        project_id,
         {"schema_version": "1", "expected_state_version": 1, "idempotency_key": "run-1", "selected_profile_id": None},
     )
     result = sql_query_runs.BusinessDocumentSqlRunService.cancel_result(
-        "tenant-1", "author-1", project_id,
+        "tenant-1",
+        "author-1",
+        project_id,
         {"schema_version": "1", "expected_state_version": 2, "idempotency_key": "cancel-1", "run_id": run["run_id"]},
     )
     assert result["rows_status"] == "PURGED"
@@ -121,7 +149,9 @@ def test_owner_result_quota_blocks_a_new_run(database, monkeypatch):
     monkeypatch.setattr(sql_query_runs, "_MAX_OWNER_ACTIVE_RESULTS", 0)
     with pytest.raises(ConflictError) as error:
         sql_query_runs.BusinessDocumentSqlRunService.run(
-            "tenant-1", "author-1", database,
+            "tenant-1",
+            "author-1",
+            database,
             {"schema_version": "1", "expected_state_version": 1, "idempotency_key": "run-quota", "selected_profile_id": None},
         )
     assert error.value.code == "SQL_RESULT_OWNER_QUOTA"
@@ -130,29 +160,42 @@ def test_owner_result_quota_blocks_a_new_run(database, monkeypatch):
 def test_python_creates_derived_result_without_changing_sql_rows(database, monkeypatch):
     project_id = database
     source = sql_query_runs.BusinessDocumentSqlRunService.run(
-        "tenant-1", "author-1", project_id,
+        "tenant-1",
+        "author-1",
+        project_id,
         {"schema_version": "1", "expected_state_version": 1, "idempotency_key": "run-1", "selected_profile_id": None},
     )
     job = BusinessDocumentJobQueue.claim("sql-test")
     output = sql_query_runs.BusinessDocumentSqlRunService.execute_job(job, "sql-test", job.lease_token)
     sql_query_runs.BusinessDocumentSqlRunService.complete_job(job, "sql-test", job.lease_token, output)
-    monkeypatch.setattr(sql_query_runs, "execute_result_python", lambda code, columns, rows: {
-        "columns": ["doubled"], "rows": [[rows[0][0] * 2]],
-    })
+    monkeypatch.setattr(
+        sql_query_runs,
+        "execute_result_python",
+        lambda code, columns, rows: {
+            "columns": ["doubled"],
+            "rows": [[rows[0][0] * 2]],
+        },
+    )
     derived = sql_query_runs.BusinessDocumentSqlRunService.run_python(
-        "tenant-1", "author-1", project_id, source["run_id"],
-        {"schema_version": "1", "expected_state_version": 2, "idempotency_key": "python-1",
-         "code": "def main(columns, rows):\n    return {'columns': ['doubled'], 'rows': [[rows[0][0] * 2]]}"},
+        "tenant-1",
+        "author-1",
+        project_id,
+        source["run_id"],
+        {"schema_version": "1", "expected_state_version": 2, "idempotency_key": "python-1", "code": "def main(columns, rows):\n    return {'columns': ['doubled'], 'rows': [[rows[0][0] * 2]]}"},
     )
     assert sql_query_runs.BusinessDocumentSqlRunService.preview("tenant-1", "author-1", project_id, derived["run_id"])["rows"] == [[84]]
     assert sql_query_runs.BusinessDocumentSqlRunService.preview("tenant-1", "author-1", project_id, source["run_id"])["rows"] == [[42]]
     with pytest.raises(ConflictError):
         sql_query_runs.BusinessDocumentSqlRunService.complete(
-            "tenant-1", "author-1", project_id,
+            "tenant-1",
+            "author-1",
+            project_id,
             {"schema_version": "1", "expected_state_version": 3, "idempotency_key": "complete-derived", "run_id": derived["run_id"]},
         )
     sql_query_runs.BusinessDocumentSqlRunService.cancel_result(
-        "tenant-1", "author-1", project_id,
+        "tenant-1",
+        "author-1",
+        project_id,
         {"schema_version": "1", "expected_state_version": 3, "idempotency_key": "cancel-source", "run_id": source["run_id"]},
     )
     assert sql_query_runs.BusinessDocumentSqlQueryRun.get_by_id(derived["run_id"]).status == "PURGED"
@@ -162,27 +205,53 @@ def test_python_creates_derived_result_without_changing_sql_rows(database, monke
 def test_lookup_rejects_duplicate_target_keys_without_changing_source(database, monkeypatch):
     project_id = database
     source = sql_query_runs.BusinessDocumentSqlRunService.run(
-        "tenant-1", "author-1", project_id,
+        "tenant-1",
+        "author-1",
+        project_id,
         {"schema_version": "1", "expected_state_version": 1, "idempotency_key": "run-1", "selected_profile_id": None},
     )
     job = BusinessDocumentJobQueue.claim("sql-test")
     output = sql_query_runs.BusinessDocumentSqlRunService.execute_job(job, "sql-test", job.lease_token)
     sql_query_runs.BusinessDocumentSqlRunService.complete_job(job, "sql-test", job.lease_token, output)
     compilation, command = sql_query_runs._source(None)
-    monkeypatch.setattr(sql_query_runs, "_source", lambda _: (compilation, {
-        **command, "schema_snapshot": {}, "accepted_schema": [{"entity_id": "lookup-table"}],
-    }))
+    monkeypatch.setattr(
+        sql_query_runs,
+        "_source",
+        lambda _: (
+            compilation,
+            {
+                **command,
+                "schema_snapshot": {},
+                "accepted_schema": [{"entity_id": "lookup-table"}],
+            },
+        ),
+    )
     columns = {name: SimpleNamespace(id=f"lookup-table.{name}", name=name) for name in ("id", "label")}
-    table = SimpleNamespace(id="lookup-table", physical_relation="public.lookup_table", technical_name="lookup_table", schema_fingerprint="sha256:sample", column=lambda value: next((item for item in columns.values() if item.id == value), None))
+    table = SimpleNamespace(
+        id="lookup-table",
+        physical_relation="public.lookup_table",
+        technical_name="lookup_table",
+        schema_fingerprint="sha256:sample",
+        column=lambda value: next((item for item in columns.values() if item.id == value), None),
+    )
     monkeypatch.setattr(sql_query_runs, "parse_schema_snapshot", lambda _: SimpleNamespace(table=lambda _: table))
     monkeypatch.setattr(sql_query_runs, "guard_read_only_sql", lambda *args, **kwargs: {"status": "PASS"})
-    monkeypatch.setattr(sql_query_runs, "execute_postgres", lambda *args, **kwargs: {
-        "columns": ["lookup_key", "value_0"], "rows": [[42, "first"], [42, "second"]],
-    })
+    monkeypatch.setattr(
+        sql_query_runs,
+        "execute_postgres",
+        lambda *args, **kwargs: {
+            "columns": ["lookup_key", "value_0"],
+            "rows": [[42, "first"], [42, "second"]],
+        },
+    )
     lookup = {
-        "schema_version": "1", "expected_state_version": 2, "idempotency_key": "lookup-1",
-        "source_column": "value", "target_entity_id": "lookup-table",
-        "target_key_column_id": "lookup-table.id", "target_value_column_ids": ["lookup-table.label"],
+        "schema_version": "1",
+        "expected_state_version": 2,
+        "idempotency_key": "lookup-1",
+        "source_column": "value",
+        "target_entity_id": "lookup-table",
+        "target_key_column_id": "lookup-table.id",
+        "target_value_column_ids": ["lookup-table.label"],
     }
     with pytest.raises(Exception, match="not unique"):
         sql_query_runs.BusinessDocumentSqlRunService.run_lookup("tenant-1", "author-1", project_id, source["run_id"], lookup)
@@ -192,33 +261,48 @@ def test_lookup_rejects_duplicate_target_keys_without_changing_source(database, 
 def test_conclusion_requires_human_confirmation_and_survives_only_in_document(database, monkeypatch):
     project_id = database
     source = sql_query_runs.BusinessDocumentSqlRunService.run(
-        "tenant-1", "author-1", project_id,
+        "tenant-1",
+        "author-1",
+        project_id,
         {"schema_version": "1", "expected_state_version": 1, "idempotency_key": "run-1", "selected_profile_id": None},
     )
     job = BusinessDocumentJobQueue.claim("sql-test")
     output = sql_query_runs.BusinessDocumentSqlRunService.execute_job(job, "sql-test", job.lease_token)
     sql_query_runs.BusinessDocumentSqlRunService.complete_job(job, "sql-test", job.lease_token, output)
-    monkeypatch.setattr(sql_query_runs, "propose_conclusion", lambda *args: {
-        "text": "Значение 42.", "citations": [{"row_index": 0, "column": "value"}],
-    })
+    monkeypatch.setattr(
+        sql_query_runs,
+        "propose_conclusion",
+        lambda *args: {
+            "text": "Значение 42.",
+            "citations": [{"row_index": 0, "column": "value"}],
+        },
+    )
     draft = sql_query_runs.BusinessDocumentSqlRunService.propose_conclusion(
-        "tenant-1", "author-1", project_id, source["run_id"],
+        "tenant-1",
+        "author-1",
+        project_id,
+        source["run_id"],
         {"schema_version": "1", "expected_state_version": 2, "idempotency_key": "draft-1"},
     )
     assert draft["text"] == "Значение 42."
     confirmed = sql_query_runs.BusinessDocumentSqlRunService.confirm_conclusion(
-        "tenant-1", "author-1", project_id, source["run_id"],
-        {"schema_version": "1", "expected_state_version": 3, "idempotency_key": "confirm-1",
-         "proposal_id": draft["proposal_id"], "text": "Проверенное значение 42."},
+        "tenant-1",
+        "author-1",
+        project_id,
+        source["run_id"],
+        {"schema_version": "1", "expected_state_version": 3, "idempotency_key": "confirm-1", "proposal_id": draft["proposal_id"], "text": "Проверенное значение 42."},
     )
     assert confirmed["text"] == "Проверенное значение 42."
     completed = sql_query_runs.BusinessDocumentSqlRunService.complete(
-        "tenant-1", "author-1", project_id,
+        "tenant-1",
+        "author-1",
+        project_id,
         {"schema_version": "1", "expected_state_version": 4, "idempotency_key": "complete-1", "run_id": source["run_id"]},
     )
     assert completed["document"]["confirmed_conclusion"]["text"] == "Проверенное значение 42."
     assert "rows" not in completed["document"]
-    assert not sql_query_runs.BusinessDocumentSqlQueryArtifact.select().where(
-        (sql_query_runs.BusinessDocumentSqlQueryArtifact.project_id == project_id)
-        & (sql_query_runs.BusinessDocumentSqlQueryArtifact.kind == "CONCLUSION")
-    ).exists()
+    assert (
+        not sql_query_runs.BusinessDocumentSqlQueryArtifact.select()
+        .where((sql_query_runs.BusinessDocumentSqlQueryArtifact.project_id == project_id) & (sql_query_runs.BusinessDocumentSqlQueryArtifact.kind == "CONCLUSION"))
+        .exists()
+    )

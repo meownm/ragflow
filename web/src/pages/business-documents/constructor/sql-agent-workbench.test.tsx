@@ -1,15 +1,15 @@
 import {
   compileBusinessDocumentSqlProject,
+  confirmBusinessDocumentSqlConclusion,
   createBusinessDocumentSqlAgentProject,
   decideBusinessDocumentSqlAgentProposal,
   fetchBusinessDocumentSqlAgentProject,
   listBusinessDocumentSqlAgentProjects,
   preflightBusinessDocumentSqlProject,
-  runBusinessDocumentSqlProject,
   previewBusinessDocumentSqlRun,
   proposeBusinessDocumentSqlConclusion,
-  confirmBusinessDocumentSqlConclusion,
   requestBusinessDocumentSqlAgent,
+  runBusinessDocumentSqlProject,
 } from '@/services/business-document-service';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { SqlAgentWorkbench } from './sql-agent-workbench';
@@ -40,8 +40,10 @@ const mockedCompile = compileBusinessDocumentSqlProject as jest.Mock;
 const mockedPreflight = preflightBusinessDocumentSqlProject as jest.Mock;
 const mockedRun = runBusinessDocumentSqlProject as jest.Mock;
 const mockedPreview = previewBusinessDocumentSqlRun as jest.Mock;
-const mockedProposeConclusion = proposeBusinessDocumentSqlConclusion as jest.Mock;
-const mockedConfirmConclusion = confirmBusinessDocumentSqlConclusion as jest.Mock;
+const mockedProposeConclusion =
+  proposeBusinessDocumentSqlConclusion as jest.Mock;
+const mockedConfirmConclusion =
+  confirmBusinessDocumentSqlConclusion as jest.Mock;
 
 function project(patch: Record<string, unknown> = {}) {
   return {
@@ -101,9 +103,7 @@ describe('SqlAgentWorkbench', () => {
     render(<SqlAgentWorkbench />);
 
     fireEvent.click(
-      (await screen.findAllByRole('button', { name: 'Новый запрос' })).at(
-        -1,
-      )!,
+      (await screen.findAllByRole('button', { name: 'Новый запрос' })).at(-1)!,
     );
     fireEvent.change(screen.getByLabelText('Название (необязательно)'), {
       target: { value: 'Продажи по регионам' },
@@ -125,7 +125,9 @@ describe('SqlAgentWorkbench', () => {
         }),
       ),
     );
-    expect(mockedCreate.mock.invocationCallOrder[0]).toBeLessThan(mockedRequest.mock.invocationCallOrder[0]);
+    expect(mockedCreate.mock.invocationCallOrder[0]).toBeLessThan(
+      mockedRequest.mock.invocationCallOrder[0],
+    );
   });
 
   it('requires an answer to a blocking question before accepting requirements', async () => {
@@ -255,19 +257,36 @@ describe('SqlAgentWorkbench', () => {
       },
     });
     mockedList.mockResolvedValue([complete]);
-    mockedFetch.mockResolvedValueOnce(complete).mockResolvedValue(project({
-      ...complete,
-      state_version: 9,
-      compilation: { id: 'compilation-1', result: {
-        sql: 'SELECT SUM(t1.amount) AS total_amount FROM sales AS t1 LIMIT :row_limit',
-        parameters: { row_limit: 100 }, guard: { status: 'PASS' },
-      } },
-      latest_run: {
-        id: 'run-1', status: 'READY', row_count: 1, duration_ms: 10,
-        columns: ['total_amount'], compilation_id: 'compilation-1',
-        checks: { status: 'PASS', schema: 'PASS', bounds: 'PASS', truncated: false, null_cells: 0, completeness: 'FULL' },
-      },
-    }));
+    mockedFetch.mockResolvedValueOnce(complete).mockResolvedValue(
+      project({
+        ...complete,
+        state_version: 9,
+        compilation: {
+          id: 'compilation-1',
+          result: {
+            sql: 'SELECT SUM(t1.amount) AS total_amount FROM sales AS t1 LIMIT :row_limit',
+            parameters: { row_limit: 100 },
+            guard: { status: 'PASS' },
+          },
+        },
+        latest_run: {
+          id: 'run-1',
+          status: 'READY',
+          row_count: 1,
+          duration_ms: 10,
+          columns: ['total_amount'],
+          compilation_id: 'compilation-1',
+          checks: {
+            status: 'PASS',
+            schema: 'PASS',
+            bounds: 'PASS',
+            truncated: false,
+            null_cells: 0,
+            completeness: 'FULL',
+          },
+        },
+      }),
+    );
     const compilation = {
       schema_version: '1',
       status: 'READY',
@@ -294,14 +313,43 @@ describe('SqlAgentWorkbench', () => {
       }),
     });
     mockedPreflight.mockResolvedValue({
-      compilation_id: 'compilation-1', state_version: 8,
+      compilation_id: 'compilation-1',
+      state_version: 8,
       binding: {
-        status: 'BOUND', selection: { profile: { id: 'profile-1', name: 'PostgreSQL', max_rows: 1000, statement_timeout_ms: 5000 } },
+        status: 'BOUND',
+        selection: {
+          profile: {
+            id: 'profile-1',
+            name: 'PostgreSQL',
+            max_rows: 1000,
+            statement_timeout_ms: 5000,
+          },
+        },
         candidates: [],
       },
     });
-    mockedRun.mockResolvedValue({ run_id: 'run-1', status: 'QUEUED', state_version: 9 });
-    mockedPreview.mockResolvedValue({ run_id: 'run-1', columns: ['total_amount'], rows: [[42]], offset: 0, row_count: 1, duration_ms: 10, result_bytes: 5, checks: { status: 'PASS', schema: 'PASS', bounds: 'PASS', truncated: false, null_cells: 0, completeness: 'FULL' } });
+    mockedRun.mockResolvedValue({
+      run_id: 'run-1',
+      status: 'QUEUED',
+      state_version: 9,
+    });
+    mockedPreview.mockResolvedValue({
+      run_id: 'run-1',
+      columns: ['total_amount'],
+      rows: [[42]],
+      offset: 0,
+      row_count: 1,
+      duration_ms: 10,
+      result_bytes: 5,
+      checks: {
+        status: 'PASS',
+        schema: 'PASS',
+        bounds: 'PASS',
+        truncated: false,
+        null_cells: 0,
+        completeness: 'FULL',
+      },
+    });
 
     render(<SqlAgentWorkbench />);
 
@@ -309,10 +357,21 @@ describe('SqlAgentWorkbench', () => {
       'SQL проверен. Данные ещё не получены.',
     );
     expect(screen.queryByTestId('sql-result-table')).not.toBeInTheDocument();
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Выполнить запрос' })).toBeEnabled());
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Выполнить запрос' }),
+      ).toBeEnabled(),
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Выполнить запрос' }));
-    expect(await screen.findByTestId('sql-result-table')).toHaveTextContent('42');
-    expect(mockedRun).toHaveBeenCalledWith('project-1', 8, expect.any(String), null);
+    expect(await screen.findByTestId('sql-result-table')).toHaveTextContent(
+      '42',
+    );
+    expect(mockedRun).toHaveBeenCalledWith(
+      'project-1',
+      8,
+      expect.any(String),
+      null,
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Открыть SQL' }));
     expect(await screen.findByText(/SELECT SUM/)).toBeInTheDocument();
     expect(
@@ -322,35 +381,100 @@ describe('SqlAgentWorkbench', () => {
 
   it('generates a conclusion only on request and requires confirmation', async () => {
     const ready = project({
-      stage: 'COMPLETE', next_agent: null, state_version: 2,
-      compilation: { id: 'compilation-1', result: {
-        sql: 'SELECT value AS value FROM public.sales LIMIT :row_limit',
-        parameters: { row_limit: 100 }, guard: { status: 'PASS' },
-      } },
-      latest_run: { id: 'run-1', status: 'READY', row_count: 1, duration_ms: 10,
-        columns: ['value'], compilation_id: 'compilation-1',
-        checks: { status: 'PASS', schema: 'PASS', bounds: 'PASS', completeness: 'FULL' } },
+      stage: 'COMPLETE',
+      next_agent: null,
+      state_version: 2,
+      compilation: {
+        id: 'compilation-1',
+        result: {
+          sql: 'SELECT value AS value FROM public.sales LIMIT :row_limit',
+          parameters: { row_limit: 100 },
+          guard: { status: 'PASS' },
+        },
+      },
+      latest_run: {
+        id: 'run-1',
+        status: 'READY',
+        row_count: 1,
+        duration_ms: 10,
+        columns: ['value'],
+        compilation_id: 'compilation-1',
+        checks: {
+          status: 'PASS',
+          schema: 'PASS',
+          bounds: 'PASS',
+          completeness: 'FULL',
+        },
+      },
     });
     let current = ready;
     mockedList.mockResolvedValue([ready]);
     mockedFetch.mockImplementation(async () => current);
-    mockedPreflight.mockResolvedValue({ binding: { status: 'BOUND', selection: { profile: { name: 'PostgreSQL', max_rows: 100, statement_timeout_ms: 5000 } } } });
-    mockedPreview.mockResolvedValue({ run_id: 'run-1', columns: ['value'], rows: [[42]], offset: 0, row_count: 1, duration_ms: 10 });
-    mockedProposeConclusion.mockImplementation(async () => {
-      current = project({ ...ready, state_version: 3, latest_conclusion: {
-        id: 'conclusion-1', payload: { status: 'DRAFT', source_run_id: 'run-1', text: 'Значение 42.', citations: [{ row_index: 0, column: 'value' }] },
-      } });
-      return { proposal_id: 'conclusion-1', text: 'Значение 42.', citations: [{ row_index: 0, column: 'value' }], state_version: 3 };
+    mockedPreflight.mockResolvedValue({
+      binding: {
+        status: 'BOUND',
+        selection: {
+          profile: {
+            name: 'PostgreSQL',
+            max_rows: 100,
+            statement_timeout_ms: 5000,
+          },
+        },
+      },
     });
-    mockedConfirmConclusion.mockResolvedValue({ conclusion_id: 'conclusion-2', text: 'Значение 42.', state_version: 4 });
+    mockedPreview.mockResolvedValue({
+      run_id: 'run-1',
+      columns: ['value'],
+      rows: [[42]],
+      offset: 0,
+      row_count: 1,
+      duration_ms: 10,
+    });
+    mockedProposeConclusion.mockImplementation(async () => {
+      current = project({
+        ...ready,
+        state_version: 3,
+        latest_conclusion: {
+          id: 'conclusion-1',
+          payload: {
+            status: 'DRAFT',
+            source_run_id: 'run-1',
+            text: 'Значение 42.',
+            citations: [{ row_index: 0, column: 'value' }],
+          },
+        },
+      });
+      return {
+        proposal_id: 'conclusion-1',
+        text: 'Значение 42.',
+        citations: [{ row_index: 0, column: 'value' }],
+        state_version: 3,
+      };
+    });
+    mockedConfirmConclusion.mockResolvedValue({
+      conclusion_id: 'conclusion-2',
+      text: 'Значение 42.',
+      state_version: 4,
+    });
     render(<SqlAgentWorkbench />);
-    expect(await screen.findByTestId('sql-result-table')).toHaveTextContent('42');
+    expect(await screen.findByTestId('sql-result-table')).toHaveTextContent(
+      '42',
+    );
     expect(mockedProposeConclusion).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Сформировать вывод' }));
-    expect(await screen.findByLabelText('Предложенный вывод')).toHaveValue('Значение 42.');
+    expect(await screen.findByLabelText('Предложенный вывод')).toHaveValue(
+      'Значение 42.',
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Подтвердить вывод' }));
-    await waitFor(() => expect(mockedConfirmConclusion).toHaveBeenCalledWith(
-      'project-1', 'run-1', 3, expect.any(String), 'conclusion-1', 'Значение 42.',
-    ));
+    await waitFor(() =>
+      expect(mockedConfirmConclusion).toHaveBeenCalledWith(
+        'project-1',
+        'run-1',
+        3,
+        expect.any(String),
+        'conclusion-1',
+        'Значение 42.',
+      ),
+    );
   });
 });

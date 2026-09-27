@@ -11,7 +11,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-
 API_PATH = Path(__file__).parents[5] / "api" / "apps" / "restful_apis" / "business_document_api.py"
 
 

@@ -40,11 +40,7 @@ def build_project_compile_command(
 ) -> dict[str, Any]:
     """Translate accepted artifacts without trusting a browser-supplied snapshot."""
 
-    statements = [
-        str(item.get("statement", "")).strip()
-        for item in requirements.get("requirements", [])
-        if isinstance(item, Mapping)
-    ]
+    statements = [str(item.get("statement", "")).strip() for item in requirements.get("requirements", []) if isinstance(item, Mapping)]
     statements = [statement for statement in statements if statement]
     snapshot = _object(schema.get("schema_snapshot"), "schema snapshot")
     accepted_schema = schema.get("accepted_schema")
@@ -52,10 +48,12 @@ def build_project_compile_command(
         if not statements or not isinstance(accepted_schema, list):
             raise ProjectCompilationError("Project does not contain accepted requirements and schema")
         return {
-            "schema_version": "1", "schema_snapshot": dict(snapshot),
+            "schema_version": "1",
+            "schema_snapshot": dict(snapshot),
             "accepted_requirements": "\n".join(f"- {statement}" for statement in statements),
             "accepted_schema": accepted_schema,
-            "manual_sql": query.get("sql"), "parameters": query.get("parameters"),
+            "manual_sql": query.get("sql"),
+            "parameters": query.get("parameters"),
         }
     aliases = _object(query.get("aliases"), "aliases")
     filters = query.get("filters")
@@ -85,15 +83,17 @@ def build_project_compile_command(
             except (TypeError, ValueError) as exc:
                 raise ProjectCompilationError("Filter parameter value is invalid") from exc
             parameters.append({"name": parameter, "type": kind, "value": value})
-        compiled_filters.append({
-            "id": item.get("id"),
-            "column_id": item.get("column_id"),
-            "operator": operator,
-            "parameter": parameter,
-            "description": item.get("description"),
-            "decision": "user",
-            "confirmed": item["confirmed"],
-        })
+        compiled_filters.append(
+            {
+                "id": item.get("id"),
+                "column_id": item.get("column_id"),
+                "operator": operator,
+                "parameter": parameter,
+                "description": item.get("description"),
+                "decision": "user",
+                "confirmed": item["confirmed"],
+            }
+        )
     row_limit = query.get("row_limit")
     if isinstance(row_limit, bool) or not isinstance(row_limit, int):
         raise ProjectCompilationError("Row limit is invalid")

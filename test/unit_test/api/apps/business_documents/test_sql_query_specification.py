@@ -11,6 +11,7 @@ from copy import deepcopy
 
 import pytest
 
+from business_documents.sql_query.project_compilation import ProjectCompilationError, build_project_compile_command
 from business_documents.sql_query.query_specification import (
     QuerySpecificationValidationError,
     SqlGuardError,
@@ -18,7 +19,6 @@ from business_documents.sql_query.query_specification import (
     guard_read_only_sql,
     parse_schema_snapshot,
 )
-from business_documents.sql_query.project_compilation import ProjectCompilationError, build_project_compile_command
 
 
 def _table(entity_id: str, fqn: str, fields: tuple[str, ...]) -> dict:
@@ -233,17 +233,19 @@ def test_accepted_project_artifacts_compile_to_the_same_sql():
     query_filters = []
     for item in specification["filters"]:
         parameter = parameter_by_name[item["parameter"]]
-        query_filters.append({
-            "id": item["id"],
-            "column_id": item["column_id"],
-            "operator": item["operator"],
-            "parameter_name": parameter["name"],
-            "parameter_type": parameter["type"],
-            "parameter_value": str(parameter["value"]),
-            "description": item["description"],
-            "decision": "user",
-            "confirmed": True,
-        })
+        query_filters.append(
+            {
+                "id": item["id"],
+                "column_id": item["column_id"],
+                "operator": item["operator"],
+                "parameter_name": parameter["name"],
+                "parameter_type": parameter["type"],
+                "parameter_value": str(parameter["value"]),
+                "description": item["description"],
+                "decision": "user",
+                "confirmed": True,
+            }
+        )
     query = {
         "base_entity_id": specification["from"]["entity_id"],
         "aliases": {
@@ -515,14 +517,17 @@ def _manual_payload(sql: str) -> dict:
     }
 
 
-@pytest.mark.parametrize("sql", [
-    "SELECT o.order_id AS order_id FROM dwh.order_fact AS o LIMIT :row_limit",
-    "WITH sales AS (SELECT o.order_id AS order_id FROM dwh.order_fact AS o) SELECT sales.order_id AS order_id FROM sales LIMIT :row_limit",
-    "SELECT o.status_id AS status_id, COUNT(o.order_id) AS total FROM dwh.order_fact AS o GROUP BY o.status_id HAVING COUNT(o.order_id) > :minimum LIMIT :row_limit",
-    "SELECT o.status_id AS status_id, COUNT(*) AS total FROM dwh.order_fact AS o GROUP BY o.status_id LIMIT :row_limit",
-    "SELECT o.order_id AS order_id FROM dwh.order_fact AS o UNION SELECT c.customer_id AS order_id FROM dwh.customer_dim AS c LIMIT :row_limit",
-    "SELECT o.order_id AS order_id, ROW_NUMBER() OVER (ORDER BY o.created_at) AS position FROM dwh.order_fact AS o LIMIT :row_limit",
-])
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT o.order_id AS order_id FROM dwh.order_fact AS o LIMIT :row_limit",
+        "WITH sales AS (SELECT o.order_id AS order_id FROM dwh.order_fact AS o) SELECT sales.order_id AS order_id FROM sales LIMIT :row_limit",
+        "SELECT o.status_id AS status_id, COUNT(o.order_id) AS total FROM dwh.order_fact AS o GROUP BY o.status_id HAVING COUNT(o.order_id) > :minimum LIMIT :row_limit",
+        "SELECT o.status_id AS status_id, COUNT(*) AS total FROM dwh.order_fact AS o GROUP BY o.status_id LIMIT :row_limit",
+        "SELECT o.order_id AS order_id FROM dwh.order_fact AS o UNION SELECT c.customer_id AS order_id FROM dwh.customer_dim AS c LIMIT :row_limit",
+        "SELECT o.order_id AS order_id, ROW_NUMBER() OVER (ORDER BY o.created_at) AS position FROM dwh.order_fact AS o LIMIT :row_limit",
+    ],
+)
 def test_manual_advanced_sql_is_catalog_bound(sql):
     payload = _manual_payload(sql)
     if ":minimum" in sql:
@@ -533,13 +538,16 @@ def test_manual_advanced_sql_is_catalog_bound(sql):
     assert result["output_columns"]
 
 
-@pytest.mark.parametrize("sql", [
-    "SELECT o.missing AS missing FROM dwh.order_fact AS o LIMIT :row_limit",
-    "SELECT o.order_id AS order_id FROM pg_catalog.pg_user AS o LIMIT :row_limit",
-    "SELECT dangerous(o.order_id) AS value FROM dwh.order_fact AS o LIMIT :row_limit",
-    "SELECT o.order_id AS order_id FROM dwh.order_fact AS o LIMIT 25",
-    "WITH RECURSIVE sales AS (SELECT o.order_id AS order_id FROM dwh.order_fact AS o) SELECT sales.order_id AS order_id FROM sales LIMIT :row_limit",
-])
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT o.missing AS missing FROM dwh.order_fact AS o LIMIT :row_limit",
+        "SELECT o.order_id AS order_id FROM pg_catalog.pg_user AS o LIMIT :row_limit",
+        "SELECT dangerous(o.order_id) AS value FROM dwh.order_fact AS o LIMIT :row_limit",
+        "SELECT o.order_id AS order_id FROM dwh.order_fact AS o LIMIT 25",
+        "WITH RECURSIVE sales AS (SELECT o.order_id AS order_id FROM dwh.order_fact AS o) SELECT sales.order_id AS order_id FROM sales LIMIT :row_limit",
+    ],
+)
 def test_manual_advanced_sql_rejects_unbound_or_unknown_access(sql):
     with pytest.raises(SqlGuardError):
         compile_query_payload(_manual_payload(sql))

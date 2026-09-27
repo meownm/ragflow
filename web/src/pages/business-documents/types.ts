@@ -682,11 +682,52 @@ export interface SqlAgentProject {
     query: Record<string, unknown> | null;
   } | null;
   compilation?: { id: string; result: SqlQueryCompileResponse } | null;
-  latest_run?: { id: string; status: 'QUEUED' | 'RUNNING' | 'CANCEL_REQUESTED' | 'READY' | 'FAILED' | 'PURGED'; row_count: number; duration_ms: number; columns: string[]; compilation_id: string; checks?: SqlResultChecks; error?: { code: string; message: string } | null } | null;
-  derived_runs?: Array<{ id: string; kind: 'PYTHON' | 'LOOKUP'; source_run_id: string; status: string; row_count: number; checks: SqlResultChecks }>;
-  document?: { id: string; revision: number; payload: Record<string, unknown> | null } | null;
-  latest_conclusion?: { id: string; payload: { status: 'DRAFT' | 'CONFIRMED'; source_run_id: string; text: string; citations: Array<{ row_index: number; column: string }> } } | null;
-  next_action?: 'WAIT' | 'CONFIRM_DECISIONS' | 'VIEW_RESULT' | 'OPEN_DOCUMENT' | 'COMPILE' | 'EXECUTE' | 'CONTINUE';
+  latest_run?: {
+    id: string;
+    status:
+      | 'QUEUED'
+      | 'RUNNING'
+      | 'CANCEL_REQUESTED'
+      | 'READY'
+      | 'FAILED'
+      | 'PURGED';
+    row_count: number;
+    duration_ms: number;
+    columns: string[];
+    compilation_id: string;
+    checks?: SqlResultChecks;
+    error?: { code: string; message: string } | null;
+  } | null;
+  derived_runs?: Array<{
+    id: string;
+    kind: 'PYTHON' | 'LOOKUP';
+    source_run_id: string;
+    status: string;
+    row_count: number;
+    checks: SqlResultChecks;
+  }>;
+  document?: {
+    id: string;
+    revision: number;
+    payload: Record<string, unknown> | null;
+  } | null;
+  latest_conclusion?: {
+    id: string;
+    payload: {
+      status: 'DRAFT' | 'CONFIRMED';
+      source_run_id: string;
+      text: string;
+      citations: Array<{ row_index: number; column: string }>;
+    };
+  } | null;
+  next_action?:
+    | 'WAIT'
+    | 'CONFIRM_DECISIONS'
+    | 'VIEW_RESULT'
+    | 'OPEN_DOCUMENT'
+    | 'COMPILE'
+    | 'EXECUTE'
+    | 'CONTINUE';
   blockers?: Array<{ code: string; message: string }>;
   last_error: { code?: string; message?: string } | null;
   capabilities: {

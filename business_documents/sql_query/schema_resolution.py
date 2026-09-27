@@ -10,9 +10,9 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Mapping, Protocol, Sequence, TypeVar
-
+from typing import Any, Protocol, TypeVar
 
 MAX_SCHEMA_TERMS = 8
 MAX_SCHEMA_TERM_LENGTH = 200
@@ -455,21 +455,9 @@ def _candidate(raw: Any, *, term: str, include_all_columns: bool) -> CatalogCand
         description=(_optional_mapping_text(raw.get("description")) or "")[:10_000],
         version=_number(raw.get("version")),
         updated_at=_optional_mapping_text(raw.get("updated_at")),
-        service=(
-            _optional_mapping_text(raw.get("service_technical_name"))
-            or _optional_mapping_text(raw.get("service"))
-            or ""
-        )[:500],
-        schema=(
-            _optional_mapping_text(raw.get("schema_technical_name"))
-            or _optional_mapping_text(raw.get("schema"))
-            or ""
-        )[:500],
-        database=(
-            _optional_mapping_text(raw.get("database_technical_name"))
-            or _optional_mapping_text(raw.get("database"))
-            or ""
-        )[:500],
+        service=(_optional_mapping_text(raw.get("service_technical_name")) or _optional_mapping_text(raw.get("service")) or "")[:500],
+        schema=(_optional_mapping_text(raw.get("schema_technical_name")) or _optional_mapping_text(raw.get("schema")) or "")[:500],
+        database=(_optional_mapping_text(raw.get("database_technical_name")) or _optional_mapping_text(raw.get("database")) or "")[:500],
         owners=_unique_texts(raw.get("owners")),
         domains=_unique_texts(raw.get("domains")),
         tags=_unique_texts(raw.get("tags")),

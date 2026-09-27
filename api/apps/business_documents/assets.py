@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 from contextlib import contextmanager
-from functools import lru_cache
+from functools import cache
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +26,6 @@ from business_documents.application.errors import ValidationError
 from business_documents.domain import content
 from business_documents.domain.errors import RuleViolation
 from business_documents.domain.hashing import text_hash
-
 
 _ASSET_ROOT = Path(__file__).resolve().parents[3] / "agent" / "business_requirements"
 _CONTRACT_FILES = {
@@ -67,7 +66,7 @@ _JOB_PROMPTS = {
 }
 
 
-@lru_cache(maxsize=None)
+@cache
 def _load_json(relative_path: str) -> dict[str, Any]:
     path = _ASSET_ROOT / relative_path
     try:
@@ -99,7 +98,7 @@ def contract_schema(name: str) -> dict[str, Any]:
     return _load_json(f"contracts/{filename}")
 
 
-@lru_cache(maxsize=None)
+@cache
 def prompt_text(name: str) -> str:
     try:
         filename, _ = _PROMPT_FILES[name]

@@ -7,27 +7,27 @@ import { Textarea } from '@/components/ui/textarea';
 import type {
   SqlAgentKind,
   SqlAgentProject,
-  SqlQueryCompileResponse,
   SqlProjectPreflight,
   SqlProjectPreview,
+  SqlQueryCompileResponse,
 } from '@/pages/business-documents/types';
 import {
-  compileBusinessDocumentSqlProject,
   cancelBusinessDocumentSqlRun,
+  compileBusinessDocumentSqlProject,
   completeBusinessDocumentSqlProject,
+  confirmBusinessDocumentSqlConclusion,
   createBusinessDocumentSqlAgentProject,
   decideBusinessDocumentSqlAgentProposal,
   fetchBusinessDocumentSqlAgentProject,
   listBusinessDocumentSqlAgentProjects,
+  loadBusinessDocumentSqlSchemaEntities,
   preflightBusinessDocumentSqlProject,
   previewBusinessDocumentSqlRun,
-  loadBusinessDocumentSqlSchemaEntities,
+  proposeBusinessDocumentSqlConclusion,
   requestBusinessDocumentSqlAgent,
+  runBusinessDocumentSqlLookup,
   runBusinessDocumentSqlProject,
   runBusinessDocumentSqlPython,
-  runBusinessDocumentSqlLookup,
-  proposeBusinessDocumentSqlConclusion,
-  confirmBusinessDocumentSqlConclusion,
   saveBusinessDocumentSqlManualQuery,
 } from '@/services/business-document-service';
 import {
@@ -124,7 +124,8 @@ function EmptyProjects({ onCreate }: { onCreate: () => void }) {
           Получите данные по вашему вопросу
         </h2>
         <p className="mt-2 text-sm leading-6 text-text-secondary">
-          Опишите задачу своими словами. Мы уточним смысл, проверим источник и покажем результат запроса.
+          Опишите задачу своими словами. Мы уточним смысл, проверим источник и
+          покажем результат запроса.
         </p>
         <Button className="mt-6" onClick={onCreate}>
           <Plus className="size-4" />
@@ -193,7 +194,12 @@ function CreateProject({
           </Button>
           <Button
             disabled={!valid || busy}
-            onClick={() => onSubmit(title.trim() || source.trim().slice(0, 80), source.trim())}
+            onClick={() =>
+              onSubmit(
+                title.trim() || source.trim().slice(0, 80),
+                source.trim(),
+              )
+            }
           >
             {busy ? (
               <LoaderCircle className="size-4 animate-spin" />
@@ -781,10 +787,20 @@ function DecisionBar({
   );
 }
 
-function ManualSqlForm({ project, initialSql, onSaved }: { project: SqlAgentProject; initialSql?: string; onSaved: () => Promise<void> }) {
+function ManualSqlForm({
+  project,
+  initialSql,
+  onSaved,
+}: {
+  project: SqlAgentProject;
+  initialSql?: string;
+  onSaved: () => Promise<void>;
+}) {
   const [open, setOpen] = useState(false);
   const [sql, setSql] = useState(initialSql || '');
-  const [parameters, setParameters] = useState('[{"name":"row_limit","type":"integer","value":100}]');
+  const [parameters, setParameters] = useState(
+    '[{"name":"row_limit","type":"integer","value":100}]',
+  );
   const [aligned, setAligned] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -792,25 +808,75 @@ function ManualSqlForm({ project, initialSql, onSaved }: { project: SqlAgentProj
     setBusy(true);
     setError(null);
     try {
-      const parsed = JSON.parse(parameters) as Array<{ name: string; type: string; value: unknown }>;
-      if (!Array.isArray(parsed)) throw new Error('Параметры должны быть массивом JSON.');
-      await saveBusinessDocumentSqlManualQuery(project.id, project.state_version, commandKey('manual-sql'), sql, parsed);
+      const parsed = JSON.parse(parameters) as Array<{
+        name: string;
+        type: string;
+        value: unknown;
+      }>;
+      if (!Array.isArray(parsed))
+        throw new Error('Параметры должны быть массивом JSON.');
+      await saveBusinessDocumentSqlManualQuery(
+        project.id,
+        project.state_version,
+        commandKey('manual-sql'),
+        sql,
+        parsed,
+      );
       setOpen(false);
       await onSaved();
-    } catch (nextError) { setError(errorMessage(nextError)); }
-    finally { setBusy(false); }
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    } finally {
+      setBusy(false);
+    }
   };
-  return <section className="mt-6 border-t border-border-button pt-4">
-    <Button variant="ghost" onClick={() => setOpen((value) => !value)}><Code2 className="size-4" />{open ? 'Скрыть ручной SQL' : 'Ручной SQL'}</Button>
-    {open && <div className="mt-4 max-w-3xl space-y-3">
-      <p className="text-xs text-text-secondary">Экспертный режим принимает один PostgreSQL SELECT с явными алиасами полей и LIMIT :row_limit. CTE, подзапросы, HAVING, окна и UNION проверяются по принятому каталогу.</p>
-      <Textarea aria-label="Ручной SQL" value={sql} onChange={(event) => setSql(event.target.value)} className="min-h-48 font-mono text-xs" />
-      <label className="block text-xs">Параметры JSON<Textarea aria-label="Параметры ручного SQL" value={parameters} onChange={(event) => setParameters(event.target.value)} className="mt-1 min-h-20 font-mono text-xs" /></label>
-      <label className="flex items-center gap-2 text-xs"><Checkbox checked={aligned} onCheckedChange={(value) => setAligned(value === true)} />Этот SQL соответствует принятой задаче и выбранным данным</label>
-      {error && <p className="text-xs text-state-error">{error}</p>}
-      <Button disabled={busy || !aligned || !sql.trim()} onClick={() => void save()}>{busy && <LoaderCircle className="size-4 animate-spin" />}Проверить и сохранить SQL</Button>
-    </div>}
-  </section>;
+  return (
+    <section className="mt-6 border-t border-border-button pt-4">
+      <Button variant="ghost" onClick={() => setOpen((value) => !value)}>
+        <Code2 className="size-4" />
+        {open ? 'Скрыть ручной SQL' : 'Ручной SQL'}
+      </Button>
+      {open && (
+        <div className="mt-4 max-w-3xl space-y-3">
+          <p className="text-xs text-text-secondary">
+            Экспертный режим принимает один PostgreSQL SELECT с явными алиасами
+            полей и LIMIT :row_limit. CTE, подзапросы, HAVING, окна и UNION
+            проверяются по принятому каталогу.
+          </p>
+          <Textarea
+            aria-label="Ручной SQL"
+            value={sql}
+            onChange={(event) => setSql(event.target.value)}
+            className="min-h-48 font-mono text-xs"
+          />
+          <label className="block text-xs">
+            Параметры JSON
+            <Textarea
+              aria-label="Параметры ручного SQL"
+              value={parameters}
+              onChange={(event) => setParameters(event.target.value)}
+              className="mt-1 min-h-20 font-mono text-xs"
+            />
+          </label>
+          <label className="flex items-center gap-2 text-xs">
+            <Checkbox
+              checked={aligned}
+              onCheckedChange={(value) => setAligned(value === true)}
+            />
+            Этот SQL соответствует принятой задаче и выбранным данным
+          </label>
+          {error && <p className="text-xs text-state-error">{error}</p>}
+          <Button
+            disabled={busy || !aligned || !sql.trim()}
+            onClick={() => void save()}
+          >
+            {busy && <LoaderCircle className="size-4 animate-spin" />}Проверить
+            и сохранить SQL
+          </Button>
+        </div>
+      )}
+    </section>
+  );
 }
 
 function CompletedProject({
@@ -828,19 +894,27 @@ function CompletedProject({
   const [showSql, setShowSql] = useState(false);
   const [showRepeat, setShowRepeat] = useState(false);
   const [preflight, setPreflight] = useState<SqlProjectPreflight | null>(null);
-  const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
+  const [selectedProfileId, setSelectedProfileId] = useState<string | null>(
+    null,
+  );
   const [preview, setPreview] = useState<SqlProjectPreview | null>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [pythonOpen, setPythonOpen] = useState(false);
-  const [pythonCode, setPythonCode] = useState('def main(columns, rows):\n    return {"columns": columns, "rows": rows}\n');
-  const [pythonPreview, setPythonPreview] = useState<SqlProjectPreview | null>(null);
+  const [pythonCode, setPythonCode] = useState(
+    'def main(columns, rows):\n    return {"columns": columns, "rows": rows}\n',
+  );
+  const [pythonPreview, setPythonPreview] = useState<SqlProjectPreview | null>(
+    null,
+  );
   const [lookupOpen, setLookupOpen] = useState(false);
   const [lookupSourceColumn, setLookupSourceColumn] = useState('');
   const [lookupTargetId, setLookupTargetId] = useState('');
   const [lookupKeyId, setLookupKeyId] = useState('');
   const [lookupValueId, setLookupValueId] = useState('');
-  const [lookupPreview, setLookupPreview] = useState<SqlProjectPreview | null>(null);
+  const [lookupPreview, setLookupPreview] = useState<SqlProjectPreview | null>(
+    null,
+  );
   const [conclusionText, setConclusionText] = useState('');
   const run = project.latest_run;
   const document = project.document;
@@ -848,45 +922,116 @@ function CompletedProject({
   useEffect(() => {
     setConclusionText(conclusion?.payload.text || '');
   }, [conclusion?.id, conclusion?.payload.text]);
-  const acceptedTableIds = new Set((project.artifacts?.schema?.accepted_schema as Array<{ entity_id: string }> | undefined)?.map((item) => item.entity_id) || []);
-  const lookupTables = ((project.artifacts?.schema?.schema_snapshot as { requirements?: Array<{ selected_table?: { id: string; name: string; columns: Array<{ id: string; name: string }> } }> } | undefined)?.requirements || [])
+  const acceptedTableIds = new Set(
+    (
+      project.artifacts?.schema?.accepted_schema as
+        | Array<{ entity_id: string }>
+        | undefined
+    )?.map((item) => item.entity_id) || [],
+  );
+  const lookupTables = (
+    (
+      project.artifacts?.schema?.schema_snapshot as
+        | {
+            requirements?: Array<{
+              selected_table?: {
+                id: string;
+                name: string;
+                columns: Array<{ id: string; name: string }>;
+              };
+            }>;
+          }
+        | undefined
+    )?.requirements || []
+  )
     .map((item) => item.selected_table)
-    .filter((item): item is { id: string; name: string; columns: Array<{ id: string; name: string }> } => Boolean(item && acceptedTableIds.has(item.id)));
+    .filter(
+      (
+        item,
+      ): item is {
+        id: string;
+        name: string;
+        columns: Array<{ id: string; name: string }>;
+      } => Boolean(item && acceptedTableIds.has(item.id)),
+    );
   const lookupTable = lookupTables.find((item) => item.id === lookupTargetId);
   useEffect(() => {
     if (!compiled?.sql) return;
     let active = true;
     setPreflight(null);
     void preflightBusinessDocumentSqlProject(project.id, selectedProfileId)
-      .then((result) => { if (active) setPreflight(result); })
-      .catch((error) => { if (active) setActionError(errorMessage(error)); });
-    return () => { active = false; };
-  }, [project.id, project.state_version, compiled?.sql, selectedProfileId, document?.id]);
+      .then((result) => {
+        if (active) setPreflight(result);
+      })
+      .catch((error) => {
+        if (active) setActionError(errorMessage(error));
+      });
+    return () => {
+      active = false;
+    };
+  }, [
+    project.id,
+    project.state_version,
+    compiled?.sql,
+    selectedProfileId,
+    document?.id,
+  ]);
   useEffect(() => {
-    if (!run || run.status !== 'READY') { setPreview(null); return; }
+    if (!run || run.status !== 'READY') {
+      setPreview(null);
+      return;
+    }
     let active = true;
     void previewBusinessDocumentSqlRun(project.id, run.id)
-      .then((result) => { if (active) setPreview(result); })
-      .catch((error) => { if (active) setActionError(errorMessage(error)); });
-    return () => { active = false; };
+      .then((result) => {
+        if (active) setPreview(result);
+      })
+      .catch((error) => {
+        if (active) setActionError(errorMessage(error));
+      });
+    return () => {
+      active = false;
+    };
   }, [project.id, run?.id, run?.status]);
   useEffect(() => {
-    const derived = project.derived_runs?.find((item) => item.kind === 'PYTHON' && item.status === 'READY');
-    if (!derived || derived.source_run_id !== run?.id) { setPythonPreview(null); return; }
+    const derived = project.derived_runs?.find(
+      (item) => item.kind === 'PYTHON' && item.status === 'READY',
+    );
+    if (!derived || derived.source_run_id !== run?.id) {
+      setPythonPreview(null);
+      return;
+    }
     let active = true;
     void previewBusinessDocumentSqlRun(project.id, derived.id)
-      .then((result) => { if (active) setPythonPreview(result); })
-      .catch((error) => { if (active) setActionError(errorMessage(error)); });
-    return () => { active = false; };
+      .then((result) => {
+        if (active) setPythonPreview(result);
+      })
+      .catch((error) => {
+        if (active) setActionError(errorMessage(error));
+      });
+    return () => {
+      active = false;
+    };
   }, [project.id, project.derived_runs, run?.id]);
   useEffect(() => {
-    const derived = project.derived_runs?.find((item) => item.kind === 'LOOKUP' && item.status === 'READY');
-    if (!derived || derived.source_run_id !== run?.id) { setLookupPreview(null); return; }
+    const derived = project.derived_runs?.find(
+      (item) => item.kind === 'LOOKUP' && item.status === 'READY',
+    );
+    if (!derived || derived.source_run_id !== run?.id) {
+      setLookupPreview(null);
+      return;
+    }
     let active = true;
     void previewBusinessDocumentSqlRun(project.id, derived.id)
-      .then((result) => { if (active) setLookupPreview(result); })
-      .catch((error) => { if (active) setActionError(errorMessage(error)); });
-    return () => { active = false; };
+      .then((result) => {
+        if (active) setLookupPreview(result);
+      })
+      .catch((error) => {
+        if (active) setActionError(errorMessage(error));
+      });
+    return () => {
+      active = false;
+    };
   }, [project.id, project.derived_runs, run?.id]);
   const copySql = async () => {
     if (!compiled?.sql) return;
@@ -899,97 +1044,203 @@ function CompletedProject({
     setBusy(true);
     setActionError(null);
     try {
-      await runBusinessDocumentSqlProject(project.id, project.state_version, commandKey('sql-run'), selectedProfileId);
+      await runBusinessDocumentSqlProject(
+        project.id,
+        project.state_version,
+        commandKey('sql-run'),
+        selectedProfileId,
+      );
       await onRefresh();
-    } catch (error) { setActionError(errorMessage(error)); }
-    finally { setBusy(false); }
+    } catch (error) {
+      setActionError(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
   };
   const finish = async () => {
     if (!run || run.status !== 'READY') return;
     setBusy(true);
     setActionError(null);
     try {
-      await completeBusinessDocumentSqlProject(project.id, project.state_version, commandKey('sql-complete'), run.id);
+      await completeBusinessDocumentSqlProject(
+        project.id,
+        project.state_version,
+        commandKey('sql-complete'),
+        run.id,
+      );
       setPreview(null);
       await onRefresh();
-    } catch (error) { setActionError(errorMessage(error)); }
-    finally { setBusy(false); }
+    } catch (error) {
+      setActionError(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
   };
   const cancelResult = async () => {
     if (!run || !['READY', 'QUEUED', 'RUNNING'].includes(run.status)) return;
     setBusy(true);
     setActionError(null);
     try {
-      await cancelBusinessDocumentSqlRun(project.id, project.state_version, commandKey('sql-cancel'), run.id);
+      await cancelBusinessDocumentSqlRun(
+        project.id,
+        project.state_version,
+        commandKey('sql-cancel'),
+        run.id,
+      );
       setPreview(null);
       await onRefresh();
-    } catch (error) { setActionError(errorMessage(error)); }
-    finally { setBusy(false); }
+    } catch (error) {
+      setActionError(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
   };
   const moreRows = async () => {
     if (!run || !preview) return;
     try {
-      const next = await previewBusinessDocumentSqlRun(project.id, run.id, preview.rows.length);
+      const next = await previewBusinessDocumentSqlRun(
+        project.id,
+        run.id,
+        preview.rows.length,
+      );
       setPreview({ ...next, rows: [...preview.rows, ...next.rows], offset: 0 });
-    } catch (error) { setActionError(errorMessage(error)); }
+    } catch (error) {
+      setActionError(errorMessage(error));
+    }
   };
   const runPython = async () => {
     if (!run || run.status !== 'READY') return;
     setBusy(true);
     setActionError(null);
     try {
-      const result = await runBusinessDocumentSqlPython(project.id, run.id, project.state_version, commandKey('sql-python'), pythonCode);
-      setPythonPreview(await previewBusinessDocumentSqlRun(project.id, result.run_id));
+      const result = await runBusinessDocumentSqlPython(
+        project.id,
+        run.id,
+        project.state_version,
+        commandKey('sql-python'),
+        pythonCode,
+      );
+      setPythonPreview(
+        await previewBusinessDocumentSqlRun(project.id, result.run_id),
+      );
       await onRefresh();
-    } catch (error) { setActionError(errorMessage(error)); }
-    finally { setBusy(false); }
+    } catch (error) {
+      setActionError(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
   };
   const runLookup = async () => {
     if (!run || run.status !== 'READY') return;
     setBusy(true);
     setActionError(null);
     try {
-      const result = await runBusinessDocumentSqlLookup(project.id, run.id, project.state_version, commandKey('sql-lookup'), {
-        source_column: lookupSourceColumn, target_entity_id: lookupTargetId,
-        target_key_column_id: lookupKeyId, target_value_column_ids: [lookupValueId],
-      });
-      setLookupPreview(await previewBusinessDocumentSqlRun(project.id, result.run_id));
+      const result = await runBusinessDocumentSqlLookup(
+        project.id,
+        run.id,
+        project.state_version,
+        commandKey('sql-lookup'),
+        {
+          source_column: lookupSourceColumn,
+          target_entity_id: lookupTargetId,
+          target_key_column_id: lookupKeyId,
+          target_value_column_ids: [lookupValueId],
+        },
+      );
+      setLookupPreview(
+        await previewBusinessDocumentSqlRun(project.id, result.run_id),
+      );
       await onRefresh();
-    } catch (error) { setActionError(errorMessage(error)); }
-    finally { setBusy(false); }
+    } catch (error) {
+      setActionError(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
   };
   const generateConclusion = async () => {
     if (!run || run.status !== 'READY') return;
     setBusy(true);
     setActionError(null);
     try {
-      await proposeBusinessDocumentSqlConclusion(project.id, run.id, project.state_version, commandKey('sql-conclusion'));
+      await proposeBusinessDocumentSqlConclusion(
+        project.id,
+        run.id,
+        project.state_version,
+        commandKey('sql-conclusion'),
+      );
       await onRefresh();
-    } catch (error) { setActionError(errorMessage(error)); }
-    finally { setBusy(false); }
+    } catch (error) {
+      setActionError(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
   };
   const confirmConclusion = async () => {
-    if (!run || run.status !== 'READY' || !conclusion || conclusion.payload.status !== 'DRAFT') return;
+    if (
+      !run ||
+      run.status !== 'READY' ||
+      !conclusion ||
+      conclusion.payload.status !== 'DRAFT'
+    )
+      return;
     setBusy(true);
     setActionError(null);
     try {
-      await confirmBusinessDocumentSqlConclusion(project.id, run.id, project.state_version, commandKey('sql-conclusion-confirm'), conclusion.id, conclusionText);
+      await confirmBusinessDocumentSqlConclusion(
+        project.id,
+        run.id,
+        project.state_version,
+        commandKey('sql-conclusion-confirm'),
+        conclusion.id,
+        conclusionText,
+      );
       await onRefresh();
-    } catch (error) { setActionError(errorMessage(error)); }
-    finally { setBusy(false); }
+    } catch (error) {
+      setActionError(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
   };
   const binding = preflight?.binding;
-  const canRun = Boolean(compiled?.sql && binding?.status === 'BOUND' && !preflight?.blocker && !busy);
+  const canRun = Boolean(
+    compiled?.sql &&
+    binding?.status === 'BOUND' &&
+    !preflight?.blocker &&
+    !busy,
+  );
   return (
     <div data-testid="sql-agent-complete">
       <p className="text-xs font-medium uppercase tracking-[0.14em] text-accent-primary">
-        {run?.status === 'READY' ? 'Результат' : run && ['QUEUED', 'RUNNING', 'CANCEL_REQUESTED'].includes(run.status) ? 'Выполнение' : document ? 'Завершённый проект' : 'Проверка и запуск'}
+        {run?.status === 'READY'
+          ? 'Результат'
+          : run &&
+              ['QUEUED', 'RUNNING', 'CANCEL_REQUESTED'].includes(run.status)
+            ? 'Выполнение'
+            : document
+              ? 'Завершённый проект'
+              : 'Проверка и запуск'}
       </p>
       <h3 className="mt-1 text-2xl font-semibold">
-        {run?.status === 'READY' ? 'Данные получены' : run && ['QUEUED', 'RUNNING', 'CANCEL_REQUESTED'].includes(run.status) ? 'Запрос выполняется' : document ? 'Документ сохранён, строки удалены' : 'Проверьте запрос перед запуском'}
+        {run?.status === 'READY'
+          ? 'Данные получены'
+          : run &&
+              ['QUEUED', 'RUNNING', 'CANCEL_REQUESTED'].includes(run.status)
+            ? 'Запрос выполняется'
+            : document
+              ? 'Документ сохранён, строки удалены'
+              : 'Проверьте запрос перед запуском'}
       </h3>
       <p className="mt-2 text-sm text-text-secondary">
-        {run?.status === 'READY' ? `${run.row_count} строк · ${run.duration_ms} мс · ${run.checks?.completeness === 'LIMITED' ? 'Показан ограниченный набор' : 'Полный набор в пределах запроса'} · проверка результата пройдена. Строки доступны до завершения проекта.` : run?.status === 'FAILED' ? `Данные не получены: ${run.error?.message || 'проверка или выполнение завершились ошибкой'}.` : run && ['QUEUED', 'RUNNING', 'CANCEL_REQUESTED'].includes(run.status) ? 'Ожидаем результат. Можно отменить выполнение.' : document ? `Ревизия ${document.revision}. Повторный запрос создаст новый запуск и документ.` : 'SQL проверен. Данные ещё не получены.'}
+        {run?.status === 'READY'
+          ? `${run.row_count} строк · ${run.duration_ms} мс · ${run.checks?.completeness === 'LIMITED' ? 'Показан ограниченный набор' : 'Полный набор в пределах запроса'} · проверка результата пройдена. Строки доступны до завершения проекта.`
+          : run?.status === 'FAILED'
+            ? `Данные не получены: ${run.error?.message || 'проверка или выполнение завершились ошибкой'}.`
+            : run &&
+                ['QUEUED', 'RUNNING', 'CANCEL_REQUESTED'].includes(run.status)
+              ? 'Ожидаем результат. Можно отменить выполнение.'
+              : document
+                ? `Ревизия ${document.revision}. Повторный запрос создаст новый запуск и документ.`
+                : 'SQL проверен. Данные ещё не получены.'}
       </p>
       {compileError && (
         <p className="mt-6 border-s-2 border-state-error ps-3 text-sm text-state-error">
@@ -1002,120 +1253,476 @@ function CompletedProject({
           Компилируем SQL…
         </div>
       )}
-      {actionError && <p className="mt-5 border-s-2 border-state-error ps-3 text-sm text-state-error">{actionError}</p>}
-      {document && run?.status !== 'READY' && <section className="mt-6 border-y border-border-button py-5" data-testid="sql-completed-document">
-        <h4 className="text-sm font-semibold">Документ · ревизия {document.revision}</h4>
-        <p className="mt-2 text-sm text-text-secondary">{String(document.payload?.requirements || project.source_request || '')}</p>
-        <p className="mt-2 text-xs text-text-secondary">Получено {String(document.payload?.row_count ?? '—')} строк · результат {((document.payload?.checks as { completeness?: string } | undefined)?.completeness === 'LIMITED') ? 'ограничен' : 'полный в пределах запроса'} · строки удалены.</p>
-        {(document.payload?.confirmed_conclusion as { text?: string } | undefined)?.text && <p className="mt-3 text-sm">{(document.payload?.confirmed_conclusion as { text: string }).text}</p>}
-      </section>}
-      {run && ['QUEUED', 'RUNNING'].includes(run.status) && <Button className="mt-5" variant="outline" disabled={busy} onClick={() => void cancelResult()}>Отменить выполнение</Button>}
+      {actionError && (
+        <p className="mt-5 border-s-2 border-state-error ps-3 text-sm text-state-error">
+          {actionError}
+        </p>
+      )}
+      {document && run?.status !== 'READY' && (
+        <section
+          className="mt-6 border-y border-border-button py-5"
+          data-testid="sql-completed-document"
+        >
+          <h4 className="text-sm font-semibold">
+            Документ · ревизия {document.revision}
+          </h4>
+          <p className="mt-2 text-sm text-text-secondary">
+            {String(
+              document.payload?.requirements || project.source_request || '',
+            )}
+          </p>
+          <p className="mt-2 text-xs text-text-secondary">
+            Получено {String(document.payload?.row_count ?? '—')} строк ·
+            результат{' '}
+            {(document.payload?.checks as { completeness?: string } | undefined)
+              ?.completeness === 'LIMITED'
+              ? 'ограничен'
+              : 'полный в пределах запроса'}{' '}
+            · строки удалены.
+          </p>
+          {(
+            document.payload?.confirmed_conclusion as
+              | { text?: string }
+              | undefined
+          )?.text && (
+            <p className="mt-3 text-sm">
+              {
+                (document.payload?.confirmed_conclusion as { text: string })
+                  .text
+              }
+            </p>
+          )}
+        </section>
+      )}
+      {run && ['QUEUED', 'RUNNING'].includes(run.status) && (
+        <Button
+          className="mt-5"
+          variant="outline"
+          disabled={busy}
+          onClick={() => void cancelResult()}
+        >
+          Отменить выполнение
+        </Button>
+      )}
       {preview && (
         <section className="mt-7" data-testid="sql-result-table">
           <div className="overflow-x-auto rounded-md border border-border-button">
             <table className="w-full text-left text-sm">
-              <thead className="bg-bg-accent"><tr>{preview.columns.map((column, index) => <th key={`${column}-${index}`} className="px-3 py-2 font-medium">{column}</th>)}</tr></thead>
-              <tbody>{preview.rows.map((row, rowIndex) => <tr key={rowIndex} className="border-t border-border-button">{row.map((value, index) => <td key={index} className="px-3 py-2">{value == null ? '—' : String(value)}</td>)}</tr>)}</tbody>
+              <thead className="bg-bg-accent">
+                <tr>
+                  {preview.columns.map((column, index) => (
+                    <th
+                      key={`${column}-${index}`}
+                      className="px-3 py-2 font-medium"
+                    >
+                      {column}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {preview.rows.map((row, rowIndex) => (
+                  <tr key={rowIndex} className="border-t border-border-button">
+                    {row.map((value, index) => (
+                      <td key={index} className="px-3 py-2">
+                        {value == null ? '—' : String(value)}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
             </table>
           </div>
-          <p className="mt-2 text-xs text-text-secondary">Показаны первые {preview.rows.length} из {preview.row_count} строк. Лимит применён к SQL-запросу.</p>
-          {preview.rows.length < preview.row_count && <Button variant="ghost" className="mt-3" onClick={() => void moreRows()}>Показать ещё</Button>}
-          <div className="mt-5 flex gap-2"><Button disabled={busy} onClick={() => void finish()}>{busy && <LoaderCircle className="size-4 animate-spin" />}Завершить и удалить строки</Button>
-          <Button variant="outline" disabled={busy} onClick={() => void cancelResult()}>Отменить результат</Button></div>
+          <p className="mt-2 text-xs text-text-secondary">
+            Показаны первые {preview.rows.length} из {preview.row_count} строк.
+            Лимит применён к SQL-запросу.
+          </p>
+          {preview.rows.length < preview.row_count && (
+            <Button
+              variant="ghost"
+              className="mt-3"
+              onClick={() => void moreRows()}
+            >
+              Показать ещё
+            </Button>
+          )}
+          <div className="mt-5 flex gap-2">
+            <Button disabled={busy} onClick={() => void finish()}>
+              {busy && <LoaderCircle className="size-4 animate-spin" />}
+              Завершить и удалить строки
+            </Button>
+            <Button
+              variant="outline"
+              disabled={busy}
+              onClick={() => void cancelResult()}
+            >
+              Отменить результат
+            </Button>
+          </div>
           <section className="mt-5 border-t border-border-button pt-4">
-            <Button variant="ghost" disabled={busy} onClick={() => void generateConclusion()}>Сформировать вывод</Button>
-            <p className="mt-1 text-xs text-text-secondary">По нажатию модели передаются не более 25 строк и 12 полей проверенного результата. Текст включается в документ только после вашего подтверждения.</p>
-            {conclusion?.payload.status === 'DRAFT' && <div className="mt-3 space-y-3">
-              <Textarea aria-label="Предложенный вывод" value={conclusionText} onChange={(event) => setConclusionText(event.target.value)} className="min-h-28" />
-              <p className="text-xs text-text-secondary">Источники: {conclusion.payload.citations.map((item) => `строка ${item.row_index + 1}, ${item.column}`).join('; ') || 'строки отсутствуют'}. Числовые утверждения сверяются с указанными ячейками.</p>
-              <Button disabled={busy || !conclusionText.trim()} onClick={() => void confirmConclusion()}>Подтвердить вывод</Button>
-            </div>}
-            {conclusion?.payload.status === 'CONFIRMED' && <p className="mt-3 text-sm">{conclusion.payload.text}</p>}
+            <Button
+              variant="ghost"
+              disabled={busy}
+              onClick={() => void generateConclusion()}
+            >
+              Сформировать вывод
+            </Button>
+            <p className="mt-1 text-xs text-text-secondary">
+              По нажатию модели передаются не более 25 строк и 12 полей
+              проверенного результата. Текст включается в документ только после
+              вашего подтверждения.
+            </p>
+            {conclusion?.payload.status === 'DRAFT' && (
+              <div className="mt-3 space-y-3">
+                <Textarea
+                  aria-label="Предложенный вывод"
+                  value={conclusionText}
+                  onChange={(event) => setConclusionText(event.target.value)}
+                  className="min-h-28"
+                />
+                <p className="text-xs text-text-secondary">
+                  Источники:{' '}
+                  {conclusion.payload.citations
+                    .map(
+                      (item) => `строка ${item.row_index + 1}, ${item.column}`,
+                    )
+                    .join('; ') || 'строки отсутствуют'}
+                  . Числовые утверждения сверяются с указанными ячейками.
+                </p>
+                <Button
+                  disabled={busy || !conclusionText.trim()}
+                  onClick={() => void confirmConclusion()}
+                >
+                  Подтвердить вывод
+                </Button>
+              </div>
+            )}
+            {conclusion?.payload.status === 'CONFIRMED' && (
+              <p className="mt-3 text-sm">{conclusion.payload.text}</p>
+            )}
           </section>
-          {project.capabilities.python_agent && <section className="mt-5 border-t border-border-button pt-4">
-            <Button variant="ghost" onClick={() => setPythonOpen((value) => !value)}>Преобразовать в Python</Button>
-            {pythonOpen && <div className="mt-3 space-y-3">
-              <p className="text-xs text-text-secondary">Код получает только копию проверенного результата. Контейнер не имеет доступа к БД и сети. Функция main(columns, rows) должна вернуть таблицу.</p>
-              <Textarea aria-label="Код Python" value={pythonCode} onChange={(event) => setPythonCode(event.target.value)} className="min-h-36 font-mono text-xs" />
-              <Button disabled={busy || !pythonCode.trim()} onClick={() => void runPython()}>Выполнить преобразование</Button>
-            </div>}
-          </section>}
-          {lookupTables.length > 0 && <section className="mt-5 border-t border-border-button pt-4">
-            <Button variant="ghost" onClick={() => setLookupOpen((value) => !value)}>Дополнить данные</Button>
-            {lookupOpen && <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <label className="text-xs">Ключ исходного результата<select className="mt-1 block w-full rounded-md border border-border-button bg-bg-base p-2" value={lookupSourceColumn} onChange={(event) => setLookupSourceColumn(event.target.value)}><option value="">Выберите поле</option>{preview.columns.map((column) => <option key={column} value={column}>{column}</option>)}</select></label>
-              <label className="text-xs">Таблица справочника<select className="mt-1 block w-full rounded-md border border-border-button bg-bg-base p-2" value={lookupTargetId} onChange={(event) => { setLookupTargetId(event.target.value); setLookupKeyId(''); setLookupValueId(''); }}><option value="">Выберите таблицу</option>{lookupTables.map((table) => <option key={table.id} value={table.id}>{table.name}</option>)}</select></label>
-              <label className="text-xs">Ключ справочника<select className="mt-1 block w-full rounded-md border border-border-button bg-bg-base p-2" value={lookupKeyId} onChange={(event) => setLookupKeyId(event.target.value)}><option value="">Выберите поле</option>{lookupTable?.columns.map((column) => <option key={column.id} value={column.id}>{column.name}</option>)}</select></label>
-              <label className="text-xs">Добавить поле<select className="mt-1 block w-full rounded-md border border-border-button bg-bg-base p-2" value={lookupValueId} onChange={(event) => setLookupValueId(event.target.value)}><option value="">Выберите поле</option>{lookupTable?.columns.filter((column) => column.id !== lookupKeyId).map((column) => <option key={column.id} value={column.id}>{column.name}</option>)}</select></label>
-              <p className="text-xs text-text-secondary sm:col-span-2">Исходный результат сохранится. Если ключ справочника не уникален, дополнение будет отклонено.</p>
-              <Button className="w-fit sm:col-span-2" disabled={busy || !lookupSourceColumn || !lookupTargetId || !lookupKeyId || !lookupValueId} onClick={() => void runLookup()}>Создать дополненный результат</Button>
-            </div>}
-          </section>}
-          {pythonPreview && <section className="mt-5" data-testid="sql-python-result-table">
-            <h4 className="text-sm font-semibold">Производный результат Python · {pythonPreview.row_count} строк</h4>
-            <div className="mt-2 overflow-x-auto rounded-md border border-border-button"><table className="w-full text-left text-sm"><thead className="bg-bg-accent"><tr>{pythonPreview.columns.map((column, index) => <th key={`${column}-${index}`} className="px-3 py-2">{column}</th>)}</tr></thead><tbody>{pythonPreview.rows.map((row, rowIndex) => <tr key={rowIndex} className="border-t border-border-button">{row.map((value, index) => <td key={index} className="px-3 py-2">{value == null ? '—' : String(value)}</td>)}</tr>)}</tbody></table></div>
-          </section>}
-          {lookupPreview && <section className="mt-5" data-testid="sql-lookup-result-table">
-            <h4 className="text-sm font-semibold">Дополненный результат · {lookupPreview.row_count} строк</h4>
-            <div className="mt-2 overflow-x-auto rounded-md border border-border-button"><table className="w-full text-left text-sm"><thead className="bg-bg-accent"><tr>{lookupPreview.columns.map((column, index) => <th key={`${column}-${index}`} className="px-3 py-2">{column}</th>)}</tr></thead><tbody>{lookupPreview.rows.map((row, rowIndex) => <tr key={rowIndex} className="border-t border-border-button">{row.map((value, index) => <td key={index} className="px-3 py-2">{value == null ? '—' : String(value)}</td>)}</tr>)}</tbody></table></div>
-          </section>}
+          {project.capabilities.python_agent && (
+            <section className="mt-5 border-t border-border-button pt-4">
+              <Button
+                variant="ghost"
+                onClick={() => setPythonOpen((value) => !value)}
+              >
+                Преобразовать в Python
+              </Button>
+              {pythonOpen && (
+                <div className="mt-3 space-y-3">
+                  <p className="text-xs text-text-secondary">
+                    Код получает только копию проверенного результата. Контейнер
+                    не имеет доступа к БД и сети. Функция main(columns, rows)
+                    должна вернуть таблицу.
+                  </p>
+                  <Textarea
+                    aria-label="Код Python"
+                    value={pythonCode}
+                    onChange={(event) => setPythonCode(event.target.value)}
+                    className="min-h-36 font-mono text-xs"
+                  />
+                  <Button
+                    disabled={busy || !pythonCode.trim()}
+                    onClick={() => void runPython()}
+                  >
+                    Выполнить преобразование
+                  </Button>
+                </div>
+              )}
+            </section>
+          )}
+          {lookupTables.length > 0 && (
+            <section className="mt-5 border-t border-border-button pt-4">
+              <Button
+                variant="ghost"
+                onClick={() => setLookupOpen((value) => !value)}
+              >
+                Дополнить данные
+              </Button>
+              {lookupOpen && (
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <label className="text-xs">
+                    Ключ исходного результата
+                    <select
+                      className="mt-1 block w-full rounded-md border border-border-button bg-bg-base p-2"
+                      value={lookupSourceColumn}
+                      onChange={(event) =>
+                        setLookupSourceColumn(event.target.value)
+                      }
+                    >
+                      <option value="">Выберите поле</option>
+                      {preview.columns.map((column) => (
+                        <option key={column} value={column}>
+                          {column}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-xs">
+                    Таблица справочника
+                    <select
+                      className="mt-1 block w-full rounded-md border border-border-button bg-bg-base p-2"
+                      value={lookupTargetId}
+                      onChange={(event) => {
+                        setLookupTargetId(event.target.value);
+                        setLookupKeyId('');
+                        setLookupValueId('');
+                      }}
+                    >
+                      <option value="">Выберите таблицу</option>
+                      {lookupTables.map((table) => (
+                        <option key={table.id} value={table.id}>
+                          {table.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-xs">
+                    Ключ справочника
+                    <select
+                      className="mt-1 block w-full rounded-md border border-border-button bg-bg-base p-2"
+                      value={lookupKeyId}
+                      onChange={(event) => setLookupKeyId(event.target.value)}
+                    >
+                      <option value="">Выберите поле</option>
+                      {lookupTable?.columns.map((column) => (
+                        <option key={column.id} value={column.id}>
+                          {column.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-xs">
+                    Добавить поле
+                    <select
+                      className="mt-1 block w-full rounded-md border border-border-button bg-bg-base p-2"
+                      value={lookupValueId}
+                      onChange={(event) => setLookupValueId(event.target.value)}
+                    >
+                      <option value="">Выберите поле</option>
+                      {lookupTable?.columns
+                        .filter((column) => column.id !== lookupKeyId)
+                        .map((column) => (
+                          <option key={column.id} value={column.id}>
+                            {column.name}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                  <p className="text-xs text-text-secondary sm:col-span-2">
+                    Исходный результат сохранится. Если ключ справочника не
+                    уникален, дополнение будет отклонено.
+                  </p>
+                  <Button
+                    className="w-fit sm:col-span-2"
+                    disabled={
+                      busy ||
+                      !lookupSourceColumn ||
+                      !lookupTargetId ||
+                      !lookupKeyId ||
+                      !lookupValueId
+                    }
+                    onClick={() => void runLookup()}
+                  >
+                    Создать дополненный результат
+                  </Button>
+                </div>
+              )}
+            </section>
+          )}
+          {pythonPreview && (
+            <section className="mt-5" data-testid="sql-python-result-table">
+              <h4 className="text-sm font-semibold">
+                Производный результат Python · {pythonPreview.row_count} строк
+              </h4>
+              <div className="mt-2 overflow-x-auto rounded-md border border-border-button">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-bg-accent">
+                    <tr>
+                      {pythonPreview.columns.map((column, index) => (
+                        <th key={`${column}-${index}`} className="px-3 py-2">
+                          {column}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pythonPreview.rows.map((row, rowIndex) => (
+                      <tr
+                        key={rowIndex}
+                        className="border-t border-border-button"
+                      >
+                        {row.map((value, index) => (
+                          <td key={index} className="px-3 py-2">
+                            {value == null ? '—' : String(value)}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+          {lookupPreview && (
+            <section className="mt-5" data-testid="sql-lookup-result-table">
+              <h4 className="text-sm font-semibold">
+                Дополненный результат · {lookupPreview.row_count} строк
+              </h4>
+              <div className="mt-2 overflow-x-auto rounded-md border border-border-button">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-bg-accent">
+                    <tr>
+                      {lookupPreview.columns.map((column, index) => (
+                        <th key={`${column}-${index}`} className="px-3 py-2">
+                          {column}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lookupPreview.rows.map((row, rowIndex) => (
+                      <tr
+                        key={rowIndex}
+                        className="border-t border-border-button"
+                      >
+                        {row.map((value, index) => (
+                          <td key={index} className="px-3 py-2">
+                            {value == null ? '—' : String(value)}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
         </section>
       )}
-      {document && run?.status !== 'READY' && !showRepeat && <Button className="mt-5" variant="outline" onClick={() => setShowRepeat(true)}>Повторить запрос</Button>}
-      {(!document || showRepeat) && !['READY', 'QUEUED', 'RUNNING', 'CANCEL_REQUESTED'].includes(run?.status || '') && compiled?.sql && (
-        <section className="mt-7 space-y-4">
-          <p className="text-sm">Профиль PostgreSQL: {binding?.selection?.profile.name || 'не выбран'}</p>
-          {binding?.status === 'NEEDS_SELECTION' && <label className="block text-sm">Источник данных
-            <select className="mt-2 block w-full rounded-md border border-border-button bg-bg-base p-2" value={selectedProfileId || ''} onChange={(event) => setSelectedProfileId(event.target.value || null)}>
-              <option value="">Выберите источник</option>
-              {binding.candidates.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
-            </select>
-          </label>}
-          {binding?.status === 'UNAVAILABLE' && <p className="text-sm text-state-error">Для выбранных данных нет доступного источника PostgreSQL.</p>}
-          {preflight?.blocker && <p className="text-sm text-state-error">{preflight.blocker.message}</p>}
-          {preflight?.warning && <p className="text-xs text-text-secondary">Каталог давно не обновлялся; перед запуском схема PostgreSQL проверена напрямую.</p>}
-          {binding?.selection && <p className="text-xs text-text-secondary">Лимит {binding.selection.profile.max_rows} строк · timeout {binding.selection.profile.statement_timeout_ms} мс</p>}
-          <Button disabled={!canRun} onClick={() => void execute()}>{busy && <LoaderCircle className="size-4 animate-spin" />}Выполнить запрос</Button>
-        </section>
+      {document && run?.status !== 'READY' && !showRepeat && (
+        <Button
+          className="mt-5"
+          variant="outline"
+          onClick={() => setShowRepeat(true)}
+        >
+          Повторить запрос
+        </Button>
       )}
+      {(!document || showRepeat) &&
+        !['READY', 'QUEUED', 'RUNNING', 'CANCEL_REQUESTED'].includes(
+          run?.status || '',
+        ) &&
+        compiled?.sql && (
+          <section className="mt-7 space-y-4">
+            <p className="text-sm">
+              Профиль PostgreSQL:{' '}
+              {binding?.selection?.profile.name || 'не выбран'}
+            </p>
+            {binding?.status === 'NEEDS_SELECTION' && (
+              <label className="block text-sm">
+                Источник данных
+                <select
+                  className="mt-2 block w-full rounded-md border border-border-button bg-bg-base p-2"
+                  value={selectedProfileId || ''}
+                  onChange={(event) =>
+                    setSelectedProfileId(event.target.value || null)
+                  }
+                >
+                  <option value="">Выберите источник</option>
+                  {binding.candidates.map((profile) => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {binding?.status === 'UNAVAILABLE' && (
+              <p className="text-sm text-state-error">
+                Для выбранных данных нет доступного источника PostgreSQL.
+              </p>
+            )}
+            {preflight?.blocker && (
+              <p className="text-sm text-state-error">
+                {preflight.blocker.message}
+              </p>
+            )}
+            {preflight?.warning && (
+              <p className="text-xs text-text-secondary">
+                Каталог давно не обновлялся; перед запуском схема PostgreSQL
+                проверена напрямую.
+              </p>
+            )}
+            {binding?.selection && (
+              <p className="text-xs text-text-secondary">
+                Лимит {binding.selection.profile.max_rows} строк · timeout{' '}
+                {binding.selection.profile.statement_timeout_ms} мс
+              </p>
+            )}
+            <Button disabled={!canRun} onClick={() => void execute()}>
+              {busy && <LoaderCircle className="size-4 animate-spin" />}
+              Выполнить запрос
+            </Button>
+          </section>
+        )}
       {compiled?.sql && (
         <section className="mt-7 border-t border-border-button pt-4">
           <div className="flex items-center justify-between gap-3">
-            <Button size="sm" variant="ghost" onClick={() => setShowSql((value) => !value)}><Code2 className="size-4" />{showSql ? 'Скрыть SQL' : 'Открыть SQL'}</Button>
-            {showSql &&
-            <Button size="sm" variant="ghost" onClick={() => void copySql()}>
-              {copied ? (
-                <Check className="size-4" />
-              ) : (
-                <Clipboard className="size-4" />
-              )}
-              {copied ? 'Скопировано' : 'Копировать'}
-            </Button>}
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setShowSql((value) => !value)}
+            >
+              <Code2 className="size-4" />
+              {showSql ? 'Скрыть SQL' : 'Открыть SQL'}
+            </Button>
+            {showSql && (
+              <Button size="sm" variant="ghost" onClick={() => void copySql()}>
+                {copied ? (
+                  <Check className="size-4" />
+                ) : (
+                  <Clipboard className="size-4" />
+                )}
+                {copied ? 'Скопировано' : 'Копировать'}
+              </Button>
+            )}
           </div>
-          {showSql && <>
-          <pre className="mt-3 max-h-[440px] overflow-auto rounded-md bg-bg-accent p-5 text-xs leading-6 text-text-primary">
-            <code>{compiled.sql}</code>
-          </pre>
-          <div className="mt-4 grid gap-4 sm:grid-cols-2">
-            <div className="border-s-2 border-state-success ps-3">
-              <p className="text-xs text-text-secondary">SQL Guard</p>
-              <p className="mt-1 text-sm font-medium">
-                {compiled.guard.status === 'PASS'
-                  ? 'Read-only · проверка пройдена'
-                  : 'Проверка не запускалась'}
-              </p>
-            </div>
-            <div className="border-s-2 border-border-button ps-3">
-              <p className="text-xs text-text-secondary">Параметры</p>
-              <p className="mt-1 text-sm font-medium">
-                {Object.keys(compiled.parameters).length} значений
-              </p>
-            </div>
-          </div>
-          </>}
+          {showSql && (
+            <>
+              <pre className="mt-3 max-h-[440px] overflow-auto rounded-md bg-bg-accent p-5 text-xs leading-6 text-text-primary">
+                <code>{compiled.sql}</code>
+              </pre>
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                <div className="border-s-2 border-state-success ps-3">
+                  <p className="text-xs text-text-secondary">SQL Guard</p>
+                  <p className="mt-1 text-sm font-medium">
+                    {compiled.guard.status === 'PASS'
+                      ? 'Read-only · проверка пройдена'
+                      : 'Проверка не запускалась'}
+                  </p>
+                </div>
+                <div className="border-s-2 border-border-button ps-3">
+                  <p className="text-xs text-text-secondary">Параметры</p>
+                  <p className="mt-1 text-sm font-medium">
+                    {Object.keys(compiled.parameters).length} значений
+                  </p>
+                </div>
+              </div>
+            </>
+          )}
         </section>
       )}
-      {!['READY', 'QUEUED', 'RUNNING', 'CANCEL_REQUESTED'].includes(run?.status || '') && <ManualSqlForm project={project} initialSql={compiled?.sql || ''} onSaved={onRefresh} />}
+      {!['READY', 'QUEUED', 'RUNNING', 'CANCEL_REQUESTED'].includes(
+        run?.status || '',
+      ) && (
+        <ManualSqlForm
+          project={project}
+          initialSql={compiled?.sql || ''}
+          onSaved={onRefresh}
+        />
+      )}
     </div>
   );
 }
@@ -1157,7 +1764,13 @@ export function SqlAgentWorkbench() {
   }, [loadProjects]);
 
   const runningProjectId =
-    project?.operation_state === 'RUNNING' || (project?.latest_run && ['QUEUED', 'RUNNING', 'CANCEL_REQUESTED'].includes(project.latest_run.status)) ? project.id : null;
+    project?.operation_state === 'RUNNING' ||
+    (project?.latest_run &&
+      ['QUEUED', 'RUNNING', 'CANCEL_REQUESTED'].includes(
+        project.latest_run.status,
+      ))
+      ? project.id
+      : null;
   useEffect(() => {
     if (!runningProjectId) return;
     let cancelled = false;
@@ -1242,12 +1855,16 @@ export function SqlAgentWorkbench() {
       setCreating(false);
       setError(null);
       const started = await requestBusinessDocumentSqlAgent(created.id, {
-        schema_version: '1', expected_state_version: created.state_version,
-        idempotency_key: commandKey('run-requirements'), kind: 'REQUIREMENTS',
+        schema_version: '1',
+        expected_state_version: created.state_version,
+        idempotency_key: commandKey('run-requirements'),
+        kind: 'REQUIREMENTS',
         payload: { locale: created.locale },
       });
       setProject(started);
-      setProjects((current) => current.map((item) => item.id === started.id ? started : item));
+      setProjects((current) =>
+        current.map((item) => (item.id === started.id ? started : item)),
+      );
     } catch (nextError) {
       setError(errorMessage(nextError));
     } finally {
@@ -1311,12 +1928,16 @@ export function SqlAgentWorkbench() {
       setError(null);
       if (decision === 'ACCEPT' && updated.next_agent === 'QUERY') {
         const started = await requestBusinessDocumentSqlAgent(updated.id, {
-          schema_version: '1', expected_state_version: updated.state_version,
-          idempotency_key: commandKey('run-query'), kind: 'QUERY',
+          schema_version: '1',
+          expected_state_version: updated.state_version,
+          idempotency_key: commandKey('run-query'),
+          kind: 'QUERY',
           payload: { locale: updated.locale },
         });
         setProject(started);
-        setProjects((current) => current.map((item) => item.id === started.id ? started : item));
+        setProjects((current) =>
+          current.map((item) => (item.id === started.id ? started : item)),
+        );
       }
     } catch (nextError) {
       setError(errorMessage(nextError));
@@ -1369,10 +1990,13 @@ export function SqlAgentWorkbench() {
                 {item.operation_state === 'RUNNING' && (
                   <LoaderCircle className="size-3 animate-spin" />
                 )}
-                {item.next_action === 'OPEN_DOCUMENT' ? 'Завершён' :
-                  item.next_action === 'VIEW_RESULT' ? 'Есть результат' :
-                  item.stage === 'COMPLETE' ? 'Ожидает запуска' :
-                  STAGES[KIND_ORDER[item.stage]]?.label || item.stage}
+                {item.next_action === 'OPEN_DOCUMENT'
+                  ? 'Завершён'
+                  : item.next_action === 'VIEW_RESULT'
+                    ? 'Есть результат'
+                    : item.stage === 'COMPLETE'
+                      ? 'Ожидает запуска'
+                      : STAGES[KIND_ORDER[item.stage]]?.label || item.stage}
               </span>
             </button>
           ))}
@@ -1488,7 +2112,10 @@ export function SqlAgentWorkbench() {
                 project.operation_state === 'REVIEW' &&
                 proposalKind === 'QUERY' && (
                   <div className="mx-auto max-w-2xl pb-8">
-                    <ManualSqlForm project={project} onSaved={() => loadProjects(project.id)} />
+                    <ManualSqlForm
+                      project={project}
+                      onSaved={() => loadProjects(project.id)}
+                    />
                   </div>
                 )}
 
@@ -1554,7 +2181,10 @@ export function SqlAgentWorkbench() {
                     Запустить агента
                   </Button>
                   {currentAgent === 'QUERY' && (
-                    <ManualSqlForm project={project} onSaved={() => loadProjects(project.id)} />
+                    <ManualSqlForm
+                      project={project}
+                      onSaved={() => loadProjects(project.id)}
+                    />
                   )}
                 </section>
               )}

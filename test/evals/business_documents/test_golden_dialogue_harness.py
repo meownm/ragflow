@@ -7,6 +7,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 import io
 import json
+import os
 from pathlib import Path
 import sys
 from types import ModuleType, SimpleNamespace
@@ -1245,6 +1246,23 @@ def _release_gate_report():
 @pytest.mark.p0
 def test_release_gate_executes_every_p0_assertion_and_reports_all_case_rate():
     report = _release_gate_report()
+    report_path = os.environ.get("BUSINESS_DOCUMENT_GOLDEN_REPORT", "").strip()
+    if report_path:
+        suite = json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))
+        Path(report_path).write_text(
+            json.dumps(
+                {
+                    "status": "PASS" if all(not failures for failures in report.case_failures.values()) else "FAIL",
+                    "suite_id": suite["suite_id"],
+                    "suite_version": suite["suite_version"],
+                    "expected_cases": len(report.priorities),
+                    "executed_cases": len(report.case_failures),
+                    "cases": [{"case_id": case_id, "status": "FAIL" if failures else "PASS", "failure_count": len(failures)} for case_id, failures in report.case_failures.items()],
+                    "criterion_scores": {},
+                }
+            ),
+            encoding="utf-8",
+        )
     p0_ids = {case_id for case_id, priority in report.priorities.items() if priority == "P0"}
     p1_ids = {case_id for case_id, priority in report.priorities.items() if priority == "P1"}
 

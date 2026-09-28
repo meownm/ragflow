@@ -46,8 +46,108 @@ from common.versions import get_ragflow_version
 from api.utils.api_utils import generate_confirmation_token
 from common.log_utils import get_log_levels, set_log_level
 from audit_feed import AuditFeed
+from document_quality import document_quality_dashboard, failed_jobs_page
+from document_quality_runs import (
+    enqueue_quality_run, get_quality_campaign, get_quality_run, list_quality_campaigns,
+    list_quality_models, list_quality_runs,
+)
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/api/v1/admin")
+
+
+@admin_bp.route("/document-quality", methods=["GET"])
+@login_required
+@check_admin_auth
+def get_document_quality():
+    try:
+        return success_response(document_quality_dashboard(days=int(request.args.get("days", "7"))), "Get document quality", 0)
+    except ValueError as exc:
+        return error_response(str(exc), 400)
+    except Exception:
+        logging.exception("Failed to load document quality dashboard")
+        return error_response("Failed to load document quality dashboard", 500)
+
+
+@admin_bp.route("/document-quality/runs", methods=["GET", "POST"])
+@login_required
+@check_admin_auth
+def document_quality_runs():
+    try:
+        if request.method == "POST":
+            payload = request.get_json(silent=True)
+            if payload is None:
+                if request.get_data():
+                    return error_response("Invalid quality run request", 400)
+                payload = {}
+            if not isinstance(payload, dict) or set(payload) - {"model", "scope", "case_id"}:
+                return error_response("Invalid quality run request", 400)
+            if (("model" in payload and not isinstance(payload["model"], str))
+                    or ("scope" in payload and payload["scope"] not in ("FULL", "CASE"))
+                    or ("case_id" in payload and not isinstance(payload["case_id"], str))):
+                return error_response("Invalid quality run request", 400)
+            return success_response(enqueue_quality_run(
+                "MANUAL", requested_by=current_user.id, model=payload.get("model"),
+                scope=payload.get("scope", "FULL"), case_id=payload.get("case_id"),
+            ), "Quality run queued", 0)
+        return success_response(list_quality_runs(), "Get quality runs", 0)
+    except ValueError as exc:
+        return error_response(str(exc), 409)
+    except Exception:
+        logging.exception("Failed to handle document quality runs")
+        return error_response("Failed to handle document quality runs", 500)
+
+
+@admin_bp.route("/document-quality/jobs", methods=["GET"])
+@login_required
+@check_admin_auth
+def document_quality_jobs():
+    try:
+        return success_response(failed_jobs_page(
+            days=int(request.args.get("days", "7")),
+            category=request.args.get("category", default=""),
+            task_type=request.args.get("task_type", default=""),
+            error_code=request.args.get("error_code", default=""),
+            offset=int(request.args.get("offset", "0")),
+        ), "Get failed document jobs", 0)
+    except ValueError as exc:
+        return error_response(str(exc), 400)
+    except Exception:
+        logging.exception("Failed to load failed document jobs")
+        return error_response("Failed to load failed document jobs", 500)
+
+
+@admin_bp.route("/document-quality/runs/<run_id>", methods=["GET"])
+@login_required
+@check_admin_auth
+def document_quality_run_detail(run_id):
+    row = get_quality_run(run_id)
+    return success_response(row, "Get quality run", 0) if row else error_response("Quality run not found", 404)
+
+
+@admin_bp.route("/document-quality/campaigns", methods=["GET"])
+@login_required
+@check_admin_auth
+def document_quality_campaigns():
+    return success_response(list_quality_campaigns(), "Get quality campaigns", 0)
+
+
+@admin_bp.route("/document-quality/campaigns/<campaign_id>", methods=["GET"])
+@login_required
+@check_admin_auth
+def document_quality_campaign_detail(campaign_id):
+    row = get_quality_campaign(campaign_id)
+    return success_response(row, "Get quality campaign", 0) if row else error_response("Quality campaign not found", 404)
+
+
+@admin_bp.route("/document-quality/models", methods=["GET"])
+@login_required
+@check_admin_auth
+def document_quality_models():
+    try:
+        return success_response(list_quality_models(), "Get quality models", 0)
+    except (ValueError, OSError, TimeoutError):
+        logging.exception("Failed to load QA model catalog")
+        return error_response("QA model catalog is unavailable", 503)
 
 
 @admin_bp.route("/audit-events", methods=["GET"])

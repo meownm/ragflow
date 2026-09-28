@@ -37,6 +37,7 @@ services:
       WAIT_FOR_BACKEND_BEFORE_NGINX: "true"
       RAGFLOW_BACKEND_READY_TIMEOUT_SECONDS: "180"
       BUSINESS_DOCUMENT_WORKER_ENABLED: "true"
+      RAGFLOW_QA_SOURCE_DIRTY: "1"
     healthcheck:
       test:
         - CMD-SHELL
@@ -93,9 +94,16 @@ services:
       - ../admin/server/config.py:/ragflow/admin/server/config.py:ro
       - ../admin/server/routes.py:/ragflow/admin/server/routes.py:ro
       - ../admin/server/audit_feed.py:/ragflow/admin/server/audit_feed.py:ro
+      - ../admin/server/document_quality.py:/ragflow/admin/server/document_quality.py:ro
+      - ../admin/server/document_quality_runs.py:/ragflow/admin/server/document_quality_runs.py:ro
+      - ../admin/server/document_quality_models.py:/ragflow/admin/server/document_quality_models.py:ro
       - ../admin/server/admin_server.py:/ragflow/admin/server/admin_server.py:ro
       - ../admin/server/services.py:/ragflow/admin/server/services.py:ro
       - ../agent/business_requirements:/ragflow/agent/business_requirements:ro
+      - ../test/evals/business_documents:/ragflow/test/evals/business_documents:ro
+      - ../test/__init__.py:/ragflow/test/__init__.py:ro
+      - ../test/unit_test/api/apps/business_documents/helpers.py:/ragflow/test/unit_test/api/apps/business_documents/helpers.py:ro
+      - ../tools/quality/verify_business_document_quality_report.py:/ragflow/tools/quality/verify_business_document_quality_report.py:ro
       - ../business_documents:/ragflow/business_documents:ro
       - ../agent/canvas.py:/ragflow/agent/canvas.py:ro
       - ../agent/templates/mrz_document_reader.json:/ragflow/agent/templates/mrz_document_reader.json:ro

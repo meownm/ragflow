@@ -275,6 +275,131 @@ declare namespace AdminService {
     | 'ingestion'
     | 'connectors';
 
+  export type DocumentQualityDashboard = {
+    updated_at: number;
+    days: 1 | 7 | 30;
+    sampled_jobs: number;
+    sampled_completed_jobs: number;
+    truncated: boolean;
+    terminal_jobs: number;
+    completed: number;
+    failed: number;
+    pending: number;
+    retrying: number;
+    running: number;
+    failure_rate: number | null;
+    failed_documents: number;
+    terminal_documents: number;
+    affected_tenants: number;
+    latency_p95_ms: number | null;
+    measured_latency_jobs: number;
+    model_latency_p95_ms: number | null;
+    measured_model_latency_jobs: number;
+    total_tokens: number;
+    measured_token_jobs: number;
+    tasks: { task_type: string; category: string; completed: number; dead: number; pending: number; retry: number; running: number }[];
+    models: { provider: string; model: string; count: number }[];
+    errors: { task_type: string; error_code: string; count: number }[];
+  };
+
+  export type DocumentQualityJob = {
+    id: string;
+    document_id: string;
+    task_type: string;
+    category: string;
+    status: 'DEAD';
+    finished_at: number;
+    error_code: string;
+    attempt: number;
+    max_attempts: number;
+  };
+  export type DocumentQualityJobs = {
+    days: 1 | 7 | 30;
+    updated_at: number;
+    total: number;
+    offset: number;
+    limit: number;
+    error_codes: string[];
+    jobs: DocumentQualityJob[];
+  };
+
+  export type DocumentQualityDiagnostic = { code: string; fact_id?: string };
+  export type DocumentQualityGateCheck = { metric: string; actual: number; threshold: number; passed: boolean };
+  export type DocumentQualityReport = {
+    status: string;
+    source_dirty?: boolean | null;
+    suite_id?: string;
+    suite_version?: string;
+    suite_sha256?: string;
+    prompt_hashes?: Record<string, string>;
+    parameter_profiles?: Record<string, unknown>[];
+    rubric_version?: string;
+    template_version?: string;
+    expected_cases?: number;
+    executed_cases?: number;
+    provider?: string | null;
+    model?: string | null;
+    model_digest?: string | null;
+    duration_ms?: number | null;
+    total_tokens?: number | null;
+    weighted_score?: number | null;
+    grounded_reference_precision?: number | null;
+    p0_case_pass_rate?: number | null;
+    all_case_pass_rate?: number | null;
+    criterion_scores?: Record<string, number>;
+    metrics?: Record<string, number>;
+    gate_checks?: DocumentQualityGateCheck[];
+    cases?: { case_id: string; priority?: string; status: string; failure_count: number; diagnostics?: DocumentQualityDiagnostic[]; metrics?: Record<string, number>; gate_checks?: DocumentQualityGateCheck[] }[];
+  };
+
+  export type DocumentQualityRun = {
+    id: string;
+    trigger: 'NIGHTLY' | 'MONTHLY' | 'MANUAL';
+    status: 'PENDING' | 'RUNNING' | 'PASS' | 'FAIL' | 'INCOMPLETE' | 'DIAGNOSTIC';
+    requested_at: number;
+    started_at: number | null;
+    finished_at: number | null;
+    source_revision: string | null;
+    campaign_id: string | null;
+    model_name: string | null;
+    model_digest: string | null;
+    scope: 'FULL' | 'CASE';
+    case_id: string | null;
+    reason_code: string | null;
+    reason: string | null;
+    report: DocumentQualityReport | null;
+  };
+
+  export type DocumentQualityRuns = {
+    configured: boolean;
+    source_revision: string;
+    total: number;
+    truncated: boolean;
+    runs: DocumentQualityRun[];
+  };
+
+  export type DocumentQualityCampaign = {
+    id: string;
+    status: 'PENDING' | 'RUNNING' | 'COMPLETE' | 'PARTIAL' | 'INCOMPLETE';
+    source_revision: string | null;
+    requested_at: number;
+    started_at: number | null;
+    finished_at: number | null;
+    baseline_status: string | null;
+    baseline_report: DocumentQualityReport | null;
+    reason_code: string | null;
+    models: { models: { name: string; digest: string; aliases: string[] }[]; errors: string[] } | null;
+    runs: DocumentQualityRun[];
+  };
+
+  export type DocumentQualityCampaigns = { campaigns: DocumentQualityCampaign[] };
+  export type DocumentQualityModels = {
+    configured: boolean;
+    case_ids: string[];
+    models: { name: string; digest: string; aliases: string[] }[];
+    errors: string[];
+  };
+
   export type AuditEventOutcome =
     | 'success'
     | 'failure'

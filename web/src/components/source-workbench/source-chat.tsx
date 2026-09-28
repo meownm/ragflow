@@ -1,5 +1,4 @@
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import {
   chatWithSourceWorkspace,
   sourceRequestError,
@@ -14,7 +13,7 @@ interface Turn extends SourceChatMessage {
   version: number;
 }
 
-/** A small chat surface that only uses the source workspace passed by its host. */
+/** Questions about the source workspace passed by its host. */
 export function SourceChat({ workspace }: { workspace: SourceWorkspace }) {
   const [question, setQuestion] = useState('');
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -58,9 +57,11 @@ export function SourceChat({ workspace }: { workspace: SourceWorkspace }) {
 
   return (
     <section className="mt-8 rounded-md border border-border-button p-5">
-      <h2 className="text-lg font-semibold">Чат по выбранным статьям</h2>
+      <h2 className="text-lg font-semibold">Вопросы по выбранным статьям</h2>
       <p className="mt-1 text-sm text-text-secondary">
-        Ответ строится только по текущей подборке и сопровождается источниками.
+        Ответ строится по текущей подборке и сопровождается источниками. Для
+        уточнения учитывается предыдущий вопрос; история видна до выхода из
+        подборки.
       </p>
       {!workspace.selected_documents.length && (
         <p className="mt-4 text-sm text-text-secondary">
@@ -109,12 +110,14 @@ export function SourceChat({ workspace }: { workspace: SourceWorkspace }) {
           </li>
         ))}
       </ol>
-      <form className="mt-5 flex gap-2" onSubmit={ask}>
-        <Input
+      <form className="mt-5 flex items-start gap-2" onSubmit={ask}>
+        <textarea
           aria-label="Вопрос по выбранным статьям"
           placeholder="Задайте вопрос по выбранным статьям"
           value={question}
           maxLength={500}
+          rows={3}
+          className="min-h-20 min-w-0 flex-1 resize-y rounded-md border border-border-button bg-bg-input px-3 py-2 text-sm text-text-primary outline-none placeholder:text-text-disabled focus-visible:ring-1 focus-visible:ring-accent-primary disabled:cursor-not-allowed disabled:opacity-50"
           onChange={(event) => setQuestion(event.target.value)}
           disabled={busy || !workspace.selected_documents.length}
         />

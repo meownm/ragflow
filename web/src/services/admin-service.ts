@@ -140,6 +140,13 @@ const {
   adminGetSystemVersion,
   adminNavigationVisibility,
   adminAuditEvents,
+  adminDocumentQuality,
+  adminDocumentQualityJobs,
+  adminDocumentQualityRuns,
+  adminDocumentQualityRun,
+  adminDocumentQualityCampaigns,
+  adminDocumentQualityCampaign,
+  adminDocumentQualityModels,
 
   adminListSandboxProviders,
   adminGetSandboxProviderSchema,
@@ -283,6 +290,51 @@ export const listAuditEvents = (params: AdminService.AuditEventQuery) =>
   request.get<ResponseData<AdminService.AuditEventPage>>(adminAuditEvents, {
     params,
   });
+
+export const getDocumentQuality = (days: 1 | 7 | 30) =>
+  request.get<ResponseData<AdminService.DocumentQualityDashboard>>(
+    adminDocumentQuality,
+    { params: { days } },
+  );
+
+export const getDocumentQualityJobs = (params: {
+  days: 1 | 7 | 30; category?: string; task_type?: string; error_code?: string; offset?: number;
+}) => request.get<ResponseData<AdminService.DocumentQualityJobs>>(adminDocumentQualityJobs, { params });
+
+export const listDocumentQualityRuns = () =>
+  request.get<ResponseData<AdminService.DocumentQualityRuns>>(
+    adminDocumentQualityRuns,
+  );
+
+export const getDocumentQualityRun = (runId: string) =>
+  request.get<ResponseData<AdminService.DocumentQualityRun>>(
+    adminDocumentQualityRun(runId),
+  );
+
+export const listDocumentQualityCampaigns = () =>
+  request.get<ResponseData<AdminService.DocumentQualityCampaigns>>(
+    adminDocumentQualityCampaigns,
+  );
+
+export const getDocumentQualityCampaign = (campaignId: string) =>
+  request.get<ResponseData<AdminService.DocumentQualityCampaign>>(
+    adminDocumentQualityCampaign(campaignId),
+  );
+
+export const listDocumentQualityModels = () =>
+  request.get<ResponseData<AdminService.DocumentQualityModels>>(
+    adminDocumentQualityModels,
+  );
+
+export const startDocumentQualityRun = (input?: {
+  model?: string;
+  scope?: 'FULL' | 'CASE';
+  case_id?: string;
+}) =>
+  request.post<ResponseData<AdminService.DocumentQualityRun>>(
+    adminDocumentQualityRuns,
+    input ?? {},
+  );
 
 export const getNavigationVisibility = () =>
   request.get<ResponseData<AdminService.NavigationVisibility>>(

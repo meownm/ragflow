@@ -18,6 +18,7 @@ from api.db.db_models import (
     BusinessDocumentSqlAgentProposal,
     BusinessDocumentSqlQueryArtifact,
     BusinessDocumentSqlQueryProject,
+    BusinessDocumentSqlQueryRun,
 )
 from business_documents.domain.access import BusinessDocumentRole
 from business_documents.sql_query.agent_cycle import (
@@ -29,6 +30,8 @@ from business_documents.sql_query.agent_cycle import (
     require_next_agent,
 )
 from business_documents.sql_query.query_planning import QueryPlanValidationError, parse_plan_query_command
+from business_documents.sql_query.project_compilation import ProjectCompilationError, build_project_compile_command
+from business_documents.sql_query.query_specification import QuerySpecificationValidationError, SqlGuardError, compile_query_payload
 from business_documents.sql_query.requirements_analysis import (
     RequirementsAnalysisValidationError,
     accept_requirements_proposal,
@@ -94,6 +97,7 @@ class BusinessDocumentSqlAgentService:
         return (
             BusinessDocumentSqlQueryProject,
             BusinessDocumentSqlQueryArtifact,
+            BusinessDocumentSqlQueryRun,
             BusinessDocumentSqlAgentProposal,
             BusinessDocumentSqlAgentCommand,
             BusinessDocumentJob,
@@ -153,6 +157,189 @@ class BusinessDocumentSqlAgentService:
         project = cls._get_project(tenant_id, project_id)
         BusinessDocumentAccess(actor_id, access_role, is_admin).require_edit(project.owner_id)
         return cls._project(project)
+
+    @classmethod
+    def compile_project(
+        cls,
+        tenant_id: str,
+        actor_id: str,
+        project_id: str,
+        raw: object,
+        is_admin: bool = False,
+        access_role: BusinessDocumentRole | str = BusinessDocumentRole.AUTHOR_CREATOR,
+    ) -> dict[str, Any]:
+        """Compile accepted server artifacts and retain the exact revision."""
+        if not isinstance(raw, Mapping):
+            raise ValidationError("INVALID_SQL_PROJECT_COMPILATION", "Request body must be a JSON object")
+        _closed(raw, {"schema_version", "expected_state_version", "idempotency_key"}, "compilation")
+        if raw.get("schema_version") != "1":
+            raise ValidationError("INVALID_SQL_PROJECT_COMPILATION", "schema_version is unsupported")
+        expected_version = raw.get("expected_state_version")
+        if isinstance(expected_version, bool) or not isinstance(expected_version, int) or expected_version < 1:
+            raise ValidationError("INVALID_SQL_PROJECT_COMPILATION", "expected_state_version must be a positive integer")
+        key = _text(raw.get("idempotency_key"), "idempotency_key", 128)
+        request_hash = _stable_hash({"type": "COMPILE_PROJECT", "request": raw})
+        with BusinessDocumentSqlQueryProject._meta.database.atomic():
+            project = cls._get_project(tenant_id, project_id)
+            BusinessDocumentAccess(actor_id, access_role, is_admin).require_edit(project.owner_id)
+            replay = cls._command_replay(tenant_id, project.id, key, request_hash)
+            if replay is not None:
+                return replay
+            if project.state_version != expected_version or project.stage != "COMPLETE" or project.operation_state != "IDLE":
+                raise ConflictError("SQL_PROJECT_COMPILATION_CONFLICT", "Project is not ready at the expected version")
+            ids = (project.requirements_artifact_id, project.schema_artifact_id, project.query_artifact_id)
+            if any(value is None for value in ids):
+                raise ConflictError("SQL_PROJECT_ARTIFACT_MISSING", "Accepted project artifacts are incomplete")
+            artifacts = [BusinessDocumentSqlQueryArtifact.get_by_id(value) for value in ids]
+            if any(artifact.project_id != project.id or artifact.tenant_id != tenant_id for artifact in artifacts):
+                raise ConflictError("SQL_PROJECT_ARTIFACT_MISMATCH", "Accepted artifacts do not belong to this project")
+            try:
+                command = build_project_compile_command(*(artifact.payload for artifact in artifacts))
+                compiled = compile_query_payload(command)
+            except (ProjectCompilationError, QuerySpecificationValidationError) as exc:
+                raise ValidationError("INVALID_SQL_PROJECT_COMPILATION", str(exc)) from exc
+            except SqlGuardError as exc:
+                raise ValidationError("SQL_QUERY_BLOCKED", "SQL не прошёл read-only проверку.", {"reason": str(exc)}) from exc
+            if compiled.get("status") != "READY" or compiled.get("guard", {}).get("status") != "PASS":
+                return {"compilation": compiled, "project": cls._project(project)}
+            revision = BusinessDocumentSqlQueryArtifact.select().where(
+                (BusinessDocumentSqlQueryArtifact.project_id == project.id)
+                & (BusinessDocumentSqlQueryArtifact.kind == "COMPILATION")
+            ).count() + 1
+            payload = {
+                "result": compiled,
+                "source_artifact_ids": list(ids),
+                "source_state_version": project.state_version,
+            }
+            artifact = BusinessDocumentSqlQueryArtifact.create(
+                id=get_uuid(), project_id=project.id, tenant_id=tenant_id,
+                kind="COMPILATION", revision=revision, payload=payload,
+                content_hash=_stable_hash(payload), source_proposal_id=artifacts[2].source_proposal_id,
+                accepted_by=actor_id,
+            )
+            changed = BusinessDocumentSqlQueryProject.update(
+                state_version=project.state_version + 1,
+                update_time=current_timestamp(), update_date=datetime.now(),
+            ).where(
+                (BusinessDocumentSqlQueryProject.id == project.id)
+                & (BusinessDocumentSqlQueryProject.state_version == project.state_version)
+            ).execute()
+            if changed != 1:
+                raise ConflictError("SQL_AGENT_VERSION_CONFLICT", "Project changed while SQL was compiled")
+            response = {"compilation_id": artifact.id, "compilation": compiled, "project": cls._project(BusinessDocumentSqlQueryProject.get_by_id(project.id))}
+            cls._record_command(tenant_id, project.id, key, request_hash, response)
+            return response
+
+    @staticmethod
+    def _compile_manual_query(requirements: Mapping[str, Any], schema: Mapping[str, Any], query: Mapping[str, Any]) -> dict[str, Any]:
+        try:
+            command = build_project_compile_command(requirements, schema, query)
+            return compile_query_payload(command)
+        except (ProjectCompilationError, QuerySpecificationValidationError) as exc:
+            raise ValidationError("INVALID_SQL_MANUAL_QUERY", str(exc)) from exc
+        except SqlGuardError as exc:
+            raise ValidationError("SQL_QUERY_BLOCKED", "Manual SQL did not pass the read-only catalog guard", {"reason": str(exc)}) from exc
+
+    @classmethod
+    def validate_manual_query(
+        cls,
+        tenant_id: str,
+        actor_id: str,
+        project_id: str,
+        raw: object,
+        is_admin: bool = False,
+        access_role: BusinessDocumentRole | str = BusinessDocumentRole.AUTHOR_CREATOR,
+    ) -> dict[str, Any]:
+        """Check a draft against the project's accepted artifacts without persisting it."""
+        if not isinstance(raw, Mapping):
+            raise ValidationError("INVALID_SQL_MANUAL_QUERY", "Request body must be an object")
+        _closed(raw, {"schema_version", "expected_state_version", "sql", "parameters"}, "manual query validation")
+        version = raw.get("expected_state_version")
+        if raw.get("schema_version") != "1" or isinstance(version, bool) or not isinstance(version, int) or version < 1:
+            raise ValidationError("INVALID_SQL_MANUAL_QUERY", "A valid project version is required")
+        project = cls._get_project(tenant_id, project_id)
+        BusinessDocumentAccess(actor_id, access_role, is_admin).require_edit(project.owner_id)
+        if project.state_version != version or project.stage not in {"QUERY", "COMPLETE"} or project.operation_state == "RUNNING":
+            raise ConflictError("SQL_PROJECT_VERSION_CONFLICT", "Project is not ready at the expected version")
+        requirements = cls._artifact(project.requirements_artifact_id, "REQUIREMENTS")
+        schema = cls._artifact(project.schema_artifact_id, "SCHEMA")
+        query_payload = {"mode": "manual", "sql": raw.get("sql"), "parameters": raw.get("parameters"), "confirmed_alignment": True}
+        return cls._compile_manual_query(requirements.payload, schema.payload, query_payload)
+
+    @classmethod
+    def save_manual_query(
+        cls,
+        tenant_id: str,
+        actor_id: str,
+        project_id: str,
+        raw: object,
+        is_admin: bool = False,
+        access_role: BusinessDocumentRole | str = BusinessDocumentRole.AUTHOR_CREATOR,
+    ) -> dict[str, Any]:
+        """Accept expert SQL as another query artifact under the same compiler and run gate."""
+        if not isinstance(raw, Mapping):
+            raise ValidationError("INVALID_SQL_MANUAL_QUERY", "Request body must be an object")
+        _closed(raw, {"schema_version", "expected_state_version", "idempotency_key", "sql", "parameters", "confirmed_alignment"}, "manual query")
+        version = raw.get("expected_state_version")
+        if raw.get("schema_version") != "1" or isinstance(version, bool) or not isinstance(version, int) or version < 1 or raw.get("confirmed_alignment") is not True:
+            raise ValidationError("INVALID_SQL_MANUAL_QUERY", "Version and explicit task alignment confirmation are required")
+        key = _text(raw.get("idempotency_key"), "idempotency_key", 128)
+        request_hash = _stable_hash({"type": "SAVE_MANUAL_QUERY", "request": raw})
+        with BusinessDocumentSqlQueryProject._meta.database.atomic():
+            project = cls._get_project(tenant_id, project_id)
+            BusinessDocumentAccess(actor_id, access_role, is_admin).require_edit(project.owner_id)
+            replay = cls._command_replay(tenant_id, project.id, key, request_hash)
+            if replay is not None:
+                return replay
+            if project.state_version != version or project.stage not in {"QUERY", "COMPLETE"} or project.operation_state == "RUNNING":
+                raise ConflictError("SQL_PROJECT_VERSION_CONFLICT", "Project is not ready for expert SQL at the expected version")
+            if BusinessDocumentSqlQueryRun.select().where(
+                (BusinessDocumentSqlQueryRun.project_id == project.id)
+                & (BusinessDocumentSqlQueryRun.tenant_id == tenant_id)
+                & (BusinessDocumentSqlQueryRun.status.in_(("QUEUED", "RUNNING", "CANCEL_REQUESTED", "READY")))
+            ).exists():
+                raise ConflictError("SQL_RESULT_ACTIVE", "Finish or cancel active results before editing SQL")
+            requirements = cls._artifact(project.requirements_artifact_id, "REQUIREMENTS")
+            schema = cls._artifact(project.schema_artifact_id, "SCHEMA")
+            query_payload = {"mode": "manual", "sql": raw.get("sql"), "parameters": raw.get("parameters"), "confirmed_alignment": True}
+            compiled = cls._compile_manual_query(requirements.payload, schema.payload, query_payload)
+            if compiled.get("status") != "READY" or compiled.get("guard", {}).get("status") != "PASS":
+                raise ValidationError("INVALID_SQL_MANUAL_QUERY", "Accepted schema must be current before saving manual SQL", {"blocking_issues": compiled.get("blocking_issues")})
+            BusinessDocumentSqlAgentProposal.update(status="REJECTED", decided_by=actor_id, decided_at=current_timestamp()).where(
+                (BusinessDocumentSqlAgentProposal.project_id == project.id) & (BusinessDocumentSqlAgentProposal.status == "PENDING")
+            ).execute()
+            query_id = get_uuid()
+            query_revision = BusinessDocumentSqlQueryArtifact.select().where(
+                (BusinessDocumentSqlQueryArtifact.project_id == project.id) & (BusinessDocumentSqlQueryArtifact.kind == "QUERY")
+            ).count() + 1
+            query = BusinessDocumentSqlQueryArtifact.create(
+                id=query_id, project_id=project.id, tenant_id=tenant_id,
+                kind="QUERY", revision=query_revision, payload=query_payload,
+                content_hash=_stable_hash(query_payload), source_proposal_id=f"manual:{query_id[:25]}", accepted_by=actor_id,
+            )
+            compilation_payload = {
+                "result": compiled,
+                "source_artifact_ids": [requirements.id, schema.id, query.id],
+                "source_state_version": version,
+            }
+            compilation_revision = BusinessDocumentSqlQueryArtifact.select().where(
+                (BusinessDocumentSqlQueryArtifact.project_id == project.id) & (BusinessDocumentSqlQueryArtifact.kind == "COMPILATION")
+            ).count() + 1
+            artifact = BusinessDocumentSqlQueryArtifact.create(
+                id=get_uuid(), project_id=project.id, tenant_id=tenant_id,
+                kind="COMPILATION", revision=compilation_revision, payload=compilation_payload,
+                content_hash=_stable_hash(compilation_payload), source_proposal_id=query.source_proposal_id, accepted_by=actor_id,
+            )
+            changed = BusinessDocumentSqlQueryProject.update(
+                query_artifact_id=query.id, stage="COMPLETE", operation_state="IDLE",
+                current_job_id=None, last_error=None, state_version=version + 1,
+                update_time=current_timestamp(), update_date=datetime.now(),
+            ).where((BusinessDocumentSqlQueryProject.id == project.id) & (BusinessDocumentSqlQueryProject.state_version == version)).execute()
+            if changed != 1:
+                raise ConflictError("SQL_PROJECT_VERSION_CONFLICT", "Project changed while expert SQL was saved")
+            response = {"compilation_id": artifact.id, "compilation": compiled, "project": cls._project(BusinessDocumentSqlQueryProject.get_by_id(project.id))}
+            cls._record_command(tenant_id, project.id, key, request_hash, response)
+            return response
 
     @classmethod
     def request_agent(
@@ -458,12 +645,20 @@ class BusinessDocumentSqlAgentService:
         value = result.get("proposal")
         if not isinstance(value, Mapping):
             raise ConflictError("SQL_AGENT_PROPOSAL_INVALID", "Stored query proposal is invalid")
-        if supplied is not None and supplied != value:
-            raise ValidationError(
-                "INVALID_SQL_AGENT_DECISION",
-                "Query proposal must be edited by rerunning the agent before acceptance",
-            )
-        return dict(value)
+        if not isinstance(supplied, Mapping):
+            raise ValidationError("INVALID_SQL_AGENT_DECISION", "Query acceptance requires explicit JOIN and filter confirmations")
+        _closed(supplied, {"confirmed_join_ids", "confirmed_filter_ids"}, "query decision")
+        accepted = dict(value)
+        for kind, field in (("joins", "confirmed_join_ids"), ("filters", "confirmed_filter_ids")):
+            items = value.get(kind)
+            ids = supplied.get(field)
+            if not isinstance(items, list) or not isinstance(ids, list) or any(not isinstance(item, str) for item in ids):
+                raise ValidationError("INVALID_SQL_AGENT_DECISION", f"{field} must list the confirmed IDs")
+            expected = [item.get("id") for item in items if isinstance(item, Mapping)]
+            if len(expected) != len(items) or len(ids) != len(set(ids)) or set(ids) != set(expected):
+                raise ValidationError("INVALID_SQL_AGENT_DECISION", f"{field} must confirm every proposed item exactly once")
+            accepted[kind] = [{**item, "decision": "user", "confirmed": True} for item in items]
+        return accepted
 
     @staticmethod
     def _accepted_project_values(project: BusinessDocumentSqlQueryProject, kind: str, artifact_id: str) -> dict[str, Any]:
@@ -523,8 +718,64 @@ class BusinessDocumentSqlAgentService:
             "query": project.query_artifact_id,
         }
         artifacts = None
+        compilation = None
+        latest_compilation = (
+            BusinessDocumentSqlQueryArtifact.select()
+            .where(
+                (BusinessDocumentSqlQueryArtifact.project_id == project.id)
+                & (BusinessDocumentSqlQueryArtifact.tenant_id == project.tenant_id)
+                & (BusinessDocumentSqlQueryArtifact.kind == "COMPILATION")
+            )
+            .order_by(BusinessDocumentSqlQueryArtifact.revision.desc())
+            .first()
+        )
+        compilation_current = latest_compilation is not None and latest_compilation.payload.get("source_artifact_ids") == list(artifact_ids.values())
+        run = (
+            BusinessDocumentSqlQueryRun.select()
+            .where((BusinessDocumentSqlQueryRun.project_id == project.id) & (BusinessDocumentSqlQueryRun.tenant_id == project.tenant_id) & (BusinessDocumentSqlQueryRun.kind == "SQL"))
+            .order_by(BusinessDocumentSqlQueryRun.create_time.desc(), BusinessDocumentSqlQueryRun.id.desc())
+            .first()
+        )
+        latest_run = {"id": run.id, "status": run.status, "row_count": run.row_count, "duration_ms": run.duration_ms, "columns": run.columns, "compilation_id": run.compilation_id, "checks": run.checks, "error": run.error} if run is not None else None
+        derived_runs = [
+            {"id": item.id, "kind": item.kind, "source_run_id": item.source_run_id,
+             "status": item.status, "row_count": item.row_count, "checks": item.checks}
+            for item in BusinessDocumentSqlQueryRun.select().where(
+                (BusinessDocumentSqlQueryRun.project_id == project.id)
+                & (BusinessDocumentSqlQueryRun.tenant_id == project.tenant_id)
+                & (BusinessDocumentSqlQueryRun.source_run_id == run.id)
+            ).order_by(BusinessDocumentSqlQueryRun.create_time.desc()).limit(10)
+        ] if run is not None else []
+        latest_document = (
+            BusinessDocumentSqlQueryArtifact.select()
+            .where((BusinessDocumentSqlQueryArtifact.project_id == project.id) & (BusinessDocumentSqlQueryArtifact.kind == "DOCUMENT"))
+            .order_by(BusinessDocumentSqlQueryArtifact.revision.desc())
+            .first()
+        )
+        document = {"id": latest_document.id, "revision": latest_document.revision, "payload": latest_document.payload if include_payloads else None} if latest_document is not None else None
+        latest_conclusion = (
+            BusinessDocumentSqlQueryArtifact.select()
+            .where(
+                (BusinessDocumentSqlQueryArtifact.project_id == project.id)
+                & (BusinessDocumentSqlQueryArtifact.tenant_id == project.tenant_id)
+                & (BusinessDocumentSqlQueryArtifact.kind == "CONCLUSION")
+            )
+            .order_by(BusinessDocumentSqlQueryArtifact.revision.desc())
+            .first()
+        )
         if include_payloads:
             artifacts = {name: BusinessDocumentSqlQueryArtifact.get_by_id(artifact_id).payload if artifact_id else None for name, artifact_id in artifact_ids.items()}
+            if compilation_current:
+                compilation = {"id": latest_compilation.id, "result": latest_compilation.payload.get("result")}
+        next_action = (
+            "WAIT" if project.operation_state == "RUNNING" or (run is not None and run.status in {"QUEUED", "RUNNING", "CANCEL_REQUESTED"}) else
+            "CONFIRM_DECISIONS" if project.operation_state == "REVIEW" else
+            "VIEW_RESULT" if run is not None and run.status == "READY" else
+            "OPEN_DOCUMENT" if latest_document is not None else
+            "COMPILE" if project.stage == "COMPLETE" and not compilation_current else
+            "EXECUTE" if project.stage == "COMPLETE" else
+            "CONTINUE"
+        )
         return {
             "schema_version": "1",
             "id": project.id,
@@ -539,13 +790,25 @@ class BusinessDocumentSqlAgentService:
             "pending_proposal": cls._proposal(pending) if pending else None,
             "artifact_ids": artifact_ids,
             "artifacts": artifacts,
+            "compilation": compilation,
+            "latest_run": latest_run,
+            "derived_runs": derived_runs,
+            "document": document,
+            "latest_conclusion": (
+                {"id": latest_conclusion.id, "payload": latest_conclusion.payload}
+                if latest_conclusion is not None and run is not None
+                and latest_conclusion.payload.get("source_run_id") == run.id
+                else None
+            ) if include_payloads else None,
+            "next_action": next_action,
+            "blockers": [],
             "last_error": project.last_error,
             "capabilities": {
                 "requirements_agent": True,
                 "schema_agent": True,
                 "query_agent": True,
-                "result_agent": False,
-                "python_agent": False,
+                "result_agent": run is not None and run.status == "READY",
+                "python_agent": run is not None and run.status == "READY" and run.result_bytes <= 10_000_000,
             },
         }
 

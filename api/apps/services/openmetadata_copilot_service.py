@@ -298,6 +298,7 @@ def normalize_table(entity: dict[str, Any], public_url: str) -> dict[str, Any]:
         column_details.append(
             {
                 "name": name,
+                "technical_name": str(column.get("name") or "").strip(),
                 "fqn": str(column.get("fullyQualifiedName") or ""),
                 "data_type": str(column.get("dataTypeDisplay") or column.get("dataType") or ""),
                 "description": column.get("description") or "",
@@ -329,8 +330,11 @@ def normalize_table(entity: dict[str, Any], public_url: str) -> dict[str, Any]:
         "updated_at_epoch": entity.get("updatedAt"),
         "updated_by": entity.get("updatedBy") or "",
         "service": service.get("displayName") or service.get("name") or "",
+        "service_technical_name": service.get("name") or "",
         "schema": schema.get("displayName") or schema.get("name") or "",
+        "schema_technical_name": schema.get("name") or "",
         "database": database.get("displayName") or database.get("name") or "",
+        "database_technical_name": database.get("name") or "",
         "owners": owners,
         "owner_keys": _unique_strings(_reference_aliases(owner_refs)),
         "domains": domains,

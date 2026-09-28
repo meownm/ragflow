@@ -45,3 +45,23 @@ test('keeps old answers after selection changes and starts a new question contex
   await waitFor(() => expect(mockedChat).toHaveBeenCalledTimes(2));
   expect(mockedChat.mock.calls[1][2]).toBe('');
 });
+
+test('accepts a multiline question and explains the conversation scope', async () => {
+  const mockedChat = jest.mocked(chatWithSourceWorkspace);
+  mockedChat.mockReset();
+  mockedChat.mockResolvedValue({ answer: 'Ответ', sources: [], version: 1 });
+  render(<SourceChat workspace={workspace} />);
+
+  expect(screen.getByText('Вопросы по выбранным статьям')).toBeInTheDocument();
+  expect(screen.getByText(/история видна до выхода из/)).toBeInTheDocument();
+  const field = screen.getByRole('textbox', {
+    name: 'Вопрос по выбранным статьям',
+  });
+  expect(field.tagName).toBe('TEXTAREA');
+  fireEvent.change(field, { target: { value: 'Вопрос\nУточнение' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Спросить' }));
+
+  await waitFor(() =>
+    expect(mockedChat).toHaveBeenCalledWith(workspace, 'Вопрос\nУточнение', ''),
+  );
+});

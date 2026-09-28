@@ -24,7 +24,7 @@ if "api.apps" not in sys.modules:
     api_apps.__path__ = [str(REPO_ROOT / "api" / "apps")]
     sys.modules["api.apps"] = api_apps
 
-from api.apps.business_documents.ai import BusinessDocumentAI
+from api.apps.business_documents.ai import BusinessDocumentAI, RAGFlowLLMAdapter
 from api.apps.business_documents.assets import published_template, validate_document_ast
 from api.apps.business_documents.evidence import BusinessDocumentEvidence
 from api.apps.business_documents.runtime import document_queries
@@ -167,7 +167,7 @@ def _create_case_runtime(case: dict[str, Any], tenant_id: str):
     )
     worker = BusinessDocumentWorker(
         worker_id=f"live-quality-{case['id']}-{uuid4().hex}",
-        ai=BusinessDocumentAI(),
+        ai=BusinessDocumentAI(adapter=RAGFlowLLMAdapter(model_name_override=os.environ.get("BUSINESS_DOCUMENT_QUALITY_MODEL") or None)),
         evidence=evidence,
         retry_base_ms=0,
     )
@@ -491,9 +491,10 @@ def _write_report(
     suite_bytes = MODEL_GOLDEN_PATH.read_bytes()
     failures = [result for result in case_results if result["status"] != "PASS"]
     complete = active_case_id is None and diagnostic_case_id is None and len(case_results) == len(suite["cases"])
+    interrupted = any(result["status"] == "INCOMPLETE" for result in case_results)
     report = {
         "schema_version": "2",
-        "status": "INCOMPLETE" if not complete else "FAIL" if failures else "PASS",
+        "status": "INCOMPLETE" if not complete or interrupted else "FAIL" if failures else "PASS",
         "active_case_id": active_case_id,
         "diagnostic_case_id": diagnostic_case_id,
         "scoring_method": "deterministic_proxy",
@@ -532,6 +533,16 @@ def test_partial_live_report_identifies_unfinished_case(tmp_path):
     assert report["active_case_id"] == suite["cases"][0]["id"]
     assert report["golden_suite"]["executed_case_ids"] == []
     assert report["metrics"] is None
+
+
+def test_execution_error_keeps_full_report_incomplete(tmp_path):
+    suite = json.loads(MODEL_GOLDEN_PATH.read_text(encoding="utf-8"))
+    results = [{"case_id": case["id"], "priority": case["priority"],
+                "status": "INCOMPLETE" if index == 0 else "PASS", "failures": [], "metrics": {}}
+               for index, case in enumerate(suite["cases"])]
+    path = tmp_path / "quality.json"
+    _write_report(str(path), suite, results, [], [])
+    assert json.loads(path.read_text(encoding="utf-8"))["status"] == "INCOMPLETE"
 
 
 @pytest.mark.p1
@@ -584,13 +595,13 @@ def test_live_model_golden_suite(database, monkeypatch):
         case_audits: list[dict[str, Any]] = []
         try:
             executions.append(_run_model_case(case, config.tenant_id, case_audits))
-        except Exception as error:  # noqa: BLE001 - preserve every case result in the evidence packet
+        except Exception as error:  # noqa: BLE001 - preserve the unfinished case without attributing it to model quality
             executions.append(
                 CaseExecution(
                     result={
                         "case_id": case["id"],
                         "priority": case["priority"],
-                        "status": "FAIL",
+                        "status": "INCOMPLETE",
                         "failures": [f"{type(error).__name__}: {error}"],
                         "metrics": {},
                     },

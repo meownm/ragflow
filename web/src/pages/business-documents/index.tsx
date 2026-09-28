@@ -12,6 +12,11 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
 import { Textarea } from '@/components/ui/textarea';
 import {
   useFetchTenantInfo,
@@ -51,6 +56,7 @@ import {
   ArrowRight,
   ArrowUpFromLine,
   CheckCircle2,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Download,
@@ -438,7 +444,7 @@ function CreateBusinessDocumentPage() {
                     ? 'У вас пока нет назначенных документов'
                     : 'Документов пока нет'}
                 </p>
-                <p className="mt-1 text-xs text-text-secondary">
+                <p className="text-xs text-text-secondary">
                   {canCreate
                     ? 'Новый документ можно создать в форме справа.'
                     : 'Откройте фильтр «Все», чтобы просмотреть доступные документы.'}
@@ -825,6 +831,7 @@ export default function BusinessDocumentsPage() {
   const [selectedRevisionId, setSelectedRevisionId] = useState<string>();
   const [evaSyncNotice, setEvaSyncNotice] = useState<string>();
   const [ownerSelection, setOwnerSelection] = useState('');
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [streamPreview, setStreamPreview] = useState<{
     jobId: string;
     attempt: number;
@@ -1387,10 +1394,10 @@ export default function BusinessDocumentsPage() {
       data-testid="business-document-workbench"
     >
       <header
-        className="flex min-h-16 min-w-0 flex-wrap items-start justify-between gap-3 border-b border-border-button px-5 py-3 sm:items-center"
+        className="flex min-h-14 min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-border-button px-5 py-2"
         data-testid="business-document-header"
       >
-        <div className="w-full min-w-0 sm:w-auto sm:flex-1">
+        <div className="min-w-0 flex-1">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <h1 className="min-w-0 break-words text-lg font-semibold tracking-tight sm:truncate">
               {document.title}
@@ -1406,61 +1413,211 @@ export default function BusinessDocumentsPage() {
               v{document.state_version}
             </span>
           </div>
-          <p className="mt-1 text-xs text-text-secondary">
-            {operationLabels[document.operation_state]}
-          </p>
-          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-text-secondary">
-            <span>Владелец: {document.owner_name || 'не назначен'}</span>
-            {document.permissions?.assign && (
-              <>
-                <div className="min-w-56">
-                  <SelectWithSearch
-                    value={ownerSelection}
-                    onChange={setOwnerSelection}
-                    options={(accessUsersQuery.data?.items ?? []).map(
-                      (user) => ({
-                        value: user.user_id,
-                        label: `${user.nickname} (${user.email})`,
-                      }),
-                    )}
-                    placeholder="Выберите владельца"
-                    emptyData="Нет доступных пользователей"
-                    disabled={
-                      accessUsersQuery.isLoading ||
-                      assignOwnerMutation.isPending
-                    }
-                    testId="business-document-owner-select"
-                    optionTestIdPrefix="business-document-owner-option-"
-                  />
-                </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={
-                    !ownerSelection ||
-                    ownerSelection === document.owner_id ||
-                    assignOwnerMutation.isPending
-                  }
-                  loading={assignOwnerMutation.isPending}
-                  onClick={() => assignOwnerMutation.mutate()}
-                  data-testid="business-document-assign-owner"
-                >
-                  Назначить
-                </Button>
-              </>
-            )}
-          </div>
-          {(accessUsersQuery.error || assignOwnerMutation.error) && (
-            <p className="mt-1 text-xs text-state-error" role="alert">
-              {(accessUsersQuery.error || assignOwnerMutation.error)?.message}
+          {!isBusinessDocumentOperationActive(document.operation_state) && (
+            <p className="text-xs text-text-secondary">
+              {operationLabels[document.operation_state]}
             </p>
           )}
         </div>
-
         <div
           className="flex w-full min-w-0 flex-wrap items-center justify-start gap-2 sm:w-auto sm:justify-end"
           data-testid="business-document-actions"
         >
+          <Popover open={detailsOpen} onOpenChange={setDetailsOpen}>
+            <PopoverTrigger asChild>
+              <Button
+                size="sm"
+                variant="ghost"
+                data-testid="business-document-details-toggle"
+              >
+                {evaUpdateQuery.data?.changed
+                  ? 'Обновление EVA'
+                  : evaUpdateQuery.error
+                    ? 'Ошибка EVA'
+                    : 'Сведения'}
+                {(evaUpdateQuery.data?.changed || evaUpdateQuery.error) && (
+                  <span className="size-1.5 rounded-full bg-state-warning" />
+                )}
+                <ChevronDown className="size-3.5" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent
+              align="end"
+              className="max-h-[min(70vh,560px)] w-[min(440px,calc(100vw-24px))] overflow-y-auto p-4"
+              data-testid="business-document-details"
+            >
+              <div className="space-y-3 text-xs">
+                <div className="flex flex-wrap items-center gap-2 text-xs text-text-secondary">
+                  <span>Владелец: {document.owner_name || 'не назначен'}</span>
+                  {document.permissions?.assign && (
+                    <>
+                      <div className="min-w-56">
+                        <SelectWithSearch
+                          value={ownerSelection}
+                          onChange={setOwnerSelection}
+                          options={(accessUsersQuery.data?.items ?? []).map(
+                            (user) => ({
+                              value: user.user_id,
+                              label: `${user.nickname} (${user.email})`,
+                            }),
+                          )}
+                          placeholder="Выберите владельца"
+                          emptyData="Нет доступных пользователей"
+                          disabled={
+                            accessUsersQuery.isLoading ||
+                            assignOwnerMutation.isPending
+                          }
+                          testId="business-document-owner-select"
+                          optionTestIdPrefix="business-document-owner-option-"
+                        />
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={
+                          !ownerSelection ||
+                          ownerSelection === document.owner_id ||
+                          assignOwnerMutation.isPending
+                        }
+                        loading={assignOwnerMutation.isPending}
+                        onClick={() => assignOwnerMutation.mutate()}
+                        data-testid="business-document-assign-owner"
+                      >
+                        Назначить
+                      </Button>
+                    </>
+                  )}
+                </div>
+                {(accessUsersQuery.error || assignOwnerMutation.error) && (
+                  <p className="mt-1 text-xs text-state-error" role="alert">
+                    {
+                      (accessUsersQuery.error || assignOwnerMutation.error)
+                        ?.message
+                    }
+                  </p>
+                )}
+                {document.eva_binding && (
+                  <div
+                    className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-border-button pt-3 text-xs"
+                    data-testid="business-document-eva-binding"
+                  >
+                    <div className="flex min-w-0 flex-1 items-center gap-2">
+                      <Link2 className="size-3.5 shrink-0 text-accent-primary" />
+                      <span className="text-text-secondary">
+                        Связано с EVA:
+                      </span>
+                      <a
+                        href={document.eva_binding.page_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex min-w-0 items-center gap-1 font-medium text-text-primary hover:text-accent-primary"
+                      >
+                        <span className="truncate">
+                          {document.eva_binding.document_name ||
+                            document.eva_binding.document_code ||
+                            document.eva_binding.page_url}
+                        </span>
+                        <ExternalLink className="size-3 shrink-0" />
+                      </a>
+                      {document.eva_binding.status === 'LINK_ONLY' && (
+                        <>
+                          <span className="text-text-disabled">
+                            Только ссылка — доступный коннектор не найден
+                          </span>
+                          {document.permissions?.edit !== false && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              disabled={isBusy || rebindEvaMutation.isPending}
+                              loading={rebindEvaMutation.isPending}
+                              onClick={() => rebindEvaMutation.mutate()}
+                              data-testid="rebind-business-document-to-eva"
+                            >
+                              <RefreshCw className="size-3.5" />
+                              Подключить заново
+                            </Button>
+                          )}
+                        </>
+                      )}
+                    </div>
+                    {document.permissions?.edit !== false &&
+                      evaUpdateQuery.data?.changed &&
+                      evaUpdateQuery.data.can_pull && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={
+                            isBusy ||
+                            !document.current_revision ||
+                            !['REVIEW', 'AGREED'].includes(
+                              document.lifecycle_state,
+                            ) ||
+                            pullEvaMutation.isPending
+                          }
+                          loading={pullEvaMutation.isPending}
+                          onClick={() => pullEvaMutation.mutate()}
+                          data-testid="pull-business-document-from-eva"
+                        >
+                          <ArrowDownToLine className="size-3.5" />
+                          Загрузить обновление из EVA
+                        </Button>
+                      )}
+                    {document.permissions?.edit !== false &&
+                      hasPersonalEvaToken && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={
+                            isBusy ||
+                            document.lifecycle_state !== 'AGREED' ||
+                            createEvaChangeMutation.isPending
+                          }
+                          loading={createEvaChangeMutation.isPending}
+                          onClick={() => createEvaChangeMutation.mutate()}
+                          data-testid="push-business-document-to-eva"
+                        >
+                          <ArrowUpFromLine className="size-3.5" />
+                          Сохранить текущий вариант в EVA
+                        </Button>
+                      )}
+                    {(rebindEvaMutation.error ||
+                      pullEvaMutation.error ||
+                      createEvaChangeMutation.error) && (
+                      <span className="w-full text-state-error" role="alert">
+                        {
+                          (
+                            rebindEvaMutation.error ||
+                            pullEvaMutation.error ||
+                            createEvaChangeMutation.error
+                          )?.message
+                        }
+                      </span>
+                    )}
+                    {evaSyncNotice && (
+                      <span className="w-full text-text-secondary">
+                        {evaSyncNotice}
+                      </span>
+                    )}
+                    {evaUpdateQuery.data?.changed && (
+                      <span
+                        className="w-full text-state-warning"
+                        data-testid="eva-update-available"
+                      >
+                        В EVA есть более новая версия документа. Загрузите её,
+                        чтобы добавить изменения в текущий цикл ревью.
+                      </span>
+                    )}
+                    {evaUpdateQuery.error && (
+                      <span className="w-full text-text-disabled" role="status">
+                        Не удалось проверить обновления EVA:{' '}
+                        {evaUpdateQuery.error.message}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            </PopoverContent>
+          </Popover>
           {!!document.current_revision && (
             <Button
               size="sm"
@@ -1647,120 +1804,6 @@ export default function BusinessDocumentsPage() {
             {deleteMutation.error.message}
           </div>
         )}
-        {document.eva_binding && (
-          <div
-            className="flex animate-in flex-wrap items-center gap-x-4 gap-y-2 border-b border-border-button bg-bg-card/35 px-5 py-2.5 text-xs fade-in duration-200"
-            data-testid="business-document-eva-binding"
-          >
-            <div className="flex min-w-0 flex-1 items-center gap-2">
-              <Link2 className="size-3.5 shrink-0 text-accent-primary" />
-              <span className="text-text-secondary">Связано с EVA:</span>
-              <a
-                href={document.eva_binding.page_url}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex min-w-0 items-center gap-1 font-medium text-text-primary hover:text-accent-primary"
-              >
-                <span className="truncate">
-                  {document.eva_binding.document_name ||
-                    document.eva_binding.document_code ||
-                    document.eva_binding.page_url}
-                </span>
-                <ExternalLink className="size-3 shrink-0" />
-              </a>
-              {document.eva_binding.status === 'LINK_ONLY' && (
-                <>
-                  <span className="text-text-disabled">
-                    Только ссылка — доступный коннектор не найден
-                  </span>
-                  {document.permissions?.edit !== false && (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={isBusy || rebindEvaMutation.isPending}
-                      loading={rebindEvaMutation.isPending}
-                      onClick={() => rebindEvaMutation.mutate()}
-                      data-testid="rebind-business-document-to-eva"
-                    >
-                      <RefreshCw className="size-3.5" />
-                      Подключить заново
-                    </Button>
-                  )}
-                </>
-              )}
-            </div>
-            {document.permissions?.edit !== false &&
-              evaUpdateQuery.data?.changed &&
-              evaUpdateQuery.data.can_pull && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={
-                    isBusy ||
-                    !document.current_revision ||
-                    !['REVIEW', 'AGREED'].includes(document.lifecycle_state) ||
-                    pullEvaMutation.isPending
-                  }
-                  loading={pullEvaMutation.isPending}
-                  onClick={() => pullEvaMutation.mutate()}
-                  data-testid="pull-business-document-from-eva"
-                >
-                  <ArrowDownToLine className="size-3.5" />
-                  Загрузить обновление из EVA
-                </Button>
-              )}
-            {document.permissions?.edit !== false && hasPersonalEvaToken && (
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={
-                  isBusy ||
-                  document.lifecycle_state !== 'AGREED' ||
-                  createEvaChangeMutation.isPending
-                }
-                loading={createEvaChangeMutation.isPending}
-                onClick={() => createEvaChangeMutation.mutate()}
-                data-testid="push-business-document-to-eva"
-              >
-                <ArrowUpFromLine className="size-3.5" />
-                Сохранить текущий вариант в EVA
-              </Button>
-            )}
-            {(rebindEvaMutation.error ||
-              pullEvaMutation.error ||
-              createEvaChangeMutation.error) && (
-              <span className="w-full text-state-error" role="alert">
-                {
-                  (
-                    rebindEvaMutation.error ||
-                    pullEvaMutation.error ||
-                    createEvaChangeMutation.error
-                  )?.message
-                }
-              </span>
-            )}
-            {evaSyncNotice && (
-              <span className="w-full text-text-secondary">
-                {evaSyncNotice}
-              </span>
-            )}
-            {evaUpdateQuery.data?.changed && (
-              <span
-                className="w-full text-state-warning"
-                data-testid="eva-update-available"
-              >
-                В EVA есть более новая версия документа. Загрузите её, чтобы
-                добавить изменения в текущий цикл ревью.
-              </span>
-            )}
-            {evaUpdateQuery.error && (
-              <span className="w-full text-text-disabled" role="status">
-                Не удалось проверить обновления EVA:{' '}
-                {evaUpdateQuery.error.message}
-              </span>
-            )}
-          </div>
-        )}
         {hasConflict && (
           <div
             className="flex flex-wrap items-center gap-3 border-b border-state-warning/40 bg-state-warning/5 px-5 py-2.5 text-sm"
@@ -1794,21 +1837,6 @@ export default function BusinessDocumentsPage() {
             <AlertTriangle className="size-4 shrink-0" />
             {commandMutation.error.message}
           </div>
-        )}
-        {isBusinessDocumentOperationActive(document.operation_state) && (
-          <BusinessDocumentProgress
-            job={document.latest_job}
-            operationState={document.operation_state}
-            operationLabel={operationLabels[document.operation_state]}
-          />
-        )}
-        {['ANALYZING_REVIEW', 'APPLYING_CHANGES'].includes(
-          document.operation_state,
-        ) && (
-          <ReviewActivity
-            reviewCycle={document.protocol}
-            onFocusSection={focusSection}
-          />
         )}
         {streamJobId &&
           streamPreview?.jobId === streamJobId &&
@@ -1909,21 +1937,23 @@ export default function BusinessDocumentsPage() {
       </div>
 
       <div
-        className="grid min-h-0 grid-cols-[minmax(0,1fr)_4px_var(--business-document-protocol-width)] max-lg:grid-cols-1 max-lg:grid-rows-[minmax(360px,1fr)_minmax(320px,0.8fr)]"
+        className="grid min-h-0 grid-cols-[minmax(0,1fr)_4px_var(--business-document-protocol-width)] grid-rows-[auto_minmax(0,1fr)] max-lg:grid-cols-1 max-lg:grid-rows-[auto_minmax(360px,1fr)_minmax(320px,0.8fr)]"
         style={
           {
             '--business-document-protocol-width': `${protocolPaneWidth}px`,
           } as CSSProperties
         }
       >
-        <DocumentPane
-          revision={displayedRevision}
-          highlightedSectionIds={documentHighlightedSectionIds}
-          focusRequest={sectionFocus}
-          onSelectionChange={(nextSelection) => {
-            if (!historyOpen) setSelection(nextSelection);
-          }}
-        />
+        <div className="row-span-2 grid min-h-0 max-lg:row-start-2 max-lg:row-span-1">
+          <DocumentPane
+            revision={displayedRevision}
+            highlightedSectionIds={documentHighlightedSectionIds}
+            focusRequest={sectionFocus}
+            onSelectionChange={(nextSelection) => {
+              if (!historyOpen) setSelection(nextSelection);
+            }}
+          />
+        </div>
         <div
           role="separator"
           aria-label="Изменить ширину обсуждения"
@@ -1932,7 +1962,7 @@ export default function BusinessDocumentsPage() {
           aria-valuemax={maxProtocolPaneWidth}
           aria-valuenow={protocolPaneWidth}
           tabIndex={0}
-          className="group relative z-10 cursor-col-resize bg-border-button outline-none hover:bg-accent-primary focus-visible:bg-accent-primary max-lg:hidden"
+          className="group relative z-10 row-span-2 cursor-col-resize bg-border-button outline-none hover:bg-accent-primary focus-visible:bg-accent-primary max-lg:hidden"
           data-testid="business-document-protocol-resizer"
           onPointerDown={startProtocolPaneResize}
           onDoubleClick={() => resizeProtocolPane(defaultProtocolPaneWidth)}
@@ -1946,45 +1976,67 @@ export default function BusinessDocumentsPage() {
         >
           <span className="absolute inset-y-0 -start-1 -end-1" />
         </div>
-        {historyOpen ? (
-          <RevisionHistoryPanel
-            revisions={revisionsQuery.data ?? []}
-            selectedRevisionId={
-              selectedRevisionId ?? document.current_revision?.revision_id
-            }
-            currentRevisionId={document.current_revision?.revision_id}
-            loading={revisionsQuery.isLoading}
-            error={revisionsQuery.error}
-            onSelect={(revision) => {
-              setSelectedRevisionId(revision.revision_id);
-              clearSelection();
-            }}
-            onClose={() => {
-              setHistoryOpen(false);
-              setSelectedRevisionId(undefined);
-            }}
-          />
-        ) : (
-          <ProtocolPane
-            documentId={document.document_id}
-            storageIdentity={promptStorageIdentity}
-            reviewCycle={document.protocol}
-            reviewCycleNumber={document.active_review_cycle}
-            proposalDecisionsOpen={document.lifecycle_state === 'REVIEW'}
-            revision={document.current_revision}
-            selection={selection}
-            allowedCommands={[...allowed]}
-            pending={isBusy}
-            editable={
-              Boolean(promptStorageIdentity) &&
-              document.permissions?.edit !== false &&
-              (allowed.has('ADD_COMMENT') || isBusy)
-            }
-            onCommand={submitCommand}
-            onClearSelection={clearSelection}
-            focusRequest={sourceFocus}
-          />
-        )}
+        <div
+          className="col-start-3 row-start-1 min-w-0 lg:max-h-64 lg:overflow-y-auto max-lg:col-start-1 scrollbar-auto"
+          data-testid="business-document-activity"
+        >
+          {isBusinessDocumentOperationActive(document.operation_state) && (
+            <BusinessDocumentProgress
+              job={document.latest_job}
+              operationState={document.operation_state}
+              operationLabel={operationLabels[document.operation_state]}
+            />
+          )}
+          {['ANALYZING_REVIEW', 'APPLYING_CHANGES'].includes(
+            document.operation_state,
+          ) && (
+            <ReviewActivity
+              reviewCycle={document.protocol}
+              onFocusSection={focusSection}
+            />
+          )}
+        </div>
+        <div className="col-start-3 row-start-2 grid min-h-0 max-lg:col-start-1 max-lg:row-start-3">
+          {historyOpen ? (
+            <RevisionHistoryPanel
+              revisions={revisionsQuery.data ?? []}
+              selectedRevisionId={
+                selectedRevisionId ?? document.current_revision?.revision_id
+              }
+              currentRevisionId={document.current_revision?.revision_id}
+              loading={revisionsQuery.isLoading}
+              error={revisionsQuery.error}
+              onSelect={(revision) => {
+                setSelectedRevisionId(revision.revision_id);
+                clearSelection();
+              }}
+              onClose={() => {
+                setHistoryOpen(false);
+                setSelectedRevisionId(undefined);
+              }}
+            />
+          ) : (
+            <ProtocolPane
+              documentId={document.document_id}
+              storageIdentity={promptStorageIdentity}
+              reviewCycle={document.protocol}
+              reviewCycleNumber={document.active_review_cycle}
+              proposalDecisionsOpen={document.lifecycle_state === 'REVIEW'}
+              revision={document.current_revision}
+              selection={selection}
+              allowedCommands={[...allowed]}
+              pending={isBusy}
+              editable={
+                Boolean(promptStorageIdentity) &&
+                document.permissions?.edit !== false &&
+                (allowed.has('ADD_COMMENT') || isBusy)
+              }
+              onCommand={submitCommand}
+              onClearSelection={clearSelection}
+              focusRequest={sourceFocus}
+            />
+          )}
+        </div>
       </div>
     </main>
   );

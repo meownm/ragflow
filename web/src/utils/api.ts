@@ -281,6 +281,30 @@ export default {
   businessDocumentSqlQueryProjects: `${restAPIv1}/business-documents/sql-query/projects`,
   businessDocumentSqlQueryProject: (id: string) =>
     `${restAPIv1}/business-documents/sql-query/projects/${id}`,
+  businessDocumentSqlProjectCompilations: (id: string) =>
+    `${restAPIv1}/business-documents/sql-query/projects/${id}/compilations`,
+  businessDocumentSqlProjectManualSql: (id: string) =>
+    `${restAPIv1}/business-documents/sql-query/projects/${id}/manual-sql`,
+  businessDocumentSqlProjectManualSqlValidate: (id: string) =>
+    `${restAPIv1}/business-documents/sql-query/projects/${id}/manual-sql/validate`,
+  businessDocumentSqlProjectPreflight: (id: string) =>
+    `${restAPIv1}/business-documents/sql-query/projects/${id}/preflight`,
+  businessDocumentSqlProjectRuns: (id: string) =>
+    `${restAPIv1}/business-documents/sql-query/projects/${id}/runs`,
+  businessDocumentSqlProjectRunPreview: (id: string, runId: string) =>
+    `${restAPIv1}/business-documents/sql-query/projects/${id}/runs/${runId}/preview`,
+  businessDocumentSqlProjectRunPython: (id: string, runId: string) =>
+    `${restAPIv1}/business-documents/sql-query/projects/${id}/runs/${runId}/python`,
+  businessDocumentSqlProjectRunLookup: (id: string, runId: string) =>
+    `${restAPIv1}/business-documents/sql-query/projects/${id}/runs/${runId}/lookup`,
+  businessDocumentSqlProjectRunConclusion: (id: string, runId: string) =>
+    `${restAPIv1}/business-documents/sql-query/projects/${id}/runs/${runId}/conclusion`,
+  businessDocumentSqlProjectRunConclusionConfirm: (id: string, runId: string) =>
+    `${restAPIv1}/business-documents/sql-query/projects/${id}/runs/${runId}/conclusion/confirm`,
+  businessDocumentSqlProjectRunCancel: (id: string, runId: string) =>
+    `${restAPIv1}/business-documents/sql-query/projects/${id}/runs/${runId}/cancel`,
+  businessDocumentSqlProjectComplete: (id: string) =>
+    `${restAPIv1}/business-documents/sql-query/projects/${id}/complete`,
   businessDocumentSqlAgentJobs: (projectId: string) =>
     `${restAPIv1}/business-documents/sql-query/projects/${projectId}/agent-jobs`,
   businessDocumentSqlAgentProposalDecision: (
@@ -507,6 +531,15 @@ export default {
     `${restAPIv1}/admin/access-groups/${groupId}`,
   adminBusinessDocumentsSettings: `${restAPIv1}/admin/business-documents`,
   adminAuditEvents: `${restAPIv1}/admin/audit-events`,
+  adminDocumentQuality: `${restAPIv1}/admin/document-quality`,
+  adminDocumentQualityJobs: `${restAPIv1}/admin/document-quality/jobs`,
+  adminDocumentQualityRuns: `${restAPIv1}/admin/document-quality/runs`,
+  adminDocumentQualityRun: (runId: string) =>
+    `${restAPIv1}/admin/document-quality/runs/${runId}`,
+  adminDocumentQualityCampaigns: `${restAPIv1}/admin/document-quality/campaigns`,
+  adminDocumentQualityCampaign: (campaignId: string) =>
+    `${restAPIv1}/admin/document-quality/campaigns/${campaignId}`,
+  adminDocumentQualityModels: `${restAPIv1}/admin/document-quality/models`,
 
   // Sandbox settings
   adminListSandboxProviders: `${restAPIv1}/admin/sandbox/providers`,

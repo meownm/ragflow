@@ -16,7 +16,9 @@ from business_documents.sql_query.query_specification import (
     SqlGuardError,
     compile_query_payload,
     guard_read_only_sql,
+    parse_schema_snapshot,
 )
+from business_documents.sql_query.project_compilation import ProjectCompilationError, build_project_compile_command
 
 
 def _table(entity_id: str, fqn: str, fields: tuple[str, ...]) -> dict:
@@ -221,6 +223,68 @@ def _payload() -> dict:
     }
 
 
+def test_accepted_project_artifacts_compile_to_the_same_sql():
+    expected = _payload()
+    accepted_text = f"- {expected['accepted_requirements']}"
+    expected["accepted_requirements"] = accepted_text
+    expected["schema_snapshot"]["original_requirements"] = accepted_text
+    specification = expected["specification"]
+    parameter_by_name = {item["name"]: item for item in specification["parameters"]}
+    query_filters = []
+    for item in specification["filters"]:
+        parameter = parameter_by_name[item["parameter"]]
+        query_filters.append({
+            "id": item["id"],
+            "column_id": item["column_id"],
+            "operator": item["operator"],
+            "parameter_name": parameter["name"],
+            "parameter_type": parameter["type"],
+            "parameter_value": str(parameter["value"]),
+            "description": item["description"],
+            "decision": "user",
+            "confirmed": True,
+        })
+    query = {
+        "base_entity_id": specification["from"]["entity_id"],
+        "aliases": {
+            specification["from"]["entity_id"]: specification["from"]["alias"],
+            **{join["entity_id"]: join["alias"] for join in specification["joins"]},
+        },
+        "select": specification["select"],
+        "joins": specification["joins"],
+        "filters": query_filters,
+        "order_by": specification["order_by"],
+        "row_limit": 1000,
+    }
+    actual = build_project_compile_command(
+        {"requirements": [{"statement": accepted_text.removeprefix("- ")}]},
+        {"schema_snapshot": expected["schema_snapshot"], "accepted_schema": expected["accepted_schema"]},
+        query,
+    )
+    actual_result = compile_query_payload(actual)
+    assert actual_result["status"] == "READY", actual_result["blocking_issues"]
+    assert actual_result["sql"] == compile_query_payload(expected)["sql"]
+
+    query["joins"] = [{**join, "confirmed": False} for join in specification["joins"]]
+    with pytest.raises(ProjectCompilationError, match="JOIN has not been confirmed"):
+        build_project_compile_command(
+            {"requirements": [{"statement": accepted_text.removeprefix("- ")}]},
+            {"schema_snapshot": expected["schema_snapshot"], "accepted_schema": expected["accepted_schema"]},
+            query,
+        )
+
+
+def test_openmetadata_database_name_with_hyphen_does_not_change_sql_relation():
+    table = _table("pdf-job", "docker_postgres_pdf_ocr.pdf-ocr.public.pdf_ocr_jobs", ("id",))
+    table["service"] = "docker_postgres_pdf_ocr"
+    table["database"] = "pdf-ocr"
+    table["schema"] = "public"
+    snapshot = _snapshot()
+    snapshot["requirements"] = [{"term": "job", "state": "CONFIRMED", "decision": "USER", "interpretation": None, "candidates": [], "selected_table": table}]
+    parsed = parse_schema_snapshot(snapshot)
+    assert parsed.tables[0].physical_relation == "public.pdf_ocr_jobs"
+
+
 def _live_omd_payload() -> dict:
     fqn = "docker_postgres_bot.bot.public.llm_requests_log"
     table = _table(
@@ -413,6 +477,7 @@ def test_invalid_or_unbounded_specs_fail_closed(mutate, message):
         "SELECT * FROM dwh.order_fact LIMIT :row_limit",
         "SELECT o.order_id FROM dwh.order_fact AS o; DELETE FROM x",
         "SELECT pg_read_file(:path) AS value FROM dwh.order_fact LIMIT :row_limit",
+        "SELECT security_definer_udf() AS value FROM dwh.order_fact LIMIT :row_limit",
         "SELECT p.rolname AS name FROM pg_catalog.pg_roles AS p LIMIT :row_limit",
         "WITH gone AS (DELETE FROM dwh.order_fact RETURNING order_id) SELECT gone.order_id AS order_id FROM gone LIMIT :row_limit",
     ],
@@ -436,3 +501,95 @@ def test_request_contract_rejects_unknown_fields_and_non_date_values():
         compile_query_payload(unknown)
     with pytest.raises(QuerySpecificationValidationError, match="ISO date"):
         compile_query_payload(invalid_date)
+
+
+def _manual_payload(sql: str) -> dict:
+    base = _payload()
+    return {
+        "schema_version": "1",
+        "schema_snapshot": base["schema_snapshot"],
+        "accepted_requirements": base["accepted_requirements"],
+        "accepted_schema": base["accepted_schema"],
+        "manual_sql": sql,
+        "parameters": [{"name": "row_limit", "type": "integer", "value": 25}],
+    }
+
+
+@pytest.mark.parametrize("sql", [
+    "SELECT o.order_id AS order_id FROM dwh.order_fact AS o LIMIT :row_limit",
+    "WITH sales AS (SELECT o.order_id AS order_id FROM dwh.order_fact AS o) SELECT sales.order_id AS order_id FROM sales LIMIT :row_limit",
+    "SELECT o.status_id AS status_id, COUNT(o.order_id) AS total FROM dwh.order_fact AS o GROUP BY o.status_id HAVING COUNT(o.order_id) > :minimum LIMIT :row_limit",
+    "SELECT o.status_id AS status_id, COUNT(*) AS total FROM dwh.order_fact AS o GROUP BY o.status_id LIMIT :row_limit",
+    "SELECT o.order_id AS order_id FROM dwh.order_fact AS o UNION SELECT c.customer_id AS order_id FROM dwh.customer_dim AS c LIMIT :row_limit",
+    "SELECT o.order_id AS order_id, ROW_NUMBER() OVER (ORDER BY o.created_at) AS position FROM dwh.order_fact AS o LIMIT :row_limit",
+])
+def test_manual_advanced_sql_is_catalog_bound(sql):
+    payload = _manual_payload(sql)
+    if ":minimum" in sql:
+        payload["parameters"].append({"name": "minimum", "type": "integer", "value": 1})
+    result = compile_query_payload(payload)
+    assert result["status"] == "READY"
+    assert result["guard"]["status"] == "PASS"
+    assert result["output_columns"]
+
+
+def test_manual_sql_progresses_from_join_to_aggregate_to_cte():
+    steps = [
+        "SELECT o.order_id AS order_id FROM dwh.order_fact AS o LIMIT :row_limit",
+        "SELECT o.order_id AS order_id, c.customer_type_code AS customer_type, s.status_name_ru AS status_name "
+        "FROM dwh.order_fact AS o JOIN dwh.customer_dim AS c ON c.customer_id = o.customer_id "
+        "JOIN ref.order_status AS s ON s.status_id = o.status_id LIMIT :row_limit",
+        "SELECT s.status_name_ru AS status_name, COUNT(o.order_id) AS order_count, "
+        "SUM(o.paid_amount_rub) AS total_amount FROM dwh.order_fact AS o "
+        "JOIN ref.order_status AS s ON s.status_id = o.status_id "
+        "GROUP BY s.status_name_ru LIMIT :row_limit",
+        "WITH totals AS (SELECT s.status_name_ru AS status_name, COUNT(o.order_id) AS order_count, "
+        "SUM(o.paid_amount_rub) AS total_amount FROM dwh.order_fact AS o "
+        "JOIN dwh.customer_dim AS c ON c.customer_id = o.customer_id "
+        "JOIN ref.order_status AS s ON s.status_id = o.status_id "
+        "WHERE c.customer_type_code = :customer_type GROUP BY s.status_name_ru) "
+        "SELECT t.status_name AS status_name, t.order_count AS order_count, t.total_amount AS total_amount "
+        "FROM totals AS t WHERE t.order_count >= :minimum "
+        "ORDER BY t.total_amount DESC LIMIT :row_limit",
+    ]
+    for index, sql in enumerate(steps):
+        payload = _manual_payload(sql)
+        if index == 3:
+            payload["parameters"].extend([
+                {"name": "customer_type", "type": "text", "value": "corporate"},
+                {"name": "minimum", "type": "integer", "value": 2},
+            ])
+        result = compile_query_payload(payload)
+        assert result["status"] == "READY"
+        assert result["guard"]["status"] == "PASS"
+        assert result["sql"] == sql
+    assert result["guard"]["tables"] == ["dwh.customer_dim", "dwh.order_fact", "ref.order_status"]
+    assert result["output_columns"] == ["status_name", "order_count", "total_amount"]
+
+
+def test_manual_sql_derived_subquery_with_having_is_guarded():
+    sql = (
+        "SELECT grouped.status_name AS status_name, grouped.order_count AS order_count "
+        "FROM (SELECT s.status_name_ru AS status_name, COUNT(o.order_id) AS order_count "
+        "FROM dwh.order_fact AS o JOIN ref.order_status AS s ON s.status_id = o.status_id "
+        "GROUP BY s.status_name_ru HAVING COUNT(o.order_id) >= :minimum) AS grouped "
+        "ORDER BY grouped.order_count DESC LIMIT :row_limit"
+    )
+    payload = _manual_payload(sql)
+    payload["parameters"].append({"name": "minimum", "type": "integer", "value": 2})
+    result = compile_query_payload(payload)
+    assert result["status"] == "READY"
+    assert result["guard"]["tables"] == ["dwh.order_fact", "ref.order_status"]
+    assert result["output_columns"] == ["status_name", "order_count"]
+
+
+@pytest.mark.parametrize("sql", [
+    "SELECT o.missing AS missing FROM dwh.order_fact AS o LIMIT :row_limit",
+    "SELECT o.order_id AS order_id FROM pg_catalog.pg_user AS o LIMIT :row_limit",
+    "SELECT dangerous(o.order_id) AS value FROM dwh.order_fact AS o LIMIT :row_limit",
+    "SELECT o.order_id AS order_id FROM dwh.order_fact AS o LIMIT 25",
+    "WITH RECURSIVE sales AS (SELECT o.order_id AS order_id FROM dwh.order_fact AS o) SELECT sales.order_id AS order_id FROM sales LIMIT :row_limit",
+])
+def test_manual_advanced_sql_rejects_unbound_or_unknown_access(sql):
+    with pytest.raises(SqlGuardError):
+        compile_query_payload(_manual_payload(sql))

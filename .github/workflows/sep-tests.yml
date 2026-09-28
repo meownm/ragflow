@@ -5,25 +5,7 @@ permissions:
 
 on:
   workflow_call:
-  push:
-    branches:
-      - 'main'
-      - '*.*.*'
-    paths-ignore:
-      - 'docs/**'
-      - '*.md'
-      - '*.mdx'
-  # The only difference between pull_request and pull_request_target is the context in which the workflow runs:
-  # — pull_request_target workflows use the workflow files from the default branch, and secrets are available.
-  # — pull_request workflows use the workflow files from the pull request branch, and secrets are unavailable.
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review, labeled]
-    paths-ignore:
-      - 'docs/**'
-      - '*.md'
-      - '*.mdx'
-  schedule:
-    - cron: '0 16 * * *'  # This schedule runs every 16:00:00Z(00:00:00+08:00)
+  workflow_dispatch:
 
 # https://docs.github.com/en/actions/using-jobs/using-concurrency
 concurrency:

@@ -1,5 +1,4 @@
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import {
   getSourceWorkspace,
   saveSourceSelection,
@@ -239,12 +238,14 @@ export function SourcePicker({
   return (
     <section className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
       <div>
-        <form className="flex gap-2" onSubmit={search}>
-          <Input
+        <form className="flex items-start gap-2" onSubmit={search}>
+          <textarea
             aria-label="Поиск статей"
             value={query}
             maxLength={500}
             placeholder="Тема или уточняющий запрос"
+            rows={3}
+            className="min-h-20 min-w-0 flex-1 resize-y rounded-md border border-border-button bg-bg-input px-3 py-2 text-sm text-text-primary outline-none placeholder:text-text-disabled focus-visible:ring-1 focus-visible:ring-accent-primary"
             onChange={(event) => setQuery(event.target.value)}
           />
           <Button type="submit" disabled={busy || !query.trim()}>

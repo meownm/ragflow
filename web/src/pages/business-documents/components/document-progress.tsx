@@ -148,7 +148,7 @@ export function BusinessDocumentProgress({
   return (
     <div
       className={cn(
-        'flex items-center gap-2 border-b px-5 py-2 text-xs',
+        'flex flex-wrap items-center gap-x-3 gap-y-1 border-b px-5 py-2 text-xs',
         classes.surface,
       )}
       data-testid="business-document-operation"
@@ -161,34 +161,30 @@ export function BusinessDocumentProgress({
           tone === 'active' && 'animate-pulse',
         )}
       />
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="shrink-0 font-medium text-text-primary">
-            {operationLabel}
-          </span>
-          <span className="min-w-0 truncate text-text-secondary">{stage}</span>
-          <span className="ms-auto shrink-0 tabular-nums font-medium text-text-primary">
-            {percent}%
-          </span>
-        </div>
-        <div className="mt-1 flex min-w-0 items-center gap-2">
-          <Progress
-            value={percent}
-            aria-label={`Прогресс обработки: ${percent}%`}
-            className={cn('h-1 min-w-12 flex-1 bg-border-button', classes.bar)}
-          />
-          {(elapsed || attempt) && (
-            <span className="shrink-0 tabular-nums text-[11px] text-text-secondary">
-              {[elapsed, attempt].filter(Boolean).join(' · ')}
-            </span>
-          )}
-          {previousError && (
-            <span className="min-w-0 truncate text-[11px] text-state-warning">
-              Предыдущая ошибка: {previousError}
-            </span>
-          )}
-        </div>
-      </div>
+      <span className="shrink-0 font-medium text-text-primary">
+        {operationLabel}
+      </span>
+      <span className="min-w-0 flex-1 truncate text-text-secondary">
+        {stage}
+      </span>
+      <Progress
+        value={percent}
+        aria-label={`Прогресс обработки: ${percent}%`}
+        className={cn('h-1 w-24 shrink-0 bg-border-button', classes.bar)}
+      />
+      <span className="shrink-0 tabular-nums font-medium text-text-primary">
+        {percent}%
+      </span>
+      {(elapsed || attempt) && (
+        <span className="shrink-0 tabular-nums text-[11px] text-text-secondary">
+          {[elapsed, attempt].filter(Boolean).join(' · ')}
+        </span>
+      )}
+      {previousError && (
+        <span className="min-w-0 truncate text-[11px] text-state-warning">
+          Предыдущая ошибка: {previousError}
+        </span>
+      )}
     </div>
   );
 }

@@ -96,6 +96,7 @@ def main():
     parser.add_argument("--frontend-archive", type=Path, help="Verified frontend archive and adjacent .json receipt; required for frozen browser candidates")
     parser.add_argument("--business-documents-quality", action="store_true", help="Run the real-model Business Documents suite in this disposable app")
     parser.add_argument("--business-documents-case-id", help="Run one Business Documents case for diagnosis; the quality report remains incomplete")
+    parser.add_argument("--business-documents-nightly", action="store_true", help="Run one full nightly series across the disposable QA tenant's Ollama catalog")
     parser.add_argument("--skip-browser-tests", action="store_true", help="Use only with Business Documents model quality; no built SPA or browser evidence")
     parser.add_argument("tests", nargs="*")
     args = parser.parse_args()
@@ -103,6 +104,8 @@ def main():
         parser.error("--skip-browser-tests requires --business-documents-quality")
     if args.business_documents_case_id and not args.business_documents_quality:
         parser.error("--business-documents-case-id requires --business-documents-quality")
+    if args.business_documents_nightly and (not args.business_documents_quality or args.business_documents_case_id or not args.skip_browser_tests):
+        parser.error("--business-documents-nightly requires quality and skip-browser-tests, without a case id")
     if args.skip_browser_tests and args.tests:
         parser.error("--skip-browser-tests cannot select browser tests")
     models = models_for_run(args.tests, args.skip_browser_tests)
@@ -318,6 +321,49 @@ def pytest_configure(config):
                 log="business-quality-dependency.log",
                 timeout=240,
             )
+            if args.business_documents_nightly:
+                nightly_script = """
+import json
+import sys
+from datetime import datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+sys.path.insert(0, '/ragflow/admin/server')
+from api.db.db_models import DB
+from document_quality_runs import enqueue_nightly_campaign, get_quality_campaign, process_next_run
+
+progress = Path('/ragflow/qa-evidence/nightly-campaign.json')
+with DB.connection_context():
+    day = datetime.now(ZoneInfo('Europe/Moscow')).date().isoformat()
+    campaign = enqueue_nightly_campaign(day)
+    progress.write_text(json.dumps(campaign, ensure_ascii=False, indent=2), encoding='utf-8')
+    while process_next_run():
+        campaign = get_quality_campaign(campaign['id'])
+        progress.write_text(json.dumps(campaign, ensure_ascii=False, indent=2), encoding='utf-8')
+    campaign = get_quality_campaign(campaign['id'])
+    assert campaign and all(run['status'] not in ('PENDING', 'RUNNING') for run in campaign['runs'])
+    print(json.dumps({'status': campaign['status'], 'baseline': campaign['baseline_status'],
+                      'models': len(campaign['runs']), 'completed': len(campaign['runs'])}))
+"""
+                quality_result = command(
+                    [*cmd, "exec", "-T", "-e", f"BUSINESS_DOCUMENT_QUALITY_TENANT_ID={tenant['tenant_id']}",
+                     "app", "/ragflow/.venv/bin/python", "-"],
+                    env=env, log="business-nightly.log", input=nightly_script, check=False,
+                    timeout=20 * 60 * 12,
+                )
+                progress = OUT / "nightly-campaign.json"
+                if progress.is_file():
+                    campaign = json.loads(progress.read_text(encoding="utf-8"))
+                    (OUT / "business-documents-quality.json").write_text(json.dumps({
+                        "schema_version": "2", "status": campaign["status"],
+                        "campaign_id": campaign["id"], "baseline_status": campaign["baseline_status"],
+                        "models": len(campaign["runs"]),
+                        "completed_models": sum(run["status"] not in ("PENDING", "RUNNING") for run in campaign["runs"]),
+                    }, indent=2) + "\n", encoding="utf-8")
+                exit_code = exit_code or quality_result.returncode
+                print(f"Business Documents nightly exit={quality_result.returncode}; see nightly-campaign.json", flush=True)
+                return exit_code
             if candidate:
                 source_manifest = json.loads((candidate / "candidate.json").read_text(encoding="utf-8"))
                 source_revision = source_manifest["identity"]["head"]

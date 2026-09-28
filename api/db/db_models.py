@@ -1619,6 +1619,32 @@ class BusinessDocumentSqlQueryArtifact(DataBaseModel):
         indexes = ((("project_id", "kind", "revision"), True),)
 
 
+class BusinessDocumentSqlQueryRun(DataBaseModel):
+    """Project result kept until explicit completion or cancellation."""
+
+    id = CharField(max_length=32, primary_key=True)
+    project_id = CharField(max_length=32, null=False, index=True)
+    tenant_id = CharField(max_length=32, null=False, index=True)
+    compilation_id = CharField(max_length=32, null=False)
+    profile_id = CharField(max_length=32, null=False)
+    profile_version = IntegerField(null=False)
+    kind = CharField(max_length=16, null=False, default="SQL", index=True)
+    source_run_id = CharField(max_length=32, null=True, index=True)
+    job_id = CharField(max_length=32, null=True, unique=True)
+    status = CharField(max_length=24, null=False, default="QUEUED", index=True)
+    columns = JSONField(null=False, default=list)
+    rows = JSONField(null=False, default=list)
+    row_count = IntegerField(null=False, default=0)
+    duration_ms = IntegerField(null=False, default=0)
+    result_bytes = IntegerField(null=False, default=0)
+    checks = JSONField(null=False, default=dict)
+    error = JSONField(null=True)
+
+    class Meta:
+        db_table = "business_document_sql_query_run"
+        indexes = ((("project_id", "create_time"), False),)
+
+
 class BusinessDocumentSqlAgentProposal(DataBaseModel):
     """Agent output with immutable payload and explicit human decision metadata."""
 
@@ -1887,6 +1913,49 @@ class BusinessDocumentJob(DataBaseModel):
     class Meta:
         db_table = "business_document_job"
         indexes = ((("status", "available_at"), False),)
+
+
+class BusinessDocumentQualityCampaign(DataBaseModel):
+    """One durable snapshot of the nightly Ollama model inventory."""
+
+    id = CharField(max_length=32, primary_key=True)
+    schedule_key = CharField(max_length=64, unique=True)
+    status = CharField(max_length=16, null=False, default="PENDING", index=True)
+    source_revision = CharField(max_length=64, null=True)
+    models = JSONField(null=False)
+    baseline_status = CharField(max_length=16, null=True)
+    baseline_report = JSONField(null=True)
+    reason_code = CharField(max_length=64, null=True)
+    started_at = BigIntegerField(null=True)
+    finished_at = BigIntegerField(null=True)
+
+    class Meta:
+        db_table = "business_document_quality_campaign"
+
+
+class BusinessDocumentQualityRun(DataBaseModel):
+    """Durable administrative evaluation request and its bounded result."""
+
+    id = CharField(max_length=32, primary_key=True)
+    schedule_key = CharField(max_length=64, null=True, unique=True)
+    trigger = CharField(max_length=16, null=False)
+    status = CharField(max_length=16, null=False, default="PENDING", index=True)
+    requested_by = CharField(max_length=64, null=True)
+    campaign_id = CharField(max_length=32, null=True, index=True)
+    model_name = CharField(max_length=256, null=True)
+    model_digest = CharField(max_length=64, null=True)
+    scope = CharField(max_length=8, null=False, default="FULL")
+    case_id = CharField(max_length=128, null=True)
+    reason_code = CharField(max_length=64, null=True)
+    started_at = BigIntegerField(null=True)
+    finished_at = BigIntegerField(null=True)
+    source_revision = CharField(max_length=64, null=True)
+    report = JSONField(null=True)
+    reason = CharField(max_length=256, null=True)
+
+    class Meta:
+        db_table = "business_document_quality_run"
+        indexes = ((("campaign_id", "model_digest"), True),)
 
 
 class BusinessDocumentJobStreamEvent(DataBaseModel):
@@ -2484,6 +2553,22 @@ def _update_tenant_llm_to_id_primary_key_postgres():
 def migrate_db():
     logging.disable(logging.ERROR)
     migrator = DatabaseMigrator[settings.DATABASE_TYPE.upper()].value(DB)
+    alter_db_add_column(migrator, "business_document_sql_query_run", "kind", CharField(max_length=16, null=False, default="SQL", index=True))
+    alter_db_add_column(migrator, "business_document_sql_query_run", "source_run_id", CharField(max_length=32, null=True, index=True))
+    alter_db_add_column(migrator, "business_document_sql_query_run", "job_id", CharField(max_length=32, null=True, unique=True))
+    alter_db_add_column(migrator, "business_document_sql_query_run", "checks", JSONField(null=False, default=dict))
+    alter_db_add_column(migrator, "business_document_sql_query_run", "error", JSONField(null=True))
+    alter_db_add_column(migrator, "business_document_quality_run", "campaign_id", CharField(max_length=32, null=True, index=True))
+    alter_db_add_column(migrator, "business_document_quality_run", "model_name", CharField(max_length=256, null=True))
+    alter_db_add_column(migrator, "business_document_quality_run", "model_digest", CharField(max_length=64, null=True))
+    alter_db_add_column(migrator, "business_document_quality_run", "scope", CharField(max_length=8, null=False, default="FULL"))
+    alter_db_add_column(migrator, "business_document_quality_run", "case_id", CharField(max_length=128, null=True))
+    alter_db_add_column(migrator, "business_document_quality_run", "reason_code", CharField(max_length=64, null=True))
+    try:
+        migrate(migrator.add_index("business_document_quality_run", ("campaign_id", "model_digest"), unique=True))
+    except (OperationalError, ProgrammingError) as exc:
+        if not any(marker in str(exc).lower() for marker in ("already exists", "duplicate key name", "1061")):
+            raise
     alter_db_add_column(
         migrator,
         "user",

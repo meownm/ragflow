@@ -83,6 +83,29 @@ test('shows only the current query and its empty result', async () => {
   ).toBeInTheDocument();
 });
 
+test('accepts a multiline search request', async () => {
+  mockedSearch.mockResolvedValue({
+    query: 'Тема\nУточняющее условие',
+    page: 1,
+    has_more: false,
+    candidates: [],
+  });
+  render(<SourcePicker workspace={workspace} onChange={jest.fn()} />);
+
+  const field = screen.getByRole('textbox', { name: 'Поиск статей' });
+  expect(field.tagName).toBe('TEXTAREA');
+  fireEvent.change(field, { target: { value: 'Тема\nУточняющее условие' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Найти' }));
+
+  await waitFor(() =>
+    expect(mockedSearch).toHaveBeenCalledWith(
+      workspace.id,
+      'Тема\nУточняющее условие',
+      1,
+    ),
+  );
+});
+
 test('reorders selected articles and locks changes during processing', async () => {
   const selected: import('@/services/source-workbench-service').SourceWorkspace =
     {

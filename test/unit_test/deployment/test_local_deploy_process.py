@@ -47,15 +47,15 @@ def test_deploy_records_source_backup_runtime_and_health_evidence():
 
 
 def test_fast_deploy_fails_closed_when_changed_runtime_is_not_bind_mounted():
-    assert '[ValidateSet("Auto", "Fast", "Candidate", "Release")]' in SOURCE
+    assert '[ValidateSet("Auto", "Fast", "Feature", "Candidate", "Release")]' in SOURCE
     assert "unmounted_runtime = $unmountedRuntime" in SOURCE
     assert "Fast deploy is unsafe" in SOURCE
     assert "docker-compose.candidate.yml" in SOURCE
 
 
 def test_candidate_image_is_pulled_and_verified_before_runtime_mutation():
-    pull = SOURCE.index('Invoke-Native -FilePath "docker" -Arguments @("pull", $candidateImage)')
-    revision = SOURCE.index("cat $candidateImage /ragflow/SOURCE_REVISION", pull)
+    pull = SOURCE.index('Invoke-Native -FilePath "docker" -Arguments @("pull", $deploymentImage)')
+    revision = SOURCE.index("cat $deploymentImage /ragflow/SOURCE_REVISION", pull)
     import_gate = SOURCE.index("import business_documents", revision)
     recreate = SOURCE.index('$upArguments = @("up", "-d", "--force-recreate", "--no-deps")', import_gate)
     assert pull < revision < import_gate < recreate
@@ -70,6 +70,63 @@ def test_release_receipt_revision_digest_and_jobs_are_checked_before_runtime_mut
     recreate = SOURCE.index('$upArguments = @("up", "-d", "--force-recreate", "--no-deps")')
     assert receipt_required < jobs_checked < digest_checked < backup < recreate
     assert 'candidate_receipt_status = if ($candidateReceiptData) { "verified" }' in SOURCE
+
+
+@pytest.mark.parametrize(
+    "mutation,valid",
+    [
+        ({}, True),
+        ({"source_id": "f" * 64}, False),
+        ({"reference": "192.168.1.175:8443/docker-hosted/ragflow:dev-latest"}, False),
+        ({"revision": "a" * 40}, False),
+        ({"version": "1.32.0"}, False),
+        ({"label": "release-qualified"}, False),
+        ({"digests": []}, False),
+        ({"architecture": "arm64"}, False),
+    ],
+)
+def test_feature_image_identity_requires_digest_and_source_provenance(mutation, valid):
+    pwsh = shutil.which("pwsh") or shutil.which("powershell")
+    if not pwsh:
+        pytest.skip("PowerShell is not installed")
+    source_id = "a" * 64
+    reference = "192.168.1.175:8443/docker-hosted/ragflow@sha256:" + "b" * 64
+    payload = {
+        "reference": reference,
+        "source_id": source_id,
+        "revision": "unverified",
+        "version": "1.32.0-dev." + source_id[:12],
+        "label": "feature-build-only",
+        "digests": [reference],
+        "architecture": "amd64",
+    } | mutation
+    command = (
+        f"$ast=[System.Management.Automation.Language.Parser]::ParseFile('{SCRIPT}', [ref]$null, [ref]$null); "
+        "$fn=$ast.Find({param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] "
+        "-and $node.Name -eq 'Test-FeatureImageIdentity'}, $true); "
+        ". ([scriptblock]::Create($fn.Extent.Text)); Set-StrictMode -Version Latest; "
+        "$data=$env:FEATURE_IMAGE_TEST | ConvertFrom-Json; "
+        "$inspection=[pscustomobject]@{Os='linux'; Architecture=$data.architecture; "
+        "Config=[pscustomobject]@{Labels=[pscustomobject]@{'org.ragflow.source-id'='" + source_id +
+        "'; 'org.ragflow.validation'=$data.label}}; RepoDigests=$data.digests}; "
+        "Test-FeatureImageIdentity -Reference $data.reference -SourceId $data.source_id "
+        "-Inspection $inspection -Revision $data.revision -Version $data.version"
+    )
+    result = subprocess.run(
+        [pwsh, "-NoProfile", "-Command", command],
+        env={**os.environ, "FEATURE_IMAGE_TEST": json.dumps(payload)},
+        capture_output=True, text=True, timeout=20,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().lower() == str(valid).lower()
+
+
+def test_feature_identity_is_checked_before_backup_or_recreate():
+    identity = SOURCE.index("Test-FeatureImageIdentity -Reference $featureImage")
+    backup = SOURCE.index('"pg_dump -U')
+    recreate = SOURCE.index('$upArguments = @("up", "-d", "--force-recreate", "--no-deps")')
+    assert identity < backup < recreate
+    assert '$backupRequired = $resolvedMode -in @("Feature", "Candidate", "Release")' in SOURCE
 
 
 def test_backup_reuse_requires_recent_verified_artifact():

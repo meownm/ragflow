@@ -187,8 +187,9 @@ class BusinessDocumentAIAdapter(Protocol):
 class RAGFlowLLMAdapter:
     """Thin injectable adapter over the tenant's configured default chat model."""
 
-    def __init__(self):
+    def __init__(self, model_name_override: str | None = None):
         self._execution_audit: dict[str, Any] | None = None
+        self._model_name_override = model_name_override
 
     def consume_execution_audit(self) -> dict[str, Any] | None:
         audit = self._execution_audit
@@ -207,6 +208,10 @@ class RAGFlowLLMAdapter:
         from common.constants import LLMType
 
         model_config = get_tenant_default_model_by_type(tenant_id, LLMType.CHAT)
+        if self._model_name_override is not None:
+            if model_config.get("llm_factory") != "Ollama":
+                raise ValueError("Quality model override requires Ollama")
+            model_config = {**model_config, "llm_name": self._model_name_override, "max_tokens": 4096}
         task_type = input_payload.get("job_input", {}).get("task_type")
         max_completion_tokens = 8192 if task_type in {"GENERATE_DRAFT", "GENERATE_EVA_CHANGE"} else 4096
         generation_parameters = {

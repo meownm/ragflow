@@ -29,6 +29,7 @@ export type CatalogEntity = {
   columns?: string[];
   column_details?: Array<{
     name: string;
+    display_name?: string | null;
     fqn: string;
     data_type: string;
     description: string;

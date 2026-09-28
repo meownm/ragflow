@@ -152,6 +152,29 @@ answers. Traceability must cover every case in both active suites.
 
 ## Model qualification
 
+The admin **Document quality** page also records quality runs without Grafana.
+Set `BUSINESS_DOCUMENT_QUALITY_TENANT_ID` in the application environment to a
+dedicated QA tenant with a configured default Chat model. The admin worker runs
+the deterministic golden suite and the live-model suite in a separate process,
+using disposable SQLite state and controlled evidence. It schedules one run per
+day at 02:00 Europe/Moscow and one per month on the first at 03:00; an admin
+can queue an additional run from the page. Schedule keys prevent duplicate
+runs after a restart. A missing tenant, test assets, or report produces
+`INCOMPLETE`, never a passing result. Results retain bounded scores, case
+statuses, model identity and source revision; generated document text is not
+stored in the admin run table. The page also shows operational job metrics,
+which are separate from model quality scores.
+The isolated suites enable related-file retrieval for their controlled evidence,
+independent of the production feature flag.
+Queued runs from a previous image revision are marked `INCOMPLETE` before
+execution. The dashboard keeps the latest 30 runs plus the latest 12 monthly
+runs. A failed deterministic suite records case IDs, statuses and failure
+counts without storing assertion text or generated document content.
+The local Compose overlay marks results as source-dirty because mounted files
+may differ from the image revision; these runs are diagnostic, not release
+qualification evidence.
+
+
 The deterministic scorer is a fail-closed proxy for the published rubric, not
 a substitute for expert semantic review. A candidate model is qualified only
 by a fresh live run against the candidate revision and current prompt,

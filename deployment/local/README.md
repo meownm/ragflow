@@ -1,5 +1,54 @@
 # Локальный деплой без служебных веток
 
+## Быстрый образ из текущего checkout
+
+Когда для проверки фичи нужен полный Linux-образ, а не bind-mount цикл, запустите
+сборку из текущего checkout без commit и push:
+
+```powershell
+.venv\Scripts\python.exe deployment\local\build-feature.py
+```
+
+Новые файлы нужно перечислить по одному: `--include admin/server/new_module.py`.
+Скрипт откажется собирать образ, если остались неучтённые untracked-файлы. Он
+создаёт проверяемый снимок отслеживаемых файлов и явно выбранных новых файлов,
+передаёт его по SSH на `192.168.1.175`, собирает C++/Go и Docker-образ, проверяет
+метаданные и импорт приложения, затем публикует образ
+`192.168.1.175:8443/docker-hosted/ragflow:dev-<source_id>` в Nexus. В выводе есть
+полный digest для точного повторного pull. Образ имеет метку
+`org.ragflow.validation=feature-build-only` и `SOURCE_REVISION=unverified`;
+он не является релизным кандидатом. При ошибке сборка или публикация завершается
+без успешного digest. Требуются SSH-ключ
+`~/.ssh/ragflow_nuc8_ed25519`, подготовленные native/Go-кэши на Ubuntu и доступный
+Nexus. Полная регрессия выполняется релизным workflow; вручную её можно запустить
+через `workflow_dispatch`.
+
+Для локальной проверки опубликованного dev-образа используйте оба значения из
+вывода сборки — `DIGEST` и `SOURCE_ID`:
+
+```powershell
+.\deployment\local\deploy.ps1 -Mode Feature `
+  -FeatureImageReference '<DIGEST>' `
+  -FeatureSourceId '<SOURCE_ID>' `
+  -CheckOnly
+.\deployment\local\deploy.ps1 -Mode Feature `
+  -FeatureImageReference '<DIGEST>' `
+  -FeatureSourceId '<SOURCE_ID>'
+```
+
+`Feature` принимает только digest из Nexus. Перед изменением локального Docker
+Desktop он сверяет хеш снимка, метки dev-образа, архитектуру, `VERSION`,
+`SOURCE_REVISION=unverified` и импорт приложения. Затем применяет тот же
+проверяемый backup, recreate и health checks, что и Candidate. `-CheckOnly`
+проверяет параметры и Compose без pull и без переключения контейнеров; полная
+проверка образа происходит при выполнении деплоя. В `deployment.json` dev-образ
+помечается полями `feature_*` и не получает статус релизного кандидата.
+`Auto` не выбирает `Feature`: для каждого нового dev-образа передайте его digest
+и `SOURCE_ID` явно.
+На этой Windows-машине Docker уже авторизован в Nexus отдельным пользователем
+с правами только на чтение `docker-hosted`; на другом компьютере потребуется
+собственный `docker login 192.168.1.175:8443`.
+
 Обычный локальный деплой автоматически выбирает быстрый bind-mount цикл или
 неизменяемый CI-кандидат:
 
@@ -37,7 +86,8 @@ ASR пересобирается отдельно, а несмонтирован
    .\deployment\local\deploy.ps1 -Mode Fast
    ```
 
-5. Развернуть прошедший CI кандидат:
+5. Перед подготовкой релиза вручную запустить workflow `tests` на `main`;
+   после прохождения проверок он публикует CI-кандидат. Затем развернуть его:
 
    ```powershell
    .\deployment\local\deploy.ps1 -Mode Candidate -CandidateRevision <full-40-char-sha>

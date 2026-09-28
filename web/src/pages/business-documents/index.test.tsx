@@ -860,6 +860,9 @@ test('offers personal-token EVA actions for a verified page binding', async () =
   });
   renderPage();
 
+  fireEvent.click(
+    await screen.findByTestId('business-document-details-toggle'),
+  );
   expect(
     await screen.findByTestId('business-document-eva-binding'),
   ).toHaveTextContent('Переводы одной кнопкой');
@@ -905,6 +908,9 @@ test('hides EVA write action without a personal token and does not offer an unch
 
   renderPage();
 
+  fireEvent.click(
+    await screen.findByTestId('business-document-details-toggle'),
+  );
   expect(
     await screen.findByTestId('business-document-eva-binding'),
   ).toBeVisible();
@@ -962,6 +968,9 @@ test('reconnects a linked EVA page before offering its newer version', async () 
 
   renderPage();
 
+  fireEvent.click(
+    await screen.findByTestId('business-document-details-toggle'),
+  );
   fireEvent.click(await screen.findByTestId('rebind-business-document-to-eva'));
   await waitFor(() =>
     expect(mockedRebindEvaDocument).toHaveBeenCalledWith('doc-1', 18),
@@ -1007,6 +1016,9 @@ test('reconnects a link-only EVA page after a connector becomes available', asyn
   mockedRebindEvaDocument.mockResolvedValueOnce(connected);
   renderPage();
 
+  fireEvent.click(
+    await screen.findByTestId('business-document-details-toggle'),
+  );
   expect(
     await screen.findByText('Только ссылка — доступный коннектор не найден'),
   ).toBeVisible();
@@ -1038,6 +1050,9 @@ test('does not check or offer EVA pull until the first local revision exists', a
   });
   renderPage();
 
+  fireEvent.click(
+    await screen.findByTestId('business-document-details-toggle'),
+  );
   expect(
     await screen.findByTestId('business-document-eva-binding'),
   ).toBeVisible();
@@ -1063,6 +1078,9 @@ test('opens the guarded EVA publication workflow from an agreed revision', async
   });
   renderPage();
 
+  fireEvent.click(
+    await screen.findByTestId('business-document-details-toggle'),
+  );
   fireEvent.click(await screen.findByTestId('push-business-document-to-eva'));
   await waitFor(() =>
     expect(mockedCreateEvaFromDocument).toHaveBeenCalledWith('doc-1', 18),
@@ -2035,6 +2053,12 @@ test('shows affected sections during review analysis and navigates to a section'
   const activity = await screen.findByTestId(
     'business-document-review-activity',
   );
+  expect(screen.getByTestId('business-document-activity')).toContainElement(
+    activity,
+  );
+  expect(screen.getByTestId('business-document-activity')).toContainElement(
+    screen.getByTestId('business-document-operation'),
+  );
   expect(activity).toHaveTextContent('Замечания анализируются');
   expect(
     within(activity).getByRole('button', { name: '§ 1 · 1' }),
@@ -2721,6 +2745,9 @@ test('allows an extended moderator to assign a document owner', async () => {
   mockedAssignOwner.mockResolvedValueOnce(assigned);
   renderPage('/business-documents/doc-1');
 
+  fireEvent.click(
+    await screen.findByTestId('business-document-details-toggle'),
+  );
   fireEvent.click(await screen.findByTestId('business-document-owner-select'));
   expect(screen.getByText('Владелец: Первый автор')).toBeVisible();
   expect(

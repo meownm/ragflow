@@ -79,7 +79,8 @@ Provision the LAN-only TLS registry once:
 sudo REGISTRY_HOST=192.168.1.175 bash deployment/runner/setup-candidate-registry.sh
 ```
 
-After preflight and any selected engine jobs pass, `tests.yml` builds and publishes
+When `tests.yml` is started manually on `main`, after preflight and any selected
+engine jobs pass, it builds and publishes
 `192.168.1.175:5443/ragflow:<full-git-sha>`. The workflow verifies
 `SOURCE_REVISION` and imports `business_documents` before pushing. The registry is
 not a release publisher and the runner still has no `ragflow-release` label.

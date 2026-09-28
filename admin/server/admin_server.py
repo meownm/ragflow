@@ -37,6 +37,7 @@ from auth import init_default_admin, setup_auth
 from flask_session import Session
 from common.versions import get_ragflow_version
 from common.observability import configure_otel, install_flask_instrumentation
+from document_quality_runs import process_next_run, schedule_due
 
 stop_event = threading.Event()
 
@@ -67,6 +68,17 @@ if __name__ == "__main__":
     setup_auth(login_manager)
     init_default_admin()
     SERVICE_CONFIGS.configs = load_configurations(SERVICE_CONF)
+
+    def quality_worker():
+        while not stop_event.is_set():
+            try:
+                schedule_due()
+                process_next_run()
+            except Exception:
+                logging.exception("Business Documents quality scheduler failed")
+            stop_event.wait(5)
+
+    threading.Thread(target=quality_worker, daemon=True, name="business-document-quality").start()
 
     try:
         logging.info(f"RAGFlow admin is ready after {time.time() - start_ts}s initialization.")

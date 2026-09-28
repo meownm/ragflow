@@ -257,7 +257,7 @@ export function DocumentPane({
       data-testid="business-document-pane"
       aria-label="Документ"
     >
-      <div className="flex h-11 shrink-0 items-center justify-between border-b border-border-button px-5">
+      <div className="flex h-9 shrink-0 items-center justify-between border-b border-border-button px-5">
         <div className="flex items-center gap-2 text-sm font-medium text-text-primary">
           <FileText className="size-4 text-text-secondary" />
           Документ
@@ -289,7 +289,7 @@ export function DocumentPane({
         <div
           ref={paneRef}
           onMouseUp={captureSelection}
-          className="min-h-0 flex-1 overflow-y-auto px-6 py-8 scrollbar-auto md:px-10 lg:px-14"
+          className="min-h-0 flex-1 overflow-y-auto px-6 pt-4 pb-8 scrollbar-auto md:px-10 lg:px-14"
           data-testid="business-document-markdown"
         >
           <article className="mx-auto max-w-[860px] text-[15px] leading-7 text-text-primary">

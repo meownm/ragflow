@@ -291,7 +291,7 @@ elif [[ "${INIT_MODEL_PROVIDER_TABLES}" -eq 1 ]]; then
 fi
 
 if [[ "${ENABLE_ADMIN_SERVER}" -eq 1 ]]; then
-    if [[ "${API_PROXY_SCHEME}" == "hybrid" ]] || [[ "${API_PROXY_SCHEME}" == "python" ]]; then
+    if [[ "${API_PROXY_SCHEME}" == "hybrid" ]] || [[ "${API_PROXY_SCHEME}" == "python" ]] || [[ "${API_PROXY_SCHEME}" == "go" ]]; then
         while true; do
             echo "Attempt to start Admin python server..."
             "$PY" admin/server/admin_server.py

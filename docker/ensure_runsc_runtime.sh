@@ -8,9 +8,15 @@ runtime_is_registered() {
 }
 
 register_runtime() {
-    dockerd_pid="$(pidof dockerd | awk '{print $1}')"
+    dockerd_pid=""
+    for candidate in $(pidof dockerd); do
+        if [ -r "/proc/${candidate}/cmdline" ] && tr '\000' ' ' < "/proc/${candidate}/cmdline" | grep -Fq -- '--config-file /run/config/docker/daemon.json'; then
+            dockerd_pid="${candidate}"
+            break
+        fi
+    done
     if [ -z "${dockerd_pid}" ]; then
-        echo "runsc bootstrap: dockerd PID is unavailable" >&2
+        echo "runsc bootstrap: Docker Desktop dockerd PID is unavailable" >&2
         return 1
     fi
 

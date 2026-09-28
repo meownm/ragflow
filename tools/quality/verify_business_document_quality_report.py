@@ -162,8 +162,11 @@ def verify_report(report_path: Path, root: Path, expected_revision: str | None =
         "case_results",
         "metrics",
     }
-    if set(report) != required or report["schema_version"] != "2":
+    optional = {"active_case_id", "diagnostic_case_id", "source_dirty", "model_weights_digest"}
+    if not required <= set(report) or set(report) - required - optional or report["schema_version"] != "2":
         raise ValueError("Invalid report envelope")
+    if report.get("active_case_id") is not None or report.get("diagnostic_case_id") is not None:
+        raise QualityGateFailed("Live model report is incomplete")
     if report["status"] != "PASS":
         raise QualityGateFailed("Live model report is not PASS")
     if report["scoring_method"] != "deterministic_proxy":
@@ -195,7 +198,7 @@ def verify_report(report_path: Path, root: Path, expected_revision: str | None =
         raise ValueError("Invalid live golden case results")
     scored_cases: list[tuple[str, dict[str, Any]]] = []
     for expected_case, result in zip(golden["cases"], case_results, strict=True):
-        if not isinstance(result, dict) or set(result) != {"case_id", "priority", "status", "failures", "metrics"}:
+        if not isinstance(result, dict) or not {"case_id", "priority", "status", "failures", "metrics"} <= set(result) or set(result) - {"case_id", "priority", "status", "failures", "metrics", "duration_ms"}:
             raise ValueError("Invalid live golden case result")
         if result["case_id"] != expected_case["id"] or result["priority"] != expected_case["priority"]:
             raise QualityGateFailed("Live golden case identity does not match the suite")

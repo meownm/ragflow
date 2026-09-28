@@ -110,134 +110,167 @@ export default function SourceWorkspacesPage() {
   };
 
   return (
-    <main className="mx-auto max-w-7xl px-6 py-8">
-      <div className="mb-6 flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold text-text-primary">
-            Работа со статьями
-          </h1>
-          <p className="mt-1 text-sm text-text-secondary">
-            Найдите статьи и сохраните набор источников для дальнейшей работы.
-          </p>
-        </div>
-        {active && (
-          <Button
-            type="button"
-            variant="outline"
-            disabled={processingBusy || selectionBusy}
-            onClick={() => setActive(null)}
-          >
-            К подборкам
-          </Button>
-        )}
-      </div>
-
-      {error && (
-        <p role="alert" className="mb-4 text-sm text-state-error">
-          {error}
-        </p>
-      )}
-
-      {active ? (
-        <>
-          <div className="mb-6">
-            <h2 className="text-lg font-medium">{active.title}</h2>
-            <p className="mt-1 text-xs text-text-secondary">
-              Базы знаний:{' '}
-              {active.dataset_ids
-                .map((id) => datasetNames[id] || id)
-                .join(', ')}
+    <main className="h-full min-h-0 overflow-y-auto scrollbar-auto">
+      <div className="mx-auto max-w-7xl px-6 py-8">
+        <div className="mb-6 flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-semibold text-text-primary">
+              Работа со статьями
+            </h1>
+            <p className="mt-1 text-sm text-text-secondary">
+              Найдите статьи и сохраните набор источников для дальнейшей работы.
             </p>
           </div>
-          <SourcePicker
-            key={active.id}
-            workspace={active}
-            datasetNames={datasetNames}
-            selectionLocked={processingBusy}
-            onChange={update}
-            onMutationChange={setSelectionBusy}
-          />
-          <SourceChat key={active.id} workspace={active} />
-          <SourceProcessor
-            key={active.id}
-            workspace={active}
-            selectionBusy={selectionBusy}
-            onBusyChange={setProcessingBusy}
-          />
-        </>
-      ) : (
-        <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_22rem]">
-          <section>
-            <h2 className="text-lg font-medium">Сохранённые подборки</h2>
-            {!workspaces.length && (
-              <p className="mt-4 text-sm text-text-secondary">
-                Подборок пока нет.
-              </p>
-            )}
-            <ul className="mt-4 space-y-2">
-              {workspaces.map((workspace) => (
-                <li key={workspace.id}>
-                  <button
-                    type="button"
-                    className="w-full rounded-md border border-border-button p-4 text-start hover:bg-bg-card"
-                    disabled={busy}
-                    onClick={() => open(workspace.id)}
-                  >
-                    <span className="block font-medium">{workspace.title}</span>
-                    <span className="mt-1 block text-xs text-text-secondary">
-                      Статей: {workspace.selected_documents.length}
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </section>
-          <form
-            className="rounded-md border border-border-button p-4"
-            onSubmit={create}
-          >
-            <h2 className="font-medium">Новая подборка</h2>
-            <Input
-              className="mt-4"
-              aria-label="Название подборки"
-              maxLength={255}
-              placeholder="Например, согласование требований"
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-            />
-            <p className="mt-5 text-sm font-medium">Где искать</p>
-            <div className="mt-2 max-h-60 space-y-2 overflow-y-auto">
-              {datasets.map((dataset) => (
-                <label
-                  key={dataset.id}
-                  className="flex items-start gap-2 text-sm"
-                >
-                  <input
-                    type="checkbox"
-                    className="mt-1 accent-accent-primary"
-                    checked={datasetIds.includes(dataset.id)}
-                    onChange={() =>
-                      setDatasetIds((previous) =>
-                        previous.includes(dataset.id)
-                          ? previous.filter((id) => id !== dataset.id)
-                          : [...previous, dataset.id],
-                      )
-                    }
-                  />
-                  <span>{dataset.name}</span>
-                </label>
-              ))}
-            </div>
+          {active && (
             <Button
-              className="mt-5"
-              type="submit"
-              disabled={busy || !title.trim() || !datasetIds.length}
+              type="button"
+              variant="outline"
+              disabled={processingBusy || selectionBusy}
+              onClick={() => setActive(null)}
             >
-              Создать
+              К подборкам
             </Button>
-          </form>
+          )}
         </div>
-      )}
+
+        {error && (
+          <p role="alert" className="mb-4 text-sm text-state-error">
+            {error}
+          </p>
+        )}
+
+        {active ? (
+          <>
+            <div className="mb-6">
+              <h2 className="text-lg font-medium">{active.title}</h2>
+              <p className="mt-1 text-xs text-text-secondary">
+                Базы знаний:{' '}
+                {active.dataset_ids
+                  .map((id) => datasetNames[id] || id)
+                  .join(', ')}
+              </p>
+            </div>
+            <nav
+              aria-label="Этапы работы со статьями"
+              className="sticky top-0 z-10 mb-6 flex flex-wrap gap-4 border-b border-border-button bg-bg-base py-3 text-sm"
+            >
+              <a
+                className="text-accent-primary hover:underline"
+                href="#source-picker"
+              >
+                Источники · {active.selected_documents.length} выбрано
+              </a>
+              <a
+                className="text-accent-primary hover:underline"
+                href="#source-questions"
+              >
+                Вопросы
+              </a>
+              <a
+                className="text-accent-primary hover:underline"
+                href="#source-processing"
+              >
+                Обработка
+              </a>
+            </nav>
+            <div id="source-picker" className="scroll-mt-16">
+              <SourcePicker
+                key={active.id}
+                workspace={active}
+                datasetNames={datasetNames}
+                selectionLocked={processingBusy}
+                onChange={update}
+                onMutationChange={setSelectionBusy}
+              />
+            </div>
+            <div id="source-questions" className="scroll-mt-16">
+              <SourceChat key={active.id} workspace={active} />
+            </div>
+            <div id="source-processing" className="scroll-mt-16">
+              <SourceProcessor
+                key={active.id}
+                workspace={active}
+                selectionBusy={selectionBusy}
+                onBusyChange={setProcessingBusy}
+              />
+            </div>
+          </>
+        ) : (
+          <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_22rem]">
+            <section>
+              <h2 className="text-lg font-medium">Сохранённые подборки</h2>
+              {!workspaces.length && (
+                <p className="mt-4 text-sm text-text-secondary">
+                  Подборок пока нет.
+                </p>
+              )}
+              <ul className="mt-4 space-y-2">
+                {workspaces.map((workspace) => (
+                  <li key={workspace.id}>
+                    <button
+                      type="button"
+                      className="w-full rounded-md border border-border-button p-4 text-start hover:bg-bg-card"
+                      disabled={busy}
+                      onClick={() => open(workspace.id)}
+                    >
+                      <span className="block font-medium">
+                        {workspace.title}
+                      </span>
+                      <span className="mt-1 block text-xs text-text-secondary">
+                        Статей: {workspace.selected_documents.length}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+            <form
+              className="rounded-md border border-border-button p-4"
+              onSubmit={create}
+            >
+              <h2 className="font-medium">Новая подборка</h2>
+              <Input
+                className="mt-4"
+                aria-label="Название подборки"
+                maxLength={255}
+                placeholder="Например, согласование требований"
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+              />
+              <p className="mt-5 text-sm font-medium">Где искать</p>
+              <div className="mt-2 max-h-60 space-y-2 overflow-y-auto">
+                {datasets.map((dataset) => (
+                  <label
+                    key={dataset.id}
+                    className="flex items-start gap-2 text-sm"
+                  >
+                    <input
+                      type="checkbox"
+                      className="mt-1 accent-accent-primary"
+                      checked={datasetIds.includes(dataset.id)}
+                      onChange={() =>
+                        setDatasetIds((previous) =>
+                          previous.includes(dataset.id)
+                            ? previous.filter((id) => id !== dataset.id)
+                            : [...previous, dataset.id],
+                        )
+                      }
+                    />
+                    <span>{dataset.name}</span>
+                  </label>
+                ))}
+              </div>
+              <Button
+                className="mt-5"
+                type="submit"
+                disabled={busy || !title.trim() || !datasetIds.length}
+              >
+                Создать
+              </Button>
+            </form>
+          </div>
+        )}
+      </div>
     </main>
   );
 }

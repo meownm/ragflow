@@ -106,6 +106,7 @@ class CatalogSource:
 class CatalogColumn:
     id: str
     name: str
+    display_name: str | None
     fqn: str
     data_type: str
     description: str
@@ -116,6 +117,7 @@ class CatalogColumn:
         return {
             "id": self.id,
             "name": self.name,
+            "display_name": self.display_name,
             "fqn": self.fqn,
             "data_type": self.data_type,
             "description": self.description,
@@ -348,13 +350,14 @@ def _freshness(value: Any) -> CatalogFreshness:
 def _column(raw: Any, table_fqn: str) -> CatalogColumn | None:
     if not isinstance(raw, Mapping):
         return None
-    name = _optional_mapping_text(raw.get("name"))
+    name = _optional_mapping_text(raw.get("technical_name")) or _optional_mapping_text(raw.get("name"))
     if not name:
         return None
     fqn = _optional_mapping_text(raw.get("fqn")) or f"{table_fqn}.{name}"
     return CatalogColumn(
         id=fqn,
         name=name[:500],
+        display_name=_optional_mapping_text(raw.get("name")) if raw.get("name") != name else None,
         fqn=fqn[:1_000],
         data_type=(_optional_mapping_text(raw.get("data_type")) or "")[:500],
         description=(_optional_mapping_text(raw.get("description")) or "")[:10_000],
@@ -387,6 +390,7 @@ def _preview_columns(raw_columns: Any, *, term: str, table_fqn: str) -> tuple[Ca
         return ()
     expected = _normalized_identifier(term)
     exact: list[CatalogColumn] = []
+    partial: list[CatalogColumn] = []
     fallback: list[CatalogColumn] = []
     seen: set[str] = set()
     for raw in raw_columns:
@@ -396,11 +400,13 @@ def _preview_columns(raw_columns: Any, *, term: str, table_fqn: str) -> tuple[Ca
         seen.add(column.id)
         if len(fallback) < 3:
             fallback.append(column)
-        if expected and any(expected in _normalized_identifier(value) for value in (column.name, column.fqn)):
+        names = (column.name, raw.get("name"))
+        normalized_names = tuple(_normalized_identifier(value) for value in names)
+        if expected and (expected in normalized_names or expected == _normalized_identifier(column.fqn)):
             exact.append(column)
-            if len(exact) >= MAX_SEARCH_COLUMNS_PER_CANDIDATE:
-                break
-    return tuple(exact or fallback)
+        elif expected and any(expected in value for value in normalized_names):
+            partial.append(column)
+    return tuple((exact + partial)[:MAX_SEARCH_COLUMNS_PER_CANDIDATE] or fallback)
 
 
 def _all_columns(raw_columns: Any, *, table_fqn: str) -> tuple[CatalogColumn, ...]:
@@ -449,9 +455,21 @@ def _candidate(raw: Any, *, term: str, include_all_columns: bool) -> CatalogCand
         description=(_optional_mapping_text(raw.get("description")) or "")[:10_000],
         version=_number(raw.get("version")),
         updated_at=_optional_mapping_text(raw.get("updated_at")),
-        service=(_optional_mapping_text(raw.get("service")) or "")[:500],
-        schema=(_optional_mapping_text(raw.get("schema")) or "")[:500],
-        database=(_optional_mapping_text(raw.get("database")) or "")[:500],
+        service=(
+            _optional_mapping_text(raw.get("service_technical_name"))
+            or _optional_mapping_text(raw.get("service"))
+            or ""
+        )[:500],
+        schema=(
+            _optional_mapping_text(raw.get("schema_technical_name"))
+            or _optional_mapping_text(raw.get("schema"))
+            or ""
+        )[:500],
+        database=(
+            _optional_mapping_text(raw.get("database_technical_name"))
+            or _optional_mapping_text(raw.get("database"))
+            or ""
+        )[:500],
         owners=_unique_texts(raw.get("owners")),
         domains=_unique_texts(raw.get("domains")),
         tags=_unique_texts(raw.get("tags")),

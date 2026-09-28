@@ -110,6 +110,15 @@ def test_quality_report_verifier_accepts_exact_current_assets(tmp_path):
     assert result["model"] == "qualified-model"
 
 
+def test_quality_report_verifier_accepts_runtime_progress_fields(tmp_path):
+    report = _report()
+    report.update({"active_case_id": None, "diagnostic_case_id": None, "source_dirty": True, "model_weights_digest": ""})
+    for case in report["case_results"]:
+        case["duration_ms"] = 1200
+
+    assert verify_report(_write(tmp_path, report), ROOT, "candidate-sha")["status"] == "PASS"
+
+
 @pytest.mark.parametrize(
     "mutation",
     [

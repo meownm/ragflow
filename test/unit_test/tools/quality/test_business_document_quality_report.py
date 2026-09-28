@@ -45,10 +45,7 @@ def _report() -> dict:
         "rubric_id": rubric["rubric_id"],
         "rubric_version": rubric["rubric_version"],
         "template_version": template["template_version"],
-        "prompts": {
-            name: f"sha256:{hashlib.sha256((ROOT / 'agent/business_requirements/prompts' / name).read_bytes()).hexdigest()}"
-            for name in prompt_names
-        },
+        "prompts": {name: f"sha256:{hashlib.sha256((ROOT / 'agent/business_requirements/prompts' / name).read_bytes()).hexdigest()}" for name in prompt_names},
         "golden_suite": {
             "suite_id": golden["suite_id"],
             "suite_version": golden["suite_version"],

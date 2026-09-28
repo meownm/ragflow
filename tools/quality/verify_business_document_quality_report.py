@@ -84,12 +84,7 @@ def _verify_case_metrics(metrics: Any, weights: dict[str, float], rubric: dict[s
         "misplacement_rate",
         "contradiction_rate",
     )
-    if any(
-        isinstance(metrics[name], bool)
-        or not isinstance(metrics[name], (int, float))
-        or not math.isfinite(metrics[name])
-        for name in numeric_rates
-    ):
+    if any(isinstance(metrics[name], bool) or not isinstance(metrics[name], (int, float)) or not math.isfinite(metrics[name]) for name in numeric_rates):
         raise ValueError("Case metrics contain an invalid numeric value")
     if any(isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 4 for value in scores.values()):
         raise ValueError("Case criterion score is outside the published range")
@@ -142,10 +137,7 @@ def verify_report(report_path: Path, root: Path, expected_revision: str | None =
     golden_path = asset_root / "golden_model_quality" / "v1.json"
     golden = _json(golden_path)
     prompt_names = ("intake.v1.md", "draft.v1.md", "review.v1.md", "change_planner.v1.md")
-    prompt_hashes = {
-        name: f"sha256:{hashlib.sha256((asset_root / 'prompts' / name).read_bytes()).hexdigest()}"
-        for name in prompt_names
-    }
+    prompt_hashes = {name: f"sha256:{hashlib.sha256((asset_root / 'prompts' / name).read_bytes()).hexdigest()}" for name in prompt_names}
 
     required = {
         "schema_version",
@@ -198,7 +190,11 @@ def verify_report(report_path: Path, root: Path, expected_revision: str | None =
         raise ValueError("Invalid live golden case results")
     scored_cases: list[tuple[str, dict[str, Any]]] = []
     for expected_case, result in zip(golden["cases"], case_results, strict=True):
-        if not isinstance(result, dict) or not {"case_id", "priority", "status", "failures", "metrics"} <= set(result) or set(result) - {"case_id", "priority", "status", "failures", "metrics", "duration_ms"}:
+        if (
+            not isinstance(result, dict)
+            or not {"case_id", "priority", "status", "failures", "metrics"} <= set(result)
+            or set(result) - {"case_id", "priority", "status", "failures", "metrics", "duration_ms"}
+        ):
             raise ValueError("Invalid live golden case result")
         if result["case_id"] != expected_case["id"] or result["priority"] != expected_case["priority"]:
             raise QualityGateFailed("Live golden case identity does not match the suite")
@@ -242,14 +238,9 @@ def verify_report(report_path: Path, root: Path, expected_revision: str | None =
         raise ValueError("Weighted score is inconsistent")
     if not scored_cases:
         raise QualityGateFailed("Live golden suite contains no scored draft cases")
-    expected_scores = {
-        criterion: sum(case_metrics["criterion_scores"][criterion] for _, case_metrics in scored_cases) / len(scored_cases)
-        for criterion in weights
-    }
+    expected_scores = {criterion: sum(case_metrics["criterion_scores"][criterion] for _, case_metrics in scored_cases) / len(scored_cases) for criterion in weights}
     expected_weighted = sum(case_metrics["weighted_score"] for _, case_metrics in scored_cases) / len(scored_cases)
-    if any(not math.isclose(scores[key], expected_scores[key], abs_tol=1e-9) for key in weights) or not math.isclose(
-        weighted_score, expected_weighted, abs_tol=1e-9
-    ):
+    if any(not math.isclose(scores[key], expected_scores[key], abs_tol=1e-9) for key in weights) or not math.isclose(weighted_score, expected_weighted, abs_tol=1e-9):
         raise ValueError("Aggregate scores do not match case-level evidence")
     if weighted_score < rubric["pass_threshold"]:
         raise QualityGateFailed("Weighted quality score is below the release threshold")
@@ -259,13 +250,9 @@ def verify_report(report_path: Path, root: Path, expected_revision: str | None =
             raise ValueError(f"{metric_name} is invalid")
         if rate < rubric["live_suite_gate"][threshold_name]:
             raise QualityGateFailed(f"{metric_name} is below the release threshold")
-    expected_p0_rate = sum(result["status"] == "PASS" for result in case_results if result["priority"] == "P0") / sum(
-        result["priority"] == "P0" for result in case_results
-    )
+    expected_p0_rate = sum(result["status"] == "PASS" for result in case_results if result["priority"] == "P0") / sum(result["priority"] == "P0" for result in case_results)
     expected_all_rate = sum(result["status"] == "PASS" for result in case_results) / len(case_results)
-    if not math.isclose(metrics["p0_case_pass_rate"], expected_p0_rate) or not math.isclose(
-        metrics["all_case_pass_rate"], expected_all_rate
-    ):
+    if not math.isclose(metrics["p0_case_pass_rate"], expected_p0_rate) or not math.isclose(metrics["all_case_pass_rate"], expected_all_rate):
         raise ValueError("Aggregate case pass rate does not match case-level evidence")
     if metrics["hard_failures"]:
         raise QualityGateFailed("Live model report contains a hard failure")
@@ -308,12 +295,8 @@ def verify_report(report_path: Path, root: Path, expected_revision: str | None =
     if len(duplicate_content) != metrics["duplicate_content_count"]:
         raise ValueError("Duplicate content count and details are inconsistent")
 
-    expected_duplicates = [
-        f"{case_id}:{item}" for case_id, case_metrics in scored_cases for item in case_metrics["duplicate_content"]
-    ]
-    expected_contradictions = [
-        f"{case_id}:{item}" for case_id, case_metrics in scored_cases for item in case_metrics["contradictions"]
-    ]
+    expected_duplicates = [f"{case_id}:{item}" for case_id, case_metrics in scored_cases for item in case_metrics["duplicate_content"]]
+    expected_contradictions = [f"{case_id}:{item}" for case_id, case_metrics in scored_cases for item in case_metrics["contradictions"]]
     expected_aggregate = {
         "grounded_reference_precision": min(case_metrics["grounded_reference_precision"] for _, case_metrics in scored_cases),
         "grounded_claim_count": sum(case_metrics["grounded_claim_count"] for _, case_metrics in scored_cases),

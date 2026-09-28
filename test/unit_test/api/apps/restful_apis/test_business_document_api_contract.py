@@ -11,7 +11,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-
 API_PATH = Path(__file__).parents[5] / "api" / "apps" / "restful_apis" / "business_document_api.py"
 
 
@@ -33,6 +32,7 @@ EXPECTED_ROUTES = {
     "create_business_document_sql_query_project": ("/business-documents/sql-query/projects", ("POST",)),
     "list_business_document_sql_query_projects": ("/business-documents/sql-query/projects", ("GET",)),
     "get_business_document_sql_query_project": ("/business-documents/sql-query/projects/<project_id>", ("GET",)),
+    "revise_business_document_sql_query_question": ("/business-documents/sql-query/projects/<project_id>/question", ("POST",)),
     "compile_business_document_sql_project": ("/business-documents/sql-query/projects/<project_id>/compilations", ("POST",)),
     "preflight_business_document_sql_project": ("/business-documents/sql-query/projects/<project_id>/preflight", ("GET",)),
     "run_business_document_sql_project": ("/business-documents/sql-query/projects/<project_id>/runs", ("POST",)),
@@ -145,6 +145,7 @@ def test_mutating_routes_read_json_and_all_routes_map_domain_errors():
             "update_business_document_access_user",
             "assign_business_document_owner",
             "create_business_document_sql_query_project",
+            "revise_business_document_sql_query_question",
             "request_business_document_sql_agent",
             "decide_business_document_sql_agent_proposal",
             "resolve_business_document_sql_schema",
@@ -152,6 +153,7 @@ def test_mutating_routes_read_json_and_all_routes_map_domain_errors():
             "plan_business_document_sql_query",
             "compile_business_document_sql_query",
             "compile_business_document_sql_project",
+            "validate_business_document_sql_manual_query",
             "run_business_document_sql_project",
             "cancel_business_document_sql_run",
             "complete_business_document_sql_project",

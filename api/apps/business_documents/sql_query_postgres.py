@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 import re
 import threading
+from collections.abc import Callable, Mapping
 from time import monotonic
-from typing import Any, Callable, Mapping
+from typing import Any
 
 import psycopg2
 
@@ -37,8 +38,12 @@ def explain_postgres(config: Mapping[str, Any], sql: str, parameters: Mapping[st
         raise BusinessDocumentError("SQL_SOURCE_UNAVAILABLE", "PostgreSQL source is unavailable", 503)
     try:
         with psycopg2.connect(
-            host=config["host"], port=int(config["port"]), dbname=config["database"],
-            user=credentials["username"], password=credentials["password"], connect_timeout=5,
+            host=config["host"],
+            port=int(config["port"]),
+            dbname=config["database"],
+            user=credentials["username"],
+            password=credentials["password"],
+            connect_timeout=5,
         ) as connection:
             connection.set_session(readonly=True, autocommit=False)
             with connection.cursor() as cursor:
@@ -67,14 +72,18 @@ def execute_postgres(
     cancel_requested = threading.Event()
     try:
         with psycopg2.connect(
-            host=config["host"], port=int(config["port"]), dbname=config["database"],
-            user=credentials["username"], password=credentials["password"],
+            host=config["host"],
+            port=int(config["port"]),
+            dbname=config["database"],
+            user=credentials["username"],
+            password=credentials["password"],
             connect_timeout=5,
         ) as connection:
             connection.set_session(readonly=True, autocommit=False)
             stop_watcher = threading.Event()
             watcher = None
             if should_cancel is not None:
+
                 def watch_cancel() -> None:
                     while not stop_watcher.wait(0.5):
                         try:

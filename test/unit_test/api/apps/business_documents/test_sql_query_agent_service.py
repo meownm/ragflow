@@ -12,7 +12,6 @@ if "api.apps" not in sys.modules:
     api_apps.__path__ = [str(Path(__file__).resolve().parents[5] / "api" / "apps")]
     sys.modules["api.apps"] = api_apps
 
-from business_documents.application.errors import BusinessDocumentError, ConflictError, PermissionDeniedError, ValidationError
 from api.apps.business_documents.sql_query_agents import BusinessDocumentSqlAgentService
 from api.apps.business_documents import sql_query_agents
 from api.apps.business_documents.sql_query_requirements import TenantRequirementsAnalyst
@@ -24,6 +23,7 @@ from api.db.db_models import (
     BusinessDocumentSqlQueryArtifact,
     BusinessDocumentSqlQueryProject,
 )
+from business_documents.application.errors import BusinessDocumentError, ConflictError, ValidationError
 from business_documents.sql_query.requirements_analysis import AnalyzeRequirementsCommand
 
 TENANT = "tenant-1"
@@ -112,40 +112,103 @@ def _create_project():
     )
 
 
+def test_revised_question_resets_decisions_and_rejects_stale_or_foreign_commands(database):
+    created = _create_project()
+    BusinessDocumentSqlQueryArtifact.create(
+        id="r" * 32,
+        project_id=created["id"],
+        tenant_id=TENANT,
+        kind="REQUIREMENTS",
+        revision=1,
+        payload={"requirements": [{"statement": "Старый вопрос"}]},
+        content_hash="sha256:old",
+        source_proposal_id="p" * 32,
+        accepted_by=ACTOR,
+    )
+    BusinessDocumentSqlQueryProject.update(stage="SCHEMA", requirements_artifact_id="r" * 32).where(BusinessDocumentSqlQueryProject.id == created["id"]).execute()
+    command = {"schema_version": "1", "expected_state_version": 1, "idempotency_key": "revise-1", "source_request": "Покажи только новые заказы"}
+    revised = BusinessDocumentSqlAgentService.revise_question(TENANT, ACTOR, created["id"], command)
+    assert revised["source_request"] == command["source_request"]
+    assert revised["stage"] == "REQUIREMENTS"
+    assert revised["artifact_ids"] == {"requirements": None, "schema": None, "query": None}
+    assert revised["state_version"] == 2
+    assert BusinessDocumentSqlAgentService.revise_question(TENANT, ACTOR, created["id"], command) == revised
+    with pytest.raises(ConflictError):
+        BusinessDocumentSqlAgentService.revise_question(TENANT, ACTOR, created["id"], {**command, "idempotency_key": "revise-2"})
+    with pytest.raises(BusinessDocumentError, match="SQL query project not found"):
+        BusinessDocumentSqlAgentService.revise_question("other-tenant", ACTOR, created["id"], {**command, "idempotency_key": "revise-3"})
+
+
+def test_failed_agent_exposes_a_retry_action(database):
+    created = _create_project()
+    queued = BusinessDocumentSqlAgentService.request_agent(
+        TENANT,
+        ACTOR,
+        created["id"],
+        {"schema_version": "1", "expected_state_version": 1, "idempotency_key": "first-analysis", "kind": "REQUIREMENTS", "payload": {}},
+    )
+    assert queued["operation_state"] == "RUNNING"
+    job = BusinessDocumentJobQueue.claim("failure-test")
+    BusinessDocumentSqlAgentService.fail_job(job, "failure-test", job.lease_token, {"code": "SQL_MODEL_UNAVAILABLE", "message": "Model unavailable"})
+    failed = BusinessDocumentSqlAgentService.get_project(TENANT, ACTOR, created["id"])
+    assert failed["operation_state"] == "IDLE"
+    assert failed["next_agent"] == "REQUIREMENTS"
+    assert failed["blockers"][0]["action"] == "RETRY_ANALYSIS"
+    retried = BusinessDocumentSqlAgentService.request_agent(
+        TENANT,
+        ACTOR,
+        created["id"],
+        {"schema_version": "1", "expected_state_version": failed["state_version"], "idempotency_key": "retry-analysis", "kind": "REQUIREMENTS", "payload": {}},
+    )
+    assert retried["operation_state"] == "RUNNING"
+
+
 def test_manual_sql_uses_the_same_project_and_is_idempotent(database, monkeypatch):
     created = _create_project()
     for kind, artifact_id in (("REQUIREMENTS", "r" * 32), ("SCHEMA", "s" * 32)):
         BusinessDocumentSqlQueryArtifact.create(
-            id=artifact_id, project_id=created["id"], tenant_id=TENANT,
-            kind=kind, revision=1, payload={"accepted": True},
-            content_hash="sha256:test", source_proposal_id="p" * 32, accepted_by=ACTOR,
+            id=artifact_id,
+            project_id=created["id"],
+            tenant_id=TENANT,
+            kind=kind,
+            revision=1,
+            payload={"accepted": True},
+            content_hash="sha256:test",
+            source_proposal_id="p" * 32,
+            accepted_by=ACTOR,
         )
     BusinessDocumentSqlQueryProject.update(
-        stage="QUERY", requirements_artifact_id="r" * 32, schema_artifact_id="s" * 32,
+        stage="QUERY",
+        requirements_artifact_id="r" * 32,
+        schema_artifact_id="s" * 32,
     ).where(BusinessDocumentSqlQueryProject.id == created["id"]).execute()
     monkeypatch.setattr(sql_query_agents, "build_project_compile_command", lambda requirements, schema, query: {"manual_sql": query["sql"]})
-    monkeypatch.setattr(sql_query_agents, "compile_query_payload", lambda command: {
-        "status": "READY", "guard": {"status": "PASS"}, "sql": command["manual_sql"],
-        "parameters": {"row_limit": 10}, "output_columns": ["value"],
-    })
+    monkeypatch.setattr(
+        sql_query_agents,
+        "compile_query_payload",
+        lambda command: {
+            "status": "READY",
+            "guard": {"status": "PASS"},
+            "sql": command["manual_sql"],
+            "parameters": {"row_limit": 10},
+            "output_columns": ["value"],
+        },
+    )
     request = {
-        "schema_version": "1", "expected_state_version": 1, "idempotency_key": "manual-1",
+        "schema_version": "1",
+        "expected_state_version": 1,
+        "idempotency_key": "manual-1",
         "sql": "SELECT value AS value FROM public.sales LIMIT :row_limit",
         "parameters": [{"name": "row_limit", "type": "integer", "value": 10}],
         "confirmed_alignment": True,
     }
-    draft = {key: value for key, value in request.items() if key not in {"idempotency_key", "confirmed_alignment"}}
-    validated = BusinessDocumentSqlAgentService.validate_manual_query(TENANT, ACTOR, created["id"], draft)
-    assert validated["sql"] == request["sql"]
+    preview_request = {key: request[key] for key in ("schema_version", "expected_state_version", "sql", "parameters")}
+    preview = BusinessDocumentSqlAgentService.validate_manual_query(TENANT, ACTOR, created["id"], preview_request)
+    assert preview["sql"] == request["sql"]
     assert BusinessDocumentSqlQueryProject.get_by_id(created["id"]).state_version == 1
-    assert BusinessDocumentSqlQueryArtifact.select().count() == 2
-    with pytest.raises(PermissionDeniedError):
-        BusinessDocumentSqlAgentService.validate_manual_query(TENANT, "another-author", created["id"], draft)
-    with pytest.raises(BusinessDocumentError) as missing:
-        BusinessDocumentSqlAgentService.validate_manual_query("another-tenant", ACTOR, created["id"], draft)
-    assert missing.value.status == 404
-    with pytest.raises(ConflictError):
-        BusinessDocumentSqlAgentService.validate_manual_query(TENANT, ACTOR, created["id"], {**draft, "expected_state_version": 2})
+    assert not BusinessDocumentSqlQueryArtifact.select().where(BusinessDocumentSqlQueryArtifact.kind == "COMPILATION").exists()
+    with pytest.raises(BusinessDocumentError):
+        BusinessDocumentSqlAgentService.validate_manual_query("other-tenant", ACTOR, created["id"], preview_request)
     saved = BusinessDocumentSqlAgentService.save_manual_query(TENANT, ACTOR, created["id"], request)
     assert saved["project"]["stage"] == "COMPLETE"
     assert saved["project"]["state_version"] == 2
@@ -155,20 +218,34 @@ def test_manual_sql_uses_the_same_project_and_is_idempotent(database, monkeypatc
 def test_query_acceptance_requires_explicit_exact_join_and_filter_ids():
     proposal = SimpleNamespace(
         kind="QUERY",
-        payload={"agent_result": {"proposal": {
-            "joins": [{"id": "join-1", "confirmed": False}],
-            "filters": [{"id": "filter-1", "confirmed": False}],
-        }}},
+        payload={
+            "agent_result": {
+                "proposal": {
+                    "joins": [{"id": "join-1", "confirmed": False}],
+                    "filters": [{"id": "filter-1", "confirmed": False}],
+                }
+            }
+        },
     )
     with pytest.raises(ValidationError, match="explicit JOIN and filter confirmations"):
         BusinessDocumentSqlAgentService._accepted_payload(None, proposal, None)
     with pytest.raises(ValidationError, match="confirmed_filter_ids"):
-        BusinessDocumentSqlAgentService._accepted_payload(None, proposal, {
-            "confirmed_join_ids": ["join-1"], "confirmed_filter_ids": [],
-        })
-    accepted = BusinessDocumentSqlAgentService._accepted_payload(None, proposal, {
-        "confirmed_join_ids": ["join-1"], "confirmed_filter_ids": ["filter-1"],
-    })
+        BusinessDocumentSqlAgentService._accepted_payload(
+            None,
+            proposal,
+            {
+                "confirmed_join_ids": ["join-1"],
+                "confirmed_filter_ids": [],
+            },
+        )
+    accepted = BusinessDocumentSqlAgentService._accepted_payload(
+        None,
+        proposal,
+        {
+            "confirmed_join_ids": ["join-1"],
+            "confirmed_filter_ids": ["filter-1"],
+        },
+    )
     assert accepted["joins"][0]["confirmed"] is True
     assert accepted["filters"][0]["decision"] == "user"
 

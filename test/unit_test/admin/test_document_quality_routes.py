@@ -41,13 +41,19 @@ def client(monkeypatch):
     return app.test_client()
 
 
-@pytest.mark.parametrize("method,path", [
-    ("get", "/document-quality"), ("get", "/document-quality/runs"),
-    ("get", "/document-quality/jobs"),
-    ("post", "/document-quality/runs"), ("get", "/document-quality/runs/run-1"),
-    ("get", "/document-quality/campaigns"), ("get", "/document-quality/campaigns/campaign-1"),
-    ("get", "/document-quality/models"),
-])
+@pytest.mark.parametrize(
+    "method,path",
+    [
+        ("get", "/document-quality"),
+        ("get", "/document-quality/runs"),
+        ("get", "/document-quality/jobs"),
+        ("post", "/document-quality/runs"),
+        ("get", "/document-quality/runs/run-1"),
+        ("get", "/document-quality/campaigns"),
+        ("get", "/document-quality/campaigns/campaign-1"),
+        ("get", "/document-quality/models"),
+    ],
+)
 def test_quality_routes_require_admin(client, monkeypatch, method, path):
     send = getattr(client, method)
     url = "/api/v1/admin" + path
@@ -72,6 +78,5 @@ def test_manual_route_validates_body_before_queueing(client, monkeypatch):
 
 def test_invalid_operational_window_and_offset_are_rejected(client):
     headers = {"Authorization": "test"}
-    for path in ("/document-quality?days=bad", "/document-quality/jobs?days=bad",
-                 "/document-quality/jobs?days=2", "/document-quality/jobs?offset=-1"):
+    for path in ("/document-quality?days=bad", "/document-quality/jobs?days=bad", "/document-quality/jobs?days=2", "/document-quality/jobs?offset=-1"):
         assert client.get("/api/v1/admin" + path, headers=headers).status_code == 400

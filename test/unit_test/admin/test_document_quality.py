@@ -90,10 +90,18 @@ def test_dashboard_counts_all_job_types_and_active_jobs_in_window(monkeypatch):
                 ("pending", "ASSESS_REVIEW", "PENDING", 999_999_000),
             ):
                 BusinessDocumentJob.create(
-                    id=identifier, document_id="doc", tenant_id="qa", job_type=job_type,
-                    status=status, dedupe_key=identifier, source_state_version=1,
-                    payload={}, available_at=finished_at, correlation_id=identifier,
-                    create_time=finished_at, update_time=finished_at,
+                    id=identifier,
+                    document_id="doc",
+                    tenant_id="qa",
+                    job_type=job_type,
+                    status=status,
+                    dedupe_key=identifier,
+                    source_state_version=1,
+                    payload={},
+                    available_at=finished_at,
+                    correlation_id=identifier,
+                    create_time=finished_at,
+                    update_time=finished_at,
                 )
                 database.execute_sql(
                     f'UPDATE "{BusinessDocumentJob._meta.table_name}" SET "{BusinessDocumentJob.update_time.column_name}" = ? WHERE "{BusinessDocumentJob.id.column_name}" = ?',
@@ -122,11 +130,21 @@ def test_failed_job_table_filters_all_matching_rows_and_omits_error_message(monk
                 ("export", "GENERATE_EXPORT", "INVALID_AI_JSON"),
             ):
                 BusinessDocumentJob.create(
-                    id=identifier, document_id="doc", tenant_id="qa", job_type=job_type,
-                    status="DEAD", dedupe_key=identifier, source_state_version=1,
-                    payload={}, error={"code": code, "message": "private document text"},
-                    attempt=3, max_attempts=3, available_at=999_999_000, correlation_id=identifier,
-                    create_time=999_998_000, update_time=999_999_000,
+                    id=identifier,
+                    document_id="doc",
+                    tenant_id="qa",
+                    job_type=job_type,
+                    status="DEAD",
+                    dedupe_key=identifier,
+                    source_state_version=1,
+                    payload={},
+                    error={"code": code, "message": "private document text"},
+                    attempt=3,
+                    max_attempts=3,
+                    available_at=999_999_000,
+                    correlation_id=identifier,
+                    create_time=999_998_000,
+                    update_time=999_999_000,
                 )
                 database.execute_sql(
                     f'UPDATE "{BusinessDocumentJob._meta.table_name}" SET "{BusinessDocumentJob.update_time.column_name}" = ? WHERE "{BusinessDocumentJob.id.column_name}" = ?',

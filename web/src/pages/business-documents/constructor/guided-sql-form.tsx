@@ -188,7 +188,7 @@ export function GuidedSqlForm({
     }
   };
 
-  return <section className="mt-6 border-t border-border-button pt-4" data-testid="guided-sql-form">
+  return <section id="sql-check-query" className="mt-6 border-t border-border-button pt-4" data-testid="guided-sql-form">
     <Button variant="ghost" onClick={() => setOpen((value) => !value)}>
       <Code2 className="size-4" />{open ? 'Скрыть редактор SQL' : initialSql ? 'Редактировать финальный SQL' : 'Собрать SQL по шагам'}
     </Button>

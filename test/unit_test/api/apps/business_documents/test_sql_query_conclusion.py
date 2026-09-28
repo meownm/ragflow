@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import pytest
 import sys
 from pathlib import Path
 from types import ModuleType
+
+import pytest
 
 if "api.apps" not in sys.modules:
     api_apps = ModuleType("api.apps")
@@ -11,7 +12,6 @@ if "api.apps" not in sys.modules:
     sys.modules["api.apps"] = api_apps
 
 from api.apps.business_documents import sql_query_conclusions
-
 from business_documents.sql_query.conclusion import ConclusionValidationError, validate_conclusion
 
 
@@ -19,7 +19,9 @@ def test_conclusion_checks_numbers_against_cited_cells():
     result = validate_conclusion(
         "Получено 2 строки, значение 42.",
         [{"row_index": 0, "column": "value"}],
-        ["value"], [[42], [43]], 2,
+        ["value"],
+        [[42], [43]],
+        2,
     )
     assert result["citations"] == [{"row_index": 0, "column": "value"}]
     with pytest.raises(ConclusionValidationError, match="Numeric claims"):

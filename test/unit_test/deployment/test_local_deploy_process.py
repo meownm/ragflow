@@ -107,15 +107,16 @@ def test_feature_image_identity_requires_digest_and_source_provenance(mutation, 
         ". ([scriptblock]::Create($fn.Extent.Text)); Set-StrictMode -Version Latest; "
         "$data=$env:FEATURE_IMAGE_TEST | ConvertFrom-Json; "
         "$inspection=[pscustomobject]@{Os='linux'; Architecture=$data.architecture; "
-        "Config=[pscustomobject]@{Labels=[pscustomobject]@{'org.ragflow.source-id'='" + source_id +
-        "'; 'org.ragflow.validation'=$data.label}}; RepoDigests=$data.digests}; "
+        "Config=[pscustomobject]@{Labels=[pscustomobject]@{'org.ragflow.source-id'='" + source_id + "'; 'org.ragflow.validation'=$data.label}}; RepoDigests=$data.digests}; "
         "Test-FeatureImageIdentity -Reference $data.reference -SourceId $data.source_id "
         "-Inspection $inspection -Revision $data.revision -Version $data.version"
     )
     result = subprocess.run(
         [pwsh, "-NoProfile", "-Command", command],
         env={**os.environ, "FEATURE_IMAGE_TEST": json.dumps(payload)},
-        capture_output=True, text=True, timeout=20,
+        capture_output=True,
+        text=True,
+        timeout=20,
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip().lower() == str(valid).lower()

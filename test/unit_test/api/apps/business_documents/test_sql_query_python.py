@@ -27,9 +27,17 @@ class Response:
 
 
 def test_python_adapter_requires_private_runsc_capability(monkeypatch):
-    monkeypatch.setattr(sql_query_python.requests, "get", lambda *args, **kwargs: Response({
-        "private_no_network": True, "private_content_logging": False, "private_runtime": "runc",
-    }))
+    monkeypatch.setattr(
+        sql_query_python.requests,
+        "get",
+        lambda *args, **kwargs: Response(
+            {
+                "private_no_network": True,
+                "private_content_logging": False,
+                "private_runtime": "runc",
+            }
+        ),
+    )
     monkeypatch.setattr(sql_query_python.requests, "post", lambda *args, **kwargs: pytest.fail("Sandbox must not receive private data"))
     with pytest.raises(BusinessDocumentError) as error:
         sql_query_python.execute_result_python("def main(columns, rows): return {}", ["value"], [[42]])
@@ -37,16 +45,31 @@ def test_python_adapter_requires_private_runsc_capability(monkeypatch):
 
 
 def test_python_adapter_sends_only_result_copy_and_private_flag(monkeypatch):
-    monkeypatch.setattr(sql_query_python.requests, "get", lambda *args, **kwargs: Response({
-        "private_no_network": True, "private_content_logging": False, "private_runtime": "runsc",
-    }))
+    monkeypatch.setattr(
+        sql_query_python.requests,
+        "get",
+        lambda *args, **kwargs: Response(
+            {
+                "private_no_network": True,
+                "private_content_logging": False,
+                "private_runtime": "runsc",
+            }
+        ),
+    )
     posted = []
 
     def post(url, *, json, timeout):
         posted.append(json)
-        return Response({"status": "success", "exit_code": 0, "result": {
-            "present": True, "value": {"columns": ["value"], "rows": [[42]]},
-        }})
+        return Response(
+            {
+                "status": "success",
+                "exit_code": 0,
+                "result": {
+                    "present": True,
+                    "value": {"columns": ["value"], "rows": [[42]]},
+                },
+            }
+        )
 
     monkeypatch.setattr(sql_query_python.requests, "post", post)
     result = sql_query_python.execute_result_python("def main(columns, rows): return {}", ["value"], [[42]])

@@ -90,12 +90,8 @@ def test_normalized_table_keeps_physical_names_beside_display_names(om_module):
 
     normalized = om_module.normalize_table(table, "https://metadata.example")
 
-    assert (normalized["service"], normalized["database"], normalized["schema"]) == (
-        "Warehouse", "Analytics", "Публичная"
-    )
-    assert (normalized["service_technical_name"], normalized["database_technical_name"], normalized["schema_technical_name"]) == (
-        "postgres", "db", "public"
-    )
+    assert (normalized["service"], normalized["database"], normalized["schema"]) == ("Warehouse", "Analytics", "Публичная")
+    assert (normalized["service_technical_name"], normalized["database_technical_name"], normalized["schema_technical_name"]) == ("postgres", "db", "public")
     assert normalized["column_details"][0]["name"] == "Номер заказа"
     assert normalized["column_details"][0]["technical_name"] == "order_id"
 

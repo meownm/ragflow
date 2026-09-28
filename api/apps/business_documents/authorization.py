@@ -16,15 +16,20 @@
 
 from __future__ import annotations
 
-
 from business_documents.application.errors import PermissionDeniedError
 from business_documents.domain.access import DocumentAccess, can_assign_document
-
 
 __all__ = ["BusinessDocumentAccess"]
 
 
 class BusinessDocumentAccess(DocumentAccess):
+    def can_execute_sql(self) -> bool:
+        return self.capabilities()["create"]
+
+    def require_execute_sql(self) -> None:
+        if not self.can_execute_sql():
+            raise PermissionDeniedError("This role may save SQL but cannot execute PostgreSQL queries")
+
     def require_create(self) -> None:
         if not self.capabilities()["create"]:
             raise PermissionDeniedError("This role cannot create business documents")

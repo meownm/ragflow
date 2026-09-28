@@ -67,27 +67,37 @@ def test_persisted_report_omits_generated_content_and_failure_text():
 
 
 def test_report_keeps_safe_fact_ids_and_gate_thresholds():
-    summary = runs._report_summary({
-        "status": "FAIL", "rubric_version": "1.0.1",
-        "golden_suite": {"expected_case_ids": ["M04"], "executed_case_ids": ["M04"]},
-        "case_results": [{"case_id": "M04", "priority": "P0", "status": "FAIL",
-                          "failures": ["missing_fact_ids=('scenario_rule',)", "Secret: private document"],
-                          "metrics": {"missing_fact_ids": ["scenario_rule"], "semantic_coverage": 0.8}}],
-        "metrics": {"p0_case_pass_rate": 0.0, "all_case_pass_rate": 0.0},
-    })
+    summary = runs._report_summary(
+        {
+            "status": "FAIL",
+            "rubric_version": "1.0.1",
+            "golden_suite": {"expected_case_ids": ["M04"], "executed_case_ids": ["M04"]},
+            "case_results": [
+                {
+                    "case_id": "M04",
+                    "priority": "P0",
+                    "status": "FAIL",
+                    "failures": ["missing_fact_ids=('scenario_rule',)", "Secret: private document"],
+                    "metrics": {"missing_fact_ids": ["scenario_rule"], "semantic_coverage": 0.8},
+                }
+            ],
+            "metrics": {"p0_case_pass_rate": 0.0, "all_case_pass_rate": 0.0},
+        }
+    )
     assert summary["cases"][0]["diagnostics"] == [{"code": "MISSING_FACT", "fact_id": "scenario_rule"}]
     assert {check["metric"] for check in summary["gate_checks"] if not check["passed"]} == {"p0_case_pass_rate", "all_case_pass_rate"}
     assert "Secret" not in str(summary)
 
 
 def test_partial_diagnostic_does_not_store_full_suite_score():
-    summary = runs._report_summary({
-        "status": "INCOMPLETE",
-        "golden_suite": {"expected_case_ids": ["M01", "M04"], "executed_case_ids": ["M04"]},
-        "metrics": {"weighted_score": 3.9, "p0_case_pass_rate": 1.0, "all_case_pass_rate": 1.0},
-        "case_results": [{"case_id": "M04", "status": "FAIL", "failures": ["missing_fact_ids=('scenario_rule',)"],
-                          "metrics": {"missing_fact_ids": ["scenario_rule"]}}],
-    })
+    summary = runs._report_summary(
+        {
+            "status": "INCOMPLETE",
+            "golden_suite": {"expected_case_ids": ["M01", "M04"], "executed_case_ids": ["M04"]},
+            "metrics": {"weighted_score": 3.9, "p0_case_pass_rate": 1.0, "all_case_pass_rate": 1.0},
+            "case_results": [{"case_id": "M04", "status": "FAIL", "failures": ["missing_fact_ids=('scenario_rule',)"], "metrics": {"missing_fact_ids": ["scenario_rule"]}}],
+        }
+    )
     assert summary["executed_cases"] == 1 and summary["expected_cases"] == 2
     assert summary["weighted_score"] is None
     assert summary["p0_case_pass_rate"] is None
@@ -96,10 +106,13 @@ def test_partial_diagnostic_does_not_store_full_suite_score():
 
 
 def test_execution_error_gets_safe_diagnostic_code():
-    summary = runs._report_summary({
-        "status": "INCOMPLETE", "golden_suite": {"expected_case_ids": ["M04"], "executed_case_ids": ["M04"]},
-        "case_results": [{"case_id": "M04", "status": "INCOMPLETE", "failures": ["private database error"]}],
-    })
+    summary = runs._report_summary(
+        {
+            "status": "INCOMPLETE",
+            "golden_suite": {"expected_case_ids": ["M04"], "executed_case_ids": ["M04"]},
+            "case_results": [{"case_id": "M04", "status": "INCOMPLETE", "failures": ["private database error"]}],
+        }
+    )
     assert summary["cases"][0]["diagnostics"] == [{"code": "EXECUTION_ERROR"}]
     assert "private database error" not in str(summary)
 
@@ -110,16 +123,22 @@ def test_diagnostic_requires_completed_selected_case(monkeypatch):
 
     def write_report(_path, env, _temp, **_kwargs):
         result_status = env["TEST_CASE_STATUS"]
-        Path(env["BUSINESS_DOCUMENT_QUALITY_REPORT"]).write_text(json.dumps({
-            "status": "INCOMPLETE", "diagnostic_case_id": "M04", "active_case_id": None,
-            "golden_suite": {"expected_case_ids": ["M04"], "executed_case_ids": ["M04"]},
-            "case_results": [{"case_id": "M04", "status": result_status, "failures": []}],
-        }), encoding="utf-8")
+        Path(env["BUSINESS_DOCUMENT_QUALITY_REPORT"]).write_text(
+            json.dumps(
+                {
+                    "status": "INCOMPLETE",
+                    "diagnostic_case_id": "M04",
+                    "active_case_id": None,
+                    "golden_suite": {"expected_case_ids": ["M04"], "executed_case_ids": ["M04"]},
+                    "case_results": [{"case_id": "M04", "status": result_status, "failures": []}],
+                }
+            ),
+            encoding="utf-8",
+        )
         return 1
 
     monkeypatch.setattr(runs, "_run_suite", write_report)
-    row = SimpleNamespace(source_revision="revision", campaign_id=None, model_name=None,
-                          model_digest=None, scope="CASE", case_id="M04")
+    row = SimpleNamespace(source_revision="revision", campaign_id=None, model_name=None, model_digest=None, scope="CASE", case_id="M04")
     monkeypatch.setenv("TEST_CASE_STATUS", "INCOMPLETE")
     status, _, _ = runs._execute(row)
     assert status == "INCOMPLETE"
@@ -215,9 +234,11 @@ def test_nightly_catalog_deduplicates_digest_and_recovers_after_baseline(monkeyp
     database = SqliteDatabase(":memory:")
     monkeypatch.setattr(runs, "_configured_tenant", lambda: "qa")
     monkeypatch.setattr(runs, "_source_revision", lambda: "revision")
-    monkeypatch.setattr(runs, "quality_model_catalog", lambda _: {"models": [
-        {"name": "qwen", "digest": "a" * 64, "aliases": ["qwen", "qwen:alias"]},
-        {"name": "mistral", "digest": "b" * 64, "aliases": ["mistral"]}], "errors": []})
+    monkeypatch.setattr(
+        runs,
+        "quality_model_catalog",
+        lambda _: {"models": [{"name": "qwen", "digest": "a" * 64, "aliases": ["qwen", "qwen:alias"]}, {"name": "mistral", "digest": "b" * 64, "aliases": ["mistral"]}], "errors": []},
+    )
     monkeypatch.setattr(runs, "_run_campaign_baseline", lambda _: ("PASS", None))
     monkeypatch.setattr(runs, "_execute", lambda _: ("PASS", {"status": "PASS"}, None))
     with database.bind_ctx([BusinessDocumentQualityCampaign, BusinessDocumentQualityRun], bind_refs=False, bind_backrefs=False):
@@ -260,12 +281,11 @@ def test_nightly_baseline_failure_marks_models_incomplete(monkeypatch):
 def test_one_incomplete_model_does_not_stop_remaining_models(monkeypatch):
     database = SqliteDatabase(":memory:")
     monkeypatch.setattr(runs, "_configured_tenant", lambda: "qa")
-    monkeypatch.setattr(runs, "quality_model_catalog", lambda _: {"models": [
-        {"name": "first", "digest": "a" * 64, "aliases": ["first"]},
-        {"name": "second", "digest": "b" * 64, "aliases": ["second"]}], "errors": []})
+    monkeypatch.setattr(
+        runs, "quality_model_catalog", lambda _: {"models": [{"name": "first", "digest": "a" * 64, "aliases": ["first"]}, {"name": "second", "digest": "b" * 64, "aliases": ["second"]}], "errors": []}
+    )
     monkeypatch.setattr(runs, "_run_campaign_baseline", lambda _: ("PASS", None))
-    monkeypatch.setattr(runs, "_execute", lambda row: ("INCOMPLETE", None, "Live model suite timed out")
-                        if row.model_name == "first" else ("PASS", {"status": "PASS"}, None))
+    monkeypatch.setattr(runs, "_execute", lambda row: ("INCOMPLETE", None, "Live model suite timed out") if row.model_name == "first" else ("PASS", {"status": "PASS"}, None))
     with database.bind_ctx([BusinessDocumentQualityCampaign, BusinessDocumentQualityRun], bind_refs=False, bind_backrefs=False):
         database.connect()
         database.create_tables([BusinessDocumentQualityCampaign, BusinessDocumentQualityRun])
@@ -274,8 +294,7 @@ def test_one_incomplete_model_does_not_stop_remaining_models(monkeypatch):
             assert runs.process_next_run() is True
             assert runs.process_next_run() is True
             assert runs.process_next_run() is True
-            assert {row.model_name: row.status for row in BusinessDocumentQualityRun.select()} == {
-                "first": "INCOMPLETE", "second": "PASS"}
+            assert {row.model_name: row.status for row in BusinessDocumentQualityRun.select()} == {"first": "INCOMPLETE", "second": "PASS"}
             assert BusinessDocumentQualityCampaign.get().status == "PARTIAL"
         finally:
             database.drop_tables([BusinessDocumentQualityRun, BusinessDocumentQualityCampaign])
@@ -286,8 +305,7 @@ def test_model_digest_mismatch_does_not_run_suite(monkeypatch):
     monkeypatch.setattr(runs, "_configured_tenant", lambda: "qa")
     monkeypatch.setattr(runs, "_source_revision", lambda: "revision")
     monkeypatch.setattr(runs, "quality_model_digest", lambda *_: "different")
-    status, report, reason = runs._execute(SimpleNamespace(source_revision="revision", campaign_id=None,
-                                                              model_name="qwen", model_digest="a" * 64, scope="CASE", case_id="M04"))
+    status, report, reason = runs._execute(SimpleNamespace(source_revision="revision", campaign_id=None, model_name="qwen", model_digest="a" * 64, scope="CASE", case_id="M04"))
     assert status == "INCOMPLETE" and report is None
     assert "digest" in reason
 
@@ -323,10 +341,16 @@ def test_one_model_timeout_is_incomplete(monkeypatch):
         raise subprocess.TimeoutExpired("pytest", 1200)
 
     monkeypatch.setattr(runs, "_run_suite", timeout)
-    status, report, reason = runs._execute(SimpleNamespace(
-        source_revision="revision", campaign_id=None, model_name=None,
-        model_digest=None, scope="CASE", case_id="M04",
-    ))
+    status, report, reason = runs._execute(
+        SimpleNamespace(
+            source_revision="revision",
+            campaign_id=None,
+            model_name=None,
+            model_digest=None,
+            scope="CASE",
+            case_id="M04",
+        )
+    )
     assert status == "INCOMPLETE" and report is None
     assert reason == "Live model suite timed out"
 
@@ -338,17 +362,29 @@ def test_changed_digest_after_execution_cannot_pass(monkeypatch):
     monkeypatch.setattr(runs, "quality_model_digest", lambda *_: next(digests))
 
     def write_report(_path, env, _temp, **_kwargs):
-        Path(env["BUSINESS_DOCUMENT_QUALITY_REPORT"]).write_text(json.dumps({
-            "status": "FAIL", "golden_suite": {"expected_case_ids": ["M04"], "executed_case_ids": ["M04"]},
-            "case_results": [{"case_id": "M04", "status": "FAIL", "failures": ["private answer"]}],
-        }), encoding="utf-8")
+        Path(env["BUSINESS_DOCUMENT_QUALITY_REPORT"]).write_text(
+            json.dumps(
+                {
+                    "status": "FAIL",
+                    "golden_suite": {"expected_case_ids": ["M04"], "executed_case_ids": ["M04"]},
+                    "case_results": [{"case_id": "M04", "status": "FAIL", "failures": ["private answer"]}],
+                }
+            ),
+            encoding="utf-8",
+        )
         return 0
 
     monkeypatch.setattr(runs, "_run_suite", write_report)
-    status, report, reason = runs._execute(SimpleNamespace(
-        source_revision="revision", campaign_id=None, model_name="qwen",
-        model_digest="a" * 64, scope="CASE", case_id="M04",
-    ))
+    status, report, reason = runs._execute(
+        SimpleNamespace(
+            source_revision="revision",
+            campaign_id=None,
+            model_name="qwen",
+            model_digest="a" * 64,
+            scope="CASE",
+            case_id="M04",
+        )
+    )
     assert status == "INCOMPLETE" and reason == "Model digest changed during execution"
     assert "private answer" not in str(report)
 
@@ -360,29 +396,48 @@ def test_changed_source_after_execution_cannot_pass(monkeypatch):
     monkeypatch.setattr(runs, "_configured_tenant", lambda: "qa")
 
     def write_report(_path, env, _temp, **_kwargs):
-        Path(env["BUSINESS_DOCUMENT_QUALITY_REPORT"]).write_text(json.dumps({
-            "status": "PASS", "golden_suite": {"expected_case_ids": ["M04"], "executed_case_ids": ["M04"]},
-            "case_results": [{"case_id": "M04", "status": "PASS", "failures": []}],
-        }), encoding="utf-8")
+        Path(env["BUSINESS_DOCUMENT_QUALITY_REPORT"]).write_text(
+            json.dumps(
+                {
+                    "status": "PASS",
+                    "golden_suite": {"expected_case_ids": ["M04"], "executed_case_ids": ["M04"]},
+                    "case_results": [{"case_id": "M04", "status": "PASS", "failures": []}],
+                }
+            ),
+            encoding="utf-8",
+        )
         return 0
 
     monkeypatch.setattr(runs, "_run_suite", write_report)
-    status, _, reason = runs._execute(SimpleNamespace(
-        source_revision="revision", campaign_id=None, model_name=None,
-        model_digest=None, scope="CASE", case_id="M04",
-    ))
+    status, _, reason = runs._execute(
+        SimpleNamespace(
+            source_revision="revision",
+            campaign_id=None,
+            model_name=None,
+            model_digest=None,
+            scope="CASE",
+            case_id="M04",
+        )
+    )
     assert status == "INCOMPLETE" and "source revision" in reason
 
 
 def test_nightly_comparison_signature_marks_rubric_prompt_and_parameter_changes():
-    reference = {"source_revision": "rev", "suite_sha256": "sha256:" + "a" * 64,
-                 "rubric_version": "1.1.0", "template_version": "v1",
-                 "prompt_hashes": {"draft.txt": "sha256:" + "b" * 64},
-                 "parameter_profiles": [{"temperature": 0, "top_p": 0.1}]}
+    reference = {
+        "source_revision": "rev",
+        "suite_sha256": "sha256:" + "a" * 64,
+        "rubric_version": "1.1.0",
+        "template_version": "v1",
+        "prompt_hashes": {"draft.txt": "sha256:" + "b" * 64},
+        "parameter_profiles": [{"temperature": 0, "top_p": 0.1}],
+    }
     signature = runs._comparison_signature(reference)
-    for changed in ({"rubric_version": "1.2.0"}, {"prompt_hashes": {"draft.txt": "sha256:" + "c" * 64}},
-                    {"parameter_profiles": [{"temperature": 0.2, "top_p": 0.1}]},
-                    {"suite_sha256": "sha256:" + "d" * 64}):
+    for changed in (
+        {"rubric_version": "1.2.0"},
+        {"prompt_hashes": {"draft.txt": "sha256:" + "c" * 64}},
+        {"parameter_profiles": [{"temperature": 0.2, "top_p": 0.1}]},
+        {"suite_sha256": "sha256:" + "d" * 64},
+    ):
         assert runs._comparison_signature({**reference, **changed}) != signature
 
 
@@ -393,11 +448,15 @@ def test_admin_run_detail_never_returns_legacy_raw_content_or_exception():
         database.create_tables([BusinessDocumentQualityRun])
         try:
             BusinessDocumentQualityRun.create(
-                id="legacy-run", trigger="MANUAL", status="FAIL", source_revision="revision",
-                reason="private exception text", report={
-                    "status": "FAIL", "raw_response": "private model answer",
-                    "cases": [{"case_id": "M04", "status": "FAIL", "failure": "private document text",
-                               "diagnostics": [{"code": "PRIVATE_DOCUMENT_TEXT"}]}],
+                id="legacy-run",
+                trigger="MANUAL",
+                status="FAIL",
+                source_revision="revision",
+                reason="private exception text",
+                report={
+                    "status": "FAIL",
+                    "raw_response": "private model answer",
+                    "cases": [{"case_id": "M04", "status": "FAIL", "failure": "private document text", "diagnostics": [{"code": "PRIVATE_DOCUMENT_TEXT"}]}],
                 },
             )
             detail = runs.get_quality_run("legacy-run")

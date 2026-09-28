@@ -91,7 +91,8 @@ describe('schema workspace', () => {
     const entity = table('orders', 'warehouse.analytics.dwh.orders');
     entity.column_details![0].display_name = 'Номер заказа';
 
-    const candidate = createSchemaResolution('orders', answer([entity])).candidates[0];
+    const candidate = createSchemaResolution('orders', answer([entity]))
+      .candidates[0];
 
     expect(candidate.columns[0]).toMatchObject({
       name: 'id',

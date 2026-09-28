@@ -537,9 +537,7 @@ def test_partial_live_report_identifies_unfinished_case(tmp_path):
 
 def test_execution_error_keeps_full_report_incomplete(tmp_path):
     suite = json.loads(MODEL_GOLDEN_PATH.read_text(encoding="utf-8"))
-    results = [{"case_id": case["id"], "priority": case["priority"],
-                "status": "INCOMPLETE" if index == 0 else "PASS", "failures": [], "metrics": {}}
-               for index, case in enumerate(suite["cases"])]
+    results = [{"case_id": case["id"], "priority": case["priority"], "status": "INCOMPLETE" if index == 0 else "PASS", "failures": [], "metrics": {}} for index, case in enumerate(suite["cases"])]
     path = tmp_path / "quality.json"
     _write_report(str(path), suite, results, [], [])
     assert json.loads(path.read_text(encoding="utf-8"))["status"] == "INCOMPLETE"

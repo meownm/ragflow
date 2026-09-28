@@ -19,6 +19,7 @@ import json
 import os
 import time
 import uuid
+
 from core.config import TIMEOUT
 from core.container import allocate_container_blocking, create_container, release_container
 from core.logger import logger
@@ -260,7 +261,7 @@ async def execute_code(req: CodeExecutionRequest):
 
             logger.info("----------------------------------------------")
             if not private:
-                logger.info(f"Code: {str(base64.b64decode(req.code_b64))}")
+                logger.info(f"Code: {base64.b64decode(req.code_b64)!s}")
             logger.info(f"{returncode=}")
             if not private:
                 logger.info(f"{stdout=}")
@@ -298,7 +299,7 @@ async def execute_code(req: CodeExecutionRequest):
                 )
             return analyze_error_result(stderr, returncode)
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             await async_run_command("docker", "exec", container, "pkill", "-9", language)
             return CodeExecutionResult(
                 status=ResultStatus.RESOURCE_LIMIT_EXCEEDED,
@@ -310,7 +311,7 @@ async def execute_code(req: CodeExecutionRequest):
             )
 
     except Exception as e:
-        logger.error(f"Execution exception: {str(e)}")
+        logger.error(f"Execution exception: {e!s}")
         return CodeExecutionResult(status=ResultStatus.PROGRAM_RUNNER_ERROR, stdout="", stderr=str(e), exit_code=-3, detail="internal_error")
 
     finally:

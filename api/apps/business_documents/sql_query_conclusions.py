@@ -36,15 +36,16 @@ def propose_conclusion(
     if len(json.dumps(context, ensure_ascii=False, default=str).encode("utf-8")) > 16_000:
         raise BusinessDocumentError("SQL_CONCLUSION_INPUT_TOO_LARGE", "Result preview is too large for the model", 422)
     try:
-        raw = asyncio.run(asyncio.wait_for(
-            RAGFlowLLMAdapter().async_generate(
-                tenant_id,
-                prompt_text("sql_conclusion"),
-                {"prompt": prompt_descriptor("PROPOSE_SQL_CONCLUSION"),
-                 "job_input": {"task_type": "PROPOSE_SQL_CONCLUSION"}, "context": context},
-            ),
-            timeout=60,
-        ))
+        raw = asyncio.run(
+            asyncio.wait_for(
+                RAGFlowLLMAdapter().async_generate(
+                    tenant_id,
+                    prompt_text("sql_conclusion"),
+                    {"prompt": prompt_descriptor("PROPOSE_SQL_CONCLUSION"), "job_input": {"task_type": "PROPOSE_SQL_CONCLUSION"}, "context": context},
+                ),
+                timeout=60,
+            )
+        )
         proposal = raw if isinstance(raw, dict) else repair_json(raw, return_objects=True)
         if not isinstance(proposal, dict) or set(proposal) != {"text", "citations"}:
             raise ConclusionValidationError("Model response has an invalid structure")

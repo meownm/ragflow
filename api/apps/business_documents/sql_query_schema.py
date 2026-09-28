@@ -5,21 +5,21 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 from json_repair import repair_json
 
 from api.apps.business_documents.ai import RAGFlowLLMAdapter
 from api.apps.business_documents.assets import contract_schema, prompt_descriptor, prompt_text, validate_contract
 from api.apps.business_documents.authorization import BusinessDocumentAccess
-from business_documents.application.errors import BusinessDocumentError, PermissionDeniedError, ValidationError
-from api.apps.services.openmetadata_dataset_retrieval import retrieve_openmetadata_dataset_hits
 from api.apps.services.openmetadata_copilot_service import normalize_table
+from api.apps.services.openmetadata_dataset_retrieval import retrieve_openmetadata_dataset_hits
 from api.apps.services.openmetadata_runtime_service import get_openmetadata_service, openmetadata_catalog_accessible
-from common.misc_utils import thread_pool_exec
+from business_documents.application.errors import BusinessDocumentError, PermissionDeniedError, ValidationError
 from business_documents.sql_query.schema_resolution import (
-    CatalogCandidate,
     CatalogAccessDenied,
+    CatalogCandidate,
     CatalogLookupError,
     CatalogResult,
     PromptProvenance,
@@ -31,7 +31,7 @@ from business_documents.sql_query.schema_resolution import (
     parse_load_schema_entities_command,
     parse_resolve_schema_command,
 )
-
+from common.misc_utils import thread_pool_exec
 
 LOGGER = logging.getLogger(__name__)
 _LLM_TIMEOUT_SECONDS = 90.0

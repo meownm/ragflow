@@ -31,15 +31,32 @@ _SAFE_ID = re.compile(r"^[A-Za-z0-9_:-]{1,80}$")
 _SAFE_LABEL = re.compile(r"^[A-Za-z0-9._:/-]{1,256}$")
 _SAFE_HASH = re.compile(r"^sha256:[a-f0-9]{64}$")
 _FAILURE_CODES = {
-    "protocol_not_separated", "invalid_question_bounds", "template_section_order_mismatch",
-    "conceptual_plantuml_missing", "scenario_text_missing", "scenario_plantuml_missing",
+    "protocol_not_separated",
+    "invalid_question_bounds",
+    "template_section_order_mismatch",
+    "conceptual_plantuml_missing",
+    "scenario_text_missing",
+    "scenario_plantuml_missing",
     "unexpected_revision_created",
 }
-_DIAGNOSTIC_CODES = {"MISSING_FACT", "UNCLASSIFIED", "ASSERTION_FAILED", "EXECUTION_ERROR"} | {code.upper() for code in _FAILURE_CODES} | {
-    "QUESTIONS_COUNT", "QUESTION_TARGETS", "GROUNDED_CLAIM_COUNT", "GROUNDED_REFERENCE_PRECISION",
-    "MISSING_FACT_IDS", "DUPLICATE_CONTENT", "MISPLACED_FACT_COUNT", "CONTRADICTIONS",
-    "WEIGHTED_SCORE", "REQUIRED_FRAGMENT_MISSING", "FORBIDDEN_FRAGMENT_PRESENT", "HARD_FAILURES",
-}
+_DIAGNOSTIC_CODES = (
+    {"MISSING_FACT", "UNCLASSIFIED", "ASSERTION_FAILED", "EXECUTION_ERROR"}
+    | {code.upper() for code in _FAILURE_CODES}
+    | {
+        "QUESTIONS_COUNT",
+        "QUESTION_TARGETS",
+        "GROUNDED_CLAIM_COUNT",
+        "GROUNDED_REFERENCE_PRECISION",
+        "MISSING_FACT_IDS",
+        "DUPLICATE_CONTENT",
+        "MISPLACED_FACT_COUNT",
+        "CONTRADICTIONS",
+        "WEIGHTED_SCORE",
+        "REQUIRED_FRAGMENT_MISSING",
+        "FORBIDDEN_FRAGMENT_PRESENT",
+        "HARD_FAILURES",
+    }
+)
 
 
 def _configured_tenant() -> str:
@@ -100,8 +117,7 @@ def _public_report(value, *, detail: bool) -> dict | None:
         item = value.get(key)
         if isinstance(item, str) and (_SAFE_HASH.fullmatch(item) or re.fullmatch(r"[a-f0-9]{64}", item)):
             report[key] = item
-    for key in ("expected_cases", "executed_cases", "duration_ms", "total_tokens", "weighted_score",
-                "grounded_reference_precision", "p0_case_pass_rate", "all_case_pass_rate"):
+    for key in ("expected_cases", "executed_cases", "duration_ms", "total_tokens", "weighted_score", "grounded_reference_precision", "p0_case_pass_rate", "all_case_pass_rate"):
         item = _safe_number(value.get(key))
         if item is not None:
             report[key] = item
@@ -110,20 +126,19 @@ def _public_report(value, *, detail: bool) -> dict | None:
     for key in ("criterion_scores", "metrics"):
         source = value.get(key)
         if isinstance(source, dict):
-            report[key] = {name: numeric for name, raw in source.items()
-                           if isinstance(name, str) and _SAFE_ID.fullmatch(name)
-                           if (numeric := _safe_number(raw)) is not None}
+            report[key] = {name: numeric for name, raw in source.items() if isinstance(name, str) and _SAFE_ID.fullmatch(name) if (numeric := _safe_number(raw)) is not None}
     hashes = value.get("prompt_hashes")
     if isinstance(hashes, dict):
-        report["prompt_hashes"] = {name: digest for name, digest in hashes.items()
-                                   if isinstance(name, str) and _SAFE_LABEL.fullmatch(name)
-                                   and isinstance(digest, str) and _SAFE_HASH.fullmatch(digest)}
+        report["prompt_hashes"] = {
+            name: digest for name, digest in hashes.items() if isinstance(name, str) and _SAFE_LABEL.fullmatch(name) and isinstance(digest, str) and _SAFE_HASH.fullmatch(digest)
+        }
     profiles = value.get("parameter_profiles")
     if isinstance(profiles, list):
-        report["parameter_profiles"] = [{key: numeric for key, raw in profile.items()
-                                         if key in {"temperature", "top_p", "max_completion_tokens"}
-                                         if (numeric := _safe_number(raw)) is not None}
-                                        for profile in profiles[:20] if isinstance(profile, dict)]
+        report["parameter_profiles"] = [
+            {key: numeric for key, raw in profile.items() if key in {"temperature", "top_p", "max_completion_tokens"} if (numeric := _safe_number(raw)) is not None}
+            for profile in profiles[:20]
+            if isinstance(profile, dict)
+        ]
     report["gate_checks"] = _public_checks(value.get("gate_checks"))
     if detail:
         cases = []
@@ -139,13 +154,17 @@ def _public_report(value, *, detail: bool) -> dict | None:
             case["failure_count"] = count if count is not None and count >= 0 else 0
             metrics = item.get("metrics")
             if isinstance(metrics, dict):
-                case["metrics"] = {name: numeric for name, raw in metrics.items()
-                                   if isinstance(name, str) and _SAFE_ID.fullmatch(name)
-                                   if (numeric := _safe_number(raw)) is not None}
+                case["metrics"] = {name: numeric for name, raw in metrics.items() if isinstance(name, str) and _SAFE_ID.fullmatch(name) if (numeric := _safe_number(raw)) is not None}
             diagnostics = item.get("diagnostics")
-            case["diagnostics"] = [{"code": entry["code"], **({"fact_id": entry["fact_id"]} if isinstance(entry.get("fact_id"), str) and _SAFE_ID.fullmatch(entry["fact_id"]) else {})}
-                                   for entry in diagnostics[:20] if isinstance(entry, dict)
-                                   and entry.get("code") in _DIAGNOSTIC_CODES] if isinstance(diagnostics, list) else []
+            case["diagnostics"] = (
+                [
+                    {"code": entry["code"], **({"fact_id": entry["fact_id"]} if isinstance(entry.get("fact_id"), str) and _SAFE_ID.fullmatch(entry["fact_id"]) else {})}
+                    for entry in diagnostics[:20]
+                    if isinstance(entry, dict) and entry.get("code") in _DIAGNOSTIC_CODES
+                ]
+                if isinstance(diagnostics, list)
+                else []
+            )
             cases.append(case)
         report["cases"] = cases
     return report
@@ -178,8 +197,7 @@ def list_quality_runs() -> dict:
     rows = {row.id: row for row in (*recent, *monthly)}
     ordered = sorted(rows.values(), key=lambda row: (row.create_time, row.id), reverse=True)
     total = BusinessDocumentQualityRun.select().count()
-    return {"configured": bool(_configured_tenant()), "source_revision": _source_revision(),
-            "total": total, "truncated": total > len(ordered), "runs": [_public_run(row) for row in ordered]}
+    return {"configured": bool(_configured_tenant()), "source_revision": _source_revision(), "total": total, "truncated": total > len(ordered), "runs": [_public_run(row) for row in ordered]}
 
 
 def get_quality_run(run_id: str) -> dict | None:
@@ -221,8 +239,7 @@ def list_quality_models() -> dict:
     return {"configured": True, "case_ids": sorted(_known_case_ids()), **quality_model_catalog(tenant)}
 
 
-def enqueue_quality_run(trigger: str, *, requested_by: str | None = None, schedule_key: str | None = None,
-                        model: str | None = None, scope: str = "FULL", case_id: str | None = None) -> dict:
+def enqueue_quality_run(trigger: str, *, requested_by: str | None = None, schedule_key: str | None = None, model: str | None = None, scope: str = "FULL", case_id: str | None = None) -> dict:
     if not _configured_tenant():
         raise ValueError("Dedicated Business Documents quality tenant is not configured")
     if trigger not in {"MANUAL", "NIGHTLY", "MONTHLY"}:
@@ -239,13 +256,18 @@ def enqueue_quality_run(trigger: str, *, requested_by: str | None = None, schedu
         if selected is None:
             raise ValueError("Selected model is not in the QA Ollama catalog")
     if trigger == "MANUAL":
-        active = BusinessDocumentQualityRun.select().where(
-            (BusinessDocumentQualityRun.trigger == "MANUAL")
-            & (BusinessDocumentQualityRun.status.in_(("PENDING", "RUNNING")))
-            & (BusinessDocumentQualityRun.model_name == (selected["name"] if selected else None))
-            & (BusinessDocumentQualityRun.scope == scope)
-            & (BusinessDocumentQualityRun.case_id == case_id)
-        ).order_by(BusinessDocumentQualityRun.create_time).first()
+        active = (
+            BusinessDocumentQualityRun.select()
+            .where(
+                (BusinessDocumentQualityRun.trigger == "MANUAL")
+                & (BusinessDocumentQualityRun.status.in_(("PENDING", "RUNNING")))
+                & (BusinessDocumentQualityRun.model_name == (selected["name"] if selected else None))
+                & (BusinessDocumentQualityRun.scope == scope)
+                & (BusinessDocumentQualityRun.case_id == case_id)
+            )
+            .order_by(BusinessDocumentQualityRun.create_time)
+            .first()
+        )
         if active is not None:
             return _public_run(active)
         identity = json.dumps([selected["digest"] if selected else "default", scope, case_id], separators=(",", ":"))
@@ -300,16 +322,29 @@ def enqueue_nightly_campaign(day: str) -> dict:
     with BusinessDocumentQualityCampaign._meta.database.atomic():
         campaign, created = BusinessDocumentQualityCampaign.get_or_create(
             schedule_key=key,
-            defaults={"id": get_uuid(), "source_revision": _source_revision(), "models": catalog,
-                      "reason_code": reason_code, "status": "PENDING" if catalog["models"] else "INCOMPLETE",
-                      "create_time": now, "update_time": now},
+            defaults={
+                "id": get_uuid(),
+                "source_revision": _source_revision(),
+                "models": catalog,
+                "reason_code": reason_code,
+                "status": "PENDING" if catalog["models"] else "INCOMPLETE",
+                "create_time": now,
+                "update_time": now,
+            },
         )
         if created:
             for item in catalog["models"]:
                 BusinessDocumentQualityRun.create(
-                    id=get_uuid(), trigger="NIGHTLY", status="PENDING", campaign_id=campaign.id,
-                    model_name=item["name"], model_digest=item["digest"], scope="FULL",
-                    source_revision=campaign.source_revision, create_time=now, update_time=now,
+                    id=get_uuid(),
+                    trigger="NIGHTLY",
+                    status="PENDING",
+                    campaign_id=campaign.id,
+                    model_name=item["name"],
+                    model_digest=item["digest"],
+                    scope="FULL",
+                    source_revision=campaign.source_revision,
+                    create_time=now,
+                    update_time=now,
                 )
     return _public_campaign(campaign)
 
@@ -358,9 +393,18 @@ def _safe_case_diagnostics(item: dict) -> list[dict]:
         if code == "missing_fact_ids" and diagnostics:
             continue
         if code in _FAILURE_CODES or code in {
-            "questions_count", "question_targets", "grounded_claim_count", "grounded_reference_precision",
-            "missing_fact_ids", "duplicate_content", "misplaced_fact_count", "contradictions",
-            "weighted_score", "required_fragment_missing", "forbidden_fragment_present", "hard_failures",
+            "questions_count",
+            "question_targets",
+            "grounded_claim_count",
+            "grounded_reference_precision",
+            "missing_fact_ids",
+            "duplicate_content",
+            "misplaced_fact_count",
+            "contradictions",
+            "weighted_score",
+            "required_fragment_missing",
+            "forbidden_fragment_present",
+            "hard_failures",
         }:
             diagnostics.append({"code": code.upper()})
     if item.get("status") == "FAIL" and not diagnostics:
@@ -384,8 +428,7 @@ def _gate_checks(metrics: dict, rubric: dict) -> list[dict]:
     ):
         actual = len(metrics.get("hard_failures") or []) if metric == "hard_failure_count" else metrics.get(metric)
         if isinstance(actual, (int, float)) and not isinstance(actual, bool) and isinstance(threshold, (int, float)):
-            checks.append({"metric": metric, "actual": actual, "threshold": threshold,
-                           "passed": actual >= threshold if operator == "min" else actual <= threshold})
+            checks.append({"metric": metric, "actual": actual, "threshold": threshold, "passed": actual >= threshold if operator == "min" else actual <= threshold})
     return checks
 
 
@@ -408,8 +451,7 @@ def _report_summary(report: dict) -> dict:
         "suite_sha256": suite.get("sha256"),
         "suite_id": suite.get("suite_id"),
         "suite_version": suite.get("suite_version"),
-        "prompt_hashes": {key: value for key, value in (report.get("prompts") or {}).items()
-                          if isinstance(key, str) and isinstance(value, str) and value.startswith("sha256:")},
+        "prompt_hashes": {key: value for key, value in (report.get("prompts") or {}).items() if isinstance(key, str) and isinstance(value, str) and value.startswith("sha256:")},
         "parameter_profiles": ai.get("parameter_profiles") or [],
         "expected_cases": expected_cases,
         "executed_cases": executed_cases,
@@ -422,18 +464,30 @@ def _report_summary(report: dict) -> dict:
         "p0_case_pass_rate": metrics.get("p0_case_pass_rate") if complete else None,
         "all_case_pass_rate": metrics.get("all_case_pass_rate") if complete else None,
         "criterion_scores": metrics.get("criterion_scores") or {},
-        "metrics": {key: value for key, value in metrics.items()
-                    if key in {"semantic_coverage", "duplication_rate", "misplacement_rate", "contradiction_rate", "hard_failure_count"}
-                    and isinstance(value, (int, float)) and not isinstance(value, bool)},
+        "metrics": {
+            key: value
+            for key, value in metrics.items()
+            if key in {"semantic_coverage", "duplication_rate", "misplacement_rate", "contradiction_rate", "hard_failure_count"} and isinstance(value, (int, float)) and not isinstance(value, bool)
+        },
         "gate_checks": _gate_checks(metrics, rubric) if complete else [],
         "cases": [
-            {"case_id": item.get("case_id"), "priority": item.get("priority"), "status": item.get("status"),
-             "failure_count": len(item.get("failures") or []), "diagnostics": _safe_case_diagnostics(item),
-             "metrics": {key: value for key, value in (item.get("metrics") or {}).items()
-                         if key in {"semantic_coverage", "grounded_reference_precision", "duplication_rate", "misplacement_rate", "contradiction_rate"}
-                         and isinstance(value, (int, float)) and not isinstance(value, bool)},
-             "gate_checks": _gate_checks(item.get("metrics") or {}, rubric)}
-            for item in report.get("case_results") or [] if isinstance(item, dict)
+            {
+                "case_id": item.get("case_id"),
+                "priority": item.get("priority"),
+                "status": item.get("status"),
+                "failure_count": len(item.get("failures") or []),
+                "diagnostics": _safe_case_diagnostics(item),
+                "metrics": {
+                    key: value
+                    for key, value in (item.get("metrics") or {}).items()
+                    if key in {"semantic_coverage", "grounded_reference_precision", "duplication_rate", "misplacement_rate", "contradiction_rate"}
+                    and isinstance(value, (int, float))
+                    and not isinstance(value, bool)
+                },
+                "gate_checks": _gate_checks(item.get("metrics") or {}, rubric),
+            }
+            for item in report.get("case_results") or []
+            if isinstance(item, dict)
         ],
     }
 
@@ -447,9 +501,16 @@ def _golden_summary(report: dict) -> dict:
         "expected_cases": report.get("expected_cases"),
         "executed_cases": report.get("executed_cases"),
         "criterion_scores": {},
-        "cases": [{"case_id": item.get("case_id"), "status": item.get("status"), "failure_count": item.get("failure_count"),
-                   "diagnostics": [{"code": "ASSERTION_FAILED"}] if item.get("status") == "FAIL" else []}
-                  for item in cases if isinstance(item, dict)][:50],
+        "cases": [
+            {
+                "case_id": item.get("case_id"),
+                "status": item.get("status"),
+                "failure_count": item.get("failure_count"),
+                "diagnostics": [{"code": "ASSERTION_FAILED"}] if item.get("status") == "FAIL" else [],
+            }
+            for item in cases
+            if isinstance(item, dict)
+        ][:50],
     }
 
 
@@ -466,9 +527,15 @@ def _failed_test_names(temp: Path) -> str:
 
 
 def _comparison_signature(summary: dict) -> tuple:
-    return (summary.get("source_revision"), summary.get("suite_sha256"), summary.get("rubric_version"),
-            summary.get("template_version"), json.dumps(summary.get("prompt_hashes"), sort_keys=True),
-            json.dumps(summary.get("parameter_profiles"), sort_keys=True), summary.get("source_dirty"))
+    return (
+        summary.get("source_revision"),
+        summary.get("suite_sha256"),
+        summary.get("rubric_version"),
+        summary.get("template_version"),
+        json.dumps(summary.get("prompt_hashes"), sort_keys=True),
+        json.dumps(summary.get("parameter_profiles"), sort_keys=True),
+        summary.get("source_dirty"),
+    )
 
 
 def _execute(row: BusinessDocumentQualityRun) -> tuple[str, dict | None, str | None]:
@@ -555,18 +622,21 @@ def _execute(row: BusinessDocumentQualityRun) -> tuple[str, dict | None, str | N
         if model_name and model_digest and quality_model_digest(tenant, model_name) != model_digest:
             return "INCOMPLETE", summary, "Model digest changed during execution"
         if getattr(row, "campaign_id", None):
-            comparison = BusinessDocumentQualityRun.select(BusinessDocumentQualityRun.report).where(
-                (BusinessDocumentQualityRun.campaign_id == row.campaign_id)
-                & (BusinessDocumentQualityRun.status.in_(("PASS", "FAIL")))
-            ).first()
+            comparison = (
+                BusinessDocumentQualityRun.select(BusinessDocumentQualityRun.report)
+                .where((BusinessDocumentQualityRun.campaign_id == row.campaign_id) & (BusinessDocumentQualityRun.status.in_(("PASS", "FAIL"))))
+                .first()
+            )
             if comparison is not None and _comparison_signature(summary) != _comparison_signature(comparison.report or {}):
                 return "INCOMPLETE", summary, "Evaluation conditions changed during the nightly series"
         if getattr(row, "scope", "FULL") == "CASE":
-            completed_case = (report.get("active_case_id") is None
-                              and report.get("diagnostic_case_id") == row.case_id
-                              and len(report.get("case_results") or []) == 1
-                              and report["case_results"][0].get("case_id") == row.case_id
-                              and report["case_results"][0].get("status") in {"PASS", "FAIL"})
+            completed_case = (
+                report.get("active_case_id") is None
+                and report.get("diagnostic_case_id") == row.case_id
+                and len(report.get("case_results") or []) == 1
+                and report["case_results"][0].get("case_id") == row.case_id
+                and report["case_results"][0].get("status") in {"PASS", "FAIL"}
+            )
             return ("DIAGNOSTIC", summary, None) if completed_case else ("INCOMPLETE", summary, "Diagnostic case did not complete")
         if live_exit or report.get("status") != "PASS":
             return "FAIL" if report.get("status") == "FAIL" else "INCOMPLETE", summary, "Live model qualification did not pass"
@@ -585,8 +655,7 @@ def _run_campaign_baseline(campaign: BusinessDocumentQualityCampaign) -> tuple[s
         return "INCOMPLETE", "TEST_ASSETS_MISSING"
     with tempfile.TemporaryDirectory(prefix="business-document-baseline-") as directory:
         temp = Path(directory)
-        env = {**os.environ, "BUSINESS_DOCUMENT_RELATED_FILE_SEARCH_ENABLED": "true",
-               "BUSINESS_DOCUMENT_GOLDEN_REPORT": str(temp / "golden.json"), "PYTHONDONTWRITEBYTECODE": "1"}
+        env = {**os.environ, "BUSINESS_DOCUMENT_RELATED_FILE_SEARCH_ENABLED": "true", "BUSINESS_DOCUMENT_GOLDEN_REPORT": str(temp / "golden.json"), "PYTHONDONTWRITEBYTECODE": "1"}
         try:
             exit_code = _run_suite(str(golden_test), env, temp)
         except subprocess.TimeoutExpired:
@@ -623,10 +692,14 @@ def _reason_code(status: str, reason: str | None) -> str | None:
     if reason is None:
         return "QUALITY_GATE" if status == "FAIL" else "RUN_INCOMPLETE"
     for prefix, code in (
-        ("Queued source revision", "SOURCE_CHANGED"), ("Dedicated quality tenant", "QA_TENANT_MISSING"),
-        ("Quality test assets", "TEST_ASSETS_MISSING"), ("Quality test dependencies", "TEST_ASSETS_MISSING"),
-        ("Nightly baseline", "BASELINE_FAILED"), ("Model digest changed", "MODEL_CHANGED"),
-        ("Live model suite timed out", "MODEL_TIMEOUT"), ("Live model suite produced no report", "REPORT_MISSING"),
+        ("Queued source revision", "SOURCE_CHANGED"),
+        ("Dedicated quality tenant", "QA_TENANT_MISSING"),
+        ("Quality test assets", "TEST_ASSETS_MISSING"),
+        ("Quality test dependencies", "TEST_ASSETS_MISSING"),
+        ("Nightly baseline", "BASELINE_FAILED"),
+        ("Model digest changed", "MODEL_CHANGED"),
+        ("Live model suite timed out", "MODEL_TIMEOUT"),
+        ("Live model suite produced no report", "REPORT_MISSING"),
         ("Evaluation conditions changed", "CONDITIONS_CHANGED"),
         ("Evaluation source changed", "SOURCE_CHANGED"),
         ("Diagnostic case did not complete", "RUN_INCOMPLETE"),
@@ -640,19 +713,22 @@ def _reason_code(status: str, reason: str | None) -> str | None:
 
 def process_next_run() -> bool:
     stale_before = current_timestamp() - (2 * RUN_TIMEOUT_SECONDS + 5 * 60) * 1000
-    stale = list(BusinessDocumentQualityRun.select(BusinessDocumentQualityRun.id, BusinessDocumentQualityRun.campaign_id).where(
-        (BusinessDocumentQualityRun.status == "RUNNING") & (BusinessDocumentQualityRun.started_at < stale_before)
-    ))
+    stale = list(
+        BusinessDocumentQualityRun.select(BusinessDocumentQualityRun.id, BusinessDocumentQualityRun.campaign_id).where(
+            (BusinessDocumentQualityRun.status == "RUNNING") & (BusinessDocumentQualityRun.started_at < stale_before)
+        )
+    )
     if stale:
-        BusinessDocumentQualityRun.update(status="INCOMPLETE", schedule_key=None, finished_at=current_timestamp(), reason="Quality worker stopped before completion", reason_code="WORKER_STOPPED").where(
-            BusinessDocumentQualityRun.id.in_([item.id for item in stale])
-        ).execute()
+        BusinessDocumentQualityRun.update(
+            status="INCOMPLETE", schedule_key=None, finished_at=current_timestamp(), reason="Quality worker stopped before completion", reason_code="WORKER_STOPPED"
+        ).where(BusinessDocumentQualityRun.id.in_([item.id for item in stale])).execute()
         for campaign_id in {item.campaign_id for item in stale if item.campaign_id}:
             _refresh_campaign(campaign_id)
-    stale_campaigns = list(BusinessDocumentQualityCampaign.select().where(
-        (BusinessDocumentQualityCampaign.status == "RUNNING") & (BusinessDocumentQualityCampaign.baseline_status.is_null(True))
-        & (BusinessDocumentQualityCampaign.started_at < stale_before)
-    ))
+    stale_campaigns = list(
+        BusinessDocumentQualityCampaign.select().where(
+            (BusinessDocumentQualityCampaign.status == "RUNNING") & (BusinessDocumentQualityCampaign.baseline_status.is_null(True)) & (BusinessDocumentQualityCampaign.started_at < stale_before)
+        )
+    )
     for campaign in stale_campaigns:
         BusinessDocumentQualityCampaign.update(baseline_status="INCOMPLETE", reason_code="WORKER_STOPPED").where(BusinessDocumentQualityCampaign.id == campaign.id).execute()
         BusinessDocumentQualityRun.update(status="INCOMPLETE", reason_code="BASELINE_FAILED", reason="Nightly baseline did not pass", finished_at=current_timestamp()).where(
@@ -663,9 +739,11 @@ def process_next_run() -> bool:
     row = BusinessDocumentQualityRun.select().where(BusinessDocumentQualityRun.status == "PENDING").order_by(BusinessDocumentQualityRun.create_time, BusinessDocumentQualityRun.id).first()
     if campaign is not None and (row is None or campaign.create_time <= row.create_time):
         started = current_timestamp()
-        claimed = BusinessDocumentQualityCampaign.update(status="RUNNING", started_at=started).where(
-            (BusinessDocumentQualityCampaign.id == campaign.id) & (BusinessDocumentQualityCampaign.status == "PENDING")
-        ).execute()
+        claimed = (
+            BusinessDocumentQualityCampaign.update(status="RUNNING", started_at=started)
+            .where((BusinessDocumentQualityCampaign.id == campaign.id) & (BusinessDocumentQualityCampaign.status == "PENDING"))
+            .execute()
+        )
         if claimed != 1:
             return False
         try:
@@ -695,9 +773,9 @@ def process_next_run() -> bool:
     except Exception:
         logging.exception("Business Documents quality run could not complete")
         status, report, reason = "INCOMPLETE", None, "Quality runner failed or timed out"
-    BusinessDocumentQualityRun.update(status=status, schedule_key=None if row.trigger == "MANUAL" else row.schedule_key,
-                                      report=report, reason=reason, reason_code=_reason_code(status, reason),
-                                      finished_at=current_timestamp()).where(BusinessDocumentQualityRun.id == row.id).execute()
+    BusinessDocumentQualityRun.update(
+        status=status, schedule_key=None if row.trigger == "MANUAL" else row.schedule_key, report=report, reason=reason, reason_code=_reason_code(status, reason), finished_at=current_timestamp()
+    ).where(BusinessDocumentQualityRun.id == row.id).execute()
     if row.campaign_id:
         _refresh_campaign(row.campaign_id)
     return True

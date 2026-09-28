@@ -347,20 +347,31 @@ with DB.connection_context():
                       'models': len(campaign['runs']), 'completed': len(campaign['runs'])}))
 """
                 quality_result = command(
-                    [*cmd, "exec", "-T", "-e", f"BUSINESS_DOCUMENT_QUALITY_TENANT_ID={tenant['tenant_id']}",
-                     "app", "/ragflow/.venv/bin/python", "-"],
-                    env=env, log="business-nightly.log", input=nightly_script, check=False,
+                    [*cmd, "exec", "-T", "-e", f"BUSINESS_DOCUMENT_QUALITY_TENANT_ID={tenant['tenant_id']}", "app", "/ragflow/.venv/bin/python", "-"],
+                    env=env,
+                    log="business-nightly.log",
+                    input=nightly_script,
+                    check=False,
                     timeout=20 * 60 * 12,
                 )
                 progress = OUT / "nightly-campaign.json"
                 if progress.is_file():
                     campaign = json.loads(progress.read_text(encoding="utf-8"))
-                    (OUT / "business-documents-quality.json").write_text(json.dumps({
-                        "schema_version": "2", "status": campaign["status"],
-                        "campaign_id": campaign["id"], "baseline_status": campaign["baseline_status"],
-                        "models": len(campaign["runs"]),
-                        "completed_models": sum(run["status"] not in ("PENDING", "RUNNING") for run in campaign["runs"]),
-                    }, indent=2) + "\n", encoding="utf-8")
+                    (OUT / "business-documents-quality.json").write_text(
+                        json.dumps(
+                            {
+                                "schema_version": "2",
+                                "status": campaign["status"],
+                                "campaign_id": campaign["id"],
+                                "baseline_status": campaign["baseline_status"],
+                                "models": len(campaign["runs"]),
+                                "completed_models": sum(run["status"] not in ("PENDING", "RUNNING") for run in campaign["runs"]),
+                            },
+                            indent=2,
+                        )
+                        + "\n",
+                        encoding="utf-8",
+                    )
                 exit_code = exit_code or quality_result.returncode
                 print(f"Business Documents nightly exit={quality_result.returncode}; see nightly-campaign.json", flush=True)
                 return exit_code

@@ -8,17 +8,17 @@ identifiers from an accepted schema snapshot and compiles one PostgreSQL
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import date, datetime
-from decimal import Decimal, InvalidOperation
 import hashlib
 import json
 import re
-from typing import Any, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
+from typing import Any
 
 import sqlglot
 from sqlglot import exp
-
 
 QUERY_SPECIFICATION_VERSION = "1"
 QUERY_DIALECT = "postgres"

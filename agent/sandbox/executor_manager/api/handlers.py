@@ -37,7 +37,10 @@ async def capabilities_handler():
     try:
         output = subprocess.run(
             ["docker", "info", "--format", "{{json .Runtimes}}"],
-            capture_output=True, text=True, timeout=3, check=True,
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=True,
         )
         available = runtime in json.loads(output.stdout)
     except (subprocess.SubprocessError, ValueError, OSError):

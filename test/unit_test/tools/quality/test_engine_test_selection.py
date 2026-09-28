@@ -207,7 +207,7 @@ def test_actual_publication_gate_rejects_missing_failed_or_cancelled_required_jo
     expression = jobs["publish_candidate"]["if"].removeprefix("${{").removesuffix("}}")
     values = {
         "!cancelled()": "True",
-        "github.event_name": repr("push"),
+        "github.event_name": repr("workflow_dispatch"),
         "github.ref": repr("refs/heads/main"),
         "needs.ragflow_preflight.outputs.run_engine_tests": repr(required),
         "needs.ragflow_preflight.result": repr(preflight),

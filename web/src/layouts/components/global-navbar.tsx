@@ -123,7 +123,7 @@ const menuItems: Array<{
     name: 'header.documentConstructor',
     fallbackName: 'Constructor',
     icon: LayoutTemplate,
-    section: 'business_documents',
+    section: 'document_constructor',
     requiresBusinessDocumentCreate: true,
     'data-testid': 'nav-document-constructor',
   },
@@ -140,7 +140,9 @@ function useVisibleMenuItems() {
   const { data: userInfo, loading: userInfoLoading } = useFetchUserInfo();
   const actorId = userInfo.id?.trim();
   const businessDocumentsVisible =
-    config?.visibleSections.includes('business_documents') === true;
+    config?.visibleSections.some((section: NavigationSection) =>
+      section === 'business_documents' || section === 'document_constructor',
+    ) === true;
   const { data: businessDocumentAccess } = useQuery({
     queryKey: ['business-document-capabilities', actorId],
     queryFn: getBusinessDocumentCapabilities,

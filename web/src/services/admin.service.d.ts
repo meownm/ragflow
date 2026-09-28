@@ -272,6 +272,7 @@ declare namespace AdminService {
   export type AuditEventSource =
     | 'application'
     | 'business_documents'
+    | 'document_constructor'
     | 'ingestion'
     | 'connectors';
 

@@ -18,6 +18,7 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 import { Textarea } from '@/components/ui/textarea';
+import { useSystemConfig } from '@/hooks/use-system-request';
 import {
   useFetchTenantInfo,
   useFetchUserInfo,
@@ -220,6 +221,7 @@ function BusinessDocumentCreationSidebar({
 
 function CreateBusinessDocumentPage() {
   const navigate = useNavigate();
+  const { config } = useSystemConfig();
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<'new' | 'eva'>('new');
   const [catalogEntryId, setCatalogEntryId] = useState('');
@@ -329,17 +331,18 @@ function CreateBusinessDocumentPage() {
             Продолжите сохранённую работу или начните новые бизнес-требования.
           </p>
         </div>
-        {canCreate && (
-          <Button asChild variant="outline">
-            <Link
-              to={Routes.DocumentConstructor}
-              data-testid="open-document-constructor"
-            >
-              <LayoutTemplate className="size-4" />
-              Конструктор
-            </Link>
-          </Button>
-        )}
+        {canCreate &&
+          config?.visibleSections.includes('document_constructor') && (
+            <Button asChild variant="outline">
+              <Link
+                to={Routes.DocumentConstructor}
+                data-testid="open-document-constructor"
+              >
+                <LayoutTemplate className="size-4" />
+                Конструктор
+              </Link>
+            </Button>
+          )}
       </header>
 
       <div

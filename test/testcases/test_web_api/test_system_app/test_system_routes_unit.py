@@ -265,3 +265,23 @@ def test_get_config_excludes_home_for_access_group_user(monkeypatch):
 
     assert res["code"] == 0
     assert res["data"]["visibleSections"] == ["chat"]
+
+
+@pytest.mark.p2
+def test_get_config_inherits_document_access_for_constructor_navigation(monkeypatch):
+    module = _load_system_module(monkeypatch)
+    access_group_service = sys.modules["api.db.services.access_group_service"]
+    navigation_visibility_service = sys.modules["api.db.services.navigation_visibility_service"]
+
+    monkeypatch.setattr(
+        navigation_visibility_service,
+        "get_visible_sections",
+        lambda: ["business_documents", "document_constructor"],
+    )
+    monkeypatch.setattr(
+        access_group_service.AccessGroupService,
+        "effective_policy",
+        lambda _user_id: {"dataset_ids": set(), "sections": {"business_documents"}},
+    )
+
+    assert module.get_config()["data"]["visibleSections"] == ["business_documents", "document_constructor"]

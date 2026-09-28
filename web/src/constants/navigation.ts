@@ -7,6 +7,7 @@ export const NavigationSections = [
   'memory',
   'catalog',
   'business_documents',
+  'document_constructor',
   'file_manager',
 ] as const;
 
@@ -21,6 +22,7 @@ export const NavigationSectionPaths: Record<NavigationSection, string> = {
   memory: '/memories',
   catalog: '/openmetadata',
   business_documents: '/business-documents',
+  document_constructor: '/document-constructor',
   file_manager: '/files',
 };
 

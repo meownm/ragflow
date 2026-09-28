@@ -86,7 +86,7 @@ describe('DesktopNavbar', () => {
     mockUseSystemConfig.mockReturnValue({
       config: {
         registerEnabled: 1,
-        visibleSections: ['business_documents'],
+        visibleSections: ['business_documents', 'document_constructor'],
       },
       loading: false,
     });
@@ -142,5 +142,43 @@ describe('DesktopNavbar', () => {
     expect(
       screen.queryByTestId('nav-document-constructor'),
     ).not.toBeInTheDocument();
+  });
+
+  it('hides only the constructor when its section is disabled', async () => {
+    mockUseSystemConfig.mockReturnValue({
+      config: {
+        registerEnabled: 1,
+        visibleSections: ['business_documents'],
+      },
+      loading: false,
+    });
+    mockedGetBusinessDocumentCapabilities.mockResolvedValue({
+      access_role: 'AUTHOR_CREATOR',
+      capabilities: { create: true },
+    } as never);
+
+    renderNavbar();
+
+    expect(await screen.findByTestId('nav-business-documents')).toBeVisible();
+    expect(screen.queryByTestId('nav-document-constructor')).not.toBeInTheDocument();
+  });
+
+  it('can show the constructor when the documents entry is hidden', async () => {
+    mockUseSystemConfig.mockReturnValue({
+      config: {
+        registerEnabled: 1,
+        visibleSections: ['document_constructor'],
+      },
+      loading: false,
+    });
+    mockedGetBusinessDocumentCapabilities.mockResolvedValue({
+      access_role: 'AUTHOR_CREATOR',
+      capabilities: { create: true },
+    } as never);
+
+    renderNavbar();
+
+    expect(await screen.findByTestId('nav-document-constructor')).toBeVisible();
+    expect(screen.queryByTestId('nav-business-documents')).not.toBeInTheDocument();
   });
 });

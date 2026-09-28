@@ -14,6 +14,7 @@ ALL_SECTIONS = [
     "memory",
     "catalog",
     "business_documents",
+    "document_constructor",
     "file_manager",
 ]
 

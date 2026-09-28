@@ -39,6 +39,12 @@ import {
 import { MemoryRouter, Route, Routes as RouterRoutes } from 'react-router';
 import BusinessDocumentsPage from '.';
 
+const mockUseSystemConfig = jest.fn();
+
+jest.mock('@/hooks/use-system-request', () => ({
+  useSystemConfig: () => mockUseSystemConfig(),
+}));
+
 type BusinessDocumentProjection = import('./types').BusinessDocumentProjection;
 type BusinessDocumentCommandResult =
   import('./types').BusinessDocumentCommandResult;
@@ -412,6 +418,10 @@ beforeAll(() => {
 });
 
 beforeEach(() => {
+  mockUseSystemConfig.mockReturnValue({
+    config: { visibleSections: ['business_documents', 'document_constructor'] },
+    loading: false,
+  });
   jest.clearAllMocks();
   mockedWatch.mockResolvedValue(undefined);
   window.localStorage.clear();
@@ -2709,6 +2719,17 @@ test('hides the creation and EVA sidebar from an author-editor', async () => {
   expect(
     screen.queryByTestId('open-document-constructor'),
   ).not.toBeInTheDocument();
+});
+
+test('hides the constructor entry when its section is disabled', async () => {
+  mockUseSystemConfig.mockReturnValue({
+    config: { visibleSections: ['business_documents'] },
+    loading: false,
+  });
+  renderPage('/business-documents');
+
+  expect(await screen.findByTestId('business-document-create-panel')).toBeVisible();
+  expect(screen.queryByTestId('open-document-constructor')).not.toBeInTheDocument();
 });
 
 test('allows an extended moderator to assign a document owner', async () => {

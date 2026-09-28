@@ -249,7 +249,8 @@ printf 'INSTALLED_AT_UTC=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | \
   sudo tee -a "${SECRETS_DIR}/deployed-source.env" >/dev/null
 
 cd "${INSTALL_DIR}/docker"
-COMPOSE=(sudo docker compose --env-file .env -p "${PROJECT_NAME}" \
+COMPOSE=(sudo docker compose --profile cpu --profile elasticsearch --profile observability \
+  --env-file .env -p "${PROJECT_NAME}" \
   -f docker-compose.yml \
   -f docker-compose.local.yml \
   -f docker-compose.linux.local.yml \

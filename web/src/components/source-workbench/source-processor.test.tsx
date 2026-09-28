@@ -8,6 +8,19 @@ import {
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { SourceProcessor } from './source-processor';
 
+jest.mock('react-markdown', () => ({
+  __esModule: true,
+  default: ({ children }: { children?: string }) => <>{children}</>,
+}));
+jest.mock('remark-gfm', () => ({
+  __esModule: true,
+  default: () => undefined,
+}));
+jest.mock('rehype-raw', () => ({
+  __esModule: true,
+  default: () => undefined,
+}));
+
 jest.mock('@/services/source-workbench-service', () => ({
   getSourceWorkspaceDraft: jest.fn(),
   listSourceWorkspaceDrafts: jest.fn(),
@@ -75,16 +88,18 @@ test('shows streamed text before completion and commits the final result', async
   });
   fireEvent.click(screen.getByRole('button', { name: 'Обработать' }));
   await waitFor(() =>
-    expect(screen.getByLabelText('Потоковый ответ')).toHaveValue('Live text'),
+    expect(
+      screen.getByRole('article', { name: 'Потоковый ответ' }),
+    ).toHaveTextContent('Live text'),
   );
   expect(
-    screen.queryByLabelText('Результат обработки'),
+    screen.queryByRole('article', { name: 'Результат обработки' }),
   ).not.toBeInTheDocument();
   release?.();
   await waitFor(() =>
-    expect(screen.getByLabelText('Результат обработки')).toHaveValue(
-      'Final text',
-    ),
+    expect(
+      screen.getByRole('article', { name: 'Результат обработки' }),
+    ).toHaveTextContent('Final text'),
   );
   expect(mockedStream.mock.calls[0][1]).toEqual({
     prompt: 'Create',
@@ -115,9 +130,9 @@ test('keeps the last completed article if a later stage fails', async () => {
   await waitFor(() =>
     expect(screen.getByRole('alert')).toHaveTextContent('Model failed'),
   );
-  expect(screen.getByLabelText('Результат обработки')).toHaveValue(
-    'After first',
-  );
+  expect(
+    screen.getByRole('article', { name: 'Результат обработки' }),
+  ).toHaveTextContent('After first');
   expect(screen.getByText('Завершено статей: 1 из 2')).toBeInTheDocument();
   expect(mockedStream.mock.calls[0][1].mode).toBe('sequential');
 });
@@ -146,9 +161,9 @@ test('stop aborts the active stream', async () => {
     screen.getByText('Для этого запуска завершённого результата нет.'),
   ).toBeInTheDocument();
   expect(screen.getByText('Незавершённый ответ модели')).toBeInTheDocument();
-  expect(screen.getByLabelText('Потоковый ответ')).toHaveValue(
-    'Незаконченный текст',
-  );
+  expect(
+    screen.getByRole('article', { name: 'Потоковый ответ' }),
+  ).toHaveTextContent('Незаконченный текст');
   expect(
     screen.queryByRole('button', { name: 'Сохранить черновик' }),
   ).not.toBeInTheDocument();
@@ -192,12 +207,13 @@ test('saves a reviewed complete result with the current source selection', async
     target: { value: 'Create' },
   });
   fireEvent.click(screen.getByRole('button', { name: 'Обработать' }));
-  await screen.findByDisplayValue('Generated');
+  await screen.findByRole('article', { name: 'Результат обработки' });
+  fireEvent.click(screen.getByRole('button', { name: 'Редактировать текст' }));
   fireEvent.change(screen.getByLabelText('Промпт'), {
     target: { value: 'Another instruction' },
   });
   fireEvent.click(screen.getByLabelText('По одной, последовательно'));
-  fireEvent.change(screen.getByLabelText('Результат обработки'), {
+  fireEvent.change(screen.getByLabelText('Редактор результата'), {
     target: { value: 'Reviewed result' },
   });
   fireEvent.click(screen.getByRole('button', { name: 'Сохранить черновик' }));
@@ -238,8 +254,11 @@ test('opens and edits a saved draft before another processing run', async () => 
   await waitFor(() =>
     expect(mockedGetDraft).toHaveBeenCalledWith(workspace.id, saved.id),
   );
-  expect(await screen.findByDisplayValue('Saved text')).toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText('Результат обработки'), {
+  expect(
+    await screen.findByRole('article', { name: 'Результат обработки' }),
+  ).toHaveTextContent('Saved text');
+  fireEvent.click(screen.getByRole('button', { name: 'Редактировать текст' }));
+  fireEvent.change(screen.getByLabelText('Редактор результата'), {
     target: { value: 'Edited text' },
   });
   fireEvent.click(screen.getByRole('button', { name: 'Сохранить правки' }));

@@ -10,11 +10,100 @@ from peewee import SqliteDatabase
 
 from common import settings
 from api.db.db_models import SourceWorkspaceDraft
-from api.source_workbench.adapters import DocMetadataService, Document, KnowledgebaseService, RAGFlowSourceGateway, SourceWorkspaceRepository
+from api.source_workbench.adapters import DocMetadataService, Document, KnowledgebaseService, RAGFlowProcessModel, RAGFlowSourceGateway, SourceWorkspaceRepository
 from api.source_workbench.service import SourceWorkspaceError
 
 
 pytestmark = pytest.mark.p1
+
+
+def test_source_dataset_choices_use_authenticated_dataset_visibility(monkeypatch):
+    calls = []
+
+    def get_list(*args):
+        calls.append(args)
+        return [
+            {"id": "kb-1", "name": "Articles", "tenant_id": "tenant-a", "embd_id": "model-a", "chunk_num": 3},
+            {"id": "kb-empty", "name": "Empty", "tenant_id": "tenant-a", "embd_id": "model-a", "chunk_num": 0},
+        ], 2
+
+    monkeypatch.setattr(KnowledgebaseService, "get_list", get_list)
+    assert RAGFlowSourceGateway.list_datasets("reader-a") == [
+        {"id": "kb-1", "name": "Articles", "tenant_id": "tenant-a", "embd_id": "model-a"}
+    ]
+    assert calls == [([], "reader-a", 1, 100, "name", False, None, None, "")]
+
+
+def test_source_dataset_choices_include_later_pages_after_empty_sources(monkeypatch):
+    def get_list(_tenants, _owner, page, *_args):
+        if page == 1:
+            return [
+                {"id": f"empty-{index}", "name": "Empty", "tenant_id": "tenant-a", "embd_id": "model-a", "chunk_num": 0}
+                for index in range(100)
+            ], 101
+        return [{"id": "kb-last", "name": "Article", "tenant_id": "tenant-a", "embd_id": "model-a", "chunk_num": 1}], 101
+
+    monkeypatch.setattr(KnowledgebaseService, "get_list", get_list)
+    assert [item["id"] for item in RAGFlowSourceGateway.list_datasets("reader-a")] == ["kb-last"]
+
+
+@pytest.mark.asyncio
+async def test_ollama_processor_uses_discovered_context_for_planning_and_generation(monkeypatch):
+    import aiohttp
+    from api.db.services import llm_service
+
+    calls = []
+
+    class Response:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            pass
+
+        def raise_for_status(self):
+            pass
+
+        async def json(self):
+            return {"details": {"family": "test"}, "model_info": {"test.context_length": 131072}}
+
+    class Session:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            pass
+
+        def post(self, url, **kwargs):
+            calls.append((url, kwargs))
+            return Response()
+
+    class Bundle:
+        def __init__(self, *_args, **_kwargs):
+            self.mdl = SimpleNamespace(async_chat_streamly=True)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        async def async_chat_streamly_delta(self, _system, _history, generation):
+            calls.append(generation)
+            yield "answer"
+
+    monkeypatch.setattr(aiohttp, "ClientSession", Session)
+    monkeypatch.setattr(llm_service, "LLMBundle", Bundle)
+    model = RAGFlowProcessModel("owner", {"llm_factory": "Ollama", "llm_name": "test:latest", "api_base": "http://ollama:11434", "api_key": "", "max_tokens": 4096})
+    await model.resolve_context()
+    assert model.context_tokens == 131072
+    assert [part async for part in model.stream("system", {"task": "create"}, 32768)] == ["answer"]
+    assert calls[0][0] == "http://ollama:11434/api/show"
+    assert calls[1]["extra_body"] == {"num_ctx": 131072}
+    assert calls[1]["max_completion_tokens"] == 32768
 
 
 def test_saved_draft_persists_provenance_and_rejects_stale_or_foreign_edit():
@@ -60,6 +149,25 @@ def test_candidate_similarity_uses_highest_finite_chunk_score(monkeypatch):
     )
     assert len(candidates) == 1
     assert candidates[0]["similarity"] == 0.73
+
+
+def test_uploaded_article_uses_readable_title_instead_of_storage_path(monkeypatch):
+    document = SimpleNamespace(
+        id="doc-1", kb_id="dataset-a", status="1", source_type="file",
+        name="f4f461eb-00c3-41f9-9b82-3f2b77792942/eva-wiki-all-projects/99b92a37-16f2-57a6-84c2-99fe5ce36099/portal-kompanii__Версия_2_11_EvaProject_и_EvaWiki.html",
+        content_hash="hash",
+    )
+
+    class Query:
+        def where(self, _condition):
+            return [document]
+
+    monkeypatch.setattr(Document, "select", lambda *_args: Query())
+    monkeypatch.setattr(DocMetadataService, "get_metadata_for_documents", lambda *_args: {})
+    describe = RAGFlowSourceGateway.describe_chunks.__wrapped__
+    candidate = describe([{"document_id": "doc-1", "dataset_id": "dataset-a"}], ["dataset-a"])[0]
+    assert candidate["title"] == "Версия 2.11 EvaProject и EvaWiki"
+    assert candidate["path"] == ["eva-wiki-all-projects", "Версия 2.11 EvaProject и EvaWiki"]
 
 
 def test_full_document_loader_requests_ordered_indexed_chunks(monkeypatch):

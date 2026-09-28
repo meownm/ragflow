@@ -12,6 +12,7 @@ import {
   type SourceWorkspaceDraftSummary,
 } from '@/services/source-workbench-service';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { SourceArticleContent } from './source-article-content';
 
 type Mode = 'all' | 'sequential';
 
@@ -38,6 +39,7 @@ export function SourceProcessor({
   const [saving, setSaving] = useState(false);
   const [resultFromCurrentRun, setResultFromCurrentRun] = useState(false);
   const [liveText, setLiveText] = useState('');
+  const [currentArticle, setCurrentArticle] = useState(0);
   const [resultVersion, setResultVersion] = useState<number | null>(null);
   const [resultPrompt, setResultPrompt] = useState('');
   const [resultMode, setResultMode] = useState<Mode>('all');
@@ -49,9 +51,10 @@ export function SourceProcessor({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [stopped, setStopped] = useState(false);
+  const [editing, setEditing] = useState(false);
   const controller = useRef<AbortController | null>(null);
   const notesUsed = useRef(false);
-  const liveArea = useRef<HTMLTextAreaElement | null>(null);
+  const editorArea = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
     if (!busy) return;
@@ -80,9 +83,10 @@ export function SourceProcessor({
   }, [workspace.id]);
 
   useEffect(() => {
-    if (liveArea.current)
-      liveArea.current.scrollTop = liveArea.current.scrollHeight;
-  }, [liveText]);
+    if (!editing || !editorArea.current) return;
+    editorArea.current.style.height = 'auto';
+    editorArea.current.style.height = `${editorArea.current.scrollHeight}px`;
+  }, [editing, editorText]);
 
   const run = async (event: FormEvent) => {
     event.preventDefault();
@@ -102,8 +106,10 @@ export function SourceProcessor({
     setError('');
     setStopped(false);
     setLiveText('');
+    setCurrentArticle(0);
     setResultFromCurrentRun(false);
     setSavedDraft(null);
+    setEditing(false);
     setCompleted(false);
     setProgress(0);
     setElapsedSeconds(0);
@@ -119,7 +125,10 @@ export function SourceProcessor({
           );
         }
         if (item.stage === 'extract') notesUsed.current = true;
-        if (item.stage === 'generate') setLiveText('');
+        if (item.stage === 'generate') {
+          setLiveText('');
+          setCurrentArticle(mode === 'sequential' ? item.current : 0);
+        }
       } else if (item.event === 'delta') {
         setLiveText((previous) => previous + item.text);
       } else if (item.event === 'step_done' || item.event === 'done') {
@@ -188,6 +197,7 @@ export function SourceProcessor({
     try {
       const item = await getSourceWorkspaceDraft(workspace.id, draftId);
       setSavedDraft(item);
+      setEditing(false);
       setResult(item.content);
       setEditorText(item.content);
       setResultVersion(item.source_version);
@@ -210,6 +220,10 @@ export function SourceProcessor({
       <p className="mt-1 text-sm text-text-secondary">
         Создайте новый текст или вставьте существующий для правок. Итог можно
         использовать как черновик следующего запроса.
+      </p>
+      <p className="mt-1 text-xs text-text-secondary">
+        Обрабатываются только выбранные статьи; запросы поиска в промпт не
+        добавляются.
       </p>
       {drafts.length > 0 && (
         <div className="mt-5">
@@ -342,7 +356,11 @@ export function SourceProcessor({
       {liveText && (
         <div className="mt-6">
           <h3 className="font-semibold">
-            {busy ? 'Ответ модели сейчас' : 'Незавершённый ответ модели'}
+            {busy
+              ? currentArticle
+                ? `Промежуточный текст · статья ${currentArticle} из ${workspace.selected_documents.length}`
+                : 'Ответ модели сейчас'
+              : 'Незавершённый ответ модели'}
           </h3>
           {!busy && (
             <p className="mt-1 text-xs text-text-secondary">
@@ -350,13 +368,7 @@ export function SourceProcessor({
               результат.
             </p>
           )}
-          <textarea
-            ref={liveArea}
-            aria-label="Потоковый ответ"
-            className="mt-3 min-h-40 w-full rounded-md border border-border-button bg-bg-card p-3 text-sm"
-            value={liveText}
-            readOnly
-          />
+          <SourceArticleContent text={liveText} label="Потоковый ответ" />
         </div>
       )}
       {result && (
@@ -378,13 +390,24 @@ export function SourceProcessor({
               Передать текст в обработку
             </Button>
           </div>
-          <textarea
-            aria-label="Результат обработки"
-            className="mt-3 min-h-64 w-full rounded-md border border-border-button bg-bg-card p-3 text-sm"
-            value={editorText}
-            onChange={(event) => setEditorText(event.target.value)}
-            disabled={busy || saving}
-          />
+          <SourceArticleContent text={editorText} label="Результат обработки" />
+          <button
+            type="button"
+            className="mt-3 text-sm text-accent-primary hover:underline"
+            onClick={() => setEditing((previous) => !previous)}
+          >
+            {editing ? 'Скрыть редактор' : 'Редактировать текст'}
+          </button>
+          {editing && (
+            <textarea
+              ref={editorArea}
+              aria-label="Редактор результата"
+              className="mt-3 min-h-64 w-full resize-none overflow-hidden rounded-md border border-border-button bg-bg-card p-3 text-sm"
+              value={editorText}
+              onChange={(event) => setEditorText(event.target.value)}
+              disabled={busy || saving}
+            />
+          )}
           <Button
             type="button"
             className="mt-3"

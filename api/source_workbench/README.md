@@ -7,8 +7,18 @@ chat or a future document workflow can consume the same source set.
 ## Contract
 
 - Create a workspace with a title and one or more dataset IDs.
+- `GET /source-workspaces/datasets` lists indexed datasets visible to the
+  authenticated user under the article section's `search` permission. The
+  picker allows one owner and embedding model per workspace; the server checks
+  access and compatibility again on creation.
 - Search any number of times. Results are grouped by document; EVA Wiki paths
   are read from the indexed document name and shown as a hierarchy.
+- `POST /source-workspaces/{id}/preview` opens the full indexed text of a
+  result or selected article. It checks workspace ownership, dataset access,
+  document membership in the workspace dataset, indexing status, and revision
+  again after loading. The UI renders Markdown and sanitized HTML markup in a
+  read-only dialog; original file layout unavailable in the index is not
+  reconstructed.
 - Save selected `{dataset_id, document_id}` pairs with `expected_version`. The
   server records each indexed document's revision; a supplied revision is ignored.
 - Call `retrieve`, `load_selected_documents`, or `chat` with the workspace ID.
@@ -52,7 +62,9 @@ chat or a future document workflow can consume the same source set.
   mode, and source version on the server. A stale selection is rejected; edits
   use a draft version to prevent overwriting another update. Drafts are owned
   by the workspace user. They are not published into a knowledge base.
-- The budget uses the model's configured `max_tokens` context, reserves output
+- The budget uses the model's configured `max_tokens` context; for Ollama it
+  reads the current model context from `/api/show` and sends `num_ctx` with
+  article-processing requests so the serving window matches the plan. It reserves output
   and safety space, and estimates input with the repository's `cl100k_base`
   tokenizer plus 25% headroom. The upstream stream has no finish-reason signal,
   so the output-cap check is conservative and cannot prove semantic completeness.

@@ -21,6 +21,11 @@ export interface SourceCandidate extends SourceReference {
   citation_numbers?: number[];
 }
 
+export interface SourceArticle extends SourceCandidate {
+  text: string;
+  revision: string;
+}
+
 export interface SourceWorkspace {
   id: string;
   title: string;
@@ -31,6 +36,13 @@ export interface SourceWorkspace {
   version: number;
   created_at: string;
   updated_at: string;
+}
+
+export interface SourceDataset {
+  id: string;
+  name: string;
+  tenant_id: string;
+  embd_id: string;
 }
 
 export interface SourceWorkspaceDraft {
@@ -121,6 +133,13 @@ export async function listSourceWorkspaces(): Promise<SourceWorkspace[]> {
   return unwrap(response.data);
 }
 
+export async function listSourceDatasets(): Promise<SourceDataset[]> {
+  const response = await request.get<Envelope<SourceDataset[]>>(
+    api.sourceWorkspaceDatasets,
+  );
+  return unwrap(response.data);
+}
+
 export async function createSourceWorkspace(input: {
   title: string;
   dataset_ids: string[];
@@ -157,6 +176,19 @@ export async function searchSourceWorkspace(
       candidates: SourceCandidate[];
     }>
   >(api.sourceWorkspaceSearch(id), { query, page });
+  return unwrap(response.data);
+}
+
+export async function previewSourceWorkspaceArticle(
+  id: string,
+  source: SourceReference,
+  signal?: AbortSignal,
+): Promise<SourceArticle> {
+  const response = await request.post<Envelope<SourceArticle>>(
+    api.sourceWorkspacePreview(id),
+    { dataset_id: source.dataset_id, document_id: source.document_id },
+    { signal },
+  );
   return unwrap(response.data);
 }
 

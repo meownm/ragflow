@@ -47,6 +47,12 @@ async def list_source_workspaces():
     return _success(await build_source_workspace_service().list(str(current_user.id)))
 
 
+@manager.route("/source-workspaces/datasets", methods=["GET"])  # noqa: F821
+@login_required
+async def list_source_workspace_datasets():
+    return _success(await build_source_workspace_service().list_datasets(str(current_user.id)))
+
+
 @manager.route("/source-workspaces/<workspace_id>", methods=["GET"])  # noqa: F821
 @login_required
 async def get_source_workspace(workspace_id):
@@ -71,6 +77,15 @@ async def search_source_workspace(workspace_id):
 async def select_source_workspace_documents(workspace_id):
     try:
         return _success(await build_source_workspace_service().select(str(current_user.id), workspace_id, await _body()))
+    except SourceWorkspaceError as error:
+        return _error(error)
+
+
+@manager.route("/source-workspaces/<workspace_id>/preview", methods=["POST"])  # noqa: F821
+@login_required
+async def preview_source_workspace_document(workspace_id):
+    try:
+        return _success(await build_source_workspace_service().preview_document(str(current_user.id), workspace_id, await _body()))
     except SourceWorkspaceError as error:
         return _error(error)
 

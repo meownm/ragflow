@@ -43,6 +43,80 @@ def _gateway(calls, revision="hash:1:2"):
 
 
 @pytest.mark.asyncio
+async def test_preview_reads_full_article_after_workspace_and_dataset_access(source_module):
+    calls = []
+    repository = SimpleNamespace(get=lambda owner, workspace: _workspace())
+    service = source_module.SourceWorkspaceService(repository, _gateway(calls))
+    result = await service.preview_document("owner-a", "workspace-id", {"dataset_id": "dataset-a", "document_id": "doc-1"})
+    assert result["text"] == "Full indexed text"
+    assert result["title"] == "Article"
+    assert [call[0] for call in calls].count("datasets") == 2
+    assert [call[0] for call in calls].count("revisions") == 2
+
+
+@pytest.mark.asyncio
+async def test_preview_rejects_document_outside_workspace_before_loading(source_module):
+    calls = []
+    service = source_module.SourceWorkspaceService(
+        SimpleNamespace(get=lambda owner, workspace: _workspace()), _gateway(calls),
+    )
+    with pytest.raises(source_module.SourceWorkspaceError) as error:
+        await service.preview_document("owner-a", "workspace-id", {"dataset_id": "foreign", "document_id": "doc-1"})
+    assert error.value.status == 404
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_preview_rejects_revoked_dataset_access(source_module):
+    calls = []
+    gateway = _gateway(calls)
+
+    def denied(_owner, _datasets):
+        raise source_module.SourceWorkspaceError("DATASET_UNAVAILABLE", "Unavailable", 403)
+
+    gateway.validate_datasets = denied
+    service = source_module.SourceWorkspaceService(
+        SimpleNamespace(get=lambda owner, workspace: _workspace()), gateway,
+    )
+    with pytest.raises(source_module.SourceWorkspaceError) as error:
+        await service.preview_document("owner-a", "workspace-id", {"dataset_id": "dataset-a", "document_id": "doc-1"})
+    assert error.value.status == 403
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_preview_rejects_changed_article_after_read(source_module):
+    calls = []
+    gateway = _gateway(calls)
+    revisions = iter(("old", "new"))
+    gateway.document_revisions = lambda documents: [{**documents[0], "revision": next(revisions)}]
+    service = source_module.SourceWorkspaceService(
+        SimpleNamespace(get=lambda owner, workspace: _workspace()), gateway,
+    )
+    with pytest.raises(source_module.SourceWorkspaceError) as error:
+        await service.preview_document("owner-a", "workspace-id", {"dataset_id": "dataset-a", "document_id": "doc-1"})
+    assert error.value.code == "SOURCE_CHANGED"
+
+
+@pytest.mark.asyncio
+async def test_preview_rejects_article_in_another_dataset(source_module):
+    calls = []
+    gateway = _gateway(calls)
+
+    def unavailable(_documents):
+        raise source_module.SourceWorkspaceError("DOCUMENT_UNAVAILABLE", "Unavailable", 409)
+
+    gateway.document_revisions = unavailable
+    gateway.load_document = lambda _document: pytest.fail("Foreign article text must not be loaded")
+    service = source_module.SourceWorkspaceService(
+        SimpleNamespace(get=lambda owner, workspace: _workspace()), gateway,
+    )
+    with pytest.raises(source_module.SourceWorkspaceError) as error:
+        await service.preview_document("owner-a", "workspace-id", {"dataset_id": "dataset-a", "document_id": "foreign-doc"})
+    assert error.value.code == "DOCUMENT_UNAVAILABLE"
+
+
+@pytest.mark.asyncio
 async def test_selection_pins_authoritative_revision(source_module):
     calls = []
     saved = []
@@ -277,6 +351,34 @@ async def test_chat_rechecks_selection_immediately_before_model(source_module, c
 
 
 @pytest.mark.asyncio
+async def test_chat_rechecks_dataset_access_after_model_answer(source_module):
+    calls = []
+    selection = [{"dataset_id": "dataset-a", "document_id": "doc-1", "revision": "hash:1:2"}]
+    gateway = _gateway(calls)
+    access = {"allowed": True}
+    original_validate = gateway.validate_datasets
+
+    def validate(owner, datasets):
+        if not access["allowed"]:
+            raise source_module.SourceWorkspaceError("DATASET_UNAVAILABLE", "Access was revoked", 403)
+        original_validate(owner, datasets)
+
+    async def answer(*_args):
+        access["allowed"] = False
+        return "Answer [1]"
+
+    gateway.validate_datasets = validate
+    service = source_module.SourceWorkspaceService(
+        SimpleNamespace(get=lambda owner, workspace: _workspace(selection)),
+        gateway,
+        SimpleNamespace(answer=answer),
+    )
+    with pytest.raises(source_module.SourceWorkspaceError) as error:
+        await service.chat("owner-a", "workspace-id", {"question": "Question", "expected_version": 3})
+    assert error.value.code == "DATASET_UNAVAILABLE"
+
+
+@pytest.mark.asyncio
 async def test_selection_rejects_document_from_other_dataset(source_module):
     calls = []
     service = source_module.SourceWorkspaceService(
@@ -468,7 +570,7 @@ async def test_processing_rejects_draft_that_fits_input_but_not_full_output(sour
     selection = [{"dataset_id": "dataset-a", "document_id": "doc-1", "revision": "hash:1:2"}]
     service = source_module.SourceWorkspaceService(SimpleNamespace(get=lambda owner, workspace: _workspace(selection)), _gateway(calls), _processor(calls, 8192))
     with pytest.raises(ProcessingError) as error:
-        await service.process_stream("owner-a", "workspace-id", {"mode": "sequential", "prompt": "Revise", "draft": "word " * 1800, "expected_version": 3})
+        await service.process_stream("owner-a", "workspace-id", {"mode": "sequential", "prompt": "Revise", "draft": "word " * 2400, "expected_version": 3})
     assert error.value.code == "DRAFT_TOO_LARGE_FOR_MODEL"
     assert not any(call[0] == "load" for call in calls)
 

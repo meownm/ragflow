@@ -56,3 +56,15 @@ def test_group_sections_are_unioned_and_superuser_bypasses(monkeypatch):
     assert AccessGroupService.has_section_access(user, "dataset") is True
     assert AccessGroupService.has_section_access(user, "chat") is False
     assert AccessGroupService.has_section_access(SimpleNamespace(id="admin", is_superuser=True), "chat") is True
+
+
+def test_article_dataset_choices_need_search_but_not_dataset_section(monkeypatch):
+    user = SimpleNamespace(id="reader", is_superuser=False)
+    monkeypatch.setattr(
+        AccessGroupService,
+        "effective_policy",
+        classmethod(lambda cls, user_id: {"sections": {"search"}, "dataset_ids": {"kb-1"}}),
+    )
+    assert AccessGroupService.has_section_access(user, section_for_blueprint("source_workbench_api"))
+    assert not AccessGroupService.has_section_access(user, section_for_blueprint("dataset_api"))
+    assert AccessGroupService.allowed_dataset_ids(user.id) == {"kb-1"}

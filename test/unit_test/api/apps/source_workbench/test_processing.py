@@ -20,8 +20,15 @@ def test_budget_uses_configured_context_and_reserves_output():
     budget = make_budget(8192)
     assert budget.context_tokens == 8192
     assert budget.assumed_context is False
-    assert budget.output_tokens == 2048
+    assert budget.output_tokens == 2730
     assert budget.input_tokens < 8192 - budget.output_tokens
+
+
+def test_large_model_context_reserves_room_for_long_input_and_answer():
+    budget = make_budget(131072)
+    assert budget.input_tokens > 75000
+    assert budget.output_tokens == 43690
+    assert budget.fits("", {"article": "word " * 36888})
 
 
 def test_budget_rejects_output_near_generation_cap():

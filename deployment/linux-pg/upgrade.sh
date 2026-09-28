@@ -94,7 +94,8 @@ compose() {
   shift
   (
     cd "${root}/docker"
-    sudo docker compose --env-file .env -p "${PROJECT_NAME}" \
+    sudo docker compose --profile cpu --profile elasticsearch --profile observability \
+      --env-file .env -p "${PROJECT_NAME}" \
       -f docker-compose.yml \
       -f docker-compose.local.yml \
       -f docker-compose.linux.local.yml \

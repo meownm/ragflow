@@ -208,6 +208,10 @@ def _move_litellm_provider_body_fields(provider: SupportedLiteLLMProvider | str 
     if not isinstance(body, dict):
         body = {}
     if str(provider) == "Ollama":
+        # LiteLLM places provider-specific parameters directly in Ollama's
+        # options; leaving num_ctx in extra_body nests it under options.extra_body.
+        if "num_ctx" in body:
+            completion_args["num_ctx"] = body.pop("num_ctx")
         body.setdefault("think", False)
     moved = False
     for key in provider_body_fields:

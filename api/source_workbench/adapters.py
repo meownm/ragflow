@@ -195,6 +195,27 @@ class SourceWorkspaceRepository:
 
 class RAGFlowSourceGateway:
     @staticmethod
+    def list_datasets(owner_id: str) -> list[dict[str, Any]]:
+        """List source choices through the same dataset visibility policy as retrieval."""
+        choices = []
+        page = 1
+        while True:
+            rows, total = KnowledgebaseService.get_list([], owner_id, page, 100, "name", False, None, None, "")
+            choices.extend(
+                {
+                    "id": row["id"],
+                    "name": row["name"],
+                    "tenant_id": row["tenant_id"],
+                    "embd_id": row["embd_id"],
+                }
+                for row in rows
+                if (row.get("chunk_num") or 0) > 0
+            )
+            if len(rows) < 100 or page * 100 >= total:
+                return choices
+            page += 1
+
+    @staticmethod
     def validate_datasets(owner_id: str, dataset_ids: list[str]) -> None:
         if any(not KnowledgebaseService.accessible(dataset_id, owner_id) for dataset_id in dataset_ids):
             raise SourceWorkspaceError("DATASET_UNAVAILABLE", "A selected dataset is unavailable", 403)
@@ -244,7 +265,16 @@ class RAGFlowSourceGateway:
                 meta = metadata.get(document_id) or {}
                 is_eva = str(row.source_type or "").startswith("eva_wiki/")
                 name = str(row.name or chunk.get("document_name") or chunk.get("docnm_kwd") or document_id)
-                path = [part.strip() for part in name.removesuffix(".txt").split(" > ")] if is_eva else [name]
+                if is_eva:
+                    path = [part.strip() for part in name.removesuffix(".txt").split(" > ")]
+                elif re.search(r"(?:^|[/\\])[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}(?:[/\\]|$)", name):
+                    parts = [part.strip() for part in re.split(r"[/\\]+", name) if part.strip()]
+                    path = [part for part in parts[:-1] if not re.fullmatch(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", part)]
+                    filename = re.sub(r"\.(?:html?|md|txt)$", "", parts[-1], flags=re.IGNORECASE)
+                    title = re.sub(r"(?<=\d)_(?=\d)", ".", filename.rsplit("__", 1)[-1]).replace("_", " ").strip() or filename
+                    path.append(title)
+                else:
+                    path = [name]
                 path = [part for part in path if part] or [document_id]
                 url = meta.get("link")
                 try:
@@ -368,7 +398,9 @@ class RAGFlowAnswerGateway:
         model_config = await thread_pool_exec(get_tenant_default_model_by_type, owner_id, LLMType.CHAT)
         if not isinstance(model_config, dict):
             raise SourceWorkspaceError("MODEL_UNAVAILABLE", "Модель чата не настроена", 503)
-        return RAGFlowProcessModel(owner_id, model_config)
+        model = RAGFlowProcessModel(owner_id, model_config)
+        await model.resolve_context()
+        return model
 
 
 class RAGFlowProcessModel:
@@ -376,6 +408,30 @@ class RAGFlowProcessModel:
         self.owner_id = owner_id
         self.model_config = model_config
         self.context_tokens = model_config.get("max_tokens")
+
+    async def resolve_context(self) -> None:
+        """Use Ollama's model context when the saved catalog limit is stale."""
+        if self.model_config.get("llm_factory") != "Ollama" or not self.model_config.get("api_base"):
+            return
+        import aiohttp
+
+        base_url = self.model_config["api_base"].rstrip("/")
+        headers = {}
+        if self.model_config.get("api_key"):
+            headers["Authorization"] = f"Bearer {self.model_config['api_key']}"
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
+                async with session.post(f"{base_url}/api/show", json={"model": self.model_config["llm_name"]}, headers=headers) as response:
+                    response.raise_for_status()
+                    details = await response.json()
+            info = details.get("model_info", {})
+            family = details.get("details", {}).get("family", "")
+            limit = info.get(f"{family}.context_length") or info.get("general.context_length")
+            if type(limit) is int and limit >= 2048:
+                self.context_tokens = limit
+        except (aiohttp.ClientError, TimeoutError, ValueError, TypeError, KeyError, AttributeError):
+            # Keep the saved limit when the model metadata endpoint is unavailable.
+            pass
 
     @staticmethod
     def count_tokens(text: str) -> int:
@@ -388,6 +444,8 @@ class RAGFlowProcessModel:
 
         history = [{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}]
         generation = {"temperature": 0, "max_completion_tokens": output_tokens}
+        if self.model_config.get("llm_factory") == "Ollama" and type(self.context_tokens) is int:
+            generation["extra_body"] = {"num_ctx": self.context_tokens}
         with LLMBundle(self.owner_id, self.model_config, lang="Russian", max_retries=0) as model:
             if not hasattr(model.mdl, "async_chat_streamly"):
                 yield await model.async_chat(system, history, generation)

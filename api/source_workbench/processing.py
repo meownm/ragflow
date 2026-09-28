@@ -33,8 +33,8 @@ class ModelBudget:
         context = 8192 if assumed else configured_limit
         if context < 2048:
             raise ProcessingError("MODEL_CONTEXT_TOO_SMALL", "У выбранной модели слишком маленькое окно контекста")
-        output = min(8192, context // 4)
-        reserve = max(512, context // 8)
+        output = context // 3
+        reserve = max(512, context // 16)
         return cls(context, output, context - output - reserve, assumed, count_tokens)
 
     def estimate(self, system: str, payload: dict[str, Any]) -> int:

@@ -23,9 +23,17 @@ def route_app(monkeypatch):
     calls = []
 
     class FakeService:
+        async def list_datasets(self, owner_id):
+            calls.append((owner_id, "datasets"))
+            return [{"id": "kb-1", "name": "Articles", "tenant_id": "tenant-a", "embd_id": "model-a"}]
+
         async def list_drafts(self, owner_id, workspace_id):
             calls.append((owner_id, workspace_id, "list"))
             return [{"id": "draft-1", "version": 1}]
+
+        async def preview_document(self, owner_id, workspace_id, data):
+            calls.append((owner_id, workspace_id, "preview", data))
+            return {"title": "Article", "text": "# Article"}
 
         async def get_draft(self, owner_id, workspace_id, draft_id):
             calls.append((owner_id, workspace_id, draft_id, "get"))
@@ -84,6 +92,23 @@ def route_app(monkeypatch):
     app = Quart(__name__)
     app.register_blueprint(module.manager)
     return app, calls
+
+
+async def test_source_dataset_choices_use_authenticated_owner(route_app):
+    app, calls = route_app
+    response = await app.test_client().get("/source-workspaces/datasets")
+    assert response.status_code == 200
+    assert (await response.get_json())["data"][0]["id"] == "kb-1"
+    assert calls == [("owner-a", "datasets")]
+
+
+async def test_preview_passes_authenticated_owner_and_workspace(route_app):
+    app, calls = route_app
+    source = {"dataset_id": "kb-1", "document_id": "doc-1"}
+    response = await app.test_client().post("/source-workspaces/workspace-1/preview", json=source)
+    assert response.status_code == 200
+    assert (await response.get_json())["data"]["text"] == "# Article"
+    assert calls == [("owner-a", "workspace-1", "preview", source)]
 
 
 async def test_chat_passes_authenticated_owner_and_workspace(route_app):

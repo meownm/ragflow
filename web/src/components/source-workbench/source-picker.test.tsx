@@ -1,13 +1,22 @@
 import {
   getSourceWorkspace,
+  previewSourceWorkspaceArticle,
   saveSourceSelection,
   searchSourceWorkspace,
 } from '@/services/source-workbench-service';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { SourcePicker } from './source-picker';
 
+jest.mock('react-markdown', () => ({
+  __esModule: true,
+  default: ({ children }: { children?: string }) => <>{children}</>,
+}));
+jest.mock('remark-gfm', () => ({ __esModule: true, default: () => undefined }));
+jest.mock('rehype-raw', () => ({ __esModule: true, default: () => undefined }));
+
 jest.mock('@/services/source-workbench-service', () => ({
   getSourceWorkspace: jest.fn(),
+  previewSourceWorkspaceArticle: jest.fn(),
   saveSourceSelection: jest.fn(),
   searchSourceWorkspace: jest.fn(),
   sourceRequestError: (error: Error) => error.message,
@@ -42,10 +51,75 @@ const workspace: import('@/services/source-workbench-service').SourceWorkspace =
 const mockedSearch = jest.mocked(searchSourceWorkspace);
 const mockedGet = jest.mocked(getSourceWorkspace);
 const mockedSave = jest.mocked(saveSourceSelection);
+const mockedPreview = jest.mocked(previewSourceWorkspaceArticle);
 
 beforeEach(() => {
   jest.clearAllMocks();
   mockedGet.mockResolvedValue(workspace);
+  mockedPreview.mockResolvedValue({
+    ...article('first', 'Первая статья'),
+    text: '# Первая статья\n\nПолный текст',
+    revision: 'hash:1:2',
+  });
+});
+
+test('opens full article from search results and selected sources', async () => {
+  mockedSearch.mockResolvedValue({
+    query: 'Тема',
+    page: 1,
+    has_more: false,
+    candidates: [article('first', 'Первая статья')],
+  });
+  render(
+    <SourcePicker
+      workspace={{
+        ...workspace,
+        selected_documents: [{ dataset_id: 'kb-1', document_id: 'first' }],
+        selected_sources: [article('first', 'Первая статья')],
+      }}
+      onChange={jest.fn()}
+    />,
+  );
+  fireEvent.click(
+    screen.getByRole('button', {
+      name: 'Читать выбранную статью Первая статья',
+    }),
+  );
+  expect(
+    await screen.findByRole('article', {
+      name: 'Содержимое статьи Первая статья',
+    }),
+  ).toHaveTextContent('Полный текст');
+  fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+
+  fireEvent.change(screen.getByLabelText('Поиск статей'), {
+    target: { value: 'Тема' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Найти' }));
+  await screen.findByRole('button', { name: 'Читать статью Первая статья' });
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Читать статью Первая статья' }),
+  );
+  await waitFor(() => expect(mockedPreview).toHaveBeenCalledTimes(2));
+  expect(mockedPreview.mock.calls[1][1]).toMatchObject({
+    dataset_id: 'kb-1',
+    document_id: 'first',
+  });
+});
+
+test('shows saved selection without an empty search results panel on reopen', () => {
+  render(
+    <SourcePicker
+      workspace={{
+        ...workspace,
+        selected_documents: [{ dataset_id: 'kb-1', document_id: 'first' }],
+        selected_sources: [article('first', 'Первая статья')],
+      }}
+      onChange={jest.fn()}
+    />,
+  );
+  expect(screen.getByText('1. Первая статья')).toBeInTheDocument();
+  expect(screen.queryByText('Найденные статьи')).not.toBeInTheDocument();
 });
 
 test('shows only the current query and its empty result', async () => {

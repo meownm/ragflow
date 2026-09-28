@@ -3,19 +3,22 @@ import { SourcePicker } from '@/components/source-workbench/source-picker';
 import { SourceProcessor } from '@/components/source-workbench/source-processor';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import type { IDataset } from '@/interfaces/database/dataset';
-import { listDataset } from '@/services/knowledge-service';
 import {
   createSourceWorkspace,
   getSourceWorkspace,
+  listSourceDatasets,
   listSourceWorkspaces,
   sourceRequestError,
+  type SourceDataset,
   type SourceWorkspace,
 } from '@/services/source-workbench-service';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 
 export default function SourceWorkspacesPage() {
-  const [datasets, setDatasets] = useState<IDataset[]>([]);
+  const [datasets, setDatasets] = useState<SourceDataset[]>([]);
+  const [datasetsStatus, setDatasetsStatus] = useState<
+    'loading' | 'ready' | 'failed'
+  >('loading');
   const [workspaces, setWorkspaces] = useState<SourceWorkspace[]>([]);
   const [active, setActive] = useState<SourceWorkspace | null>(null);
   const [title, setTitle] = useState('');
@@ -29,6 +32,9 @@ export default function SourceWorkspacesPage() {
       Object.fromEntries(datasets.map((dataset) => [dataset.id, dataset.name])),
     [datasets],
   );
+  const selectedDataset = datasets.find(
+    (dataset) => dataset.id === datasetIds[0],
+  );
 
   useEffect(() => {
     listSourceWorkspaces()
@@ -40,30 +46,21 @@ export default function SourceWorkspacesPage() {
 
   useEffect(() => {
     let cancelled = false;
-    const loadDatasets = async () => {
-      try {
-        const all: IDataset[] = [];
-        for (let page = 1; ; page += 1) {
-          const response = await listDataset({ page, page_size: 100 });
-          if (response.data.code !== 0) {
-            throw new Error(
-              response.data.message || 'Не удалось загрузить базы знаний',
-            );
-          }
-          const batch = (response.data.data || []) as IDataset[];
-          all.push(...batch);
-          if (batch.length < 100 || all.length >= response.data.total) break;
+    listSourceDatasets()
+      .then((items) => {
+        if (!cancelled) {
+          setDatasets(items);
+          setDatasetsStatus('ready');
         }
-        if (!cancelled)
-          setDatasets(all.filter((dataset) => dataset.chunk_count > 0));
-      } catch (cause) {
-        if (!cancelled)
+      })
+      .catch((cause) => {
+        if (!cancelled) {
+          setDatasetsStatus('failed');
           setError(
             sourceRequestError(cause, 'Не удалось загрузить базы знаний'),
           );
-      }
-    };
-    void loadDatasets();
+        }
+      });
     return () => {
       cancelled = true;
     };
@@ -238,27 +235,52 @@ export default function SourceWorkspacesPage() {
                 onChange={(event) => setTitle(event.target.value)}
               />
               <p className="mt-5 text-sm font-medium">Где искать</p>
+              {datasetsStatus === 'loading' && (
+                <p className="mt-2 text-sm text-text-secondary">
+                  Загрузка баз знаний…
+                </p>
+              )}
+              {datasetsStatus === 'ready' && !datasets.length && (
+                <p className="mt-2 text-sm text-text-secondary">
+                  Нет доступных баз с проиндексированными статьями.
+                </p>
+              )}
               <div className="mt-2 max-h-60 space-y-2 overflow-y-auto">
-                {datasets.map((dataset) => (
-                  <label
-                    key={dataset.id}
-                    className="flex items-start gap-2 text-sm"
-                  >
-                    <input
-                      type="checkbox"
-                      className="mt-1 accent-accent-primary"
-                      checked={datasetIds.includes(dataset.id)}
-                      onChange={() =>
-                        setDatasetIds((previous) =>
-                          previous.includes(dataset.id)
-                            ? previous.filter((id) => id !== dataset.id)
-                            : [...previous, dataset.id],
-                        )
-                      }
-                    />
-                    <span>{dataset.name}</span>
-                  </label>
-                ))}
+                {datasets.map((dataset) => {
+                  const checked = datasetIds.includes(dataset.id);
+                  const compatible =
+                    !selectedDataset ||
+                    (dataset.tenant_id === selectedDataset.tenant_id &&
+                      dataset.embd_id === selectedDataset.embd_id);
+                  return (
+                    <label
+                      key={dataset.id}
+                      className="flex items-start gap-2 text-sm"
+                    >
+                      <input
+                        type="checkbox"
+                        className="mt-1 accent-accent-primary"
+                        checked={checked}
+                        disabled={!compatible && !checked}
+                        onChange={() =>
+                          setDatasetIds((previous) =>
+                            previous.includes(dataset.id)
+                              ? previous.filter((id) => id !== dataset.id)
+                              : [...previous, dataset.id],
+                          )
+                        }
+                      />
+                      <span>
+                        {dataset.name}
+                        {!compatible && !checked && (
+                          <span className="block text-xs text-text-secondary">
+                            Другой владелец или модель поиска
+                          </span>
+                        )}
+                      </span>
+                    </label>
+                  );
+                })}
               </div>
               <Button
                 className="mt-5"

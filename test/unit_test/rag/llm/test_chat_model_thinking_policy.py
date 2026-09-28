@@ -186,3 +186,21 @@ def test_ollama_completion_payload_disables_thinking_by_default():
     _move_litellm_provider_body_fields("Ollama", completion_args)
 
     assert completion_args["extra_body"] == {"think": False}
+
+
+def test_ollama_context_reaches_native_options():
+    import litellm
+    from litellm.llms.ollama.chat.transformation import OllamaChatConfig
+
+    completion_args = {"model": "ollama_chat/test", "messages": [{"role": "user", "content": "x"}], "max_completion_tokens": 32768, "extra_body": {"num_ctx": 131072}}
+    _move_litellm_provider_body_fields("Ollama", completion_args)
+    optional = litellm.get_optional_params(
+        model=completion_args["model"],
+        custom_llm_provider="ollama_chat",
+        max_completion_tokens=completion_args["max_completion_tokens"],
+        num_ctx=completion_args["num_ctx"],
+        extra_body=completion_args["extra_body"],
+    )
+    request = OllamaChatConfig().transform_request(model="test", messages=completion_args["messages"], optional_params=optional, litellm_params={}, headers={})
+    assert request["options"]["num_ctx"] == 131072
+    assert request["options"]["num_predict"] == 32768

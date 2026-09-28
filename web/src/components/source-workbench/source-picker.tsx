@@ -9,6 +9,7 @@ import {
   type SourceWorkspace,
 } from '@/services/source-workbench-service';
 import { useMemo, useState, type FormEvent } from 'react';
+import { SourceArticleDialog } from './source-article-dialog';
 import { buildSourceTree, sourceKey, type SourceTreeNode } from './source-tree';
 
 interface SourcePickerProps {
@@ -24,11 +25,13 @@ function CandidateNode({
   selected,
   disabled,
   onToggle,
+  onPreview,
 }: {
   node: SourceTreeNode;
   selected: Set<string>;
   disabled: boolean;
   onToggle(candidate: SourceCandidate): void;
+  onPreview(candidate: SourceCandidate): void;
 }) {
   const candidate = node.candidate;
   const row = (
@@ -46,6 +49,19 @@ function CandidateNode({
       )}
       <div className="min-w-0">
         <span className="text-sm text-text-primary">{node.label}</span>
+        {candidate && (
+          <button
+            type="button"
+            className="ms-2 text-xs text-accent-primary hover:underline"
+            aria-label={`Читать статью ${candidate.title}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              onPreview(candidate);
+            }}
+          >
+            Читать
+          </button>
+        )}
         {candidate?.source_url && (
           <a
             className="ms-2 text-xs text-accent-primary hover:underline"
@@ -79,6 +95,7 @@ function CandidateNode({
                 selected={selected}
                 disabled={disabled}
                 onToggle={onToggle}
+                onPreview={onPreview}
               />
             ))}
           </ul>
@@ -101,6 +118,9 @@ export function SourcePicker({
   const [query, setQuery] = useState('');
   const [candidates, setCandidates] = useState<SourceCandidate[]>([]);
   const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState<
+    SourceCandidate | SourceReference | null
+  >(null);
   const [error, setError] = useState('');
   const [activeSearch, setActiveSearch] = useState<{
     query: string;
@@ -236,7 +256,13 @@ export function SourcePicker({
   };
 
   return (
-    <section className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
+    <section
+      className={
+        activeSearch
+          ? 'grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]'
+          : 'space-y-6'
+      }
+    >
       <div>
         <form className="flex items-start gap-2" onSubmit={search}>
           <textarea
@@ -262,64 +288,60 @@ export function SourcePicker({
             {error}
           </p>
         )}
-        <div className="mt-5">
-          <h2 className="text-base font-semibold">Найденные статьи</h2>
-          {activeSearch && (
+        {activeSearch && (
+          <div className="mt-5">
+            <h2 className="text-base font-semibold">Найденные статьи</h2>
             <p className="mt-2 text-sm text-text-secondary">
               Результаты запроса «{activeSearch.query}»: {candidates.length} на
               загруженных страницах.
             </p>
-          )}
-          {!activeSearch && (
-            <p className="mt-3 text-sm text-text-secondary">
-              Введите запрос, чтобы найти статьи в выбранных базах знаний.
-            </p>
-          )}
-          {activeSearch && !candidates.length && (
-            <p className="mt-3 text-sm text-text-secondary">
-              По этому запросу статьи не найдены. Уточните формулировку.
-            </p>
-          )}
-          <ul className="mt-3 space-y-2">
-            {tree.map((node) => (
-              <li
-                key={node.key}
-                className="rounded-md border border-border-button p-3"
+            {!candidates.length && (
+              <p className="mt-3 text-sm text-text-secondary">
+                По этому запросу статьи не найдены. Уточните формулировку.
+              </p>
+            )}
+            <ul className="mt-3 space-y-2">
+              {tree.map((node) => (
+                <li
+                  key={node.key}
+                  className="rounded-md border border-border-button p-3"
+                >
+                  <p className="mb-2 text-xs font-medium text-text-secondary">
+                    {node.label} ·{' '}
+                    {datasetNames[node.key.split(':')[1]] ||
+                      node.key.split(':')[1]}
+                  </p>
+                  <ul>
+                    {node.children.map((child) => (
+                      <CandidateNode
+                        key={child.key}
+                        node={child}
+                        selected={selected}
+                        disabled={busy || selectionLocked}
+                        onToggle={toggle}
+                        onPreview={setPreview}
+                      />
+                    ))}
+                  </ul>
+                </li>
+              ))}
+            </ul>
+            {activeSearch?.hasMore && (
+              <Button
+                type="button"
+                className="mt-4"
+                disabled={busy}
+                onClick={() =>
+                  runSearch(activeSearch.query, activeSearch.page + 1)
+                }
               >
-                <p className="mb-2 text-xs font-medium text-text-secondary">
-                  {node.label} ·{' '}
-                  {datasetNames[node.key.split(':')[1]] ||
-                    node.key.split(':')[1]}
-                </p>
-                <ul>
-                  {node.children.map((child) => (
-                    <CandidateNode
-                      key={child.key}
-                      node={child}
-                      selected={selected}
-                      disabled={busy || selectionLocked}
-                      onToggle={toggle}
-                    />
-                  ))}
-                </ul>
-              </li>
-            ))}
-          </ul>
-          {activeSearch?.hasMore && (
-            <Button
-              type="button"
-              className="mt-4"
-              disabled={busy}
-              onClick={() =>
-                runSearch(activeSearch.query, activeSearch.page + 1)
-              }
-            >
-              Показать ещё
-            </Button>
-          )}
-        </div>
+                Показать ещё
+              </Button>
+            )}
+          </div>
+        )}
       </div>
-      <aside className="rounded-md border border-border-button p-4">
+      <aside className="min-w-0 rounded-md border border-border-button p-4">
         <h2 className="font-semibold">Выбрано: {selected.size}</h2>
         {selectionLocked && (
           <p className="mt-2 text-xs text-text-secondary">
@@ -344,10 +366,16 @@ export function SourcePicker({
         )}
         {!selected.size && (
           <p className="mt-3 text-sm text-text-secondary">
-            Отметьте нужные статьи слева.
+            Найдите статьи выше и отметьте нужные в результатах.
           </p>
         )}
-        <ul className="mt-3 space-y-3">
+        <ul
+          className={
+            activeSearch
+              ? 'mt-3 space-y-3'
+              : 'mt-3 grid gap-x-6 gap-y-3 md:grid-cols-2'
+          }
+        >
           {workspace.selected_documents.map((source, index) => {
             const detail =
               candidateByKey.get(sourceKey(source)) ||
@@ -359,7 +387,7 @@ export function SourcePicker({
                 key={sourceKey(source)}
                 className="border-b border-border-button pb-2 text-sm"
               >
-                <p className="font-medium">
+                <p className="break-words font-medium">
                   {index + 1}. {detail?.title || source.document_id}
                 </p>
                 {detail?.path && detail.path.length > 1 && (
@@ -368,6 +396,14 @@ export function SourcePicker({
                   </p>
                 )}
                 <div className="mt-2 flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    className="text-xs text-accent-primary hover:underline"
+                    aria-label={`Читать выбранную статью ${detail?.title || source.document_id}`}
+                    onClick={() => setPreview(detail || source)}
+                  >
+                    Читать
+                  </button>
                   {workspace.selected_documents.length > 1 && (
                     <>
                       <button
@@ -408,6 +444,13 @@ export function SourcePicker({
           })}
         </ul>
       </aside>
+      {preview && (
+        <SourceArticleDialog
+          workspaceId={workspace.id}
+          source={preview}
+          onClose={() => setPreview(null)}
+        />
+      )}
     </section>
   );
 }

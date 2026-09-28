@@ -193,10 +193,12 @@ def test_catalog_sync_replaces_previous_source_rows_and_v3_derives_the_title(dat
         },
     )
 
-    assert len(catalog["items"]) == 70
-    assert len({item["id"] for item in catalog["items"]}) == 70
-    assert any(item["id"] == "L2-01.01.04.01.01" for item in catalog["items"])
-    assert listed["total"] == 70
+    assert len(catalog["items"]) == 69
+    assert len({item["id"] for item in catalog["items"]}) == 69
+    assert all(item["id"] != "L2-01.01.04.01.01" for item in catalog["items"])
+    assert all(not item["title"].startswith(item["details"]["source_l5_id"] + " ") for item in catalog["items"])
+    assert len({item["title"] for item in catalog["items"]}) == 69
+    assert listed["total"] == 69
     assert all(item["capability_level"] == "L5" for item in listed["items"])
     assert created["catalog_entry_id"] == first["id"]
     assert created["title"] == first["title"]

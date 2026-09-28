@@ -171,9 +171,12 @@ export default {
     `${restAPIv1}/datasets/${datasetId}/documents/${documentId}/chunks/${chunkId}`,
   retrievalTest: `${restAPIv1}/datasets/search`,
   sourceWorkspaces: `${restAPIv1}/source-workspaces`,
+  sourceWorkspaceDatasets: `${restAPIv1}/source-workspaces/datasets`,
   sourceWorkspace: (id: string) => `${restAPIv1}/source-workspaces/${id}`,
   sourceWorkspaceSearch: (id: string) =>
     `${restAPIv1}/source-workspaces/${id}/search`,
+  sourceWorkspacePreview: (id: string) =>
+    `${restAPIv1}/source-workspaces/${id}/preview`,
   sourceWorkspaceSelection: (id: string) =>
     `${restAPIv1}/source-workspaces/${id}/selection`,
   sourceWorkspaceDrafts: (id: string) =>

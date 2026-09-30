@@ -2,6 +2,7 @@
 
 import json
 import sys
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -18,6 +19,7 @@ import auth
 import routes
 from api.common.exceptions import AdminException
 from api.db.services import business_document_settings_service as service
+from business_documents.domain.catalog_import import CatalogImportError
 from common.constants import ActiveEnum
 
 
@@ -69,7 +71,16 @@ def test_admin_saves_reads_and_disables_standalone_settings(app):
     assert json.loads(values[service.BUSINESS_DOCUMENTS_EVA_CONNECTION_SETTING]) == {}
 
 
-@pytest.mark.parametrize("method,path", [("get", "/business-documents"), ("put", "/business-documents"), ("post", "/business-documents/eva-spaces")])
+@pytest.mark.parametrize(
+    "method,path",
+    [
+        ("get", "/business-documents"),
+        ("put", "/business-documents"),
+        ("post", "/business-documents/eva-spaces"),
+        ("get", "/business-documents/catalog"),
+        ("post", "/business-documents/catalog"),
+    ],
+)
 def test_connection_routes_require_login_and_admin(app, monkeypatch, method, path):
     application, values = app
     client = application.test_client()
@@ -92,3 +103,55 @@ def test_invalid_input_does_not_write_and_discovery_does_not_save(app, monkeypat
     assert response.status_code == 200
     assert response.json["data"]["items"][0]["name"] == "Documents"
     assert not values
+
+
+def test_admin_reads_and_uploads_catalog(app, monkeypatch):
+    application, _values = app
+    client = application.test_client()
+    headers = {"Authorization": "test"}
+    status = {
+        "source_id": "BCM_Bank",
+        "source_version": "v24",
+        "source_sha256": "a" * 64,
+        "filename": "BCM_v24.json",
+        "active_items": 70,
+    }
+    get_status = Mock(return_value=status)
+    imported = Mock(return_value={**status, "source_version": "v25", "active_items": 72})
+    monkeypatch.setattr(routes, "get_business_document_catalog_status", get_status)
+    monkeypatch.setattr(routes, "import_business_document_catalog", imported)
+
+    response = client.get("/api/v1/admin/business-documents/catalog", headers=headers)
+    assert response.status_code == 200
+    assert response.json["data"]["active_items"] == 70
+    response = client.post(
+        "/api/v1/admin/business-documents/catalog",
+        data={"file": (BytesIO(b'{"L1": []}'), "BCM_v25.json")},
+        headers=headers,
+        content_type="multipart/form-data",
+    )
+    assert response.status_code == 200
+    assert response.json["data"]["source_version"] == "v25"
+    assert imported.call_args.kwargs == {
+        "filename": "BCM_v25.json",
+        "content": b'{"L1": []}',
+        "actor_id": "test-admin",
+    }
+
+
+def test_catalog_upload_requires_a_valid_file(app, monkeypatch):
+    application, _values = app
+    client = application.test_client()
+    headers = {"Authorization": "test"}
+    imported = Mock(side_effect=CatalogImportError("L1 must be a non-empty array"))
+    monkeypatch.setattr(routes, "import_business_document_catalog", imported)
+
+    assert client.post("/api/v1/admin/business-documents/catalog", headers=headers).status_code == 400
+    response = client.post(
+        "/api/v1/admin/business-documents/catalog",
+        data={"file": (BytesIO(b"{}"), "BCM_v25.json")},
+        headers=headers,
+        content_type="multipart/form-data",
+    )
+    assert response.status_code == 400
+    assert response.json["message"] == "L1 must be a non-empty array"

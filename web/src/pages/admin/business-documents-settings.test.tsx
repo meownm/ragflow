@@ -1,7 +1,9 @@
 import message from '@/components/ui/message';
 import {
   discoverBusinessDocumentsEvaSpaces,
+  getBusinessDocumentsCatalogStatus,
   getBusinessDocumentsSettings,
+  importBusinessDocumentsCatalog,
   setBusinessDocumentsSettings,
 } from '@/services/admin-service';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -15,6 +17,8 @@ jest.mock('@/services/admin-service', () => ({
   getBusinessDocumentsSettings: jest.fn(),
   setBusinessDocumentsSettings: jest.fn(),
   discoverBusinessDocumentsEvaSpaces: jest.fn(),
+  getBusinessDocumentsCatalogStatus: jest.fn(),
+  importBusinessDocumentsCatalog: jest.fn(),
 }));
 jest.mock('@/components/ui/message', () => ({
   __esModule: true,
@@ -55,6 +59,18 @@ const saved = {
 const response = (connection = saved) => ({
   data: { code: 0, data: { eva_connection: connection } },
 });
+const catalogStatus = {
+  source_id: 'BCM_Bank',
+  source_version: 'v24',
+  source_sha256: 'a'.repeat(64),
+  filename: 'BCM_v24.json',
+  storage: 'uploaded' as const,
+  catalog_items: 70,
+  active_items: 70,
+  total_items: 71,
+  imported_at: '2026-09-30T10:00:00+00:00',
+  imported_by: 'admin-1',
+};
 function mount() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -73,6 +89,67 @@ beforeEach(() => {
   jest
     .mocked(setBusinessDocumentsSettings)
     .mockResolvedValue(response() as never);
+  jest.mocked(getBusinessDocumentsCatalogStatus).mockResolvedValue({
+    data: { code: 0, data: catalogStatus },
+  } as never);
+  jest.mocked(importBusinessDocumentsCatalog).mockResolvedValue({
+    data: {
+      code: 0,
+      data: {
+        ...catalogStatus,
+        source_version: 'v25',
+        created_items: 2,
+        updated_items: 68,
+        reactivated_items: 0,
+        deactivated_items: 2,
+      },
+    },
+  } as never);
+});
+
+test('uploads the BCM catalog and refreshes its status without changing documents', async () => {
+  mount();
+  expect(await screen.findByText('BCM_Bank · v24')).toBeInTheDocument();
+  expect(screen.getByText('70')).toBeInTheDocument();
+  const file = new File(['{"L1":[]}'], 'BCM_v25.json', {
+    type: 'application/json',
+  });
+
+  fireEvent.change(screen.getByLabelText('catalogSelect'), {
+    target: { files: [file] },
+  });
+  fireEvent.click(screen.getByTestId('business-documents-catalog-import'));
+
+  await waitFor(() =>
+    expect(importBusinessDocumentsCatalog).toHaveBeenCalledWith(file),
+  );
+  expect(await screen.findByText('BCM_Bank · v25')).toBeInTheDocument();
+  expect(message.success).toHaveBeenCalledWith('catalogImported');
+});
+
+test('shows the import validation error when the status request also failed', async () => {
+  jest.mocked(getBusinessDocumentsCatalogStatus).mockResolvedValue({
+    data: { code: 500, message: 'Status unavailable' },
+  } as never);
+  jest.mocked(importBusinessDocumentsCatalog).mockResolvedValue({
+    data: { code: 400, message: 'L1 must be a non-empty array' },
+  } as never);
+  mount();
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    'Status unavailable',
+  );
+  const file = new File(['{}'], 'BCM_v25.json', {
+    type: 'application/json',
+  });
+
+  fireEvent.change(screen.getByLabelText('catalogSelect'), {
+    target: { files: [file] },
+  });
+  fireEvent.click(screen.getByTestId('business-documents-catalog-import'));
+
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    'L1 must be a non-empty array',
+  );
 });
 
 test('saves a standalone connection without a data source or copying a secret to the form', async () => {

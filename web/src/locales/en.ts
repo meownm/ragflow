@@ -3518,6 +3518,20 @@ Important structured information may include: names, dates, locations, events, k
       businessDocumentsSettingsPage: {
         description:
           'Configure a separate EVA connection for Documents. No data source is required.',
+        catalogTitle: 'Allowed document catalog',
+        catalogDescription:
+          'Upload the current BCM catalog used by the document creation dropdown.',
+        catalogVersion: 'Source and version',
+        catalogRecords: 'Active L5 records',
+        catalogFile: 'Current file',
+        catalogHash: 'SHA-256',
+        catalogSelect: 'BCM JSON file',
+        catalogHelp:
+          'The BCM L1–L5 structure is supported. Only L5 records are imported. Missing records are deactivated, while existing documents remain unchanged.',
+        catalogImport: 'Upload catalog',
+        catalogImporting: 'Uploading…',
+        catalogImported:
+          'The allowed document catalog was updated: {{count}} active L5 records.',
         api_base_url: 'EVA API URL',
         web_base_url: 'EVA web URL',
         token: 'Shared EVA read token',

@@ -2317,40 +2317,17 @@ def migrate_business_document_title_key(migrator):
 
 
 def migrate_business_document_catalog():
-    """Replace the source catalog with the bundled L5 entries."""
+    """Synchronize the configured L5 catalog without changing documents."""
 
-    from business_documents.domain.catalog import load_document_catalog
+    from api.db.services.business_document_catalog_service import (
+        catalog_for_bootstrap,
+        synchronize_business_document_catalog,
+    )
 
-    catalog = load_document_catalog()
-    source_id = catalog["source_id"]
-    active_ids = [item["id"] for item in catalog["items"]]
+    catalog = catalog_for_bootstrap()
     database = BusinessDocumentCatalog._meta.database
     with database.atomic():
-        for sort_order, item in enumerate(catalog["items"]):
-            values = {
-                "title": item["title"].strip(),
-                "title_en": item.get("title_en"),
-                "description": item.get("description"),
-                "capability_level": item["capability_level"],
-                "capability_type": item.get("capability_type"),
-                "hierarchy": item.get("hierarchy") or {},
-                "details": item.get("details") or {},
-                "source_id": source_id,
-                "source_version": catalog["source_version"],
-                "source_sha256": catalog["source_sha256"],
-                "sort_order": sort_order,
-                "is_active": True,
-            }
-            existing = BusinessDocumentCatalog.get_or_none(BusinessDocumentCatalog.id == item["id"])
-            if existing is None:
-                BusinessDocumentCatalog.create(id=item["id"], **values)
-            else:
-                changed_values = {field: value for field, value in values.items() if getattr(existing, field) != value}
-                if changed_values:
-                    BusinessDocumentCatalog.update(**changed_values).where(BusinessDocumentCatalog.id == item["id"]).execute()
-        BusinessDocumentCatalog.update(is_active=False).where(
-            (BusinessDocumentCatalog.source_id == source_id) & ~BusinessDocumentCatalog.id.in_(active_ids) & (BusinessDocumentCatalog.is_active == True)  # noqa: E712
-        ).execute()
+        synchronize_business_document_catalog(catalog)
 
 
 def migrate_business_document_eva_bindings():

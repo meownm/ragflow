@@ -398,6 +398,19 @@ export const discoverBusinessDocumentsEvaSpaces = (
     { eva_connection: connection },
   );
 
+export const getBusinessDocumentsCatalogStatus = () =>
+  request.get<ResponseData<AdminService.BusinessDocumentsCatalogStatus>>(
+    api.adminBusinessDocumentsCatalog,
+  );
+
+export const importBusinessDocumentsCatalog = (file: File) => {
+  const form = new FormData();
+  form.append('file', file);
+  return request.post<
+    ResponseData<AdminService.BusinessDocumentsCatalogImport>
+  >(api.adminBusinessDocumentsCatalog, form);
+};
+
 // Sandbox settings APIs
 export const listSandboxProviders = () =>
   request.get<ResponseData<AdminService.SandboxProvider[]>>(

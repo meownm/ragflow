@@ -3026,6 +3026,20 @@ export default {
       businessDocumentsSettingsPage: {
         description:
           'Настройте отдельное соединение с EVA для раздела «Документы». Создавать источник данных не требуется.',
+        catalogTitle: 'Справочник разрешённых документов',
+        catalogDescription:
+          'Загрузите актуальный BCM-справочник для выпадающего списка при создании документа.',
+        catalogVersion: 'Источник и версия',
+        catalogRecords: 'Активных записей L5',
+        catalogFile: 'Текущий файл',
+        catalogHash: 'SHA-256',
+        catalogSelect: 'JSON-файл BCM',
+        catalogHelp:
+          'Поддерживается структура BCM L1–L5. Импортируются только записи L5. Отсутствующие записи деактивируются, а созданные документы не изменяются.',
+        catalogImport: 'Загрузить справочник',
+        catalogImporting: 'Загрузка…',
+        catalogImported:
+          'Справочник разрешённых документов обновлён: {{count}} активных записей L5.',
         api_base_url: 'Адрес API EVA',
         web_base_url: 'Адрес веб-интерфейса EVA',
         token: 'Общий токен EVA для чтения',

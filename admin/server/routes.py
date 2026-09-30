@@ -34,6 +34,12 @@ from api.db.services.business_document_settings_service import (
     get_business_documents_settings as documents_settings,
     prepare_business_documents_connection,
 )
+from api.db.services.business_document_catalog_service import (
+    MAX_CATALOG_UPLOAD_BYTES,
+    get_business_document_catalog_status,
+    import_business_document_catalog,
+)
+from business_documents.domain.catalog_import import CatalogImportError
 from api.db.services.navigation_visibility_service import (
     NAVIGATION_VISIBILITY_SETTING,
     get_visible_sections,
@@ -726,6 +732,38 @@ def discover_documents_eva_spaces():
         return success_response({"items": spaces})
     except (ValueError, ConnectorMissingCredentialError, ConnectorValidationError, InsufficientPermissionsError) as error:
         return error_response(str(error), 400)
+
+
+@admin_bp.route("/business-documents/catalog", methods=["GET"])
+@login_required
+@check_admin_auth
+def get_documents_catalog_status():
+    try:
+        return success_response(get_business_document_catalog_status())
+    except Exception:
+        logging.exception("Failed to load the business-document catalog status")
+        return error_response("Failed to load the business-document catalog status", 500)
+
+
+@admin_bp.route("/business-documents/catalog", methods=["POST"])
+@login_required
+@check_admin_auth
+def upload_documents_catalog():
+    upload = request.files.get("file")
+    if upload is None or not upload.filename:
+        return error_response("file is required", 400)
+    try:
+        result = import_business_document_catalog(
+            filename=upload.filename,
+            content=upload.stream.read(MAX_CATALOG_UPLOAD_BYTES + 1),
+            actor_id=current_user.id,
+        )
+        return success_response(result)
+    except CatalogImportError as error:
+        return error_response(str(error), 400)
+    except Exception:
+        logging.exception("Failed to import the business-document catalog")
+        return error_response("Failed to import the business-document catalog", 500)
 
 
 @admin_bp.route("/configs", methods=["GET"])

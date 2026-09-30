@@ -12,7 +12,9 @@ import { Input } from '@/components/ui/input';
 import message from '@/components/ui/message';
 import {
   discoverBusinessDocumentsEvaSpaces,
+  getBusinessDocumentsCatalogStatus,
   getBusinessDocumentsSettings,
+  importBusinessDocumentsCatalog,
   setBusinessDocumentsSettings,
 } from '@/services/admin-service';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -20,6 +22,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 const queryKey = ['admin', 'business-documents-settings'];
+const catalogQueryKey = ['admin', 'business-documents-catalog'];
 const emptyConnection = {
   api_base_url: '',
   web_base_url: '',
@@ -37,6 +40,7 @@ export default function AdminBusinessDocumentsSettings() {
   const [token, setToken] = useState('');
   const [clearToken, setClearToken] = useState(false);
   const [spaces, setSpaces] = useState<{ id: string; name: string }[]>([]);
+  const [catalogFile, setCatalogFile] = useState<File | null>(null);
   const { data, isLoading, error } = useQuery({
     queryKey,
     queryFn: async () => {
@@ -92,6 +96,29 @@ export default function AdminBusinessDocumentsSettings() {
       message.success(label('saved'));
     },
   });
+  const catalog = useQuery({
+    queryKey: catalogQueryKey,
+    queryFn: async () => {
+      const { data: response } = await getBusinessDocumentsCatalogStatus();
+      if (response.code !== 0) throw new Error(response.message);
+      return response.data;
+    },
+  });
+  const catalogImport = useMutation({
+    mutationFn: async (file: File) => {
+      const { data: response } = await importBusinessDocumentsCatalog(file);
+      if (response.code !== 0) throw new Error(response.message);
+      return response.data;
+    },
+    onSuccess: (status) => {
+      queryClient.setQueryData(catalogQueryKey, status);
+      message.success(
+        t('admin.businessDocumentsSettingsPage.catalogImported', {
+          count: status.active_items,
+        }),
+      );
+    },
+  });
   const busy = isLoading || mutation.isPending || discovery.isPending;
   const update = (
     key: keyof typeof emptyConnection,
@@ -107,6 +134,71 @@ export default function AdminBusinessDocumentsSettings() {
       data-testid="business-documents-settings-admin"
     >
       <CardHeader className="border-b border-border-button">
+        <CardTitle>{label('catalogTitle')}</CardTitle>
+        <CardDescription>{label('catalogDescription')}</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-5 pt-6">
+        {catalog.data && (
+          <dl className="grid max-w-3xl grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+            <div>
+              <dt className="text-text-secondary">{label('catalogVersion')}</dt>
+              <dd className="font-medium">
+                {catalog.data.source_id} · {catalog.data.source_version}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-text-secondary">{label('catalogRecords')}</dt>
+              <dd className="font-medium">{catalog.data.active_items}</dd>
+            </div>
+            <div>
+              <dt className="text-text-secondary">{label('catalogFile')}</dt>
+              <dd className="font-medium">{catalog.data.filename}</dd>
+            </div>
+            <div>
+              <dt className="text-text-secondary">{label('catalogHash')}</dt>
+              <dd className="break-all font-mono text-xs">
+                {catalog.data.source_sha256}
+              </dd>
+            </div>
+          </dl>
+        )}
+        <div className="max-w-3xl space-y-2">
+          <label
+            className="text-sm font-medium"
+            htmlFor="business-documents-catalog-file"
+          >
+            {label('catalogSelect')}
+          </label>
+          <Input
+            id="business-documents-catalog-file"
+            type="file"
+            accept=".json,application/json"
+            disabled={catalogImport.isPending}
+            onChange={(event) => {
+              setCatalogFile(event.target.files?.[0] ?? null);
+              catalogImport.reset();
+            }}
+          />
+          <p className="text-sm text-text-secondary">{label('catalogHelp')}</p>
+        </div>
+        {(catalogImport.error || catalog.error) && (
+          <p className="text-sm text-state-error" role="alert">
+            {(catalogImport.error || catalog.error)?.message}
+          </p>
+        )}
+        <div className="flex justify-end">
+          <Button
+            data-testid="business-documents-catalog-import"
+            disabled={!catalogFile || catalogImport.isPending}
+            onClick={() => catalogFile && catalogImport.mutate(catalogFile)}
+          >
+            {label(
+              catalogImport.isPending ? 'catalogImporting' : 'catalogImport',
+            )}
+          </Button>
+        </div>
+      </CardContent>
+      <CardHeader className="border-y border-border-button">
         <CardTitle>{t('admin.businessDocumentsSettings')}</CardTitle>
         <CardDescription>{label('description')}</CardDescription>
       </CardHeader>

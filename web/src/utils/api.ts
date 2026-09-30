@@ -533,6 +533,7 @@ export default {
   adminAccessGroup: (groupId: string) =>
     `${restAPIv1}/admin/access-groups/${groupId}`,
   adminBusinessDocumentsSettings: `${restAPIv1}/admin/business-documents`,
+  adminBusinessDocumentsCatalog: `${restAPIv1}/admin/business-documents/catalog`,
   adminAuditEvents: `${restAPIv1}/admin/audit-events`,
   adminDocumentQuality: `${restAPIv1}/admin/document-quality`,
   adminDocumentQualityJobs: `${restAPIv1}/admin/document-quality/jobs`,

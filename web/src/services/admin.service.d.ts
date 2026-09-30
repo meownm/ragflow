@@ -261,6 +261,27 @@ declare namespace AdminService {
     eva_connection: BusinessDocumentsEvaConnection;
   };
 
+  export type BusinessDocumentsCatalogStatus = {
+    source_id: string;
+    source_version: string;
+    source_sha256: string;
+    filename: string;
+    storage: 'bundled' | 'uploaded';
+    catalog_items: number;
+    active_items: number;
+    total_items: number;
+    imported_at: string | null;
+    imported_by: string | null;
+  };
+
+  export type BusinessDocumentsCatalogImport =
+    BusinessDocumentsCatalogStatus & {
+      created_items: number;
+      updated_items: number;
+      reactivated_items: number;
+      deactivated_items: number;
+    };
+
   export type BusinessDocumentsEvaConnectionInput = Omit<
     BusinessDocumentsEvaConnection,
     'token_configured'

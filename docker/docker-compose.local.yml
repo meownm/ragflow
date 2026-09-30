@@ -55,6 +55,7 @@ services:
     volumes:
       - ../api/db/services/connector_service.py:/ragflow/api/db/services/connector_service.py:ro
       - ../api/db/services/access_group_service.py:/ragflow/api/db/services/access_group_service.py:ro
+      - ../api/db/services/business_document_catalog_service.py:/ragflow/api/db/services/business_document_catalog_service.py:ro
       - ../api/db/services/business_document_settings_service.py:/ragflow/api/db/services/business_document_settings_service.py:ro
       - ../api/db/services/knowledgebase_service.py:/ragflow/api/db/services/knowledgebase_service.py:ro
       - ../api/db/services/managed_resource_service.py:/ragflow/api/db/services/managed_resource_service.py:ro

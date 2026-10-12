@@ -64,6 +64,9 @@ def test_application_ui_and_test_changes_skip_engines(repo, path):
         "docker/infinity_conf.toml",
         "docker/.env",
         ".github/workflows/tests.yml",
+        "api/apps/restful_apis/chunk_api.py",
+        "sdk/python/ragflow_sdk/modules/session.py",
+        "test/testcases/test_sdk_api/test_retrieval.py",
     ],
 )
 def test_engine_behavior_and_runtime_changes_select_both(repo, path):
@@ -82,6 +85,15 @@ def test_earlier_unverified_engine_change_is_not_hidden_by_later_ui_commit(repo)
     result = selector.select({"GITHUB_EVENT_NAME": "push"})
     assert result["required"] is True
     assert result["base"] == base
+
+
+def test_unclassified_runtime_boundary_gets_live_acceptance(repo):
+    commit, _ = repo
+    commit("new_runtime/package.py")
+    result = selector.select({})
+    assert result["required"] is True
+    assert result["reason"] == "unclassified-boundary-changed"
+    assert result["paths"] == ["new_runtime/package.py"]
 
 
 def test_rename_outside_engine_boundary_still_selects_engines(repo, monkeypatch):
@@ -182,41 +194,25 @@ def test_actions_baseline_ignores_pr_and_current_run(monkeypatch):
     )
 
 
-@pytest.mark.parametrize("workflow", ["tests.yml", "sep-tests.yml"])
-def test_both_workflows_gate_engines_on_shared_selector(workflow):
-    jobs = yaml.safe_load((ROOT / ".github/workflows" / workflow).read_text())["jobs"]
+def test_only_qualification_owner_uses_selector():
+    jobs = yaml.safe_load((ROOT / ".github/workflows/tests.yml").read_text())["jobs"]
     preflight = jobs["ragflow_preflight"]
-    assert preflight["outputs"]["run_engine_tests"] == "${{ steps.engine_tests.outputs.run_engine_tests }}"
     selection = next(step for step in preflight["steps"] if step.get("id") == "engine_tests")
     assert selection["run"] == "python3 tools/quality/select_engine_tests.py"
-    assert selection["env"]["CI_WORKFLOW_FILE"] == workflow
-    if workflow == "sep-tests.yml":
-        lanes = next(step for step in preflight["steps"] if step.get("id") == "detect_changes")
-        assert preflight["steps"].index(selection) < preflight["steps"].index(lanes)
-        assert lanes["env"]["CI_BEFORE"] == "${{ steps.engine_tests.outputs.engine_test_base }}"
+    assert selection["env"]["QUALIFICATION_PROFILE"] == "${{ inputs.profile || 'targeted' }}"
     for name in ("ragflow_tests_infinity", "ragflow_tests_elasticsearch"):
         assert jobs[name]["if"] == "${{ needs.ragflow_preflight.outputs.run_engine_tests == 'true' }}"
 
 
-@pytest.mark.parametrize("required", ["true", "false", ""])
-@pytest.mark.parametrize("preflight", ["success", "failure", "skipped", "cancelled"])
-@pytest.mark.parametrize("infinity", ["success", "failure", "skipped", "cancelled"])
-@pytest.mark.parametrize("elasticsearch", ["success", "failure", "skipped", "cancelled"])
-def test_actual_publication_gate_rejects_missing_failed_or_cancelled_required_jobs(required, preflight, infinity, elasticsearch):
-    jobs = yaml.safe_load((ROOT / ".github/workflows/tests.yml").read_text())["jobs"]
-    expression = jobs["publish_candidate"]["if"].removeprefix("${{").removesuffix("}}")
-    values = {
-        "!cancelled()": "True",
-        "github.event_name": repr("workflow_dispatch"),
-        "github.ref": repr("refs/heads/main"),
-        "needs.ragflow_preflight.outputs.run_engine_tests": repr(required),
-        "needs.ragflow_preflight.result": repr(preflight),
-        "needs.ragflow_tests_infinity.result": repr(infinity),
-        "needs.ragflow_tests_elasticsearch.result": repr(elasticsearch),
-    }
-    for name, value in values.items():
-        expression = expression.replace(name, value)
-    expression = " ".join(expression.replace("&&", "and").replace("||", "or").split())
-    permitted = eval(expression, {"__builtins__": {}}, {})
-    expected = preflight == "success" and ((required == "true" and infinity == elasticsearch == "success") or (required == "false" and infinity == elasticsearch == "skipped"))
-    assert permitted is expected
+def test_release_always_selects_both_even_for_verified_sha(repo):
+    assert selector.select({"QUALIFICATION_PROFILE": "release"})["required"] is True
+
+
+@pytest.mark.parametrize("state", ["failure", "cancelled", "skipped", ""])
+@pytest.mark.parametrize("lane", ["ragflow_preflight", "ragflow_tests_infinity", "ragflow_tests_elasticsearch"])
+def test_required_failure_cannot_become_pass(state, lane):
+    from tools.quality.release_evidence import RELEASE_LANES, qualification_status
+
+    jobs = dict.fromkeys(RELEASE_LANES, "success")
+    jobs[lane] = state
+    assert qualification_status(jobs) != "PASS"

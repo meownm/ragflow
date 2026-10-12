@@ -1,0 +1,7 @@
+# The qualified image supplies code and entrypoint; only disposable config/logs are mounted.
+services:
+  ragflow-cpu:
+    env_file: !override
+      - ${CI_ENV_FILE}
+    volumes: !override
+      - ${CI_LOG_DIR}:/ragflow/logs

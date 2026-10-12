@@ -120,7 +120,7 @@ def test_contract_schemas_compile_and_question_bounds_are_enforced():
     v3_request = {
         "schema_version": "3",
         "document_type": "business_requirements",
-        "catalog_entry_id": "L2-01.01.04.01.01",
+        "catalog_entry_id": "01.01.04.01.01",
         "idea": "Импортировать существующую страницу",
         "eva_page_url": "https://eva.example.com/project/Document/BR-42",
         "eva_decision": {"mode": "BIND"},

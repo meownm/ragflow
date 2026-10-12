@@ -18,6 +18,7 @@ from time import sleep
 
 import pytest
 from ragflow_sdk import Chunk
+from utils import wait_for
 
 
 def validate_chunk_details(dataset_id: str, document_id: str, payload: dict, chunk: Chunk):
@@ -172,19 +173,26 @@ class TestAddChunk:
             document.add_chunk(content="chunk test")
         assert f"You don't own the document {document.id}" in str(exception_info.value), str(exception_info.value)
 
-    @pytest.mark.skip(reason="issues/6411")
     @pytest.mark.p3
     def test_concurrent_add_chunk(self, add_document):
         count = 50
         _, document = add_document
-        initial_chunk_count = len(document.list_chunks())
+        initial_ids = {chunk.id for chunk in document.list_chunks(page_size=100)}
 
         def add_chunk_task(i):
             return document.add_chunk(content=f"chunk test concurrent {i}")
 
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = [executor.submit(add_chunk_task, i) for i in range(count)]
-        responses = list(as_completed(futures))
+        responses = [future.result() for future in as_completed(futures)]
         assert len(responses) == count, responses
-        sleep(5)
-        assert len(document.list_chunks(page_size=100)) == initial_chunk_count + count
+        created_ids = {chunk.id for chunk in responses}
+        assert len(created_ids) == count
+        assert not initial_ids & created_ids
+
+        @wait_for(30, 1, "Concurrent chunks did not become visible")
+        def visible():
+            chunks = document.list_chunks(page_size=100)
+            return {chunk.id for chunk in chunks} == initial_ids | created_ids and len(chunks) == len(initial_ids) + count
+
+        visible()

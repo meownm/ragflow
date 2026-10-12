@@ -13,13 +13,13 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
-import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pytest
 from configs import INVALID_API_TOKEN
 from libs.auth import RAGFlowWebApiAuth
 from test_common import batch_add_chunks, list_chunks, update_chunk
+from utils.engine_utils import get_doc_engine
 
 
 @pytest.mark.p2
@@ -43,12 +43,12 @@ class TestChunksList:
         "params, expected_code, expected_page_size, expected_message",
         [
             ({"page": None, "page_size": 2}, 0, 2, ""),
-            pytest.param({"page": 0, "page_size": 2}, 100, 0, "ValueError('Search does not support negative slicing.')", marks=pytest.mark.skip),
+            ({"page": 0, "page_size": 2}, 102, 0, "page must be greater than or equal to 1"),
             ({"page": 2, "page_size": 2}, 0, 2, ""),
             ({"page": 3, "page_size": 2}, 0, 1, ""),
             ({"page": "3", "page_size": 2}, 0, 1, ""),
-            pytest.param({"page": -1, "page_size": 2}, 100, 0, "ValueError('Search does not support negative slicing.')", marks=pytest.mark.skip),
-            pytest.param({"page": "a", "page_size": 2}, 100, 0, """ValueError("invalid literal for int() with base 10: 'a'")""", marks=pytest.mark.skip),
+            ({"page": -1, "page_size": 2}, 102, 0, "page must be greater than or equal to 1"),
+            ({"page": "a", "page_size": 2}, 102, 0, "page must be an integer"),
         ],
     )
     def test_page(self, WebApiAuth, add_chunks, params, expected_code, expected_page_size, expected_message):
@@ -65,12 +65,12 @@ class TestChunksList:
         "params, expected_code, expected_page_size, expected_message",
         [
             ({"page_size": None}, 0, 5, ""),
-            pytest.param({"page_size": 0}, 0, 5, ""),
+            ({"page_size": 0}, 0, 0, ""),
             ({"page_size": 1}, 0, 1, ""),
             ({"page_size": 6}, 0, 5, ""),
             ({"page_size": "1"}, 0, 1, ""),
-            pytest.param({"page_size": -1}, 0, 5, "", marks=pytest.mark.skip),
-            pytest.param({"page_size": "a"}, 100, 0, """ValueError("invalid literal for int() with base 10: 'a'")""", marks=pytest.mark.skip),
+            ({"page_size": -1}, 102, 0, "page_size must be greater than or equal to 0"),
+            ({"page_size": "a"}, 102, 0, "page_size must be an integer"),
         ],
     )
     def test_page_size(self, WebApiAuth, add_chunks, params, expected_code, expected_page_size, expected_message):
@@ -115,12 +115,13 @@ class TestChunksList:
             ({"keywords": None}, 5, None),
             ({"keywords": ""}, 5, None),
             ({"keywords": "1"}, 1, None),
-            pytest.param({"keywords": "chunk"}, None, 3, marks=pytest.mark.skipif(os.getenv("DOC_ENGINE") == "infinity", reason="issues/6509")),
+            ({"keywords": "chunk"}, None, 3),
             ({"keywords": "unknown"}, 0, None),
         ],
     )
     def test_keywords(self, WebApiAuth, add_chunks, params, expected_page_size, minimum_page_size):
         dataset_id, document_id, _ = add_chunks
+        assert get_doc_engine() in {"elasticsearch", "infinity", "opensearch"}, "Document engine prerequisite is missing"
         res = list_chunks(WebApiAuth, dataset_id, document_id, params=params)
         assert res["code"] == 0, res
         if minimum_page_size is not None:
@@ -141,9 +142,11 @@ class TestChunksList:
         count = 100
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = [executor.submit(list_chunks, WebApiAuth, dataset_id, document_id) for _ in range(count)]
-        responses = list(as_completed(futures))
+        responses = [future.result() for future in as_completed(futures)]
         assert len(responses) == count, responses
-        assert all(len(future.result()["data"]["chunks"]) == 5 for future in futures)
+        for response in responses:
+            assert response["code"] == 0, response
+        assert all(len(response["data"]["chunks"]) == 5 for response in responses)
 
     @pytest.mark.p1
     def test_default(self, WebApiAuth, add_document):

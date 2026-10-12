@@ -103,14 +103,22 @@ MARKER_EXPRESSIONS = {
 }
 
 _CLOUD_CREDENTIAL_NAMES = ("ZHIPU_AI_API_KEY", "SILICONFLOW_API_KEY")
+_CLOUD_PROVIDER_CASES = {
+    "test/testcases/restful_api/test_datasets.py::test_dataset_create_embedding_model_contract[tenant_zhipu]",
+    "test/testcases/test_sdk_api/test_dataset_mangement/test_create_dataset.py::TestDatasetCreate::test_embedding_model[tenant_zhipu]",
+    "test/testcases/test_sdk_api/test_dataset_mangement/test_update_dataset.py::TestDatasetUpdate::test_embedding_model[tenant_zhipu]",
+}
+_LOCAL_PROVIDER_SKIP = "provider-specific ZHIPU-AI positive case; local Ollama profile"
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption("--api-case-evidence", default=None, help="Write exact API execution nodeids and phase results as JSON")
+    parser.addoption("--api-case-suite", choices=["test_sdk_api", "restful_api", "test_web_api", "test_admin_api"], default=None)
     parser.addoption(
         "--model-profile",
         choices=["cloud", "local"],
         default="local",
-        help="local: provider-free suite (default); cloud: opt-in provider-backed tests requiring credentials",
+        help="local: disposable Ollama when configured, otherwise provider-free contracts; cloud: opt-in external providers",
     )
     parser.addoption(
         "--level",
@@ -130,8 +138,15 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 
 def pytest_configure(config: pytest.Config) -> None:
+    if config.getoption("--api-case-evidence"):
+        if not config.getoption("--api-case-suite"):
+            raise pytest.UsageError("--api-case-evidence requires --api-case-suite")
+        from pathlib import Path
+        from tools.quality.api_case_evidence import CaseEvidencePlugin
+
+        config.pluginmanager.register(CaseEvidencePlugin(Path(config.getoption("--api-case-evidence")), config.getoption("--api-case-suite"), config), "api-case-evidence")
     config.addinivalue_line("markers", "local_api: reviewed API test that needs no cloud model setup")
-    config.addinivalue_line("markers", "cloud_models: test requiring configured cloud model providers")
+    config.addinivalue_line("markers", "cloud_models: test requiring live models, available in configured local or cloud profiles")
     level = config.getoption("--level")
     config.option.markexpr = MARKER_EXPRESSIONS[level]
     if config.option.verbose > 0:
@@ -145,18 +160,15 @@ def _require_cloud_credentials():
 
 
 def _requires_cloud_models(item):
-    # pytest expands transitive fixture dependencies in ``fixturenames``. The
-    # root set_tenant_info fixture therefore carries cloud_model_credentials,
-    # while same-named unit-test doubles remain provider-free.
     return bool(item.get_closest_marker("cloud_models") or "cloud_model_credentials" in item.fixturenames)
 
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_runtest_setup(item):
-    # Provider-backed tests are explicit opt-in. The default local profile runs
-    # API and SDK contracts without attempting any external cloud setup.
     if item.config.getoption("--model-profile") == "local":
-        if _requires_cloud_models(item):
+        if item.nodeid in _CLOUD_PROVIDER_CASES:
+            pytest.skip(_LOCAL_PROVIDER_SKIP)
+        if "cloud_model_credentials" in item.fixturenames or (_requires_cloud_models(item) and not os.getenv("RAGFLOW_TEST_OLLAMA_URL")):
             pytest.skip("requires opt-in --model-profile=cloud")
     else:
         _require_cloud_credentials()
@@ -174,6 +186,10 @@ def cloud_model_credentials(request):
 def _model_environment(request):
     if request.config.getoption("--model-profile") == "cloud":
         request.getfixturevalue("set_tenant_info")
+    elif os.getenv("RAGFLOW_TEST_OLLAMA_URL"):
+        if os.getenv("RAGFLOW_TEST_DISPOSABLE") != "1":
+            pytest.fail("Local model provisioning requires RAGFLOW_TEST_DISPOSABLE=1", pytrace=False)
+        request.getfixturevalue("token")
 
 
 def register():
@@ -228,6 +244,16 @@ def token(auth):
         res = response.json()
         if res.get("code") != 0:
             raise Exception(f"access: {admin_url}, PUT method, error code: {res.get('code')}, message: {res.get('message')}")
+
+        if ollama_url := os.getenv("RAGFLOW_TEST_OLLAMA_URL"):
+            from test.live_models import configure_ollama
+
+            def request_json(url, *, method="GET", payload=None, headers=None, timeout_s=120):
+                response = requests.request(method, url, json=payload, headers=headers, timeout=timeout_s)
+                response.raise_for_status()
+                return response.status_code, response.json()
+
+            configure_ollama(HOST_ADDRESS, auth, ollama_url, request_json)
 
         token_url = ADMIN_HOST_ADDRESS + f"/api/{VERSION}/admin/users/{EMAIL}/keys"
         response = session.post(token_url)

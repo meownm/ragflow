@@ -142,6 +142,7 @@ export function ProposalItem({
               <Button
                 size="sm"
                 variant="danger"
+                className="dark:text-[#ff8b8d]"
                 disabled={!canDecide || pending}
                 data-testid={`reject-proposal-${proposal.proposal_id}`}
                 onClick={() =>
@@ -157,6 +158,7 @@ export function ProposalItem({
               <Button
                 size="sm"
                 variant="accent"
+                className="text-[#102c2a]"
                 disabled={!canDecide || pending}
                 loading={pending}
                 data-testid={`accept-proposal-${proposal.proposal_id}`}

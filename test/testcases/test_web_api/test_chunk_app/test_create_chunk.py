@@ -19,6 +19,7 @@ import pytest
 from configs import INVALID_API_TOKEN
 from libs.auth import RAGFlowWebApiAuth
 from test_common import add_chunk, delete_document, get_chunk, list_chunks
+from utils import wait_for
 
 
 def validate_chunk_details(auth, dataset_id, document_id, payload, res):
@@ -179,17 +180,30 @@ class TestAddChunk:
         assert res["code"] == 102, res
         assert res["message"] == f"You don't own the document {document_id}.", res
 
-    @pytest.mark.skip(reason="issues/6411")
     @pytest.mark.p3
     def test_concurrent_add_chunk(self, WebApiAuth, add_document):
         count = 50
         dataset_id, document_id = add_document
-        chunks_count = list_chunks(WebApiAuth, dataset_id, document_id)["data"]["doc"]["chunk_count"]
+        initial = list_chunks(WebApiAuth, dataset_id, document_id, params={"page_size": 100})
+        assert initial["code"] == 0, initial
+        initial_ids = {chunk["id"] for chunk in initial["data"]["chunks"]}
+        chunks_count = initial["data"]["doc"]["chunk_count"]
 
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = [executor.submit(add_chunk, WebApiAuth, dataset_id, document_id, {"content": f"chunk test {i}"}) for i in range(count)]
-        responses = list(as_completed(futures))
+        responses = [future.result() for future in as_completed(futures)]
         assert len(responses) == count, responses
-        assert all(future.result()["code"] == 0 for future in futures)
-        res = list_chunks(WebApiAuth, dataset_id, document_id)
-        assert res["data"]["doc"]["chunk_count"] == chunks_count + count
+        for response in responses:
+            assert response["code"] == 0, response
+        created_ids = {response["data"]["chunk"]["id"] for response in responses}
+        assert len(created_ids) == count
+        assert not initial_ids & created_ids
+
+        @wait_for(30, 1, "Concurrent chunks or counters did not become visible")
+        def visible():
+            res = list_chunks(WebApiAuth, dataset_id, document_id, params={"page_size": 100})
+            assert res["code"] == 0, res
+            chunks = res["data"]["chunks"]
+            return {chunk["id"] for chunk in chunks} == initial_ids | created_ids and len(chunks) == len(initial_ids) + count and res["data"]["doc"]["chunk_count"] == chunks_count + count
+
+        visible()

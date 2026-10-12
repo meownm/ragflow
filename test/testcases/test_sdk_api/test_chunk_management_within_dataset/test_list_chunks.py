@@ -13,7 +13,6 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
-import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pytest
@@ -27,12 +26,12 @@ class TestChunksList:
         "params, expected_page_size, expected_message",
         [
             ({"page": None, "page_size": 2}, 2, ""),
-            pytest.param({"page": 0, "page_size": 2}, 0, "ValueError('Search does not support negative slicing.')", marks=pytest.mark.skip),
+            ({"page": 0, "page_size": 2}, 0, "page must be greater than or equal to 1"),
             ({"page": 2, "page_size": 2}, 2, ""),
             ({"page": 3, "page_size": 2}, 1, ""),
             ({"page": "3", "page_size": 2}, 1, ""),
-            pytest.param({"page": -1, "page_size": 2}, 0, "ValueError('Search does not support negative slicing.')", marks=pytest.mark.skip),
-            pytest.param({"page": "a", "page_size": 2}, 0, """ValueError("invalid literal for int() with base 10: \'a\'")""", marks=pytest.mark.skip),
+            ({"page": -1, "page_size": 2}, 0, "page must be greater than or equal to 1"),
+            ({"page": "a", "page_size": 2}, 0, "page must be an integer"),
         ],
     )
     def test_page(self, add_chunks, params, expected_page_size, expected_message):
@@ -51,12 +50,12 @@ class TestChunksList:
         "params, expected_page_size, expected_message",
         [
             ({"page_size": None}, 5, ""),
-            pytest.param({"page_size": 0}, 5, ""),
+            ({"page_size": 0}, 0, ""),
             ({"page_size": 1}, 1, ""),
             ({"page_size": 6}, 5, ""),
             ({"page_size": "1"}, 1, ""),
-            pytest.param({"page_size": -1}, 5, "", marks=pytest.mark.skip),
-            pytest.param({"page_size": "a"}, 0, """ValueError("invalid literal for int() with base 10: \'a\'")""", marks=pytest.mark.skip),
+            ({"page_size": -1}, 0, "page_size must be greater than or equal to 0"),
+            ({"page_size": "a"}, 0, "page_size must be an integer"),
         ],
     )
     def test_page_size(self, add_chunks, params, expected_page_size, expected_message):
@@ -78,19 +77,13 @@ class TestChunksList:
             ({"keywords": ""}, 5),
             ({"keywords": "1"}, 1),
             ({"keywords": "chunk"}, 4),
-            pytest.param({"keywords": "ragflow"}, 1, marks=pytest.mark.skipif(os.getenv("DOC_ENGINE") == "infinity", reason="issues/6509")),
-            pytest.param({"keywords": "ragflow"}, 5, marks=pytest.mark.skipif(os.getenv("DOC_ENGINE") != "infinity", reason="issues/6509")),
+            ({"keywords": "ragflow"}, 1),
             ({"keywords": "unknown"}, 0),
         ],
     )
     def test_keywords(self, add_chunks, params, expected_page_size):
         _, document, _ = add_chunks
-        if params.get("keywords") == "ragflow":
-            doc_engine = get_doc_engine(document.rag)
-            if doc_engine == "infinity" and expected_page_size == 1:
-                pytest.skip("issues/6509")
-            if doc_engine != "infinity" and expected_page_size == 5:
-                pytest.skip("issues/6509")
+        assert get_doc_engine(document.rag) in {"elasticsearch", "infinity", "opensearch"}, "Document engine prerequisite is missing"
         chunks = document.list_chunks(**params)
         assert len(chunks) == expected_page_size, str(chunks)
 
@@ -100,14 +93,12 @@ class TestChunksList:
         [
             (None, 5, ""),
             ("", 5, ""),
-            pytest.param(lambda r: r[0], 1, "", marks=pytest.mark.skipif(os.getenv("DOC_ENGINE") == "infinity", reason="issues/6499")),
-            pytest.param("unknown", 0, """AttributeError("\'NoneType\' object has no attribute \'keys\'")""", marks=pytest.mark.skip),
+            (lambda r: r[0], 1, ""),
+            ("unknown", 0, "Chunk not found:"),
         ],
     )
     def test_id(self, add_chunks, chunk_id, expected_page_size, expected_message):
         _, document, chunks = add_chunks
-        if callable(chunk_id) and get_doc_engine(document.rag) == "infinity":
-            pytest.skip("issues/6499")
         chunk_ids = [chunk.id for chunk in chunks]
         if callable(chunk_id):
             params = {"id": chunk_id(chunk_ids)}
@@ -123,6 +114,7 @@ class TestChunksList:
             if params["id"] in [None, ""]:
                 assert len(chunks) == expected_page_size, str(chunks)
             else:
+                assert len(chunks) == expected_page_size, str(chunks)
                 assert chunks[0].id == params["id"], str(chunks)
 
     @pytest.mark.p3
@@ -132,9 +124,9 @@ class TestChunksList:
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = [executor.submit(document.list_chunks) for _ in range(count)]
 
-        responses = list(as_completed(futures))
+        responses = [future.result() for future in as_completed(futures)]
         assert len(responses) == count, responses
-        assert all(len(future.result()) == 5 for future in futures)
+        assert all(len(response) == 5 for response in responses)
 
     @pytest.mark.p1
     def test_default(self, add_document):

@@ -105,7 +105,7 @@ def test_concurrent_deletion(add_dataset, tmp_path):
     with ThreadPoolExecutor(max_workers=5) as executor:
         futures = [executor.submit(delete_doc, doc.id) for doc in documents]
 
-    responses = list(as_completed(futures))
+    responses = [future.result() for future in as_completed(futures)]
     assert len(responses) == count, responses
 
 

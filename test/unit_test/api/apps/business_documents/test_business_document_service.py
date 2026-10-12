@@ -93,6 +93,19 @@ def _create(**overrides):
     return document_creation.execute(TENANT, AUTHOR, request)
 
 
+def test_event_preserves_one_persistence_clock(database, monkeypatch):
+    import api.db.db_models as models
+
+    ticks = iter(range(1001, 1020))
+    monkeypatch.setattr(models, "current_timestamp", lambda: next(ticks))
+    BusinessDocumentEvent.insert(
+        id="clock", document_id="document", sequence=1, event_type="created", actor_type="USER", actor_id=AUTHOR, payload={}, correlation_id="clock", create_time=1000, update_time=1000
+    ).execute()
+    event = BusinessDocumentEvent.get_by_id("clock")
+    assert event.create_time == event.update_time == 1000
+    assert event.create_date == event.update_date
+
+
 def test_exported_business_document_markdown_can_be_imported_without_an_llm_rewrite():
     markdown = render_document_ast(_draft())
 
@@ -193,12 +206,12 @@ def test_catalog_sync_replaces_previous_source_rows_and_v3_derives_the_title(dat
         },
     )
 
-    assert len(catalog["items"]) == 69
-    assert len({item["id"] for item in catalog["items"]}) == 69
-    assert all(item["id"] != "L2-01.01.04.01.01" for item in catalog["items"])
-    assert all(not item["title"].startswith(item["details"]["source_l5_id"] + " ") for item in catalog["items"])
-    assert len({item["title"] for item in catalog["items"]}) == 69
-    assert listed["total"] == 69
+    assert len(catalog["items"]) == 70
+    assert len({item["id"] for item in catalog["items"]}) == 70
+    assert any(item["id"] == "01.01.04.01.01" for item in catalog["items"])
+    assert all(item["title"].startswith(item["details"]["source_l5_id"] + " ") for item in catalog["items"])
+    assert len({item["title"] for item in catalog["items"]}) == 70
+    assert listed["total"] == 70
     assert all(item["capability_level"] == "L5" for item in listed["items"])
     assert created["catalog_entry_id"] == first["id"]
     assert created["title"] == first["title"]
@@ -1898,7 +1911,7 @@ def test_assignment_event_failure_rolls_back_owner_and_version(database, monkeyp
     def fail_event(*_args, **_kwargs):
         raise IntegrityError("forced assignment event failure")
 
-    monkeypatch.setattr(BusinessDocumentEvent, "insert_many", staticmethod(fail_event))
+    monkeypatch.setattr(BusinessDocumentEvent, "insert", staticmethod(fail_event))
     with pytest.raises(IntegrityError, match="forced assignment event failure"):
         assign_business_document(
             "moderator-1",

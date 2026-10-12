@@ -41,7 +41,7 @@ class TestChunksDeletion:
     @pytest.mark.parametrize(
         "document_id, expected_code, expected_message",
         [
-            ("invalid_document_id", 100, "Can't find the document with ID invalid_document_id!"),
+            ("invalid_document_id", 102, "You don't own the document invalid_document_id."),
         ],
     )
     def test_invalid_document_id(self, WebApiAuth, add_chunks_func, document_id, expected_code, expected_message):
@@ -106,9 +106,9 @@ class TestChunksDeletion:
 
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = [executor.submit(delete_chunks, WebApiAuth, dataset_id, document_id, {"chunk_ids": chunk_ids[i : i + 1]}) for i in range(count)]
-        responses = list(as_completed(futures))
+        responses = [future.result() for future in as_completed(futures)]
         assert len(responses) == count, responses
-        assert all(future.result()["code"] == 0 for future in futures)
+        assert all(response["code"] == 0 for response in responses), responses
 
     @pytest.mark.p3
     def test_delete_1k(self, WebApiAuth, add_document):

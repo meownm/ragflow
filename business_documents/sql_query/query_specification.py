@@ -67,7 +67,7 @@ _FILTER_OPERATORS = {
     "like": "LIKE",
     "ilike": "ILIKE",
     "in": "= ANY",
-    "not_in": "<> ALL",
+    "not_in": "= ANY",
     "is_null": "IS NULL",
     "is_not_null": "IS NOT NULL",
 }
@@ -537,9 +537,12 @@ def parse_parameter_value(value_type: str, value: Any, field: str) -> Any:
         if isinstance(value, bool) or not isinstance(value, (str, int, float)):
             raise QuerySpecificationValidationError(f"{field} must be a decimal")
         try:
-            return str(Decimal(str(value)))
+            parsed = Decimal(str(value))
         except InvalidOperation as exc:
             raise QuerySpecificationValidationError(f"{field} must be a decimal") from exc
+        if not parsed.is_finite():
+            raise QuerySpecificationValidationError(f"{field} must be a finite decimal")
+        return str(parsed)
     if value_type in {"date", "datetime"}:
         text = _text(value, field, 100)
         try:
@@ -896,7 +899,10 @@ def _filter_sql(snapshot: SchemaSnapshot, aliases: Mapping[str, str], item: Filt
     if item.operator in _PARAMETERLESS_OPERATORS:
         return f"{column} {operator}"
     if item.operator in _LIST_OPERATORS:
-        return f"{column} {operator}(:{item.parameter})"
+        expression = f"{column} {operator}(:{item.parameter})"
+        # Negating ANY preserves array/null semantics without introducing an
+        # anonymous ALL function into the independently checked SQL AST.
+        return f"NOT ({expression})" if item.operator == "not_in" else expression
     return f"{column} {operator} :{item.parameter}"
 
 

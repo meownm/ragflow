@@ -102,10 +102,9 @@ class TestChatAssistantsDelete:
 
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = [executor.submit(client.delete_chats, ids=[chat_ids[i]]) for i in range(count)]
-            responses = list(as_completed(futures))
+            responses = [future.result() for future in as_completed(futures)]
 
         assert len(responses) == count
-        assert all(future.exception() is None for future in futures)
 
     @pytest.mark.p3
     def test_delete_1k(self, client):

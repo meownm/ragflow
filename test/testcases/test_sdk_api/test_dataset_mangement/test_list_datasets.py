@@ -48,7 +48,7 @@ class TestCapability:
                 )
                 for _ in range(count)
             ]
-        responses = list(as_completed(futures))
+        responses = [future.result() for future in as_completed(futures)]
         assert len(responses) == count, responses
 
 

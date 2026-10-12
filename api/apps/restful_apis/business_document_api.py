@@ -36,9 +36,21 @@ from api.apps.business_documents.sql_query_runs import BusinessDocumentSqlRunSer
 from api.apps.business_documents.sql_query_planner import BusinessDocumentSqlQueryPlanningService
 from api.apps.business_documents.sql_query_schema import BusinessDocumentSqlQuerySchemaService
 from api.apps.business_documents.worker import wake_business_document_worker
+from api.db.db_models import DB
 from api.utils.api_utils import get_request_json
 from business_documents.application.errors import BusinessDocumentError
-from common.misc_utils import thread_pool_exec
+from common.misc_utils import thread_pool_exec as _thread_pool_exec
+
+
+async def thread_pool_exec(func, *args, **kwargs):
+    # Peewee connections belong to the worker thread, not Quart's request thread.
+    def invoke():
+        try:
+            return func(*args, **kwargs)
+        finally:
+            DB.close()
+
+    return await _thread_pool_exec(invoke)
 
 
 def _success(data, status=200):

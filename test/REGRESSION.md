@@ -135,22 +135,19 @@ focused pass scoped to its lane. For release acceptance, attach the existing
 candidate manifest, quality reports where applicable, and deployment evidence
 for the same source revision; check the deployed image identity, backup and
 health in `deployment.json`. Record any remaining acceptance gap explicitly.
-The CI `publish_candidate` job uploads `candidate-receipt.json` only after the
-preflight succeeds and both engine jobs either succeed when selected or are
-explicitly skipped for `no-engine-changes`. The receipt records the actual job
-statuses and `engine_tests_required`; a skip is not engine test evidence.
-Local `Release` requires this receipt
-before changing containers and verifies its revision, registry digest and the
-pulled image ID. Run `python tools/quality/release_evidence.py verify --receipt
-<candidate-receipt.json> --deployment <deployment.json> --source-workbench-report
-<source-workbench-quality.json> --business-documents-report <business-quality.json>
---output <release-evidence.json>` to collect a separate pass/fail/incomplete
-report. Quality thresholds are baseline observations until two reproducible
-unchanged-source/model/corpus runs establish a reviewed gate. Missing reports
-or prerequisites yield `incomplete`. The receipt is trusted only when obtained
-from the named CI run; the verifier checks its contents and file hash, not CI
-artifact authenticity. `source_id` is recorded only for a separately verified
-source snapshot and is never inferred from the Git SHA.
+`candidate-receipt.json` schema 2 records qualification results and the required
+lane set. Release requires successful prerequisites and every mandatory lane;
+targeted skips never establish full qualification. Publication separately checks
+GitHub job results, artifact origin and producer bytes, using inventories from the
+qualified source SHA. Local `Release` requires the published proof before changing
+containers and verifies GitHub asset digests, the registry digest and pulled image.
+The `release_evidence.py verify` command collects deployment and quality reports;
+it does not itself authorize publication. New quality thresholds require two
+reproducible unchanged-source/model/corpus runs and review. Existing approved gates
+remain mandatory. Missing reports or prerequisites yield `INCOMPLETE`.
+`source_id` is recorded only for a separately verified source snapshot and is never
+inferred from the Git SHA. Schema 1 is historical and requires the explicit local
+restore flag; it cannot authorize a new release.
 `evidence_status` and `quality_status` are separate: complete release identity
 evidence never turns a failed model-quality baseline into a quality pass.
 
@@ -176,23 +173,75 @@ or infer a quality gate from one run.
 patch whitespace, applicable small Python boundary/tooling checks, changed-file
 lint, frontend type-checking, and changed Go formatting. It does not replace
 the engine, live-model, or browser lanes and is not yet a required branch rule.
-`tests.yml` and `sep-tests.yml` retain their preflight checks. The two live engine
-jobs (including SDK/REST/Web/admin APIs and browser journeys) run only when
-`tools/quality/select_engine_tests.py` finds engine-boundary changes: storage,
-indexing, ingestion, retrieval/ranking, shared interfaces, dependencies or runtime
-configuration. UI and application-only changes skip both jobs. Selection uses
-the last successful run of the same branch/workflow, including earlier failed
-or cancelled changes; PR selection uses the complete base diff. Missing history
-or Actions API access selects both jobs. Scheduled/tag runs do not independently
-force the engine matrix. When selected, `tests.yml` runs the full Go suite on
-non-PR events. For a
-PR, changes unrelated to Go skip Go tests; Go changes run their packages and
-in-module consumers on both document engines. Unknown inputs fall back to the
-full suite. Within selected engine jobs, `sep-tests.yml` selects changed lanes
-from the same successful baseline or PR base, with all sub-lanes for tags, schedules and
-unclassified inputs. Version-only bumps in `pyproject.toml` and the root package
-in `uv.lock` do not select engine tests; dependency changes still do. Candidate
-publication always rebuilds native and Go binaries from the tested revision.
+`tests.yml` is the single qualification owner. The `targeted` profile selects
+engine lanes from the verified successful baseline or complete PR diff. Unknown
+inputs select the full appropriate set. It never grants publication eligibility.
+The `release` profile always runs p3 on Elasticsearch and Infinity, the complete
+browser inventory on Chromium/Firefox/WebKit, native image probes, six portable
+CLI and both Python wheels. Schedules, version tags and full manual candidates use
+this profile regardless of changed paths. `sep-tests.yml` remains a temporary
+manual entry during the five-run observation period; it calls the same owner.
+
+Release API evidence is checked against `test/mandatory-api-cases.json`, not a
+runtime-generated expected count. The collector records nodeids and setup/call/
+teardown outcomes. Model fixtures use the disposable tenant with
+`RAGFLOW_TEST_OLLAMA_URL` and require `RAGFLOW_TEST_DISPOSABLE=1`. Generic model tests
+execute on Ollama; only explicitly reviewed provider-specific cases are N/A.
+Bug skips, missing runtimes/models, xfail, missing/extra/duplicate cases fail the
+release gate. The API suites have independent inventories for both engines.
+
+```bash
+python -m tools.quality.check_release_workflows
+pytest test/testcases/restful_api --level=p3 --model-profile=local \
+  --api-case-suite restful_api --api-case-evidence /tmp/rest-cases.json
+python -m tools.quality.api_case_evidence /tmp/rest-cases.json \
+  --suite restful_api --engine infinity --repository meownm/ragflow \
+  --sha "$SOURCE_SHA" --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" \
+  --image-digest "$RAGFLOW_TEST_IMAGE_DIGEST" --output /tmp/rest-qualified.json
+```
+
+`release_evidence` schema 2 records immutable qualification. Publication has a
+separate proof, and local Release pulls the promoted image by digest. Schema 1 is
+historical evidence only. Two complete qualifications of the same product bytes
+use `release.yml` dry-run then the first qualification artifact's
+`replay_artifact_id/replay_run_id/replay_attempt`. A replay uses the same image,
+CLI and wheels and must keep the same bundle ID.
+
+Native qualification executes six mandatory CGO parser cases and the actual CLI
+inside the final image. The parser test binary is separate instrumentation;
+PDF layout mock results do not prove real OCR. Compile through:
+
+```bash
+bash deployment/runner/build-go-linux.sh --test -c \
+  -o output/ci-native/parser.test ./internal/parser/parser
+bash deployment/runner/test-native-image.sh output/ci-native/parser.test output/ci-image/native
+```
+
+The existing `--cov-branch --cov-fail-under=79` gate measures combined coverage,
+not a separate 79% branch rate. Release additionally checks XML branch counts
+against the plan's strict 79% branch requirement. Report both numbers. Do not
+change coverage sources/exclusions to pass it. A below-floor report blocks release.
+
+Previous qualified runtime upgrade is checked with
+`deployment/runner/test-qualified-upgrade.py`: real old/new image dependencies,
+synthetic PostgreSQL rows, repeat initializer, backup/restore and own-resource
+cleanup. It requires a trusted previous published receipt and digest-pinned
+PostgreSQL. Missing baseline is INCOMPLETE. Historical v1.12.0 source tests remain
+useful focused evidence and do not substitute for this check.
+The same probe accepts `--historical-image/--historical-sha` for explicit diagnostic
+assessment. It verifies repository ancestry and actual image source identity, then
+runs the same disposable upgrade/restore sequence. Its overall status remains
+INCOMPLETE even when `diagnostic_status=PASS`; it never establishes publication
+eligibility or a previous qualified release.
+The explicitly approved initial bootstrap is a separate one-time policy with a
+fixed historical image/SHA. `--bootstrap` requires its exact bytes and passing
+migration/restore/cleanup; the historical image remains unqualified. Publication
+rejects another bootstrap after the first qualified bundle and allows only an
+idempotent retry of that exact publication. This exception never reduces the new
+bundle's required lanes, API inventory, models or coverage gates.
+
+See [release architecture](../docs/develop/release-architecture-ru.md) for events,
+proof contracts, publication recovery and rollout criteria.
 
 The coverage floors prevent regression from the measured baseline; they are
 not a claim that every application route or every negative case is covered.

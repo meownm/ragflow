@@ -13,11 +13,11 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
-import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from random import randint
 
 import pytest
+from ragflow_sdk.modules.chunk import ChunkUpdateError
+from utils import wait_for
 
 
 class TestUpdatedChunk:
@@ -27,11 +27,7 @@ class TestUpdatedChunk:
         [
             ({"content": None}, ""),
             ({"content": ""}, "`content` is required"),
-            pytest.param(
-                {"content": 1},
-                "TypeError('expected string or bytes-like object')",
-                marks=pytest.mark.skip,
-            ),
+            ({"content": 1}, "`content` must be a string"),
             ({"content": "update chunk"}, ""),
             ({"content": " "}, "`content` is required"),
             ({"content": "\n!?。；！？\"'"}, ""),
@@ -42,8 +38,9 @@ class TestUpdatedChunk:
         chunk = chunks[0]
 
         if expected_message:
-            with pytest.raises(Exception) as exception_info:
+            with pytest.raises(ChunkUpdateError) as exception_info:
                 chunk.update(payload)
+            assert exception_info.value.code == 102
             assert expected_message in str(exception_info.value), str(exception_info.value)
         else:
             chunk.update(payload)
@@ -54,7 +51,7 @@ class TestUpdatedChunk:
         [
             ({"important_keywords": ["a", "b", "c"]}, ""),
             ({"important_keywords": [""]}, ""),
-            ({"important_keywords": [1]}, "Internal server error"),
+            ({"important_keywords": [1]}, "`important_keywords` must be a list of strings"),
             ({"important_keywords": ["a", "a"]}, ""),
             ({"important_keywords": "abc"}, "`important_keywords` should be a list"),
             ({"important_keywords": 123}, "`important_keywords` should be a list"),
@@ -65,8 +62,9 @@ class TestUpdatedChunk:
         chunk = chunks[0]
 
         if expected_message:
-            with pytest.raises(Exception) as exception_info:
+            with pytest.raises(ChunkUpdateError) as exception_info:
                 chunk.update(payload)
+            assert exception_info.value.code == 102
             assert expected_message in str(exception_info.value), str(exception_info.value)
         else:
             chunk.update(payload)
@@ -77,7 +75,7 @@ class TestUpdatedChunk:
         [
             ({"questions": ["a", "b", "c"]}, ""),
             ({"questions": [""]}, ""),
-            ({"questions": [1]}, "Internal server error"),
+            ({"questions": [1]}, "`questions` must be a list of strings"),
             ({"questions": ["a", "a"]}, ""),
             ({"questions": "abc"}, "`questions` should be a list"),
             ({"questions": 123}, "`questions` should be a list"),
@@ -88,8 +86,9 @@ class TestUpdatedChunk:
         chunk = chunks[0]
 
         if expected_message:
-            with pytest.raises(Exception) as exception_info:
+            with pytest.raises(ChunkUpdateError) as exception_info:
                 chunk.update(payload)
+            assert exception_info.value.code == 102
             assert expected_message in str(exception_info.value), str(exception_info.value)
         else:
             chunk.update(payload)
@@ -111,8 +110,9 @@ class TestUpdatedChunk:
         chunk = chunks[0]
 
         if expected_message:
-            with pytest.raises(Exception) as exception_info:
+            with pytest.raises(ChunkUpdateError) as exception_info:
                 chunk.update(payload)
+            assert exception_info.value.code == 102
             assert expected_message in str(exception_info.value), str(exception_info.value)
         else:
             chunk.update(payload)
@@ -122,10 +122,10 @@ class TestUpdatedChunk:
         "payload, expected_message",
         [
             ({"available": True}, ""),
-            pytest.param({"available": "True"}, """ValueError("invalid literal for int() with base 10: \'True\'")""", marks=pytest.mark.skip),
+            ({"available": "True"}, "`available` must be a boolean or 0 or 1"),
             ({"available": 1}, ""),
             ({"available": False}, ""),
-            pytest.param({"available": "False"}, """ValueError("invalid literal for int() with base 10: \'False\'")""", marks=pytest.mark.skip),
+            ({"available": "False"}, "`available` must be a boolean or 0 or 1"),
             ({"available": 0}, ""),
         ],
     )
@@ -134,8 +134,9 @@ class TestUpdatedChunk:
         chunk = chunks[0]
 
         if expected_message:
-            with pytest.raises(Exception) as exception_info:
+            with pytest.raises(ChunkUpdateError) as exception_info:
                 chunk.update(payload)
+            assert exception_info.value.code == 102
             assert expected_message in str(exception_info.value), str(exception_info.value)
         else:
             chunk.update(payload)
@@ -149,15 +150,27 @@ class TestUpdatedChunk:
         chunk.update({"content": "chunk test 2"})
 
     @pytest.mark.p3
-    @pytest.mark.skipif(os.getenv("DOC_ENGINE") == "infinity", reason="issues/6554")
     def test_concurrent_update_chunk(self, add_chunks):
         count = 50
-        _, _, chunks = add_chunks
+        _, document, chunks = add_chunks
+        initial_ids = {chunk.id for chunk in document.list_chunks(page_size=100)}
+        assert {chunk.id for chunk in chunks}.issubset(initial_ids)
+        expected = {chunk.id: set() for chunk in chunks[:4]}
+        for index in range(count):
+            expected[chunks[index % 4].id].add(f"update chunk test {index}")
 
         with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = [executor.submit(chunks[randint(0, 3)].update, {"content": f"update chunk test {i}"}) for i in range(count)]
-        responses = list(as_completed(futures))
+            futures = [executor.submit(chunks[i % 4].update, {"content": f"update chunk test {i}"}) for i in range(count)]
+        responses = [future.result() for future in as_completed(futures)]
         assert len(responses) == count, responses
+
+        @wait_for(30, 1, "Concurrent chunk updates did not become visible")
+        def visible():
+            actual = document.list_chunks(page_size=100)
+            by_id = {chunk.id: chunk for chunk in actual}
+            return len(actual) == len(initial_ids) and set(by_id) == initial_ids and all(by_id[chunk_id].content in contents for chunk_id, contents in expected.items())
+
+        visible()
 
     @pytest.mark.p3
     def test_update_chunk_to_deleted_document(self, add_chunks):

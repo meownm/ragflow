@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import re
 
@@ -8,7 +9,7 @@ from playwright.sync_api import expect
 from test.playwright.helpers._next_apps_helpers import RESULT_TIMEOUT_MS, _goto_home
 
 
-AXE_SCRIPT = Path(__file__).resolve().parents[3] / "web" / "node_modules" / "axe-core" / "axe.min.js"
+AXE_SCRIPT = Path(os.environ.get("RAGFLOW_AXE_SCRIPT", str(Path(__file__).resolve().parents[3] / "web" / "node_modules" / "axe-core" / "axe.min.js")))
 
 
 def _envelope(data):
@@ -191,7 +192,7 @@ def test_business_documents_list_validation_and_create_navigation(
                         {
                             "items": [
                                 {
-                                    "id": "L2-01.01.04.01.01",
+                                    "id": "01.01.04.01.01",
                                     "title": "Новый регламент",
                                     "title_en": "New regulation",
                                     "description": "Разрешённый L5-документ",
@@ -269,7 +270,7 @@ def test_business_documents_list_validation_and_create_navigation(
     create_panel = page.locator("[data-testid='business-document-create-panel']")
     submit = create_panel.locator("button[type='submit']")
     expect(submit).to_be_disabled()
-    page.locator("[data-testid='business-document-catalog-select']").select_option("L2-01.01.04.01.01")
+    page.locator("[data-testid='business-document-catalog-select']").select_option("01.01.04.01.01")
     create_panel.locator("textarea").fill("  Согласовать единый процесс.  ")
     expect(submit).to_be_enabled()
     submit.click()
@@ -279,7 +280,7 @@ def test_business_documents_list_validation_and_create_navigation(
         {
             "schema_version": "3",
             "document_type": "business_requirements",
-            "catalog_entry_id": "L2-01.01.04.01.01",
+            "catalog_entry_id": "01.01.04.01.01",
             "idea": "Согласовать единый процесс.",
             "dataset_ids": [],
         }

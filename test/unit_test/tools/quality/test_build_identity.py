@@ -72,45 +72,41 @@ def test_dockerfile_preserves_runtime_files_without_git():
     assert ".git" in (ROOT / ".dockerignore").read_text().splitlines()
 
 
-@pytest.mark.parametrize("workflow,count", [("tests.yml", 3), ("sep-tests.yml", 2), ("release.yml", 1)])
-def test_all_main_image_ci_build_callers_supply_checkout_identity(workflow, count):
-    document = yaml.safe_load((ROOT / ".github/workflows" / workflow).read_text())
-    builds = []
-    for job in document["jobs"].values():
-        for step in job.get("steps", []):
-            script = step.get("run", "")
-            if "docker build " in script and "-f Dockerfile " in script:
-                builds.append(script)
-                assert "git describe --tags --match='v*' --first-parent --always" in script
-                assert "git rev-parse HEAD" in script
-                assert '--build-arg "RAGFLOW_BUILD_VERSION=${build_version}"' in script
-                assert '--build-arg "RAGFLOW_SOURCE_REVISION=${source_revision}"' in script
-    assert len(builds) == count
+def test_one_qualified_image_build_supplies_and_checks_source_identity():
+    jobs = yaml.safe_load((ROOT / ".github/workflows/tests.yml").read_text())["jobs"]
+    builds = [step for job in jobs.values() for step in job.get("steps", []) if "build-qualified-image.sh" in step.get("run", "")]
+    assert len(builds) == 1
+    assert builds[0] in jobs["build_image"]["steps"]
+    assert jobs["build_image"]["env"]["SOURCE_SHA"] == "${{ inputs.source_sha || github.sha }}"
+    script = (ROOT / "deployment/runner/build-qualified-image.sh").read_text()
+    assert '--build-arg "RAGFLOW_BUILD_VERSION=${version}"' in script
+    assert '--build-arg "RAGFLOW_SOURCE_REVISION=${SOURCE_SHA}"' in script
+    assert 'cat "$digest" /ragflow/SOURCE_REVISION)" = "$SOURCE_SHA"' in script
 
 
-@pytest.mark.parametrize("workflow", ["tests.yml", "sep-tests.yml"])
-def test_compose_ci_uses_isolated_postgres_overlay(workflow):
-    document = yaml.safe_load((ROOT / ".github/workflows" / workflow).read_text())
-    prepare_steps = [
-        step["run"]
-        for job in document["jobs"].values()
-        for step in job.get("steps", [])
-        if step.get("name") == "Prepare function test environment"
-    ]
+@pytest.mark.parametrize("workflow,profile", [("sep-tests.yml", "targeted"), ("release.yml", "release")])
+def test_release_and_targeted_callers_delegate_to_qualification(workflow, profile):
+    jobs = yaml.safe_load((ROOT / ".github/workflows" / workflow).read_text())["jobs"]
+    qualified = jobs["qualification"]
+    assert qualified["uses"] == "./.github/workflows/tests.yml"
+    assert qualified["with"]["profile"] == profile
+    assert not any("docker build " in step.get("run", "") for job in jobs.values() for step in job.get("steps", []))
 
-    assert len(prepare_steps) == 2
-    for script in prepare_steps:
-        assert "/^DB_TYPE=/d" not in script
-        assert 'echo "DB_TYPE=mysql"' not in script
 
-    compose_commands = [
-        step["run"]
-        for job in document["jobs"].values()
-        for step in job.get("steps", [])
-        if "sudo docker compose " in step.get("run", "")
-    ]
-    assert compose_commands
-    assert all("-f docker/docker-compose.ci-postgres.yml" in script for script in compose_commands)
+@pytest.mark.parametrize("engine", ["infinity", "elasticsearch"])
+def test_engine_stack_runs_qualified_digest_with_isolated_postgres(engine):
+    jobs = yaml.safe_load((ROOT / ".github/workflows/tests.yml").read_text())["jobs"]
+    job = jobs[f"ragflow_tests_{engine}"]
+    assert job["env"]["RAGFLOW_IMAGE"] == "${{ needs.build_image.outputs.digest }}"
+    scripts = "\n".join(step.get("run", "") for step in job["steps"])
+    assert "bash deployment/runner/test-engine.sh" in scripts
+    assert "runtime_image_lock materialize" in scripts
+    assert "docker build " not in scripts
+    script = (ROOT / "deployment/runner/test-engine.sh").read_text()
+    assert "-f docker/docker-compose.ci-postgres.yml" in script
+    assert '"${compose[@]}" up -d --no-build' in script
+    assert '"${RUNTIME_IMAGE_OVERRIDE:?}"' in script
+    assert 'test "$actual" = "$expected"' in script
 
 
 def test_ci_postgres_overlay_disables_mysql_and_gates_ragflow_on_postgres():
@@ -122,21 +118,10 @@ def test_ci_postgres_overlay_disables_mysql_and_gates_ragflow_on_postgres():
     assert 'REGISTER_ENABLED: "1"' in overlay
 
 
-@pytest.mark.parametrize("workflow", ["tests.yml", "sep-tests.yml"])
-def test_live_api_ci_uses_provider_free_model_profile(workflow):
-    document = yaml.safe_load((ROOT / ".github/workflows" / workflow).read_text())
-    test_roots = (
-        "test/testcases/test_sdk_api",
-        "test/testcases/restful_api",
-        "test/testcases/test_web_api",
-        "test/testcases/test_admin_api",
-    )
-    commands = [
-        step["run"]
-        for job in document["jobs"].values()
-        for step in job.get("steps", [])
-        if "pytest " in step.get("run", "") and any(root in step["run"] for root in test_roots)
-    ]
-
-    assert len(commands) == 8
-    assert all("--model-profile=local" in command for command in commands)
+def test_all_api_suites_use_local_models_and_record_case_evidence():
+    script = (ROOT / "deployment/runner/test-engine.sh").read_text()
+    assert "for suite in test_sdk_api restful_api test_web_api test_admin_api; do" in script
+    assert '"test/testcases/${suite}"' in script
+    assert "pytest --model-profile=local" in script
+    assert '--api-case-suite "$suite" --api-case-evidence' in script
+    assert "python -m tools.quality.api_case_evidence" in script

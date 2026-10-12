@@ -25,8 +25,8 @@ class TestSessionWithChatAssistantUpdate:
         "payload, expected_message",
         [
             pytest.param({"name": "valid_name"}, "", marks=pytest.mark.p1),
-            pytest.param({"name": "a" * (SESSION_WITH_CHAT_NAME_LIMIT + 1)}, "", marks=pytest.mark.skip(reason="issues/")),
-            pytest.param({"name": 1}, "", marks=pytest.mark.skip(reason="issues/")),
+            pytest.param({"name": "a" * (SESSION_WITH_CHAT_NAME_LIMIT + 1)}, ""),
+            pytest.param({"name": 1}, "`name` can not be empty."),
             pytest.param({"name": ""}, "`name` can not be empty.", marks=pytest.mark.p3),
             pytest.param({"name": "duplicated_name"}, "", marks=pytest.mark.p3),
             pytest.param({"name": "case insensitive"}, "", marks=pytest.mark.p3),
@@ -48,7 +48,7 @@ class TestSessionWithChatAssistantUpdate:
         else:
             session.update(payload)
             updated_session = chat_assistant.list_sessions(id=session.id)[0]
-            assert updated_session.name == payload["name"]
+            assert updated_session.name == payload["name"].strip()[:SESSION_WITH_CHAT_NAME_LIMIT]
 
     @pytest.mark.p3
     def test_repeated_update_session(self, add_sessions_with_chat_assistant_func):
@@ -62,9 +62,9 @@ class TestSessionWithChatAssistantUpdate:
     @pytest.mark.parametrize(
         "payload, expected_message",
         [
-            pytest.param({"unknown_key": "unknown_value"}, "ValueError", marks=pytest.mark.skip),
+            pytest.param({"unknown_key": "unknown_value"}, "Unknown session fields: unknown_key"),
             ({}, ""),
-            pytest.param(None, "TypeError", marks=pytest.mark.skip),
+            pytest.param(None, "`update_message` must be a dict"),
         ],
     )
     def test_invalid_params(self, add_sessions_with_chat_assistant_func, payload, expected_message):
@@ -85,7 +85,7 @@ class TestSessionWithChatAssistantUpdate:
 
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = [executor.submit(sessions[randint(0, 4)].update, {"name": f"update session test {i}"}) for i in range(count)]
-        responses = list(as_completed(futures))
+        responses = [future.result() for future in as_completed(futures)]
         assert len(responses) == count, responses
 
     @pytest.mark.p3

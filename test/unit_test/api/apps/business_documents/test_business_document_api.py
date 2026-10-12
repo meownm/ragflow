@@ -296,7 +296,7 @@ async def test_catalog_route_returns_the_service_projection(route_app, monkeypat
     catalog = {
         "items": [
             {
-                "id": "L2-01.01.04.01.01",
+                "id": "01.01.04.01.01",
                 "title": "Разрешённый документ",
                 "capability_level": "L5",
             }

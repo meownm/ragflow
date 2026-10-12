@@ -2,23 +2,116 @@ name: tests
 permissions:
   contents: read
   actions: read
-
-on:
+'on':
   workflow_call:
+    inputs:
+      profile:
+        type: string
+        default: targeted
+      source_sha:
+        type: string
+        default: ''
+      replay_artifact_id:
+        type: number
+        default: 0
+      replay_run_id:
+        type: string
+        default: ''
+      replay_attempt:
+        type: number
+        default: 1
+    secrets:
+      RUNNER_READ_TOKEN:
+        required: true
+      NEXUS_STAGING_BUILD_USER:
+        required: true
+      NEXUS_STAGING_BUILD_PASSWORD:
+        required: true
+      NEXUS_STAGING_READ_USER:
+        required: true
+      NEXUS_STAGING_READ_PASSWORD:
+        required: true
+      NEXUS_RELEASE_READ_USER:
+        required: true
+      NEXUS_RELEASE_READ_PASSWORD:
+        required: true
+    outputs:
+      receipt_sha256:
+        value: ${{ jobs.evidence.outputs.receipt_sha256 }}
+      artifact:
+        value: ${{ jobs.evidence.outputs.artifact }}
+      artifact_id:
+        value: ${{ jobs.evidence.outputs.artifact_id }}
+      qualification_attempt:
+        value: ${{ jobs.evidence.outputs.qualification_attempt }}
   workflow_dispatch:
-
-# https://docs.github.com/en/actions/using-jobs/using-concurrency
-concurrency:
-  group: tests-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
+    inputs:
+      profile:
+        type: choice
+        options:
+        - targeted
+        - release
+        default: targeted
+      source_sha:
+        type: string
+        default: ''
+      replay_artifact_id:
+        type: number
+        default: 0
+      replay_run_id:
+        type: string
+        default: ''
+      replay_attempt:
+        type: number
+        default: 1
+  pull_request:
+    types:
+    - opened
+    - synchronize
+    - reopened
+    - labeled
 jobs:
+  ready:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+    - &id002
+      uses: actions/checkout@v6
+      with: &id001
+        ref: ${{ inputs.source_sha || github.sha }}
+        fetch-depth: 0
+        fetch-tags: true
+    - name: Require test runner
+      env:
+        GH_TOKEN: ${{ secrets.RUNNER_READ_TOKEN }}
+      run: python3 -m tools.quality.release_runtime ready
+    - name: Validate qualification source and configuration
+      env:
+        PROFILE: ${{ inputs.profile || 'targeted' }}
+        SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+        RELEASE_IMAGE_REPOSITORY: ${{ vars.RELEASE_IMAGE_REPOSITORY }}
+        STAGING_IMAGE_REPOSITORY: ${{ vars.STAGING_IMAGE_REPOSITORY }}
+        DEEPDOC_IMAGE: ${{ vars.RAGFLOW_CI_DEEPDOC_IMAGE }}
+        PREVIOUS_RELEASE_TAG: ${{ vars.RAGFLOW_PREVIOUS_QUALIFIED_RELEASE }}
+        INITIAL_BOOTSTRAP: ${{ vars.RELEASE_BOOTSTRAP_ENABLED }}
+      run: |
+        set -euo pipefail
+        test -n "$STAGING_IMAGE_REPOSITORY" || { echo '::error::Missing STAGING_IMAGE_REPOSITORY'; exit 1; }
+        test -n "$DEEPDOC_IMAGE" || { echo '::error::Missing published RAGFLOW_CI_DEEPDOC_IMAGE'; exit 1; }
+        if [[ "$PROFILE" == release ]]; then
+          test "$SOURCE_SHA" = "$GITHUB_SHA"
+          test -n "$RELEASE_IMAGE_REPOSITORY" || { echo '::error::Missing RELEASE_IMAGE_REPOSITORY'; exit 1; }
+          test -n "$PREVIOUS_RELEASE_TAG" || [[ "$INITIAL_BOOTSTRAP" == true ]] || { echo '::error::INCOMPLETE: previous qualified baseline or approved initial bootstrap is not configured'; exit 1; }
+        fi
+    if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository &&
+      contains(github.event.pull_request.labels.*.name, 'ci')) }}
   ragflow_preflight:
     name: ragflow_preflight
-    # https://docs.github.com/en/actions/using-jobs/using-conditions-to-control-job-execution
-    # https://github.com/orgs/community/discussions/26261
-    if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && contains(github.event.pull_request.labels.*.name, 'ci') && (github.event.action != 'labeled' || github.event.label.name == 'ci')) }}
-    runs-on: [ "self-hosted", "ragflow-test" ]
+    runs-on:
+    - self-hosted
+    - ragflow-test
+    - Linux
+    - ragflow-isolated-vm
     services:
       regression-postgres:
         image: postgres:16-alpine
@@ -27,1127 +120,614 @@ jobs:
           POSTGRES_PASSWORD: regression-only
           POSTGRES_DB: regression
         ports:
-          - 5432/tcp
-        options: >-
-          --health-cmd "pg_isready -U regression -d regression"
-          --health-interval 5s --health-timeout 5s --health-retries 10
+        - 5432/tcp
+        options: --health-cmd "pg_isready -U regression -d regression" --health-interval 5s --health-timeout 5s --health-retries
+          10
     outputs:
       http_api_test_level: ${{ steps.test_level.outputs.http_api_test_level }}
       has_go_changes: ${{ steps.detect_changes.outputs.has_go_changes }}
       run_engine_tests: ${{ steps.engine_tests.outputs.run_engine_tests }}
       engine_test_reason: ${{ steps.engine_tests.outputs.engine_test_reason }}
     steps:
-      - name: Ensure workspace ownership
-        run: |
-          echo "Workflow triggered by ${{ github.event_name }}"
-          echo "chown -R ${USER} ${GITHUB_WORKSPACE}" && sudo chown -R ${USER} ${GITHUB_WORKSPACE}
+    - &id003
+      uses: astral-sh/setup-uv@v6
+      with:
+        python-version: '3.13'
+        enable-cache: false
+    - name: Ensure workspace ownership
+      run: 'echo "Workflow triggered by ${{ github.event_name }}"
 
-      # https://github.com/actions/checkout/issues/1781
-      - name: Check out code
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ (github.event_name == 'pull_request' || github.event_name == 'pull_request_target') && format('refs/pull/{0}/merge', github.event.pull_request.number) || github.sha }}
-          fetch-depth: 0
-          fetch-tags: true
+        echo "chown -R $(id -un) ${GITHUB_WORKSPACE}" && sudo chown -R $(id -un) ${GITHUB_WORKSPACE}
 
-      - name: Prepare artifacts directory
-        run: |
-          set -euo pipefail
-          ARTIFACTS_DIR="${RUNNER_WORKSPACE_PREFIX}/artifacts/${GITHUB_REPOSITORY}/${GITHUB_RUN_ID}"
-          echo "ARTIFACTS_DIR=${ARTIFACTS_DIR}" >> "${GITHUB_ENV}"
-          rm -rf -- "${ARTIFACTS_DIR}"
-          mkdir -p -- "${ARTIFACTS_DIR}"
+        '
+    - name: Check out code
+      uses: actions/checkout@v6
+      with: *id001
+    - name: Prepare artifacts directory
+      run: 'set -euo pipefail
 
-      - name: Run Lefthook on changed files
-        run: |
-          set -euo pipefail
-          uv tool install --force ruff==0.13.3
-          export PATH="$HOME/.local/bin:$PATH"
-          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" || "${GITHUB_EVENT_NAME}" == "pull_request_target" ]]; then
-            changed_files=$(mktemp)
-            trap 'rm -f "$changed_files"' EXIT
-            git diff --name-only ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }} \
-              | while read -r file; do
-                  if [[ -f "$file" ]]; then
-                    printf '%s\0' "$file"
-                  fi
-                done > "$changed_files"
-            echo "Changed files to run lefthook on:"
-            if [[ -s "$changed_files" ]]; then
-              tr '\0' '\n' < "$changed_files" | sed 's/^/  /'
-            else
-              echo "  (none — lefthook will be a no-op)"
-            fi
-            # LEFTHOOK_CHECK_ONLY=1 makes the pre-commit jobs verify without
-            # applying --fix or `git add`, so CI only checks and reports
-            # failures instead of rewriting the working tree.
-            python3 tools/hooks/prepare_web.py --files-from "$changed_files"
-            LEFTHOOK_CHECK_ONLY=1 lefthook run pre-commit --files-from-stdin --no-auto-install < "$changed_files"
-          fi
+        ARTIFACTS_DIR="${RUNNER_WORKSPACE_PREFIX:-${HOME}}/artifacts/${GITHUB_REPOSITORY}/${GITHUB_RUN_ID}/${GITHUB_RUN_ATTEMPT}/preflight"
 
-      - name: Set test level
-        id: test_level
-        run: |
-          set -euo pipefail
-          if [[ ${GITHUB_EVENT_NAME} == "schedule" ]]; then
-            export HTTP_API_TEST_LEVEL=p3
-          else
-            export HTTP_API_TEST_LEVEL=p2
-          fi
-          echo "HTTP_API_TEST_LEVEL=${HTTP_API_TEST_LEVEL}" >> ${GITHUB_ENV}
-          echo "http_api_test_level=${HTTP_API_TEST_LEVEL}" >> ${GITHUB_OUTPUT}
+        echo "ARTIFACTS_DIR=${ARTIFACTS_DIR}" >> "${GITHUB_ENV}"
 
-      - name: Detect changed file types
-        id: detect_changes
-        env:
-          CI_BEFORE: ${{ github.event.before }}
-          CI_PR_BASE: ${{ github.event.pull_request.base.sha }}
-        run: bash deployment/runner/select-ci-lanes.sh
+        test -n "${ARTIFACTS_DIR}"
 
-      - name: Select engine regression
-        id: engine_tests
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CI_WORKFLOW_FILE: tests.yml
-          CI_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          CI_PR_BASE: ${{ github.event.pull_request.base.sha }}
-        run: python3 tools/quality/select_engine_tests.py
+        mkdir -p -- "${ARTIFACTS_DIR}"
 
-      - name: Prepare Python test environment
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libglib2.0-0 libglx-mesa0 libgl1
-          uv sync --python 3.13 --group test --frozen
-          uv pip install -e sdk/python
+        '
+    - name: Run Lefthook on changed files
+      run: "set -euo pipefail\nuv tool install --force ruff==0.13.3\nexport PATH=\"$HOME/.local/bin:$PATH\"\nif [[ \"${GITHUB_EVENT_NAME}\"\
+        \ == \"pull_request\" || \"${GITHUB_EVENT_NAME}\" == \"pull_request_target\" ]]; then\n  changed_files=$(mktemp)\n\
+        \  trap 'rm -f \"$changed_files\"' EXIT\n  git diff --name-only ${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha\
+        \ }} \\\n    | while read -r file; do\n        if [[ -f \"$file\" ]]; then\n          printf '%s\\0' \"$file\"\n \
+        \       fi\n      done > \"$changed_files\"\n  echo \"Changed files to run lefthook on:\"\n  if [[ -s \"$changed_files\"\
+        \ ]]; then\n    tr '\\0' '\\n' < \"$changed_files\" | sed 's/^/  /'\n  else\n    echo \"  (none \u0432\u0402\u201D\
+        \ lefthook will be a no-op)\"\n  fi\n  # LEFTHOOK_CHECK_ONLY=1 makes the pre-commit jobs verify without\n  # applying\
+        \ --fix or `git add`, so CI only checks and reports\n  # failures instead of rewriting the working tree.\n  python3\
+        \ tools/hooks/prepare_web.py --files-from \"$changed_files\"\n  LEFTHOOK_CHECK_ONLY=1 lefthook run pre-commit --files-from-stdin\
+        \ --no-auto-install < \"$changed_files\"\nfi\n"
+    - name: Set test level
+      id: test_level
+      run: "set -euo pipefail\nif [[ \"${QUALIFICATION_PROFILE}\" == \"release\" ]]; then\n  export HTTP_API_TEST_LEVEL=p3\n\
+        else\n  export HTTP_API_TEST_LEVEL=p2\nfi\necho \"HTTP_API_TEST_LEVEL=${HTTP_API_TEST_LEVEL}\" >> ${GITHUB_ENV}\n\
+        echo \"http_api_test_level=${HTTP_API_TEST_LEVEL}\" >> ${GITHUB_OUTPUT}\n"
+    - name: Detect changed file types
+      id: detect_changes
+      env:
+        CI_BEFORE: ${{ github.event.before }}
+        CI_PR_BASE: ${{ github.event.pull_request.base.sha }}
+      run: bash deployment/runner/select-ci-lanes.sh
+    - name: Select engine regression
+      id: engine_tests
+      env:
+        GH_TOKEN: ${{ github.token }}
+        CI_WORKFLOW_FILE: release.yml
+        CI_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        CI_PR_BASE: ${{ github.event.pull_request.base.sha }}
+        QUALIFICATION_PROFILE: ${{ inputs.profile || 'targeted' }}
+      run: python3 tools/quality/select_engine_tests.py
+    - name: Prepare Python test environment
+      run: 'sudo apt-get update
 
-      - name: Run unit test
-        run: |
-          source .venv/bin/activate
-          which pytest || echo "pytest not in PATH"
-          echo "Start to run unit test"
-          python3 run_tests.py -i
+        sudo apt-get install -y --no-install-recommends libglib2.0-0 libglx-mesa0 libgl1
 
-      - name: Business document branch coverage gate
-        run: |
-          source .venv/bin/activate
-          pytest test/unit_test/business_documents test/unit_test/api/apps/business_documents test/unit_test/api/apps/restful_apis/test_business_document_api_contract.py --cov=api/apps/business_documents --cov=business_documents --cov-branch --cov-fail-under=79 --cov-report=xml:coverage-business-documents.xml
+        uv sync --python 3.13 --group test --frozen
 
-      - name: Deterministic business document requirements
-        run: |
-          source .venv/bin/activate
-          pytest test/evals/business_documents/test_golden_dialogue_harness.py test/evals/business_documents/test_live_quality_scorer.py test/evals/source_workbench/test_evaluate.py test/evals/source_workbench/test_live_provisioning.py
+        uv pip install -e sdk/python
 
-      - name: PostgreSQL transaction races
-        env:
-          BUSINESS_DOCUMENT_TEST_POSTGRES_DSN: postgresql://regression:regression-only@host.docker.internal:${{ job.services.regression-postgres.ports['5432'] }}/regression
-        run: |
-          set -euo pipefail
-          source .venv/bin/activate
-          minio_name="business-documents-minio-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          cleanup_minio() { docker rm -f "${minio_name}" >/dev/null 2>&1 || true; }
-          trap cleanup_minio EXIT
-          docker run --rm -d --name "${minio_name}" --label codex.lane=business-document-export \
-            -p 127.0.0.1::9000 \
-            -e MINIO_ROOT_USER=regression \
-            -e MINIO_ROOT_PASSWORD=regression-only-minio \
-            pgsty/minio:RELEASE.2026-03-25T00-00-00Z server /data >/dev/null
-          minio_endpoint="$(docker port "${minio_name}" 9000/tcp)"
-          for _ in $(seq 1 80); do
-            if curl --noproxy '*' -fsS "http://${minio_endpoint}/minio/health/ready" >/dev/null; then
-              break
-            fi
-            sleep 0.25
-          done
-          curl --noproxy '*' -fsS "http://${minio_endpoint}/minio/health/ready" >/dev/null
-          export BUSINESS_DOCUMENT_TEST_MINIO_ENDPOINT="http://${minio_endpoint}"
-          export BUSINESS_DOCUMENT_TEST_MINIO_USER=regression
-          export BUSINESS_DOCUMENT_TEST_MINIO_PASSWORD=regression-only-minio
-          pytest test/integration/test_business_document_postgres.py
+        '
+    - name: Run unit test
+      run: 'source .venv/bin/activate
 
+        which pytest || echo "pytest not in PATH"
 
+        echo "Start to run unit test"
 
+        python3 run_tests.py -i
+
+        '
+    - name: Verify required local models before product build
+      if: ${{ inputs.profile == 'release' || steps.engine_tests.outputs.run_engine_tests == 'true' }}
+      env:
+        RAGFLOW_TEST_OLLAMA_URL: ${{ vars.RAGFLOW_CI_OLLAMA_URL }}
+      run: python3 -m tools.quality.release_runtime models --output models-prerequisite.json
+    - name: Business document branch coverage gate
+      run: 'source .venv/bin/activate
+
+        pytest test/unit_test/business_documents test/unit_test/api/apps/business_documents test/unit_test/api/apps/restful_apis/test_business_document_api_contract.py
+        --cov=api/apps/business_documents --cov=business_documents --cov-branch --cov-fail-under=79 --cov-report=xml:coverage-business-documents.xml
+
+        python3 -c ''from pathlib import Path; from tools.quality.release_evidence import verify_branch_coverage; print(verify_branch_coverage(Path("coverage-business-documents.xml")))''
+
+        '
+    - name: Deterministic business document requirements
+      run: 'source .venv/bin/activate
+
+        pytest test/evals/business_documents/test_golden_dialogue_harness.py test/evals/business_documents/test_live_quality_scorer.py
+        test/evals/source_workbench/test_evaluate.py test/evals/source_workbench/test_live_provisioning.py
+
+        '
+    - name: PostgreSQL transaction races
+      env:
+        BUSINESS_DOCUMENT_TEST_POSTGRES_DSN: postgresql://regression:regression-only@host.docker.internal:${{ job.services.regression-postgres.ports['5432']
+          }}/regression
+      run: "set -euo pipefail\nsource .venv/bin/activate\nminio_name=\"business-documents-minio-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}\"\
+        \ncleanup_minio() { docker rm -f \"${minio_name}\" >/dev/null 2>&1 || true; }\ntrap cleanup_minio EXIT\ndocker run\
+        \ --rm -d --name \"${minio_name}\" --label codex.lane=business-document-export \\\n  -p 127.0.0.1::9000 \\\n  -e MINIO_ROOT_USER=regression\
+        \ \\\n  -e MINIO_ROOT_PASSWORD=regression-only-minio \\\n  pgsty/minio:RELEASE.2026-03-25T00-00-00Z server /data >/dev/null\n\
+        minio_endpoint=\"$(docker port \"${minio_name}\" 9000/tcp)\"\nfor _ in $(seq 1 80); do\n  if curl --noproxy '*' -fsS\
+        \ \"http://${minio_endpoint}/minio/health/ready\" >/dev/null; then\n    break\n  fi\n  sleep 0.25\ndone\ncurl --noproxy\
+        \ '*' -fsS \"http://${minio_endpoint}/minio/health/ready\" >/dev/null\nexport BUSINESS_DOCUMENT_TEST_MINIO_ENDPOINT=\"\
+        http://${minio_endpoint}\"\nexport BUSINESS_DOCUMENT_TEST_MINIO_USER=regression\nexport BUSINESS_DOCUMENT_TEST_MINIO_PASSWORD=regression-only-minio\n\
+        pytest test/integration/test_business_document_postgres.py\n"
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: preflight-${{ github.run_id }}-${{ github.run_attempt }}
+        path: coverage-business-documents.xml
+        if-no-files-found: error
+        include-hidden-files: true
+        retention-days: 30
+    needs:
+    - ready
+    - replay
+    timeout-minutes: 45
+    env:
+      QUALIFICATION_PROFILE: ${{ inputs.profile || 'targeted' }}
+  frontend:
+    runs-on: ubuntu-24.04
+    needs:
+    - ready
+    - replay
+    timeout-minutes: 30
+    steps:
+    - *id002
+    - name: Validate release workflows
+      run: 'python3 -m pip install PyYAML==6.0.2
+
+        python3 -m tools.quality.check_release_workflows'
+    - uses: pnpm/action-setup@v4
+      with:
+        version: 10
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: pnpm
+        cache-dependency-path: web/pnpm-lock.yaml
+    - name: Locked frontend tests and accessibility tool
+      working-directory: web
+      run: 'pnpm install --frozen-lockfile
+
+        pnpm test --runInBand
+
+        mkdir -p ../browser-tools
+
+        cp node_modules/axe-core/axe.min.js ../browser-tools/axe.min.js
+
+        sha256sum ../browser-tools/axe.min.js | cut -d'' '' -f1 > ../browser-tools/axe.sha256'
+    - uses: actions/upload-artifact@v4
+      with:
+        name: browser-tools-${{ github.run_id }}-${{ github.run_attempt }}
+        path: browser-tools
+        if-no-files-found: error
+        include-hidden-files: true
+        retention-days: 30
+  package_python:
+    runs-on: ubuntu-24.04
+    needs:
+    - ready
+    - replay
+    timeout-minutes: 20
+    steps:
+    - *id002
+    - *id003
+    - uses: actions/download-artifact@v5
+      if: ${{ needs.replay.outputs.artifact != '' }}
+      with:
+        artifact-ids: ${{ needs.replay.outputs.artifact }}
+        path: replay
+    - name: Build wheel distributions
+      run: "mkdir -p \"$RUNNER_TEMP/wheels\"\nif [[ -d replay/qualification/python ]]; then\n  cp replay/qualification/python/*.whl\
+        \ \"$RUNNER_TEMP/wheels/\"\nelse\n  uv build --wheel --out-dir \"$RUNNER_TEMP/wheels\" sdk/python\n  uv build --wheel\
+        \ --out-dir \"$RUNNER_TEMP/wheels\" admin/client\nfi\nuv venv --python 3.13 \"$RUNNER_TEMP/wheel-test\"\nuv pip install\
+        \ --python \"$RUNNER_TEMP/wheel-test/bin/python\" \"$RUNNER_TEMP\"/wheels/*.whl\n(cd \"$RUNNER_TEMP\" && \"$RUNNER_TEMP/wheel-test/bin/python\"\
+        \ -c 'import ragflow_sdk, ragflow_cli')"
+    - uses: actions/upload-artifact@v4
+      with:
+        name: python-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/wheels/*.whl
+        if-no-files-found: error
+        include-hidden-files: true
+        retention-days: 30
+  build_cli:
+    needs:
+    - ready
+    - replay
+    if: ${{ inputs.profile == 'release' }}
+    uses: ./.github/workflows/release-cli.yml
+    with:
+      source_sha: ${{ inputs.source_sha || github.sha }}
+      replay_artifact: ${{ needs.replay.outputs.artifact }}
+  build_image:
+    runs-on:
+    - self-hosted
+    - ragflow-test
+    - Linux
+    - ragflow-isolated-vm
+    needs:
+    - ragflow_preflight
+    - frontend
+    - replay
+    timeout-minutes: 120
+    outputs:
+      digest: ${{ steps.image.outputs.digest }}
+      lock_sha256: ${{ steps.lock.outputs.sha256 }}
+      postgres: ${{ steps.lock.outputs.postgres }}
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+      STAGING_IMAGE: ${{ vars.STAGING_IMAGE_REPOSITORY }}:${{ inputs.source_sha || github.sha }}-${{ github.run_id }}-${{
+        github.run_attempt }}
+      REPLAY_IMAGE: ${{ needs.replay.outputs.digest }}
+      DEEPDOC_IMAGE: ${{ vars.RAGFLOW_CI_DEEPDOC_IMAGE }}
+    steps:
+    - *id002
+    - *id003
+    - uses: actions/download-artifact@v5
+      if: ${{ needs.replay.outputs.artifact != '' }}
+      with:
+        artifact-ids: ${{ needs.replay.outputs.artifact }}
+        path: replay
+    - name: Build native binaries
+      run: |
+        set -euo pipefail
+        bash deployment/runner/build-go-linux.sh --cpp
+        bash deployment/runner/build-go-linux.sh
+    - name: Go regression
+      if: ${{ inputs.profile == 'release' || needs.ragflow_preflight.outputs.has_go_changes == 'true' }}
+      env:
+        RAGFLOW_TEST_DOCKER_HOST: host.docker.internal
+        RAGFLOW_TEST_BIND_ADDRESS: 0.0.0.0
+      run: bash test/run_go_regression.sh
+    - name: Compile native parser checks with repository wrapper
+      run: 'mkdir -p output/ci-native
+
+        bash deployment/runner/build-go-linux.sh --test -c -o output/ci-native/parser.test ./internal/parser/parser'
+    - name: Build one image and extract SPA
+      id: image
+      env:
+        STAGING_IMAGE_REPOSITORY: ${{ vars.STAGING_IMAGE_REPOSITORY }}
+        NEXUS_STAGING_BUILD_USER: ${{ secrets.NEXUS_STAGING_BUILD_USER }}
+        NEXUS_STAGING_BUILD_PASSWORD: ${{ secrets.NEXUS_STAGING_BUILD_PASSWORD }}
+      run: bash deployment/runner/build-qualified-image.sh
+    - name: Freeze supporting runtime images
+      id: lock
+      env:
+        RAGFLOW_IMAGE: ${{ steps.image.outputs.digest }}
+      run: "test -n \"$DEEPDOC_IMAGE\"\nif [[ -f replay/qualification/runtime-images.json ]]; then\n  python3 - <<'PY'\nimport\
+        \ json,os\nfrom pathlib import Path\nfrom tools.quality.runtime_image_lock import identity,serialize\nlock=json.loads(Path('replay/qualification/runtime-images.json').read_text())\n\
+        assert lock['candidate_image']==os.environ['RAGFLOW_IMAGE']\nlock.update(identity(os.environ['GITHUB_REPOSITORY'],os.environ['SOURCE_SHA'],os.environ['GITHUB_RUN_ID'],int(os.environ['GITHUB_RUN_ATTEMPT'])))\n\
+        Path('output/ci-image/runtime-images.json').write_bytes(serialize(lock))\nPY\nelse\n  python3 -m tools.quality.runtime_image_lock\
+        \ build --lock output/ci-image/runtime-images.json --candidate-image \"$RAGFLOW_IMAGE\"\nfi\nprintf 'sha256=%s\\n'\
+        \ \"$(sha256sum output/ci-image/runtime-images.json | cut -d' ' -f1)\" >> \"$GITHUB_OUTPUT\"\npython3 - <<'PY'\nimport\
+        \ json,os\nfrom pathlib import Path\nlock=json.loads(Path('output/ci-image/runtime-images.json').read_text())\nwith\
+        \ open(os.environ['GITHUB_OUTPUT'],'a') as out:\n    out.write('postgres='+lock['services']['elasticsearch']['postgres']['image']+'\\\
+        n')\nPY"
+    - name: Qualify native binaries inside final image
+      env:
+        RAGFLOW_IMAGE: ${{ steps.image.outputs.digest }}
+      run: bash deployment/runner/test-native-image.sh output/ci-native/parser.test output/ci-image/native
+    - name: Qualify previous image upgrade and restore
+      env:
+        RAGFLOW_IMAGE: ${{ steps.image.outputs.digest }}
+        RAGFLOW_TEST_DISPOSABLE: '1'
+        RAGFLOW_QUALIFICATION_POSTGRES_IMAGE: ${{ steps.lock.outputs.postgres }}
+        PREVIOUS_RELEASE_TAG: ${{ vars.RAGFLOW_PREVIOUS_QUALIFIED_RELEASE }}
+        INITIAL_BOOTSTRAP: ${{ vars.RELEASE_BOOTSTRAP_ENABLED }}
+        RELEASE_IMAGE_REPOSITORY: ${{ vars.RELEASE_IMAGE_REPOSITORY }}
+        NEXUS_RELEASE_READ_USER: ${{ secrets.NEXUS_RELEASE_READ_USER }}
+        NEXUS_RELEASE_READ_PASSWORD: ${{ secrets.NEXUS_RELEASE_READ_PASSWORD }}
+        STAGING_IMAGE_REPOSITORY: ${{ vars.STAGING_IMAGE_REPOSITORY }}
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        args=()
+        if [[ -n "$PREVIOUS_RELEASE_TAG" ]]; then
+          source deployment/runner/staging-docker-auth.sh
+          authenticate_previous_release_read
+          args+=(--previous-tag "$PREVIOUS_RELEASE_TAG")
+        elif [[ "$INITIAL_BOOTSTRAP" == true ]]; then
+          mapfile -t baseline < <(python3 - <<'PY'
+        import json
+        from tools.quality.release_evidence import BOOTSTRAP_BASELINE
+        data=json.loads(BOOTSTRAP_BASELINE.read_bytes())
+        print(data['image_digest'])
+        print(data['source_sha'])
+        print(data['repository'])
+        PY
+          )
+          test "${#baseline[@]}" = 3
+          args+=(--bootstrap --historical-image "${baseline[0]}" --historical-sha "${baseline[1]}" --baseline-repository "${baseline[2]}")
+        else
+          echo '::error::INCOMPLETE: runtime baseline unavailable'
+          exit 1
+        fi
+        python3 deployment/runner/test-qualified-upgrade.py "${args[@]}" --output output/ci-image/upgrade
+      if: ${{ inputs.profile == 'release' }}
+    - uses: actions/upload-artifact@v4
+      with:
+        name: image-${{ github.run_id }}-${{ github.run_attempt }}
+        path: output/ci-image
+        if-no-files-found: error
+        include-hidden-files: true
+        retention-days: 30
+    - name: Remove owned staging credentials
+      if: always()
+      run: bash deployment/runner/staging-docker-auth.sh cleanup
   ragflow_tests_infinity:
     name: ragflow_tests_infinity
-    needs: ragflow_preflight
+    needs:
+    - ragflow_preflight
+    - build_image
+    - package_python
     if: ${{ needs.ragflow_preflight.outputs.run_engine_tests == 'true' }}
-    runs-on: [ "self-hosted", "ragflow-test" ]
+    runs-on:
+    - self-hosted
+    - ragflow-test
+    - Linux
+    - ragflow-isolated-vm
+    timeout-minutes: 120
     env:
+      SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
       DOC_ENGINE: infinity
-      RAGFLOW_IMAGE: infiniflow/ragflow:${{ github.run_id }}-infinity
+      RAGFLOW_IMAGE: ${{ needs.build_image.outputs.digest }}
       HTTP_API_TEST_LEVEL: ${{ needs.ragflow_preflight.outputs.http_api_test_level }}
+      RAGFLOW_TEST_OLLAMA_URL: ${{ vars.RAGFLOW_CI_OLLAMA_URL }}
+      RAGFLOW_TEST_DISPOSABLE: '1'
+      E2E_ADMIN_EMAIL: admin@ragflow.io
+      E2E_ADMIN_PASSWORD: admin
+      RAGFLOW_E2E_OAUTH: '1'
+      DEEPDOC_IMAGE: ${{ vars.RAGFLOW_CI_DEEPDOC_IMAGE }}
+      RUNTIME_IMAGE_LOCK_SHA256: ${{ needs.build_image.outputs.lock_sha256 }}
     steps:
-      - name: Ensure workspace ownership
-        run: |
-          echo "Workflow triggered by ${{ github.event_name }}"
-          echo "chown -R ${USER} ${GITHUB_WORKSPACE}" && sudo chown -R ${USER} ${GITHUB_WORKSPACE}
+    - *id002
+    - *id003
+    - uses: actions/download-artifact@v5
+      with:
+        name: python-${{ github.run_id }}-${{ github.run_attempt }}
+        path: output/ci-wheels
+    - name: Prepare locked test environment
+      run: 'sudo apt-get update
 
-      - name: Check out code
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ (github.event_name == 'pull_request' || github.event_name == 'pull_request_target') && format('refs/pull/{0}/merge', github.event.pull_request.number) || github.sha }}
-          fetch-depth: 0
-          fetch-tags: true
+        sudo apt-get install -y --no-install-recommends libglib2.0-0 libglx-mesa0 libgl1
 
-      - name: Build ragflow go server
-        run: |
-          set -euo pipefail
-          BUILDER_CONTAINER=ragflow_build_${GITHUB_RUN_ID}_${DOC_ENGINE}_$(od -An -N4 -tx4 /dev/urandom | tr -d ' ')
-          cleanup_builder() {
-            if [[ -n "${BUILDER_CONTAINER:-}" ]]; then
-              sudo docker rm -f -v "${BUILDER_CONTAINER}" >/dev/null 2>&1 || true
-            fi
-          }
-          trap cleanup_builder EXIT
+        uv sync --python 3.13 --group test --frozen
 
-          TZ=${TZ:-$(readlink -f /etc/localtime | awk -F '/zoneinfo/' '{print $2}')}
-          sudo docker run --privileged -d --name "${BUILDER_CONTAINER}" \
-            -e TZ="${TZ}" \
-            -e UV_INDEX=https://mirrors.aliyun.com/pypi/simple \
-            -v "${PWD}:/ragflow" \
-            -v "${PWD}/internal/binding/cpp/resource:/usr/share/infinity/resource" \
-            infiniflow/infinity_builder:ubuntu22_clang20
-          sudo docker exec "${BUILDER_CONTAINER}" bash -c 'git config --global safe.directory "*" && cd /ragflow && ./build.sh --cpp'
-          bash deployment/runner/build-go-linux.sh
+        uv pip install output/ci-wheels/*.whl
 
-      - name: Run Go unit tests
-        if: ${{ github.event_name != 'pull_request' || needs.ragflow_preflight.outputs.has_go_changes == 'true' }}
-        env:
-          RAGFLOW_TEST_DOCKER_HOST: host.docker.internal
-          RAGFLOW_TEST_BIND_ADDRESS: 0.0.0.0
-          RAGFLOW_GO_TEST_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
-        run: bash test/run_go_regression.sh
+        '
+    - uses: actions/download-artifact@v5
+      with:
+        name: image-${{ github.run_id }}-${{ github.run_attempt }}
+        path: output/ci-image
+    - name: Prepare isolated stack
+      working-directory: docker
+      env:
+        STAGING_IMAGE_REPOSITORY: ${{ vars.STAGING_IMAGE_REPOSITORY }}
+        NEXUS_STAGING_READ_USER: ${{ secrets.NEXUS_STAGING_READ_USER }}
+        NEXUS_STAGING_READ_PASSWORD: ${{ secrets.NEXUS_STAGING_READ_PASSWORD }}
+      run: bash ../deployment/runner/prepare-engine.sh
+    - name: Materialize verified runtime image lock
+      run: 'override="$RUNNER_TEMP/runtime-images.override.json"
 
-      - name: Build ragflow:nightly
-        run: |
-          set -euo pipefail
-          sudo docker pull ubuntu:24.04
-          build_version=$(git describe --tags --match='v*' --first-parent --always)
-          source_revision=$(git rev-parse HEAD)
-          sudo DOCKER_BUILDKIT=1 docker build --build-arg "RAGFLOW_BUILD_VERSION=${build_version}" --build-arg "RAGFLOW_SOURCE_REVISION=${source_revision}" --build-arg NEED_MIRROR=${NEED_MIRROR:-0} --build-arg HTTPS_PROXY=${HTTPS_PROXY:-} --build-arg HTTP_PROXY=${HTTP_PROXY:-} -f Dockerfile -t ${RAGFLOW_IMAGE} .
+        python3 -m tools.quality.runtime_image_lock materialize --lock output/ci-image/runtime-images.json --lock-sha256 "$RUNTIME_IMAGE_LOCK_SHA256"
+        --candidate-image "$RAGFLOW_IMAGE" --engine "$DOC_ENGINE" --env-file "$CI_ENV_FILE" --output "$override"
 
-      - name: Prepare Python test environment
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libglib2.0-0 libglx-mesa0 libgl1
-          uv sync --python 3.13 --group test --frozen
-          uv pip install -e sdk/python
-
-      - name: Prepare function test environment
-        working-directory: docker
-        run: |
-          set -euo pipefail
-          # install ss
-          sudo apt update && sudo apt install -y iproute2
-          RUNNER_WORKSPACE_PREFIX=${RUNNER_WORKSPACE_PREFIX:-${HOME}}
-          COMPOSE_PROJECT_NAME="${GITHUB_RUN_ID}-${DOC_ENGINE}"
-          echo "COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME}" >> ${GITHUB_ENV}
-          echo "RAGFLOW_CONTAINER=${COMPOSE_PROJECT_NAME}-ragflow-cpu-1" >> ${GITHUB_ENV}
-          ARTIFACTS_DIR=${RUNNER_WORKSPACE_PREFIX}/artifacts/${GITHUB_REPOSITORY}/${GITHUB_RUN_ID}/${DOC_ENGINE}
-          echo "ARTIFACTS_DIR=${ARTIFACTS_DIR}" >> ${GITHUB_ENV}
-          rm -rf "${ARTIFACTS_DIR}" && mkdir -p "${ARTIFACTS_DIR}"
-
-          # Determine runner number (default to 1 if not found)
-               RUNNER_NUM=$(sudo docker inspect $(hostname) --format '{{index .Config.Labels "com.docker.compose.container-number"}}' 2>/dev/null || true)
-               RUNNER_NUM=${RUNNER_NUM:-1}
-
-          # Engine-specific offset partitions keep concurrent engine jobs from
-          # choosing the same host ports when they land on the same self-hosted runner.
-          # A lock plus reservation file closes the check/start race between parallel jobs.
-               PORT_BASES=(1200 1201 23817 23820 5432 9000 9001 6379 6380 6601 9380 9381 9382 9384 9383 9385 80 443 4222)
-               PARTITION_SIZE=6000
-               case "${DOC_ENGINE}" in
-                 elasticsearch) PARTITION_BASE=1000 ;;
-                 infinity) PARTITION_BASE=31000 ;;
-                 *) echo "Unsupported DOC_ENGINE=${DOC_ENGINE}" >&2; exit 1 ;;
-               esac
-               PORT_LOCK_DIR=${RUNNER_WORKSPACE_PREFIX}/artifacts/${GITHUB_REPOSITORY}/port-locks
-               mkdir -p "${PORT_LOCK_DIR}"
-
-               port_offset_available() {
-                 local offset=$1
-                 local base port
-                 for base in "${PORT_BASES[@]}"; do
-                   port=$((base + offset))
-                   # The runner is containerized: ss sees its namespace, while Docker
-                   # publishes ports in the daemon's namespace.
-                   if ss -ltnH "sport = :${port}" | grep -q . || sudo docker ps --filter "publish=${port}" --format '{{.ID}}' | grep -q .; then
-                     return 1
-                   fi
-                 done
-                 return 0
-               }
-
-               cleanup_stale_port_locks() {
-                 local now stale_after lock lock_ts
-                 now=$(date -u +%s)
-                 stale_after=$((6 * 60 * 60))
-                 for lock in "${PORT_LOCK_DIR}"/*.lock; do
-                   [[ -e "${lock}" ]] || continue
-                   lock_ts=$(awk '{print $3}' "${lock}" 2>/dev/null || true)
-                   if [[ "${lock_ts}" =~ ^[0-9]+$ ]] && (( now - lock_ts > stale_after )); then
-                     rm -f "${lock}"
-                   fi
-                 done
-               }
-
-               reserve_port_offset() {
-                 local attempt candidate reservation
-                 cleanup_stale_port_locks
-                 for attempt in $(seq 0 59); do
-                   candidate=$(( PARTITION_BASE + ((GITHUB_RUN_ID + RUNNER_NUM * 1000 + attempt * 97) % PARTITION_SIZE) ))
-                   reservation="${PORT_LOCK_DIR}/${candidate}.lock"
-                   if ( set -o noclobber; echo "${GITHUB_RUN_ID} ${DOC_ENGINE} $(date -u +%s)" > "${reservation}" ) 2>/dev/null; then
-                     if port_offset_available "${candidate}"; then
-                       PORT_OFFSET=${candidate}
-                       PORT_RESERVATION=${reservation}
-                       return 0
-                     fi
-                     rm -f "${reservation}"
-                   fi
-                 done
-                 return 1
-               }
-
-               if ! reserve_port_offset; then
-                 echo "Failed to reserve a free host port range for ${DOC_ENGINE} docker compose" >&2
-                 exit 1
-               fi
-               echo "PORT_RESERVATION=${PORT_RESERVATION}" >> ${GITHUB_ENV}
-               echo "Using ${DOC_ENGINE} host port offset ${PORT_OFFSET}"
-               ES_PORT=$((1200 + PORT_OFFSET))
-               OS_PORT=$((1201 + PORT_OFFSET))
-               INFINITY_THRIFT_PORT=$((23817 + PORT_OFFSET))
-               INFINITY_HTTP_PORT=$((23820 + PORT_OFFSET))
-               INFINITY_PSQL_PORT=$((5432 + PORT_OFFSET))
-               MINIO_PORT=$((9000 + PORT_OFFSET))
-               MINIO_CONSOLE_PORT=$((9001 + PORT_OFFSET))
-               REDIS_PORT=$((6379 + PORT_OFFSET))
-               NATS_PORT=$((4222 + PORT_OFFSET))
-               TEI_PORT=$((6380 + PORT_OFFSET))
-               KIBANA_PORT=$((6601 + PORT_OFFSET))
-               SVR_HTTP_PORT=$((9380 + PORT_OFFSET))
-               ADMIN_SVR_HTTP_PORT=$((9381 + PORT_OFFSET))
-               SVR_MCP_PORT=$((9382 + PORT_OFFSET))
-               GO_HTTP_PORT=$((9384 + PORT_OFFSET))
-               GO_ADMIN_PORT=$((9383 + PORT_OFFSET))
-               SANDBOX_EXECUTOR_MANAGER_PORT=$((9385 + PORT_OFFSET))
-               SVR_WEB_HTTP_PORT=$((80 + PORT_OFFSET))
-               SVR_WEB_HTTPS_PORT=$((443 + PORT_OFFSET))
-
-          # Persist computed ports into .env so docker-compose uses the correct host bindings.
-          # Remove previous CI overrides first; docker compose uses the last duplicate key.
-               sed -i '/^ES_PORT=/d;/^OS_PORT=/d;/^INFINITY_THRIFT_PORT=/d;/^INFINITY_HTTP_PORT=/d;/^INFINITY_PSQL_PORT=/d;/^MINIO_PORT=/d;/^MINIO_CONSOLE_PORT=/d;/^REDIS_PORT=/d;/^TEI_PORT=/d;/^KIBANA_PORT=/d;/^SVR_HTTP_PORT=/d;/^ADMIN_SVR_HTTP_PORT=/d;/^SVR_MCP_PORT=/d;/^GO_HTTP_PORT=/d;/^GO_ADMIN_PORT=/d;/^SANDBOX_EXECUTOR_MANAGER_PORT=/d;/^SVR_WEB_HTTP_PORT=/d;/^SVR_WEB_HTTPS_PORT=/d;/^NATS_PORT=/d;/^COMPOSE_PROFILES=/d;/^TEI_MODEL=/d;/^RAGFLOW_IMAGE=/d;/^DOC_ENGINE=/d' .env
-               {
-                 echo ""
-                 echo "ES_PORT=${ES_PORT}"
-                 echo "OS_PORT=${OS_PORT}"
-                 echo "INFINITY_THRIFT_PORT=${INFINITY_THRIFT_PORT}"
-                 echo "INFINITY_HTTP_PORT=${INFINITY_HTTP_PORT}"
-                 echo "INFINITY_PSQL_PORT=${INFINITY_PSQL_PORT}"
-                 echo "MINIO_PORT=${MINIO_PORT}"
-                 echo "MINIO_CONSOLE_PORT=${MINIO_CONSOLE_PORT}"
-                 echo "REDIS_PORT=${REDIS_PORT}"
-                 echo "NATS_PORT=${NATS_PORT}"
-                 echo "TEI_PORT=${TEI_PORT}"
-                 echo "KIBANA_PORT=${KIBANA_PORT}"
-                 echo "SVR_HTTP_PORT=${SVR_HTTP_PORT}"
-                 echo "ADMIN_SVR_HTTP_PORT=${ADMIN_SVR_HTTP_PORT}"
-                 echo "SVR_MCP_PORT=${SVR_MCP_PORT}"
-                 echo "GO_HTTP_PORT=${GO_HTTP_PORT}"
-                 echo "GO_ADMIN_PORT=${GO_ADMIN_PORT}"
-                 echo "SANDBOX_EXECUTOR_MANAGER_PORT=${SANDBOX_EXECUTOR_MANAGER_PORT}"
-                 echo "SVR_WEB_HTTP_PORT=${SVR_WEB_HTTP_PORT}"
-                 echo "SVR_WEB_HTTPS_PORT=${SVR_WEB_HTTPS_PORT}"
-                 echo "COMPOSE_PROFILES=${DOC_ENGINE},cpu,tei-cpu,deepdoc"
-                 echo "TEI_MODEL=BAAI/bge-small-en-v1.5"
-                 echo "RAGFLOW_IMAGE=${RAGFLOW_IMAGE}"
-                 echo "DOC_ENGINE=${DOC_ENGINE}"
-               } >> .env
-               echo "HOST_ADDRESS=http://host.docker.internal:${SVR_HTTP_PORT}" >> ${GITHUB_ENV}
-               echo "RAGFLOW_BASE_URL=http://host.docker.internal:${SVR_WEB_HTTP_PORT}" >> ${GITHUB_ENV}
-               echo "ADMIN_HOST_ADDRESS=http://host.docker.internal:${ADMIN_SVR_HTTP_PORT}" >> ${GITHUB_ENV}
-
-               # Patch entrypoint.sh for coverage
-               sed -i '/"\$PY" api\/ragflow_server.py \${INIT_SUPERUSER_ARGS} &/c\   echo "Ensuring coverage is installed..."\n      "$PY" -m pip install coverage -i https://mirrors.aliyun.com/pypi/simple\n     export COVERAGE_FILE=/ragflow/logs/.coverage\n        echo "Starting ragflow_server with coverage..."\n        "$PY" -m coverage run --source=./api/apps --omit="*/tests/*,*/migrations/*" -a api/ragflow_server.py ${INIT_SUPERUSER_ARGS} &' ./entrypoint.sh
-
-
-      - name: Start ragflow:nightly for Infinity
-        run: |
-          sudo docker compose -f docker/docker-compose.yml -f docker/docker-compose.ci-postgres.yml -p ${COMPOSE_PROJECT_NAME} down -v || true
-          sudo docker ps -a --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" -q | xargs -r sudo docker rm -f
-          sudo docker compose -f docker/docker-compose.yml -f docker/docker-compose.ci-postgres.yml -p ${COMPOSE_PROJECT_NAME} up -d
-
-      - name: Run sdk tests against Infinity
-        run: |
-          export http_proxy=""; export https_proxy=""; export no_proxy=""; export HTTP_PROXY=""; export HTTPS_PROXY=""; export NO_PROXY=""
-          svc_ready=0
-          for i in $(seq 1 60); do
-            if sudo docker exec ${RAGFLOW_CONTAINER} curl -sf --connect-timeout 5 "${HOST_ADDRESS}/api/v1/system/ping" > /dev/null 2>&1; then
-              svc_ready=1
-              break
-            fi
-            echo "Waiting for service to be available... ($i/60)"
-            sleep 5
-          done
-          if [ "$svc_ready" -ne 1 ]; then
-            echo "Service did not become ready after 5 minutes. Docker logs:"
-            sudo docker logs ${RAGFLOW_CONTAINER}
-            exit 1
-          fi
-          echo "Start to run test sdk on Infinity"
-          source .venv/bin/activate && set -o pipefail; DOC_ENGINE=infinity pytest -s --tb=short --model-profile=local --level=${HTTP_API_TEST_LEVEL} --junitxml=pytest-infinity-sdk.xml --cov=sdk/python/ragflow_sdk --cov-branch --cov-report=xml:coverage-infinity-sdk.xml test/testcases/test_sdk_api 2>&1 | tee infinity_sdk_test.log
-
-      - name: Run New RESTFUL api tests against Infinity
-        run: |
-          export http_proxy=""; export https_proxy=""; export no_proxy=""; export HTTP_PROXY=""; export HTTPS_PROXY=""; export NO_PROXY=""
-          svc_ready=0
-          for i in $(seq 1 60); do
-            if sudo docker exec ${RAGFLOW_CONTAINER} curl -sf --connect-timeout 5 "${HOST_ADDRESS}/api/v1/system/ping" > /dev/null 2>&1; then
-              svc_ready=1
-              break
-            fi
-            echo "Waiting for service to be available... ($i/60)"
-            sleep 5
-          done
-          if [ "$svc_ready" -ne 1 ]; then
-            echo "Service did not become ready after 5 minutes. Docker logs:"
-            sudo docker logs ${RAGFLOW_CONTAINER}
-            exit 1
-          fi
-          source .venv/bin/activate && set -o pipefail; DOC_ENGINE=infinity pytest -s --tb=short --model-profile=local --level=${HTTP_API_TEST_LEVEL} test/testcases/restful_api 2>&1 | tee infinity_restful_api_test.log
-
-      - name: Run test_web_api against Infinity
-        run: |
-          source .venv/bin/activate
-          export http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY=""
-          pytest --model-profile=local --level=${HTTP_API_TEST_LEVEL} --junitxml=infinity-test_web_api.xml test/testcases/test_web_api
-
-      - name: Run test_admin_api against Infinity
-        run: |
-          source .venv/bin/activate
-          export http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY=""
-          pytest --model-profile=local --level=${HTTP_API_TEST_LEVEL} --junitxml=infinity-test_admin_api.xml test/testcases/test_admin_api
-
-      - name: RAGFlow CLI retrieval test Infinity
-        env:
-          PYTHONPATH: ${{ github.workspace }}
-        run: |
-          set -euo pipefail
-          source .venv/bin/activate
-
-          export http_proxy=""; export https_proxy=""; export no_proxy=""; export HTTP_PROXY=""; export HTTPS_PROXY=""; export NO_PROXY=""
-
-          EMAIL="ci-${GITHUB_RUN_ID}@example.com"
-          PASS="ci-pass-${GITHUB_RUN_ID}"
-          DATASET="ci_dataset_${GITHUB_RUN_ID}"
-
-          CLI="python admin/client/ragflow_cli.py"
-
-          LOG_FILE="infinity_cli_test.log"
-          : > "${LOG_FILE}"
-
-          ERROR_RE='Traceback|ModuleNotFoundError|ImportError|Parse error|Bad response|Fail to|code:\\s*[1-9]'
-          run_cli() {
-            local logfile="$1"
-            shift
-            local allow_re=""
-            if [[ "${1:-}" == "--allow" ]]; then
-              allow_re="$2"
-              shift 2
-            fi
-            local cmd_display="$*"
-            echo "===== $(date -u +\"%Y-%m-%dT%H:%M:%SZ\") CMD: ${cmd_display} =====" | tee -a "${logfile}"
-            local tmp_log
-            tmp_log="$(mktemp)"
-            set +e
-            timeout 500s "$@" 2>&1 | tee "${tmp_log}"
-            local status=${PIPESTATUS[0]}
-            set -e
-            cat "${tmp_log}" >> "${logfile}"
-            if grep -qiE "${ERROR_RE}" "${tmp_log}"; then
-              if [[ -n "${allow_re}" ]] && grep -qiE "${allow_re}" "${tmp_log}"; then
-                echo "Allowed CLI error markers in ${logfile}"
-                rm -f "${tmp_log}"
-                return 0
-              fi
-              echo "Detected CLI error markers in ${logfile}"
-              rm -f "${tmp_log}"
-              exit 1
-            fi
-            rm -f "${tmp_log}"
-            return ${status}
-          }
-
-          set -a
-          source docker/.env
-          set +a
-
-          HOST_ADDRESS="http://host.docker.internal:${SVR_HTTP_PORT}"
-          USER_HOST="$(echo "${HOST_ADDRESS}" | sed -E 's#^https?://([^:/]+).*#\1#')"
-          USER_PORT="${SVR_HTTP_PORT}"
-          ADMIN_HOST="${USER_HOST}"
-          ADMIN_PORT="${ADMIN_SVR_HTTP_PORT}"
-
-          svc_ready=0
-          for i in $(seq 1 60); do
-            if sudo docker exec ${RAGFLOW_CONTAINER} curl -sf --connect-timeout 5 "${HOST_ADDRESS}/api/v1/system/ping" > /dev/null 2>&1; then
-              svc_ready=1
-              break
-            fi
-            echo "Waiting for service to be available... ($i/60)"
-            sleep 5
-          done
-          if [ "$svc_ready" -ne 1 ]; then
-            echo "Service did not become ready after 5 minutes. Docker logs:"
-            sudo docker logs ${RAGFLOW_CONTAINER}
-            exit 1
-          fi
-
-          admin_ready=0
-          for i in $(seq 1 30); do
-            if run_cli "${LOG_FILE}" $CLI --type admin --host "$ADMIN_HOST" --port "$ADMIN_PORT" --username "admin@ragflow.io" --password "admin" command "ping"; then
-              admin_ready=1
-              break
-            fi
-            sleep 1
-          done
-          if [[ "${admin_ready}" -ne 1 ]]; then
-            echo "Admin service did not become ready"
-            exit 1
-          fi
-
-          run_cli "${LOG_FILE}" $CLI --type admin --host "$ADMIN_HOST" --port "$ADMIN_PORT" --username "admin@ragflow.io" --password "admin" command "show version"
-          ALLOW_USER_EXISTS_RE='already exists|already exist|duplicate|already.*registered|exist(s)?'
-          run_cli "${LOG_FILE}" --allow "${ALLOW_USER_EXISTS_RE}" $CLI --type admin --host "$ADMIN_HOST" --port "$ADMIN_PORT" --username "admin@ragflow.io" --password "admin" command "create user '$EMAIL' '$PASS'"
-          run_cli "${LOG_FILE}" $CLI --type admin --host "$ADMIN_HOST" --port "$ADMIN_PORT" --username "admin@ragflow.io" --password "admin" command "grant admin '$EMAIL'"
-
-          user_ready=0
-          for i in $(seq 1 30); do
-            if run_cli "${LOG_FILE}" $CLI --type user --host "$USER_HOST" --port "$USER_PORT" --username "$EMAIL" --password "$PASS" command "ping"; then
-              user_ready=1
-              break
-            fi
-            sleep 1
-          done
-          if [[ "${user_ready}" -ne 1 ]]; then
-            echo "User service did not become ready"
-            exit 1
-          fi
-
-          run_cli "${LOG_FILE}" $CLI --type user --host "$USER_HOST" --port "$USER_PORT" --username "$EMAIL" --password "$PASS" command "show version"
-          run_cli "${LOG_FILE}" $CLI --type user --host "$USER_HOST" --port "$USER_PORT" --username "$EMAIL" --password "$PASS" command "create dataset '$DATASET' with embedding 'BAAI/bge-small-en-v1.5@Builtin' parser 'auto'"
-          run_cli "${LOG_FILE}" $CLI --type user --host "$USER_HOST" --port "$USER_PORT" --username "$EMAIL" --password "$PASS" command "import 'test/benchmark/test_docs/Doc1.pdf,test/benchmark/test_docs/Doc2.pdf' into dataset '$DATASET'"
-          run_cli "${LOG_FILE}" $CLI --type user --host "$USER_HOST" --port "$USER_PORT" --username "$EMAIL" --password "$PASS" command "parse dataset '$DATASET' sync"
-          run_cli "${LOG_FILE}" $CLI --type user --host "$USER_HOST" --port "$USER_PORT" --username "$EMAIL" --password "$PASS" command "Benchmark 16 100 search 'what are these documents about' on datasets '$DATASET'"
-
-      - name: Live browser upload chat and search against Infinity
-        env:
-          RAGFLOW_TEST_OLLAMA_URL: ${{ vars.RAGFLOW_CI_OLLAMA_URL }}
-          E2E_ADMIN_EMAIL: admin@ragflow.io
-          E2E_ADMIN_PASSWORD: admin
-        run: |
-          source .venv/bin/activate
-          export http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY=""
-          export PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64
-          python -m playwright install --with-deps chromium
-          pytest test/playwright/e2e/test_dataset_upload_parse.py test/playwright/e2e/test_next_apps_chat.py test/playwright/e2e/test_next_apps_search.py
-
-      - name: Stop ragflow to save coverage Infinity
-        if: ${{ !cancelled() }}
-        run: |
-          # Send SIGINT to ragflow_server.py to trigger coverage save
-          PID=$(sudo docker exec ${RAGFLOW_CONTAINER} ps aux | grep "ragflow_server.py" | grep -v grep | awk '{print $2}' | head -n 1)
-          if [ -n "$PID" ]; then
-            echo "Sending SIGINT to ragflow_server.py (PID: $PID)..."
-            sudo docker exec ${RAGFLOW_CONTAINER} kill -INT $PID
-            # Wait for process to exit and coverage file to be written
-            sleep 10
-          else
-            echo "ragflow_server.py not found!"
-          fi
-          sudo docker compose -f docker/docker-compose.yml -f docker/docker-compose.ci-postgres.yml -p ${COMPOSE_PROJECT_NAME} stop
-
-      - name: Generate server coverage report Infinity
-        if: ${{ !cancelled() }}
-        run: |
-          # .coverage file should be in docker/ragflow-logs/.coverage
-          if [ -f docker/ragflow-logs/.coverage ]; then
-            echo "Found .coverage file"
-            cp docker/ragflow-logs/.coverage .coverage
-            source .venv/bin/activate
-            # Create .coveragerc to map container paths to host paths
-            echo "[paths]" > .coveragerc
-            echo "source =" >> .coveragerc
-            echo "    ." >> .coveragerc
-            echo "    /ragflow" >> .coveragerc
-            coverage xml -o coverage-infinity-server.xml
-            rm .coveragerc
-          else
-            echo ".coverage file not found!"
-          fi
-
-      - name: Upload coverage reports to Codecov
-        uses: codecov/codecov-action@v5
-        if: ${{ !cancelled() }}
-        continue-on-error: true
-        timeout-minutes: 2
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: false
-
-      - name: Collect ragflow log Infinity
-        if: ${{ !cancelled() }}
-        run: |
-          if [ -d docker/ragflow-logs ]; then
-            cp -r docker/ragflow-logs ${ARTIFACTS_DIR}/ragflow-logs-infinity
-            echo "ragflow log" && tail -n 200 docker/ragflow-logs/ragflow_server.log || true
-          else
-            echo "No docker/ragflow-logs directory found; skipping log collection"
-          fi
-          sudo rm -rf docker/ragflow-logs || true
-
-      - name: Stop ragflow:nightly for Infinity
-        if: always()  # always run this step even if previous steps failed
-        run: |
-          # Sometimes `docker compose down` fail due to hang container, heavy load etc. Need to remove such containers to release resources(for example, listen ports).
-          sudo docker compose -f docker/docker-compose.yml -f docker/docker-compose.ci-postgres.yml -p ${COMPOSE_PROJECT_NAME} down -v || true
-          sudo docker ps -a --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" -q | xargs -r sudo docker rm -f
-          if [[ -n ${RAGFLOW_IMAGE} ]]; then
-            sudo docker rmi -f ${RAGFLOW_IMAGE}
-          fi
-          if [[ -n ${PORT_RESERVATION:-} ]]; then
-            rm -f "${PORT_RESERVATION}"
-          fi
-
-
-
+        printf ''RUNTIME_IMAGE_OVERRIDE=%s\n'' "$override" >> "$GITHUB_ENV"'
+    - name: Run qualified engine scenarios
+      run: bash deployment/runner/test-engine.sh
+    - name: Cleanup owned stack
+      if: always()
+      run: bash deployment/runner/cleanup-engine.sh
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: engine-infinity-${{ github.run_id }}-${{ github.run_attempt }}
+        path: output/ci-engine
+        if-no-files-found: error
+        include-hidden-files: true
+        retention-days: 30
   ragflow_tests_elasticsearch:
     name: ragflow_tests_elasticsearch
-    needs: ragflow_preflight
-    if: ${{ needs.ragflow_preflight.outputs.run_engine_tests == 'true' }}
-    runs-on: [ "self-hosted", "ragflow-test" ]
-    env:
-      DOC_ENGINE: elasticsearch
-      RAGFLOW_IMAGE: infiniflow/ragflow:${{ github.run_id }}-elasticsearch
-      HTTP_API_TEST_LEVEL: ${{ needs.ragflow_preflight.outputs.http_api_test_level }}
-    steps:
-      - name: Ensure workspace ownership
-        run: |
-          echo "Workflow triggered by ${{ github.event_name }}"
-          echo "chown -R ${USER} ${GITHUB_WORKSPACE}" && sudo chown -R ${USER} ${GITHUB_WORKSPACE}
-
-      - name: Check out code
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ (github.event_name == 'pull_request' || github.event_name == 'pull_request_target') && format('refs/pull/{0}/merge', github.event.pull_request.number) || github.sha }}
-          fetch-depth: 0
-          fetch-tags: true
-
-      - name: Build ragflow go server
-        run: |
-          set -euo pipefail
-          BUILDER_CONTAINER=ragflow_build_${GITHUB_RUN_ID}_${DOC_ENGINE}_$(od -An -N4 -tx4 /dev/urandom | tr -d ' ')
-          cleanup_builder() {
-            if [[ -n "${BUILDER_CONTAINER:-}" ]]; then
-              sudo docker rm -f -v "${BUILDER_CONTAINER}" >/dev/null 2>&1 || true
-            fi
-          }
-          trap cleanup_builder EXIT
-
-          TZ=${TZ:-$(readlink -f /etc/localtime | awk -F '/zoneinfo/' '{print $2}')}
-          sudo docker run --privileged -d --name "${BUILDER_CONTAINER}" \
-            -e TZ="${TZ}" \
-            -e UV_INDEX=https://mirrors.aliyun.com/pypi/simple \
-            -v "${PWD}:/ragflow" \
-            -v "${PWD}/internal/binding/cpp/resource:/usr/share/infinity/resource" \
-            infiniflow/infinity_builder:ubuntu22_clang20
-          sudo docker exec "${BUILDER_CONTAINER}" bash -c 'git config --global safe.directory "*" && cd /ragflow && ./build.sh --cpp'
-          bash deployment/runner/build-go-linux.sh
-
-      - name: Run Go unit tests
-        if: ${{ github.event_name != 'pull_request' || needs.ragflow_preflight.outputs.has_go_changes == 'true' }}
-        env:
-          RAGFLOW_TEST_DOCKER_HOST: host.docker.internal
-          RAGFLOW_TEST_BIND_ADDRESS: 0.0.0.0
-          RAGFLOW_GO_TEST_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
-        run: bash test/run_go_regression.sh
-
-      - name: Build ragflow:nightly
-        run: |
-          set -euo pipefail
-          sudo docker pull ubuntu:24.04
-          build_version=$(git describe --tags --match='v*' --first-parent --always)
-          source_revision=$(git rev-parse HEAD)
-          sudo DOCKER_BUILDKIT=1 docker build --build-arg "RAGFLOW_BUILD_VERSION=${build_version}" --build-arg "RAGFLOW_SOURCE_REVISION=${source_revision}" --build-arg NEED_MIRROR=${NEED_MIRROR:-0} --build-arg HTTPS_PROXY=${HTTPS_PROXY:-} --build-arg HTTP_PROXY=${HTTP_PROXY:-} -f Dockerfile -t ${RAGFLOW_IMAGE} .
-
-      - name: Prepare Python test environment
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libglib2.0-0 libglx-mesa0 libgl1
-          uv sync --python 3.13 --group test --frozen
-          uv pip install -e sdk/python
-
-      - name: Prepare function test environment
-        working-directory: docker
-        run: |
-          set -euo pipefail
-          # install ss
-          sudo apt update && sudo apt install -y iproute2
-          RUNNER_WORKSPACE_PREFIX=${RUNNER_WORKSPACE_PREFIX:-${HOME}}
-          COMPOSE_PROJECT_NAME="${GITHUB_RUN_ID}-${DOC_ENGINE}"
-          echo "COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME}" >> ${GITHUB_ENV}
-          echo "RAGFLOW_CONTAINER=${COMPOSE_PROJECT_NAME}-ragflow-cpu-1" >> ${GITHUB_ENV}
-          ARTIFACTS_DIR=${RUNNER_WORKSPACE_PREFIX}/artifacts/${GITHUB_REPOSITORY}/${GITHUB_RUN_ID}/${DOC_ENGINE}
-          echo "ARTIFACTS_DIR=${ARTIFACTS_DIR}" >> ${GITHUB_ENV}
-          rm -rf "${ARTIFACTS_DIR}" && mkdir -p "${ARTIFACTS_DIR}"
-
-          # Determine runner number (default to 1 if not found)
-               RUNNER_NUM=$(sudo docker inspect $(hostname) --format '{{index .Config.Labels "com.docker.compose.container-number"}}' 2>/dev/null || true)
-               RUNNER_NUM=${RUNNER_NUM:-1}
-
-          # Engine-specific offset partitions keep concurrent engine jobs from
-          # choosing the same host ports when they land on the same self-hosted runner.
-          # A lock plus reservation file closes the check/start race between parallel jobs.
-               PORT_BASES=(1200 1201 23817 23820 5432 9000 9001 6379 6380 6601 9380 9381 9382 9384 9383 9385 80 443 4222)
-               PARTITION_SIZE=6000
-               case "${DOC_ENGINE}" in
-                 elasticsearch) PARTITION_BASE=1000 ;;
-                 infinity) PARTITION_BASE=31000 ;;
-                 *) echo "Unsupported DOC_ENGINE=${DOC_ENGINE}" >&2; exit 1 ;;
-               esac
-               PORT_LOCK_DIR=${RUNNER_WORKSPACE_PREFIX}/artifacts/${GITHUB_REPOSITORY}/port-locks
-               mkdir -p "${PORT_LOCK_DIR}"
-
-               port_offset_available() {
-                 local offset=$1
-                 local base port
-                 for base in "${PORT_BASES[@]}"; do
-                   port=$((base + offset))
-                   # The runner is containerized: ss sees its namespace, while Docker
-                   # publishes ports in the daemon's namespace.
-                   if ss -ltnH "sport = :${port}" | grep -q . || sudo docker ps --filter "publish=${port}" --format '{{.ID}}' | grep -q .; then
-                     return 1
-                   fi
-                 done
-                 return 0
-               }
-
-               cleanup_stale_port_locks() {
-                 local now stale_after lock lock_ts
-                 now=$(date -u +%s)
-                 stale_after=$((6 * 60 * 60))
-                 for lock in "${PORT_LOCK_DIR}"/*.lock; do
-                   [[ -e "${lock}" ]] || continue
-                   lock_ts=$(awk '{print $3}' "${lock}" 2>/dev/null || true)
-                   if [[ "${lock_ts}" =~ ^[0-9]+$ ]] && (( now - lock_ts > stale_after )); then
-                     rm -f "${lock}"
-                   fi
-                 done
-               }
-
-               reserve_port_offset() {
-                 local attempt candidate reservation
-                 cleanup_stale_port_locks
-                 for attempt in $(seq 0 59); do
-                   candidate=$(( PARTITION_BASE + ((GITHUB_RUN_ID + RUNNER_NUM * 1000 + attempt * 97) % PARTITION_SIZE) ))
-                   reservation="${PORT_LOCK_DIR}/${candidate}.lock"
-                   if ( set -o noclobber; echo "${GITHUB_RUN_ID} ${DOC_ENGINE} $(date -u +%s)" > "${reservation}" ) 2>/dev/null; then
-                     if port_offset_available "${candidate}"; then
-                       PORT_OFFSET=${candidate}
-                       PORT_RESERVATION=${reservation}
-                       return 0
-                     fi
-                     rm -f "${reservation}"
-                   fi
-                 done
-                 return 1
-               }
-
-               if ! reserve_port_offset; then
-                 echo "Failed to reserve a free host port range for ${DOC_ENGINE} docker compose" >&2
-                 exit 1
-               fi
-               echo "PORT_RESERVATION=${PORT_RESERVATION}" >> ${GITHUB_ENV}
-               echo "Using ${DOC_ENGINE} host port offset ${PORT_OFFSET}"
-               ES_PORT=$((1200 + PORT_OFFSET))
-               OS_PORT=$((1201 + PORT_OFFSET))
-               INFINITY_THRIFT_PORT=$((23817 + PORT_OFFSET))
-               INFINITY_HTTP_PORT=$((23820 + PORT_OFFSET))
-               INFINITY_PSQL_PORT=$((5432 + PORT_OFFSET))
-               MINIO_PORT=$((9000 + PORT_OFFSET))
-               MINIO_CONSOLE_PORT=$((9001 + PORT_OFFSET))
-               REDIS_PORT=$((6379 + PORT_OFFSET))
-               NATS_PORT=$((4222 + PORT_OFFSET))
-               TEI_PORT=$((6380 + PORT_OFFSET))
-               KIBANA_PORT=$((6601 + PORT_OFFSET))
-               SVR_HTTP_PORT=$((9380 + PORT_OFFSET))
-               ADMIN_SVR_HTTP_PORT=$((9381 + PORT_OFFSET))
-               SVR_MCP_PORT=$((9382 + PORT_OFFSET))
-               GO_HTTP_PORT=$((9384 + PORT_OFFSET))
-               GO_ADMIN_PORT=$((9383 + PORT_OFFSET))
-               SANDBOX_EXECUTOR_MANAGER_PORT=$((9385 + PORT_OFFSET))
-               SVR_WEB_HTTP_PORT=$((80 + PORT_OFFSET))
-               SVR_WEB_HTTPS_PORT=$((443 + PORT_OFFSET))
-
-          # Persist computed ports into .env so docker-compose uses the correct host bindings.
-          # Remove previous CI overrides first; docker compose uses the last duplicate key.
-               sed -i '/^ES_PORT=/d;/^OS_PORT=/d;/^INFINITY_THRIFT_PORT=/d;/^INFINITY_HTTP_PORT=/d;/^INFINITY_PSQL_PORT=/d;/^MINIO_PORT=/d;/^MINIO_CONSOLE_PORT=/d;/^REDIS_PORT=/d;/^TEI_PORT=/d;/^KIBANA_PORT=/d;/^SVR_HTTP_PORT=/d;/^ADMIN_SVR_HTTP_PORT=/d;/^SVR_MCP_PORT=/d;/^GO_HTTP_PORT=/d;/^GO_ADMIN_PORT=/d;/^SANDBOX_EXECUTOR_MANAGER_PORT=/d;/^SVR_WEB_HTTP_PORT=/d;/^SVR_WEB_HTTPS_PORT=/d;/^NATS_PORT=/d;/^COMPOSE_PROFILES=/d;/^TEI_MODEL=/d;/^RAGFLOW_IMAGE=/d;/^DOC_ENGINE=/d' .env
-               {
-                 echo ""
-                 echo "ES_PORT=${ES_PORT}"
-                 echo "OS_PORT=${OS_PORT}"
-                 echo "INFINITY_THRIFT_PORT=${INFINITY_THRIFT_PORT}"
-                 echo "INFINITY_HTTP_PORT=${INFINITY_HTTP_PORT}"
-                 echo "INFINITY_PSQL_PORT=${INFINITY_PSQL_PORT}"
-                 echo "MINIO_PORT=${MINIO_PORT}"
-                 echo "MINIO_CONSOLE_PORT=${MINIO_CONSOLE_PORT}"
-                 echo "REDIS_PORT=${REDIS_PORT}"
-                 echo "NATS_PORT=${NATS_PORT}"
-                 echo "TEI_PORT=${TEI_PORT}"
-                 echo "KIBANA_PORT=${KIBANA_PORT}"
-                 echo "SVR_HTTP_PORT=${SVR_HTTP_PORT}"
-                 echo "ADMIN_SVR_HTTP_PORT=${ADMIN_SVR_HTTP_PORT}"
-                 echo "SVR_MCP_PORT=${SVR_MCP_PORT}"
-                 echo "GO_HTTP_PORT=${GO_HTTP_PORT}"
-                 echo "GO_ADMIN_PORT=${GO_ADMIN_PORT}"
-                 echo "SANDBOX_EXECUTOR_MANAGER_PORT=${SANDBOX_EXECUTOR_MANAGER_PORT}"
-                 echo "SVR_WEB_HTTP_PORT=${SVR_WEB_HTTP_PORT}"
-                 echo "SVR_WEB_HTTPS_PORT=${SVR_WEB_HTTPS_PORT}"
-                 echo "COMPOSE_PROFILES=${DOC_ENGINE},cpu,tei-cpu,deepdoc"
-                 echo "TEI_MODEL=BAAI/bge-small-en-v1.5"
-                 echo "RAGFLOW_IMAGE=${RAGFLOW_IMAGE}"
-                 echo "DOC_ENGINE=${DOC_ENGINE}"
-               } >> .env
-               echo "HOST_ADDRESS=http://host.docker.internal:${SVR_HTTP_PORT}" >> ${GITHUB_ENV}
-               echo "RAGFLOW_BASE_URL=http://host.docker.internal:${SVR_WEB_HTTP_PORT}" >> ${GITHUB_ENV}
-               echo "ADMIN_HOST_ADDRESS=http://host.docker.internal:${ADMIN_SVR_HTTP_PORT}" >> ${GITHUB_ENV}
-
-               # Patch entrypoint.sh for coverage
-               sed -i '/"\$PY" api\/ragflow_server.py \${INIT_SUPERUSER_ARGS} &/c\   echo "Ensuring coverage is installed..."\n      "$PY" -m pip install coverage -i https://mirrors.aliyun.com/pypi/simple\n     export COVERAGE_FILE=/ragflow/logs/.coverage\n        echo "Starting ragflow_server with coverage..."\n        "$PY" -m coverage run --source=./api/apps --omit="*/tests/*,*/migrations/*" -a api/ragflow_server.py ${INIT_SUPERUSER_ARGS} &' ./entrypoint.sh
-
-
-      - name: Start ragflow:nightly for Elasticsearch
-        run: |
-          sudo docker compose -f docker/docker-compose.yml -f docker/docker-compose.ci-postgres.yml -p ${COMPOSE_PROJECT_NAME} down -v || true
-          sudo docker ps -a --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" -q | xargs -r sudo docker rm -f
-          sudo docker compose -f docker/docker-compose.yml -f docker/docker-compose.ci-postgres.yml -p ${COMPOSE_PROJECT_NAME} up -d
-
-      - name: Run sdk tests against Elasticsearch
-        run: |
-          export http_proxy=""; export https_proxy=""; export no_proxy=""; export HTTP_PROXY=""; export HTTPS_PROXY=""; export NO_PROXY=""
-          svc_ready=0
-          for i in $(seq 1 60); do
-            if sudo docker exec ${RAGFLOW_CONTAINER} curl -sf --connect-timeout 5 "${HOST_ADDRESS}/api/v1/system/ping" > /dev/null 2>&1; then
-              svc_ready=1
-              break
-            fi
-            echo "Waiting for service to be available... ($i/60)"
-            sleep 5
-          done
-          if [ "$svc_ready" -ne 1 ]; then
-            echo "Service did not become ready after 5 minutes. Docker logs:"
-            sudo docker logs ${RAGFLOW_CONTAINER}
-            exit 1
-          fi
-          echo "Start to run test sdk on Elasticsearch"
-          source .venv/bin/activate && set -o pipefail; pytest -s --tb=short --model-profile=local --level=${HTTP_API_TEST_LEVEL} --junitxml=pytest-es-sdk.xml --cov=sdk/python/ragflow_sdk --cov-branch --cov-report=xml:coverage-es-sdk.xml test/testcases/test_sdk_api 2>&1 | tee es_sdk_test.log
-
-      - name: Run New RESTFUL api tests against Elasticsearch
-        run: |
-          export http_proxy=""; export https_proxy=""; export no_proxy=""; export HTTP_PROXY=""; export HTTPS_PROXY=""; export NO_PROXY=""
-          svc_ready=0
-          for i in $(seq 1 60); do
-            if sudo docker exec ${RAGFLOW_CONTAINER} curl -sf --connect-timeout 5 "${HOST_ADDRESS}/api/v1/system/ping" > /dev/null 2>&1; then
-              svc_ready=1
-              break
-            fi
-            echo "Waiting for service to be available... ($i/60)"
-            sleep 5
-          done
-          if [ "$svc_ready" -ne 1 ]; then
-            echo "Service did not become ready after 5 minutes. Docker logs:"
-            sudo docker logs ${RAGFLOW_CONTAINER}
-            exit 1
-          fi
-          source .venv/bin/activate && set -o pipefail; pytest -s --tb=short --model-profile=local --level=${HTTP_API_TEST_LEVEL} test/testcases/restful_api 2>&1 | tee es_restful_api_test.log
-
-      - name: Run test_web_api against Elasticsearch
-        run: |
-          source .venv/bin/activate
-          export http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY=""
-          pytest --model-profile=local --level=${HTTP_API_TEST_LEVEL} --junitxml=elasticsearch-test_web_api.xml test/testcases/test_web_api
-
-      - name: Run test_admin_api against Elasticsearch
-        run: |
-          source .venv/bin/activate
-          export http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY=""
-          pytest --model-profile=local --level=${HTTP_API_TEST_LEVEL} --junitxml=elasticsearch-test_admin_api.xml test/testcases/test_admin_api
-
-      - name: RAGFlow CLI retrieval test Elasticsearch
-        env:
-          PYTHONPATH: ${{ github.workspace }}
-        run: |
-          set -euo pipefail
-          source .venv/bin/activate
-
-          export http_proxy=""; export https_proxy=""; export no_proxy=""; export HTTP_PROXY=""; export HTTPS_PROXY=""; export NO_PROXY=""
-
-          EMAIL="ci-${GITHUB_RUN_ID}@example.com"
-          PASS="ci-pass-${GITHUB_RUN_ID}"
-          DATASET="ci_dataset_${GITHUB_RUN_ID}"
-
-          CLI="python admin/client/ragflow_cli.py"
-
-          LOG_FILE="es_cli_test.log"
-          : > "${LOG_FILE}"
-
-          ERROR_RE='Traceback|ModuleNotFoundError|ImportError|Parse error|Bad response|Fail to|code:\\s*[1-9]'
-          run_cli() {
-            local logfile="$1"
-            shift
-            local allow_re=""
-            if [[ "${1:-}" == "--allow" ]]; then
-              allow_re="$2"
-              shift 2
-            fi
-            local cmd_display="$*"
-            echo "===== $(date -u +\"%Y-%m-%dT%H:%M:%SZ\") CMD: ${cmd_display} =====" | tee -a "${logfile}"
-            local tmp_log
-            tmp_log="$(mktemp)"
-            set +e
-            timeout 500s "$@" 2>&1 | tee "${tmp_log}"
-            local status=${PIPESTATUS[0]}
-            set -e
-            cat "${tmp_log}" >> "${logfile}"
-            if grep -qiE "${ERROR_RE}" "${tmp_log}"; then
-              if [[ -n "${allow_re}" ]] && grep -qiE "${allow_re}" "${tmp_log}"; then
-                echo "Allowed CLI error markers in ${logfile}"
-                rm -f "${tmp_log}"
-                return 0
-              fi
-              echo "Detected CLI error markers in ${logfile}"
-              rm -f "${tmp_log}"
-              exit 1
-            fi
-            rm -f "${tmp_log}"
-            return ${status}
-          }
-
-          set -a
-          source docker/.env
-          set +a
-
-          HOST_ADDRESS="http://host.docker.internal:${SVR_HTTP_PORT}"
-          USER_HOST="$(echo "${HOST_ADDRESS}" | sed -E 's#^https?://([^:/]+).*#\1#')"
-          USER_PORT="${SVR_HTTP_PORT}"
-          ADMIN_HOST="${USER_HOST}"
-          ADMIN_PORT="${ADMIN_SVR_HTTP_PORT}"
-
-          svc_ready=0
-          for i in $(seq 1 60); do
-            if sudo docker exec ${RAGFLOW_CONTAINER} curl -sf --connect-timeout 5 "${HOST_ADDRESS}/api/v1/system/ping" > /dev/null 2>&1; then
-              svc_ready=1
-              break
-            fi
-            echo "Waiting for service to be available... ($i/60)"
-            sleep 5
-          done
-          if [ "$svc_ready" -ne 1 ]; then
-            echo "Service did not become ready after 5 minutes. Docker logs:"
-            sudo docker logs ${RAGFLOW_CONTAINER}
-            exit 1
-          fi
-
-          admin_ready=0
-          for i in $(seq 1 30); do
-            if run_cli "${LOG_FILE}" $CLI --type admin --host "$ADMIN_HOST" --port "$ADMIN_PORT" --username "admin@ragflow.io" --password "admin" command "ping"; then
-              admin_ready=1
-              break
-            fi
-            sleep 1
-          done
-          if [[ "${admin_ready}" -ne 1 ]]; then
-            echo "Admin service did not become ready"
-            exit 1
-          fi
-
-          run_cli "${LOG_FILE}" $CLI --type admin --host "$ADMIN_HOST" --port "$ADMIN_PORT" --username "admin@ragflow.io" --password "admin" command "show version"
-          ALLOW_USER_EXISTS_RE='already exists|already exist|duplicate|already.*registered|exist(s)?'
-          run_cli "${LOG_FILE}" --allow "${ALLOW_USER_EXISTS_RE}" $CLI --type admin --host "$ADMIN_HOST" --port "$ADMIN_PORT" --username "admin@ragflow.io" --password "admin" command "create user '$EMAIL' '$PASS'"
-          run_cli "${LOG_FILE}" $CLI --type admin --host "$ADMIN_HOST" --port "$ADMIN_PORT" --username "admin@ragflow.io" --password "admin" command "grant admin '$EMAIL'"
-
-          user_ready=0
-          for i in $(seq 1 30); do
-            if run_cli "${LOG_FILE}" $CLI --type user --host "$USER_HOST" --port "$USER_PORT" --username "$EMAIL" --password "$PASS" command "ping"; then
-              user_ready=1
-              break
-            fi
-            sleep 1
-          done
-          if [[ "${user_ready}" -ne 1 ]]; then
-            echo "User service did not become ready"
-            exit 1
-          fi
-
-          run_cli "${LOG_FILE}" $CLI --type user --host "$USER_HOST" --port "$USER_PORT" --username "$EMAIL" --password "$PASS" command "show version"
-          run_cli "${LOG_FILE}" $CLI --type user --host "$USER_HOST" --port "$USER_PORT" --username "$EMAIL" --password "$PASS" command "create dataset '$DATASET' with embedding 'BAAI/bge-small-en-v1.5@Builtin' parser 'auto'"
-          run_cli "${LOG_FILE}" $CLI --type user --host "$USER_HOST" --port "$USER_PORT" --username "$EMAIL" --password "$PASS" command "import 'test/benchmark/test_docs/Doc1.pdf,test/benchmark/test_docs/Doc2.pdf' into dataset '$DATASET'"
-          run_cli "${LOG_FILE}" $CLI --type user --host "$USER_HOST" --port "$USER_PORT" --username "$EMAIL" --password "$PASS" command "parse dataset '$DATASET' sync"
-          run_cli "${LOG_FILE}" $CLI --type user --host "$USER_HOST" --port "$USER_PORT" --username "$EMAIL" --password "$PASS" command "Benchmark 16 100 search 'what are these documents about' on datasets '$DATASET'"
-
-      - name: Live browser upload chat and search against Elasticsearch
-        env:
-          RAGFLOW_TEST_OLLAMA_URL: ${{ vars.RAGFLOW_CI_OLLAMA_URL }}
-          E2E_ADMIN_EMAIL: admin@ragflow.io
-          E2E_ADMIN_PASSWORD: admin
-        run: |
-          source .venv/bin/activate
-          export http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY=""
-          export PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64
-          python -m playwright install --with-deps chromium
-          pytest test/playwright/e2e/test_dataset_upload_parse.py test/playwright/e2e/test_next_apps_chat.py test/playwright/e2e/test_next_apps_search.py
-
-      - name: Stop ragflow to save coverage Elasticsearch
-        if: ${{ !cancelled() }}
-        run: |
-          # Send SIGINT to ragflow_server.py to trigger coverage save
-          PID=$(sudo docker exec ${RAGFLOW_CONTAINER} ps aux | grep "ragflow_server.py" | grep -v grep | awk '{print $2}' | head -n 1)
-          if [ -n "$PID" ]; then
-            echo "Sending SIGINT to ragflow_server.py (PID: $PID)..."
-            sudo docker exec ${RAGFLOW_CONTAINER} kill -INT $PID
-            # Wait for process to exit and coverage file to be written
-            sleep 10
-          else
-            echo "ragflow_server.py not found!"
-          fi
-          sudo docker compose -f docker/docker-compose.yml -f docker/docker-compose.ci-postgres.yml -p ${COMPOSE_PROJECT_NAME} stop
-
-      - name: Generate server coverage report Elasticsearch
-        if: ${{ !cancelled() }}
-        run: |
-          # .coverage file should be in docker/ragflow-logs/.coverage
-          if [ -f docker/ragflow-logs/.coverage ]; then
-            echo "Found .coverage file"
-            cp docker/ragflow-logs/.coverage .coverage
-            source .venv/bin/activate
-            # Create .coveragerc to map container paths to host paths
-            echo "[paths]" > .coveragerc
-            echo "source =" >> .coveragerc
-            echo "    ." >> .coveragerc
-            echo "    /ragflow" >> .coveragerc
-            coverage xml -o coverage-es-server.xml
-            rm .coveragerc
-            # Clean up for next run
-            sudo rm docker/ragflow-logs/.coverage
-          else
-            echo ".coverage file not found!"
-          fi
-
-      - name: Collect ragflow log Elasticsearch
-        if: ${{ !cancelled() }}
-        run: |
-          if [ -d docker/ragflow-logs ]; then
-            cp -r docker/ragflow-logs ${ARTIFACTS_DIR}/ragflow-logs-es
-            echo "ragflow log" && tail -n 200 docker/ragflow-logs/ragflow_server.log || true
-          else
-            echo "No docker/ragflow-logs directory found; skipping log collection"
-          fi
-          sudo rm -rf docker/ragflow-logs || true
-
-      - name: Stop ragflow:nightly for Elasticsearch
-        if: always()  # always run this step even if previous steps failed
-        run: |
-          # Sometimes `docker compose down` fail due to hang container, heavy load etc. Need to remove such containers to release resources(for example, listen ports).
-          sudo docker compose -f docker/docker-compose.yml -f docker/docker-compose.ci-postgres.yml -p ${COMPOSE_PROJECT_NAME} down -v || true
-          sudo docker ps -a --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" -q | xargs -r sudo docker rm -f
-          if [[ -n ${RAGFLOW_IMAGE} ]]; then
-            sudo docker rmi -f ${RAGFLOW_IMAGE}
-          fi
-          if [[ -n ${PORT_RESERVATION:-} ]]; then
-            rm -f "${PORT_RESERVATION}"
-          fi
-
-  publish_candidate:
-    name: publish_candidate
     needs:
-      - ragflow_preflight
-      - ragflow_tests_infinity
-      - ragflow_tests_elasticsearch
-    if: >-
-      ${{ !cancelled() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' &&
-          needs.ragflow_preflight.result == 'success' &&
-          ((needs.ragflow_preflight.outputs.run_engine_tests == 'true' &&
-            needs.ragflow_tests_infinity.result == 'success' && needs.ragflow_tests_elasticsearch.result == 'success') ||
-           (needs.ragflow_preflight.outputs.run_engine_tests == 'false' &&
-            needs.ragflow_tests_infinity.result == 'skipped' && needs.ragflow_tests_elasticsearch.result == 'skipped')) }}
-    runs-on: [ "self-hosted", "ragflow-test" ]
+    - ragflow_preflight
+    - build_image
+    - package_python
+    if: ${{ needs.ragflow_preflight.outputs.run_engine_tests == 'true' }}
+    runs-on:
+    - self-hosted
+    - ragflow-test
+    - Linux
+    - ragflow-isolated-vm
+    timeout-minutes: 120
     env:
-      CANDIDATE_IMAGE: 192.168.1.175:5443/ragflow:${{ github.sha }}
+      SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+      DOC_ENGINE: elasticsearch
+      RAGFLOW_IMAGE: ${{ needs.build_image.outputs.digest }}
+      HTTP_API_TEST_LEVEL: ${{ needs.ragflow_preflight.outputs.http_api_test_level }}
+      RAGFLOW_TEST_OLLAMA_URL: ${{ vars.RAGFLOW_CI_OLLAMA_URL }}
+      RAGFLOW_TEST_DISPOSABLE: '1'
+      E2E_ADMIN_EMAIL: admin@ragflow.io
+      E2E_ADMIN_PASSWORD: admin
+      RAGFLOW_E2E_OAUTH: '1'
+      DEEPDOC_IMAGE: ${{ vars.RAGFLOW_CI_DEEPDOC_IMAGE }}
+      RUNTIME_IMAGE_LOCK_SHA256: ${{ needs.build_image.outputs.lock_sha256 }}
     steps:
-      - name: Ensure workspace ownership
-        run: sudo chown -R "${USER}" "${GITHUB_WORKSPACE}"
+    - *id002
+    - *id003
+    - uses: actions/download-artifact@v5
+      with:
+        name: python-${{ github.run_id }}-${{ github.run_attempt }}
+        path: output/ci-wheels
+    - name: Prepare locked test environment
+      run: 'sudo apt-get update
 
-      - name: Check out tested revision
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ github.sha }}
-          fetch-depth: 0
-          fetch-tags: true
+        sudo apt-get install -y --no-install-recommends libglib2.0-0 libglx-mesa0 libgl1
 
-      - name: Build native and Go binaries
-        run: |
-          set -euo pipefail
-          builder="ragflow_candidate_cpp_${GITHUB_RUN_ID}"
-          cleanup() { sudo docker rm -f -v "${builder}" >/dev/null 2>&1 || true; }
-          trap cleanup EXIT
-          sudo docker run --privileged -d --name "${builder}" \
-            -v "${PWD}:/ragflow" \
-            -v "${PWD}/internal/binding/cpp/resource:/usr/share/infinity/resource" \
-            infiniflow/infinity_builder:ubuntu22_clang20
-          sudo docker exec "${builder}" bash -c \
-            'git config --global safe.directory "*" && cd /ragflow && ./build.sh --cpp'
-          bash deployment/runner/build-go-linux.sh
+        uv sync --python 3.13 --group test --frozen
 
-      - name: Build immutable candidate image
-        run: |
-          set -euo pipefail
-          build_version=$(git describe --tags --match='v*' --first-parent --always)
-          source_revision=$(git rev-parse HEAD)
-          sudo DOCKER_BUILDKIT=1 docker build \
-            --build-arg "RAGFLOW_BUILD_VERSION=${build_version}" \
-            --build-arg "RAGFLOW_SOURCE_REVISION=${source_revision}" \
-            --build-arg "NEED_MIRROR=${NEED_MIRROR:-0}" \
-            -f Dockerfile -t "${CANDIDATE_IMAGE}" .
+        uv pip install output/ci-wheels/*.whl
 
-      - name: Verify and publish candidate image
-        env:
-          CI_PREFLIGHT_RESULT: ${{ needs.ragflow_preflight.result }}
-          CI_INFINITY_RESULT: ${{ needs.ragflow_tests_infinity.result }}
-          CI_ELASTICSEARCH_RESULT: ${{ needs.ragflow_tests_elasticsearch.result }}
-          CI_ENGINE_TESTS_REQUIRED: ${{ needs.ragflow_preflight.outputs.run_engine_tests }}
-          CI_ENGINE_TEST_REASON: ${{ needs.ragflow_preflight.outputs.engine_test_reason }}
-        run: |
-          set -euo pipefail
-          actual_revision=$(sudo docker run --rm --entrypoint cat \
-            "${CANDIDATE_IMAGE}" /ragflow/SOURCE_REVISION)
-          test "${actual_revision}" = "${GITHUB_SHA}"
-          sudo docker run --rm --entrypoint /ragflow/.venv/bin/python \
-            "${CANDIDATE_IMAGE}" -c 'import business_documents'
-          sudo docker push "${CANDIDATE_IMAGE}"
-          repo_digests=$(sudo docker image inspect "${CANDIDATE_IMAGE}" --format '{{json .RepoDigests}}')
-          repo_digest=$(python3 -c 'import json,sys; repository=sys.argv[1].rsplit(":",1)[0]; matches=[item for item in json.loads(sys.argv[2]) if item.startswith(repository+"@sha256:")]; assert len(matches)==1, "expected exactly one pushed repository digest"; print(matches[0])' "${CANDIDATE_IMAGE}" "${repo_digests}")
-          python3 tools/quality/release_evidence.py receipt \
-            --revision "${GITHUB_SHA}" --repository "${GITHUB_REPOSITORY}" \
-            --run-id "${GITHUB_RUN_ID}" --image "${CANDIDATE_IMAGE}" \
-            --digest "${repo_digest}" --preflight "${CI_PREFLIGHT_RESULT}" \
-            --infinity "${CI_INFINITY_RESULT}" --elasticsearch "${CI_ELASTICSEARCH_RESULT}" \
-            --engine-tests-required "${CI_ENGINE_TESTS_REQUIRED}" --engine-test-reason "${CI_ENGINE_TEST_REASON}" \
-            --output candidate-receipt.json
+        '
+    - uses: actions/download-artifact@v5
+      with:
+        name: image-${{ github.run_id }}-${{ github.run_attempt }}
+        path: output/ci-image
+    - name: Prepare isolated stack
+      working-directory: docker
+      env:
+        STAGING_IMAGE_REPOSITORY: ${{ vars.STAGING_IMAGE_REPOSITORY }}
+        NEXUS_STAGING_READ_USER: ${{ secrets.NEXUS_STAGING_READ_USER }}
+        NEXUS_STAGING_READ_PASSWORD: ${{ secrets.NEXUS_STAGING_READ_PASSWORD }}
+      run: bash ../deployment/runner/prepare-engine.sh
+    - name: Materialize verified runtime image lock
+      run: 'override="$RUNNER_TEMP/runtime-images.override.json"
 
-      - name: Upload candidate receipt
-        uses: actions/upload-artifact@v4
-        with:
-          name: candidate-receipt-${{ github.sha }}
-          path: candidate-receipt.json
-          if-no-files-found: error
-          retention-days: 30
+        python3 -m tools.quality.runtime_image_lock materialize --lock output/ci-image/runtime-images.json --lock-sha256 "$RUNTIME_IMAGE_LOCK_SHA256"
+        --candidate-image "$RAGFLOW_IMAGE" --engine "$DOC_ENGINE" --env-file "$CI_ENV_FILE" --output "$override"
+
+        printf ''RUNTIME_IMAGE_OVERRIDE=%s\n'' "$override" >> "$GITHUB_ENV"'
+    - name: Run qualified engine scenarios
+      run: bash deployment/runner/test-engine.sh
+    - name: Cleanup owned stack
+      if: always()
+      run: bash deployment/runner/cleanup-engine.sh
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: engine-elasticsearch-${{ github.run_id }}-${{ github.run_attempt }}
+        path: output/ci-engine
+        if-no-files-found: error
+        include-hidden-files: true
+        retention-days: 30
+  browser_regression:
+    needs:
+    - build_image
+    - frontend
+    uses: ./.github/workflows/browser-regression.yml
+    with:
+      source_sha: ${{ inputs.source_sha || github.sha }}
+      image_artifact: image-${{ github.run_id }}-${{ github.run_attempt }}
+      image_digest: ${{ needs.build_image.outputs.digest }}
+  evidence:
+    if: always()
+    needs:
+    - ready
+    - ragflow_preflight
+    - frontend
+    - package_python
+    - build_cli
+    - build_image
+    - ragflow_tests_infinity
+    - ragflow_tests_elasticsearch
+    - browser_regression
+    - replay
+    runs-on: ubuntu-24.04
+    outputs:
+      receipt_sha256: ${{ steps.receipt.outputs.sha256 }}
+      artifact: qualification-${{ github.run_id }}-${{ github.run_attempt }}
+      artifact_id: ${{ steps.qualified.outputs.artifact-id }}
+      qualification_attempt: ${{ github.run_attempt }}
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+      NEEDS_JSON: ${{ toJSON(needs) }}
+      RELEASE_IMAGE_REPOSITORY: ${{ vars.RELEASE_IMAGE_REPOSITORY }}
+      PROFILE: ${{ inputs.profile || 'targeted' }}
+      EXPECTED_BUNDLE_ID: ${{ needs.replay.outputs.bundle_id }}
+    steps:
+    - *id002
+    - name: Record qualification outcome even without artifacts
+      run: 'python3 - <<''PY''
+
+        import json,os
+
+        from pathlib import Path
+
+        from tools.quality.release_evidence import qualification_status,RELEASE_LANES
+
+        needs=json.loads(os.environ[''NEEDS_JSON''])
+
+        status=qualification_status({name:needs.get(name,{}).get(''result'') for name in RELEASE_LANES})
+
+        Path(''qualification-summary.json'').write_text(json.dumps({''schema'':2,''purpose'':''qualification-outcome'',''profile'':os.environ[''PROFILE''],''status'':status,''jobs'':needs,''publication_eligible'':False}))
+
+        PY'
+    - name: Report targeted qualification
+      if: ${{ env.PROFILE == 'targeted' }}
+      run: 'python3 - <<''PY''
+
+        import json,os
+
+        from pathlib import Path
+
+        from tools.quality.release_evidence import qualification_status
+
+        needs=json.loads(os.environ[''NEEDS_JSON''])
+
+        status=qualification_status({k:v[''result''] for k,v in needs.items()},[k for k in needs if k not in (''build_cli'',)])
+
+        Path(''qualification-summary.json'').write_text(json.dumps({''profile'':''targeted'',''status'':status,''publication_eligible'':False,''jobs'':needs}))
+
+        assert not any(v[''result''] in (''failure'',''cancelled'') for v in needs.values()), ''targeted lane failed''
+
+        PY'
+    - name: Acquire and verify every qualification producer
+      if: ${{ env.PROFILE == 'release' }}
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: python3 -m tools.quality.release_origin --producers --repository "$GITHUB_REPOSITORY" --run-id "$GITHUB_RUN_ID" --attempt "$GITHUB_RUN_ATTEMPT" --sha "$SOURCE_SHA" --output incoming --origin-output producer-origins.json
+    - name: Assemble closed qualification packet
+      if: ${{ env.PROFILE == 'release' }}
+      run: python3 -m tools.quality.release_packet incoming output/qualification
+    - name: Create qualification receipt
+      id: receipt
+      if: ${{ env.PROFILE == 'release' }}
+      run: 'python3 -m tools.quality.release_runtime receipt --path output/qualification --output output/candidate-receipt.json
+
+        printf ''sha256=%s
+
+        '' "$(sha256sum output/candidate-receipt.json | cut -d'' '' -f1)" >> "$GITHUB_OUTPUT"'
+    - uses: actions/upload-artifact@v4
+      if: ${{ env.PROFILE == 'release' }}
+      with:
+        name: qualification-${{ github.run_id }}-${{ github.run_attempt }}
+        path: 'output/qualification
+
+          output/candidate-receipt.json'
+        if-no-files-found: error
+        include-hidden-files: true
+        retention-days: 30
+      id: qualified
+    - uses: actions/upload-artifact@v4
+      if: ${{ env.PROFILE == 'targeted' }}
+      with:
+        name: qualification-summary-${{ github.run_id }}-${{ github.run_attempt }}
+        path: qualification-summary.json
+        if-no-files-found: error
+        include-hidden-files: true
+        retention-days: 30
+    - uses: actions/upload-artifact@v4
+      if: ${{ always() && env.PROFILE == 'release' }}
+      with:
+        name: qualification-summary-${{ github.run_id }}-${{ github.run_attempt }}
+        path: qualification-summary.json
+        if-no-files-found: error
+  replay:
+    needs: ready
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      digest: ${{ steps.replay.outputs.digest }}
+      bundle_id: ${{ steps.replay.outputs.bundle_id }}
+      artifact: ${{ steps.upload.outputs.artifact-id }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ inputs.source_sha || github.sha }}
+    - id: replay
+      if: ${{ inputs.replay_artifact_id != 0 && inputs.replay_artifact_id != null }}
+      env:
+        ARTIFACT_ID: ${{ inputs.replay_artifact_id }}
+        REPLAY_RUN: ${{ inputs.replay_run_id }}
+        REPLAY_ATTEMPT: ${{ inputs.replay_attempt }}
+      run: python3 -m tools.quality.release_replay --artifact-id "$ARTIFACT_ID" --run-id "$REPLAY_RUN" --attempt "$REPLAY_ATTEMPT"
+        --output replay
+    - uses: actions/upload-artifact@v4
+      id: upload
+      if: ${{ inputs.replay_artifact_id != 0 && inputs.replay_artifact_id != null }}
+      with:
+        name: replay-${{ github.run_id }}-${{ github.run_attempt }}
+        path: replay
+        if-no-files-found: error

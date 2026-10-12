@@ -44,7 +44,7 @@ class TestCapability:
         count = 100
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = [executor.submit(dataset.update, {"name": f"dataset_{i}"}) for i in range(count)]
-        responses = list(as_completed(futures))
+        responses = [future.result() for future in as_completed(futures)]
         assert len(responses) == count, responses
 
 

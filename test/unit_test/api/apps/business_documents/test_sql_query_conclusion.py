@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -44,7 +45,8 @@ def test_model_receives_a_bounded_result_and_uncited_numbers_fail(monkeypatch):
             return {"text": "Итого 999.", "citations": [{"row_index": 0, "column": "value"}]}
 
     monkeypatch.setattr(sql_query_conclusions, "RAGFlowLLMAdapter", FakeLLM)
-    with pytest.raises(Exception, match="Numeric claims"):
-        sql_query_conclusions.propose_conclusion("tenant-1", "Продажи", ["value"], [[42]] * 30, 30, "FULL")
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with pytest.raises(Exception, match="Numeric claims"):
+            executor.submit(sql_query_conclusions.propose_conclusion, "tenant-1", "Продажи", ["value"], [[42]] * 30, 30, "FULL").result()
     assert len(seen[0]["rows"]) == 25
     assert seen[0]["columns"] == ["value"]

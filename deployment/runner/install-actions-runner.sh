@@ -2,10 +2,20 @@
 set -euo pipefail
 
 REPOSITORY="${REPOSITORY:-meownm/ragflow}"
-RUNNER_NAME="${RUNNER_NAME:-ragflow-test-meow}"
-RUNNER_LABELS="${RUNNER_LABELS:-ragflow-test}"
-RUNNER_USER="${RUNNER_USER:-apt}"
-RUNNER_DIR="${RUNNER_DIR:-/opt/actions-runner}"
+RUNNER_NAME="${RUNNER_NAME:-ragflow-test-vm}"
+RUNNER_LABELS="${RUNNER_LABELS:-ragflow-test,ragflow-isolated-vm}"
+RUNNER_USER="${RUNNER_USER:-ragflow-test}"
+RUNNER_DIR="${RUNNER_DIR:-/opt/actions-runner-test}"
+
+[[ "${TEST_VM_CONFIRMED:-}" == yes ]] || {
+  echo 'Set TEST_VM_CONFIRMED=yes after checking the test VM isolation inventory.' >&2; exit 1;
+}
+systemd-detect-virt --vm >/dev/null || {
+  echo 'Register the test runner only inside its dedicated VM.' >&2; exit 1;
+}
+[[ "$RUNNER_USER" != apt && "$RUNNER_USER" != root ]] || {
+  echo 'Use the dedicated test guest account.' >&2; exit 1;
+}
 
 IFS= read -r RUNNER_TOKEN
 RUNNER_TOKEN="${RUNNER_TOKEN%$'\r'}"
@@ -39,7 +49,6 @@ fi
 if [[ ! -f .runner ]]; then
   ./config.sh \
     --unattended \
-    --replace \
     --url "https://github.com/${REPOSITORY}" \
     --token "${RUNNER_TOKEN}" \
     --name "${RUNNER_NAME}" \

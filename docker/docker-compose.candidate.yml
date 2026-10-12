@@ -2,5 +2,5 @@ services:
   ragflow-cpu:
     image: ${RAGFLOW_IMAGE:?RAGFLOW_IMAGE must name an immutable candidate image}
     volumes: !override
-      - ./ragflow-logs:/ragflow/logs
-      - ./service_conf.yaml.template:/ragflow/conf/service_conf.yaml.template:ro
+      - ${RAGFLOW_LOCAL_RUNTIME_LOGS:?RAGFLOW_LOCAL_RUNTIME_LOGS must be set by deploy.ps1}:/ragflow/logs
+      - ${RAGFLOW_LOCAL_RUNTIME_CONFIG:?RAGFLOW_LOCAL_RUNTIME_CONFIG must be set by deploy.ps1}:/ragflow/conf/service_conf.yaml.template:ro

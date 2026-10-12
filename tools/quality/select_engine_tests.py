@@ -43,7 +43,11 @@ ENGINE_PATHS = (
     "api/db/db_models.py",
     "api/apps/chunk_app.py",
     "api/apps/retrieval_app.py",
-    "api/apps/restful_apis/dataset*.py",
+    "api/apps/restful_apis/*",
+    "sdk/*",
+    "test/testcases/*",
+    "test/mandatory-api-cases.json",
+    "test/live_models.py",
     "Dockerfile*",
     "docker/*",
     "conf/*",
@@ -57,11 +61,24 @@ ENGINE_PATHS = (
     "internal/cpp/*",
     "internal/binding/*",
     ".github/workflows/tests.yml",
-    ".github/workflows/sep-tests.yml",
     ".github/workflows/release.yml",
     "deployment/runner/*",
     "tools/quality/select_engine_tests.py",
     "test/unit_test/tools/quality/test_engine_test_selection.py",
+)
+
+# These consumers have separate unit/frontend/browser checks. New or unclassified
+# boundaries run live acceptance until their ownership is reviewed here.
+_SEPARATE_CHECK_PATHS = (
+    "web/*",
+    "business_documents/*",
+    "api/apps/business_documents/*",
+    "api/source_workbench/*",
+    "test/playwright/*",
+    "test/unit_test/*",
+    "test/evals/*",
+    "docs/*",
+    ".agents/*",
 )
 
 
@@ -95,12 +112,14 @@ def successful_base(env: dict[str, str]) -> str:
     with urlopen(request, timeout=15) as response:
         runs = json.load(response)["workflow_runs"]
     for run in runs:
-        if str(run["id"]) != env.get("GITHUB_RUN_ID") and run["event"] in {"push", "schedule"}:
+        if str(run["id"]) != env.get("GITHUB_RUN_ID") and run["event"] in {"push", "schedule", "workflow_dispatch"}:
             return run["head_sha"]
     raise ValueError("no successful branch baseline")
 
 
 def select(env: dict[str, str]) -> dict:
+    if env.get("QUALIFICATION_PROFILE") == "release":
+        return {"required": True, "reason": "full-release-qualification", "base": "", "paths": []}
     base = ""
     try:
         is_pr = env.get("GITHUB_EVENT_NAME") == "pull_request"
@@ -111,6 +130,10 @@ def select(env: dict[str, str]) -> dict:
         result = subprocess.run(["git", "diff", "--name-only", "--no-renames", "-z", base, "HEAD"], check=True, capture_output=True)
         paths = [path.decode("utf-8") for path in result.stdout.split(b"\0") if path]
         changed = [path for path in engine_paths(paths) if not _version_only(path, base)]
+        if not changed:
+            unknown = [path for path in paths if not path.endswith((".md", ".mdx")) and not any(fnmatchcase(path, pattern) for pattern in (*ENGINE_PATHS, *_SEPARATE_CHECK_PATHS))]
+            if unknown:
+                return {"required": True, "reason": "unclassified-boundary-changed", "base": base, "paths": unknown}
         return {"required": bool(changed), "reason": "engine-boundary-changed" if changed else "no-engine-changes", "base": base, "paths": changed}
     except (OSError, ValueError, KeyError, subprocess.CalledProcessError):
         # Missing history, Actions permissions or malformed data must not hide changes.

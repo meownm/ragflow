@@ -551,3 +551,22 @@ def test_manual_advanced_sql_is_catalog_bound(sql):
 def test_manual_advanced_sql_rejects_unbound_or_unknown_access(sql):
     with pytest.raises(SqlGuardError):
         compile_query_payload(_manual_payload(sql))
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT o.customer_id AS customer_id, COUNT(o.order_id) AS total FROM dwh.order_fact AS o JOIN dwh.customer_dim AS c ON c.customer_id = o.customer_id JOIN ref.order_status AS s ON s.status_id = o.status_id GROUP BY o.customer_id HAVING COUNT(o.order_id) > :minimum LIMIT :row_limit",
+        "SELECT o.order_id AS order_id FROM dwh.order_fact AS o WHERE EXISTS (SELECT i.order_id AS order_id FROM dwh.order_fact AS i WHERE i.customer_id = o.customer_id AND i.status_id = :minimum) LIMIT :row_limit",
+        "SELECT o.order_id AS order_id FROM dwh.order_fact AS o WHERE o.customer_id IN (SELECT c.customer_id AS customer_id FROM dwh.customer_dim AS c WHERE c.customer_type_code = :customer_type) LIMIT :row_limit",
+        "WITH selected AS (SELECT o.customer_id AS customer_id, SUM(o.paid_amount_rub) AS amount FROM dwh.order_fact AS o GROUP BY o.customer_id HAVING SUM(o.paid_amount_rub) > :minimum) SELECT selected.customer_id AS customer_id, selected.amount AS amount FROM selected LIMIT :row_limit",
+    ],
+)
+def test_manual_complex_selects_remain_catalog_bound(sql):
+    payload = _manual_payload(sql)
+    if ":minimum" in sql:
+        payload["parameters"].append({"name": "minimum", "type": "integer", "value": 1})
+    if ":customer_type" in sql:
+        payload["parameters"].append({"name": "customer_type", "type": "text", "value": "corporate"})
+    result = compile_query_payload(payload)
+    assert result["guard"]["status"] == "PASS"

@@ -303,6 +303,8 @@ markers = [
     "smoke: smoke test cases",
     "auth: authentication UI tests",
     "asyncio: mark test as async",
+    "local_api: reviewed API test that needs no cloud model setup",
+    "cloud_models: test requiring live models, available in configured local or cloud profiles",
 ]
 
 # Test collection and runtime configuration

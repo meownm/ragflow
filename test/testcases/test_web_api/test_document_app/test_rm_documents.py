@@ -100,9 +100,9 @@ def test_concurrent_deletion(WebApiAuth, add_dataset, tmp_path):
 
     with ThreadPoolExecutor(max_workers=5) as executor:
         futures = [executor.submit(delete_document, WebApiAuth, kb_id, {"ids": [document_ids[i]]}) for i in range(count)]
-    responses = list(as_completed(futures))
+    responses = [future.result() for future in as_completed(futures)]
     assert len(responses) == count, responses
-    assert all(future.result()["code"] == 0 for future in futures), responses
+    assert all(response["code"] == 0 for response in responses), responses
 
     res = list_documents(WebApiAuth, {"kb_id": kb_id})
     assert len(res["data"]["docs"]) == 0, res

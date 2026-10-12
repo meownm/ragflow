@@ -107,27 +107,21 @@ class _PeeweeAssignmentUnitOfWork(AssignmentUnitOfWork):
     def add_event(self, event: DocumentAssignedEvent) -> None:
         now = datetime.now()
         timestamp = current_timestamp()
-        # Bulk insert preserves the explicit instant; BaseModel.create resamples
-        # creation and update clocks separately even for an append-only event.
-        BusinessDocumentEvent.insert_many(
-            [
-                dict(
-                    id=event.id,
-                    document_id=event.document_id,
-                    sequence=event.sequence,
-                    event_type=event.event_type,
-                    actor_type=event.actor_type,
-                    actor_id=event.actor_id,
-                    payload=event.payload,
-                    correlation_id=event.correlation_id,
-                    causation_id=event.causation_id,
-                    create_time=timestamp,
-                    create_date=now,
-                    update_time=timestamp,
-                    update_date=now,
-                )
-            ]
-        ).execute()
+        BusinessDocumentEvent.create(
+            id=event.id,
+            document_id=event.document_id,
+            sequence=event.sequence,
+            event_type=event.event_type,
+            actor_type=event.actor_type,
+            actor_id=event.actor_id,
+            payload=event.payload,
+            correlation_id=event.correlation_id,
+            causation_id=event.causation_id,
+            create_time=timestamp,
+            create_date=now,
+            update_time=timestamp,
+            update_date=now,
+        )
 
 
 def assign_business_document(

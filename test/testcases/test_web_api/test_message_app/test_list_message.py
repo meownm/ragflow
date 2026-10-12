@@ -13,13 +13,13 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
-import os
 import random
 
 import pytest
 from test_common import list_memory_message
 from configs import INVALID_API_TOKEN
 from libs.auth import RAGFlowWebApiAuth
+from utils.engine_utils import get_doc_engine
 
 
 class TestAuthorization:
@@ -83,16 +83,24 @@ class TestMessageList:
             assert message["agent_id"] == agent_id, message
 
     @pytest.mark.p2
-    @pytest.mark.skipif(os.getenv("DOC_ENGINE") == "infinity", reason="Not support.")
     def test_search_keyword(self, WebApiAuth):
         memory_id = self.memory_id
-        session_ids = self.session_ids
-        session_id = random.choice(session_ids)
-        slice_start = random.randint(0, len(session_id) - 2)
-        slice_end = random.randint(slice_start + 1, len(session_id) - 1)
-        keyword = session_id[slice_start:slice_end]
+        engine = get_doc_engine()
+        assert engine in {"elasticsearch", "infinity", "opensearch"}, "Document engine prerequisite is missing"
+        session_id = self.session_ids[0]
+        exact = list_memory_message(WebApiAuth, memory_id, params={"keywords": session_id})
+        assert exact["code"] == 0, exact
+        messages = exact["data"]["messages"]["message_list"]
+        assert messages, exact
+        assert all(message["session_id"] == session_id for message in messages), exact
+        # ES applies a wildcard substring filter; Infinity applies string equality.
+        keyword = session_id[1:-1]
+        assert keyword and keyword not in self.session_ids
         res = list_memory_message(WebApiAuth, memory_id, params={"keywords": keyword})
         assert res["code"] == 0, res
+        if engine == "infinity":
+            assert res["data"]["messages"]["message_list"] == [], res
+            return
         assert len(res["data"]["messages"]["message_list"]) > 0, res
         for message in res["data"]["messages"]["message_list"]:
             assert keyword in message["session_id"], message

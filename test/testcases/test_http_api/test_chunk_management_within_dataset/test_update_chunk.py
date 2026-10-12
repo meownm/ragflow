@@ -47,8 +47,8 @@ class TestUpdatedChunk:
             ({"content": ""}, 102, "`content` is required"),
             pytest.param(
                 {"content": 1},
-                100,
-                "TypeError('expected string or bytes-like object')",
+                102,
+                "`content` must be a string",
                 marks=pytest.mark.skip,
             ),
             ({"content": "update chunk"}, 0, ""),
@@ -69,7 +69,7 @@ class TestUpdatedChunk:
         [
             ({"important_keywords": ["a", "b", "c"]}, 0, ""),
             ({"important_keywords": [""]}, 0, ""),
-            ({"important_keywords": [1]}, 100, "TypeError('sequence item 0: expected str instance, int found')"),
+            ({"important_keywords": [1]}, 102, "`important_keywords` must be a list of strings"),
             ({"important_keywords": ["a", "a"]}, 0, ""),
             ({"important_keywords": "abc"}, 102, "`important_keywords` should be a list"),
             ({"important_keywords": 123}, 102, "`important_keywords` should be a list"),
@@ -88,7 +88,7 @@ class TestUpdatedChunk:
         [
             ({"questions": ["a", "b", "c"]}, 0, ""),
             ({"questions": [""]}, 0, ""),
-            ({"questions": [1]}, 100, "TypeError('sequence item 0: expected str instance, int found')"),
+            ({"questions": [1]}, 102, "`questions` must be a list of strings"),
             ({"questions": ["a", "a"]}, 0, ""),
             ({"questions": "abc"}, 102, "`questions` should be a list"),
             ({"questions": 123}, 102, "`questions` should be a list"),
@@ -125,10 +125,10 @@ class TestUpdatedChunk:
         "payload, expected_code, expected_message",
         [
             ({"available": True}, 0, ""),
-            pytest.param({"available": "True"}, 100, """ValueError("invalid literal for int() with base 10: \'True\'")""", marks=pytest.mark.skip),
+            pytest.param({"available": "True"}, 102, "`available` must be a boolean or 0 or 1", marks=pytest.mark.skip),
             ({"available": 1}, 0, ""),
             ({"available": False}, 0, ""),
-            pytest.param({"available": "False"}, 100, """ValueError("invalid literal for int() with base 10: \'False\'")""", marks=pytest.mark.skip),
+            pytest.param({"available": "False"}, 102, "`available` must be a boolean or 0 or 1", marks=pytest.mark.skip),
             ({"available": 0}, 0, ""),
         ],
     )

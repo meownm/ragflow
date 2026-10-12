@@ -170,6 +170,8 @@ class Session(Base):
         return res
 
     def update(self, update_message):
+        if not isinstance(update_message, dict):
+            raise ValueError("`update_message` must be a dict")
         res = self.patch(f"/chats/{self.chat_id}/sessions/{self.id}", update_message)
         res = res.json()
         if res.get("code") != 0:

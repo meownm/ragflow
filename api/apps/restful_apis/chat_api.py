@@ -45,7 +45,7 @@ from api.utils.api_utils import (
     server_error_response,
     validate_request,
 )
-from api.utils.pagination_utils import validate_rest_api_page_size
+from api.utils.pagination_utils import validate_rest_list_args
 from common.constants import LLMType, RetCode, StatusEnum
 from common import settings
 from common.misc_utils import get_uuid, thread_pool_exec
@@ -440,10 +440,13 @@ async def create():
 @manager.route("/chats", methods=["GET"])  # noqa: F821
 @login_required
 async def list_chats():
+    """List chats; invalid pagination or storage sort fields return DATA_ERROR (102).
+
+    Zero page/page_size disable pagination. Only desc=false selects ascending order.
+    """
     chat_id = request.args.get("id")
     name = request.args.get("name")
     keywords = request.args.get("keywords", "")
-    orderby = request.args.get("orderby", "create_time")
     desc = request.args.get("desc", "true").lower() != "false"
     owner_ids = request.args.getlist("owner_ids")
     exact_filters = {"id": chat_id, "name": name}
@@ -451,8 +454,10 @@ async def list_chats():
         keywords = ""
 
     try:
-        page_number = int(request.args.get("page", 0))
-        items_per_page = validate_rest_api_page_size(int(request.args.get("page_size", 0)))
+        try:
+            page_number, items_per_page, orderby = validate_rest_list_args(request.args, orderby_fields=DialogService.model._meta.fields, default_page=0, default_page_size=0)
+        except ValueError as exc:
+            return get_data_error_result(message=str(exc))
 
         if owner_ids:
             chats, total = await thread_pool_exec(
@@ -577,11 +582,7 @@ async def update_chat(chat_id):
         for field in _READONLY_FIELDS:
             req.pop(field, None)
 
-        if (
-            "name" in req
-            and req["name"].lower() != current_chat["name"].lower()
-            and DialogService.name_exists(current_user.id, req["name"], exclude_id=chat_id)
-        ):
+        if "name" in req and req["name"].lower() != current_chat["name"].lower() and DialogService.name_exists(current_user.id, req["name"], exclude_id=chat_id):
             return get_data_error_result(message="Duplicated chat name.")
 
         if not DialogService.update_by_id(chat_id, req):
@@ -661,11 +662,7 @@ async def patch_chat(chat_id):
         for field in _READONLY_FIELDS:
             req.pop(field, None)
 
-        if (
-            "name" in req
-            and req["name"].lower() != current_chat["name"].lower()
-            and DialogService.name_exists(current_user.id, req["name"], exclude_id=chat_id)
-        ):
+        if "name" in req and req["name"].lower() != current_chat["name"].lower() and DialogService.name_exists(current_user.id, req["name"], exclude_id=chat_id):
             return get_data_error_result(message="Duplicated chat name.")
 
         if not DialogService.update_by_id(chat_id, req):
@@ -775,6 +772,10 @@ async def create_session(chat_id):
 @manager.route("/chats/<chat_id>/sessions", methods=["GET"])  # noqa: F821
 @login_required
 async def list_sessions(chat_id):
+    """List owned chat sessions; invalid pagination or sort fields return code 102.
+
+    Page zero addresses the first page; page_size zero returns an empty list.
+    """
     try:
         if not await _ensure_owned_chat(chat_id):
             return get_json_result(
@@ -782,9 +783,10 @@ async def list_sessions(chat_id):
                 message="No authorization.",
                 code=RetCode.AUTHENTICATION_ERROR,
             )
-        page_number = int(request.args.get("page", 1))
-        items_per_page = validate_rest_api_page_size(int(request.args.get("page_size", 30)))
-        orderby = request.args.get("orderby", "create_time")
+        try:
+            page_number, items_per_page, orderby = validate_rest_list_args(request.args, orderby_fields=ConversationService.model._meta.fields, default_page=1, default_page_size=30)
+        except ValueError as exc:
+            return get_data_error_result(message=str(exc))
         desc = request.args.get("desc", "true").lower() != "false"
         session_id = request.args.get("id")
         name = request.args.get("name")
@@ -824,22 +826,28 @@ async def get_session(chat_id, session_id):
 @manager.route("/chats/<chat_id>/sessions/<session_id>", methods=["PATCH"])  # noqa: F821
 @login_required
 async def update_session(chat_id, session_id):
+    """Update supported session fields; non-object bodies and unknown fields return code 102."""
     if not await _ensure_owned_chat(chat_id):
         return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)
     try:
         req = await get_request_json()
+        if not isinstance(req, dict):
+            return get_data_error_result(message="request must be an object")
         if not ConversationService.query(id=session_id, dialog_id=chat_id):
             return get_data_error_result(message="Session not found!")
         if "message" in req or "messages" in req:
             return get_data_error_result(message="`messages` cannot be changed.")
         if "reference" in req:
             return get_data_error_result(message="`reference` cannot be changed.")
-        name = req.get("name")
+        update_fields = {k: v for k, v in req.items() if k not in {"id", "dialog_id", "chat_id", "user_id"}}
+        unknown_fields = sorted(set(update_fields) - ConversationService.model._meta.fields.keys())
+        if unknown_fields:
+            return get_data_error_result(message=f"Unknown session fields: {', '.join(unknown_fields)}")
+        name = update_fields.get("name")
         if name is not None:
             if not isinstance(name, str) or not name.strip():
                 return get_data_error_result(message="`name` can not be empty.")
-            req["name"] = name.strip()[:255]
-        update_fields = {k: v for k, v in req.items() if k not in {"id", "dialog_id", "chat_id", "user_id"}}
+            update_fields["name"] = name.strip()[:255]
         if not ConversationService.update_by_id(session_id, update_fields):
             return get_data_error_result(message="Session not found!")
         ok, conv = ConversationService.get_by_id(session_id)

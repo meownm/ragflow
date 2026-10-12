@@ -11,6 +11,7 @@ param(
     [string]$CandidateRevision,
     [string]$CandidateImageReference,
     [string]$CandidateReceipt,
+    [switch]$AllowHistoricalReceipt,
     [switch]$Observability,
     [switch]$Build,
     [switch]$BuildFrontend,
@@ -125,21 +126,19 @@ function Get-DeployedRevision {
     return $revision
 }
 
-function Test-CandidateReceiptJobs {
-    param([Parameter(Mandatory = $true)]$CI)
-
-    $requiredProperty = $CI.PSObject.Properties['engine_tests_required']
-    $required = if ($requiredProperty) { $requiredProperty.Value } else { $true }
-    if ($required -isnot [bool]) { return $false }
-    if (-not $required) {
-        $reason = $CI.PSObject.Properties['engine_test_reason']
-        if (-not $reason -or $reason.Value -ne 'no-engine-changes') { return $false }
+function Assert-CandidateReceipt {
+    param([string]$Path, [bool]$Published)
+    $python = Join-Path $repoRoot ".venv/Scripts/python.exe"
+    if (-not (Test-Path -LiteralPath $python)) {
+        $python = (Get-Command python -ErrorAction Stop).Source
     }
-    $expected = if ($required) { 'success' } else { 'skipped' }
-    return ($CI.jobs.PSObject.Properties.Name.Count -eq 3 -and
-        $CI.jobs.ragflow_preflight -eq 'success' -and
-        $CI.jobs.ragflow_tests_infinity -eq $expected -and
-        $CI.jobs.ragflow_tests_elasticsearch -eq $expected)
+    $arguments = @("-m", "tools.quality.release_runtime", "validate", "--path", $Path)
+    if ($Published) { $arguments += "--published" }
+    Push-Location $repoRoot
+    try {
+        & $python @arguments
+        if ($LASTEXITCODE -ne 0) { throw "Candidate receipt failed canonical evidence validation." }
+    } finally { Pop-Location }
 }
 
 function Test-FeatureImageIdentity {
@@ -205,6 +204,36 @@ function Get-RagflowBindSources {
         }
     }
     return $sources
+}
+
+function Initialize-PersistentRuntimeBinds {
+    param(
+        [Parameter(Mandatory = $true)][string]$RuntimeRoot,
+        [Parameter(Mandatory = $true)][string]$TemplatePath
+    )
+
+    if (-not (Test-Path -LiteralPath $TemplatePath -PathType Leaf)) {
+        throw "Local service configuration template is missing: $TemplatePath"
+    }
+    $hash = (Get-FileHash -LiteralPath $TemplatePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $configDirectory = Join-Path $RuntimeRoot "config\$hash"
+    $configPath = Join-Path $configDirectory "service_conf.yaml.template"
+    $logsPath = Join-Path $RuntimeRoot "logs"
+    New-Item -ItemType Directory -Force -Path $configDirectory, $logsPath | Out-Null
+    if (Test-Path -LiteralPath $configPath) {
+        if (-not (Test-Path -LiteralPath $configPath -PathType Leaf) -or
+            (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $hash) {
+            throw "Persistent service configuration does not match its source hash: $configPath"
+        }
+    }
+    else {
+        Copy-Item -LiteralPath $TemplatePath -Destination $configPath
+    }
+    return [pscustomobject]@{
+        config_path = $configPath
+        logs_path = $logsPath
+        config_sha256 = $hash
+    }
 }
 
 function Test-PathCoveredByBindMount {
@@ -415,6 +444,7 @@ if (-not $CandidateRevision) {
 $candidateImage = $null
 $featureImage = $null
 $deploymentImage = $null
+$runtimeBinds = $null
 $candidateReceiptData = $null
 $candidateReceiptPath = $null
 $candidateReceiptHash = $null
@@ -442,21 +472,29 @@ if ($resolvedMode -in @("Candidate", "Release")) {
             throw "Candidate receipt is unavailable: $candidateReceiptPath"
         }
         $candidateReceiptData = Get-Content -LiteralPath $candidateReceiptPath -Raw | ConvertFrom-Json
-        $imageRepository = $candidateImage.Substring(0, $candidateImage.LastIndexOf(':'))
-        if ($candidateReceiptData.schema -ne 1 -or
-            $candidateReceiptData.source_revision -ne $CandidateRevision -or
-            $candidateReceiptData.image.reference -ne $candidateImage -or
-            $candidateReceiptData.image.digest -cnotmatch ('^' + [regex]::Escape($imageRepository) + '@sha256:[0-9a-f]{64}$') -or
-            $candidateReceiptData.ci.run_id -notmatch '^[0-9]+$' -or
-            -not $candidateReceiptData.ci.repository -or
-            -not (Test-CandidateReceiptJobs -CI $candidateReceiptData.ci)) {
-            throw "Candidate receipt does not prove the requested revision, image and required CI jobs."
+        if ($candidateReceiptData.schema -eq 1 -and -not $AllowHistoricalReceipt) {
+            throw "Schema 1 is historical evidence. Use AllowHistoricalReceipt only for an explicit historical recovery."
         }
+        Assert-CandidateReceipt -Path $candidateReceiptPath -Published ($candidateReceiptData.schema -eq 2)
+        if ($candidateReceiptData.source_revision -cne $CandidateRevision) {
+            throw "Candidate receipt source revision mismatch."
+        }
+        if ($CandidateImageReference -and $CandidateImageReference -cne $candidateReceiptData.image.reference -and
+            $CandidateImageReference -cne $candidateReceiptData.image.digest) {
+            throw "Candidate receipt image mismatch."
+        }
+        $candidateImage = $candidateReceiptData.image.reference
+        $deploymentImage = $candidateReceiptData.image.digest
         $candidateReceiptHash = (Get-FileHash -LiteralPath $candidateReceiptPath -Algorithm SHA256).Hash.ToLowerInvariant()
     }
 }
 if ($deploymentImage) {
     $env:RAGFLOW_IMAGE = $deploymentImage
+    $runtimeRoot = Join-Path (Split-Path -Path $repoRoot -Parent) "$ProjectName-runtime"
+    $runtimeBinds = Initialize-PersistentRuntimeBinds -RuntimeRoot $runtimeRoot `
+        -TemplatePath (Join-Path $dockerDirectory "service_conf.yaml.template")
+    $env:RAGFLOW_LOCAL_RUNTIME_CONFIG = $runtimeBinds.config_path
+    $env:RAGFLOW_LOCAL_RUNTIME_LOGS = $runtimeBinds.logs_path
     if (-not $composeFiles.Contains("docker-compose.candidate.yml")) {
         $composeFiles.Add("docker-compose.candidate.yml")
         Update-ComposeArguments
@@ -499,10 +537,12 @@ if ($CheckOnly) {
         services = $Services
         source = $source
         deployed_revision = $deployedRevision
-        candidate_image = $candidateImage
+        deployment_image = $deploymentImage
+    candidate_image = $candidateImage
         feature_image = $featureImage
         feature_source_id = if ($featureImage) { $FeatureSourceId } else { $null }
         feature_image_status = if ($featureImage) { "metadata_only" } else { "not_applicable" }
+        runtime_config_sha256 = if ($runtimeBinds) { $runtimeBinds.config_sha256 } else { $null }
         candidate_receipt_path = $candidateReceiptPath
         candidate_receipt_sha256 = $candidateReceiptHash
         candidate_receipt_status = if ($candidateReceiptData) { "metadata_only" } elseif ($candidateImage) { "missing" } else { "not_applicable" }
@@ -678,11 +718,13 @@ $evidence = [ordered]@{
     source = $source
     deployed_revision = $deployedRevision
     candidate_revision = if ($candidateImage) { $CandidateRevision } else { $null }
+    deployment_image = $deploymentImage
     candidate_image = $candidateImage
     candidate_image_id = if ($candidateImage) { $deploymentImageId } else { $null }
     candidate_repo_digests = if ($candidateImage) { $deploymentRepoDigests } else { @() }
     feature_image = $featureImage
     feature_source_id = if ($featureImage) { $FeatureSourceId } else { $null }
+    runtime_config_sha256 = if ($runtimeBinds) { $runtimeBinds.config_sha256 } else { $null }
     feature_image_id = if ($featureImage) { $deploymentImageId } else { $null }
     feature_repo_digests = if ($featureImage) { $deploymentRepoDigests } else { @() }
     feature_version = if ($featureImage) { $actualVersion } else { $null }

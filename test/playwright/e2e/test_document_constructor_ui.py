@@ -28,6 +28,7 @@ VISIBLE_SECTIONS = [
     "memory",
     "catalog",
     "business_documents",
+    "document_constructor",
     "file_manager",
 ]
 
@@ -1217,7 +1218,7 @@ def test_sql_agent_mvp_golden_from_request_to_document(page, base_url):
     expect(workbench).to_be_visible()
     expect(workbench).to_contain_text("Получите данные по вашему вопросу")
 
-    workbench.get_by_role("button", name="Новый запрос").click()
+    workbench.get_by_role("button", name="Новый запрос").first.click()
     workbench.get_by_label("Название (необязательно)").fill("Golden: завершённые заказы")
     workbench.get_by_label("Какой вопрос нужно решить?").fill("Вывести идентификатор и сумму завершённых заказов за месяц, не более 1000 строк.")
     workbench.get_by_role("button", name="Создать и продолжить").click()
@@ -1227,18 +1228,20 @@ def test_sql_agent_mvp_golden_from_request_to_document(page, base_url):
     requirements.get_by_role("button", name="Календарный месяц").click()
     requirements.get_by_role("button", name="Подтвердить требования").click()
 
-    workbench.get_by_label("Сущности и понятия").fill("Заказ")
+    workbench.get_by_label("Что искать в данных?").fill("Заказ")
     workbench.get_by_test_id("sql-agent-run-schema").click()
     schema = workbench.get_by_test_id("sql-agent-schema-review")
-    expect(schema).to_contain_text("Выберите таблицы и нужные поля")
+    expect(schema).to_contain_text("Проверьте найденные данные")
     schema.get_by_role("button", name=re.compile(r"order_fact")).first.click()
     expect(schema).to_contain_text("paid_amount_rub")
-    schema.get_by_role("button", name="Выбрать все").click()
+    for column in ("order_id", "status_id", "paid_amount_rub"):
+        schema.get_by_role("checkbox", name=column).check()
     expect(schema).to_contain_text("выбрано 3")
     schema.get_by_role("button", name="Подтвердить схему").click()
 
     query = workbench.get_by_test_id("sql-agent-query-review")
     expect(query).to_contain_text("Оставить только завершённые заказы")
+    query.get_by_role("checkbox", name="Подтверждаю исключение строк этим условием.").check()
     query.get_by_role("button", name="Подтвердить и собрать SQL").click()
 
     completed = workbench.get_by_test_id("sql-agent-complete")
@@ -1255,7 +1258,7 @@ def test_sql_agent_mvp_golden_from_request_to_document(page, base_url):
     expect(completed).to_contain_text("Данные получены")
     assert [kind for kind, _ in stub.sql_project_commands] == ["compile", "run"]
 
-    completed.get_by_role("button", name="Завершить и удалить строки").click()
+    completed.get_by_role("button", name="Завершить", exact=True).click()
     document = completed.get_by_test_id("sql-completed-document")
     expect(document).to_contain_text("Документ · ревизия 1")
     expect(document).to_contain_text("строки удалены")

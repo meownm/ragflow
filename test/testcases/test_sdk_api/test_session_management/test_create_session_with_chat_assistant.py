@@ -16,7 +16,8 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pytest
-from common import list_all_sessions
+from beartype.roar import BeartypeCallHintParamViolation
+from test.testcases.test_sdk_api.common import list_all_sessions
 from configs import SESSION_WITH_CHAT_NAME_LIMIT
 from ragflow_sdk import RAGFlow
 from ragflow_sdk.modules.session import Session
@@ -39,8 +40,8 @@ class TestSessionWithChatAssistantCreate:
         "name, expected_message",
         [
             ("valid_name", ""),
-            pytest.param("a" * (SESSION_WITH_CHAT_NAME_LIMIT + 1), "", marks=pytest.mark.skip(reason="issues/")),
-            pytest.param(1, "", marks=pytest.mark.skip(reason="issues/")),
+            pytest.param("a" * (SESSION_WITH_CHAT_NAME_LIMIT + 1), ""),
+            pytest.param(1, "violates type hint"),
             ("", "`name` can not be empty."),
             ("duplicated_name", ""),
             ("case insensitive", ""),
@@ -56,13 +57,16 @@ class TestSessionWithChatAssistantCreate:
             chat_assistant.create_session(name=name.upper())
 
         if expected_message:
-            with pytest.raises(Exception) as exception_info:
+            with pytest.raises(BeartypeCallHintParamViolation if not isinstance(name, str) else Exception) as exception_info:
                 chat_assistant.create_session(name=name)
             assert expected_message in str(exception_info.value)
         else:
             session = chat_assistant.create_session(name=name)
-            assert session.name == name, str(session)
+            expected_name = name.strip()[:SESSION_WITH_CHAT_NAME_LIMIT]
+            assert session.name == expected_name, str(session)
             assert session.chat_id == chat_assistant.id, str(session)
+            stored = chat_assistant.list_sessions(id=session.id)
+            assert len(stored) == 1 and stored[0].name == expected_name
 
     @pytest.mark.p3
     def test_concurrent_create_session(self, add_chat_assistants):
@@ -72,7 +76,7 @@ class TestSessionWithChatAssistantCreate:
 
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = [executor.submit(chat_assistant.create_session, name=f"session with chat assistant test {i}") for i in range(count)]
-        responses = list(as_completed(futures))
+        responses = [future.result() for future in as_completed(futures)]
         assert len(responses) == count, responses
 
         updated_sessions = list_all_sessions(chat_assistant, limit=count + 1)

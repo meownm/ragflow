@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -157,8 +158,9 @@ def test_catalog_version_change_blocks_execution(monkeypatch):
         return {"entities": [{"entity_id": "table-1", "lookup": {"status": "OK"}, "freshness": {"stale": False}, "entity": {"version": 3, "schema_fingerprint": "sha256:new", "fqn": table.fqn}}]}
 
     monkeypatch.setattr(sql_query_runs.BusinessDocumentSqlQuerySchemaService, "load_entities", load_entities)
-    with pytest.raises(ConflictError) as error:
-        sql_query_runs._verify_schema({"schema_snapshot": {}}, "author-1", False, "AUTHOR_CREATOR")
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with pytest.raises(ConflictError) as error:
+            executor.submit(sql_query_runs._verify_schema, {"schema_snapshot": {}}, "author-1", False, "AUTHOR_CREATOR").result()
     assert error.value.code == "SQL_SCHEMA_STALE"
 
 

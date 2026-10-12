@@ -18,6 +18,7 @@ import binascii
 import datetime
 import json
 import logging
+import math
 import re
 
 import xxhash
@@ -148,6 +149,35 @@ def _get_query_id_list(args, name: str) -> list[str]:
                 ids.append(item)
                 seen.add(item)
     return ids
+
+
+def _chunk_list_pagination(req):
+    pagination = {}
+    for field, default, minimum in (("page", 1, 1), ("page_size", 30, 0)):
+        raw = req.get(field, default)
+        if isinstance(raw, bool) or not isinstance(raw, (int, str)):
+            raise ValueError(f"{field} must be an integer")
+        try:
+            value = int(raw)
+        except (ValueError, OverflowError) as exc:
+            raise ValueError(f"{field} must be an integer") from exc
+        if value < minimum:
+            raise ValueError(f"{field} must be greater than or equal to {minimum}")
+        pagination[field] = value
+    return pagination["page"], validate_rest_api_page_size(pagination["page_size"])
+
+
+def _retrieval_finite_number(req, field, default):
+    raw = req.get(field, default)
+    if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+        raise ValueError(f"{field} must be a finite number")
+    try:
+        value = float(raw)
+    except (ValueError, OverflowError) as exc:
+        raise ValueError(f"{field} must be a finite number") from exc
+    if not math.isfinite(value):
+        raise ValueError(f"{field} must be a finite number")
+    return value
 
 
 def _strip_chunk_runtime_fields(chunk):
@@ -327,8 +357,10 @@ async def retrieval_test(tenant_id):
         return get_result(message="Datasets use different embedding models.", code=RetCode.DATA_ERROR)
     if "question" not in req:
         return get_error_data_result("`question` is required.")
-    page = int(req.get("page", 1))
-    size = validate_rest_api_page_size(int(req.get("page_size", 30)))
+    try:
+        page, size = _chunk_list_pagination(req)
+    except ValueError as exc:
+        return get_error_data_result(str(exc))
     question = req["question"].strip() if isinstance(req["question"], str) else req["question"]
     if not question:
         return get_result(data={"total": 0, "chunks": [], "doc_aggs": {}})
@@ -354,9 +386,18 @@ async def retrieval_test(tenant_id):
                 doc_ids = ["-999"]
         else:
             doc_ids = None
-    similarity_threshold = float(req.get("similarity_threshold", 0.2))
-    vector_similarity_weight = float(req.get("vector_similarity_weight", 0.3))
-    top = int(req.get("top_k", 1024))
+    try:
+        similarity_threshold = _retrieval_finite_number(req, "similarity_threshold", 0.2)
+        vector_similarity_weight = _retrieval_finite_number(req, "vector_similarity_weight", 0.3)
+    except ValueError as exc:
+        return get_error_data_result(str(exc))
+    raw_top = req.get("top_k", 1024)
+    if isinstance(raw_top, bool) or not isinstance(raw_top, (int, str)):
+        return get_error_data_result("`top_k` must be an integer")
+    try:
+        top = int(raw_top)
+    except (ValueError, OverflowError):
+        return get_error_data_result("`top_k` must be an integer")
     if top <= 0:
         return get_error_data_result("`top_k` must be greater than 0")
     highlight_val = req.get("highlight", None)
@@ -369,6 +410,8 @@ async def retrieval_test(tenant_id):
     else:
         return get_error_data_result("`highlight` should be a boolean")
     include_metadata, metadata_fields = _resolve_reference_metadata(req)
+    if size == 0:
+        return get_result(data={"total": 0, "chunks": [], "doc_aggs": {}})
     try:
         tenant_ids = list(set([kb.tenant_id for kb in kbs]))
         e, kb = KnowledgebaseService.get_by_id(kb_ids[0])
@@ -454,8 +497,10 @@ async def list_chunks(tenant_id, dataset_id, document_id):
         return get_error_data_result(message=f"You don't own the document {document_id}.")
     doc = doc[0]
     req = request.args
-    page = int(req.get("page", 1))
-    size = validate_rest_api_page_size(int(req.get("page_size", 30)))
+    try:
+        page, size = _chunk_list_pagination(req)
+    except ValueError as exc:
+        return get_error_data_result(str(exc))
     question = req.get("keywords", "")
     chunk_ids = _get_query_id_list(req, "chunk_ids")
     query = {
@@ -498,7 +543,7 @@ async def list_chunks(tenant_id, dataset_id, document_id):
         }
         res["chunks"].append(final_chunk)
         _ = Chunk(**final_chunk)
-    elif settings.docStoreConn.index_exist(search.index_name(dataset_tenant_id), dataset_id):
+    elif size and settings.docStoreConn.index_exist(search.index_name(dataset_tenant_id), dataset_id):
         sres = await settings.retriever.search(
             query,
             search.index_name(dataset_tenant_id),
@@ -1003,6 +1048,8 @@ async def update_chunk(tenant_id, dataset_id, document_id, chunk_id):
     req = await get_request_json()
     content = req.get("content")
     if content is not None:
+        if not isinstance(content, str):
+            return get_error_data_result("`content` must be a string")
         if is_content_empty(content):
             return get_error_data_result(message="`content` is required")
     else:
@@ -1013,14 +1060,20 @@ async def update_chunk(tenant_id, dataset_id, document_id, chunk_id):
     if "important_keywords" in req:
         if not isinstance(req["important_keywords"], list):
             return get_error_data_result("`important_keywords` should be a list")
+        if not all(isinstance(keyword, str) for keyword in req["important_keywords"]):
+            return get_error_data_result("`important_keywords` must be a list of strings")
         d["important_kwd"] = req.get("important_keywords", [])
         d["important_tks"] = rag_tokenizer.tokenize(" ".join(req["important_keywords"]))
     if "questions" in req:
         if not isinstance(req["questions"], list):
             return get_error_data_result("`questions` should be a list")
+        if not all(isinstance(question, str) for question in req["questions"]):
+            return get_error_data_result("`questions` must be a list of strings")
         d["question_kwd"] = [str(q).strip() for q in req.get("questions", []) if str(q).strip()]
         d["question_tks"] = rag_tokenizer.tokenize("\n".join(req["questions"]))
     if "available" in req:
+        if not isinstance(req["available"], (bool, int)) or req["available"] not in (0, 1):
+            return get_error_data_result("`available` must be a boolean or 0 or 1")
         d["available_int"] = int(req["available"])
     if "positions" in req:
         if not isinstance(req["positions"], list):

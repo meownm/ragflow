@@ -43,12 +43,12 @@ class TestChunksList:
         "params, expected_code, expected_page_size, expected_message",
         [
             ({"page": None, "page_size": 2}, 0, 2, ""),
-            pytest.param({"page": 0, "page_size": 2}, 100, 0, "ValueError('Search does not support negative slicing.')", marks=pytest.mark.skip),
+            pytest.param({"page": 0, "page_size": 2}, 102, 0, "page must be greater than or equal to 1", marks=pytest.mark.skip),
             ({"page": 2, "page_size": 2}, 0, 2, ""),
             ({"page": 3, "page_size": 2}, 0, 1, ""),
             ({"page": "3", "page_size": 2}, 0, 1, ""),
-            pytest.param({"page": -1, "page_size": 2}, 100, 0, "ValueError('Search does not support negative slicing.')", marks=pytest.mark.skip),
-            pytest.param({"page": "a", "page_size": 2}, 100, 0, """ValueError("invalid literal for int() with base 10: \'a\'")""", marks=pytest.mark.skip),
+            pytest.param({"page": -1, "page_size": 2}, 102, 0, "page must be greater than or equal to 1", marks=pytest.mark.skip),
+            pytest.param({"page": "a", "page_size": 2}, 102, 0, "page must be an integer", marks=pytest.mark.skip),
         ],
     )
     def test_page(self, HttpApiAuth, add_chunks, params, expected_code, expected_page_size, expected_message):
@@ -65,12 +65,12 @@ class TestChunksList:
         "params, expected_code, expected_page_size, expected_message",
         [
             ({"page_size": None}, 0, 5, ""),
-            pytest.param({"page_size": 0}, 0, 5, ""),
+            pytest.param({"page_size": 0}, 0, 0, ""),
             ({"page_size": 1}, 0, 1, ""),
             ({"page_size": 6}, 0, 5, ""),
             ({"page_size": "1"}, 0, 1, ""),
-            pytest.param({"page_size": -1}, 0, 5, "", marks=pytest.mark.skip),
-            pytest.param({"page_size": "a"}, 100, 0, """ValueError("invalid literal for int() with base 10: \'a\'")""", marks=pytest.mark.skip),
+            pytest.param({"page_size": -1}, 102, 0, "page_size must be greater than or equal to 0", marks=pytest.mark.skip),
+            pytest.param({"page_size": "a"}, 102, 0, "page_size must be an integer", marks=pytest.mark.skip),
         ],
     )
     def test_page_size(self, HttpApiAuth, add_chunks, params, expected_code, expected_page_size, expected_message):
@@ -108,7 +108,7 @@ class TestChunksList:
             (None, 0, 5, ""),
             ("", 0, 5, ""),
             pytest.param(lambda r: r[0], 0, 1, "", marks=pytest.mark.skipif(os.getenv("DOC_ENGINE") == "infinity", reason="issues/6499")),
-            pytest.param("unknown", 100, 0, """AttributeError("\'NoneType\' object has no attribute \'keys\'")""", marks=pytest.mark.skip),
+            pytest.param("unknown", 102, 0, "Chunk not found:", marks=pytest.mark.skip),
         ],
     )
     def test_id(

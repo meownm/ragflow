@@ -158,6 +158,16 @@ class BusinessDocumentSqlAgentService:
                 return replay
             if project.state_version != version or project.stage == "COMPLETE" or project.operation_state == "RUNNING":
                 raise ConflictError("SQL_PROJECT_VERSION_CONFLICT", "Question cannot be changed in the current project state")
+            if (
+                BusinessDocumentSqlQueryRun.select()
+                .where(
+                    (BusinessDocumentSqlQueryRun.project_id == project_id)
+                    & (BusinessDocumentSqlQueryRun.tenant_id == tenant_id)
+                    & (BusinessDocumentSqlQueryRun.status.in_(("QUEUED", "RUNNING", "CANCEL_REQUESTED", "READY")))
+                )
+                .exists()
+            ):
+                raise ConflictError("SQL_RESULT_ACTIVE", "Finish or cancel the current result before revising the question")
             now = current_timestamp()
             BusinessDocumentSqlAgentProposal.update(status="REJECTED", decided_by=actor_id, decided_at=now).where(
                 (BusinessDocumentSqlAgentProposal.project_id == project_id) & (BusinessDocumentSqlAgentProposal.tenant_id == tenant_id) & (BusinessDocumentSqlAgentProposal.status == "PENDING")
@@ -253,7 +263,7 @@ class BusinessDocumentSqlAgentService:
             except (ProjectCompilationError, QuerySpecificationValidationError) as exc:
                 raise ValidationError("INVALID_SQL_PROJECT_COMPILATION", str(exc)) from exc
             except SqlGuardError as exc:
-                raise ValidationError("SQL_QUERY_BLOCKED", "SQL не прошёл read-only проверку.", {"reason": str(exc)}) from exc
+                raise ValidationError("SQL_QUERY_BLOCKED", "SQL РЅРµ РїСЂРѕС€С‘Р» read-only РїСЂРѕРІРµСЂРєСѓ.", {"reason": str(exc)}) from exc
             if compiled.get("status") != "READY" or compiled.get("guard", {}).get("status") != "PASS":
                 return {"compilation": compiled, "project": cls._project(project)}
             revision = (
@@ -1041,7 +1051,7 @@ class BusinessDocumentSqlAgentService:
             status=status,
             progress=1.0 if status == "COMPLETED" else job.progress,
             progress_stage="COMPLETED" if status == "COMPLETED" else status,
-            progress_message="Результат агента готов" if status == "COMPLETED" else None,
+            progress_message="Р РµР·СѓР»СЊС‚Р°С‚ Р°РіРµРЅС‚Р° РіРѕС‚РѕРІ" if status == "COMPLETED" else None,
             result=dict(result) if result is not None else None,
             error=dict(error) if error is not None else None,
             lease_owner=None,

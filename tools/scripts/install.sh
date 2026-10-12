@@ -99,6 +99,14 @@ detect_platform() {
 }
 
 resolve_version() {
+    if [ "$VERSION" = "nightly" ] && [ "$GITHUB_REPO" = "meownm/ragflow" ]; then
+        need_cmd python3
+        response="$(curl -sSfL "https://api.github.com/repos/${GITHUB_REPO}/git/ref/tags/nightly")"
+        tag_sha="$(printf '%s' "$response" | python3 -c 'import json,sys,re; v=json.load(sys.stdin)["object"]; assert v["type"]=="tag" and re.fullmatch("[0-9a-f]{40}",v["sha"]); print(v["sha"])')"
+        response="$(curl -sSfL "https://api.github.com/repos/${GITHUB_REPO}/git/tags/${tag_sha}")"
+        VERSION="$(printf '%s' "$response" | python3 -c 'import json,sys,re; v=json.loads(json.load(sys.stdin)["message"]); assert v["schema"]==2 and re.fullmatch("nightly-[0-9]+-[0-9]+",v["release_tag"]); print(v["release_tag"])')"
+        return
+    fi
     if [ "$VERSION" != "latest" ]; then
         info "Using specified version: $VERSION"
         return

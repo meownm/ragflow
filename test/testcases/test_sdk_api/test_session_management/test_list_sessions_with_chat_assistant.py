@@ -14,19 +14,10 @@
 #  limitations under the License.
 #
 import pytest
+from beartype.roar import BeartypeCallHintParamViolation
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from ragflow_sdk import RAGFlow
 from ragflow_sdk.modules.session import Message, Session
-
-
-@pytest.fixture(scope="session")
-def auth():
-    return "unit-auth"
-
-
-@pytest.fixture(scope="session", autouse=True)
-def set_tenant_info():
-    return None
 
 
 class TestSessionsWithChatAssistantList:
@@ -49,20 +40,20 @@ class TestSessionsWithChatAssistantList:
         "params, expected_page_size, expected_message",
         [
             ({"page": None, "page_size": 2}, 0, "not instance of"),
-            pytest.param({"page": 0, "page_size": 2}, 0, "ValueError('Search does not support negative slicing.')", marks=pytest.mark.skip),
+            ({"page": 0, "page_size": 2}, 2, ""),
             ({"page": 2, "page_size": 2}, 2, ""),
             ({"page": 3, "page_size": 2}, 1, ""),
             ({"page": "3", "page_size": 2}, 0, "not instance of"),
-            pytest.param({"page": -1, "page_size": 2}, 0, "ValueError('Search does not support negative slicing.')", marks=pytest.mark.skip),
-            pytest.param({"page": "a", "page_size": 2}, 0, """ValueError("invalid literal for int() with base 10: \'a\'")""", marks=pytest.mark.skip),
+            ({"page": -1, "page_size": 2}, 0, "page must be greater than or equal to 0"),
+            ({"page": "a", "page_size": 2}, 0, "not instance of"),
         ],
     )
     def test_page(self, add_sessions_with_chat_assistant, params, expected_page_size, expected_message):
         chat_assistant, _ = add_sessions_with_chat_assistant
         if expected_message:
-            with pytest.raises(Exception) as exception_info:
+            with pytest.raises(BeartypeCallHintParamViolation if expected_message == "not instance of" else Exception) as exception_info:
                 chat_assistant.list_sessions(**params)
-            assert expected_message in str(exception_info.value)
+            assert expected_message in str(exception_info.value) if expected_message == "not instance of" else expected_message == str(exception_info.value)
         else:
             sessions = chat_assistant.list_sessions(**params)
             assert len(sessions) == expected_page_size
@@ -76,16 +67,16 @@ class TestSessionsWithChatAssistantList:
             ({"page_size": 1}, 1, ""),
             ({"page_size": 6}, 5, ""),
             ({"page_size": "1"}, 0, "not instance of"),
-            pytest.param({"page_size": -1}, 5, "", marks=pytest.mark.skip),
-            pytest.param({"page_size": "a"}, 0, """ValueError("invalid literal for int() with base 10: \'a\'")""", marks=pytest.mark.skip),
+            ({"page_size": -1}, 0, "page_size must be greater than or equal to 0"),
+            ({"page_size": "a"}, 0, "not instance of"),
         ],
     )
     def test_page_size(self, add_sessions_with_chat_assistant, params, expected_page_size, expected_message):
         chat_assistant, _ = add_sessions_with_chat_assistant
         if expected_message:
-            with pytest.raises(Exception) as exception_info:
+            with pytest.raises(BeartypeCallHintParamViolation if expected_message == "not instance of" else Exception) as exception_info:
                 chat_assistant.list_sessions(**params)
-            assert expected_message in str(exception_info.value)
+            assert expected_message in str(exception_info.value) if expected_message == "not instance of" else expected_message == str(exception_info.value)
         else:
             sessions = chat_assistant.list_sessions(**params)
             assert len(sessions) == expected_page_size
@@ -98,17 +89,22 @@ class TestSessionsWithChatAssistantList:
             ({"orderby": "create_time"}, ""),
             ({"orderby": "update_time"}, ""),
             ({"orderby": "name", "desc": "False"}, "not instance of"),
-            pytest.param({"orderby": "unknown"}, "orderby should be create_time or update_time", marks=pytest.mark.skip(reason="issues/")),
+            ({"orderby": "name", "desc": False}, ""),
+            ({"orderby": "unknown"}, "Invalid orderby field: unknown"),
         ],
     )
     def test_orderby(self, add_sessions_with_chat_assistant, params, expected_message):
         chat_assistant, _ = add_sessions_with_chat_assistant
         if expected_message:
-            with pytest.raises(Exception) as exception_info:
+            with pytest.raises(BeartypeCallHintParamViolation if expected_message == "not instance of" else Exception) as exception_info:
                 chat_assistant.list_sessions(**params)
-            assert expected_message in str(exception_info.value)
+            assert expected_message in str(exception_info.value) if expected_message == "not instance of" else expected_message == str(exception_info.value)
         else:
-            chat_assistant.list_sessions(**params)
+            sessions = chat_assistant.list_sessions(**params)
+            assert len(sessions) == 5
+            assert len({session.id for session in sessions}) == 5
+            values = [getattr(session, params.get("orderby", "create_time")) for session in sessions]
+            assert values == sorted(values, reverse=params.get("desc", True))
 
     @pytest.mark.p3
     @pytest.mark.parametrize(
@@ -122,17 +118,21 @@ class TestSessionsWithChatAssistantList:
             ({"desc": "False"}, "not instance of"),
             ({"desc": False}, ""),
             ({"desc": "False", "orderby": "update_time"}, "not instance of"),
-            pytest.param({"desc": "unknown"}, "desc should be true or false", marks=pytest.mark.skip(reason="issues/")),
+            ({"desc": "unknown"}, "not instance of"),
         ],
     )
     def test_desc(self, add_sessions_with_chat_assistant, params, expected_message):
         chat_assistant, _ = add_sessions_with_chat_assistant
         if expected_message:
-            with pytest.raises(Exception) as exception_info:
+            with pytest.raises(BeartypeCallHintParamViolation if expected_message == "not instance of" else Exception) as exception_info:
                 chat_assistant.list_sessions(**params)
-            assert expected_message in str(exception_info.value)
+            assert expected_message in str(exception_info.value) if expected_message == "not instance of" else expected_message == str(exception_info.value)
         else:
-            chat_assistant.list_sessions(**params)
+            sessions = chat_assistant.list_sessions(**params)
+            assert len(sessions) == 5
+            assert len({session.id for session in sessions}) == 5
+            values = [getattr(session, params.get("orderby", "create_time")) for session in sessions]
+            assert values == sorted(values, reverse=params.get("desc", True))
 
     @pytest.mark.p1
     @pytest.mark.parametrize(
@@ -216,7 +216,7 @@ class TestSessionsWithChatAssistantList:
         chat_assistant, _ = add_sessions_with_chat_assistant
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = [executor.submit(chat_assistant.list_sessions) for _ in range(count)]
-        responses = list(as_completed(futures))
+        responses = [future.result() for future in as_completed(futures)]
         assert len(responses) == count, responses
 
     @pytest.mark.p3

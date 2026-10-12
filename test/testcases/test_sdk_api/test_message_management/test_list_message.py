@@ -13,7 +13,6 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
-import os
 import random
 
 import pytest
@@ -85,18 +84,22 @@ class TestMessageList:
             assert message["agent_id"] == agent_id, message
 
     @pytest.mark.p2
-    @pytest.mark.skipif(os.getenv("DOC_ENGINE") == "infinity", reason="Not support.")
     def test_search_keyword(self, client):
-        if get_doc_engine(client) == "infinity":
-            pytest.skip("Not support.")
         memory_id = self.memory_id
-        session_ids = self.session_ids
-        session_id = random.choice(session_ids)
-        slice_start = random.randint(0, len(session_id) - 2)
-        slice_end = random.randint(slice_start + 1, len(session_id) - 1)
-        keyword = session_id[slice_start:slice_end]
+        engine = get_doc_engine(client)
+        assert engine in {"elasticsearch", "infinity", "opensearch"}, "Document engine prerequisite is missing"
+        session_id = self.session_ids[0]
         memory = Memory(client, {"id": memory_id})
+        exact = memory.list_memory_messages(keywords=session_id)["messages"]["message_list"]
+        assert exact, exact
+        assert all(message["session_id"] == session_id for message in exact), exact
+        # ES applies a wildcard substring filter; Infinity applies string equality.
+        keyword = session_id[1:-1]
+        assert keyword and keyword not in self.session_ids
         res = memory.list_memory_messages(**{"keywords": keyword})
+        if engine == "infinity":
+            assert res["messages"]["message_list"] == [], res
+            return
         assert len(res["messages"]["message_list"]) > 0, res
         for message in res["messages"]["message_list"]:
             assert keyword in message["session_id"], message

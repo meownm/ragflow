@@ -60,7 +60,7 @@ from api.utils.api_utils import (
     get_error_argument_result,
     check_duplicate_ids,
 )
-from api.utils.pagination_utils import validate_rest_api_page_size
+from api.utils.pagination_utils import validate_rest_list_args
 from api.utils.validation_utils import (
     UpdateDocumentReq,
     format_validation_error_message,
@@ -722,19 +722,19 @@ def list_docs(dataset_id, tenant_id):
         type: integer
         required: false
         default: 1
-        description: Page number.
+        description: Nonnegative page number. Zero disables pagination. Invalid input returns code 102.
       - in: query
         name: page_size
         type: integer
         required: false
         default: 30
-        description: Number of items per page.
+        description: Items per page, from 0 to 100. Zero disables pagination. Invalid input returns code 102.
       - in: query
         name: orderby
         type: string
         required: false
         default: "create_time"
-        description: Field to order by.
+        description: Document storage field to order by (for example create_time, update_time, name, size, chunk_num). Unknown fields return code 102.
       - in: query
         name: desc
         type: boolean
@@ -841,10 +841,10 @@ def _get_docs_with_request(req, dataset_id: str):
 
     Args:
         req: The request object containing query parameters.
-            - page (int): Page number for pagination (default: 1).
-            - page_size (int): Number of documents per page (default: 30).
-            - orderby (str): Field to order by (default: "create_time").
-            - desc (bool): Whether to order in descending order (default: True).
+            - page (int): Nonnegative page number (default: 1); zero disables pagination.
+            - page_size (int): Documents per page, 0..100 (default: 30); zero disables pagination.
+            - orderby (str): Concrete Document storage field (default: "create_time").
+            - desc (str): Only case-insensitive "false" selects ascending order.
             - keywords (str): Keywords to search in document names.
             - suffix (list): File suffix filters.
             - types (list): Document type filters.
@@ -864,15 +864,16 @@ def _get_docs_with_request(req, dataset_id: str):
             - total (int): Total number of documents matching the criteria.
 
     Note:
+        - Invalid pagination and unknown sort fields return DATA_ERROR (102) before storage access.
         - The function supports filtering by document types, processing status, keywords, and time range.
         - Metadata filtering supports both simple key-value matching and complex conditions with operators.
     """
     q = req.args
 
-    page = int(q.get("page", 1))
-    page_size = validate_rest_api_page_size(int(q.get("page_size", 30)))
-
-    orderby = q.get("orderby", "create_time")
+    try:
+        page, page_size, orderby = validate_rest_list_args(q, orderby_fields=DocumentService.model._meta.fields, default_page=1, default_page_size=30)
+    except ValueError as exc:
+        return RetCode.DATA_ERROR, str(exc), [], 0
     desc = str(q.get("desc", "true")).strip().lower() != "false"
     keywords = q.get("keywords", "")
 

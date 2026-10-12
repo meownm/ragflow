@@ -56,8 +56,8 @@ class TestDocumentsList:
             ({"page": 2, "page_size": 2}, 0, 2, ""),
             ({"page": 3, "page_size": 2}, 0, 1, ""),
             ({"page": "3", "page_size": 2}, 0, 1, ""),
-            pytest.param({"page": -1, "page_size": 2}, 100, 0, "1064", marks=pytest.mark.skip(reason="issues/5851")),
-            pytest.param({"page": "a", "page_size": 2}, 100, 0, """ValueError("invalid literal for int() with base 10: 'a'")""", marks=pytest.mark.skip(reason="issues/5851")),
+            ({"page": -1, "page_size": 2}, 102, 0, "page must be greater than or equal to 0"),
+            ({"page": "a", "page_size": 2}, 102, 0, "page must be an integer"),
         ],
     )
     def test_page(self, WebApiAuth, add_documents, params, expected_code, expected_page_size, expected_message):
@@ -79,8 +79,8 @@ class TestDocumentsList:
             ({"page_size": 1}, 0, 1, ""),
             ({"page_size": 6}, 0, 5, ""),
             ({"page_size": "1"}, 0, 1, ""),
-            pytest.param({"page_size": -1}, 100, 0, "1064", marks=pytest.mark.skip(reason="issues/5851")),
-            pytest.param({"page_size": "a"}, 100, 0, """ValueError("invalid literal for int() with base 10: 'a'")""", marks=pytest.mark.skip(reason="issues/5851")),
+            ({"page_size": -1}, 102, 0, "page_size must be greater than or equal to 0"),
+            ({"page_size": "a"}, 102, 0, "page_size must be an integer"),
         ],
     )
     def test_page_size(self, WebApiAuth, add_documents, params, expected_code, expected_page_size, expected_message):
@@ -99,8 +99,8 @@ class TestDocumentsList:
             ({"orderby": None}, 0, lambda r: is_sorted(r["data"]["docs"], "create_time", True), ""),
             ({"orderby": "create_time"}, 0, lambda r: is_sorted(r["data"]["docs"], "create_time", True), ""),
             ({"orderby": "update_time"}, 0, lambda r: is_sorted(r["data"]["docs"], "update_time", True), ""),
-            pytest.param({"orderby": "name", "desc": "False"}, 0, lambda r: is_sorted(r["data"]["docs"], "name", False), "", marks=pytest.mark.skip(reason="issues/5851")),
-            pytest.param({"orderby": "unknown"}, 102, 0, "orderby should be create_time or update_time", marks=pytest.mark.skip(reason="issues/5851")),
+            ({"orderby": "name", "desc": "False"}, 0, lambda r: is_sorted(r["data"]["docs"], "name", False), ""),
+            ({"orderby": "unknown"}, 102, 0, "Invalid orderby field: unknown"),
         ],
     )
     def test_orderby(self, WebApiAuth, add_documents, params, expected_code, assertions, expected_message):
@@ -121,11 +121,11 @@ class TestDocumentsList:
             ({"desc": "true"}, 0, lambda r: is_sorted(r["data"]["docs"], "create_time", True), ""),
             ({"desc": "True"}, 0, lambda r: is_sorted(r["data"]["docs"], "create_time", True), ""),
             ({"desc": True}, 0, lambda r: is_sorted(r["data"]["docs"], "create_time", True), ""),
-            pytest.param({"desc": "false"}, 0, lambda r: is_sorted(r["data"]["docs"], "create_time", False), "", marks=pytest.mark.skip(reason="issues/5851")),
+            ({"desc": "false"}, 0, lambda r: is_sorted(r["data"]["docs"], "create_time", False), ""),
             ({"desc": "False"}, 0, lambda r: is_sorted(r["data"]["docs"], "create_time", False), ""),
             ({"desc": False}, 0, lambda r: is_sorted(r["data"]["docs"], "create_time", False), ""),
             ({"desc": "False", "orderby": "update_time"}, 0, lambda r: is_sorted(r["data"]["docs"], "update_time", False), ""),
-            pytest.param({"desc": "unknown"}, 102, 0, "desc should be true or false", marks=pytest.mark.skip(reason="issues/5851")),
+            ({"desc": "unknown"}, 0, lambda r: is_sorted(r["data"]["docs"], "create_time", True), ""),
         ],
     )
     def test_desc(self, WebApiAuth, add_documents, params, expected_code, assertions, expected_message):
@@ -163,9 +163,9 @@ class TestDocumentsList:
 
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = [executor.submit(list_documents, WebApiAuth, {"kb_id": kb_id}) for i in range(count)]
-        responses = list(as_completed(futures))
+        responses = [future.result() for future in as_completed(futures)]
         assert len(responses) == count, responses
-        assert all(future.result()["code"] == 0 for future in futures), responses
+        assert all(response["code"] == 0 for response in responses), responses
 
     # Tests moved from TestDocumentsListUnit
     @pytest.mark.p2

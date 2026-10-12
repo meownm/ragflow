@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-RUNNER_USER="${RUNNER_USER:-apt}"
+RUNNER_USER="${RUNNER_USER:-ragflow-test}"
+
+fail() { printf '%s\n' "$*" >&2; exit 1; }
+[[ "${TEST_VM_CONFIRMED:-}" == yes ]] || fail "Set TEST_VM_CONFIRMED=yes after verifying the dedicated test VM inventory."
+systemd-detect-virt --vm >/dev/null || fail "Provision test prerequisites only inside their dedicated VM."
+[[ ! -d /opt/nexus && ! -d /opt/ragflow-registry ]] || fail "Registry infrastructure must remain outside CI."
+[[ "$RUNNER_USER" =~ ^[a-z][a-z0-9_-]*$ && "$RUNNER_USER" != apt && "$RUNNER_USER" != root ]] || \
+  fail "Use a dedicated test guest account; apt/root are not CI identities."
 
 if [[ ${EUID} -ne 0 ]]; then
-  echo "Run this script as root: sudo RUNNER_USER=${RUNNER_USER} bash $0" >&2
+  echo "Run as the VM administrator: sudo TEST_VM_CONFIRMED=yes RUNNER_USER=${RUNNER_USER} bash $0" >&2
   exit 1
 fi
 
@@ -12,6 +19,7 @@ if ! id "${RUNNER_USER}" >/dev/null 2>&1; then
   echo "Runner user does not exist: ${RUNNER_USER}" >&2
   exit 1
 fi
+[[ "$(id -u "$RUNNER_USER")" != 0 ]] || fail "Test runner must not have UID zero."
 
 export DEBIAN_FRONTEND=noninteractive
 

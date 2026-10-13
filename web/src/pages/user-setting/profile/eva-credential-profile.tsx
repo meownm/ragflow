@@ -1,8 +1,10 @@
 import PasswordInput from '@/components/originui/password-input';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import message from '@/components/ui/message';
 import { Modal } from '@/components/ui/modal/modal';
 import { useTranslate } from '@/hooks/common-hooks';
+import { useFetchUserInfo } from '@/hooks/use-user-setting-request';
+import { evaAccessQueryKey } from '@/pages/business-documents/components/eva-access';
 import {
   deleteEvaUserCredential,
   EvaUserCredentialStatus,
@@ -11,12 +13,22 @@ import {
 } from '@/services/user-service';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { KeyRound, Loader2Icon, Trash2 } from 'lucide-react';
-import { useState } from 'react';
-
-const queryKey = ['eva-user-credentials'];
+import { useEffect, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router';
 
 export function EvaCredentialProfile() {
   const { t } = useTranslate('setting');
+  const { data: user } = useFetchUserInfo();
+  const queryKey = ['eva-user-credentials', user?.id];
+  const [search] = useSearchParams();
+  const autoOpened = useRef('');
+  const [verificationResult, setVerificationResult] = useState('');
+  const returnPath = search.get('returnTo') ?? '';
+  const returnTo = /^\/business-documents(?:\/(?:[\w-]+|eva\/[\w-]+))?$/.test(
+    returnPath,
+  )
+    ? returnPath
+    : undefined;
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState<EvaUserCredentialStatus>();
   const [removing, setRemoving] = useState<EvaUserCredentialStatus>();
@@ -42,7 +54,11 @@ export function EvaCredentialProfile() {
       setEditing(undefined);
       setToken('');
       await queryClient.invalidateQueries({ queryKey });
-      message.success(t('evaTokenSaved'));
+      await queryClient.invalidateQueries({ queryKey: evaAccessQueryKey });
+      await queryClient.invalidateQueries({
+        queryKey: ['business-document-eva-update'],
+      });
+      setVerificationResult(t('evaTokenVerified'));
     },
   });
   const deleteMutation = useMutation({
@@ -55,13 +71,28 @@ export function EvaCredentialProfile() {
     onSuccess: async () => {
       setRemoving(undefined);
       await queryClient.invalidateQueries({ queryKey });
+      await queryClient.invalidateQueries({ queryKey: evaAccessQueryKey });
+      setVerificationResult('');
       message.success(t('evaTokenDeleted'));
     },
   });
 
   const items = credentialsQuery.data ?? [];
+  useEffect(() => {
+    const connectorId = search.get('eva');
+    if (!connectorId || autoOpened.current === connectorId) return;
+    const item = credentialsQuery.data?.find(
+      (candidate) =>
+        candidate.connector_id === connectorId ||
+        candidate.connectors.some((connector) => connector.id === connectorId),
+    );
+    if (!item) return;
+    autoOpened.current = connectorId;
+    setEditing({ ...item, connector_id: connectorId });
+    setToken('');
+  }, [credentialsQuery.data, search]);
   return (
-    <section data-testid="settings-eva-profile">
+    <section id="eva-token" data-testid="settings-eva-profile">
       <div className="flex items-start gap-4">
         <label className="w-[190px] text-sm font-medium">
           {t('evaApiToken')}
@@ -131,6 +162,19 @@ export function EvaCredentialProfile() {
               {credentialsQuery.error.message}
             </p>
           )}
+          {verificationResult && (
+            <p className="text-xs text-state-success" role="status">
+              {verificationResult}
+            </p>
+          )}
+          {returnTo && (
+            <Link
+              className={buttonVariants({ variant: 'ghost' })}
+              to={returnTo}
+            >
+              {t('evaTokenReturn')}
+            </Link>
+          )}
         </div>
       </div>
 
@@ -142,7 +186,7 @@ export function EvaCredentialProfile() {
         maskClosable={false}
         confirmLoading={saveMutation.isPending}
         disabled={!token.trim()}
-        okText={t('save', { keyPrefix: 'common' })}
+        okText={t('evaTokenVerifyAndSave')}
         onOk={() => saveMutation.mutate()}
         onCancel={() => {
           setEditing(undefined);

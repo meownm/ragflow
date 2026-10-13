@@ -254,7 +254,6 @@ declare namespace AdminService {
     project_id: string;
     verify_ssl: boolean;
     include_archived: boolean;
-    token_configured: boolean;
   };
 
   export type BusinessDocumentsSettings = {
@@ -282,13 +281,8 @@ declare namespace AdminService {
       deactivated_items: number;
     };
 
-  export type BusinessDocumentsEvaConnectionInput = Omit<
-    BusinessDocumentsEvaConnection,
-    'token_configured'
-  > & {
-    eva_api_token?: string;
-    clear_token?: boolean;
-  };
+  export type BusinessDocumentsEvaConnectionInput =
+    BusinessDocumentsEvaConnection;
 
   export type AuditEventSource =
     | 'application'
@@ -319,7 +313,15 @@ declare namespace AdminService {
     measured_model_latency_jobs: number;
     total_tokens: number;
     measured_token_jobs: number;
-    tasks: { task_type: string; category: string; completed: number; dead: number; pending: number; retry: number; running: number }[];
+    tasks: {
+      task_type: string;
+      category: string;
+      completed: number;
+      dead: number;
+      pending: number;
+      retry: number;
+      running: number;
+    }[];
     models: { provider: string; model: string; count: number }[];
     errors: { task_type: string; error_code: string; count: number }[];
   };
@@ -346,7 +348,12 @@ declare namespace AdminService {
   };
 
   export type DocumentQualityDiagnostic = { code: string; fact_id?: string };
-  export type DocumentQualityGateCheck = { metric: string; actual: number; threshold: number; passed: boolean };
+  export type DocumentQualityGateCheck = {
+    metric: string;
+    actual: number;
+    threshold: number;
+    passed: boolean;
+  };
   export type DocumentQualityReport = {
     status: string;
     source_dirty?: boolean | null;
@@ -371,13 +378,27 @@ declare namespace AdminService {
     criterion_scores?: Record<string, number>;
     metrics?: Record<string, number>;
     gate_checks?: DocumentQualityGateCheck[];
-    cases?: { case_id: string; priority?: string; status: string; failure_count: number; diagnostics?: DocumentQualityDiagnostic[]; metrics?: Record<string, number>; gate_checks?: DocumentQualityGateCheck[] }[];
+    cases?: {
+      case_id: string;
+      priority?: string;
+      status: string;
+      failure_count: number;
+      diagnostics?: DocumentQualityDiagnostic[];
+      metrics?: Record<string, number>;
+      gate_checks?: DocumentQualityGateCheck[];
+    }[];
   };
 
   export type DocumentQualityRun = {
     id: string;
     trigger: 'NIGHTLY' | 'MONTHLY' | 'MANUAL';
-    status: 'PENDING' | 'RUNNING' | 'PASS' | 'FAIL' | 'INCOMPLETE' | 'DIAGNOSTIC';
+    status:
+      | 'PENDING'
+      | 'RUNNING'
+      | 'PASS'
+      | 'FAIL'
+      | 'INCOMPLETE'
+      | 'DIAGNOSTIC';
     requested_at: number;
     started_at: number | null;
     finished_at: number | null;
@@ -410,11 +431,16 @@ declare namespace AdminService {
     baseline_status: string | null;
     baseline_report: DocumentQualityReport | null;
     reason_code: string | null;
-    models: { models: { name: string; digest: string; aliases: string[] }[]; errors: string[] } | null;
+    models: {
+      models: { name: string; digest: string; aliases: string[] }[];
+      errors: string[];
+    } | null;
     runs: DocumentQualityRun[];
   };
 
-  export type DocumentQualityCampaigns = { campaigns: DocumentQualityCampaign[] };
+  export type DocumentQualityCampaigns = {
+    campaigns: DocumentQualityCampaign[];
+  };
   export type DocumentQualityModels = {
     configured: boolean;
     case_ids: string[];

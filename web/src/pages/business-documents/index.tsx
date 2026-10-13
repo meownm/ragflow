@@ -43,10 +43,6 @@ import {
   submitBusinessDocumentCommand,
   watchBusinessDocumentJobEvents,
 } from '@/services/business-document-service';
-import {
-  EvaUserCredentialStatus,
-  listEvaUserCredentials,
-} from '@/services/user-service';
 import api from '@/utils/api';
 import { downloadFileFromBlob } from '@/utils/file-util';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -63,7 +59,6 @@ import {
   Download,
   ExternalLink,
   FileClock,
-  FilePenLine,
   FilePlus2,
   LayoutTemplate,
   Link2,
@@ -92,7 +87,11 @@ import {
   BusinessDocumentProgress,
   isBusinessDocumentOperationActive,
 } from './components/document-progress';
-import { EvaChangeCreatePanel } from './components/eva-change-create-panel';
+import {
+  EvaAccessNotice,
+  isEvaAccessError,
+  useEvaAccess,
+} from './components/eva-access';
 import { EvaChangeWorkbench } from './components/eva-change-workbench';
 import { evidenceRefsChanged } from './components/evidence-refs-diff';
 import { ProtocolPane } from './components/protocol-pane';
@@ -221,9 +220,9 @@ function BusinessDocumentCreationSidebar({
 
 function CreateBusinessDocumentPage() {
   const navigate = useNavigate();
+  const evaAccess = useEvaAccess();
   const { config } = useSystemConfig();
   const queryClient = useQueryClient();
-  const [mode, setMode] = useState<'new' | 'eva'>('new');
   const [catalogEntryId, setCatalogEntryId] = useState('');
   const [idea, setIdea] = useState('');
   const [evaMatches, setEvaMatches] = useState<EvaTitleMatch[]>([]);
@@ -325,24 +324,36 @@ function CreateBusinessDocumentPage() {
       <header className="flex flex-wrap items-center justify-between gap-4 border-b border-border-button px-6 py-5 lg:px-8">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-text-primary">
-            Рабочие документы
+            Бизнес-требования
           </h1>
           <p className="mt-1 text-sm text-text-secondary">
             Продолжите сохранённую работу или начните новые бизнес-требования.
           </p>
         </div>
-        {canCreate &&
-          config?.visibleSections.includes('document_constructor') && (
-            <Button asChild variant="outline">
-              <Link
-                to={Routes.DocumentConstructor}
-                data-testid="open-document-constructor"
-              >
-                <LayoutTemplate className="size-4" />
-                Конструктор
-              </Link>
-            </Button>
-          )}
+        <div className="flex flex-wrap items-center gap-2">
+          <EvaAccessNotice
+            access={evaAccess}
+            compact
+            error={createMutation.error}
+            returnTo={Routes.BusinessDocuments}
+            onRetry={() => {
+              if (isEvaAccessError(createMutation.error))
+                createMutation.reset();
+            }}
+          />
+          {canCreate &&
+            config?.visibleSections.includes('document_constructor') && (
+              <Button asChild variant="outline">
+                <Link
+                  to={Routes.DocumentConstructor}
+                  data-testid="open-document-constructor"
+                >
+                  <LayoutTemplate className="size-4" />
+                  Конструктор
+                </Link>
+              </Button>
+            )}
+        </div>
       </header>
 
       <div
@@ -573,235 +584,221 @@ function CreateBusinessDocumentPage() {
         </section>
 
         <BusinessDocumentCreationSidebar visible={canCreate}>
-          <div className="sticky top-0 z-20 flex gap-1 border-b border-border-button bg-bg-base px-6 py-3 lg:px-8">
-            <Button
-              size="sm"
-              variant={mode === 'new' ? 'secondary' : 'ghost'}
-              onClick={() => setMode('new')}
-              data-testid="new-document-mode"
-            >
+          <form onSubmit={submit} className="px-6 py-7 lg:px-8">
+            <div className="flex items-center gap-2 text-sm font-medium text-accent-primary">
               <FilePlus2 className="size-4" />
-              Новый
-            </Button>
-            <Button
-              size="sm"
-              variant={mode === 'eva' ? 'secondary' : 'ghost'}
-              onClick={() => setMode('eva')}
-              data-testid="eva-change-mode"
-            >
-              <FilePenLine className="size-4" />
-              Доработать EVA
-            </Button>
-          </div>
+              Новый документ
+            </div>
+            <h2 className="mt-3 text-xl font-semibold tracking-tight text-text-primary">
+              Бизнес-требования
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-text-secondary">
+              Выберите название, чтобы создать пустые обязательные разделы. Если
+              укажете идею, агент начнёт сбор вводных.
+            </p>
 
-          {mode === 'new' ? (
-            <form onSubmit={submit} className="px-6 py-7 lg:px-8">
-              <div className="flex items-center gap-2 text-sm font-medium text-accent-primary">
-                <FilePlus2 className="size-4" />
-                Новый документ
-              </div>
-              <h2 className="mt-3 text-xl font-semibold tracking-tight text-text-primary">
-                Бизнес-требования
-              </h2>
-              <p className="mt-2 text-sm leading-6 text-text-secondary">
-                Агент соберёт вводные, подготовит документ и проведёт
-                согласование.
-              </p>
-
-              <label className="mt-6 block space-y-2 text-sm font-medium">
-                <span>Название</span>
-                <select
-                  value={catalogEntryId}
-                  onChange={(event) => {
-                    setCatalogEntryId(event.target.value);
-                    setEvaMatches([]);
-                  }}
-                  disabled={catalogQuery.isLoading || catalogQuery.isError}
-                  className="h-9 w-full rounded-md border border-border-button bg-bg-input px-3 text-sm font-normal outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                  aria-label="Название документа"
-                  data-testid="business-document-catalog-select"
-                >
-                  <option value="" disabled>
-                    Выберите документ из справочника
+            <label className="mt-6 block space-y-2 text-sm font-medium">
+              <span>Название</span>
+              <select
+                value={catalogEntryId}
+                onChange={(event) => {
+                  setCatalogEntryId(event.target.value);
+                  setEvaMatches([]);
+                }}
+                disabled={catalogQuery.isLoading || catalogQuery.isError}
+                className="h-9 w-full rounded-md border border-border-button bg-bg-input px-3 text-sm font-normal outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                aria-label="Название документа"
+                data-testid="business-document-catalog-select"
+              >
+                <option value="" disabled>
+                  Выберите документ из справочника
+                </option>
+                {(catalogQuery.data?.items ?? []).map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.title}
                   </option>
-                  {(catalogQuery.data?.items ?? []).map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.title}
-                    </option>
-                  ))}
-                </select>
-                {catalogQuery.isLoading && (
-                  <span className="block text-xs font-normal text-text-secondary">
-                    Загружаем справочник документов…
-                  </span>
-                )}
-                {catalogQuery.isError && (
-                  <span className="block text-xs font-normal text-state-error">
-                    Не удалось загрузить справочник документов.
-                  </span>
-                )}
-                {selectedCatalogEntry?.description && (
-                  <span className="block text-xs font-normal leading-5 text-text-secondary">
-                    {selectedCatalogEntry.description}
-                  </span>
-                )}
-              </label>
-              <label className="mt-5 block space-y-2 text-sm font-medium">
-                <span>Идея</span>
-                <div className="relative">
-                  <Textarea
-                    value={idea}
-                    maxLength={10000}
-                    autoSize={{ minRows: 7, maxRows: 18 }}
-                    resize="vertical"
-                    aria-label="Описание идеи"
-                    placeholder="Что нужно создать, для кого и какой результат ожидается?"
-                    className="pe-11"
-                    onChange={(event) => setIdea(event.target.value)}
+                ))}
+              </select>
+              {catalogQuery.isLoading && (
+                <span className="block text-xs font-normal text-text-secondary">
+                  Загружаем справочник документов…
+                </span>
+              )}
+              {catalogQuery.isError && (
+                <span className="block text-xs font-normal text-state-error">
+                  Не удалось загрузить справочник документов.
+                </span>
+              )}
+              {selectedCatalogEntry?.description && (
+                <span className="block text-xs font-normal leading-5 text-text-secondary">
+                  {selectedCatalogEntry.description}
+                </span>
+              )}
+            </label>
+            <label className="mt-5 block space-y-2 text-sm font-medium">
+              <span>Идея</span>
+              <div className="relative">
+                <Textarea
+                  value={idea}
+                  maxLength={10000}
+                  autoSize={{ minRows: 7, maxRows: 18 }}
+                  resize="vertical"
+                  aria-label="Описание идеи"
+                  placeholder="Что нужно создать, для кого и какой результат ожидается?"
+                  className="pe-11"
+                  onChange={(event) => setIdea(event.target.value)}
+                />
+                <div className="absolute end-2 top-2">
+                  <VoiceInput
+                    label="Идея"
+                    onTranscript={(transcript) =>
+                      setIdea((value) =>
+                        appendVoiceTranscript(value, transcript, 10000),
+                      )
+                    }
+                    testId="voice-input-document-idea"
                   />
-                  <div className="absolute end-2 top-2">
-                    <VoiceInput
-                      label="Идея"
-                      onTranscript={(transcript) =>
-                        setIdea((value) =>
-                          appendVoiceTranscript(value, transcript, 10000),
-                        )
-                      }
-                      testId="voice-input-document-idea"
-                    />
-                  </div>
                 </div>
-              </label>
+              </div>
+            </label>
 
-              {evaMatches.length > 0 && (
-                <div
-                  className="mt-5 rounded-lg border border-state-warning/40 bg-state-warning/10 p-4"
-                  data-testid="eva-title-match-banner"
-                >
-                  <div className="flex items-start gap-3">
-                    <AlertTriangle className="mt-0.5 size-4 shrink-0 text-state-warning" />
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold text-text-primary">
-                        В EVA Wiki найдены страницы с таким названием
-                      </p>
-                      <p className="mt-1 text-xs leading-5 text-text-secondary">
-                        Выберите свободную страницу: её содержимое откроется как
-                        первая ревизия для комментариев и анализа.
-                      </p>
-                      <div className="mt-3 space-y-2">
-                        {evaMatches.map((match) => (
-                          <div
-                            key={match.id || match.web_url}
-                            className="rounded-md border border-border-button bg-bg-base p-3"
-                          >
-                            <div className="flex flex-wrap items-start justify-between gap-3">
-                              <div className="min-w-0">
-                                <p className="text-sm font-medium text-text-primary">
-                                  {match.name}
-                                </p>
-                                <div className="mt-1 flex flex-wrap items-center gap-1 text-xs text-text-secondary">
-                                  {match.breadcrumbs.map((item, index) => (
-                                    <span
-                                      key={item.id}
-                                      className="flex items-center gap-1"
-                                    >
-                                      {index > 0 && (
-                                        <span aria-hidden="true">›</span>
-                                      )}
-                                      <a
-                                        href={item.web_url}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="hover:text-accent-primary hover:underline"
-                                      >
-                                        {item.name}
-                                      </a>
-                                    </span>
-                                  ))}
-                                  {match.breadcrumbs.length === 0 && (
+            {evaMatches.length > 0 && (
+              <div
+                className="mt-5 rounded-lg border border-state-warning/40 bg-state-warning/10 p-4"
+                data-testid="eva-title-match-banner"
+              >
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="mt-0.5 size-4 shrink-0 text-state-warning" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-text-primary">
+                      В EVA Wiki найдены страницы с таким названием
+                    </p>
+                    <p className="mt-1 text-xs leading-5 text-text-secondary">
+                      Выберите свободную страницу: её содержимое откроется как
+                      первая ревизия для комментариев и анализа.
+                    </p>
+                    <div className="mt-3 space-y-2">
+                      {evaMatches.map((match) => (
+                        <div
+                          key={match.id || match.web_url}
+                          className="rounded-md border border-border-button bg-bg-base p-3"
+                        >
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium text-text-primary">
+                                {match.name}
+                              </p>
+                              <div className="mt-1 flex flex-wrap items-center gap-1 text-xs text-text-secondary">
+                                {match.breadcrumbs.map((item, index) => (
+                                  <span
+                                    key={item.id}
+                                    className="flex items-center gap-1"
+                                  >
+                                    {index > 0 && (
+                                      <span aria-hidden="true">›</span>
+                                    )}
                                     <a
-                                      href={match.web_url}
+                                      href={item.web_url}
                                       target="_blank"
                                       rel="noopener noreferrer"
-                                      className="break-all hover:text-accent-primary hover:underline"
+                                      className="hover:text-accent-primary hover:underline"
                                     >
-                                      {match.hierarchy || match.web_url}
+                                      {item.name}
                                     </a>
-                                  )}
-                                </div>
-                                {!match.binding_available && (
-                                  <p className="mt-2 text-xs text-state-error">
-                                    Уже привязана к документу «
-                                    {match.linked_document?.title ||
-                                      'другой документ'}
-                                    »
-                                  </p>
+                                  </span>
+                                ))}
+                                {match.breadcrumbs.length === 0 && (
+                                  <a
+                                    href={match.web_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="break-all hover:text-accent-primary hover:underline"
+                                  >
+                                    {match.hierarchy || match.web_url}
+                                  </a>
                                 )}
                               </div>
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="secondary"
-                                disabled={
-                                  !match.binding_available ||
-                                  createMutation.isPending
-                                }
-                                onClick={() =>
-                                  createDocument(
-                                    { mode: 'BIND' },
-                                    match.web_url,
-                                  )
-                                }
-                              >
-                                Открыть в редакторе
-                              </Button>
+                              {!match.binding_available && (
+                                <p className="mt-2 text-xs text-state-error">
+                                  Уже привязана к документу «
+                                  {match.linked_document?.title ||
+                                    'другой документ'}
+                                  »
+                                </p>
+                              )}
                             </div>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              disabled={
+                                !match.binding_available ||
+                                createMutation.isPending
+                              }
+                              onClick={() =>
+                                createDocument({ mode: 'BIND' }, match.web_url)
+                              }
+                            >
+                              Открыть в редакторе
+                            </Button>
                           </div>
-                        ))}
-                      </div>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        className="mt-3"
-                        disabled={createMutation.isPending}
-                        onClick={() => createDocument({ mode: 'SKIP' })}
-                        data-testid="create-without-eva-binding"
-                      >
-                        Создать без привязки
-                      </Button>
+                        </div>
+                      ))}
                     </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="mt-3"
+                      disabled={createMutation.isPending}
+                      onClick={() => createDocument({ mode: 'SKIP' })}
+                      data-testid="create-without-eva-binding"
+                    >
+                      Создать без привязки
+                    </Button>
                   </div>
                 </div>
+              </div>
+            )}
+
+            {createMutation.error &&
+              !isEvaAccessError(createMutation.error) &&
+              !(
+                createMutation.error instanceof BusinessDocumentConflictError &&
+                createMutation.error.code === 'EVA_BINDING_DECISION_REQUIRED'
+              ) && (
+                <p className="mt-4 text-sm text-state-error" role="alert">
+                  {createMutation.error.message}
+                </p>
               )}
 
-              {createMutation.error &&
-                !(
-                  createMutation.error instanceof
-                    BusinessDocumentConflictError &&
-                  createMutation.error.code === 'EVA_BINDING_DECISION_REQUIRED'
+            <div className="mt-6 flex scroll-mt-20 flex-wrap justify-end gap-2">
+              {evaAccess.data &&
+                ['MISSING', 'REJECTED', 'FORBIDDEN', 'UNAVAILABLE'].includes(
+                  evaAccess.data.state,
                 ) && (
-                  <p className="mt-4 text-sm text-state-error" role="alert">
-                    {createMutation.error.message}
-                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={!catalogEntryId || createMutation.isPending}
+                    onClick={() => createDocument({ mode: 'SKIP' })}
+                    data-testid="create-without-eva-access"
+                  >
+                    Начать без привязки к EVA
+                  </Button>
                 )}
-
-              <div className="mt-6 flex scroll-mt-20 justify-end">
-                <Button
-                  type="submit"
-                  variant="accent"
-                  size="lg"
-                  loading={createMutation.isPending}
-                  disabled={!catalogEntryId || !idea.trim()}
-                >
-                  <Sparkles className="size-4" />
-                  Начать работу
-                </Button>
-              </div>
-            </form>
-          ) : (
-            <EvaChangeCreatePanel />
-          )}
+              <Button
+                type="submit"
+                variant="accent"
+                size="lg"
+                loading={createMutation.isPending}
+                disabled={!catalogEntryId || !idea.trim()}
+              >
+                <Sparkles className="size-4" />
+                Начать работу
+              </Button>
+            </div>
+          </form>
         </BusinessDocumentCreationSidebar>
       </div>
     </main>
@@ -1079,42 +1076,10 @@ export default function BusinessDocumentsPage() {
     },
   });
   const evaPageUrl = document?.eva_binding?.page_url;
-  const evaConnectorId = document?.eva_binding?.connector_id;
-  const evaCredentialsQuery = useQuery<EvaUserCredentialStatus[]>({
-    queryKey: ['eva-user-credentials'],
-    queryFn: async () => {
-      const { data } = await listEvaUserCredentials();
-      if (data.code !== 0) {
-        throw new Error(
-          data.message || 'Не удалось проверить персональный EVA-токен.',
-        );
-      }
-      return data.data?.items ?? [];
-    },
-    enabled: Boolean(
-      documentId &&
-      !changeId &&
-      evaPageUrl &&
-      document?.permissions?.edit !== false,
-    ),
-    retry: false,
-  });
-  const hasPersonalEvaToken = useMemo(
-    () =>
-      Boolean(
-        evaPageUrl &&
-        evaCredentialsQuery.data?.some(
-          (credential) =>
-            credential.configured &&
-            (!evaConnectorId ||
-              credential.connector_id === evaConnectorId ||
-              credential.connectors.some(
-                (connector) => connector.id === evaConnectorId,
-              )),
-        ),
-      ),
-    [evaConnectorId, evaCredentialsQuery.data, evaPageUrl],
+  const evaAccess = useEvaAccess(
+    Boolean(documentId && !changeId && evaPageUrl),
   );
+  const hasPersonalEvaToken = evaAccess.data?.state === 'AVAILABLE';
   const currentRevisionId = document?.current_revision?.revision_id;
   const evaUpdateQuery = useQuery({
     queryKey: BusinessDocumentKeys.evaUpdate(documentId),
@@ -1122,6 +1087,7 @@ export default function BusinessDocumentsPage() {
     enabled: Boolean(
       documentId &&
       !changeId &&
+      hasPersonalEvaToken &&
       document?.eva_binding?.status === 'CONNECTED' &&
       document.eva_binding.capabilities.includes('PULL_FROM_EVA') &&
       document.current_revision &&
@@ -1433,14 +1399,7 @@ export default function BusinessDocumentsPage() {
                 variant="ghost"
                 data-testid="business-document-details-toggle"
               >
-                {evaUpdateQuery.data?.changed
-                  ? 'Обновление EVA'
-                  : evaUpdateQuery.error
-                    ? 'Ошибка EVA'
-                    : 'Сведения'}
-                {(evaUpdateQuery.data?.changed || evaUpdateQuery.error) && (
-                  <span className="size-1.5 rounded-full bg-state-warning" />
-                )}
+                Сведения
                 <ChevronDown className="size-3.5" />
               </Button>
             </PopoverTrigger>
@@ -1498,125 +1457,6 @@ export default function BusinessDocumentsPage() {
                         ?.message
                     }
                   </p>
-                )}
-                {document.eva_binding && (
-                  <div
-                    className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-border-button pt-3 text-xs"
-                    data-testid="business-document-eva-binding"
-                  >
-                    <div className="flex min-w-0 flex-1 items-center gap-2">
-                      <Link2 className="size-3.5 shrink-0 text-accent-primary" />
-                      <span className="text-text-secondary">
-                        Связано с EVA:
-                      </span>
-                      <a
-                        href={document.eva_binding.page_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex min-w-0 items-center gap-1 font-medium text-text-primary hover:text-accent-primary"
-                      >
-                        <span className="truncate">
-                          {document.eva_binding.document_name ||
-                            document.eva_binding.document_code ||
-                            document.eva_binding.page_url}
-                        </span>
-                        <ExternalLink className="size-3 shrink-0" />
-                      </a>
-                      {document.eva_binding.status === 'LINK_ONLY' && (
-                        <>
-                          <span className="text-text-disabled">
-                            Только ссылка — доступный коннектор не найден
-                          </span>
-                          {document.permissions?.edit !== false && (
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              disabled={isBusy || rebindEvaMutation.isPending}
-                              loading={rebindEvaMutation.isPending}
-                              onClick={() => rebindEvaMutation.mutate()}
-                              data-testid="rebind-business-document-to-eva"
-                            >
-                              <RefreshCw className="size-3.5" />
-                              Подключить заново
-                            </Button>
-                          )}
-                        </>
-                      )}
-                    </div>
-                    {document.permissions?.edit !== false &&
-                      evaUpdateQuery.data?.changed &&
-                      evaUpdateQuery.data.can_pull && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={
-                            isBusy ||
-                            !document.current_revision ||
-                            !['REVIEW', 'AGREED'].includes(
-                              document.lifecycle_state,
-                            ) ||
-                            pullEvaMutation.isPending
-                          }
-                          loading={pullEvaMutation.isPending}
-                          onClick={() => pullEvaMutation.mutate()}
-                          data-testid="pull-business-document-from-eva"
-                        >
-                          <ArrowDownToLine className="size-3.5" />
-                          Загрузить обновление из EVA
-                        </Button>
-                      )}
-                    {document.permissions?.edit !== false &&
-                      hasPersonalEvaToken && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={
-                            isBusy ||
-                            document.lifecycle_state !== 'AGREED' ||
-                            createEvaChangeMutation.isPending
-                          }
-                          loading={createEvaChangeMutation.isPending}
-                          onClick={() => createEvaChangeMutation.mutate()}
-                          data-testid="push-business-document-to-eva"
-                        >
-                          <ArrowUpFromLine className="size-3.5" />
-                          Сохранить текущий вариант в EVA
-                        </Button>
-                      )}
-                    {(rebindEvaMutation.error ||
-                      pullEvaMutation.error ||
-                      createEvaChangeMutation.error) && (
-                      <span className="w-full text-state-error" role="alert">
-                        {
-                          (
-                            rebindEvaMutation.error ||
-                            pullEvaMutation.error ||
-                            createEvaChangeMutation.error
-                          )?.message
-                        }
-                      </span>
-                    )}
-                    {evaSyncNotice && (
-                      <span className="w-full text-text-secondary">
-                        {evaSyncNotice}
-                      </span>
-                    )}
-                    {evaUpdateQuery.data?.changed && (
-                      <span
-                        className="w-full text-state-warning"
-                        data-testid="eva-update-available"
-                      >
-                        В EVA есть более новая версия документа. Загрузите её,
-                        чтобы добавить изменения в текущий цикл ревью.
-                      </span>
-                    )}
-                    {evaUpdateQuery.error && (
-                      <span className="w-full text-text-disabled" role="status">
-                        Не удалось проверить обновления EVA:{' '}
-                        {evaUpdateQuery.error.message}
-                      </span>
-                    )}
-                  </div>
                 )}
               </div>
             </PopoverContent>
@@ -1802,6 +1642,151 @@ export default function BusinessDocumentsPage() {
       </header>
 
       <div aria-live="polite">
+        {document.eva_binding && (
+          <div
+            className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border-button px-5 py-3 text-xs"
+            data-testid="business-document-eva-binding"
+          >
+            <div className="flex min-w-0 flex-1 items-center gap-2">
+              <Link2 className="size-3.5 shrink-0 text-accent-primary" />
+              <span className="text-text-secondary">Связано с EVA:</span>
+              <a
+                href={document.eva_binding.page_url}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex min-w-0 items-center gap-1 font-medium text-text-primary hover:text-accent-primary"
+              >
+                <span className="truncate">
+                  {document.eva_binding.document_name ||
+                    document.eva_binding.document_code ||
+                    document.eva_binding.page_url}
+                </span>
+                <ExternalLink className="size-3 shrink-0" />
+              </a>
+              {document.eva_binding.status === 'LINK_ONLY' && (
+                <>
+                  <span className="text-text-disabled">
+                    Только ссылка — доступный коннектор не найден
+                  </span>
+                  {document.permissions?.edit !== false && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={
+                        isBusy ||
+                        !hasPersonalEvaToken ||
+                        rebindEvaMutation.isPending
+                      }
+                      loading={rebindEvaMutation.isPending}
+                      onClick={() => rebindEvaMutation.mutate()}
+                      data-testid="rebind-business-document-to-eva"
+                    >
+                      <RefreshCw className="size-3.5" />
+                      Подключить заново
+                    </Button>
+                  )}
+                </>
+              )}
+            </div>
+            {document.permissions?.edit !== false &&
+              evaUpdateQuery.data?.changed &&
+              evaUpdateQuery.data.can_pull && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={
+                    isBusy ||
+                    !hasPersonalEvaToken ||
+                    !document.current_revision ||
+                    !['REVIEW', 'AGREED'].includes(document.lifecycle_state) ||
+                    pullEvaMutation.isPending
+                  }
+                  loading={pullEvaMutation.isPending}
+                  onClick={() => pullEvaMutation.mutate()}
+                  data-testid="pull-business-document-from-eva"
+                >
+                  <ArrowDownToLine className="size-3.5" />
+                  Загрузить обновление из EVA
+                </Button>
+              )}
+            {document.permissions?.edit !== false && (
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={
+                  isBusy ||
+                  !hasPersonalEvaToken ||
+                  !document.current_revision ||
+                  !['REVIEW', 'AGREED'].includes(document.lifecycle_state) ||
+                  createEvaChangeMutation.isPending
+                }
+                loading={createEvaChangeMutation.isPending}
+                onClick={() => createEvaChangeMutation.mutate()}
+                data-testid="push-business-document-to-eva"
+              >
+                <ArrowUpFromLine className="size-3.5" />
+                Сохранить текущий вариант в EVA
+              </Button>
+            )}
+            {(rebindEvaMutation.error ||
+              pullEvaMutation.error ||
+              createEvaChangeMutation.error) &&
+              !isEvaAccessError(
+                rebindEvaMutation.error ||
+                  pullEvaMutation.error ||
+                  createEvaChangeMutation.error,
+              ) && (
+                <span className="w-full text-state-error" role="alert">
+                  {
+                    (
+                      rebindEvaMutation.error ||
+                      pullEvaMutation.error ||
+                      createEvaChangeMutation.error
+                    )?.message
+                  }
+                </span>
+              )}
+            {evaSyncNotice && (
+              <span className="w-full text-text-secondary">
+                {evaSyncNotice}
+              </span>
+            )}
+            {evaUpdateQuery.data?.changed && (
+              <span
+                className="w-full text-state-warning"
+                data-testid="eva-update-available"
+              >
+                В EVA есть более новая версия документа. Загрузите её, чтобы
+                добавить изменения в текущий цикл ревью.
+              </span>
+            )}
+            {evaUpdateQuery.error &&
+              !isEvaAccessError(evaUpdateQuery.error) && (
+                <span className="w-full text-text-disabled" role="status">
+                  Не удалось проверить обновления EVA:{' '}
+                  {evaUpdateQuery.error.message}
+                </span>
+              )}
+            <div className="w-full">
+              <EvaAccessNotice
+                access={evaAccess}
+                error={
+                  rebindEvaMutation.error ||
+                  pullEvaMutation.error ||
+                  createEvaChangeMutation.error ||
+                  evaUpdateQuery.error
+                }
+                returnTo={`${Routes.BusinessDocuments}/${documentId}`}
+                onRetry={() => {
+                  rebindEvaMutation.reset();
+                  pullEvaMutation.reset();
+                  createEvaChangeMutation.reset();
+                  if (hasPersonalEvaToken) void evaUpdateQuery.refetch();
+                }}
+              />
+            </div>
+          </div>
+        )}
         {deleteMutation.error && (
           <div className="border-b border-state-error/40 bg-state-error/10 px-5 py-2 text-sm text-state-error">
             {deleteMutation.error.message}

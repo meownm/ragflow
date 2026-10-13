@@ -93,12 +93,23 @@ function unwrap<T>(payload: T | ApiEnvelope<T>): T {
   return payload as T;
 }
 
-export class BusinessDocumentConflictError extends Error {
+export class BusinessDocumentRequestError extends Error {
+  readonly receivedAt = Date.now();
+  constructor(
+    message: string,
+    readonly code: string,
+  ) {
+    super(message);
+    this.name = 'BusinessDocumentRequestError';
+  }
+}
+
+export class BusinessDocumentConflictError extends BusinessDocumentRequestError {
   readonly code: string;
   readonly details: unknown;
 
   constructor(message: string, code = 'CONFLICT', details?: unknown) {
-    super(message);
+    super(message, code);
     this.name = 'BusinessDocumentConflictError';
     this.code = code;
     this.details = details;
@@ -137,9 +148,39 @@ function rethrowBusinessDocumentError(error: unknown): never {
         payload?.data?.details,
       );
     }
+    if (payload?.data?.error_code) {
+      throw new BusinessDocumentRequestError(
+        message || requestFailureMessage(error.response?.status),
+        payload.data.error_code,
+      );
+    }
     throw new Error(message || requestFailureMessage(error.response?.status));
   }
   throw error;
+}
+
+export type BusinessDocumentEvaAccess = {
+  state:
+    | 'AVAILABLE'
+    | 'MISSING'
+    | 'REJECTED'
+    | 'FORBIDDEN'
+    | 'UNAVAILABLE'
+    | 'NOT_CONFIGURED';
+  connector_id: string | null;
+  error_code?: string;
+};
+
+export async function checkBusinessDocumentEvaAccess() {
+  try {
+    const response = await request.get(
+      api.businessDocumentEvaAccess,
+      requestConfig(),
+    );
+    return unwrap<BusinessDocumentEvaAccess>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
 }
 
 export async function createBusinessDocument(
@@ -360,7 +401,12 @@ export async function validateBusinessDocumentSqlManualQuery(
   try {
     const response = await request.post(
       api.businessDocumentSqlProjectManualSqlValidate(projectId),
-      { schema_version: '1', expected_state_version: expectedStateVersion, sql, parameters },
+      {
+        schema_version: '1',
+        expected_state_version: expectedStateVersion,
+        sql,
+        parameters,
+      },
       requestConfig(),
     );
     return unwrap<SqlQueryCompileResponse>(response.data);

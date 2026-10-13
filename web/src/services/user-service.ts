@@ -1,6 +1,8 @@
 import api from '@/utils/api';
+import evaRequest from '@/utils/next-request';
 import registerServer from '@/utils/register-server';
 import request, { post } from '@/utils/request';
+import type { AxiosRequestConfig } from 'axios';
 
 const {
   login,
@@ -113,17 +115,23 @@ export interface EvaUserCredentialStatus {
   connectors: Array<{ id: string; name: string }>;
 }
 
-export const listEvaUserCredentials = () => request.get(api.evaUserCredentials);
+const evaCredentialConfig = {
+  skipErrorNotification: true,
+} as AxiosRequestConfig;
+export const listEvaUserCredentials = () =>
+  evaRequest.get(api.evaUserCredentials, evaCredentialConfig);
 
 export const putEvaUserCredential = (
   connectorId: string,
   evaApiToken: string,
 ) =>
-  request.put(api.evaUserCredential(connectorId), {
-    data: { eva_api_token: evaApiToken },
-  });
+  evaRequest.put(
+    api.evaUserCredential(connectorId),
+    { eva_api_token: evaApiToken },
+    evaCredentialConfig,
+  );
 
 export const deleteEvaUserCredential = (connectorId: string) =>
-  request.delete(api.evaUserCredential(connectorId));
+  evaRequest.delete(api.evaUserCredential(connectorId), evaCredentialConfig);
 
 export default userService;

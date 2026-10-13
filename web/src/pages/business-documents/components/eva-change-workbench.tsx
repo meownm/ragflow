@@ -16,6 +16,7 @@ import { Routes } from '@/routes';
 import {
   approveEvaDocumentChange,
   BusinessDocumentConflictError,
+  BusinessDocumentRequestError,
   fetchEvaDocumentChange,
   generateEvaDocumentChangeDraft,
   prepareEvaDocumentChange,
@@ -40,6 +41,7 @@ import type {
   EvaDocumentChangeAction,
   EvaDocumentChangeState,
 } from '../types';
+import { EvaAccessNotice, isEvaAccessError, useEvaAccess } from './eva-access';
 import { appendVoiceTranscript, VoiceInput } from './voice-input';
 
 const stateLabels: Record<EvaDocumentChangeState, string> = {
@@ -94,6 +96,7 @@ export function EvaChangeWorkbench({ changeId }: { changeId: string }) {
         : false,
   });
   const change = changeQuery.data;
+  const evaAccess = useEvaAccess(Boolean(change));
 
   const actionMutation = useMutation({
     mutationFn: ({
@@ -157,6 +160,19 @@ export function EvaChangeWorkbench({ changeId }: { changeId: string }) {
   );
   const isPending = actionMutation.isPending;
   const mutationError = actionMutation.error;
+  const lastErrorCode = change?.last_error?.code;
+  const lastErrorMessage = change?.last_error?.message;
+  const accessError = useMemo(
+    () =>
+      mutationError ??
+      (lastErrorCode || lastErrorMessage
+        ? new BusinessDocumentRequestError(
+            lastErrorMessage || lastErrorCode || 'Ошибка EVA',
+            lastErrorCode || 'REQUEST_FAILED',
+          )
+        : undefined),
+    [mutationError, lastErrorCode, lastErrorMessage],
+  );
 
   if (changeQuery.isLoading) {
     return (
@@ -263,24 +279,29 @@ export function EvaChangeWorkbench({ changeId }: { changeId: string }) {
             </Button>
           </div>
         )}
-        {mutationError && !hasConflict && !overwriteAction && (
-          <div
-            className="flex items-center gap-3 border-b border-state-error/40 bg-state-error/5 px-5 py-2.5 text-sm text-state-error"
-            role="alert"
-          >
-            <AlertTriangle className="size-4 shrink-0" />
-            {mutationError.message}
-          </div>
-        )}
-        {change.last_error && !mutationError && (
-          <div
-            className="flex items-center gap-3 border-b border-state-warning/40 bg-state-warning/5 px-5 py-2.5 text-sm"
-            data-testid="eva-change-last-error"
-          >
-            <AlertTriangle className="size-4 shrink-0 text-state-warning" />
-            {change.last_error.message || change.last_error.code}
-          </div>
-        )}
+        {mutationError &&
+          !isEvaAccessError(mutationError) &&
+          !hasConflict &&
+          !overwriteAction && (
+            <div
+              className="flex items-center gap-3 border-b border-state-error/40 bg-state-error/5 px-5 py-2.5 text-sm text-state-error"
+              role="alert"
+            >
+              <AlertTriangle className="size-4 shrink-0" />
+              {mutationError.message}
+            </div>
+          )}
+        {change.last_error &&
+          !mutationError &&
+          !isEvaAccessError(accessError) && (
+            <div
+              className="flex items-center gap-3 border-b border-state-warning/40 bg-state-warning/5 px-5 py-2.5 text-sm"
+              data-testid="eva-change-last-error"
+            >
+              <AlertTriangle className="size-4 shrink-0 text-state-warning" />
+              {change.last_error.message || change.last_error.code}
+            </div>
+          )}
       </div>
 
       <div className="grid min-h-0 grid-cols-[minmax(260px,0.72fr)_minmax(420px,1.45fr)_minmax(300px,0.78fr)] max-xl:grid-cols-[minmax(240px,0.7fr)_minmax(420px,1.3fr)] max-xl:grid-rows-[minmax(0,1fr)_auto] max-lg:block max-lg:overflow-y-auto">
@@ -417,6 +438,17 @@ export function EvaChangeWorkbench({ changeId }: { changeId: string }) {
           <div className="flex items-center gap-2">
             <FilePenLine className="size-4 text-accent-primary" />
             <h2 className="text-sm font-medium">Подтвердить запись в EVA</h2>
+          </div>
+          <div className="mt-3">
+            <EvaAccessNotice
+              access={evaAccess}
+              error={accessError}
+              returnTo={`${Routes.BusinessDocuments}/eva/${changeId}`}
+              onRetry={() => {
+                actionMutation.reset();
+                void changeQuery.refetch();
+              }}
+            />
           </div>
           <div className="mt-4 grid grid-cols-3 gap-px overflow-hidden rounded-md border border-border-button bg-border-button text-center">
             <div className="bg-bg-base px-2 py-3">
@@ -579,7 +611,7 @@ export function EvaChangeWorkbench({ changeId }: { changeId: string }) {
                 className="w-full"
                 variant="accent"
                 loading={actionMutation.isPending}
-                disabled={isPending}
+                disabled={isPending || evaAccess.data?.state !== 'AVAILABLE'}
                 onClick={() =>
                   actionMutation.mutate({ action: 'PREPARE_EVA_DRAFT' })
                 }
@@ -597,7 +629,9 @@ export function EvaChangeWorkbench({ changeId }: { changeId: string }) {
                   <Button
                     className="w-full"
                     variant="accent"
-                    disabled={isPending}
+                    disabled={
+                      isPending || evaAccess.data?.state !== 'AVAILABLE'
+                    }
                     data-testid="publish-eva-document"
                   >
                     <Send className="size-4" />

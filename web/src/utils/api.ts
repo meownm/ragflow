@@ -350,6 +350,7 @@ export default {
   businessDocumentExportDownload: (id: string, artifactId: string) =>
     `${restAPIv1}/business-documents/${id}/exports/${artifactId}/download`,
   evaBusinessDocumentSources: `${restAPIv1}/business-documents/eva/sources`,
+  businessDocumentEvaAccess: `${restAPIv1}/business-documents/eva/access`,
   evaBusinessDocumentChanges: `${restAPIv1}/business-documents/eva/changes`,
   evaBusinessDocumentChange: (id: string) =>
     `${restAPIv1}/business-documents/eva/changes/${id}`,

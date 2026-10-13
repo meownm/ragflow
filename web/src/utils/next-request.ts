@@ -119,7 +119,12 @@ request.interceptors.request.use(
 
 request.interceptors.response.use(
   async (response) => {
-    if (response?.status === 413 || response?.status === 504) {
+    const skipNotification = (response.config as RequestConfigWithNotifications)
+      .skipErrorNotification;
+    if (
+      !skipNotification &&
+      (response?.status === 413 || response?.status === 504)
+    ) {
       message.error(RetcodeMessage[response?.status as ResultCode]);
     }
 
@@ -136,9 +141,7 @@ request.interceptors.response.use(
       }
     }
 
-    if (data?.code === 100) {
-      message.error(data?.message);
-    } else if (data?.code === 401) {
+    if (data?.code === 401) {
       if (!isRedirecting) {
         isRedirecting = true;
         notification.error({
@@ -149,7 +152,9 @@ request.interceptors.response.use(
         authorizationUtil.removeAll();
         redirectToLogin();
       }
-    } else if (data?.code !== 0) {
+    } else if (!skipNotification && data?.code === 100) {
+      message.error(data?.message);
+    } else if (!skipNotification && data?.code !== 0) {
       notification.error({
         message: `${i18n.t('message.hint')} : ${data?.code}`,
         description: data?.message,

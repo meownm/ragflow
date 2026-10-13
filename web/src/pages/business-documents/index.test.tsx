@@ -2,10 +2,10 @@ import {
   approveEvaDocumentChange,
   assignBusinessDocumentOwner,
   BusinessDocumentConflictError,
+  checkBusinessDocumentEvaAccess,
   checkBusinessDocumentEvaUpdate,
   createBusinessDocument,
   createEvaChangeFromBusinessDocument,
-  createEvaDocumentChange,
   deleteBusinessDocument,
   downloadBusinessDocumentExport,
   fetchBusinessDocument,
@@ -16,16 +16,13 @@ import {
   listBusinessDocumentCatalog,
   listBusinessDocumentRevisions,
   listBusinessDocuments,
-  listEvaDocumentChanges,
   prepareEvaDocumentChange,
   publishEvaDocumentChange,
   pullBusinessDocumentFromEva,
   rebindBusinessDocumentToEva,
-  searchEvaDocumentSources,
   submitBusinessDocumentCommand,
   watchBusinessDocumentJobEvents,
 } from '@/services/business-document-service';
-import { listEvaUserCredentials } from '@/services/user-service';
 import { downloadFileFromBlob } from '@/utils/file-util';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
@@ -116,6 +113,7 @@ jest.mock('@/services/business-document-service', () => {
     ...actual,
     createBusinessDocument: jest.fn(),
     checkBusinessDocumentEvaUpdate: jest.fn(),
+    checkBusinessDocumentEvaAccess: jest.fn(),
     createEvaChangeFromBusinessDocument: jest.fn(),
     deleteBusinessDocument: jest.fn(),
     downloadBusinessDocumentExport: jest.fn(),
@@ -128,9 +126,6 @@ jest.mock('@/services/business-document-service', () => {
     assignBusinessDocumentOwner: jest.fn(),
     submitBusinessDocumentCommand: jest.fn(),
     watchBusinessDocumentJobEvents: jest.fn(),
-    searchEvaDocumentSources: jest.fn(),
-    createEvaDocumentChange: jest.fn(),
-    listEvaDocumentChanges: jest.fn(),
     fetchEvaDocumentChange: jest.fn(),
     generateEvaDocumentChangeDraft: jest.fn(),
     approveEvaDocumentChange: jest.fn(),
@@ -140,10 +135,6 @@ jest.mock('@/services/business-document-service', () => {
     rebindBusinessDocumentToEva: jest.fn(),
   };
 });
-
-jest.mock('@/services/user-service', () => ({
-  listEvaUserCredentials: jest.fn(),
-}));
 
 const mockedCreate = jest.mocked(createBusinessDocument);
 const mockedCheckEvaUpdate = jest.mocked(checkBusinessDocumentEvaUpdate);
@@ -162,9 +153,6 @@ const mockedListCatalog = jest.mocked(listBusinessDocumentCatalog);
 const mockedAssignOwner = jest.mocked(assignBusinessDocumentOwner);
 const mockedSubmit = jest.mocked(submitBusinessDocumentCommand);
 const mockedWatch = jest.mocked(watchBusinessDocumentJobEvents);
-const mockedSearchEva = jest.mocked(searchEvaDocumentSources);
-const mockedCreateEva = jest.mocked(createEvaDocumentChange);
-const mockedListEva = jest.mocked(listEvaDocumentChanges);
 const mockedFetchEva = jest.mocked(fetchEvaDocumentChange);
 const mockedGenerateEva = jest.mocked(generateEvaDocumentChangeDraft);
 const mockedApproveEva = jest.mocked(approveEvaDocumentChange);
@@ -172,7 +160,7 @@ const mockedPrepareEva = jest.mocked(prepareEvaDocumentChange);
 const mockedPublishEva = jest.mocked(publishEvaDocumentChange);
 const mockedPullEvaDocument = jest.mocked(pullBusinessDocumentFromEva);
 const mockedRebindEvaDocument = jest.mocked(rebindBusinessDocumentToEva);
-const mockedListEvaUserCredentials = jest.mocked(listEvaUserCredentials);
+const mockedCheckEvaAccess = jest.mocked(checkBusinessDocumentEvaAccess);
 
 const catalogEntry = {
   id: 'L2-99.99.99.99.99',
@@ -474,12 +462,6 @@ beforeEach(() => {
   mockedListAccessUsers.mockResolvedValue({ items: [] });
   mockedListCatalog.mockResolvedValue({ items: [catalogEntry], total: 1 });
   mockedAssignOwner.mockResolvedValue(projection);
-  mockedListEva.mockResolvedValue({
-    items: [],
-    total: 0,
-    page: 1,
-    page_size: 20,
-  });
   mockedFetchEva.mockResolvedValue(evaChange);
   mockedGenerateEva.mockResolvedValue(evaChange);
   mockedApproveEva.mockResolvedValue(evaChange);
@@ -504,20 +486,9 @@ beforeEach(() => {
     direction: 'FROM_EVA',
     can_pull: true,
   });
-  mockedListEvaUserCredentials.mockResolvedValue({
-    data: {
-      code: 0,
-      data: {
-        items: [
-          {
-            scope: 'https://eva.example.com',
-            configured: true,
-            connector_id: 'connector-1',
-            connectors: [{ id: 'connector-1', name: 'EVA Wiki' }],
-          },
-        ],
-      },
-    },
+  mockedCheckEvaAccess.mockResolvedValue({
+    state: 'AVAILABLE',
+    connector_id: 'connector-1',
   });
 });
 
@@ -905,7 +876,7 @@ test('offers personal-token EVA actions for a verified page binding', async () =
   ).toBeVisible();
 });
 
-test('hides EVA write action without a personal token and does not offer an unchanged page', async () => {
+test('shows one token warning and disables EVA write without a personal token', async () => {
   mockedFetch.mockResolvedValueOnce({
     ...projection,
     lifecycle_state: 'AGREED',
@@ -917,8 +888,9 @@ test('hides EVA write action without a personal token and does not offer an unch
       document_id: 'eva-document-1',
     },
   });
-  mockedListEvaUserCredentials.mockResolvedValueOnce({
-    data: { code: 0, data: { items: [] } },
+  mockedCheckEvaAccess.mockResolvedValueOnce({
+    state: 'MISSING',
+    connector_id: 'connector-1',
   });
 
   renderPage();
@@ -929,12 +901,18 @@ test('hides EVA write action without a personal token and does not offer an unch
   expect(
     await screen.findByTestId('business-document-eva-binding'),
   ).toBeVisible();
-  await waitFor(() => expect(mockedListEvaUserCredentials).toHaveBeenCalled());
+  await waitFor(() => expect(mockedCheckEvaAccess).toHaveBeenCalled());
   expect(
-    screen.queryByRole('button', {
+    screen.getByRole('button', {
       name: 'Сохранить текущий вариант в EVA',
     }),
-  ).not.toBeInTheDocument();
+  ).toBeDisabled();
+  expect(screen.getAllByTestId('eva-access-notice')).toHaveLength(1);
+  expect(screen.queryByTestId('eva-access-indicator')).not.toBeInTheDocument();
+  expect(screen.getByTestId('eva-token-settings-link')).toHaveAttribute(
+    'target',
+    '_blank',
+  );
   expect(
     screen.queryByRole('button', {
       name: 'Загрузить обновление из EVA',
@@ -1078,25 +1056,70 @@ test('does not check or offer EVA pull until the first local revision exists', a
   expect(mockedPullEvaDocument).not.toHaveBeenCalled();
 });
 
-test('opens the guarded EVA publication workflow from an agreed revision', async () => {
+test.each(['REVIEW', 'AGREED'] as const)(
+  'opens the guarded EVA publication workflow from a %s revision',
+  async (lifecycleState) => {
+    mockedFetch.mockResolvedValueOnce({
+      ...projection,
+      lifecycle_state: lifecycleState,
+      operation_state: 'IDLE',
+      eva_binding: {
+        page_url: 'https://eva.example.com/project/Document/BR-42',
+        status: 'CONNECTED',
+        capabilities: ['OPEN', 'CREATE_EVA_CHANGE'],
+        connector_id: 'connector-1',
+        document_id: 'eva-document-1',
+      },
+    });
+    renderPage();
+
+    fireEvent.click(
+      await screen.findByTestId('business-document-details-toggle'),
+    );
+    fireEvent.click(await screen.findByTestId('push-business-document-to-eva'));
+    await waitFor(() =>
+      expect(mockedCreateEvaFromDocument).toHaveBeenCalledWith('doc-1', 18),
+    );
+    expect(await screen.findByTestId('eva-change-workbench')).toBeVisible();
+  },
+);
+
+test('allows saving a review revision into an empty EVA page without an error or pull action', async () => {
   mockedFetch.mockResolvedValueOnce({
     ...projection,
-    lifecycle_state: 'AGREED',
+    lifecycle_state: 'REVIEW',
     operation_state: 'IDLE',
     eva_binding: {
       page_url: 'https://eva.example.com/project/Document/BR-42',
       status: 'CONNECTED',
-      capabilities: ['OPEN', 'CREATE_EVA_CHANGE'],
+      capabilities: ['OPEN', 'PULL_FROM_EVA', 'CREATE_EVA_CHANGE'],
       connector_id: 'connector-1',
       document_id: 'eva-document-1',
     },
   });
+  mockedCheckEvaUpdate.mockResolvedValueOnce({
+    document_id: 'doc-1',
+    changed: false,
+    direction: 'FROM_EVA',
+    can_pull: false,
+  });
   renderPage();
-
   fireEvent.click(
     await screen.findByTestId('business-document-details-toggle'),
   );
-  fireEvent.click(await screen.findByTestId('push-business-document-to-eva'));
+  await waitFor(() =>
+    expect(mockedCheckEvaUpdate).toHaveBeenCalledWith('doc-1'),
+  );
+  const save = await screen.findByTestId('push-business-document-to-eva');
+  expect(save).toBeEnabled();
+  expect(
+    screen.queryByTestId('pull-business-document-from-eva'),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByText('Ошибка EVA')).not.toBeInTheDocument();
+  expect(
+    screen.queryByText(/Не удалось проверить обновления EVA/),
+  ).not.toBeInTheDocument();
+  fireEvent.click(save);
   await waitFor(() =>
     expect(mockedCreateEvaFromDocument).toHaveBeenCalledWith('doc-1', 18),
   );
@@ -2354,6 +2377,7 @@ test('creates a new business requirements document', async () => {
   expect(
     screen.queryByRole('textbox', { name: 'URL страницы EVA' }),
   ).not.toBeInTheDocument();
+  expect(screen.queryByText('Доработать EVA')).not.toBeInTheDocument();
 
   await selectCatalogEntry();
   fireEvent.change(screen.getByRole('textbox', { name: 'Описание идеи' }), {
@@ -2388,6 +2412,24 @@ test('creates a new business requirements document', async () => {
   expect(
     await screen.findByTestId('business-document-workbench'),
   ).toBeVisible();
+});
+
+test('can explicitly create local requirements without reading EVA when personal access is missing', async () => {
+  mockedCheckEvaAccess.mockResolvedValue({
+    state: 'MISSING',
+    connector_id: 'connector-1',
+  });
+  mockedCreate.mockResolvedValueOnce(projection);
+  renderPage('/business-documents');
+  await selectCatalogEntry();
+  fireEvent.change(screen.getByRole('textbox', { name: 'Описание идеи' }), {
+    target: { value: 'Локальная идея' },
+  });
+  fireEvent.click(await screen.findByTestId('create-without-eva-access'));
+  await waitFor(() => expect(mockedCreate).toHaveBeenCalledTimes(1));
+  expect(mockedCreate.mock.calls[0][0]).toMatchObject({
+    eva_decision: { mode: 'SKIP' },
+  });
 });
 
 test('opens the created document when automatic analysis cannot be started', async () => {
@@ -2692,7 +2734,7 @@ test('switches between my and all documents', async () => {
   await waitFor(() => expect(mockedList).toHaveBeenCalledWith(1, 20, 'all'));
 });
 
-test('hides the creation and EVA sidebar from an author-editor', async () => {
+test('hides the creation sidebar from an author-editor', async () => {
   mockedList.mockResolvedValueOnce({
     items: [],
     total: 0,
@@ -2716,8 +2758,6 @@ test('hides the creation and EVA sidebar from an author-editor', async () => {
       screen.queryByTestId('business-document-create-panel'),
     ).not.toBeInTheDocument(),
   );
-  expect(screen.queryByTestId('new-document-mode')).not.toBeInTheDocument();
-  expect(screen.queryByTestId('eva-change-mode')).not.toBeInTheDocument();
   expect(
     screen.queryByRole('button', { name: 'Начать работу' }),
   ).not.toBeInTheDocument();
@@ -2908,54 +2948,6 @@ test('shows the reviewed lifecycle and review operation labels', async () => {
   expect(screen.getByText('Анализ замечаний')).toBeInTheDocument();
 });
 
-test('finds an existing EVA document and opens a pinned change request', async () => {
-  mockedSearchEva.mockResolvedValueOnce({
-    connectors: [{ connector_id: 'connector-1', connector_name: 'EVA Wiki' }],
-    items: [
-      {
-        connector_id: 'connector-1',
-        connector_name: 'EVA Wiki',
-        id: 'CmfDocument:doc-1',
-        name: 'Переводы одной кнопкой',
-        code: 'BR-42',
-        project_id: 'project-1',
-        version: '1|version-1|2026-08-26',
-        modified_at: '2026-08-26T09:00:00+03:00',
-        web_url: 'https://eva.example.com/project/Document/BR-42',
-        excerpt: 'Существующие бизнес-требования',
-      },
-    ],
-  });
-  mockedCreateEva.mockResolvedValueOnce(evaChange);
-  renderPage('/business-documents');
-
-  fireEvent.click(await screen.findByTestId('eva-change-mode'));
-  fireEvent.change(
-    screen.getByRole('textbox', { name: 'Поиск документа EVA' }),
-    { target: { value: 'BR-42' } },
-  );
-  fireEvent.click(screen.getByRole('button', { name: 'Найти документ EVA' }));
-  fireEvent.click(await screen.findByTestId('eva-source-result'));
-  fireEvent.click(screen.getByRole('button', { name: 'Проверить' }));
-  fireEvent.change(
-    screen.getByRole('textbox', { name: 'Описание доработки' }),
-    { target: { value: 'Уточнить ожидаемый результат.' } },
-  );
-  fireEvent.click(
-    screen.getByRole('button', { name: 'Подготовить доработку' }),
-  );
-
-  await waitFor(() => expect(mockedCreateEva).toHaveBeenCalledTimes(1));
-  expect(mockedCreateEva.mock.calls[0][0]).toEqual({
-    connector_id: 'connector-1',
-    document_id: 'CmfDocument:doc-1',
-    change_summary:
-      'Сценарий: проверить документ на противоречия, пропуски и неясные требования, затем подготовить исправленный вариант в границах задачи автора.\n\nЗадача автора:\nУточнить ожидаемый результат.',
-  });
-  expect(await screen.findByTestId('eva-change-workbench')).toBeVisible();
-  expect(mockedFetchEva).toHaveBeenCalledWith('change-1');
-});
-
 test('shows a read-only agent draft and regenerates it only from instructions', async () => {
   renderPage('/business-documents/eva/change-1');
 
@@ -3045,6 +3037,7 @@ test('asks for confirmation and force-overwrites a changed EVA document', async 
 
   renderPage('/business-documents/eva/change-1');
   const prepareDraftButton = await screen.findByTestId('prepare-eva-draft');
+  await waitFor(() => expect(prepareDraftButton).toBeEnabled());
   expect(screen.getByText('Изменения подтверждены')).toBeVisible();
   expect(prepareDraftButton).toHaveTextContent('Сохранить как черновик в EVA');
   fireEvent.click(prepareDraftButton);

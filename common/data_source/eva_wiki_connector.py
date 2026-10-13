@@ -21,6 +21,14 @@ from common.data_source.models import BasicExpertInfo, Document, GenerateDocumen
 from business_documents.domain.names import normalize_title
 
 
+class EvaAuthenticationError(InsufficientPermissionsError):
+    """EVA rejected authentication, independently of page permissions."""
+
+
+class EvaProjectAccessError(ConnectorValidationError):
+    """The configured project is absent or invisible to the token."""
+
+
 class EvaWikiConnector(LoadConnector, PollConnector, SlimConnectorWithPermSync):
     """Load one EVA Wiki project through EVA's authenticated JSON-RPC API."""
 
@@ -266,6 +274,9 @@ class EvaWikiConnector(LoadConnector, PollConnector, SlimConnectorWithPermSync):
     def validate_connector_settings(self) -> None:
         self.get_project()
 
+    def close(self) -> None:
+        self._session.close()
+
     def get_project(self) -> dict[str, str]:
         """Return the configured EVA project with its display metadata."""
         self._validate_config()
@@ -281,7 +292,7 @@ class EvaWikiConnector(LoadConnector, PollConnector, SlimConnectorWithPermSync):
             },
         )
         if not projects:
-            raise ConnectorValidationError(f"EVA Wiki project was not found or is not accessible: {self.project_id}")
+            raise EvaProjectAccessError("EVA Wiki project was not found or is not accessible")
         project = projects[0]
         if not isinstance(project, dict):
             raise ConnectorValidationError("Unexpected EVA Wiki project record")
@@ -971,7 +982,9 @@ class EvaWikiConnector(LoadConnector, PollConnector, SlimConnectorWithPermSync):
 
     @staticmethod
     def _raise_for_status(response: requests.Response, operation: str) -> None:
-        if response.status_code in {401, 403}:
+        if response.status_code == 401:
+            raise EvaAuthenticationError("EVA Wiki rejected the API token")
+        if response.status_code == 403:
             raise InsufficientPermissionsError(f"EVA Wiki rejected credentials while trying to {operation}")
         if 300 <= response.status_code < 400:
             raise ConnectorValidationError(f"EVA Wiki redirect was refused while trying to {operation}")

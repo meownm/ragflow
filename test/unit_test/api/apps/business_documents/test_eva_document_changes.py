@@ -37,6 +37,8 @@ from api.db.services.user_external_credential_service import (
     UserExternalCredentialService,
 )
 from common.time_utils import current_timestamp
+from common.data_source.eva_wiki_connector import EvaAuthenticationError
+from common.data_source.exceptions import ConnectorValidationError, InsufficientPermissionsError
 
 
 TENANT = "tenant-1"
@@ -126,6 +128,11 @@ def database():
         yield database
         database.drop_tables(tables)
         database.close()
+
+
+@pytest.fixture(autouse=True)
+def personal_read_credential(monkeypatch):
+    monkeypatch.setattr(UserExternalCredentialService, "get_eva_wiki_token", lambda *_args: SimpleNamespace(secret="personal-token", credential_version=1))
 
 
 @pytest.fixture(autouse=True)
@@ -242,9 +249,10 @@ def test_eva_connector_rejects_document_outside_configured_space(monkeypatch):
         {},
         {"eva_api_token": ""},
         {"eva_api_token": "   "},
+        {"eva_api_token": "shared-token"},
     ],
 )
-def test_eva_reader_falls_back_to_personal_token_when_shared_token_is_blank(monkeypatch, credentials):
+def test_eva_reader_always_uses_actor_personal_token(monkeypatch, credentials):
     connector = _eva_connector(credentials)
     _patch_accessible_connector(monkeypatch, connector)
     credential_requests = []
@@ -261,24 +269,23 @@ def test_eva_reader_falls_back_to_personal_token_when_shared_token_is_blank(monk
     assert credential_requests == [(AUTHOR, "https://eva.example.com/api")]
 
 
-def test_eva_reader_prefers_shared_token_without_loading_personal_credential(monkeypatch):
+def test_shared_token_cannot_replace_missing_personal_token(monkeypatch):
     connector = _eva_connector({"eva_api_token": "shared-token"})
     _patch_accessible_connector(monkeypatch, connector)
 
-    def reject_personal_lookup(*_args):
-        raise AssertionError("personal credential must not be loaded when the shared token is configured")
+    def missing(*_args):
+        raise ExternalCredentialMissingError("missing")
 
-    monkeypatch.setattr(UserExternalCredentialService, "get_eva_wiki_token", staticmethod(reject_personal_lookup))
-
-    _, reader = EvaDocumentChangeService._connector(connector.id, AUTHOR)
-
-    assert reader._session.headers["X-Eva-Token"] == "shared-token"
+    monkeypatch.setattr(UserExternalCredentialService, "get_eva_wiki_token", missing)
+    with pytest.raises(BusinessDocumentError) as error:
+        EvaDocumentChangeService._connector(connector.id, AUTHOR)
+    assert error.value.code == "EVA_USER_TOKEN_MISSING"
 
 
 @pytest.mark.parametrize(
     ("credential_error", "expected_code", "expected_status"),
     [
-        (ExternalCredentialMissingError("missing"), "EVA_CREDENTIALS_MISSING", 422),
+        (ExternalCredentialMissingError("missing"), "EVA_USER_TOKEN_MISSING", 422),
         (ExternalCredentialDecryptionError("unavailable"), "EVA_USER_TOKEN_UNAVAILABLE", 503),
     ],
 )
@@ -1207,3 +1214,55 @@ def test_standalone_writes_use_personal_token_only(monkeypatch, personal_mutatio
     get_token.assert_called_once_with(AUTHOR, connection.config["api_base_url"])
     assert writer is client and version == 7
     client.load_credentials.assert_called_once_with({"eva_api_token": "personal-write-token"})
+
+
+@pytest.mark.parametrize(
+    "external_error,state",
+    [
+        (None, "AVAILABLE"),
+        (EvaAuthenticationError("token rejected"), "REJECTED"),
+        (InsufficientPermissionsError("forbidden"), "FORBIDDEN"),
+        (ConnectorValidationError("offline"), "UNAVAILABLE"),
+    ],
+)
+def test_eva_access_is_read_only_and_closes_transport(monkeypatch, external_error, state):
+    from unittest.mock import Mock
+
+    reader = Mock()
+    reader.get_project.side_effect = external_error
+    monkeypatch.setattr(EvaDocumentChangeService, "_connector", lambda *_args: (CONNECTOR, reader))
+    result = EvaDocumentChangeService.check_access(AUTHOR)
+    assert result["state"] == state
+    assert result["connector_id"] == CONNECTOR.id
+    reader.get_project.assert_called_once_with()
+    reader.close.assert_called_once_with()
+    reader.update_document_draft.assert_not_called()
+    reader.publish_document.assert_not_called()
+    assert "personal-token" not in repr(result)
+
+
+def test_eva_access_reports_missing_personal_token_even_with_shared_token(monkeypatch):
+    connector = _eva_connector({"eva_api_token": "shared-token"})
+    _patch_accessible_connector(monkeypatch, connector)
+
+    def missing(*_args):
+        raise ExternalCredentialMissingError("missing")
+
+    monkeypatch.setattr(UserExternalCredentialService, "get_eva_wiki_token", missing)
+    assert EvaDocumentChangeService.check_access(AUTHOR)["state"] == "MISSING"
+
+
+@pytest.mark.parametrize("error", [EvaAuthenticationError("rejected"), InsufficientPermissionsError("forbidden")])
+def test_new_token_validation_never_mutates_eva_and_releases_client(monkeypatch, error):
+    from unittest.mock import Mock
+
+    reader = Mock()
+    reader.get_project.side_effect = error
+    constructor = Mock(return_value=reader)
+    monkeypatch.setattr(EvaDocumentChangeService, "_read_client", constructor)
+    with pytest.raises(BusinessDocumentError):
+        EvaDocumentChangeService.validate_personal_token(CONNECTOR, "candidate-token")
+    constructor.assert_called_once_with(CONNECTOR, "candidate-token")
+    reader.close.assert_called_once()
+    reader.update_document_draft.assert_not_called()
+    reader.publish_document.assert_not_called()

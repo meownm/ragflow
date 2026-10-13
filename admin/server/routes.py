@@ -65,6 +65,12 @@ from document_quality_runs import (
 admin_bp = Blueprint("admin", __name__, url_prefix="/api/v1/admin")
 
 
+@admin_bp.errorhandler(AdminException)
+def handle_admin_exception(error):
+    response, _ = error_response(error.message, error.code)
+    return response, error.code
+
+
 @admin_bp.route("/document-quality", methods=["GET"])
 @login_required
 @check_admin_auth
@@ -724,13 +730,14 @@ def set_business_documents_settings():
 @login_required
 @check_admin_auth
 def discover_documents_eva_spaces():
+    from api.db.services.user_external_credential_service import ExternalCredentialError
     from common.data_source.exceptions import ConnectorMissingCredentialError, ConnectorValidationError, InsufficientPermissionsError
 
     data = request.get_json(silent=True)
     try:
-        spaces = discover_business_documents_eva_spaces(data.get("eva_connection") if isinstance(data, dict) else None)
+        spaces = discover_business_documents_eva_spaces(data.get("eva_connection") if isinstance(data, dict) else None, str(current_user.id))
         return success_response({"items": spaces})
-    except (ValueError, ConnectorMissingCredentialError, ConnectorValidationError, InsufficientPermissionsError) as error:
+    except (ValueError, ExternalCredentialError, ConnectorMissingCredentialError, ConnectorValidationError, InsufficientPermissionsError) as error:
         return error_response(str(error), 400)
 
 

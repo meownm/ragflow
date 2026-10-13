@@ -1077,6 +1077,21 @@ def test_logout_setting_profile_matrix_unit(monkeypatch):
 @pytest.mark.parametrize("standalone", [False, True])
 def test_personal_eva_credential_profile_routes_never_return_token(monkeypatch, standalone):
     module = _load_user_app(monkeypatch)
+    validation = []
+
+    class _ValidationService:
+        @staticmethod
+        def validate_personal_token(connector, token):
+            validation.append((connector.id, token))
+
+    validation_mod = ModuleType("api.apps.business_documents.eva_changes")
+    validation_mod.EvaDocumentChangeService = _ValidationService
+    monkeypatch.setitem(sys.modules, "api.apps.business_documents.eva_changes", validation_mod)
+
+    async def execute(function, *args):
+        return function(*args)
+
+    monkeypatch.setattr(sys.modules["common.misc_utils"], "thread_pool_exec", execute, raising=False)
     connector = SimpleNamespace(
         id="eva-connector-1",
         name="EVA Production",
@@ -1177,6 +1192,18 @@ def test_personal_eva_credential_profile_routes_never_return_token(monkeypatch, 
     assert res["code"] == 0
     assert "secret-token" not in repr(res)
     assert calls[-1] == ("put", "current-user", "https://eva.example/api/", "secret-token")
+    assert validation == [(connector.id, "secret-token")]
+
+    from business_documents.application.errors import BusinessDocumentError
+
+    def reject(*_args):
+        raise BusinessDocumentError("EVA_USER_TOKEN_REJECTED", "Токен отклонён", 403)
+
+    monkeypatch.setattr(_ValidationService, "validate_personal_token", reject)
+    previous_calls = list(calls)
+    failed = _run(module.put_user_eva_credential(connector.id))
+    assert failed["code"] != 0
+    assert calls == previous_calls
 
     res = _run(module.delete_user_eva_credential(connector.id))
     assert res["code"] == 0

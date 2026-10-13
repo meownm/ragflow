@@ -38,8 +38,15 @@ for _compose_tag in ("!override", "!reset"):
     _ComposeSafeLoader.add_constructor(_compose_tag, _construct_compose_tag)
 
 
-def _read_bytes(path: Path) -> bytes:
-    return path.read_bytes()
+def _text_bytes(path: Path) -> bytes | None:
+    data = path.read_bytes()
+    if b"\0" in data:
+        return None
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    return data
 
 
 def _staged_paths() -> list[Path]:
@@ -89,7 +96,9 @@ def check_eof(paths: list[Path], fix: bool = False) -> int:
     for path in paths:
         if not path.is_file():
             continue
-        data = _read_bytes(path)
+        data = _text_bytes(path)
+        if data is None:
+            continue
         if data and not data.endswith(b"\n"):
             if fix:
                 with path.open("ab") as f:
@@ -108,10 +117,10 @@ def check_trailing_whitespace(paths: list[Path], fix: bool = False) -> int:
     for path in paths:
         if not path.is_file():
             continue
-        try:
-            text = path.read_text(encoding="utf-8", errors="ignore")
-        except Exception:
+        data = _text_bytes(path)
+        if data is None:
             continue
+        text = data.decode("utf-8")
         if not text:
             continue
         new_text = _TRAILING_WS_RE.sub("", text)
@@ -134,7 +143,9 @@ def check_mixed_line_endings(paths: list[Path], fix: bool = False) -> int:
     for path in paths:
         if not path.is_file():
             continue
-        data = _read_bytes(path)
+        data = _text_bytes(path)
+        if data is None:
+            continue
         has_crlf = b"\r\n" in data
         has_lf = b"\n" in data.replace(b"\r\n", b"")
         if has_crlf and has_lf:
@@ -151,7 +162,10 @@ def check_merge_conflicts(paths: list[Path], fix: bool = False) -> int:
     for path in paths:
         if not path.is_file():
             continue
-        text = path.read_text(encoding="utf-8", errors="ignore")
+        data = _text_bytes(path)
+        if data is None:
+            continue
+        text = data.decode("utf-8")
         if all(pattern in text for pattern in MERGE_PATTERNS):
             errors.append(f"merge conflict markers: {path}")
     return _report(errors)

@@ -16,21 +16,15 @@
 
 """Persistence and EVA adapter for the Documents-only connection."""
 
-import base64
-import hashlib
 import json
-import os
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-from cryptography.fernet import Fernet, InvalidToken
-
 from api.db.db_models import Connector
 from api.db.services.system_settings_service import SystemSettingsService
-from common import settings
+from api.db.services.user_external_credential_service import UserExternalCredentialService
 from common.data_source.config import DocumentSource
 from common.data_source.eva_wiki_connector import EvaWikiConnector
-from common.data_source.exceptions import ConnectorValidationError
 from common.misc_utils import get_uuid
 
 BUSINESS_DOCUMENTS_EVA_CONNECTOR_SETTING = "business_documents.eva_connector_id"
@@ -41,7 +35,7 @@ BUSINESS_DOCUMENTS_EVA_CONNECTION_SETTING = "business_documents.eva_connection"
 class DocumentsEvaConnection:
     id: str
     config: dict
-    name: str = "EVA · Документы"
+    name: str = "EVA · Бизнес-требования"
     source: str = DocumentSource.EVA_WIKI.value
 
 
@@ -50,25 +44,11 @@ def _stored_connection() -> dict | None:
     return json.loads(rows[0].value) if len(rows) == 1 else None
 
 
-def _token_cipher() -> Fernet:
-    key = os.getenv("RAGFLOW_CREDENTIALS_KEY") or settings.get_secret_key()
-    if not key:
-        raise ConnectorValidationError("EVA connection encryption key is unavailable")
-    digest = hashlib.sha256(f"ragflow-documents-eva:{key}".encode()).digest()
-    return Fernet(base64.urlsafe_b64encode(digest))
-
-
-def get_documents_eva_connection(*, with_token: bool = False) -> DocumentsEvaConnection | None:
+def get_documents_eva_connection() -> DocumentsEvaConnection | None:
     stored = _stored_connection()
     if not stored or not stored.get("id"):
         return None
     config = {key: stored[key] for key in ("api_base_url", "web_base_url", "project_id", "verify_ssl", "include_archived")}
-    if with_token and stored.get("encrypted_token"):
-        try:
-            token = _token_cipher().decrypt(stored["encrypted_token"].encode()).decode()
-        except InvalidToken as error:
-            raise ConnectorValidationError("EVA connection token could not be decrypted") from error
-        config["credentials"] = {"eva_api_token": token}
     return DocumentsEvaConnection(id=stored["id"], config=config)
 
 
@@ -103,7 +83,6 @@ def get_business_documents_settings() -> dict:
             "project_id": config.get("project_id", ""),
             "verify_ssl": config.get("verify_ssl", True),
             "include_archived": config.get("include_archived", False),
-            "token_configured": bool(stored.get("encrypted_token")) if stored is not None else bool((config.get("credentials") or {}).get("eva_api_token")),
         }
     }
 
@@ -138,43 +117,26 @@ def _validated_config(value: object, *, require_project: bool = True) -> dict:
     return config
 
 
-def _connection_token(value: dict, config: dict, existing) -> str:
-    token = value.get("eva_api_token", "")
-    if not isinstance(token, str) or len(token) > 4096:
-        raise ValueError("eva_api_token must be a string of at most 4096 characters")
-    if not isinstance(value.get("clear_token", False), bool):
-        raise ValueError("clear_token must be a boolean")
-    if value.get("clear_token"):
-        return ""
-    if token.strip():
-        return token.strip()
-    if existing and str(existing.config.get("api_base_url", "")).rstrip("/") == config["api_base_url"]:
-        if isinstance(existing, DocumentsEvaConnection):
-            existing = get_documents_eva_connection(with_token=True)
-        return str((existing.config.get("credentials") or {}).get("eva_api_token") or "").strip()
-    return ""
-
-
 def prepare_business_documents_connection(value: object) -> dict:
     if value is None:
         return {}  # An explicit disabled setting must never fall back to a data source.
     config = _validated_config(value)
+    if "eva_api_token" in value or "clear_token" in value:
+        raise ValueError("Добавьте личный EVA-токен в профиле; подключение бизнес-требований хранит только адрес и пространство.")
     existing = _existing_connection()
-    token = _connection_token(value, config, existing)
     same_scope = existing and all(str(existing.config.get(key, "")).rstrip("/") == config[key] for key in ("api_base_url", "project_id"))
     return {
         **config,
         "id": existing.id if same_scope else get_uuid(),
-        "encrypted_token": _token_cipher().encrypt(token.encode()).decode() if token else "",
     }
 
 
-def discover_business_documents_eva_spaces(value: object) -> list[dict]:
+def discover_business_documents_eva_spaces(value: object, actor_id: str) -> list[dict]:
     config = _validated_config(value, require_project=False)
-    token = _connection_token(value, config, _existing_connection())
+    credential = UserExternalCredentialService.get_eva_wiki_token(actor_id, config["api_base_url"])
     client = EvaWikiConnector(**config, include_attachments=False)
-    client.load_credentials({"eva_api_token": token})
+    client.load_credentials({"eva_api_token": credential.secret})
     try:
         return client.list_projects()
     finally:
-        client._session.close()
+        client.close()

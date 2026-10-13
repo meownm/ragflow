@@ -16,6 +16,7 @@ API_PATH = Path(__file__).parents[5] / "api" / "apps" / "restful_apis" / "busine
 
 EXPECTED_ROUTES = {
     "search_eva_business_document_sources": ("/business-documents/eva/sources", ("GET",)),
+    "check_business_document_eva_access": ("/business-documents/eva/access", ("GET",)),
     "create_eva_business_document_change": ("/business-documents/eva/changes", ("POST",)),
     "list_eva_business_document_changes": ("/business-documents/eva/changes", ("GET",)),
     "get_eva_business_document_change": ("/business-documents/eva/changes/<change_id>", ("GET",)),

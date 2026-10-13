@@ -54,7 +54,6 @@ const saved = {
   project_id: 'CmfProject:docs',
   verify_ssl: true,
   include_archived: false,
-  token_configured: true,
 };
 const response = (connection = saved) => ({
   data: { code: 0, data: { eva_connection: connection } },
@@ -159,7 +158,6 @@ test('saves a standalone connection without a data source or copying a secret to
       api_base_url: '',
       web_base_url: '',
       project_id: '',
-      token_configured: false,
     }) as never,
   );
   mount();
@@ -179,9 +177,6 @@ test('saves a standalone connection without a data source or copying a secret to
   fireEvent.change(screen.getByLabelText('evaSpace'), {
     target: { value: saved.project_id },
   });
-  fireEvent.change(screen.getByLabelText('token'), {
-    target: { value: 'secret' },
-  });
   fireEvent.click(screen.getByTestId('business-documents-settings-save'));
   await waitFor(() =>
     expect(setBusinessDocumentsSettings).toHaveBeenCalledWith({
@@ -190,38 +185,10 @@ test('saves a standalone connection without a data source or copying a secret to
       project_id: saved.project_id,
       verify_ssl: true,
       include_archived: false,
-      eva_api_token: 'secret',
-      clear_token: false,
     }),
   );
-  await waitFor(() => expect(screen.getByLabelText('token')).toHaveValue(''));
+  expect(screen.queryByLabelText('token')).not.toBeInTheDocument();
   expect(message.success).toHaveBeenCalledWith('saved');
-});
-
-test('keeps the stored token with a blank input and supports explicit removal', async () => {
-  mount();
-  await waitFor(() =>
-    expect(screen.getByLabelText('api_base_url')).toHaveValue(
-      saved.api_base_url,
-    ),
-  );
-  expect(screen.getByLabelText('token')).toHaveValue('');
-  fireEvent.click(screen.getByTestId('business-documents-settings-save'));
-  await waitFor(() =>
-    expect(setBusinessDocumentsSettings).toHaveBeenCalledWith(
-      expect.objectContaining({ eva_api_token: '', clear_token: false }),
-    ),
-  );
-  await waitFor(() =>
-    expect(screen.getByLabelText('clearToken')).toBeEnabled(),
-  );
-  fireEvent.click(screen.getByLabelText('clearToken'));
-  fireEvent.click(screen.getByTestId('business-documents-settings-save'));
-  await waitFor(() =>
-    expect(setBusinessDocumentsSettings).toHaveBeenLastCalledWith(
-      expect.objectContaining({ eva_api_token: '', clear_token: true }),
-    ),
-  );
 });
 
 test('loads named spaces from draft settings without saving', async () => {

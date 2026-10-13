@@ -1,4 +1,3 @@
-import PasswordInput from '@/components/originui/password-input';
 import { SelectWithSearch } from '@/components/originui/select-with-search';
 import { Button } from '@/components/ui/button';
 import {
@@ -37,8 +36,6 @@ export default function AdminBusinessDocumentsSettings() {
     t(`admin.businessDocumentsSettingsPage.${key}`);
   const queryClient = useQueryClient();
   const [connection, setConnection] = useState(emptyConnection);
-  const [token, setToken] = useState('');
-  const [clearToken, setClearToken] = useState(false);
   const [spaces, setSpaces] = useState<{ id: string; name: string }[]>([]);
   const [catalogFile, setCatalogFile] = useState<File | null>(null);
   const { data, isLoading, error } = useQuery({
@@ -58,15 +55,9 @@ export default function AdminBusinessDocumentsSettings() {
         verify_ssl: data.eva_connection.verify_ssl,
         include_archived: data.eva_connection.include_archived,
       });
-      setToken('');
-      setClearToken(false);
     }
   }, [data]);
-  const payload = {
-    ...connection,
-    eva_api_token: token,
-    clear_token: clearToken,
-  };
+  const payload = connection;
   const discovery = useMutation({
     mutationFn: async () => {
       const { data: response } =
@@ -86,8 +77,6 @@ export default function AdminBusinessDocumentsSettings() {
     },
     onSuccess: async (saved) => {
       queryClient.setQueryData(queryKey, saved);
-      setToken('');
-      setClearToken(false);
       setSpaces([]);
       discovery.reset();
       await queryClient.invalidateQueries({
@@ -218,44 +207,6 @@ export default function AdminBusinessDocumentsSettings() {
               />
             </div>
           ))}
-          <div className="space-y-2">
-            <label className="text-sm font-medium" htmlFor="eva-token">
-              {label('token')}
-            </label>
-            <PasswordInput
-              id="eva-token"
-              value={token}
-              onChange={(event) => {
-                setToken(event.target.value);
-                setClearToken(false);
-                setSpaces([]);
-                discovery.reset();
-              }}
-              maxLength={4096}
-              autoComplete="new-password"
-              placeholder={label(
-                data?.eva_connection.token_configured
-                  ? 'tokenSaved'
-                  : 'tokenOptional',
-              )}
-            />
-            <p className="text-sm text-text-secondary">{label('tokenHelp')}</p>
-            {data?.eva_connection.token_configured && (
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={clearToken}
-                  onChange={(event) => {
-                    setClearToken(event.target.checked);
-                    setToken('');
-                    setSpaces([]);
-                    discovery.reset();
-                  }}
-                />
-                {label('clearToken')}
-              </label>
-            )}
-          </div>
           <div className="space-y-2">
             <label className="text-sm font-medium" htmlFor="project_id">
               {label('evaSpace')}

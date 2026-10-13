@@ -38,7 +38,19 @@ from api.apps.business_documents.sql_query_schema import BusinessDocumentSqlQuer
 from api.apps.business_documents.worker import wake_business_document_worker
 from api.utils.api_utils import get_request_json
 from business_documents.application.errors import BusinessDocumentError
-from common.misc_utils import thread_pool_exec
+from api.db.db_models import DB
+from common.misc_utils import thread_pool_exec as _thread_pool_exec
+
+
+async def thread_pool_exec(func, *args, **kwargs):
+    # Peewee connections belong to the worker thread, not Quart's request thread.
+    def invoke():
+        try:
+            return func(*args, **kwargs)
+        finally:
+            DB.close()
+
+    return await _thread_pool_exec(invoke)
 
 
 def _success(data, status=200):
@@ -185,6 +197,16 @@ async def decide_business_document_sql_agent_proposal(project_id: str, proposal_
         return _success(result)
     except (AttributeError, TypeError, BadRequest):
         return _error(BusinessDocumentError("INVALID_SQL_AGENT_DECISION", "Request body must be a valid JSON object", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/eva/access", methods=["GET"])  # noqa: F821
+@login_required
+async def check_business_document_eva_access():
+    try:
+        result = await thread_pool_exec(EvaDocumentChangeService.check_access, current_user.id)
+        return _success(result)
     except BusinessDocumentError as error:
         return _error(error)
 

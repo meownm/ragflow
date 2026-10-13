@@ -480,6 +480,9 @@ async def put_user_eva_credential(connector_id):
     """Add or replace the current user's EVA token for the connector origin."""
 
     from api.db.services.user_external_credential_service import ExternalCredentialError, UserExternalCredentialService
+    from api.apps.business_documents.eva_changes import EvaDocumentChangeService
+    from business_documents.application.errors import BusinessDocumentError
+    from common.misc_utils import thread_pool_exec
 
     connector = _eva_profile_connector(connector_id, current_user.id)
     if connector is None:
@@ -488,12 +491,13 @@ async def put_user_eva_credential(connector_id):
     if not isinstance(req, dict):
         return get_json_result(data=False, message="Request body must be an object.", code=RetCode.ARGUMENT_ERROR)
     try:
+        await thread_pool_exec(EvaDocumentChangeService.validate_personal_token, connector, req.get("eva_api_token", ""))
         status = UserExternalCredentialService.put_eva_wiki_token(
             current_user.id,
             (connector.config or {}).get("api_base_url", ""),
             req.get("eva_api_token", ""),
         )
-    except ExternalCredentialError as exc:
+    except (ExternalCredentialError, BusinessDocumentError) as exc:
         return get_json_result(data=False, message=str(exc), code=RetCode.ARGUMENT_ERROR)
     return get_json_result(data=status)
 

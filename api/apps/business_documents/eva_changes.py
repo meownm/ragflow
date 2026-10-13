@@ -42,7 +42,7 @@ from api.db.services.user_external_credential_service import (
     UserExternalCredentialService,
 )
 from common.data_source.config import DocumentSource, INDEX_BATCH_SIZE
-from common.data_source.eva_wiki_connector import EvaWikiConnector, EvaWikiMutationClient
+from common.data_source.eva_wiki_connector import EvaAuthenticationError, EvaProjectAccessError, EvaWikiConnector, EvaWikiMutationClient
 from common.data_source.exceptions import ConnectorMissingCredentialError, ConnectorValidationError, InsufficientPermissionsError
 from common.misc_utils import get_uuid
 from common.time_utils import current_timestamp
@@ -221,15 +221,11 @@ class EvaDocumentChangeService:
 
     @classmethod
     def _connector(cls, connector_id: str, actor_id: str) -> tuple[Connector | DocumentsEvaConnection, EvaWikiConnector]:
-        """Build the EVA reader used by interactive document management.
-
-        The Documents connection's shared token is the primary read credential;
-        a missing shared token allows the current user's personal token.
-        """
+        """Read EVA with the actor's personal token, never a knowledge-base token."""
 
         configured_connector_id = cls._require_configured_connector(connector_id, actor_id)
         try:
-            connector = get_documents_eva_connection(with_token=True)
+            connector = get_documents_eva_connection()
         except ConnectorValidationError as error:
             raise cls._map_external_error(error) from error
         if connector is not None and connector.id != configured_connector_id:
@@ -238,6 +234,14 @@ class EvaDocumentChangeService:
             exists, connector = ConnectorService.get_by_id(configured_connector_id)
             if not exists or connector.source != DocumentSource.EVA_WIKI.value:
                 raise BusinessDocumentError("EVA_CONNECTOR_NOT_FOUND", "EVA Wiki connector not found", 404)
+        try:
+            credential = UserExternalCredentialService.get_eva_wiki_token(actor_id, (connector.config or {}).get("api_base_url", ""))
+        except ExternalCredentialError as error:
+            raise cls._map_user_token_error(error) from error
+        return connector, cls._read_client(connector, credential.secret)
+
+    @staticmethod
+    def _read_client(connector: Connector | DocumentsEvaConnection, token: str) -> EvaWikiConnector:
         config = dict(connector.config or {})
         client = EvaWikiConnector(
             api_base_url=config.get("api_base_url", ""),
@@ -250,18 +254,43 @@ class EvaDocumentChangeService:
             page_size_limit=config.get("page_size_limit") or EvaWikiConnector.DEFAULT_PAGE_SIZE_LIMIT,
             retry_count=config.get("retry_count", EvaWikiConnector.DEFAULT_RETRY_COUNT),
         )
-        credentials = dict(config.get("credentials") or {})
-        if not str(credentials.get("eva_api_token") or "").strip():
-            try:
-                personal_credential = UserExternalCredentialService.get_eva_wiki_token(actor_id, config.get("api_base_url", ""))
-            except ExternalCredentialMissingError:
-                pass
-            except ExternalCredentialError as error:
-                raise cls._map_user_token_error(error) from error
-            else:
-                credentials["eva_api_token"] = personal_credential.secret
-        client.load_credentials(credentials)
-        return connector, client
+        client.load_credentials({"eva_api_token": token})
+        return client
+
+    @classmethod
+    def validate_personal_token(cls, connector: Connector | DocumentsEvaConnection, token: str) -> None:
+        if not isinstance(token, str) or not token.strip() or len(token) > 4096:
+            raise BusinessDocumentError("EVA_USER_TOKEN_INVALID", "Укажите личный EVA-токен длиной не более 4096 символов.", 422)
+        client = cls._read_client(connector, token.strip())
+        try:
+            client.get_project()
+        except Exception as error:
+            raise cls._map_external_error(error) from error
+        finally:
+            client.close()
+
+    @classmethod
+    def check_access(cls, actor_id: str) -> dict[str, Any]:
+        connector_id = get_business_documents_eva_connector_id()
+        if not connector_id:
+            return {"state": "NOT_CONFIGURED", "connector_id": None}
+        client = None
+        try:
+            _, client = cls._connector(connector_id, actor_id)
+            client.get_project()
+            return {"state": "AVAILABLE", "connector_id": connector_id}
+        except Exception as error:
+            mapped = cls._map_external_error(error)
+            state = {
+                "EVA_USER_TOKEN_MISSING": "MISSING",
+                "EVA_USER_TOKEN_REJECTED": "REJECTED",
+                "EVA_PERMISSION_DENIED": "FORBIDDEN",
+                "EVA_SPACE_FORBIDDEN": "FORBIDDEN",
+            }.get(mapped.code, "UNAVAILABLE")
+            return {"state": state, "connector_id": connector_id, "error_code": mapped.code}
+        finally:
+            if client is not None:
+                client.close()
 
     @classmethod
     def _mutation_client(cls, connector: Connector | DocumentsEvaConnection, actor_id: str) -> tuple[EvaWikiMutationClient, int]:
@@ -280,12 +309,14 @@ class EvaDocumentChangeService:
     def _map_external_error(error: Exception) -> BusinessDocumentError:
         if isinstance(error, BusinessDocumentError):
             return error
-        if isinstance(error, InsufficientPermissionsError):
-            return BusinessDocumentError("EVA_PERMISSION_DENIED", "EVA Wiki rejected the configured credentials", 403)
+        if isinstance(error, EvaAuthenticationError):
+            return BusinessDocumentError("EVA_USER_TOKEN_REJECTED", "EVA не принимает ваш личный токен. Возможно, он истёк или был отозван.", 403)
+        if isinstance(error, (InsufficientPermissionsError, EvaProjectAccessError)):
+            return BusinessDocumentError("EVA_PERMISSION_DENIED", "Недостаточно прав в EVA на страницу или операцию.", 403)
         if isinstance(error, ConnectorMissingCredentialError):
-            return BusinessDocumentError("EVA_CREDENTIALS_MISSING", "EVA Wiki connector credentials are missing", 422)
+            return BusinessDocumentError("EVA_USER_TOKEN_MISSING", "Добавьте личный EVA-токен в настройках профиля для чтения и записи.", 422)
         if isinstance(error, ConnectorValidationError):
-            return BusinessDocumentError("EVA_UNAVAILABLE", str(error), 502)
+            return BusinessDocumentError("EVA_UNAVAILABLE", "Не удалось проверить доступ к EVA. Повторите попытку позднее.", 502)
         return BusinessDocumentError("EVA_UNAVAILABLE", "EVA Wiki request failed", 502)
 
     @staticmethod
@@ -293,13 +324,15 @@ class EvaDocumentChangeService:
         if isinstance(error, BusinessDocumentError):
             return error
         if isinstance(error, ExternalCredentialMissingError):
-            return BusinessDocumentError("EVA_USER_TOKEN_MISSING", "Add your personal EVA API token in Profile before changing EVA", 422)
+            return BusinessDocumentError("EVA_USER_TOKEN_MISSING", "Добавьте личный EVA-токен в настройках профиля для чтения и записи.", 422)
         if isinstance(error, ExternalCredentialDecryptionError):
             return BusinessDocumentError("EVA_USER_TOKEN_UNAVAILABLE", "Your personal EVA API token could not be loaded", 503)
         if isinstance(error, ExternalCredentialError):
             return BusinessDocumentError("EVA_USER_TOKEN_INVALID", str(error), 422)
+        if isinstance(error, EvaAuthenticationError):
+            return BusinessDocumentError("EVA_USER_TOKEN_REJECTED", "EVA не принимает ваш личный токен. Возможно, он истёк или был отозван.", 403)
         if isinstance(error, InsufficientPermissionsError):
-            return BusinessDocumentError("EVA_USER_TOKEN_REJECTED", "EVA rejected your personal API token for this change", 403)
+            return BusinessDocumentError("EVA_PERMISSION_DENIED", "Недостаточно прав в EVA на страницу или операцию.", 403)
         if isinstance(error, ConnectorMissingCredentialError):
             return BusinessDocumentError("EVA_USER_TOKEN_MISSING", "Add your personal EVA API token in Profile before changing EVA", 422)
         if isinstance(error, ConnectorValidationError):

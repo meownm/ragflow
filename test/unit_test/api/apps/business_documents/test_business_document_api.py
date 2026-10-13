@@ -47,6 +47,23 @@ def route_app(monkeypatch):
 
 @pytest.mark.p0
 @pytest.mark.asyncio
+async def test_eva_access_checks_current_actor_without_logging_out_on_eva_rejection(route_app, monkeypatch):
+    app, module = route_app
+    actors = []
+
+    def check(actor):
+        actors.append(actor)
+        return {"state": "REJECTED", "connector_id": "eva-1"}
+
+    monkeypatch.setattr(module.EvaDocumentChangeService, "check_access", check)
+    response = await app.test_client().get("/business-documents/eva/access")
+    assert response.status_code == 200
+    assert (await response.get_json())["data"] == {"state": "REJECTED", "connector_id": "eva-1"}
+    assert actors == [ACTOR]
+
+
+@pytest.mark.p0
+@pytest.mark.asyncio
 async def test_json_routes_reject_non_object_and_malformed_json(route_app):
     app, _module = route_app
     client = app.test_client()

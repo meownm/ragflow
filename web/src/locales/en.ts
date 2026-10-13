@@ -126,7 +126,7 @@ export default {
       dataset: 'Dataset',
       memories: 'Memory',
       openMetadata: 'Catalog',
-      businessDocuments: 'Business docs',
+      businessDocuments: 'Business requirements',
       documentConstructor: 'Constructor',
       instruction: 'User guide',
       discord: 'Discord',
@@ -1699,7 +1699,11 @@ Example: Virtual Hosted Style`,
       evaTokenHowToGet:
         'How to get it: open your profile settings in EVA, find API tokens, select Create token, set its lifetime, and copy the value immediately. If the section is unavailable, contact your EVA administrator.',
       evaTokenUsageDescription:
-        'Document management uses the EVA connector service token first and falls back to your personal token when the service token is absent. Your personal token is also used to save drafts and publish changes; background synchronization still requires the service token.',
+        'Business requirements use your personal token for reading and writing EVA. The connector service token is used only for reading EVA into a knowledge base.',
+      evaTokenVerifyAndSave: 'Verify and save',
+      evaTokenVerified:
+        'Access to the EVA space verified. Personal token saved.',
+      evaTokenReturn: 'Return to business requirements',
       evaTokenAdd: 'Add EVA token',
       evaTokenReplace: 'Replace EVA token',
       evaTokenAddAction: 'Add',
@@ -3322,7 +3326,12 @@ Important structured information may include: names, dates, locations, events, k
 
       businessDocumentsQualityPage: {
         title: 'Document quality',
-        tabs: { overview: 'Overview', comparisons: 'Nightly comparisons', history: 'Run history', operations: 'Document jobs' },
+        tabs: {
+          overview: 'Overview',
+          comparisons: 'Nightly comparisons',
+          history: 'Run history',
+          operations: 'Document jobs',
+        },
         source: 'Source',
         updated: 'Updated',
         unverified: 'Revision unverified',
@@ -3344,9 +3353,11 @@ Important structured information may include: names, dates, locations, events, k
         diagnostic: 'Diagnostic',
         diagnosticNote: 'One case is not a full model qualification.',
         modelCatalogError: 'Could not load the Ollama catalog.',
-        comparisonNote: 'Compare full runs within one series. Partial runs have no overall score.',
+        comparisonNote:
+          'Compare full runs within one series. Partial runs have no overall score.',
         comparisonBoundary: 'Evaluation conditions changed',
-        historyBoundaryNote: 'Scores are not directly comparable after changes to code, suite, rubric, template, prompts, or generation parameters.',
+        historyBoundaryNote:
+          'Scores are not directly comparable after changes to code, suite, rubric, template, prompts, or generation parameters.',
         historyLimited: 'History is limited; showing',
         aliases: 'Aliases',
         modelFilter: 'Model',
@@ -3377,12 +3388,23 @@ Important structured information may include: names, dates, locations, events, k
         errorFilter: 'Error code',
         allCategories: 'All categories',
         allErrors: 'All errors',
-        sampledErrors: 'Error breakdown and recent jobs are based on the sample only.',
+        sampledErrors:
+          'Error breakdown and recent jobs are based on the sample only.',
         detailsUnavailable: 'Details were not retained for this run.',
         threshold: 'Threshold',
         close: 'Close',
-        categories: { DOCUMENT_AI: 'Document AI', SQL_AGENT: 'SQL agent', EXPORT: 'Export', OTHER: 'Other' },
-        diagnostics: { MISSING_FACT: 'Required fact missing', UNCLASSIFIED: 'Reason not classified', ASSERTION_FAILED: 'Golden assertion failed', EXECUTION_ERROR: 'The case did not complete because execution failed' },
+        categories: {
+          DOCUMENT_AI: 'Document AI',
+          SQL_AGENT: 'SQL agent',
+          EXPORT: 'Export',
+          OTHER: 'Other',
+        },
+        diagnostics: {
+          MISSING_FACT: 'Required fact missing',
+          UNCLASSIFIED: 'Reason not classified',
+          ASSERTION_FAILED: 'Golden assertion failed',
+          EXECUTION_ERROR: 'The case did not complete because execution failed',
+        },
         description:
           'Golden evaluations and Business Documents AI job activity.',
         evaluationTitle: 'Quality evaluations',
@@ -3534,15 +3556,9 @@ Important structured information may include: names, dates, locations, events, k
           'The allowed document catalog was updated: {{count}} active L5 records.',
         api_base_url: 'EVA API URL',
         web_base_url: 'EVA web URL',
-        token: 'Shared EVA read token',
-        tokenSaved: 'Token saved. Leave blank to keep it.',
-        tokenOptional: 'Optional',
-        tokenHelp:
-          'The shared token reads documents and lists spaces. Without it, documents use the personal token from Profile. EVA writes always use the personal token.',
-        clearToken: 'Remove the saved shared token',
         evaSpace: 'EVA space',
         evaSpaceHelp:
-          'Enter a space ID or load spaces using the shared token. Search and changes are limited to this space. Rebind documents after changing the API or space.',
+          'Enter a space ID and save the connection. Add a personal token in Profile to load accessible spaces. Rebind documents after changing the API or space.',
         loadSpaces: 'Load spaces',
         loadingSpaces: 'Loading…',
         evaSpacesEmpty: 'No accessible spaces',

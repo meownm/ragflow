@@ -17,7 +17,6 @@ if str(ADMIN_SERVER) not in sys.path:
 
 import auth
 import routes
-from api.common.exceptions import AdminException
 from api.db.services import business_document_settings_service as service
 from business_documents.domain.catalog_import import CatalogImportError
 from common.constants import ActiveEnum
@@ -37,10 +36,6 @@ def app(monkeypatch):
     def load_user(request):
         return User() if request.headers.get("Authorization") else None
 
-    @app.errorhandler(AdminException)
-    def admin_error(error):
-        return {"code": error.code, "message": error.message}, error.code
-
     monkeypatch.setattr(auth.UserService, "filter_by_id", lambda _id: SimpleNamespace(is_superuser=True, is_active=ActiveEnum.ACTIVE.value))
     values = {}
     monkeypatch.setattr(service.SystemSettingsService, "get_by_name", lambda name: [SimpleNamespace(value=values[name])] if name in values else [])
@@ -56,10 +51,10 @@ def test_admin_saves_reads_and_disables_standalone_settings(app):
     application, values = app
     client = application.test_client()
     headers = {"Authorization": "test"}
-    payload = {"eva_connection": {"api_base_url": "https://eva.example", "project_id": "CmfProject:docs", "eva_api_token": "secret-value"}}
+    payload = {"eva_connection": {"api_base_url": "https://eva.example", "project_id": "CmfProject:docs"}}
     response = client.put("/api/v1/admin/business-documents", json=payload, headers=headers)
     assert response.status_code == 200
-    assert response.json["data"]["eva_connection"]["token_configured"]
+    assert "token_configured" not in response.json["data"]["eva_connection"]
     assert "secret-value" not in response.text
     assert "secret-value" not in repr(values)
     assert list(values) == [service.BUSINESS_DOCUMENTS_EVA_CONNECTION_SETTING]
@@ -102,6 +97,7 @@ def test_invalid_input_does_not_write_and_discovery_does_not_save(app, monkeypat
     response = client.post("/api/v1/admin/business-documents/eva-spaces", json={"eva_connection": {"api_base_url": "https://eva.example"}}, headers=headers)
     assert response.status_code == 200
     assert response.json["data"]["items"][0]["name"] == "Documents"
+    discovery.assert_called_once_with({"api_base_url": "https://eva.example"}, "test-admin")
     assert not values
 
 

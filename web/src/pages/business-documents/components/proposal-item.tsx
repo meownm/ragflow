@@ -121,11 +121,11 @@ export function ProposalItem({
               {status.label}
             </Badge>
           </div>
-          <p className="mt-2 text-sm leading-6 text-text-primary">
+          <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-text-primary">
             {proposal.text}
           </p>
           {proposal.rationale && (
-            <p className="mt-2 text-xs leading-5 text-text-secondary">
+            <p className="mt-2 whitespace-pre-wrap break-words text-xs leading-5 text-text-secondary">
               {proposal.rationale}
             </p>
           )}

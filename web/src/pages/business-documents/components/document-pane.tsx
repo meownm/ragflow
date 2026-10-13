@@ -2,6 +2,7 @@ import { DiagramCodeBlock } from '@/components/diagram-code-block';
 import { AlertTriangle, FileText, MousePointer2 } from 'lucide-react';
 import { isValidElement, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import type {
   BusinessDocumentRevision,
@@ -335,7 +336,7 @@ export function DocumentPane({
                   </ReactMarkdown>
                   <div data-section-body>
                     <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
+                      remarkPlugins={[remarkGfm, remarkBreaks]}
                       components={{
                         p: ({ children }) => <p className="mb-4">{children}</p>,
                         ul: ({ children }) => (

@@ -189,11 +189,11 @@ export function QuestionItem({
                       className="mt-0.5"
                     />
                     <span className="min-w-0">
-                      <span className="block text-text-primary">
+                      <span className="block whitespace-pre-wrap break-words text-text-primary">
                         {option.label}
                       </span>
                       {option.description && (
-                        <span className="mt-0.5 block text-xs leading-5 text-text-secondary">
+                        <span className="mt-0.5 block whitespace-pre-wrap break-words text-xs leading-5 text-text-secondary">
                           {option.description}
                         </span>
                       )}

@@ -73,6 +73,11 @@ jest.mock('remark-gfm', () => ({
   default: () => undefined,
 }));
 
+jest.mock('remark-breaks', () => ({
+  __esModule: true,
+  default: () => undefined,
+}));
+
 jest.mock('@/components/diagram-code-block', () => ({
   DiagramCodeBlock: ({ source }: { source: string }) => <pre>{source}</pre>,
 }));
@@ -2728,8 +2733,12 @@ test('hides the constructor entry when its section is disabled', async () => {
   });
   renderPage('/business-documents');
 
-  expect(await screen.findByTestId('business-document-create-panel')).toBeVisible();
-  expect(screen.queryByTestId('open-document-constructor')).not.toBeInTheDocument();
+  expect(
+    await screen.findByTestId('business-document-create-panel'),
+  ).toBeVisible();
+  expect(
+    screen.queryByTestId('open-document-constructor'),
+  ).not.toBeInTheDocument();
 });
 
 test('allows an extended moderator to assign a document owner', async () => {

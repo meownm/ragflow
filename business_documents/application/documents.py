@@ -202,6 +202,8 @@ class CreateDocument:
         remote_title = str(refreshed.get("document_name") or "").strip()
         if remote_title and normalize_title(remote_title) != normalize_title(display_title):
             raise ConflictError("EVA_PAGE_TITLE_CHANGED", "Название выбранной страницы EVA изменилось", {"actual_title": remote_title})
+        if not markdown.strip():
+            return None
         if len(markdown) > MAX_EVA_MARKDOWN_SIZE:
             raise ValidationError("EVA_DOCUMENT_TOO_LARGE", "Страница EVA слишком велика для импорта в бизнес-документ", {"maximum": MAX_EVA_MARKDOWN_SIZE})
         document_ast = self._content.import_document_markdown(markdown)

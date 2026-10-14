@@ -88,12 +88,9 @@ class EvaSynchronization:
         document = _require_edit(self._reader.document(document_id), access, expected, "The document changed since it was loaded")
         _require_pull(document)
         binding = self._binding(document_id, "PULL_FROM_EVA")
-        try:
-            remote, markdown = self._source.read_connected_page(actor_id, binding)
-        except ValidationError as error:
-            if error.code == "EVA_DOCUMENT_EMPTY":
-                raise ValidationError(error.code, "The linked EVA document has no published content") from error
-            raise
+        remote, markdown = self._source.read_connected_page(actor_id, binding)
+        if not markdown.strip():
+            raise ValidationError("EVA_DOCUMENT_EMPTY", "The linked EVA document has no published content")
         if len(markdown) > MAX_EVA_MARKDOWN_SIZE:
             raise ValidationError("EVA_DOCUMENT_TOO_LARGE", "The linked EVA document is too large for governed synchronization", {"maximum": MAX_EVA_MARKDOWN_SIZE})
         remote_hash, remote_version = remote["remote_content_hash"], remote.get("remote_version")
@@ -155,16 +152,17 @@ class EvaSynchronization:
         if document is None:
             raise NotFoundError()
         binding = self._binding(document_id, "PULL_FROM_EVA")
-        remote, _ = self._source.read_connected_page(actor_id, binding)
+        remote, markdown = self._source.read_connected_page(actor_id, binding)
+        has_content = bool(markdown.strip())
         remote_hash = remote.get("remote_content_hash")
         baseline_hash = binding.get("last_pulled_content_hash") or binding.get("remote_content_hash")
         return {
             "document_id": document_id,
-            "changed": bool(remote_hash and remote_hash != baseline_hash),
+            "changed": bool(has_content and remote_hash and remote_hash != baseline_hash),
             "direction": "FROM_EVA",
             "remote_version": remote.get("remote_version"),
             "baseline_version": binding.get("remote_version"),
-            "can_pull": bool(access.permissions(document["owner_id"])["edit"] and document["current_revision_id"] and document["lifecycle_state"] in {"AGREED", "REVIEW"}),
+            "can_pull": bool(has_content and access.permissions(document["owner_id"])["edit"] and document["current_revision_id"] and document["lifecycle_state"] in {"AGREED", "REVIEW"}),
         }
 
     def rebind_eva(
@@ -198,10 +196,10 @@ class EvaSynchronization:
         expected = _expected_version(raw, "INVALID_EVA_SYNC")
         access = DocumentAccess(actor_id, access_role, is_admin)
         document = _require_edit(self._reader.document(document_id), access, expected, "The document changed since it was loaded")
-        if document["lifecycle_state"] != "AGREED":
-            raise ConflictError("LIFECYCLE_STATE_CONFLICT", "Command requires AGREED lifecycle state", {"actual": document["lifecycle_state"]})
+        if document["lifecycle_state"] not in {"REVIEW", "AGREED"}:
+            raise ConflictError("LIFECYCLE_STATE_CONFLICT", "EVA publication requires REVIEW or AGREED lifecycle state", {"actual": document["lifecycle_state"]})
         if not document["current_revision_id"]:
-            raise ConflictError("AGREED_REVISION_REQUIRED", "An agreed local revision is required")
+            raise ConflictError("CURRENT_REVISION_REQUIRED", "A current local revision is required")
         binding = self._binding(document_id, "CREATE_EVA_CHANGE")
         revision = self._queries.revision(document, document["current_revision_id"])
         basis_summary = "; ".join(item["summary"] for item in revision["change_basis"][:3] if item.get("summary"))

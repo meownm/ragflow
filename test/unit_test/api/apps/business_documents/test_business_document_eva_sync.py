@@ -148,12 +148,67 @@ def test_eva_pull_preserves_empty_page_error(database, monkeypatch):
     document, _ = connected_document(monkeypatch)
 
     def read(*_args):
-        raise ValidationError("EVA_DOCUMENT_EMPTY", "Страница EVA не содержит опубликованного текста")
+        return {"remote_content_hash": "sha256:empty"}, ""
 
     monkeypatch.setattr(eva_synchronization._source, "read_connected_page", read)
     with pytest.raises(ValidationError) as caught:
         pull(document)
     assert caught.value.message == "The linked EVA document has no published content"
+
+
+@pytest.mark.parametrize("markdown", ["", " \n\t"])
+def test_empty_eva_import_does_not_create_a_revision(database, monkeypatch, markdown):
+    from api.apps.business_documents.runtime import document_creation
+
+    binding = {"status": "CONNECTED", "document_name": "An empty page"}
+    monkeypatch.setattr(document_creation._eva, "read_connected_page", lambda *_args: (binding, markdown))
+    events = BusinessDocumentEvent.select().count()
+    revisions = BusinessDocumentRevision.select().count()
+    assert document_creation._prepare_import(AUTHOR, "3", binding["document_name"], binding) is None
+    assert BusinessDocumentEvent.select().count() == events
+    assert BusinessDocumentRevision.select().count() == revisions
+
+
+def test_review_revision_can_initialize_empty_eva_page(database, monkeypatch):
+    from api.apps.business_documents.eva_changes import EvaDocumentChangeService
+    from api.db.db_models import BusinessDocumentEvaChange, BusinessDocumentEvaChangeEvent
+    from api.db.services.connector_service import ConnectorService
+    from test.unit_test.api.apps.business_documents.test_eva_document_changes import CONNECTOR, EVA_CHANGES_MODULE, FakeEvaClient
+
+    document, remote = connected_document(monkeypatch)
+    assert document["lifecycle_state"] == "REVIEW"
+    monkeypatch.setattr(EVA_CHANGES_MODULE, "get_documents_eva_connection", lambda **_kwargs: None)
+    monkeypatch.setattr(EVA_CHANGES_MODULE, "get_business_documents_eva_connector_id", lambda: remote["connector_id"])
+    monkeypatch.setattr(ConnectorService, "accessible", lambda *_args: True)
+    client = FakeEvaClient()
+    client.document.update(id=remote["document_id"], project_id=remote["project_id"], html="", version="1||2026-08-26T09:00:00+03:00")
+    monkeypatch.setattr(EvaDocumentChangeService, "_connector", lambda *_args: (CONNECTOR, client))
+    monkeypatch.setattr(EvaDocumentChangeService, "_mutation_client", lambda *_args: (client, 1))
+    monkeypatch.setattr(eva_synchronization._source, "read_connected_page", lambda actor, binding: EvaDocumentChangeService.read_connected_page(actor, binding))
+    events = BusinessDocumentEvent.select().count()
+    tables = [BusinessDocumentEvaChange, BusinessDocumentEvaChangeEvent]
+    with database.bind_ctx(tables, bind_refs=False, bind_backrefs=False):
+        database.create_tables(tables)
+        try:
+            status = eva_synchronization.check_eva_update(TENANT, AUTHOR, document["document_id"])
+            assert status["changed"] is False and status["can_pull"] is False
+            created = eva_synchronization.create_eva_change_from_revision(TENANT, AUTHOR, document["document_id"], {"expected_state_version": document["state_version"]})
+            assert created["base_markdown"] == ""
+            assert created["draft_markdown"] == document["current_revision"]["body_markdown"]
+            assert client.document["html"] == ""
+            approved = EvaDocumentChangeService.approve(TENANT, AUTHOR, created["change_id"], {"expected_state_version": created["state_version"]})
+            prepared = EvaDocumentChangeService.prepare_eva_draft(TENANT, AUTHOR, created["change_id"], {"expected_state_version": approved["state_version"]})
+            published = EvaDocumentChangeService.publish(TENANT, AUTHOR, created["change_id"], {"expected_state_version": prepared["state_version"]})
+            assert published["workflow_state"] == "PUBLISHED"
+            assert client.publish_calls == 1
+            assert client.document["html"]
+            assert client.document["name"] == document["title"]
+        finally:
+            database.drop_tables(tables)
+    stored = BusinessDocument.get_by_id(document["document_id"])
+    assert stored.lifecycle_state == "REVIEW"
+    assert stored.state_version == document["state_version"]
+    assert BusinessDocumentEvent.select().count() == events
 
 
 @pytest.mark.parametrize("operation", ["pull_from_eva", "rebind_eva", "create_eva_change_from_revision"])

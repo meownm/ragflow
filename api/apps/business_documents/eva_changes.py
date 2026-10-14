@@ -492,8 +492,6 @@ class EvaDocumentChangeService:
         except Exception as error:
             raise cls._map_external_error(error) from error
         remote_markdown = _html_to_markdown(str(remote.get("html") or ""))
-        if not remote_markdown:
-            raise ValidationError("EVA_DOCUMENT_EMPTY", "Страница EVA не содержит опубликованного текста")
         updated_binding = {
             **binding,
             "page_url": str(remote.get("web_url") or binding.get("page_url") or ""),

@@ -428,6 +428,22 @@ def test_read_connected_page_returns_current_markdown_and_refreshes_binding():
     assert refreshed["remote_content_hash"].startswith("sha256:")
 
 
+@pytest.mark.parametrize("html", ["", "<p><br></p>", "<p> </p>"])
+def test_read_connected_empty_page_preserves_identity_and_capabilities(html):
+    client = FakeEvaClient()
+    client.document["html"] = html
+    client.document["version"] = "1||2026-08-26T09:00:00+03:00"
+    binding = {"connector_id": CONNECTOR.id, "document_id": client.document["id"], "page_url": client.document["web_url"]}
+    with patch.object(EvaDocumentChangeService, "_connector", return_value=(CONNECTOR, client)):
+        refreshed, markdown = EvaDocumentChangeService.read_connected_page(AUTHOR, binding)
+    assert markdown == ""
+    assert refreshed["status"] == "CONNECTED"
+    assert refreshed["document_id"] == client.document["id"]
+    assert refreshed["remote_version"] == client.document["version"]
+    assert refreshed["remote_content_hash"].startswith("sha256:")
+    assert refreshed["capabilities"] == ["OPEN", "PULL_FROM_EVA", "CREATE_EVA_CHANGE"]
+
+
 def test_full_eva_change_flow_keeps_publish_as_separate_action(database):
     client = FakeEvaClient()
     created = _create(client)

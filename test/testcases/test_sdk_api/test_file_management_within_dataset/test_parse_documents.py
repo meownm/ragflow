@@ -272,7 +272,7 @@ def test_concurrent_parse(add_dataset_func, tmp_path):
     with ThreadPoolExecutor(max_workers=5) as executor:
         futures = [executor.submit(parse_doc, doc.id) for doc in documents]
 
-    responses = list(as_completed(futures))
+    responses = [future.result() for future in as_completed(futures)]
     assert len(responses) == count, responses
 
     condition_inner(dataset, count)

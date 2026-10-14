@@ -10,6 +10,7 @@ from json_repair import repair_json
 
 from api.apps.business_documents.ai import RAGFlowLLMAdapter
 from api.apps.business_documents.assets import prompt_descriptor, prompt_text
+from api.apps.business_documents.async_runtime import run_in_worker_loop
 from business_documents.application.errors import BusinessDocumentError
 from business_documents.sql_query.conclusion import ConclusionValidationError, validate_conclusion
 
@@ -36,7 +37,7 @@ def propose_conclusion(
     if len(json.dumps(context, ensure_ascii=False, default=str).encode("utf-8")) > 16_000:
         raise BusinessDocumentError("SQL_CONCLUSION_INPUT_TOO_LARGE", "Result preview is too large for the model", 422)
     try:
-        raw = asyncio.run(
+        raw = run_in_worker_loop(
             asyncio.wait_for(
                 RAGFlowLLMAdapter().async_generate(
                     tenant_id,

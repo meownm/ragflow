@@ -53,7 +53,7 @@ class TestCapability:
         datasets = batch_create_datasets(client, count)
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = [executor.submit(client.delete_datasets, **{"ids": [dataset.id for dataset in datasets][i : i + 1]}) for i in range(count)]
-        responses = list(as_completed(futures))
+        responses = [future.result() for future in as_completed(futures)]
         assert len(responses) == count, responses
 
         datasets = client.list_datasets()

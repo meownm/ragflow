@@ -20,8 +20,12 @@ ADMIN_HOST_ADDRESS = os.getenv("ADMIN_HOST_ADDRESS", "http://127.0.0.1:9381")
 VERSION = "v1"
 ZHIPU_AI_API_KEY = os.getenv("ZHIPU_AI_API_KEY")
 SILICONFLOW_API_KEY = os.getenv("SILICONFLOW_API_KEY")
-DEFAULT_EMBEDDING_MODEL = "embedding-3@CI@ZHIPU-AI" if ZHIPU_AI_API_KEY else "BAAI/bge-small-en-v1.5"
-DEFAULT_CHAT_MODEL = "glm-4-flash@CI@ZHIPU-AI" if ZHIPU_AI_API_KEY else ""
+if os.getenv("RAGFLOW_TEST_OLLAMA_URL"):
+    DEFAULT_EMBEDDING_MODEL = "bge-m3:latest@Local@Ollama"
+    DEFAULT_CHAT_MODEL = "qwen3.8:latest@Local@Ollama"
+else:
+    DEFAULT_EMBEDDING_MODEL = "embedding-3@CI@ZHIPU-AI" if ZHIPU_AI_API_KEY else "BAAI/bge-small-en-v1.5"
+    DEFAULT_CHAT_MODEL = "glm-4-flash@CI@ZHIPU-AI" if ZHIPU_AI_API_KEY else ""
 
 EMAIL = "qa@infiniflow.org"
 # password is "123"

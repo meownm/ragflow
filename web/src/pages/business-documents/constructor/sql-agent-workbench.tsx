@@ -31,9 +31,9 @@ import {
   decideBusinessDocumentSqlAgentProposal,
   fetchBusinessDocumentSqlAgentProject,
   listBusinessDocumentSqlAgentProjects,
+  loadBusinessDocumentSqlSchemaEntities,
   preflightBusinessDocumentSqlProject,
   previewBusinessDocumentSqlRun,
-  loadBusinessDocumentSqlSchemaEntities,
   proposeBusinessDocumentSqlConclusion,
   requestBusinessDocumentSqlAgent,
   reviseBusinessDocumentSqlQuestion,
@@ -60,6 +60,7 @@ import {
   X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { GuidedSqlForm } from './guided-sql-form';
 import {
   applySchemaCandidateDetails,
   buildSchemaSnapshot,
@@ -73,7 +74,7 @@ import {
   schemaArtifactFromWorkspace,
   schemaWorkspaceFromProposal,
 } from './sql-agent-document';
-import { GuidedSqlForm } from './guided-sql-form';
+import { SqlRevisionWorkspacePanel } from './sql-revision-workspace';
 
 const STAGES: Array<{
   kind: SqlAgentKind;
@@ -534,7 +535,9 @@ function SchemaReview({
                         {candidate.description ||
                           'Описание источника не указано'}
                       </span>
-                      <span className="block truncate text-xs text-text-disabled">Источник: {candidate.database} · {candidate.schema}</span>
+                      <span className="block truncate text-xs text-text-disabled">
+                        Источник: {candidate.database} · {candidate.schema}
+                      </span>
                     </span>
                     {loadingEntity === candidate.id ? (
                       <LoaderCircle className="size-4 shrink-0 animate-spin" />
@@ -1070,8 +1073,9 @@ function CompletedProject({
       setBusy(false);
     }
   };
-  const finish = async () => {
-    if (!run || run.status !== 'READY') return;
+  const finish = async (runId?: string) => {
+    if (!compiled || (runId && (run?.id !== runId || run.status !== 'READY')))
+      return;
     setBusy(true);
     setActionError(null);
     try {
@@ -1079,7 +1083,7 @@ function CompletedProject({
         project.id,
         project.state_version,
         commandKey('sql-complete'),
-        run.id,
+        runId,
       );
       setPreview(null);
       await onRefresh();
@@ -1308,15 +1312,25 @@ function CompletedProject({
               document.payload?.requirements || project.source_request || '',
             )}
           </p>
-          <p className="mt-2 text-xs text-text-secondary">
-            Получено {String(document.payload?.row_count ?? '—')} строк ·
-            результат{' '}
-            {(document.payload?.checks as { completeness?: string } | undefined)
-              ?.completeness === 'LIMITED'
-              ? 'ограничен'
-              : 'полный в пределах запроса'}{' '}
-            · строки удалены.
-          </p>
+          {document.payload?.execution_status === 'NOT_EXECUTED' ? (
+            <p className="mt-2 text-xs text-text-secondary">
+              SQL проверен. Запрос не выполнялся; результат и Python-обработка
+              не получены.
+            </p>
+          ) : (
+            <p className="mt-2 text-xs text-text-secondary">
+              Получено {String(document.payload?.row_count ?? '—')} строк ·
+              результат{' '}
+              {(
+                document.payload?.checks as
+                  | { completeness?: string }
+                  | undefined
+              )?.completeness === 'LIMITED'
+                ? 'ограничен'
+                : 'полный в пределах запроса'}{' '}
+              · строки удалены.
+            </p>
+          )}
           {(
             document.payload?.confirmed_conclusion as
               | { text?: string }
@@ -1329,6 +1343,18 @@ function CompletedProject({
               }
             </p>
           )}
+          <Button
+            className="mt-4"
+            size="sm"
+            variant="outline"
+            onClick={() =>
+              window.document
+                .getElementById('sql-revision-workspace')
+                ?.scrollIntoView({ behavior: 'smooth' })
+            }
+          >
+            Доработать
+          </Button>
         </section>
       )}
       {run && ['QUEUED', 'RUNNING'].includes(run.status) && (
@@ -1384,7 +1410,7 @@ function CompletedProject({
             </Button>
           )}
           <div className="mt-5 flex gap-2">
-            <Button disabled={busy} onClick={() => void finish()}>
+            <Button disabled={busy} onClick={() => void finish(run?.id)}>
               {busy && <LoaderCircle className="size-4 animate-spin" />}
               Завершить
             </Button>
@@ -1736,6 +1762,21 @@ function CompletedProject({
         )}
       {compiled?.sql && (
         <section className="mt-7 border-t border-border-button pt-4">
+          {!document && !run && (
+            <div className="mb-4 space-y-2">
+              <Button
+                variant="outline"
+                disabled={busy}
+                onClick={() => void finish()}
+              >
+                Сохранить документ без выполнения
+              </Button>
+              <p className="text-xs text-text-secondary">
+                Документ сохранит проверенный SQL и отметит выполнение и Python
+                как не выполненные.
+              </p>
+            </div>
+          )}
           <div className="flex items-center justify-between gap-3">
             <Button
               size="sm"
@@ -2153,20 +2194,19 @@ export function SqlAgentWorkbench() {
                   <p className="mt-1 line-clamp-2 max-w-3xl text-sm leading-6 text-text-secondary">
                     {project.source_request}
                   </p>
-                  {project.stage !== 'COMPLETE' &&
-                    project.operation_state !== 'RUNNING' && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        disabled={busy}
-                        onClick={() => {
-                          setQuestionDraft(project.source_request || '');
-                          setEditingQuestion(true);
-                        }}
-                      >
-                        Изменить задачу
-                      </Button>
-                    )}
+                  {project.operation_state !== 'RUNNING' && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={busy}
+                      onClick={() => {
+                        setQuestionDraft(project.source_request || '');
+                        setEditingQuestion(true);
+                      }}
+                    >
+                      Изменить задачу
+                    </Button>
+                  )}
                 </div>
                 <Button
                   size="sm"
@@ -2181,6 +2221,13 @@ export function SqlAgentWorkbench() {
             </header>
 
             <main className="px-5 py-7 lg:px-7" aria-live="polite">
+              <SqlRevisionWorkspacePanel
+                project={project}
+                onRefresh={() => loadProjects(project.id)}
+                onSchemaRequested={(suggested) =>
+                  setTerms(suggested.join('\n'))
+                }
+              />
               {editingQuestion && (
                 <section className="mb-6 max-w-2xl space-y-3 border-y border-border-button py-4">
                   <label

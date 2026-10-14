@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -37,14 +39,18 @@ def test_conclusion_rejects_uncited_or_out_of_range_cell():
 
 def test_model_receives_a_bounded_result_and_uncited_numbers_fail(monkeypatch):
     seen = []
+    loops = []
 
     class FakeLLM:
         async def async_generate(self, tenant_id, prompt, payload):
+            loops.append(asyncio.get_running_loop())
             seen.append(payload["context"])
             return {"text": "Итого 999.", "citations": [{"row_index": 0, "column": "value"}]}
 
     monkeypatch.setattr(sql_query_conclusions, "RAGFlowLLMAdapter", FakeLLM)
-    with pytest.raises(Exception, match="Numeric claims"):
-        sql_query_conclusions.propose_conclusion("tenant-1", "Продажи", ["value"], [[42]] * 30, 30, "FULL")
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with pytest.raises(Exception, match="Numeric claims"):
+            executor.submit(sql_query_conclusions.propose_conclusion, "tenant-1", "Продажи", ["value"], [[42]] * 30, 30, "FULL").result()
     assert len(seen[0]["rows"]) == 25
     assert seen[0]["columns"] == ["value"]
+    assert len(loops) == 1 and loops[0].is_closed()

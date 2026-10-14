@@ -44,7 +44,8 @@ def test_worker_loop_is_closed_after_operation_finishes():
     async def capture_loop() -> asyncio.AbstractEventLoop:
         return asyncio.get_running_loop()
 
-    loop = run_in_worker_loop(capture_loop())
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        loop = executor.submit(run_in_worker_loop, capture_loop()).result()
 
     assert loop.is_closed()
 
@@ -97,9 +98,8 @@ def test_llm_adapter_preserves_tenant_prompt_payload_and_retry_contract(monkeypa
     monkeypatch.setattr(ai_module, "_drain_litellm_callbacks", drain_litellm_callbacks)
 
     payload = {"job_input": {"task_type": task_type}, "document": {"title": "Регламент"}}
-    # The synchronous adapter is called by the production worker thread.  Keep
-    # its private asyncio.run away from pytest-asyncio's main-thread loop too,
-    # otherwise Windows can retain the displaced Proactor self-pipe until GC.
+    # The synchronous adapter owns its private loop in the production worker
+    # thread; the main-thread policy loop belongs to pytest-asyncio.
     adapter = RAGFlowLLMAdapter()
     with ThreadPoolExecutor(max_workers=1) as executor:
         result = executor.submit(
@@ -188,7 +188,8 @@ def test_default_and_injected_adapters_keep_one_production_boundary(monkeypatch)
 
 
 @pytest.mark.p1
-def test_litellm_callback_drain_does_not_stop_or_clear_the_global_worker(monkeypatch):
+@pytest.mark.asyncio
+async def test_litellm_callback_drain_does_not_stop_or_clear_the_global_worker(monkeypatch):
     calls = []
 
     class FakeWorker:
@@ -207,7 +208,7 @@ def test_litellm_callback_drain_does_not_stop_or_clear_the_global_worker(monkeyp
     logging_worker.GLOBAL_LOGGING_WORKER = FakeWorker()
     monkeypatch.setitem(sys.modules, logging_worker.__name__, logging_worker)
 
-    asyncio.run(ai_module._drain_litellm_callbacks())
+    await ai_module._drain_litellm_callbacks()
 
     assert calls == ["flush"]
 

@@ -54,14 +54,12 @@ class TestChunksRetrieval:
             pytest.param(
                 {"page": None, "page_size": 2},
                 2,
-                """TypeError("int() argument must be a string, a bytes-like object or a real number, not \'NoneType\'")""",
-                marks=pytest.mark.skip,
+                "page must be an integer",
             ),
             pytest.param(
                 {"page": 0, "page_size": 2},
                 0,
-                "ValueError('Search does not support negative slicing.')",
-                marks=pytest.mark.skip,
+                "page must be greater than or equal to 1",
             ),
             ({"page": 2, "page_size": 2}, 2, ""),
             ({"page": 3, "page_size": 2}, 0, ""),
@@ -69,14 +67,12 @@ class TestChunksRetrieval:
             pytest.param(
                 {"page": -1, "page_size": 2},
                 0,
-                "ValueError('Search does not support negative slicing.')",
-                marks=pytest.mark.skip,
+                "page must be greater than or equal to 1",
             ),
             pytest.param(
                 {"page": "a", "page_size": 2},
                 0,
-                """ValueError("invalid literal for int() with base 10: \'a\'")""",
-                marks=pytest.mark.skip,
+                "page must be an integer",
             ),
         ],
     )
@@ -99,22 +95,20 @@ class TestChunksRetrieval:
             pytest.param(
                 {"page_size": None},
                 0,
-                """TypeError("int() argument must be a string, a bytes-like object or a real number, not \'NoneType\'")""",
-                marks=pytest.mark.skip,
+                "page_size must be an integer",
             ),
-            pytest.param({"page_size": 1}, 1, "", marks=pytest.mark.skip(reason="issues/10692")),
+            ({"page_size": 1}, 1, ""),
             ({"page_size": 5}, 4, ""),
-            pytest.param({"page_size": "1"}, 1, "", marks=pytest.mark.skip(reason="issues/10692")),
+            ({"page_size": "1"}, 1, ""),
             pytest.param(
                 {"page_size": "a"},
                 0,
-                """ValueError("invalid literal for int() with base 10: \'a\'")""",
-                marks=pytest.mark.skip,
+                "page_size must be an integer",
             ),
         ],
     )
     def test_page_size(self, client, add_chunks, payload, expected_page_size, expected_message):
-        dataset, _, _ = add_chunks
+        dataset, _, expected_chunks = add_chunks
         payload.update({"question": "chunk", "dataset_ids": [dataset.id]})
 
         if expected_message:
@@ -124,6 +118,16 @@ class TestChunksRetrieval:
         else:
             chunks = client.retrieve(**payload)
             assert len(chunks) == expected_page_size, str(chunks)
+            if int(payload["page_size"]) == 1:
+                retrieved_ids = [chunks[0].id]
+                for page in range(2, len(expected_chunks) + 1):
+                    next_page = client.retrieve(**{**payload, "page": page})
+                    assert len(next_page) == 1, str(next_page)
+                    retrieved_ids.append(next_page[0].id)
+                assert len(retrieved_ids) == len(set(retrieved_ids)), retrieved_ids
+                assert set(retrieved_ids) == {chunk.id for chunk in expected_chunks}, retrieved_ids
+                exhausted = client.retrieve(**{**payload, "page": len(expected_chunks) + 1})
+                assert exhausted == [], str(exhausted)
 
     @pytest.mark.p3
     @pytest.mark.parametrize(
@@ -135,8 +139,7 @@ class TestChunksRetrieval:
             pytest.param(
                 {"vector_similarity_weight": "a"},
                 0,
-                """ValueError("could not convert string to float: 'a'")""",
-                marks=pytest.mark.skip,
+                "vector_similarity_weight must be a finite number",
             ),
         ],
     )
@@ -173,8 +176,7 @@ class TestChunksRetrieval:
             pytest.param(
                 {"top_k": "a"},
                 0,
-                """ValueError("invalid literal for int() with base 10: \'a\'")""",
-                marks=pytest.mark.skip,
+                "`top_k` must be an integer",
             ),
         ],
     )
@@ -241,5 +243,5 @@ class TestChunksRetrieval:
 
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = [executor.submit(client.retrieve, **payload) for _ in range(count)]
-        responses = list(as_completed(futures))
+        responses = [future.result() for future in as_completed(futures)]
         assert len(responses) == count, responses

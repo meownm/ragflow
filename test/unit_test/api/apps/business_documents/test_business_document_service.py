@@ -93,6 +93,19 @@ def _create(**overrides):
     return document_creation.execute(TENANT, AUTHOR, request)
 
 
+def test_event_preserves_one_persistence_clock(database, monkeypatch):
+    import api.db.db_models as models
+
+    ticks = iter(range(1001, 1020))
+    monkeypatch.setattr(models, "current_timestamp", lambda: next(ticks))
+    BusinessDocumentEvent.insert(
+        id="clock", document_id="document", sequence=1, event_type="created", actor_type="USER", actor_id=AUTHOR, payload={}, correlation_id="clock", create_time=1000, update_time=1000
+    ).execute()
+    event = BusinessDocumentEvent.get_by_id("clock")
+    assert event.create_time == event.update_time == 1000
+    assert event.create_date == event.update_date
+
+
 def test_exported_business_document_markdown_can_be_imported_without_an_llm_rewrite():
     markdown = render_document_ast(_draft())
 
@@ -101,6 +114,19 @@ def test_exported_business_document_markdown_can_be_imported_without_an_llm_rewr
     assert render_document_ast(imported) == markdown
     conceptual = next(section for section in imported["sections"] if section["id"] == "4.1")
     assert any(block["type"] == "plantuml" for block in conceptual["blocks"])
+
+
+def test_required_only_document_round_trips_through_eva_markdown():
+    draft = _draft()
+    required_ids = {section["id"] for section in published_template()["sections"] if section["required"]}
+    draft.update(schema_version="2", section_scope="required", sections=[section for section in draft["sections"] if section["id"] in required_ids])
+
+    imported = import_document_markdown(render_document_ast(draft))
+
+    assert imported["schema_version"] == "2"
+    assert imported["section_scope"] == "required"
+    assert render_document_ast(imported) == render_document_ast(draft)
+    assert {section["id"] for section in imported["sections"]} == required_ids
 
 
 def test_eva_import_recovers_plantuml_after_html_round_trip_drops_the_fence_language():
@@ -193,19 +219,175 @@ def test_catalog_sync_replaces_previous_source_rows_and_v3_derives_the_title(dat
         },
     )
 
-    assert len(catalog["items"]) == 69
-    assert len({item["id"] for item in catalog["items"]}) == 69
-    assert all(item["id"] != "L2-01.01.04.01.01" for item in catalog["items"])
-    assert all(not item["title"].startswith(item["details"]["source_l5_id"] + " ") for item in catalog["items"])
-    assert len({item["title"] for item in catalog["items"]}) == 69
-    assert listed["total"] == 69
+    assert len(catalog["items"]) == 70
+    assert len({item["id"] for item in catalog["items"]}) == 70
+    assert any(item["id"] == "01.01.04.01.01" for item in catalog["items"])
+    assert all(item["title"].startswith(item["details"]["source_l5_id"] + " ") for item in catalog["items"])
+    assert len({item["title"] for item in catalog["items"]}) == 70
+    assert listed["total"] == 70
     assert all(item["capability_level"] == "L5" for item in listed["items"])
     assert created["catalog_entry_id"] == first["id"]
     assert created["title"] == first["title"]
 
 
 @pytest.mark.p0
-def test_v3_imports_the_only_unbound_title_match_as_revision_one(database, monkeypatch):
+@pytest.mark.parametrize("idea", [None, "", "   "])
+def test_v4_creates_empty_required_structure_by_title(database, idea):
+    from api.db.db_models import migrate_business_document_catalog
+
+    migrate_business_document_catalog()
+    entry = load_document_catalog()["items"][0]
+    request = {"schema_version": "4", "document_type": "business_requirements", "catalog_entry_id": entry["id"], "eva_decision": {"mode": "SKIP"}}
+    if idea is not None:
+        request["idea"] = idea
+    document = document_creation.execute(TENANT, AUTHOR, request)
+
+    assert document["title"] == entry["title"]
+    assert document["idea"] == ""
+    assert document["state_version"] == 2
+    assert document["lifecycle_state"] == "REVIEW"
+    assert document["active_review_cycle"] == 1
+    assert document["operation_state"] == "IDLE"
+    revision = document["current_revision"]
+    assert revision["revision_number"] == 1
+    expected = [{"id": section["id"], "title": section["title"], "blocks": []} for section in published_template()["sections"] if section["required"]]
+    assert revision["document_ast"]["sections"] == expected
+    assert revision["document_ast"]["section_scope"] == "required"
+    assert all(text == "" for text in revision["section_texts"].values())
+    assert revision["change_basis"][0]["title"] == "Структура документа"
+    assert BusinessDocumentJob.select().count() == 0
+    assert [event.event_type for event in BusinessDocumentEvent.select().order_by(BusinessDocumentEvent.sequence)] == ["DocumentCreated", "DocumentStructureCreated"]
+    assert "ADD_COMMENT" in document["allowed_commands"]
+    assert "REQUEST_REVIEW_ASSESSMENT" in document["allowed_commands"]
+    with pytest.raises(BusinessDocumentError) as caught:
+        document_creation.execute(TENANT, AUTHOR, request)
+    assert caught.value.code == "DOCUMENT_TITLE_ALREADY_EXISTS"
+    assert BusinessDocumentRevision.select().count() == 1
+
+
+@pytest.mark.p0
+def test_v4_with_idea_preserves_intake_without_initial_structure(database):
+    from api.db.db_models import migrate_business_document_catalog
+
+    migrate_business_document_catalog()
+    document = document_creation.execute(
+        TENANT,
+        AUTHOR,
+        {
+            "schema_version": "4",
+            "document_type": "business_requirements",
+            "catalog_entry_id": load_document_catalog()["items"][0]["id"],
+            "idea": "Собрать вводные",
+            "eva_decision": {"mode": "SKIP"},
+        },
+    )
+    assert document["lifecycle_state"] == "INTAKE"
+    assert document["current_revision"] is None
+    assert BusinessDocumentRevision.select().count() == 0
+    assert BusinessDocumentJob.select().count() == 0
+
+
+@pytest.mark.p0
+def test_title_only_structure_can_be_filled_incrementally_without_agreeing_empty_sections(database):
+    from api.db.db_models import migrate_business_document_catalog
+
+    migrate_business_document_catalog()
+    document = document_creation.execute(
+        TENANT,
+        AUTHOR,
+        {
+            "schema_version": "4",
+            "document_type": "business_requirements",
+            "catalog_entry_id": load_document_catalog()["items"][0]["id"],
+            "eva_decision": {"mode": "SKIP"},
+        },
+    )
+    for section_ids, expected_lifecycle in [(["1"], "REVIEW"), ([section["id"] for section in published_template()["sections"] if section["required"]], "AGREED")]:
+        base = deepcopy(document["current_revision"])
+        response = document_commands.execute(
+            TENANT,
+            AUTHOR,
+            document["document_id"],
+            _command(
+                document,
+                "ADD_COMMENT",
+                {
+                    "revision_id": base["revision_id"],
+                    "section_id": None,
+                    "text": "Заполнить указанные разделы",
+                    "anchor": None,
+                },
+            ),
+        )
+        document = document_queries.get_document(response["document_id"], AUTHOR)
+        source_id = document["protocol"]["comments"][-1]["source_event_id"]
+        document = _complete_review_assessment(document)
+        requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "APPLY_CHANGES", {"base_revision_id": base["revision_id"]}))
+        sections = {section["id"]: section for section in base["document_ast"]["sections"]}
+        document = _complete(
+            requested["job_id"],
+            {
+                "change_plan": {
+                    "schema_version": "1",
+                    "base_revision_id": base["revision_id"],
+                    "source_state_version": requested["state_version"],
+                    "acknowledged_no_change_event_ids": [],
+                    "operations": [
+                        {
+                            "operation_id": f"op-{section_id}",
+                            "type": "REPLACE_SECTION_CONTENT",
+                            "section_id": section_id,
+                            "expected_section_hash": section_hash(sections[section_id]),
+                            "source_event_ids": [source_id],
+                            "content": {"blocks": required_section_blocks(section_id, "Содержимое раздела")},
+                        }
+                        for section_id in section_ids
+                    ],
+                }
+            },
+        )
+        assert document["lifecycle_state"] == expected_lifecycle
+        assert document["current_revision"]["document_ast"]["section_scope"] == "required"
+        assert [section["id"] for section in document["current_revision"]["document_ast"]["sections"]] == list(sections)
+    assert BusinessDocumentRevision.select().count() == 3
+
+
+@pytest.mark.p0
+def test_title_only_empty_structure_cannot_be_agreed_by_no_op(database):
+    from api.db.db_models import migrate_business_document_catalog
+
+    migrate_business_document_catalog()
+    document = document_creation.execute(
+        TENANT,
+        AUTHOR,
+        {
+            "schema_version": "4",
+            "document_type": "business_requirements",
+            "catalog_entry_id": load_document_catalog()["items"][0]["id"],
+            "eva_decision": {"mode": "SKIP"},
+        },
+    )
+    document = _complete_review_assessment(document)
+    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "APPLY_CHANGES", {"base_revision_id": document["current_revision"]["revision_id"]}))
+    document = _complete(
+        requested["job_id"],
+        {
+            "change_plan": {
+                "schema_version": "1",
+                "base_revision_id": document["current_revision"]["revision_id"],
+                "source_state_version": requested["state_version"],
+                "acknowledged_no_change_event_ids": [],
+                "operations": [],
+            }
+        },
+    )
+    assert document["lifecycle_state"] == "REVIEW"
+    assert BusinessDocumentRevision.select().count() == 1
+
+
+@pytest.mark.p0
+@pytest.mark.parametrize("with_idea", [True, False])
+def test_v3_imports_the_only_unbound_title_match_as_revision_one(database, monkeypatch, with_idea):
     from api.apps.business_documents.eva_changes import EvaDocumentChangeService
     from api.db.db_models import migrate_business_document_catalog
 
@@ -259,6 +441,9 @@ def test_v3_imports_the_only_unbound_title_match_as_revision_one(database, monke
         "catalog_entry_id": first["id"],
         "idea": "Проверить существующий документ EVA",
     }
+    if not with_idea:
+        request.pop("idea")
+        request["schema_version"] = "4"
     created = document_creation.execute(TENANT, AUTHOR, request)
 
     assert observed_titles == [first["title"]]
@@ -296,6 +481,69 @@ def test_v3_imports_the_only_unbound_title_match_as_revision_one(database, monke
         _command(commented, "REQUEST_REVIEW_ASSESSMENT"),
     )
     assert BusinessDocumentJob.get_by_id(requested["job_id"]).job_type == "ASSESS_REVIEW"
+
+
+@pytest.mark.p0
+@pytest.mark.parametrize("explicit_selection", [False, True])
+@pytest.mark.parametrize("with_idea", [True, False])
+def test_v3_binds_an_empty_eva_page_without_importing_it(database, monkeypatch, explicit_selection, with_idea):
+    from api.apps.business_documents.eva_changes import EvaDocumentChangeService
+    from api.db.db_models import migrate_business_document_catalog
+
+    migrate_business_document_catalog()
+    catalog_entry = load_document_catalog()["items"][0]
+    title = catalog_entry["title"]
+    page_url = "https://eva.example.com/project/Document/BR-42"
+    binding = {
+        "page_url": page_url,
+        "status": "CONNECTED",
+        "capabilities": ["OPEN", "PULL_FROM_EVA", "CREATE_EVA_CHANGE"],
+        "connector_id": "connector-1",
+        "eva_origin": "https://eva-api.example.com",
+        "project_id": "CmfProject:portal",
+        "document_id": "CmfDocument:doc-1",
+        "document_code": "BR-42",
+        "document_name": title,
+        "remote_version": "7",
+        "remote_content_hash": None,
+    }
+    monkeypatch.setattr(
+        EvaDocumentChangeService,
+        "find_title_matches",
+        staticmethod(lambda *_args: [{"name": title, "web_url": page_url, "code": "BR-42"}]),
+    )
+    monkeypatch.setattr(EvaDocumentChangeService, "resolve_page_url", staticmethod(lambda *_args: binding))
+
+    def read_empty_page(*_args):
+        return binding, ""
+
+    monkeypatch.setattr(EvaDocumentChangeService, "read_connected_page", staticmethod(read_empty_page))
+    request = {
+        "schema_version": "3",
+        "document_type": "business_requirements",
+        "catalog_entry_id": catalog_entry["id"],
+        "idea": "Подготовить новый документ для пустой страницы EVA",
+    }
+    if explicit_selection:
+        request.update(eva_page_url=page_url, eva_decision={"mode": "BIND"})
+    if not with_idea:
+        request.pop("idea")
+        request["schema_version"] = "4"
+
+    created = document_creation.execute(TENANT, AUTHOR, request)
+
+    assert created["lifecycle_state"] == ("INTAKE" if with_idea else "REVIEW")
+    if with_idea:
+        assert created["current_revision"] is None
+    else:
+        assert all(section["blocks"] == [] for section in created["current_revision"]["document_ast"]["sections"])
+    assert created["eva_binding"]["document_id"] == binding["document_id"]
+    assert created["eva_binding"]["remote_content_hash"] is None
+    assert BusinessDocumentEvaBinding.select().count() == 1
+    assert BusinessDocumentRevision.select().count() == (0 if with_idea else 1)
+    assert [event.event_type for event in BusinessDocumentEvent.select().order_by(BusinessDocumentEvent.sequence)] == (
+        ["DocumentCreated"] if with_idea else ["DocumentCreated", "DocumentStructureCreated"]
+    )
 
 
 @pytest.mark.p0
@@ -445,7 +693,8 @@ def test_v3_template_mismatch_does_not_leave_a_partial_document_or_binding(datab
 
 @pytest.mark.p0
 @pytest.mark.parametrize("catalog_entry_id", ["missing", "L4-test"])
-def test_v3_rejects_catalog_entries_that_are_not_active_l5(database, catalog_entry_id):
+@pytest.mark.parametrize("schema_version", ["3", "4"])
+def test_v3_rejects_catalog_entries_that_are_not_active_l5(database, catalog_entry_id, schema_version):
     from api.db.db_models import migrate_business_document_catalog
 
     migrate_business_document_catalog()
@@ -466,10 +715,10 @@ def test_v3_rejects_catalog_entries_that_are_not_active_l5(database, catalog_ent
             TENANT,
             AUTHOR,
             {
-                "schema_version": "3",
+                "schema_version": schema_version,
                 "document_type": "business_requirements",
                 "catalog_entry_id": catalog_entry_id,
-                "idea": "Недопустимый документ",
+                **({"idea": "Недопустимый документ"} if schema_version == "3" else {}),
             },
         )
 
@@ -1898,7 +2147,7 @@ def test_assignment_event_failure_rolls_back_owner_and_version(database, monkeyp
     def fail_event(*_args, **_kwargs):
         raise IntegrityError("forced assignment event failure")
 
-    monkeypatch.setattr(BusinessDocumentEvent, "insert_many", staticmethod(fail_event))
+    monkeypatch.setattr(BusinessDocumentEvent, "insert", staticmethod(fail_event))
     with pytest.raises(IntegrityError, match="forced assignment event failure"):
         assign_business_document(
             "moderator-1",

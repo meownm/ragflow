@@ -298,8 +298,16 @@ export const getDocumentQuality = (days: 1 | 7 | 30) =>
   );
 
 export const getDocumentQualityJobs = (params: {
-  days: 1 | 7 | 30; category?: string; task_type?: string; error_code?: string; offset?: number;
-}) => request.get<ResponseData<AdminService.DocumentQualityJobs>>(adminDocumentQualityJobs, { params });
+  days: 1 | 7 | 30;
+  category?: string;
+  task_type?: string;
+  error_code?: string;
+  offset?: number;
+}) =>
+  request.get<ResponseData<AdminService.DocumentQualityJobs>>(
+    adminDocumentQualityJobs,
+    { params },
+  );
 
 export const listDocumentQualityRuns = () =>
   request.get<ResponseData<AdminService.DocumentQualityRuns>>(

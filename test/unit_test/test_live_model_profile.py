@@ -1,5 +1,6 @@
 """Isolated pytest harness contract; no live server or provider calls."""
 
+import json
 import os
 from pathlib import Path
 import shutil
@@ -32,10 +33,10 @@ requests.sessions.Session.request = _forbidden_network
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(source, encoding="utf-8")
         env = os.environ.copy()
-        for key in ("ZHIPU_AI_API_KEY", "SILICONFLOW_API_KEY", "PYTEST_ADDOPTS"):
+        for key in ("ZHIPU_AI_API_KEY", "SILICONFLOW_API_KEY", "PYTEST_ADDOPTS", "RAGFLOW_TEST_OLLAMA_URL", "RAGFLOW_TEST_DISPOSABLE"):
             env.pop(key, None)
         env.update(credentials or {})
-        env["PYTHONPATH"] = str(tmp_path)
+        env["PYTHONPATH"] = os.pathsep.join((str(tmp_path), str(ROOT)))
         env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
         result = subprocess.run(
             [sys.executable, "-m", "pytest", "-q", "--strict-markers", "--tb=short", "-c", str(tmp_path / "pytest.ini"), str(target), *args],
@@ -207,3 +208,50 @@ def test_second(): assert calls == ["configured"]
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "2 passed" in result.stdout
+
+
+def test_generic_live_model_case_runs_in_disposable_local_profile(harness):
+    result = harness(
+        """
+import pytest
+from configs import DEFAULT_CHAT_MODEL, DEFAULT_EMBEDDING_MODEL
+@pytest.fixture(scope="session", autouse=True)
+def _model_environment(): pass
+@pytest.mark.p1
+@pytest.mark.cloud_models
+def test_contract():
+    assert DEFAULT_CHAT_MODEL == "qwen3.8:latest@Local@Ollama"
+    assert DEFAULT_EMBEDDING_MODEL == "bge-m3:latest@Local@Ollama"
+""",
+        "--model-profile=local",
+        credentials={"RAGFLOW_TEST_OLLAMA_URL": "http://ollama.invalid:11434", "RAGFLOW_TEST_DISPOSABLE": "1", "ZHIPU_AI_API_KEY": "synthetic-not-a-key"},
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 passed" in result.stdout
+
+
+def test_local_provisioning_rejects_non_disposable_environment_before_network(harness):
+    result = harness(
+        "import pytest\n@pytest.mark.p1\ndef test_contract(): pass\n",
+        "--model-profile=local",
+        credentials={"RAGFLOW_TEST_OLLAMA_URL": "http://ollama.invalid:11434"},
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "RAGFLOW_TEST_DISPOSABLE=1" in result.stdout
+
+
+def test_execution_collector_records_real_pytest_success_and_skip(harness, tmp_path):
+    evidence = tmp_path / "execution.json"
+    result = harness(
+        "import pytest\n@pytest.mark.p1\ndef test_pass(): pass\n@pytest.mark.p1\n@pytest.mark.skip(reason='synthetic capability')\ndef test_skip(): pass\n",
+        "--api-case-suite=restful_api",
+        f"--api-case-evidence={evidence}",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads(evidence.read_text(encoding="utf-8"))
+    assert len(report["collected"]) == 2
+    assert len(report["cases"]) == 2
+    passed, skipped = report["cases"]
+    assert [phase["outcome"] for phase in passed["phases"]] == ["passed", "passed", "passed"]
+    assert skipped["phases"][0]["skip_reason"] == "synthetic capability"
+    assert skipped["phases"][-1]["outcome"] == "passed"

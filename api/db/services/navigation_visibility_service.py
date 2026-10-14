@@ -20,7 +20,7 @@ from api.db.services.system_settings_service import SystemSettingsService
 
 
 NAVIGATION_VISIBILITY_SETTING = "navigation.visible_sections"
-NAVIGATION_VISIBILITY_VERSION = 3
+NAVIGATION_VISIBILITY_VERSION = 5
 NAVIGATION_SECTIONS = (
     "home",
     "dataset",
@@ -31,11 +31,12 @@ NAVIGATION_SECTIONS = (
     "catalog",
     "business_documents",
     "document_constructor",
+    "sql_projects",
+    "asr",
+    "translator",
     "file_manager",
 )
-ACCESS_CONTROLLED_NAVIGATION_SECTIONS = tuple(
-    section for section in NAVIGATION_SECTIONS if section not in {"home", "document_constructor"}
-)
+ACCESS_CONTROLLED_NAVIGATION_SECTIONS = tuple(section for section in NAVIGATION_SECTIONS if section not in {"home", "document_constructor", "sql_projects"})
 
 
 def validate_visible_sections(value: object) -> list[str]:
@@ -63,11 +64,15 @@ def get_visible_sections() -> list[str]:
         stored = json.loads(settings[0].value)
         if isinstance(stored, dict):
             version = stored.get("version")
-            if version not in (2, NAVIGATION_VISIBILITY_VERSION):
+            if version not in (2, 3, 4, NAVIGATION_VISIBILITY_VERSION):
                 raise ValueError("Unknown navigation visibility version")
             sections = stored.get("visible_sections")
             if version == 2 and isinstance(sections, list) and "business_documents" in sections:
                 sections = [*sections, "document_constructor"]
+            if version in (2, 3) and isinstance(sections, list) and "document_constructor" in sections:
+                sections = [*sections, "sql_projects"]
+            if version in (2, 3, 4) and isinstance(sections, list) and sections:
+                sections = [*sections, "asr", "translator"]
             return validate_visible_sections(sections)
 
         # Settings written before the home toggle existed implicitly kept Home
@@ -75,6 +80,8 @@ def get_visible_sections() -> list[str]:
         sections = ["home", *stored]
         if "business_documents" in sections:
             sections.append("document_constructor")
+            sections.append("sql_projects")
+        sections.extend(("asr", "translator"))
         return validate_visible_sections(sections)
     except (TypeError, ValueError, json.JSONDecodeError):
         return list(NAVIGATION_SECTIONS)

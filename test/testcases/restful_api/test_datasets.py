@@ -444,7 +444,7 @@ def test_dataset_update_embedding_model_format_contract(rest_client, clear_datas
 
 @pytest.mark.p1
 @pytest.mark.cloud_models
-def test_dataset_update_embedding_model_with_existing_chunks_contract(rest_client, create_document):
+def test_dataset_update_embedding_model_with_existing_chunks_contract(rest_client, create_document, create_dataset, tmp_path):
     dataset_id, document_id = create_document("dataset_update_embedding_with_chunks.txt")
     chunk_res = rest_client.post(
         f"/datasets/{dataset_id}/documents/{document_id}/chunks",
@@ -460,26 +460,50 @@ def test_dataset_update_embedding_model_with_existing_chunks_contract(rest_clien
     assert dataset_payload["code"] == 0, dataset_payload
     current_embedding = dataset_payload["data"]["embedding_model"]
 
-    candidates = ["embedding-3@CI@ZHIPU-AI", "BAAI/bge-small-en-v1.5@Local@Builtin"]
-    last_payload = None
-    for candidate in candidates:
-        if candidate == current_embedding:
-            continue
-        update_res = rest_client.put(
-            f"/datasets/{dataset_id}",
-            json={"embedding_model": candidate},
-        )
-        assert update_res.status_code == 200
-        update_payload = update_res.json()
-        last_payload = update_payload
-        if update_payload["code"] == 0:
-            assert update_payload["data"]["embedding_model"] == candidate, update_payload
-            return
-        if update_payload["code"] == 102 and "Unauthorized model" in update_payload.get("message", ""):
-            continue
-        assert False, update_payload
+    models_res = rest_client.get("/models", params={"type": "embedding"})
+    assert models_res.status_code == 200
+    models_payload = models_res.json()
+    assert models_payload["code"] == 0, models_payload
+    candidates = []
+    current_name = current_embedding.rsplit("@", 2)[0]
+    for model in models_payload["data"]:
+        name = model.get("name") or model.get("model_name")
+        provider = model.get("provider_name") or model.get("model_provider")
+        instance = model.get("instance_name") or model.get("model_instance")
+        if name and provider and instance and name != current_name and model.get("enable", True):
+            candidates.append(f"{name}@{instance}@{provider}")
+    assert candidates, "Embedding switch prerequisite: two distinct available embedding models are required"
+    candidate = sorted(candidates)[0]
 
-    pytest.xfail(f"No authorized alternative embedding model available for update: {last_payload}")
+    # Verify that the alternative actually encodes; changing the original index
+    # to a different vector dimension would be a separate reindexing scenario.
+    probe_dataset_id = create_dataset(f"embedding_probe_{uuid.uuid4().hex}")
+    probe_update = rest_client.put(f"/datasets/{probe_dataset_id}", json={"embedding_model": candidate})
+    assert probe_update.status_code == 200
+    assert probe_update.json()["code"] == 0, probe_update.json()
+    probe_file = create_txt_file(tmp_path / "embedding_probe.txt")
+    with probe_file.open("rb") as stream:
+        probe_upload = rest_client.post(f"/datasets/{probe_dataset_id}/documents", files=[("file", (probe_file.name, stream))])
+    assert probe_upload.status_code == 200
+    probe_payload = probe_upload.json()
+    assert probe_payload["code"] == 0, probe_payload
+    probe_document_id = probe_payload["data"][0]["id"]
+    probe_chunk = rest_client.post(f"/datasets/{probe_dataset_id}/documents/{probe_document_id}/chunks", json={"content": "alternative embedding encoder proof"})
+    assert probe_chunk.status_code == 200
+    probe_chunk_payload = probe_chunk.json()
+    assert probe_chunk_payload["code"] == 0, probe_chunk_payload
+    assert probe_chunk_payload["data"]["chunk"]["id"], probe_chunk_payload
+
+    update_res = rest_client.put(f"/datasets/{dataset_id}", json={"embedding_model": candidate})
+    assert update_res.status_code == 200
+    update_payload = update_res.json()
+    assert update_payload["code"] == 0, update_payload
+    assert update_payload["data"]["embedding_model"] == candidate, update_payload
+    persisted = rest_client.get(f"/datasets/{dataset_id}")
+    assert persisted.status_code == 200
+    persisted_payload = persisted.json()
+    assert persisted_payload["code"] == 0, persisted_payload
+    assert persisted_payload["data"]["embedding_model"] == candidate, persisted_payload
 
 
 @pytest.mark.p2
@@ -811,9 +835,7 @@ def test_dataset_update_embedding_model_invalid_and_none_contract(rest_client, c
     invalid_cases = [
         (
             "unknown@ZHIPU-AI",
-            "Instance default not found for model unknown@ZHIPU-AI."
-            if ZHIPU_AI_API_KEY
-            else "Provider ZHIPU-AI not found for model unknown@ZHIPU-AI.",
+            "Instance default not found for model unknown@ZHIPU-AI." if ZHIPU_AI_API_KEY else "Provider ZHIPU-AI not found for model unknown@ZHIPU-AI.",
         ),
         ("embedding-3@unknown", "Provider unknown not found for model embedding-3@unknown."),
         ("text-embedding-v3@Tongyi-Qianwen", "Provider Tongyi-Qianwen not found for model text-embedding-v3@Tongyi-Qianwen."),
@@ -1182,9 +1204,7 @@ def test_dataset_create_permission_contract(rest_client, clear_datasets, name, p
             "unknown@ZHIPU-AI",
             102,
             None,
-            "Instance default not found for model unknown@ZHIPU-AI."
-            if ZHIPU_AI_API_KEY
-            else "Provider ZHIPU-AI not found for model unknown@ZHIPU-AI.",
+            "Instance default not found for model unknown@ZHIPU-AI." if ZHIPU_AI_API_KEY else "Provider ZHIPU-AI not found for model unknown@ZHIPU-AI.",
             False,
         ),
         ("unknown_llm_factory", "embedding-3@unknown", 102, None, "Provider unknown not found for model embedding-3@unknown.", False),

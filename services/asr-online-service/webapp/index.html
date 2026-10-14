@@ -2,30 +2,33 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8" />
-  <title>ASR Online Service</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Расшифровка аудио · ASR</title>
+  <link rel="stylesheet" href="./style.css" />
 </head>
 <body>
-  <h1>ASR Online Service</h1>
-  <div>
-    <label for="audioFile">Аудиофайл</label>
-    <input id="audioFile" type="file" accept="audio/*" />
-  </div>
-  <div>
-    <label for="language">Язык</label>
-    <select id="language"></select>
-  </div>
-  <div>
-    <label for="model">Модель</label>
-    <select id="model"></select>
-  </div>
-  <div>
-    <label><input type="checkbox" id="wantTxt" /> Добавить txt артефакт</label>
-  </div>
-  <button id="createJob">Запустить распознавание</button>
-  <p id="progress"></p>
-  <pre id="output"></pre>
-  <p><a id="artifactJson" href="#" style="display:none">Скачать result_json</a></p>
-  <p><a id="artifactTxt" href="#" style="display:none">Скачать txt</a></p>
-  <script src="/app.js"></script>
+  <main class="workspace">
+    <header class="topline"><span class="brand">ASR<span class="brand-dot">.</span></span><span class="topline-note">Расшифровка аудио</span></header>
+    <section class="intro" aria-labelledby="page-title">
+      <p class="eyebrow">АУДИО → ТЕКСТ</p>
+      <h1 id="page-title">Расшифровка файла</h1>
+      <p class="description">Загрузите запись. Текст будет появляться по мере распознавания.</p>
+    </section>
+    <form id="transcriptionForm" class="controls">
+      <label class="file-picker" for="audioFile"><span class="file-picker-label">Аудиофайл</span><span id="fileName" class="file-name">Выберите файл</span><span class="file-picker-action">Обзор ↗</span></label>
+      <input id="audioFile" name="file" type="file" accept="audio/*,video/*,.wav,.mp3,.m4a,.ogg,.opus,.flac,.mp4,.webm" required />
+      <label class="field" for="model"><span>Модель</span><select id="model" name="model" required></select></label>
+      <label class="field" for="language"><span>Язык</span><select id="language" name="language" required></select></label>
+      <button id="startButton" type="submit" disabled>Начать распознавание <span aria-hidden="true">↗</span></button>
+    </form>
+    <section class="result" aria-labelledby="result-title">
+      <div class="result-heading"><div><p class="eyebrow">РЕЗУЛЬТАТ</p><h2 id="result-title">Текст записи</h2></div><button id="copyButton" type="button" disabled>Скопировать</button></div>
+      <div class="progress-line" role="progressbar" aria-label="Прогресс распознавания" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="progressFill"></span></div>
+      <p id="status" class="status" role="status" aria-live="polite">Ожидание файла</p>
+      <p id="output" class="output placeholder" aria-live="polite">Здесь появится расшифровка.</p>
+      <p id="error" class="error" role="alert" hidden></p>
+    </section>
+  </main>
+  <script type="module" src="./app.js"></script>
 </body>
 </html>

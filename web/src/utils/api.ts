@@ -284,6 +284,24 @@ export default {
   businessDocumentSqlQueryProjects: `${restAPIv1}/business-documents/sql-query/projects`,
   businessDocumentSqlQueryProject: (id: string) =>
     `${restAPIv1}/business-documents/sql-query/projects/${id}`,
+  businessDocumentSqlRevisionWorkspace: (id: string) =>
+    `${restAPIv1}/business-documents/sql-query/projects/${id}/workspace`,
+  businessDocumentSqlRevisionDraft: (id: string) =>
+    `${restAPIv1}/business-documents/sql-query/projects/${id}/draft`,
+  businessDocumentSqlRevisionThreads: (id: string) =>
+    `${restAPIv1}/business-documents/sql-query/projects/${id}/threads`,
+  businessDocumentSqlRevisionThreadMessages: (id: string, threadId: string) =>
+    `${restAPIv1}/business-documents/sql-query/projects/${id}/threads/${threadId}/messages`,
+  businessDocumentSqlRevisionProposal: (id: string, threadId: string) =>
+    `${restAPIv1}/business-documents/sql-query/projects/${id}/threads/${threadId}/proposal`,
+  businessDocumentSqlRevisionReattach: (id: string, threadId: string) =>
+    `${restAPIv1}/business-documents/sql-query/projects/${id}/threads/${threadId}/reattach`,
+  businessDocumentSqlRevisionDecision: (id: string, proposalId: string) =>
+    `${restAPIv1}/business-documents/sql-query/projects/${id}/revision-proposals/${proposalId}/decision`,
+  businessDocumentSqlRevisionCancel: (id: string) =>
+    `${restAPIv1}/business-documents/sql-query/projects/${id}/revision-proposals/cancel`,
+  businessDocumentSqlSchemaReopen: (id: string) =>
+    `${restAPIv1}/business-documents/sql-query/projects/${id}/schema/reopen`,
   businessDocumentSqlProjectCompilations: (id: string) =>
     `${restAPIv1}/business-documents/sql-query/projects/${id}/compilations`,
   businessDocumentSqlProjectManualSql: (id: string) =>

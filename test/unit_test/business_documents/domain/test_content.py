@@ -83,6 +83,24 @@ def test_duplicate_section_ids_remain_visible_to_validation():
     assert normalize_document_ast(document, _template(("1", False, []))) == document
 
 
+def test_required_scope_preserves_empty_parents_without_adding_optional_sections():
+    template = _template(("1", True, ["paragraph"]), ("1.1", True, ["paragraph"]), ("2", False, ["paragraph"]))
+    document = {"section_scope": "required", "sections": [_section("1"), _section("1.1", {"type": "paragraph", "text": "Child content"})]}
+    original = deepcopy(document)
+
+    normalized = normalize_document_ast(document, template)
+
+    assert normalized == original
+    normalized["sections"][1]["blocks"][0]["text"] = "Changed"
+    assert document == original
+
+
+def test_required_scope_keeps_explicit_optional_sections():
+    document = {"section_scope": "required", "sections": [_section("1"), _section("2", {"type": "paragraph", "text": "Optional content"})]}
+
+    assert normalize_document_ast(document, _template(("1", True, ["paragraph"]), ("2", False, ["paragraph"]))) == document
+
+
 def test_content_without_an_allowed_descendant_stays_empty():
     document = {"sections": [_section("1.1", {"type": "paragraph", "text": " "}, {"type": "image", "url": "image.png"})]}
 

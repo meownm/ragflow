@@ -32,9 +32,11 @@ _CONTRACT_FILES = {
     "create_document": "create_document.v1.schema.json",
     "create_document_v2": "create_document.v2.schema.json",
     "create_document_v3": "create_document.v3.schema.json",
+    "create_document_v4": "create_document.v4.schema.json",
     "command": "command.v1.schema.json",
     "question_batch": "question_batch.v1.schema.json",
     "document_draft": "document_draft.v1.schema.json",
+    "document_draft_v2": "document_draft.v2.schema.json",
     "change_plan": "change_plan.v1.schema.json",
     "review_plan": "review_plan.v1.schema.json",
     "eva_change_draft": "eva_change_draft.v1.schema.json",
@@ -140,17 +142,19 @@ def validate_contract(name: str, value: object) -> None:
 
 def validate_document_ast(document: object) -> dict[str, Any]:
     with _validation_errors():
-        return content.validate_document_ast(document, published_template(), contract_schema("document_draft"))
+        name = "document_draft_v2" if isinstance(document, dict) and document.get("schema_version") == "2" else "document_draft"
+        return content.validate_document_ast(document, published_template(), contract_schema(name))
 
 
 def import_document_markdown(markdown: object) -> dict[str, Any]:
     with _validation_errors():
-        return content.import_document_markdown(markdown, published_template(), contract_schema("document_draft"))
+        return content.import_document_markdown(markdown, published_template(), contract_schema("document_draft"), required_schema=contract_schema("document_draft_v2"))
 
 
 def apply_change_plan(base_document: dict[str, Any], change_plan: dict[str, Any]) -> dict[str, Any]:
     with _validation_errors():
-        return content.apply_change_plan(base_document, change_plan, published_template(), contract_schema("document_draft"))
+        name = "document_draft_v2" if base_document.get("schema_version") == "2" else "document_draft"
+        return content.apply_change_plan(base_document, change_plan, published_template(), contract_schema(name))
 
 
 def render_document_ast(document: dict[str, Any]) -> str:

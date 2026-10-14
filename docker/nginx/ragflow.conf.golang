@@ -10,6 +10,39 @@ server {
     gzip_vary on;
     gzip_disable "MSIE [1-6]\.";
 
+    location = /asr {
+        absolute_redirect off;
+        return 308 /asr/;
+    }
+    location ^~ /asr/ {
+        resolver 127.0.0.11 valid=30s;
+        set $asr_upstream t-one-asr:9011;
+        rewrite ^/asr/(.*)$ /$1 break;
+        proxy_pass http://$asr_upstream;
+        include proxy.conf;
+    }
+
+    location = /translate {
+        absolute_redirect off;
+        return 308 /translate/;
+    }
+    location = /translate/address-form {
+        absolute_redirect off;
+        return 308 /translate/address-form/;
+    }
+    location ^~ /translate/address-form/ {
+        proxy_pass http://host.docker.internal:8094;
+        include proxy.conf;
+    }
+    location ^~ /address-api/ {
+        proxy_pass http://host.docker.internal:8094;
+        include proxy.conf;
+    }
+    location ^~ /translate/ {
+        proxy_pass http://host.docker.internal:8092;
+        include proxy.conf;
+    }
+
     location ~ ^/api/v1/admin/document-quality {
         proxy_pass http://127.0.0.1:9381;
         include proxy.conf;

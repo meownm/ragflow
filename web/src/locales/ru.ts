@@ -119,6 +119,10 @@ export default {
       openMetadata: 'Каталог',
       businessDocuments: 'Бизнес-требования',
       documentConstructor: 'Конструктор',
+      sqlProjects: 'SQL-проекты',
+      transcription: 'Расшифровка',
+      translator: 'Переводчик',
+      openStandalone: 'Открыть в новой вкладке',
       instruction: 'Инструкция',
     },
     openMetadata: {
@@ -1381,7 +1385,7 @@ export default {
       evaTokenReplaceAction: 'Заменить',
       evaTokenDelete: 'Удалить EVA-токен',
       evaTokenDeleteConfirmation:
-        'После удаления чтение EVA без сервисного токена коннектора, сохранение черновика и публикация изменений будут недоступны, пока вы не добавите персональный токен снова.',
+        'После удаления личного токена чтение и запись EVA в бизнес-требованиях будут недоступны. Локальные документы и общий токен чтения в базу знаний сохранятся.',
       evaTokenSaved: 'EVA-токен сохранен.',
       evaTokenDeleted: 'EVA-токен удален.',
       evaTokenLoadFailed: 'Не удалось загрузить состояние EVA-токена.',

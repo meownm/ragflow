@@ -105,7 +105,9 @@ def test_contract_schemas_compile_and_question_bounds_are_enforced():
         "create_document.v1.schema.json",
         "create_document.v2.schema.json",
         "create_document.v3.schema.json",
+        "create_document.v4.schema.json",
         "document_draft.v1.schema.json",
+        "document_draft.v2.schema.json",
         "eva_change_draft.v1.schema.json",
         "question_batch.v1.schema.json",
         "review_plan.v1.schema.json",
@@ -120,13 +122,23 @@ def test_contract_schemas_compile_and_question_bounds_are_enforced():
     v3_request = {
         "schema_version": "3",
         "document_type": "business_requirements",
-        "catalog_entry_id": "L2-01.01.04.01.01",
+        "catalog_entry_id": "01.01.04.01.01",
         "idea": "Импортировать существующую страницу",
         "eva_page_url": "https://eva.example.com/project/Document/BR-42",
         "eva_decision": {"mode": "BIND"},
     }
     create_v3.validate(v3_request)
     assert list(create_v3.iter_errors({**v3_request, "eva_decision": {"mode": "BIND", "confirm_replace": True}}))
+    title_only = {"schema_version": "4", "document_type": "business_requirements", "catalog_entry_id": "01.01.04.01.01"}
+    create_v4 = Draft202012Validator(schemas["create_document.v4.schema.json"])
+    create_v4.validate(title_only)
+    create_v4.validate({**title_only, "idea": ""})
+    assert list(create_v4.iter_errors({**title_only, "idea": None}))
+    assert list(create_v3.iter_errors({**title_only, "schema_version": "3"}))
+
+    document_v2 = {"schema_version": "2", "document_type": "business_requirements", "template_version": "1", "section_scope": "required", "sections": [{"id": "1", "title": "Цель", "blocks": []}]}
+    Draft202012Validator(schemas["document_draft.v2.schema.json"]).validate(document_v2)
+    assert list(Draft202012Validator(schemas["document_draft.v1.schema.json"]).iter_errors(document_v2))
 
     validator = Draft202012Validator(schemas["question_batch.v1.schema.json"])
     valid_question = {

@@ -138,7 +138,21 @@ export default defineConfig(({ mode }) => {
     },
   };
 
-  const proxy = proxySchemes[proxyScheme] || proxySchemes.python;
+  const proxy = {
+    ...(proxySchemes[proxyScheme] || proxySchemes.python),
+    '/asr/': {
+      target: 'http://127.0.0.1:9380',
+      changeOrigin: true,
+    },
+    '/address-api/': {
+      target: 'http://127.0.0.1:9380',
+      changeOrigin: true,
+    },
+    '/translate/': {
+      target: 'http://127.0.0.1:9380',
+      changeOrigin: true,
+    },
+  };
 
   return {
     define: {

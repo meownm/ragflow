@@ -115,7 +115,7 @@ def guard_advanced_sql(sql: str, snapshot, parameter_names: list[str]) -> dict[s
             raise SqlGuardError("Recursive CTEs are not supported")
         if isinstance(node, exp.Select) and (node.args.get("into") is not None or node.args.get("locks")):
             raise SqlGuardError("SELECT INTO and row locks are prohibited")
-        if isinstance(node, exp.Func) and node.sql_name().casefold() not in _ALLOWED_FUNCTIONS:
+        if isinstance(node, exp.Func) and not isinstance(node, exp.Exists) and node.sql_name().casefold() not in _ALLOWED_FUNCTIONS:
             raise SqlGuardError(f"Function {node.sql_name()} is not allowed")
         if isinstance(node, exp.Literal) and (not node.is_string or str(node.this).casefold() not in {"day", "week", "month", "quarter", "year"}):
             raise SqlGuardError("Values must use bound parameters")

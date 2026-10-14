@@ -11,6 +11,7 @@ param(
     [string]$CandidateRevision,
     [string]$CandidateImageReference,
     [string]$CandidateReceipt,
+    [switch]$AllowHistoricalReceipt,
     [switch]$Observability,
     [switch]$Build,
     [switch]$BuildFrontend,
@@ -125,21 +126,19 @@ function Get-DeployedRevision {
     return $revision
 }
 
-function Test-CandidateReceiptJobs {
-    param([Parameter(Mandatory = $true)]$CI)
-
-    $requiredProperty = $CI.PSObject.Properties['engine_tests_required']
-    $required = if ($requiredProperty) { $requiredProperty.Value } else { $true }
-    if ($required -isnot [bool]) { return $false }
-    if (-not $required) {
-        $reason = $CI.PSObject.Properties['engine_test_reason']
-        if (-not $reason -or $reason.Value -ne 'no-engine-changes') { return $false }
+function Assert-CandidateReceipt {
+    param([string]$Path, [bool]$Published)
+    $python = Join-Path $repoRoot ".venv/Scripts/python.exe"
+    if (-not (Test-Path -LiteralPath $python)) {
+        $python = (Get-Command python -ErrorAction Stop).Source
     }
-    $expected = if ($required) { 'success' } else { 'skipped' }
-    return ($CI.jobs.PSObject.Properties.Name.Count -eq 3 -and
-        $CI.jobs.ragflow_preflight -eq 'success' -and
-        $CI.jobs.ragflow_tests_infinity -eq $expected -and
-        $CI.jobs.ragflow_tests_elasticsearch -eq $expected)
+    $arguments = @("-m", "tools.quality.release_runtime", "validate", "--path", $Path)
+    if ($Published) { $arguments += "--published" }
+    Push-Location $repoRoot
+    try {
+        & $python @arguments
+        if ($LASTEXITCODE -ne 0) { throw "Candidate receipt failed canonical evidence validation." }
+    } finally { Pop-Location }
 }
 
 function Test-FeatureImageIdentity {
@@ -151,7 +150,8 @@ function Test-FeatureImageIdentity {
         [Parameter(Mandatory = $true)][string]$Version
     )
 
-    if ($Reference -cnotmatch '^192\.168\.1\.175:8443/docker-hosted/ragflow@sha256:[0-9a-f]{64}$' -or
+    $localImage = $Reference -cmatch '^sha256:[0-9a-f]{64}$'
+    if ((-not $localImage -and $Reference -cnotmatch '^192\.168\.1\.175:8443/docker-hosted/ragflow@sha256:[0-9a-f]{64}$') -or
         $SourceId -cnotmatch '^[0-9a-f]{64}$' -or
         $Revision -cne 'unverified' -or
         $Version -cnotmatch ('-dev\.' + $SourceId.Substring(0, 12) + '$') -or
@@ -162,9 +162,12 @@ function Test-FeatureImageIdentity {
     if (-not $labels) { return $false }
     $sourceLabel = $labels.PSObject.Properties['org.ragflow.source-id']
     $validationLabel = $labels.PSObject.Properties['org.ragflow.validation']
+    $identityMatches = if ($localImage) { $Inspection.Id -ceq $Reference } else {
+        @($Inspection.RepoDigests) -ccontains $Reference
+    }
     return ($sourceLabel -and $sourceLabel.Value -ceq $SourceId -and
         $validationLabel -and $validationLabel.Value -ceq 'feature-build-only' -and
-        @($Inspection.RepoDigests) -ccontains $Reference)
+        $identityMatches)
 }
 
 function Get-ChangedPaths {
@@ -205,6 +208,36 @@ function Get-RagflowBindSources {
         }
     }
     return $sources
+}
+
+function Initialize-PersistentRuntimeBinds {
+    param(
+        [Parameter(Mandatory = $true)][string]$RuntimeRoot,
+        [Parameter(Mandatory = $true)][string]$TemplatePath
+    )
+
+    if (-not (Test-Path -LiteralPath $TemplatePath -PathType Leaf)) {
+        throw "Local service configuration template is missing: $TemplatePath"
+    }
+    $hash = (Get-FileHash -LiteralPath $TemplatePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $configDirectory = Join-Path $RuntimeRoot "config\$hash"
+    $configPath = Join-Path $configDirectory "service_conf.yaml.template"
+    $logsPath = Join-Path $RuntimeRoot "logs"
+    New-Item -ItemType Directory -Force -Path $configDirectory, $logsPath | Out-Null
+    if (Test-Path -LiteralPath $configPath) {
+        if (-not (Test-Path -LiteralPath $configPath -PathType Leaf) -or
+            (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $hash) {
+            throw "Persistent service configuration does not match its source hash: $configPath"
+        }
+    }
+    else {
+        Copy-Item -LiteralPath $TemplatePath -Destination $configPath
+    }
+    return [pscustomobject]@{
+        config_path = $configPath
+        logs_path = $logsPath
+        config_sha256 = $hash
+    }
 }
 
 function Test-PathCoveredByBindMount {
@@ -382,13 +415,15 @@ $candidateOnlyDirtyPaths = @($changePlan.image_inputs + $changePlan.unmounted_ru
     Where-Object { $dirtyPaths.Contains($_) } | Sort-Object -Unique)
 
 $resolvedMode = $Mode
+$asrOnly = $Services.Count -eq 1 -and $Services[0] -eq "t-one-asr"
 if ($resolvedMode -eq "Auto") {
-    $resolvedMode = if ($changePlan.requires_candidate) { "Candidate" } else { "Fast" }
+    $resolvedMode = if ($asrOnly -or -not $changePlan.requires_candidate) { "Fast" } else { "Candidate" }
 }
 if ($resolvedMode -eq "Feature") {
-    if ($FeatureImageReference -cnotmatch '^192\.168\.1\.175:8443/docker-hosted/ragflow@sha256:[0-9a-f]{64}$' -or
+    if (($FeatureImageReference -cnotmatch '^sha256:[0-9a-f]{64}$' -and
+        $FeatureImageReference -cnotmatch '^192\.168\.1\.175:8443/docker-hosted/ragflow@sha256:[0-9a-f]{64}$') -or
         $FeatureSourceId -cnotmatch '^[0-9a-f]{64}$') {
-        throw "Feature mode requires the Nexus image digest and full source ID from build-feature.py."
+        throw "Feature mode requires an immutable local image ID or Nexus digest, and its full source ID."
     }
     if ($CandidateRevision -or $CandidateImageReference -or $CandidateReceipt -or $Build -or $BuildFrontend) {
         throw "Feature mode cannot use candidate/release metadata or local build options."
@@ -397,7 +432,7 @@ if ($resolvedMode -eq "Feature") {
 elseif ($FeatureImageReference -or $FeatureSourceId) {
     throw "Feature image parameters require -Mode Feature."
 }
-if ($resolvedMode -eq "Fast" -and $changePlan.requires_candidate) {
+if ($resolvedMode -eq "Fast" -and $changePlan.requires_candidate -and -not $asrOnly) {
     $details = @($changePlan.image_inputs + $changePlan.unmounted_runtime | Sort-Object -Unique) -join ", "
     if (-not $details) { $details = "deployed SOURCE_REVISION is unknown" }
     throw "Fast deploy is unsafe: runtime changes require a CI candidate image. Paths: $details"
@@ -415,6 +450,7 @@ if (-not $CandidateRevision) {
 $candidateImage = $null
 $featureImage = $null
 $deploymentImage = $null
+$runtimeBinds = $null
 $candidateReceiptData = $null
 $candidateReceiptPath = $null
 $candidateReceiptHash = $null
@@ -442,21 +478,29 @@ if ($resolvedMode -in @("Candidate", "Release")) {
             throw "Candidate receipt is unavailable: $candidateReceiptPath"
         }
         $candidateReceiptData = Get-Content -LiteralPath $candidateReceiptPath -Raw | ConvertFrom-Json
-        $imageRepository = $candidateImage.Substring(0, $candidateImage.LastIndexOf(':'))
-        if ($candidateReceiptData.schema -ne 1 -or
-            $candidateReceiptData.source_revision -ne $CandidateRevision -or
-            $candidateReceiptData.image.reference -ne $candidateImage -or
-            $candidateReceiptData.image.digest -cnotmatch ('^' + [regex]::Escape($imageRepository) + '@sha256:[0-9a-f]{64}$') -or
-            $candidateReceiptData.ci.run_id -notmatch '^[0-9]+$' -or
-            -not $candidateReceiptData.ci.repository -or
-            -not (Test-CandidateReceiptJobs -CI $candidateReceiptData.ci)) {
-            throw "Candidate receipt does not prove the requested revision, image and required CI jobs."
+        if ($candidateReceiptData.schema -eq 1 -and -not $AllowHistoricalReceipt) {
+            throw "Schema 1 is historical evidence. Use AllowHistoricalReceipt only for an explicit historical recovery."
         }
+        Assert-CandidateReceipt -Path $candidateReceiptPath -Published ($candidateReceiptData.schema -eq 2)
+        if ($candidateReceiptData.source_revision -cne $CandidateRevision) {
+            throw "Candidate receipt source revision mismatch."
+        }
+        if ($CandidateImageReference -and $CandidateImageReference -cne $candidateReceiptData.image.reference -and
+            $CandidateImageReference -cne $candidateReceiptData.image.digest) {
+            throw "Candidate receipt image mismatch."
+        }
+        $candidateImage = $candidateReceiptData.image.reference
+        $deploymentImage = $candidateReceiptData.image.digest
         $candidateReceiptHash = (Get-FileHash -LiteralPath $candidateReceiptPath -Algorithm SHA256).Hash.ToLowerInvariant()
     }
 }
 if ($deploymentImage) {
     $env:RAGFLOW_IMAGE = $deploymentImage
+    $runtimeRoot = Join-Path (Split-Path -Path $repoRoot -Parent) "$ProjectName-runtime"
+    $runtimeBinds = Initialize-PersistentRuntimeBinds -RuntimeRoot $runtimeRoot `
+        -TemplatePath (Join-Path $dockerDirectory "service_conf.yaml.template")
+    $env:RAGFLOW_LOCAL_RUNTIME_CONFIG = $runtimeBinds.config_path
+    $env:RAGFLOW_LOCAL_RUNTIME_LOGS = $runtimeBinds.logs_path
     if (-not $composeFiles.Contains("docker-compose.candidate.yml")) {
         $composeFiles.Add("docker-compose.candidate.yml")
         Update-ComposeArguments
@@ -475,7 +519,7 @@ elseif (-not $PSBoundParameters.ContainsKey("Services")) {
     $Services = @($plannedServices | Select-Object -Unique)
 }
 
-if ($resolvedMode -eq "Fast" -and $changePlan.frontend.Count -gt 0) {
+if ($resolvedMode -eq "Fast" -and -not $asrOnly -and $changePlan.frontend.Count -gt 0) {
     $BuildFrontend = $true
 }
 if ($resolvedMode -eq "Fast" -and $changePlan.asr.Count -gt 0) {
@@ -499,10 +543,12 @@ if ($CheckOnly) {
         services = $Services
         source = $source
         deployed_revision = $deployedRevision
-        candidate_image = $candidateImage
+        deployment_image = $deploymentImage
+    candidate_image = $candidateImage
         feature_image = $featureImage
         feature_source_id = if ($featureImage) { $FeatureSourceId } else { $null }
         feature_image_status = if ($featureImage) { "metadata_only" } else { "not_applicable" }
+        runtime_config_sha256 = if ($runtimeBinds) { $runtimeBinds.config_sha256 } else { $null }
         candidate_receipt_path = $candidateReceiptPath
         candidate_receipt_sha256 = $candidateReceiptHash
         candidate_receipt_status = if ($candidateReceiptData) { "metadata_only" } elseif ($candidateImage) { "missing" } else { "not_applicable" }
@@ -518,7 +564,9 @@ if ($CheckOnly) {
 $deploymentImageId = $null
 $deploymentRepoDigests = @()
 if ($deploymentImage) {
-    Invoke-Native -FilePath "docker" -Arguments @("pull", $deploymentImage)
+    if (-not ($featureImage -and $featureImage -cmatch '^sha256:[0-9a-f]{64}$')) {
+        Invoke-Native -FilePath "docker" -Arguments @("pull", $deploymentImage)
+    }
     $actualRevision = (& docker run --rm --entrypoint cat $deploymentImage /ragflow/SOURCE_REVISION).Trim()
     if ($LASTEXITCODE -ne 0) {
         throw "Could not read pulled image source revision."
@@ -678,11 +726,13 @@ $evidence = [ordered]@{
     source = $source
     deployed_revision = $deployedRevision
     candidate_revision = if ($candidateImage) { $CandidateRevision } else { $null }
+    deployment_image = $deploymentImage
     candidate_image = $candidateImage
     candidate_image_id = if ($candidateImage) { $deploymentImageId } else { $null }
     candidate_repo_digests = if ($candidateImage) { $deploymentRepoDigests } else { @() }
     feature_image = $featureImage
     feature_source_id = if ($featureImage) { $FeatureSourceId } else { $null }
+    runtime_config_sha256 = if ($runtimeBinds) { $runtimeBinds.config_sha256 } else { $null }
     feature_image_id = if ($featureImage) { $deploymentImageId } else { $null }
     feature_repo_digests = if ($featureImage) { $deploymentRepoDigests } else { @() }
     feature_version = if ($featureImage) { $actualVersion } else { $null }

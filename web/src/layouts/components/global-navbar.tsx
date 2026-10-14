@@ -3,13 +3,16 @@ import { useTranslation } from 'react-i18next';
 import { Link, useLocation } from 'react-router';
 
 import {
+  Bot,
   FilePenLine,
   LayoutTemplate,
+  LucideAudioLines,
   LucideBrain,
   LucideCpu,
   LucideDatabase,
   LucideFolderOpen,
   LucideHouse,
+  LucideLanguages,
   LucideMenu,
   LucideMessageSquareText,
   LucideNetwork,
@@ -38,6 +41,9 @@ const PathMap = {
   [Routes.OpenMetadata]: [Routes.OpenMetadata],
   [Routes.BusinessDocuments]: [Routes.BusinessDocuments],
   [Routes.DocumentConstructor]: [Routes.DocumentConstructor],
+  [Routes.SqlProjects]: [Routes.SqlProjects],
+  [Routes.Transcription]: [Routes.Transcription],
+  [Routes.Translator]: [Routes.Translator],
   [Routes.Files]: [Routes.Files],
 } as const;
 
@@ -128,10 +134,35 @@ const menuItems: Array<{
     'data-testid': 'nav-document-constructor',
   },
   {
+    path: Routes.SqlProjects,
+    name: 'header.sqlProjects',
+    fallbackName: 'SQL-проекты',
+    icon: Bot,
+    section: 'sql_projects',
+    requiresBusinessDocumentCreate: true,
+    'data-testid': 'nav-sql-projects',
+  },
+  {
     path: Routes.Files,
     name: 'header.fileManager',
     icon: LucideFolderOpen,
     section: 'file_manager',
+  },
+  {
+    path: Routes.Transcription,
+    name: 'header.transcription',
+    fallbackName: 'Расшифровка',
+    icon: LucideAudioLines,
+    section: 'asr',
+    'data-testid': 'nav-transcription',
+  },
+  {
+    path: Routes.Translator,
+    name: 'header.translator',
+    fallbackName: 'Переводчик',
+    icon: LucideLanguages,
+    section: 'translator',
+    'data-testid': 'nav-translator',
   },
 ];
 
@@ -140,8 +171,11 @@ function useVisibleMenuItems() {
   const { data: userInfo, loading: userInfoLoading } = useFetchUserInfo();
   const actorId = userInfo.id?.trim();
   const businessDocumentsVisible =
-    config?.visibleSections.some((section: NavigationSection) =>
-      section === 'business_documents' || section === 'document_constructor',
+    config?.visibleSections.some(
+      (section: NavigationSection) =>
+        section === 'business_documents' ||
+        section === 'document_constructor' ||
+        section === 'sql_projects',
     ) === true;
   const { data: businessDocumentAccess } = useQuery({
     queryKey: ['business-document-capabilities', actorId],

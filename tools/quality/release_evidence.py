@@ -7,11 +7,276 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import xml.etree.ElementTree as ET
 
 
 SHA = re.compile(r"^[0-9a-f]{40}$")
 DIGEST = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
 JOBS = ("ragflow_preflight", "ragflow_tests_infinity", "ragflow_tests_elasticsearch")
+RELEASE_LANES = (
+    "ragflow_preflight",
+    "frontend",
+    "build_image",
+    "ragflow_tests_infinity",
+    "ragflow_tests_elasticsearch",
+    "browser_regression",
+    "package_python",
+    "build_cli",
+)
+HEX_DIGEST = re.compile(r"^[0-9a-f]{64}$")
+CLI_PLATFORMS = {f"{os}-{arch}" for os in ("linux", "darwin", "windows") for arch in ("amd64", "arm64")}
+REQUIRED_MODELS = {"qwen3.8:latest", "qwen3.6:27b", "bge-m3:latest"}
+BOOTSTRAP_BASELINE = Path(__file__).with_name("release-bootstrap-baseline.json")
+
+
+def verify_branch_coverage(report: Path, minimum: int = 79) -> dict:
+    coverage = ET.parse(report).getroot()
+    valid = int(coverage.get("branches-valid", "0"))
+    covered = int(coverage.get("branches-covered", "-1"))
+    if valid < 1 or not 0 <= covered <= valid or covered * 100 < minimum * valid:
+        raise ValueError("Business Documents branch coverage below mandatory 79%")
+    return {"branches_valid": valid, "branches_covered": covered, "minimum": minimum}
+
+
+def verify_runtime_upgrade(report: dict, revision: str, image_digest: str) -> dict:
+    if (
+        report.get("status") != "PASS"
+        or report.get("cleanup") != "PASS"
+        or report.get("source_sha") != revision
+        or report.get("image_digest") != image_digest
+        or not isinstance(report.get("previous_source_sha"), str)
+        or not SHA.fullmatch(report["previous_source_sha"])
+        or not isinstance(report.get("previous_image_digest"), str)
+        or not DIGEST.fullmatch(report["previous_image_digest"])
+        or any(report.get(check) is not True for check in ("repeated_initializer", "candidate_restore", "previous_restore"))
+    ):
+        raise ValueError("previous qualified runtime migration/restore incomplete")
+    if report.get("purpose") == "initial-runtime-baseline-upgrade":
+        content = BOOTSTRAP_BASELINE.read_bytes()
+        baseline = json.loads(content)
+        historical = report.get("historical_baseline", {})
+        if (
+            report.get("bootstrap_baseline_sha256") != hashlib.sha256(content).hexdigest()
+            or report.get("previous_image_digest") != baseline["image_digest"]
+            or report.get("previous_source_sha") != baseline["source_sha"]
+            or historical.get("repository") != baseline["repository"]
+            or historical.get("source_sha") != baseline["source_sha"]
+            or historical.get("image_digest") != baseline["image_digest"]
+            or historical.get("qualified") is not False
+            or historical.get("github_commit_verified") is not True
+            or historical.get("candidate_ancestor_verified") is not True
+            or "previous_receipt_sha256" in report
+        ):
+            raise ValueError("unapproved initial runtime baseline")
+    elif report.get("purpose") != "previous-qualified-image-upgrade" or not isinstance(report.get("previous_receipt_sha256"), str) or not HEX_DIGEST.fullmatch(report["previous_receipt_sha256"]):
+        raise ValueError("previous qualified runtime migration/restore incomplete")
+    summary = {
+        "kind": "initial-bootstrap" if report["purpose"] == "initial-runtime-baseline-upgrade" else "previous-qualified-release",
+        "previous_source_sha": report["previous_source_sha"],
+        "previous_image_digest": report["previous_image_digest"],
+        "previous_qualification": "historical-unqualified" if report["purpose"] == "initial-runtime-baseline-upgrade" else "qualified",
+        "scope": "Synthetic PostgreSQL rows and backup restoration using actual image model initializers; no object store or runtime API",
+    }
+    if "bootstrap_baseline_sha256" in report:
+        summary["baseline_policy_sha256"] = report["bootstrap_baseline_sha256"]
+    return summary
+
+
+def bundle_identity(receipt: dict) -> str:
+    """Product identity is independent of qualification and publication retries."""
+    data = {
+        "source": receipt["source_revision"],
+        "image": receipt["image"]["staging_digest"].split("@", 1)[1],
+        "spa": receipt["artifacts"]["spa_sha256"],
+        "packages": {name: digest for name, digest in receipt["artifacts"]["files"].items() if name.startswith(("cli/", "python/", "installers/"))},
+        "toolchain": receipt["toolchain"],
+        "models": sorted(receipt["models"], key=lambda item: item["name"]),
+    }
+    return hashlib.sha256(json.dumps(data, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def validate_publication(receipt: dict, proof: dict, receipt_sha256: str) -> None:
+    require_publishable(receipt)
+    if (
+        not isinstance(proof, dict)
+        or proof.get("schema") != 2
+        or proof.get("status") != "PASS"
+        or proof.get("qualification_sha256") != receipt_sha256
+        or proof.get("bundle_id") != bundle_identity(receipt)
+        or proof.get("repository") != receipt["ci"]["repository"]
+        or proof.get("image_digest") != receipt["image"]["digest"]
+        or not isinstance(proof.get("release_tag"), str)
+    ):
+        raise ValueError("publication proof does not identify qualified bundle")
+    origin = proof.get("qualification_artifact", {})
+    ci = receipt["ci"]
+    if (
+        type(origin.get("id")) is not int
+        or origin["id"] < 1
+        or origin.get("name") != f"qualification-{ci['run_id']}-{ci['attempt']}"
+        or not re.fullmatch(r"sha256:[0-9a-f]{64}", origin.get("digest", ""))
+        or str(origin.get("workflow_run", {}).get("id")) != ci["run_id"]
+        or origin.get("workflow_run", {}).get("head_sha") != receipt["source_revision"]
+    ):
+        raise ValueError("publication proof lacks qualification artifact origin")
+
+
+def file_manifest(root: Path) -> dict[str, str]:
+    """Hash a closed artifact tree; links must never escape the evidence packet."""
+    if not root.is_dir():
+        raise ValueError(f"artifact directory unavailable: {root}")
+    files = {}
+    for path in sorted(root.rglob("*")):
+        if path.is_symlink():
+            raise ValueError("symlink in artifact packet")
+        if path.is_file():
+            files[path.relative_to(root).as_posix()] = _sha256(path)
+    if not files:
+        raise ValueError("artifact packet is empty")
+    return files
+
+
+def verify_files(root: Path, expected: dict[str, str]) -> None:
+    if file_manifest(root) != expected:
+        raise ValueError("artifact file set or digest mismatch")
+
+
+def qualification_status(jobs: dict[str, str], required=RELEASE_LANES) -> str:
+    results = [jobs.get(name) for name in required]
+    if "failure" in results:
+        return "FAIL"
+    if "cancelled" in results:
+        return "CANCELLED"
+    return "PASS" if results and all(result == "success" for result in results) else "INCOMPLETE"
+
+
+def make_release_receipt(revision: str, repository: str, run_id: str, attempt: int, image: dict, jobs: dict, artifacts: dict, toolchain: dict, models: list[dict], *, profile: str = "release") -> dict:
+    receipt = {
+        "schema": 2,
+        "source_revision": revision,
+        "status": qualification_status(jobs) if profile == "release" else "INCOMPLETE",
+        "ci": {"repository": repository, "run_id": run_id, "attempt": attempt, "profile": profile, "required_lanes": list(RELEASE_LANES), "jobs": jobs},
+        "image": image,
+        "artifacts": artifacts,
+        "toolchain": toolchain,
+        "models": models,
+    }
+    validate_receipt(receipt)
+    return receipt
+
+
+def _validate_release_receipt(receipt: dict) -> None:
+    ci, image = receipt.get("ci"), receipt.get("image")
+    if not isinstance(receipt.get("source_revision"), str) or not SHA.fullmatch(receipt["source_revision"]):
+        raise ValueError("receipt needs a full source revision")
+    if not isinstance(ci, dict) or not isinstance(ci.get("repository"), str) or not re.fullmatch(r"[\w.-]+/[\w.-]+", ci["repository"]):
+        raise ValueError("receipt needs repository identity")
+    if not isinstance(ci.get("run_id"), str) or not ci["run_id"].isdigit() or not ci["run_id"].strip("0"):
+        raise ValueError("receipt needs a CI run ID")
+    if type(ci.get("attempt")) is not int or ci["attempt"] < 1 or ci.get("profile") not in {"targeted", "release"}:
+        raise ValueError("invalid qualification attempt or profile")
+    if ci.get("required_lanes") != list(RELEASE_LANES) or not isinstance(ci.get("jobs"), dict):
+        raise ValueError("qualification policy mismatch")
+    if set(ci["jobs"]) != set(RELEASE_LANES) or any(not isinstance(result, str) or result not in {"success", "failure", "cancelled", "skipped"} for result in ci["jobs"].values()):
+        raise ValueError("invalid qualification lane set")
+    expected = qualification_status(ci["jobs"]) if ci["profile"] == "release" else "INCOMPLETE"
+    if receipt.get("status") != expected:
+        raise ValueError("qualification status mismatch")
+    if not isinstance(image, dict):
+        raise ValueError("missing image identity")
+    if "published" in image:
+        raise ValueError("qualification receipt must not contain mutable publication state")
+    for key in ("digest", "staging_digest"):
+        if not isinstance(image.get(key), str) or not DIGEST.fullmatch(image[key]):
+            raise ValueError("invalid image digest")
+    if image["digest"].split("@", 1)[1] != image["staging_digest"].split("@", 1)[1]:
+        raise ValueError("promotion changed image digest")
+    tag = receipt["source_revision"] + "-" + ci["run_id"] + "-" + str(ci["attempt"])
+    if not isinstance(image.get("reference"), str) or not image["reference"].endswith(":" + tag):
+        raise ValueError("image reference does not identify source revision")
+    if image["digest"].split("@", 1)[0] != image["reference"].rsplit(":", 1)[0]:
+        raise ValueError("published image repository mismatch")
+    artifacts = receipt.get("artifacts")
+    if not isinstance(artifacts, dict) or set(artifacts) != {"files", "spa_sha256", "browser_inventory_sha256", "cli_platforms", "python_packages"}:
+        raise ValueError("incomplete artifact inventory")
+    if (
+        not isinstance(artifacts["cli_platforms"], list)
+        or not all(isinstance(platform, str) for platform in artifacts["cli_platforms"])
+        or set(artifacts["cli_platforms"]) != CLI_PLATFORMS
+        or len(artifacts["cli_platforms"]) != 6
+    ):
+        raise ValueError("incomplete CLI platform matrix")
+    if (
+        not isinstance(artifacts["python_packages"], list)
+        or not all(isinstance(package, str) for package in artifacts["python_packages"])
+        or set(artifacts["python_packages"]) != {"ragflow-sdk", "ragflow-cli"}
+        or len(artifacts["python_packages"]) != 2
+    ):
+        raise ValueError("incomplete Python package matrix")
+    for key in ("spa_sha256", "browser_inventory_sha256"):
+        if not isinstance(artifacts.get(key), str) or not HEX_DIGEST.fullmatch(artifacts[key]):
+            raise ValueError("invalid browser evidence digest")
+    files = artifacts.get("files")
+    if (
+        not isinstance(files, dict)
+        or not files
+        or any(
+            not isinstance(name, str) or not name or "\\" in name or name.startswith("/") or ".." in name.split("/") or not isinstance(digest, str) or not HEX_DIGEST.fullmatch(digest)
+            for name, digest in files.items()
+        )
+    ):
+        raise ValueError("invalid artifact file manifest")
+    toolchain = receipt.get("toolchain")
+    if not isinstance(toolchain, dict) or any(not isinstance(toolchain.get(key), str) or not toolchain[key] for key in ("python", "go", "node", "native", "runtime")):
+        raise ValueError("missing toolchain provenance")
+    models = receipt.get("models")
+    if (
+        not isinstance(models, list)
+        or not models
+        or any(
+            not isinstance(model, dict)
+            or not isinstance(model.get("name"), str)
+            or not model["name"]
+            or not isinstance(model.get("digest"), str)
+            or not re.fullmatch(r"(?:sha256:)?[0-9a-f]{64}", model["digest"])
+            for model in models
+        )
+    ):
+        raise ValueError("missing model weight identity")
+    if len({model["name"] for model in models}) != len(models):
+        raise ValueError("duplicate model weight identity")
+    if {model["name"] for model in models} != REQUIRED_MODELS:
+        raise ValueError("required model inventory mismatch")
+
+
+def require_publishable(receipt: dict) -> None:
+    validate_receipt(receipt)
+    if receipt.get("schema") != 2 or receipt.get("status") != "PASS" or receipt["ci"]["profile"] != "release":
+        raise ValueError("publication requires complete schema 2 release qualification")
+
+
+def verify_ci_origin(receipt: dict, run: dict, jobs: list[dict]) -> None:
+    """Check live GitHub metadata fetched by the trusted publisher."""
+    require_publishable(receipt)
+    ci = receipt["ci"]
+    if (
+        str(run.get("id")) != ci["run_id"]
+        or run.get("run_attempt") != ci["attempt"]
+        or run.get("head_sha") != receipt["source_revision"]
+        or run.get("repository", {}).get("full_name") != ci["repository"]
+        or run.get("path") not in {".github/workflows/release.yml", ".github/workflows/tests.yml"}
+        or run.get("event") not in {"schedule", "push", "workflow_dispatch"}
+    ):
+        raise ValueError("foreign CI run, attempt, source, repository or event")
+    for lane in RELEASE_LANES:
+        matching = [job for job in jobs if job.get("name", "").split(" / ")[-1].split(" (")[0] == lane]
+        expected_count = 6 if lane == "build_cli" else 1
+        if lane == "build_cli" and {job.get("name", "").split(" / ")[-1] for job in matching} != {f"build_cli ({platform})" for platform in CLI_PLATFORMS}:
+            raise ValueError("CI CLI platform identity mismatch")
+        if len(matching) != expected_count or any(
+            job.get("conclusion") != "success" or job.get("head_sha") != receipt["source_revision"] or job.get("run_attempt") != ci["attempt"] for job in matching
+        ):
+            raise ValueError(f"CI lane not verified: {lane}")
 
 
 def _sha256(path: Path) -> str:
@@ -36,6 +301,9 @@ def make_receipt(
 
 
 def validate_receipt(receipt: dict) -> None:
+    if isinstance(receipt, dict) and receipt.get("schema") == 2:
+        _validate_release_receipt(receipt)
+        return
     if not isinstance(receipt, dict) or receipt.get("schema") != 1:
         raise ValueError("candidate receipt schema must be 1")
     revision = receipt.get("source_revision")
@@ -92,6 +360,12 @@ def verify_release(
     if receipt is not None:
         try:
             validate_receipt(receipt)
+            if receipt.get("schema") == 2:
+                require_publishable(receipt)
+                publication = read("publication", receipt_path.with_name("publication-receipt.json"))
+                if publication is None:
+                    raise ValueError("publication proof unavailable")
+                validate_publication(receipt, publication, _sha256(receipt_path))
         except ValueError as error:
             failures.append(str(error))
         else:
@@ -102,7 +376,7 @@ def verify_release(
         checks = {
             "release_mode": deployment.get("mode") == "release",
             "source_revision": deployment.get("candidate_revision") == receipt["source_revision"],
-            "image_reference": deployment.get("candidate_image") == receipt["image"]["reference"],
+            "image_reference": deployment.get("candidate_image") == receipt["image"]["reference"] and (receipt.get("schema") != 2 or deployment.get("deployment_image") == receipt["image"]["digest"]),
             "image_digest": receipt["image"]["digest"] in (deployment.get("candidate_repo_digests") or []),
             "receipt_hash": deployment.get("candidate_receipt_sha256", "").lower() == _sha256(receipt_path),
             "receipt_verified": deployment.get("candidate_receipt_status") == "verified",

@@ -117,6 +117,8 @@ def _change_basis(document: Record, row: Record, history: RevisionHistory) -> li
         kind = event["event_type"]
         if kind == "DraftCreated":
             item.update(type="INITIAL_DRAFT", title="Первичный черновик", summary=document["idea"], section_id=None)
+        elif kind == "DocumentStructureCreated":
+            item.update(type="INITIAL_DRAFT", title="Структура документа", summary="Созданы пустые обязательные разделы", section_id=None)
         elif kind == "QuestionAnswered":
             question, answer = history.questions.get(payload.get("question_id")), history.answers.get(payload.get("answer_id"))
             if question is None or answer is None:

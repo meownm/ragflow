@@ -8,6 +8,9 @@ export const NavigationSections = [
   'catalog',
   'business_documents',
   'document_constructor',
+  'sql_projects',
+  'asr',
+  'translator',
   'file_manager',
 ] as const;
 
@@ -23,6 +26,9 @@ export const NavigationSectionPaths: Record<NavigationSection, string> = {
   catalog: '/openmetadata',
   business_documents: '/business-documents',
   document_constructor: '/document-constructor',
+  sql_projects: '/sql-projects',
+  asr: '/transcription',
+  translator: '/translator',
   file_manager: '/files',
 };
 

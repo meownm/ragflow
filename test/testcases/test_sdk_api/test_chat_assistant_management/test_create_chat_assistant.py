@@ -15,6 +15,7 @@
 #
 
 import pytest
+from beartype.roar import BeartypeCallHintParamViolation
 from configs import CHAT_ASSISTANT_NAME_LIMIT
 from utils import encode_avatar
 from utils.file_utils import create_image_file
@@ -28,8 +29,8 @@ class TestChatAssistantCreate:
         "name, expected_message",
         [
             ("valid_name", ""),
-            pytest.param("a" * (CHAT_ASSISTANT_NAME_LIMIT + 1), "", marks=pytest.mark.skip(reason="issues/")),
-            pytest.param(1, "", marks=pytest.mark.skip(reason="issues/")),
+            pytest.param("a" * (CHAT_ASSISTANT_NAME_LIMIT + 1), "Chat name length is 256 which is larger than 255."),
+            pytest.param(1, "violates type hint"),
             ("", "`name` is required."),
             ("duplicated_name", "Duplicated chat name in creating chat."),
             ("case insensitive", "Duplicated chat name in creating chat."),
@@ -42,7 +43,7 @@ class TestChatAssistantCreate:
             client.create_chat(name=name.upper())
 
         if expected_message:
-            with pytest.raises(Exception) as exception_info:
+            with pytest.raises(BeartypeCallHintParamViolation if not isinstance(name, str) else Exception) as exception_info:
                 client.create_chat(name=name)
             assert expected_message in str(exception_info.value)
         else:
@@ -85,32 +86,33 @@ class TestChatAssistantCreate:
             ({}, ""),
             ({"temperature": 0}, ""),
             ({"temperature": 1}, ""),
-            pytest.param({"temperature": -1}, "", marks=pytest.mark.skip),
-            pytest.param({"temperature": 10}, "", marks=pytest.mark.skip),
-            pytest.param({"temperature": "a"}, "", marks=pytest.mark.skip),
+            pytest.param({"temperature": -1}, ""),
+            pytest.param({"temperature": 10}, ""),
+            pytest.param({"temperature": "a"}, ""),
             ({"top_p": 0}, ""),
             ({"top_p": 1}, ""),
-            pytest.param({"top_p": -1}, "", marks=pytest.mark.skip),
-            pytest.param({"top_p": 10}, "", marks=pytest.mark.skip),
-            pytest.param({"top_p": "a"}, "", marks=pytest.mark.skip),
+            pytest.param({"top_p": -1}, ""),
+            pytest.param({"top_p": 10}, ""),
+            pytest.param({"top_p": "a"}, ""),
             ({"presence_penalty": 0}, ""),
             ({"presence_penalty": 1}, ""),
-            pytest.param({"presence_penalty": -1}, "", marks=pytest.mark.skip),
-            pytest.param({"presence_penalty": 10}, "", marks=pytest.mark.skip),
-            pytest.param({"presence_penalty": "a"}, "", marks=pytest.mark.skip),
+            pytest.param({"presence_penalty": -1}, ""),
+            pytest.param({"presence_penalty": 10}, ""),
+            pytest.param({"presence_penalty": "a"}, ""),
             ({"frequency_penalty": 0}, ""),
             ({"frequency_penalty": 1}, ""),
-            pytest.param({"frequency_penalty": -1}, "", marks=pytest.mark.skip),
-            pytest.param({"frequency_penalty": 10}, "", marks=pytest.mark.skip),
-            pytest.param({"frequency_penalty": "a"}, "", marks=pytest.mark.skip),
+            pytest.param({"frequency_penalty": -1}, ""),
+            pytest.param({"frequency_penalty": 10}, ""),
+            pytest.param({"frequency_penalty": "a"}, ""),
             ({"max_token": 0}, ""),
             ({"max_token": 1024}, ""),
-            pytest.param({"max_token": -1}, "", marks=pytest.mark.skip),
-            pytest.param({"max_token": 10}, "", marks=pytest.mark.skip),
-            pytest.param({"max_token": "a"}, "", marks=pytest.mark.skip),
-            pytest.param({"unknown": "unknown"}, "", marks=pytest.mark.skip),
+            pytest.param({"max_token": -1}, ""),
+            pytest.param({"max_token": 10}, ""),
+            pytest.param({"max_token": "a"}, ""),
+            pytest.param({"unknown": "unknown"}, ""),
         ],
     )
+    # Configuration persistence is independent of provider-specific inference validation.
     def test_llm_setting(self, client, add_chunks, llm_setting, expected_message):
         dataset, _, _ = add_chunks
 
@@ -120,6 +122,7 @@ class TestChatAssistantCreate:
             assert expected_message in str(exception_info.value)
         else:
             chat_assistant = client.create_chat(name="llm_test", dataset_ids=[dataset.id], llm_setting=llm_setting or None)
+            chat_assistant = client.get_chat(chat_assistant.id)
             for k, v in llm_setting.items():
                 assert getattr(chat_assistant.llm_setting, k) == v
 
@@ -138,16 +141,16 @@ class TestChatAssistantCreate:
             ({"empty_response": ""}, ""),
             ({"empty_response": "!@#$%^&*()"}, ""),
             ({"empty_response": "中文测试"}, ""),
-            pytest.param({"empty_response": 123}, "", marks=pytest.mark.skip),
-            pytest.param({"empty_response": True}, "", marks=pytest.mark.skip),
-            pytest.param({"empty_response": " "}, "", marks=pytest.mark.skip),
+            pytest.param({"empty_response": 123}, ""),
+            pytest.param({"empty_response": True}, ""),
+            pytest.param({"empty_response": " "}, ""),
             ({"prologue": "Hello World"}, ""),
             ({"prologue": ""}, ""),
             ({"prologue": "!@#$%^&*()"}, ""),
             ({"prologue": "中文测试"}, ""),
-            pytest.param({"prologue": 123}, "", marks=pytest.mark.skip),
-            pytest.param({"prologue": True}, "", marks=pytest.mark.skip),
-            pytest.param({"prologue": " "}, "", marks=pytest.mark.skip),
+            pytest.param({"prologue": 123}, ""),
+            pytest.param({"prologue": True}, ""),
+            pytest.param({"prologue": " "}, ""),
             ({"quote": True}, ""),
             ({"quote": False}, ""),
             ({"system": "Hello World {knowledge}"}, ""),
@@ -156,10 +159,11 @@ class TestChatAssistantCreate:
             ({"system": "中文测试 {knowledge}"}, ""),
             ({"system": "Hello World"}, ""),
             ({"system": "Hello World", "parameters": []}, ""),
-            pytest.param({"system": 123}, "", marks=pytest.mark.skip),
-            pytest.param({"unknown": "unknown"}, "", marks=pytest.mark.skip),
+            pytest.param({"system": 123}, ""),
+            pytest.param({"unknown": "unknown"}, ""),
         ],
     )
+    # Nested prompt values and provider extension keys round-trip through storage.
     def test_prompt_config(self, client, add_chunks, prompt_config, expected_message):
         dataset, _, _ = add_chunks
 
@@ -169,6 +173,7 @@ class TestChatAssistantCreate:
             assert expected_message in str(exception_info.value)
         else:
             chat_assistant = client.create_chat(name="prompt_test", dataset_ids=[dataset.id], prompt_config=prompt_config)
+            chat_assistant = client.get_chat(chat_assistant.id)
             for k, v in prompt_config.items():
                 assert getattr(chat_assistant.prompt_config, k) == v
 

@@ -16,12 +16,6 @@ jest.mock('@/hooks/use-user-setting-request', () => ({
 jest.mock('@/services/business-document-service', () => ({
   getBusinessDocumentCapabilities: jest.fn(),
 }));
-jest.mock('./execution-registry-dialog', () => ({
-  ExecutionRegistryDialog: () => (
-    <button data-testid="open-sql-execution-registry">Источники SQL</button>
-  ),
-}));
-
 const mockedGetBusinessDocumentCapabilities =
   getBusinessDocumentCapabilities as jest.Mock;
 
@@ -36,7 +30,7 @@ function renderPage() {
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={['/document-constructor?surface=template']}>
+      <MemoryRouter initialEntries={['/document-constructor']}>
         <DocumentConstructorPage />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -66,6 +60,7 @@ describe('DocumentConstructorPage', () => {
     expect(
       await screen.findByText('Конструктор документов'),
     ).toBeInTheDocument();
+    expect(screen.queryByTestId('sql-agent-workbench')).not.toBeInTheDocument();
     expect(
       screen.getAllByTestId('document-constructor-section-row'),
     ).toHaveLength(createSqlQueryTemplate().sections.length);
@@ -150,10 +145,23 @@ describe('DocumentConstructorPage', () => {
       },
     });
 
-    renderPage();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/sql-projects']}>
+          <DocumentConstructorPage surface="sql" />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
 
+    expect(await screen.findByText('SQL-проекты')).toBeInTheDocument();
+    expect(
+      screen.queryByTestId('document-constructor-structure'),
+    ).not.toBeInTheDocument();
     expect(
       await screen.findByTestId('open-sql-execution-registry'),
-    ).toBeInTheDocument();
+    ).toHaveAttribute('href', '/sql-sources');
   });
 });

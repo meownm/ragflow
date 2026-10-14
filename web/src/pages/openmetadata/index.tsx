@@ -335,7 +335,7 @@ function GovernancePanel({
 
   return (
     <Card
-      className="border border-accent-primary"
+      className="border border-accent-primary bg-bg-base"
       data-testid="openmetadata-governance-panel"
     >
       <CardHeader>

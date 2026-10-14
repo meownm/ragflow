@@ -1,16 +1,26 @@
-# Self-hosted build runner
+# Runner квалификации и публикации
 
-This directory provisions a dedicated Linux x64 GitHub Actions runner for the
-repository's `ragflow-test` jobs. It is a build and test host, not a RAGFlow
-runtime or data host.
+Целевая схема: **test VM + release VM**, Nexus и управление hypervisor на
+host вне CI. Порядок переноса и acceptance:
+[runbook изоляции](../../docs/develop/ci-runner-isolation-ru.md).
 
-## Host bootstrap
+| Узел | Доступ CI | Назначение |
+|---|---|---|
+| Management host | Нет runner/CI credentials | Hypervisor, Nexus, CA и backup |
+| Test VM, `ragflow-test` | Sudo/Docker только своего guest | Native build, regression, staging write |
+| Release VM, `ragflow-release` | Без sudo и Docker socket | Evidence, skopeo, staging read и release write |
 
-The tested host is Ubuntu x86_64 with an ext4 root filesystem. Run the
-bootstrap once as an administrator:
+Guests имеют самостоятельные Docker daemon. Host filesystem, daemon/libvirt
+socket, SSH agent и management credentials в guests не передаются. Publisher
+использует `skopeo`; Docker release guest остаётся у его администратора.
+
+## Test VM bootstrap
+
+На свежем test guest Ubuntu x86_64/ext4 выполните bootstrap как администратор.
+Он даёт sudo и расширяет guest LVM: **не запускайте его на management host**.
 
 ```bash
-sudo RUNNER_USER=apt bash deployment/runner/bootstrap-ubuntu.sh
+sudo TEST_VM_CONFIRMED=yes RUNNER_USER=ragflow-test bash deployment/runner/bootstrap-ubuntu.sh
 ```
 
 The bootstrap installs Docker, Go, C/C++ tools, Python `uv`, Node.js,
@@ -27,24 +37,46 @@ credentials or production databases on it.
 
 ## Runner registration
 
-Generate a repository runner registration token in GitHub, then pass it on
-standard input so it is not written to disk:
+Регистрация test runner выполняется внутри test VM. Передавайте отдельный
+ephemeral registration token на stdin, не копируйте installation/credentials
+старого host runner:
 
 ```bash
 printf '%s\n' "$RUNNER_TOKEN" | \
-  REPOSITORY=meownm/ragflow \
-  RUNNER_NAME=ragflow-test-meow \
-  RUNNER_LABELS=ragflow-test \
+  TEST_VM_CONFIRMED=yes REPOSITORY=meownm/ragflow \
+  RUNNER_NAME=ragflow-test-vm \
+  RUNNER_LABELS=ragflow-test,ragflow-isolated-vm \
   bash deployment/runner/install-actions-runner.sh
 ```
 
 The installer creates an enabled systemd service and sets
-`RUNNER_WORKSPACE_PREFIX` to the runner user's home. The latter is required by
-the preflight artifact paths in `tests.yml` and `sep-tests.yml`.
+`RUNNER_WORKSPACE_PREFIX` to the runner user's home. Artifact/resource identity
+includes repository/run/attempt/lane/engine.
 
-The resulting labels are `self-hosted`, `Linux`, `X64`, and `ragflow-test`.
-Do not add `ragflow-release` unless this machine is explicitly authorized to
-run release and publication workflows.
+The resulting labels are `self-hosted`, `Linux`, `X64`, `ragflow-test`, and
+`ragflow-isolated-vm`. Этот дополнительный label назначается только после проверки
+границы VM; старый host runner с одним role label не проходит hosted readiness.
+Не добавляйте `ragflow-release` test guest. Release registration выполняется
+администратором отдельного guest по runbook, без sudo у publisher account.
+
+## Release VM
+
+```bash
+sudo RELEASE_VM_CONFIRMED=yes bash deployment/runner/bootstrap-release.sh
+```
+
+Оператор предварительно проверяет topology: host не выполняет CI, guest не
+имеет host mounts/socket/credentials. Bootstrap не может доказать права на
+hypervisor. Он устанавливает tools/guest Docker, создаёт publisher без
+additional groups/sudo, закрывает password login, готовит systemd hardening.
+Он не регистрирует runner и не создаёт token, secrets или Nexus repositories.
+Не используйте test installer для непривилегированного publisher.
+
+Публичный CA можно передать через `REGISTRY_CA_FILE` и независимо проверенный
+`REGISTRY_CA_SHA256`. Private keys остаются на management host. Не отключайте
+TLS verification. Сначала выполните две полные dry qualification одного SHA,
+negative ACL/provenance/retry checks, внутренний nightly и восстановление;
+только затем разрешайте `RELEASE_NIGHTLY_ENABLED=true`.
 
 ## Native dependency cache
 
@@ -79,21 +111,114 @@ Provision the LAN-only TLS registry once:
 sudo REGISTRY_HOST=192.168.1.175 bash deployment/runner/setup-candidate-registry.sh
 ```
 
-When `tests.yml` is started manually on `main`, after preflight and any selected
-engine jobs pass, it builds and publishes
-`192.168.1.175:5443/ragflow:<full-git-sha>`. The workflow verifies
-`SOURCE_REVISION` and imports `business_documents` before pushing. The registry is
-not a release publisher and the runner still has no `ragflow-release` label.
+`setup-candidate-registry.sh` создаёт TLS registry без authentication/roles.
+Ограниченные staging read/write roles требуют Nexus или token authority;
+этот legacy setup сам по себе не выполняет целевую модель доступа.
 
-Both engine jobs run only for changes to the engine boundary: index storage,
-ingestion, retrieval/ranking, shared engine interfaces, dependencies and runtime
-configuration. `tools/quality/select_engine_tests.py` owns the path list. UI and
-application-only changes skip the jobs. Selection compares with the last
-successful branch run, so a failed/cancelled engine change remains in the diff
-on the next push; PRs compare with their base. Schedule/tag events do not force
-the matrix when that source is already covered. An unavailable baseline selects
-both jobs. The receipt records the selection and actual `skipped` statuses;
-failed/cancelled jobs never satisfy publication or deployment validation.
+`tests.yml` владеет qualification. Image собирается один раз в staging под
+уникальным SHA/run/attempt; engine lane проверяют его digest. Test VM пишет
+только staging, publisher читает staging и пишет только `docker-releases`.
+Immutable release tags используют `ALLOW_ONCE`; nightly pointer разрешается
+через проверенный Git tag/manifest. Endpoints задают
+`STAGING_IMAGE_REPOSITORY` и `RELEASE_IMAGE_REPOSITORY`.
+
+Staging auth создаётся только в job-scoped `RUNNER_TEMP` через
+`staging-docker-auth.sh`; `sudo docker` получает явный `--config`. Builder
+получает `NEXUS_STAGING_BUILD_USER/PASSWORD` с staging write, engine lane —
+`NEXUS_STAGING_READ_USER/PASSWORD` только с staging read. Publisher использует
+отдельный `NEXUS_STAGING_USER/PASSWORD` с read. Secrets не копируются в `.env`,
+workspace, artifacts или постоянные `~/.docker`/`/root/.docker`. Пароль передаётся
+на stdin; login output подавляется. `CI_DOCKER_CONFIG`, `DOCKER_CONFIG` и
+`CI_DOCKER_AUTH_SCOPE` передаются следующим steps через `GITHUB_ENV`.
+После atomic Docker login helper возвращает только проверенный `config.json`
+runner UID/GID и mode 600. Поэтому raw Docker/upgrade consumer читает
+`DOCKER_CONFIG`, а sudo commands используют явный `--config`; чужие файлы и
+постоянный root config не меняются. Config содержит file-based auth; пустая
+initial auth entry предотвращает auto-detection внешнего credential store.
+Persistent `credsStore`/`credHelpers` и symlink `config.json` отклоняются до
+login. Inherited `DOCKER_AUTH_CONFIG` очищается.
+
+Для проверки upgrade предыдущий квалифицированный image читается из
+`docker-releases` отдельной identity `NEXUS_RELEASE_READ_USER/PASSWORD` с
+`browse/read`. Эти secrets передаются только upgrade step. В этом же shell
+выполните `source deployment/runner/staging-docker-auth.sh`, затем
+`authenticate_previous_release_read`: credentials будут unset до запуска
+probe. CLI `previous-read` доступен для отдельного auth step. Helper добавляет
+read auth в существующий проверенный builder config, не заменяет staging
+entry. `RELEASE_IMAGE_REPOSITORY` должен иметь **другой host[:port]**, чем
+staging: Docker auth keys ограничены authority, repository path не разделяет
+identities. Release write identity в test VM не выдаётся.
+
+Builder config живёт до завершения runtime lock/native/upgrade steps. Workflow
+обязан вызвать `bash deployment/runner/staging-docker-auth.sh cleanup` с
+`if: always()`. `cleanup-engine.sh` удаляет auth после cleanup stack, включая
+отказ до создания Compose project. Cleanup проверяет temp root, repository,
+run, attempt, scope и ownership marker; чужой путь или symlink отклоняется.
+Удаление этого verified job directory выполняется через guest sudo, поскольку
+BuildKit может создать root-owned subdirectories.
+После принудительного завершения guest оператор удаляет только подтверждённые
+остатки закончившегося job, никогда общий Docker config.
+
+`RAGFLOW_CI_DEEPDOC_IMAGE` — обязательный repository variable с опубликованным
+Linux-совместимым DeepDOC image reference (`repository@sha256:...` рекомендуется).
+Workflow передаёт его как `DEEPDOC_IMAGE`. Локальный `deepdoc_oss:latest` без
+registry manifest/RepoDigest не квалифицируется. Build job фиксирует supporting
+images обоих engines в `runtime-images.json`; engine использует проверенный
+override и `docker compose up --no-build`, без повторной DeepDOC сборки.
+
+Для Nexus gateway разрешите registry `/v2/` paths и **точный** Bearer token URL
+из `WWW-Authenticate` (например `/service/rest/v1/security/docker/token`) на
+отдельном auth endpoint/allowlist. Остальной Nexus `/service/rest/`, UI и
+administrative endpoints недоступны CI subnets. Доступ к token endpoint не даёт
+management API доступа. Login authority — host[:port] из staging repository,
+без repository path, userinfo или URL scheme; TLS/CA проверяется для обоих
+registry/auth endpoints.
+
+Hosted readiness использует `RUNNER_READ_TOKEN`; scheduled queue watchdog —
+`RUNNER_WATCHDOG_TOKEN` с runner metadata read и Actions write только нужного
+repository. Tokens management/GitHub CLI accounts в guest не переносятся.
+Перед публикацией hosted job повторно проверяет online publisher после полной
+qualification. Watchdog контролирует `queued` jobs обеих ролей: offline более
+15 минут и busy queue более двух часов. `waiting` (Environment approval) и
+`pending` (concurrency) не считаются ожиданием назначения runner; см.
+[GitHub deployment states](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/control-deployments).
+
+`release` profile всегда выполняет обе engine lane. `targeted` выбирает их
+по подтверждённому baseline/path policy и не получает право publication.
+Недоступный baseline выбирает обе lane. Обязательный skipped/failure/cancelled
+никогда не считается релизным pass.
+
+### Первоначальный baseline
+
+`RAGFLOW_PREVIOUS_QUALIFIED_RELEASE` указывает опубликованный комплект schema 2
+с проверяемыми GitHub assets и digest образа. Исторический образ без этого proof
+не удовлетворяет обычному prerequisite. Для первого выпуска отдельно разрешён
+разовый bootstrap с фиксированной утверждённой политикой
+`tools/quality/release-bootstrap-baseline.json`: установить
+`RELEASE_BOOTSTRAP_ENABLED=true` при пустом `RAGFLOW_PREVIOUS_QUALIFIED_RELEASE`.
+Workflow запускает те же проверки с `--bootstrap`. Доказательство восстановления
+явно ограничено историческим образом; сам этот образ остаётся неквалифицированным.
+Publisher блокирует новый bootstrap после первого опубликованного комплекта,
+разрешая только идемпотентный повтор его точного тега и qualification hash.
+После публикации выключить bootstrap и задать предыдущий квалифицированный тег.
+Отсутствие успешной migration/restore/cleanup проверки блокирует первый выпуск.
+
+Для отдельной диагностики существующего образа используйте тот же upgrade probe:
+
+```bash
+RAGFLOW_TEST_DISPOSABLE=1 python3 deployment/runner/test-qualified-upgrade.py \
+  --historical-image "$HISTORICAL_IMAGE_DIGEST" --historical-sha "$HISTORICAL_SHA" \
+  --baseline-repository meownm/ragflow \
+  --image "$CANDIDATE_IMAGE_DIGEST" --sha "$SOURCE_SHA" \
+  --postgres-image "$POSTGRES_IMAGE_DIGEST" --output "$DISPOSABLE_PROOF_DIR"
+```
+
+Оба образа и PostgreSQL задаются по digest; SHA полные. Probe проверяет GitHub
+commit/ancestry и фактический `SOURCE_REVISION` внутри каждого образа, затем
+создаёт собственные PostgreSQL, synthetic rows и backups. Успешная диагностика
+имеет `diagnostic_status=PASS`, но общий `status=INCOMPLETE`, exit 2: она доказывает
+только проверенную миграцию и восстановление данных, не квалификацию исторического
+выпуска. Она не используется как publisher proof. Shared runtime/DB не затрагивать.
 
 The live browser jobs use the repository variable `RAGFLOW_CI_OLLAMA_URL` as
 the Ollama URL reachable from their RAGFlow containers. The endpoint must have
@@ -115,7 +240,7 @@ the digest in the test script only after verifying the new image by digest.
 ## Verification
 
 ```bash
-systemctl status actions.runner.meownm-ragflow.ragflow-test-meow.service
+systemctl status actions.runner.meownm-ragflow.ragflow-test-vm.service
 docker info
 bash build.sh --cpp
 bash deployment/runner/build-go-linux.sh

@@ -299,12 +299,12 @@ function CreateBusinessDocumentPage() {
     evaDecision?: CreateBusinessDocumentRequest['eva_decision'],
     selectedEvaPageUrl?: string,
   ) => {
-    if (!catalogEntryId || !idea.trim() || createMutation.isPending) return;
+    if (!catalogEntryId || createMutation.isPending) return;
     createMutation.mutate({
-      schema_version: '3',
+      schema_version: '4',
       document_type: 'business_requirements',
       catalog_entry_id: catalogEntryId,
-      idea: idea.trim(),
+      ...(idea.trim() ? { idea: idea.trim() } : {}),
       dataset_ids: [],
       ...(selectedEvaPageUrl ? { eva_page_url: selectedEvaPageUrl } : {}),
       ...(evaDecision ? { eva_decision: evaDecision } : {}),
@@ -636,7 +636,7 @@ function CreateBusinessDocumentPage() {
               )}
             </label>
             <label className="mt-5 block space-y-2 text-sm font-medium">
-              <span>Идея</span>
+              <span>Идея (необязательно)</span>
               <div className="relative">
                 <Textarea
                   value={idea}
@@ -792,7 +792,7 @@ function CreateBusinessDocumentPage() {
                 variant="accent"
                 size="lg"
                 loading={createMutation.isPending}
-                disabled={!catalogEntryId || !idea.trim()}
+                disabled={!catalogEntryId}
               >
                 <Sparkles className="size-4" />
                 Начать работу

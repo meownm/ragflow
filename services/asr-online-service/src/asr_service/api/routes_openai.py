@@ -11,7 +11,7 @@ from asr_service.api.routes_asr import get_job_queue, get_job_store, get_registr
 from asr_service.jobs.job_models import CreateJobRequest, JobStatus
 from asr_service.jobs.job_events import iter_job_sse
 from asr_service.jobs.job_queue import JobQueue
-from asr_service.jobs.job_store import JobStore
+from asr_service.jobs.job_store import JobCapacityError, JobStore
 from asr_service.models.model_registry import RegistryView
 from asr_service.settings import settings
 
@@ -88,18 +88,25 @@ def create_transcription(
         )
 
     upload_path = _save_upload(file)
-    job = store.create(
-        CreateJobRequest(
-            model_key=model_key,
-            language=selected_language,
-            source_uri=str(upload_path),
-            options={
-                "output": {"include_segments": False},
-                "streaming": {"enabled": stream},
-                "delete_source_on_finish": True,
-            },
+    try:
+        job = store.create(
+            CreateJobRequest(
+                model_key=model_key,
+                language=selected_language,
+                source_uri=str(upload_path),
+                options={
+                    "output": {"include_segments": False},
+                    "streaming": {"enabled": stream},
+                    "delete_source_on_finish": True,
+                },
+            )
         )
-    )
+    except JobCapacityError as exc:
+        upload_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=429,
+            detail={"error": {"code": "Q-ASR-CAPACITY-REACHED", "message": str(exc)}},
+        ) from exc
     queue.put(job.id)
 
     if stream:

@@ -1,0 +1,86 @@
+name: release-cli
+'on':
+  workflow_call:
+    inputs:
+      source_sha:
+        type: string
+        required: true
+      replay_artifact:
+        type: string
+        default: ''
+permissions:
+  contents: read
+jobs:
+  build_cli:
+    name: build_cli (${{ matrix.goos }}-${{ matrix.goarch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - goos: linux
+          goarch: amd64
+          runner: ubuntu-24.04
+        - goos: linux
+          goarch: arm64
+          runner: ubuntu-24.04-arm
+        - goos: darwin
+          goarch: amd64
+          runner: macos-15-intel
+        - goos: darwin
+          goarch: arm64
+          runner: macos-14
+        - goos: windows
+          goarch: amd64
+          runner: windows-latest
+        - goos: windows
+          goarch: arm64
+          runner: windows-11-arm
+    env:
+      CGO_ENABLED: '0'
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+      SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+      REPLAY_ARTIFACT: ${{ inputs.replay_artifact }}
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: ${{ inputs.source_sha || github.sha }}
+        fetch-depth: 0
+        fetch-tags: true
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+    - uses: actions/setup-python@v6
+      with:
+        python-version: '3.13'
+        architecture: ${{ matrix.goarch == 'arm64' && 'arm64' || 'x64' }}
+    - uses: actions/download-artifact@v5
+      if: ${{ inputs.replay_artifact != '' }}
+      with:
+        artifact-ids: ${{ inputs.replay_artifact }}
+        path: replay
+    - name: Build and exercise portable CLI
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p dist/cli
+        suffix=""; [[ "$GOOS" != windows ]] || suffix=.exe
+        output="dist/cli/ragflow-cli-${GOOS}-${GOARCH}${suffix}"
+        if [[ -n "$REPLAY_ARTIFACT" ]]; then
+          test -f "replay/qualification/cli/ragflow-cli-${GOOS}-${GOARCH}${suffix}"
+          cp "replay/qualification/cli/ragflow-cli-${GOOS}-${GOARCH}${suffix}" "$output"
+          chmod +x "$output"
+        else
+          bash deployment/runner/build-portable-cli.sh "$output"
+        fi
+        python deployment/runner/portable_cli_probe.py "$output" \
+          --platform "${GOOS}-${GOARCH}" --source-sha "$SOURCE_SHA" --output "$output.proof.json"
+    - uses: actions/upload-artifact@v4
+      with:
+        name: cli-${{ matrix.goos }}-${{ matrix.goarch }}-${{ github.run_id }}-${{ github.run_attempt }}
+        path: dist/cli/*
+        if-no-files-found: error
+        include-hidden-files: true
+        retention-days: 30

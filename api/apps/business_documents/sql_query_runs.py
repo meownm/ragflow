@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 from collections.abc import Mapping
@@ -11,6 +10,7 @@ from typing import Any
 
 from peewee import SqliteDatabase
 
+from api.apps.business_documents.async_runtime import run_in_worker_loop
 from api.apps.business_documents.authorization import BusinessDocumentAccess
 from api.apps.business_documents.sql_execution_registry import BusinessDocumentSqlExecutionRegistryService
 from api.apps.business_documents.sql_query_agents import BusinessDocumentSqlAgentService, _stable_hash
@@ -117,7 +117,7 @@ def _binding(actor_id: str, is_admin: bool, access_role: str, command: dict[str,
 def _verify_schema(command: dict[str, Any], actor_id: str, is_admin: bool, access_role: str) -> bool:
     """Recheck catalog ACL and accepted table versions immediately before use."""
     snapshot = parse_schema_snapshot(command["schema_snapshot"])
-    response = asyncio.run(
+    response = run_in_worker_loop(
         BusinessDocumentSqlQuerySchemaService.load_entities(
             actor_id,
             {"entity_ids": [table.id for table in snapshot.tables], "locale": "ru"},
@@ -857,7 +857,7 @@ class BusinessDocumentSqlRunService:
 
     @classmethod
     def complete(cls, tenant_id: str, actor_id: str, project_id: str, raw: object, is_admin: bool = False, access_role: str = "AUTHOR_CREATOR") -> dict[str, Any]:
-        version, key = _command(raw, {"run_id"})
+        version, key = _command(raw, {"run_id"} if isinstance(raw, Mapping) and "run_id" in raw else set())
         request_hash = _stable_hash({"type": "COMPLETE", "request": raw})
         with BusinessDocumentSqlQueryProject._meta.database.atomic():
             project = BusinessDocumentSqlAgentService._get_project(tenant_id, project_id)
@@ -867,15 +867,20 @@ class BusinessDocumentSqlRunService:
                 return replay
             if project.state_version != version or project.operation_state != "IDLE":
                 raise ConflictError("SQL_PROJECT_VERSION_CONFLICT", "Project changed; reload before completion")
-            run = BusinessDocumentSqlQueryRun.get_or_none(
-                (BusinessDocumentSqlQueryRun.id == raw["run_id"])
-                & (BusinessDocumentSqlQueryRun.project_id == project_id)
-                & (BusinessDocumentSqlQueryRun.tenant_id == tenant_id)
-                & (BusinessDocumentSqlQueryRun.kind == "SQL")
-                & (BusinessDocumentSqlQueryRun.status == "READY")
-            )
-            if run is None or run.checks.get("status") != "PASS":
-                raise ConflictError("SQL_RESULT_MISSING", "A verified result is required")
+            run_id = raw.get("run_id")
+            if "run_id" in raw and (not isinstance(run_id, str) or not run_id):
+                raise ValidationError("INVALID_SQL_RUN_COMMAND", "run_id must identify a verified result")
+            run = None
+            if run_id is not None:
+                run = BusinessDocumentSqlQueryRun.get_or_none(
+                    (BusinessDocumentSqlQueryRun.id == run_id)
+                    & (BusinessDocumentSqlQueryRun.project_id == project_id)
+                    & (BusinessDocumentSqlQueryRun.tenant_id == tenant_id)
+                    & (BusinessDocumentSqlQueryRun.kind == "SQL")
+                    & (BusinessDocumentSqlQueryRun.status == "READY")
+                )
+                if run is None or run.checks.get("status") != "PASS":
+                    raise ConflictError("SQL_RESULT_MISSING", "A verified result is required")
             if (
                 BusinessDocumentSqlQueryRun.select()
                 .where(
@@ -887,37 +892,27 @@ class BusinessDocumentSqlRunService:
             ):
                 raise ConflictError("SQL_RUN_ACTIVE", "Wait for the active query to finish before completing")
             compilation, command = _source(project)
-            if run.compilation_id != compilation.id:
+            if run is not None and run.compilation_id != compilation.id:
                 raise ConflictError("SQL_RESULT_STALE", "Result belongs to another SQL revision")
             revision = BusinessDocumentSqlQueryArtifact.select().where((BusinessDocumentSqlQueryArtifact.project_id == project_id) & (BusinessDocumentSqlQueryArtifact.kind == "DOCUMENT")).count() + 1
-            confirmed_conclusion = next(
-                (
-                    item.payload
-                    for item in BusinessDocumentSqlQueryArtifact.select()
-                    .where(
-                        (BusinessDocumentSqlQueryArtifact.project_id == project_id)
-                        & (BusinessDocumentSqlQueryArtifact.tenant_id == tenant_id)
-                        & (BusinessDocumentSqlQueryArtifact.kind == "CONCLUSION")
-                    )
-                    .order_by(BusinessDocumentSqlQueryArtifact.revision.desc())
-                    if item.payload.get("status") == "CONFIRMED" and item.payload.get("source_run_id") == run.id
-                ),
-                None,
-            )
-            payload = {
-                "run_id": run.id,
-                "sql": compilation.payload["result"]["sql"],
-                "requirements": command["accepted_requirements"],
-                "snapshot_fingerprint": compilation.payload["result"]["snapshot_fingerprint"],
-                "guard": compilation.payload["result"]["guard"],
-                "profile_id": run.profile_id,
-                "profile_version": run.profile_version,
-                "row_count": run.row_count,
-                "duration_ms": run.duration_ms,
-                "result_bytes": run.result_bytes,
-                "checks": run.checks,
-                "confirmed_conclusion": confirmed_conclusion,
-                "derived_runs": [
+            confirmed_conclusion = None
+            if run is not None:
+                confirmed_conclusion = next(
+                    (
+                        item.payload
+                        for item in BusinessDocumentSqlQueryArtifact.select()
+                        .where(
+                            (BusinessDocumentSqlQueryArtifact.project_id == project_id)
+                            & (BusinessDocumentSqlQueryArtifact.tenant_id == tenant_id)
+                            & (BusinessDocumentSqlQueryArtifact.kind == "CONCLUSION")
+                        )
+                        .order_by(BusinessDocumentSqlQueryArtifact.revision.desc())
+                        if item.payload.get("status") == "CONFIRMED" and item.payload.get("source_run_id") == run.id
+                    ),
+                    None,
+                )
+            derived_runs = (
+                [
                     {"id": item.id, "kind": item.kind, "source_run_id": item.source_run_id, "row_count": item.row_count, "checks": item.checks}
                     for item in BusinessDocumentSqlQueryRun.select().where(
                         (BusinessDocumentSqlQueryRun.project_id == project_id)
@@ -925,7 +920,27 @@ class BusinessDocumentSqlRunService:
                         & (BusinessDocumentSqlQueryRun.source_run_id == run.id)
                         & (BusinessDocumentSqlQueryRun.status == "READY")
                     )
-                ],
+                ]
+                if run
+                else []
+            )
+            payload = {
+                "run_id": run.id if run else None,
+                "execution_status": "READY" if run else "NOT_EXECUTED",
+                "python_status": "READY" if any(item["kind"] == "PYTHON" for item in derived_runs) else "NO_SAVED_RESULT" if run else "NOT_EXECUTED",
+                "source_artifact_ids": compilation.payload.get("source_artifact_ids", []),
+                "sql": compilation.payload["result"]["sql"],
+                "requirements": command["accepted_requirements"],
+                "snapshot_fingerprint": compilation.payload["result"]["snapshot_fingerprint"],
+                "guard": compilation.payload["result"]["guard"],
+                "profile_id": run.profile_id if run else None,
+                "profile_version": run.profile_version if run else None,
+                "row_count": run.row_count if run else None,
+                "duration_ms": run.duration_ms if run else None,
+                "result_bytes": run.result_bytes if run else None,
+                "checks": run.checks if run else {"status": "NOT_EXECUTED"},
+                "confirmed_conclusion": confirmed_conclusion,
+                "derived_runs": derived_runs,
             }
             document = BusinessDocumentSqlQueryArtifact.create(
                 id=get_uuid(),
@@ -938,10 +953,11 @@ class BusinessDocumentSqlRunService:
                 source_proposal_id=compilation.source_proposal_id,
                 accepted_by=actor_id,
             )
-            BusinessDocumentSqlQueryRun.update(rows=[], status="PURGED").where(
-                (BusinessDocumentSqlQueryRun.project_id == project_id) & (BusinessDocumentSqlQueryRun.tenant_id == tenant_id) & (BusinessDocumentSqlQueryRun.status == "READY")
-            ).execute()
-            _purge_conclusion_drafts(project_id, tenant_id, run.id)
+            if run is not None:
+                BusinessDocumentSqlQueryRun.update(rows=[], status="PURGED").where(
+                    (BusinessDocumentSqlQueryRun.project_id == project_id) & (BusinessDocumentSqlQueryRun.tenant_id == tenant_id) & (BusinessDocumentSqlQueryRun.status == "READY")
+                ).execute()
+                _purge_conclusion_drafts(project_id, tenant_id, run.id)
             changed = (
                 BusinessDocumentSqlQueryProject.update(
                     state_version=version + 1,
@@ -953,6 +969,6 @@ class BusinessDocumentSqlRunService:
             )
             if changed != 1:
                 raise ConflictError("SQL_PROJECT_VERSION_CONFLICT", "Project changed during completion")
-            response = {"document_id": document.id, "revision": revision, "document": payload, "rows_status": "PURGED", "state_version": version + 1}
+            response = {"document_id": document.id, "revision": revision, "document": payload, "rows_status": "PURGED" if run else "NOT_EXECUTED", "state_version": version + 1}
             BusinessDocumentSqlAgentService._record_command(tenant_id, project_id, key, request_hash, response)
             return response

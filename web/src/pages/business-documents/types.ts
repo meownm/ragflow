@@ -395,9 +395,10 @@ export interface BusinessDocumentSection {
 }
 
 export interface BusinessDocumentAst {
-  schema_version: '1';
+  schema_version: '1' | '2';
   document_type: 'business_requirements';
   template_version: string;
+  section_scope?: 'required';
   sections: BusinessDocumentSection[];
 }
 
@@ -643,7 +644,7 @@ export type SqlAgentKind = 'REQUIREMENTS' | 'SCHEMA' | 'QUERY';
 
 export interface SqlAgentJob {
   id: string;
-  kind: SqlAgentKind;
+  kind: SqlAgentKind | 'REVISION';
   status: 'PENDING' | 'RUNNING' | 'RETRY' | 'COMPLETED' | 'DEAD' | 'STALE';
   progress: number;
   progress_stage: string;
@@ -655,10 +656,77 @@ export interface SqlAgentJob {
 
 export interface SqlAgentProposal {
   id: string;
-  kind: SqlAgentKind;
+  kind: SqlAgentKind | 'REVISION';
   status: 'PENDING' | 'ACCEPTED' | 'REJECTED';
   source_state_version: number;
   payload: Record<string, unknown>;
+}
+
+export interface SqlRevisionWorkspace {
+  project_id: string;
+  state_version: number;
+  query_artifact_id: string | null;
+  document_artifact_id: string | null;
+  sql: string;
+  blocks: Array<{
+    id: string;
+    kind: string;
+    title: string;
+    sql: string;
+    fingerprint: string;
+  }>;
+  query_revisions: Array<{
+    id: string;
+    revision: number;
+    sql: string;
+    blocks: SqlRevisionWorkspace['blocks'];
+  }>;
+  draft: {
+    version: number;
+    base_query_artifact_id: string | null;
+    steps: Array<{ title: string; sql: string; parameters: string }>;
+  } | null;
+  threads: Array<{
+    id: string;
+    target: 'QUERY' | 'DOCUMENT';
+    base_artifact_id: string;
+    anchor: Record<string, unknown>;
+    anchor_status: 'CURRENT' | 'UNRESOLVED';
+    messages: Array<{
+      id: string;
+      author_id: string;
+      text: string;
+      created_at: number;
+    }>;
+    rebindings: Array<{
+      base_artifact_id: string;
+      anchor: Record<string, unknown>;
+      replaced_by: string;
+      replaced_at: number;
+    }>;
+    status: 'OPEN' | 'RESOLVED';
+    version: number;
+    proposals: Array<{
+      id: string;
+      status: 'PENDING' | 'ACCEPTED' | 'REJECTED';
+      proposal: {
+        summary?: string;
+        sql?: string;
+        document_text?: string;
+      } | null;
+      decided_by: string | null;
+      decided_at: number | null;
+    }>;
+  }>;
+  history: Array<{
+    id: string;
+    kind: 'REQUIREMENTS' | 'SCHEMA' | 'QUERY' | 'COMPILATION' | 'DOCUMENT';
+    revision: number;
+    content_hash: string;
+    accepted_by: string;
+    created_at: number;
+    preview: string;
+  }>;
 }
 
 export interface SqlAgentProject {
@@ -879,7 +947,6 @@ export interface BusinessDocumentList {
 
 interface CreateBusinessDocumentRequestBase {
   document_type: 'business_requirements';
-  idea: string;
   dataset_ids?: string[];
   eva_page_url?: string;
   eva_decision?: { mode: 'SKIP' } | { mode: 'BIND' };
@@ -889,10 +956,17 @@ export type CreateBusinessDocumentRequest =
   | (CreateBusinessDocumentRequestBase & {
       schema_version: '1' | '2';
       title: string;
+      idea: string;
     })
   | (CreateBusinessDocumentRequestBase & {
       schema_version: '3';
       catalog_entry_id: string;
+      idea: string;
+    })
+  | (CreateBusinessDocumentRequestBase & {
+      schema_version: '4';
+      catalog_entry_id: string;
+      idea?: string;
     });
 
 export interface BusinessDocumentCatalogEntry {

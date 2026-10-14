@@ -28,6 +28,8 @@ VISIBLE_SECTIONS = [
     "memory",
     "catalog",
     "business_documents",
+    "document_constructor",
+    "sql_projects",
     "file_manager",
 ]
 
@@ -1081,26 +1083,44 @@ def _expected_execution_binding_request():
 def _open_constructor(page, base_url):
     page.set_viewport_size({"width": 1920, "height": 1080})
     page.goto(
-        f"{base_url.rstrip('/')}/business-documents",
+        f"{base_url.rstrip('/')}/document-constructor",
         wait_until="commit",
         timeout=NAVIGATION_TIMEOUT_MS,
     )
-    expect(page.get_by_test_id("open-document-constructor")).to_have_count(0)
-    constructor_link = page.locator("[data-testid='nav-document-constructor']:visible")
-    expect(constructor_link).to_be_visible(timeout=NAVIGATION_TIMEOUT_MS)
-    constructor_link.click()
     expect(page).to_have_url(
         re.compile(r"/document-constructor$"),
         timeout=RESULT_TIMEOUT_MS,
     )
-    expect(page.locator("[data-testid='nav-document-constructor']:visible")).to_have_attribute("aria-current", "page")
     expect(page.get_by_test_id("document-constructor-page")).to_be_visible()
     page.wait_for_load_state("load", timeout=NAVIGATION_TIMEOUT_MS)
-    page.get_by_test_id("document-constructor-template-surface").click()
-    expect(page).to_have_url(
-        re.compile(r"/document-constructor\?surface=template$"),
-        timeout=RESULT_TIMEOUT_MS,
-    )
+
+
+@pytest.mark.p1
+@pytest.mark.auth
+def test_constructor_navigation_opens_document_and_sql_scenarios(page, base_url):
+    stub = DocumentConstructorStub()
+    _install_session(page)
+    page.route("**/api/v1/**", stub)
+    _open_constructor(page, base_url)
+    expect(page.get_by_test_id("nav-document-constructor").first).to_be_visible()
+    page.get_by_test_id("nav-sql-projects").first.click()
+    expect(page).to_have_url(re.compile(r"/sql-projects$"), timeout=RESULT_TIMEOUT_MS)
+    expect(page.get_by_test_id("sql-agent-workbench")).to_be_visible()
+    page.get_by_test_id("nav-document-constructor").first.click()
+    expect(page.get_by_test_id("document-constructor-page")).to_be_visible()
+
+
+@pytest.mark.p1
+@pytest.mark.auth
+def test_legacy_sql_constructor_link_opens_sql_projects(page, base_url):
+    stub = DocumentConstructorStub()
+    _install_session(page)
+    page.route("**/api/v1/**", stub)
+
+    page.goto(f"{base_url.rstrip('/')}/document-constructor?surface=sql", wait_until="commit")
+
+    expect(page).to_have_url(re.compile(r"/sql-projects$"), timeout=NAVIGATION_TIMEOUT_MS)
+    expect(page.get_by_test_id("sql-agent-workbench")).to_be_visible()
 
 
 @pytest.mark.p1
@@ -1211,13 +1231,14 @@ def test_sql_agent_mvp_golden_from_request_to_document(page, base_url):
     _install_session(page)
     page.route("**/api/v1/**", stub)
 
-    _open_constructor(page, base_url)
-    page.get_by_test_id("document-constructor-sql-surface").click()
+    page.set_viewport_size({"width": 1920, "height": 1080})
+    page.goto(f"{base_url.rstrip('/')}/sql-projects", wait_until="commit")
+    expect(page).to_have_url(re.compile(r"/sql-projects$"), timeout=RESULT_TIMEOUT_MS)
     workbench = page.get_by_test_id("sql-agent-workbench")
     expect(workbench).to_be_visible()
     expect(workbench).to_contain_text("Получите данные по вашему вопросу")
 
-    workbench.get_by_role("button", name="Новый запрос").click()
+    workbench.get_by_role("button", name="Новый запрос").first.click()
     workbench.get_by_label("Название (необязательно)").fill("Golden: завершённые заказы")
     workbench.get_by_label("Какой вопрос нужно решить?").fill("Вывести идентификатор и сумму завершённых заказов за месяц, не более 1000 строк.")
     workbench.get_by_role("button", name="Создать и продолжить").click()
@@ -1227,18 +1248,20 @@ def test_sql_agent_mvp_golden_from_request_to_document(page, base_url):
     requirements.get_by_role("button", name="Календарный месяц").click()
     requirements.get_by_role("button", name="Подтвердить требования").click()
 
-    workbench.get_by_label("Сущности и понятия").fill("Заказ")
+    workbench.get_by_label("Что искать в данных?").fill("Заказ")
     workbench.get_by_test_id("sql-agent-run-schema").click()
     schema = workbench.get_by_test_id("sql-agent-schema-review")
-    expect(schema).to_contain_text("Выберите таблицы и нужные поля")
+    expect(schema).to_contain_text("Проверьте найденные данные")
     schema.get_by_role("button", name=re.compile(r"order_fact")).first.click()
     expect(schema).to_contain_text("paid_amount_rub")
-    schema.get_by_role("button", name="Выбрать все").click()
+    for column in ("order_id", "status_id", "paid_amount_rub"):
+        schema.get_by_role("checkbox", name=column).check()
     expect(schema).to_contain_text("выбрано 3")
     schema.get_by_role("button", name="Подтвердить схему").click()
 
     query = workbench.get_by_test_id("sql-agent-query-review")
     expect(query).to_contain_text("Оставить только завершённые заказы")
+    query.get_by_role("checkbox", name="Подтверждаю исключение строк этим условием.").check()
     query.get_by_role("button", name="Подтвердить и собрать SQL").click()
 
     completed = workbench.get_by_test_id("sql-agent-complete")
@@ -1255,7 +1278,7 @@ def test_sql_agent_mvp_golden_from_request_to_document(page, base_url):
     expect(completed).to_contain_text("Данные получены")
     assert [kind for kind, _ in stub.sql_project_commands] == ["compile", "run"]
 
-    completed.get_by_role("button", name="Завершить и удалить строки").click()
+    completed.get_by_role("button", name="Завершить", exact=True).click()
     document = completed.get_by_test_id("sql-completed-document")
     expect(document).to_contain_text("Документ · ревизия 1")
     expect(document).to_contain_text("строки удалены")

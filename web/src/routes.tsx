@@ -27,6 +27,10 @@ export enum Routes {
   OpenMetadata = '/openmetadata',
   BusinessDocuments = '/business-documents',
   DocumentConstructor = '/document-constructor',
+  SqlProjects = '/sql-projects',
+  SqlSources = '/sql-sources',
+  Transcription = '/transcription',
+  Translator = '/translator',
   Memory = '/memory',
   MemoryMessage = '/memory-message',
   MemorySetting = '/memory-setting',
@@ -254,7 +258,29 @@ const routeConfigOptions = [
       },
       {
         path: Routes.DocumentConstructor,
+        loader: ({ request }: { request: Request }) =>
+          new URL(request.url).searchParams.get('surface') === 'sql'
+            ? redirect(Routes.SqlProjects)
+            : null,
         Component: () => import('@/pages/business-documents/constructor'),
+      },
+      {
+        path: Routes.SqlProjects,
+        Component: () =>
+          import('@/pages/business-documents/constructor/sql-projects-page'),
+      },
+      {
+        path: Routes.SqlSources,
+        Component: () =>
+          import('@/pages/business-documents/constructor/execution-registry-page'),
+      },
+      {
+        path: Routes.Transcription,
+        Component: () => import('@/pages/service-workspace'),
+      },
+      {
+        path: Routes.Translator,
+        Component: () => import('@/pages/service-workspace'),
       },
       {
         path: `${Routes.BusinessDocuments}/constructor`,

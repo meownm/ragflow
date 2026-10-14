@@ -7,6 +7,7 @@ from typing import Any
 from api.apps.business_documents.async_runtime import run_in_worker_loop
 from api.apps.business_documents.authorization import BusinessDocumentAccess
 from api.apps.business_documents.sql_query_planner import TenantQueryPlanner, query_planner_provenance
+from api.apps.business_documents.sql_query_revision_ai import propose_revision
 from api.apps.business_documents.sql_query_requirements import TenantRequirementsAnalyst, requirements_prompt_provenance
 from api.apps.business_documents.sql_query_schema import OpenMetadataCatalogResolver, TenantSchemaInterpreter
 from api.db.db_models import BusinessDocumentJob, BusinessDocumentSqlQueryProject, User
@@ -64,4 +65,8 @@ class BusinessDocumentSqlAgentRunner:
                     "warning": result["warning"],
                 },
             }
+        if job.job_type == "SQL_AGENT_REVISION":
+            if not isinstance(request, dict):
+                raise RuntimeError("SQL revision request is missing")
+            return await propose_revision(job.tenant_id, request)
         raise RuntimeError(f"Unsupported SQL agent job type: {job.job_type}")

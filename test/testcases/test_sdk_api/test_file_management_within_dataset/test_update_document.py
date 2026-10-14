@@ -27,7 +27,7 @@ class TestDocumentsUpdated:
         [
             ("new_name.txt", ""),
             (f"{'a' * (DOCUMENT_NAME_LIMIT - 4)}.txt", ""),
-            (0, "AttributeError"),
+            (0, "Input should be a valid string"),
             (None, "AttributeError"),
             ("", "The extension of file can't be changed"),
             ("ragflow_test_upload_0", "The extension of file can't be changed"),
@@ -40,29 +40,9 @@ class TestDocumentsUpdated:
         document = documents[0]
 
         if expected_message:
-            if name is None or (isinstance(name, int) and name == 0):
-                # Skip tests that don't raise exceptions as expected
-                pytest.skip("This test case doesn't consistently raise an exception as expected")
-            elif name == "":
-                # Check if empty string raises an exception or not
-                try:
-                    document.update({"name": name})
-                    # If no exception is raised, the test expectation might be wrong
-                    pytest.skip("Empty string name doesn't raise an exception as expected")
-                except Exception as e:
-                    assert expected_message in str(e), str(e)
-            elif name == "ragflow_test_upload_0":
-                # Check if this case raises an exception or not
-                try:
-                    document.update({"name": name})
-                    # If no exception is raised, the test expectation might be wrong
-                    pytest.skip("Name without extension doesn't raise an exception as expected")
-                except Exception as e:
-                    assert expected_message in str(e), str(e)
-            else:
-                with pytest.raises(Exception) as exception_info:
-                    document.update({"name": name})
-                assert expected_message in str(exception_info.value), str(exception_info.value)
+            with pytest.raises(Exception) as exception_info:
+                document.update({"name": name})
+            assert expected_message in str(exception_info.value), str(exception_info.value)
         else:
             document.update({"name": name})
             docs = dataset.list_documents(id=document.id)
@@ -122,22 +102,9 @@ class TestDocumentsUpdated:
         document = documents[0]
 
         if expected_message:
-            if chunk_method == "":
-                # Check if empty string raises an exception or not
-                try:
-                    document.update({"chunk_method": chunk_method})
-                    # If no exception is raised, skip this test
-                    pytest.skip("Empty chunk_method doesn't raise an exception as expected")
-                except Exception as e:
-                    assert expected_message in str(e), str(e)
-            elif chunk_method == "other_chunk_method":
-                with pytest.raises(Exception) as exception_info:
-                    document.update({"chunk_method": chunk_method})
-                assert expected_message in str(exception_info.value), str(exception_info.value)
-            else:
-                with pytest.raises(Exception) as exception_info:
-                    document.update({"chunk_method": chunk_method})
-                assert expected_message in str(exception_info.value), str(exception_info.value)
+            with pytest.raises(Exception) as exception_info:
+                document.update({"chunk_method": chunk_method})
+            assert expected_message in str(exception_info.value), str(exception_info.value)
         else:
             document.update({"chunk_method": chunk_method})
             docs = dataset.list_documents()
@@ -151,95 +118,105 @@ class TestDocumentsUpdated:
             ({"chunk_count": 1}, "Can't change `chunk_count`"),
             pytest.param(
                 {"create_date": "Fri, 14 Mar 2025 16:53:42 GMT"},
-                "The input parameters are invalid",
-                marks=pytest.mark.skip(reason="issues/6104"),
+                "",
             ),
             pytest.param(
                 {"create_time": 1},
-                "The input parameters are invalid",
-                marks=pytest.mark.skip(reason="issues/6104"),
+                "",
             ),
             pytest.param(
                 {"created_by": "ragflow_test"},
-                "The input parameters are invalid",
-                marks=pytest.mark.skip(reason="issues/6104"),
+                "",
             ),
             pytest.param(
                 {"dataset_id": "ragflow_test"},
-                "The input parameters are invalid",
-                marks=pytest.mark.skip(reason="issues/6104"),
+                "",
             ),
             pytest.param(
                 {"id": "ragflow_test"},
-                "The input parameters are invalid",
-                marks=pytest.mark.skip(reason="issues/6104"),
+                "",
             ),
             pytest.param(
                 {"location": "ragflow_test.txt"},
-                "The input parameters are invalid",
-                marks=pytest.mark.skip(reason="issues/6104"),
+                "",
             ),
             pytest.param(
                 {"process_begin_at": 1},
-                "The input parameters are invalid",
-                marks=pytest.mark.skip(reason="issues/6104"),
+                "",
             ),
             pytest.param(
                 {"process_duration": 1.0},
-                "The input parameters are invalid",
-                marks=pytest.mark.skip(reason="issues/6104"),
+                "",
             ),
             ({"progress": 1.0}, "Can't change `progress`"),
             pytest.param(
                 {"progress_msg": "ragflow_test"},
-                "The input parameters are invalid",
-                marks=pytest.mark.skip(reason="issues/6104"),
+                "",
             ),
             pytest.param(
                 {"run": "ragflow_test"},
-                "The input parameters are invalid",
-                marks=pytest.mark.skip(reason="issues/6104"),
+                "",
             ),
             pytest.param(
                 {"size": 1},
-                "The input parameters are invalid",
-                marks=pytest.mark.skip(reason="issues/6104"),
+                "",
             ),
             pytest.param(
                 {"source_type": "ragflow_test"},
-                "The input parameters are invalid",
-                marks=pytest.mark.skip(reason="issues/6104"),
+                "",
             ),
             pytest.param(
                 {"thumbnail": "ragflow_test"},
-                "The input parameters are invalid",
-                marks=pytest.mark.skip(reason="issues/6104"),
+                "",
             ),
             ({"token_count": 1}, "Can't change `token_count`"),
             pytest.param(
                 {"type": "ragflow_test"},
-                "The input parameters are invalid",
-                marks=pytest.mark.skip(reason="issues/6104"),
+                "",
             ),
             pytest.param(
                 {"update_date": "Fri, 14 Mar 2025 16:33:17 GMT"},
-                "The input parameters are invalid",
-                marks=pytest.mark.skip(reason="issues/6104"),
+                "",
             ),
             pytest.param(
                 {"update_time": 1},
-                "The input parameters are invalid",
-                marks=pytest.mark.skip(reason="issues/6104"),
+                "",
             ),
         ],
     )
-    def test_invalid_field(self, add_documents, payload, expected_message):
-        _, documents = add_documents
+    def test_protected_and_ignored_fields(self, add_documents, payload, expected_message):
+        dataset, documents = add_documents
         document = documents[0]
 
-        with pytest.raises(Exception) as exception_info:
+        if expected_message:
+            with pytest.raises(Exception) as exception_info:
+                document.update(payload)
+            assert expected_message in str(exception_info.value), str(exception_info.value)
+        else:
+            # Unknown document metadata is ignored by the request contract.
+            # Confirm it cannot overwrite the document's protected state.
+            protected = (
+                "id",
+                "dataset_id",
+                "name",
+                "created_by",
+                "source_type",
+                "type",
+                "size",
+                "chunk_count",
+                "token_count",
+                "progress",
+                "progress_msg",
+                "process_begin_at",
+                "process_duration",
+                "run",
+                "status",
+            )
+            before = dataset.list_documents(id=document.id)[0]
+            baseline = {key: getattr(before, key) for key in protected}
             document.update(payload)
-        assert expected_message in str(exception_info.value), str(exception_info.value)
+            after = dataset.list_documents(id=baseline["id"])[0]
+            assert {key: getattr(after, key) for key in protected} == baseline, str(after)
 
     @pytest.mark.p2
     @pytest.mark.parametrize(
@@ -329,7 +306,6 @@ class TestUpdateDocumentParserConfig:
                 "naive",
                 DEFAULT_PARSER_CONFIG_FOR_TEST,
                 "",
-                marks=pytest.mark.skip(reason="DEFAULT_PARSER_CONFIG contains fields not allowed in document update API"),
             ),
             pytest.param(
                 "naive",

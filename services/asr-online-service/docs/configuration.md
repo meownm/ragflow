@@ -3,7 +3,13 @@
 ## Core
 - `ASR_SERVICE_HOST`, `ASR_SERVICE_PORT`
 - `ASR_LOG_LEVEL`, `LOG_DATA_MODE=plain|masked`
-- `ASR_MAX_CONCURRENT_JOBS`, `ASR_JOB_TTL_SECONDS`
+- `ASR_MAX_CONCURRENT_JOBS` (одновременно работающие воркеры, по умолчанию 2),
+  `ASR_MAX_ACTIVE_JOBS` (незавершённые задания в обработке и очереди, по
+  умолчанию и максимум 5), `ASR_JOB_TTL_SECONDS`
+
+Оба API создания задания используют общий лимит. Шестое незавершённое
+задание получает HTTP 429 `Q-ASR-CAPACITY-REACHED`; завершение, ошибка,
+отмена или истечение срока действия освобождают место.
 - `ASR_ARTIFACTS_DIR`, `ASR_UPLOAD_DIR`
 
 The synchronous OpenAI-compatible transcription endpoint has no independent

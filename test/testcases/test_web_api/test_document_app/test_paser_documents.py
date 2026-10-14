@@ -267,10 +267,9 @@ def test_concurrent_parse(WebApiAuth, add_dataset_func, tmp_path):
     @wait_for(120, 1, "Document parsing timeout")
     def condition(_auth, _kb_id, _document_num):
         res = list_documents(_auth, {"kb_id": _kb_id, "page_size": _document_num})
-        for doc in res["data"]["docs"]:
-            if doc["run"] != "3":
-                return False
-        return True
+        assert res["code"] == 0, res
+        docs = res["data"]["docs"]
+        return {doc["id"] for doc in docs} == set(document_ids) and all(doc["run"] == "DONE" for doc in docs)
 
     count = 100
     kb_id = add_dataset_func
@@ -285,9 +284,9 @@ def test_concurrent_parse(WebApiAuth, add_dataset_func, tmp_path):
             )
             for i in range(count)
         ]
-    responses = list(as_completed(futures))
+    responses = [future.result() for future in as_completed(futures)]
     assert len(responses) == count, responses
-    assert all(future.result()["code"] == 0 for future in futures)
+    assert all(response["code"] == 0 for response in responses), responses
 
     condition(WebApiAuth, kb_id, count)
 

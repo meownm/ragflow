@@ -1,0 +1,8 @@
+{
+  "schema": 1,
+  "purpose": "approved-initial-runtime-baseline",
+  "repository": "meownm/ragflow",
+  "image_digest": "192.168.1.175:5443/ragflow@sha256:1c25531cf7e6b9e54b2e3ea1c46eb899b978db1fe804aebddddf4422498b6c63",
+  "source_sha": "3d168d5bc503f87f32eb255b8a21dad509f7b0db",
+  "qualification": "historical-unqualified"
+}

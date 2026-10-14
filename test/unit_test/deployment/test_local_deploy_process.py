@@ -14,6 +14,7 @@ SCRIPT = ROOT / "deployment/local/deploy.ps1"
 SOURCE = SCRIPT.read_text(encoding="utf-8")
 DOCKERFILE_SOURCE = (ROOT / "Dockerfile").read_text(encoding="utf-8")
 OBSERVABILITY_SOURCE = (ROOT / "docker/docker-compose.observability.yml").read_text(encoding="utf-8")
+CANDIDATE_COMPOSE_SOURCE = (ROOT / "docker/docker-compose.candidate.yml").read_text(encoding="utf-8")
 
 
 def test_local_deploy_has_one_fixed_local_target_and_no_git_mutation():
@@ -36,6 +37,49 @@ def test_preflight_and_backup_precede_runtime_mutation():
     assert config < backup < recreate < health
     assert "pg_restore --list" in SOURCE
     assert '"--no-build", "--pull", "never"' in SOURCE
+
+
+def test_candidate_binds_survive_checkout_removal_and_reject_tampering(tmp_path):
+    pwsh = shutil.which("pwsh") or shutil.which("powershell")
+    if not pwsh:
+        pytest.skip("PowerShell is not installed")
+    assert "${RAGFLOW_LOCAL_RUNTIME_CONFIG:?" in CANDIDATE_COMPOSE_SOURCE
+    assert "${RAGFLOW_LOCAL_RUNTIME_LOGS:?" in CANDIDATE_COMPOSE_SOURCE
+    template = tmp_path / "checkout" / "service_conf.yaml.template"
+    template.parent.mkdir()
+    template.write_text("postgres:\n  max_connections: 20\n", encoding="utf-8")
+    runtime = tmp_path / "runtime"
+    command = (
+        f"$ast=[System.Management.Automation.Language.Parser]::ParseFile('{SCRIPT}', [ref]$null, [ref]$null); "
+        "$fn=$ast.Find({param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] "
+        "-and $node.Name -eq 'Initialize-PersistentRuntimeBinds'}, $true); "
+        ". ([scriptblock]::Create($fn.Extent.Text)); $ErrorActionPreference='Stop'; "
+        "$data=$env:PERSISTENT_BIND_TEST | ConvertFrom-Json; "
+        "$first=Initialize-PersistentRuntimeBinds -RuntimeRoot $data.runtime -TemplatePath $data.template; "
+        "$again=Initialize-PersistentRuntimeBinds -RuntimeRoot $data.runtime -TemplatePath $data.template; "
+        "Remove-Item -LiteralPath $data.template -Force; "
+        "$survives=Test-Path -LiteralPath $first.config_path -PathType Leaf; "
+        "Copy-Item -LiteralPath $again.config_path -Destination $data.template; "
+        "Set-Content -LiteralPath $first.config_path -Value 'tampered'; "
+        "$rejected=$false; "
+        "try { Initialize-PersistentRuntimeBinds -RuntimeRoot $data.runtime -TemplatePath $data.template | Out-Null } "
+        "catch { $rejected=$true }; "
+        "[pscustomobject]@{survives=$survives; rejected=$rejected; config_path=$first.config_path; "
+        "logs_path=$first.logs_path; hash=$first.config_sha256} | ConvertTo-Json -Compress"
+    )
+    result = subprocess.run(
+        [pwsh, "-NoProfile", "-Command", command],
+        env={**os.environ, "PERSISTENT_BIND_TEST": json.dumps({"runtime": str(runtime), "template": str(template)})},
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["survives"] is True
+    assert payload["rejected"] is True
+    assert Path(payload["config_path"]).is_relative_to(runtime)
+    assert Path(payload["logs_path"]).is_relative_to(runtime)
 
 
 def test_deploy_records_source_backup_runtime_and_health_evidence():
@@ -64,7 +108,7 @@ def test_candidate_image_is_pulled_and_verified_before_runtime_mutation():
 
 def test_release_receipt_revision_digest_and_jobs_are_checked_before_runtime_mutation():
     receipt_required = SOURCE.index("Release mode requires the candidate receipt")
-    jobs_checked = SOURCE.index("-not (Test-CandidateReceiptJobs -CI $candidateReceiptData.ci)")
+    jobs_checked = SOURCE.index("Assert-CandidateReceipt -Path $candidateReceiptPath")
     digest_checked = SOURCE.index("Pulled candidate image digest does not match the CI receipt")
     backup = SOURCE.index('"pg_dump -U')
     recreate = SOURCE.index('$upArguments = @("up", "-d", "--force-recreate", "--no-deps")')
@@ -83,6 +127,10 @@ def test_release_receipt_revision_digest_and_jobs_are_checked_before_runtime_mut
         ({"label": "release-qualified"}, False),
         ({"digests": []}, False),
         ({"architecture": "arm64"}, False),
+        ({"reference": "sha256:" + "c" * 64, "digests": []}, True),
+        ({"reference": "sha256:" + "d" * 64, "digests": []}, False),
+        ({"reference": "sha256:" + "c" * 64, "source_id": "f" * 64}, False),
+        ({"reference": "sha256:" + "c" * 64, "label": "release-qualified"}, False),
     ],
 )
 def test_feature_image_identity_requires_digest_and_source_provenance(mutation, valid):
@@ -106,7 +154,7 @@ def test_feature_image_identity_requires_digest_and_source_provenance(mutation, 
         "-and $node.Name -eq 'Test-FeatureImageIdentity'}, $true); "
         ". ([scriptblock]::Create($fn.Extent.Text)); Set-StrictMode -Version Latest; "
         "$data=$env:FEATURE_IMAGE_TEST | ConvertFrom-Json; "
-        "$inspection=[pscustomobject]@{Os='linux'; Architecture=$data.architecture; "
+        "$inspection=[pscustomobject]@{Id='sha256:" + "c" * 64 + "'; Os='linux'; Architecture=$data.architecture; "
         "Config=[pscustomobject]@{Labels=[pscustomobject]@{'org.ragflow.source-id'='" + source_id + "'; 'org.ragflow.validation'=$data.label}}; RepoDigests=$data.digests}; "
         "Test-FeatureImageIdentity -Reference $data.reference -SourceId $data.source_id "
         "-Inspection $inspection -Revision $data.revision -Version $data.version"
@@ -155,37 +203,11 @@ def test_powershell_script_parses():
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.parametrize(
-    "required,reason,engine_result,valid",
-    [
-        (True, "engine-boundary-changed", "success", True),
-        (False, "no-engine-changes", "skipped", True),
-        (False, "no-engine-changes", "failure", False),
-        (False, "no-engine-changes", "cancelled", False),
-        (True, "engine-boundary-changed", "skipped", False),
-        (False, "baseline-unavailable", "skipped", False),
-        ("false", "no-engine-changes", "skipped", False),
-    ],
-)
-def test_deploy_evaluates_receipt_engine_policy_without_touching_docker(required, reason, engine_result, valid):
-    pwsh = shutil.which("pwsh") or shutil.which("powershell")
-    if not pwsh:
-        pytest.skip("PowerShell is not installed")
-    ci = {
-        "engine_tests_required": required,
-        "engine_test_reason": reason,
-        "jobs": {"ragflow_preflight": "success", "ragflow_tests_infinity": engine_result, "ragflow_tests_elasticsearch": engine_result},
-    }
-    command = (
-        f"$ast=[System.Management.Automation.Language.Parser]::ParseFile('{SCRIPT}', [ref]$null, [ref]$null); "
-        "$fn=$ast.Find({param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] "
-        "-and $node.Name -eq 'Test-CandidateReceiptJobs'}, $true); "
-        ". ([scriptblock]::Create($fn.Extent.Text)); Set-StrictMode -Version Latest; "
-        "Test-CandidateReceiptJobs -CI ($env:RECEIPT_TEST_CI | ConvertFrom-Json)"
-    )
-    result = subprocess.run([pwsh, "-NoProfile", "-Command", command], env={**os.environ, "RECEIPT_TEST_CI": json.dumps(ci)}, capture_output=True, text=True, timeout=20)
-    assert result.returncode == 0, result.stderr
-    assert result.stdout.strip().lower() == str(valid).lower()
+def test_deploy_calls_canonical_validator_and_pulls_digest():
+    assert '"tools.quality.release_runtime", "validate"' in SOURCE
+    assert '$arguments += "--published"' in SOURCE
+    assert "$deploymentImage = $candidateReceiptData.image.digest" in SOURCE
+    assert "Test-CandidateReceiptJobs" not in SOURCE
 
 
 @pytest.mark.parametrize("known", [True, False])

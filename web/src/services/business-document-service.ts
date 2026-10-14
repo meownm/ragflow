@@ -41,6 +41,7 @@ import type {
   SqlQueryCompileResponse,
   SqlQueryPlanRequest,
   SqlQueryPlanResponse,
+  SqlRevisionWorkspace,
   SqlSchemaEntityDetailsResponse,
   SqlSchemaResolutionResponse,
 } from '@/pages/business-documents/types';
@@ -314,6 +315,205 @@ export async function fetchBusinessDocumentSqlAgentProject(projectId: string) {
   try {
     const response = await request.get(
       api.businessDocumentSqlQueryProject(projectId),
+      requestConfig(),
+    );
+    return unwrap<SqlAgentProject>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function fetchBusinessDocumentSqlRevisionWorkspace(
+  projectId: string,
+) {
+  try {
+    const response = await request.get(
+      api.businessDocumentSqlRevisionWorkspace(projectId),
+      requestConfig(),
+    );
+    return unwrap<SqlRevisionWorkspace>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function saveBusinessDocumentSqlRevisionDraft(
+  projectId: string,
+  input: {
+    schema_version: '1';
+    expected_state_version: number;
+    expected_draft_version: number | null;
+    steps: Array<{ title: string; sql: string; parameters: string }>;
+  },
+) {
+  try {
+    const response = await request.put(
+      api.businessDocumentSqlRevisionDraft(projectId),
+      input,
+      requestConfig(),
+    );
+    return unwrap<NonNullable<SqlRevisionWorkspace['draft']>>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function createBusinessDocumentSqlRevisionThread(
+  projectId: string,
+  input: {
+    schema_version: '1';
+    expected_state_version: number;
+    idempotency_key: string;
+    target: 'QUERY' | 'DOCUMENT';
+    base_artifact_id?: string;
+    anchor: Record<string, unknown>;
+    text: string;
+  },
+) {
+  try {
+    const response = await request.post(
+      api.businessDocumentSqlRevisionThreads(projectId),
+      input,
+      requestConfig(),
+    );
+    return unwrap<SqlRevisionWorkspace['threads'][number]>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function replyBusinessDocumentSqlRevisionThread(
+  projectId: string,
+  threadId: string,
+  version: number,
+  text: string,
+  key: string,
+) {
+  try {
+    const response = await request.post(
+      api.businessDocumentSqlRevisionThreadMessages(projectId, threadId),
+      {
+        schema_version: '1',
+        expected_thread_version: version,
+        idempotency_key: key,
+        text,
+      },
+      requestConfig(),
+    );
+    return unwrap<SqlRevisionWorkspace['threads'][number]>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function requestBusinessDocumentSqlRevision(
+  projectId: string,
+  threadId: string,
+  version: number,
+  key: string,
+) {
+  try {
+    const response = await request.post(
+      api.businessDocumentSqlRevisionProposal(projectId, threadId),
+      {
+        schema_version: '1',
+        expected_state_version: version,
+        idempotency_key: key,
+      },
+      requestConfig(),
+    );
+    return unwrap<SqlAgentProject>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function reattachBusinessDocumentSqlRevisionThread(
+  projectId: string,
+  threadId: string,
+  version: number,
+  threadVersion: number,
+  anchor: Record<string, unknown>,
+  key: string,
+) {
+  try {
+    const response = await request.post(
+      api.businessDocumentSqlRevisionReattach(projectId, threadId),
+      {
+        schema_version: '1',
+        expected_state_version: version,
+        expected_thread_version: threadVersion,
+        idempotency_key: key,
+        anchor,
+      },
+      requestConfig(),
+    );
+    return unwrap<SqlRevisionWorkspace['threads'][number]>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function decideBusinessDocumentSqlRevision(
+  projectId: string,
+  proposalId: string,
+  version: number,
+  key: string,
+  decision: 'ACCEPT' | 'REJECT',
+  confirmedNoNewFacts = false,
+) {
+  try {
+    const response = await request.post(
+      api.businessDocumentSqlRevisionDecision(projectId, proposalId),
+      {
+        schema_version: '1',
+        expected_state_version: version,
+        idempotency_key: key,
+        decision,
+        confirmed_no_new_facts: confirmedNoNewFacts,
+      },
+      requestConfig(),
+    );
+    return unwrap<SqlAgentProject>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function cancelBusinessDocumentSqlRevision(
+  projectId: string,
+  version: number,
+  key: string,
+) {
+  try {
+    const response = await request.post(
+      api.businessDocumentSqlRevisionCancel(projectId),
+      {
+        schema_version: '1',
+        expected_state_version: version,
+        idempotency_key: key,
+      },
+      requestConfig(),
+    );
+    return unwrap<SqlAgentProject>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function reopenBusinessDocumentSqlSchema(
+  projectId: string,
+  version: number,
+  key: string,
+) {
+  try {
+    const response = await request.post(
+      api.businessDocumentSqlSchemaReopen(projectId),
+      {
+        schema_version: '1',
+        expected_state_version: version,
+        idempotency_key: key,
+      },
       requestConfig(),
     );
     return unwrap<SqlAgentProject>(response.data);
@@ -604,7 +804,7 @@ export async function completeBusinessDocumentSqlProject(
   projectId: string,
   expectedStateVersion: number,
   idempotencyKey: string,
-  runId: string,
+  runId?: string,
 ) {
   try {
     const response = await request.post(
@@ -613,7 +813,7 @@ export async function completeBusinessDocumentSqlProject(
         schema_version: '1',
         expected_state_version: expectedStateVersion,
         idempotency_key: idempotencyKey,
-        run_id: runId,
+        ...(runId ? { run_id: runId } : {}),
       },
       requestConfig(),
     );

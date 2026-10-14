@@ -15,7 +15,6 @@ if str(ADMIN_SERVER) not in sys.path:
 
 import auth
 import routes
-from api.common.exceptions import AdminException
 from common.constants import ActiveEnum
 
 
@@ -27,14 +26,11 @@ def client(monkeypatch):
 
     class User(UserMixin):
         id = "admin"
+        email = "admin@example.com"
 
     @manager.request_loader
     def load_user(request):
         return User() if request.headers.get("Authorization") else None
-
-    @app.errorhandler(AdminException)
-    def admin_error(error):
-        return {"code": error.code, "message": error.message}, error.code
 
     monkeypatch.setattr(auth.UserService, "filter_by_id", lambda _id: SimpleNamespace(is_superuser=True, is_active=ActiveEnum.ACTIVE.value))
     app.register_blueprint(routes.admin_bp)
@@ -54,12 +50,29 @@ def client(monkeypatch):
         ("get", "/document-quality/models"),
     ],
 )
-def test_quality_routes_require_admin(client, monkeypatch, method, path):
+@pytest.mark.parametrize(
+    "user,expected_status,expected_message",
+    [
+        (SimpleNamespace(is_superuser=False, is_active=ActiveEnum.ACTIVE.value), 403, "Not admin"),
+        (SimpleNamespace(is_superuser=True, is_active=ActiveEnum.INACTIVE.value), 403, "User admin@example.com inactive"),
+        (None, 404, "User 'admin@example.com' not found"),
+    ],
+)
+def test_quality_routes_require_admin(client, monkeypatch, method, path, user, expected_status, expected_message):
     send = getattr(client, method)
     url = "/api/v1/admin" + path
     assert send(url).status_code == 401
+    monkeypatch.setattr(auth.UserService, "filter_by_id", lambda _id: user)
+    response = send(url, headers={"Authorization": "test"})
+    assert response.status_code == expected_status
+    assert response.json == {"code": expected_status, "message": expected_message, "data": None}
+
+
+def test_version_route_uses_admin_authorization_handler(client, monkeypatch):
     monkeypatch.setattr(auth.UserService, "filter_by_id", lambda _id: SimpleNamespace(is_superuser=False, is_active=ActiveEnum.ACTIVE.value))
-    assert send(url, headers={"Authorization": "test"}).status_code == 403
+    response = client.get("/api/v1/admin/version", headers={"Authorization": "test"})
+    assert response.status_code == 403
+    assert response.json == {"code": 403, "message": "Not admin", "data": None}
 
 
 def test_manual_route_validates_body_before_queueing(client, monkeypatch):

@@ -160,7 +160,9 @@ describe('DesktopNavbar', () => {
     renderNavbar();
 
     expect(await screen.findByTestId('nav-business-documents')).toBeVisible();
-    expect(screen.queryByTestId('nav-document-constructor')).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId('nav-document-constructor'),
+    ).not.toBeInTheDocument();
   });
 
   it('can show the constructor when the documents entry is hidden', async () => {
@@ -179,6 +181,57 @@ describe('DesktopNavbar', () => {
     renderNavbar();
 
     expect(await screen.findByTestId('nav-document-constructor')).toBeVisible();
-    expect(screen.queryByTestId('nav-business-documents')).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId('nav-business-documents'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('shows SQL projects independently of the constructor', async () => {
+    mockUseSystemConfig.mockReturnValue({
+      config: {
+        registerEnabled: 1,
+        visibleSections: ['sql_projects'],
+      },
+      loading: false,
+    });
+    mockedGetBusinessDocumentCapabilities.mockResolvedValue({
+      access_role: 'AUTHOR_CREATOR',
+      capabilities: { create: true },
+    } as never);
+
+    renderNavbar('/sql-projects');
+
+    const link = await screen.findByTestId('nav-sql-projects');
+    expect(link).toHaveAttribute('href', '/sql-projects');
+    expect(link).toHaveAttribute('aria-current', 'page');
+    expect(
+      screen.queryByTestId('nav-document-constructor'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('shows separate ASR and translator sections', () => {
+    mockUseSystemConfig.mockReturnValue({
+      config: {
+        registerEnabled: 1,
+        visibleSections: ['asr', 'translator'],
+      },
+      loading: false,
+    });
+
+    renderNavbar('/translator');
+
+    expect(screen.getByTestId('nav-transcription')).toHaveAttribute(
+      'href',
+      '/transcription',
+    );
+    expect(screen.getByTestId('nav-translator')).toHaveAttribute(
+      'href',
+      '/translator',
+    );
+    expect(screen.getByTestId('nav-translator')).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+    expect(mockedGetBusinessDocumentCapabilities).not.toHaveBeenCalled();
   });
 });

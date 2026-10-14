@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO", alias="ASR_LOG_LEVEL")
     log_data_mode: Literal["plain", "masked"] = Field(default="plain", alias="LOG_DATA_MODE")
     max_concurrent_jobs: int = Field(default=2, alias="ASR_MAX_CONCURRENT_JOBS")
+    max_active_jobs: int = Field(default=5, ge=1, le=5, alias="ASR_MAX_ACTIVE_JOBS")
     job_ttl_seconds: int = Field(default=3600, alias="ASR_JOB_TTL_SECONDS")
     artifacts_dir: str = Field(default="artifacts", alias="ASR_ARTIFACTS_DIR")
     upload_dir: str = Field(default="uploads", alias="ASR_UPLOAD_DIR")

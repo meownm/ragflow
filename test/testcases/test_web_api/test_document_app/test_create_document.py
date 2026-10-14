@@ -95,9 +95,9 @@ class TestDocumentCreate:
 
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = [executor.submit(create_document, WebApiAuth, {"name": name, "kb_id": kb_id}) for name in filenames]
-        responses = list(as_completed(futures))
+        responses = [future.result() for future in as_completed(futures)]
         assert len(responses) == count, responses
-        assert all(future.result()["code"] == 0 for future in futures), responses
+        assert all(response["code"] == 0 for response in responses), responses
 
         res = list_datasets(WebApiAuth, {"id": kb_id})
         assert res["data"][0]["document_count"] == count, res

@@ -19,6 +19,11 @@ Batch/job ASR сервис для обработки аудио через за�
 Swagger: `http://localhost:9011/docs`
 UI: `http://localhost:9011/`
 
+В локальном Compose проекта UI доступен через nginx по `/asr/` (обычно
+`http://localhost:9380/asr/`). Страница отправляет выбранный файл в
+`/asr/v1/audio/transcriptions` с `stream=true` и показывает промежуточный
+текст и прогресс из SSE. Сервис должен быть доступен nginx в сети Compose.
+
 ## Документация
 - `docs/architecture.md`
 - `docs/deployment.md`

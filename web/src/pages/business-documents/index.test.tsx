@@ -2387,7 +2387,7 @@ test('creates a new business requirements document', async () => {
 
   await waitFor(() => expect(mockedCreate).toHaveBeenCalledTimes(1));
   expect(mockedCreate.mock.calls[0][0]).toEqual({
-    schema_version: '3',
+    schema_version: '4',
     document_type: 'business_requirements',
     catalog_entry_id: catalogEntry.id,
     idea: 'Нужен новый клиентский сценарий.',
@@ -2422,15 +2422,41 @@ test('can explicitly create local requirements without reading EVA when personal
   mockedCreate.mockResolvedValueOnce(projection);
   renderPage('/business-documents');
   await selectCatalogEntry();
-  fireEvent.change(screen.getByRole('textbox', { name: 'Описание идеи' }), {
-    target: { value: 'Локальная идея' },
-  });
   fireEvent.click(await screen.findByTestId('create-without-eva-access'));
   await waitFor(() => expect(mockedCreate).toHaveBeenCalledTimes(1));
   expect(mockedCreate.mock.calls[0][0]).toMatchObject({
     eva_decision: { mode: 'SKIP' },
   });
 });
+
+test.each(['', '   '])(
+  'creates a structure by title without starting analysis (idea: %j)',
+  async (idea) => {
+    mockedCreate.mockResolvedValueOnce(projection);
+    renderPage('/business-documents');
+
+    expect(
+      await screen.findByRole('button', { name: 'Начать работу' }),
+    ).toBeDisabled();
+    await selectCatalogEntry();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Описание идеи' }), {
+      target: { value: idea },
+    });
+    expect(screen.getByRole('button', { name: 'Начать работу' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Начать работу' }));
+
+    expect(
+      await screen.findByTestId('business-document-workbench'),
+    ).toBeVisible();
+    expect(mockedCreate.mock.calls[0][0]).toEqual({
+      schema_version: '4',
+      document_type: 'business_requirements',
+      catalog_entry_id: catalogEntry.id,
+      dataset_ids: [],
+    });
+    expect(mockedSubmit).not.toHaveBeenCalled();
+  },
+);
 
 test('opens the created document when automatic analysis cannot be started', async () => {
   mockedCreate.mockResolvedValueOnce({
@@ -2577,7 +2603,7 @@ test('opens a selected free EVA page in the document editor without replacement 
   await waitFor(() => expect(mockedCreate).toHaveBeenCalledTimes(2));
   expect(mockedCreate.mock.calls[1][0]).toEqual(
     expect.objectContaining({
-      schema_version: '3',
+      schema_version: '4',
       catalog_entry_id: catalogEntry.id,
       eva_page_url: 'https://eva.example.com/project/Document/BR-42',
       eva_decision: { mode: 'BIND' },
@@ -2634,7 +2660,7 @@ test('creates without EVA binding after the user explicitly skips matches', asyn
   await waitFor(() => expect(mockedCreate).toHaveBeenCalledTimes(2));
   expect(mockedCreate.mock.calls[1][0]).toEqual(
     expect.objectContaining({
-      schema_version: '3',
+      schema_version: '4',
       catalog_entry_id: catalogEntry.id,
       eva_decision: { mode: 'SKIP' },
     }),

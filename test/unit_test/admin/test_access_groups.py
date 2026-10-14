@@ -29,12 +29,6 @@ def _application(monkeypatch):
 
     monkeypatch.setattr(auth.UserService, "filter_by_id", lambda _id: SimpleNamespace(is_superuser=True, is_active=ActiveEnum.ACTIVE.value))
 
-    def admin_error(error):
-        return {"code": error.code, "message": error.message}, error.code
-
-    for exception_type in {auth.AdminException, routes.AdminException}:
-        app.register_error_handler(exception_type, admin_error)
-
     app.register_blueprint(routes.admin_bp)
     return app
 

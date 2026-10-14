@@ -10,7 +10,7 @@ from test.playwright.helpers._next_apps_helpers import RESULT_TIMEOUT_MS
 
 DOCUMENT_ID = "doc-access-1"
 ACTOR_ID = "browser-viewer"
-CATALOG_ENTRY_ID = "L2-01.01.04.01.01"
+CATALOG_ENTRY_ID = "01.01.04.01.01"
 CATALOG_ENTRY_TITLE = "Новый продукт"
 ALL_SECTIONS = [
     "home",
@@ -668,6 +668,7 @@ def test_document_role_matrix_controls_browser_actions(
         option.check()
     expect(page.get_by_test_id("answer-question-question-access-1")).to_be_enabled(enabled=can_edit_foreign)
     expect(page.get_by_test_id("business-document-delete-detail")).to_have_count(1 if can_delete else 0)
+    page.get_by_test_id("business-document-details-toggle").click()
     expect(page.get_by_test_id("business-document-owner-select")).to_have_count(1 if can_assign else 0)
 
 
@@ -723,6 +724,7 @@ def test_extended_moderator_assigns_foreign_document_to_another_author(page, bas
     stub = BusinessDocumentsAccessStub("EXTENDED_MODERATOR")
     _open_document(page, base_url, stub)
 
+    page.get_by_test_id("business-document-details-toggle").click()
     page.get_by_test_id("business-document-owner-select").click()
     page.get_by_test_id("business-document-owner-option-author-2").click()
     page.get_by_test_id("business-document-assign-owner").click()
@@ -743,6 +745,7 @@ def test_owner_assignment_conflict_keeps_previous_owner_and_shows_error(page, ba
     stub = BusinessDocumentsAccessStub("EXTENDED_MODERATOR", assignment_status=409)
     _open_document(page, base_url, stub)
 
+    page.get_by_test_id("business-document-details-toggle").click()
     page.get_by_test_id("business-document-owner-select").click()
     page.get_by_test_id("business-document-owner-option-author-2").click()
     page.get_by_test_id("business-document-assign-owner").click()

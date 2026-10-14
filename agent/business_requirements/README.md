@@ -21,6 +21,13 @@ boundary, information-quality, and golden-dialogue release gates.
 Published asset versions are immutable. A document pins the exact template and
 policy versions used when it is created.
 
+Create-document v4 accepts a catalog title without an idea. Without imported
+EVA content it creates revision 1 with empty required sections, using document
+AST v2 (`section_scope: required`), and opens review without an AI job. Review
+changes may fill this structure incrementally; completion still requires all
+mandatory content and diagrams. Create-document v1-v3 and document AST v1 keep
+their published contracts.
+
 The Workbench calls the document API directly. Do not route calls back into the
 same deployment through the Canvas `Invoke` component: its SSRF controls must
 continue to reject private and loopback targets. If a Canvas adapter is added,

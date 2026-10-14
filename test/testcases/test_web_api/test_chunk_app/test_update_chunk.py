@@ -13,15 +13,14 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
-import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from random import randint
 from time import sleep
 
 import pytest
 from configs import INVALID_API_TOKEN
 from libs.auth import RAGFlowWebApiAuth
 from test_common import delete_document, list_chunks, update_chunk
+from utils import wait_for
 
 
 @pytest.mark.p2
@@ -52,7 +51,7 @@ class TestUpdateChunk:
         [
             ({"content": None}, 0, ""),
             ({"content": ""}, 102, "`content` is required"),
-            pytest.param({"content": 1}, 100, "TypeError('expected string or bytes-like object')", marks=pytest.mark.skip),
+            ({"content": 1}, 102, "`content` must be a string"),
             ({"content": "update chunk"}, 0, ""),
             ({"content": " "}, 102, "`content` is required"),
             ({"content": "\n!?。；！？\"'"}, 0, ""),
@@ -77,7 +76,7 @@ class TestUpdateChunk:
         [
             ({"important_keywords": ["a", "b", "c"]}, 0, ""),
             ({"important_keywords": [""]}, 0, ""),
-            ({"important_keywords": [1]}, 100, "Internal server error"),
+            ({"important_keywords": [1]}, 102, "`important_keywords` must be a list of strings"),
             ({"important_keywords": ["a", "a"]}, 0, ""),
             ({"important_keywords": "abc"}, 102, "`important_keywords` should be a list"),
             ({"important_keywords": 123}, 102, "`important_keywords` should be a list"),
@@ -101,7 +100,7 @@ class TestUpdateChunk:
         [
             ({"questions": ["a", "b", "c"]}, 0, ""),
             ({"questions": [""]}, 0, ""),
-            ({"questions": [1]}, 100, "Internal server error"),
+            ({"questions": [1]}, 102, "`questions` must be a list of strings"),
             ({"questions": ["a", "a"]}, 0, ""),
             ({"questions": "abc"}, 102, "`questions` should be a list"),
             ({"questions": 123}, 102, "`questions` should be a list"),
@@ -127,6 +126,8 @@ class TestUpdateChunk:
             ({"available": 1}, 0, ""),
             ({"available": False}, 0, ""),
             ({"available": 0}, 0, ""),
+            ({"available": "True"}, 102, "`available` must be a boolean or 0 or 1"),
+            ({"available": "False"}, 102, "`available` must be a boolean or 0 or 1"),
         ],
     )
     def test_available(self, WebApiAuth, add_chunks, payload, expected_code, expected_message):
@@ -190,10 +191,16 @@ class TestUpdateChunk:
             assert res["message"] == expected_message, res
 
     @pytest.mark.p3
-    @pytest.mark.skipif(os.getenv("DOC_ENGINE") == "infinity", reason="issues/6554")
     def test_concurrent_update_chunk(self, WebApiAuth, add_chunks):
         count = 50
         dataset_id, document_id, chunk_ids = add_chunks
+        initial = list_chunks(WebApiAuth, dataset_id, document_id, params={"page_size": 100})
+        assert initial["code"] == 0, initial
+        initial_ids = {chunk["id"] for chunk in initial["data"]["chunks"]}
+        assert set(chunk_ids).issubset(initial_ids)
+        expected = {chunk_id: set() for chunk_id in chunk_ids[:4]}
+        for index in range(count):
+            expected[chunk_ids[index % 4]].add(f"update chunk test {index}")
 
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = [
@@ -202,14 +209,25 @@ class TestUpdateChunk:
                     WebApiAuth,
                     dataset_id,
                     document_id,
-                    chunk_ids[randint(0, 3)],
+                    chunk_ids[i % 4],
                     {"content": f"update chunk test {i}"},
                 )
                 for i in range(count)
             ]
-        responses = list(as_completed(futures))
+        responses = [future.result() for future in as_completed(futures)]
         assert len(responses) == count, responses
-        assert all(future.result()["code"] == 0 for future in futures)
+        for response in responses:
+            assert response["code"] == 0, response
+
+        @wait_for(30, 1, "Concurrent chunk updates did not become visible")
+        def visible():
+            res = list_chunks(WebApiAuth, dataset_id, document_id, params={"page_size": 100})
+            assert res["code"] == 0, res
+            actual = res["data"]["chunks"]
+            by_id = {chunk["id"]: chunk for chunk in actual}
+            return len(actual) == len(initial_ids) and set(by_id) == initial_ids and all(by_id[chunk_id]["content"] in contents for chunk_id, contents in expected.items())
+
+        visible()
 
     @pytest.mark.p3
     def test_update_chunk_to_deleted_document(self, WebApiAuth, add_chunks):

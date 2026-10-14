@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 ROOT = Path(__file__).resolve().parents[1]
 SUITES = [
     "test/playwright/e2e/test_document_constructor_ui.py",
+    "test/playwright/e2e/test_sql_revision_ui.py",
     "test/playwright/e2e/test_business_documents_access_ui.py",
     "test/playwright/e2e/test_business_documents_ui.py",
     "test/playwright/e2e/test_navigation_visibility_admin.py",

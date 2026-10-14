@@ -42,9 +42,9 @@ class TestCapability:
         count = 100
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = [executor.submit(client.list_memory) for _ in range(count)]
-        responses = list(as_completed(futures))
+        responses = [future.result() for future in as_completed(futures)]
         assert len(responses) == count, responses
-        assert all(future.result()["code"] == 0 for future in futures)
+        assert all(response["code"] == 0 for response in responses), responses
 
 
 @pytest.mark.usefixtures("add_memory_func")

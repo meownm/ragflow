@@ -70,26 +70,26 @@ class CreateDocument:
         if "chat_id" in raw:
             raise ValidationError("CHAT_ID_NOT_ALLOWED", "chat_id is assigned by the business document channel")
         schema_version = raw.get("schema_version")
-        if schema_version not in {"2", "3"} and raw.get("eva_page_url"):
-            raise ValidationError("EVA_BINDING_REQUIRES_SCHEMA_V2", "EVA page binding requires create-document schema version 2 or 3")
+        if schema_version not in {"2", "3", "4"} and raw.get("eva_page_url"):
+            raise ValidationError("EVA_BINDING_REQUIRES_SCHEMA_V2", "EVA page binding requires create-document schema version 2, 3 or 4")
         if raw.get("eva_page_url"):
             decision = raw.get("eva_decision")
             if not isinstance(decision, dict) or decision.get("mode") != "BIND":
                 raise ValidationError("EVA_BINDING_DECISION_REQUIRED", "Подтвердите выбор страницы EVA для импорта в новый документ")
             if schema_version == "2" and decision.get("confirm_replace") is not True:
                 raise ValidationError("EVA_REPLACE_CONFIRMATION_REQUIRED", "Confirm that publishing this document will replace the current EVA page content")
-        self._content.validate_contract({"2": "create_document_v2", "3": "create_document_v3"}.get(schema_version, "create_document"), raw)
+        self._content.validate_contract({"2": "create_document_v2", "3": "create_document_v3", "4": "create_document_v4"}.get(schema_version, "create_document"), raw)
         catalog = None
-        if schema_version == "3":
+        if schema_version in {"3", "4"}:
             catalog = self._writer.catalog_entry(raw.get("catalog_entry_id"))
             if catalog is None or catalog["capability_level"] != "L5" or not catalog["is_active"]:
                 raise ValidationError("DOCUMENT_CATALOG_ENTRY_NOT_ALLOWED", "catalog_entry_id must identify an active L5 business document")
         title = catalog["title"] if catalog else raw.get("title")
-        idea, dataset_ids = raw.get("idea"), raw.get("dataset_ids", [])
+        idea, dataset_ids = raw.get("idea", ""), raw.get("dataset_ids", [])
         if not isinstance(title, str) or not title.strip():
             raise ValidationError("INVALID_TITLE", "title must be a non-empty string")
-        if not isinstance(idea, str) or not idea.strip():
-            raise ValidationError("INVALID_IDEA", "idea must be a non-empty string")
+        if not isinstance(idea, str) or (schema_version != "4" and not idea.strip()):
+            raise ValidationError("INVALID_IDEA", "idea must be a string; schemas 1, 2 and 3 require a non-empty idea")
         display_title = " ".join(unicodedata.normalize("NFKC", title).strip().split())
         normalized_title = title_key(display_title)
         self._datasets.ensure_dataset_access(actor_id, dataset_ids)
@@ -159,10 +159,35 @@ class CreateDocument:
             )
             if imported is not None:
                 self._record_import(document, actor_id, imported)
+            elif not idea.strip():
+                self._record_structure(document, actor_id, template)
         return self._queries.get_document(document_id, actor_id, is_admin, access_role)
 
+    def _record_structure(self, document, actor_id, template):
+        draft = {
+            "schema_version": "2",
+            "document_type": "business_requirements",
+            "template_version": template["template_version"],
+            "section_scope": "required",
+            "sections": [{"id": section["id"], "title": section["title"], "blocks": []} for section in template["sections"] if section["required"]],
+        }
+        self._content.validate_contract("document_draft_v2", draft)
+        event_id, revision_id = self._new_id(), self._new_id()
+        self._writer.append_event(
+            document["id"],
+            2,
+            "DocumentStructureCreated",
+            "USER",
+            actor_id,
+            {"review_cycle": 1, "revision_id": revision_id, "section_scope": "required"},
+            document["id"],
+            event_id=event_id,
+        )
+        self._writer.insert_revision(document["id"], 1, draft, self._content.render_document_ast(draft), [event_id], actor_id, revision_id=revision_id)
+        self._writer.update_document(document, {"lifecycle_state": "REVIEW", "current_revision_id": revision_id, "active_review_cycle": 1, "state_version": 2})
+
     def _resolve_binding(self, actor_id, raw, schema_version, display_title):
-        if schema_version not in {"2", "3"}:
+        if schema_version not in {"2", "3", "4"}:
             return None
         decision = raw.get("eva_decision")
         if isinstance(decision, dict) and decision.get("mode") == "SKIP":
@@ -170,14 +195,14 @@ class CreateDocument:
         page_url = raw.get("eva_page_url")
         if not page_url:
             matches = self._matches_with_occupancy(self._eva.find_title_matches(actor_id, display_title))
-            if schema_version == "3" and len(matches) == 1 and matches[0]["binding_available"]:
+            if schema_version in {"3", "4"} and len(matches) == 1 and matches[0]["binding_available"]:
                 page_url = matches[0].get("web_url")
             if not page_url:
                 if matches:
                     raise ConflictError("EVA_BINDING_DECISION_REQUIRED", "В EVA найдены страницы с таким названием. Загрузите подходящую страницу или продолжите без привязки.", {"matches": matches})
                 return None
         binding = self._eva.resolve_page_url(actor_id, page_url)
-        if binding.get("status") not in ({"CONNECTED"} if schema_version == "3" else {"CONNECTED", "LINK_ONLY"}):
+        if binding.get("status") not in ({"CONNECTED"} if schema_version in {"3", "4"} else {"CONNECTED", "LINK_ONLY"}):
             raise ConflictError("EVA_BINDING_UNAVAILABLE", "The selected EVA page could not be verified")
         remote_title = str(binding.get("document_name") or "").strip()
         if remote_title and normalize_title(remote_title) != normalize_title(display_title):
@@ -194,7 +219,7 @@ class CreateDocument:
         return result
 
     def _prepare_import(self, actor_id, schema_version, display_title, binding):
-        if schema_version != "3" or binding is None:
+        if schema_version not in {"3", "4"} or binding is None:
             return None
         if binding.get("status") != "CONNECTED":
             raise ConflictError("EVA_IMPORT_UNAVAILABLE", "Не удалось прочитать выбранную страницу EVA для импорта")

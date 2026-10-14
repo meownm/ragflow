@@ -1,0 +1,18 @@
+name: runner-watchdog
+'on':
+  schedule:
+  - cron: '*/10 * * * *'
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  watchdog:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ secrets.RUNNER_WATCHDOG_TOKEN }}
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        ref: main
+    - run: python3 -m tools.quality.release_runtime watchdog

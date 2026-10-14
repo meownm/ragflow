@@ -35,10 +35,11 @@ from api.apps.business_documents.sql_query_lifecycle import BusinessDocumentSqlQ
 from api.apps.business_documents.sql_query_runs import BusinessDocumentSqlRunService
 from api.apps.business_documents.sql_query_planner import BusinessDocumentSqlQueryPlanningService
 from api.apps.business_documents.sql_query_schema import BusinessDocumentSqlQuerySchemaService
+from api.apps.business_documents.sql_query_revisions import BusinessDocumentSqlRevisionService
 from api.apps.business_documents.worker import wake_business_document_worker
+from api.db.db_models import DB
 from api.utils.api_utils import get_request_json
 from business_documents.application.errors import BusinessDocumentError
-from api.db.db_models import DB
 from common.misc_utils import thread_pool_exec as _thread_pool_exec
 
 
@@ -197,6 +198,130 @@ async def decide_business_document_sql_agent_proposal(project_id: str, proposal_
         return _success(result)
     except (AttributeError, TypeError, BadRequest):
         return _error(BusinessDocumentError("INVALID_SQL_AGENT_DECISION", "Request body must be a valid JSON object", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/projects/<project_id>/workspace", methods=["GET"])  # noqa: F821
+@login_required
+async def get_business_document_sql_revision_workspace(project_id: str):
+    try:
+        actor_id = str(current_user.id)
+        result = await thread_pool_exec(BusinessDocumentSqlRevisionService.workspace, actor_id, actor_id, project_id, _is_admin(), _access_role())
+        return _success(result)
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/projects/<project_id>/draft", methods=["PUT"])  # noqa: F821
+@login_required
+async def save_business_document_sql_revision_draft(project_id: str):
+    try:
+        data = await get_request_json()
+        actor_id = str(current_user.id)
+        result = await thread_pool_exec(BusinessDocumentSqlRevisionService.save_draft, actor_id, actor_id, project_id, data, _is_admin(), _access_role())
+        return _success(result)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_SQL_DRAFT", "Request body must be valid JSON", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/projects/<project_id>/threads", methods=["POST"])  # noqa: F821
+@login_required
+async def create_business_document_sql_revision_thread(project_id: str):
+    try:
+        data = await get_request_json()
+        actor_id = str(current_user.id)
+        result = await thread_pool_exec(BusinessDocumentSqlRevisionService.create_thread, actor_id, actor_id, project_id, data, _is_admin(), _access_role())
+        return _success(result, 201)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_SQL_REVISION", "Request body must be valid JSON", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/projects/<project_id>/threads/<thread_id>/messages", methods=["POST"])  # noqa: F821
+@login_required
+async def reply_business_document_sql_revision_thread(project_id: str, thread_id: str):
+    try:
+        data = await get_request_json()
+        actor_id = str(current_user.id)
+        result = await thread_pool_exec(BusinessDocumentSqlRevisionService.reply, actor_id, actor_id, project_id, thread_id, data, _is_admin(), _access_role())
+        return _success(result)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_SQL_REVISION", "Request body must be valid JSON", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/projects/<project_id>/threads/<thread_id>/proposal", methods=["POST"])  # noqa: F821
+@login_required
+async def request_business_document_sql_revision(project_id: str, thread_id: str):
+    try:
+        data = await get_request_json()
+        actor_id = str(current_user.id)
+        result = await thread_pool_exec(BusinessDocumentSqlRevisionService.request_change, actor_id, actor_id, project_id, thread_id, data, _is_admin(), _access_role())
+        wake_business_document_worker()
+        return _success(result, 202)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_SQL_REVISION", "Request body must be valid JSON", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/projects/<project_id>/threads/<thread_id>/reattach", methods=["POST"])  # noqa: F821
+@login_required
+async def reattach_business_document_sql_revision_thread(project_id: str, thread_id: str):
+    try:
+        data = await get_request_json()
+        actor_id = str(current_user.id)
+        result = await thread_pool_exec(BusinessDocumentSqlRevisionService.reattach, actor_id, actor_id, project_id, thread_id, data, _is_admin(), _access_role())
+        return _success(result)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_SQL_REVISION", "Request body must be valid JSON", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/projects/<project_id>/revision-proposals/<proposal_id>/decision", methods=["POST"])  # noqa: F821
+@login_required
+async def decide_business_document_sql_revision(project_id: str, proposal_id: str):
+    try:
+        data = await get_request_json()
+        actor_id = str(current_user.id)
+        result = await thread_pool_exec(BusinessDocumentSqlRevisionService.decide_change, actor_id, actor_id, project_id, proposal_id, data, _is_admin(), _access_role())
+        return _success(result)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_SQL_REVISION", "Request body must be valid JSON", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/projects/<project_id>/revision-proposals/cancel", methods=["POST"])  # noqa: F821
+@login_required
+async def cancel_business_document_sql_revision(project_id: str):
+    try:
+        data = await get_request_json()
+        actor_id = str(current_user.id)
+        result = await thread_pool_exec(BusinessDocumentSqlRevisionService.cancel_change, actor_id, actor_id, project_id, data, _is_admin(), _access_role())
+        return _success(result)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_SQL_REVISION", "Request body must be valid JSON", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/projects/<project_id>/schema/reopen", methods=["POST"])  # noqa: F821
+@login_required
+async def reopen_business_document_sql_schema(project_id: str):
+    try:
+        data = await get_request_json()
+        actor_id = str(current_user.id)
+        result = await thread_pool_exec(BusinessDocumentSqlRevisionService.reopen_schema, actor_id, actor_id, project_id, data, _is_admin(), _access_role())
+        return _success(result)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_SQL_REVISION", "Request body must be valid JSON", 422))
     except BusinessDocumentError as error:
         return _error(error)
 

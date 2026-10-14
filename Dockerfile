@@ -227,7 +227,7 @@ RUN --mount=type=cache,id=ragflow_uv,target=/root/.cache/uv,sharing=locked \
 # web source / docs changes don't invalidate this layer.
 COPY web/package.json web/package-lock.json web/.npmrc ./web/
 RUN --mount=type=cache,id=ragflow_npm,target=/root/.npm,sharing=locked \
-    cd web && NODE_OPTIONS="--max-old-space-size=8192" npm install
+    cd web && NODE_OPTIONS="--max-old-space-size=8192" npm ci
 
 # Copy full web source and docs for the frontend build.
 COPY web web

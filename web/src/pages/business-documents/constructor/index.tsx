@@ -20,7 +20,6 @@ import { getBusinessDocumentCapabilities } from '@/services/business-document-se
 import { useQuery } from '@tanstack/react-query';
 import {
   AlertTriangle,
-  Bot,
   Check,
   Download,
   FileJson2,
@@ -31,14 +30,13 @@ import {
   Upload,
 } from 'lucide-react';
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router';
+import { Link } from 'react-router';
 import {
   createDocumentConstructorStorageKey,
   loadStoredTemplate,
   saveStoredTemplate,
   type DocumentConstructorStorageScope,
 } from './draft-storage';
-import { ExecutionRegistryDialog } from './execution-registry-dialog';
 import {
   addChildSection,
   addRootSection,
@@ -88,10 +86,11 @@ function descendantsFor(sections: ConstructorSection[], uid: string) {
   return cursor - index - 1;
 }
 
-export default function DocumentConstructorPage() {
-  const [searchParams, setSearchParams] = useSearchParams();
-  const surface =
-    searchParams.get('surface') === 'template' ? 'template' : 'sql';
+export default function DocumentConstructorPage({
+  surface = 'template',
+}: {
+  surface?: 'template' | 'sql';
+}) {
   const importInputRef = useRef<HTMLInputElement>(null);
   const { data: userInfo, loading: userInfoLoading } = useFetchUserInfo();
   const { data: tenantInfo, loading: tenantInfoLoading } = useFetchTenantInfo();
@@ -125,13 +124,6 @@ export default function DocumentConstructorPage() {
     kind: 'success' | 'warning' | 'error';
     message: string;
   } | null>(null);
-
-  const showSurface = (next: 'template' | 'sql') => {
-    const params = new URLSearchParams(searchParams);
-    if (next === 'template') params.set('surface', 'template');
-    else params.delete('surface');
-    setSearchParams(params, { replace: true });
-  };
 
   const numberedSections = useMemo(
     () => numberSections(draft.sections),
@@ -407,7 +399,7 @@ export default function DocumentConstructorPage() {
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <h1 className="truncate text-xl font-semibold tracking-tight sm:text-2xl">
-                  Конструктор документов
+                  {surface === 'sql' ? 'SQL-проекты' : 'Конструктор документов'}
                 </h1>
                 <Badge className="gap-1 border-accent-primary/30 bg-accent-primary/10 text-accent-primary">
                   <FlaskConical className="size-3" />
@@ -423,27 +415,16 @@ export default function DocumentConstructorPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <div className="flex rounded-md border border-border-button p-0.5">
-              <Button
-                size="sm"
-                variant={surface === 'sql' ? 'secondary' : 'ghost'}
-                data-testid="document-constructor-sql-surface"
-                onClick={() => showSurface('sql')}
-              >
-                <Bot className="size-4" />
-                SQL-проекты
+            {surface === 'sql' && isAdmin && (
+              <Button asChild size="sm" variant="outline">
+                <Link
+                  to={Routes.SqlSources}
+                  data-testid="open-sql-execution-registry"
+                >
+                  Источники SQL
+                </Link>
               </Button>
-              <Button
-                size="sm"
-                variant={surface === 'template' ? 'secondary' : 'ghost'}
-                data-testid="document-constructor-template-surface"
-                onClick={() => showSurface('template')}
-              >
-                <FileJson2 className="size-4" />
-                Шаблоны
-              </Button>
-            </div>
-            {isAdmin && <ExecutionRegistryDialog />}
+            )}
             {surface === 'template' && (
               <>
                 <span className="me-1 hidden items-center gap-1.5 text-xs text-text-secondary sm:flex">

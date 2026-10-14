@@ -7,6 +7,7 @@ import {
   updateBusinessDocumentSqlCatalogBinding,
   updateBusinessDocumentSqlExecutionProfile,
 } from '@/services/business-document-service';
+import { useQuery } from '@tanstack/react-query';
 import {
   fireEvent,
   render,
@@ -14,7 +15,15 @@ import {
   waitFor,
   within,
 } from '@testing-library/react';
-import { ExecutionRegistryDialog } from './execution-registry-dialog';
+import { MemoryRouter } from 'react-router';
+import ExecutionRegistryPage from './execution-registry-page';
+
+jest.mock('@/hooks/use-user-setting-request', () => ({
+  useFetchUserInfo: () => ({ data: { id: 'admin-1' }, loading: false }),
+}));
+jest.mock('@tanstack/react-query', () => ({
+  useQuery: jest.fn(),
+}));
 
 jest.mock('@/services/business-document-service', () => ({
   createBusinessDocumentSqlCatalogBinding: jest.fn(),
@@ -92,9 +101,21 @@ const mockedUpdateBinding = jest.mocked(
   updateBusinessDocumentSqlCatalogBinding,
 );
 
-describe('ExecutionRegistryDialog', () => {
+function renderRegistry() {
+  return render(
+    <MemoryRouter>
+      <ExecutionRegistryPage />
+    </MemoryRouter>,
+  );
+}
+
+describe('ExecutionRegistryPage', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.mocked(useQuery).mockReturnValue({
+      data: { access_role: 'ADMIN' },
+      isPending: false,
+    } as never);
     mockedListConnectors.mockResolvedValue({
       schema_version: '1',
       items: [connector],
@@ -113,20 +134,30 @@ describe('ExecutionRegistryDialog', () => {
     mockedUpdateBinding.mockResolvedValue({ ...binding, version: 3 });
   });
 
+  it('does not load registry data for a non-admin', () => {
+    jest.mocked(useQuery).mockReturnValue({
+      data: { access_role: 'AUTHOR_CREATOR' },
+      isPending: false,
+    } as never);
+    renderRegistry();
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'только администратору',
+    );
+    expect(mockedListProfiles).not.toHaveBeenCalled();
+  });
+
   it('creates complete profiles and exact catalog bindings', async () => {
-    render(<ExecutionRegistryDialog />);
-    fireEvent.click(screen.getByTestId('open-sql-execution-registry'));
+    renderRegistry();
 
     expect(await screen.findByText('Warehouse RO')).toBeInTheDocument();
-    expect(screen.getByText('warehouse/analytics/dwh')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Добавить профиль' }));
 
-    fireEvent.change(screen.getByLabelText('Название execution profile'), {
+    fireEvent.change(screen.getByLabelText('Название'), {
       target: { value: 'Finance RO' },
     });
-    fireEvent.change(
-      screen.getByLabelText('Разрешённые схемы execution profile'),
-      { target: { value: 'finance, ref, finance' } },
-    );
+    fireEvent.change(screen.getByLabelText('Разрешённые схемы PostgreSQL'), {
+      target: { value: 'finance, ref, finance' },
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Создать профиль' }));
 
     await waitFor(() => expect(mockedCreateProfile).toHaveBeenCalledTimes(1));
@@ -142,16 +173,19 @@ describe('ExecutionRegistryDialog', () => {
       enabled: true,
     });
 
-    fireEvent.change(screen.getByLabelText('Catalog service'), {
+    fireEvent.click(screen.getByRole('button', { name: /Привязки схем/ }));
+    expect(screen.getByText('warehouse/analytics/dwh')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Добавить привязку' }));
+    fireEvent.change(screen.getByLabelText('Сервис'), {
       target: { value: 'warehouse' },
     });
-    fireEvent.change(screen.getByLabelText('Catalog database'), {
+    fireEvent.change(screen.getByLabelText('База данных'), {
       target: { value: 'analytics' },
     });
-    fireEvent.change(screen.getByLabelText('Catalog schema'), {
+    fireEvent.change(screen.getByLabelText('Схема'), {
       target: { value: 'ref' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Создать связь' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Привязать схему' }));
 
     await waitFor(() => expect(mockedCreateBinding).toHaveBeenCalledTimes(1));
     expect(mockedCreateBinding).toHaveBeenCalledWith({
@@ -165,16 +199,21 @@ describe('ExecutionRegistryDialog', () => {
   });
 
   it('uses record versions when editing or disabling registry entries', async () => {
-    render(<ExecutionRegistryDialog />);
-    fireEvent.click(screen.getByTestId('open-sql-execution-registry'));
+    renderRegistry();
 
     await screen.findByText('Warehouse RO');
     const profileList = screen.getByTestId('sql-execution-profile-list');
     fireEvent.click(
       within(profileList).getByRole('button', { name: 'Изменить' }),
     );
-    fireEvent.change(screen.getByLabelText('Название execution profile'), {
+    fireEvent.change(screen.getByLabelText('Название'), {
       target: { value: 'Warehouse read only' },
+    });
+    fireEvent.change(screen.getByLabelText('Время выполнения, с'), {
+      target: { value: '12.5' },
+    });
+    fireEvent.change(screen.getByLabelText('Размер результата, МБ'), {
+      target: { value: '2.5' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Сохранить профиль' }));
 
@@ -183,31 +222,37 @@ describe('ExecutionRegistryDialog', () => {
       'profile-1',
       expect.objectContaining({
         name: 'Warehouse read only',
+        statement_timeout_ms: 12500,
+        max_result_bytes: 2500000,
         expected_version: 3,
       }),
     );
 
+    fireEvent.click(screen.getByRole('button', { name: /Привязки схем/ }));
     const bindingList = screen.getByTestId('sql-catalog-binding-list');
     fireEvent.click(
       within(bindingList).getByRole('button', { name: 'Отключить' }),
     );
+    fireEvent.click(screen.getByRole('button', { name: 'Отключить' }));
 
     await waitFor(() => expect(mockedUpdateBinding).toHaveBeenCalledTimes(1));
-    expect(mockedUpdateBinding).toHaveBeenCalledWith(
-      'binding-1',
-      { schema_version: '1', enabled: false, expected_version: 2 },
-    );
+    expect(mockedUpdateBinding).toHaveBeenCalledWith('binding-1', {
+      schema_version: '1',
+      enabled: false,
+      expected_version: 2,
+    });
   });
 
   it('uses a minimal versioned command to disable a profile', async () => {
-    render(<ExecutionRegistryDialog />);
-    fireEvent.click(screen.getByTestId('open-sql-execution-registry'));
+    renderRegistry();
 
     await screen.findByText('Warehouse RO');
     const profileList = screen.getByTestId('sql-execution-profile-list');
     fireEvent.click(
       within(profileList).getByRole('button', { name: 'Отключить' }),
     );
+    expect(screen.getByText(/Активных привязок: 1/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Отключить' }));
 
     await waitFor(() => expect(mockedUpdateProfile).toHaveBeenCalledTimes(1));
     expect(mockedUpdateProfile).toHaveBeenCalledWith('profile-1', {
@@ -244,12 +289,15 @@ describe('ExecutionRegistryDialog', () => {
       schema_version: '1',
       items: [profile, drifted, missing, corrupt],
     });
+    mockedListBindings.mockResolvedValue({
+      schema_version: '1',
+      items: [{ ...binding, execution_profile_id: missing.id }],
+    });
 
-    render(<ExecutionRegistryDialog />);
-    fireEvent.click(screen.getByTestId('open-sql-execution-registry'));
+    renderRegistry();
 
     expect(
-      await screen.findByText(/Target или роль коннектора изменились/),
+      await screen.findByText(/База данных или роль подключения изменились/),
     ).toBeInTheDocument();
     expect(
       screen.getByText(/Коннектор удалён, имеет другой тип/),
@@ -258,9 +306,10 @@ describe('ExecutionRegistryDialog', () => {
       screen.getByText(/политика не прошла проверку контракта/),
     ).toBeInTheDocument();
 
-    const profileSelect = screen.getByLabelText(
-      'Execution profile для связи каталога',
-    );
+    fireEvent.click(screen.getByRole('button', { name: /Привязки схем/ }));
+    expect(screen.getByText('Профиль недоступен')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Добавить привязку' }));
+    const profileSelect = screen.getByLabelText('Профиль выполнения');
     expect(
       within(profileSelect).getByRole('option', {
         name: /Drifted target.*недоступен/,

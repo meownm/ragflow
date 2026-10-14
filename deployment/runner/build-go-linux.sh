@@ -33,4 +33,4 @@ docker run --rm \
   --mount "type=bind,src=${cache_root}/build,dst=/tmp/go-build-cache" \
   --mount "type=bind,src=${cache_root}/modules,dst=/tmp/go-mod-cache" \
   "${builder_image}" \
-  -c './build.sh --go'
+  -c 'if (( $# )); then ./build.sh "$@"; else ./build.sh --go; fi' bash "$@"

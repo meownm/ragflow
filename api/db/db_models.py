@@ -634,7 +634,7 @@ DB.lock = DatabaseLock[settings.DATABASE_TYPE.upper()].value
 def close_connection():
     try:
         if DB:
-            DB.close_stale(age=30)
+            DB.close()
     except Exception as e:
         logging.exception(e)
 
@@ -1680,6 +1680,39 @@ class BusinessDocumentSqlAgentCommand(DataBaseModel):
         indexes = ((("tenant_id", "project_id", "idempotency_key"), True),)
 
 
+class BusinessDocumentSqlQueryDraft(DataBaseModel):
+    """Server-owned working SQL steps for one project."""
+
+    id = CharField(max_length=32, primary_key=True)
+    project_id = CharField(max_length=32, null=False, unique=True)
+    tenant_id = CharField(max_length=32, null=False, index=True)
+    base_query_artifact_id = CharField(max_length=32, null=True)
+    version = IntegerField(null=False, default=1)
+    steps = JSONField(null=False, default=list)
+
+    class Meta:
+        db_table = "business_document_sql_query_draft"
+
+
+class BusinessDocumentSqlQueryThread(DataBaseModel):
+    """Review discussion anchored outside immutable SQL artifacts."""
+
+    id = CharField(max_length=32, primary_key=True)
+    project_id = CharField(max_length=32, null=False, index=True)
+    tenant_id = CharField(max_length=32, null=False, index=True)
+    base_artifact_id = CharField(max_length=32, null=False, index=True)
+    target = CharField(max_length=16, null=False)
+    anchor = JSONField(null=False)
+    messages = JSONField(null=False, default=list)
+    rebindings = JSONField(null=False, default=list)
+    status = CharField(max_length=16, null=False, default="OPEN")
+    version = IntegerField(null=False, default=1)
+
+    class Meta:
+        db_table = "business_document_sql_query_thread"
+        indexes = ((("project_id", "create_time"), False),)
+
+
 class BusinessDocument(DataBaseModel):
     """Current projection for a governed business document workflow."""
 
@@ -1823,6 +1856,31 @@ class BusinessDocumentComment(DataBaseModel):
 
 class BusinessDocumentEvent(DataBaseModel):
     """Append-only audit and domain event stream."""
+
+    @classmethod
+    def insert(cls, __data=None, **insert):
+        # The event's clock belongs to the persistence adapter. The shared
+        # upstream model assigns independent create/update clocks on insertion.
+        values = dict(__data or {})
+        values.update(insert)
+        field = cls._meta.combined["create_time"]
+        timestamp = values.get(field, values.get("create_time"))
+        if timestamp is None:
+            timestamp = current_timestamp()
+        values[field] = timestamp
+        values.pop("create_time", None)
+        return Model.insert.__func__(cls, values)
+
+    @classmethod
+    def _normalize_data(cls, data, kwargs):
+        normalized = super()._normalize_data(data, kwargs)
+        create = cls._meta.combined["create_time"]
+        if create in normalized:
+            timestamp = normalized[create]
+            normalized[cls._meta.combined["update_time"]] = timestamp
+            normalized[cls._meta.combined["create_date"]] = timestamp_to_date(timestamp)
+            normalized[cls._meta.combined["update_date"]] = timestamp_to_date(timestamp)
+        return normalized
 
     id = CharField(max_length=32, primary_key=True)
     document_id = CharField(max_length=32, null=False, index=True)

@@ -67,7 +67,7 @@ class TestSessionWithChatAssistantDelete:
 
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = [executor.submit(chat_assistant.delete_sessions, ids=[sessions[i].id]) for i in range(count)]
-        responses = list(as_completed(futures))
+        responses = [future.result() for future in as_completed(futures)]
         assert len(responses) == count, responses
 
     @pytest.mark.p3

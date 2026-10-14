@@ -43,9 +43,8 @@ def _assert_unauthorized(payload):
     assert "Unauthorized" in payload["message"], payload
 
 
-def _assert_unauthorized_response(res, *, allow_405=False):
-    if allow_405 and res.status_code == 405:
-        pytest.skip("method not supported in this deployment")
+def _assert_unauthorized_response(res):
+    assert res.status_code in {200, 401}, res.status_code
     content_type = res.headers.get("Content-Type", "")
     payload = None
     if "json" in content_type:
@@ -137,12 +136,12 @@ def test_langfuse_api_key_requires_auth():
 
 def test_langfuse_api_key_requires_auth_get():
     res = requests.get(LANGFUSE_API_KEY_URL)
-    _assert_unauthorized_response(res, allow_405=True)
+    _assert_unauthorized_response(res)
 
 
 def test_langfuse_api_key_requires_auth_put():
     res = requests.put(LANGFUSE_API_KEY_URL, json={})
-    _assert_unauthorized_response(res, allow_405=True)
+    _assert_unauthorized_response(res)
 
 
 def test_llm_set_api_key_requires_auth():

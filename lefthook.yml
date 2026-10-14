@@ -65,7 +65,7 @@ pre-commit:
         if [ "${LEFTHOOK_CHECK_ONLY:-}" = "1" ]; then
           unformatted=$(gofmt -l {staged_files})
           if [ -n "$unformatted" ]; then
-            echo "The following Go files are not gofmt'd:"
+            echo Go files require gofmt:
             echo "$unformatted"
             exit 1
           fi

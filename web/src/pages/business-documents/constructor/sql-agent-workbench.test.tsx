@@ -1,10 +1,12 @@
 import {
   cancelBusinessDocumentSqlRun,
   compileBusinessDocumentSqlProject,
+  completeBusinessDocumentSqlProject,
   confirmBusinessDocumentSqlConclusion,
   createBusinessDocumentSqlAgentProject,
   decideBusinessDocumentSqlAgentProposal,
   fetchBusinessDocumentSqlAgentProject,
+  fetchBusinessDocumentSqlRevisionWorkspace,
   listBusinessDocumentSqlAgentProjects,
   preflightBusinessDocumentSqlProject,
   previewBusinessDocumentSqlRun,
@@ -21,6 +23,8 @@ jest.mock('@/services/business-document-service', () => ({
   createBusinessDocumentSqlAgentProject: jest.fn(),
   decideBusinessDocumentSqlAgentProposal: jest.fn(),
   fetchBusinessDocumentSqlAgentProject: jest.fn(),
+  fetchBusinessDocumentSqlRevisionWorkspace: jest.fn(),
+  saveBusinessDocumentSqlRevisionDraft: jest.fn(),
   listBusinessDocumentSqlAgentProjects: jest.fn(),
   preflightBusinessDocumentSqlProject: jest.fn(),
   runBusinessDocumentSqlProject: jest.fn(),
@@ -36,11 +40,13 @@ jest.mock('@/services/business-document-service', () => ({
 
 const mockedList = listBusinessDocumentSqlAgentProjects as jest.Mock;
 const mockedFetch = fetchBusinessDocumentSqlAgentProject as jest.Mock;
+const mockedWorkspace = fetchBusinessDocumentSqlRevisionWorkspace as jest.Mock;
 const mockedCreate = createBusinessDocumentSqlAgentProject as jest.Mock;
 const mockedRequest = requestBusinessDocumentSqlAgent as jest.Mock;
 const mockedRevise = reviseBusinessDocumentSqlQuestion as jest.Mock;
 const mockedDecide = decideBusinessDocumentSqlAgentProposal as jest.Mock;
 const mockedCompile = compileBusinessDocumentSqlProject as jest.Mock;
+const mockedComplete = completeBusinessDocumentSqlProject as jest.Mock;
 const mockedPreflight = preflightBusinessDocumentSqlProject as jest.Mock;
 const mockedRun = runBusinessDocumentSqlProject as jest.Mock;
 const mockedPreview = previewBusinessDocumentSqlRun as jest.Mock;
@@ -80,6 +86,14 @@ function project(patch: Record<string, unknown> = {}) {
 describe('SqlAgentWorkbench', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockedWorkspace.mockResolvedValue({
+      query_artifact_id: null,
+      document_artifact_id: null,
+      draft: null,
+      threads: [],
+      blocks: [],
+      sql: '',
+    });
     mockedList.mockResolvedValue([]);
   });
 
@@ -586,14 +600,43 @@ describe('SqlAgentWorkbench', () => {
       },
     });
     mockedPreflight.mockResolvedValue({
-      compilation_id: 'compilation-1', state_version: 8,
+      compilation_id: 'compilation-1',
+      state_version: 8,
       binding: {
-        status: 'BOUND', selection: { profile: { id: 'profile-1', name: 'PostgreSQL', max_rows: 1000, statement_timeout_ms: 5000 } },
+        status: 'BOUND',
+        selection: {
+          profile: {
+            id: 'profile-1',
+            name: 'PostgreSQL',
+            max_rows: 1000,
+            statement_timeout_ms: 5000,
+          },
+        },
         candidates: [],
       },
     });
-    mockedRun.mockResolvedValue({ run_id: 'run-1', status: 'QUEUED', state_version: 9 });
-    mockedPreview.mockResolvedValue({ run_id: 'run-1', columns: ['total_amount'], rows: [[42]], offset: 0, row_count: 1, duration_ms: 10, result_bytes: 5, checks: { status: 'PASS', schema: 'PASS', bounds: 'PASS', truncated: false, null_cells: 0, completeness: 'FULL' } });
+    mockedRun.mockResolvedValue({
+      run_id: 'run-1',
+      status: 'QUEUED',
+      state_version: 9,
+    });
+    mockedPreview.mockResolvedValue({
+      run_id: 'run-1',
+      columns: ['total_amount'],
+      rows: [[42]],
+      offset: 0,
+      row_count: 1,
+      duration_ms: 10,
+      result_bytes: 5,
+      checks: {
+        status: 'PASS',
+        schema: 'PASS',
+        bounds: 'PASS',
+        truncated: false,
+        null_cells: 0,
+        completeness: 'FULL',
+      },
+    });
 
     render(<SqlAgentWorkbench />);
 
@@ -628,6 +671,79 @@ describe('SqlAgentWorkbench', () => {
     expect(mockedCancel).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Оставить данные' }));
     expect(mockedCancel).not.toHaveBeenCalled();
+  });
+
+  it('saves a checked SQL document without suggesting that rows were returned', async () => {
+    const specification = project({
+      stage: 'COMPLETE',
+      next_agent: null,
+      state_version: 4,
+      artifact_ids: {
+        requirements: 'artifact-r',
+        schema: 'artifact-s',
+        query: 'artifact-q',
+      },
+      compilation: {
+        id: 'compilation-1',
+        result: {
+          sql: 'SELECT 1 AS value LIMIT :row_limit',
+          parameters: { row_limit: 1 },
+          guard: { status: 'PASS' },
+        },
+      },
+      latest_run: null,
+      document: null,
+    });
+    const document = {
+      id: 'document-1',
+      revision: 1,
+      payload: {
+        requirements: 'Покажи значение',
+        execution_status: 'NOT_EXECUTED',
+        python_status: 'NOT_EXECUTED',
+        row_count: null,
+      },
+    };
+    const saved = project({
+      ...specification,
+      state_version: 5,
+      document,
+    });
+    mockedList.mockResolvedValue([specification]);
+    mockedFetch.mockResolvedValueOnce(specification).mockResolvedValue(saved);
+    mockedPreflight.mockResolvedValue({
+      blocker: {
+        code: 'SQL_EXECUTION_FORBIDDEN',
+        message: 'Нет права запуска',
+      },
+      binding: { status: 'UNAVAILABLE', candidates: [] },
+    });
+    mockedComplete.mockResolvedValue({
+      document_id: 'document-1',
+      revision: 1,
+      document: document.payload,
+      rows_status: 'NOT_EXECUTED',
+      state_version: 5,
+    });
+
+    render(<SqlAgentWorkbench />);
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Сохранить документ без выполнения',
+      }),
+    );
+    await waitFor(() =>
+      expect(mockedComplete).toHaveBeenCalledWith(
+        'project-1',
+        4,
+        expect.any(String),
+        undefined,
+      ),
+    );
+    expect(
+      await screen.findByTestId('sql-completed-document'),
+    ).toHaveTextContent('Запрос не выполнялся');
+    expect(screen.queryByText(/Получено .* строк/)).not.toBeInTheDocument();
   });
 
   it('generates a conclusion only on request and requires confirmation', async () => {

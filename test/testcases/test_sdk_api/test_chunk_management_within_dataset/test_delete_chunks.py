@@ -67,7 +67,7 @@ class TestChunksDeletion:
 
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = [executor.submit(document.delete_chunks, ids=[chunk_id]) for chunk_id in chunk_ids]
-        responses = list(as_completed(futures))
+        responses = [future.result() for future in as_completed(futures)]
         assert len(responses) == count, responses
 
     @pytest.mark.p3

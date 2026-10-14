@@ -1,96 +1,68 @@
-"""Publication ordering contracts; shell probes never contact a registry or Git remote."""
+"""Release event, ownership, identity and fail-closed wiring."""
 
 from pathlib import Path
-import shutil
-import subprocess
-
-import pytest
 import yaml
 
-
 ROOT = Path(__file__).resolve().parents[4]
-RELEASE = ROOT / ".github/workflows/release.yml"
-CHECKS = {
-    "regression": "tests.yml",
-    "separated_regression": "sep-tests.yml",
-    "browser_regression": "browser-regression.yml",
-}
 
 
-def _workflow(path=RELEASE):
-    return yaml.safe_load(path.read_text(encoding="utf-8"))
+def workflow(name):
+    return yaml.safe_load((ROOT / ".github/workflows" / name).read_text())
 
 
-def _step(name):
-    return next(step for step in _workflow()["jobs"]["release"]["steps"] if step.get("name") == name)
+def test_publication_requires_same_run_qualification_and_separate_environment():
+    jobs = workflow("release.yml")["jobs"]
+    assert jobs["qualification"]["uses"] == "./.github/workflows/tests.yml"
+    assert jobs["qualification"]["with"]["profile"] == "release"
+    publish = jobs["publish"]
+    assert set(publish["needs"]) == {"prepare", "qualification", "publish_ready"}
+    assert publish["runs-on"] == ["self-hosted", "ragflow-release", "Linux", "ragflow-isolated-vm"]
+    assert publish["environment"] == "internal-release"
+    assert publish["concurrency"] == {"group": "release-publication", "cancel-in-progress": False, "queue": "max"}
+    assert "always()" not in publish["if"]
+    scripts = "\n".join(step.get("run", "") for step in publish["steps"])
+    assert "RECEIPT_SHA256" in scripts
+    assert "release_publish" in scripts
+    assert "docker build" not in scripts and "git push" not in scripts
+    assert "DOCKERHUB" not in scripts and "twine" not in scripts
 
 
-def test_publication_requires_same_run_regressions_and_build():
-    workflow = _workflow()
-    jobs = workflow["jobs"]
-    assert set(jobs["release"]["needs"]) == {*CHECKS, "prepare", "build_cli"}
-    assert "if" not in jobs["release"]  # Default success() rejects failed/skipped dependencies.
-    assert "continue-on-error" not in jobs["release"]
-    assert "release" in jobs["publish_cli_assets"]["needs"]
-    assert "if" not in jobs["publish_cli_assets"]
-    for job, filename in CHECKS.items():
-        assert jobs[job]["uses"] == f"./.github/workflows/{filename}"
-        assert "if" not in jobs[job]
-        called = _workflow(ROOT / ".github/workflows" / filename)
-        # PyYAML's YAML 1.1 loader represents the Actions 'on' key as True.
-        assert "workflow_call" in called[True]
-        assert called["concurrency"]["group"].startswith(filename.removesuffix(".yml") + "-")
-        assert called["concurrency"]["group"] != workflow["concurrency"]["group"]
+def test_publisher_is_rechecked_after_qualification_before_runner_assignment():
+    job = workflow("release.yml")["jobs"]["publish_ready"]
+    assert set(job["needs"]) == {"prepare", "qualification"}
+    assert job["runs-on"] == "ubuntu-24.04"
+    assert "always()" not in job["if"]
+    probe = next(step for step in job["steps"] if "run" in step)
+    assert probe["run"] == "python3 -m tools.quality.release_runtime ready --roles ragflow-release"
+    assert probe["env"]["GH_TOKEN"] == "${{ secrets.RUNNER_READ_TOKEN }}"
 
 
-def test_tag_moves_only_after_image_build_and_before_publication():
-    jobs = _workflow()["jobs"]
-    prepare = "\n".join(step.get("run", "") for step in jobs["prepare"]["steps"])
-    assert "git push" not in prepare
-    assert "git tag" not in prepare
-    steps = jobs["release"]["steps"]
-    names = [step.get("name") for step in steps]
-    assert names.index("Build release image") < names.index("Move the existing mutable tag") < names.index("Push release image")
-    build = _step("Build release image")
-    assert "docker build" in build["run"]
-    assert "docker push" not in build["run"]
-    assert "continue-on-error" not in build
-    assert _step("Move the existing mutable tag")["if"] == "github.event_name == 'schedule'"
+def test_qualification_is_single_owner_and_release_does_not_select_changes():
+    jobs = workflow("tests.yml")["jobs"]
+    assert set(jobs["evidence"]["needs"]) >= {"build_image", "frontend", "browser_regression", "package_python", "build_cli", "ragflow_tests_infinity", "ragflow_tests_elasticsearch"}
+    assert jobs["evidence"]["if"] == "always()"
+    assert jobs["browser_regression"]["with"]["image_digest"] == "${{ needs.build_image.outputs.digest }}"
+    for engine in ("infinity", "elasticsearch"):
+        lane = jobs["ragflow_tests_" + engine]
+        assert lane["env"]["RAGFLOW_IMAGE"] == "${{ needs.build_image.outputs.digest }}"
+        assert not any("docker build" in step.get("run", "") for step in lane["steps"])
+        prepare = next(step for step in lane["steps"] if step.get("name") == "Prepare isolated stack")
+        assert prepare["run"] == "bash ../deployment/runner/prepare-engine.sh"
 
 
-def test_release_checkouts_pin_source_and_publication_is_serialized():
-    workflow = _workflow()
-    assert workflow["concurrency"] == {"group": "release-publication", "cancel-in-progress": False}
-    for job in workflow["jobs"].values():
-        for step in job.get("steps", []):
-            if step.get("uses", "").startswith("actions/checkout@"):
-                assert step["with"]["ref"] == "${{ github.sha }}"
+def test_stable_only_version_tags_and_nightly_does_not_trigger_itself():
+    release = workflow("release.yml")
+    events = release.get("on", release.get(True))
+    assert events["push"]["tags"] == ["v*.*.*"]
+    assert events["workflow_dispatch"]["inputs"]["dry_run"]["default"] is True
+    scripts = "\n".join(step.get("run", "") for step in release["jobs"]["prepare"]["steps"])
+    assert "RELEASE_NIGHTLY_ENABLED" in str(release)
+    assert "stable tag/project version mismatch" in scripts
+    assert "git tag" not in scripts
 
 
-@pytest.mark.parametrize("prerelease,latest", [("true", False), ("false", True)])
-def test_image_publish_does_not_promote_nightly_to_latest(prerelease, latest):
-    bash = shutil.which("bash")
-    assert bash, "Bash is required to exercise the actual release shell"
-    script = f"PRERELEASE={prerelease}\nRELEASE_TAG={'nightly' if prerelease == 'true' else 'v1.2.3'}\nDOCKERHUB_TOKEN=fixture-only\n"
-    script += 'sudo() { printf "%s\\n" "$*"; };\n' + _step("Push release image")["run"]
-    result = subprocess.run(
-        [bash, "-c", "bash -s"],
-        input=script.encode(),
-        capture_output=True,
-        timeout=15,
-    )
-    assert result.returncode == 0, result.stderr
-    assert (b"docker push infiniflow/ragflow:latest" in result.stdout) == latest
-    assert b"fixture-only" not in result.stdout
-
-
-def test_failed_registry_login_prevents_push():
-    script = 'PRERELEASE=false\nRELEASE_TAG=v1.2.3\nDOCKERHUB_TOKEN=fixture-only\nsudo() { printf "%s\\n" "$*"; return 7; };\n' + _step("Push release image")["run"]
-    result = subprocess.run(
-        ["bash", "-c", "bash -s"],
-        input=script.encode(),
-        capture_output=True,
-        timeout=15,
-    )
-    assert result.returncode == 7
-    assert b"docker push" not in result.stdout
+def test_six_portable_platforms_have_native_execution_without_cgo():
+    job = workflow("release-cli.yml")["jobs"]["build_cli"]
+    assert job["env"]["CGO_ENABLED"] == "0"
+    assert {(item["goos"], item["goarch"]) for item in job["strategy"]["matrix"]["include"]} == {(system, arch) for system in ("linux", "darwin", "windows") for arch in ("amd64", "arm64")}
+    assert "build-portable-cli.sh" in str(job) and "portable_cli_probe.py" in str(job)

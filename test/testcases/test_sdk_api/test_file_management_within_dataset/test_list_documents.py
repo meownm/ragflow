@@ -16,6 +16,7 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pytest
+from beartype.roar import BeartypeCallHintParamViolation
 
 
 class TestDocumentsList:
@@ -34,26 +35,16 @@ class TestDocumentsList:
             ({"page": 2, "page_size": 2}, 2, ""),
             ({"page": 3, "page_size": 2}, 1, ""),
             ({"page": "3", "page_size": 2}, 1, "not instance of"),
-            pytest.param(
-                {"page": -1, "page_size": 2},
-                0,
-                "Invalid page number",
-                marks=pytest.mark.skip(reason="issues/5851"),
-            ),
-            pytest.param(
-                {"page": "a", "page_size": 2},
-                0,
-                "Invalid page value",
-                marks=pytest.mark.skip(reason="issues/5851"),
-            ),
+            ({"page": -1, "page_size": 2}, 0, "page must be greater than or equal to 0"),
+            ({"page": "a", "page_size": 2}, 0, "not instance of"),
         ],
     )
     def test_page(self, add_documents, params, expected_page_size, expected_message):
         dataset, _ = add_documents
         if expected_message:
-            with pytest.raises(Exception) as exception_info:
+            with pytest.raises(BeartypeCallHintParamViolation if expected_message == "not instance of" else Exception) as exception_info:
                 dataset.list_documents(**params)
-            assert expected_message in str(exception_info.value), str(exception_info.value)
+            assert expected_message in str(exception_info.value) if expected_message == "not instance of" else expected_message == str(exception_info.value)
         else:
             documents = dataset.list_documents(**params)
             assert len(documents) == expected_page_size, str(documents)
@@ -67,26 +58,16 @@ class TestDocumentsList:
             ({"page_size": 1}, 1, ""),
             ({"page_size": 6}, 5, ""),
             ({"page_size": "1"}, 1, "not instance of"),
-            pytest.param(
-                {"page_size": -1},
-                0,
-                "Invalid page size",
-                marks=pytest.mark.skip(reason="issues/5851"),
-            ),
-            pytest.param(
-                {"page_size": "a"},
-                0,
-                "Invalid page size value",
-                marks=pytest.mark.skip(reason="issues/5851"),
-            ),
+            ({"page_size": -1}, 0, "page_size must be greater than or equal to 0"),
+            ({"page_size": "a"}, 0, "not instance of"),
         ],
     )
     def test_page_size(self, add_documents, params, expected_page_size, expected_message):
         dataset, _ = add_documents
         if expected_message:
-            with pytest.raises(Exception) as exception_info:
+            with pytest.raises(BeartypeCallHintParamViolation if expected_message == "not instance of" else Exception) as exception_info:
                 dataset.list_documents(**params)
-            assert expected_message in str(exception_info.value), str(exception_info.value)
+            assert expected_message in str(exception_info.value) if expected_message == "not instance of" else expected_message == str(exception_info.value)
         else:
             documents = dataset.list_documents(**params)
             assert len(documents) == expected_page_size, str(documents)
@@ -98,18 +79,24 @@ class TestDocumentsList:
             ({"orderby": None}, "not instance of"),
             ({"orderby": "create_time"}, ""),
             ({"orderby": "update_time"}, ""),
-            pytest.param({"orderby": "name", "desc": "False"}, "", marks=pytest.mark.skip(reason="issues/5851")),
-            pytest.param({"orderby": "unknown"}, "orderby should be create_time or update_time", marks=pytest.mark.skip(reason="issues/5851")),
+            ({"orderby": "name", "desc": False}, ""),
+            ({"orderby": "unknown"}, "Invalid orderby field: unknown"),
         ],
     )
     def test_orderby(self, add_documents, params, expected_message):
         dataset, _ = add_documents
         if expected_message:
-            with pytest.raises(Exception) as exception_info:
+            with pytest.raises(BeartypeCallHintParamViolation if expected_message == "not instance of" else Exception) as exception_info:
                 dataset.list_documents(**params)
-            assert expected_message in str(exception_info.value), str(exception_info.value)
+            assert expected_message in str(exception_info.value) if expected_message == "not instance of" else expected_message == str(exception_info.value)
         else:
-            dataset.list_documents(**params)
+            result = dataset.list_documents(**params)
+            assert len(result) == 5
+            assert len({item.id for item in result}) == 5
+            field = params.get("orderby", "create_time")
+            if field == "name":
+                values = [item.name for item in result]
+                assert values == sorted(values, reverse=params.get("desc", True))
 
     @pytest.mark.p3
     @pytest.mark.parametrize(
@@ -119,21 +106,27 @@ class TestDocumentsList:
             ({"desc": "true"}, "not instance of"),
             ({"desc": "True"}, "not instance of"),
             ({"desc": True}, ""),
-            pytest.param({"desc": "false"}, "", marks=pytest.mark.skip(reason="issues/5851")),
+            ({"desc": "false"}, "not instance of"),
             ({"desc": "False"}, "not instance of"),
             ({"desc": False}, ""),
             ({"desc": "False", "orderby": "update_time"}, "not instance of"),
-            pytest.param({"desc": "unknown"}, "desc should be true or false", marks=pytest.mark.skip(reason="issues/5851")),
+            ({"desc": "unknown"}, "not instance of"),
         ],
     )
     def test_desc(self, add_documents, params, expected_message):
         dataset, _ = add_documents
         if expected_message:
-            with pytest.raises(Exception) as exception_info:
+            with pytest.raises(BeartypeCallHintParamViolation if expected_message == "not instance of" else Exception) as exception_info:
                 dataset.list_documents(**params)
-            assert expected_message in str(exception_info.value), str(exception_info.value)
+            assert expected_message in str(exception_info.value) if expected_message == "not instance of" else expected_message == str(exception_info.value)
         else:
-            dataset.list_documents(**params)
+            result = dataset.list_documents(**params)
+            assert len(result) == 5
+            assert len({item.id for item in result}) == 5
+            field = params.get("orderby", "create_time")
+            if field == "name":
+                values = [item.name for item in result]
+                assert values == sorted(values, reverse=params.get("desc", True))
 
     @pytest.mark.p2
     @pytest.mark.parametrize(
@@ -232,10 +225,9 @@ class TestDocumentsList:
 
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = [executor.submit(list_docs) for _ in range(count)]
-        responses = list(as_completed(futures))
+        responses = [future.result() for future in as_completed(futures)]
         assert len(responses) == count, responses
-        for future in futures:
-            docs = future.result()
+        for docs in responses:
             assert len(docs) == 5, str(docs)
 
     @pytest.mark.p3

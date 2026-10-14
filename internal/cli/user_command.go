@@ -3555,15 +3555,36 @@ func (c *CLI) APIParseLocalFileCommand(cmd *Command) (ResponseIf, error) {
 	if err != nil {
 		return nil, err
 	}
+	if pdfParser, ok := fileParser.(*parser.PDFParser); ok && docParseModel != "" {
+		pdfParser.ConfigureFromSetup(map[string]any{"parse_method": docParseModel})
+	}
 
 	fileContent, err := os.ReadFile(filename)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read dsl file: %w", err)
+		return nil, fmt.Errorf("failed to read local file: %w", err)
 	}
 
 	parseResult := fileParser.ParseWithResult(filename, fileContent)
 	if parseResult.Err != nil {
 		return nil, formatRequestError("parse local file", parseResult.Err)
+	}
+	// Local parsing writes the selected payload so the command can be used
+	// without a server and its extracted content can be inspected or redirected.
+	switch parseResult.OutputFormat {
+	case "json":
+		payload, err := json.MarshalIndent(parseResult.JSON, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("failed to encode parsed content: %w", err)
+		}
+		fmt.Println(string(payload))
+	case "markdown":
+		fmt.Println(parseResult.Markdown)
+	case "text":
+		fmt.Println(parseResult.Text)
+	case "html":
+		fmt.Println(parseResult.HTML)
+	default:
+		return nil, fmt.Errorf("unsupported local parse output format: %q", parseResult.OutputFormat)
 	}
 
 	var result SimpleResponse

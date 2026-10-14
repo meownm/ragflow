@@ -79,7 +79,7 @@ postgres:
   password: '${POSTGRES_PASSWORD:-infini_rag_flow}'
   host: '${POSTGRES_HOST:-postgres}'
   port: ${POSTGRES_PORT:-5432}
-  max_connections: 100
+  max_connections: ${POSTGRES_POOL_MAX_CONNECTIONS:-20}
   stale_timeout: 30
 asr:
   name: 't-one-asr'

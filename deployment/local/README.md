@@ -36,13 +36,24 @@ Nexus. Полная регрессия выполняется релизным w
   -FeatureSourceId '<SOURCE_ID>'
 ```
 
-`Feature` принимает только digest из Nexus. Перед изменением локального Docker
+`Feature` принимает digest из Nexus или полный локальный image ID вида
+`sha256:<64 hex>` из `docker image inspect --format '{{.Id}}' <образ>`.
+Локальный образ должен быть уже собран и загружен в Docker Desktop; для него
+pull и публикация в registry не выполняются. Метки и `SOURCE_ID` проверяются
+так же, а image ID должен точно совпасть с результатом inspect.
+Перед изменением локального Docker
 Desktop он сверяет хеш снимка, метки dev-образа, архитектуру, `VERSION`,
 `SOURCE_REVISION=unverified` и импорт приложения. Затем применяет тот же
 проверяемый backup, recreate и health checks, что и Candidate. `-CheckOnly`
 проверяет параметры и Compose без pull и без переключения контейнеров; полная
 проверка образа происходит при выполнении деплоя. В `deployment.json` dev-образ
 помечается полями `feature_*` и не получает статус релизного кандидата.
+Для `Feature`, `Candidate` и `Release` скрипт копирует шаблон конфигурации по
+SHA-256 и хранит его вместе с логами в соседнем с checkout каталоге
+`ragflow-local-runtime` на том же диске.
+Контейнер монтирует эти постоянные пути, поэтому удаление временного checkout
+после деплоя не лишает его конфигурации и каталога логов. Скрипт откажется
+использовать ранее сохранённый шаблон, если его содержимое изменилось.
 `Auto` не выбирает `Feature`: для каждого нового dev-образа передайте его digest
 и `SOURCE_ID` явно.
 На этой Windows-машине Docker уже авторизован в Nexus отдельным пользователем
@@ -56,7 +67,15 @@ Desktop он сверяет хеш снимка, метки dev-образа, а
 .\deployment\local\deploy.ps1
 ```
 
-Скрипт не создаёт и не переключает ветки, worktree, commit или tag. Для Fast-режима
+Скрипт отвечает за применение и проверку runtime; после его успешного завершения
+исполнитель деплоя обязательно создаёт коммит проверенных изменений поставки в
+текущей ветке. Это правило одинаково для Fast, Feature, Candidate и Release:
+режим сборки и квалификация образа не являются причиной оставлять изменения без
+коммита. В коммит входят проверенные исходники, тесты и документация этой поставки;
+посторонние изменения сохраняются отдельно. Если поставка уже закоммичена,
+исполнитель сообщает существующий SHA, не создавая пустой коммит. При ошибке
+деплоя или `-CheckOnly` коммит не создаётся. Push выполняется только по отдельному
+указанию. Скрипт не создаёт и не переключает ветки, worktree или tag. Для Fast-режима
 источником служит текущий checkout. Candidate/Release получает готовый образ из
 `192.168.1.175:5443` по полному Git SHA и отключает development bind mounts.
 
@@ -86,19 +105,36 @@ ASR пересобирается отдельно, а несмонтирован
    .\deployment\local\deploy.ps1 -Mode Fast
    ```
 
-5. Перед подготовкой релиза вручную запустить workflow `tests` на `main`;
-   после прохождения проверок он публикует CI-кандидат. Затем развернуть его:
+5. Для диагностики запустить `tests` с профилем `targeted`. Полный candidate
+   квалифицируется через `release` с `dry_run=true`; он не публикуется автоматически.
+   Проверенный image digest указан в schema 2 receipt.
+
+6. Для локального Release скачать из **неизменяемого опубликованного** комплекта
+   форка `meownm/ragflow` три файла в одну папку:
+   `candidate-receipt.json`, `publication-receipt.json`, `release-manifest.json`.
+   Скрипт проверит их digest через GitHub API доверенного repository, SHA и image;
+   самодекларации receipt недостаточно. Нужны `gh` и Python.
 
    ```powershell
-   .\deployment\local\deploy.ps1 -Mode Candidate -CandidateRevision <full-40-char-sha>
+   gh release download <immutable-release-tag> --repo meownm/ragflow `
+     --pattern candidate-receipt.json --pattern publication-receipt.json `
+     --pattern release-manifest.json --dir C:\ragflow-release
+   .\deployment\local\deploy.ps1 -Mode Release -CandidateRevision <full-40-char-sha> `
+     -CandidateReceipt C:\ragflow-release\candidate-receipt.json
    ```
 
-6. Для локального Release скачать `candidate-receipt.json` из artifact
-   успешного `publish_candidate` того же CI run и указать его явно:
+   Runtime загружается по digest. Nightly разрешается через annotated `nightly`
+   Git tag с JSON message, который указывает конкретный immutable release tag.
+   `latest` относится только к stable. Новые выпуски требуют schema 2; исторический
+   schema 1 допускается только для явного восстановления с `-AllowHistoricalReceipt`.
 
-   ```powershell
-   .\deployment\local\deploy.ps1 -Mode Release -CandidateRevision <full-40-char-sha> -CandidateReceipt <candidate-receipt.json>
-   ```
+7. Для возврата получить три assets предыдущего квалифицированного комплекта,
+   проверить совместимость его runtime с данными и указать его receipt/SHA.
+   Возврат image не восстанавливает PostgreSQL автоматически. Если новая версия
+   несовместимо изменила схему, сначала остановить записи и восстановить проверенный
+   pre-upgrade backup по процедуре PostgreSQL; сохранить SHA256 и RPO. Новые записи
+   после backup потеряются при таком восстановлении. До выпуска это проверяется
+   `deployment/runner/test-qualified-upgrade.py` на disposable копии.
 
 До пересоздания контейнеров скрипт проверяет итоговый Compose config и делает
 проверяемый PostgreSQL dump. После переключения он ждёт container health и
@@ -129,10 +165,13 @@ Tempo, Prometheus и OpenTelemetry используйте `-Observability`; вс
 docker desktop restart
 ```
 
-Commit и annotated tag создаются после успешного деплоя, только когда это требуется
-для оформления релиза. Для этого не нужна новая ветка. Отдельная integration-ветка
-или worktree остаётся обязательной только для обновления upstream, конфликтующей
-интеграции либо когда текущий checkout нельзя безопасно считать одним кандидатом.
+Для stable выпуска commit и версионный tag предшествуют CI квалификации:
+`release.yml` проверяет этот source SHA и публикует проверенный комплект. Локальный
+Release устанавливает уже опубликованный комплект и записывает отдельный результат
+deployment. Незакоммиченные изменения проверяются как Feature с явно неполной
+квалификацией и точным SOURCE_ID. Candidate использует committed source SHA;
+ограниченная диагностика не является опубликованным выпуском. Отдельная integration-ветка или worktree нужны для обновления
+upstream, конфликтующей интеграции или отдельно обоснованной изоляции кандидата.
 
 Удалённая поставка использует отдельный документированный процесс
 `deployment/linux-pg/`; она запускается только по явному запросу на remote deploy.

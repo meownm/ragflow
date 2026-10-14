@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from asr_service.jobs.job_models import CreateJobRequest, CreateJobResponse, Job, JobStatus
 from asr_service.jobs.job_events import iter_job_sse
 from asr_service.jobs.job_queue import JobQueue
-from asr_service.jobs.job_store import JobStore
+from asr_service.jobs.job_store import JobCapacityError, JobStore
 from asr_service.models.model_registry import RegistryView
 from asr_service.settings import settings
 
@@ -144,7 +144,13 @@ def create_job(
 
     validated_source_uri = validate_source_uri(request.source_uri)
     job_request = request.model_copy(update={"source_uri": validated_source_uri})
-    job = store.create(job_request)
+    try:
+        job = store.create(job_request)
+    except JobCapacityError as exc:
+        raise HTTPException(
+            status_code=429,
+            detail={"error_code": "Q-ASR-CAPACITY-REACHED", "message": str(exc), "details": {}},
+        ) from exc
     queue.put(job.id)
     return CreateJobResponse(job_id=job.id, status=job.status)
 

@@ -30,7 +30,27 @@ def test_get_visible_sections_reads_versioned_persisted_value(monkeypatch):
         lambda _name: [SimpleNamespace(value=json.dumps({"version": 3, "visible_sections": ["memory", "dataset"]}))],
     )
 
-    assert service.get_visible_sections() == ["dataset", "memory"]
+    assert service.get_visible_sections() == ["dataset", "memory", "asr", "translator"]
+
+
+def test_existing_constructor_setting_keeps_sql_projects_visible(monkeypatch):
+    monkeypatch.setattr(
+        service.SystemSettingsService,
+        "get_by_name",
+        lambda _name: [SimpleNamespace(value=json.dumps({"version": 3, "visible_sections": ["document_constructor"]}))],
+    )
+
+    assert service.get_visible_sections() == ["document_constructor", "sql_projects", "asr", "translator"]
+
+
+def test_existing_visibility_settings_expose_new_workspaces(monkeypatch):
+    monkeypatch.setattr(
+        service.SystemSettingsService,
+        "get_by_name",
+        lambda _name: [SimpleNamespace(value=json.dumps({"version": 4, "visible_sections": ["chat"]}))],
+    )
+
+    assert service.get_visible_sections() == ["chat", "asr", "translator"]
 
 
 def test_get_visible_sections_keeps_home_for_legacy_setting(monkeypatch):
@@ -40,13 +60,16 @@ def test_get_visible_sections_keeps_home_for_legacy_setting(monkeypatch):
         lambda _name: [SimpleNamespace(value=json.dumps(["memory", "dataset"]))],
     )
 
-    assert service.get_visible_sections() == ["home", "dataset", "memory"]
+    assert service.get_visible_sections() == ["home", "dataset", "memory", "asr", "translator"]
 
 
-@pytest.mark.parametrize("stored", [
-    {"version": 2, "visible_sections": ["business_documents", "chat"]},
-    ["business_documents", "chat"],
-])
+@pytest.mark.parametrize(
+    "stored",
+    [
+        {"version": 2, "visible_sections": ["business_documents", "chat"]},
+        ["business_documents", "chat"],
+    ],
+)
 def test_get_visible_sections_keeps_existing_constructor_visibility(monkeypatch, stored):
     monkeypatch.setattr(
         service.SystemSettingsService,
@@ -55,6 +78,7 @@ def test_get_visible_sections_keeps_existing_constructor_visibility(monkeypatch,
     )
 
     assert "document_constructor" in service.get_visible_sections()
+    assert "sql_projects" in service.get_visible_sections()
 
 
 def test_get_visible_sections_can_hide_only_constructor(monkeypatch):
@@ -68,9 +92,20 @@ def test_get_visible_sections_can_hide_only_constructor(monkeypatch):
     assert service.get_visible_sections() == ["business_documents"]
 
 
+def test_get_visible_sections_can_hide_sql_projects_independently(monkeypatch):
+    stored = service.serialize_visible_sections(["document_constructor"])
+    monkeypatch.setattr(
+        service.SystemSettingsService,
+        "get_by_name",
+        lambda _name: [SimpleNamespace(value=stored)],
+    )
+
+    assert service.get_visible_sections() == ["document_constructor"]
+
+
 def test_serialize_visible_sections_records_current_version():
     assert json.loads(service.serialize_visible_sections(["chat"])) == {
-        "version": 3,
+        "version": 5,
         "visible_sections": ["chat"],
     }
 

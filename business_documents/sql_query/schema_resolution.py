@@ -534,7 +534,7 @@ def _parse_identifiers(value: Any, *, field: str, maximum_length: int) -> tuple[
 
 
 def _locale(value: Any) -> str:
-    if value not in {"ru", "en"}:
+    if not isinstance(value, str) or value not in {"ru", "en"}:
         raise SchemaResolutionValidationError("locale must be ru or en")
     return str(value)
 
@@ -690,7 +690,7 @@ def _validated_interpretation(
     index: int,
 ) -> dict[str, Any]:
     kind = item.get("kind")
-    if kind not in _TERM_KINDS:
+    if not isinstance(kind, str) or kind not in _TERM_KINDS:
         raise SchemaResolutionValidationError(f"resolutions[{index}].kind is unsupported")
     recommended, recommended_columns = _validated_recommendations(item, answer, str(kind))
     return {
@@ -758,18 +758,20 @@ async def _bounded_batch(
             return exc
 
     tasks = [asyncio.create_task(run_one(item)) for item in items]
-    done, pending = await asyncio.wait(tasks, timeout=batch_timeout_seconds)
-    for task in pending:
-        task.cancel()
-    if pending:
-        await asyncio.gather(*pending, return_exceptions=True)
-    results: list[_R | Exception] = []
-    for task in tasks:
-        if task not in done:
-            results.append(CatalogLookupError("Catalog batch deadline exceeded"))
-        else:
-            results.append(task.result())
-    return results
+    try:
+        done, _ = await asyncio.wait(tasks, timeout=batch_timeout_seconds)
+        results: list[_R | Exception] = []
+        for task in tasks:
+            if task not in done:
+                results.append(CatalogLookupError("Catalog batch deadline exceeded"))
+            else:
+                results.append(task.result())
+        return results
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def _failure_result(term: str, locale: str) -> CatalogResult:

@@ -16,8 +16,10 @@ from api.db.db_models import (
     BusinessDocumentSqlAgentCommand,
     BusinessDocumentSqlAgentProposal,
     BusinessDocumentSqlQueryArtifact,
+    BusinessDocumentSqlQueryDraft,
     BusinessDocumentSqlQueryProject,
     BusinessDocumentSqlQueryRun,
+    BusinessDocumentSqlQueryThread,
 )
 from business_documents.application.errors import BusinessDocumentError, ConflictError, ValidationError
 from business_documents.domain.access import BusinessDocumentRole
@@ -100,6 +102,8 @@ class BusinessDocumentSqlAgentService:
             BusinessDocumentSqlQueryRun,
             BusinessDocumentSqlAgentProposal,
             BusinessDocumentSqlAgentCommand,
+            BusinessDocumentSqlQueryDraft,
+            BusinessDocumentSqlQueryThread,
             BusinessDocumentJob,
         )
 
@@ -156,8 +160,18 @@ class BusinessDocumentSqlAgentService:
             replay = cls._command_replay(tenant_id, project_id, key, request_hash)
             if replay is not None:
                 return replay
-            if project.state_version != version or project.stage == "COMPLETE" or project.operation_state == "RUNNING":
+            if project.state_version != version or project.operation_state == "RUNNING":
                 raise ConflictError("SQL_PROJECT_VERSION_CONFLICT", "Question cannot be changed in the current project state")
+            if (
+                BusinessDocumentSqlQueryRun.select()
+                .where(
+                    (BusinessDocumentSqlQueryRun.project_id == project_id)
+                    & (BusinessDocumentSqlQueryRun.tenant_id == tenant_id)
+                    & (BusinessDocumentSqlQueryRun.status.in_(("QUEUED", "RUNNING", "CANCEL_REQUESTED", "READY")))
+                )
+                .exists()
+            ):
+                raise ConflictError("SQL_RESULT_ACTIVE", "Finish or cancel the current result before revising the question")
             now = current_timestamp()
             BusinessDocumentSqlAgentProposal.update(status="REJECTED", decided_by=actor_id, decided_at=now).where(
                 (BusinessDocumentSqlAgentProposal.project_id == project_id) & (BusinessDocumentSqlAgentProposal.tenant_id == tenant_id) & (BusinessDocumentSqlAgentProposal.status == "PENDING")
@@ -617,6 +631,9 @@ class BusinessDocumentSqlAgentService:
                 cls._finish_job(current_job, "COMPLETED", result=result)
                 return
             kind = current_job.job_type.removeprefix(_JOB_PREFIX)
+            if kind == "REVISION":
+                request = (current_job.payload or {}).get("request") or {}
+                result = {**result, "source": {**(result.get("source") or {}), "thread_version": request.get("thread_version")}}
             proposal = {
                 "schema_version": "1",
                 "kind": kind,

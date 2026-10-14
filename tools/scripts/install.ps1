@@ -67,6 +67,16 @@ function Get-ReleaseVersion {
         [string]$Repository
     )
 
+    if ($RequestedVersion -eq "nightly" -and $Repository -eq "meownm/ragflow") {
+        $ref = Invoke-RestMethod -Uri "https://api.github.com/repos/${Repository}/git/ref/tags/nightly" -TimeoutSec 20
+        if ($ref.object.type -ne "tag" -or $ref.object.sha -notmatch '^[0-9a-f]{40}$') { throw "Invalid nightly tag identity." }
+        $tag = Invoke-RestMethod -Uri "https://api.github.com/repos/${Repository}/git/tags/$($ref.object.sha)" -TimeoutSec 20
+        $channel = $tag.message | ConvertFrom-Json
+        if ($channel.schema -ne 2 -or $channel.release_tag -notmatch '^nightly-[0-9]+-[0-9]+$') {
+            throw "Invalid qualified nightly channel."
+        }
+        return $channel.release_tag
+    }
     if ($RequestedVersion -ne "latest") {
         Write-Info "Using specified version: $RequestedVersion"
         return $RequestedVersion

@@ -29,6 +29,8 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
+from api.utils.pagination_utils import validate_rest_list_args
+
 
 class _PassthroughManager:
     def route(self, *_args, **_kwargs):
@@ -145,7 +147,7 @@ def _load_agent_api(monkeypatch, *, storage_get):
     )
     _stub(monkeypatch, "common.ssrf_guard", assert_host_is_safe=lambda *_a, **_k: None)
     _stub(monkeypatch, "common.constants", RetCode=SimpleNamespace())
-    _stub(monkeypatch, "api.utils.pagination_utils", validate_rest_api_page_size=lambda *_a, **_k: None)
+    _stub(monkeypatch, "api.utils.pagination_utils", validate_rest_list_args=validate_rest_list_args)
     _stub(monkeypatch, "peewee")
 
     async def _thread_pool_exec(fn, *args, **kwargs):

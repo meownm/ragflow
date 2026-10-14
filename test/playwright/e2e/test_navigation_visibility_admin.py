@@ -15,6 +15,7 @@ ALL_SECTIONS = [
     "catalog",
     "business_documents",
     "document_constructor",
+    "sql_projects",
     "file_manager",
 ]
 

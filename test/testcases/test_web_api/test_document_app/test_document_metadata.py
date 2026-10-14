@@ -232,18 +232,17 @@ class TestDocumentMetadataNegative:
     #    assert "KB ID" in res["message"], res
 
     @pytest.mark.p3
-    def test_infos_invalid_doc_id(self, WebApiAuth):
-        res = document_infos(WebApiAuth, {"doc_ids": ["invalid_id"]})
-        assert res["code"] == 109, res
-        assert "No authorization" in res["message"], res
+    def test_infos_invalid_doc_id(self, WebApiAuth, add_dataset_func):
+        res = document_infos(WebApiAuth, add_dataset_func, params={"id": "invalid_id"})
+        assert res["code"] == 102, res
+        assert "You don't own the document" in res["message"], res
 
     @pytest.mark.p3
     def test_update_metadata_setting_missing_metadata(self, WebApiAuth, add_document_func):
-        _, doc_id = add_document_func
-        res = document_update_metadata_setting(WebApiAuth, {"doc_id": doc_id})
+        dataset_id, doc_id = add_document_func
+        res = document_update_metadata_setting(WebApiAuth, dataset_id, doc_id, {})
         assert res["code"] == 101, res
-        assert "required argument are missing" in res["message"], res
-        assert "metadata" in res["message"], res
+        assert res["message"] == "metadata is required", res
 
     @pytest.mark.p2
     def test_update_metadata_setting_not_found(self, WebApiAuth, add_document_func):

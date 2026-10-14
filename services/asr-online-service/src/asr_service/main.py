@@ -21,7 +21,7 @@ from asr_service.settings import settings
 
 configure_logging(settings.log_level, settings.log_data_mode)
 
-store = JobStore(ttl_seconds=settings.job_ttl_seconds)
+store = JobStore(ttl_seconds=settings.job_ttl_seconds, max_active_jobs=settings.max_active_jobs)
 queue = JobQueue()
 registry = default_registry()
 manager = ModelManager()

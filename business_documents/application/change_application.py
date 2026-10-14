@@ -63,6 +63,17 @@ class ApplyChanges:
             if draft["template_version"] != document["template_version"]:
                 raise ValidationError("TEMPLATE_VERSION_CONFLICT", "Updated document does not use the pinned template")
 
+        next_lifecycle = inputs.next_lifecycle
+        if next_lifecycle == "AGREED":
+            current = draft if draft is not None else self._writer.revision(document["id"], document["current_revision_id"])["document_ast"]
+            if current.get("section_scope") == "required":
+                try:
+                    self._content.validate_document_ast(current)
+                except ValidationError as error:
+                    if error.code not in {"REQUIRED_SECTION_EMPTY", "CONCEPTUAL_DIAGRAM_REQUIRED", "ACTIVITY_SCENARIO_REQUIRED"}:
+                        raise
+                    next_lifecycle = "REVIEW"
+
         version = document["state_version"] + 1
         event_id = self._new_id()
         changes: dict[str, Any] = {"operation_state": "IDLE", "state_version": version}
@@ -70,18 +81,18 @@ class ApplyChanges:
             kind = "ChangePreviewPrepared"
             payload = {"job_id": job["id"], "base_revision_id": job["base_revision_id"], "review_cycle": document["active_review_cycle"]}
         else:
-            changes["lifecycle_state"] = inputs.next_lifecycle
+            changes["lifecycle_state"] = next_lifecycle
             payload = {
                 "job_id": job["id"],
                 "revision_id": document["current_revision_id"],
                 "review_cycle": document["active_review_cycle"],
-                "review_continues": bool(inputs.pending_proposal_ids),
+                "review_continues": next_lifecycle == "REVIEW",
                 "remaining_proposal_ids": list(inputs.pending_proposal_ids),
                 "acknowledged_no_change_event_ids": list(inputs.acknowledged_event_ids),
                 **prompt_audit(job),
                 **({"execution": execution} if execution else {}),
             }
-            kind = "ReviewContinuedWithoutChanges" if inputs.pending_proposal_ids else "ReviewAgreedWithoutChanges"
+            kind = "ReviewContinuedWithoutChanges" if next_lifecycle == "REVIEW" else "ReviewAgreedWithoutChanges"
             if draft is not None:
                 body = self._content.render_document_ast(draft)
                 revision_id = self._writer.insert_revision(

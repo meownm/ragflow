@@ -38,6 +38,7 @@ from flask_session import Session
 from common.versions import get_ragflow_version
 from common.observability import configure_otel, install_flask_instrumentation
 from document_quality_runs import process_next_run, schedule_due
+from api.db.db_models import DB
 
 stop_event = threading.Event()
 
@@ -54,6 +55,11 @@ if __name__ == "__main__":
     """)
 
     app = Flask(__name__)
+
+    @app.teardown_request
+    def _close_db_connection(_exception):
+        DB.close()
+
     install_flask_instrumentation(app, "ragflow-admin")
     app.register_blueprint(admin_bp)
     app.config["SESSION_PERMANENT"] = False
@@ -76,6 +82,8 @@ if __name__ == "__main__":
                 process_next_run()
             except Exception:
                 logging.exception("Business Documents quality scheduler failed")
+            finally:
+                DB.close()
             stop_event.wait(5)
 
     threading.Thread(target=quality_worker, daemon=True, name="business-document-quality").start()

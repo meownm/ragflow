@@ -49,13 +49,14 @@ def validate_contract(name: str, value: object, schema: dict[str, Any]) -> None:
     )
 
 
-def validate_document_ast(document: object, template: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
+def validate_document_ast(document: object, template: dict[str, Any], schema: dict[str, Any], *, allow_incomplete: bool = False) -> dict[str, Any]:
     document = normalize_document_ast(document, template)
     validate_contract("document_draft", document, schema)
     assert isinstance(document, dict)
     if document["template_version"] != template["template_version"]:
         raise RuleViolation("TEMPLATE_VERSION_CONFLICT", "Draft does not use the document template version")
-    expected = [(section["id"], section["title"]) for section in template["sections"]]
+    actual_ids = {section["id"] for section in document["sections"]}
+    expected = [(section["id"], section["title"]) for section in template["sections"] if document.get("section_scope") != "required" or section["required"] or section["id"] in actual_ids]
     expected_ids = {item[0] for item in expected}
     actual = [(section["id"], section["title"]) for section in document["sections"]]
     actual_template_outline = [item for item in actual if item[0] in expected_ids]
@@ -90,6 +91,8 @@ def validate_document_ast(document: object, template: dict[str, Any], schema: di
             "Этот тип содержимого нельзя использовать в выбранном разделе шаблона",
             {"blocks": disallowed},
         )
+    if allow_incomplete:
+        return document
     empty_required = [section["id"] for section in document["sections"] if section["id"] in required_ids and not any(_block_has_content(block) for block in section["blocks"])]
     if empty_required:
         raise RuleViolation(
@@ -103,7 +106,7 @@ def validate_document_ast(document: object, template: dict[str, Any], schema: di
     return document
 
 
-def import_document_markdown(markdown: object, template: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
+def import_document_markdown(markdown: object, template: dict[str, Any], schema: dict[str, Any], *, required_schema: dict[str, Any] | None = None) -> dict[str, Any]:
     """Convert a previously exported business document back to its governed AST.
 
     EVA pages are accepted only when their numbered headings still match the
@@ -145,6 +148,10 @@ def import_document_markdown(markdown: object, template: dict[str, Any], schema:
 
     actual_ids = [item[0] for item in found if item[0] in expected]
     expected_ids = [section["id"] for section in template_sections]
+    required_ids = [section["id"] for section in template_sections if section["required"]]
+    required_only = required_schema is not None and actual_ids == required_ids
+    if required_only:
+        expected_ids = required_ids
     if actual_ids != expected_ids:
         raise RuleViolation(
             "EVA_DOCUMENT_TEMPLATE_MISMATCH",
@@ -170,13 +177,14 @@ def import_document_markdown(markdown: object, template: dict[str, Any], schema:
         )
     return validate_document_ast(
         {
-            "schema_version": "1",
+            "schema_version": "2" if required_only else "1",
             "document_type": "business_requirements",
             "template_version": template["template_version"],
+            **({"section_scope": "required"} if required_only else {}),
             "sections": sections,
         },
         template,
-        schema,
+        required_schema if required_only else schema,
     )
 
 
@@ -213,12 +221,7 @@ def _paragraph_blocks(text: str) -> list[dict[str, str]]:
 
 
 def normalize_document_ast(document: object, template: dict[str, Any]) -> object:
-    """Restore the published optional section skeleton before validation.
-
-    Section presence and ordering are deterministic template concerns.  The
-    model owns section content, but it must not be able to accidentally drop
-    optional headings from the canonical document outline.
-    """
+    """Restore the pinned outline, retaining the scope of title-only documents."""
 
     if not isinstance(document, dict) or not isinstance(document.get("sections"), list):
         return document
@@ -247,11 +250,13 @@ def normalize_document_ast(document: object, template: dict[str, Any]) -> object
     inherited_blocks = None
     normalized_sections = []
     for template_section in template_sections:
+        if document.get("section_scope") == "required" and not template_section["required"] and template_section["id"] not in by_id:
+            continue
         section = by_id.get(
             template_section["id"],
             {"id": template_section["id"], "title": template_section["title"], "blocks": []},
         )
-        if template_section["required"] and not any(_block_has_content(block) for block in section.get("blocks", [])):
+        if document.get("section_scope") != "required" and template_section["required"] and not any(_block_has_content(block) for block in section.get("blocks", [])):
             if inherited_blocks is None:
                 inherited_blocks = _first_descendant_blocks(flattened_sections, expected_ids)
             candidates = inherited_blocks.get(template_section["id"], {})
@@ -385,7 +390,7 @@ def apply_change_plan(base_document: dict[str, Any], change_plan: dict[str, Any]
         section["blocks"] = operation["content"]["blocks"]
         if "evidence_refs" in operation:
             section["evidence_refs"] = operation["evidence_refs"]
-    validated = validate_document_ast(result, template, schema)
+    validated = validate_document_ast(result, template, schema, allow_incomplete=base_document.get("section_scope") == "required")
     # Normalization can return its input unchanged for noncanonical saved ASTs.
     return deepcopy(validated) if validated is result else validated
 

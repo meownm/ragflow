@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -102,6 +104,24 @@ def test_editor_can_keep_compiled_sql_without_execution_right(database):
     assert sql_query_runs.BusinessDocumentSqlQueryRun.select().count() == 0
 
 
+def test_editor_can_save_specification_document_without_running_sql(database):
+    completed = sql_query_runs.BusinessDocumentSqlRunService.complete(
+        "tenant-1",
+        "author-1",
+        database,
+        {"schema_version": "1", "expected_state_version": 1, "idempotency_key": "spec-only"},
+        access_role="AUTHOR_EDITOR",
+    )
+    assert completed["rows_status"] == "NOT_EXECUTED"
+    assert completed["document"]["execution_status"] == "NOT_EXECUTED"
+    assert completed["document"]["python_status"] == "NOT_EXECUTED"
+    assert completed["document"]["checks"]["status"] == "NOT_EXECUTED"
+    assert completed["document"]["run_id"] is None
+    assert completed["document"]["row_count"] is None
+    assert sql_query_runs.BusinessDocumentSqlQueryRun.select().count() == 0
+    assert sql_query_runs.BusinessDocumentSqlQueryArtifact.get_by_id(completed["document_id"]).payload == completed["document"]
+
+
 def test_worker_rechecks_execution_role_before_postgres(database, monkeypatch):
     queued = sql_query_runs.BusinessDocumentSqlRunService.run(
         "tenant-1",
@@ -150,16 +170,20 @@ def test_failed_latest_run_keeps_older_ready_run_available(database):
 
 
 def test_catalog_version_change_blocks_execution(monkeypatch):
+    loops = []
     table = SimpleNamespace(id="table-1", version=2, schema_fingerprint="sha256:old", fqn="svc.db.public.sales")
     monkeypatch.setattr(sql_query_runs, "parse_schema_snapshot", lambda _: SimpleNamespace(tables=[table]))
 
     async def load_entities(*args):
+        loops.append(asyncio.get_running_loop())
         return {"entities": [{"entity_id": "table-1", "lookup": {"status": "OK"}, "freshness": {"stale": False}, "entity": {"version": 3, "schema_fingerprint": "sha256:new", "fqn": table.fqn}}]}
 
     monkeypatch.setattr(sql_query_runs.BusinessDocumentSqlQuerySchemaService, "load_entities", load_entities)
-    with pytest.raises(ConflictError) as error:
-        sql_query_runs._verify_schema({"schema_snapshot": {}}, "author-1", False, "AUTHOR_CREATOR")
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with pytest.raises(ConflictError) as error:
+            executor.submit(sql_query_runs._verify_schema, {"schema_snapshot": {}}, "author-1", False, "AUTHOR_CREATOR").result()
     assert error.value.code == "SQL_SCHEMA_STALE"
+    assert len(loops) == 1 and loops[0].is_closed()
 
 
 def test_run_preview_and_completion_purge_rows(database):
@@ -184,6 +208,8 @@ def test_run_preview_and_completion_purge_rows(database):
         {"schema_version": "1", "expected_state_version": 2, "idempotency_key": "complete-1", "run_id": run["run_id"]},
     )
     assert completed["rows_status"] == "PURGED"
+    assert completed["document"]["execution_status"] == "READY"
+    assert completed["document"]["python_status"] == "NO_SAVED_RESULT"
     assert "rows" not in completed["document"]
     saved = sql_query_runs.BusinessDocumentSqlQueryRun.get_by_id(run["run_id"])
     assert saved.rows == [] and saved.status == "PURGED"

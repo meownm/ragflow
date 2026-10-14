@@ -1209,11 +1209,15 @@ export async function checkBusinessDocumentEvaUpdate(documentId: string) {
 export async function rebindBusinessDocumentToEva(
   documentId: string,
   expectedStateVersion: number,
+  evaPageUrl?: string,
 ) {
   try {
     const response = await request.post(
       api.businessDocumentEvaRebind(documentId),
-      { expected_state_version: expectedStateVersion },
+      {
+        expected_state_version: expectedStateVersion,
+        ...(evaPageUrl ? { eva_page_url: evaPageUrl } : {}),
+      },
       requestConfig(),
     );
     return unwrap<BusinessDocumentProjection>(response.data);

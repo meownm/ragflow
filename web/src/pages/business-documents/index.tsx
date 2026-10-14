@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import {
   Popover,
   PopoverContent,
@@ -1075,10 +1076,8 @@ export default function BusinessDocumentsPage() {
       navigate(Routes.BusinessDocuments);
     },
   });
-  const evaPageUrl = document?.eva_binding?.page_url;
-  const evaAccess = useEvaAccess(
-    Boolean(documentId && !changeId && evaPageUrl),
-  );
+  const [initialEvaPageUrl, setInitialEvaPageUrl] = useState('');
+  const evaAccess = useEvaAccess(Boolean(documentId && !changeId));
   const hasPersonalEvaToken = evaAccess.data?.state === 'AVAILABLE';
   const currentRevisionId = document?.current_revision?.revision_id;
   const evaUpdateQuery = useQuery({
@@ -1256,9 +1255,15 @@ export default function BusinessDocumentsPage() {
     },
   });
   const rebindEvaMutation = useMutation({
-    mutationFn: () => {
+    mutationFn: (pageUrl?: string) => {
       if (!documentId || !document) throw new Error('Документ не загружен');
-      return rebindBusinessDocumentToEva(documentId, document.state_version);
+      return pageUrl
+        ? rebindBusinessDocumentToEva(
+            documentId,
+            document.state_version,
+            pageUrl,
+          )
+        : rebindBusinessDocumentToEva(documentId, document.state_version);
     },
     onSuccess: (updatedDocument) => {
       queryClient.setQueryData(
@@ -1642,6 +1647,60 @@ export default function BusinessDocumentsPage() {
       </header>
 
       <div aria-live="polite">
+        {!document.eva_binding &&
+          document.permissions?.edit !== false &&
+          document.lifecycle_state !== 'ARCHIVED' && (
+            <div className="space-y-2 border-b border-border-button px-5 py-3">
+              <EvaAccessNotice
+                access={evaAccess}
+                error={rebindEvaMutation.error}
+                returnTo={`${Routes.BusinessDocuments}/${documentId}`}
+                onRetry={() => rebindEvaMutation.reset()}
+              />
+              <form
+                className="flex max-w-3xl items-center gap-2"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (
+                    !isBusy &&
+                    hasPersonalEvaToken &&
+                    initialEvaPageUrl.trim()
+                  ) {
+                    rebindEvaMutation.mutate(initialEvaPageUrl.trim());
+                  }
+                }}
+              >
+                <Input
+                  aria-label="Ссылка на страницу EVA"
+                  placeholder="Ссылка на учебную или рабочую страницу EVA"
+                  value={initialEvaPageUrl}
+                  onChange={(event) => setInitialEvaPageUrl(event.target.value)}
+                  maxLength={2048}
+                  disabled={isBusy || rebindEvaMutation.isPending}
+                />
+                <Button
+                  type="submit"
+                  disabled={
+                    isBusy ||
+                    !hasPersonalEvaToken ||
+                    !initialEvaPageUrl.trim() ||
+                    rebindEvaMutation.isPending
+                  }
+                >
+                  Связать с EVA
+                </Button>
+              </form>
+              <p className="text-xs text-text-secondary">
+                Привязка сохраняет текущую ревизию. Чтение обновления и
+                публикация выполняются отдельно.
+              </p>
+              {rebindEvaMutation.error && (
+                <p className="text-xs text-state-error" role="alert">
+                  {rebindEvaMutation.error.message}
+                </p>
+              )}
+            </div>
+          )}
         {document.eva_binding && (
           <div
             className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border-button px-5 py-3 text-xs"
@@ -1678,7 +1737,7 @@ export default function BusinessDocumentsPage() {
                         rebindEvaMutation.isPending
                       }
                       loading={rebindEvaMutation.isPending}
-                      onClick={() => rebindEvaMutation.mutate()}
+                      onClick={() => rebindEvaMutation.mutate(undefined)}
                       data-testid="rebind-business-document-to-eva"
                     >
                       <RefreshCw className="size-3.5" />

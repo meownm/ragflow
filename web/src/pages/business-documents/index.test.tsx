@@ -978,6 +978,58 @@ test('reconnects a linked EVA page before offering its newer version', async () 
   );
 });
 
+test('attaches an existing assigned document without creating a new revision', async () => {
+  const connected = {
+    ...projection,
+    state_version: 19,
+    eva_binding: {
+      page_url: 'https://eva.example.com/project/Document/BR-42',
+      status: 'CONNECTED' as const,
+      capabilities: [
+        'OPEN' as const,
+        'PULL_FROM_EVA' as const,
+        'CREATE_EVA_CHANGE' as const,
+      ],
+      document_name: 'Корпоративные новости',
+    },
+  };
+  mockedRebindEvaDocument.mockResolvedValueOnce(connected);
+  renderPage();
+  const input = await screen.findByRole('textbox', {
+    name: 'Ссылка на страницу EVA',
+  });
+  fireEvent.change(input, {
+    target: { value: connected.eva_binding.page_url },
+  });
+  const bind = screen.getByRole('button', { name: 'Связать с EVA' });
+  await waitFor(() => expect(bind).toBeEnabled());
+  fireEvent.click(bind);
+  await waitFor(() =>
+    expect(mockedRebindEvaDocument).toHaveBeenCalledWith(
+      'doc-1',
+      18,
+      connected.eva_binding.page_url,
+    ),
+  );
+  expect(
+    await screen.findByTestId('business-document-eva-binding'),
+  ).toHaveTextContent('Корпоративные новости');
+  expect(mockedCreate).not.toHaveBeenCalled();
+  expect(mockedSubmit).not.toHaveBeenCalled();
+});
+
+test('does not offer initial EVA binding to a read-only user', async () => {
+  mockedFetch.mockResolvedValueOnce({
+    ...projection,
+    permissions: { read: true, edit: false, delete: false },
+  });
+  renderPage();
+  await screen.findByTestId('business-document-workbench');
+  expect(
+    screen.queryByRole('button', { name: 'Связать с EVA' }),
+  ).not.toBeInTheDocument();
+});
+
 test('reconnects a link-only EVA page after a connector becomes available', async () => {
   const linkOnly = {
     ...projection,

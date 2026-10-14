@@ -10,6 +10,8 @@ from api.apps.business_documents.runtime import document_writer, eva_synchroniza
 from api.db.db_models import BusinessDocument, BusinessDocumentEvent, BusinessDocumentEvaBinding, BusinessDocumentRevision
 from business_documents.application.errors import BusinessDocumentError, ValidationError
 from business_documents.domain.content import apply_change_plan, section_hash
+from business_documents.domain.access import BusinessDocumentRole
+from api.apps.business_documents.adapters.queries import load_eva_bindings
 
 
 @pytest.fixture()
@@ -238,6 +240,43 @@ def test_eva_rebind_rechecks_owner_after_resolving_page(database, monkeypatch):
         eva_synchronization.rebind_eva(TENANT, AUTHOR, document["document_id"], {"expected_state_version": document["state_version"]})
     assert caught.value.code == "DOCUMENT_PERMISSION_DENIED"
     assert not BusinessDocumentEvent.select().where(BusinessDocumentEvent.event_type == "EvaBindingResolved").exists()
+
+
+def test_attach_preserves_document_and_reconstructs_binding_from_history(database, monkeypatch):
+    document = _request_and_complete_draft(_create())
+    page = {
+        "page_url": "https://eva.example.test/project/Document/new",
+        "status": "CONNECTED",
+        "capabilities": ["OPEN", "PULL_FROM_EVA", "CREATE_EVA_CHANGE"],
+        "connector_id": "eva-connector",
+        "document_id": "eva-new-page",
+    }
+    monkeypatch.setattr(eva_synchronization._source, "resolve_page_url", lambda *_: deepcopy(page))
+    before = deepcopy(BusinessDocument.get_by_id(document["document_id"]).__data__)
+    revisions = BusinessDocumentRevision.select().count()
+    attached = eva_synchronization.rebind_eva(
+        TENANT, AUTHOR, document["document_id"], {"expected_state_version": document["state_version"], "eva_page_url": page["page_url"]}, access_role=BusinessDocumentRole.AUTHOR_EDITOR
+    )
+    assert attached["eva_binding"] == page
+    after = BusinessDocument.get_by_id(document["document_id"]).__data__
+    for key in ("owner_id", "current_revision_id", "active_review_cycle", "lifecycle_state", "title"):
+        assert after[key] == before[key]
+    assert BusinessDocumentRevision.select().count() == revisions
+    BusinessDocumentEvaBinding.delete().where(BusinessDocumentEvaBinding.document_id == document["document_id"]).execute()
+    assert load_eva_bindings({document["document_id"]}) == {document["document_id"]: page}
+
+
+def test_attach_occupied_page_rolls_back_version_and_event(database, monkeypatch):
+    existing, page = connected_document(monkeypatch)
+    other = _request_and_complete_draft(_create(title="Other document"))
+    monkeypatch.setattr(eva_synchronization._source, "resolve_page_url", lambda *_: deepcopy(existing["eva_binding"]))
+    events = BusinessDocumentEvent.select().count()
+    with pytest.raises(BusinessDocumentError) as caught:
+        eva_synchronization.rebind_eva(TENANT, AUTHOR, other["document_id"], {"expected_state_version": other["state_version"], "eva_page_url": page["page_url"]})
+    assert caught.value.code == "EVA_PAGE_ALREADY_LINKED"
+    assert BusinessDocument.get_by_id(other["document_id"]).state_version == other["state_version"]
+    assert BusinessDocumentEvent.select().count() == events
+    assert not BusinessDocumentEvaBinding.select().where(BusinessDocumentEvaBinding.document_id == other["document_id"]).exists()
 
 
 def test_applied_ast_owns_changed_and_unchanged_content_without_mutating_inputs():

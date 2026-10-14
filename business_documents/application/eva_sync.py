@@ -172,22 +172,31 @@ class EvaSynchronization:
         access = DocumentAccess(actor_id, access_role, is_admin)
         document = _require_edit(self._reader.document(document_id), access, expected, "The document changed since it was loaded")
         _require_rebind(document)
-        binding = self._binding(document_id)
-        resolved = self._source.resolve_page_url(actor_id, binding["page_url"])
+        binding = self._reader.bindings({document_id}).get(document_id)
+        page_url = raw.get("eva_page_url")
+        if binding:
+            if page_url is not None and page_url != binding["page_url"]:
+                raise ConflictError("EVA_BINDING_EXISTS", "The document is already linked to an EVA page")
+            page_url = binding["page_url"]
+        elif page_url is None:
+            raise ConflictError("EVA_BINDING_MISSING", "The document has no EVA page link")
+        if not isinstance(page_url, str) or not page_url.strip():
+            raise ValidationError("INVALID_EVA_BINDING", "eva_page_url must be a non-empty string")
+        resolved = self._source.resolve_page_url(actor_id, page_url.strip())
         if resolved.get("status") != "CONNECTED":
             raise ConflictError("EVA_BINDING_UNAVAILABLE", "No accessible EVA connector matches the linked page", {"document_code": resolved.get("document_code")})
         with self._writer.transaction():
             document = _require_edit(self._writer.lock_document(document_id), access, expected, "The document changed during EVA reconnection")
             _require_rebind(document)
             latest_binding = self._reader.bindings({document_id}).get(document_id)
-            if not latest_binding or latest_binding.get("page_url") != binding.get("page_url"):
+            if bool(latest_binding) != bool(binding) or (binding and latest_binding.get("page_url") != binding.get("page_url")):
                 raise ConflictError("EVA_BINDING_CONFLICT", "The EVA link changed during reconnection")
             version = document["state_version"] + 1
             document = self._writer.update_document(document, {"state_version": version, "last_error": None})
             self._writer.append_event(
                 document_id, version, "EvaBindingResolved", "USER", actor_id, {"document_title": document["title"], "previous_eva_binding": latest_binding, "eva_binding": resolved}, self._new_id()
             )
-            self._writer.store_binding(document_id, resolved, replace=True)
+            self._writer.store_binding(document_id, resolved, replace=bool(binding))
         return self._queries.project(document, access)
 
     def create_eva_change_from_revision(

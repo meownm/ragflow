@@ -25,13 +25,13 @@ def binding_from_events(events: Iterable[Mapping[str, Any]]) -> dict[str, Any] |
         elif event["event_type"] == "EvaDocumentPulled":
             pull = event
     raw = created["payload"].get("eva_binding") if created and isinstance(created["payload"], dict) else None
-    if not isinstance(raw, dict) or not raw.get("page_url"):
-        return None
-    binding = dict(raw)
     if resolution and isinstance(resolution["payload"], dict):
         resolved = resolution["payload"].get("eva_binding")
         if isinstance(resolved, dict) and resolved.get("page_url"):
-            binding = dict(resolved)
+            raw = resolved
+    if not isinstance(raw, dict) or not raw.get("page_url"):
+        return None
+    binding = dict(raw)
     if pull and (resolution is None or pull["sequence"] > resolution["sequence"]):
         binding.update(
             remote_version=pull["payload"].get("remote_version"),

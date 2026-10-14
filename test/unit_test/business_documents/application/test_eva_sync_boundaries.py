@@ -9,6 +9,7 @@ import pytest
 from business_documents.application.documents import MAX_EVA_MARKDOWN_SIZE
 from business_documents.application.errors import BusinessDocumentError, ValidationError
 from business_documents.application.eva_sync import EvaSynchronization
+from business_documents.domain.access import BusinessDocumentRole
 from test.unit_test.business_documents.application.test_queries_boundaries import document
 
 
@@ -217,6 +218,47 @@ def test_rebind_failure_does_not_publish_binding_or_event(eva, damage, code):
     writer.update_document.assert_not_called()
     writer.append_event.assert_not_called()
     writer.store_binding.assert_not_called()
+
+
+def test_editor_can_attach_existing_document_without_changing_its_revision(eva):
+    scenario, reader, writer, source, _ = eva
+    reader.bindings.return_value = {}
+    before = deepcopy(reader.document.return_value)
+    result = scenario.rebind_eva("tenant", "owner", "doc", {"expected_state_version": 7, "eva_page_url": " https://eva/new-page "}, access_role=BusinessDocumentRole.AUTHOR_EDITOR)
+    source.resolve_page_url.assert_called_once_with("owner", "https://eva/new-page")
+    assert result["state_version"] == 8
+    assert reader.document.return_value == before
+    writer.update_document.assert_called_once_with(before, {"state_version": 8, "last_error": None})
+    writer.store_binding.assert_called_once_with("doc", source.resolve_page_url.return_value, replace=False)
+    assert writer.append_event.call_args.args[5]["previous_eva_binding"] is None
+
+
+@pytest.mark.parametrize("page_url", ["", " ", 42, [], {}])
+def test_initial_binding_rejects_invalid_url_before_network(eva, page_url):
+    scenario, reader, writer, source, _ = eva
+    reader.bindings.return_value = {}
+    with pytest.raises(ValidationError) as caught:
+        scenario.rebind_eva("tenant", "owner", "doc", {"expected_state_version": 7, "eva_page_url": page_url})
+    assert caught.value.code == "INVALID_EVA_BINDING"
+    assert source.mock_calls == writer.mock_calls == []
+
+
+def test_initial_binding_detects_binding_created_during_remote_resolution(eva):
+    scenario, reader, writer, _, _ = eva
+    reader.bindings.side_effect = [{}, {"doc": binding()}]
+    with pytest.raises(BusinessDocumentError) as caught:
+        scenario.rebind_eva("tenant", "owner", "doc", {"expected_state_version": 7, "eva_page_url": "https://eva/new-page"})
+    assert caught.value.code == "EVA_BINDING_CONFLICT"
+    writer.update_document.assert_not_called()
+    writer.store_binding.assert_not_called()
+
+
+def test_initial_binding_cannot_replace_existing_page(eva):
+    scenario, _, writer, source, _ = eva
+    with pytest.raises(BusinessDocumentError) as caught:
+        scenario.rebind_eva("tenant", "owner", "doc", {"expected_state_version": 7, "eva_page_url": "https://eva/new-page"})
+    assert caught.value.code == "EVA_BINDING_EXISTS"
+    assert source.mock_calls == writer.mock_calls == []
 
 
 @pytest.mark.parametrize(

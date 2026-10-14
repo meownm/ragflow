@@ -213,7 +213,7 @@ class RAGFlowLLMAdapter:
                 raise ValueError("Quality model override requires Ollama")
             model_config = {**model_config, "llm_name": self._model_name_override, "max_tokens": 4096}
         task_type = input_payload.get("job_input", {}).get("task_type")
-        max_completion_tokens = 8192 if task_type in {"GENERATE_DRAFT", "GENERATE_EVA_CHANGE"} else 4096
+        max_completion_tokens = 8192 if task_type in {"GENERATE_DRAFT", "GENERATE_EVA_CHANGE", "PLAN_CHANGES"} else 4096
         generation_parameters = {
             "temperature": 0,
             "top_p": 0.1,

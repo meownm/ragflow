@@ -51,7 +51,7 @@ def test_worker_loop_is_closed_after_operation_finishes():
 
 
 @pytest.mark.p1
-@pytest.mark.parametrize(("task_type", "expected_limit"), [("GENERATE_DRAFT", 8192), ("ASSESS_INTAKE", 4096)])
+@pytest.mark.parametrize(("task_type", "expected_limit"), [("GENERATE_DRAFT", 8192), ("PLAN_CHANGES", 8192), ("ASSESS_INTAKE", 4096)])
 def test_llm_adapter_preserves_tenant_prompt_payload_and_retry_contract(monkeypatch, task_type, expected_limit):
     lookup_calls = []
     bundle_calls = []

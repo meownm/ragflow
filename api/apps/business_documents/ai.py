@@ -46,6 +46,9 @@ from business_documents.application.errors import ValidationError
 from business_documents.domain.content import render_section_text
 from business_documents.domain.change_stream import ChangeOperationStream
 from business_documents.domain.content_quality import parent_child_section_pairs, semantic_duplicate_section_pairs
+from business_documents.domain.requirement_coverage import requirement_fragments, validate_requirement_coverage
+from business_documents.domain.change_plan import added_subsection_scopes
+from business_documents.domain.errors import RuleViolation
 from api.db.db_models import BusinessDocumentJob
 
 
@@ -100,6 +103,33 @@ def _active_change_input_event_ids(job_payload: dict[str, Any]) -> list[str]:
         if isinstance(comment, dict) and isinstance(comment.get("source_event_id"), str):
             event_ids.append(comment["source_event_id"])
     return list(dict.fromkeys(event_ids))
+
+
+def _confirmed_requirement_fragments(payload: dict[str, Any]) -> dict[str, dict[str, str]]:
+    active = set(_active_change_input_event_ids(payload))
+    protocol = payload.get("protocol") or {}
+    sources: dict[str, str] = {}
+    contexts: dict[str, str] = {}
+    for comment in protocol.get("comments", []):
+        event_id = comment.get("source_event_id")
+        if event_id in active and (comment.get("disposition") or {}).get("disposition") == "CONFIRMED_CHANGE":
+            sources[event_id] = comment["text"]
+    for proposal in protocol.get("proposals", []):
+        event_id = proposal.get("decision_event_id")
+        if event_id in active and proposal.get("decision") == "ACCEPTED":
+            sources[event_id] = proposal["text"]
+    for question in protocol.get("questions", []):
+        answer = question.get("answer") or {}
+        event_id = answer.get("source_event_id")
+        if event_id in active:
+            selected = next((option for option in question.get("options", []) if option.get("option_id") == answer.get("selected_option_id")), {})
+            sources[event_id] = answer.get("custom_answer") or selected.get("label") or ""
+            contexts[event_id] = question["text"]
+    fragments = requirement_fragments(sources)
+    for fragment in fragments.values():
+        if fragment["source_id"] in contexts:
+            fragment["context"] = contexts[fragment["source_id"]]
+    return fragments
 
 
 def _has_pinned_active_change_inputs(job_payload: dict[str, Any]) -> bool:
@@ -213,7 +243,7 @@ class RAGFlowLLMAdapter:
                 raise ValueError("Quality model override requires Ollama")
             model_config = {**model_config, "llm_name": self._model_name_override, "max_tokens": 4096}
         task_type = input_payload.get("job_input", {}).get("task_type")
-        max_completion_tokens = 8192 if task_type in {"GENERATE_DRAFT", "GENERATE_EVA_CHANGE", "PLAN_CHANGES"} else 4096
+        max_completion_tokens = 8192 if task_type in {"GENERATE_DRAFT", "GENERATE_EVA_CHANGE", "PLAN_CHANGES", "VERIFY_REQUIREMENT_COVERAGE"} else 4096
         generation_parameters = {
             "temperature": 0,
             "top_p": 0.1,
@@ -312,9 +342,16 @@ class PromptBundle:
 class BusinessDocumentAI:
     def __init__(self, adapter: BusinessDocumentAIAdapter | None = None):
         self._adapter = adapter or RAGFlowLLMAdapter()
+        self._plan_audit: dict[str, Any] | None = None
+        self._verification_audits: list[dict[str, Any]] = []
 
     def consume_execution_audit(self) -> dict[str, Any] | None:
         consumer = getattr(self._adapter, "consume_execution_audit", None)
+        if self._plan_audit is not None:
+            audit, self._plan_audit = self._plan_audit, None
+            verification = self._verification_audits[0] if len(self._verification_audits) == 1 else self._verification_audits
+            self._verification_audits = []
+            return {**audit, **({"verification": verification} if verification else {})}
         return consumer() if callable(consumer) else None
 
     def process(
@@ -325,6 +362,8 @@ class BusinessDocumentAI:
     ) -> dict[str, Any]:
         if job.job_type not in _AI_JOB_TYPES:
             raise ValidationError("INVALID_AI_JOB", "Job type is not handled by the AI worker", {"job_type": job.job_type})
+        self._plan_audit = None
+        self._verification_audits = []
         prompt = self._prompt(job, evidence)
         stream_generate = getattr(self._adapter, "generate_stream", None)
         if job.job_type == "PLAN_CHANGES" and job.payload.get("preview_only") is True and on_section_preview is not None and callable(stream_generate):
@@ -352,7 +391,60 @@ class BusinessDocumentAI:
         parsed = self._bind_change_plan_source_sections(job, parsed)
         parsed = self._bind_exact_draft_evidence_refs(job, parsed, evidence)
         parsed = self._filter_evidence_refs(parsed, evidence)
-        return self._validate(job, parsed)
+        validated = self._validate(job, parsed)
+        if job.job_type == "PLAN_CHANGES":
+            consumer = getattr(self._adapter, "consume_execution_audit", None)
+            self._plan_audit = consumer() if callable(consumer) else None
+            validated["requirement_coverage"] = self._verify_requirements(job, validated["change_plan"])
+        return validated
+
+    def _verify_requirements(self, job: BusinessDocumentJob, plan: dict[str, Any]) -> dict[str, Any]:
+        fragments = _confirmed_requirement_fragments(job.payload)
+        sources: dict[str, str] = {}
+        # Pulling EVA supplies review context, not acceptance of every remote
+        # change. Accepted proposals and author answers above own that decision.
+        base = job.payload["current_revision"]["document_ast"]
+        changed_sections = {operation["section_id"] for operation in plan["operations"]}
+        for section in base["sections"]:
+            if section["id"] in changed_sections:
+                sources[f"section:{section['id']}"] = render_section_text(section)
+        fragments.update(requirement_fragments(sources))
+        final = apply_change_plan(base, plan)
+        blocks = {f"{section['id']}:{index}": text for section in final["sections"] for index, block in enumerate(section["blocks"]) if (text := render_section_text({"blocks": [block]})).strip()}
+        section_titles = {section["id"]: section["title"] for section in published_template()["sections"]} | {section["id"]: section["title"] for section in final["sections"]}
+        if not fragments:
+            return {"checks": []}
+        checks = []
+        fragment_ids = list(fragments)
+        consumer = getattr(self._adapter, "consume_execution_audit", None)
+        for offset in range(0, len(fragment_ids), 24):
+            batch = {key: fragments[key] for key in fragment_ids[offset : offset + 24]}
+            replacements = (
+                {key: value for key, value in fragments.items() if not value["source_id"].startswith("section:")} if any(value["source_id"].startswith("section:") for value in batch.values()) else {}
+            )
+            raw = self._adapter.generate(
+                job.tenant_id,
+                prompt_text("requirement_coverage"),
+                {"job_input": {"task_type": "VERIFY_REQUIREMENT_COVERAGE", "fragments": batch, "replacement_fragments": replacements, "final_blocks": blocks, "section_titles": section_titles}},
+            )
+            audit = consumer() if callable(consumer) else None
+            if audit:
+                self._verification_audits.append(audit)
+            report = self._parse(raw)
+            batch_checks = report.get("checks")
+            if (
+                set(report) != {"checks"}
+                or not isinstance(batch_checks, list)
+                or len(batch_checks) != len(batch)
+                or any(not isinstance(check, dict) or not isinstance(check.get("fragment_id"), str) for check in batch_checks)
+                or {check["fragment_id"] for check in batch_checks} != set(batch)
+            ):
+                raise ValidationError("INVALID_REQUIREMENT_COVERAGE", "Requirement verification must check exactly the requested fragments")
+            checks.extend(batch_checks)
+        try:
+            return validate_requirement_coverage({"checks": checks}, fragments, blocks)
+        except RuleViolation as error:
+            raise ValidationError(error.code, error.message, error.details) from error
 
     def process_stream(
         self,
@@ -433,6 +525,10 @@ class BusinessDocumentAI:
         if not isinstance(pinned, dict) or pinned != current:
             raise ValidationError("PROMPT_ASSET_CHANGED", "The prompt pinned by the job is unavailable or has changed")
         schemas = {name: contract_schema(name) for name in contract_names}
+        if job.job_type == "PLAN_CHANGES":
+            base_document = (job.payload.get("current_revision") or {}).get("document_ast") or {}
+            document_contract = "document_draft_v2" if base_document.get("schema_version") == "2" else "document_draft"
+            schemas["document_draft"] = contract_schema(document_contract)
         trusted_assets = {
             "published_template": published_template(),
             "process_policy": process_policy(),
@@ -472,6 +568,14 @@ class BusinessDocumentAI:
                 "proposals соответствует массиву proposals из review_plan."
             )
         job_input = deepcopy(job.payload)
+        if job.job_type == "PLAN_CHANGES":
+            job_input["confirmed_requirement_fragments"] = _confirmed_requirement_fragments(job.payload)
+        previous_error = getattr(job, "error", None)
+        if job.job_type == "PLAN_CHANGES" and isinstance(previous_error, dict) and previous_error.get("code") == "REQUIREMENT_COVERAGE_FAILED":
+            details = previous_error.get("details")
+            requirements = details.get("requirements") if isinstance(details, dict) else None
+            if isinstance(requirements, list) and requirements:
+                job_input["requirement_coverage_feedback"] = deepcopy(requirements)
         if job.job_type == "ASSESS_REVIEW":
             closed_questions, resolved_comment_questions = _closed_review_question_context(job_input)
             if closed_questions:
@@ -886,9 +990,14 @@ class BusinessDocumentAI:
             acknowledgements = []
             bound["acknowledged_no_change_event_ids"] = acknowledgements
         operations_by_section: dict[str, list[dict[str, Any]]] = {}
+        operation_scopes: dict[int, frozenset[str]] = {}
+        base_document = (job.payload.get("current_revision") or {}).get("document_ast") or {}
         for operation in bound["operations"]:
             if isinstance(operation, dict) and isinstance(operation.get("section_id"), str):
-                operations_by_section.setdefault(operation["section_id"], []).append(operation)
+                scopes = frozenset({operation["section_id"]}) | added_subsection_scopes(base_document, operation)
+                operation_scopes[id(operation)] = scopes
+                for section_id in scopes:
+                    operations_by_section.setdefault(section_id, []).append(operation)
 
         for operation in bound["operations"]:
             if not isinstance(operation, dict) or not isinstance(operation.get("source_event_ids"), list):
@@ -900,13 +1009,14 @@ class BusinessDocumentAI:
                     changed = True
                 target_section = source_sections.get(event_id)
                 targets = operations_by_section.get(target_section, []) if target_section is not None else []
-                if target_section is not None and target_section != operation.get("section_id") and len(targets) == 1:
+                targets_current = target_section in operation_scopes.get(id(operation), frozenset())
+                if event_id not in confirmed_comment_sources and target_section is not None and not targets_current and len(targets) == 1:
                     target_sources = targets[0].get("source_event_ids")
                     if isinstance(target_sources, list) and event_id not in target_sources:
                         target_sources.append(event_id)
                     changed = True
                     continue
-                if target_section is not None and target_section != operation.get("section_id") and event_id not in accepted_proposal_sources:
+                if event_id not in confirmed_comment_sources and target_section is not None and not targets_current and event_id not in accepted_proposal_sources:
                     if event_id not in acknowledgements:
                         acknowledgements.append(event_id)
                     changed = True

@@ -421,6 +421,7 @@ def _run_model_case(case: dict[str, Any], tenant_id: str, audits: list[dict[str,
 
 
 def _aggregate_ai_audits(audits: list[dict[str, Any]]) -> dict[str, Any] | None:
+    audits = [step for audit in audits for step in [audit, *(audit["verification"] if isinstance(audit.get("verification"), list) else [audit["verification"]] if audit.get("verification") else [])]]
     if not audits:
         return None
     identities = {(audit["provider"], audit["model"], audit["model_type"]) for audit in audits}

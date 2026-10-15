@@ -47,9 +47,9 @@ class ReviewState:
     def open_question_ids(self, stage: str) -> list[str]:
         return [row["id"] for row in self.questions if row["stage"] == stage and row["id"] not in self.answers]
 
-    def assessment_is_current(self, event_type: str, invalidating_types: Iterable[str], review_cycle: int) -> bool:
+    def assessment_is_current(self, event_type: str, invalidating_types: Iterable[str], review_cycle: int, *, outcomes: tuple[str, ...] = ("COMPLETE",)) -> bool:
         assessment = self.assessments.get((event_type, review_cycle))
-        return bool(assessment and assessment["payload"].get("outcome") == "COMPLETE" and assessment["sequence"] > max((self.latest_sequences.get(kind, 0) for kind in invalidating_types), default=0))
+        return bool(assessment and assessment["payload"].get("outcome") in outcomes and assessment["sequence"] > max((self.latest_sequences.get(kind, 0) for kind in invalidating_types), default=0))
 
     @property
     def intake_complete(self) -> bool:
@@ -58,6 +58,17 @@ class ReviewState:
     @property
     def review_complete(self) -> bool:
         return self.assessment_is_current("ReviewAssessed", REVIEW_FEEDBACK, self.review_cycle)
+
+    @property
+    def applicable_inputs(self) -> frozenset[str]:
+        """Defer ambiguous comments until their clarifying answers are assessed."""
+        return frozenset(event_id for event_id in self.active_inputs if self.comment_dispositions.get(event_id, {}).get("disposition") != "NEEDS_QUESTION")
+
+    @property
+    def review_changes_ready(self) -> bool:
+        return self.review_complete or bool(
+            self.open_question_ids("REVIEW") and self.applicable_inputs and self.assessment_is_current("ReviewAssessed", REVIEW_FEEDBACK, self.review_cycle, outcomes=("NEEDS_INPUT",))
+        )
 
 
 def build_review_state(

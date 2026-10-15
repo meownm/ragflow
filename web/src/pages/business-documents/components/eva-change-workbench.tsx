@@ -138,7 +138,9 @@ export function EvaChangeWorkbench({ changeId }: { changeId: string }) {
     onError: async (error, variables) => {
       if (error instanceof BusinessDocumentConflictError) {
         if (
-          error.code === 'EVA_SOURCE_VERSION_CONFLICT' &&
+          ['EVA_SOURCE_VERSION_CONFLICT', 'EVA_DRAFT_CONFLICT'].includes(
+            error.code,
+          ) &&
           ['PREPARE_EVA_DRAFT', 'PUBLISH_EVA'].includes(variables.action)
         ) {
           setHasConflict(false);
@@ -700,9 +702,10 @@ export function EvaChangeWorkbench({ changeId }: { changeId: string }) {
           <AlertDialogHeader>
             <AlertDialogTitle>Перезаписать документ EVA?</AlertDialogTitle>
             <AlertDialogDescription>
-              Опубликованный документ EVA изменился после создания этой заявки.
-              Подтверждение заменит внешние изменения согласованной версией из
-              системы «Агент Раггер».
+              Документ EVA или его неопубликованный черновик отличается от этой
+              заявки. Продолжение заменит неопубликованный черновик, в том числе
+              чужие изменения. Подтверждение заменит внешние изменения
+              согласованной версией из системы «Агент Раггер».
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

@@ -1,7 +1,7 @@
 {
   "schema_version": "1",
   "suite_id": "business-requirements-dialogues",
-  "suite_version": "2.0.0",
+  "suite_version": "2.1.0",
   "language": "ru",
   "cases": [
     {
@@ -159,9 +159,9 @@
       ]
     },
     {
-      "id": "G08_open_question_locks_body",
+      "id": "G08_partial_changes_preserve_open_questions",
       "priority": "P0",
-      "category": "negative",
+      "category": "positive",
       "turns": [
         {
           "role": "agent",
@@ -173,9 +173,11 @@
         }
       ],
       "assertions": [
-        "command_rejected=OPEN_REVIEW_QUESTIONS",
-        "revision_unchanged",
-        "body_hash_unchanged"
+        "ready_change_applied",
+        "unanswered_question_preserved",
+        "lifecycle_state=REVIEW",
+        "review_cycle_unchanged",
+        "new_revision_created"
       ]
     },
     {

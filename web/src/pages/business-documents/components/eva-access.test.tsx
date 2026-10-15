@@ -78,6 +78,63 @@ test('removes the warning after access is recovered', () => {
   expect(screen.queryByTestId('eva-access-notice')).not.toBeInTheDocument();
 });
 
+test('dismisses the current warning across checks and shows a changed access state', () => {
+  const rejected = access('REJECTED');
+  const rendered = render(
+    <EvaAccessNotice access={rejected} returnTo="/business-documents/doc-1" />,
+  );
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Закрыть предупреждение EVA' }),
+  );
+  expect(screen.queryByTestId('eva-access-notice')).not.toBeInTheDocument();
+  expect(rejected.refetch).not.toHaveBeenCalled();
+
+  rendered.rerender(
+    <EvaAccessNotice
+      access={{ ...access('REJECTED'), dataUpdatedAt: Date.now() }}
+      returnTo="/business-documents/doc-1"
+    />,
+  );
+  expect(screen.queryByTestId('eva-access-notice')).not.toBeInTheDocument();
+
+  rendered.rerender(
+    <EvaAccessNotice
+      access={access('FORBIDDEN')}
+      returnTo="/business-documents/doc-1"
+    />,
+  );
+  expect(screen.getByTestId('eva-access-notice')).toHaveTextContent(
+    'EVA: нет доступа',
+  );
+});
+
+test('shows a new warning after recovery and a repeated rejection', () => {
+  const rendered = render(
+    <EvaAccessNotice
+      access={access('REJECTED')}
+      returnTo="/business-documents/doc-1"
+    />,
+  );
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Закрыть предупреждение EVA' }),
+  );
+  rendered.rerender(
+    <EvaAccessNotice
+      access={access('AVAILABLE')}
+      returnTo="/business-documents/doc-1"
+    />,
+  );
+  rendered.rerender(
+    <EvaAccessNotice
+      access={access('REJECTED')}
+      returnTo="/business-documents/doc-1"
+    />,
+  );
+  expect(screen.getByTestId('eva-access-notice')).toHaveTextContent(
+    'EVA: обновите токен',
+  );
+});
+
 test('clears a previous token rejection after a newer successful personal access check', () => {
   const error = new BusinessDocumentRequestError(
     'rejected',

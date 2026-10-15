@@ -49,6 +49,7 @@ _PROMPT_FILES = {
     "review": ("review.v1.md", "1"),
     "draft": ("draft.v1.md", "1"),
     "change_planner": ("change_planner.v1.md", "1"),
+    "requirement_coverage": ("requirement_coverage.v1.md", "1"),
     "eva_change": ("eva_change.v1.md", "1"),
     "sql_schema_interpreter": ("sql_schema_interpreter.v1.md", "1"),
     "sql_query_planner": ("sql_query_planner.v1.md", "1"),
@@ -119,6 +120,8 @@ def prompt_descriptor(job_type: str) -> dict[str, str] | None:
         return None
     _, version = _PROMPT_FILES[name]
     content = prompt_text(name)
+    if job_type == "PLAN_CHANGES":
+        content += "\n" + prompt_text("requirement_coverage")
     return {
         "name": name,
         "version": version,

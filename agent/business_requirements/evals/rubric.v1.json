@@ -1,7 +1,7 @@
 {
   "schema_version": "1",
   "rubric_id": "business-requirements-quality",
-  "rubric_version": "1.1.0",
+  "rubric_version": "1.2.0",
   "scoring_range": [0, 4],
   "pass_threshold": 3.2,
   "criteria": [
@@ -38,7 +38,7 @@
     {
       "id": "protocol_integrity",
       "weight": 0.10,
-      "description": "Тело отделено от протокола; история неизменяема; внедрены только подтвержденные изменения после закрытия вопросов."
+      "description": "Тело отделено от протокола; история неизменяема; внедрены только подтвержденные изменения, а открытые вопросы сохраняются в незавершённом ревью."
     },
     {
       "id": "content_nonredundancy",
@@ -47,7 +47,7 @@
     }
   ],
   "hard_failures": [
-    "BODY_CHANGED_WITH_OPEN_QUESTIONS",
+    "REVIEW_CLOSED_WITH_OPEN_QUESTIONS",
     "UNACCEPTED_PROPOSAL_APPLIED",
     "UNSUPPORTED_SECTION_INVENTED",
     "REQUIRED_MONITORING_MISSING",

@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import datetime
 from pathlib import Path
 import sys
@@ -26,7 +27,16 @@ if "api.apps" not in sys.modules:
     sys.modules["api.apps"] = api_apps
 
 from api.apps.business_documents.ai import BusinessDocumentAI
-from api.apps.business_documents.assets import apply_change_plan, import_document_markdown, prompt_descriptor, prompt_text, published_template, render_document_ast, validate_document_ast
+from api.apps.business_documents.assets import (
+    apply_change_plan,
+    contract_schema,
+    import_document_markdown,
+    prompt_descriptor,
+    prompt_text,
+    published_template,
+    render_document_ast,
+    validate_document_ast,
+)
 from business_documents.domain.content import bind_change_plan_section_hashes, section_hash
 from business_documents.application.errors import BusinessDocumentError
 from api.apps.business_documents.exports import BusinessDocumentExportService
@@ -259,6 +269,55 @@ def test_change_plan_can_add_a_numbered_subsection_to_an_existing_parent(databas
     assert next(item for item in changed["sections"] if item["id"] == "4")["blocks"] == parent["blocks"]
 
 
+def test_change_plan_adds_optional_reporting_and_preserves_real_monitoring(database):
+    from copy import deepcopy
+
+    base = _draft()
+    base.update(schema_version="2", section_scope="required")
+    required = {section["id"] for section in published_template()["sections"] if section["required"]}
+    base["sections"] = [section for section in base["sections"] if section["id"] in required]
+    parent = next(section for section in base["sections"] if section["id"] == "5")
+    monitoring = next(section for section in base["sections"] if section["id"] == "5.5")
+    report_blocks = [{"type": "paragraph", "text": "Отчёт содержит сотрудника, новость и время первого подтверждения."}]
+    monitoring_block = {"type": "paragraph", "text": "Мониторинг проверяет работоспособность каждые пять минут."}
+    monitoring["blocks"] = [*report_blocks, monitoring_block]
+    before = deepcopy(base)
+    plan = {
+        "schema_version": "1",
+        "base_revision_id": "base",
+        "source_state_version": 3,
+        "acknowledged_no_change_event_ids": [],
+        "operations": [
+            {
+                "operation_id": "reporting",
+                "type": "REPLACE_SECTION_CONTENT",
+                "section_id": "5",
+                "expected_section_hash": section_hash(parent),
+                "source_event_ids": ["comment-event"],
+                "content": {"blocks": [*parent["blocks"], {"id": "5.4", "title": "Требования к отчетности", "blocks": report_blocks}]},
+            },
+            {
+                "operation_id": "monitoring",
+                "type": "REPLACE_SECTION_CONTENT",
+                "section_id": "5.5",
+                "expected_section_hash": section_hash(monitoring),
+                "source_event_ids": ["comment-event"],
+                "content": {"blocks": [monitoring_block]},
+            },
+        ],
+    }
+
+    result = apply_change_plan(base, plan)
+    sections = {section["id"]: section for section in result["sections"]}
+    assert sections["5.4"]["title"] == "Требования к отчетности"
+    assert sections["5.4"]["blocks"] == report_blocks
+    assert sections["5.5"]["blocks"] == [monitoring_block]
+    assert sections["5"]["blocks"] == parent["blocks"]
+    assert [section["id"] for section in result["sections"]][-3:] == ["5", "5.4", "5.5"]
+    assert "5.2" not in sections and "5.3" not in sections
+    assert base == before
+
+
 @pytest.mark.p0
 def test_document_ast_restores_required_structural_parents_from_child_content(database):
     draft = _draft()
@@ -381,6 +440,213 @@ class CapturingAdapter:
     def generate(self, tenant_id, system_prompt, input_payload):
         self.calls.append((tenant_id, system_prompt, input_payload))
         return self.response
+
+
+def _coverage_job(*, preview_only=True):
+    base = _draft()
+    return SimpleNamespace(
+        job_type="PLAN_CHANGES",
+        tenant_id=TENANT,
+        base_revision_id="base",
+        source_state_version=3,
+        attempt=1,
+        payload={
+            "task_type": "PLAN_CHANGES",
+            "prompt": prompt_descriptor("PLAN_CHANGES"),
+            "preview_only": preview_only,
+            "current_revision": {"document_ast": base},
+            "active_change_input_event_ids": ["comment-event"],
+            "source_events": [{"event_id": "comment-event", "event_type": "AuthorCommentAdded", "payload": {"comment_id": "comment"}}],
+            "protocol": {
+                "comments": [
+                    {
+                        "comment_id": "comment",
+                        "source_event_id": "comment-event",
+                        "section_id": None,
+                        "text": "Хранить 90 дней. Повтор не меняет первую дату.",
+                        "disposition": {"disposition": "CONFIRMED_CHANGE"},
+                    }
+                ]
+            },
+        },
+    )
+
+
+def _coverage_plan():
+    return {
+        "schema_version": "1",
+        "base_revision_id": "base",
+        "source_state_version": 3,
+        "acknowledged_no_change_event_ids": [],
+        "operations": [
+            {
+                "operation_id": "op",
+                "type": "REPLACE_SECTION_CONTENT",
+                "section_id": "1",
+                "expected_section_hash": section_hash(_draft()["sections"][0]),
+                "source_event_ids": ["comment-event"],
+                "content": {"blocks": [{"type": "paragraph", "text": "Хранение 90 дней. Первоначальная дата сохраняется при повторе."}]},
+            }
+        ],
+    }
+
+
+class CoverageAdapter:
+    def __init__(self, *, missing=False):
+        self.missing = missing
+        self.calls = []
+
+    def generate(self, tenant_id, system_prompt, input_payload):
+        self.calls.append(input_payload)
+        if input_payload["job_input"]["task_type"] == "PLAN_CHANGES":
+            return _coverage_plan()
+        fragments = input_payload["job_input"]["fragments"]
+        return {
+            "checks": [
+                {
+                    "fragment_id": key,
+                    "status": "MISSING" if self.missing and key == "comment-event:1" else "NOT_REQUIREMENT" if value["source_id"].startswith("section:") else "PRESENT",
+                    "matches": [] if value["source_id"].startswith("section:") or (self.missing and key == "comment-event:1") else ["1:0"],
+                    "required_section_ids": [],
+                    "superseded_by": None,
+                }
+                for key, value in fragments.items()
+            ]
+        }
+
+
+@pytest.mark.parametrize("preview_only", [False, True])
+def test_change_generation_checks_all_requirements_before_returning_a_result(preview_only):
+    adapter = CoverageAdapter(missing=True)
+    with pytest.raises(BusinessDocumentError) as caught:
+        BusinessDocumentAI(adapter).process(_coverage_job(preview_only=preview_only))
+    assert caught.value.code == "REQUIREMENT_COVERAGE_FAILED"
+    assert caught.value.details["requirements"][0]["source_id"] == "comment-event"
+    assert len(adapter.calls) == 2
+
+
+def test_change_coverage_uses_only_confirmed_inputs_and_selected_answer_text():
+    job = _coverage_job()
+    job.payload["active_change_input_event_ids"] += ["accepted", "rejected", "pending", "answer", "no-change"]
+    job.payload["protocol"]["proposals"] = [
+        {"decision_event_id": decision.lower(), "decision": decision.upper(), "text": text}
+        for decision, text in [("accepted", "Сто пользователей."), ("rejected", "Запрещённая идея."), ("pending", "Неподтверждённая идея.")]
+    ]
+    job.payload["protocol"]["comments"].append({"source_event_id": "no-change", "text": "Ничего не менять.", "disposition": {"disposition": "NO_CHANGE"}})
+    job.payload["protocol"]["questions"] = [
+        {"text": "Какой доступ?", "options": [{"option_id": "chosen", "label": "Только после входа."}], "answer": {"source_event_id": "answer", "selected_option_id": "chosen", "custom_answer": None}}
+    ]
+    adapter = CoverageAdapter()
+    result = BusinessDocumentAI(adapter)._verify_requirements(job, _coverage_plan())
+    fragments = adapter.calls[0]["job_input"]["fragments"]
+    texts = [fragment["text"] for fragment in fragments.values()]
+    assert "Только после входа." in texts
+    assert "Сто пользователей." in texts
+    assert not any(text in texts for text in ["Запрещённая идея.", "Неподтверждённая идея.", "Ничего не менять."])
+    assert result["checks"]
+
+
+def test_coverage_receives_absent_template_sections_and_actual_custom_titles():
+    job = _coverage_job()
+    base = job.payload["current_revision"]["document_ast"]
+    base.update(schema_version="2", section_scope="required")
+    required = {section["id"] for section in published_template()["sections"] if section["required"]}
+    base["sections"] = [section for section in base["sections"] if section["id"] in required]
+    base["sections"].append({"id": "5.6", "title": "Проверка источников", "blocks": [{"type": "paragraph", "text": "Проверять источник ежедневно."}]})
+    adapter = CoverageAdapter()
+
+    BusinessDocumentAI(adapter)._verify_requirements(job, _coverage_plan())
+
+    verification = adapter.calls[0]["job_input"]
+    assert verification["section_titles"]["5.4"] == "Требования к отчетности"
+    assert verification["section_titles"]["5.5"] == "Мониторинг"
+    assert verification["section_titles"]["5.6"] == "Проверка источников"
+    assert not any(key.startswith("5.4:") for key in verification["final_blocks"])
+    assert not any(section["id"] == "5.4" for section in base["sections"])
+
+
+def test_change_retry_includes_actual_missing_requirements_without_mutating_snapshot():
+    job = _coverage_job()
+    adapter = CoverageAdapter(missing=True)
+    ai = BusinessDocumentAI(adapter)
+    with pytest.raises(BusinessDocumentError) as caught:
+        ai.process(job)
+    job.error = {"code": caught.value.code, "details": caught.value.details}
+    adapter.missing = False
+    ai.process(job)
+    assert "requirement_coverage_feedback" not in adapter.calls[0]["job_input"]
+    assert adapter.calls[2]["job_input"]["requirement_coverage_feedback"] == caught.value.details["requirements"]
+    assert adapter.calls[0]["job_input"]["confirmed_requirement_fragments"]["comment-event:1"]["text"] == "Повтор не меняет первую дату."
+    assert adapter.calls[0]["job_input"]["confirmed_requirement_fragments"] == {
+        key: value for key, value in adapter.calls[1]["job_input"]["fragments"].items() if not value["source_id"].startswith("section:")
+    }
+    assert "requirement_coverage_feedback" not in job.payload
+
+
+def test_change_coverage_retains_generation_and_verification_model_audits():
+    from business_documents.domain.execution_audit import validate_ai_audit
+
+    class AuditedAdapter(CoverageAdapter):
+        def consume_execution_audit(self):
+            return {
+                "provider": "Ollama",
+                "model": "local-model",
+                "model_type": "chat",
+                "parameters": {"temperature": 0, "top_p": 0.1, "max_completion_tokens": 8192},
+                "duration_ms": len(self.calls) * 100,
+                "token_usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+            }
+
+    ai = BusinessDocumentAI(AuditedAdapter())
+    result = ai.process(_coverage_job())
+    assert result["requirement_coverage"]["checks"]
+    audit = validate_ai_audit(ai.consume_execution_audit())
+    assert audit["duration_ms"] == 100
+    assert audit["verification"]["duration_ms"] == 200
+    from test.evals.business_documents.test_live_model_quality import _aggregate_ai_audits
+
+    aggregate = _aggregate_ai_audits([audit])
+    assert aggregate["execution_count"] == 2 and aggregate["duration_ms"] == 300
+
+
+@pytest.mark.parametrize("cross_batch_replacement", [False, True])
+def test_change_coverage_batches_long_sources_without_dropping_fragments(cross_batch_replacement):
+    job = _coverage_job()
+    job.payload["protocol"]["comments"][0]["text"] = " ".join(f"Требование номер {index}." for index in range(60))
+
+    class CrossBatchAdapter(CoverageAdapter):
+        def generate(self, tenant_id, system_prompt, input_payload):
+            result = super().generate(tenant_id, system_prompt, input_payload)
+            if cross_batch_replacement and input_payload["job_input"]["task_type"] == "VERIFY_REQUIREMENT_COVERAGE":
+                for check in result["checks"]:
+                    if check["fragment_id"].startswith("section:"):
+                        assert "comment-event:0" in input_payload["job_input"]["replacement_fragments"]
+                        check.update(status="SUPERSEDED", matches=[], superseded_by="comment-event:0")
+            return result
+
+    adapter = CrossBatchAdapter()
+    result = BusinessDocumentAI(adapter).process(job)
+    assert len(adapter.calls) == 4
+    assert len(result["requirement_coverage"]["checks"]) == 61
+    assert all(len(call["job_input"]["fragments"]) <= 24 for call in adapter.calls[1:])
+
+
+@pytest.mark.parametrize("acknowledge_pull", [False, True])
+def test_partial_or_fully_rejected_eva_update_does_not_impose_remote_requirements(acknowledge_pull):
+    job = _coverage_job()
+    job.payload["active_change_input_event_ids"].append("eva-pull")
+    job.payload["source_events"].append({"event_id": "eva-pull", "event_type": "EvaDocumentPulled", "payload": {"remote_markdown": "Теперь хранить 120 дней."}})
+    plan = _coverage_plan()
+    plan["acknowledged_no_change_event_ids"] = ["eva-pull"] if acknowledge_pull else []
+    if not acknowledge_pull:
+        plan["operations"][0]["source_event_ids"].append("eva-pull")
+        job.payload["active_change_input_event_ids"].append("accepted-eva-change")
+        job.payload["protocol"]["proposals"] = [{"decision_event_id": "accepted-eva-change", "decision": "ACCEPTED", "text": "Добавить колонку отчёта."}]
+    adapter = CoverageAdapter()
+    BusinessDocumentAI(adapter)._verify_requirements(job, plan)
+    assert not any(value["source_id"] == "eva-pull" for value in adapter.calls[0]["job_input"]["fragments"].values())
+    if not acknowledge_pull:
+        assert any(value["text"] == "Добавить колонку отчёта." for value in adapter.calls[0]["job_input"]["fragments"].values())
 
 
 @pytest.mark.p0
@@ -672,6 +938,66 @@ def test_ai_retry_prompt_contains_previous_validation_error(database):
     assert prompt.input_payload["job_input"]["retry_feedback"] == job.error
     assert "Исправление предыдущей попытки" in prompt.system
     assert "retry_feedback" not in job.payload
+
+
+@pytest.mark.parametrize("schema_version", ["1", "2"])
+def test_change_prompt_includes_the_current_document_block_contract(schema_version):
+    job = _coverage_job()
+    base = job.payload["current_revision"]["document_ast"]
+    base["schema_version"] = schema_version
+    if schema_version == "2":
+        base["section_scope"] = "required"
+
+    prompt = BusinessDocumentAI._prompt(job)
+    schemas, _ = json.JSONDecoder().raw_decode(prompt.system.split("# Контракт выхода\n\n", 1)[1])
+
+    assert schemas["change_plan"] == contract_schema("change_plan")
+    assert schemas["document_draft"] == contract_schema("document_draft_v2" if schema_version == "2" else "document_draft")
+    assert "XML BPMN не поддерживаются" in prompt.system
+    assert "Диаграммы допустимы только как `plantuml` в разделах 4.1 и 4.3" in prompt.system
+    assert "document_draft" not in job.payload
+
+
+@pytest.mark.parametrize("schema_version", ["1", "2"])
+def test_change_plan_rejects_bpmn_with_compact_retry_feedback_and_preserves_plantuml(schema_version):
+    job = _coverage_job()
+    base = job.payload["current_revision"]["document_ast"]
+    base["schema_version"] = schema_version
+    if schema_version == "2":
+        base["section_scope"] = "required"
+    original = json.dumps(base, ensure_ascii=False)
+    scenario = next(section for section in base["sections"] if section["id"] == "4.3")
+    plan = _coverage_plan()
+    operation = plan["operations"][0]
+    xml = '<?xml version="1.0"?><definitions>' + "private scenario " * 200 + "</definitions>"
+    operation.update(
+        section_id="4.3",
+        expected_section_hash=section_hash(scenario),
+        content={"blocks": [scenario["blocks"][0], {"type": "bpmn", "source": xml}]},
+    )
+
+    with pytest.raises(BusinessDocumentError) as caught:
+        BusinessDocumentAI(CapturingAdapter(plan)).process(job)
+
+    error = caught.value
+    assert error.code == "INVALID_DOCUMENT_DRAFT"
+    assert error.details == {
+        "path": "sections.9.blocks.1",
+        "validator": "oneOf",
+        "block_type": "bpmn",
+        "allowed_block_types": ["paragraph", "list", "table", "plantuml", "image", "reference"],
+    }
+    assert len(error.message) < 400
+    assert "private scenario" not in error.message
+    assert "PlantUML" in error.message
+    assert json.dumps(base, ensure_ascii=False) == original
+    job.attempt = 2
+    job.error = {"code": error.code, "message": error.message, "details": error.details}
+    retry = BusinessDocumentAI._prompt(job)
+    assert retry.input_payload["job_input"]["retry_feedback"] == job.error
+    operation["content"]["blocks"] = scenario["blocks"]
+    assert BusinessDocumentAI._validate(job, plan) == {"change_plan": plan}
+    assert json.dumps(base, ensure_ascii=False) == original
 
 
 @pytest.mark.p0

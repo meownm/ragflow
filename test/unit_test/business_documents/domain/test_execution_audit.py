@@ -18,10 +18,18 @@ def _ai_execution_audit():
 
 
 def test_ai_execution_audit_is_canonicalized_for_persistence():
-
     validated = validate_ai_audit(_ai_execution_audit())
 
     assert validated == _ai_execution_audit()
+
+
+def test_verification_retains_both_model_calls_without_replacing_generation_audit():
+    audit = _ai_execution_audit()
+    audit["verification"] = {**_ai_execution_audit(), "duration_ms": 300}
+    assert validate_ai_audit(audit) == audit
+    assert validate_ai_audit(audit)["duration_ms"] == 1250.5
+    audit["verification"] = [_ai_execution_audit(), _ai_execution_audit()]
+    assert len(validate_ai_audit(audit)["verification"]) == 2
 
 
 @pytest.mark.parametrize(

@@ -444,7 +444,8 @@ def test_read_connected_empty_page_preserves_identity_and_capabilities(html):
     assert refreshed["capabilities"] == ["OPEN", "PULL_FROM_EVA", "CREATE_EVA_CHANGE"]
 
 
-def test_full_eva_change_flow_keeps_publish_as_separate_action(database):
+@pytest.mark.parametrize("initial_draft", ["", "published", "target"])
+def test_full_eva_change_flow_keeps_publish_as_separate_action(database, initial_draft):
     client = FakeEvaClient()
     created = _create(client)
 
@@ -470,6 +471,10 @@ def test_full_eva_change_flow_keeps_publish_as_separate_action(database):
     assert approved["workflow_state"] == "APPROVED"
     assert approved["allowed_actions"] == ["PREPARE_EVA_DRAFT"]
     assert client.document["draft_html"] == ""
+    if initial_draft == "published":
+        client.document["draft_html"] = client.document["html"]
+    elif initial_draft == "target":
+        client.document["draft_html"] = BusinessDocumentEvaChange.get_by_id(created["change_id"]).draft_html
 
     with patch.object(EvaDocumentChangeService, "_connector", return_value=(CONNECTOR, client)):
         prepared = EvaDocumentChangeService.prepare_eva_draft(
@@ -869,6 +874,78 @@ def test_empty_eva_page_still_requires_an_initial_draft(database):
         )
 
     assert exc_info.value.code == "EVA_DOCUMENT_EMPTY"
+
+
+@pytest.mark.parametrize("draft_existed_at_creation", [False, True])
+def test_prepare_preserves_foreign_unpublished_draft_until_explicit_confirmation(database, draft_existed_at_creation):
+    client = FakeEvaClient()
+    foreign = "<p>Чужая неопубликованная правка.</p>"
+    if draft_existed_at_creation:
+        client.document["draft_html"] = foreign
+    created = _create(client)
+    draft = _generate(created, "# Требования\n\nПодтверждённый результат.")
+    approved = EvaDocumentChangeService.approve(TENANT, AUTHOR, created["change_id"], {"expected_state_version": draft["state_version"]})
+    client.document["draft_html"] = foreign
+    original = dict(client.document)
+    with patch.object(EvaDocumentChangeService, "_connector", return_value=(CONNECTOR, client)):
+        with pytest.raises(BusinessDocumentError) as caught:
+            EvaDocumentChangeService.prepare_eva_draft(TENANT, AUTHOR, created["change_id"], {"expected_state_version": approved["state_version"]})
+        assert caught.value.code == "EVA_DRAFT_CONFLICT"
+        assert caught.value.details["confirmation_action"] == "OVERWRITE_EVA_DOCUMENT"
+        assert client.document == original
+        restored = EvaDocumentChangeService.get_change(TENANT, AUTHOR, created["change_id"])
+        assert restored["workflow_state"] == "APPROVED"
+        prepared = EvaDocumentChangeService.prepare_eva_draft(TENANT, AUTHOR, created["change_id"], {"expected_state_version": restored["state_version"], "force_overwrite": True})
+    assert prepared["workflow_state"] == "EVA_DRAFT_READY"
+    assert "Подтверждённый результат" in client.document["draft_html"]
+    assert client.document["html"] == original["html"]
+
+
+def test_publish_preserves_a_foreign_draft_until_explicit_overwrite(database):
+    client = FakeEvaClient()
+    created = _create(client)
+    draft = _generate(created, "# Требования\n\nСогласованный результат.")
+    approved = EvaDocumentChangeService.approve(TENANT, AUTHOR, created["change_id"], {"expected_state_version": draft["state_version"]})
+    with patch.object(EvaDocumentChangeService, "_connector", return_value=(CONNECTOR, client)):
+        prepared = EvaDocumentChangeService.prepare_eva_draft(TENANT, AUTHOR, created["change_id"], {"expected_state_version": approved["state_version"]})
+        client.document["draft_html"] = "<p>Чужая правка после подготовки.</p>"
+        original = dict(client.document)
+        with pytest.raises(BusinessDocumentError) as caught:
+            EvaDocumentChangeService.publish(TENANT, AUTHOR, created["change_id"], {"expected_state_version": prepared["state_version"]})
+        assert caught.value.code == "EVA_DRAFT_CONFLICT"
+        assert client.document == original and client.publish_calls == 0
+        restored = EvaDocumentChangeService.get_change(TENANT, AUTHOR, created["change_id"])
+        published = EvaDocumentChangeService.publish(TENANT, AUTHOR, created["change_id"], {"expected_state_version": restored["state_version"], "force_overwrite": True})
+    assert published["workflow_state"] == "PUBLISHED"
+    assert "Согласованный результат" in client.document["html"]
+
+
+def test_prepare_does_not_claim_success_when_eva_ignores_the_write(database):
+    client = FakeEvaClient()
+    created = _create(client)
+    draft = _generate(created, "# Требования\n\nНовый результат.")
+    approved = EvaDocumentChangeService.approve(TENANT, AUTHOR, created["change_id"], {"expected_state_version": draft["state_version"]})
+    with patch.object(EvaDocumentChangeService, "_connector", return_value=(CONNECTOR, client)), patch.object(client, "update_document_draft", return_value=True):
+        with pytest.raises(BusinessDocumentError) as caught:
+            EvaDocumentChangeService.prepare_eva_draft(TENANT, AUTHOR, created["change_id"], {"expected_state_version": approved["state_version"]})
+    assert caught.value.code == "EVA_DRAFT_VERIFICATION_FAILED"
+    assert EvaDocumentChangeService.get_change(TENANT, AUTHOR, created["change_id"])["workflow_state"] == "APPROVED"
+
+
+def test_force_publish_does_not_publish_foreign_content_when_eva_ignores_draft_update(database):
+    client = FakeEvaClient()
+    created = _create(client)
+    draft = _generate(created, "# Требования\n\nСогласованный результат.")
+    approved = EvaDocumentChangeService.approve(TENANT, AUTHOR, created["change_id"], {"expected_state_version": draft["state_version"]})
+    with patch.object(EvaDocumentChangeService, "_connector", return_value=(CONNECTOR, client)):
+        prepared = EvaDocumentChangeService.prepare_eva_draft(TENANT, AUTHOR, created["change_id"], {"expected_state_version": approved["state_version"]})
+        client.document["draft_html"] = "<p>Чужое содержимое.</p>"
+        original = dict(client.document)
+        with patch.object(client, "update_document_draft", return_value=True), pytest.raises(BusinessDocumentError) as caught:
+            EvaDocumentChangeService.publish(TENANT, AUTHOR, created["change_id"], {"expected_state_version": prepared["state_version"], "force_overwrite": True})
+    assert caught.value.code == "EVA_DRAFT_VERIFICATION_FAILED"
+    assert client.document == original and client.publish_calls == 0
+    assert EvaDocumentChangeService.get_change(TENANT, AUTHOR, created["change_id"])["workflow_state"] == "EVA_DRAFT_READY"
 
 
 def test_prepare_rejects_changed_published_source_and_keeps_it_untouched(database):

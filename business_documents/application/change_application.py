@@ -42,23 +42,24 @@ class ApplyChanges:
             raise ConflictError("JOB_STATE_CONFLICT", "Change application is not active")
         if job["base_revision_id"] != document["current_revision_id"]:
             raise ConflictError("STALE_AI_RESULT", "Change plan targets an outdated revision")
+        if mode is ChangeMode.CONFIRM and job["payload"].get("prompt") != self._content.prompt_descriptor("PLAN_CHANGES"):
+            raise ConflictError("CHANGE_PREVIEW_STALE", "Prepare changes again with the current requirement verification policy")
         review = self._writer.review(document["id"], document["active_review_cycle"])
-        if review.open_question_ids("REVIEW"):
-            raise ConflictError("OPEN_REVIEW_QUESTIONS", "Changes cannot be applied while review questions are open")
         plan = output.get("change_plan") if isinstance(output, dict) else None
         self._content.validate_contract("change_plan", plan)
         assert isinstance(plan, dict)
         if plan["base_revision_id"] != document["current_revision_id"] or plan["source_state_version"] != job["source_state_version"]:
             raise ConflictError("STALE_AI_RESULT", "Change plan does not match the immutable job snapshot")
         snapshot = SnapshotIndex.build(job, execution)
+        base = self._writer.revision(document["id"], document["current_revision_id"]) if plan["operations"] else None
         try:
-            inputs = validate_change_inputs(review, plan, snapshot_source_ids=snapshot.event_ids, evidence_source_refs=snapshot.evidence_refs)
+            inputs = validate_change_inputs(review, plan, snapshot_source_ids=snapshot.event_ids, evidence_source_refs=snapshot.evidence_refs, base_document=base["document_ast"] if base else None)
         except RuleViolation as error:
             raise ValidationError(error.code, error.message, error.details) from error
 
         draft = None
         if plan["operations"]:
-            base = self._writer.revision(document["id"], document["current_revision_id"])
+            assert base is not None
             draft = self._content.apply_change_plan(base["document_ast"], plan)
             if draft["template_version"] != document["template_version"]:
                 raise ValidationError("TEMPLATE_VERSION_CONFLICT", "Updated document does not use the pinned template")

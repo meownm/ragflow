@@ -74,3 +74,36 @@ def test_view_does_not_offer_an_existing_draft_again():
         events=[_event(1, "IntakeAssessed", review_cycle=0, outcome="COMPLETE")],
     )
     assert available_commands(_document(lifecycle_state="INTAKE", operation_state="IDLE"), review) == ["ARCHIVE"]
+
+
+@pytest.mark.parametrize("outcome", ["COMPLETE", "NEEDS_INPUT"])
+def test_ready_changes_and_answers_are_offered_together_with_open_questions(outcome):
+    review = _review(_event(8, "ReviewAssessed", review_cycle=2, outcome=outcome))
+    review = replace(review, questions=(*review.questions, {"id": "unanswered", "stage": "REVIEW"}), pending_proposal_ids=())
+    document = _document(operation_state="IDLE")
+    assert review.review_changes_ready
+    assert {"ANSWER_QUESTION", "APPLY_CHANGES", "PREPARE_CHANGES"} <= set(available_commands(document, review))
+    for command in ("APPLY_CHANGES", "PREPARE_CHANGES"):
+        assert command_problem(command, document, review, {"base_revision_id": "revision"}) is None
+        assert command_problem(command, document, review, {"base_revision_id": "stale"}).code == "BASE_REVISION_CONFLICT"
+        assert command_problem(command, _document(), review, {"base_revision_id": "revision"}).code == "OPERATION_IN_PROGRESS"
+
+
+@pytest.mark.parametrize("feedback", ["QuestionAnswered", "ProposalDecided", "AuthorCommentAdded", "EvaDocumentPulled"])
+def test_new_feedback_invalidates_partial_change_readiness(feedback):
+    review = _review(_event(8, "ReviewAssessed", review_cycle=2, outcome="NEEDS_INPUT"), _event(9, feedback))
+    review = replace(review, questions=(*review.questions, {"id": "unanswered", "stage": "REVIEW"}))
+    assert not review.review_changes_ready
+    commands = available_commands(_document(operation_state="IDLE"), review)
+    assert "REQUEST_REVIEW_ASSESSMENT" in commands
+    assert not {"APPLY_CHANGES", "PREPARE_CHANGES"} & set(commands)
+
+
+def test_unanswered_questions_without_ready_inputs_do_not_create_empty_apply_jobs():
+    review = _review(_event(8, "ReviewAssessed", review_cycle=2, outcome="NEEDS_INPUT"))
+    review = replace(review, questions=(*review.questions, {"id": "unanswered", "stage": "REVIEW"}), active_inputs=frozenset())
+    document = _document(operation_state="IDLE")
+    assert not review.review_changes_ready
+    assert "ANSWER_QUESTION" in available_commands(document, review)
+    for command in ("APPLY_CHANGES", "PREPARE_CHANGES"):
+        assert command_problem(command, document, review).code == "REVIEW_ASSESSMENT_REQUIRED"

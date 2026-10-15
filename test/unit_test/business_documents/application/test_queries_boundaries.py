@@ -303,7 +303,7 @@ def test_preview_missing_revision_fails_after_plan_validation(queries):
 def test_preview_projects_ordered_sources_and_independent_before_after_content(queries):
     scenario, reader, content = queries
     source_ids = ["comment", "answer", "proposal", "eva"]
-    plan = {"operations": [{"section_id": "1", "source_event_ids": source_ids}], "acknowledged_no_change_event_ids": ["unknown"]}
+    plan = {"operations": [{"section_id": "1", "source_event_ids": source_ids, "content": {"blocks": []}}], "acknowledged_no_change_event_ids": ["unknown"]}
     base = {"sections": [section()]}
     draft = {"sections": [{**section("After"), "evidence_refs": ["evidence"]}]}
     reader.revision.return_value = revision(document_ast=base)

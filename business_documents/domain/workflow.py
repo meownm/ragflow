@@ -138,15 +138,13 @@ def command_problem(
             if command == CommandType.APPLY_CHANGES and preview is not None:
                 return StateConflict("CHANGE_PREVIEW_CONFIRMATION_REQUIRED", "Prepared changes must be confirmed or discarded before direct application")
             assert review is not None
-            if questions := review.open_question_ids("REVIEW"):
-                return StateConflict("OPEN_REVIEW_QUESTIONS", "Changes cannot be applied while review questions are open", {"question_ids": questions})
-            if not review.review_complete:
-                return StateConflict("REVIEW_ASSESSMENT_REQUIRED", "Changes require a current COMPLETE review assessment")
+            if not review.review_changes_ready:
+                return StateConflict("REVIEW_ASSESSMENT_REQUIRED", "Changes require a current review assessment with ready inputs or a COMPLETE outcome")
             if payload is not None and payload.get("base_revision_id") != document["current_revision_id"]:
                 return StateConflict(
                     "BASE_REVISION_CONFLICT", "The change request does not target the current revision", {"expected": document["current_revision_id"], "actual": payload.get("base_revision_id")}
                 )
-            if review.pending_proposal_ids and not review.active_inputs:
+            if review.pending_proposal_ids and not review.applicable_inputs:
                 return StateConflict("PENDING_PROPOSAL_DECISIONS", "Decide a pending proposal or add review feedback before applying changes", {"proposal_ids": list(review.pending_proposal_ids)})
             return _idle_problem(document)
         case CommandType.CONFIRM_PREPARED_CHANGES | CommandType.DISCARD_PREPARED_CHANGES:
@@ -194,9 +192,9 @@ def available_commands(document: Mapping[str, Any], review: ReviewState, *, prev
             commands.append("ANSWER_QUESTION")
             if review.has_unassessed_feedback:
                 commands.append("REQUEST_REVIEW_ASSESSMENT")
-        elif review.review_complete:
+        if review.review_changes_ready:
             commands.extend(("APPLY_CHANGES", "PREPARE_CHANGES"))
-        else:
+        elif not review.open_question_ids("REVIEW"):
             commands.append("REQUEST_REVIEW_ASSESSMENT")
     elif lifecycle == "AGREED":
         commands = ["START_REVIEW", "REQUEST_EXPORT", "ARCHIVE"]

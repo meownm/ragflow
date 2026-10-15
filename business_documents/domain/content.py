@@ -42,6 +42,16 @@ def validate_contract(name: str, value: object, schema: dict[str, Any]) -> None:
     if error is None:
         return
     path = ".".join(str(part) for part in error.absolute_path)
+    if name == "document_draft" and error.validator == "oneOf" and isinstance(error.instance, dict):
+        allowed_types = [branch.get("properties", {}).get("type", {}).get("const") for branch in error.schema["oneOf"]]
+        allowed_types = [kind for kind in allowed_types if isinstance(kind, str)]
+        block_type = error.instance.get("type")
+        if allowed_types and isinstance(block_type, str) and block_type not in allowed_types:
+            raise RuleViolation(
+                "INVALID_DOCUMENT_DRAFT",
+                f"Недопустимый тип блока «{block_type[:64]}» ({path}). Допустимые типы: {', '.join(allowed_types)}. Для диаграмм используйте PlantUML в разрешённых шаблоном разделах.",
+                {"path": path, "validator": error.validator, "block_type": block_type, "allowed_block_types": allowed_types},
+            )
     raise RuleViolation(
         f"INVALID_{name.upper()}",
         f"Contract {name} validation failed{f' at {path}' if path else ''}: {error.message}",

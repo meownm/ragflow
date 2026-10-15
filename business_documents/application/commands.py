@@ -385,7 +385,7 @@ class DocumentCommands:
             "source_events": [
                 {"event_id": event["id"], "sequence": event["sequence"], "event_type": event["event_type"], "actor_type": event["actor_type"], "payload": event["payload"]} for event in source_events
             ],
-            "active_change_input_event_ids": sorted(review.active_inputs),
+            "active_change_input_event_ids": sorted(review.applicable_inputs),
             "lifecycle_state": document["lifecycle_state"],
             "state_version": document["state_version"] + 1,
             "template_version": document["template_version"],

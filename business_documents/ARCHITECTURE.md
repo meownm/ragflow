@@ -67,13 +67,48 @@ acknowledged inputs. Pending proposal order remains creation order. A resolved
 input may not authorize a second change. One active input may authorize several
 section operations; it may not also be acknowledged as unchanged.
 
-For active inputs A, used inputs U, no-change acknowledgements N and active
+Open review questions permit partial application after a current assessment.
+New feedback still requires reassessment. Ambiguous comments with NEEDS_QUESTION
+remain unresolved and are excluded from applicable inputs and pinned change sources.
+Applying ready inputs preserves the same review cycle and unanswered questions;
+only a review without open questions or pending proposals can become AGREED.
+
+For applicable inputs A, used inputs U, no-change acknowledgements N and active
 accepted proposals P, require U and N to be subsets of A, U intersect N to be
 empty, A to equal U union N, and P to be a subset of U. Validate snapshot
 membership, event kind, review cycle, section restriction and comment disposition
 before these completeness checks, retaining stable error priority/details.
 Confirmed comments may coordinate changes across sections; question/proposal
 targets remain strict. Build snapshot/evidence membership sets once per result.
+
+Change generation receives the confirmed-fragment inventory and checks semantic preservation before returning a preview
+or revision: inventory every sentence of confirmed comments, accepted proposals,
+author answers and replaced sections, then ask the configured model to verify
+the complete resulting document. Domain validation requires a verdict for every
+  fragment and existing nonempty result-block references; the server resolves
+  those references to actual document text. Missing or contradicted requirements
+  use the durable job retry, with the missing-fragment verdict supplied to the
+  next generation attempt; the verifier never edits the document. Explicit
+removal and replacement remain possible. EVA pull text is review context;
+accepted proposals and author answers determine which external changes become
+requirements. Generation and verification retain separate model audits. This
+probabilistic semantic check uses model calls in batches of at most 24 fragments and complements deterministic
+source authorization; it is not a formal proof of equivalence. Confirmation
+rejects previews pinned to an older generation/verification prompt policy.
+
+Generation and verification use the published section roles: business report
+specifications belong to optional section 5.4; system monitoring remains in 5.5.
+An absent optional section is included through the existing parent-section
+operation. Verification receives section titles, including absent template
+sections. The semantic verdict explicitly classifies reporting and monitoring
+requirements; deterministic validation requires citations in each classified
+section even when the model returns PRESENT. A wrong placement uses the same
+durable retry feedback as missing content. The semantic classification remains
+probabilistic.
+Child-scoped sources may add their missing subsection through the parent only
+when the parent's own blocks remain unchanged and every new child is authorized.
+Confirmed comment anchors do not restrict cross-section changes. New sections
+are included in the before/after preview before author confirmation.
 
 The validator returns a change decision. Persistence applies one of three
 results: a prepared preview, an audited no-op, or a new immutable revision.

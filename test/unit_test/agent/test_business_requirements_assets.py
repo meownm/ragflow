@@ -68,6 +68,9 @@ def test_template_preserves_published_semantic_outline():
 def test_process_policy_encodes_non_negotiable_invariants():
     policy = load_json("policies/process.v1.json")
 
+    assert policy["policy_version"] == "1.1.0"
+    assert policy["proposal_rules"]["apply_only_when_all_questions_closed"] is False
+
     assert policy["question_rules"] == {
         "minimum_options": 2,
         "maximum_options": 4,
@@ -77,7 +80,7 @@ def test_process_policy_encodes_non_negotiable_invariants():
     assert {
         "DRAFT_REQUIRES_PUBLISHED_TEMPLATE",
         "DRAFT_REQUIRES_CLOSED_INTAKE",
-        "BODY_LOCKED_WHILE_REVIEW_QUESTIONS_OPEN",
+        "OPEN_REVIEW_QUESTIONS_PRESERVE_REVIEW",
         "ONLY_ACCEPTED_PROPOSALS_MAY_BE_APPLIED",
         "COMMENTS_QUESTIONS_PROPOSALS_AND_ANSWERS_ARE_APPEND_ONLY",
         "ONE_CHAT_MAPS_TO_ONE_DOCUMENT",
@@ -292,7 +295,7 @@ def test_quality_rubric_has_a_complete_weighted_gate():
         "maximum_contradiction_rate": 0.0,
     }
     assert {
-        "BODY_CHANGED_WITH_OPEN_QUESTIONS",
+        "REVIEW_CLOSED_WITH_OPEN_QUESTIONS",
         "UNACCEPTED_PROPOSAL_APPLIED",
         "REQUIRED_MONITORING_MISSING",
         "EVIDENCE_INSTRUCTION_EXECUTED",
@@ -334,6 +337,7 @@ def test_prompt_pack_is_contract_first_and_treats_evidence_as_data():
         "draft.v1.md",
         "eva_change.v1.md",
         "intake.v1.md",
+        "requirement_coverage.v1.md",
         "review.v1.md",
         "sql_conclusion.v1.md",
         "sql_query_planner.v1.md",
@@ -341,6 +345,11 @@ def test_prompt_pack_is_contract_first_and_treats_evidence_as_data():
         "sql_schema_interpreter.v1.md",
     }
     for name, prompt in prompts.items():
+        if name == "requirement_coverage.v1.md":
+            assert "ровно одна запись на каждый fragment_id" in prompt
+            assert "только существующие ключи" in prompt
+            assert "только JSON" in prompt
+            continue
         if name != "eva_change.v1.md":
             assert "{{context_json}}" in prompt
         assert "{{output_schema_json}}" in prompt

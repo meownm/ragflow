@@ -97,6 +97,12 @@ class ScriptedAIAdapter:
         assert "недовер" in system_prompt.lower()
         self.requests.append(input_payload)
         job_type = input_payload["job_input"]["task_type"]
+        if job_type == "VERIFY_REQUIREMENT_COVERAGE":
+            # Scripted semantic verdicts keep this lane a state-machine check;
+            # real semantic accuracy belongs to the separate live-model lane.
+            blocks = input_payload["job_input"]["final_blocks"]
+            block_id = next(key for key, text in blocks.items() if text.strip())
+            return {"checks": [{"fragment_id": key, "status": "PRESENT", "matches": [block_id], "required_section_ids": [], "superseded_by": None} for key in input_payload["job_input"]["fragments"]]}
         if not self.responses.get(job_type):
             raise AssertionError(f"No scripted AI response for {job_type}")
         return self.responses[job_type].popleft()
@@ -575,24 +581,36 @@ class GoldenDialogueRunner:
     def _g08(self, case):
         projection = self._to_review(case, review_questions=self._question_batch("REVIEW", count=1))
         revision = projection["current_revision"]
-        before_count = BusinessDocumentRevision.select().where(BusinessDocumentRevision.document_id == projection["document_id"]).count()
-        error_code = None
-        try:
-            document_commands.execute(
-                self.tenant_id,
-                self.actor_id,
-                projection["document_id"],
-                self._command(projection, "APPLY_CHANGES", {"base_revision_id": revision["revision_id"]}),
-            )
-        except BusinessDocumentError as error:
-            error_code = error.code
-        after = document_queries.get_document(projection["document_id"], self.actor_id)
-        after_count = BusinessDocumentRevision.select().where(BusinessDocumentRevision.document_id == projection["document_id"]).count()
+        cycle = projection["active_review_cycle"]
+        question = deepcopy(projection["protocol"]["questions"][0])
+        comment = document_commands.execute(
+            self.tenant_id,
+            self.actor_id,
+            projection["document_id"],
+            self._command(projection, "ADD_COMMENT", {"revision_id": revision["revision_id"], "section_id": None, "text": "Фиксировать ошибки операций", "anchor": None}),
+        )
+        projection = self._assess_review(document_queries.get_document(projection["document_id"], self.actor_id))
+        target = next(section for section in revision["document_ast"]["sections"] if section["id"] == "5.5")
+        after = self._apply(
+            projection,
+            [
+                {
+                    "operation_id": "partial-with-open-question",
+                    "type": "REPLACE_SECTION_CONTENT",
+                    "section_id": "5.5",
+                    "expected_section_hash": section_hash(target),
+                    "source_event_ids": [comment["event_id"]],
+                    "content": {"blocks": [{"type": "paragraph", "text": "Фиксировать ошибки операций"}]},
+                }
+            ],
+        )
         facts = {
-            "revision_unchanged" if before_count == after_count else "",
-            "body_hash_unchanged" if after["current_revision"]["content_hash"] == revision["content_hash"] else "",
+            "ready_change_applied" if "Фиксировать ошибки операций" in after["current_revision"]["body_markdown"] else "",
+            "unanswered_question_preserved" if after["protocol"]["questions"] == [question] and question["status"] == "OPEN" and "ANSWER_QUESTION" in after["allowed_commands"] else "",
+            "review_cycle_unchanged" if after["active_review_cycle"] == cycle else "",
+            "new_revision_created" if after["current_revision"]["revision_number"] == revision["revision_number"] + 1 else "",
         }
-        return GoldenObservation(values={"command_rejected": error_code}, facts=frozenset(facts - {""}))
+        return GoldenObservation(values={"lifecycle_state": after["lifecycle_state"]}, facts=frozenset(facts - {""}))
 
     def _g09(self, case):
         projection = self._to_review(case)

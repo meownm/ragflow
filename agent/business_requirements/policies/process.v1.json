@@ -1,7 +1,7 @@
 {
   "schema_version": "1",
   "policy_id": "business-requirements-process",
-  "policy_version": "1.0.0",
+  "policy_version": "1.1.0",
   "language": "ru",
   "lifecycle_states": ["INTAKE", "REVIEW", "AGREED", "ARCHIVED"],
   "operation_states": [
@@ -22,12 +22,12 @@
   "proposal_rules": {
     "allowed_decisions": ["ACCEPTED", "REJECTED"],
     "unanswered_policy": "EXCLUDE",
-    "apply_only_when_all_questions_closed": true
+    "apply_only_when_all_questions_closed": false
   },
   "invariants": [
     "DRAFT_REQUIRES_PUBLISHED_TEMPLATE",
     "DRAFT_REQUIRES_CLOSED_INTAKE",
-    "BODY_LOCKED_WHILE_REVIEW_QUESTIONS_OPEN",
+    "OPEN_REVIEW_QUESTIONS_PRESERVE_REVIEW",
     "ONLY_ACCEPTED_PROPOSALS_MAY_BE_APPLIED",
     "COMMENTS_QUESTIONS_PROPOSALS_AND_ANSWERS_ARE_APPEND_ONLY",
     "ONE_CHAT_MAPS_TO_ONE_DOCUMENT",

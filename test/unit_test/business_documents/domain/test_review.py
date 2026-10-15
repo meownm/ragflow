@@ -85,6 +85,28 @@ def test_latest_incomplete_assessment_cannot_fall_back_to_an_earlier_complete_on
     assert not review.has_unassessed_feedback
 
 
+def test_open_questions_keep_applied_changes_in_the_same_review():
+    review = replace(_review(), questions=(*_review().questions, {"id": "unanswered", "stage": "REVIEW"}), pending_proposal_ids=())
+    inputs = _validate(review, [_operation("e2", "e3", "e4")], ["e6"])
+    assert inputs.pending_question_ids == ("unanswered",)
+    assert inputs.next_lifecycle == "REVIEW"
+    assert replace(inputs, pending_question_ids=()).next_lifecycle == "AGREED"
+
+
+def test_ambiguous_comment_is_deferred_without_being_resolved_or_used():
+    review = _review(dispositions=[{"comment_event_id": "e4", "disposition": "NEEDS_QUESTION", "question_id": "unanswered"}])
+    assert "e4" in review.active_inputs
+    assert "e4" not in review.applicable_inputs
+    inputs = _validate(review, [_operation("e2", "e3")], ["e6"])
+    assert "e4" not in (*inputs.source_event_ids, *inputs.acknowledged_event_ids)
+    with pytest.raises(RuleViolation) as operation:
+        _validate(review, [_operation("e2", "e3", "e4")], ["e6"])
+    assert operation.value.code == "COMMENT_CHANGE_NOT_CONFIRMED"
+    with pytest.raises(RuleViolation) as acknowledgement:
+        _validate(review, [_operation("e2", "e3")], ["e4", "e6"])
+    assert acknowledgement.value.code == "COMMENT_NO_CHANGE_NOT_CONFIRMED"
+
+
 def test_one_confirmed_comment_may_authorize_multiple_sections_and_order_is_preserved():
     inputs = _validate(_review(), [_operation("e2", "e3", "e4"), _operation("e4", section="5.5")], ["e6"])
     assert inputs.source_event_ids == ("e2", "e3", "e4", "e4")
@@ -135,3 +157,60 @@ def test_no_change_comment_can_be_acknowledged_but_cannot_authorize_an_operation
     with pytest.raises(RuleViolation) as caught:
         _validate(review, [_operation("e4")])
     assert caught.value.code == "COMMENT_CHANGE_NOT_CONFIRMED"
+
+
+@pytest.mark.parametrize("extra_child_authorized", [False, True])
+def test_child_scoped_sources_only_authorize_their_own_new_subsections(extra_child_authorized):
+    review = _review()
+    review = replace(review, active_inputs=frozenset({"e2", "e3"}), event_scopes={**review.event_scopes, "e2": (2, "5.4"), "e3": (2, "5.2" if extra_child_authorized else "5.4")})
+    parent = {"id": "5", "blocks": [{"type": "paragraph", "text": "Не менять родительский раздел."}]}
+    children = [{"id": section, "title": section, "blocks": []} for section in ["5.4", "5.2"]]
+    operation = {**_operation("e2", "e3", section="5"), "content": {"blocks": [*parent["blocks"], *children]}}
+    arguments = dict(snapshot_source_ids=frozenset(review.events_by_id), evidence_source_refs=frozenset(), base_document={"sections": [parent]})
+    if extra_child_authorized:
+        assert validate_change_inputs(review, {"operations": [operation]}, **arguments).source_event_ids == ("e2", "e3")
+    else:
+        with pytest.raises(RuleViolation) as caught:
+            validate_change_inputs(review, {"operations": [operation]}, **arguments)
+        assert caught.value.code == "CHANGE_SOURCE_SECTION_CONFLICT"
+        assert caught.value.details["section_ids"] == ["5.2"]
+
+
+@pytest.mark.parametrize("tamper", ["parent_text", "parent_evidence", "existing_child", "wrong_parent", "old_cycle", "inactive", "outside_snapshot", "rejected"])
+def test_child_scope_does_not_bypass_parent_or_review_authorization(tamper):
+    from copy import deepcopy
+
+    review = _review()
+    review = replace(review, active_inputs=frozenset({"e2", "e3"}), event_scopes={**review.event_scopes, "e2": (2, "5.4"), "e3": (2, "5.4")})
+    parent = {"id": "5", "blocks": [{"type": "paragraph", "text": "Сохранить."}]}
+    child = {"id": "5.4", "title": "Требования к отчетности", "blocks": []}
+    base = {"sections": [parent]}
+    operation = {**_operation("e2", "e3", section="5"), "content": {"blocks": [*parent["blocks"], child]}}
+    snapshot = frozenset(review.events_by_id)
+    expected = "CHANGE_SOURCE_SECTION_CONFLICT"
+    if tamper == "parent_text":
+        operation["content"]["blocks"][0] = {"type": "paragraph", "text": "Чужое изменение."}
+    elif tamper == "parent_evidence":
+        parent["evidence_refs"] = ["original"]
+        operation["evidence_refs"] = ["replacement"]
+    elif tamper == "existing_child":
+        base["sections"].append(child)
+    elif tamper == "wrong_parent":
+        operation["section_id"] = "4"
+    elif tamper == "old_cycle":
+        review = replace(review, event_scopes={**review.event_scopes, "e2": (1, "5.4")})
+        expected = "CHANGE_SOURCE_REVIEW_CYCLE_CONFLICT"
+    elif tamper == "inactive":
+        review = replace(review, active_inputs=frozenset({"e2"}))
+        expected = "CHANGE_SOURCE_NOT_ACTIVE"
+    elif tamper == "outside_snapshot":
+        snapshot = frozenset({"e2"})
+        expected = "SOURCE_NOT_IN_JOB_SNAPSHOT"
+    else:
+        events = deepcopy(review.events_by_id)
+        events["e3"]["payload"]["decision"] = "REJECTED"
+        review = replace(review, events_by_id=events)
+        expected = "REJECTED_PROPOSAL_SOURCE"
+    with pytest.raises(RuleViolation) as caught:
+        validate_change_inputs(review, {"operations": [operation]}, snapshot_source_ids=snapshot, evidence_source_refs=frozenset({"replacement"}), base_document=base)
+    assert caught.value.code == expected

@@ -232,7 +232,7 @@ def test_catalog_sync_replaces_previous_source_rows_and_v3_derives_the_title(dat
 
 @pytest.mark.p0
 @pytest.mark.parametrize("idea", [None, "", "   "])
-def test_v4_creates_empty_required_structure_by_title(database, idea):
+def test_v4_creates_empty_structure_with_all_root_sections_by_title(database, idea):
     from api.db.db_models import migrate_business_document_catalog
 
     migrate_business_document_catalog()
@@ -250,9 +250,14 @@ def test_v4_creates_empty_required_structure_by_title(database, idea):
     assert document["operation_state"] == "IDLE"
     revision = document["current_revision"]
     assert revision["revision_number"] == 1
-    expected = [{"id": section["id"], "title": section["title"], "blocks": []} for section in published_template()["sections"] if section["required"]]
+    expected_ids = ["1", "2", "3", "3.1", "3.2", "3.3", "4", "4.1", "4.3", "5", "5.5"]
+    expected = [{"id": section["id"], "title": section["title"], "blocks": []} for section in published_template()["sections"] if section["id"] in expected_ids]
+    assert [section["id"] for section in revision["document_ast"]["sections"]] == expected_ids
     assert revision["document_ast"]["sections"] == expected
     assert revision["document_ast"]["section_scope"] == "required"
+    assert revision["document_ast"]["sections"][1] == {"id": "2", "title": "Нормативно-правовые акты (НПА)", "blocks": []}
+    assert "## 2. Нормативно-правовые акты (НПА)" in revision["body_markdown"]
+    assert document_queries.get_document(document["document_id"], AUTHOR)["current_revision"] == revision
     assert all(text == "" for text in revision["section_texts"].values())
     assert revision["change_basis"][0]["title"] == "Структура документа"
     assert BusinessDocumentJob.select().count() == 0
@@ -988,7 +993,7 @@ def _draft(suffix="исходная версия"):
     }
 
 
-def _request_and_complete_draft(document, *, review_questions=None, proposals=None):
+def _request_and_complete_draft(document, *, review_questions=None, proposals=None, draft=None):
     if "REQUEST_DRAFT" not in document["allowed_commands"]:
         assessment = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
         document = _complete(
@@ -1009,7 +1014,7 @@ def _request_and_complete_draft(document, *, review_questions=None, proposals=No
     return _complete(
         requested["job_id"],
         {
-            "draft": _draft(),
+            "draft": draft if draft is not None else _draft(),
             "review_questions": review_questions or {"schema_version": "1", "outcome": "COMPLETE", "questions": []},
             "proposals": normalized_proposals,
         },
@@ -1026,7 +1031,8 @@ def _complete_review_assessment(document, *, comment_disposition="CONFIRMED_CHAN
 
 
 @pytest.mark.p0
-def test_change_preview_requires_explicit_confirmation_and_shows_section_diff(database):
+@pytest.mark.parametrize("stale_verification_policy", [False, True])
+def test_change_preview_requires_explicit_confirmation_and_shows_section_diff(database, stale_verification_policy):
     document = _request_and_complete_draft(_create())
     base = document["current_revision"]
     response = document_commands.execute(
@@ -1101,6 +1107,16 @@ def test_change_preview_requires_explicit_confirmation_and_shows_section_diff(da
     assert BusinessDocumentRevision.select().count() == 1
 
     command = _command(document, "CONFIRM_PREPARED_CHANGES", {"job_id": requested["job_id"]})
+    if stale_verification_policy:
+        job = BusinessDocumentJob.get_by_id(requested["job_id"])
+        job.payload = {**job.payload, "prompt": {**job.payload["prompt"], "content_hash": "sha256:" + "0" * 64}}
+        job.save()
+        with pytest.raises(BusinessDocumentError) as stale:
+            document_commands.execute(TENANT, AUTHOR, document["document_id"], command)
+        assert stale.value.code == "CHANGE_PREVIEW_STALE"
+        assert BusinessDocumentRevision.select().count() == 1
+        assert document_queries.get_document(document["document_id"], AUTHOR)["current_revision"]["revision_id"] == base["revision_id"]
+        return
     applied = document_commands.execute(TENANT, AUTHOR, document["document_id"], command)
     assert document_commands.execute(TENANT, AUTHOR, document["document_id"], command)["idempotent_replay"] is True
     events, _ = BusinessDocumentStreamEvents.read(requested["job_id"], 0)
@@ -1682,7 +1698,7 @@ def test_partial_review_feedback_can_be_assessed_once_without_changing_revision(
     assert len(document["protocol"]["questions"]) == 2
     assert len(document["protocol"]["proposals"]) == 2
     assert "REQUEST_REVIEW_ASSESSMENT" not in document["allowed_commands"]
-    assert "APPLY_CHANGES" not in document["allowed_commands"]
+    assert {"APPLY_CHANGES", "PREPARE_CHANGES"} <= set(document["allowed_commands"])
     assessment = BusinessDocumentEvent.get((BusinessDocumentEvent.document_id == document["document_id"]) & (BusinessDocumentEvent.event_type == "ReviewAssessed"))
     assert assessment.payload["outcome"] == "NEEDS_INPUT"
     with pytest.raises(BusinessDocumentError) as caught:
@@ -1700,15 +1716,183 @@ def test_partial_review_feedback_can_be_assessed_once_without_changing_revision(
 
 
 @pytest.mark.p0
-def test_apply_is_rejected_while_review_question_is_open_without_mutation_or_job(database):
+@pytest.mark.parametrize("command_type", ["APPLY_CHANGES", "PREPARE_CHANGES"])
+@pytest.mark.parametrize("feedback_type", ["ANSWER_QUESTION", "DECIDE_PROPOSAL", "ADD_COMMENT"])
+def test_ready_changes_apply_with_unanswered_questions_and_review_can_continue(database, command_type, feedback_type):
+    questions = _question_batch("REVIEW")
+    questions["questions"].extend(_question_batch("REVIEW", "other_audience")["questions"])
+    document = _request_and_complete_draft(_create(), review_questions=questions, proposals=[{"text": "Добавить контроль ошибок"}] if feedback_type == "DECIDE_PROPOSAL" else [])
+    base = deepcopy(document["current_revision"])
+    cycle = document["active_review_cycle"]
+    payload = {
+        "ANSWER_QUESTION": {"question_id": document["protocol"]["questions"][0]["question_id"], "selected_option_id": "individuals", "custom_answer": None},
+        "ADD_COMMENT": {"revision_id": base["revision_id"], "section_id": None, "text": "Добавить контроль ошибок", "anchor": None},
+    }.get(feedback_type)
+    if feedback_type == "DECIDE_PROPOSAL":
+        payload = {"proposal_id": document["protocol"]["proposals"][0]["proposal_id"], "decision": "ACCEPTED"}
+    response = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, feedback_type, payload))
+    source_id = response["event_id"]
+    document = _complete_review_assessment(document_queries.get_document(document["document_id"], AUTHOR))
+    open_ids = {question["question_id"] for question in document["protocol"]["questions"] if question["status"] == "OPEN"}
+    assert open_ids
+    assert {"APPLY_CHANGES", "PREPARE_CHANGES", "ANSWER_QUESTION"} <= set(document["allowed_commands"])
+
+    command = _command(document, command_type, {"base_revision_id": base["revision_id"]})
+    with pytest.raises(BusinessDocumentError) as denied:
+        document_commands.execute(TENANT, "another-author", document["document_id"], command)
+    assert denied.value.code == "DOCUMENT_PERMISSION_DENIED"
+    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], command)
+    assert document_commands.execute(TENANT, AUTHOR, document["document_id"], command)["idempotent_replay"] is True
+    assert BusinessDocumentJob.get_by_id(requested["job_id"]).payload["active_change_input_event_ids"] == [source_id]
+    section_id = "3.1" if feedback_type == "ANSWER_QUESTION" else "5.5"
+    target = next(section for section in base["document_ast"]["sections"] if section["id"] == section_id)
+    document = _complete(
+        requested["job_id"],
+        {
+            "change_plan": {
+                "schema_version": "1",
+                "base_revision_id": base["revision_id"],
+                "source_state_version": requested["state_version"],
+                "acknowledged_no_change_event_ids": [],
+                "operations": [
+                    {
+                        "operation_id": "partial",
+                        "type": "REPLACE_SECTION_CONTENT",
+                        "section_id": section_id,
+                        "expected_section_hash": section_hash(target),
+                        "source_event_ids": [source_id],
+                        "content": {"blocks": [{"type": "paragraph", "text": "Подтверждённые изменения"}]},
+                    }
+                ],
+            }
+        },
+    )
+    if command_type == "PREPARE_CHANGES":
+        assert document["current_revision"] == base
+        assert document["change_preview"]["job_id"] == requested["job_id"]
+        confirmation = _command(document, "CONFIRM_PREPARED_CHANGES", {"job_id": requested["job_id"]})
+        document_commands.execute(TENANT, AUTHOR, document["document_id"], confirmation)
+        assert document_commands.execute(TENANT, AUTHOR, document["document_id"], confirmation)["idempotent_replay"] is True
+        document = document_queries.get_document(document["document_id"], AUTHOR)
+    assert document["lifecycle_state"] == "REVIEW"
+    assert document["active_review_cycle"] == cycle
+    assert document["current_revision"]["revision_number"] == 2
+    assert "Подтверждённые изменения" in document["current_revision"]["body_markdown"]
+    assert {question["question_id"] for question in document["protocol"]["questions"] if question["status"] == "OPEN"} == open_ids
+    assert "ANSWER_QUESTION" in document["allowed_commands"]
+    assert not {"APPLY_CHANGES", "PREPARE_CHANGES", "REQUEST_EXPORT"} & set(document["allowed_commands"])
+
+    for question_id in open_ids:
+        document_commands.execute(
+            TENANT, AUTHOR, document["document_id"], _command(document, "ANSWER_QUESTION", {"question_id": question_id, "selected_option_id": "individuals", "custom_answer": None})
+        )
+        document = document_queries.get_document(document["document_id"], AUTHOR)
+    document = _complete_review_assessment(document)
+    final = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "APPLY_CHANGES", {"base_revision_id": document["current_revision"]["revision_id"]}))
+    final_job = BusinessDocumentJob.get_by_id(final["job_id"])
+    assert source_id not in final_job.payload["active_change_input_event_ids"]
+    document = _complete(
+        final["job_id"],
+        {
+            "change_plan": {
+                "schema_version": "1",
+                "base_revision_id": document["current_revision"]["revision_id"],
+                "source_state_version": final["state_version"],
+                "acknowledged_no_change_event_ids": final_job.payload["active_change_input_event_ids"],
+                "operations": [],
+            }
+        },
+    )
+    assert document["lifecycle_state"] == "AGREED"
+    assert BusinessDocumentRevision.select().count() == 2
+
+
+@pytest.mark.p0
+@pytest.mark.parametrize("ready_disposition", ["CONFIRMED_CHANGE", "NO_CHANGE"])
+def test_partial_application_defers_ambiguous_comments_until_their_question_is_answered(database, ready_disposition):
+    document = _request_and_complete_draft(_create())
+    base = document["current_revision"]
+    source_ids = []
+    for text in ("Уточнить контроль ошибок", "Сделать иначе"):
+        response = document_commands.execute(
+            TENANT, AUTHOR, document["document_id"], _command(document, "ADD_COMMENT", {"revision_id": base["revision_id"], "section_id": None, "text": text, "anchor": None})
+        )
+        source_ids.append(response["event_id"])
+        document = document_queries.get_document(document["document_id"], AUTHOR)
+    ready_id, deferred_id = source_ids
+    question = {key: value for key, value in _question_batch("REVIEW")["questions"][0].items() if key != "stage"}
+    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_REVIEW_ASSESSMENT"))
+    document = _complete(
+        requested["job_id"],
+        {
+            "schema_version": "1",
+            "questions": [question],
+            "proposals": [],
+            "comment_dispositions": [
+                {"comment_event_id": ready_id, "disposition": ready_disposition},
+                {"comment_event_id": deferred_id, "disposition": "NEEDS_QUESTION", "question_semantic_tag": question["semantic_tag"]},
+            ],
+        },
+    )
+    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "APPLY_CHANGES", {"base_revision_id": base["revision_id"]}))
+    assert BusinessDocumentJob.get_by_id(requested["job_id"]).payload["active_change_input_event_ids"] == [ready_id]
+    target = next(section for section in base["document_ast"]["sections"] if section["id"] == "5.5")
+    operations = [
+        {
+            "operation_id": "ready-comment",
+            "type": "REPLACE_SECTION_CONTENT",
+            "section_id": "5.5",
+            "expected_section_hash": section_hash(target),
+            "source_event_ids": [ready_id],
+            "content": {"blocks": [{"type": "paragraph", "text": "Контроль ошибок"}]},
+        }
+    ]
+    document = _complete(
+        requested["job_id"],
+        {
+            "change_plan": {
+                "schema_version": "1",
+                "base_revision_id": base["revision_id"],
+                "source_state_version": requested["state_version"],
+                "operations": operations if ready_disposition == "CONFIRMED_CHANGE" else [],
+                "acknowledged_no_change_event_ids": [ready_id] if ready_disposition == "NO_CHANGE" else [],
+            }
+        },
+    )
+    assert document["lifecycle_state"] == "REVIEW"
+    assert document["protocol"]["questions"][0]["status"] == "OPEN"
+    assert document["protocol"]["comments"][1]["disposition"]["disposition"] == "NEEDS_QUESTION"
+    assert "APPLY_CHANGES" not in document["allowed_commands"]
+    applied = BusinessDocumentEvent.get(
+        (BusinessDocumentEvent.document_id == document["document_id"])
+        & (BusinessDocumentEvent.event_type == ("ChangesApplied" if operations and ready_disposition == "CONFIRMED_CHANGE" else "ReviewContinuedWithoutChanges"))
+    )
+    assert deferred_id not in applied.payload.get("source_event_ids", []) + applied.payload["acknowledged_no_change_event_ids"]
+
+    document_commands.execute(
+        TENANT,
+        AUTHOR,
+        document["document_id"],
+        _command(document, "ANSWER_QUESTION", {"question_id": document["protocol"]["questions"][0]["question_id"], "selected_option_id": "individuals", "custom_answer": None}),
+    )
+    document = _complete_review_assessment(document_queries.get_document(document["document_id"], AUTHOR))
+    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "PREPARE_CHANGES", {"base_revision_id": document["current_revision"]["revision_id"]}))
+    active_ids = BusinessDocumentJob.get_by_id(requested["job_id"]).payload["active_change_input_event_ids"]
+    assert deferred_id in active_ids
+    assert ready_id not in active_ids
+
+
+@pytest.mark.p0
+@pytest.mark.parametrize("command_type", ["APPLY_CHANGES", "PREPARE_CHANGES"])
+def test_changes_without_ready_review_input_are_rejected_without_mutation_or_job(database, command_type):
     document = _request_and_complete_draft(_create(), review_questions=_question_batch("REVIEW"))
     revision = deepcopy(document["current_revision"])
-    command = _command(document, "APPLY_CHANGES", {"base_revision_id": revision["revision_id"]}, key="blocked-apply")
+    command = _command(document, command_type, {"base_revision_id": revision["revision_id"]}, key="blocked-apply")
 
     with pytest.raises(BusinessDocumentError) as caught:
         document_commands.execute(TENANT, AUTHOR, document["document_id"], command)
 
-    assert caught.value.code == "OPEN_REVIEW_QUESTIONS"
+    assert caught.value.code == "REVIEW_ASSESSMENT_REQUIRED"
     after = document_queries.get_document(document["document_id"], AUTHOR)
     assert after["state_version"] == document["state_version"]
     assert after["current_revision"] == revision
@@ -1716,7 +1900,7 @@ def test_apply_is_rejected_while_review_question_is_open_without_mutation_or_job
     assert BusinessDocumentCommand.get(BusinessDocumentCommand.idempotency_key == "blocked-apply").response["accepted"] is False
     with pytest.raises(BusinessDocumentError) as replayed:
         document_commands.execute(TENANT, AUTHOR, document["document_id"], command)
-    assert replayed.value.code == "OPEN_REVIEW_QUESTIONS"
+    assert replayed.value.code == "REVIEW_ASSESSMENT_REQUIRED"
 
 
 @pytest.mark.p0
@@ -2926,6 +3110,105 @@ def test_confirmed_anchored_comment_may_request_a_cross_section_change(database)
     ]
 
 
+@pytest.mark.parametrize("source_kind", ["proposal", "answer", "anchored_comment"])
+def test_reporting_subsection_is_previewed_and_confirmed_with_scoped_sources(database, source_kind):
+    report_text = "Отчёт содержит сотрудника, новость и время первого подтверждения."
+    monitor_text = "Мониторинг проверяет работоспособность каждые пять минут."
+    draft = _draft()
+    draft.update(schema_version="2", section_scope="required")
+    required = {section["id"] for section in published_template()["sections"] if section["required"]}
+    draft["sections"] = [section for section in draft["sections"] if section["id"] in required]
+    monitoring = next(section for section in draft["sections"] if section["id"] == "5.5")
+    monitoring["blocks"] = [{"type": "paragraph", "text": monitor_text}]
+    if source_kind == "anchored_comment":
+        monitoring["blocks"].append({"type": "paragraph", "text": report_text})
+    questions = _question_batch("REVIEW", "report_columns") if source_kind == "answer" else None
+    if questions:
+        questions["questions"][0].update(target_section_id="5.4", text="Какие данные содержит отчёт?")
+    document = _request_and_complete_draft(_create(), draft=draft, review_questions=questions, proposals=[{"target_section_id": "5.4", "text": report_text}] if source_kind == "proposal" else None)
+    if source_kind == "proposal":
+        payload = {"proposal_id": document["protocol"]["proposals"][0]["proposal_id"], "decision": "ACCEPTED"}
+        command = "DECIDE_PROPOSAL"
+    elif source_kind == "answer":
+        payload = {"question_id": document["protocol"]["questions"][0]["question_id"], "selected_option_id": None, "custom_answer": report_text}
+        command = "ANSWER_QUESTION"
+    else:
+        revision = document["current_revision"]
+        selected = revision["section_texts"]["5.5"]
+        payload = {
+            "revision_id": revision["revision_id"],
+            "section_id": "5.5",
+            "text": "Перенести описание отчёта в отчётность, сохранить мониторинг.",
+            "anchor": {"revision_id": revision["revision_id"], "section_id": "5.5", "selected_text": selected, "prefix": "", "suffix": "", "start_offset": 0, "end_offset": len(selected)},
+        }
+        command = "ADD_COMMENT"
+    document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, command, payload))
+    document = _complete_review_assessment(document_queries.get_document(document["document_id"], AUTHOR))
+    revision = document["current_revision"]
+    parent = next(section for section in revision["document_ast"]["sections"] if section["id"] == "5")
+    source = next(
+        event.id
+        for event in BusinessDocumentEvent.select().where(BusinessDocumentEvent.document_id == document["document_id"])
+        if event.event_type == {"proposal": "ProposalDecided", "answer": "QuestionAnswered", "anchored_comment": "AuthorCommentAdded"}[source_kind]
+    )
+    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "PREPARE_CHANGES", {"base_revision_id": revision["revision_id"]}))
+    plan = {
+        "schema_version": "1",
+        "base_revision_id": revision["revision_id"],
+        "source_state_version": requested["state_version"],
+        "acknowledged_no_change_event_ids": [],
+        "operations": [
+            {
+                "operation_id": "reporting",
+                "type": "REPLACE_SECTION_CONTENT",
+                "section_id": "5",
+                "expected_section_hash": section_hash(parent),
+                "source_event_ids": [source],
+                "content": {"blocks": [*parent["blocks"], {"id": "5.4", "title": "Требования к отчетности", "blocks": [{"type": "paragraph", "text": report_text}]}]},
+            }
+        ],
+    }
+    if source_kind == "anchored_comment":
+        plan["operations"].append(
+            {
+                "operation_id": "monitoring",
+                "type": "REPLACE_SECTION_CONTENT",
+                "section_id": "5.5",
+                "expected_section_hash": section_hash(monitoring),
+                "source_event_ids": [source],
+                "content": {"blocks": [{"type": "paragraph", "text": monitor_text}]},
+            }
+        )
+
+    class Adapter:
+        def generate(self, tenant_id, system_prompt, input_payload):
+            if input_payload["job_input"]["task_type"] == "PLAN_CHANGES":
+                return plan
+            # This test exercises worker/authorization/preview, not model accuracy.
+            return {
+                "checks": [
+                    {"fragment_id": key, "status": "PRESENT", "matches": ["5:0", "5.4:0", "5.5:0"], "required_section_ids": [], "superseded_by": None}
+                    for key in input_payload["job_input"]["fragments"]
+                ]
+            }
+
+    worker = BusinessDocumentWorker(worker_id="reporting-worker", ai=BusinessDocumentAI(Adapter()), lease_ms=60_000, retry_base_ms=0)
+    assert worker.run_once()
+    job = BusinessDocumentJob.get_by_id(requested["job_id"])
+    assert job.status == "COMPLETED", job.error
+    current = document_queries.get_document(document["document_id"], AUTHOR)
+    assert current["current_revision"]["revision_id"] == revision["revision_id"]
+    preview = document_queries.get_change_preview(document["document_id"], job.id)
+    added = next(section for section in preview["sections"] if section["section_id"] == "5.4")
+    assert added["before"] == "" and added["after"] == report_text
+    assert added["source_event_ids"] == [source]
+    document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(current, "CONFIRM_PREPARED_CHANGES", {"job_id": job.id}))
+    changed = document_queries.get_document(document["document_id"], AUTHOR)
+    assert changed["current_revision"]["revision_number"] == 2
+    assert changed["current_revision"]["section_texts"]["5.4"] == report_text
+    assert changed["current_revision"]["section_texts"]["5.5"] == monitor_text
+
+
 @pytest.mark.p0
 def test_confirmed_document_comment_may_authorize_changes_in_multiple_sections(database):
     document = _request_and_complete_draft(_create())
@@ -3893,7 +4176,8 @@ def test_job_stream_replays_in_order_and_fences_old_worker_attempts(database):
     assert BusinessDocumentJobStreamEvent.select().count() == 0
 
 
-def test_worker_publishes_checked_section_before_full_plan_is_committed(database):
+@pytest.mark.parametrize("coverage_fails_first", [False, True])
+def test_worker_publishes_checked_section_before_full_plan_is_committed(database, coverage_fails_first):
     document = _request_and_complete_draft(_create())
     base = document["current_revision"]
     comment = document_commands.execute(
@@ -3923,9 +4207,28 @@ def test_worker_publishes_checked_section_before_full_plan_is_committed(database
         ],
     }
     observed_during_generation = []
+    observed_coverage_feedback = []
 
     class StreamingAdapter:
+        coverage_calls = 0
+
+        def generate(self, tenant_id, system_prompt, input_payload):
+            self.coverage_calls += 1
+            return {
+                "checks": [
+                    {
+                        "fragment_id": key,
+                        "status": "NOT_REQUIREMENT" if value["source_id"].startswith("section:") else "MISSING" if coverage_fails_first and self.coverage_calls == 1 else "PRESENT",
+                        "matches": [] if value["source_id"].startswith("section:") or (coverage_fails_first and self.coverage_calls == 1) else ["5.5:0"],
+                        "required_section_ids": [],
+                        "superseded_by": None,
+                    }
+                    for key, value in input_payload["job_input"]["fragments"].items()
+                ]
+            }
+
         def generate_stream(self, tenant_id, system_prompt, input_payload, on_chunk):
+            observed_coverage_feedback.append(input_payload["job_input"].get("requirement_coverage_feedback"))
             raw = json.dumps({"change_plan": plan}, ensure_ascii=False)
             cut = raw.rfind("}]") + 1
             on_chunk(raw[:cut])
@@ -3933,8 +4236,17 @@ def test_worker_publishes_checked_section_before_full_plan_is_committed(database
             on_chunk(raw[cut:])
             return raw
 
-    worker = BusinessDocumentWorker(worker_id="stream-worker", ai=BusinessDocumentAI(StreamingAdapter()), lease_ms=60_000)
+    worker = BusinessDocumentWorker(worker_id="stream-worker", ai=BusinessDocumentAI(StreamingAdapter()), lease_ms=60_000, retry_base_ms=0)
     assert worker.run_once() is True
+    if coverage_fails_first:
+        failed = BusinessDocumentJob.get_by_id(requested["job_id"])
+        assert failed.status == "RETRY" and failed.error["code"] == "REQUIREMENT_COVERAGE_FAILED"
+        unchanged = document_queries.get_document(document["document_id"], AUTHOR)
+        assert unchanged["current_revision"]["revision_id"] == base["revision_id"]
+        assert unchanged["change_preview"] is None
+        assert worker.run_once() is True
+        assert observed_coverage_feedback[1] == failed.error["details"]["requirements"]
+    assert observed_coverage_feedback[0] is None
     assert any(event["type"] == "section_preview" and event["payload"]["after"] == "Новый контроль ошибок" for event in observed_during_generation)
     assert BusinessDocumentJob.get_by_id(requested["job_id"]).status == "COMPLETED"
     replay = document_queries.read_job_stream_events(TENANT, AUTHOR, document["document_id"], requested["job_id"], 0)

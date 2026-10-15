@@ -209,7 +209,7 @@ available_commands(document, review, *, preview=None)
 | ANSWER_QUESTION | Покой; вопрос принадлежит документу и текущим stage/cycle, ещё не отвечен; выбран ровно один допустимый способ ответа |
 | DECIDE_PROPOSAL | REVIEW; покой; предложение текущего документа/цикла, без прежнего решения; ACCEPTED либо REJECTED |
 | ADD_COMMENT | REVIEW; покой; текущая редакция, непустой текст, существующий раздел и корректный якорь, когда он требуется |
-| APPLY_CHANGES / PREPARE_CHANGES | REVIEW; покой; текущая базовая редакция; нет открытых вопросов; актуальный COMPLETE-анализ; есть применимый вход, если остаются нерешённые предложения |
+| APPLY_CHANGES / PREPARE_CHANGES | REVIEW; покой; текущая базовая редакция; актуальный COMPLETE-анализ либо NEEDS_INPUT при открытых вопросах и готовых входных данных; есть применимый вход, если остаются нерешённые предложения; NEEDS_QUESTION-комментарии откладываются |
 | CONFIRM / DISCARD | REVIEW и IDLE; актуальный preview для того же job/revision/cycle/version; TTL не истёк |
 | REQUEST_EXPORT | AGREED; покой; текущая согласованная редакция; поддерживаемый формат |
 | START_REVIEW | AGREED; покой; новый цикл |
@@ -322,7 +322,7 @@ CAS документа + одно событие ReviewAssessed
 | REQUEST_INTAKE_ASSESSMENT | открытые intake-вопросы → покой → INTAKE |
 | REQUEST_REVIEW_ASSESSMENT | REVIEW → открытые вопросы без нового feedback → покой |
 | REQUEST_DRAFT | INTAKE → уже есть редакция → открытые вопросы → актуальный COMPLETE → покой |
-| APPLY_CHANGES | REVIEW → существующий preview → открытые вопросы → актуальный COMPLETE → base revision → pending proposals без активного входа → покой |
+| APPLY_CHANGES | REVIEW → существующий preview → актуальный анализ и готовность правок → base revision → pending proposals без применимого входа → покой |
 | PREPARE_CHANGES | Как APPLY_CHANGES, но без запрета из-за существующего preview |
 | CONFIRM / DISCARD | REVIEW → покой → актуальность конкретного preview; для CONFIRM затем полный общий алгоритм плана |
 | REQUEST_EXPORT | AGREED → текущая согласованная редакция → допустимый формат → покой |

@@ -17,7 +17,7 @@ questions, decisions, comments, jobs, or audit history.
 | --- | --- | --- | --- |
 | Intake | Owner creates a document for one idea | Questions or a complete assessment event | No open intake questions and the latest assessment is current |
 | Draft generation | Intake is complete and the aggregate is idle | Immutable revision 1 plus review protocol | Schema, template, policy, evidence and optimistic-version checks all pass |
-| Review | A current immutable revision exists | Append-only answers, decisions, comments, questions and proposals | A current complete review assessment exists and no question is open |
+| Review | A current immutable revision exists | Append-only answers, decisions, comments, questions and proposals | A current assessment permits ready changes; open questions keep the document in review |
 | Finalization | Review exit conditions hold | One new immutable revision, or an audited no-change agreement | Every authorizing input has exactly one disposition and the aggregate is `AGREED` |
 | Export | The requested revision is the current agreed revision | Durable hash-verified artifact | Artifact metadata and bytes are readable by the owner |
 | Continuation | Owner starts another review on an agreed document | New append-only review cycle | The same document/chat remains the aggregate root |
@@ -59,24 +59,28 @@ body. It records exactly one disposition for every active comment:
 `CONFIRMED_CHANGE`, `NO_CHANGE`, or `NEEDS_QUESTION`. The last form is linked
 immutably to a concrete persisted question. Only confirmed comments may source
 a change, and only no-change comments may be acknowledged without one. A
-current `ReviewAssessed(COMPLETE)` and zero open questions are required
-for finalization.
+current review assessment is required before changes. `NEEDS_INPUT` permits
+applying ready answers, accepted proposals and confirmed comments while
+unanswered questions and ambiguous comments stay in the same review cycle.
+New feedback invalidates readiness until reassessed.
 
 ### Finalization
 
 The model returns only section replacement operations with the expected base
 section hash and authorizing event IDs. Every active-cycle answer, accepted
-proposal, and author comment must either authorize an operation or appear in
-`acknowledged_no_change_event_ids`. The domain verifies this disposition,
+proposal, and applicable author comment must either authorize an operation or
+appear in `acknowledged_no_change_event_ids`. The domain verifies this disposition,
 current-cycle provenance, evidence references, and section hashes, applies
 operations to the stored base AST, validates the result, and renders Markdown
-itself. The model never supplies an authoritative full replacement body. If
-undecided proposals remain, the service commits the authorized operations (or
-audits a fully acknowledged no-op), keeps the same review cycle in `REVIEW`,
-and exposes the remaining proposals for later decisions. Inputs resolved by a
+itself. Comments with `NEEDS_QUESTION` are deferred and cannot authorize a change
+or be acknowledged as no-change. The model never supplies an authoritative full
+replacement body. If unanswered questions or undecided proposals remain, the
+service commits the authorized operations (or audits a fully acknowledged no-op),
+keeps the same review cycle in `REVIEW`, and exposes the remaining questions and
+proposals for later answers and decisions. Inputs resolved by a
 partial pass cannot authorize another change. The document reaches `AGREED`
-only after no proposal remains undecided; a final fully acknowledged no-op does
-not manufacture a duplicate revision.
+only after no question remains unanswered and no proposal remains undecided;
+a final fully acknowledged no-op does not manufacture a duplicate revision.
 
 ### Export and continuation
 
@@ -306,8 +310,8 @@ uses a numeric `code` and places the stable domain identifier in
 
 - **Insufficient input:** no revision is created; the protocol receives
   questions and `REQUEST_DRAFT` remains unavailable.
-- **Open review question:** finalization is rejected without a revision, job,
-  or partial protocol mutation.
+- **Open review question:** assessed ready inputs may be applied, with the
+  question and review cycle preserved. Without ready inputs no apply job starts.
 - **Rejected or undecided proposal:** it cannot authorize a body change. An
   undecided proposal keeps a partially applied document in `REVIEW`.
 - **Stale browser or worker:** optimistic version, base revision, and section

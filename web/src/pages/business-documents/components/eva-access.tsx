@@ -12,7 +12,8 @@ import {
   type BusinessDocumentEvaAccess,
 } from '@/services/business-document-service';
 import { useQuery } from '@tanstack/react-query';
-import { KeyRound, RefreshCw } from 'lucide-react';
+import { KeyRound, RefreshCw, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
 
 export const evaAccessQueryKey = ['business-document-eva-access'];
 
@@ -97,6 +98,7 @@ export function EvaAccessNotice({
   returnTo: string;
   onRetry?: () => void;
 }) {
+  const [dismissed, setDismissed] = useState(false);
   const accessError = isEvaAccessError(error)
     ? (error as BusinessDocumentRequestError)
     : undefined;
@@ -112,6 +114,9 @@ export function EvaAccessNotice({
   const state: State = code
     ? errorStates[code]
     : (access.data?.state ?? (access.error ? 'UNAVAILABLE' : 'UNCHECKED'));
+  useEffect(() => {
+    setDismissed(false);
+  }, [state, access.data?.connector_id, accessError?.receivedAt, returnTo]);
   if (!compact && state === 'AVAILABLE') return null;
   const tokenAction = ['MISSING', 'REJECTED'].includes(state);
   const settings = `${Routes.UserSetting}/profile?${new URLSearchParams({
@@ -174,11 +179,22 @@ export function EvaAccessNotice({
         </PopoverContent>
       </Popover>
     );
+  if (dismissed) return null;
   return (
     <div
-      className="border-s-2 border-state-warning bg-state-warning/5 p-3"
+      className="relative border-s-2 border-state-warning bg-state-warning/5 p-3 pe-12"
       data-testid="eva-access-notice"
     >
+      <Button
+        type="button"
+        size="icon-sm"
+        variant="ghost"
+        className="absolute end-2 top-2"
+        aria-label="Закрыть предупреждение EVA"
+        onClick={() => setDismissed(true)}
+      >
+        <X className="size-4" />
+      </Button>
       {content}
     </div>
   );

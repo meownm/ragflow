@@ -69,6 +69,7 @@ import {
   Send,
   Sparkles,
   Trash2,
+  X,
 } from 'lucide-react';
 import {
   CSSProperties,
@@ -839,6 +840,8 @@ export default function BusinessDocumentsPage() {
     sections: BusinessDocumentSectionStreamPreview[];
   } | null>(null);
   const [streamError, setStreamError] = useState<string>();
+  const [dismissedOperationError, setDismissedOperationError] =
+    useState<string>();
   const [protocolPaneWidth, setProtocolPaneWidth] = useState(
     readProtocolPaneWidth,
   );
@@ -906,6 +909,12 @@ export default function BusinessDocumentsPage() {
   });
 
   const document = documentQuery.data;
+  const operationErrorKey = JSON.stringify([
+    documentId,
+    document?.latest_job?.job_id ?? document?.state_version,
+    document?.latest_job?.attempt,
+    document?.last_error,
+  ]);
   const streamJobId =
     document?.latest_job?.job_type === 'PLAN_CHANGES' &&
     ['PENDING', 'RUNNING', 'RETRY'].includes(document.latest_job.status)
@@ -1882,7 +1891,18 @@ export default function BusinessDocumentsPage() {
             role="alert"
           >
             <AlertTriangle className="size-4 shrink-0" />
-            {commandMutation.error.message}
+            <span className="min-w-0 flex-1 break-words">
+              {commandMutation.error.message}
+            </span>
+            <Button
+              type="button"
+              size="icon-sm"
+              variant="ghost"
+              aria-label="Закрыть сообщение об ошибке"
+              onClick={() => commandMutation.reset()}
+            >
+              <X className="size-4" />
+            </Button>
           </div>
         )}
         {streamJobId &&
@@ -1941,14 +1961,31 @@ export default function BusinessDocumentsPage() {
             {changePreviewQuery.error.message}
           </div>
         )}
-        {document.operation_state === 'FAILED' && document.last_error && (
-          <div className="flex items-center gap-2 border-b border-state-error/30 bg-state-error/5 px-5 py-2 text-xs text-state-error">
-            <Archive className="size-3.5" />
-            {typeof document.last_error === 'string'
-              ? document.last_error
-              : document.last_error.message || document.last_error.code}
-          </div>
-        )}
+        {document.operation_state === 'FAILED' &&
+          document.last_error &&
+          dismissedOperationError !== operationErrorKey && (
+            <div
+              className="flex items-start gap-2 border-b border-state-error/30 bg-state-error/5 px-5 py-2 text-xs text-state-error"
+              data-testid="business-document-operation-error"
+              role="alert"
+            >
+              <Archive className="mt-1.5 size-3.5 shrink-0" />
+              <span className="min-w-0 flex-1 break-words">
+                {typeof document.last_error === 'string'
+                  ? document.last_error
+                  : document.last_error.message || document.last_error.code}
+              </span>
+              <Button
+                type="button"
+                size="icon-sm"
+                variant="ghost"
+                aria-label="Закрыть сообщение об ошибке"
+                onClick={() => setDismissedOperationError(operationErrorKey)}
+              >
+                <X className="size-4" />
+              </Button>
+            </div>
+          )}
         {!!visibleExports.length && (
           <div
             className="flex flex-wrap items-center gap-2 border-b border-border-button bg-bg-card/40 px-5 py-2 text-xs"

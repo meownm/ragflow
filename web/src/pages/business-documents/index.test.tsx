@@ -347,7 +347,7 @@ function renderPage(path = '/business-documents/doc-1') {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return render(
+  const rendered = render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[path]}>
         <RouterRoutes>
@@ -367,6 +367,7 @@ function renderPage(path = '/business-documents/doc-1') {
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  return { ...rendered, client };
 }
 
 async function selectCatalogEntry() {
@@ -517,6 +518,31 @@ test('renders a dense read-only workbench from the server projection', async () 
   expect(screen.getAllByTestId('business-document-section')[2]).toHaveAttribute(
     'data-section-text',
     '| Флаг | Значение |\n| --- | --- |\n| True | None |\n| False | 7 |',
+  );
+});
+
+test('allows preparing ready changes while an unanswered question stays visible', async () => {
+  mockedFetch.mockResolvedValueOnce({
+    ...projection,
+    allowed_commands: ['ANSWER_QUESTION', 'PREPARE_CHANGES'],
+  });
+  renderPage();
+
+  const prepare = await screen.findByTestId('prepare-changes-button');
+  expect(prepare).toBeEnabled();
+  expect(screen.getByTestId('business-document-question')).toBeVisible();
+  expect(
+    screen.getByRole('radio', { name: 'Только успешные операции' }),
+  ).toBeEnabled();
+  fireEvent.click(prepare);
+  await waitFor(() =>
+    expect(mockedSubmit).toHaveBeenCalledWith(
+      'doc-1',
+      expect.objectContaining({
+        type: 'PREPARE_CHANGES',
+        payload: { base_revision_id: projection.current_revision!.revision_id },
+      }),
+    ),
   );
 });
 
@@ -918,6 +944,15 @@ test('shows one token warning and disables EVA write without a personal token', 
       name: 'Загрузить обновление из EVA',
     }),
   ).not.toBeInTheDocument();
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Закрыть предупреждение EVA' }),
+  );
+  expect(screen.queryByTestId('eva-access-notice')).not.toBeInTheDocument();
+  expect(
+    screen.getByRole('button', {
+      name: 'Сохранить текущий вариант в EVA',
+    }),
+  ).toBeDisabled();
 });
 
 test('reconnects a linked EVA page before offering its newer version', async () => {
@@ -1777,6 +1812,14 @@ test('preserves the comment draft and anchor when submission fails', async () =>
   expect(
     await screen.findByTestId('business-document-command-error'),
   ).toHaveTextContent('network down');
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Закрыть сообщение об ошибке' }),
+  );
+  await waitFor(() =>
+    expect(
+      screen.queryByTestId('business-document-command-error'),
+    ).not.toBeInTheDocument(),
+  );
   expect(comment).toHaveValue('Не потерять этот комментарий');
   expect(
     screen.getByTestId('business-document-comment-composer'),
@@ -2217,6 +2260,49 @@ test('shows streamed sections as preliminary and clears them on retry', async ()
   ).not.toBeInTheDocument();
 });
 
+test('shows a new optional reporting section before confirming its application', async () => {
+  mockedFetch.mockResolvedValue({
+    ...projection,
+    change_preview: { job_id: 'job-reporting', base_revision_id: 'revision-3' },
+    allowed_commands: ['CONFIRM_PREPARED_CHANGES', 'DISCARD_PREPARED_CHANGES'],
+  });
+  mockedFetchPreview.mockResolvedValue({
+    job_id: 'job-reporting',
+    base_revision_id: 'revision-3',
+    state_version: 18,
+    sections: [
+      {
+        section_id: '5.4',
+        title: 'Требования к отчетности',
+        before: '',
+        after:
+          'Отчёт содержит сотрудника, новость и время первого подтверждения.',
+        source_event_ids: ['event-reporting'],
+        sources: [],
+      },
+    ],
+    acknowledged_no_change_event_ids: [],
+  });
+  mockedSubmit.mockResolvedValue(commandResult);
+  renderPage();
+  const preview = await screen.findByTestId('business-document-change-preview');
+  expect(preview).toHaveTextContent('Требования к отчетности');
+  expect(preview).toHaveTextContent('время первого подтверждения');
+  expect(mockedSubmit).not.toHaveBeenCalled();
+  fireEvent.click(
+    within(preview).getByRole('button', { name: 'Подтвердить применение' }),
+  );
+  await waitFor(() =>
+    expect(mockedSubmit).toHaveBeenCalledWith(
+      'doc-1',
+      expect.objectContaining({
+        type: 'CONFIRM_PREPARED_CHANGES',
+        payload: { job_id: 'job-reporting' },
+      }),
+    ),
+  );
+});
+
 test('prepares changes, then shows before and after with explicit confirmation', async () => {
   mockedFetch.mockResolvedValueOnce({
     ...projection,
@@ -2377,6 +2463,54 @@ test('renders loading and retryable error states', async () => {
   ).toHaveTextContent('network down');
   fireEvent.click(screen.getByRole('button', { name: 'Повторить' }));
   await waitFor(() => expect(mockedFetch).toHaveBeenCalledTimes(2));
+});
+
+test('dismisses a failed operation error across refreshes and shows the next failure', async () => {
+  const failed: BusinessDocumentProjection = {
+    ...projection,
+    operation_state: 'FAILED',
+    last_error: {
+      code: 'INVALID_DOCUMENT_DRAFT',
+      message: 'Черновик не соответствует контракту',
+    },
+    latest_job: {
+      job_id: 'failed-job-1',
+      job_type: 'PLAN_CHANGES',
+      status: 'DEAD',
+      attempt: 3,
+      max_attempts: 3,
+    },
+  };
+  mockedFetch.mockResolvedValue(failed);
+  const { client } = renderPage();
+  expect(
+    await screen.findByTestId('business-document-operation-error'),
+  ).toHaveTextContent('Черновик не соответствует контракту');
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Закрыть сообщение об ошибке' }),
+  );
+  expect(
+    screen.queryByTestId('business-document-operation-error'),
+  ).not.toBeInTheDocument();
+  expect(mockedSubmit).not.toHaveBeenCalled();
+
+  await act(() =>
+    client.refetchQueries({ queryKey: ['business-document', 'doc-1'] }),
+  );
+  expect(
+    screen.queryByTestId('business-document-operation-error'),
+  ).not.toBeInTheDocument();
+
+  mockedFetch.mockResolvedValue({
+    ...failed,
+    latest_job: { ...failed.latest_job!, job_id: 'failed-job-2' },
+  });
+  await act(() =>
+    client.refetchQueries({ queryKey: ['business-document', 'doc-1'] }),
+  );
+  expect(
+    await screen.findByTestId('business-document-operation-error'),
+  ).toBeVisible();
 });
 
 test('shows the active attempt and previous validation error while retrying', async () => {
@@ -3087,45 +3221,115 @@ test('shows a read-only agent draft and regenerates it only from instructions', 
   expect(mockedApproveEva).not.toHaveBeenCalled();
 });
 
-test('asks for confirmation and force-overwrites a changed EVA document', async () => {
-  const approvedChange: EvaDocumentChange = {
-    ...evaChange,
-    state_version: 4,
-    workflow_state: 'APPROVED',
-    allowed_actions: ['PREPARE_EVA_DRAFT'],
-  };
-  mockedFetchEva.mockResolvedValue(approvedChange);
-  mockedPrepareEva
-    .mockRejectedValueOnce(
+test.each(
+  ['EVA_SOURCE_VERSION_CONFLICT', 'EVA_DRAFT_CONFLICT'].flatMap(
+    (conflictCode) =>
+      ['prepare', 'publish'].map((action) => ({ conflictCode, action })),
+  ),
+)(
+  'asks for confirmation and force-overwrites $action after $conflictCode with a refreshed version',
+  async ({ conflictCode, action }) => {
+    const actionMock =
+      action === 'prepare' ? mockedPrepareEva : mockedPublishEva;
+    const approvedChange: EvaDocumentChange = {
+      ...evaChange,
+      state_version: 4,
+      workflow_state: action === 'prepare' ? 'APPROVED' : 'EVA_DRAFT_READY',
+      allowed_actions: [
+        action === 'prepare' ? 'PREPARE_EVA_DRAFT' : 'PUBLISH_EVA',
+      ],
+    };
+    mockedFetchEva.mockResolvedValueOnce(approvedChange).mockResolvedValue({
+      ...approvedChange,
+      state_version: 6,
+    });
+    actionMock
+      .mockRejectedValueOnce(
+        new BusinessDocumentConflictError(
+          'The published EVA document changed after this change request was created',
+          conflictCode,
+          {
+            confirmation_required: true,
+            confirmation_action: 'OVERWRITE_EVA_DOCUMENT',
+          },
+        ),
+      )
+      .mockResolvedValueOnce({
+        ...approvedChange,
+        state_version: 6,
+        workflow_state: 'EVA_DRAFT_READY',
+        allowed_actions: ['PUBLISH_EVA'],
+      });
+
+    renderPage('/business-documents/eva/change-1');
+    const prepareDraftButton = await screen.findByTestId(
+      action === 'prepare' ? 'prepare-eva-draft' : 'publish-eva-document',
+    );
+    await waitFor(() => expect(prepareDraftButton).toBeEnabled());
+    fireEvent.click(prepareDraftButton);
+    if (action === 'publish') {
+      fireEvent.click(
+        await screen.findByRole('button', {
+          name: 'Опубликовать',
+        }),
+      );
+    }
+
+    expect(await screen.findByText('Перезаписать документ EVA?')).toBeVisible();
+    expect(screen.getByText(/в том числе чужие изменения/)).toBeVisible();
+    expect(actionMock).toHaveBeenNthCalledWith(1, 'change-1', 4, false);
+
+    fireEvent.click(screen.getByTestId('confirm-eva-overwrite'));
+
+    await waitFor(() =>
+      expect(actionMock).toHaveBeenNthCalledWith(2, 'change-1', 6, true),
+    );
+  },
+);
+
+test.each(['prepare', 'publish'])(
+  'cancelling overwrite during %s preserves the foreign EVA draft without another request',
+  async (action) => {
+    const actionMock =
+      action === 'prepare' ? mockedPrepareEva : mockedPublishEva;
+    mockedFetchEva.mockResolvedValue({
+      ...evaChange,
+      state_version: 4,
+      workflow_state: action === 'prepare' ? 'APPROVED' : 'EVA_DRAFT_READY',
+      allowed_actions: [
+        action === 'prepare' ? 'PREPARE_EVA_DRAFT' : 'PUBLISH_EVA',
+      ],
+    });
+    actionMock.mockRejectedValueOnce(
       new BusinessDocumentConflictError(
-        'The published EVA document changed after this change request was created',
-        'EVA_SOURCE_VERSION_CONFLICT',
+        'Different unpublished draft',
+        'EVA_DRAFT_CONFLICT',
         {
           confirmation_required: true,
           confirmation_action: 'OVERWRITE_EVA_DOCUMENT',
         },
       ),
-    )
-    .mockResolvedValueOnce({
-      ...approvedChange,
-      state_version: 6,
-      workflow_state: 'EVA_DRAFT_READY',
-      allowed_actions: ['PUBLISH_EVA'],
-    });
-
-  renderPage('/business-documents/eva/change-1');
-  const prepareDraftButton = await screen.findByTestId('prepare-eva-draft');
-  await waitFor(() => expect(prepareDraftButton).toBeEnabled());
-  expect(screen.getByText('Изменения подтверждены')).toBeVisible();
-  expect(prepareDraftButton).toHaveTextContent('Сохранить как черновик в EVA');
-  fireEvent.click(prepareDraftButton);
-
-  expect(await screen.findByText('Перезаписать документ EVA?')).toBeVisible();
-  expect(mockedPrepareEva).toHaveBeenNthCalledWith(1, 'change-1', 4, false);
-
-  fireEvent.click(screen.getByTestId('confirm-eva-overwrite'));
-
-  await waitFor(() =>
-    expect(mockedPrepareEva).toHaveBeenNthCalledWith(2, 'change-1', 4, true),
-  );
-});
+    );
+    renderPage('/business-documents/eva/change-1');
+    const button = await screen.findByTestId(
+      action === 'prepare' ? 'prepare-eva-draft' : 'publish-eva-document',
+    );
+    await waitFor(() => expect(button).toBeEnabled());
+    fireEvent.click(button);
+    if (action === 'publish') {
+      fireEvent.click(
+        await screen.findByRole('button', {
+          name: 'Опубликовать',
+        }),
+      );
+    }
+    const dialog = await screen.findByTestId('eva-overwrite-confirmation');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Отмена' }));
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId('eva-overwrite-confirmation'),
+      ).not.toBeInTheDocument(),
+    );
+    expect(actionMock).toHaveBeenCalledTimes(1);
+  },
+);

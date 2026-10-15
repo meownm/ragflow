@@ -743,17 +743,13 @@ class EvaDocumentChangeService:
                 except ConflictError:
                     if cls._remote_published_hash(remote) != cls._serialized_draft_hash(change):
                         raise
+                cls._ensure_draft_unchanged(change, remote)
             user_token_operation = True
             mutation_client, credential_version = cls._mutation_client(connector, actor_id)
             mutation_client.update_document_draft(change.eva_document_id, change.draft_html, change.eva_document_name)
             user_token_operation = False
             verified = reader.get_document_for_edit(change.eva_document_id)
-            if str(verified.get("name") or "").strip() != change.eva_document_name:
-                raise ConflictError(
-                    "EVA_NAME_VERIFICATION_FAILED",
-                    "EVA returned a different document name after saving",
-                    {"expected": change.eva_document_name, "actual": str(verified.get("name") or "").strip()},
-                )
+            cls._ensure_saved_draft(change, verified)
         except Exception as error:
             mapped = cls._map_user_token_error(error) if user_token_operation else cls._map_external_error(error)
             cls._restore_after_external_failure(change.id, reservation_version, EvaChangeState.PREPARING_EVA_DRAFT, EvaChangeState.APPROVED, mapped)
@@ -794,6 +790,9 @@ class EvaDocumentChangeService:
                     user_token_operation = True
                     mutation_client, credential_version = cls._mutation_client(connector, actor_id)
                     mutation_client.update_document_draft(change.eva_document_id, change.draft_html, change.eva_document_name)
+                    user_token_operation = False
+                    cls._ensure_saved_draft(change, reader.get_document_for_edit(change.eva_document_id))
+                    user_token_operation = True
                 else:
                     if published_hash == serialized_draft_hash and not name_matches:
                         cls._raise_source_conflict(change, remote, published_hash)
@@ -937,6 +936,32 @@ class EvaDocumentChangeService:
         actual_hash = cls._remote_published_hash(remote)
         if actual_hash != change.base_content_hash:
             cls._raise_source_conflict(change, remote, actual_hash)
+
+    @classmethod
+    def _ensure_draft_unchanged(cls, change: BusinessDocumentEvaChange, remote: dict[str, Any]) -> None:
+        draft_hash = cls._remote_draft_hash(remote)
+        if draft_hash in {_content_hash(""), cls._remote_published_hash(remote), cls._serialized_draft_hash(change)}:
+            return
+        raise ConflictError(
+            "EVA_DRAFT_CONFLICT",
+            "EVA contains a different unpublished draft; confirm before replacing it",
+            {"actual_hash": draft_hash, "confirmation_required": True, "confirmation_action": "OVERWRITE_EVA_DOCUMENT"},
+        )
+
+    @classmethod
+    def _ensure_saved_draft(cls, change: BusinessDocumentEvaChange, remote: dict[str, Any]) -> None:
+        if cls._remote_draft_hash(remote) != cls._serialized_draft_hash(change):
+            raise ConflictError("EVA_DRAFT_VERIFICATION_FAILED", "EVA did not retain the approved draft after saving")
+        if str(remote.get("name") or "").strip() != change.eva_document_name:
+            raise ConflictError(
+                "EVA_NAME_VERIFICATION_FAILED",
+                "EVA returned a different document name after saving",
+                {"expected": change.eva_document_name, "actual": str(remote.get("name") or "").strip()},
+            )
+
+    @staticmethod
+    def _remote_draft_hash(remote: dict[str, Any]) -> str:
+        return _content_hash(_html_to_markdown(str(remote.get("draft_html") or "")))
 
     @staticmethod
     def _raise_source_conflict(change: BusinessDocumentEvaChange, remote: dict[str, Any], actual_hash: str) -> None:

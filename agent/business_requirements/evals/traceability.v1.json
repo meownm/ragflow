@@ -1,7 +1,7 @@
 {
   "schema_version": "1",
   "traceability_id": "business-requirements-quality",
-  "traceability_version": "1.2.0",
+  "traceability_version": "1.3.0",
   "requirements": [
     {
       "requirement_id": "template_fidelity",
@@ -62,13 +62,13 @@
     },
     {
       "requirement_id": "protocol_integrity",
-      "golden_cases": ["G03_numbered_answer", "G04_custom_answer", "G05_accept_proposal_after_questions_closed", "G06_reject_proposal", "G07_unanswered_proposal_excluded", "G08_open_question_locks_body", "G09_direct_body_edit_forbidden", "G10_ambiguous_anchor_comment", "G11_orphaned_anchor", "G12_duplicate_command_idempotency", "G13_stale_state_version", "G14_answer_already_closed_question", "G15_question_option_lower_bound", "G16_question_option_upper_bound", "G22_export_md_and_docx", "G24_resume_same_chat_and_new_chat_boundary"],
+      "golden_cases": ["G03_numbered_answer", "G04_custom_answer", "G05_accept_proposal_after_questions_closed", "G06_reject_proposal", "G07_unanswered_proposal_excluded", "G08_partial_changes_preserve_open_questions", "G09_direct_body_edit_forbidden", "G10_ambiguous_anchor_comment", "G11_orphaned_anchor", "G12_duplicate_command_idempotency", "G13_stale_state_version", "G14_answer_already_closed_question", "G15_question_option_lower_bound", "G16_question_option_upper_bound", "G22_export_md_and_docx", "G24_resume_same_chat_and_new_chat_boundary"],
       "model_golden_cases": ["M01_incomplete_idea_requests_clarification", "M03_confirmed_review_change", "M05_conflicting_sources_require_clarification"],
       "tests": ["test/evals/business_documents/test_golden_dialogue_harness.py::test_release_gate_executes_every_p0_assertion_and_reports_all_case_rate", "test/evals/business_documents/test_live_model_quality.py::test_live_model_golden_suite"]
     },
     {
-      "requirement_id": "BODY_CHANGED_WITH_OPEN_QUESTIONS",
-      "golden_cases": ["G08_open_question_locks_body"],
+      "requirement_id": "REVIEW_CLOSED_WITH_OPEN_QUESTIONS",
+      "golden_cases": ["G08_partial_changes_preserve_open_questions"],
       "model_golden_cases": ["M03_confirmed_review_change"],
       "tests": ["test/evals/business_documents/test_golden_dialogue_harness.py::test_release_gate_executes_every_p0_assertion_and_reports_all_case_rate"]
     },

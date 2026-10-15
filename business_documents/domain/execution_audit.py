@@ -58,7 +58,7 @@ def verify_pinned_evidence(retrieval: Mapping[str, Any], snapshot: Mapping[str, 
 
 def validate_ai_audit(ai: object) -> dict[str, Any]:
     expected = {"provider", "model", "model_type", "parameters", "duration_ms", "token_usage"}
-    if not isinstance(ai, dict) or set(ai) != expected:
+    if not isinstance(ai, dict) or set(ai) - {"verification"} != expected:
         raise RuleViolation("INVALID_EXECUTION_AUDIT", "Worker AI audit fields are invalid")
     if not all(isinstance(ai[key], str) and ai[key] for key in ("provider", "model", "model_type")):
         raise RuleViolation("INVALID_EXECUTION_AUDIT", "Worker AI identity is invalid")
@@ -78,7 +78,13 @@ def validate_ai_audit(ai: object) -> dict[str, Any]:
         raise RuleViolation("INVALID_EXECUTION_AUDIT", "Worker AI token usage is invalid")
     if usage["prompt_tokens"] + usage["completion_tokens"] not in {0, usage["total_tokens"]}:
         raise RuleViolation("INVALID_EXECUTION_AUDIT", "Worker AI token usage is inconsistent")
+    verification = ai.get("verification")
+    verification_steps = verification if isinstance(verification, list) else [verification] if verification is not None else []
+    if verification is not None and (not verification_steps or any(not isinstance(step, dict) or "verification" in step for step in verification_steps)):
+        raise RuleViolation("INVALID_EXECUTION_AUDIT", "Worker AI verification audit is invalid")
+    checked_steps = [validate_ai_audit(step) for step in verification_steps]
     return {
+        **({"verification": checked_steps if isinstance(verification, list) else checked_steps[0]} if checked_steps else {}),
         "duration_ms": float(duration_ms),
         "model": ai["model"],
         "model_type": ai["model_type"],

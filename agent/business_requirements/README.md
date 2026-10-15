@@ -22,8 +22,10 @@ Published asset versions are immutable. A document pins the exact template and
 policy versions used when it is created.
 
 Create-document v4 accepts a catalog title without an idea. Without imported
-EVA content it creates revision 1 with empty required sections, using document
-AST v2 (`section_scope: required`), and opens review without an AI job. Review
+EVA content it creates revision 1 with empty top-level sections (including
+section 2, normative legal acts) and mandatory subsections, using document AST
+v2 (`section_scope: required`), and opens review without an AI job. Optional
+subsections are added when needed. Review
 changes may fill this structure incrementally; completion still requires all
 mandatory content and diagrams. Create-document v1-v3 and document AST v1 keep
 their published contracts.

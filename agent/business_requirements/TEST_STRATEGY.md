@@ -24,7 +24,7 @@ evidence adapter, exporter, or UI interaction that owns the behavior.
 | Model output | invalid shape, invented event/source references | published JSON Schemas plus semantic domain validation |
 | Evidence | ACL leaks, prompt injection, stale retry context, unsupported sources | injected RAGFlow search/access adapters and immutable snapshot checks |
 | Worker | duplicate execution, expired lease, crash/retry/dead letter | fenced-lease queue tests with controlled time |
-| Revision/protocol | body mutation while questions are open, non-append-only history | aggregate tests and golden conversations |
+| Revision/protocol | closing review with open questions, unconfirmed changes, non-append-only history | aggregate tests and golden conversations |
 | Export | wrong revision, protocol leakage, unsafe HTML/URLs, corrupt storage | byte-level Markdown/DOCX/EvaWiki and storage readback tests |
 | Workbench | direct edits, wrong command payload, stale selection/conflict loss | Jest interaction tests, TypeScript, ESLint, production build |
 | EVA title import | duplicate title, occupied/multiple pages, template mismatch, partial create, wrong initial analysis | service transaction tests, Jest interaction tests and authenticated browser flow |
@@ -41,10 +41,10 @@ The canonical positive journey must execute all of the following:
    template.
 4. Append a proposal decision, answer, and anchored or general comment without
    changing the body.
-5. Reassess review input, resolve every clarification, and give every active
-   input exactly one change/no-change disposition.
-6. Apply accepted changes to a new immutable revision. If proposals remain
-   undecided, stay in the same `REVIEW` cycle and expose their decisions;
+5. Reassess review input and give every applicable input exactly one
+   change/no-change disposition; defer ambiguous comments until clarified.
+6. Apply accepted changes to a new immutable revision. If questions remain
+   unanswered or proposals remain undecided, stay in the same `REVIEW` cycle and expose their controls;
    otherwise reach `AGREED`.
 7. Generate, persist, list, and download Markdown/DOCX/EvaWiki artifacts for
    the agreed revision.
@@ -59,7 +59,7 @@ export service are exercised by unit/integration tests and golden cases
 The release suite must reject without partial mutation:
 
 - draft generation before a current complete intake assessment;
-- finalization while any review question is open;
+- closing review while any review question is open;
 - rejected or undecided proposal used as a change source;
 - ambiguous/unconfirmed comment used as a change source;
 - unknown event IDs or evidence references invented by a model;
@@ -90,8 +90,8 @@ ledger entry.
 - long initial ideas cannot evict current revision/protocol context from a
   review/change retrieval query;
 - repeated semantic questions/proposals do not append duplicate protocol rows;
-- a partial change pass resolves each used input once, keeps undecided
-  proposals in the same `REVIEW` cycle, and cannot reuse an already applied
+- a partial change pass resolves each used input once, keeps unanswered
+  questions and undecided proposals in the same `REVIEW` cycle, and cannot reuse an already applied
   decision;
 - worker retry reuses the first pinned snapshot and rejects a lost lease;
 - missing/corrupt export bytes can be regenerated without poisoning that
@@ -141,7 +141,8 @@ original suite; `golden_dialogs/v2.json` is the active suite for partial review
 application. Each case contains an ID, priority, category, user turns, and hard
 assertions. The deterministic runner reports both case and assertion
 denominators by P0/P1 and fails on unknown, skipped, or unexecuted P0 behavior.
-Current coverage is 24/24 cases and 78/78 hard assertions.
+Suite 2.1.0 covers applying ready changes while preserving unanswered questions.
+Current coverage is 24/24 cases and 80/80 hard assertions.
 
 `golden_model_quality/v1.json` is a separate five-case, data-driven live-model
 suite. It covers incomplete intake, a complete draft, a confirmed review

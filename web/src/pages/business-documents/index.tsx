@@ -80,6 +80,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
@@ -105,6 +106,7 @@ import type {
   BusinessDocumentCommandType,
   BusinessDocumentLifecycleState,
   BusinessDocumentOperationState,
+  BusinessDocumentProjection,
   BusinessDocumentRevision,
   BusinessDocumentSectionStreamPreview,
   BusinessDocumentSelection,
@@ -812,6 +814,8 @@ export default function BusinessDocumentsPage() {
     id: string;
     changeId: string;
   }>();
+  const activeDocumentId = useRef(documentId);
+  activeDocumentId.current = documentId;
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data: userInfo } = useFetchUserInfo();
@@ -1134,10 +1138,38 @@ export default function BusinessDocumentsPage() {
       };
       return submitBusinessDocumentCommand(documentId, command);
     },
-    onSuccess: async () => {
-      setHasConflict(false);
+    onSuccess: async (result, { type }) => {
+      const targetDocumentId = result.document_id;
+      if (activeDocumentId.current === targetDocumentId) {
+        setHasConflict(false);
+      }
+      const updatedDocument = result.document;
+      if (updatedDocument) {
+        await queryClient.cancelQueries({
+          queryKey: BusinessDocumentKeys.detail(targetDocumentId),
+          exact: true,
+        });
+        queryClient.setQueryData<BusinessDocumentProjection>(
+          BusinessDocumentKeys.detail(targetDocumentId),
+          (current) =>
+            current && current.state_version > updatedDocument.state_version
+              ? current
+              : updatedDocument,
+        );
+        if (type === 'CONFIRM_PREPARED_CHANGES') {
+          if (activeDocumentId.current === targetDocumentId) {
+            setHistoryOpen(false);
+            setSelectedRevisionId(undefined);
+          }
+          await queryClient.invalidateQueries({
+            queryKey: ['business-document-revisions', targetDocumentId],
+            refetchType: 'none',
+          });
+        }
+        return;
+      }
       await queryClient.invalidateQueries({
-        queryKey: BusinessDocumentKeys.detail(documentId),
+        queryKey: BusinessDocumentKeys.detail(targetDocumentId),
       });
     },
     onError: (error) => {

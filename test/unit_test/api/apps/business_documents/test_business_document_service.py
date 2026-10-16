@@ -1118,18 +1118,24 @@ def test_change_preview_requires_explicit_confirmation_and_shows_section_diff(da
         assert document_queries.get_document(document["document_id"], AUTHOR)["current_revision"]["revision_id"] == base["revision_id"]
         return
     applied = document_commands.execute(TENANT, AUTHOR, document["document_id"], command)
-    assert document_commands.execute(TENANT, AUTHOR, document["document_id"], command)["idempotent_replay"] is True
+    replayed = document_commands.execute(TENANT, AUTHOR, document["document_id"], command)
+    assert replayed["idempotent_replay"] is True
+    assert replayed["document"] == applied["document"]
+    assert "document" not in BusinessDocumentCommand.get(BusinessDocumentCommand.idempotency_key == command["idempotency_key"]).response
     events, _ = BusinessDocumentStreamEvents.read(requested["job_id"], 0)
     assert [event["type"] for event in events].count("applied") == 1
     assert events[-1]["payload"]["state_version"] == applied["state_version"]
     document = document_queries.get_document(applied["document_id"], AUTHOR)
+    assert applied["document"] == document
     assert document["current_revision"]["revision_number"] == 2
+    assert document["current_revision"]["section_texts"]["5.5"] == "Новый контроль ошибок"
     assert document["change_preview"] is None
     assert BusinessDocumentRevision.select().count() == 2
 
 
 @pytest.mark.p0
-def test_prepared_change_can_be_discarded_without_creating_a_revision(database):
+@pytest.mark.parametrize("command_type", ["CONFIRM_PREPARED_CHANGES", "DISCARD_PREPARED_CHANGES"])
+def test_prepared_no_change_plan_can_be_confirmed_or_discarded_without_creating_a_revision(database, command_type):
     document = _request_and_complete_draft(_create())
     base = document["current_revision"]
     response = document_commands.execute(
@@ -1158,15 +1164,20 @@ def test_prepared_change_can_be_discarded_without_creating_a_revision(database):
     assert preview["acknowledged_no_change_sources"] == [
         {"event_id": source_id, "kind": "comment", "entity_id": document["protocol"]["comments"][0]["comment_id"], "label": "Комментарий автора", "text": "Проверить требования"}
     ]
-    document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "DISCARD_PREPARED_CHANGES", {"job_id": requested["job_id"]}))
+    result = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, command_type, {"job_id": requested["job_id"]}))
     document = document_queries.get_document(document["document_id"], AUTHOR)
+    if command_type == "CONFIRM_PREPARED_CHANGES":
+        assert result["document"] == document
+    else:
+        assert "document" not in result
     assert document["change_preview"] is None
     assert document["current_revision"]["revision_id"] == base["revision_id"]
+    assert BusinessDocumentRevision.select().count() == 1
     with pytest.raises(BusinessDocumentError) as caught:
         document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "CONFIRM_PREPARED_CHANGES", {"job_id": requested["job_id"]}))
-    assert caught.value.code == "CHANGE_PREVIEW_STALE"
+    assert caught.value.code == ("LIFECYCLE_STATE_CONFLICT" if command_type == "CONFIRM_PREPARED_CHANGES" else "CHANGE_PREVIEW_STALE")
     events, _ = BusinessDocumentStreamEvents.read(requested["job_id"], 0)
-    assert events[-1]["type"] == "discarded"
+    assert events[-1]["type"] == ("applied" if command_type == "CONFIRM_PREPARED_CHANGES" else "discarded")
     assert events[-1]["payload"]["state_version"] == document["state_version"]
 
 

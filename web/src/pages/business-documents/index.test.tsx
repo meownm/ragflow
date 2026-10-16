@@ -33,7 +33,12 @@ import {
   waitFor,
   within,
 } from '@testing-library/react';
-import { MemoryRouter, Route, Routes as RouterRoutes } from 'react-router';
+import {
+  MemoryRouter,
+  Route,
+  Routes as RouterRoutes,
+  useNavigate,
+} from 'react-router';
 import BusinessDocumentsPage from '.';
 
 const mockUseSystemConfig = jest.fn();
@@ -2383,6 +2388,272 @@ test('prepares changes, then shows before and after with explicit confirmation',
     ),
   );
 });
+
+test.each([
+  [false, false],
+  [true, false],
+  [false, true],
+])(
+  'renders the saved confirmation response without another GET (history open: %s, earlier GET pending: %s)',
+  async (historyOpen, earlierGetPending) => {
+    mockedFetch.mockResolvedValue({
+      ...projection,
+      change_preview: { job_id: 'job-preview', base_revision_id: 'revision-3' },
+      allowed_commands: [
+        'CONFIRM_PREPARED_CHANGES',
+        'DISCARD_PREPARED_CHANGES',
+      ],
+    });
+    const updatedDocument: BusinessDocumentProjection = {
+      ...projection,
+      state_version: 19,
+      lifecycle_state: 'AGREED',
+      change_preview: null,
+      allowed_commands: ['START_REVIEW', 'REQUEST_EXPORT'],
+      current_revision: {
+        ...projection.current_revision!,
+        revision_id: 'revision-4',
+        revision_number: 4,
+        document_ast: {
+          ...projection.current_revision!.document_ast,
+          sections: [
+            {
+              id: '1',
+              title: 'Цель',
+              blocks: [{ type: 'paragraph', text: 'Новая измеримая цель.' }],
+            },
+          ],
+        },
+        section_texts: { '1': 'Новая измеримая цель.' },
+        body_markdown: '## 1. Цель\nНовая измеримая цель.',
+      },
+    };
+    let confirm!: (result: BusinessDocumentCommandResult) => void;
+    mockedSubmit.mockReturnValueOnce(
+      new Promise((resolve) => {
+        confirm = resolve;
+      }),
+    );
+    const { client } = renderPage();
+    const preview = await screen.findByTestId(
+      'business-document-change-preview',
+    );
+    if (historyOpen) {
+      fireEvent.click(screen.getByTestId('business-document-history-toggle'));
+      await waitFor(() => expect(mockedListRevisions).toHaveBeenCalledTimes(1));
+    }
+    let finishEarlierGet!: (document: BusinessDocumentProjection) => void;
+    let earlierGet: Promise<void> | undefined;
+    if (earlierGetPending) {
+      mockedFetch.mockReturnValueOnce(
+        new Promise((resolve) => {
+          finishEarlierGet = resolve;
+        }),
+      );
+      earlierGet = client.refetchQueries({
+        queryKey: ['business-document', 'doc-1'],
+      });
+      await waitFor(() => expect(mockedFetch).toHaveBeenCalledTimes(2));
+    }
+    fireEvent.click(
+      within(preview).getByRole('button', { name: 'Подтвердить применение' }),
+    );
+    const markdown = screen.getByTestId('business-document-markdown');
+    expect(markdown).toHaveTextContent(firstSectionText);
+    await act(async () => {
+      confirm({
+        ...commandResult,
+        operation_state: 'IDLE',
+        lifecycle_state: 'AGREED',
+        job_id: null,
+        document: updatedDocument,
+      });
+    });
+    await waitFor(() =>
+      expect(markdown).toHaveTextContent('Новая измеримая цель.'),
+    );
+    expect(markdown).not.toHaveTextContent(firstSectionText);
+    expect(
+      screen.queryByTestId('business-document-change-preview'),
+    ).not.toBeInTheDocument();
+    if (earlierGetPending) {
+      await act(async () => {
+        finishEarlierGet(projection);
+        await earlierGet;
+      });
+      expect(markdown).toHaveTextContent('Новая измеримая цель.');
+    }
+    expect(mockedFetch).toHaveBeenCalledTimes(earlierGetPending ? 2 : 1);
+    expect(mockedFetchPreview).toHaveBeenCalledTimes(1);
+    expect(mockedListRevisions).toHaveBeenCalledTimes(historyOpen ? 1 : 0);
+    if (historyOpen) {
+      fireEvent.click(screen.getByTestId('business-document-history-toggle'));
+      await waitFor(() => expect(mockedListRevisions).toHaveBeenCalledTimes(2));
+    }
+  },
+);
+
+test.each([
+  { includeDocument: true, navigateDuringCacheUpdate: false },
+  { includeDocument: false, navigateDuringCacheUpdate: false },
+  { includeDocument: true, navigateDuringCacheUpdate: true },
+])(
+  'keeps document B and its history intact when confirmation of A completes: %j',
+  async ({ includeDocument, navigateDuringCacheUpdate }) => {
+    const documentA: BusinessDocumentProjection = {
+      ...projection,
+      change_preview: { job_id: 'job-preview', base_revision_id: 'revision-3' },
+      allowed_commands: ['CONFIRM_PREPARED_CHANGES'],
+    };
+    const documentB: BusinessDocumentProjection = {
+      ...projection,
+      document_id: 'doc-2',
+      state_version: 1,
+      title: 'Другой документ',
+      allowed_commands: [],
+    };
+    const confirmedA: BusinessDocumentProjection = {
+      ...projection,
+      state_version: 19,
+      title: 'Подтверждённый документ',
+      change_preview: null,
+    };
+    mockedFetch.mockImplementation(async (id) =>
+      id === 'doc-2' ? documentB : documentA,
+    );
+    let finish!: (result: BusinessDocumentCommandResult) => void;
+    mockedSubmit.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+    let finishCacheUpdate!: () => void;
+    if (navigateDuringCacheUpdate) {
+      const cancelQueries = client.cancelQueries.bind(client);
+      const pendingCacheUpdate = new Promise<void>((resolve) => {
+        finishCacheUpdate = resolve;
+      });
+      jest
+        .spyOn(client, 'cancelQueries')
+        .mockImplementationOnce(async (...args) => {
+          await pendingCacheUpdate;
+          await cancelQueries(...args);
+        });
+    }
+    function SwitchDocument() {
+      const navigate = useNavigate();
+      return (
+        <button onClick={() => navigate('/business-documents/doc-2')}>
+          Другой документ
+        </button>
+      );
+    }
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/business-documents/doc-1']}>
+          <SwitchDocument />
+          <RouterRoutes>
+            <Route
+              path="/business-documents/:id"
+              element={<BusinessDocumentsPage />}
+            />
+          </RouterRoutes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    const preview = await screen.findByTestId(
+      'business-document-change-preview',
+    );
+    fireEvent.click(
+      within(preview).getByRole('button', { name: 'Подтвердить применение' }),
+    );
+    await waitFor(() => expect(mockedSubmit).toHaveBeenCalledTimes(1));
+    const result: BusinessDocumentCommandResult = {
+      ...commandResult,
+      operation_state: 'IDLE',
+      job_id: null,
+      document: includeDocument ? confirmedA : undefined,
+    };
+    if (navigateDuringCacheUpdate) {
+      await act(async () => finish(result));
+      await waitFor(() =>
+        expect(client.cancelQueries).toHaveBeenCalledTimes(1),
+      );
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Другой документ' }));
+    await waitFor(() =>
+      expect(screen.getByTestId('business-document-header')).toHaveTextContent(
+        'Другой документ',
+      ),
+    );
+    fireEvent.click(screen.getByTestId('business-document-history-toggle'));
+    await waitFor(() =>
+      expect(mockedListRevisions).toHaveBeenCalledWith('doc-2'),
+    );
+    await act(async () => {
+      if (navigateDuringCacheUpdate) finishCacheUpdate();
+      else finish(result);
+    });
+    await waitFor(() =>
+      expect(client.getMutationCache().getAll()[0].state.status).toBe(
+        'success',
+      ),
+    );
+    expect(client.getQueryData(['business-document', 'doc-2'])).toEqual(
+      documentB,
+    );
+    expect(screen.getByTestId('business-document-header')).toHaveTextContent(
+      'Другой документ',
+    );
+    expect(screen.getByTestId('business-document-history')).toBeInTheDocument();
+    expect(mockedFetch).toHaveBeenCalledTimes(2);
+    if (includeDocument) {
+      expect(client.getQueryData(['business-document', 'doc-1'])).toEqual(
+        confirmedA,
+      );
+    }
+  },
+);
+
+test.each(['permission', 'version'])(
+  'keeps the document unchanged when confirmation fails: %s',
+  async (kind) => {
+    const error =
+      kind === 'permission'
+        ? new Error('Нет прав на изменение документа')
+        : new BusinessDocumentConflictError(
+            'Версия устарела',
+            'STATE_VERSION_CONFLICT',
+          );
+    mockedFetch.mockResolvedValue({
+      ...projection,
+      change_preview: { job_id: 'job-preview', base_revision_id: 'revision-3' },
+      allowed_commands: ['CONFIRM_PREPARED_CHANGES'],
+    });
+    mockedSubmit.mockRejectedValueOnce(error);
+    renderPage();
+    const preview = await screen.findByTestId(
+      'business-document-change-preview',
+    );
+    fireEvent.click(
+      within(preview).getByRole('button', { name: 'Подтвердить применение' }),
+    );
+    await screen.findByTestId(
+      error instanceof BusinessDocumentConflictError
+        ? 'business-document-conflict'
+        : 'business-document-command-error',
+    );
+    const markdown = screen.getByTestId('business-document-markdown');
+    expect(markdown).toHaveTextContent(firstSectionText);
+    expect(markdown).not.toHaveTextContent('Новая измеримая цель.');
+  },
+);
 
 test('shows evidence changes and named no-change inputs before confirmation', async () => {
   mockedFetch.mockResolvedValueOnce({

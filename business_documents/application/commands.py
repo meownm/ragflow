@@ -114,7 +114,7 @@ class DocumentCommands:
                 document_tenant_id = document["tenant_id"]
                 existing = self._writer.command_receipt(document_tenant_id, document_id, envelope.idempotency_key)
                 if existing is not None:
-                    return self._replay_command(existing, request_hash)
+                    return self._command_result(self._replay_command(existing, request_hash), envelope, access, document_id)
                 try:
                     # Roll back every child write on rejection while retaining the receipt.
                     # The original value snapshot also survives a failure after CAS.
@@ -135,14 +135,22 @@ class DocumentCommands:
                 self._writer.record_command(
                     id=self._new_id(), document_id=document_id, tenant_id=document_tenant_id, idempotency_key=envelope.idempotency_key, request_hash=request_hash, response=response
                 )
+                if captured_error is None:
+                    response = self._command_result(response, envelope, access, document_id)
         except Exception as error:
             # The adapter recognizes exact ledger collisions; all other failures propagate.
             existing = self._writer.receipt_after_conflict(error, document_tenant_id, document_id, envelope.idempotency_key)
             if existing is None:
                 raise
-            return self._replay_command(existing, request_hash)
+            return self._command_result(self._replay_command(existing, request_hash), envelope, access, document_id)
         if captured_error is not None:
             raise captured_error
+        return response
+
+    def _command_result(self, response: dict[str, Any], envelope: _CommandEnvelope, access: DocumentAccess, document_id: str) -> dict[str, Any]:
+        if envelope.type == CommandType.CONFIRM_PREPARED_CHANGES:
+            # Keep the durable receipt small; return the current view with this caller's permissions, including on replay.
+            return {**response, "document": self._queries.get_document(document_id, access.actor_id, access.is_admin, access.assigned_role)}
         return response
 
     @staticmethod

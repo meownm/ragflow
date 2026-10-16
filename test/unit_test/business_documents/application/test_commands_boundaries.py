@@ -271,3 +271,26 @@ def test_archive_success_has_no_follow_up_actions_and_no_job_work(commands):
     writer.append_event.assert_called_once_with("doc", 8, "DocumentArchived", "USER", "owner", {}, "command-id")
     writer.insert_job.assert_not_called()
     writer.review.assert_not_called()
+
+
+@pytest.mark.parametrize("actor,is_admin,role", [("owner", False, "AUTHOR_CREATOR"), ("moderator", False, "MODERATOR_CREATOR"), ("admin", True, "AUTHOR_EDITOR")])
+def test_confirmation_returns_current_view_with_callers_access_on_success_and_replay(commands, actor, is_admin, role):
+    scenario, writer, queries, changes = commands
+    writer.preview.side_effect = [{"id": "preview", "result": {"output": {}, "execution": {}}}, None]
+    changes.execute.return_value = document(state_version=8, current_revision_id="revision-4")
+    queries.get_document.return_value = {"document_id": "doc", "state_version": 8}
+    request = command("CONFIRM_PREPARED_CHANGES", job_id="preview")
+    result = scenario.execute("tenant", actor, "doc", request, is_admin, role)
+    assert result["document"] == queries.get_document.return_value
+    queries.get_document.assert_called_once_with("doc", actor, is_admin, role)
+    receipt = writer.record_command.call_args.kwargs
+    assert "document" not in receipt["response"]
+
+    writer.command_receipt.return_value = receipt
+    queries.get_document.return_value = {"document_id": "doc", "state_version": 9}
+    replayed = scenario.execute("tenant", actor, "doc", request, is_admin, role)
+    assert replayed["idempotent_replay"] is True
+    assert replayed["document"]["state_version"] == 9
+    assert queries.get_document.call_args.args == ("doc", actor, is_admin, role)
+    changes.execute.assert_called_once()
+    writer.record_command.assert_called_once()

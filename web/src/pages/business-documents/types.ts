@@ -1035,6 +1035,7 @@ export interface BusinessDocumentCommand {
 
 export interface BusinessDocumentCommandResult {
   accepted: boolean;
+  document?: BusinessDocumentProjection;
   document_id: string;
   state_version: number;
   lifecycle_state: BusinessDocumentLifecycleState;

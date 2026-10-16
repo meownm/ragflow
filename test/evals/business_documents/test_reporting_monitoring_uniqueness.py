@@ -69,6 +69,15 @@ def test_unchanged_existing_duplication_does_not_block_an_unrelated_edit(documen
     validate_reporting_monitoring_uniqueness(before, after)
 
 
+def test_scalar_table_cells_are_allowed_without_mutating_the_document(documents):
+    before, after = documents
+    reporting = next(s for s in after["sections"] if s["id"] == "5.4")
+    reporting["blocks"].append({"type": "table", "headers": ["Порог", "Значение", "Включено", "Примечание"], "rows": [["Порог времени", 5, True, None]]})
+    original = deepcopy(after)
+    validate_reporting_monitoring_uniqueness(before, after)
+    assert after == original
+
+
 def test_ai_rejects_duplicate_definitions_before_inference(documents):
     before, after = documents
     case = json.loads(live.MODEL_GOLDEN_PATH.read_text(encoding="utf-8"))["cases"][-1]

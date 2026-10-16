@@ -22,7 +22,7 @@ def validate_reporting_monitoring_uniqueness(before: Mapping, after: Mapping) ->
             if block["type"] == "list":
                 blocks.extend({"type": "paragraph", "text": item} for item in block["items"])
             elif block["type"] == "table":
-                blocks.extend({"type": "paragraph", "text": " ".join(row)} for row in block["rows"])
+                blocks.extend({"type": "table", "rows": [row]} for row in block["rows"])
             elif block["type"] == "paragraph":
                 blocks.append(block)
         comparable.append({"id": section["id"], "blocks": blocks})

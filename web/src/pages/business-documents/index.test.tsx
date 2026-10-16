@@ -56,10 +56,13 @@ type EvaDocumentChange = import('./types').EvaDocumentChange;
 
 jest.mock('react-markdown', () => ({
   __esModule: true,
-  default: ({ children }: { children?: string }) =>
-    (children ?? '')
-      .replace(/\*\*(.*?)\*\*/g, '$1')
-      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1'),
+  default: ({ children }: { children?: string }) => (
+    <span data-source-start={0} data-source-end={(children ?? '').length}>
+      {(children ?? '')
+        .replace(/\*\*(.*?)\*\*/g, '$1')
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')}
+    </span>
+  ),
 }));
 
 jest.mock('@/hooks/use-user-setting-request', () => ({

@@ -1,5 +1,6 @@
 import { DiagramCodeBlock } from '@/components/diagram-code-block';
 import { AlertTriangle, FileText, MousePointer2 } from 'lucide-react';
+import type { Nodes, Root } from 'mdast';
 import { isValidElement, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
@@ -73,29 +74,51 @@ interface NormalizedText {
   ends: number[];
 }
 
-function normalizeRenderedText(value: string): NormalizedText {
+// Parser positions keep labels out of link destinations and other Markdown syntax.
+function remarkSelectionSource() {
+  return (tree: Root) => {
+    const visit = (node: Nodes) => {
+      if (node.type === 'text' && node.position) {
+        node.data = {
+          ...node.data,
+          hName: 'span',
+          hProperties: {
+            ...node.data?.hProperties,
+            'data-source-start': node.position.start.offset,
+            'data-source-end': node.position.end.offset,
+          },
+        };
+      }
+      if ('children' in node) node.children.forEach(visit);
+    };
+    visit(tree);
+  };
+}
+
+function decodeSource(value: string, literal: boolean): NormalizedText {
   let text = '';
   const starts: number[] = [];
   const ends: number[] = [];
-  let whitespaceStart: number | null = null;
-
-  for (let index = 0; index < value.length; index += 1) {
-    const character = value[index];
-    if (/\s/u.test(character) || character === '\u00a0') {
-      whitespaceStart ??= index;
-      continue;
+  let decoder: HTMLTextAreaElement | undefined;
+  // Decode only Markdown escapes and character references, never raw HTML.
+  const units = literal
+    ? /[\s\S]/gu
+    : /\\[!"#$%&'()*+,\-./:;<=>?@[\]\\^_`{|}~]|&(?:#[xX][\da-fA-F]+|#\d+|[a-zA-Z][a-zA-Z\d]+);|[\s\S]/gu;
+  for (const match of value.matchAll(units)) {
+    const raw = match[0];
+    let decoded = raw;
+    if (!literal && raw.startsWith('\\')) decoded = raw.slice(1);
+    if (!literal && raw.startsWith('&') && raw.endsWith(';')) {
+      decoder ??= document.createElement('textarea');
+      decoder.innerHTML = raw;
+      decoded = decoder.value;
     }
-    if (whitespaceStart !== null && text.length > 0) {
-      text += ' ';
-      starts.push(whitespaceStart);
-      ends.push(index);
+    text += decoded;
+    for (let index = 0; index < decoded.length; index += 1) {
+      starts.push(match.index! + (raw === decoded ? index : 0));
+      ends.push(match.index! + (raw === decoded ? index + 1 : raw.length));
     }
-    whitespaceStart = null;
-    text += character;
-    starts.push(index);
-    ends.push(index + 1);
   }
-
   return { text, starts, ends };
 }
 
@@ -110,26 +133,62 @@ function projectRenderedSection(
   const starts: number[] = [];
   const ends: number[] = [];
   let sourceCursor = 0;
+  let pendingWhitespace = false;
   const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
   let node = walker.nextNode();
   while (node) {
     const value = node.textContent ?? '';
+    if (!value.trim()) {
+      pendingWhitespace ||= value.length > 0;
+      node = walker.nextNode();
+      continue;
+    }
+    const element = node.parentElement;
+    if (element?.closest('[data-diagram-kind]')) {
+      // Rendered diagram labels/status are not canonical prose anchors.
+      text += '\0';
+      starts.push(sourceCursor);
+      ends.push(sourceCursor);
+      node = walker.nextNode();
+      continue;
+    }
+    const source = element?.closest<HTMLElement>('[data-source-start]');
+    if (!source) return null;
+    const rangeStart = Number(source.dataset.sourceStart);
+    const rangeEnd = Number(source.dataset.sourceEnd);
+    const decoded = decodeSource(
+      sectionText.slice(rangeStart, rangeEnd),
+      source?.dataset.sourceLiteral === 'true',
+    );
+    let decodedCursor = 0;
+    let renderedCursor = 0;
     for (const match of value.matchAll(/\S+/gu)) {
       const token = match[0];
-      const sourceStart = sectionText.indexOf(token, sourceCursor);
-      if (sourceStart < 0) return null;
-      if (text && /\s/u.test(sectionText.slice(sourceCursor, sourceStart))) {
+      const tokenStart = decoded.text.indexOf(token, decodedCursor);
+      if (tokenStart < 0) return null;
+      const sourceStart = rangeStart + decoded.starts[tokenStart];
+      if (sourceStart < sourceCursor) return null;
+      if (
+        text &&
+        (pendingWhitespace ||
+          /\s/u.test(value.slice(renderedCursor, match.index)) ||
+          /\s/u.test(sectionText.slice(sourceCursor, sourceStart)))
+      ) {
         text += ' ';
         starts.push(sourceCursor);
         ends.push(sourceStart);
       }
       for (let index = 0; index < token.length; index += 1) {
         text += token[index];
-        starts.push(sourceStart + index);
-        ends.push(sourceStart + index + 1);
+        starts.push(rangeStart + decoded.starts[tokenStart + index]);
+        ends.push(rangeStart + decoded.ends[tokenStart + index]);
       }
-      sourceCursor = sourceStart + token.length;
+      decodedCursor = tokenStart + token.length;
+      sourceCursor = rangeStart + decoded.ends[decodedCursor - 1];
+      renderedCursor = match.index! + token.length;
+      pendingWhitespace = false;
     }
+    pendingWhitespace ||= /\s/u.test(value.slice(renderedCursor));
     node = walker.nextNode();
   }
   return { text, starts, ends };
@@ -142,7 +201,7 @@ function findUniqueOffset(
 ) {
   const canonical = projectRenderedSection(section, sectionText);
   if (!canonical) return { error: 'NOT_EXACT' as const };
-  const selected = normalizeRenderedText(selectedText).text;
+  const selected = selectedText.replace(/\s+/gu, ' ').trim();
   const normalizedStart = canonical.text.indexOf(selected);
   if (!selected || normalizedStart < 0) return { error: 'NOT_EXACT' as const };
   if (canonical.text.indexOf(selected, normalizedStart + 1) >= 0) {
@@ -381,7 +440,11 @@ export function DocumentPane({
                   )}
                   <div data-section-body>
                     <ReactMarkdown
-                      remarkPlugins={[remarkGfm, remarkBreaks]}
+                      remarkPlugins={[
+                        remarkGfm,
+                        remarkBreaks,
+                        remarkSelectionSource,
+                      ]}
                       components={{
                         p: ({ children }) => <p className="mb-4">{children}</p>,
                         ul: ({ children }) => (
@@ -443,8 +506,13 @@ export function DocumentPane({
                             </pre>
                           );
                         },
-                        code: ({ children }) => (
-                          <code className="rounded bg-bg-card px-1.5 py-0.5 font-mono text-[0.9em]">
+                        code: ({ children, node }) => (
+                          <code
+                            data-source-start={node?.position?.start.offset}
+                            data-source-end={node?.position?.end.offset}
+                            data-source-literal="true"
+                            className="rounded bg-bg-card px-1.5 py-0.5 font-mono text-[0.9em]"
+                          >
                             {children}
                           </code>
                         ),

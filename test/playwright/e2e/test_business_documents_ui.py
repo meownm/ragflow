@@ -6,6 +6,7 @@ import re
 import pytest
 from playwright.sync_api import expect
 
+from business_documents.domain.comment_anchor import validate_comment_anchor
 from test.playwright.helpers._next_apps_helpers import RESULT_TIMEOUT_MS, _goto_home
 
 
@@ -163,7 +164,7 @@ def _install_common_routes(page):
     ):
         page.route(
             pattern,
-            lambda route, response=data: route.fulfill(
+            lambda route, _request, response=data: route.fulfill(
                 status=200,
                 content_type="application/json",
                 body=json.dumps(_envelope(response)),
@@ -354,6 +355,82 @@ def test_business_document_workbench_commands_and_mobile_layout(
     expect(page.locator("[data-testid='business-document-header']")).to_be_visible()
     expect(page.locator("[data-testid='business-document-actions']")).to_be_visible()
     expect(page.locator("[data-testid='apply-changes-button']")).to_be_visible()
+
+
+@pytest.mark.p1
+@pytest.mark.parametrize(
+    "section_id,source,selected,canonical_selected",
+    [
+        ("4", "Обычный текст перед схемой.\n\n```plantuml\n@startuml\nA -> B\n@enduml\n```\n\nТекст после схемы.", "Текст после схемы", "Текст после схемы"),
+        ("4.1", "| Правило | Значение |\n| --- | --- |\n| Группа | A\\|B |\n\nСледующее правило.", "A|B", "A\\|B"),
+        ("4.3", "Условие: имя\\_поля &amp; значение.\n\nКонец раздела.", "имя_поля & значение", "имя\\_поля &amp; значение"),
+        ("4.3", "[Ссылка](https://example.test/повтор) и повтор.", "повтор", "повтор"),
+        ("4.1", "Первый **важный** пункт.\n\nВторой пункт.", "Первый важный пункт", "Первый **важный** пункт"),
+        ("4.3", "Метка 😀: A&nbsp;B &#x1F600;.", "A\u00a0B 😀", "A&nbsp;B &#x1F600;"),
+        ("4.1", "Код: `имя\\_поля &amp; значение`.", "имя\\_поля &amp; значение", "имя\\_поля &amp; значение"),
+    ],
+    ids=["diagram-prose", "escaped-table-cell", "escape-and-entity", "link-destination", "inline-formatting", "unicode-entities", "literal-code"],
+)
+def test_business_document_markdown_selection_anchor(page, base_url, section_id, source, selected, canonical_selected):
+    _install_session(page)
+    page.route("**/api/v1/**", lambda route: route.fulfill(json=_envelope({})))
+    _install_common_routes(page)
+    page.route("**/api/v1/users/me/models", lambda route: route.fulfill(json=_envelope({"tenant_id": "selection-tenant"})))
+    projection = _projection()
+    revision = projection["current_revision"]
+    revision["document_ast"]["sections"] = [{"id": section_id, "title": "Логика", "blocks": [{"type": "paragraph", "text": source}]}]
+    revision["section_texts"] = {section_id: source}
+    revision["body_markdown"] = f"## {section_id}. Логика\n{source}"
+    page.route("**/api/v1/business-documents/doc-ui-1", lambda route: route.fulfill(json=_envelope(projection)))
+    page.route("**/api/v1/business-documents/doc-ui-1/commands", lambda route: route.fulfill(json=_envelope({"accepted": True, "state_version": 19})))
+    page.route("**/plantuml/svg/", lambda route: route.fulfill(content_type="image/svg+xml", body='<svg xmlns="http://www.w3.org/2000/svg"><text>Метка визуализатора</text></svg>'))
+    page.goto(f"{base_url.rstrip('/')}/business-documents/doc-ui-1")
+    section = page.locator(f'[data-section-id="{section_id}"]')
+    expect(section).to_be_visible(timeout=RESULT_TIMEOUT_MS)
+    if "plantuml" in source:
+        expect(section.locator('[data-diagram-kind="plantuml"] svg')).to_be_visible()
+    section.locator("[data-section-body]").evaluate(
+        """(body, selected) => {
+            const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+            const nodes = [];
+            let text = '', node;
+            while ((node = walker.nextNode())) {
+                nodes.push({node, start: text.length});
+                text += node.textContent;
+            }
+            const start = text.indexOf(selected);
+            if (start < 0) throw new Error('Missing rendered selection: ' + selected);
+            const end = start + selected.length;
+            const first = nodes.find(({node, start: offset}) => offset <= start && offset + node.length > start);
+            const last = nodes.find(({node, start: offset}) => offset < end && offset + node.length >= end);
+            const range = document.createRange();
+            range.setStart(first.node, start - first.start);
+            range.setEnd(last.node, end - last.start);
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            body.dispatchEvent(new MouseEvent('mouseup', {bubbles: true}));
+        }""",
+        selected,
+    )
+    expect(page.get_by_test_id("business-document-selection-error")).to_have_count(0)
+    expect(page.get_by_test_id("business-document-comment-scope-selector")).to_contain_text(f"выделенный фрагмент · § {section_id}")
+    page.get_by_role("textbox", name="Комментарий", exact=True).fill("Уточнить правило")
+    with page.expect_request("**/api/v1/business-documents/doc-ui-1/commands") as submitted:
+        page.get_by_role("button", name="Добавить комментарий", exact=True).click()
+    anchor = submitted.value.post_data_json["payload"]["anchor"]
+    start = source.rindex(canonical_selected)
+    end = start + len(canonical_selected)
+    assert anchor == {
+        "revision_id": "revision-3",
+        "section_id": section_id,
+        "selected_text": canonical_selected,
+        "start_offset": len(source[:start].encode("utf-16-le")) // 2,
+        "end_offset": len(source[:end].encode("utf-16-le")) // 2,
+        "prefix": source[max(0, start - 64) : start],
+        "suffix": source[end : end + 64],
+    }
+    validate_comment_anchor(anchor, "revision-3", section_id, source)
 
 
 @pytest.mark.p1

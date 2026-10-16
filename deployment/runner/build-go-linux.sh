@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 builder_file="${repo_root}/deployment/runner/Dockerfile.go-builder"
-builder_image="ragflow-go-builder:go1.26.4-ubuntu22"
+builder_image="ragflow-go-builder:go1.26.9-ubuntu22"
 native_cache="${RAGFLOW_NATIVE_CACHE:-${HOME}/ragflow-native-libs}"
 cache_root="${RAGFLOW_GO_CACHE_ROOT:-${HOME}/.cache/ragflow-go-builder}"
 

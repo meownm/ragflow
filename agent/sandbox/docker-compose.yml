@@ -23,7 +23,7 @@ services:
       - SANDBOX_MAX_MEMORY=${SANDBOX_MAX_MEMORY:-256m} # b, k, m, g
       - SANDBOX_TIMEOUT=${SANDBOX_TIMEOUT:-10s} # s, m, 1m30s
     healthcheck:
-      test: ["CMD-SHELL", "curl --fail http://localhost:9385/healthz || exit 1"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9385/healthz', timeout=5)"]
       interval: 10s
       timeout: 5s
       retries: 5

@@ -3,7 +3,7 @@ include:
 # To ensure that the container processes the locally modified `service_conf.yaml.template` instead of the one included in its image, you need to mount the local `service_conf.yaml.template` to the container.
 services:
   plantuml-server:
-    image: plantuml/plantuml-server:jetty-v1.2026.6
+    image: plantuml/plantuml-server:jetty-v1.2026.8
     environment:
       PLANTUML_SECURITY_PROFILE: INTERNET
     networks:

@@ -986,9 +986,9 @@ class MistralChat(Base):
     def __init__(self, key, model_name, base_url=None, **kwargs):
         super().__init__(key, model_name, base_url=base_url, **kwargs)
 
-        from mistralai.client import MistralClient
+        from mistralai import Mistral
 
-        self.client = MistralClient(api_key=key)
+        self.client = Mistral(api_key=key)
         self.model_name = model_name
 
     def _clean_conf(self, gen_conf):
@@ -1000,7 +1000,7 @@ class MistralChat(Base):
     def _chat(self, history, gen_conf=None, **kwargs):
         gen_conf = dict(gen_conf or {})
         gen_conf = self._clean_conf(gen_conf)
-        response = self.client.chat(model=self.model_name, messages=history, **gen_conf)
+        response = self.client.chat.complete(model=self.model_name, messages=history, **gen_conf)
         if not response.choices:
             raise ValueError("LLM returned empty response")  # pact: guard empty choices list
         ans = response.choices[0].message.content
@@ -1019,18 +1019,19 @@ class MistralChat(Base):
         ans = ""
         total_tokens = 0
         try:
-            response = self.client.chat_stream(model=self.model_name, messages=history, **gen_conf, **kwargs)
-            for resp in response:
-                if not resp.choices or not resp.choices[0].delta.content:
-                    continue
-                ans = resp.choices[0].delta.content
-                total_tokens += 1
-                if resp.choices[0].finish_reason == "length":
-                    if is_chinese(ans):
-                        ans += LENGTH_NOTIFICATION_CN
-                    else:
-                        ans += LENGTH_NOTIFICATION_EN
-                yield ans
+            with self.client.chat.stream(model=self.model_name, messages=history, **gen_conf, **kwargs) as response:
+                for event in response:
+                    resp = event.data
+                    if not resp.choices or not resp.choices[0].delta.content:
+                        continue
+                    ans = resp.choices[0].delta.content
+                    total_tokens += 1
+                    if resp.choices[0].finish_reason == "length":
+                        if is_chinese(ans):
+                            ans += LENGTH_NOTIFICATION_CN
+                        else:
+                            ans += LENGTH_NOTIFICATION_EN
+                    yield ans
 
         except openai.APIError as e:
             yield ans + "\n**ERROR**: " + str(e)

@@ -296,7 +296,7 @@ ASR_CONTAINER=$("${COMPOSE[@]}" ps -q t-one-asr)
 SANDBOX_CONTAINER=$("${COMPOSE[@]}" ps -q sandbox-executor-manager)
 test -n "${ASR_CONTAINER}" -a -n "${SANDBOX_CONTAINER}"
 sudo docker exec "${ASR_CONTAINER}" python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9011/health/ready', timeout=10)"
-sudo docker exec "${SANDBOX_CONTAINER}" curl -fsS http://127.0.0.1:9385/healthz >/dev/null
+sudo docker exec "${SANDBOX_CONTAINER}" python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9385/healthz', timeout=5)" >/dev/null
 SANDBOX_LOGS=$(sudo docker logs "${SANDBOX_CONTAINER}" 2>&1)
 grep -Eq 'Container pool initialization complete: [1-9][0-9]*/[1-9][0-9]* available' <<<"${SANDBOX_LOGS}"
 sudo grep -Eq '^RAGFLOW_CREDENTIALS_KEY=[0-9a-f]{64}$' "${ENV_FILE}"

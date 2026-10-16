@@ -42,7 +42,7 @@ from tools.quality.release_evidence import file_manifest
 native=file_manifest(Path(os.environ.get('RAGFLOW_NATIVE_CACHE',str(Path.home()/'ragflow-native-libs'))))
 import hashlib
 toolchain={'python':version(*docker,'run','--rm','--entrypoint','/ragflow/.venv/bin/python',os.environ['IMAGE_DIGEST'],'--version'),
-           'go':version(*docker,'run','--rm','--entrypoint','go','ragflow-go-builder:go1.26.4-ubuntu22','version'),
+           'go':version(*docker,'run','--rm','--entrypoint','go','ragflow-go-builder:go1.26.9-ubuntu22','version'),
            'node':version(*docker,'run','--rm','--entrypoint','node',os.environ['IMAGE_DIGEST'],'--version'),'native':hashlib.sha256(json.dumps(native,sort_keys=True).encode()).hexdigest()}
 Path('output/ci-image/image-build.json').write_text(json.dumps({'sha':os.environ['SOURCE_SHA'],
     'digest':os.environ['IMAGE_DIGEST'],'toolchain':toolchain,'native_files':native}))

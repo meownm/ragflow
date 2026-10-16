@@ -223,12 +223,12 @@ class TestTruncationBoundary:
         embed.model_name = "mistral-embed"
         captured = {}
 
-        def _embeddings(input, model):
-            captured["input"] = input
+        def _embeddings(inputs, model):
+            captured["input"] = inputs
             return _OpenAIResp([[0.0, 0.0]], total_tokens=1)
 
         embed.client = MagicMock()
-        embed.client.embeddings = MagicMock(side_effect=_embeddings)
+        embed.client.embeddings.create = MagicMock(side_effect=_embeddings)
         huge = "word " * 12000
         embed.encode([huge])
         assert num_tokens_from_string(captured["input"][0]) <= DEFAULT_MAX_TOKENS

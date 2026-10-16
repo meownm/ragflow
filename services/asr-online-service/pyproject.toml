@@ -8,10 +8,20 @@ packages = [{ include = "asr_service", from = "src" }]
 
 [tool.poetry.dependencies]
 python = ">=3.11,<4.0"
-fastapi = "^0.115.0"
+fastapi = "0.135.0"
+# CVE-2026-48710: reject malformed Host headers before reconstructing URLs.
+starlette = "1.3.1"
 uvicorn = {version = "^0.30.0", extras = ["standard"]}
 pydantic = "^2.8.0"
-pydantic-settings = "^2.4.0"
+pydantic-settings = ">=2.14.2,<3"
+anyio = ">=4.14.2,<5"
+filelock = ">=3.20.3,<4"
+fsspec = ">=2026.6.0"
+idna = ">=3.15,<4"
+protobuf = ">=6.33.5,<7"
+python-dotenv = ">=1.2.2,<2"
+requests = ">=2.33.0,<3"
+urllib3 = ">=2.8.0,<3"
 pyyaml = "^6.0.2"
 watchfiles = "^0.24.0"
 httpx = "^0.27.2"
@@ -25,6 +35,7 @@ gigaam = {version = "*", optional = true}
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.2"
+pytest-asyncio = "^0.25.3"
 ruff = "0.6.9"
 vulture = "2.11"
 

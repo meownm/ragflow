@@ -140,6 +140,14 @@ services:
       - diagram_renderer
 
   sandbox-executor-manager:
+    image: ${SANDBOX_EXECUTOR_MANAGER_IMAGE-local/ragflow-sandbox-manager:security-20261017}
+    build:
+      context: ../agent/sandbox/executor_manager
+      args:
+        NEED_MIRROR: "0"
+    environment:
+      SANDBOX_BASE_PYTHON_IMAGE: ${SANDBOX_BASE_PYTHON_IMAGE:-local/ragflow-sandbox-python:security-20261016}
+      SANDBOX_BASE_NODEJS_IMAGE: ${SANDBOX_BASE_NODEJS_IMAGE:-local/ragflow-sandbox-nodejs:security-20261016}
     depends_on:
       sandbox-runtime-bootstrap:
         condition: service_healthy
@@ -148,7 +156,11 @@ services:
   sandbox-runtime-bootstrap:
     profiles:
       - sandbox
-    image: ${SANDBOX_EXECUTOR_MANAGER_IMAGE-infiniflow/sandbox-executor-manager:latest}
+    # The same patched Docker CLI is used by the manager and runtime bootstrap.
+    image: local/ragflow-docker-cli:security-20261017
+    build:
+      context: ../agent/sandbox/executor_manager
+      target: docker-cli
     entrypoint:
       - /bin/sh
       - /usr/local/bin/ensure-runsc-runtime
@@ -175,6 +187,7 @@ services:
     restart: unless-stopped
 
   es01:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
     ports: !reset []
 
   mysql:
@@ -183,7 +196,10 @@ services:
     ports: !reset []
 
   postgres:
-    image: postgres:16-alpine
+    image: local/ragflow-postgres:security-20261016
+    build:
+      context: ./security
+      dockerfile: Dockerfile.postgres
     environment:
       POSTGRES_DB: ${POSTGRES_DBNAME}
       POSTGRES_USER: ${POSTGRES_USER}
@@ -203,7 +219,17 @@ services:
     ports: !reset []
 
   redis:
+    image: local/ragflow-valkey:security-20261016
+    build:
+      context: ./security
+      dockerfile: Dockerfile.valkey
     ports: !reset []
+
+  plantuml-server:
+    image: local/ragflow-plantuml:security-20261016
+    build:
+      context: ./security
+      dockerfile: Dockerfile.plantuml
 
 volumes:
   postgres_data:

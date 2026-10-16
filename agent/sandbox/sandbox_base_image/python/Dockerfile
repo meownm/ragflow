@@ -17,9 +17,11 @@ RUN if [ "$NEED_MIRROR" = 1 ]; then \
         export UV_INDEX_URL="https://pypi.org/simple"; \
     fi; \
     apt-get update && \
+    apt-get upgrade -y --no-install-recommends && \
     apt-get install -y --no-install-recommends curl gcc && \
     mkdir -p /tmp/matplotlib && \
-    uv pip install --system -r requirements.txt && \
+    uv pip install --system -r requirements.txt "pip>=26.2.0,<27" "setuptools>=83,<85" "wheel>=0.46.2,<1" && \
+    uv cache clean && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace

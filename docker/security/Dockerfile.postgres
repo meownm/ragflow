@@ -1,0 +1,12 @@
+FROM golang:1.26.9-alpine AS gosu
+ADD --checksum=sha256:cd9719b775dbfedae53923c9b0dc792b66d42c51e0b36652ed6f747fbadc0164 \
+    https://codeload.github.com/tianon/gosu/tar.gz/refs/tags/1.19 /tmp/gosu.tar.gz
+WORKDIR /src
+RUN tar xzf /tmp/gosu.tar.gz --strip-components=1 && \
+    go get golang.org/x/sys@v0.46.0 github.com/moby/sys/user@v0.4.1 && \
+    go mod tidy && go test ./... && \
+    CGO_ENABLED=0 go build -trimpath -ldflags='-s -w -X main.Version=1.19' -o /out/gosu .
+
+FROM postgres:16.15-alpine
+RUN apk upgrade --no-cache && rm /usr/local/bin/gosu
+COPY --from=gosu /out/gosu /usr/local/bin/gosu

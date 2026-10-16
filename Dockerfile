@@ -1,3 +1,36 @@
+ARG RAGFLOW_DEPS_IMAGE=infiniflow/ragflow_deps:latest
+
+# Pin browser/parser resources independently of the model/tokenizer image.
+FROM alpine:3.24 AS resource_updates
+ARG NEED_MIRROR=0
+RUN apk add --no-cache ca-certificates curl
+WORKDIR /resources
+RUN set -eux; \
+    if [ "$NEED_MIRROR" = "1" ]; then \
+        tika_origin=https://repo.huaweicloud.com/repository/maven; \
+        chrome_origin=https://registry.npmmirror.com/-/binary/chrome-for-testing; \
+    else \
+        tika_origin=https://repo1.maven.org/maven2; \
+        chrome_origin=https://storage.googleapis.com/chrome-for-testing-public; \
+    fi; \
+    curl --fail --location --retry 5 --output tika-server-standard-3.3.3.jar \
+        "$tika_origin/org/apache/tika/tika-server-standard/3.3.3/tika-server-standard-3.3.3.jar"; \
+    curl --fail --location --retry 5 --output tika-server-standard-3.3.3.jar.md5 \
+        "$tika_origin/org/apache/tika/tika-server-standard/3.3.3/tika-server-standard-3.3.3.jar.md5"; \
+    curl --fail --location --retry 5 --output chrome-linux64-155-0-8059-84 \
+        "$chrome_origin/155.0.8059.84/linux64/chrome-linux64.zip"; \
+    curl --fail --location --retry 5 --output chromedriver-linux64-155-0-8059-84 \
+        "$chrome_origin/155.0.8059.84/linux64/chromedriver-linux64.zip"; \
+    printf '%s\n' \
+        '4559c1fa6ca08390a800036438607e31a6763aba0ea11b928c3fce72315ecf0f  tika-server-standard-3.3.3.jar' \
+        '24a0ab5c842bcf296bf9b8a5c5c3d76a1f1149c3fa4aedf0727929aeb32343a4  tika-server-standard-3.3.3.jar.md5' \
+        'cf0f049892dea22e6a6db26d47ed0d7776b7158edcbec4634086633df8bafcbc  chrome-linux64-155-0-8059-84' \
+        '4fe2433044363e5233d642e70fa50278b471bda08032d922402c8bd7c6d743fd  chromedriver-linux64-155-0-8059-84' \
+        | sha256sum -c -
+
+FROM ${RAGFLOW_DEPS_IMAGE} AS ragflow_deps
+COPY --from=resource_updates /resources/ /
+
 # base stage
 FROM ubuntu:24.04 AS base
 USER root
@@ -9,7 +42,7 @@ WORKDIR /ragflow
 
 # copy models downloaded via download_deps.py
 RUN mkdir -p /ragflow/rag/res/deepdoc /root/.ragflow
-RUN --mount=type=bind,from=infiniflow/ragflow_deps:latest,source=/huggingface.co,target=/huggingface.co \
+RUN --mount=type=bind,from=ragflow_deps,source=/huggingface.co,target=/huggingface.co \
     tar --exclude='.*' -cf - \
         /huggingface.co/InfiniFlow/text_concat_xgb_v1.0 \
         /huggingface.co/InfiniFlow/deepdoc \
@@ -17,19 +50,19 @@ RUN --mount=type=bind,from=infiniflow/ragflow_deps:latest,source=/huggingface.co
 
 # https://github.com/chrismattmann/tika-python
 # This is the only way to run python-tika without internet access. Without this set, the default is to check the tika version and pull latest every time from Apache.
-RUN --mount=type=bind,from=infiniflow/ragflow_deps:latest,source=/,target=/deps \
+RUN --mount=type=bind,from=ragflow_deps,source=/,target=/deps \
     cp -r /deps/nltk_data /root/ && \
-    cp /deps/tika-server-standard-3.3.0.jar /deps/tika-server-standard-3.3.0.jar.md5 /ragflow/ && \
+    cp /deps/tika-server-standard-3.3.3.jar /deps/tika-server-standard-3.3.3.jar.md5 /ragflow/ && \
     cp /deps/cl100k_base.tiktoken /ragflow/9b5ad71b2ce5302211f9c61530b329a4922fc6a4
 
-ENV TIKA_SERVER_JAR="file:///ragflow/tika-server-standard-3.3.0.jar"
+ENV TIKA_SERVER_JAR="file:///ragflow/tika-server-standard-3.3.3.jar"
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Setup apt
 # Python package and implicit dependencies:
 # opencv-python: libglib2.0-0 libglx-mesa0 libgl1
-# python-pptx:   default-jdk                              tika-server-standard-3.3.0.jar
-# selenium:      libatk-bridge2.0-0                       chrome-linux64-121-0-6167-85
+# python-pptx:   default-jdk                              tika-server-standard-3.3.3.jar
+# selenium:      libatk-bridge2.0-0                       chrome-linux64-155-0-8059-84
 # Building C extensions: libpython3-dev libgtk-4-1 libnss3 xdg-utils libgbm-dev
 RUN --mount=type=cache,id=ragflow_apt,target=/var/cache/apt,sharing=locked \
     apt update && \
@@ -45,6 +78,7 @@ RUN --mount=type=cache,id=ragflow_apt,target=/var/cache/apt,sharing=locked \
     echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache && \
     chmod 1777 /tmp && \
     apt update && \
+    apt upgrade -y && \
     apt install -y \
     libglib2.0-0 libglx-mesa0 libgl1 pkg-config libgdiplus default-jdk libatk-bridge2.0-0 libgtk-4-1 libnss3 xdg-utils libjemalloc-dev gnupg unzip curl wget git vim less ghostscript pandoc texlive texlive-latex-extra texlive-xetex texlive-lang-chinese fonts-freefont-ttf fonts-noto-cjk postgresql-client && \
     rm -rf /var/lib/apt/lists/*
@@ -70,7 +104,7 @@ RUN --mount=type=cache,id=ragflow_apt,target=/var/cache/apt,sharing=locked \
     rm -rf /var/lib/apt/lists/*
 
 # Install uv
-RUN --mount=type=bind,from=infiniflow/ragflow_deps:latest,source=/,target=/deps \
+RUN --mount=type=bind,from=ragflow_deps,source=/,target=/deps \
     if [ "$NEED_MIRROR" == "1" ]; then \
         mkdir -p /etc/uv && \
         echo 'python-install-mirror = "https://registry.npmmirror.com/-/binary/python-build-standalone/"' > /etc/uv/uv.toml && \
@@ -83,20 +117,30 @@ RUN --mount=type=bind,from=infiniflow/ragflow_deps:latest,source=/,target=/deps 
     tar xzf "/deps/uv-${uv_arch}-unknown-linux-gnu.tar.gz" \
     && cp "uv-${uv_arch}-unknown-linux-gnu/"* /usr/local/bin/ \
     && rm -rf "uv-${uv_arch}-unknown-linux-gnu" \
-    && uv python install 3.13
+    && uv python install 3.13 \
+    && uv pip install --break-system-packages --python "$(uv python find 3.13)" 'pip>=26.2.0,<27'
 
 ENV PYTHONDONTWRITEBYTECODE=1 DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 \
     UV_HTTP_TIMEOUT=200 \
     UV_HTTP_RETRIES=3
 ENV PATH=/root/.local/bin:$PATH
 
-# nodejs 12.22 on Ubuntu 22.04 is too old
+# Use the supported Node.js 24 LTS line for browser tooling.
 RUN --mount=type=cache,id=ragflow_apt,target=/var/cache/apt,sharing=locked \
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && \
     apt purge -y nodejs npm && \
     apt autoremove -y && \
     apt update && \
     apt install -y nodejs && \
+    npm install --global npm@12.2.0 && \
+    npm install --prefix /tmp/npm-security --omit=dev --ignore-scripts \
+        --package-lock=false --save-exact undici@6.28.1 brace-expansion@5.0.12 \
+        postcss-selector-parser@7.1.6 ip-address@10.7.1 && \
+    npm_modules="$(npm root -g)/npm/node_modules" && \
+    for dependency in /tmp/npm-security/node_modules/*; do \
+        name="$(basename "$dependency")"; \
+        rm -rf "${npm_modules:?}/${name}"; cp -a "$dependency" "$npm_modules/"; \
+    done && rm -rf /tmp/npm-security && npm cache clean --force && \
     rm -rf /var/lib/apt/lists/*
 
 # stagehand-server-v3 (Node.js SEA binary used by Browser component
@@ -127,7 +171,7 @@ RUN --mount=type=cache,id=ragflow_apt,target=/var/cache/apt,sharing=locked \
 # cache path that `local.go:cacheDir()` constructs at runtime —
 # `/root/.cache/stagehand/lib/go_<ver>/stagehand-server-v3-<arch>`.
 ARG STAGEHAND_GO_VERSION=v3.21.0
-RUN --mount=type=bind,from=infiniflow/ragflow_deps:latest,source=/,target=/deps \
+RUN --mount=type=bind,from=ragflow_deps,source=/,target=/deps \
     set -eux; \
     arch="$(uname -m)"; \
     case "$arch" in \
@@ -163,22 +207,14 @@ RUN --mount=type=cache,id=ragflow_apt,target=/var/cache/apt,sharing=locked \
 
 
 # Add dependencies of selenium
-RUN --mount=type=bind,from=infiniflow/ragflow_deps:latest,source=/chrome-linux64-121-0-6167-85,target=/chrome-linux64.zip \
+RUN --mount=type=bind,from=ragflow_deps,source=/chrome-linux64-155-0-8059-84,target=/chrome-linux64.zip \
     unzip /chrome-linux64.zip && \
     mv chrome-linux64 /opt/chrome && \
     ln -s /opt/chrome/chrome /usr/local/bin/
-RUN --mount=type=bind,from=infiniflow/ragflow_deps:latest,source=/chromedriver-linux64-121-0-6167-85,target=/chromedriver-linux64.zip \
+RUN --mount=type=bind,from=ragflow_deps,source=/chromedriver-linux64-155-0-8059-84,target=/chromedriver-linux64.zip \
     unzip -j /chromedriver-linux64.zip chromedriver-linux64/chromedriver && \
     mv chromedriver /usr/local/bin/ && \
     rm -f /usr/bin/google-chrome
-
-RUN --mount=type=bind,from=infiniflow/ragflow_deps:latest,source=/,target=/deps \
-    if [ "$(uname -m)" = "x86_64" ]; then \
-        dpkg -i /deps/libssl1.1_1.1.1f-1ubuntu2_amd64.deb; \
-    elif [ "$(uname -m)" = "aarch64" ]; then \
-        dpkg -i /deps/libssl1.1_1.1.1f-1ubuntu2_arm64.deb; \
-    fi
-
 
 # builder stage
 FROM base AS builder
@@ -221,7 +257,12 @@ RUN --mount=type=cache,id=ragflow_uv,target=/root/.cache/uv,sharing=locked \
     # the locked version avoids serving a half-broken cached copy.
     uv sync --python 3.13 --frozen --group test --refresh-package litellm && \
     # Ensure pip is available in the venv for runtime package installation (fixes #12651)
-    .venv/bin/python3 -m ensurepip --upgrade
+    .venv/bin/python3 -m ensurepip --upgrade && \
+    uv pip install --python .venv/bin/python3 'pip>=26.2.0,<27'
+
+# Crawl4AI uses Playwright's Chromium and headless shell. Their revisions follow
+# the locked SDK; provision both at build time for offline runtime use.
+RUN PLAYWRIGHT_BROWSERS_PATH=/opt/playwright .venv/bin/python3 -m playwright install chromium
 
 # Install frontend dependencies — depends only on package manifests so
 # web source / docs changes don't invalidate this layer.
@@ -253,6 +294,8 @@ WORKDIR /ragflow
 ENV VIRTUAL_ENV=/ragflow/.venv
 COPY --from=builder ${VIRTUAL_ENV} ${VIRTUAL_ENV}
 ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
+COPY --from=builder /opt/playwright /opt/playwright
 
 ENV PYTHONPATH=/ragflow/
 

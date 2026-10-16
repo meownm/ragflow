@@ -1,4 +1,4 @@
-FROM golang:1.26.4-bookworm AS go_toolchain
+FROM golang:1.26.9-bookworm AS go_toolchain
 
 FROM infiniflow/infinity_builder:ubuntu22_clang20
 

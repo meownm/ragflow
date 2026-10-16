@@ -8,9 +8,10 @@ def test_pyproject_contains_required_runtime_dependencies() -> None:
     text = pyproject.read_text(encoding="utf-8")
 
     required = [
-        'fastapi = "^0.115.0"',
+        'fastapi = "0.135.0"',
+        'starlette = "1.3.1"',
         'pydantic = "^2.8.0"',
-        'pydantic-settings = "^2.4.0"',
+        'pydantic-settings = ">=2.14.2,<3"',
         'numpy = "^1.26.0"',
         'torch = "^2.4.0"',
         'transformers = "^4.44.0"',
@@ -23,6 +24,6 @@ def test_pyproject_keeps_optional_extras_for_tone_and_gigaam() -> None:
     pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
     text = pyproject.read_text(encoding="utf-8")
 
-    assert '[tool.poetry.extras]' in text
+    assert "[tool.poetry.extras]" in text
     assert 'tone = ["tone"]' in text
     assert 'gigaam = ["gigaam"]' in text

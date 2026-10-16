@@ -433,7 +433,7 @@ ASR_CONTAINER=$(compose "${INSTALL_DIR}" ps -q t-one-asr)
 SANDBOX_CONTAINER=$(compose "${INSTALL_DIR}" ps -q sandbox-executor-manager)
 [[ -n ${ASR_CONTAINER} && -n ${SANDBOX_CONTAINER} ]] || upgrade_fail "ASR or sandbox manager is not running after upgrade."
 sudo docker exec "${ASR_CONTAINER}" python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9011/health/ready', timeout=10)"
-sudo docker exec "${SANDBOX_CONTAINER}" curl -fsS http://127.0.0.1:9385/healthz >/dev/null
+sudo docker exec "${SANDBOX_CONTAINER}" python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9385/healthz', timeout=5)" >/dev/null
 SANDBOX_LOGS=$(sudo docker logs "${SANDBOX_CONTAINER}" 2>&1)
 grep -Eq 'Container pool initialization complete: [1-9][0-9]*/[1-9][0-9]* available' <<<"${SANDBOX_LOGS}"
 

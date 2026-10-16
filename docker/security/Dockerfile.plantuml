@@ -1,0 +1,5 @@
+FROM plantuml/plantuml-server:jetty-v1.2026.8
+USER root
+RUN apt-get update && apt-get upgrade -y --no-install-recommends && \
+    rm -rf /var/lib/apt/lists/*
+USER jetty

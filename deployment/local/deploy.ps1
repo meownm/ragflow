@@ -1,7 +1,9 @@
 [CmdletBinding()]
 param(
     [string]$ProjectName = "ragflow-local",
-    [ValidateSet("ragflow-cpu", "t-one-asr")]
+    [ValidateSet("ragflow-cpu", "t-one-asr", "sandbox-executor-manager", "sandbox-runtime-bootstrap",
+        "es01", "postgres", "minio", "redis", "plantuml-server",
+        "otel-collector", "tempo", "loki", "prometheus", "grafana")]
     [string[]]$Services = @("ragflow-cpu"),
     [ValidateSet("Auto", "Fast", "Feature", "Candidate", "Release")]
     [string]$Mode = "Auto",
@@ -505,7 +507,12 @@ if ($deploymentImage) {
         $composeFiles.Add("docker-compose.candidate.yml")
         Update-ComposeArguments
     }
-    $Services = @("ragflow-cpu")
+    if (-not $PSBoundParameters.ContainsKey("Services")) {
+        $Services = @("ragflow-cpu")
+    }
+    elseif ($Services -notcontains "ragflow-cpu") {
+        throw "An application image deployment must include ragflow-cpu in Services."
+    }
     $Build = $false
     $BuildFrontend = $false
     Invoke-Compose -Arguments @("config", "--quiet")
@@ -704,7 +711,7 @@ foreach ($service in $Services) {
         id = $containerId
         image = $inspection[0].Image
         status = $inspection[0].State.Status
-        health = if ($inspection[0].State.Health) { $inspection[0].State.Health.Status } else { "none" }
+        health = if ($inspection[0].State.PSObject.Properties['Health']) { $inspection[0].State.Health.Status } else { "none" }
         restart_count = $inspection[0].RestartCount
     }
 }

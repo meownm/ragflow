@@ -346,8 +346,10 @@ class DocumentQueries:
         if revision is None:
             raise BusinessDocumentError("REVISION_NOT_FOUND", "Business document revision not found", 404)
         base = revision["document_ast"]
-        draft = self._content.apply_change_plan(base, plan)
-        before, after = ({section["id"]: section for section in ast["sections"]} for ast in (base, draft))
+        before, after = {}, {}
+        if plan["operations"]:
+            draft = self._content.apply_change_plan(base, plan)
+            before, after = ({section["id"]: section for section in ast["sections"]} for ast in (base, draft))
         sources = PreviewSources.from_snapshot(job["payload"] if isinstance(job["payload"], dict) else {})
         sections = []
         for operation in plan["operations"]:

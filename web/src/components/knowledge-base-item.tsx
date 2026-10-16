@@ -31,6 +31,7 @@ export function useDisableDifferenceEmbeddingDataset(name: string) {
   const { list: datasetListOrigin, loading } = useFetchKnowledgeList(
     true,
     debouncedSearchString,
+    'sources',
   );
   const datasetCacheRef = useRef(new Map<string, IDataset>());
 

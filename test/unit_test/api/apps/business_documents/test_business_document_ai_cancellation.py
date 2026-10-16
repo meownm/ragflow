@@ -1,6 +1,7 @@
 """The LLM adapter closes resources and never hides partial stream failures."""
 
 import asyncio
+import json
 import sys
 from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock
@@ -15,8 +16,8 @@ from business_documents.application.errors import BusinessDocumentError
 
 @pytest.fixture()
 def model_boundary(monkeypatch):
-    config = {"llm_factory": "Ollama", "llm_name": "local-chat", "model_type": "chat"}
-    calls = {"bundle": [], "chat": 0, "closed": 0, "drained": 0}
+    config = {"llm_factory": "Ollama", "llm_name": "local-chat", "model_type": "chat", "max_tokens": 131072}
+    calls = {"bundle": [], "chat": 0, "closed": 0, "drained": 0, "parameters": []}
     lookup = ModuleType("api.db.joint_services.tenant_model_service")
     lookup.get_tenant_default_model_by_type = Mock(return_value=config)
     monkeypatch.setitem(sys.modules, lookup.__name__, lookup)
@@ -36,10 +37,12 @@ def model_boundary(monkeypatch):
             calls["closed"] += 1
 
         async def async_chat(self, *_args):
+            calls["parameters"].append(_args[2])
             calls["chat"] += 1
             return "fallback-result"
 
         async def async_chat_streamly_delta(self, *_args):
+            calls["parameters"].append(_args[2])
             if self.mode == "unsupported":
                 raise RuntimeError("Provider does not implement streaming")
             if self.mode == "error_before_output":
@@ -121,12 +124,167 @@ async def test_quality_override_rejects_other_provider_and_keeps_configuration(m
 
 
 @pytest.mark.asyncio
-async def test_quality_override_is_local_to_requested_attempt(model_boundary):
+@pytest.mark.parametrize("window", [65536, 131072, 262144])
+async def test_quality_override_is_local_to_requested_attempt(model_boundary, monkeypatch, window):
     config, _, _, calls = model_boundary
-    await RAGFlowLLMAdapter("qualified-local-model").async_generate("tenant", "system", {})
+    import httpx
+
+    config.update(api_base="http://provider/v1/", api_key="tenant-secret")
+    lookups = []
+
+    async def show(_client, url, **kwargs):
+        assert url == "http://provider/api/show" and kwargs["headers"] == {"Authorization": "Bearer tenant-secret"}
+        assert kwargs["json"] == {"model": "qualified-local-model"}
+        lookups.append(url)
+        return httpx.Response(200, json={"model_info": {"qwen.context_length": window}}, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", show)
+    adapter = RAGFlowLLMAdapter("qualified-local-model")
+    for task in ["PLAN_CHANGES", "VERIFY_REQUIREMENT_COVERAGE"]:
+        await adapter.async_generate("tenant", "system", {"job_input": {"task_type": task}})
     assert calls["bundle"][0][0][1]["llm_name"] == "qualified-local-model"
-    assert calls["bundle"][0][0][1]["max_tokens"] == 4096
-    assert config["llm_name"] == "local-chat" and "max_tokens" not in config
+    assert calls["bundle"][0][0][1]["max_tokens"] == window
+    assert config["llm_name"] == "local-chat" and config["max_tokens"] == 131072
+    assert len(lookups) == 1 and len(calls["bundle"]) == 2
+    assert all(parameters["extra_body"] == {"num_ctx": window} for parameters in calls["parameters"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("metadata", [{}, {"model_info": None}, {"model_info": {"qwen.context_length": True}}])
+async def test_override_requires_the_selected_models_window(model_boundary, monkeypatch, metadata):
+    import httpx
+
+    _, _, _, calls = model_boundary
+
+    async def show(_client, url, **kwargs):
+        return httpx.Response(200, json=metadata, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", show)
+    with pytest.raises(BusinessDocumentError) as caught:
+        await RAGFlowLLMAdapter("unknown-window").async_generate("tenant", "system", {})
+    assert caught.value.code == "MODEL_CONTEXT_UNAVAILABLE" and calls["bundle"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("window", [65536, 131072, 262144])
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("task,desired", [("PLAN_CHANGES", 65536), ("VERIFY_REQUIREMENT_COVERAGE", 2048)])
+async def test_context_budget_and_native_window_agree(model_boundary, window, stream, task, desired):
+    from common.token_utils import encoder
+    from business_documents.domain.execution_audit import validate_ai_audit
+
+    config, _, _, calls = model_boundary
+    config["max_tokens"] = window
+    # A complete large input, not a token-count stub. More than 64k at 128k/256k.
+    payload = {"job_input": {"task_type": task, "text": " complete requirement" * (window // 4)}}
+    snapshot = json.dumps(payload, ensure_ascii=False)
+    available = window - len(encoder.encode("system")) - len(encoder.encode(snapshot)) - 256
+    adapter = RAGFlowLLMAdapter()
+    await adapter.async_generate("tenant", "system", payload, (lambda _: None) if stream else None)
+    assert calls["parameters"] == [{"temperature": 0, "top_p": 0.1, "max_completion_tokens": min(desired, available), "extra_body": {"num_ctx": window}}]
+    assert len(calls["bundle"]) == 1
+    assert json.dumps(payload, ensure_ascii=False) == snapshot
+    assert validate_ai_audit(adapter.consume_execution_audit())["parameters"] == calls["parameters"][0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("window", [65536, 131072, 262144])
+@pytest.mark.parametrize(
+    "task,remaining,code", [("PLAN_CHANGES", 0, "MODEL_CONTEXT_TOO_LARGE"), ("VERIFY_REQUIREMENT_COVERAGE", 2047, "REQUIREMENT_CONTEXT_TOO_LARGE"), ("VERIFY_REQUIREMENT_COVERAGE", 2048, None)]
+)
+async def test_budget_boundaries_stop_before_provider(model_boundary, monkeypatch, window, task, remaining, code):
+    from common import token_utils
+
+    config, _, _, calls = model_boundary
+    config["max_tokens"] = window
+    encoded = []
+
+    def encode(text, **kwargs):
+        assert kwargs == {"disallowed_special": ()}
+        encoded.append(text)
+        return range(1 if text == "system" else window - 257 - remaining)
+
+    monkeypatch.setattr(token_utils, "encoder", SimpleNamespace(encode=encode))
+    adapter = RAGFlowLLMAdapter()
+    if code:
+        with pytest.raises(BusinessDocumentError) as caught:
+            await adapter.async_generate("tenant", "system", {"job_input": {"task_type": task}})
+        assert caught.value.code == code
+        assert calls["bundle"] == [] and adapter.consume_execution_audit() is None
+    else:
+        await adapter.async_generate("tenant", "system", {"job_input": {"task_type": task}})
+        assert calls["parameters"][0]["max_completion_tokens"] == 2048
+    assert len(encoded) == 2  # Each message is counted once, no repeated budget pass.
+
+
+@pytest.mark.asyncio
+async def test_budget_counts_special_token_looking_document_text_as_data(model_boundary):
+    _, _, _, calls = model_boundary
+    await RAGFlowLLMAdapter().async_generate("tenant", "system", {"job_input": {"task_type": "PLAN_CHANGES", "text": "Preserve <|endoftext|> literally"}})
+    assert len(calls["bundle"]) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("window", [65536, 131072, 262144])
+@pytest.mark.parametrize("stream", [False, True])
+async def test_compatible_ollama_uses_loaded_window_and_qwen_content_budget(model_boundary, monkeypatch, window, stream):
+    import httpx
+    from common.token_utils import encoder
+    from business_documents.domain.execution_audit import validate_ai_audit
+
+    config, _, _, calls = model_boundary
+    config.update(llm_factory="OpenAI-API-Compatible", llm_name="qwen3.8:latest", api_base="http://provider/v1/", api_key="tenant-secret", max_tokens=8192)
+    lookups = []
+
+    async def ps(_client, url, **kwargs):
+        assert url == "http://provider/api/ps" and kwargs["headers"] == {"Authorization": "Bearer tenant-secret"}
+        lookups.append(url)
+        return httpx.Response(200, json={"models": [{"name": "unrelated", "context_length": 4096}, {"name": "qwen3.8:latest", "context_length": window}]}, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", ps)
+    adapter = RAGFlowLLMAdapter()
+    for task in ["PLAN_CHANGES", "VERIFY_REQUIREMENT_COVERAGE"]:
+        payload = {"job_input": {"task_type": task, "text": " full requirement" * 12000}}
+        available = window - len(encoder.encode("system")) - len(encoder.encode(json.dumps(payload, ensure_ascii=False))) - 256
+        await adapter.async_generate("tenant", "system", payload, (lambda _: None) if stream else None)
+        expected = {"temperature": 0, "top_p": 0.1, "max_tokens": min(65536 if task == "PLAN_CHANGES" else 2048, available), "reasoning_effort": "none"}
+        assert calls["parameters"][-1] == expected
+        assert validate_ai_audit(adapter.consume_execution_audit())["parameters"] == expected
+    assert len(lookups) == len(calls["bundle"]) == 2
+    assert config["max_tokens"] == 8192
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("metadata", [{"models": [{"name": "qwen3", "context_length": None}]}, {"models": [{"name": "qwen3", "context_length": True}]}])
+async def test_compatible_ollama_cannot_invent_a_loaded_model_window(model_boundary, monkeypatch, metadata):
+    import httpx
+
+    config, _, _, calls = model_boundary
+    config.update(llm_factory="OpenAI-API-Compatible", llm_name="qwen3", api_base="http://provider/v1")
+
+    async def ps(_client, url, **kwargs):
+        return httpx.Response(200, json=metadata, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", ps)
+    with pytest.raises(BusinessDocumentError) as caught:
+        await RAGFlowLLMAdapter().async_generate("tenant", "system", {})
+    assert caught.value.code == "MODEL_CONTEXT_UNAVAILABLE" and calls["bundle"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status,metadata", [(401, None), (404, None), (405, None), (503, None), (200, {"models": []}), (200, {"models": [{"name": "another-model", "context_length": 4096}]})])
+async def test_non_ollama_or_cold_compatible_keeps_its_configured_window(model_boundary, monkeypatch, status, metadata):
+    import httpx
+
+    config, _, _, calls = model_boundary
+    config.update(llm_factory="OpenAI-API-Compatible", llm_name="other-model", api_base="http://provider/v1")
+
+    async def ps(_client, url, **kwargs):
+        return httpx.Response(status, json=metadata, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", ps)
+    await RAGFlowLLMAdapter().async_generate("tenant", "system", {"job_input": {"task_type": "PLAN_CHANGES"}})
+    assert calls["parameters"] == [{"temperature": 0, "top_p": 0.1, "max_tokens": 65536}]
 
 
 @pytest.mark.parametrize("response, code", [(None, "EMPTY_AI_RESPONSE"), ("[]", "INVALID_AI_JSON")])
@@ -136,7 +294,8 @@ def test_ai_worker_rejects_empty_and_non_object_model_response(response, code):
     with pytest.raises(BusinessDocumentError) as caught:
         ai_module.BusinessDocumentAI(adapter).process(job)
     assert caught.value.code == code
-    adapter.generate.assert_called_once()
+    assert adapter.generate.call_count == 2
+    assert adapter.generate.call_args.args[2]["format_repair"]["error"]["code"] == code
 
 
 def test_job_with_changed_prompt_is_rejected_before_calling_model():

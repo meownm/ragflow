@@ -84,7 +84,7 @@ def _capabilities(role):
     return {
         "read": True,
         "create": create,
-        "edit_own": True,
+        "edit_own": role != "READER",
         "edit_all": edit_all,
         "delete": elevated,
         "assign": elevated,
@@ -95,7 +95,7 @@ def _permissions(role, owner_id):
     capabilities = _capabilities(role)
     return {
         "read": True,
-        "edit": capabilities["edit_all"] or owner_id == ACTOR_ID,
+        "edit": capabilities["edit_all"] or (capabilities["edit_own"] and owner_id == ACTOR_ID),
         "delete": capabilities["delete"],
         "assign": capabilities["assign"],
     }
@@ -637,6 +637,7 @@ def _open_document(page, base_url, stub):
 @pytest.mark.parametrize(
     ("role", "can_create", "can_edit_foreign", "can_delete", "can_assign"),
     [
+        ("READER", False, False, False, False),
         ("AUTHOR_CREATOR", True, False, False, False),
         ("AUTHOR_EDITOR", False, False, False, False),
         ("MODERATOR_CREATOR", True, True, False, False),
@@ -657,8 +658,6 @@ def test_document_role_matrix_controls_browser_actions(
     _open_documents(page, base_url, stub)
 
     expect(page.get_by_test_id("business-document-create-panel")).to_have_count(1 if can_create else 0)
-    expect(page.get_by_test_id("new-document-mode")).to_have_count(1 if can_create else 0)
-    expect(page.get_by_test_id("eva-change-mode")).to_have_count(1 if can_create else 0)
 
     page.goto(f"{base_url.rstrip('/')}/business-documents/{DOCUMENT_ID}")
     expect(page.get_by_test_id("business-document-workbench")).to_be_visible(timeout=RESULT_TIMEOUT_MS)
@@ -813,7 +812,7 @@ def test_eva_title_challenge_opens_the_selected_free_page_in_the_editor(page, ba
     expect(page.get_by_role("textbox", name="Комментарий")).to_be_visible()
     expect(page.get_by_role("button", name="Проанализировать замечания")).to_be_visible()
     create_payloads = [payload for method, path, payload in stub.mutations if method == "POST" and path == "/api/v1/business-documents"]
-    assert create_payloads[1]["schema_version"] == "3"
+    assert create_payloads[1]["schema_version"] == "4"
     assert create_payloads[1]["catalog_entry_id"] == CATALOG_ENTRY_ID
     assert create_payloads[1]["eva_page_url"] == stub.matches[0]["web_url"]
     assert create_payloads[1]["eva_decision"] == {"mode": "BIND"}

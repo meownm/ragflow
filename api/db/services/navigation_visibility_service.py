@@ -36,7 +36,6 @@ NAVIGATION_SECTIONS = (
     "translator",
     "file_manager",
 )
-ACCESS_CONTROLLED_NAVIGATION_SECTIONS = tuple(section for section in NAVIGATION_SECTIONS if section not in {"home", "document_constructor", "sql_projects"})
 
 
 def validate_visible_sections(value: object) -> list[str]:

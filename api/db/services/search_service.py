@@ -18,7 +18,8 @@ from datetime import datetime
 from peewee import fn
 
 from common.constants import StatusEnum
-from api.db.db_models import DB, Search, User
+from api.db import UserTenantRole
+from api.db.db_models import DB, Search, User, UserTenant
 from api.db.services.common_service import CommonService
 from common.time_utils import current_timestamp, datetime_format
 
@@ -54,7 +55,7 @@ class SearchService(CommonService):
 
     @classmethod
     @DB.connection_context()
-    def get_detail(cls, search_id):
+    def get_detail(cls, search_id, user_id):
         fields = [
             cls.model.id,
             cls.model.avatar,
@@ -70,7 +71,20 @@ class SearchService(CommonService):
         search = (
             cls.model.select(*fields)
             .join(User, on=((User.id == cls.model.tenant_id) & (User.status == StatusEnum.VALID.value)))
-            .where((cls.model.id == search_id) & (cls.model.status == StatusEnum.VALID.value))
+            .where(
+                (cls.model.id == search_id)
+                & (cls.model.status == StatusEnum.VALID.value)
+                & (
+                    (cls.model.tenant_id == user_id)
+                    | cls.model.tenant_id.in_(
+                        UserTenant.select(UserTenant.tenant_id).where(
+                            UserTenant.user_id == user_id,
+                            UserTenant.status == StatusEnum.VALID.value,
+                            UserTenant.role.in_([UserTenantRole.OWNER, UserTenantRole.ADMIN, UserTenantRole.NORMAL]),
+                        )
+                    )
+                )
+            )
             .first()
         )
         if not search:

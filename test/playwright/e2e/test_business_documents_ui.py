@@ -290,6 +290,62 @@ def test_business_documents_list_validation_and_create_navigation(
 
 @pytest.mark.p1
 @pytest.mark.auth
+@pytest.mark.parametrize("operation_state", ["FAILED", "APPLYING_CHANGES"])
+def test_business_document_soar_requirement_error_details(page, base_url, operation_state):
+    _install_session(page)
+    _install_common_routes(page)
+    suite = json.loads((Path(__file__).resolve().parents[3] / "agent/business_requirements/golden_model_quality/v2.json").read_text(encoding="utf-8"))
+    case = next(case for case in suite["cases"] if case["workflow"] == "metric_placement")
+    metrics = [requirement["text"] for requirement in case["seed"]["requirements"] if requirement["section_id"] == "5.4"]
+    assert len(metrics) == 8
+    error = {
+        "code": "REQUIREMENT_COVERAGE_FAILED",
+        "message": "Generated changes omit, contradict or misplace confirmed requirements",
+        "details": {"requirements": [{"text": text, "status": "MISSING"} for text in metrics]},
+    }
+    projection = _projection()
+    projection.update(
+        operation_state=operation_state,
+        last_error=error,
+        latest_job={
+            "job_id": "soar-failed-plan",
+            "job_type": "PLAN_CHANGES",
+            "status": "DEAD" if operation_state == "FAILED" else "RETRY",
+            "attempt": 3,
+            "max_attempts": 3,
+            "error": error,
+        },
+    )
+    page.route(
+        "**/api/v1/business-documents/doc-ui-1",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(_envelope(projection), ensure_ascii=False),
+        ),
+    )
+    page.goto(f"{base_url.rstrip('/')}/business-documents/doc-ui-1")
+    panel = page.get_by_test_id("business-document-operation-error" if operation_state == "FAILED" else "business-document-operation")
+    expect(panel).to_be_visible(timeout=RESULT_TIMEOUT_MS)
+    expect(panel).to_contain_text("План изменений не сохранил подтверждённые требования.")
+    expect(panel.get_by_role("listitem")).to_have_count(8)
+    for metric in metrics:
+        expect(panel).to_contain_text(metric)
+    expect(panel).not_to_contain_text(error["message"])
+    for width in [1280, 390]:
+        page.set_viewport_size({"width": width, "height": 844})
+        assert panel.evaluate("element => element.scrollWidth <= element.clientWidth"), "Error details overflow the viewport"
+        panel.get_by_role("listitem").last.scroll_into_view_if_needed()
+        expect(panel.get_by_role("listitem").last).to_be_in_viewport()
+    page.reload()
+    expect(panel.get_by_role("listitem")).to_have_count(8)
+    if operation_state == "FAILED":
+        page.get_by_role("button", name="Закрыть сообщение об ошибке").click()
+        expect(panel).to_have_count(0)
+
+
+@pytest.mark.p1
+@pytest.mark.auth
 def test_business_document_workbench_commands_and_mobile_layout(
     page,
     base_url,

@@ -47,40 +47,11 @@ def validate_evidence_sources(allowed: frozenset[str], evidence_refs: object) ->
         )
 
 
-def added_subsection_scopes(base_document: Mapping[str, Any], operation: Mapping[str, Any]) -> frozenset[str]:
-    """Allow child-scoped inputs through a parent only when its own text is intact."""
-    sections = {section["id"]: section for section in base_document.get("sections", [])}
-    parent_id = operation.get("section_id")
-    parent = sections.get(parent_id)
-    content = operation.get("content")
-    blocks = content.get("blocks") if isinstance(content, Mapping) else None
-    if parent is None or not isinstance(blocks, list):
-        return frozenset()
-    if "evidence_refs" in operation and operation["evidence_refs"] != parent.get("evidence_refs", []):
-        return frozenset()
-    children = []
-    retained = []
-    for block in blocks:
-        if isinstance(block, dict) and "type" not in block and isinstance(block.get("id"), str) and isinstance(block.get("title"), str) and isinstance(block.get("blocks"), list):
-            children.append(block)
-        else:
-            retained.append(block)
-    if not children or retained != parent["blocks"]:
-        return frozenset()
-    child_ids = frozenset(child["id"] for child in children)
-    if len(child_ids) != len(children) or any(child_id in sections or child_id.rsplit(".", 1)[0] != parent_id for child_id in child_ids):
-        return frozenset()
-    return child_ids
-
-
-def _validate_operation_sources(review: ReviewState, operation: Mapping[str, Any], base_document: Mapping[str, Any]) -> None:
+def _validate_operation_sources(review: ReviewState, operation: Mapping[str, Any]) -> None:
     source_ids = operation["source_event_ids"]
     missing = [event_id for event_id in source_ids if event_id not in review.events_by_id]
     if missing:
         raise RuleViolation("UNKNOWN_CHANGE_SOURCE", "Result references unknown document events", {"event_ids": missing})
-    added_scopes = added_subsection_scopes(base_document, operation)
-    authorized_children: set[str] = set()
-    parent_authorized = False
     for event_id in source_ids:
         event = review.events_by_id[event_id]
         kind = event["event_type"]
@@ -94,28 +65,15 @@ def _validate_operation_sources(review: ReviewState, operation: Mapping[str, Any
                 "A comment can authorize a change only when the current review assessment says CONFIRMED_CHANGE",
                 {"event_id": event_id},
             )
-        source_cycle, source_section = review.event_scopes.get(event_id, (None, None))
+        source_cycle, _ = review.event_scopes.get(event_id, (None, None))
         if source_cycle != review.review_cycle:
             raise RuleViolation("CHANGE_SOURCE_REVIEW_CYCLE_CONFLICT", "Change source is outside the active review cycle", {"event_id": event_id})
-        # Comment anchors identify feedback, not the complete scope of a request.
-        if kind == "AuthorCommentAdded" or source_section is None or source_section == operation["section_id"]:
-            parent_authorized = True
-        elif source_section in added_scopes:
-            authorized_children.add(source_section)
-        else:
-            raise RuleViolation(
-                "CHANGE_SOURCE_SECTION_CONFLICT",
-                "Change source targets a different template section",
-                {"event_id": event_id, "source_section_id": source_section, "operation_section_id": operation["section_id"]},
-            )
         if event_id not in review.active_inputs:
             raise RuleViolation(
                 "CHANGE_SOURCE_NOT_ACTIVE",
                 "A resolved or superseded review input cannot authorize another document change",
                 {"event_id": event_id},
             )
-    if added_scopes and not parent_authorized and added_scopes != authorized_children:
-        raise RuleViolation("CHANGE_SOURCE_SECTION_CONFLICT", "New subsections require their own authorizing inputs", {"section_ids": sorted(added_scopes - authorized_children)})
 
 
 def validate_change_inputs(
@@ -124,7 +82,6 @@ def validate_change_inputs(
     *,
     snapshot_source_ids: frozenset[str],
     evidence_source_refs: frozenset[str],
-    base_document: Mapping[str, Any] | None = None,
 ) -> ChangeInputs:
     """Validate a schema-checked plan in source order, without performing I/O."""
 
@@ -135,7 +92,7 @@ def validate_change_inputs(
             raise RuleViolation("UNSUPPORTED_CHANGE", "Every change operation requires source_event_ids")
         validate_snapshot_sources(snapshot_source_ids, operation["source_event_ids"])
         validate_evidence_sources(evidence_source_refs, operation.get("evidence_refs", []))
-        _validate_operation_sources(review, operation, base_document or {})
+        _validate_operation_sources(review, operation)
         sources.extend(operation["source_event_ids"])
         evidence.extend(operation.get("evidence_refs", []))
     acknowledgements = plan.get("acknowledged_no_change_event_ids", [])

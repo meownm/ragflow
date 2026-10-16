@@ -20,7 +20,7 @@ param(
     [ValidateRange(1, 168)]
     [int]$BackupFreshHours = 24,
     [ValidateRange(30, 1800)]
-    [int]$HealthTimeoutSeconds = 300,
+    [int]$HealthTimeoutSeconds = 1200,
     [string]$EvidenceDirectory
 )
 

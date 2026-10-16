@@ -361,7 +361,7 @@ def bind_change_plan_section_hashes(base_document: dict[str, Any], change_plan: 
     optimistic-concurrency token used to protect those sections.
     """
 
-    if not isinstance(change_plan, dict) or not isinstance(change_plan.get("operations"), list):
+    if not isinstance(change_plan, dict) or not isinstance(change_plan.get("operations"), list) or not change_plan["operations"]:
         return change_plan
     hashes = {section["id"]: section_hash(section) for section in base_document.get("sections", []) if isinstance(section, dict) and isinstance(section.get("id"), str)}
     bound = deepcopy(change_plan)

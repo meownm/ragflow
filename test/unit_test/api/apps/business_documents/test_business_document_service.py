@@ -2830,6 +2830,58 @@ def test_no_op_review_agrees_existing_revision_without_duplicate(database):
     assert BusinessDocumentEvent.select().where(BusinessDocumentEvent.event_type == "ReviewAgreedWithoutChanges").count() == 1
 
 
+@pytest.mark.parametrize("prepare", [False, True])
+def test_identical_replacement_resolves_sources_without_a_duplicate_revision(database, prepare):
+    document = _request_and_complete_draft(_create())
+    original = deepcopy(document["current_revision"])
+    added = document_commands.execute(
+        TENANT,
+        AUTHOR,
+        document["document_id"],
+        _command(document, "ADD_COMMENT", {"revision_id": original["revision_id"], "section_id": None, "text": "Существующего контроля достаточно", "anchor": None}),
+    )
+    source_id = added["event_id"]
+    document = _complete_review_assessment(document_queries.get_document(document["document_id"], AUTHOR))
+    requested = document_commands.execute(
+        TENANT,
+        AUTHOR,
+        document["document_id"],
+        _command(document, "PREPARE_CHANGES" if prepare else "APPLY_CHANGES", {"base_revision_id": original["revision_id"]}),
+    )
+    section = next(section for section in original["document_ast"]["sections"] if section["id"] == "5.5")
+    output = {
+        "change_plan": {
+            "schema_version": "1",
+            "base_revision_id": original["revision_id"],
+            "source_state_version": requested["state_version"],
+            "acknowledged_no_change_event_ids": [],
+            "operations": [
+                {
+                    "operation_id": "unchanged",
+                    "type": "REPLACE_SECTION_CONTENT",
+                    "section_id": "5.5",
+                    "expected_section_hash": section_hash(section),
+                    "source_event_ids": [source_id],
+                    "content": {"blocks": deepcopy(section["blocks"])},
+                }
+            ],
+        }
+    }
+    result = _complete(requested["job_id"], output)
+    if prepare:
+        assert source_id in document_writer.review(document["document_id"], document["active_review_cycle"]).active_inputs
+        command = _command(result, "CONFIRM_PREPARED_CHANGES", {"job_id": requested["job_id"]})
+        result = document_commands.execute(TENANT, AUTHOR, document["document_id"], command)["document"]
+        assert document_commands.execute(TENANT, AUTHOR, document["document_id"], command)["idempotent_replay"]
+    assert result["current_revision"] == original
+    assert result["lifecycle_state"] == "AGREED"
+    assert result["operation_state"] == "IDLE"
+    assert source_id not in document_writer.review(document["document_id"], document["active_review_cycle"]).active_inputs
+    assert BusinessDocumentRevision.select().count() == 1
+    event = BusinessDocumentEvent.get(BusinessDocumentEvent.event_type == "ReviewAgreedWithoutChanges")
+    assert event.payload["source_event_ids"] == [source_id]
+
+
 @pytest.mark.p0
 def test_no_op_requires_explicit_disposition_for_current_review_inputs(database):
     document = _request_and_complete_draft(_create())
@@ -2987,7 +3039,7 @@ def test_accepted_proposal_cannot_be_acknowledged_as_no_change(database):
 
 
 @pytest.mark.p0
-def test_change_source_must_match_active_cycle_and_target_section(database):
+def test_author_answer_may_apply_to_another_section(database):
     document = _request_and_complete_draft(_create(), review_questions=_question_batch("REVIEW", "audience"))
     question = document["protocol"]["questions"][0]
     response = document_commands.execute(
@@ -3013,30 +3065,30 @@ def test_change_source_must_match_active_cycle_and_target_section(database):
         document["document_id"],
         _command(document, "APPLY_CHANGES", {"base_revision_id": document["current_revision"]["revision_id"]}),
     )
-    wrong_section = next(section for section in document["current_revision"]["document_ast"]["sections"] if section["id"] == "5.5")
-    with pytest.raises(BusinessDocumentError) as caught:
-        _complete(
-            requested["job_id"],
-            {
-                "change_plan": {
-                    "schema_version": "1",
-                    "base_revision_id": document["current_revision"]["revision_id"],
-                    "source_state_version": requested["state_version"],
-                    "acknowledged_no_change_event_ids": [],
-                    "operations": [
-                        {
-                            "operation_id": "op-wrong-section",
-                            "type": "REPLACE_SECTION_CONTENT",
-                            "section_id": "5.5",
-                            "expected_section_hash": section_hash(wrong_section),
-                            "source_event_ids": [answer_event.id],
-                            "content": {"blocks": [{"type": "paragraph", "text": "Не должно примениться"}]},
-                        }
-                    ],
-                }
-            },
-        )
-    assert caught.value.code == "CHANGE_SOURCE_SECTION_CONFLICT"
+    target = next(section for section in document["current_revision"]["document_ast"]["sections"] if section["id"] == "5.5")
+    result = _complete(
+        requested["job_id"],
+        {
+            "change_plan": {
+                "schema_version": "1",
+                "base_revision_id": document["current_revision"]["revision_id"],
+                "source_state_version": requested["state_version"],
+                "acknowledged_no_change_event_ids": [],
+                "operations": [
+                    {
+                        "operation_id": "cross-section",
+                        "type": "REPLACE_SECTION_CONTENT",
+                        "section_id": "5.5",
+                        "expected_section_hash": section_hash(target),
+                        "source_event_ids": [answer_event.id],
+                        "content": {"blocks": [{"type": "paragraph", "text": "Контролировать ошибки для физических лиц."}]},
+                    }
+                ],
+            }
+        },
+    )
+    assert result["current_revision"]["revision_number"] == 2
+    assert result["current_revision"]["section_texts"]["5.5"] == "Контролировать ошибки для физических лиц."
 
 
 @pytest.mark.p0
@@ -3196,12 +3248,7 @@ def test_reporting_subsection_is_previewed_and_confirmed_with_scoped_sources(dat
             if input_payload["job_input"]["task_type"] == "PLAN_CHANGES":
                 return plan
             # This test exercises worker/authorization/preview, not model accuracy.
-            return {
-                "checks": [
-                    {"fragment_id": key, "status": "PRESENT", "matches": ["5:0", "5.4:0", "5.5:0"], "required_section_ids": [], "superseded_by": None}
-                    for key in input_payload["job_input"]["fragments"]
-                ]
-            }
+            return {"status": "PASS", "issues": []}
 
     worker = BusinessDocumentWorker(worker_id="reporting-worker", ai=BusinessDocumentAI(Adapter()), lease_ms=60_000, retry_base_ms=0)
     assert worker.run_once()
@@ -4226,18 +4273,9 @@ def test_worker_publishes_checked_section_before_full_plan_is_committed(database
 
         def generate(self, tenant_id, system_prompt, input_payload):
             self.coverage_calls += 1
-            return {
-                "checks": [
-                    {
-                        "fragment_id": key,
-                        "status": "NOT_REQUIREMENT" if value["source_id"].startswith("section:") else "MISSING" if coverage_fails_first and self.coverage_calls == 1 else "PRESENT",
-                        "matches": [] if value["source_id"].startswith("section:") or (coverage_fails_first and self.coverage_calls == 1) else ["5.5:0"],
-                        "required_section_ids": [],
-                        "superseded_by": None,
-                    }
-                    for key, value in input_payload["job_input"]["fragments"].items()
-                ]
-            }
+            if coverage_fails_first and self.coverage_calls == 1:
+                return {"status": "FAIL", "issues": [{"source_id": source_id, "section_id": "5.5", "reason": "Не уточнён контроль ошибок."}]}
+            return {"status": "PASS", "issues": []}
 
         def generate_stream(self, tenant_id, system_prompt, input_payload, on_chunk):
             observed_coverage_feedback.append(input_payload["job_input"].get("requirement_coverage_feedback"))
@@ -4252,12 +4290,15 @@ def test_worker_publishes_checked_section_before_full_plan_is_committed(database
     assert worker.run_once() is True
     if coverage_fails_first:
         failed = BusinessDocumentJob.get_by_id(requested["job_id"])
-        assert failed.status == "RETRY" and failed.error["code"] == "REQUIREMENT_COVERAGE_FAILED"
+        assert failed.status == "DEAD" and failed.error["code"] == "REQUIREMENT_COVERAGE_FAILED"
         unchanged = document_queries.get_document(document["document_id"], AUTHOR)
         assert unchanged["current_revision"]["revision_id"] == base["revision_id"]
         assert unchanged["change_preview"] is None
-        assert worker.run_once() is True
-        assert observed_coverage_feedback[1] == failed.error["details"]["requirements"]
+        assert not worker.run_once()
+        assert len(observed_coverage_feedback) == 1
+        replay = document_queries.read_job_stream_events(TENANT, AUTHOR, document["document_id"], requested["job_id"], 0)
+        assert replay["events"][-1]["type"] == "failed"
+        return
     assert observed_coverage_feedback[0] is None
     assert any(event["type"] == "section_preview" and event["payload"]["after"] == "Новый контроль ошибок" for event in observed_during_generation)
     assert BusinessDocumentJob.get_by_id(requested["job_id"]).status == "COMPLETED"

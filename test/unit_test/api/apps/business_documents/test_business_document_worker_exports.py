@@ -100,7 +100,7 @@ class MemoryStorage:
 
 class FailingAI:
     def process(self, _job):
-        raise RuntimeError("transient model failure")
+        raise TimeoutError("transient model failure")
 
 
 class CompleteIntakeAI:

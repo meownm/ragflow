@@ -240,7 +240,8 @@ def test_review_query_prioritizes_revision_tail_and_active_comment_over_long_ide
 
 
 @pytest.mark.p0
-def test_retry_reuses_pinned_snapshot_and_acl_is_rechecked_before_reuse(database):
+@pytest.mark.parametrize("revoke_access", [False, True])
+def test_retry_reuses_pinned_snapshot_and_acl_is_rechecked_before_reuse(database, revoke_access):
     first_content = "Первоначальный неизменяемый фрагмент"
     search = FakeSearch(
         [
@@ -286,7 +287,7 @@ def test_retry_reuses_pinned_snapshot_and_acl_is_rechecked_before_reuse(database
         def process(self, _job, snapshot):
             self.evidence.append(snapshot)
             if len(self.evidence) == 1:
-                raise RuntimeError("failure after retrieval")
+                raise TimeoutError("failure after retrieval")
             return {"schema_version": "1", "outcome": "COMPLETE", "questions": []}
 
     ai = FailOnceAI()
@@ -304,14 +305,17 @@ def test_retry_reuses_pinned_snapshot_and_acl_is_rechecked_before_reuse(database
     pinned = BusinessDocumentEvidenceSnapshot.get(BusinessDocumentEvidenceSnapshot.job_id == requested["job_id"])
     assert BusinessDocumentJob.get_by_id(requested["job_id"]).status == "RETRY"
 
-    acl["allowed"] = False
-    assert worker.run_once() is True
-    blocked = BusinessDocumentJob.get_by_id(requested["job_id"])
-    assert blocked.status == "RETRY"
-    assert blocked.error["code"] == "DATASET_NOT_FOUND"
-    assert len(ai.evidence) == 1
-
-    acl["allowed"] = True
+    if revoke_access:
+        acl["allowed"] = False
+        assert worker.run_once() is True
+        blocked = BusinessDocumentJob.get_by_id(requested["job_id"])
+        assert blocked.status == "DEAD"
+        assert blocked.error["code"] == "DATASET_NOT_FOUND"
+        assert len(ai.evidence) == len(search.calls) == 1
+        acl["allowed"] = True
+        assert not worker.run_once()
+        assert acl["calls"] == 2
+        return
     assert worker.run_once() is True
     completed = BusinessDocumentJob.get_by_id(requested["job_id"])
     assert completed.status == "COMPLETED"
@@ -320,7 +324,7 @@ def test_retry_reuses_pinned_snapshot_and_acl_is_rechecked_before_reuse(database
     assert ai.evidence[0] == ai.evidence[1] == pinned.snapshot
     assert first_content == ai.evidence[1]["chunks"][0]["content"]
     assert completed.result["execution"]["retrieval"]["evidence_hash"] == pinned.evidence_hash
-    assert acl["calls"] == 3
+    assert acl["calls"] == 2
 
 
 @pytest.mark.p1
@@ -346,7 +350,7 @@ def test_retry_reuses_pinned_snapshot_and_acl_is_rechecked_before_reuse(database
         ),
     ],
 )
-def test_failed_or_mixed_retrieval_retries_without_calling_ai(database, response, error_code):
+def test_failed_retrieval_retries_but_mixed_sources_stop_without_calling_ai(database, response, error_code):
     class MustNotRunAI:
         def process(self, *_args):
             raise AssertionError("AI must not run without a valid evidence snapshot")
@@ -362,7 +366,7 @@ def test_failed_or_mixed_retrieval_retries_without_calling_ai(database, response
     )
     assert worker.run_once() is True
     job = BusinessDocumentJob.get_by_id(requested["job_id"])
-    assert job.status == "RETRY"
+    assert job.status == ("RETRY" if error_code == "EVIDENCE_RETRIEVAL_FAILED" else "DEAD")
     assert job.error["code"] == error_code
     assert BusinessDocumentEvidenceSnapshot.select().count() == 0
 

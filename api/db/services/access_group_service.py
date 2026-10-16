@@ -15,7 +15,7 @@ from api.db.db_models import (
     Knowledgebase,
     User,
 )
-from api.db.services.navigation_visibility_service import ACCESS_CONTROLLED_NAVIGATION_SECTIONS
+from api.db.services.navigation_visibility_service import NAVIGATION_SECTIONS, get_visible_sections
 from common.misc_utils import get_uuid
 from common.constants import StatusEnum
 from common.time_utils import current_timestamp, datetime_format
@@ -40,8 +40,32 @@ BLUEPRINT_SECTIONS = {
 }
 
 
-def section_for_blueprint(blueprint):
-    return BLUEPRINT_SECTIONS.get(blueprint)
+def sections_for_request(blueprint, route):
+    path = route.removeprefix("/api/v1")
+    if blueprint == "dataset_api" and path in {
+        "/datasets/choices",
+        "/datasets/metadata/flattened",
+        "/datasets/tags/aggregation",
+    }:
+        return ("dataset", "chat", "search", "agent")
+    if blueprint == "chat_api" and path in {"/chat/mindmap", "/chat/recommendation"}:
+        return ("chat", "search")
+    if blueprint == "bot_api" and path.startswith("/searchbots/"):
+        return ("search",)
+    if blueprint == "business_document_api":
+        if path == "/business-documents/capabilities":
+            return ("business_documents", "document_constructor", "sql_projects")
+        if path in {
+            "/business-documents/sql-query/schema/resolve",
+            "/business-documents/sql-query/schema/entities",
+            "/business-documents/sql-query/compile",
+            "/business-documents/sql-query/plan",
+        }:
+            return ("document_constructor", "sql_projects")
+        if path.startswith("/business-documents/sql-query/"):
+            return ("sql_projects",)
+    section = BLUEPRINT_SECTIONS.get(blueprint)
+    return (section,) if section else ()
 
 
 class AccessGroupValidationError(ValueError):
@@ -74,11 +98,11 @@ def validate_group_payload(payload, *, partial=False):
         if not partial or field in payload:
             result[field] = _normalize_ids(payload.get(field, []), field)
     if "sections" in result:
-        unknown = sorted(set(result["sections"]) - set(ACCESS_CONTROLLED_NAVIGATION_SECTIONS))
+        unknown = sorted(set(result["sections"]) - set(NAVIGATION_SECTIONS))
         if unknown:
             raise AccessGroupValidationError(f"Unknown sections: {', '.join(unknown)}")
         selected = set(result["sections"])
-        result["sections"] = [item for item in ACCESS_CONTROLLED_NAVIGATION_SECTIONS if item in selected]
+        result["sections"] = [item for item in NAVIGATION_SECTIONS if item in selected]
     return result
 
 
@@ -115,7 +139,7 @@ class AccessGroupService:
             group["user_ids"] = sorted(users[group["id"]])
             group["dataset_ids"] = sorted(datasets[group["id"]])
             selected = set(sections[group["id"]])
-            group["sections"] = [item for item in ACCESS_CONTROLLED_NAVIGATION_SECTIONS if item in selected]
+            group["sections"] = [item for item in NAVIGATION_SECTIONS if item in selected]
         return groups
 
     @staticmethod
@@ -125,7 +149,7 @@ class AccessGroupService:
         datasets = list(
             Knowledgebase.select(Knowledgebase.id, Knowledgebase.name, Knowledgebase.tenant_id).where(Knowledgebase.status == StatusEnum.VALID.value).order_by(Knowledgebase.name.asc()).dicts()
         )
-        return {"users": users, "datasets": datasets, "sections": list(ACCESS_CONTROLLED_NAVIGATION_SECTIONS)}
+        return {"users": users, "datasets": datasets, "sections": list(NAVIGATION_SECTIONS)}
 
     @staticmethod
     def _replace_links(group_id, payload):
@@ -204,11 +228,18 @@ class AccessGroupService:
         return {"dataset_ids": dataset_ids, "sections": sections}
 
     @classmethod
-    def has_section_access(cls, user, section):
+    def has_section_access(cls, user, sections):
         if getattr(user, "is_superuser", False):
             return True
         policy = cls.effective_policy(user.id)
-        return policy is None or section in policy["sections"]
+        return policy is None or bool(policy["sections"].intersection(sections))
+
+    @classmethod
+    def visible_sections(cls, user):
+        policy = cls.effective_policy(user.id) if user else None
+        if policy is None:
+            return get_visible_sections()
+        return [section for section in NAVIGATION_SECTIONS if section in policy["sections"]]
 
     @classmethod
     def allowed_dataset_ids(cls, user_id):

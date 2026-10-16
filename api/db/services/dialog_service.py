@@ -34,6 +34,7 @@ from api.db.services.doc_metadata_service import DocMetadataService
 from api.db.services.knowledgebase_service import KnowledgebaseService
 from api.db.services.langfuse_service import TenantLangfuseService
 from api.db.services.llm_service import LLMBundle
+from api.db.services.search_service import SearchService
 from common.metadata_utils import apply_meta_data_filter
 from api.utils.reference_metadata_utils import (
     enrich_chunks_with_document_metadata,
@@ -51,6 +52,7 @@ from common.token_utils import num_tokens_from_string
 from rag.utils.tavily_conn import Tavily
 from rag.utils.tts_cache import synthesize_with_cache
 from common.string_utils import remove_redundant_spaces
+from common.misc_utils import thread_pool_exec
 from common import settings
 
 
@@ -142,11 +144,7 @@ class DialogService(CommonService):
     @classmethod
     def name_exists(cls, tenant_id: str, name: str, *, exclude_id: str | None = None) -> bool:
         """Return whether an active dialog name exists, case-insensitively."""
-        query = cls.model.select(cls.model.id).where(
-            (cls.model.tenant_id == tenant_id)
-            & (cls.model.status == StatusEnum.VALID.value)
-            & (fn.LOWER(cls.model.name) == name.lower())
-        )
+        query = cls.model.select(cls.model.id).where((cls.model.tenant_id == tenant_id) & (cls.model.status == StatusEnum.VALID.value) & (fn.LOWER(cls.model.name) == name.lower()))
         if exclude_id:
             query = query.where(cls.model.id != exclude_id)
         return query.exists()
@@ -693,8 +691,8 @@ async def async_chat(dialog, messages, stream=True, **kwargs):
                 prompt_config,
                 partial(
                     retriever.retrieval,
-                    embd_mdl = embd_mdl,
-                    tenant_ids = tenant_ids,
+                    embd_mdl=embd_mdl,
+                    tenant_ids=tenant_ids,
                     kb_ids=dialog.kb_ids,
                     page=1,
                     page_size=dialog.top_n,
@@ -1632,10 +1630,11 @@ async def _stream_with_think_delta(stream_iter, min_tokens: int = 16):
         state.pending_after_close = ""
 
 
-async def async_ask(question, kb_ids, tenant_id, chat_llm_name=None, search_config={}, search_id=None):
+async def async_ask(question, kb_ids, tenant_id, chat_llm_name=None, search_config=None, search_id=None):
+    search_config = search_config or {}
+    kb_ids = await thread_pool_exec(KnowledgebaseService.authorize_ids, search_config.get("kb_ids") or kb_ids, tenant_id)
     doc_ids = search_config.get("doc_ids", [])
     rerank_mdl = None
-    kb_ids = search_config.get("kb_ids", kb_ids)
     chat_llm_name = search_config.get("chat_id", chat_llm_name)
     rerank_id = search_config.get("rerank_id", "")
     meta_data_filter = search_config.get("meta_data_filter")
@@ -1756,7 +1755,21 @@ async def async_ask(question, kb_ids, tenant_id, chat_llm_name=None, search_conf
     yield final
 
 
-async def gen_mindmap(question, kb_ids, tenant_id, search_config={}):
+async def gen_mindmap(question, kb_ids, tenant_id, search_id=""):
+    if not isinstance(search_id, str):
+        raise ValueError("search_id must be a string")
+    search_config = {}
+    if search_id:
+        search_app = await thread_pool_exec(SearchService.get_detail, search_id, tenant_id)
+        if not search_app:
+            raise PermissionError("No authorization for this search.")
+        search_config = search_app.get("search_config") or {}
+
+    configured_kb_ids = search_config.get("kb_ids") or []
+    configured_kb_ids = await thread_pool_exec(KnowledgebaseService.authorize_ids, configured_kb_ids, tenant_id)
+    kb_ids = await thread_pool_exec(KnowledgebaseService.authorize_ids, kb_ids, tenant_id)
+    kb_ids = list(dict.fromkeys([*configured_kb_ids, *kb_ids]))
+
     meta_data_filter = search_config.get("meta_data_filter", {})
     doc_ids = search_config.get("doc_ids", [])
     rerank_id = search_config.get("rerank_id", "")

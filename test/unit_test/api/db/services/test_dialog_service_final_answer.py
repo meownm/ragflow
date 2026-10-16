@@ -199,12 +199,18 @@ def _collect(async_gen):
     async def _run():
         return [ev async for ev in async_gen]
 
-    return asyncio.run(_run())
+    with asyncio.Runner() as runner:
+        return runner.run(_run())
 
 
 # ---------------------------------------------------------------------------
 # Tests for async_ask  (production code path)
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _dataset_grants(monkeypatch):
+    monkeypatch.setattr(dialog_service.KnowledgebaseService, "accessible", lambda kb_id, actor: kb_id == "kb-1" and actor == "tenant-1")
 
 
 @pytest.mark.p2
@@ -324,26 +330,22 @@ def test_async_ask_empty_kb_ids_yields_error_final_event(monkeypatch):
 
 
 @pytest.mark.p2
-def test_async_ask_stale_kb_ids_yields_error_final_event(monkeypatch):
-    """Provided kb_ids that do not resolve to any KB should report invalid selection."""
+def test_async_ask_stale_kb_ids_are_rejected_before_loading(monkeypatch):
+    """A deleted dataset fails authorization before any content is loaded."""
     monkeypatch.setattr(
         dialog_service.KnowledgebaseService,
         "get_by_ids",
         lambda ids: [] if ids == ["deleted-kb"] else [_KB],
     )
 
-    events = _collect(
-        dialog_service.async_ask(
-            question="What is RAGFlow?",
-            kb_ids=["deleted-kb"],
-            tenant_id="tenant-1",
+    with pytest.raises(PermissionError, match="datasets"):
+        _collect(
+            dialog_service.async_ask(
+                question="What is RAGFlow?",
+                kb_ids=["deleted-kb"],
+                tenant_id="tenant-1",
+            )
         )
-    )
-
-    assert len(events) == 1
-    assert events[0].get("final") is True
-    assert "not valid" in events[0]["answer"]
-    assert events[0]["reference"] == {}
 
 
 # ---------------------------------------------------------------------------

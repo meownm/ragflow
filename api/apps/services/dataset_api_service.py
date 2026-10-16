@@ -1009,7 +1009,7 @@ async def search(dataset_id: str, tenant_id: str, req: dict):
     search_config = {}
     chat_mdl = None
     if search_id:
-        search_detail = SearchService.get_detail(search_id)
+        search_detail = SearchService.get_detail(search_id, tenant_id)
         if not search_detail:
             logging.warning("search config not found: search_id=%s", search_id)
             return False, "Invalid search_id"
@@ -1391,7 +1391,7 @@ async def search_datasets(tenant_id: str, req: dict):
     search_config = {}
     chat_mdl = None
     if search_id:
-        search_detail = SearchService.get_detail(search_id)
+        search_detail = SearchService.get_detail(search_id, tenant_id)
         if not search_detail:
             logging.warning("search config not found: search_id=%s", search_id)
             return False, "Invalid search_id"

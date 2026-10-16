@@ -16,6 +16,7 @@ from test.unit_test.api.apps.business_documents.test_business_document_service i
 )
 from api.apps.business_documents.runtime import document_commands, document_queries, document_writer, job_completion
 from api.apps.business_documents.worker import BusinessDocumentJobQueue
+from api.apps.business_documents.evidence import BusinessDocumentEvidence
 from api.db.db_models import BusinessDocumentEvent, BusinessDocumentJob, BusinessDocumentProposalDecision, BusinessDocumentRevision
 from business_documents.application.errors import BusinessDocumentError, ValidationError
 from business_documents.domain.content import section_hash
@@ -128,6 +129,65 @@ def test_failed_application_can_be_retried_without_another_decision(database):
     assert BusinessDocumentProposalDecision.select().count() == 1
     result = _complete(retried["job_id"], _plan(failed, retried))
     assert result["protocol"]["proposals"][0]["applied"] is True
+    assert BusinessDocumentRevision.select().count() == 2
+
+
+@pytest.mark.parametrize("open_questions", [False, True])
+def test_accepting_an_already_satisfied_proposal_resolves_it_without_a_revision(database, open_questions):
+    document = _document(open_questions)
+    proposal_id = document["protocol"]["proposals"][0]["proposal_id"]
+    command = _command(document, "ACCEPT_PROPOSAL", {"proposal_id": proposal_id})
+    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], command)
+    output = _plan(document, requested)
+    section = next(section for section in document["current_revision"]["document_ast"]["sections"] if section["id"] == "5.5")
+    output["change_plan"]["operations"][0]["content"]["blocks"] = deepcopy(section["blocks"])
+
+    result = _complete(requested["job_id"], output)
+
+    assert result["current_revision"] == document["current_revision"]
+    assert BusinessDocumentRevision.select().count() == 1
+    assert result["operation_state"] == "IDLE"
+    assert result["lifecycle_state"] == "REVIEW"
+    assert result["protocol"]["questions"] == document["protocol"]["questions"]
+    assert result["protocol"]["proposals"][0]["applied"] is True
+    event = BusinessDocumentEvent.get(BusinessDocumentEvent.event_type == "ReviewContinuedWithoutChanges")
+    assert event.payload["source_event_ids"] == output["change_plan"]["operations"][0]["source_event_ids"]
+    replay = document_commands.execute(TENANT, AUTHOR, document["document_id"], command)
+    assert replay["idempotent_replay"] is True
+    assert replay["document"]["protocol"]["proposals"][0]["applied"] is True
+    assert BusinessDocumentRevision.select().count() == 1
+    with pytest.raises(BusinessDocumentError) as applied:
+        document_commands.execute(TENANT, AUTHOR, result["document_id"], _command(result, "ACCEPT_PROPOSAL", {"proposal_id": proposal_id}))
+    assert applied.value.code == "PROPOSAL_ALREADY_APPLIED"
+
+
+def test_evidence_only_change_creates_a_revision_even_when_markdown_is_identical(database):
+    document = _document()
+    requested = document_commands.execute(
+        TENANT,
+        AUTHOR,
+        document["document_id"],
+        _command(
+            document,
+            "ACCEPT_PROPOSAL",
+            {
+                "proposal_id": document["protocol"]["proposals"][0]["proposal_id"],
+            },
+        ),
+    )
+    output = _plan(document, requested)
+    section = next(section for section in document["current_revision"]["document_ast"]["sections"] if section["id"] == "5.5")
+    operation = output["change_plan"]["operations"][0]
+    operation["content"]["blocks"] = deepcopy(section["blocks"])
+    job = BusinessDocumentJobQueue.claim("evidence-only-worker")
+    snapshot = BusinessDocumentEvidence._normalize(job, "query", ["dataset"], [{"dataset_id": "dataset", "document_id": "source", "chunk_id": "chunk", "content": "Control requirements"}])
+    BusinessDocumentEvidence._pin(job, snapshot)
+    operation["evidence_refs"] = [snapshot["chunks"][0]["source_ref"]]
+    result = job_completion.complete(TENANT, "evidence-only-worker", job.id, output, job.lease_token, BusinessDocumentEvidence.audit(snapshot, job.attempt))
+    assert result["current_revision"]["body_markdown"] == document["current_revision"]["body_markdown"]
+    assert result["current_revision"]["revision_number"] == 2
+    updated = next(section for section in result["current_revision"]["document_ast"]["sections"] if section["id"] == "5.5")
+    assert updated["evidence_refs"] == operation["evidence_refs"]
     assert BusinessDocumentRevision.select().count() == 2
 
 

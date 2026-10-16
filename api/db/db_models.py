@@ -702,7 +702,7 @@ class User(DataBaseModel, AuthUser):
         max_length=32,
         null=False,
         default="AUTHOR_CREATOR",
-        help_text="AUTHOR_CREATOR|AUTHOR_EDITOR|MODERATOR_CREATOR|EXTENDED_MODERATOR",
+        help_text="READER|AUTHOR_CREATOR|AUTHOR_EDITOR|MODERATOR_CREATOR|EXTENDED_MODERATOR",
         index=True,
     )
 

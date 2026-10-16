@@ -17,6 +17,7 @@ import kbService, {
   getKbDetail,
   getKnowledgeGraph,
   listDataset,
+  listDatasetChoices,
   listTag,
   removeTag,
   renameTag,
@@ -403,23 +404,39 @@ export const useRemoveKnowledgeGraph = () => {
   return { data, loading, removeKnowledgeGraph: mutateAsync };
 };
 
+const KnowledgeKeys = {
+  list: (
+    filterEmpty: boolean,
+    keywords: string,
+    scope: 'management' | 'sources',
+  ) =>
+    [
+      KnowledgeApiAction.FetchKnowledgeList,
+      filterEmpty,
+      keywords,
+      scope,
+    ] as const,
+};
+
 export const useFetchKnowledgeList = (
   shouldFilterListWithoutDocument: boolean = false,
   keywords = '',
+  scope: 'management' | 'sources' = 'management',
 ): {
   list: IDataset[];
   loading: boolean;
 } => {
   const { data, isFetching: loading } = useQuery({
-    queryKey: [
-      KnowledgeApiAction.FetchKnowledgeList,
+    queryKey: KnowledgeKeys.list(
       shouldFilterListWithoutDocument,
       keywords,
-    ],
+      scope,
+    ),
     initialData: [],
     gcTime: 0, // https://tanstack.com/query/latest/docs/framework/react/guides/caching?from=reactQueryV3
     queryFn: async () => {
-      const { data } = await listDataset(
+      const fetchList = scope === 'sources' ? listDatasetChoices : listDataset;
+      const { data } = await fetchList(
         keywords
           ? {
               ext: {

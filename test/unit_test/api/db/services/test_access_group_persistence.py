@@ -1,12 +1,17 @@
 """Group persistence with real queries and disposable SQLite transactions."""
 
 import inspect
+import ast
+import logging
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from peewee import IntegrityError, SqliteDatabase
 
 from api.db.db_models import AccessGroup, AccessGroupDataset, AccessGroupSection, AccessGroupUser, Knowledgebase, User
 from api.db.services import access_group_service as service
+from api.db.services.navigation_visibility_service import NAVIGATION_SECTIONS
 
 
 @pytest.fixture
@@ -81,3 +86,74 @@ def test_group_unknown_reference_does_not_replace_existing_grants(group_database
     with pytest.raises(service.AccessGroupValidationError, match="Unknown"):
         service.AccessGroupService.update(group["id"], {field: ["missing"], "sections": ["chat"]})
     assert service.AccessGroupService.effective_policy("member") == {"sections": {"dataset"}, "dataset_ids": {"dataset"}}
+
+
+@pytest.mark.parametrize("section", NAVIGATION_SECTIONS)
+def test_every_section_is_independently_persisted_and_listed(group_database, section):
+    group = _group("Independent", [section])
+    assert group["sections"] == [section]
+    assert service.AccessGroupService.list_groups()[0]["sections"] == [section]
+    assert service.AccessGroupService.effective_policy("member")["sections"] == {section}
+    assert service.AccessGroupService.options()["sections"] == list(NAVIGATION_SECTIONS)
+
+
+def test_persisted_group_visibility_union_empty_policy_and_global_fallback(group_database, monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(service, "get_visible_sections", lambda: ["chat"])
+    user = SimpleNamespace(id="member", is_superuser=False)
+    assert service.AccessGroupService.visible_sections(user) == ["chat"]
+    first = _group("First", ["home"])
+    second = _group("Second", ["sql_projects"])
+    assert service.AccessGroupService.visible_sections(user) == ["home", "sql_projects"]
+    service.AccessGroupService.delete(second["id"])
+    service.AccessGroupService.update(first["id"], {"sections": []})
+    assert service.AccessGroupService.visible_sections(user) == []
+    service.AccessGroupService.delete(first["id"])
+    assert service.AccessGroupService.visible_sections(user) == ["chat"]
+
+
+def test_source_choices_only_return_assigned_labels_and_support_search(group_database, monkeypatch):
+    from api.db.services.knowledgebase_service import KnowledgebaseService
+    from api.utils.api_utils import remap_dictionary_keys
+
+    _group("Search only", ["search"])
+    Knowledgebase.create(id="not-assigned", tenant_id="tenant", name="Hidden", embd_id="synthetic", created_by="member")
+    monkeypatch.setattr(KnowledgebaseService, "get_list", classmethod(inspect.unwrap(KnowledgebaseService.get_list.__func__)))
+    root = Path(__file__).parents[5]
+    namespace = {
+        "KnowledgebaseService": KnowledgebaseService,
+        "TenantService": SimpleNamespace(get_joined_tenants_by_user_id=lambda _actor: []),
+        "UserService": SimpleNamespace(get_by_ids=lambda ids: list(User.select().where(User.id.in_(ids)))),
+        "remap_dictionary_keys": remap_dictionary_keys,
+    }
+
+    def load_function(path, name, scope):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        node = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == name)
+        node.decorator_list = []
+        exec(compile(ast.Module(body=[node], type_ignores=[]), str(path), "exec"), scope)
+
+    load_function(root / "api/apps/services/dataset_api_service.py", "list_datasets", namespace)
+    args = {"ext": {}}
+    route = {
+        "request": object(),
+        "ListDatasetReq": object(),
+        "validate_and_parse_request_args": lambda *_args: (args, None),
+        "dataset_api_service": SimpleNamespace(list_datasets=namespace["list_datasets"]),
+        "get_result": lambda **kwargs: kwargs,
+        "get_error_data_result": lambda **kwargs: kwargs,
+        "get_error_argument_result": lambda error: {"error": error},
+        "logging": logging,
+    }
+    load_function(root / "api/apps/restful_apis/dataset_api.py", "list_dataset_choices", route)
+    response = route["list_dataset_choices"]("member")
+    assert response["total"] == 1
+    assert response["data"][0]["id"] == "dataset"
+    assert set(response["data"][0]) == {"id", "name", "nickname", "avatar", "embedding_model", "chunk_method", "chunk_count"}
+    args["ext"] = {"keywords": "Hidden"}
+    assert route["list_dataset_choices"]("member") == {"data": [], "total": 0}
+    args["ext"] = {"keywords": "DATA"}
+    assert route["list_dataset_choices"]("member")["data"][0]["id"] == "dataset"
+    service.AccessGroupService.update(service.AccessGroupService.list_groups()[0]["id"], {"dataset_ids": []})
+    assert route["list_dataset_choices"]("member") == {"data": [], "total": 0}

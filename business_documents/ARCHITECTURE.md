@@ -76,38 +76,48 @@ only a review without open questions or pending proposals can become AGREED.
 For applicable inputs A, used inputs U, no-change acknowledgements N and active
 accepted proposals P, require U and N to be subsets of A, U intersect N to be
 empty, A to equal U union N, and P to be a subset of U. Validate snapshot
-membership, event kind, review cycle, section restriction and comment disposition
+membership, event kind, review cycle and comment disposition
 before these completeness checks, retaining stable error priority/details.
-Confirmed comments may coordinate changes across sections; question/proposal
-targets remain strict. Build snapshot/evidence membership sets once per result.
+Confirmed comments, author answers and accepted proposals may coordinate changes
+across sections. Source section IDs describe context, not authorization limits.
+Build snapshot/evidence membership sets once per result.
 
-Change generation receives the confirmed-fragment inventory and checks semantic preservation before returning a preview
-or revision: inventory every sentence of confirmed comments, accepted proposals,
-author answers and replaced sections, then ask the configured model to verify
-the complete resulting document. Domain validation requires a verdict for every
-  fragment and existing nonempty result-block references; the server resolves
-  those references to actual document text. Missing or contradicted requirements
-  use the durable job retry, with the missing-fragment verdict supplied to the
-  next generation attempt; the verifier never edits the document. Explicit
-removal and replacement remain possible. EVA pull text is review context;
-accepted proposals and author answers determine which external changes become
-requirements. Generation and verification retain separate model audits. This
-probabilistic semantic check uses model calls in batches of at most 24 fragments and complements deterministic
-source authorization; it is not a formal proof of equivalence. Confirmation
-rejects previews pinned to an older generation/verification prompt policy.
+EVA pull text is review context; accepted proposals and author answers determine
+which external changes become requirements. Generation and verification retain
+separate model audits. Semantic verification complements deterministic source
+authorization; it is not a formal proof of equivalence.
+The full verification input is sent without truncation. The provider adapter
+counts the serialized input once, reserves 256 tokens for message framing and
+bounds the output by the remaining context. PLAN_CHANGES requests at most 65536
+output tokens; semantic verification requires room for its full 2048-token report.
+Native Ollama receives the same window through `num_ctx` in ordinary and streaming
+requests. A quality model override resolves its own window through `/api/show`,
+once per adapter and model/endpoint/credential combination. For Ollama behind an
+OpenAI-compatible endpoint, `/api/ps` supplies the loaded model's actual context
+before each call, replacing a possibly generic 8192 catalog value. Cold models
+and other compatible servers retain their configured window. Optional metadata
+discovery never requires unrelated providers to implement Ollama endpoints.
+The shared tokenizer estimates input size; provider capacity errors still fail
+the attempt. Qwen3 compatible planning and verification explicitly request
+`reasoning_effort=none`, which survives transport filtering and is audited.
 
-Generation and verification use the published section roles: business report
-specifications belong to optional section 5.4; system monitoring remains in 5.5.
+Generation and verification use published section roles and confirmed author
+placement decisions, independently of section numbers. A confirmed relocation
+retains the full definition at its destination and removes its former copy,
+while preserving references, explicitly permitted repeats and independent rules.
+Pure domain comparison supplies candidate section pairs with similar content,
+including unchanged result sections paired with a changed section. Similarity
+alone never authorizes deletion or rejects a plan: the single semantic review
+checks each candidate against the actual confirmed decision. This remains a
+model judgment, not a deterministic proof of free-text relocation intent.
 An absent optional section is included through the existing parent-section
 operation. Verification receives section titles, including absent template
-sections. The semantic verdict explicitly classifies reporting and monitoring
-requirements; deterministic validation requires citations in each classified
-section even when the model returns PRESENT. A wrong placement uses the same
-durable retry feedback as missing content. The semantic classification remains
-probabilistic.
-Child-scoped sources may add their missing subsection through the parent only
-when the parent's own blocks remain unchanged and every new child is authorized.
-Confirmed comment anchors do not restrict cross-section changes. New sections
+sections. A semantic rejection of misplaced or missing requirements terminates
+the job with concrete source-scoped feedback; it does not authorize rewriting
+requirements automatically.
+The single semantic check evaluates whether each change follows confirmed inputs,
+including changes to a parent together with new subsections. Source validation
+does not traverse the AST or compare parent content. New sections
 are included in the before/after preview before author confirmation.
 
 The validator returns a change decision. Persistence applies one of three
@@ -117,7 +127,62 @@ flags that permit contradictory modes. Persisted preview_only is translated at
 job completion and retains its existing meaning.
 Pending proposals keep the review open. Confirmation revalidates the current
 version, revision, review cycle, preview age and inputs. No-op finalization must
-not manufacture a duplicate revision.
+not manufacture a duplicate revision, including a nonempty plan whose canonical
+AST equals the base. Source events are resolved in the no-change event even when
+the current revision is retained. Evidence-only AST changes still create revisions.
+
+The model receives the current AST, active feedback, unanswered questions and
+pinned evidence. The complete immutable snapshot remains server-side for audit;
+resolved protocol bodies and historical execution events are not model input.
+Confirmed source text and selected/custom answers appear once in
+`confirmed_change_sources`, together with question context. Protocol and event
+entries retain identifiers and decision metadata. Unanswered questions,
+non-confirmed comment context and EVA quotations remain available.
+Transport normalization resolves entity aliases and server-owned section hashes;
+it never relocates sources, invents an omitted source or declares a no-change
+disposition on the model's behalf. Domain validation rejects these omissions.
+
+Change generation returns the existing structured `change_plan`: section IDs,
+server-bound base hashes, replacement blocks and authorizing source IDs. One
+semantic model call reviews all changed sections against active confirmed inputs
+and their previous requirements. All unchanged result sections are supplied as
+context, including mixed plans that acknowledge an already-satisfied answer. Each
+result section appears once, either in the diff or in context; none is truncated. The bounded
+PASS/FAIL report contains at most four source/section-scoped issues, not a report
+per sentence. Its 2048-token output limit is shared by the provider call and
+context-budget check. The resolved model context is preserved. Oversized input
+fails explicitly without truncation or batching.
+
+The worker retries known temporary provider/retrieval/storage failures only,
+respecting Retry-After. Access, configuration, corrupt evidence, stale results
+and semantic rejection terminate without another model generation. SQL job
+retry policy is independent. Document model calls share a durable limit of six
+calls and 900 seconds, including queue waits and format repair. Each generation
+or verification stage permits one targeted format correction; the original
+input and validation diagnostics accompany the response being corrected.
+The domain validators and final authorization checks remain mandatory.
+
+Before semantic review, the validated candidate and call/audit/repair state are
+checkpointed in the existing job.result, without changing immutable job.payload.
+A retry of the verifier reuses that candidate, checks the snapshot fingerprint,
+document version and worker lease, and never publishes it before PASS. Invalid
+verifier JSON or report shape permits one format repair; a valid FAIL does not.
+Recovery checkpoints are internal and absent from job/preview HTTP projections.
+Lease loss and cancellation stop subsequent calls and publication. A stale job
+failure does not overwrite a newer document state. Network calls stay outside
+database transactions. The opt-in raise_on_error provider boundary retains
+typed failures for this queue; ordinary chat keeps its existing behavior.
+Saved M06 qualification evidence replays the saved plan once, binds the final
+generator response to that plan after transport normalization, and checks that
+the terminal semantic PASS reviews the same sources, before/after text, context
+and titles. Earlier failed attempts do not invalidate a subsequent successful
+pair. Empty, failed or unrelated exchanges cannot substantiate a saved PASS.
+The AI assembles the candidate once for semantic verification; completion applies
+the diff against the locked current revision and retains final authorization,
+version and lease guards. Streamed previews index the base sections once and
+hash only the target of each operation. They validate only the current section
+shape; they neither assemble the whole AST nor authorize a write. Old prepared
+previews must be prepared again when their pinned prompt policy changes.
 
 Preview source labels use one snapshot index for all operations. For K
 operations, H snapshot entries and R references this changes repeated

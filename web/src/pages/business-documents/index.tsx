@@ -85,6 +85,7 @@ import {
 } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { ChangePreviewPanel } from './components/change-preview-panel';
+import { BusinessDocumentError } from './components/document-error';
 import { DocumentPane } from './components/document-pane';
 import {
   BusinessDocumentProgress,
@@ -1986,11 +1987,9 @@ export default function BusinessDocumentsPage() {
               role="alert"
             >
               <Archive className="mt-1.5 size-3.5 shrink-0" />
-              <span className="min-w-0 flex-1 break-words">
-                {typeof document.last_error === 'string'
-                  ? document.last_error
-                  : document.last_error.message || document.last_error.code}
-              </span>
+              <div className="min-w-0 flex-1">
+                <BusinessDocumentError error={document.last_error} />
+              </div>
               <Button
                 type="button"
                 size="icon-sm"

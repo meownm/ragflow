@@ -27,7 +27,7 @@ from api.db.db_models import DB
 from api.db.services import duplicate_name
 from api.db.services.knowledgebase_service import KnowledgebaseService
 from api.db.services.search_service import SearchService
-from api.db.services.user_service import TenantService, UserTenantService
+from api.db.services.user_service import TenantService
 from common.misc_utils import get_uuid
 from common.constants import RetCode, StatusEnum
 from api.utils.api_utils import get_data_error_result, get_json_result, get_request_json, server_error_response, validate_request
@@ -103,16 +103,9 @@ def list_searches():
 @login_required
 def detail(search_id):
     try:
-        tenants = UserTenantService.query(user_id=current_user.id)
-        for tenant in tenants:
-            if SearchService.query(tenant_id=tenant.tenant_id, id=search_id):
-                break
-        else:
-            return get_json_result(data=False, message="Has no permission for this operation.", code=RetCode.OPERATING_ERROR)
-
-        search = SearchService.get_detail(search_id)
+        search = SearchService.get_detail(search_id, current_user.id)
         if not search:
-            return get_data_error_result(message="Can't find this Search App!")
+            return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR), 403
         return get_json_result(data=search)
     except Exception as e:
         return server_error_response(e)
@@ -196,18 +189,11 @@ def delete_search(search_id):
 @login_required
 @validate_request("question")
 async def completion(search_id):
-    if not SearchService.accessible4deletion(search_id, current_user.id):
-        return get_json_result(
-            data=False,
-            message="No authorization.",
-            code=RetCode.AUTHENTICATION_ERROR,
-        )
-
     req = await get_request_json()
     uid = current_user.id
-    search_app = SearchService.get_detail(search_id)
+    search_app = SearchService.get_detail(search_id, uid)
     if not search_app:
-        return get_data_error_result(message=f"Cannot find search {search_id}")
+        return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR), 403
 
     search_config = search_app.get("search_config", {})
     logging.debug(
@@ -220,13 +206,12 @@ async def completion(search_id):
     kb_ids = search_config.get("kb_ids") or req.get("kb_ids") or []
     if not kb_ids:
         return get_data_error_result(message="`kb_ids` is required.")
-    inaccessible = [kb_id for kb_id in kb_ids if not KnowledgebaseService.accessible(kb_id, uid)]
-    if inaccessible:
-        return get_json_result(
-            data=False,
-            message="No authorization for one or more configured datasets.",
-            code=RetCode.AUTHENTICATION_ERROR,
-        ), 403
+    try:
+        kb_ids = KnowledgebaseService.authorize_ids(kb_ids, uid)
+    except PermissionError as error:
+        return get_json_result(data=False, message=str(error), code=RetCode.AUTHENTICATION_ERROR), 403
+    except ValueError as error:
+        return get_data_error_result(message=str(error)), 400
 
     async def stream():
         nonlocal req, uid, kb_ids, search_config

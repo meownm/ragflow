@@ -558,45 +558,48 @@ test('uses the central SQL execution registry and a separate resolution endpoint
   );
 });
 
-test('uses explicit access and ownership endpoints', async () => {
-  const users = {
-    items: [
-      {
-        user_id: 'author-2',
-        nickname: 'Второй автор',
-        role: 'AUTHOR_CREATOR' as const,
-      },
-    ],
-  };
-  const assigned = { document_id: 'doc-1', owner_id: 'author-2' };
-  mockedGet.mockResolvedValueOnce({ data: { code: 0, data: users } });
-  mockedPut.mockResolvedValueOnce({ data: { code: 0, data: assigned } });
-  mockedPatch.mockResolvedValueOnce({
-    data: { code: 0, data: users.items[0] },
-  });
+test.each(['AUTHOR_EDITOR', 'READER'] as const)(
+  'uses explicit access and ownership endpoints for %s',
+  async (role) => {
+    const users = {
+      items: [
+        {
+          user_id: 'author-2',
+          nickname: 'Второй автор',
+          role: 'AUTHOR_CREATOR' as const,
+        },
+      ],
+    };
+    const assigned = { document_id: 'doc-1', owner_id: 'author-2' };
+    mockedGet.mockResolvedValueOnce({ data: { code: 0, data: users } });
+    mockedPut.mockResolvedValueOnce({ data: { code: 0, data: assigned } });
+    mockedPatch.mockResolvedValueOnce({
+      data: { code: 0, data: users.items[0] },
+    });
 
-  await expect(listBusinessDocumentAccessUsers()).resolves.toEqual(users);
-  await expect(
-    assignBusinessDocumentOwner('doc-1', 'author-2', 7),
-  ).resolves.toEqual(assigned);
-  await expect(
-    updateBusinessDocumentUserRole('author-2', 'AUTHOR_EDITOR'),
-  ).resolves.toEqual(users.items[0]);
+    await expect(listBusinessDocumentAccessUsers()).resolves.toEqual(users);
+    await expect(
+      assignBusinessDocumentOwner('doc-1', 'author-2', 7),
+    ).resolves.toEqual(assigned);
+    await expect(
+      updateBusinessDocumentUserRole('author-2', role),
+    ).resolves.toEqual(users.items[0]);
 
-  expect(mockedGet).toHaveBeenCalledWith(api.businessDocumentAccessUsers, {
-    skipErrorNotification: true,
-  });
-  expect(mockedPut).toHaveBeenCalledWith(
-    api.businessDocumentOwner('doc-1'),
-    { owner_id: 'author-2', expected_state_version: 7 },
-    { skipErrorNotification: true },
-  );
-  expect(mockedPatch).toHaveBeenCalledWith(
-    api.businessDocumentAccessUser('author-2'),
-    { role: 'AUTHOR_EDITOR' },
-    { skipErrorNotification: true },
-  );
-});
+    expect(mockedGet).toHaveBeenCalledWith(api.businessDocumentAccessUsers, {
+      skipErrorNotification: true,
+    });
+    expect(mockedPut).toHaveBeenCalledWith(
+      api.businessDocumentOwner('doc-1'),
+      { owner_id: 'author-2', expected_state_version: 7 },
+      { skipErrorNotification: true },
+    );
+    expect(mockedPatch).toHaveBeenCalledWith(
+      api.businessDocumentAccessUser('author-2'),
+      { role },
+      { skipErrorNotification: true },
+    );
+  },
+);
 
 test('reads the domain error code from the backend error envelope', async () => {
   mockedPost.mockRejectedValueOnce({

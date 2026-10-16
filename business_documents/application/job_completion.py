@@ -176,9 +176,10 @@ class JobCompletion:
             if job["status"] == "DEAD":
                 return self._queries.project(document)
             self._require_lease(job, actor_id, lease_token)
-            version = document["state_version"] + 1
-            self._writer.update_document(document, {"operation_state": "FAILED", "last_error": error, "state_version": version})
-            self._writer.append_event(document["id"], version, "BusinessDocumentJobFailed", "SYSTEM", actor_id, {"job_id": job["id"], "error": error}, job["correlation_id"])
+            if document["state_version"] == job["source_state_version"] and document["current_revision_id"] == job["base_revision_id"]:
+                version = document["state_version"] + 1
+                self._writer.update_document(document, {"operation_state": "FAILED", "last_error": error, "state_version": version})
+                self._writer.append_event(document["id"], version, "BusinessDocumentJobFailed", "SYSTEM", actor_id, {"job_id": job["id"], "error": error}, job["correlation_id"])
             self._finalize(job, actor_id, lease_token, {"status": "DEAD", "progress_stage": "FAILED", "progress_message": "Не удалось завершить обработку", "error": error})
             if job["job_type"] == "PLAN_CHANGES":
                 self._writer.append_job_event(job["id"], "failed", {"code": error.get("code", "WORKER_FAILURE")})

@@ -100,9 +100,7 @@ class ScriptedAIAdapter:
         if job_type == "VERIFY_REQUIREMENT_COVERAGE":
             # Scripted semantic verdicts keep this lane a state-machine check;
             # real semantic accuracy belongs to the separate live-model lane.
-            blocks = input_payload["job_input"]["final_blocks"]
-            block_id = next(key for key, text in blocks.items() if text.strip())
-            return {"checks": [{"fragment_id": key, "status": "PRESENT", "matches": [block_id], "required_section_ids": [], "superseded_by": None} for key in input_payload["job_input"]["fragments"]]}
+            return {"status": "PASS", "issues": []}
         if not self.responses.get(job_type):
             raise AssertionError(f"No scripted AI response for {job_type}")
         return self.responses[job_type].popleft()
@@ -856,7 +854,7 @@ class GoldenDialogueRunner:
         document = self._create(case)
         invalid = self._question_batch(count=1)
         invalid["questions"][0]["options"] = [{"option_id": f"option-{index}", "label": f"Вариант {index}"} for index in range(1, option_count + 1)]
-        adapter = ScriptedAIAdapter({"ASSESS_INTAKE": [invalid]})
+        adapter = ScriptedAIAdapter({"ASSESS_INTAKE": [invalid, deepcopy(invalid)]})
         requested = document_commands.execute(
             self.tenant_id,
             self.actor_id,
@@ -864,10 +862,12 @@ class GoldenDialogueRunner:
             self._command(document, "REQUEST_INTAKE_ASSESSMENT"),
         )
         self._work(adapter)
+        assert len(adapter.requests) == 2
+        assert adapter.requests[1]["format_repair"]["error"]["code"] == "INVALID_QUESTION_BATCH"
         projection = document_queries.get_document(document["document_id"], self.actor_id)
         job = BusinessDocumentJob.get_by_id(requested["job_id"])
         facts = {
-            "structured_output_rejected" if job.status == "RETRY" and job.error["code"] == "INVALID_QUESTION_BATCH" else "",
+            "structured_output_rejected" if job.status == "DEAD" and job.error["code"] == "INVALID_QUESTION_BATCH" else "",
             "no_question_published" if projection["protocol"]["questions"] == [] else "",
             "no_invalid_question_published" if projection["protocol"]["questions"] == [] else "",
             "question_must_be_split" if option_count > 4 and job.error["code"] == "INVALID_QUESTION_BATCH" else "",

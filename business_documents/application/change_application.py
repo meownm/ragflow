@@ -51,18 +51,17 @@ class ApplyChanges:
         if plan["base_revision_id"] != document["current_revision_id"] or plan["source_state_version"] != job["source_state_version"]:
             raise ConflictError("STALE_AI_RESULT", "Change plan does not match the immutable job snapshot")
         snapshot = SnapshotIndex.build(job, execution)
-        base = self._writer.revision(document["id"], document["current_revision_id"]) if plan["operations"] else None
         proposal_id = job["payload"].get("apply_proposal_id")
         try:
             if proposal_id is not None:
                 review = review.for_proposal_application(proposal_id)
-            inputs = validate_change_inputs(review, plan, snapshot_source_ids=snapshot.event_ids, evidence_source_refs=snapshot.evidence_refs, base_document=base["document_ast"] if base else None)
+            inputs = validate_change_inputs(review, plan, snapshot_source_ids=snapshot.event_ids, evidence_source_refs=snapshot.evidence_refs)
         except RuleViolation as error:
             raise ValidationError(error.code, error.message, error.details) from error
 
         draft = None
         if plan["operations"]:
-            assert base is not None
+            base = self._writer.revision(document["id"], document["current_revision_id"])
             draft = self._content.apply_change_plan(base["document_ast"], plan)
             if draft["template_version"] != document["template_version"]:
                 raise ValidationError("TEMPLATE_VERSION_CONFLICT", "Updated document does not use the pinned template")
@@ -93,11 +92,13 @@ class ApplyChanges:
                 "review_continues": next_lifecycle == "REVIEW",
                 "remaining_proposal_ids": list(inputs.pending_proposal_ids),
                 "acknowledged_no_change_event_ids": list(inputs.acknowledged_event_ids),
+                "source_event_ids": list(inputs.source_event_ids),
+                "evidence_refs": list(inputs.evidence_refs),
                 **prompt_audit(job),
                 **({"execution": execution} if execution else {}),
             }
             kind = "ReviewContinuedWithoutChanges" if next_lifecycle == "REVIEW" else "ReviewAgreedWithoutChanges"
-            if draft is not None:
+            if draft is not None and not _same_json_value(draft, base["document_ast"]):
                 body = self._content.render_document_ast(draft)
                 revision_id = self._writer.insert_revision(
                     document["id"],
@@ -114,9 +115,19 @@ class ApplyChanges:
                     base_revision_id=job["base_revision_id"],
                     revision_id=revision_id,
                     requested_by_actor_id=requested_by(job, document["owner_id"]),
-                    source_event_ids=list(inputs.source_event_ids),
-                    evidence_refs=list(inputs.evidence_refs),
                 )
         updated = self._writer.update_document(document, changes)
         self._writer.append_event(document["id"], version, kind, "AI", actor_id, payload, job["correlation_id"], event_id=event_id)
         return updated
+
+
+def _same_json_value(left: object, right: object) -> bool:
+    """Compare persisted JSON without equating booleans with numbers."""
+
+    if type(left) is not type(right):
+        return type(left) in (int, float) and type(right) in (int, float) and left == right
+    if isinstance(left, dict):
+        return len(left) == len(right) and all(key in right and _same_json_value(value, right[key]) for key, value in left.items())
+    if isinstance(left, list):
+        return len(left) == len(right) and all(_same_json_value(a, b) for a, b in zip(left, right))
+    return left == right

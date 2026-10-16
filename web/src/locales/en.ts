@@ -3532,7 +3532,7 @@ Important structured information may include: names, dates, locations, events, k
 
       navigationVisibilityPage: {
         description:
-          'Globally choose which sections appear in the main menu for all users.',
+          'Choose menu sections for users without access groups. For group members, the combined section list from their groups replaces this global list.',
         visibleCount: 'Visible: {{count}} of {{total}}',
         showAll: 'Show all',
         hideAll: 'Hide all',

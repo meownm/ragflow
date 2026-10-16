@@ -355,6 +355,7 @@ async def search_eva_business_document_sources():
 @login_required
 async def create_eva_business_document_change():
     try:
+        BusinessDocumentAccess(current_user.id, _access_role(), _is_admin()).require_edit(current_user.id)
         data = await get_request_json()
         if not data:
             raise BusinessDocumentError("INVALID_EVA_CHANGE", "Request body must be a valid JSON object", 422)
@@ -411,6 +412,8 @@ async def get_eva_business_document_change(change_id):
     try:
         actor_id = current_user.id
         result = await thread_pool_exec(EvaDocumentChangeService.get_change, actor_id, actor_id, change_id)
+        if not BusinessDocumentAccess(actor_id, _access_role(), _is_admin()).permissions(actor_id)["edit"]:
+            result["allowed_actions"] = []
         return _success(result)
     except BusinessDocumentError as error:
         return _error(error)
@@ -420,6 +423,7 @@ async def get_eva_business_document_change(change_id):
 @login_required
 async def generate_eva_business_document_change_draft(change_id):
     try:
+        BusinessDocumentAccess(current_user.id, _access_role(), _is_admin()).require_edit(current_user.id)
         data = await get_request_json()
         if not data:
             raise BusinessDocumentError("INVALID_EVA_GENERATION", "Передайте параметры подготовки доработки в непустом JSON-объекте.", 422)
@@ -436,6 +440,7 @@ async def generate_eva_business_document_change_draft(change_id):
 @login_required
 async def approve_eva_business_document_change(change_id):
     try:
+        BusinessDocumentAccess(current_user.id, _access_role(), _is_admin()).require_edit(current_user.id)
         data = await get_request_json()
         actor_id = current_user.id
         result = await thread_pool_exec(EvaDocumentChangeService.approve, actor_id, actor_id, change_id, data)
@@ -450,6 +455,7 @@ async def approve_eva_business_document_change(change_id):
 @login_required
 async def prepare_eva_business_document_change(change_id):
     try:
+        BusinessDocumentAccess(current_user.id, _access_role(), _is_admin()).require_edit(current_user.id)
         data = await get_request_json()
         actor_id = current_user.id
         result = await thread_pool_exec(EvaDocumentChangeService.prepare_eva_draft, actor_id, actor_id, change_id, data)
@@ -464,6 +470,7 @@ async def prepare_eva_business_document_change(change_id):
 @login_required
 async def publish_eva_business_document_change(change_id):
     try:
+        BusinessDocumentAccess(current_user.id, _access_role(), _is_admin()).require_edit(current_user.id)
         data = await get_request_json()
         actor_id = current_user.id
         result = await thread_pool_exec(EvaDocumentChangeService.publish, actor_id, actor_id, change_id, data)

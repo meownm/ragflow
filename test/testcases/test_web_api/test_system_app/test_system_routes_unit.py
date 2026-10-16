@@ -122,12 +122,8 @@ def _load_system_module(monkeypatch):
     monkeypatch.setitem(sys.modules, "api.db.services.audit_service", audit_service_mod)
 
     access_group_service_mod = ModuleType("api.db.services.access_group_service")
-    access_group_service_mod.AccessGroupService = SimpleNamespace(effective_policy=lambda _user_id: None)
+    access_group_service_mod.AccessGroupService = SimpleNamespace(visible_sections=lambda _user: ["home", "dataset", "chat"])
     monkeypatch.setitem(sys.modules, "api.db.services.access_group_service", access_group_service_mod)
-
-    navigation_visibility_service_mod = ModuleType("api.db.services.navigation_visibility_service")
-    navigation_visibility_service_mod.get_visible_sections = lambda: ["home", "dataset", "chat"]
-    monkeypatch.setitem(sys.modules, "api.db.services.navigation_visibility_service", navigation_visibility_service_mod)
 
     log_utils_mod = ModuleType("common.log_utils")
     log_utils_mod.get_log_levels = lambda: {}
@@ -249,39 +245,20 @@ def test_get_config_returns_register_enabled_unit(monkeypatch):
 
 
 @pytest.mark.p2
-def test_get_config_excludes_home_for_access_group_user(monkeypatch):
+@pytest.mark.parametrize("sections", [[], ["search"], ["home"], ["business_documents"], ["document_constructor"], ["sql_projects"]])
+def test_get_config_returns_effective_visibility_without_inheritance(monkeypatch, sections):
     module = _load_system_module(monkeypatch)
     access_group_service = sys.modules["api.db.services.access_group_service"]
-    navigation_visibility_service = sys.modules["api.db.services.navigation_visibility_service"]
+    users = []
 
-    monkeypatch.setattr(navigation_visibility_service, "get_visible_sections", lambda: ["home", "dataset", "chat"])
-    monkeypatch.setattr(
-        access_group_service.AccessGroupService,
-        "effective_policy",
-        lambda _user_id: {"dataset_ids": set(), "sections": {"chat"}},
-    )
+    def visible_sections(user):
+        users.append(user.id)
+        return sections
+
+    monkeypatch.setattr(access_group_service.AccessGroupService, "visible_sections", visible_sections)
 
     res = module.get_config()
 
     assert res["code"] == 0
-    assert res["data"]["visibleSections"] == ["chat"]
-
-
-@pytest.mark.p2
-def test_get_config_inherits_document_access_for_constructor_navigation(monkeypatch):
-    module = _load_system_module(monkeypatch)
-    access_group_service = sys.modules["api.db.services.access_group_service"]
-    navigation_visibility_service = sys.modules["api.db.services.navigation_visibility_service"]
-
-    monkeypatch.setattr(
-        navigation_visibility_service,
-        "get_visible_sections",
-        lambda: ["business_documents", "document_constructor"],
-    )
-    monkeypatch.setattr(
-        access_group_service.AccessGroupService,
-        "effective_policy",
-        lambda _user_id: {"dataset_ids": set(), "sections": {"business_documents"}},
-    )
-
-    assert module.get_config()["data"]["visibleSections"] == ["business_documents", "document_constructor"]
+    assert res["data"]["visibleSections"] == sections
+    assert users == ["user-1"]

@@ -37,7 +37,6 @@ from api.db.services.llm_service import LLMBundle
 from api.db.services.user_service import TenantService
 from common.metadata_utils import apply_meta_data_filter
 from api.db.services.search_service import SearchService
-from api.db.services.user_service import UserTenantService
 from api.db.joint_services.tenant_model_service import get_tenant_default_model_by_type, get_model_config_from_provider_instance
 from common.misc_utils import thread_pool_exec
 from api.utils.api_utils import get_error_data_result, get_json_result, add_tenant_id_to_kwargs, get_result, get_request_json, server_error_response, validate_request
@@ -369,8 +368,16 @@ async def ask_about_embedded(tenant_id=None):
     search_id = req.get("search_id", "")
     search_config = {}
     if search_id:
-        if search_app := await thread_pool_exec(SearchService.get_detail, search_id):
-            search_config = search_app.get("search_config", {})
+        search_app = await thread_pool_exec(SearchService.get_detail, search_id, uid)
+        if not search_app:
+            return get_json_result(data=False, message="No authorization for this search.", code=RetCode.AUTHENTICATION_ERROR), 403
+        search_config = search_app.get("search_config") or {}
+    try:
+        kb_ids = await thread_pool_exec(KnowledgebaseService.authorize_ids, search_config.get("kb_ids") or req["kb_ids"], uid)
+    except PermissionError as error:
+        return get_json_result(data=False, message=str(error), code=RetCode.AUTHENTICATION_ERROR), 403
+    except ValueError as error:
+        return get_error_data_result(message=str(error)), 400
 
     chat_llm_name = ""
     if not search_config or not search_config.get("chat_id"):
@@ -380,7 +387,7 @@ async def ask_about_embedded(tenant_id=None):
     async def stream():
         nonlocal req, uid
         try:
-            async for ans in async_ask(req["question"], req["kb_ids"], uid, chat_llm_name=chat_llm_name, search_config=search_config):
+            async for ans in async_ask(req["question"], kb_ids, uid, chat_llm_name=chat_llm_name, search_config=search_config):
                 yield "data:" + json.dumps({"code": 0, "message": "", "data": ans}, ensure_ascii=False) + "\n\n"
         except Exception as e:
             yield "data:" + json.dumps({"code": 500, "message": str(e), "data": {"answer": "**ERROR**: " + str(e), "reference": []}}, ensure_ascii=False) + "\n\n"
@@ -421,20 +428,27 @@ async def retrieval_test_embedded(tenant_id=None):
         return get_error_data_result(message="permission denined.")
     search_config = {}
 
+    if search_id := req.get("search_id", ""):
+        detail = await thread_pool_exec(SearchService.get_detail, search_id, tenant_id)
+        if not detail:
+            return get_json_result(data=False, message="No authorization for this search.", code=RetCode.AUTHENTICATION_ERROR), 403
+        search_config = detail.get("search_config") or {}
+    try:
+        kb_ids = await thread_pool_exec(KnowledgebaseService.authorize_ids, kb_ids, tenant_id)
+    except PermissionError as error:
+        return get_json_result(data=False, message=str(error), code=RetCode.AUTHENTICATION_ERROR), 403
+    except ValueError as error:
+        return get_error_data_result(message=str(error)), 400
+
     async def _retrieval():
         nonlocal similarity_threshold, vector_similarity_weight, top, rerank_id
         local_doc_ids = list(doc_ids) if doc_ids else []
-        tenant_ids = []
         _question = question
 
         meta_data_filter = {}
         chat_mdl = None
         if req.get("search_id", ""):
-            nonlocal search_config
-            detail = await thread_pool_exec(SearchService.get_detail, req.get("search_id", ""))
-            if detail:
-                search_config = detail.get("search_config", {})
-                meta_data_filter = search_config.get("meta_data_filter", {})
+            meta_data_filter = search_config.get("meta_data_filter", {})
             if meta_data_filter.get("method") in ["auto", "semi_auto"]:
                 chat_id = search_config.get("chat_id", "")
                 if chat_id:
@@ -468,18 +482,11 @@ async def retrieval_test_embedded(tenant_id=None):
                 metas_loader=lambda: DocMetadataService.get_flatted_meta_by_kbs(kb_ids),
             )
 
-        tenants = await thread_pool_exec(UserTenantService.query, user_id=tenant_id)
-        for kb_id in kb_ids:
-            for tenant in tenants:
-                if await thread_pool_exec(KnowledgebaseService.query, tenant_id=tenant.tenant_id, id=kb_id):
-                    tenant_ids.append(tenant.tenant_id)
-                    break
-            else:
-                return get_json_result(data=False, message="Only owner of dataset authorized for this operation.", code=RetCode.OPERATING_ERROR)
-
-        e, kb = await thread_pool_exec(KnowledgebaseService.get_by_id, kb_ids[0])
-        if not e:
+        kbs = await thread_pool_exec(KnowledgebaseService.get_by_ids, kb_ids)
+        if len(kbs) != len(kb_ids):
             return get_error_data_result(message="Knowledgebase not found!")
+        tenant_ids = list(dict.fromkeys(kb.tenant_id for kb in kbs))
+        kb = kbs[0]
 
         if langs:
             _question = await cross_languages(kb.tenant_id, None, _question, langs)
@@ -549,8 +556,10 @@ async def related_questions_embedded(tenant_id=None):
     search_id = req.get("search_id", "")
     search_config = {}
     if search_id:
-        if search_app := await thread_pool_exec(SearchService.get_detail, search_id):
-            search_config = search_app.get("search_config", {})
+        search_app = await thread_pool_exec(SearchService.get_detail, search_id, tenant_id)
+        if not search_app:
+            return get_json_result(data=False, message="No authorization for this search.", code=RetCode.AUTHENTICATION_ERROR), 403
+        search_config = search_app.get("search_config") or {}
 
     question = req["question"]
 
@@ -587,16 +596,9 @@ async def detail_share_embedded(tenant_id=None):
     if not tenant_id:
         return get_error_data_result(message="permission denined.")
     try:
-        tenants = await thread_pool_exec(UserTenantService.query, user_id=tenant_id)
-        for tenant in tenants:
-            if await thread_pool_exec(SearchService.query, tenant_id=tenant.tenant_id, id=search_id):
-                break
-        else:
-            return get_json_result(data=False, message="Has no permission for this operation.", code=RetCode.OPERATING_ERROR)
-
-        search = await thread_pool_exec(SearchService.get_detail, search_id)
+        search = await thread_pool_exec(SearchService.get_detail, search_id, tenant_id)
         if not search:
-            return get_error_data_result(message="Can't find this Search App!")
+            return get_json_result(data=False, message="No authorization for this search.", code=RetCode.AUTHENTICATION_ERROR), 403
         return get_json_result(data=search)
     except Exception as e:
         return server_error_response(e)
@@ -608,11 +610,12 @@ async def detail_share_embedded(tenant_id=None):
 @validate_request("question", "kb_ids")
 async def mindmap(tenant_id=None):
     req = await get_request_json()
-
-    search_id = req.get("search_id", "")
-    search_app = await thread_pool_exec(SearchService.get_detail, search_id) if search_id else {}
-
-    mind_map = await gen_mindmap(req["question"], req["kb_ids"], tenant_id, search_app.get("search_config", {}))
+    try:
+        mind_map = await gen_mindmap(req["question"], req["kb_ids"], tenant_id, req.get("search_id", ""))
+    except PermissionError as error:
+        return get_json_result(data=False, message=str(error), code=RetCode.AUTHENTICATION_ERROR), 403
+    except ValueError as error:
+        return get_error_data_result(message=str(error)), 400
     if "error" in mind_map:
         return server_error_response(Exception(mind_map["error"]))
     return get_json_result(data=mind_map)

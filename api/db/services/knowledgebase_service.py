@@ -375,11 +375,7 @@ class KnowledgebaseService(CommonService):
     @DB.connection_context()
     def query_by_name_case_insensitive(cls, *, name, tenant_id, status):
         """Find active tenant datasets by name using database-neutral casing."""
-        return cls.model.select().where(
-            (cls.model.tenant_id == tenant_id)
-            & (cls.model.status == status)
-            & (fn.LOWER(cls.model.name) == name.lower())
-        )
+        return cls.model.select().where((cls.model.tenant_id == tenant_id) & (cls.model.status == status) & (fn.LOWER(cls.model.name) == name.lower()))
 
     @classmethod
     @DB.connection_context()
@@ -479,6 +475,17 @@ class KnowledgebaseService(CommonService):
         kbs = kbs.paginate(page_number, items_per_page)
 
         return list(kbs.dicts()), total
+
+    @classmethod
+    def authorize_ids(cls, kb_ids, user_id):
+        """Validate a retrieval selection against the actor's current grants."""
+        if not isinstance(kb_ids, list) or not all(isinstance(kb_id, str) and kb_id for kb_id in kb_ids):
+            raise ValueError("kb_ids must be an array of non-empty strings")
+        ids = list(dict.fromkeys(kb_ids))
+        for kb_id in ids:
+            if not cls.accessible(kb_id, user_id):
+                raise PermissionError("No authorization for one or more configured datasets.")
+        return ids
 
     @classmethod
     @DB.connection_context()

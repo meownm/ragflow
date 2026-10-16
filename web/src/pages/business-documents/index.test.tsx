@@ -3025,6 +3025,53 @@ test('renders loading and retryable error states', async () => {
   await waitFor(() => expect(mockedFetch).toHaveBeenCalledTimes(2));
 });
 
+test.each(['FAILED', 'APPLYING_CHANGES'] as const)(
+  'shows concrete requirement failures in the document when %s',
+  async (operation_state) => {
+    const error = {
+      code: 'REQUIREMENT_COVERAGE_FAILED',
+      message:
+        'Generated changes omit, contradict or misplace confirmed requirements',
+      details: {
+        requirements: [
+          {
+            text: 'Время появления тикета: от создания инцидента SOAR до появления связанного тикета в ЕЛКа.',
+            section_id: '5.4',
+            reason: 'В новом разделе отсутствует определение метрики.',
+          },
+        ],
+      },
+    };
+    mockedFetch.mockResolvedValue({
+      ...projection,
+      operation_state,
+      last_error: error,
+      latest_job: {
+        job_id: 'soar-plan',
+        job_type: 'PLAN_CHANGES',
+        status: operation_state === 'FAILED' ? 'DEAD' : 'RETRY',
+        attempt: 3,
+        max_attempts: 3,
+        error,
+      },
+    });
+    renderPage();
+    const panel = await screen.findByTestId(
+      operation_state === 'FAILED'
+        ? 'business-document-operation-error'
+        : 'business-document-operation',
+    );
+    expect(panel).toHaveTextContent(
+      'План изменений не сохранил подтверждённые требования.',
+    );
+    expect(panel).toHaveTextContent('Раздел 5.4');
+    expect(panel).toHaveTextContent('от создания инцидента SOAR');
+    expect(panel).toHaveTextContent(
+      'Причина: В новом разделе отсутствует определение метрики.',
+    );
+  },
+);
+
 test('dismisses a failed operation error across refreshes and shows the next failure', async () => {
   const failed: BusinessDocumentProjection = {
     ...projection,
@@ -3506,37 +3553,40 @@ test('switches between my and all documents', async () => {
   await waitFor(() => expect(mockedList).toHaveBeenCalledWith(1, 20, 'all'));
 });
 
-test('hides the creation sidebar from an author-editor', async () => {
-  mockedList.mockResolvedValueOnce({
-    items: [],
-    total: 0,
-    page: 1,
-    page_size: 20,
-    access_role: 'AUTHOR_EDITOR',
-    capabilities: {
-      read: true,
-      create: false,
-      edit_own: true,
-      edit_all: false,
-      delete: false,
-      assign: false,
-    },
-  });
-  renderPage('/business-documents');
+test.each(['AUTHOR_EDITOR', 'READER'] as const)(
+  'hides the creation sidebar from %s',
+  async (role) => {
+    mockedList.mockResolvedValueOnce({
+      items: [],
+      total: 0,
+      page: 1,
+      page_size: 20,
+      access_role: role,
+      capabilities: {
+        read: true,
+        create: false,
+        edit_own: role !== 'READER',
+        edit_all: false,
+        delete: false,
+        assign: false,
+      },
+    });
+    renderPage('/business-documents');
 
-  await waitFor(() => expect(mockedList).toHaveBeenCalledTimes(1));
-  await waitFor(() =>
+    await waitFor(() => expect(mockedList).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId('business-document-create-panel'),
+      ).not.toBeInTheDocument(),
+    );
     expect(
-      screen.queryByTestId('business-document-create-panel'),
-    ).not.toBeInTheDocument(),
-  );
-  expect(
-    screen.queryByRole('button', { name: 'Начать работу' }),
-  ).not.toBeInTheDocument();
-  expect(
-    screen.queryByTestId('open-document-constructor'),
-  ).not.toBeInTheDocument();
-});
+      screen.queryByRole('button', { name: 'Начать работу' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId('open-document-constructor'),
+    ).not.toBeInTheDocument();
+  },
+);
 
 test('hides the constructor entry when its section is disabled', async () => {
   mockUseSystemConfig.mockReturnValue({
@@ -3661,21 +3711,29 @@ test('keeps a foreign document editable for admin and allows deletion from its w
   await waitFor(() => expect(mockedDelete).toHaveBeenCalledWith('doc-1'));
 });
 
-test('keeps a foreign document read-only for an author', async () => {
-  mockedFetch.mockResolvedValueOnce({
-    ...projection,
-    owner_id: 'author-1',
-    access_role: 'AUTHOR_CREATOR',
-    permissions: { read: true, edit: false, delete: false },
-  });
-  renderPage('/business-documents/doc-1');
+test.each([
+  { role: 'AUTHOR_CREATOR', ownerId: 'author-1' },
+  { role: 'READER', ownerId: 'user-1' },
+  { role: 'READER', ownerId: 'author-1' },
+] as const)(
+  'keeps owner $ownerId read-only for $role',
+  async ({ role, ownerId }) => {
+    mockedFetch.mockResolvedValueOnce({
+      ...projection,
+      owner_id: ownerId,
+      access_role: role,
+      permissions: { read: true, edit: false, delete: false },
+    });
+    renderPage('/business-documents/doc-1');
 
-  expect(await screen.findByText(projection.title)).toBeVisible();
-  expect(screen.queryByText('Применить исправления')).not.toBeInTheDocument();
-  expect(
-    screen.queryByTestId('business-document-delete-detail'),
-  ).not.toBeInTheDocument();
-});
+    expect(await screen.findByText(projection.title)).toBeVisible();
+    expect(screen.queryByText('Применить исправления')).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId('business-document-delete-detail'),
+    ).not.toBeInTheDocument();
+    expect(mockedSubmit).not.toHaveBeenCalled();
+  },
+);
 
 test('shows the reviewed lifecycle and review operation labels', async () => {
   mockedList.mockResolvedValueOnce({
@@ -3718,6 +3776,27 @@ test('shows the reviewed lifecycle and review operation labels', async () => {
   expect(screen.getByText('Правки внесены')).toBeInTheDocument();
   expect(screen.getByText('В архиве')).toBeInTheDocument();
   expect(screen.getByText('Анализ замечаний')).toBeInTheDocument();
+});
+
+test('shows an EVA change with no mutation controls for a reader', async () => {
+  mockedFetchEva.mockResolvedValueOnce({ ...evaChange, allowed_actions: [] });
+  renderPage('/business-documents/eva/change-1');
+
+  expect(await screen.findByTestId('eva-change-workbench')).toBeVisible();
+  expect(screen.getByTestId('eva-change-diff')).toHaveTextContent(
+    'Новый текст.',
+  );
+  expect(
+    screen.queryByTestId('generate-eva-change-draft'),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByTestId('prepare-eva-draft')).not.toBeInTheDocument();
+  expect(screen.queryByTestId('publish-eva-document')).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole('button', { name: 'Подтвердить изменения' }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByLabelText('Уточнение доработки EVA'),
+  ).not.toBeInTheDocument();
 });
 
 test('shows a read-only agent draft and regenerates it only from instructions', async () => {

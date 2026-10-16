@@ -226,8 +226,10 @@ def _move_litellm_provider_body_fields(provider: SupportedLiteLLMProvider | str 
 class Base(ABC):
     def __init__(self, key, model_name, base_url, **kwargs):
         timeout = int(os.environ.get("LLM_TIMEOUT_SECONDS", 600))
-        self.client = OpenAI(api_key=key, base_url=base_url, timeout=timeout)
-        self.async_client = AsyncOpenAI(api_key=key, base_url=base_url, timeout=timeout)
+        self.raise_on_error = kwargs.get("raise_on_error", False)
+        retry_options = {"max_retries": 0} if self.raise_on_error else {}
+        self.client = OpenAI(api_key=key, base_url=base_url, timeout=timeout, **retry_options)
+        self.async_client = AsyncOpenAI(api_key=key, base_url=base_url, timeout=timeout, **retry_options)
         self.model_name = model_name
         # Configure retry parameters
         self.max_retries = kwargs.get("max_retries", int(os.environ.get("LLM_MAX_RETRIES", 5)))
@@ -374,6 +376,8 @@ class Base(ABC):
         return msg
 
     async def _exceptions_async(self, e, attempt):
+        if getattr(self, "raise_on_error", False):
+            raise e
         logging.exception("OpenAI async completion")
         error_code = self._classify_error(e)
         if attempt == self.max_retries:
@@ -1058,9 +1062,12 @@ class OpenAI_APIChat(Base):
     def _clean_conf(self, gen_conf):
         # Compatible servers such as Ollama use the original OpenAI limit field.
         legacy_limit = gen_conf.get("max_tokens")
+        reasoning_effort = gen_conf.get("reasoning_effort")
         cleaned = super()._clean_conf(gen_conf)
         if legacy_limit is not None and "max_completion_tokens" not in cleaned:
             cleaned["max_tokens"] = legacy_limit
+        if reasoning_effort is not None and self.model_name.lower().split("/")[-1].startswith("qwen3"):
+            cleaned["reasoning_effort"] = reasoning_effort
         return cleaned
 
 
@@ -1597,6 +1604,7 @@ class LiteLLMBase(ABC):
     ]
 
     def __init__(self, key, model_name, base_url=None, **kwargs):
+        self.raise_on_error = kwargs.get("raise_on_error", False)
         self.timeout = int(os.environ.get("LLM_TIMEOUT_SECONDS", 600))
         self.provider = kwargs.get("provider", "")
         self.prefix = LITELLM_PROVIDER_PREFIX.get(self.provider, "")
@@ -1808,6 +1816,8 @@ class LiteLLMBase(ABC):
         return error_code in self._retryable_errors
 
     async def _exceptions_async(self, e, attempt):
+        if getattr(self, "raise_on_error", False):
+            raise e
         logging.exception("LiteLLMBase async completion")
         error_code = self._classify_error(e)
         if attempt == self.max_retries:

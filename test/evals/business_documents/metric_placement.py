@@ -7,8 +7,11 @@ import re
 import unicodedata
 from uuid import uuid4
 
-from business_documents.domain.content import apply_change_plan, render_section_text
+from json_repair import repair_json
+
+from business_documents.domain.content import apply_change_plan, render_section_text, validate_contract
 from business_documents.domain.errors import RuleViolation
+from business_documents.domain.requirement_coverage import changed_section_repetitions, validate_requirement_coverage
 
 
 def _json(value):
@@ -44,9 +47,6 @@ class RecordedModel:
         call["response_sha256"] = _hash(response if isinstance(response, str) else _json(response))
         return response
 
-    def context_window(self, tenant_id):
-        return getattr(self.adapter, "context_window", lambda _: 32768)(tenant_id)
-
     def consume_execution_audit(self):
         return self.adapter.consume_execution_audit()
 
@@ -68,7 +68,8 @@ def placement_failures(case, document_ast):
         if requirement.get("label_pattern"):
             matches = [
                 " ".join(str(cell) for cell in row)
-                for block in section["blocks"] if block.get("type") == "table"
+                for block in section["blocks"]
+                if block.get("type") == "table"
                 for row in block["rows"]
                 if re.fullmatch(requirement["label_pattern"], _text(str(row[0])))
             ]
@@ -89,8 +90,12 @@ def placement_failures(case, document_ast):
 
 def _command(document, kind, payload=None):
     return {
-        "schema_version": "1", "command_id": uuid4().hex, "idempotency_key": uuid4().hex,
-        "expected_state_version": document["state_version"], "type": kind, "payload": payload or {},
+        "schema_version": "1",
+        "command_id": uuid4().hex,
+        "idempotency_key": uuid4().hex,
+        "expected_state_version": document["state_version"],
+        "type": kind,
+        "payload": payload or {},
     }
 
 
@@ -116,25 +121,60 @@ def prepare_metric_placement(case, tenant):
     from api.db.db_models import BusinessDocumentEvent
 
     seed = case["seed"]
-    document = document_creation.execute(tenant, tenant, {
-        "schema_version": "1", "document_type": "business_requirements", "title": case["title"], "idea": case["idea"],
-    })
+    document = document_creation.execute(
+        tenant,
+        tenant,
+        {
+            "schema_version": "1",
+            "document_type": "business_requirements",
+            "title": case["title"],
+            "idea": case["idea"],
+        },
+    )
     document = _seed_completion(tenant, document, "REQUEST_INTAKE_ASSESSMENT", {"schema_version": "1", "outcome": "COMPLETE", "questions": []})
     created = BusinessDocumentEvent.get((BusinessDocumentEvent.document_id == document["document_id"]) & (BusinessDocumentEvent.event_type == "DocumentCreated"))
-    document = _seed_completion(tenant, document, "REQUEST_DRAFT", {
-        "draft": deepcopy(seed["base_document"]),
-        "review_questions": {"schema_version": "1", "outcome": "NEEDS_INPUT", "questions": [{
-            "semantic_tag": "metrics_reporting_placement", "stage": "REVIEW", "target_section_id": seed["question_section_id"],
-            "text": seed["question"], "options": seed["options"], "allow_custom_answer": True,
-        }]},
-        "proposals": [{"target_section_id": seed["proposal_section_id"], "text": "Мониторинг включает:\n" + "\n".join(r["text"] for r in seed["requirements"]),
-                       "rationale": "Подтверждённые определения метрик и независимый мониторинг.", "source_event_ids": [created.id]}],
-    })
+    document = _seed_completion(
+        tenant,
+        document,
+        "REQUEST_DRAFT",
+        {
+            "draft": deepcopy(seed["base_document"]),
+            "review_questions": {
+                "schema_version": "1",
+                "outcome": "NEEDS_INPUT",
+                "questions": [
+                    {
+                        "semantic_tag": "metrics_reporting_placement",
+                        "stage": "REVIEW",
+                        "target_section_id": seed["question_section_id"],
+                        "text": seed["question"],
+                        "options": seed["options"],
+                        "allow_custom_answer": True,
+                    }
+                ],
+            },
+            "proposals": [
+                {
+                    "target_section_id": seed["proposal_section_id"],
+                    "text": "Мониторинг включает:\n" + "\n".join(r["text"] for r in seed["requirements"]),
+                    "rationale": "Подтверждённые определения метрик и независимый мониторинг.",
+                    "source_event_ids": [created.id],
+                }
+            ],
+        },
+    )
     _execute(tenant, document, "DECIDE_PROPOSAL", {"proposal_id": document["protocol"]["proposals"][0]["proposal_id"], "decision": "ACCEPTED"})
     document = document_queries.get_document(document["document_id"], tenant)
-    _execute(tenant, document, "ANSWER_QUESTION", {
-        "question_id": document["protocol"]["questions"][0]["question_id"], "selected_option_id": seed["selected_option_id"], "custom_answer": None,
-    })
+    _execute(
+        tenant,
+        document,
+        "ANSWER_QUESTION",
+        {
+            "question_id": document["protocol"]["questions"][0]["question_id"],
+            "selected_option_id": seed["selected_option_id"],
+            "custom_answer": None,
+        },
+    )
     document = document_queries.get_document(document["document_id"], tenant)
     document = _seed_completion(tenant, document, "REQUEST_REVIEW_ASSESSMENT", {"schema_version": "1", "questions": [], "proposals": [], "comment_dispositions": []})
     assert not document["protocol"]["comments"]
@@ -162,13 +202,21 @@ def run_metric_placement(case, tenant, adapter):
         job = BusinessDocumentJob.get_by_id(job.id)
         if job.status in {"COMPLETED", "DEAD"}:
             break
-    result = {"case_id": case["id"], "priority": case["priority"], "status": "FAIL", "failures": [], "metrics": {},
-              "model_calls": recorded.calls, "fixture_sha256": _hash(_json(case)), "attempts": job.attempt,
-              "expected_sources": {"5": [answer], "5.5": [proposal]}}
+    result = {
+        "case_id": case["id"],
+        "priority": case["priority"],
+        "status": "FAIL",
+        "failures": [],
+        "metrics": {},
+        "model_calls": recorded.calls,
+        "fixture_sha256": _hash(_json(case)),
+        "attempts": job.attempt,
+        "expected_sources": {"5": [answer], "5.5": [proposal]},
+    }
     if job.status != "COMPLETED":
         code = (job.error or {}).get("code", "UNFINISHED_JOB")
         result["failures"] = [f"job:{code}"]
-        if code not in {"REQUIREMENT_COVERAGE_FAILED", "INVALID_CHANGE_PLAN", "INVALID_DOCUMENT_DRAFT"}:
+        if code not in {"REQUIREMENT_COVERAGE_FAILED", "INVALID_CHANGE_PLAN", "INVALID_DOCUMENT_DRAFT", "DUPLICATE_REQUIREMENT_CONTENT"}:
             result["status"] = "INCOMPLETE"
         return result, []
     failures = result["failures"]
@@ -187,12 +235,21 @@ def run_metric_placement(case, tenant, adapter):
         failures.append("confirmation_not_idempotent")
     result.update(final_ast=ast, change_plan=output["change_plan"], requirement_ids=[r["id"] for r in case["seed"]["requirements"]])
     evidence = {key: value for key, value in result.items() if key not in {"case_id", "priority", "status", "failures", "metrics"}}
-    failures.extend(evidence_failures(case, evidence, {name: prompt_text(name) for name in ("change_planner", "requirement_coverage")}, published_template(), contract_schema("document_draft_v2")))
+    failures.extend(
+        evidence_failures(
+            case, evidence, {name: prompt_text(name) for name in ("change_planner", "requirement_coverage")}, published_template(), contract_schema("document_draft_v2"), contract_schema("change_plan")
+        )
+    )
     result["status"] = "FAIL" if failures else "PASS"
     return result, [job.result["execution"]["ai"]]
 
 
-def evidence_failures(case, evidence, prompts, template, schema):
+def _response(call):
+    raw = call.get("response")
+    return deepcopy(raw) if isinstance(raw, dict) else repair_json(raw, return_objects=True) if isinstance(raw, str) else None
+
+
+def evidence_failures(case, evidence, prompts, template, schema, change_schema):
     """Fail closed when a saved model-quality report loses its replayable proof."""
     if not isinstance(evidence, dict) or evidence.get("fixture_sha256") != _hash(_json(case)):
         return ["fixture_identity"]
@@ -221,6 +278,7 @@ def evidence_failures(case, evidence, prompts, template, schema):
     if used_sources != allowed_sources:
         failures.append("unapplied_confirmed_source")
     try:
+        validate_contract("change_plan", plan, change_schema)
         replayed = apply_change_plan(case["seed"]["base_document"], plan, template, schema)
     except RuleViolation:
         failures.append("invalid_saved_plan")
@@ -229,15 +287,21 @@ def evidence_failures(case, evidence, prompts, template, schema):
             failures.append("plan_ast_mismatch")
     final = {s["id"]: s for s in evidence["final_ast"]["sections"]}
     base = case["seed"]["base_document"]["sections"]
-    if set(final) != {s["id"] for s in base} | {"5.4"}:
+    base_ids = {section["id"] for section in base}
+    if set(final) != base_ids | {"5.4"}:
         failures.append("section_inventory")
     for section in base:
         if section["id"] != "5.5" and final.get(section["id"]) != section:
             failures.append(f"unrelated_section_changed:{section['id']}")
-    tasks = []
+    last_plan = last_verification = None
     for call in evidence["model_calls"]:
         task = call["task_type"]
-        tasks.append(task)
+        if task == "PLAN_CHANGES":
+            last_plan, last_verification = call, None
+        elif task == "VERIFY_REQUIREMENT_COVERAGE":
+            if last_plan is None or last_verification is not None:
+                failures.append("unexpected_model_sequence")
+            last_verification = call
         name = "change_planner" if task == "PLAN_CHANGES" else "requirement_coverage" if task == "VERIFY_REQUIREMENT_COVERAGE" else None
         if name is None or not call["system_prompt"].startswith(prompts[name].split("# Вход")[0]):
             failures.append("unexpected_prompt")
@@ -245,13 +309,64 @@ def evidence_failures(case, evidence, prompts, template, schema):
             failures.append("model_input_hash")
         if "error_type" not in call and call["response_sha256"] != _hash(call["response"] if isinstance(call["response"], str) else _json(call["response"])):
             failures.append("model_response_hash")
-    if not tasks or tasks[0] != "PLAN_CHANGES" or tasks[-1] != "VERIFY_REQUIREMENT_COVERAGE":
+    if last_plan is None or last_verification is None or "error_type" in last_plan or "error_type" in last_verification:
         failures.append("missing_real_model_exchanges")
     else:
-        inputs = next(call["input_payload"]["job_input"] for call in reversed(evidence["model_calls"]) if call["task_type"] == "PLAN_CHANGES")
+        inputs = last_plan["input_payload"]["job_input"]
         protocol = inputs.get("protocol") or {}
-        answers = [q["answer"]["source_event_id"] for q in protocol.get("questions", []) if q.get("target_section_id") == "5" and (q.get("answer") or {}).get("selected_option_id") == case["seed"]["selected_option_id"]]
+        answers = [
+            q["answer"]["source_event_id"]
+            for q in protocol.get("questions", [])
+            if q.get("target_section_id") == "5" and (q.get("answer") or {}).get("selected_option_id") == case["seed"]["selected_option_id"]
+        ]
         proposals = [p["decision_event_id"] for p in protocol.get("proposals", []) if p.get("target_section_id") == "5.5" and p.get("decision") == "ACCEPTED"]
         if answers != sources["5"] or proposals != sources["5.5"] or protocol.get("comments") or set(inputs.get("active_change_input_event_ids", [])) != set(answers + proposals):
             failures.append("source_input_mismatch")
+        expected_sources = {
+            sources["5"][0]: {"text": next(option["label"] for option in case["seed"]["options"] if option["option_id"] == case["seed"]["selected_option_id"]), "context": case["seed"]["question"]},
+            sources["5.5"][0]: {"text": "Мониторинг включает:\n" + "\n".join(requirement["text"] for requirement in case["seed"]["requirements"])},
+        }
+        if inputs.get("confirmed_change_sources") != expected_sources or inputs.get("current_revision", {}).get("document_ast") != case["seed"]["base_document"]:
+            failures.append("source_input_mismatch")
+        generated = _response(last_plan)
+        if isinstance(generated, dict) and "change_plan" in generated:
+            nested = generated["change_plan"]
+            generated = nested if "operations" not in generated else {key: value for key, value in generated.items() if key != "change_plan"}
+            if isinstance(generated, dict) and "schema_version" not in generated and isinstance(nested, dict) and {"$schema", "properties", "type"} <= nested.keys():
+                generated = {"schema_version": nested.get("properties", {}).get("schema_version", {}).get("const"), **generated}
+        if isinstance(generated, dict):
+            if generated.get("schema_version") == 1:
+                generated["schema_version"] = "1"
+            aliases = {q["question_id"]: q["answer"]["source_event_id"] for q in protocol.get("questions", []) if q.get("question_id") and (q.get("answer") or {}).get("source_event_id")}
+            aliases.update({p["proposal_id"]: p["decision_event_id"] for p in protocol.get("proposals", []) if p.get("proposal_id") and p.get("decision_event_id")})
+            hashes = {operation["section_id"]: operation["expected_section_hash"] for operation in plan["operations"]}
+            for operation in generated.get("operations", []) if isinstance(generated.get("operations"), list) else []:
+                if isinstance(operation, dict) and isinstance(operation.get("section_id"), str):
+                    if operation["section_id"] in hashes:
+                        operation["expected_section_hash"] = hashes[operation["section_id"]]
+                    if isinstance(operation.get("source_event_ids"), list):
+                        operation["source_event_ids"] = [aliases.get(value, value) if isinstance(value, str) else value for value in operation["source_event_ids"]]
+        if _json(generated) != _json(plan):
+            failures.append("model_plan_mismatch")
+        changed = {operation["section_id"] for operation in plan["operations"]}
+        before = {section["id"]: render_section_text(section) for section in base if section["id"] in changed}
+        after, context = {}, {}
+        for section in evidence["final_ast"]["sections"]:
+            (after if section["id"] in changed or section["id"] not in base_ids else context)[section["id"]] = render_section_text(section)
+        titles = {section["id"]: section["title"] for section in template["sections"]} | {section["id"]: section["title"] for section in evidence["final_ast"]["sections"]}
+        verification_input = {
+            "task_type": "VERIFY_REQUIREMENT_COVERAGE",
+            "sources": expected_sources,
+            "before_sections": before,
+            "after_sections": after,
+            "context_sections": context,
+            "section_titles": titles,
+        }
+        verification_input["cross_section_repetitions"] = [list(pair) for pair in changed_section_repetitions(case["seed"]["base_document"], evidence["final_ast"])]
+        if last_verification.get("input_payload") != {"job_input": verification_input}:
+            failures.append("verification_input_mismatch")
+        try:
+            validate_requirement_coverage(_response(last_verification), {**expected_sources, **{f"section:{key}": {"text": value} for key, value in before.items()}}, titles)
+        except RuleViolation:
+            failures.append("invalid_final_verdict")
     return list(dict.fromkeys(failures))

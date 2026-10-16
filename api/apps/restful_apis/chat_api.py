@@ -1174,14 +1174,12 @@ async def transcription():
 @validate_request("question", "kb_ids")
 async def mindmap():
     req = await get_request_json()
-    search_id = req.get("search_id", "")
-    search_app = SearchService.get_detail(search_id) if search_id else {}
-    search_config = search_app.get("search_config", {}) if search_app else {}
-    kb_ids = search_config.get("kb_ids", [])
-    kb_ids.extend(req["kb_ids"])
-    kb_ids = list(set(kb_ids))
-
-    mind_map = await gen_mindmap(req["question"], kb_ids, search_app.get("tenant_id", current_user.id), search_config)
+    try:
+        mind_map = await gen_mindmap(req["question"], req["kb_ids"], current_user.id, req.get("search_id", ""))
+    except PermissionError as error:
+        return get_json_result(data=False, message=str(error), code=RetCode.AUTHENTICATION_ERROR), 403
+    except ValueError as error:
+        return get_data_error_result(message=str(error)), 400
     if "error" in mind_map:
         return server_error_response(Exception(mind_map["error"]))
     return get_json_result(data=mind_map)
@@ -1196,8 +1194,10 @@ async def recommendation():
     search_id = req.get("search_id", "")
     search_config = {}
     if search_id:
-        if search_app := SearchService.get_detail(search_id):
-            search_config = search_app.get("search_config", {})
+        search_app = SearchService.get_detail(search_id, current_user.id)
+        if not search_app:
+            return get_json_result(data=False, message="No authorization for this search.", code=RetCode.AUTHENTICATION_ERROR), 403
+        search_config = search_app.get("search_config") or {}
 
     question = req["question"]
 
@@ -1318,7 +1318,7 @@ async def session_completion(chat_id_in_arg=""):
             if not tenant_info or not tenant_info.llm_id:
                 raise LookupError("No default chat model for tenant.")
             dia.llm_id = tenant_info.llm_id
-            merge_generation_config(dia, chat_model_config)
+        merge_generation_config(dia, chat_model_config)
 
         legacy = _get_bool_request_flag(
             req,

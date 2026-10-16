@@ -381,6 +381,26 @@ def list_datasets(tenant_id):
         return get_error_data_result(message="Internal server error")
 
 
+@manager.route("/datasets/choices", methods=["GET"])  # noqa: F821
+@login_required
+@add_tenant_id_to_kwargs
+def list_dataset_choices(tenant_id):
+    """Expose assigned source labels to chat, search and agent selectors."""
+    args, err = validate_and_parse_request_args(request, ListDatasetReq)
+    if err is not None:
+        return get_error_argument_result(err)
+    try:
+        success, result = dataset_api_service.list_datasets(tenant_id, args)
+        if not success:
+            return get_error_data_result(message=result)
+        fields = ("id", "name", "nickname", "avatar", "embedding_model", "chunk_method", "chunk_count")
+        choices = [{key: row.get(key) for key in fields} for row in result["data"]]
+        return get_result(data=choices, total=result["total"])
+    except Exception as error:
+        logging.exception(error)
+        return get_error_data_result(message="Internal server error")
+
+
 @manager.route("/datasets/<dataset_id>", methods=["GET"])  # noqa: F821
 @login_required
 @add_tenant_id_to_kwargs

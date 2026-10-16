@@ -188,11 +188,12 @@ def test_ollama_completion_payload_disables_thinking_by_default():
     assert completion_args["extra_body"] == {"think": False}
 
 
-def test_ollama_context_reaches_native_options():
+@pytest.mark.parametrize("window", [65536, 131072, 262144])
+def test_ollama_context_reaches_native_options(window):
     import litellm
     from litellm.llms.ollama.chat.transformation import OllamaChatConfig
 
-    completion_args = {"model": "ollama_chat/test", "messages": [{"role": "user", "content": "x"}], "max_completion_tokens": 32768, "extra_body": {"num_ctx": 131072}}
+    completion_args = {"model": "ollama_chat/test", "messages": [{"role": "user", "content": "x"}], "max_completion_tokens": 32768, "extra_body": {"num_ctx": window}}
     _move_litellm_provider_body_fields("Ollama", completion_args)
     optional = litellm.get_optional_params(
         model=completion_args["model"],
@@ -202,5 +203,5 @@ def test_ollama_context_reaches_native_options():
         extra_body=completion_args["extra_body"],
     )
     request = OllamaChatConfig().transform_request(model="test", messages=completion_args["messages"], optional_params=optional, litellm_params={}, headers={})
-    assert request["options"]["num_ctx"] == 131072
+    assert request["options"]["num_ctx"] == window
     assert request["options"]["num_predict"] == 32768

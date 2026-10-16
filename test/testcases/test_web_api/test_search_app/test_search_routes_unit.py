@@ -195,7 +195,7 @@ def _load_search_api(monkeypatch):
             return True, _SearchRecord(search_id=_search_id, name="updated")
 
         @staticmethod
-        def get_detail(_search_id):
+        def get_detail(_search_id, _user_id):
             return {"id": _search_id}
 
         @staticmethod
@@ -210,7 +210,7 @@ def _load_search_api(monkeypatch):
     monkeypatch.setitem(sys.modules, "api.db.services.search_service", search_service_mod)
 
     knowledgebase_service_mod = ModuleType("api.db.services.knowledgebase_service")
-    knowledgebase_service_mod.KnowledgebaseService = SimpleNamespace(accessible=lambda _kb_id, _user_id: True)
+    knowledgebase_service_mod.KnowledgebaseService = SimpleNamespace(accessible=lambda _kb_id, _user_id: True, authorize_ids=lambda ids, _user_id: ids)
     monkeypatch.setitem(sys.modules, "api.db.services.knowledgebase_service", knowledgebase_service_mod)
 
     dialog_service_mod = ModuleType("api.db.services.dialog_service")
@@ -444,27 +444,19 @@ def test_update_and_detail_route_matrix_unit(monkeypatch):
     assert "update boom" in res["message"]
 
     # detail: no permission
-    monkeypatch.setattr(module.UserTenantService, "query", lambda **_kwargs: [SimpleNamespace(tenant_id="tenant-a")])
-    monkeypatch.setattr(module.SearchService, "query", lambda **_kwargs: [])
-    res = module.detail(search_id="s1")
-    assert res["code"] == module.RetCode.OPERATING_ERROR
-    assert "permission" in res["message"].lower()
-
-    # detail: search not found
-    monkeypatch.setattr(module.SearchService, "query", lambda **_kwargs: [SimpleNamespace(id="s1")])
-    monkeypatch.setattr(module.SearchService, "get_detail", lambda _search_id: None)
-    res = module.detail(search_id="s1")
-    assert res["code"] == module.RetCode.DATA_ERROR
-    assert "can't find" in res["message"].lower()
+    monkeypatch.setattr(module.SearchService, "get_detail", lambda _search_id, _user_id: {})
+    res, status = module.detail(search_id="s1")
+    assert status == 403
+    assert res["code"] == module.RetCode.AUTHENTICATION_ERROR
 
     # detail: success
-    monkeypatch.setattr(module.SearchService, "get_detail", lambda _search_id: {"id": _search_id, "name": "detail-name"})
+    monkeypatch.setattr(module.SearchService, "get_detail", lambda _search_id, _user_id: {"id": _search_id, "name": "detail-name"})
     res = module.detail(search_id="s1")
     assert res["code"] == 0
     assert res["data"]["id"] == "s1"
 
     # detail: exception
-    def _raise_detail(_search_id):
+    def _raise_detail(_search_id, _user_id):
         raise RuntimeError("detail boom")
 
     monkeypatch.setattr(module.SearchService, "get_detail", _raise_detail)

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 
 class BusinessDocumentRole(StrEnum):
+    READER = "READER"
     AUTHOR_CREATOR = "AUTHOR_CREATOR"
     AUTHOR_EDITOR = "AUTHOR_EDITOR"
     MODERATOR_CREATOR = "MODERATOR_CREATOR"
@@ -55,7 +56,7 @@ class DocumentAccess:
         return {
             "read": True,
             "create": role in {BusinessDocumentRole.AUTHOR_CREATOR, BusinessDocumentRole.MODERATOR_CREATOR, BusinessDocumentRole.EXTENDED_MODERATOR, BusinessDocumentRole.ADMIN},
-            "edit_own": True,
+            "edit_own": role != BusinessDocumentRole.READER,
             "edit_all": role in {BusinessDocumentRole.MODERATOR_CREATOR, BusinessDocumentRole.EXTENDED_MODERATOR, BusinessDocumentRole.ADMIN},
             "delete": role in {BusinessDocumentRole.EXTENDED_MODERATOR, BusinessDocumentRole.ADMIN},
             "assign": can_assign_document(self.assigned_role, self.is_admin),
@@ -65,7 +66,7 @@ class DocumentAccess:
         capabilities = self.capabilities()
         return {
             "read": True,
-            "edit": capabilities["edit_all"] or owner_id == self.actor_id,
+            "edit": capabilities["edit_all"] or (capabilities["edit_own"] and owner_id == self.actor_id),
             "delete": capabilities["delete"],
             "assign": capabilities["assign"],
         }

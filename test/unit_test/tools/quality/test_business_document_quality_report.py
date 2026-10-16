@@ -14,7 +14,8 @@ ROOT = Path(__file__).parents[4]
 
 def _placement_evidence(case):
     """Synthetic verifier input only; the live gate never imports this factory."""
-    from business_documents.domain.content import section_hash
+    from business_documents.domain.content import section_hash, render_section_text
+    from business_documents.domain.requirement_coverage import changed_section_repetitions
 
     def digest(value):
         return hashlib.sha256(value.encode("utf-8")).hexdigest()
@@ -25,29 +26,85 @@ def _placement_evidence(case):
     ast = json.loads(json.dumps(case["seed"]["base_document"]))
     monitoring = next(s for s in ast["sections"] if s["id"] == "5.5")
     monitoring["blocks"] = [{"type": "paragraph", "text": " ".join(r["text"] for r in case["seed"]["requirements"] if r["section_id"] == "5.5")}]
-    ast["sections"].insert(-1, {"id": "5.4", "title": "Требования к отчетности", "blocks": [{"type": "table", "headers": ["Метрика", "Определение"],
-                               "rows": [[r["label"], r["text"].split(": ", 1)[1]] for r in case["seed"]["requirements"] if r["section_id"] == "5.4"]}]})
+    ast["sections"].insert(
+        -1,
+        {
+            "id": "5.4",
+            "title": "Требования к отчетности",
+            "blocks": [{"type": "table", "headers": ["Метрика", "Определение"], "rows": [[r["label"], r["text"].split(": ", 1)[1]] for r in case["seed"]["requirements"] if r["section_id"] == "5.4"]}],
+        },
+    )
     base = {s["id"]: s for s in case["seed"]["base_document"]["sections"]}
     report_section = next(s for s in ast["sections"] if s["id"] == "5.4")
-    plan = {"schema_version": "1", "base_revision_id": "fixture", "source_state_version": 1, "acknowledged_no_change_event_ids": [], "operations": [
-        {"operation_id": s, "type": "REPLACE_SECTION_CONTENT", "section_id": s, "source_event_ids": [event], "expected_section_hash": section_hash(base[s]),
-         "content": {"blocks": [*base["5"]["blocks"], report_section] if s == "5" else monitoring["blocks"]}}
-        for s, event in [("5", "answer"), ("5.5", "proposal")]
-    ]}
+    plan = {
+        "schema_version": "1",
+        "base_revision_id": "fixture",
+        "source_state_version": 1,
+        "acknowledged_no_change_event_ids": [],
+        "operations": [
+            {
+                "operation_id": s,
+                "type": "REPLACE_SECTION_CONTENT",
+                "section_id": s,
+                "source_event_ids": [event],
+                "expected_section_hash": section_hash(base[s]),
+                "content": {"blocks": [*base["5"]["blocks"], report_section] if s == "5" else monitoring["blocks"]},
+            }
+            for s, event in [("5", "answer"), ("5.5", "proposal")]
+        ],
+    }
+    sources = {
+        "answer": {"text": next(option["label"] for option in case["seed"]["options"] if option["option_id"] == case["seed"]["selected_option_id"]), "context": case["seed"]["question"]},
+        "proposal": {"text": "Мониторинг включает:\n" + "\n".join(requirement["text"] for requirement in case["seed"]["requirements"])},
+    }
+    template = json.loads((ROOT / "agent/business_requirements/templates/business_requirements.v1.json").read_text(encoding="utf-8"))
+    titles = {section["id"]: section["title"] for section in template["sections"]}
+    changed = {"5", "5.4", "5.5"}
     calls = []
     for task, name in [("PLAN_CHANGES", "change_planner"), ("VERIFY_REQUIREMENT_COVERAGE", "requirement_coverage")]:
         system = (ROOT / f"agent/business_requirements/prompts/{name}.v1.md").read_text(encoding="utf-8")
         payload = {"job_input": {"task_type": task}}
         if task == "PLAN_CHANGES":
-            payload["job_input"].update(active_change_input_event_ids=["answer", "proposal"], protocol={
-                "questions": [{"target_section_id": "5", "answer": {"source_event_id": "answer", "selected_option_id": case["seed"]["selected_option_id"]}}],
-                "proposals": [{"target_section_id": "5.5", "decision": "ACCEPTED", "decision_event_id": "proposal"}], "comments": [],
-            })
-        calls.append({"task_type": task, "system_prompt": system, "system_sha256": digest(system), "input_payload": payload,
-                      "input_sha256": digest(encoded(payload)), "response": {}, "response_sha256": digest(encoded({}))})
-    return {"fixture_sha256": digest(encoded(case)), "attempts": 1, "model_calls": calls, "expected_sources": {"5": ["answer"], "5.5": ["proposal"]},
-            "final_ast": ast, "requirement_ids": [r["id"] for r in case["seed"]["requirements"]],
-            "change_plan": plan}
+            payload["job_input"].update(
+                current_revision={"document_ast": case["seed"]["base_document"]},
+                confirmed_change_sources=sources,
+                active_change_input_event_ids=["answer", "proposal"],
+                protocol={
+                    "questions": [{"question_id": "question", "target_section_id": "5", "answer": {"source_event_id": "answer", "selected_option_id": case["seed"]["selected_option_id"]}}],
+                    "proposals": [{"proposal_id": "proposal-id", "target_section_id": "5.5", "decision": "ACCEPTED", "decision_event_id": "proposal"}],
+                    "comments": [],
+                },
+            )
+        else:
+            payload["job_input"].update(
+                sources=sources,
+                before_sections={key: render_section_text(base[key]) for key in ("5", "5.5")},
+                after_sections={s["id"]: render_section_text(s) for s in ast["sections"] if s["id"] in changed},
+                context_sections={s["id"]: render_section_text(s) for s in ast["sections"] if s["id"] not in changed},
+                section_titles=titles,
+                cross_section_repetitions=[list(pair) for pair in changed_section_repetitions(case["seed"]["base_document"], ast)],
+            )
+        response = json.loads(json.dumps(plan)) if task == "PLAN_CHANGES" else {"status": "PASS", "issues": []}
+        calls.append(
+            {
+                "task_type": task,
+                "system_prompt": system,
+                "system_sha256": digest(system),
+                "input_payload": payload,
+                "input_sha256": digest(encoded(payload)),
+                "response": response,
+                "response_sha256": digest(encoded(response)),
+            }
+        )
+    return {
+        "fixture_sha256": digest(encoded(case)),
+        "attempts": 1,
+        "model_calls": calls,
+        "expected_sources": {"5": ["answer"], "5.5": ["proposal"]},
+        "final_ast": ast,
+        "requirement_ids": [r["id"] for r in case["seed"]["requirements"]],
+        "change_plan": plan,
+    }
 
 
 def _report() -> dict:

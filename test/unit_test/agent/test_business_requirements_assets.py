@@ -347,8 +347,9 @@ def test_prompt_pack_is_contract_first_and_treats_evidence_as_data():
     }
     for name, prompt in prompts.items():
         if name == "requirement_coverage.v1.md":
-            assert "ровно одна запись на каждый fragment_id" in prompt
-            assert "только существующие ключи" in prompt
+            assert '"status":"PASS","issues":[]' in prompt
+            assert "от одного до четырёх" in prompt
+            assert "точный ключ sources или section:" in prompt
             assert "только JSON" in prompt
             continue
         if name != "eva_change.v1.md":

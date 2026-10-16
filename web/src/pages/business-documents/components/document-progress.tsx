@@ -5,6 +5,7 @@ import type {
   BusinessDocumentJobSummary,
   BusinessDocumentOperationState,
 } from '../types';
+import { BusinessDocumentError } from './document-error';
 
 const stageLabels: Record<string, string> = {
   QUEUED: 'Ожидает запуска',
@@ -65,12 +66,6 @@ function progressIcon(tone: ProgressTone) {
   return Clock3;
 }
 
-function errorMessage(job: BusinessDocumentJobSummary | null | undefined) {
-  if (!job?.error) return '';
-  if (typeof job.error === 'string') return job.error;
-  return job.error.message || job.error.code || '';
-}
-
 function elapsedTime(createdAt: number | null | undefined) {
   if (!createdAt) return '';
   const milliseconds =
@@ -118,7 +113,6 @@ export function BusinessDocumentProgress({
   const attempt = job?.attempt
     ? `Попытка ${job.attempt} из ${job.max_attempts}`
     : '';
-  const previousError = errorMessage(job);
 
   if (compact) {
     return (
@@ -180,10 +174,11 @@ export function BusinessDocumentProgress({
           {[elapsed, attempt].filter(Boolean).join(' · ')}
         </span>
       )}
-      {previousError && (
-        <span className="min-w-0 truncate text-[11px] text-state-warning">
-          Предыдущая ошибка: {previousError}
-        </span>
+      {job?.error && (
+        <div className="w-full min-w-0 text-[11px] text-state-warning">
+          <span>Предыдущая ошибка: </span>
+          <BusinessDocumentError error={job.error} />
+        </div>
       )}
     </div>
   );

@@ -56,20 +56,30 @@ def verify_pinned_evidence(retrieval: Mapping[str, Any], snapshot: Mapping[str, 
         raise RuleViolation("EVIDENCE_AUDIT_MISMATCH", "Retrieval audit does not match the pinned evidence snapshot")
 
 
+def validate_generation_parameters(parameters: object, provider: str, model: str) -> dict[str, Any]:
+    if not isinstance(parameters, dict) or set(parameters) - {"extra_body", "reasoning_effort"} not in ({"temperature", "top_p", "max_completion_tokens"}, {"temperature", "top_p", "max_tokens"}):
+        raise RuleViolation("INVALID_EXECUTION_AUDIT", "Worker AI parameters are invalid")
+    limit = parameters["max_tokens" if "max_tokens" in parameters else "max_completion_tokens"]
+    if parameters["temperature"] != 0 or parameters["top_p"] != 0.1 or type(limit) is not int or not 1 <= limit <= 65536:
+        raise RuleViolation("INVALID_EXECUTION_AUDIT", "Worker AI parameters are invalid")
+    if "extra_body" in parameters:
+        body = parameters["extra_body"]
+        if provider != "Ollama" or not isinstance(body, dict) or set(body) != {"num_ctx"} or type(body["num_ctx"]) is not int or body["num_ctx"] <= limit:
+            raise RuleViolation("INVALID_EXECUTION_AUDIT", "Worker AI context parameters are invalid")
+    if "reasoning_effort" in parameters and (provider != "OpenAI-API-Compatible" or not model.lower().split("/")[-1].startswith("qwen3") or parameters["reasoning_effort"] != "none"):
+        raise RuleViolation("INVALID_EXECUTION_AUDIT", "Worker AI reasoning parameters are invalid")
+    return {key: parameters[key] for key in sorted(parameters)}
+
+
 def validate_ai_audit(ai: object) -> dict[str, Any]:
     expected = {"provider", "model", "model_type", "parameters", "duration_ms", "token_usage"}
-    if not isinstance(ai, dict) or set(ai) - {"verification"} != expected:
+    if not isinstance(ai, dict) or set(ai) - {"verification", "recovery"} != expected:
         raise RuleViolation("INVALID_EXECUTION_AUDIT", "Worker AI audit fields are invalid")
     if not all(isinstance(ai[key], str) and ai[key] for key in ("provider", "model", "model_type")):
         raise RuleViolation("INVALID_EXECUTION_AUDIT", "Worker AI identity is invalid")
     if len(ai["provider"]) > 128 or len(ai["model"]) > 256 or len(ai["model_type"]) > 64:
         raise RuleViolation("INVALID_EXECUTION_AUDIT", "Worker AI identity is invalid")
-    parameters = ai["parameters"]
-    if not isinstance(parameters, dict) or set(parameters) not in ({"temperature", "top_p", "max_completion_tokens"}, {"temperature", "top_p", "max_tokens"}):
-        raise RuleViolation("INVALID_EXECUTION_AUDIT", "Worker AI parameters are invalid")
-    limit_parameter = "max_tokens" if "max_tokens" in parameters else "max_completion_tokens"
-    if parameters["temperature"] != 0 or parameters["top_p"] != 0.1 or parameters[limit_parameter] not in {4096, 8192, 65536}:
-        raise RuleViolation("INVALID_EXECUTION_AUDIT", "Worker AI parameters are invalid")
+    parameters = validate_generation_parameters(ai["parameters"], ai["provider"], ai["model"])
     duration_ms = ai["duration_ms"]
     if isinstance(duration_ms, bool) or not isinstance(duration_ms, (int, float)) or not math.isfinite(duration_ms) or duration_ms < 0:
         raise RuleViolation("INVALID_EXECUTION_AUDIT", "Worker AI duration is invalid")
@@ -81,10 +91,15 @@ def validate_ai_audit(ai: object) -> dict[str, Any]:
         raise RuleViolation("INVALID_EXECUTION_AUDIT", "Worker AI token usage is inconsistent")
     verification = ai.get("verification")
     verification_steps = verification if isinstance(verification, list) else [verification] if verification is not None else []
-    if verification is not None and (not verification_steps or any(not isinstance(step, dict) or "verification" in step for step in verification_steps)):
+    if verification is not None and (not verification_steps or any(not isinstance(step, dict) or {"verification", "recovery"} & step.keys() for step in verification_steps)):
         raise RuleViolation("INVALID_EXECUTION_AUDIT", "Worker AI verification audit is invalid")
     checked_steps = [validate_ai_audit(step) for step in verification_steps]
+    recovery = ai.get("recovery")
+    if recovery is not None and (not isinstance(recovery, list) or not recovery or any(not isinstance(step, dict) or {"verification", "recovery"} & step.keys() for step in recovery)):
+        raise RuleViolation("INVALID_EXECUTION_AUDIT", "Worker AI recovery audit is invalid")
+    checked_recovery = [validate_ai_audit(step) for step in recovery or []]
     return {
+        **({"recovery": checked_recovery} if checked_recovery else {}),
         **({"verification": checked_steps if isinstance(verification, list) else checked_steps[0]} if checked_steps else {}),
         "duration_ms": float(duration_ms),
         "model": ai["model"],

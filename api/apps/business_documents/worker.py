@@ -27,12 +27,15 @@ from api.apps.business_documents.ai import BusinessDocumentAI
 from api.apps.business_documents.evidence import BusinessDocumentEvidence, related_file_search_enabled
 from api.apps.business_documents.exports import BusinessDocumentExportService
 from api.apps.business_documents.runtime import job_completion
+from api.apps.business_documents.recovery import AIRecovery, is_transient_failure, retry_delay_ms
 from api.apps.business_documents.sql_query_agent_worker import BusinessDocumentSqlAgentRunner
 from api.apps.business_documents.sql_query_agents import BusinessDocumentSqlAgentService
 from api.apps.business_documents.sql_query_runs import BusinessDocumentSqlRunService
 from api.apps.business_documents.stream_events import BusinessDocumentStreamEvents
-from api.db.db_models import BusinessDocumentJob
+from api.db.db_models import BusinessDocument, BusinessDocumentJob
 from business_documents.application.errors import BusinessDocumentError, ConflictError
+from business_documents.domain.hashing import stable_hash
+from business_documents.domain.job_recovery import MAX_AI_SECONDS
 from common.misc_utils import get_uuid
 from common.time_utils import current_timestamp
 
@@ -50,6 +53,31 @@ def _error_payload(error: Exception) -> dict[str, Any]:
 
 class BusinessDocumentJobQueue:
     """Database-backed multi-process job lease and recovery operations."""
+
+    @classmethod
+    def checkpoint_ai(cls, job: BusinessDocumentJob, worker_id: str, state: dict[str, Any]) -> None:
+        now = current_timestamp()
+        document = BusinessDocument.get_or_none(BusinessDocument.id == job.document_id)
+        if document is None or document.state_version != job.source_state_version or document.current_revision_id != job.base_revision_id:
+            raise ConflictError("STALE_AI_RESULT", "Документ изменился; результат задания больше не актуален")
+        changed = (
+            BusinessDocumentJob.update(result={"recovery": state})
+            .where(
+                (BusinessDocumentJob.id == job.id)
+                & (BusinessDocumentJob.status == "RUNNING")
+                & (BusinessDocumentJob.lease_owner == worker_id)
+                & (BusinessDocumentJob.lease_token == job.lease_token)
+                & (BusinessDocumentJob.lease_expires_at > now)
+            )
+            .execute()
+        )
+        if changed != 1:
+            raise ConflictError("JOB_LEASE_LOST", "Worker no longer owns a current lease for this job")
+        previous = (job.result or {}).get("recovery", {}).get("feedback", {})
+        if job.job_type == "PLAN_CHANGES" and "generation" in state["feedback"] and "generation" not in previous:
+            if not BusinessDocumentStreamEvents.append(job.id, "retry", {"reason": "format_repair"}, lease_token=job.lease_token, expected_attempt=job.attempt):
+                raise ConflictError("JOB_LEASE_LOST", "Worker no longer owns a current lease for this job")
+        job.result = {"recovery": state}
 
     @classmethod
     def claim(cls, worker_id: str, *, lease_ms: int = 60_000, now_ms: int | None = None) -> BusinessDocumentJob | None:
@@ -354,18 +382,26 @@ class BusinessDocumentWorker:
         if not BusinessDocumentJobQueue.update_progress(job.id, self.worker_id, job.lease_token, progress, stage, message):
             raise ConflictError("JOB_LEASE_LOST", "Worker no longer owns a current lease for this job")
 
-    def _process_ai(self, job: BusinessDocumentJob, evidence_snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
+    def _process_ai(self, job: BusinessDocumentJob, evidence_snapshot: dict[str, Any] | None = None) -> tuple[dict[str, Any], dict | None]:
+        def publish(preview: dict[str, Any]) -> None:
+            if not BusinessDocumentStreamEvents.append(job.id, "section_preview", preview, lease_token=job.lease_token, expected_attempt=job.attempt):
+                raise ConflictError("JOB_LEASE_LOST", "Worker no longer owns a current lease for this job")
+
         stream = getattr(self.ai, "process_stream", None)
-        if job.job_type == "PLAN_CHANGES" and job.payload.get("preview_only") is True and callable(stream):
-
-            def publish(preview: dict[str, Any]) -> None:
-                if not BusinessDocumentStreamEvents.append(job.id, "section_preview", preview, lease_token=job.lease_token, expected_attempt=job.attempt):
-                    raise ConflictError("JOB_LEASE_LOST", "Worker no longer owns a current lease for this job")
-
-            return stream(job, evidence_snapshot, publish)
-        if evidence_snapshot is None:
-            return self.ai.process(job)
-        return self.ai.process(job, evidence_snapshot)
+        if isinstance(self.ai, BusinessDocumentAI):
+            state = (job.result or {}).get("recovery")
+            snapshot_hash = stable_hash(job.payload)
+            if state is not None and state.get("snapshot_hash") != snapshot_hash:
+                raise ConflictError("INVALID_JOB_SNAPSHOT", "Снимок задания изменился после начала генерации")
+            recovery = AIRecovery(state, save=lambda value: BusinessDocumentJobQueue.checkpoint_ai(job, self.worker_id, value))
+            recovery.state["snapshot_hash"] = snapshot_hash
+            output = self.ai.process(job, evidence_snapshot, publish, recovery=recovery)
+        elif job.job_type == "PLAN_CHANGES" and job.payload.get("preview_only") is True and callable(stream):
+            output = stream(job, evidence_snapshot, publish)
+        else:
+            output = self.ai.process(job) if evidence_snapshot is None else self.ai.process(job, evidence_snapshot)
+        consumer = getattr(self.ai, "consume_execution_audit", None)
+        return output, consumer() if callable(consumer) else None
 
     def run_once(self, *, now_ms: int | None = None) -> bool:
         job = BusinessDocumentJobQueue.claim(self.worker_id, lease_ms=self.lease_ms, now_ms=now_ms)
@@ -402,13 +438,11 @@ class BusinessDocumentWorker:
                     self._set_progress(job, 0.32, "RETRIEVED", "Связанные материалы подготовлены")
                     execution_audit = self.evidence.audit(evidence_snapshot, job.attempt)
                     self._set_progress(job, 0.4, "GENERATING", "Формируем результат")
-                    output = self._process_ai(job, evidence_snapshot)
+                    output, ai_audit = self._process_ai(job, evidence_snapshot)
                 else:
                     execution_audit = None
                     self._set_progress(job, 0.4, "GENERATING", "Формируем результат")
-                    output = self._process_ai(job)
-                audit_consumer = getattr(self.ai, "consume_execution_audit", None)
-                ai_audit = audit_consumer() if callable(audit_consumer) else None
+                    output, ai_audit = self._process_ai(job)
                 if ai_audit:
                     execution_audit = {**(execution_audit or {}), "ai": ai_audit}
                 self._set_progress(job, 0.82, "VALIDATING", "Проверяем результат")
@@ -432,7 +466,15 @@ class BusinessDocumentWorker:
                 payload = _error_payload(error)
                 current_job = BusinessDocumentJob.get_or_none(BusinessDocumentJob.id == job.id)
                 if current_job is not None and current_job.lease_owner == self.worker_id and current_job.lease_token == claimed_lease_token:
-                    if current_job.attempt >= current_job.max_attempts:
+                    document_job = current_job.job_type in {"ASSESS_INTAKE", "ASSESS_REVIEW", "GENERATE_DRAFT", "PLAN_CHANGES", "GENERATE_EXPORT"}
+                    delay = self.retry_base_ms * (2 ** max(0, current_job.attempt - 1))
+                    if document_job:
+                        delay = retry_delay_ms(error, delay)
+                    recovery = (current_job.result or {}).get("recovery")
+                    deadline_reached = bool(recovery and current_timestamp() + delay >= (recovery["started_at"] + MAX_AI_SECONDS) * 1000)
+                    if deadline_reached and is_transient_failure(error):
+                        payload = {"code": "AI_TIME_BUDGET_EXCEEDED", "message": "Повторная попытка выходит за предел времени восстановления документа"}
+                    if current_job.attempt >= current_job.max_attempts or deadline_reached or (document_job and not is_transient_failure(error)):
                         try:
                             if current_job.job_type == "SQL_QUERY_RUN":
                                 BusinessDocumentSqlRunService.fail_job(
@@ -459,7 +501,6 @@ class BusinessDocumentWorker:
                         except BusinessDocumentError:
                             logging.exception("Unable to dead-letter business document job %s", current_job.id)
                     else:
-                        delay = self.retry_base_ms * (2 ** max(0, current_job.attempt - 1))
                         BusinessDocumentJobQueue.retry(
                             current_job.id,
                             self.worker_id,

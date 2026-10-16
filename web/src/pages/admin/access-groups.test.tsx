@@ -1,6 +1,13 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 
+import { NavigationSections } from '@/constants/navigation';
 import {
   createAccessGroup,
   deleteAccessGroup,
@@ -59,7 +66,7 @@ beforeEach(() => {
           },
         ],
         datasets: [{ id: 'kb1', name: 'Policies', tenant_id: 'admin' }],
-        sections: ['dataset', 'business_documents'],
+        sections: [...NavigationSections],
       },
     },
   } as never);
@@ -67,6 +74,31 @@ beforeEach(() => {
     .mocked(createAccessGroup)
     .mockResolvedValue({ data: { data: {} } } as never);
 });
+
+test.each(NavigationSections)(
+  'saves only the selected section: %s',
+  async (section) => {
+    mount();
+    fireEvent.change(await screen.findByLabelText('name'), {
+      target: { value: 'Independent' },
+    });
+    const sectionChoices = within(
+      screen.getByRole('group', { name: 'sections' }),
+    ).getAllByRole('checkbox');
+    expect(sectionChoices).toHaveLength(NavigationSections.length);
+    fireEvent.click(sectionChoices[NavigationSections.indexOf(section)]);
+    fireEvent.click(screen.getByRole('button', { name: 'save' }));
+    await waitFor(() =>
+      expect(createAccessGroup).toHaveBeenCalledWith({
+        name: 'Independent',
+        description: '',
+        user_ids: [],
+        dataset_ids: [],
+        sections: [section],
+      }),
+    );
+  },
+);
 
 test('creates a group with selected users, sources and sections', async () => {
   mount();

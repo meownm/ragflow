@@ -10,6 +10,9 @@ import math
 from pathlib import Path
 from typing import Any
 
+from business_documents.domain.errors import RuleViolation
+from business_documents.domain.execution_audit import validate_generation_parameters
+
 
 class QualityGateFailed(ValueError):
     pass
@@ -32,10 +35,10 @@ def _verify_ai_audit(ai: Any) -> dict[str, Any]:
     if not isinstance(profiles, list) or not profiles:
         raise ValueError("Report has no generation parameter profiles")
     for parameters in profiles:
-        if not isinstance(parameters, dict) or set(parameters) != {"temperature", "top_p", "max_completion_tokens"}:
-            raise ValueError("Report has invalid generation parameters")
-        if parameters["temperature"] != 0 or parameters["top_p"] != 0.1 or parameters["max_completion_tokens"] not in {4096, 8192}:
-            raise ValueError("Report generation parameters do not match the controlled profile")
+        try:
+            validate_generation_parameters(parameters, ai["provider"], ai["model"])
+        except RuleViolation as error:
+            raise ValueError("Report generation parameters do not match the controlled profile") from error
     execution_count = ai["execution_count"]
     if isinstance(execution_count, bool) or not isinstance(execution_count, int) or execution_count < 1:
         raise ValueError("Report has invalid model execution count")
@@ -208,7 +211,9 @@ def verify_report(report_path: Path, root: Path, expected_revision: str | None =
             from test.evals.business_documents.metric_placement import evidence_failures
 
             prompts = {name: (asset_root / "prompts" / f"{name}.v1.md").read_text(encoding="utf-8") for name in ("change_planner", "requirement_coverage")}
-            if evidence_failures(expected_case, result.get("evidence"), prompts, template, _json(asset_root / "contracts/document_draft.v2.schema.json")):
+            if evidence_failures(
+                expected_case, result.get("evidence"), prompts, template, _json(asset_root / "contracts/document_draft.v2.schema.json"), _json(asset_root / "contracts/change_plan.v1.schema.json")
+            ):
                 raise QualityGateFailed("Metric placement case lacks valid requirement and source evidence")
         elif "evidence" in result:
             raise ValueError("Unexpected scenario evidence")

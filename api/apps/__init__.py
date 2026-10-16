@@ -273,10 +273,10 @@ def login_required(func: Callable[P, Awaitable[T]] = None, auth_types=None) -> C
                         message=getattr(g, "auth_error_message", None) or "Authorization is not valid!",
                     )
                 raise QuartAuthUnauthorized()
-            from api.db.services.access_group_service import AccessGroupService, section_for_blueprint
+            from api.db.services.access_group_service import AccessGroupService, sections_for_request
 
-            section = section_for_blueprint(request.blueprint)
-            if section and not AccessGroupService.has_section_access(user, section):
+            sections = sections_for_request(request.blueprint, request.url_rule.rule if request.url_rule else request.path)
+            if sections and not AccessGroupService.has_section_access(user, sections):
                 return get_json_result(
                     code=RetCode.OPERATING_ERROR,
                     message="This section is not available for your access groups.",

@@ -16,6 +16,8 @@ ALL_SECTIONS = [
     "business_documents",
     "document_constructor",
     "sql_projects",
+    "asr",
+    "translator",
     "file_manager",
 ]
 
@@ -181,7 +183,12 @@ def _open_admin_visibility(page, base_url, stub):
 def _open_business_documents(page, base_url):
     page.set_viewport_size({"width": 1920, "height": 1080})
     page.goto(f"{base_url.rstrip('/')}/business-documents")
-    expect(page.locator("[data-testid='nav-chat']:visible")).to_be_visible()
+    chat = page.locator("[data-testid='nav-chat']:visible")
+    menu = page.get_by_role("button", name="Menu")
+    expect(chat.or_(menu).first).to_be_visible()
+    if not chat.is_visible():
+        menu.click()
+    expect(chat).to_be_visible()
 
 
 @pytest.mark.p1

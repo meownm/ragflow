@@ -544,6 +544,12 @@ export interface BusinessDocumentReviewCycle {
   comments: BusinessDocumentComment[];
 }
 
+export interface BusinessDocumentOperationError {
+  code?: string;
+  message?: string;
+  details?: unknown;
+}
+
 export interface BusinessDocumentJobSummary {
   job_id: string;
   job_type: string;
@@ -555,10 +561,7 @@ export interface BusinessDocumentJobSummary {
   max_attempts: number;
   available_at?: number | null;
   lease_expires_at?: number | null;
-  error?:
-    | { code?: string; message?: string; details?: unknown }
-    | string
-    | null;
+  error?: BusinessDocumentOperationError | string | null;
   create_time?: number | null;
   update_time?: number | null;
 }
@@ -635,7 +638,7 @@ export interface BusinessDocumentProjection {
   active_review_cycle: number;
   protocol: BusinessDocumentReviewCycle;
   allowed_commands: BusinessDocumentCommandType[];
-  last_error?: { code?: string; message?: string } | string | null;
+  last_error?: BusinessDocumentOperationError | string | null;
   latest_job?: BusinessDocumentJobSummary | null;
   change_preview?: { job_id: string; base_revision_id: string } | null;
   latest_exports?: BusinessDocumentExportArtifact[];
@@ -903,6 +906,7 @@ export interface BusinessDocumentPermissions {
 }
 
 export type BusinessDocumentRole =
+  | 'READER'
   | 'AUTHOR_CREATOR'
   | 'AUTHOR_EDITOR'
   | 'MODERATOR_CREATOR'

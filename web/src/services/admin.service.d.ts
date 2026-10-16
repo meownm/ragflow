@@ -31,6 +31,7 @@ declare namespace AdminService {
     role: string;
     nickname: string;
     business_document_role:
+      | 'READER'
       | 'AUTHOR_CREATOR'
       | 'AUTHOR_EDITOR'
       | 'MODERATOR_CREATOR'

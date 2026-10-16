@@ -1,6 +1,7 @@
 """Oracle and registry tests; real-model acceptance is the opt-in M06 case."""
 
 from copy import deepcopy
+import hashlib
 import json
 import re
 
@@ -25,10 +26,14 @@ def _ideal_ast():
         {"type": "paragraph", "text": " ".join(r["text"] for r in CASE["seed"]["requirements"] if r["section_id"] == "5.5")},
         {"type": "paragraph", "text": "Состав метрик и правила расчёта определены в 5.4."},
     ]
-    ast["sections"].insert(-1, {
-        "id": "5.4", "title": "Требования к отчетности", "blocks": [{"type": "table", "headers": ["Метрика", "Определение"],
-        "rows": [[r["label"], r["text"].split(": ", 1)[1]] for r in CASE["seed"]["requirements"] if r["section_id"] == "5.4"]}],
-    })
+    ast["sections"].insert(
+        -1,
+        {
+            "id": "5.4",
+            "title": "Требования к отчетности",
+            "blocks": [{"type": "table", "headers": ["Метрика", "Определение"], "rows": [[r["label"], r["text"].split(": ", 1)[1]] for r in CASE["seed"]["requirements"] if r["section_id"] == "5.4"]}],
+        },
+    )
     return ast
 
 
@@ -95,28 +100,42 @@ def test_metrics_cannot_be_moved_or_duplicated_in_monitoring(duplicate):
 class FixedTransport:
     """Test the runner only; it is never selected by the live gate."""
 
+    def __init__(self):
+        self.audit = None
+
     def generate(self, tenant, system, payload):
         job = payload["job_input"]
-        self.audit = {"provider": "Fixture", "model": "unit", "model_type": "chat", "duration_ms": 1,
-                      "parameters": {"temperature": 0, "top_p": 0.1, "max_tokens": 65536 if job["task_type"] == "PLAN_CHANGES" else 4096},
-                      "token_usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}}
+        self.audit = {
+            "provider": "Fixture",
+            "model": "unit",
+            "model_type": "chat",
+            "duration_ms": 1,
+            "parameters": {"temperature": 0, "top_p": 0.1, "max_tokens": 65536 if job["task_type"] == "PLAN_CHANGES" else 4096},
+            "token_usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        }
         if job["task_type"] != "PLAN_CHANGES":
-            if "fragments" in job:
-                return {"checks": [{"fragment_id": fragment_id, "required_section_ids": [], "status": "PRESENT",
-                                    "matches": list(job["final_blocks"]), "superseded_by": None}
-                                   for fragment_id in job["fragments"]]}
             return {"status": "PASS", "issues": []}
         sections = {s["id"]: s for s in job["current_revision"]["document_ast"]["sections"]}
         ideal = {s["id"]: s for s in _ideal_ast()["sections"]}
         answer = job["protocol"]["questions"][0]["answer"]["source_event_id"]
         proposal = job["protocol"]["proposals"][0]["decision_event_id"]
-        return {"schema_version": "1", "base_revision_id": job["current_revision"]["revision_id"], "source_state_version": job["state_version"],
-                "acknowledged_no_change_event_ids": [], "operations": [
-                    {"operation_id": section, "type": "REPLACE_SECTION_CONTENT", "section_id": section,
-                     "expected_section_hash": section_hash(sections[section]), "source_event_ids": [source],
-                     "content": {"blocks": [*deepcopy(sections["5"]["blocks"]), deepcopy(ideal["5.4"])] if section == "5" else deepcopy(ideal["5.5"]["blocks"])}}
-                    for section, source in [("5", answer), ("5.5", proposal)]
-                ]}
+        return {
+            "schema_version": "1",
+            "base_revision_id": job["current_revision"]["revision_id"],
+            "source_state_version": job["state_version"],
+            "acknowledged_no_change_event_ids": [],
+            "operations": [
+                {
+                    "operation_id": section,
+                    "type": "REPLACE_SECTION_CONTENT",
+                    "section_id": section,
+                    "expected_section_hash": section_hash(sections[section]),
+                    "source_event_ids": [source],
+                    "content": {"blocks": [*deepcopy(sections["5"]["blocks"]), deepcopy(ideal["5.4"])] if section == "5" else deepcopy(ideal["5.5"]["blocks"])},
+                }
+                for section, source in [("5", answer), ("5.5", proposal)]
+            ],
+        }
 
     def consume_execution_audit(self):
         audit, self.audit = self.audit, None
@@ -179,3 +198,106 @@ def test_release_report_requires_replayable_placement_proof(case_execution, tmp_
             verify_report(path, live.REPO_ROOT, "candidate-sha")
     else:
         assert verify_report(path, live.REPO_ROOT, "candidate-sha")["status"] == "PASS"
+
+
+@pytest.mark.parametrize("shared", [False, True])
+def test_release_report_accepts_confirmed_sources_across_sections(case_execution, tmp_path, shared):
+    report = _report()
+    result = next(r for r in report["case_results"] if r["case_id"] == CASE["id"])
+    result.update(deepcopy(case_execution.result))
+    evidence = result["evidence"]
+    sources = evidence["expected_sources"]
+    for operation in evidence["change_plan"]["operations"]:
+        operation["source_event_ids"] = sources["5"] + sources["5.5"] if shared else sources["5.5" if operation["section_id"] == "5" else "5"]
+    call = next(call for call in evidence["model_calls"] if call["task_type"] == "PLAN_CHANGES")
+    call["response"] = deepcopy(evidence["change_plan"])
+    response = json.dumps(call["response"], ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    call["response_sha256"] = hashlib.sha256(response.encode("utf-8")).hexdigest()
+    path = tmp_path / "cross-section-report.json"
+    path.write_text(json.dumps(report), encoding="utf-8")
+    assert verify_report(path, live.REPO_ROOT, "candidate-sha")["status"] == "PASS"
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "verifier_fail",
+        "verifier_empty",
+        "verifier_malformed",
+        "verifier_transport",
+        "generator_empty",
+        "generator_unrelated",
+        "sources",
+        "before_sections",
+        "after_sections",
+        "context_sections",
+        "section_titles",
+        "cross_section_repetitions",
+        "generator_sources",
+        "generator_base",
+    ],
+)
+def test_saved_pass_requires_the_actual_plan_and_successful_matching_review(tmp_path, damage):
+    report = _report()
+    evidence = next(result["evidence"] for result in report["case_results"] if result["case_id"] == CASE["id"])
+    plan, review = evidence["model_calls"]
+    if damage == "verifier_fail":
+        review["response"] = {"status": "FAIL", "issues": [{"source_id": "proposal", "section_id": "5.4", "reason": "Missing metric"}]}
+    elif damage == "verifier_empty":
+        review["response"] = ""
+    elif damage == "verifier_malformed":
+        review["response"] = {"status": "PASS", "issues": [{"source_id": "unknown"}]}
+    elif damage == "verifier_transport":
+        review["error_type"] = "TimeoutError"
+    elif damage == "generator_empty":
+        plan["response"] = {}
+    elif damage == "generator_unrelated":
+        plan["response"]["operations"][0]["content"]["blocks"] = [{"type": "paragraph", "text": "Unrelated result"}]
+    elif damage == "generator_sources":
+        plan["input_payload"]["job_input"]["confirmed_change_sources"]["proposal"]["text"] = "Another requirement"
+    elif damage == "generator_base":
+        plan["input_payload"]["job_input"]["current_revision"]["document_ast"]["sections"][0]["title"] = "Another base"
+    else:
+        review["input_payload"]["job_input"][damage] = {}
+    # Prove semantic/causal validation, not merely the pre-existing hash check.
+    for call in (plan, review):
+        for field, target in [("response", "response_sha256"), ("input_payload", "input_sha256")]:
+            raw = call[field] if isinstance(call[field], str) else json.dumps(call[field], ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            call[target] = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    path = tmp_path / "false-pass.json"
+    path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(QualityGateFailed):
+        verify_report(path, live.REPO_ROOT, "candidate-sha")
+
+
+@pytest.mark.parametrize("transport", ["json", "envelope", "schema_echo", "aliases", "server_hash", "numeric_version", "retry"])
+def test_saved_proof_accepts_supported_transport_and_successful_retry(tmp_path, transport):
+    report = _report()
+    evidence = next(result["evidence"] for result in report["case_results"] if result["case_id"] == CASE["id"])
+    call = evidence["model_calls"][0]
+    if transport == "json":
+        call["response"] = json.dumps(call["response"], ensure_ascii=False)
+    elif transport == "envelope":
+        call["response"] = {"change_plan": call["response"]}
+    elif transport == "schema_echo":
+        call["response"].pop("schema_version")
+        call["response"]["change_plan"] = json.loads((live.ASSET_ROOT / "contracts/change_plan.v1.schema.json").read_text(encoding="utf-8"))
+    elif transport == "aliases":
+        for operation, alias in zip(call["response"]["operations"], ["question", "proposal-id"]):
+            operation["source_event_ids"] = [alias]
+    elif transport == "server_hash":
+        for operation in call["response"]["operations"]:
+            operation["expected_section_hash"] = "model-supplied-hash"
+    elif transport == "numeric_version":
+        call["response"]["schema_version"] = 1
+    else:
+        failed_pair = deepcopy(evidence["model_calls"])
+        failed_pair[1]["response"] = {"status": "FAIL", "issues": [{"source_id": "proposal", "section_id": "5.4", "reason": "Missing metric"}]}
+        failed_pair[1]["response_sha256"] = hashlib.sha256(json.dumps(failed_pair[1]["response"], ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+        evidence["model_calls"][:0] = failed_pair
+        evidence["attempts"] = 2
+    raw = call["response"] if isinstance(call["response"], str) else json.dumps(call["response"], ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    call["response_sha256"] = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    path = tmp_path / "normalized-proof.json"
+    path.write_text(json.dumps(report), encoding="utf-8")
+    assert verify_report(path, live.REPO_ROOT, "candidate-sha")["status"] == "PASS"

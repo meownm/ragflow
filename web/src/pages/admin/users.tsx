@@ -126,6 +126,7 @@ const BUSINESS_DOCUMENT_ROLE_LABELS: Record<
   Exclude<BusinessDocumentRole, 'ADMIN'>,
   string
 > = {
+  READER: 'Только чтение',
   AUTHOR_CREATOR: 'Автор-создатель',
   AUTHOR_EDITOR: 'Автор-редактор',
   MODERATOR_CREATOR: 'Модератор-создатель',

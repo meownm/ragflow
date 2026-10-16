@@ -79,7 +79,7 @@ def _load_apps_module(monkeypatch):
             return True
 
     access_group_mod.AccessGroupService = _StubAccessGroupService
-    access_group_mod.section_for_blueprint = lambda _blueprint: None
+    access_group_mod.sections_for_request = lambda _blueprint, _route: ()
     monkeypatch.setitem(
         sys.modules,
         "api.db.services.access_group_service",
@@ -369,6 +369,64 @@ def test_login_required_blocks_direct_managed_route_before_handler(monkeypatch):
         ("user-1", "mcp_api", "mcp_api.direct_managed", "POST"),
         ("user-1", "mcp_api", "mcp_api.direct_managed", "GET"),
     ]
+
+
+@pytest.mark.p1
+@pytest.mark.parametrize("section", ["business_documents", "document_constructor", "sql_projects", "chat", "search", "agent", "dataset", "home"])
+def test_login_required_enforces_independent_section_routes(monkeypatch, section):
+    from api.db.services.access_group_service import AccessGroupService, sections_for_request
+    from api.db.services.managed_resource_service import ManagedResourceService
+    from quart import Blueprint
+
+    quart_app, apps_module = _load_apps_module(monkeypatch)
+    monkeypatch.setattr(apps_module, "_load_user", lambda _auth_types=None: SimpleNamespace(id="member", is_superuser=False))
+    access_module = sys.modules["api.db.services.access_group_service"]
+    monkeypatch.setattr(access_module, "AccessGroupService", AccessGroupService)
+    monkeypatch.setattr(access_module, "sections_for_request", sections_for_request)
+    monkeypatch.setattr(sys.modules["api.db.services.managed_resource_service"], "ManagedResourceService", ManagedResourceService)
+    monkeypatch.setattr(AccessGroupService, "effective_policy", staticmethod(lambda _id: {"sections": {section}, "dataset_ids": set()}))
+    handled = []
+    cases = {
+        ("business_document_api", "/business-documents/capabilities"): {"business_documents", "document_constructor", "sql_projects"},
+        ("business_document_api", "/business-documents"): {"business_documents"},
+        ("business_document_api", "/business-documents/sql-query/projects"): {"sql_projects"},
+        ("business_document_api", "/business-documents/sql-query/compile"): {"document_constructor", "sql_projects"},
+        ("chat_api", "/chat/mindmap"): {"chat", "search"},
+        ("chat_api", "/chat/completions"): {"chat"},
+        ("bot_api", "/searchbots/mindmap"): {"search"},
+        ("dataset_api", "/datasets/choices"): {"dataset", "chat", "search", "agent"},
+        ("dataset_api", "/datasets/metadata/flattened"): {"dataset", "chat", "search", "agent"},
+        ("dataset_api", "/datasets/tags/aggregation"): {"dataset", "chat", "search", "agent"},
+        ("dataset_api", "/datasets"): {"dataset"},
+        ("dataset_api", "/datasets/<dataset_id>"): {"dataset"},
+    }
+
+    def handler_for(path):
+        @apps_module.login_required
+        async def handler(**_kwargs):
+            handled.append(path)
+            return {"ok": True}
+
+        return handler
+
+    blueprints = {name: Blueprint(name, __name__) for name, _path in cases}
+    for index, (name, path) in enumerate(cases):
+        blueprints[name].add_url_rule(path, endpoint=f"operation_{index}", view_func=handler_for(path), methods=["GET", "POST"] if path == "/datasets" else ["GET"])
+    for blueprint in blueprints.values():
+        quart_app.register_blueprint(blueprint, url_prefix="/api/v1")
+
+    async def check():
+        client = quart_app.test_client()
+        for (_name, path), allowed in cases.items():
+            response = await client.get("/api/v1" + path)
+            assert response.status_code == (200 if section in allowed else 403)
+        assert (await client.post("/api/v1/datasets")).status_code == 403
+        # The app's existing generic error adapter wraps MethodNotAllowed in JSON.
+        rejected = await client.post("/api/v1/datasets/choices")
+        assert "MethodNotAllowed" in (await rejected.get_json())["message"]
+
+    _run(check())
+    assert handled == [path for (_name, path), allowed in cases.items() if section in allowed]
 
 
 @pytest.mark.p2

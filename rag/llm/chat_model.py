@@ -1055,6 +1055,14 @@ class OpenAI_APIChat(Base):
         model_name = model_name.split("___")[0]
         super().__init__(key, model_name, base_url, **kwargs)
 
+    def _clean_conf(self, gen_conf):
+        # Compatible servers such as Ollama use the original OpenAI limit field.
+        legacy_limit = gen_conf.get("max_tokens")
+        cleaned = super()._clean_conf(gen_conf)
+        if legacy_limit is not None and "max_completion_tokens" not in cleaned:
+            cleaned["max_tokens"] = legacy_limit
+        return cleaned
+
 
 class Xiaomi(Base):
     _FACTORY_NAME = "Xiaomi"

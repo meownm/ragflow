@@ -51,13 +51,16 @@ def test_worker_loop_is_closed_after_operation_finishes():
 
 
 @pytest.mark.p1
-@pytest.mark.parametrize(("task_type", "expected_limit"), [("GENERATE_DRAFT", 8192), ("PLAN_CHANGES", 8192), ("ASSESS_INTAKE", 4096)])
-def test_llm_adapter_preserves_tenant_prompt_payload_and_retry_contract(monkeypatch, task_type, expected_limit):
+@pytest.mark.parametrize(("factory", "limit_parameter"), [(None, "max_completion_tokens"), ("OpenAI-API-Compatible", "max_tokens"), ("Ollama", "max_completion_tokens")])
+@pytest.mark.parametrize(("task_type", "expected_limit"), [("GENERATE_DRAFT", 8192), ("PLAN_CHANGES", 65536), ("VERIFY_REQUIREMENT_COVERAGE", 8192), ("ASSESS_INTAKE", 4096)])
+def test_llm_adapter_preserves_tenant_prompt_payload_and_retry_contract(monkeypatch, task_type, expected_limit, factory, limit_parameter):
     lookup_calls = []
     bundle_calls = []
     chat_calls = []
     drain_calls = []
     model_config = {"model_name": "configured-chat"}
+    if factory:
+        model_config["llm_factory"] = factory
 
     tenant_model_module = ModuleType("api.db.joint_services.tenant_model_service")
 
@@ -118,11 +121,11 @@ def test_llm_adapter_preserves_tenant_prompt_payload_and_retry_contract(monkeypa
     assert system_prompt == "system contract"
     assert messages[0]["role"] == "user"
     assert json.loads(messages[0]["content"]) == payload
-    assert options == {"temperature": 0, "top_p": 0.1, "max_completion_tokens": expected_limit}
+    assert options == {"temperature": 0, "top_p": 0.1, limit_parameter: expected_limit}
     assert drain_calls == [True]
     audit = adapter.consume_execution_audit()
     assert audit is not None
-    assert audit["provider"] == "unknown"
+    assert audit["provider"] == (factory or "unknown")
     assert audit["model"] == "configured-chat"
     assert audit["model_type"] == "chat"
     assert audit["parameters"] == options

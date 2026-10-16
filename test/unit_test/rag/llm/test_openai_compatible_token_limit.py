@@ -1,6 +1,7 @@
 """Completion limits reach compatible servers in ordinary and streaming calls."""
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import pytest
@@ -41,7 +42,9 @@ def test_completion_limit_reaches_compatible_transport(streaming, limits, expect
             return [chunk async for chunk in model.async_chat_streamly("Return JSON", [{"role": "user", "content": "x"}], options)]
         return await model.async_chat("Return JSON", [{"role": "user", "content": "x"}], options)
 
-    result = asyncio.run(call())
+    # Keep the transport's private loop separate from pytest-asyncio's policy loop.
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        result = executor.submit(asyncio.run, call()).result()
     assert result[0] == "{}"
     assert len(requests) == 1
     request = requests[0]

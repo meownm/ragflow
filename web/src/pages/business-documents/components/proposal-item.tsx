@@ -15,8 +15,10 @@ interface ProposalItemProps {
   proposal: BusinessDocumentProposal;
   proposalDecisionsOpen: boolean;
   canDecide: boolean;
+  canAccept: boolean;
   pending: boolean;
   onDecide: (payload: Record<string, unknown>) => void;
+  onAccept: () => void;
 }
 
 const proposalStatusPresentation = {
@@ -71,10 +73,14 @@ export function ProposalItem({
   proposal,
   proposalDecisionsOpen,
   canDecide,
+  canAccept,
   pending,
   onDecide,
+  onAccept,
 }: ProposalItemProps) {
   const isPending = proposal.decision === 'PENDING';
+  const isAwaitingApplication =
+    proposal.decision === 'ACCEPTED' && proposal.applied === false;
   const isClosedWithoutDecision = isPending && !proposalDecisionsOpen;
   const status = isClosedWithoutDecision
     ? closedPendingProposalPresentation
@@ -118,7 +124,11 @@ export function ProposalItem({
               )}
               data-testid={`proposal-status-${proposal.proposal_id}`}
             >
-              {status.label}
+              {proposal.applied
+                ? 'Применено'
+                : isAwaitingApplication
+                  ? 'Принято к применению'
+                  : status.label}
             </Badge>
           </div>
           <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-text-primary">
@@ -137,40 +147,37 @@ export function ProposalItem({
               Решение не было принято до завершения этапа внесения изменений.
             </p>
           )}
-          {isPending && proposalDecisionsOpen && (
+          {(isPending || isAwaitingApplication) && proposalDecisionsOpen && (
             <div className="mt-4 flex gap-2">
-              <Button
-                size="sm"
-                variant="danger"
-                className="dark:text-[#ff8b8d]"
-                disabled={!canDecide || pending}
-                data-testid={`reject-proposal-${proposal.proposal_id}`}
-                onClick={() =>
-                  onDecide({
-                    proposal_id: proposal.proposal_id,
-                    decision: 'REJECTED',
-                  })
-                }
-              >
-                <X className="size-3.5" />
-                Отклонить
-              </Button>
+              {isPending && (
+                <Button
+                  size="sm"
+                  variant="danger"
+                  className="dark:text-[#ff8b8d]"
+                  disabled={!canDecide || pending}
+                  data-testid={`reject-proposal-${proposal.proposal_id}`}
+                  onClick={() =>
+                    onDecide({
+                      proposal_id: proposal.proposal_id,
+                      decision: 'REJECTED',
+                    })
+                  }
+                >
+                  <X className="size-3.5" />
+                  Отклонить
+                </Button>
+              )}
               <Button
                 size="sm"
                 variant="accent"
                 className="text-[#102c2a]"
-                disabled={!canDecide || pending}
+                disabled={!canAccept || pending}
                 loading={pending}
                 data-testid={`accept-proposal-${proposal.proposal_id}`}
-                onClick={() =>
-                  onDecide({
-                    proposal_id: proposal.proposal_id,
-                    decision: 'ACCEPTED',
-                  })
-                }
+                onClick={onAccept}
               >
                 <Check className="size-3.5" />
-                Принять
+                {isPending ? 'Принять' : 'Применить'}
               </Button>
             </div>
           )}

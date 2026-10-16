@@ -75,7 +75,7 @@ def _projection(*, allowed_commands=None):
             ],
             "comments": [],
         },
-        "allowed_commands": allowed_commands or ["ANSWER_QUESTION", "DECIDE_PROPOSAL", "ADD_COMMENT", "APPLY_CHANGES"],
+        "allowed_commands": allowed_commands or ["ANSWER_QUESTION", "DECIDE_PROPOSAL", "ACCEPT_PROPOSAL", "ADD_COMMENT", "APPLY_CHANGES"],
         "latest_exports": [
             {
                 "artifact_id": "artifact-md-r3",

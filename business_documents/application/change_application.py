@@ -52,7 +52,10 @@ class ApplyChanges:
             raise ConflictError("STALE_AI_RESULT", "Change plan does not match the immutable job snapshot")
         snapshot = SnapshotIndex.build(job, execution)
         base = self._writer.revision(document["id"], document["current_revision_id"]) if plan["operations"] else None
+        proposal_id = job["payload"].get("apply_proposal_id")
         try:
+            if proposal_id is not None:
+                review = review.for_proposal_application(proposal_id)
             inputs = validate_change_inputs(review, plan, snapshot_source_ids=snapshot.event_ids, evidence_source_refs=snapshot.evidence_refs, base_document=base["document_ast"] if base else None)
         except RuleViolation as error:
             raise ValidationError(error.code, error.message, error.details) from error
@@ -64,7 +67,7 @@ class ApplyChanges:
             if draft["template_version"] != document["template_version"]:
                 raise ValidationError("TEMPLATE_VERSION_CONFLICT", "Updated document does not use the pinned template")
 
-        next_lifecycle = inputs.next_lifecycle
+        next_lifecycle = "REVIEW" if proposal_id is not None else inputs.next_lifecycle
         if next_lifecycle == "AGREED":
             current = draft if draft is not None else self._writer.revision(document["id"], document["current_revision_id"])["document_ast"]
             if current.get("section_scope") == "required":

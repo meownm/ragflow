@@ -148,7 +148,7 @@ class DocumentCommands:
         return response
 
     def _command_result(self, response: dict[str, Any], envelope: _CommandEnvelope, access: DocumentAccess, document_id: str) -> dict[str, Any]:
-        if envelope.type == CommandType.CONFIRM_PREPARED_CHANGES:
+        if envelope.type in {CommandType.CONFIRM_PREPARED_CHANGES, CommandType.ACCEPT_PROPOSAL}:
             # Keep the durable receipt small; return the current view with this caller's permissions, including on replay.
             return {**response, "document": self._queries.get_document(document_id, access.actor_id, access.is_admin, access.assigned_role)}
         return response
@@ -180,7 +180,7 @@ class DocumentCommands:
                 return self._request_job(document, actor_id, envelope, "GENERATE_DRAFT", OperationState.GENERATING_DRAFT, review=review)
             case CommandType.ANSWER_QUESTION:
                 return self._answer_question(document, actor_id, envelope)
-            case CommandType.DECIDE_PROPOSAL:
+            case CommandType.DECIDE_PROPOSAL | CommandType.ACCEPT_PROPOSAL:
                 return self._decide_proposal(document, actor_id, envelope)
             case CommandType.ADD_COMMENT:
                 return self._add_comment(document, actor_id, envelope)
@@ -220,6 +220,8 @@ class DocumentCommands:
         snapshot["task_type"] = job_type
         if envelope.type == CommandType.PREPARE_CHANGES:
             snapshot["preview_only"] = True
+        if envelope.type == CommandType.ACCEPT_PROPOSAL:
+            snapshot["apply_proposal_id"] = envelope.payload["proposal_id"]
         snapshot["requested_by_actor_id"] = actor_id
         prompt = self._content.prompt_descriptor(job_type)
         if prompt is not None:
@@ -320,22 +322,32 @@ class DocumentCommands:
         return self._command_response(document, new_version, event_id)
 
     def _decide_proposal(self, document: Record, actor_id: str, envelope: _CommandEnvelope) -> dict[str, Any]:
+        apply = envelope.type == CommandType.ACCEPT_PROPOSAL
         proposal_id = envelope.payload.get("proposal_id")
         proposal = self._writer.proposal(document["id"], proposal_id, document["active_review_cycle"])
         if proposal is None:
             raise ValidationError("PROPOSAL_NOT_FOUND", "Proposal does not belong to the active review cycle")
-        if self._writer.has_decision(document["id"], proposal["id"]):
+        decided = self._writer.has_decision(document["id"], proposal["id"])
+        if decided and not apply:
             raise ConflictError("PROPOSAL_ALREADY_DECIDED", "Published proposal decisions are immutable")
-        decision = envelope.payload.get("decision")
+        decision = "ACCEPTED" if apply else envelope.payload.get("decision")
         if decision not in {"ACCEPTED", "REJECTED"}:
             raise ValidationError("INVALID_PROPOSAL_DECISION", "decision must be ACCEPTED or REJECTED")
-        new_version = document["state_version"] + 1
-        decision_id = self._new_id()
-        self._writer.insert_decision(id=decision_id, document_id=document["id"], proposal_id=proposal["id"], actor_id=actor_id, decision=decision)
-        document = self._writer.update_document(document, {"state_version": new_version})
-        event_id = self._writer.append_event(
-            document["id"], new_version, "ProposalDecided", "USER", actor_id, {"proposal_id": proposal["id"], "decision_id": decision_id, "decision": decision}, envelope.command_id
-        )
+        if not decided:
+            new_version = document["state_version"] + 1
+            decision_id = self._new_id()
+            self._writer.insert_decision(id=decision_id, document_id=document["id"], proposal_id=proposal["id"], actor_id=actor_id, decision=decision)
+            document = self._writer.update_document(document, {"state_version": new_version})
+            event_id = self._writer.append_event(
+                document["id"], new_version, "ProposalDecided", "USER", actor_id, {"proposal_id": proposal["id"], "decision_id": decision_id, "decision": decision}, envelope.command_id
+            )
+        if apply:
+            review = self._writer.review(document["id"], document["active_review_cycle"])
+            try:
+                selected = review.for_proposal_application(proposal["id"])
+            except RuleViolation as error:
+                raise ConflictError(error.code, error.message, error.details) from error
+            return self._request_job(document, actor_id, envelope, "PLAN_CHANGES", OperationState.APPLYING_CHANGES, review=selected)
         return self._command_response(document, new_version, event_id)
 
     def _add_comment(self, document: Record, actor_id: str, envelope: _CommandEnvelope) -> dict[str, Any]:

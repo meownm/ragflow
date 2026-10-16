@@ -1156,7 +1156,7 @@ export default function BusinessDocumentsPage() {
               ? current
               : updatedDocument,
         );
-        if (type === 'CONFIRM_PREPARED_CHANGES') {
+        if (type === 'CONFIRM_PREPARED_CHANGES' || type === 'ACCEPT_PROPOSAL') {
           if (activeDocumentId.current === targetDocumentId) {
             setHistoryOpen(false);
             setSelectedRevisionId(undefined);

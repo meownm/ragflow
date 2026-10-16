@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
+
+from business_documents.domain.errors import StateConflict
 
 
 Record = Mapping[str, Any]
@@ -69,6 +71,15 @@ class ReviewState:
         return self.review_complete or bool(
             self.open_question_ids("REVIEW") and self.applicable_inputs and self.assessment_is_current("ReviewAssessed", REVIEW_FEEDBACK, self.review_cycle, outcomes=("NEEDS_INPUT",))
         )
+
+    def for_proposal_application(self, proposal_id: str) -> ReviewState:
+        """Limit one-click application to this unresolved accepted decision."""
+        event_id = self.protocol_events["decisions"].get(proposal_id)
+        if event_id not in self.accepted_inputs:
+            raise StateConflict("PROPOSAL_NOT_ACCEPTED", "Only an accepted proposal can be applied")
+        if event_id not in self.active_inputs:
+            raise StateConflict("PROPOSAL_ALREADY_APPLIED", "This proposal has already been applied")
+        return replace(self, active_inputs=frozenset({event_id}))
 
 
 def build_review_state(

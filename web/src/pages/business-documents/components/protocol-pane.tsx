@@ -393,8 +393,14 @@ export function ProtocolPane({
             proposal={proposal}
             proposalDecisionsOpen={proposalDecisionsOpen}
             canDecide={allowed.has('DECIDE_PROPOSAL')}
+            canAccept={allowed.has('ACCEPT_PROPOSAL')}
             pending={pending}
             onDecide={(payload) => onCommand('DECIDE_PROPOSAL', payload)}
+            onAccept={() =>
+              onCommand('ACCEPT_PROPOSAL', {
+                proposal_id: proposal.proposal_id,
+              })
+            }
           />
         ))}
 

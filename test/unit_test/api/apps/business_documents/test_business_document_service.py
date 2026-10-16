@@ -3467,6 +3467,7 @@ def test_verified_eva_binding_supports_governed_pull_and_outbound_change(databas
     assert pulled["document"]["permissions"]["delete"] is True
     assert pulled["document"]["allowed_commands"] == [
         "DECIDE_PROPOSAL",
+        "ACCEPT_PROPOSAL",
         "ADD_COMMENT",
         "ARCHIVE",
         "REQUEST_REVIEW_ASSESSMENT",

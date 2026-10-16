@@ -72,6 +72,7 @@ def test_new_eva_input_invalidates_assessment_and_available_commands():
     assert review.active_inputs == {"e2", "e3", "e4", "e8"}
     assert available_commands({"lifecycle_state": "REVIEW", "operation_state": "IDLE", "current_revision_id": "revision"}, review) == [
         "DECIDE_PROPOSAL",
+        "ACCEPT_PROPOSAL",
         "ADD_COMMENT",
         "ARCHIVE",
         "REQUEST_REVIEW_ASSESSMENT",

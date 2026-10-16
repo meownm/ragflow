@@ -23,6 +23,7 @@
         "ANSWER_QUESTION",
         "REQUEST_DRAFT",
         "DECIDE_PROPOSAL",
+        "ACCEPT_PROPOSAL",
         "ADD_COMMENT",
         "REQUEST_REVIEW_ASSESSMENT",
         "APPLY_CHANGES",
@@ -59,6 +60,14 @@
       "properties": {
         "proposal_id": {"type": "string", "minLength": 1, "maxLength": 64},
         "decision": {"enum": ["ACCEPTED", "REJECTED"]}
+      }
+    },
+    "acceptProposalPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["proposal_id"],
+      "properties": {
+        "proposal_id": {"type": "string", "minLength": 1, "maxLength": 64}
       }
     },
     "addCommentPayload": {
@@ -142,6 +151,10 @@
     {
       "if": {"properties": {"type": {"const": "DECIDE_PROPOSAL"}}},
       "then": {"properties": {"payload": {"$ref": "#/$defs/decideProposalPayload"}}}
+    },
+    {
+      "if": {"properties": {"type": {"const": "ACCEPT_PROPOSAL"}}},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/acceptProposalPayload"}}}
     },
     {
       "if": {"properties": {"type": {"const": "ADD_COMMENT"}}},

@@ -366,6 +366,7 @@ export type BusinessDocumentCommandType =
   | 'ANSWER_QUESTION'
   | 'REQUEST_DRAFT'
   | 'DECIDE_PROPOSAL'
+  | 'ACCEPT_PROPOSAL'
   | 'ADD_COMMENT'
   | 'APPLY_CHANGES'
   | 'PREPARE_CHANGES'
@@ -507,6 +508,7 @@ export interface BusinessDocumentProposal {
   text: string;
   rationale?: string;
   decision: 'PENDING' | 'ACCEPTED' | 'REJECTED';
+  applied?: boolean;
 }
 
 export interface BusinessDocumentCommentAnchor {

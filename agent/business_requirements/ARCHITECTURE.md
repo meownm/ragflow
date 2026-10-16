@@ -59,10 +59,21 @@ body. It records exactly one disposition for every active comment:
 `CONFIRMED_CHANGE`, `NO_CHANGE`, or `NEEDS_QUESTION`. The last form is linked
 immutably to a concrete persisted question. Only confirmed comments may source
 a change, and only no-change comments may be acknowledged without one. A
-current review assessment is required before changes. `NEEDS_INPUT` permits
+current review assessment is required before aggregate changes. `NEEDS_INPUT` permits
 applying ready answers, accepted proposals and confirmed comments while
 unanswered questions and ambiguous comments stay in the same review cycle.
 New feedback invalidates readiness until reassessed.
+
+`ACCEPT_PROPOSAL` records acceptance and queues `PLAN_CHANGES` atomically without
+assessment or preview confirmation. Its immutable snapshot pins
+`apply_proposal_id` and exactly that decision's active input event. The same
+change application validates the result against that scope and saves a revision,
+remaining in `REVIEW` regardless of other open inputs. Other questions, comments
+and proposals remain available for subsequent work. A failed job leaves the
+decision accepted and the body unchanged; the same command can retry without
+creating another decision. The API's `DECIDE_PROPOSAL` retains its decision-only
+contract for existing consumers and rejection. The UI uses `ACCEPT_PROPOSAL`
+for acceptance and retry, and refreshes the current revision when the job applies.
 
 ### Finalization
 

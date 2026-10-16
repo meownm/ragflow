@@ -381,6 +381,7 @@ class DocumentQueries:
 
 
 def project_protocol(review: ReviewState, current_revision_id: str | None) -> dict[str, Any]:
+    applied_proposal_events = review.accepted_inputs - review.active_inputs
     questions = []
     for question in review.questions:
         answer = review.answers.get(question["id"])
@@ -421,6 +422,7 @@ def project_protocol(review: ReviewState, current_revision_id: str | None) -> di
                 "evidence_refs": row["evidence_refs"],
                 "decision": review.decisions[row["id"]]["decision"] if row["id"] in review.decisions else "PENDING",
                 "decision_event_id": review.protocol_events["decisions"].get(row["id"]),
+                "applied": review.protocol_events["decisions"].get(row["id"]) in applied_proposal_events,
             }
             for row in review.proposals
         ],

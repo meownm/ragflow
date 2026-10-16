@@ -286,6 +286,7 @@ const projection: BusinessDocumentProjection = {
   allowed_commands: [
     'ANSWER_QUESTION',
     'DECIDE_PROPOSAL',
+    'ACCEPT_PROPOSAL',
     'ADD_COMMENT',
     'APPLY_CHANGES',
   ],
@@ -1528,8 +1529,8 @@ test('records proposal decisions and author comments as commands', async () => {
   expect(mockedSubmit).toHaveBeenLastCalledWith(
     'doc-1',
     expect.objectContaining({
-      type: 'DECIDE_PROPOSAL',
-      payload: { proposal_id: 'proposal-12', decision: 'ACCEPTED' },
+      type: 'ACCEPT_PROPOSAL',
+      payload: { proposal_id: 'proposal-12' },
     }),
   );
 
@@ -2264,6 +2265,141 @@ test('shows streamed sections as preliminary and clears them on retry', async ()
     screen.queryByTestId('business-document-change-preview'),
   ).not.toBeInTheDocument();
 });
+
+test.each([false, true])(
+  'accepts and applies a proposal without confirmation (retry: %s)',
+  async (retry) => {
+    const initial: BusinessDocumentProjection = {
+      ...projection,
+      protocol: {
+        ...projection.protocol,
+        proposals: projection.protocol.proposals.map((proposal) => ({
+          ...proposal,
+          decision: retry ? 'ACCEPTED' : 'PENDING',
+          applied: false,
+        })),
+      },
+    };
+    const applying: BusinessDocumentProjection = {
+      ...initial,
+      state_version: 20,
+      operation_state: 'APPLYING_CHANGES',
+      allowed_commands: [],
+      latest_job: {
+        job_id: 'job-accept',
+        job_type: 'PLAN_CHANGES',
+        status: 'PENDING',
+        attempt: 0,
+        max_attempts: 3,
+      },
+      protocol: {
+        ...initial.protocol,
+        proposals: initial.protocol.proposals.map((proposal) => ({
+          ...proposal,
+          decision: 'ACCEPTED',
+        })),
+      },
+    };
+    const applied: BusinessDocumentProjection = {
+      ...initial,
+      state_version: 21,
+      current_revision: {
+        ...projection.current_revision!,
+        revision_id: 'revision-4',
+        revision_number: 4,
+        document_ast: {
+          ...projection.current_revision!.document_ast,
+          sections: [
+            {
+              id: '1',
+              title: 'Цель',
+              blocks: [
+                {
+                  type: 'paragraph',
+                  text: 'Нагрузка: 100 операций в секунду.',
+                },
+              ],
+            },
+          ],
+        },
+        body_markdown: '## 1. Цель\nНагрузка: 100 операций в секунду.',
+        section_texts: { '1': 'Нагрузка: 100 операций в секунду.' },
+      },
+      protocol: {
+        ...initial.protocol,
+        proposals: initial.protocol.proposals.map((proposal) => ({
+          ...proposal,
+          decision: 'ACCEPTED',
+          applied: true,
+        })),
+      },
+    };
+    mockedFetch.mockResolvedValue(initial);
+    mockedSubmit.mockResolvedValueOnce({
+      ...commandResult,
+      operation_state: 'APPLYING_CHANGES',
+      job_id: 'job-accept',
+      document: applying,
+    });
+    let emit: ((event: BusinessDocumentJobStreamEvent) => void) | undefined;
+    mockedWatch.mockImplementation(
+      async (_document, _job, _signal, onEvent) => {
+        emit = onEvent;
+      },
+    );
+    renderPage();
+    const accept = await screen.findByTestId('accept-proposal-proposal-12');
+    expect(accept).toHaveTextContent(retry ? 'Применить' : 'Принять');
+    fireEvent.click(accept);
+    await waitFor(() => expect(emit).toBeDefined());
+    expect(screen.getByTestId('proposal-status-proposal-12')).toHaveTextContent(
+      'Принято к применению',
+    );
+    expect(screen.getByTestId('accept-proposal-proposal-12')).toBeDisabled();
+    expect(screen.getByTestId('business-document-markdown')).toHaveTextContent(
+      firstSectionText,
+    );
+    mockedFetch.mockResolvedValue(applied);
+    act(() =>
+      emit!({
+        id: 1,
+        job_id: 'job-accept',
+        attempt: 1,
+        base_revision_id: 'revision-3',
+        type: 'applied',
+        payload: { revision_id: 'revision-4' },
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByTestId('business-document-markdown'),
+      ).toHaveTextContent('Нагрузка: 100 операций в секунду.'),
+    );
+    expect(screen.getByTestId('proposal-status-proposal-12')).toHaveTextContent(
+      'Применено',
+    );
+    expect(
+      screen.queryByTestId('accept-proposal-proposal-12'),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Подтвердить применение' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId('business-document-change-preview'),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText('Какие события необходимо отслеживать?'),
+    ).toBeInTheDocument();
+    expect(mockedSubmit).toHaveBeenCalledTimes(1);
+    expect(mockedSubmit).toHaveBeenCalledWith(
+      'doc-1',
+      expect.objectContaining({
+        type: 'ACCEPT_PROPOSAL',
+        payload: { proposal_id: 'proposal-12' },
+      }),
+    );
+  },
+);
 
 test('shows a new optional reporting section before confirming its application', async () => {
   mockedFetch.mockResolvedValue({

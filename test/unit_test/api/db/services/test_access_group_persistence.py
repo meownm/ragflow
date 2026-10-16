@@ -17,7 +17,7 @@ def group_database(monkeypatch):
     # This lane validates persistence/transactions, not connection-pool lifecycle.
     for name in ("create", "update"):
         monkeypatch.setattr(service.AccessGroupService, name, classmethod(inspect.unwrap(getattr(service.AccessGroupService, name).__func__)))
-    for name in ("list_groups", "delete", "effective_policy"):
+    for name in ("list_groups", "options", "delete", "effective_policy"):
         monkeypatch.setattr(service.AccessGroupService, name, staticmethod(inspect.unwrap(getattr(service.AccessGroupService, name))))
     monkeypatch.setattr(service, "DB", database)
     with database.bind_ctx(tables, bind_refs=False, bind_backrefs=False):
@@ -45,6 +45,21 @@ def test_persisted_group_union_repeated_update_and_delete(group_database):
     assert service.AccessGroupService.effective_policy("member") == {"sections": {"agent"}, "dataset_ids": set()}
     for table in (AccessGroupDataset, AccessGroupUser, AccessGroupSection):
         assert table.select().where(table.group_id == second["id"]).count() == 0
+
+
+def test_administrator_can_be_selected_added_and_removed(group_database):
+    User.create(id="admin", nickname="Administrator", email="admin@example.test", is_superuser=True)
+    options = service.AccessGroupService.options()
+    assert next(user for user in options["users"] if user["id"] == "admin")["is_superuser"]
+
+    group = service.AccessGroupService.create({"name": "Administrators", "user_ids": ["member", "admin"], "dataset_ids": ["dataset"], "sections": ["dataset"]})
+    assert group["user_ids"] == ["admin", "member"]
+    for user_ids in (["member"], ["member", "admin"]):
+        updated = service.AccessGroupService.update(group["id"], {"user_ids": user_ids})
+        assert updated["user_ids"] == sorted(user_ids)
+        assert updated["dataset_ids"] == ["dataset"]
+        assert updated["sections"] == ["dataset"]
+        assert User.get_by_id("admin").is_superuser
 
 
 def test_group_link_failure_rolls_back_name_and_all_grants(group_database, monkeypatch):

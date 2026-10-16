@@ -51,6 +51,12 @@ beforeEach(() => {
             nickname: 'User One',
             is_superuser: false,
           },
+          {
+            id: 'admin',
+            email: 'admin@example.com',
+            nickname: 'Administrator',
+            is_superuser: true,
+          },
         ],
         datasets: [{ id: 'kb1', name: 'Policies', tenant_id: 'admin' }],
         sections: ['dataset', 'business_documents'],
@@ -84,3 +90,62 @@ test('creates a group with selected users, sources and sections', async () => {
   expect(deleteAccessGroup).not.toHaveBeenCalled();
   expect(updateAccessGroup).not.toHaveBeenCalled();
 });
+
+test('includes the administrator when creating a group', async () => {
+  mount();
+  fireEvent.change(await screen.findByLabelText('name'), {
+    target: { value: 'Administrators' },
+  });
+  fireEvent.click(
+    await screen.findByRole('checkbox', { name: 'Administrator' }),
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'save' }));
+
+  await waitFor(() =>
+    expect(createAccessGroup).toHaveBeenCalledWith({
+      name: 'Administrators',
+      description: '',
+      user_ids: ['admin'],
+      dataset_ids: [],
+      sections: [],
+    }),
+  );
+});
+
+test.each([false, true])(
+  'toggles administrator membership when editing a group (initially selected: %s)',
+  async (selected) => {
+    const group = {
+      id: 'g1',
+      name: 'Legal',
+      description: 'Policies access',
+      user_ids: selected ? ['u1', 'admin'] : ['u1'],
+      dataset_ids: ['kb1'],
+      sections: ['dataset'],
+    };
+    jest.mocked(listAccessGroups).mockResolvedValue({
+      data: { data: { items: [group] } },
+    } as never);
+    jest
+      .mocked(updateAccessGroup)
+      .mockResolvedValue({ data: { data: {} } } as never);
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'edit' }));
+
+    const administrator = await screen.findByRole('checkbox', {
+      name: 'Administrator',
+    });
+    expect(administrator).toHaveAttribute('aria-checked', String(selected));
+    fireEvent.click(administrator);
+    fireEvent.click(screen.getByRole('button', { name: 'save' }));
+
+    const { id, ...input } = group;
+    await waitFor(() =>
+      expect(updateAccessGroup).toHaveBeenCalledWith(id, {
+        ...input,
+        user_ids: selected ? ['u1'] : ['u1', 'admin'],
+      }),
+    );
+    expect(createAccessGroup).not.toHaveBeenCalled();
+  },
+);

@@ -208,29 +208,27 @@ export default function AdminAccessGroups() {
               {t('admin.accessGroupsPage.users')}
             </legend>
             <div className="grid gap-2 md:grid-cols-2">
-              {optionsQuery.data?.users
-                .filter((user) => !user.is_superuser)
-                .map((user) => (
-                  <Label
-                    key={user.id}
-                    className="flex items-center gap-2 rounded-md border border-border-button p-3"
-                  >
-                    <Checkbox
-                      checked={draft.user_ids.includes(user.id)}
-                      onCheckedChange={(checked) =>
-                        setDraft({
-                          ...draft,
-                          user_ids: toggle(
-                            draft.user_ids,
-                            user.id,
-                            checked === true,
-                          ),
-                        })
-                      }
-                    />
-                    <span>{user.nickname || user.email}</span>
-                  </Label>
-                ))}
+              {optionsQuery.data?.users.map((user) => (
+                <Label
+                  key={user.id}
+                  className="flex items-center gap-2 rounded-md border border-border-button p-3"
+                >
+                  <Checkbox
+                    checked={draft.user_ids.includes(user.id)}
+                    onCheckedChange={(checked) =>
+                      setDraft({
+                        ...draft,
+                        user_ids: toggle(
+                          draft.user_ids,
+                          user.id,
+                          checked === true,
+                        ),
+                      })
+                    }
+                  />
+                  <span>{user.nickname || user.email}</span>
+                </Label>
+              ))}
             </div>
           </fieldset>
           <fieldset className="space-y-3">

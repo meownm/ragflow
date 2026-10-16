@@ -65,9 +65,10 @@ def validate_ai_audit(ai: object) -> dict[str, Any]:
     if len(ai["provider"]) > 128 or len(ai["model"]) > 256 or len(ai["model_type"]) > 64:
         raise RuleViolation("INVALID_EXECUTION_AUDIT", "Worker AI identity is invalid")
     parameters = ai["parameters"]
-    if not isinstance(parameters, dict) or set(parameters) != {"temperature", "top_p", "max_completion_tokens"}:
+    if not isinstance(parameters, dict) or set(parameters) not in ({"temperature", "top_p", "max_completion_tokens"}, {"temperature", "top_p", "max_tokens"}):
         raise RuleViolation("INVALID_EXECUTION_AUDIT", "Worker AI parameters are invalid")
-    if parameters["temperature"] != 0 or parameters["top_p"] != 0.1 or parameters["max_completion_tokens"] not in {4096, 8192}:
+    limit_parameter = "max_tokens" if "max_tokens" in parameters else "max_completion_tokens"
+    if parameters["temperature"] != 0 or parameters["top_p"] != 0.1 or parameters[limit_parameter] not in {4096, 8192, 65536}:
         raise RuleViolation("INVALID_EXECUTION_AUDIT", "Worker AI parameters are invalid")
     duration_ms = ai["duration_ms"]
     if isinstance(duration_ms, bool) or not isinstance(duration_ms, (int, float)) or not math.isfinite(duration_ms) or duration_ms < 0:

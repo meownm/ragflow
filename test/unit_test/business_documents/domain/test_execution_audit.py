@@ -23,6 +23,22 @@ def test_ai_execution_audit_is_canonicalized_for_persistence():
     assert validated == _ai_execution_audit()
 
 
+@pytest.mark.parametrize("limit_parameter", ["max_tokens", "max_completion_tokens"])
+@pytest.mark.parametrize("limit", [4096, 8192, 65536])
+def test_supported_completion_parameters_are_preserved(limit_parameter, limit):
+    audit = _ai_execution_audit()
+    audit["parameters"] = {"temperature": 0, "top_p": 0.1, limit_parameter: limit}
+    assert validate_ai_audit(audit) == audit
+
+
+@pytest.mark.parametrize("limits", [{}, {"max_tokens": 65536, "max_completion_tokens": 8192}, {"max_tokens": 65535}, {"max_completion_tokens": True}, {"token_limit": 8192}])
+def test_ambiguous_or_unsupported_completion_limits_fail_closed(limits):
+    audit = _ai_execution_audit()
+    audit["parameters"] = {"temperature": 0, "top_p": 0.1, **limits}
+    with pytest.raises(RuleViolation, match="Worker AI parameters"):
+        validate_ai_audit(audit)
+
+
 def test_verification_retains_both_model_calls_without_replacing_generation_audit():
     audit = _ai_execution_audit()
     audit["verification"] = {**_ai_execution_audit(), "duration_ms": 300}

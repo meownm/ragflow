@@ -131,6 +131,9 @@ def test_llm_adapter_preserves_tenant_prompt_payload_and_retry_contract(monkeypa
     assert audit["parameters"] == options
     assert audit["token_usage"] == {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18}
     assert audit["duration_ms"] >= 0
+    from business_documents.domain.execution_audit import validate_ai_audit
+
+    assert validate_ai_audit(audit) == audit
     assert adapter.consume_execution_audit() is None
 
 

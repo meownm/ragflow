@@ -44,7 +44,8 @@ def test_fixture_has_complete_clause_inventory_and_valid_template():
     assert not placement_failures(CASE, validate_document_ast(_ideal_ast()))
 
 
-def test_active_suite_preserves_original_cases_and_registers_admin_diagnostic():
+def test_active_suite_preserves_original_cases_and_registers_admin_diagnostic(monkeypatch):
+    monkeypatch.syspath_prepend(str(live.REPO_ROOT / "admin/server"))
     from admin.server.document_quality_runs import _known_case_ids
 
     baseline = json.loads((live.ASSET_ROOT / "golden_model_quality/v1.json").read_text(encoding="utf-8"))

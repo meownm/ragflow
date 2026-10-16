@@ -171,6 +171,19 @@ Oracle unit tests remove every requirement and every clause, and move or
 duplicate the definitions into 5.5. These unit tests validate the oracle and
 runner; they are not real-model acceptance.
 
+Every verifier batch retains all active confirmed sources in
+`replacement_fragments`, including placement answers outside its own `fragments`.
+`test_requirement_placement_context.py` captures the request before inference
+with more than 24 proposal fragments. It fails if the first request loses the
+author's placement answer; it supplies no model verdict.
+
+A pure domain guard reuses `semantic_duplicate_section_pairs` for changed 5.4/5.5
+content. It rejects overlapping definitions before inference and feeds the
+section pair back to the next planner request without inventing new source IDs.
+Unchanged duplication does not block edits to other sections. The focused tests
+cover table/list repeats, independent monitoring with a reference, and retry
+feedback. Real-model controls retain the model verdict separately from this guard.
+
 Run this case through the disposable live runner:
 
 ```bash

@@ -4,6 +4,35 @@ from collections.abc import Mapping
 import re
 
 from business_documents.domain.errors import RuleViolation
+from business_documents.domain.content_quality import semantic_duplicate_section_pairs
+
+
+def validate_reporting_monitoring_uniqueness(before: Mapping, after: Mapping) -> None:
+    """Reject repeated definitions when reporting or monitoring content changes."""
+    previous = {section["id"]: section["blocks"] for section in before["sections"]}
+    current = {section["id"]: section["blocks"] for section in after["sections"]}
+    if all(previous.get(section_id) == current.get(section_id) for section_id in ("5.4", "5.5")):
+        return
+    comparable = []
+    for section in after["sections"]:
+        if section["id"] not in {"5.4", "5.5"}:
+            continue
+        blocks = []
+        for block in section["blocks"]:
+            if block["type"] == "list":
+                blocks.extend({"type": "paragraph", "text": item} for item in block["items"])
+            elif block["type"] == "table":
+                blocks.extend({"type": "paragraph", "text": " ".join(row)} for row in block["rows"])
+            elif block["type"] == "paragraph":
+                blocks.append(block)
+        comparable.append({"id": section["id"], "blocks": blocks})
+    duplicates = semantic_duplicate_section_pairs(comparable, section_pairs=(("5.4", "5.5"),))
+    if duplicates:
+        raise RuleViolation(
+            "DUPLICATE_REQUIREMENT_CONTENT",
+            "Reporting and monitoring repeat the same requirement definitions",
+            {"duplicate_section_pairs": [list(pair) for pair in duplicates]},
+        )
 
 
 def requirement_fragments(sources: Mapping[str, str]) -> dict[str, dict[str, str]]:

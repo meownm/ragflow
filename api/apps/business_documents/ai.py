@@ -46,7 +46,7 @@ from business_documents.application.errors import ValidationError
 from business_documents.domain.content import render_section_text
 from business_documents.domain.change_stream import ChangeOperationStream
 from business_documents.domain.content_quality import parent_child_section_pairs, semantic_duplicate_section_pairs
-from business_documents.domain.requirement_coverage import requirement_fragments, validate_requirement_coverage
+from business_documents.domain.requirement_coverage import requirement_fragments, validate_requirement_coverage, validate_reporting_monitoring_uniqueness
 from business_documents.domain.change_plan import added_subsection_scopes
 from business_documents.domain.errors import RuleViolation
 from api.db.db_models import BusinessDocumentJob
@@ -405,7 +405,8 @@ class BusinessDocumentAI:
         return validated
 
     def _verify_requirements(self, job: BusinessDocumentJob, plan: dict[str, Any]) -> dict[str, Any]:
-        fragments = _confirmed_requirement_fragments(job.payload)
+        confirmed = _confirmed_requirement_fragments(job.payload)
+        fragments = dict(confirmed)
         sources: dict[str, str] = {}
         # Pulling EVA supplies review context, not acceptance of every remote
         # change. Accepted proposals and author answers above own that decision.
@@ -416,6 +417,10 @@ class BusinessDocumentAI:
                 sources[f"section:{section['id']}"] = render_section_text(section)
         fragments.update(requirement_fragments(sources))
         final = apply_change_plan(base, plan)
+        try:
+            validate_reporting_monitoring_uniqueness(base, final)
+        except RuleViolation as error:
+            raise ValidationError(error.code, error.message, error.details) from error
         blocks = {f"{section['id']}:{index}": text for section in final["sections"] for index, block in enumerate(section["blocks"]) if (text := render_section_text({"blocks": [block]})).strip()}
         section_titles = {section["id"]: section["title"] for section in published_template()["sections"]} | {section["id"]: section["title"] for section in final["sections"]}
         if not fragments:
@@ -425,13 +430,10 @@ class BusinessDocumentAI:
         consumer = getattr(self._adapter, "consume_execution_audit", None)
         for offset in range(0, len(fragment_ids), 24):
             batch = {key: fragments[key] for key in fragment_ids[offset : offset + 24]}
-            replacements = (
-                {key: value for key, value in fragments.items() if not value["source_id"].startswith("section:")} if any(value["source_id"].startswith("section:") for value in batch.values()) else {}
-            )
             raw = self._adapter.generate(
                 job.tenant_id,
                 prompt_text("requirement_coverage"),
-                {"job_input": {"task_type": "VERIFY_REQUIREMENT_COVERAGE", "fragments": batch, "replacement_fragments": replacements, "final_blocks": blocks, "section_titles": section_titles}},
+                {"job_input": {"task_type": "VERIFY_REQUIREMENT_COVERAGE", "fragments": batch, "replacement_fragments": confirmed, "final_blocks": blocks, "section_titles": section_titles}},
             )
             audit = consumer() if callable(consumer) else None
             if audit:

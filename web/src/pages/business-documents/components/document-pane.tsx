@@ -5,15 +5,23 @@ import ReactMarkdown from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import type {
+  BusinessDocumentChangePreview,
   BusinessDocumentRevision,
   BusinessDocumentSelection,
 } from '../types';
+import { DocumentSectionChange } from './change-preview-panel';
 
 interface DocumentPaneProps {
   revision: BusinessDocumentRevision | null;
   onSelectionChange: (selection: BusinessDocumentSelection | null) => void;
   highlightedSectionIds?: string[];
   focusRequest?: { sectionId: string; sequence: number } | null;
+  changePreview?: BusinessDocumentChangePreview | null;
+  preliminary?: boolean;
+  onFocusSource?: (
+    kind: 'question' | 'proposal' | 'comment',
+    id: string,
+  ) => void;
 }
 
 const CONTEXT_WINDOW = 64;
@@ -152,10 +160,31 @@ export function DocumentPane({
   onSelectionChange,
   highlightedSectionIds = [],
   focusRequest,
+  changePreview,
+  preliminary = false,
+  onFocusSource,
 }: DocumentPaneProps) {
   const paneRef = useRef<HTMLDivElement>(null);
   const [selectionError, setSelectionError] = useState<string | null>(null);
   const [focusedSectionId, setFocusedSectionId] = useState<string | null>(null);
+  const changes = new Map(
+    changePreview?.sections.map((change) => [change.section_id, change]),
+  );
+  const sections = [...(revision?.document_ast.sections ?? [])];
+  const sectionIds = new Set(sections.map((section) => section.id));
+  const addedSections = (changePreview?.sections ?? []).filter(
+    (change) => !sectionIds.has(change.section_id),
+  );
+  if (addedSections.length) {
+    sections.push(
+      ...addedSections.map((change) => ({
+        id: change.section_id,
+        title: change.title,
+        blocks: [],
+      })),
+    );
+    sections.sort((a, b) => a.id.localeCompare(b.id, 'en', { numeric: true }));
+  }
 
   useEffect(() => setSelectionError(null), [revision?.revision_id]);
   useEffect(() => {
@@ -210,6 +239,12 @@ export function DocumentPane({
       rejectSelection('Не удалось определить раздел для комментария.');
       return;
     }
+    if (startSection.dataset.sectionPreview === 'true') {
+      rejectSelection(
+        'Комментарий к этому фрагменту можно привязать после применения изменений.',
+      );
+      return;
+    }
 
     const match = findUniqueOffset(startSection, sectionText, selectedText);
     if ('error' in match) {
@@ -254,7 +289,7 @@ export function DocumentPane({
 
   return (
     <section
-      className="flex min-h-0 flex-col bg-bg-base"
+      className="flex min-h-0 flex-1 flex-col bg-bg-base"
       data-testid="business-document-pane"
       aria-label="Документ"
     >
@@ -294,10 +329,12 @@ export function DocumentPane({
           data-testid="business-document-markdown"
         >
           <article className="mx-auto max-w-[860px] text-[15px] leading-7 text-text-primary">
-            {revision.document_ast.sections.map((section) => {
+            {sections.map((section) => {
+              const change = changes.get(section.id);
               const sectionText = revision.section_texts[section.id] ?? '';
-              const displayedSectionText = sectionText.trim()
-                ? sectionText
+              const previewText = change ? change.after : sectionText;
+              const displayedSectionText = previewText.trim()
+                ? previewText
                 : 'Требования отсутствуют';
               const headingLevel = Math.min(
                 6,
@@ -309,11 +346,12 @@ export function DocumentPane({
                   key={section.id}
                   data-section-id={section.id}
                   data-section-text={sectionText}
+                  data-section-preview={Boolean(change)}
                   data-testid="business-document-section"
                   className={
                     focusedSectionId === section.id
                       ? 'rounded-md bg-accent-primary/10 ring-2 ring-accent-primary/50 ring-offset-4'
-                      : highlightedSectionIds.includes(section.id)
+                      : change || highlightedSectionIds.includes(section.id)
                         ? 'rounded-md bg-accent-primary/5 ring-1 ring-accent-primary/20 ring-offset-4'
                         : undefined
                   }
@@ -334,6 +372,13 @@ export function DocumentPane({
                   >
                     {headingMarkdown}
                   </ReactMarkdown>
+                  {change && (
+                    <p className="mb-3 text-xs font-medium text-accent-primary">
+                      {preliminary
+                        ? 'Предварительные изменения · проверка продолжается'
+                        : 'Изменения проверены · ещё не применены'}
+                    </p>
+                  )}
                   <div data-section-body>
                     <ReactMarkdown
                       remarkPlugins={[remarkGfm, remarkBreaks]}
@@ -418,6 +463,12 @@ export function DocumentPane({
                       {displayedSectionText}
                     </ReactMarkdown>
                   </div>
+                  {change && (
+                    <DocumentSectionChange
+                      change={change}
+                      onFocusSource={onFocusSource}
+                    />
+                  )}
                 </section>
               );
             })}

@@ -2247,7 +2247,21 @@ test('shows streamed sections as preliminary and clears them on retry', async ()
   });
   const preview = await screen.findByTestId('business-document-change-preview');
   expect(preview).toHaveTextContent('Предварительные изменения');
-  expect(preview).toHaveTextContent('Новая цель.');
+  const section = screen.getAllByTestId('business-document-section')[0];
+  expect(section.querySelector('[data-section-body]')).toHaveTextContent(
+    'Новая цель.',
+  );
+  expect(section.querySelector('[data-section-body]')).not.toHaveTextContent(
+    firstSectionText,
+  );
+  expect(preview).not.toHaveTextContent('Новая цель.');
+  expect(section).toHaveAttribute('data-section-preview', 'true');
+  const selectionSpy = mockTextSelection('Новая цель.', section);
+  fireEvent.mouseUp(screen.getByTestId('business-document-markdown'));
+  expect(
+    screen.getByTestId('business-document-selection-error'),
+  ).toHaveTextContent('после применения изменений');
+  selectionSpy.mockRestore();
   expect(
     within(preview).queryByRole('button', { name: 'Подтвердить применение' }),
   ).not.toBeInTheDocument();
@@ -2261,6 +2275,32 @@ test('shows streamed sections as preliminary and clears them on retry', async ()
       payload: { reason: 'TEST' },
     });
   });
+  expect(
+    screen.queryByTestId('business-document-change-preview'),
+  ).not.toBeInTheDocument();
+  expect(section.querySelector('[data-section-body]')).toHaveTextContent(
+    firstSectionText,
+  );
+  expect(section).toHaveAttribute('data-section-preview', 'false');
+  act(() => {
+    emit!({
+      id: 3,
+      job_id: 'job-stream',
+      attempt: 2,
+      base_revision_id: 'revision-old',
+      type: 'section_preview',
+      payload: {
+        section_id: '1',
+        title: 'Цель',
+        before: firstSectionText,
+        after: 'Правка устаревшей ревизии.',
+        source_event_ids: ['event-1'],
+      },
+    });
+  });
+  expect(section.querySelector('[data-section-body]')).toHaveTextContent(
+    firstSectionText,
+  );
   expect(
     screen.queryByTestId('business-document-change-preview'),
   ).not.toBeInTheDocument();
@@ -2427,8 +2467,12 @@ test('shows a new optional reporting section before confirming its application',
   mockedSubmit.mockResolvedValue(commandResult);
   renderPage();
   const preview = await screen.findByTestId('business-document-change-preview');
-  expect(preview).toHaveTextContent('Требования к отчетности');
-  expect(preview).toHaveTextContent('время первого подтверждения');
+  const section = screen.getAllByTestId('business-document-section').at(-1)!;
+  expect(section).toHaveAttribute('data-section-id', '5.4');
+  expect(section).toHaveTextContent('Требования к отчетности');
+  expect(section.querySelector('[data-section-body]')).toHaveTextContent(
+    'время первого подтверждения',
+  );
   expect(mockedSubmit).not.toHaveBeenCalled();
   fireEvent.click(
     within(preview).getByRole('button', { name: 'Подтвердить применение' }),
@@ -2444,7 +2488,7 @@ test('shows a new optional reporting section before confirming its application',
   );
 });
 
-test('prepares changes, then shows before and after with explicit confirmation', async () => {
+test('prepares changes, then shows new text in the document with expandable context', async () => {
   mockedFetch.mockResolvedValueOnce({
     ...projection,
     allowed_commands: ['PREPARE_CHANGES'],
@@ -2497,16 +2541,15 @@ test('prepares changes, then shows before and after with explicit confirmation',
   renderPage();
   const preview = await screen.findByTestId('business-document-change-preview');
   expect(preview).toHaveTextContent('ещё не применено');
-  expect(preview).toHaveTextContent(firstSectionText);
-  expect(preview).toHaveTextContent('Новая измеримая цель.');
-  fireEvent.click(
-    within(preview).getByRole('button', { name: 'Показать в документе' }),
+  const section = screen.getAllByTestId('business-document-section')[0];
+  expect(section.querySelector('[data-section-body]')).toHaveTextContent(
+    'Новая измеримая цель.',
   );
-  expect(screen.getAllByTestId('business-document-section')[0]).toHaveClass(
-    'ring-2',
-  );
+  expect(section.querySelector('details')).not.toHaveAttribute('open');
+  fireEvent.click(within(section).getByText(/Прежний текст и основания/));
+  expect(section).toHaveTextContent(firstSectionText);
   fireEvent.click(
-    within(preview).getByRole('button', {
+    within(section).getByRole('button', {
       name: /Комментарий автора: Уточнить цель/,
     }),
   );
@@ -2523,6 +2566,102 @@ test('prepares changes, then shows before and after with explicit confirmation',
       }),
     ),
   );
+});
+
+test('discards inline changes and restores the saved text without changing its revision', async () => {
+  mockedFetch.mockResolvedValue({
+    ...projection,
+    change_preview: { job_id: 'job-preview', base_revision_id: 'revision-3' },
+    allowed_commands: ['DISCARD_PREPARED_CHANGES'],
+  });
+  mockedSubmit.mockResolvedValue({ ...commandResult, document: projection });
+  renderPage();
+  const preview = await screen.findByTestId('business-document-change-preview');
+  const sections = screen.getAllByTestId('business-document-section');
+  expect(sections[1].querySelector('[data-section-body]')).toHaveTextContent(
+    secondSectionText,
+  );
+  expect(sections[1]).toHaveAttribute('data-section-preview', 'false');
+  fireEvent.click(within(preview).getByRole('button', { name: 'Отказаться' }));
+  await waitFor(() =>
+    expect(
+      screen.queryByTestId('business-document-change-preview'),
+    ).not.toBeInTheDocument(),
+  );
+  expect(sections[0].querySelector('[data-section-body]')).toHaveTextContent(
+    firstSectionText,
+  );
+  expect(screen.getByTestId('business-document-pane')).toHaveTextContent(
+    'Ревизия 3',
+  );
+  expect(mockedSubmit).toHaveBeenCalledWith(
+    'doc-1',
+    expect.objectContaining({
+      type: 'DISCARD_PREPARED_CHANGES',
+      payload: { job_id: 'job-preview' },
+    }),
+  );
+});
+
+test('places new preview subsections in numeric document order', async () => {
+  mockedFetch.mockResolvedValue({
+    ...projection,
+    change_preview: { job_id: 'job-preview', base_revision_id: 'revision-3' },
+    allowed_commands: [],
+  });
+  mockedFetchPreview.mockResolvedValue({
+    job_id: 'job-preview',
+    base_revision_id: 'revision-3',
+    state_version: 18,
+    sections: ['1.10', '1.2'].map((section_id) => ({
+      section_id,
+      title: 'Новый подраздел',
+      before: '',
+      after: `Текст ${section_id}`,
+      source_event_ids: ['event-1'],
+    })),
+    acknowledged_no_change_event_ids: [],
+  });
+  renderPage();
+  await screen.findByTestId('business-document-change-preview');
+  expect(
+    screen
+      .getAllByTestId('business-document-section')
+      .map((section) => section.dataset.sectionId),
+  ).toEqual(['1', '1.2', '1.10', '2', '3']);
+});
+
+test('does not overlay a prepared plan from a different revision', async () => {
+  mockedFetch.mockResolvedValue({
+    ...projection,
+    change_preview: { job_id: 'job-preview', base_revision_id: 'revision-old' },
+    allowed_commands: [],
+  });
+  mockedFetchPreview.mockResolvedValue({
+    job_id: 'job-preview',
+    base_revision_id: 'revision-old',
+    state_version: 18,
+    sections: [
+      {
+        section_id: '1',
+        title: 'Цель',
+        before: firstSectionText,
+        after: 'Устаревшая правка.',
+        source_event_ids: [],
+      },
+    ],
+    acknowledged_no_change_event_ids: [],
+  });
+  renderPage();
+  await waitFor(() => expect(mockedFetchPreview).toHaveBeenCalledTimes(1));
+  expect(
+    screen
+      .getAllByTestId('business-document-section')[0]
+      .querySelector('[data-section-body]'),
+  ).toHaveTextContent(firstSectionText);
+  expect(
+    screen.queryByTestId('business-document-change-preview'),
+  ).not.toBeInTheDocument();
 });
 
 test.each([
@@ -2595,7 +2734,9 @@ test.each([
       within(preview).getByRole('button', { name: 'Подтвердить применение' }),
     );
     const markdown = screen.getByTestId('business-document-markdown');
-    expect(markdown).toHaveTextContent(firstSectionText);
+    expect(markdown).toHaveTextContent(
+      historyOpen ? firstSectionText : 'Новая измеримая цель.',
+    );
     await act(async () => {
       confirm({
         ...commandResult,
@@ -2785,9 +2926,15 @@ test.each(['permission', 'version'])(
         ? 'business-document-conflict'
         : 'business-document-command-error',
     );
-    const markdown = screen.getByTestId('business-document-markdown');
-    expect(markdown).toHaveTextContent(firstSectionText);
-    expect(markdown).not.toHaveTextContent('Новая измеримая цель.');
+    const section = screen.getAllByTestId('business-document-section')[0];
+    expect(section).toHaveAttribute('data-section-text', firstSectionText);
+    expect(section.querySelector('[data-section-body]')).toHaveTextContent(
+      'Новая измеримая цель.',
+    );
+    expect(section).toHaveTextContent('ещё не применены');
+    expect(screen.getByTestId('business-document-pane')).toHaveTextContent(
+      'Ревизия 3',
+    );
   },
 );
 
@@ -2825,9 +2972,10 @@ test('shows evidence changes and named no-change inputs before confirmation', as
   });
   renderPage();
   const preview = await screen.findByTestId('business-document-change-preview');
-  fireEvent.click(within(preview).getByText(/будет изменён/));
-  expect(preview).toHaveTextContent('Источники до');
-  expect(preview).toHaveTextContent('ragflow://dataset/d/document/new/chunk/1');
+  const section = screen.getAllByTestId('business-document-section')[0];
+  fireEvent.click(within(section).getByText(/Прежний текст и основания/));
+  expect(section).toHaveTextContent('Источники до');
+  expect(section).toHaveTextContent('ragflow://dataset/d/document/new/chunk/1');
   expect(preview).toHaveTextContent('Учтено без изменения текста: 1');
   fireEvent.click(
     within(preview).getByRole('button', { name: /Проверить метрику/ }),
@@ -2844,7 +2992,9 @@ test('keeps a prepared diff readable without offering edit actions to a viewer',
   });
   renderPage();
   const preview = await screen.findByTestId('business-document-change-preview');
-  expect(preview).toHaveTextContent('Новая измеримая цель.');
+  expect(screen.getByTestId('business-document-markdown')).toHaveTextContent(
+    'Новая измеримая цель.',
+  );
   expect(
     within(preview).queryByRole('button', { name: 'Подтвердить применение' }),
   ).not.toBeInTheDocument();

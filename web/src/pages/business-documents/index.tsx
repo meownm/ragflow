@@ -841,6 +841,7 @@ export default function BusinessDocumentsPage() {
   const [streamPreview, setStreamPreview] = useState<{
     jobId: string;
     attempt: number;
+    baseRevisionId?: string | null;
     sections: BusinessDocumentSectionStreamPreview[];
   } | null>(null);
   const [streamError, setStreamError] = useState<string>();
@@ -959,6 +960,7 @@ export default function BusinessDocumentsPage() {
             return {
               jobId: streamJobId,
               attempt: event.attempt,
+              baseRevisionId: event.base_revision_id,
               sections: [
                 ...sections.filter(
                   (item) => item.section_id !== section.section_id,
@@ -999,6 +1001,31 @@ export default function BusinessDocumentsPage() {
     ),
     retry: false,
   });
+  const inlineChangePreview = useMemo(() => {
+    if (document?.change_preview) {
+      const preview = changePreviewQuery.data;
+      return preview?.job_id === document.change_preview.job_id &&
+        preview.base_revision_id === document.current_revision?.revision_id
+        ? preview
+        : null;
+    }
+    if (
+      !document ||
+      !streamJobId ||
+      streamPreview?.jobId !== streamJobId ||
+      streamPreview.baseRevisionId !== document.current_revision?.revision_id ||
+      !streamPreview.sections.length
+    )
+      return null;
+    return {
+      job_id: streamJobId,
+      base_revision_id: document.current_revision?.revision_id ?? '',
+      state_version: document.state_version,
+      sections: streamPreview.sections,
+      acknowledged_no_change_event_ids: [],
+    };
+  }, [document, changePreviewQuery.data, streamPreview, streamJobId]);
+  useEffect(() => setSelection(null), [inlineChangePreview?.sections]);
   const focusSection = useCallback((sectionId: string) => {
     setSectionFocus((current) => ({
       sectionId,
@@ -1017,14 +1044,8 @@ export default function BusinessDocumentsPage() {
     [],
   );
   const highlightedSectionIds = useMemo(() => {
-    if (changePreviewQuery.data)
-      return changePreviewQuery.data.sections.map(
-        (section) => section.section_id,
-      );
-    const streamed =
-      streamPreview && streamPreview.jobId === streamJobId
-        ? streamPreview.sections.map((section) => section.section_id)
-        : [];
+    if (document?.change_preview && inlineChangePreview)
+      return inlineChangePreview.sections.map((section) => section.section_id);
     if (
       !document ||
       !['ANALYZING_REVIEW', 'APPLYING_CHANGES'].includes(
@@ -1035,7 +1056,9 @@ export default function BusinessDocumentsPage() {
     return [
       ...new Set(
         [
-          ...streamed,
+          ...(inlineChangePreview?.sections.map(
+            (section) => section.section_id,
+          ) ?? []),
           ...document.protocol.questions.map(
             (question) => question.target_section_id,
           ),
@@ -1046,7 +1069,7 @@ export default function BusinessDocumentsPage() {
         ].filter((sectionId): sectionId is string => Boolean(sectionId)),
       ),
     ];
-  }, [changePreviewQuery.data, document, streamPreview, streamJobId]);
+  }, [inlineChangePreview, document]);
   useEffect(() => {
     setOwnerSelection(document?.owner_id ?? '');
   }, [document?.owner_id]);
@@ -1937,25 +1960,6 @@ export default function BusinessDocumentsPage() {
             </Button>
           </div>
         )}
-        {streamJobId &&
-          streamPreview?.jobId === streamJobId &&
-          streamPreview.sections.length > 0 &&
-          !document.change_preview && (
-            <ChangePreviewPanel
-              preliminary
-              preview={{
-                job_id: streamJobId,
-                base_revision_id: document.current_revision?.revision_id ?? '',
-                state_version: document.state_version,
-                sections: streamPreview.sections,
-                acknowledged_no_change_event_ids: [],
-              }}
-              pending
-              canConfirm={false}
-              canDiscard={false}
-              onFocusSection={focusSection}
-            />
-          )}
         {streamJobId && streamError && (
           <div
             className="border-b border-state-error/30 bg-state-error/5 px-5 py-2 text-xs text-state-error"
@@ -1963,26 +1967,6 @@ export default function BusinessDocumentsPage() {
           >
             Не удалось получить предварительные изменения: {streamError}
           </div>
-        )}
-        {document.change_preview && changePreviewQuery.data && (
-          <ChangePreviewPanel
-            preview={changePreviewQuery.data}
-            pending={isBusy}
-            canConfirm={allowed.has('CONFIRM_PREPARED_CHANGES')}
-            canDiscard={allowed.has('DISCARD_PREPARED_CHANGES')}
-            onFocusSection={focusSection}
-            onFocusSource={focusSource}
-            onConfirm={() =>
-              runDocumentCommand('CONFIRM_PREPARED_CHANGES', {
-                job_id: document.change_preview!.job_id,
-              })
-            }
-            onDiscard={() =>
-              runDocumentCommand('DISCARD_PREPARED_CHANGES', {
-                job_id: document.change_preview!.job_id,
-              })
-            }
-          />
         )}
         {document.change_preview && changePreviewQuery.error && (
           <div
@@ -2060,9 +2044,32 @@ export default function BusinessDocumentsPage() {
           } as CSSProperties
         }
       >
-        <div className="row-span-2 grid min-h-0 max-lg:row-start-2 max-lg:row-span-1">
+        <div className="row-span-2 flex min-h-0 flex-col max-lg:row-start-2 max-lg:row-span-1">
+          {inlineChangePreview && (
+            <ChangePreviewPanel
+              preliminary={!document.change_preview}
+              preview={inlineChangePreview}
+              pending={isBusy}
+              canConfirm={allowed.has('CONFIRM_PREPARED_CHANGES')}
+              canDiscard={allowed.has('DISCARD_PREPARED_CHANGES')}
+              onFocusSource={focusSource}
+              onConfirm={() =>
+                runDocumentCommand('CONFIRM_PREPARED_CHANGES', {
+                  job_id: inlineChangePreview.job_id,
+                })
+              }
+              onDiscard={() =>
+                runDocumentCommand('DISCARD_PREPARED_CHANGES', {
+                  job_id: inlineChangePreview.job_id,
+                })
+              }
+            />
+          )}
           <DocumentPane
             revision={displayedRevision}
+            changePreview={historyOpen ? null : inlineChangePreview}
+            preliminary={!document.change_preview}
+            onFocusSource={focusSource}
             highlightedSectionIds={documentHighlightedSectionIds}
             focusRequest={sectionFocus}
             onSelectionChange={(nextSelection) => {

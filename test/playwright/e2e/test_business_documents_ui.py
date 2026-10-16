@@ -278,7 +278,7 @@ def test_business_documents_list_validation_and_create_navigation(
     expect(page).to_have_url(re.compile(r"/business-documents/doc-ui-1$"))
     assert created_payloads == [
         {
-            "schema_version": "3",
+            "schema_version": "4",
             "document_type": "business_requirements",
             "catalog_entry_id": "01.01.04.01.01",
             "idea": "Согласовать единый процесс.",
@@ -417,12 +417,19 @@ def test_streamed_document_section_stays_preliminary_after_reload(page, base_url
     page.goto(f"{base_url.rstrip('/')}/business-documents/doc-ui-1")
     preview = page.get_by_test_id("business-document-change-preview")
     expect(preview).to_contain_text("Предварительные изменения", timeout=RESULT_TIMEOUT_MS)
-    expect(preview).to_contain_text("Новая измеримая цель.")
+    section = page.locator('[data-section-id="1"]')
+    body = section.locator("[data-section-body]")
+    expect(body).to_contain_text("Новая измеримая цель.")
+    expect(body).not_to_contain_text("Сократить время перевода до одной минуты.")
     expect(preview.get_by_role("button", name="Подтвердить применение")).to_have_count(0)
-    expect(page.get_by_test_id("business-document-pane")).to_contain_text("Сократить время перевода до одной минуты.")
+    expect(section.get_by_text("Прежний текст и основания", exact=False)).to_be_visible()
+    expect(section.locator("details pre")).not_to_be_visible()
+    section.locator("summary").click()
+    expect(section.locator("details pre")).to_contain_text("Сократить время перевода до одной минуты.")
 
     page.reload()
-    expect(preview).to_contain_text("Новая измеримая цель.", timeout=RESULT_TIMEOUT_MS)
+    expect(body).to_contain_text("Новая измеримая цель.", timeout=RESULT_TIMEOUT_MS)
+    expect(section.locator("details pre")).not_to_be_visible()
 
 
 @pytest.mark.p1
@@ -495,15 +502,20 @@ def test_prepared_document_changes_are_visible_before_confirmation(page, base_ur
     preview = page.get_by_test_id("business-document-change-preview")
     expect(preview).to_be_visible(timeout=RESULT_TIMEOUT_MS)
     expect(preview).to_contain_text("ещё не применено")
-    expect(preview).to_contain_text("Новая измеримая цель.")
-    expect(page.get_by_test_id("business-document-pane")).to_contain_text("Сократить время перевода до одной минуты.")
+    section = page.locator('[data-section-id="1"]')
+    body = section.locator("[data-section-body]")
+    expect(body).to_contain_text("Новая измеримая цель.")
+    expect(body).not_to_contain_text("Сократить время перевода до одной минуты.")
+    expect(section.locator("details pre")).not_to_be_visible()
     assert submitted[0]["type"] == "PREPARE_CHANGES"
     assert submitted[0]["payload"] == {"base_revision_id": "revision-3"}
 
     page.reload()
     expect(preview).to_be_visible(timeout=RESULT_TIMEOUT_MS)
-    expect(page.get_by_test_id("business-document-pane")).to_contain_text("Сократить время перевода до одной минуты.")
+    expect(body).to_contain_text("Новая измеримая цель.")
     preview.get_by_role("button", name="Подтвердить применение").click()
     expect(page.get_by_test_id("business-document-pane")).to_contain_text("Новая измеримая цель.", timeout=RESULT_TIMEOUT_MS)
+    expect(section).to_have_attribute("data-section-preview", "false")
+    expect(preview).to_have_count(0)
     assert submitted[1]["type"] == "CONFIRM_PREPARED_CHANGES"
     assert submitted[1]["payload"] == {"job_id": "job-preview"}

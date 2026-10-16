@@ -134,9 +134,9 @@ def verify_report(report_path: Path, root: Path, expected_revision: str | None =
     rubric = _json(asset_root / "evals" / "rubric.v1.json")
     weights = {item["id"]: float(item["weight"]) for item in rubric["criteria"]}
     template = _json(asset_root / "templates" / "business_requirements.v1.json")
-    golden_path = asset_root / "golden_model_quality" / "v1.json"
+    golden_path = asset_root / "golden_model_quality" / "v2.json"
     golden = _json(golden_path)
-    prompt_names = ("intake.v1.md", "draft.v1.md", "review.v1.md", "change_planner.v1.md")
+    prompt_names = ("intake.v1.md", "draft.v1.md", "review.v1.md", "change_planner.v1.md", "requirement_coverage.v1.md")
     prompt_hashes = {name: f"sha256:{hashlib.sha256((asset_root / 'prompts' / name).read_bytes()).hexdigest()}" for name in prompt_names}
 
     required = {
@@ -193,7 +193,7 @@ def verify_report(report_path: Path, root: Path, expected_revision: str | None =
         if (
             not isinstance(result, dict)
             or not {"case_id", "priority", "status", "failures", "metrics"} <= set(result)
-            or set(result) - {"case_id", "priority", "status", "failures", "metrics", "duration_ms"}
+            or set(result) - {"case_id", "priority", "status", "failures", "metrics", "duration_ms", "evidence"}
         ):
             raise ValueError("Invalid live golden case result")
         if result["case_id"] != expected_case["id"] or result["priority"] != expected_case["priority"]:
@@ -204,6 +204,14 @@ def verify_report(report_path: Path, root: Path, expected_revision: str | None =
             scored_cases.append((result["case_id"], _verify_case_metrics(result["metrics"], weights, rubric)))
         elif result["metrics"] != {}:
             raise ValueError("Unscored live golden case contains unexpected metrics")
+        if expected_case["workflow"] == "metric_placement":
+            from test.evals.business_documents.metric_placement import evidence_failures
+
+            prompts = {name: (asset_root / "prompts" / f"{name}.v1.md").read_text(encoding="utf-8") for name in ("change_planner", "requirement_coverage")}
+            if evidence_failures(expected_case, result.get("evidence"), prompts, template, _json(asset_root / "contracts/document_draft.v2.schema.json")):
+                raise QualityGateFailed("Metric placement case lacks valid requirement and source evidence")
+        elif "evidence" in result:
+            raise ValueError("Unexpected scenario evidence")
 
     ai = _verify_ai_audit(report["ai"])
     metrics = report["metrics"]

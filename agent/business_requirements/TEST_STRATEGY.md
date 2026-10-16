@@ -144,12 +144,49 @@ denominators by P0/P1 and fails on unknown, skipped, or unexecuted P0 behavior.
 Suite 2.1.0 covers applying ready changes while preserving unanswered questions.
 Current coverage is 24/24 cases and 80/80 hard assertions.
 
-`golden_model_quality/v1.json` is a separate five-case, data-driven live-model
+`golden_model_quality/v1.json` retains the original five-case suite.
+`golden_model_quality/v2.json` is the active six-case, data-driven live-model
 suite. It covers incomplete intake, a complete draft, a confirmed review
 change, prompt injection inside evidence, and conflicting sources across three
 business domains. Each case owns its inputs, controlled evidence, expected
 fragments and expected outcome; the runner contains no case-specific model
 answers. Traceability must cover every case in both active suites.
+
+### Metric placement regression (M06)
+
+`M06_metric_placement_54_55` starts from the fixed document and protocol in
+the fixture: an accepted proposal targets existing 5.5, while an explicit
+answer for parent 5 chooses missing 5.4. There is no reinforcing general
+comment. Only this starting state is seeded. The current production
+`BusinessDocumentAI` generates the change plan and semantic verdict through
+the configured real model and the actual prompt files; the case never supplies
+either response.
+
+The leased worker prepares the preview and the normal confirmation command
+applies it. The independent oracle checks both source-event scopes, all eight
+metric definitions in individual table rows, interval endpoints, roles,
+negation, ratio numerators/denominators, API alerting and the four-hour SLA.
+It also checks unchanged parent/other sections and idempotent confirmation.
+Oracle unit tests remove every requirement and every clause, and move or
+duplicate the definitions into 5.5. These unit tests validate the oracle and
+runner; they are not real-model acceptance.
+
+Run this case through the disposable live runner:
+
+```bash
+python -B test/integration/live_ragflow/runner.py \
+  --source-root <source> --dist-root <empty-QA-dir> \
+  --evidence-dir <outside-source> --business-documents-quality \
+  --business-documents-case-id M06_metric_placement_54_55 --skip-browser-tests
+```
+
+The report includes the fixture hash, both prompt hashes, exact model exchanges
+and their input/output hashes, the resulting plan/AST and the requirement
+inventory. Its case status may be PASS or FAIL, but a one-case report remains
+INCOMPLETE/diagnostic and cannot qualify the full suite. The release report
+verifier rejects missing or inconsistent M06 evidence. Re-running this command
+uses the same published inputs with fresh disposable document/event IDs;
+the saved exchanges retain the exact system text and input/output JSON for inspection.
 
 ## Model qualification
 

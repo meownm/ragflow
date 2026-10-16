@@ -161,7 +161,7 @@ first five substantive changes for CI duration, failures and post-check defects
 before changing required branch rules.
 
 The live Business Documents runner accepts `--business-documents-case-id` for
-one-case diagnosis. Its report remains `INCOMPLETE`; a full five-case run is
+one-case diagnosis. Its report remains `INCOMPLETE`; a full active-suite run is
 needed to assess the baseline. Source Workbench uses a local similarity
 threshold of 0.4, selected from a disposable `bge-m3` corpus where positive
 top hits scored at least 0.450 and no-answer hits scored at most 0.364.

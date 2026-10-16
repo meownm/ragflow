@@ -295,7 +295,7 @@ def enqueue_quality_run(trigger: str, *, requested_by: str | None = None, schedu
 
 
 def _known_case_ids() -> set[str]:
-    suite = ROOT / "agent/business_requirements/golden_model_quality/v1.json"
+    suite = ROOT / "agent/business_requirements/golden_model_quality/v2.json"
     value = json.loads(suite.read_text(encoding="utf-8"))
     return {item["id"] for item in value.get("cases", []) if isinstance(item, dict) and isinstance(item.get("id"), str)}
 

@@ -207,13 +207,13 @@ def test_golden_dialogue_suite_covers_required_quality_lanes():
 
 
 def test_model_golden_suite_is_self_contained_and_diverse():
-    suite = load_json("golden_model_quality/v1.json")
+    suite = load_json("golden_model_quality/v2.json")
     cases = suite["cases"]
     case_ids = [case["id"] for case in cases]
 
     assert suite["suite_id"] == "business-requirements-live-model-quality"
-    assert suite["suite_version"] == "1.0.1"
-    assert len(cases) == 5
+    assert suite["suite_version"] == "2.0.0"
+    assert len(cases) == 6
     assert len(case_ids) == len(set(case_ids))
     assert len({case["title"] for case in cases}) == len(cases)
     assert {case["priority"] for case in cases} == {"P0"}
@@ -222,6 +222,7 @@ def test_model_golden_suite_is_self_contained_and_diverse():
         "draft_quality",
         "review_change",
         "source_conflict",
+        "metric_placement",
     }
     assert {case["category"] for case in cases} == {
         "completeness",
@@ -306,7 +307,7 @@ def test_quality_traceability_covers_every_rubric_requirement_with_executable_ev
     rubric = load_json("evals/rubric.v1.json")
     traceability = load_json("evals/traceability.v1.json")
     suite = load_json("golden_dialogs/v2.json")
-    model_suite = load_json("golden_model_quality/v1.json")
+    model_suite = load_json("golden_model_quality/v2.json")
     known_cases = {case["id"] for case in suite["cases"]}
     known_model_cases = {case["id"] for case in model_suite["cases"]}
     rows = traceability["requirements"]

@@ -12,12 +12,50 @@ from tools.quality.verify_business_document_quality_report import QualityGateFai
 ROOT = Path(__file__).parents[4]
 
 
+def _placement_evidence(case):
+    """Synthetic verifier input only; the live gate never imports this factory."""
+    from business_documents.domain.content import section_hash
+
+    def digest(value):
+        return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+    def encoded(value):
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+    ast = json.loads(json.dumps(case["seed"]["base_document"]))
+    monitoring = next(s for s in ast["sections"] if s["id"] == "5.5")
+    monitoring["blocks"] = [{"type": "paragraph", "text": " ".join(r["text"] for r in case["seed"]["requirements"] if r["section_id"] == "5.5")}]
+    ast["sections"].insert(-1, {"id": "5.4", "title": "Требования к отчетности", "blocks": [{"type": "table", "headers": ["Метрика", "Определение"],
+                               "rows": [[r["label"], r["text"].split(": ", 1)[1]] for r in case["seed"]["requirements"] if r["section_id"] == "5.4"]}]})
+    base = {s["id"]: s for s in case["seed"]["base_document"]["sections"]}
+    report_section = next(s for s in ast["sections"] if s["id"] == "5.4")
+    plan = {"schema_version": "1", "base_revision_id": "fixture", "source_state_version": 1, "acknowledged_no_change_event_ids": [], "operations": [
+        {"operation_id": s, "type": "REPLACE_SECTION_CONTENT", "section_id": s, "source_event_ids": [event], "expected_section_hash": section_hash(base[s]),
+         "content": {"blocks": [*base["5"]["blocks"], report_section] if s == "5" else monitoring["blocks"]}}
+        for s, event in [("5", "answer"), ("5.5", "proposal")]
+    ]}
+    calls = []
+    for task, name in [("PLAN_CHANGES", "change_planner"), ("VERIFY_REQUIREMENT_COVERAGE", "requirement_coverage")]:
+        system = (ROOT / f"agent/business_requirements/prompts/{name}.v1.md").read_text(encoding="utf-8")
+        payload = {"job_input": {"task_type": task}}
+        if task == "PLAN_CHANGES":
+            payload["job_input"].update(active_change_input_event_ids=["answer", "proposal"], protocol={
+                "questions": [{"target_section_id": "5", "answer": {"source_event_id": "answer", "selected_option_id": case["seed"]["selected_option_id"]}}],
+                "proposals": [{"target_section_id": "5.5", "decision": "ACCEPTED", "decision_event_id": "proposal"}], "comments": [],
+            })
+        calls.append({"task_type": task, "system_prompt": system, "system_sha256": digest(system), "input_payload": payload,
+                      "input_sha256": digest(encoded(payload)), "response": {}, "response_sha256": digest(encoded({}))})
+    return {"fixture_sha256": digest(encoded(case)), "attempts": 1, "model_calls": calls, "expected_sources": {"5": ["answer"], "5.5": ["proposal"]},
+            "final_ast": ast, "requirement_ids": [r["id"] for r in case["seed"]["requirements"]],
+            "change_plan": plan}
+
+
 def _report() -> dict:
     rubric = json.loads((ROOT / "agent/business_requirements/evals/rubric.v1.json").read_text(encoding="utf-8"))
     template = json.loads((ROOT / "agent/business_requirements/templates/business_requirements.v1.json").read_text(encoding="utf-8"))
-    golden_path = ROOT / "agent/business_requirements/golden_model_quality/v1.json"
+    golden_path = ROOT / "agent/business_requirements/golden_model_quality/v2.json"
     golden = json.loads(golden_path.read_text(encoding="utf-8"))
-    prompt_names = ("intake.v1.md", "draft.v1.md", "review.v1.md", "change_planner.v1.md")
+    prompt_names = ("intake.v1.md", "draft.v1.md", "review.v1.md", "change_planner.v1.md", "requirement_coverage.v1.md")
     scores = {criterion["id"]: 4.0 for criterion in rubric["criteria"]}
     scored_metrics = {
         "criterion_scores": scores,
@@ -69,6 +107,7 @@ def _report() -> dict:
                 "status": "PASS",
                 "failures": [],
                 "metrics": json.loads(json.dumps(scored_metrics)) if case["workflow"] in {"draft_quality", "review_change"} else {},
+                **({"evidence": _placement_evidence(case)} if case["workflow"] == "metric_placement" else {}),
             }
             for case in golden["cases"]
         ],

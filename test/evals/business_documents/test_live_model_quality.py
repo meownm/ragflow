@@ -34,12 +34,13 @@ from api.apps.business_documents.adapters.persistence import DOCUMENT_TABLES
 from api.apps.business_documents.worker import BusinessDocumentWorker
 from api.db.db_models import BusinessDocumentEvidenceSnapshot, BusinessDocumentJob, BusinessDocumentQuestion
 from test.evals.business_documents.live_quality import ControlledFact, QualityScore, resolve_live_quality_config, score_document_quality
+from test.evals.business_documents.metric_placement import run_metric_placement
 
 
 ASSET_ROOT = REPO_ROOT / "agent" / "business_requirements"
-MODEL_GOLDEN_PATH = ASSET_ROOT / "golden_model_quality" / "v1.json"
+MODEL_GOLDEN_PATH = ASSET_ROOT / "golden_model_quality" / "v2.json"
 RUBRIC = json.loads((ASSET_ROOT / "evals" / "rubric.v1.json").read_text(encoding="utf-8"))
-PROMPT_NAMES = ("intake.v1.md", "draft.v1.md", "review.v1.md", "change_planner.v1.md")
+PROMPT_NAMES = ("intake.v1.md", "draft.v1.md", "review.v1.md", "change_planner.v1.md", "requirement_coverage.v1.md")
 
 
 @dataclass(frozen=True)
@@ -373,6 +374,11 @@ def _case_metrics(score: QualityScore | None) -> dict[str, Any]:
 
 
 def _run_model_case(case: dict[str, Any], tenant_id: str, audits: list[dict[str, Any]]) -> CaseExecution:
+    if case["workflow"] == "metric_placement":
+        result, case_audits = run_metric_placement(case, tenant_id, RAGFlowLLMAdapter(model_name_override=os.environ.get("BUSINESS_DOCUMENT_QUALITY_MODEL") or None))
+        result["evidence"] = {key: result.pop(key) for key in list(result) if key not in {"case_id", "priority", "status", "failures", "metrics"}}
+        audits.extend(case_audits)
+        return CaseExecution(result=result, score=None, ai_audits=tuple(audits))
     document, worker, dataset_id = _create_case_runtime(case, tenant_id)
     workflow = case["workflow"]
     if workflow in {"intake_questions", "source_conflict"}:

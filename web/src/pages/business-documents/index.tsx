@@ -2036,7 +2036,8 @@ export default function BusinessDocumentsPage() {
       </div>
 
       <div
-        className="grid min-h-0 grid-cols-[minmax(0,1fr)_4px_var(--business-document-protocol-width)] grid-rows-[auto_minmax(0,1fr)] max-lg:grid-cols-1 max-lg:grid-rows-[auto_minmax(360px,1fr)_minmax(320px,0.8fr)]"
+        className="grid min-h-0 grid-cols-[minmax(0,1fr)_4px_var(--business-document-protocol-width)] grid-rows-[auto_minmax(0,1fr)] max-lg:grid-cols-1 max-lg:grid-rows-[auto_minmax(360px,1fr)_minmax(320px,0.8fr)] max-lg:overflow-y-auto scrollbar-auto"
+        data-testid="business-document-panes"
         style={
           {
             '--business-document-protocol-width': `${protocolPaneWidth}px`,

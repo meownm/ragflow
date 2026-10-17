@@ -9,12 +9,14 @@ documented behavior is not considered covered by a UI rendering alone.
 | One chat maps to one idea/document | Domain persistence | `test_business_document_service.py::test_shared_access_list_and_server_assigned_chat` | covered |
 | No draft before all intake questions are closed | Command gate | `test_business_document_service.py::test_draft_requires_complete_assessment_after_last_intake_answer` | covered |
 | Questions contain two to four answer options | JSON Schema and completion transaction | `test_business_requirements_assets.py::test_contract_schemas_compile_and_question_bounds_are_enforced`; `test_business_document_service.py::test_question_schema_boundary_rejects_five_options_and_rolls_back` | covered |
-| Author can choose an option or provide a custom answer | Domain command | `test_business_document_service.py::test_question_answers_and_proposal_decisions_are_immutable` plus negative answer-boundary tests | covered |
+| Author can choose an option or provide a custom answer; a published answer cannot be replaced | Domain command | `test_business_document_service.py::test_answers_cannot_be_replaced_and_current_proposal_decisions_cannot_be_overwritten` plus negative answer-boundary tests | covered |
 | Author cannot edit the body directly | REST command allowlist and read-only UI document pane | `test_business_document_api_contract.py`; `web/src/pages/business-documents/index.test.tsx` | covered_by_lower_level |
-| Body remains unchanged while review questions are open | Command gate and immutable revisions | `test_business_document_service.py::test_apply_is_rejected_while_review_question_is_open_without_mutation_or_job` | covered |
+| Ready inputs may be applied while review questions remain open; unanswered inputs stay in the same REVIEW cycle | Review readiness and immutable revisions | `test_business_document_service.py::test_partial_application_defers_ambiguous_comments_until_their_question_is_answered`; golden case `G08` | covered |
+| One-click acceptance applies only the selected proposal without assessment or preview and keeps REVIEW open | Command transaction, scoped worker snapshot and UI | `test_accept_proposal.py::test_accept_starts_application_without_assessment_or_preview_and_preserves_other_inputs`; `web/src/pages/business-documents/index.test.tsx` | covered |
+| Unapplied acceptance can be cancelled only in quiescent REVIEW; reacceptance cannot reuse the revoked source | Current decision projection and immutable audit events | `test_proposal_acceptance_cancellation.py::test_cancel_and_reaccept_preserves_history_and_excludes_cancelled_input`; `test_cancel_guards_preserve_current_decision_and_text`; `test_cancel_invalidates_prepared_changes_and_old_authorizing_source` | covered |
 | Only accepted proposals may authorize a change | Source-event validator | `test_business_document_service.py::test_rejected_proposal_cannot_authorize_change` | covered |
 | Partial proposal application keeps remaining decisions open without reusing resolved inputs | Review lifecycle and change-source validator | `test_business_document_service.py::test_partial_proposal_changes_keep_review_open_and_apply_each_decision_once`; golden case `G07` | covered |
-| Questions, answers, proposals, decisions, and comments are append-only | Separate persistence models | `test_business_document_service.py::test_full_workflow_is_versioned_idempotent_and_append_only`; immutable-answer test | covered |
+| Questions, answers, proposals, comments, and decision/cancellation events are append-only; the current unique decision row is a removable projection | Protocol models, event history and cancellation transaction | `test_business_document_service.py::test_full_workflow_is_versioned_idempotent_and_append_only`; `test_proposal_acceptance_cancellation.py::test_cancel_and_reaccept_preserves_history_and_excludes_cancelled_input`; `test_cancel_rolls_back_if_audit_write_fails` | covered |
 | Comment may target a selected fragment in the current revision | Comment command and UI selection | service anchor negative/boundary tests; `web/src/pages/business-documents/index.test.tsx` | covered |
 | Anchored comments survive revision changes without silent re-anchoring | Projection anchor lifecycle | service anchor lifecycle tests; golden case `G11`; orphan marker in `ProtocolPane` | covered |
 | Draft follows only the published business-requirements template | AST validator | `test_business_requirements_assets.py::test_template_preserves_published_semantic_outline`; required-section/template mismatch tests | covered |
@@ -71,9 +73,9 @@ documented behavior is not considered covered by a UI rendering alone.
 
 ## Golden coverage matrix
 
-- P0: 19/19 cases and 64/64 hard assertions; release gate.
+- P0: 19/19 cases and 66/66 hard assertions; release gate.
 - P1: 5/5 cases and 14/14 hard assertions; release gate.
-- All cases: 24/24 and 78/78 hard assertions. No known deterministic golden
+- All cases: 24/24 and 80/80 hard assertions. No known deterministic golden
   gaps remain.
 - These counts describe scripted deterministic cases only. They do not satisfy
   the rubric's live-model gate or its 95% grounded-reference threshold.

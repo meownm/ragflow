@@ -22,6 +22,7 @@ from api.apps.business_documents.runtime import document_commands, document_quer
 from api.apps.business_documents.worker import BusinessDocumentWorker
 from api.db.db_models import BusinessDocument, BusinessDocumentEvent, BusinessDocumentEvidenceSnapshot, BusinessDocumentJob, BusinessDocumentRevision
 from business_documents.domain.content import section_hash
+from business_documents.application.errors import ValidationError
 
 
 @pytest.fixture()
@@ -84,6 +85,24 @@ def request_plan():
         ),
     )
     return requested, _plan(document, requested)["change_plan"]
+
+
+@pytest.mark.parametrize("known_reference", [True, False])
+def test_change_plan_citations_use_the_pinned_chunk_provenance(database, known_reference):
+    requested, plan = request_plan()
+    job = BusinessDocumentJob.get_by_id(requested["job_id"])
+    snapshot = BusinessDocumentEvidence._normalize(job, "query", ["dataset"], [{"dataset_id": "dataset", "document_id": "source", "chunk_id": "chunk", "content": "Controls"}])
+    pinned_ref = snapshot["chunks"][0]["source_ref"]
+    reference = pinned_ref if known_reference else pinned_ref + "-invented"
+    plan["operations"][0]["evidence_refs"] = [reference]
+    # An unrelated top-level list must not authorize a citation outside chunks.
+    snapshot["source_refs"] = [] if known_reference else [reference]
+    if known_reference:
+        assert BusinessDocumentAI._validate(job, plan, snapshot)["change_plan"]["operations"][0]["evidence_refs"] == [pinned_ref]
+    else:
+        with pytest.raises(ValidationError) as caught:
+            BusinessDocumentAI._validate(job, plan, snapshot)
+        assert caught.value.code == "EVIDENCE_REF_NOT_IN_SNAPSHOT"
 
 
 @pytest.mark.parametrize("with_evidence", [False, True])

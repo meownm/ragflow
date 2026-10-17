@@ -73,6 +73,15 @@ remain unresolved and are excluded from applicable inputs and pinned change sour
 Applying ready inputs preserves the same review cycle and unanswered questions;
 only a review without open questions or pending proposals can become AGREED.
 
+One-click ACCEPT_PROPOSAL is scoped to one accepted decision and does not require
+an assessment or preview; completion always retains REVIEW. Questions, answers,
+proposals, comments and decision/cancellation events are append-only. The unique
+decision row is a current projection: CANCEL_PROPOSAL_ACCEPTANCE may remove an
+unapplied acceptance only in quiescent REVIEW, invalidating prepared changes and
+the current assessment. The original decision event remains in history, and
+reacceptance creates a new authorizing event. Applied or cancelled events cannot
+authorize another change.
+
 For applicable inputs A, used inputs U, no-change acknowledgements N and active
 accepted proposals P, require U and N to be subsets of A, U intersect N to be
 empty, A to equal U union N, and P to be a subset of U. Validate snapshot
@@ -90,13 +99,16 @@ The full verification input is sent without truncation. The provider adapter
 counts the serialized input once, reserves 256 tokens for message framing and
 bounds the output by the remaining context. PLAN_CHANGES requests at most 65536
 output tokens; semantic verification requires room for its full 2048-token report.
-Native Ollama receives the same window through `num_ctx` in ordinary and streaming
-requests. A quality model override resolves its own window through `/api/show`,
-once per adapter and model/endpoint/credential combination. For Ollama behind an
+Native Ollama resolves its model window through `/api/show` before each request,
+including quality model overrides, and passes it through `num_ctx` in ordinary
+and streaming requests. A stale catalog limit does not override model metadata;
+the saved tenant configuration is unchanged. For Ollama behind an
 OpenAI-compatible endpoint, `/api/ps` supplies the loaded model's actual context
 before each call, replacing a possibly generic 8192 catalog value. Cold models
 and other compatible servers retain their configured window. Optional metadata
 discovery never requires unrelated providers to implement Ollama endpoints.
+Model-family request options merge with configured provider body fields so
+thinking controls cannot discard the native context in non-streaming calls.
 The shared tokenizer estimates input size; provider capacity errors still fail
 the attempt. Qwen3 compatible planning and verification explicitly request
 `reasoning_effort=none`, which survives transport filtering and is audited.
@@ -131,13 +143,14 @@ not manufacture a duplicate revision, including a nonempty plan whose canonical
 AST equals the base. Source events are resolved in the no-change event even when
 the current revision is retained. Evidence-only AST changes still create revisions.
 
-The model receives the current AST, active feedback, unanswered questions and
-pinned evidence. The complete immutable snapshot remains server-side for audit;
-resolved protocol bodies and historical execution events are not model input.
-Confirmed source text and selected/custom answers appear once in
-`confirmed_change_sources`, together with question context. Protocol and event
-entries retain identifiers and decision metadata. Unanswered questions,
-non-confirmed comment context and EVA quotations remain available.
+The generator receives a copy of the complete immutable snapshot: the current
+AST, protocol with question options and answers, event history and pinned evidence.
+Duplicate revision markdown and flattened section texts are omitted. Active events
+are also listed in `active_change_inputs`; `confirmed_requirement_fragments`
+summarizes active confirmed text and selected/custom answers with question context.
+Historical context does not authorize operations: only active input event IDs do.
+The semantic check receives each active confirmed source in full, without splitting
+it into separate model calls.
 Transport normalization resolves entity aliases and server-owned section hashes;
 it never relocates sources, invents an omitted source or declares a no-change
 disposition on the model's behalf. Domain validation rejects these omissions.
@@ -154,7 +167,9 @@ context-budget check. The resolved model context is preserved. Oversized input
 fails explicitly without truncation or batching.
 
 The worker retries known temporary provider/retrieval/storage failures only,
-respecting Retry-After. Access, configuration, corrupt evidence, stale results
+respecting Retry-After from the original transport error, including SDK exception
+chains and provider error headers. Original HTTP status takes precedence over
+a generic SDK wrapper status. Access, configuration, corrupt evidence, stale results
 and semantic rejection terminate without another model generation. SQL job
 retry policy is independent. Document model calls share a durable limit of six
 calls and 900 seconds, including queue waits and format repair. Each generation
@@ -177,8 +192,11 @@ typed failures for this queue; ordinary chat keeps its existing behavior.
 Saved M06 qualification evidence replays the saved plan once, binds the final
 generator response to that plan after transport normalization, and checks that
 the terminal semantic PASS reviews the same sources, before/after text, context
-and titles. Earlier failed attempts do not invalidate a subsequent successful
-pair. Empty, failed or unrelated exchanges cannot substantiate a saved PASS.
+and titles. A transient failure may repeat verification of that same candidate;
+one invalid-format verdict may receive exact recorded repair feedback. Every
+verification call retains the original input. Semantic FAIL, regeneration after
+verification, a second format repair and call-budget overruns invalidate the
+proof. Empty, failed or unrelated terminal exchanges cannot substantiate PASS.
 The AI assembles the candidate once for semantic verification; completion applies
 the diff against the locked current revision and retains final authorization,
 version and lease guards. Streamed previews index the base sections once and

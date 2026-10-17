@@ -1,10 +1,77 @@
 """Guard the live runner's log decoding and bounded child-process cleanup."""
 
+import io
+import json
 import os
 import sys
+from contextlib import nullcontext
 from time import monotonic
+from types import SimpleNamespace
+
+import pytest
 
 from test.integration.live_ragflow import runner
+
+
+def test_quality_setup_failure_returns_nonzero_and_cleans_own_project(tmp_path, monkeypatch):
+    from test.playwright import conftest as browser_fixtures
+
+    logs = []
+
+    def command(args, **kwargs):
+        logs.append(kwargs["log"])
+        if kwargs["log"] == "business-quality-dependency.log":
+            raise RuntimeError("Synthetic SDK setup failure")
+        return SimpleNamespace(returncode=0, stdout="")
+
+    def api(path, *_args, **_kwargs):
+        if path == "/api/v1/auth/login":
+            return {"is_superuser": True}, "synthetic-token"
+        return {"tenant_id": "synthetic-tenant"}, None
+
+    def urlopen(request, **_kwargs):
+        url = request if isinstance(request, str) else request.full_url
+        data = (
+            {"models": [{"name": name, "digest": "synthetic-weights", "size": 2_000_000} for name, _ in runner.MODELS]}
+            if url.endswith("/api/tags")
+            else {"model_info": {"general.architecture": "test", "test.context_length": 8192}}
+        )
+        return io.BytesIO(json.dumps(data).encode())
+
+    def git_output(args, **kwargs):
+        value = "" if "ls-files" in args else "synthetic-head"
+        return value if kwargs.get("text") else value.encode()
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["runner.py", "--source-root", str(runner.ROOT), "--dist-root", str(tmp_path / "dist"), "--evidence-dir", str(tmp_path / "evidence"), "--business-documents-quality", "--skip-browser-tests"],
+    )
+    monkeypatch.setattr(runner, "command", command)
+    monkeypatch.setattr(runner, "api", api)
+    monkeypatch.setattr(runner, "urlopen", urlopen)
+    monkeypatch.setattr(runner, "SECRET_VALUES", [])
+    monkeypatch.setattr(runner.subprocess, "check_output", git_output)
+    monkeypatch.setattr(runner.socket, "socket", lambda *_: nullcontext(SimpleNamespace(bind=lambda *_: None)))
+    monkeypatch.setattr(browser_fixtures, "_rsa_encrypt_password", lambda _: "synthetic-encrypted-password")
+
+    assert runner.main() != 0
+    assert (tmp_path / "evidence/failure.txt").read_text(encoding="utf-8") == "Synthetic SDK setup failure"
+    assert logs[-5:] == ["app.log", "cleanup.log", "remaining-containers.log", "remaining-volumes.log", "remaining-networks.log"]
+
+
+@pytest.mark.parametrize("architecture,context", [("qwen3", 262144), ("bert", 8192)])
+def test_native_model_context_is_preserved(architecture, context):
+    metadata = {"model_info": {"general.architecture": architecture, f"{architecture}.context_length": context}}
+    assert runner.model_context_length(metadata) == context
+
+
+@pytest.mark.parametrize(
+    "info", [{}, {"qwen3.context_length": 262144}, {"general.architecture": "qwen3"}, *({"general.architecture": "qwen3", "qwen3.context_length": value} for value in (True, "262144", 0, -1, 8192.5))]
+)
+def test_missing_or_invalid_native_context_fails_closed(info):
+    with pytest.raises(ValueError, match="context_length"):
+        runner.model_context_length({"model_info": info})
 
 
 def test_retrieval_only_run_does_not_require_unused_chat_model():

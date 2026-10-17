@@ -2444,6 +2444,52 @@ test.each([false, true])(
   },
 );
 
+test('cancels acceptance and returns the proposal to the decision controls', async () => {
+  const accepted: BusinessDocumentProjection = {
+    ...projection,
+    allowed_commands: ['ACCEPT_PROPOSAL', 'CANCEL_PROPOSAL_ACCEPTANCE'],
+    protocol: {
+      ...projection.protocol,
+      proposals: projection.protocol.proposals.map((item) => ({
+        ...item,
+        decision: 'ACCEPTED',
+        applied: false,
+        application: {
+          status: 'DEAD',
+          error: { message: 'Модель недоступна' },
+        },
+      })),
+    },
+  };
+  mockedFetch.mockResolvedValue(accepted);
+  mockedSubmit.mockImplementationOnce(async () => {
+    mockedFetch.mockResolvedValue(projection);
+    return { ...commandResult, allowed_commands: projection.allowed_commands };
+  });
+  renderPage();
+  fireEvent.click(await screen.findByTestId('cancel-acceptance-proposal-12'));
+  await waitFor(() =>
+    expect(screen.getByTestId('proposal-status-proposal-12')).toHaveTextContent(
+      'Ожидает решения',
+    ),
+  );
+  expect(mockedSubmit).toHaveBeenCalledWith(
+    'doc-1',
+    expect.objectContaining({
+      type: 'CANCEL_PROPOSAL_ACCEPTANCE',
+      payload: { proposal_id: 'proposal-12' },
+    }),
+  );
+  expect(screen.getByTestId('accept-proposal-proposal-12')).toHaveTextContent(
+    'Принять',
+  );
+  expect(screen.getByTestId('reject-proposal-proposal-12')).toBeEnabled();
+  expect(screen.getByTestId('business-document-markdown')).toHaveTextContent(
+    firstSectionText,
+  );
+  expect(screen.queryByTestId('proposal-application-proposal-12')).toBeNull();
+});
+
 test('shows a new optional reporting section before confirming its application', async () => {
   mockedFetch.mockResolvedValue({
     ...projection,
@@ -3119,6 +3165,28 @@ test('dismisses a failed operation error across refreshes and shows the next fai
     await screen.findByTestId('business-document-operation-error'),
   ).toBeVisible();
 });
+
+test.each([null, {}, '', { message: '   ' }])(
+  'does not render a previous-error warning for an empty error %p',
+  async (error) => {
+    mockedFetch.mockResolvedValue({
+      ...projection,
+      operation_state: 'GENERATING_DRAFT',
+      latest_job: {
+        job_id: 'first-job',
+        job_type: 'GENERATE_DRAFT',
+        status: 'RUNNING',
+        attempt: 1,
+        max_attempts: 3,
+        error,
+      },
+    });
+    renderPage();
+    expect(
+      await screen.findByTestId('business-document-operation'),
+    ).not.toHaveTextContent('Предыдущая ошибка');
+  },
+);
 
 test('shows the active attempt and previous validation error while retrying', async () => {
   mockedFetch.mockResolvedValue({

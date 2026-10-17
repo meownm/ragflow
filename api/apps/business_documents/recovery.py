@@ -13,23 +13,44 @@ from business_documents.application.errors import BusinessDocumentError, Validat
 from business_documents.domain.job_recovery import MAX_AI_CALLS, MAX_AI_SECONDS, TRANSIENT_FAILURE_CODES, is_transient_status
 
 
+def _provider_errors(error: Exception) -> list[BaseException]:
+    """Read the original transport failure before SDK wrapper metadata."""
+    chain, seen = [], set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        chain.append(current)
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return chain[::-1]
+
+
 def is_transient_failure(error: Exception) -> bool:
     if isinstance(error, BusinessDocumentError):
         return error.code in TRANSIENT_FAILURE_CODES
-    status = getattr(error, "status_code", None) or getattr(getattr(error, "response", None), "status_code", None)
     if getattr(error, "code", None) in {"insufficient_quota", "billing_hard_limit_reached"}:
         return False
-    if status is not None:
-        return is_transient_status(status)
-    return isinstance(error, (TimeoutError, ConnectionError, httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)) or type(error).__name__ in {
+    transport_failure = isinstance(error, (TimeoutError, ConnectionError, httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)) or type(error).__name__ in {
         "APITimeoutError",
         "APIConnectionError",
     }
+    if getattr(error, "status_code", None) is None and getattr(getattr(error, "response", None), "status_code", None) is None and not transport_failure:
+        return False
+    for failure in _provider_errors(error):
+        status = getattr(getattr(failure, "response", None), "status_code", None) or getattr(failure, "status_code", None)
+        if status is not None:
+            return is_transient_status(status)
+    return transport_failure
 
 
 def retry_delay_ms(error: Exception, default: int) -> int:
-    headers = getattr(getattr(error, "response", None), "headers", {})
-    value = headers.get("retry-after")
+    value = None
+    for failure in _provider_errors(error):
+        for headers in (getattr(getattr(failure, "response", None), "headers", {}), getattr(failure, "headers", {})):
+            value = (headers or {}).get("retry-after")
+            if value is not None:
+                break
+        if value is not None:
+            break
     if value is None:
         return default
     try:

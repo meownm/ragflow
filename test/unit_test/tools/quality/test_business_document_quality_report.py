@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -11,6 +14,22 @@ from tools.quality.verify_business_document_quality_report import QualityGateFai
 
 
 ROOT = Path(__file__).parents[4]
+
+
+def test_quality_report_cli_runs_as_module_without_pythonpath(tmp_path):
+    path = tmp_path / "report.json"
+    path.write_text(json.dumps(_report()), encoding="utf-8")
+    environment = {key: value for key, value in os.environ.items() if key.upper() != "PYTHONPATH"}
+    result = subprocess.run(
+        [sys.executable, "-B", "-m", "tools.quality.verify_business_document_quality_report", "--report", str(path), "--expected-revision", "candidate-sha"],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert json.loads(result.stdout)["status"] == "PASS"
 
 
 def _placement_evidence(case):
@@ -118,7 +137,7 @@ def _report() -> dict:
     template = json.loads((ROOT / "agent/business_requirements/templates/business_requirements.v1.json").read_text(encoding="utf-8"))
     golden_path = ROOT / "agent/business_requirements/golden_model_quality/v2.json"
     golden = json.loads(golden_path.read_text(encoding="utf-8"))
-    prompt_names = ("intake.v1.md", "draft.v1.md", "review.v1.md", "change_planner.v1.md", "requirement_coverage.v1.md")
+    prompt_names = ("intake.v1.md", "draft.v1.md", "draft_evidence.v1.md", "review.v1.md", "change_planner.v1.md", "requirement_coverage.v1.md")
     scores = {criterion["id"]: 4.0 for criterion in rubric["criteria"]}
     scored_metrics = {
         "criterion_scores": scores,

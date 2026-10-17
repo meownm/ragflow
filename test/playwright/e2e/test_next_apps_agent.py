@@ -6,11 +6,11 @@ from playwright.sync_api import expect
 
 from test.playwright.helpers._auth_helpers import ensure_authed
 from test.playwright.helpers.flow_steps import require
+from test.playwright.helpers.navigation import click_navigation
 from test.playwright.helpers._next_apps_helpers import (
     RESULT_TIMEOUT_MS,
     _fill_and_save_create_modal,
     _goto_home,
-    _nav_click,
     _open_create_from_list,
     _unique_name,
     _wait_for_url_regex,
@@ -116,7 +116,7 @@ def step_02_open_agent_list(
     page = flow_page
     with step("open agent list"):
         _goto_home(page, base_url)
-        _nav_click(page, "nav-agent")
+        click_navigation(page, "nav-agent", "/agents")
         _wait_for_url_regex(page, r"/agents(?:[/?#].*)?$", timeout_ms=RESULT_TIMEOUT_MS)
         page.wait_for_function(
             """

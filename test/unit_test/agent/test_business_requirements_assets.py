@@ -1,3 +1,4 @@
+import ast
 import json
 from pathlib import Path
 
@@ -68,8 +69,9 @@ def test_template_preserves_published_semantic_outline():
 def test_process_policy_encodes_non_negotiable_invariants():
     policy = load_json("policies/process.v1.json")
 
-    assert policy["policy_version"] == "1.1.0"
+    assert policy["policy_version"] == "1.2.0"
     assert policy["proposal_rules"]["apply_only_when_all_questions_closed"] is False
+    assert {"ACCEPT_PROPOSAL", "CANCEL_PROPOSAL_ACCEPTANCE"} <= set(policy["roles"]["AUTHOR"])
 
     assert policy["question_rules"] == {
         "minimum_options": 2,
@@ -83,6 +85,8 @@ def test_process_policy_encodes_non_negotiable_invariants():
         "OPEN_REVIEW_QUESTIONS_PRESERVE_REVIEW",
         "ONLY_ACCEPTED_PROPOSALS_MAY_BE_APPLIED",
         "COMMENTS_QUESTIONS_PROPOSALS_AND_ANSWERS_ARE_APPEND_ONLY",
+        "PROPOSAL_DECISION_EVENTS_ARE_APPEND_ONLY",
+        "ONLY_UNAPPLIED_ACCEPTANCE_MAY_BE_CANCELLED_IN_QUIESCENT_REVIEW",
         "ONE_CHAT_MAPS_TO_ONE_DOCUMENT",
         "EXPORT_DOES_NOT_MUTATE_A_REVISION",
         "EVA_WIKI_REQUIRES_AGREED_REVISION",
@@ -327,7 +331,10 @@ def test_quality_traceability_covers_every_rubric_requirement_with_executable_ev
         for nodeid in row["tests"]:
             path, separator, test_name = nodeid.partition("::")
             assert separator and test_name.startswith("test_")
-            assert (ASSET_ROOT.parents[1] / path).is_file()
+            source = ASSET_ROOT.parents[1] / path
+            assert source.is_file()
+            defined_tests = {node.name for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"))) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+            assert test_name in defined_tests, nodeid
 
 
 def test_prompt_pack_is_contract_first_and_treats_evidence_as_data():
@@ -338,6 +345,7 @@ def test_prompt_pack_is_contract_first_and_treats_evidence_as_data():
         "draft.v1.md",
         "eva_change.v1.md",
         "intake.v1.md",
+        "draft_evidence.v1.md",
         "requirement_coverage.v1.md",
         "review.v1.md",
         "sql_conclusion.v1.md",

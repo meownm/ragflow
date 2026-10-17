@@ -414,6 +414,33 @@ def test_business_document_workbench_commands_and_mobile_layout(
 
 
 @pytest.mark.p1
+@pytest.mark.parametrize("width,height", [(1000, 800), (390, 844)])
+def test_narrow_workbench_protocol_controls_remain_reachable(page, base_url, width, height):
+    page.set_viewport_size({"width": width, "height": height})
+    _install_session(page)
+    _install_common_routes(page)
+    page.route("**/api/v1/users/me/models", lambda route: route.fulfill(json=_envelope({"tenant_id": "narrow-workbench-tenant"})))
+    page.route("**/api/v1/business-documents/doc-ui-1", lambda route: route.fulfill(json=_envelope(_projection())))
+    page.goto(f"{base_url.rstrip('/')}/business-documents/doc-ui-1")
+    panes = page.get_by_test_id("business-document-panes")
+    expect(panes).to_be_visible(timeout=RESULT_TIMEOUT_MS)
+    answer = page.get_by_test_id("answer-question-question-1")
+    answer.scroll_into_view_if_needed()
+    expect(answer).to_be_in_viewport()
+    page.get_by_label("По времени").check()
+    expect(answer).to_be_enabled()
+    proposal = page.get_by_text("Добавить целевую метрику", exact=True)
+    proposal.scroll_into_view_if_needed()
+    expect(proposal).to_be_in_viewport()
+    comment = page.get_by_role("textbox", name="Комментарий", exact=True)
+    comment.scroll_into_view_if_needed()
+    expect(comment).to_be_in_viewport()
+    comment.fill("Проверка доступности обсуждения")
+    expect(page.get_by_role("button", name="Добавить комментарий", exact=True)).to_be_enabled()
+    assert panes.evaluate("el => el.scrollTop > 0"), "Narrow panes must actually scroll to the protocol"
+
+
+@pytest.mark.p1
 @pytest.mark.parametrize(
     "section_id,source,selected,canonical_selected",
     [

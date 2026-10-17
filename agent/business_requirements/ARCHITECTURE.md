@@ -17,7 +17,7 @@ questions, decisions, comments, jobs, or audit history.
 | --- | --- | --- | --- |
 | Intake | Owner creates a document for one idea | Questions or a complete assessment event | No open intake questions and the latest assessment is current |
 | Draft generation | Intake is complete and the aggregate is idle | Immutable revision 1 plus review protocol | Schema, template, policy, evidence and optimistic-version checks all pass |
-| Review | A current immutable revision exists | Append-only answers, decisions, comments, questions and proposals | A current assessment permits ready changes; open questions keep the document in review |
+| Review | A current immutable revision exists | Append-only answers, comments, questions and proposals; audited decisions and cancellations | A current assessment permits ready changes; open questions keep the document in review |
 | Finalization | Review exit conditions hold | One new immutable revision, or an audited no-change agreement | Every authorizing input has exactly one disposition and the aggregate is `AGREED` |
 | Export | The requested revision is the current agreed revision | Durable hash-verified artifact | Artifact metadata and bytes are readable by the owner |
 | Continuation | Owner starts another review on an agreed document | New append-only review cycle | The same document/chat remains the aggregate root |
@@ -39,7 +39,19 @@ newer than every intake answer and no intake question is open.
 ### Draft generation
 
 `REQUEST_DRAFT` pins the current state, template, policy, protocol, and evidence
-into a job snapshot. The model returns a schema-valid AST. Deterministic code
+into a job snapshot. Its prompt hash also pins `draft_evidence.v1.md`. With
+evidence, a separate model call classifies every source fragment as source data
+or a command to the model. The transport assigns numeric IDs and returns two
+ID partitions; deterministic validation requires every known ID exactly once,
+rejecting duplicates, overlap, missing/unknown IDs and non-integer values.
+The model cannot rewrite source text or add facts.
+Only selected source data is passed to draft generation, with the original
+source references. Both source data and model decisions remain untrusted.
+The original snapshot is unchanged. A checkpoint binds the complete decisions
+to the job and exact input hash, and queue retries reuse it. Classification and
+generation share the existing six-call, 900-second budget and cancellation
+fences. The verification audit records the classification call. Without
+evidence this stage is omitted. The model returns a schema-valid AST. Deterministic code
 then verifies the exact template outline, per-section block types, required
 content, and pinned versions before creating immutable revision 1. Section
 4.1 must include a non-empty PlantUML source block. Section 4.3 must include
@@ -49,10 +61,38 @@ on a best-effort basis and shows the preserved source when rendering fails.
 Questions and proposals are stored outside the body, and lifecycle changes to
 `REVIEW`.
 
+Initial draft generation requests one conceptual component diagram in 4.1:
+participants, systems and data links. Its model-facing schema selects this
+layout without changing the public AST schema. Detailed actions, conditions,
+errors and retries belong to 4.3, which retains its accompanying text. Public
+AST consumers can still supply section prose; the generation layout does not
+remove supported import or revision content.
+
+Classification reserves the full serialized system/user input plus 5% (at
+least 256 tokens), and a complete response containing every numeric ID in
+readable JSON plus 25% (at least 256 tokens). Classification uses UTF-8 byte
+counts as conservative bounds for byte-based model tokenizers; cl100k alone
+underestimates Qwen's numeric responses. The adapter checks that both fit
+the selected model context and the 65536-token response ceiling before provider
+I/O. It never shortens source text or the required answer to fit. The compact
+transport avoids repeating source references and per-ID labels, including for
+dense evidence at the existing 4000-character chunk / 24000-character total
+limits. Responses above the ceiling are split into deterministic batches; the
+maximum supported density (12012 fragments) needs four classification calls.
+Only complete, validated batches are checkpointed, bound to the full immutable
+input hash and reused after transport failure. All IDs must be classified before
+draft generation. The same six-call/900-second budget covers every batch,
+generation and repairs; a repair is limited to its original batch and is never
+reset for another batch. Insufficient context is an explicit failure, preserving
+the snapshot.
+
 ### Review
 
-The author can answer questions once, decide each proposal once, and append
-comments to the current revision. The body is read-only. After any author
+The author can answer questions once, record a current proposal decision, and
+append comments to the current revision. Answers, questions, proposals,
+comments and decision/cancellation events are append-only; the unique decision
+row is a current projection and may be removed only by the cancellation command.
+The body is read-only. After author
 input, `REQUEST_REVIEW_ASSESSMENT` must run before finalization; it may append
 new questions and proposals, but cannot alter existing protocol entries or the
 body. It records exactly one disposition for every active comment:
@@ -74,6 +114,16 @@ decision accepted and the body unchanged; the same command can retry without
 creating another decision. The API's `DECIDE_PROPOSAL` retains its decision-only
 contract for existing consumers and rejection. The UI uses `ACCEPT_PROPOSAL`
 for acceptance and retry, and refreshes the current revision when the job applies.
+
+`CANCEL_PROPOSAL_ACCEPTANCE` returns an accepted, unapplied proposal to pending
+only while the document is quiescent and in `REVIEW`. It removes the current
+decision projection and appends `ProposalAcceptanceCancelled` with the original
+decision and event IDs; the original `ProposalDecided` event remains in history.
+Cancellation invalidates prepared changes and review assessment through the new
+state version and feedback event. Reacceptance creates a new authorizing event;
+cancelled decisions cannot authorize subsequent plans. The proposal view exposes
+the newest application job matched by that decision event, including its error,
+so unrelated operations and earlier acceptances do not explain the current state.
 
 ### Finalization
 

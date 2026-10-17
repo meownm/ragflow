@@ -6,9 +6,10 @@ export const enum MemoryApiAction {
   FetchMemoryList = 'fetchMemoryList',
 }
 
-export const useFetchAllMemoryList = () => {
+export const useFetchAllMemoryList = (enabled = true) => {
   const { data, isLoading, isError, refetch } = useQuery<IMemory[], Error>({
     queryKey: [MemoryApiAction.FetchMemoryList],
+    enabled,
     queryFn: async () => {
       const { data: response } = await memoryService.getMemoryList(
         {

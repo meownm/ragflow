@@ -7,7 +7,7 @@ from unittest.mock import Mock
 import pytest
 
 from business_documents.application.errors import BusinessDocumentError, ValidationError
-from business_documents.application.queries import DocumentPage, DocumentQueries, RevisionHistory
+from business_documents.application.queries import DocumentPage, DocumentQueries, RevisionHistory, project_job
 from business_documents.domain.content import section_hash
 from business_documents.domain.review import build_review_state
 
@@ -64,6 +64,14 @@ def history(rows):
 
 def empty_review():
     return build_review_state("doc", 2, questions=(), answers=(), proposals=(), decisions=(), comments=(), events=())
+
+
+@pytest.mark.parametrize("error", [None, {}, "", {"code": "PROVIDER_UNAVAILABLE", "message": "Retry later"}])
+def test_job_projection_normalizes_absent_error_without_losing_failure(error):
+    row = dict.fromkeys(("job_type", "status", "progress", "progress_stage", "progress_message", "attempt", "max_attempts", "available_at", "lease_expires_at", "create_time", "update_time"))
+    row.update(id="running-job", error=error)
+    assert project_job(row)["error"] == (error or None)
+    assert row["error"] == error
 
 
 @pytest.fixture()

@@ -24,107 +24,17 @@ def _goto_home(page, base_url: str) -> None:
     _assert_not_on_login(page)
 
 
-def _nav_click(page, testid: str) -> None:
-    expected_path_map = {
-        "nav-chat": "/chats",
-        "nav-search": "/searches",
-        "nav-agent": "/agents",
-    }
-    expected_path = expected_path_map.get(testid)
-
-    def _ensure_expected_path():
-        if not expected_path:
-            return
-        if expected_path in page.url:
-            return
-        try:
-            page.wait_for_url(
-                re.compile(rf".*{re.escape(expected_path)}(?:[/?#].*)?$"),
-                wait_until="domcontentloaded",
-                timeout=5000,
-            )
-        except Exception:
-            page.goto(expected_path, wait_until="domcontentloaded")
-
-    locator = page.locator(f"[data-testid='{testid}']")
-    if locator.count() > 0:
-        expect(locator.first).to_be_visible(timeout=RESULT_TIMEOUT_MS)
-        locator.first.click()
-        _ensure_expected_path()
-        return
-
-    nav_text_map = {
-        "nav-chat": "chat",
-        "nav-search": "search",
-        "nav-agent": "agent",
-    }
-    label = nav_text_map.get(testid)
-    if label:
-        pattern = re.compile(rf"^{re.escape(label)}$", re.I)
-        fallback = page.get_by_role("button", name=pattern)
-        if fallback.count() == 0:
-            top_nav = page.locator("[data-testid='top-nav']")
-            if top_nav.count() > 0:
-                fallback = top_nav.first.get_by_text(pattern)
-            else:
-                fallback = page.get_by_text(pattern)
-        if fallback.count() == 0:
-            fallback = page.locator("button, [role='button'], a, span, div").filter(has_text=pattern)
-        expect(fallback.first).to_be_visible(timeout=RESULT_TIMEOUT_MS)
-        fallback.first.click()
-        _ensure_expected_path()
-        return
-
-    expect(locator).to_be_visible(timeout=RESULT_TIMEOUT_MS)
-    locator.click()
-    _ensure_expected_path()
-
-
 def _open_create_from_list(
     page,
     empty_testid: str,
     create_btn_testid: str,
     modal_testid: str = "rename-modal",
 ):
-    empty = page.locator(f"[data-testid='{empty_testid}']")
-    if empty.count() > 0 and empty.first.is_visible():
-        empty.first.click()
-    else:
-        create_btn = page.locator(f"[data-testid='{create_btn_testid}']")
-        if create_btn.count() > 0:
-            expect(create_btn.first).to_be_visible(timeout=RESULT_TIMEOUT_MS)
-            create_btn.first.click()
-        else:
-            create_text_map = {
-                "create-chat": r"create\s+chat",
-                "create-search": r"create\s+search",
-                "create-agent": r"create\s+agent",
-            }
-            pattern = create_text_map.get(create_btn_testid)
-            clicked = False
-            if pattern:
-                fallback_btn = page.get_by_role("button", name=re.compile(pattern, re.I))
-                if fallback_btn.count() > 0 and fallback_btn.first.is_visible():
-                    fallback_btn.first.click()
-                    clicked = True
-
-            if not clicked:
-                empty_text_map = {
-                    "chats-empty-create": r"no chat app created yet",
-                    "search-empty-create": r"no search app created yet",
-                    "agents-empty-create": r"no agent",
-                }
-                empty_pattern = empty_text_map.get(empty_testid)
-                if empty_pattern:
-                    empty_state = page.locator("div, section, article").filter(has_text=re.compile(empty_pattern, re.I))
-                    if empty_state.count() > 0 and empty_state.first.is_visible():
-                        empty_state.first.click()
-                        clicked = True
-
-            if not clicked:
-                fallback_card = page.locator(".border-dashed, [class*='border-dashed']").first
-                expect(fallback_card).to_be_visible(timeout=RESULT_TIMEOUT_MS)
-                fallback_card.click()
+    # Lists briefly render an empty card while their existing entries load.
+    page.wait_for_load_state("networkidle")
+    trigger = page.locator(f"[data-testid='{create_btn_testid}']:visible, [data-testid='{empty_testid}']:visible").first
+    expect(trigger).to_be_visible(timeout=RESULT_TIMEOUT_MS)
+    trigger.click()
     if modal_testid == "agent-create-modal":
         menu = page.locator("[data-testid='agent-create-menu']")
         if menu.count() > 0 and menu.first.is_visible():

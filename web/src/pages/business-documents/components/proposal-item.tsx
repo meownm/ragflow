@@ -10,15 +10,18 @@ import {
   XCircle,
 } from 'lucide-react';
 import type { BusinessDocumentProposal } from '../types';
+import { BusinessDocumentError } from './document-error';
 
 interface ProposalItemProps {
   proposal: BusinessDocumentProposal;
   proposalDecisionsOpen: boolean;
   canDecide: boolean;
   canAccept: boolean;
+  canCancelAcceptance: boolean;
   pending: boolean;
   onDecide: (payload: Record<string, unknown>) => void;
   onAccept: () => void;
+  onCancelAcceptance: () => void;
 }
 
 const proposalStatusPresentation = {
@@ -69,14 +72,35 @@ const closedPendingProposalPresentation = {
   badgeClass: 'border-border-button bg-bg-card text-text-disabled',
 };
 
+const applicationMessages = {
+  WAITING:
+    'Принятие записано, но применение ещё не запущено. Нажмите «Применить» или отмените принятие.',
+  PENDING: 'Применение ожидает запуска задачи.',
+  RUNNING: 'Изменения вносятся. Дождитесь завершения задачи.',
+  RETRY:
+    'Попытка применения завершилась ошибкой. Запланирован автоматический повтор.',
+  DEAD: 'Применение завершилось ошибкой. Можно повторить применение или отменить принятие.',
+  PREPARED:
+    'Изменения подготовлены и ожидают подтверждения. После отмены принятия потребуется подготовить их заново.',
+  PREVIEW_STALE:
+    'Подготовленные изменения больше не актуальны или были отклонены. Запустите применение заново или отмените принятие.',
+  COMPLETED:
+    'Задача завершена, но применение этого предложения не подтверждено. Можно повторить применение или отменить принятие.',
+} satisfies Record<
+  NonNullable<BusinessDocumentProposal['application']>['status'],
+  string
+>;
+
 export function ProposalItem({
   proposal,
   proposalDecisionsOpen,
   canDecide,
   canAccept,
+  canCancelAcceptance,
   pending,
   onDecide,
   onAccept,
+  onCancelAcceptance,
 }: ProposalItemProps) {
   const isPending = proposal.decision === 'PENDING';
   const isAwaitingApplication =
@@ -147,8 +171,33 @@ export function ProposalItem({
               Решение не было принято до завершения этапа внесения изменений.
             </p>
           )}
+          {isAwaitingApplication && (
+            <div
+              className="mt-3 text-xs leading-5 text-text-secondary"
+              data-testid={`proposal-application-${proposal.proposal_id}`}
+            >
+              <p>
+                {applicationMessages[proposal.application?.status ?? 'WAITING']}
+              </p>
+              {proposal.application?.error && (
+                <BusinessDocumentError error={proposal.application.error} />
+              )}
+            </div>
+          )}
           {(isPending || isAwaitingApplication) && proposalDecisionsOpen && (
-            <div className="mt-4 flex gap-2">
+            <div className="mt-4 flex flex-wrap gap-2">
+              {isAwaitingApplication && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!canCancelAcceptance || pending}
+                  data-testid={`cancel-acceptance-${proposal.proposal_id}`}
+                  onClick={onCancelAcceptance}
+                >
+                  <X className="size-3.5" />
+                  Отменить принятие
+                </Button>
+              )}
               {isPending && (
                 <Button
                   size="sm"

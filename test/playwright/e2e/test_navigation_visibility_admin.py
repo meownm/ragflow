@@ -5,6 +5,8 @@ from urllib.parse import urlparse
 import pytest
 from playwright.sync_api import expect
 
+from test.playwright.helpers.navigation import navigation_root
+
 ALL_SECTIONS = [
     "home",
     "dataset",
@@ -152,6 +154,10 @@ class NavigationApiStub:
             _fulfill_json(route, _envelope([]))
             return
 
+        if path == "/api/v1/business-documents/catalog":
+            _fulfill_json(route, _envelope({"items": []}))
+            return
+
         if path == "/api/v1/business-documents":
             _fulfill_json(
                 route,
@@ -183,12 +189,7 @@ def _open_admin_visibility(page, base_url, stub):
 def _open_business_documents(page, base_url):
     page.set_viewport_size({"width": 1920, "height": 1080})
     page.goto(f"{base_url.rstrip('/')}/business-documents")
-    chat = page.locator("[data-testid='nav-chat']:visible")
-    menu = page.get_by_role("button", name="Menu")
-    expect(chat.or_(menu).first).to_be_visible()
-    if not chat.is_visible():
-        menu.click()
-    expect(chat).to_be_visible()
+    expect(navigation_root(page).get_by_test_id("nav-chat")).to_be_visible()
 
 
 @pytest.mark.p1

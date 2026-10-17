@@ -48,6 +48,7 @@ _PROMPT_FILES = {
     "intake": ("intake.v1.md", "1"),
     "review": ("review.v1.md", "1"),
     "draft": ("draft.v1.md", "1"),
+    "draft_evidence": ("draft_evidence.v1.md", "1"),
     "change_planner": ("change_planner.v1.md", "1"),
     "requirement_coverage": ("requirement_coverage.v1.md", "1"),
     "eva_change": ("eva_change.v1.md", "1"),
@@ -122,6 +123,8 @@ def prompt_descriptor(job_type: str) -> dict[str, str] | None:
     content = prompt_text(name)
     if job_type == "PLAN_CHANGES":
         content += "\n" + prompt_text("requirement_coverage")
+    if job_type == "GENERATE_DRAFT":
+        content += "\n" + prompt_text("draft_evidence")
     return {
         "name": name,
         "version": version,

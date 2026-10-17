@@ -138,9 +138,11 @@ def _apply_model_family_policies(
         sanitized_gen_conf.pop("enable_thinking", None)
 
     def _merge_extra_body(target: dict, extra: dict) -> None:
-        body = target.get("extra_body")
-        if not isinstance(body, dict):
-            body = {}
+        configured = sanitized_gen_conf.get("extra_body")
+        body = dict(configured) if isinstance(configured, dict) else {}
+        requested = target.get("extra_body")
+        if isinstance(requested, dict):
+            body.update(requested)
         body.update(extra)
         target["extra_body"] = body
 
@@ -241,6 +243,10 @@ class Base(ABC):
         # Token usage split (prompt/completion/total) of the most recent chat call.
         # Consumed by LLMBundle for accurate Langfuse reporting and run aggregation.
         self.last_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
+    async def aclose(self):
+        """Close the SDK transport before its request event loop is closed."""
+        await self.async_client.close()
 
     def _get_delay(self):
         return self.base_delay * random.uniform(10, 150)
@@ -1697,6 +1703,7 @@ class LiteLLMBase(ABC):
             self.model_name,
             backend="litellm",
             provider=self.provider,
+            gen_conf=gen_conf,
             request_kwargs=kwargs,
         )
 

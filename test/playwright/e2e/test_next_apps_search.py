@@ -4,11 +4,11 @@ from urllib.parse import urlparse
 
 from test.playwright.helpers._auth_helpers import ensure_authed
 from test.playwright.helpers.flow_steps import require
+from test.playwright.helpers.navigation import click_navigation
 from test.playwright.helpers._next_apps_helpers import (
     RESULT_TIMEOUT_MS,
     _fill_and_save_create_modal,
     _goto_home,
-    _nav_click,
     _open_create_from_list,
     _search_query_input,
     _select_first_dataset_and_save,
@@ -72,7 +72,7 @@ def step_02_open_search_list(
     page = flow_page
     with step("open search list"):
         _goto_home(page, base_url)
-        _nav_click(page, "nav-search")
+        click_navigation(page, "nav-search", "/searches")
         expect(page.locator("[data-testid='search-list']")).to_be_visible(timeout=RESULT_TIMEOUT_MS)
     snap("search_list_open")
 

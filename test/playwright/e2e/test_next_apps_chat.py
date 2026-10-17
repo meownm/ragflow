@@ -12,12 +12,12 @@ from playwright.sync_api import expect
 from test.playwright.helpers.flow_context import FlowContext
 from test.playwright.helpers._auth_helpers import ensure_authed
 from test.playwright.helpers.flow_steps import require
+from test.playwright.helpers.navigation import click_navigation
 from test.playwright.helpers._next_apps_helpers import (
     RESULT_TIMEOUT_MS,
     _assert_successful_chat_stream,
     _fill_and_save_create_modal,
     _goto_home,
-    _nav_click,
     _open_create_from_list,
     _select_first_dataset_and_save,
     _send_chat_and_wait_done,
@@ -44,7 +44,7 @@ def step_02_open_chat_list(ctx: FlowContext, step, snap):
     page = ctx.page
     with step("open chat list"):
         _goto_home(page, ctx.base_url)
-        _nav_click(page, "nav-chat")
+        click_navigation(page, "nav-chat", "/chats")
         expect(page.locator("[data-testid='chats-list']")).to_be_visible(timeout=RESULT_TIMEOUT_MS)
     snap("chat_list_open")
 
@@ -209,7 +209,7 @@ def mm_step_01_ensure_authed_and_open_chat_list(ctx: FlowContext, step, snap):
             seeded_user_credentials=ctx.seeded_user_credentials,
         )
         _goto_home(page, ctx.base_url)
-        _nav_click(page, "nav-chat")
+        click_navigation(page, "nav-chat", "/chats")
         expect(page.locator("[data-testid='chats-list']")).to_be_visible(timeout=RESULT_TIMEOUT_MS)
     ctx.state["mm_logged_in"] = True
     snap("chat_mm_list")

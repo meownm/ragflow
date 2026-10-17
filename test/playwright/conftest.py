@@ -23,6 +23,8 @@ import pytest
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import expect
 
+from test.playwright.helpers.redaction import redact_browser_secrets
+
 ROOT_DIR = Path(__file__).resolve().parents[2]
 PLAYWRIGHT_TEST_DIR = Path(__file__).resolve().parent
 ARTIFACTS_DIR = Path(os.getenv("PW_ARTIFACTS_DIR", str(Path(__file__).resolve().parent / "artifacts" / os.getenv("PW_BROWSER", "chromium"))))
@@ -582,7 +584,7 @@ def _step(label: str, enabled: bool) -> None:
             print(f"[STEP] done in {elapsed:.2f}s: {label}", flush=True)
 
 
-@pytest.hookimpl(hookwrapper=True)
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
 def pytest_runtest_makereport(item, call):
     outcome = yield
     report = outcome.get_result()
@@ -596,6 +598,12 @@ def pytest_runtest_makereport(item, call):
                 report.outcome = "failed"
                 report.longrepr = f"{item.nodeid}: {len(errors)} unhandled browser exception(s); see browser failure artifacts"
                 break
+    if report.longrepr:
+        original = str(report.longrepr)
+        redacted = redact_browser_secrets(original)
+        if redacted != original:
+            report.longrepr = redacted
+    report.sections = [(name, redact_browser_secrets(text)) for name, text in report.sections]
     setattr(item, f"_rep_{report.when}", report)
 
 
@@ -1405,7 +1413,7 @@ def _write_artifacts_if_failed(page, context, request) -> None:
         print(f"[artifact] screenshot failed: {exc}", flush=True)
 
     try:
-        html_path.write_text(page.content(), encoding="utf-8")
+        html_path.write_text(redact_browser_secrets(page.content()), encoding="utf-8")
     except Exception as exc:
         print(f"[artifact] html dump failed: {exc}", flush=True)
 
@@ -1418,7 +1426,7 @@ def _write_artifacts_if_failed(page, context, request) -> None:
                 lines.append(f"{key}:")
                 lines.extend(entries)
         if lines:
-            events_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            events_path.write_text(redact_browser_secrets("\n".join(lines) + "\n"), encoding="utf-8")
     except Exception as exc:
         print(f"[artifact] events dump failed: {exc}", flush=True)
 
@@ -1495,14 +1503,14 @@ def _write_auth_ready_diagnostics(page, request, reason: str) -> None:
         print(f"[auth_ready] screenshot failed: {exc}", flush=True)
 
     try:
-        html_path.write_text(page.content(), encoding="utf-8")
+        html_path.write_text(redact_browser_secrets(page.content()), encoding="utf-8")
     except Exception as exc:
         print(f"[auth_ready] html dump failed: {exc}", flush=True)
 
     try:
         summary = _auth_ready_summary(page)
         summary_text = f"reason: {reason}\nurl: {page.url}\ntitle: {page.title()}\n" + _format_auth_ready_summary(summary)
-        summary_path.write_text(summary_text, encoding="utf-8")
+        summary_path.write_text(redact_browser_secrets(summary_text), encoding="utf-8")
         print(summary_text, flush=True)
     except Exception as exc:
         print(f"[auth_ready] summary failed: {exc}", flush=True)

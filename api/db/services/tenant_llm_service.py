@@ -13,6 +13,7 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
+import asyncio
 import os
 import json
 import logging
@@ -530,6 +531,35 @@ class LLM4Tenant:
             except Exception:
                 # Skip langfuse tracing if connection fails
                 pass
+
+    async def aclose(self):
+        """Await model-owned async resources on their request event loop."""
+        try:
+            close_async = getattr(self.mdl, "aclose", None)
+            if callable(close_async):
+                # Keep cleanup on this loop, and join it even if the caller is
+                # cancelled repeatedly. SDK closed flags can precede transport
+                # shutdown, so an interrupted close cannot simply be retried.
+                cleanup = asyncio.create_task(close_async())
+                cancellation = None
+                while True:
+                    try:
+                        await asyncio.shield(cleanup)
+                        break
+                    except asyncio.CancelledError as error:
+                        if cleanup.cancelled():
+                            raise
+                        if cancellation is None:
+                            cancellation = error
+                    except Exception:
+                        if cancellation is None:
+                            raise
+                        logging.warning("Model async cleanup failed after cancellation", exc_info=True)
+                        break
+                if cancellation is not None:
+                    raise cancellation
+        finally:
+            self.close()
 
     def close(self):
         """Release resources held by this LLM4Tenant instance.

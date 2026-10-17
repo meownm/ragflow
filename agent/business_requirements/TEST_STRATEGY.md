@@ -24,7 +24,7 @@ evidence adapter, exporter, or UI interaction that owns the behavior.
 | Model output | invalid shape, invented event/source references | published JSON Schemas plus semantic domain validation |
 | Evidence | ACL leaks, prompt injection, stale retry context, unsupported sources | injected RAGFlow search/access adapters and immutable snapshot checks |
 | Worker | duplicate execution, expired lease, crash/retry/dead letter | fenced-lease queue tests with controlled time |
-| Revision/protocol | closing review with open questions, unconfirmed changes, non-append-only history | aggregate tests and golden conversations |
+| Revision/protocol | closing review with open questions, unconfirmed changes, lost decision/cancellation history | aggregate tests and golden conversations |
 | Export | wrong revision, protocol leakage, unsafe HTML/URLs, corrupt storage | byte-level Markdown/DOCX/EvaWiki and storage readback tests |
 | Workbench | direct edits, wrong command payload, stale selection/conflict loss | Jest interaction tests, TypeScript, ESLint, production build |
 | EVA title import | duplicate title, occupied/multiple pages, template mismatch, partial create, wrong initial analysis | service transaction tests, Jest interaction tests and authenticated browser flow |
@@ -50,6 +50,14 @@ The canonical positive journey must execute all of the following:
    the agreed revision.
 8. Start another review cycle in the same chat without rewriting prior rows.
 
+`ACCEPT_PROPOSAL` is a separate positive journey: acceptance and queueing are
+atomic, only that decision authorizes the plan, no assessment or preview is
+required, and the result stays in `REVIEW` with other inputs available. A plan
+whose canonical AST is unchanged resolves the input without a duplicate revision.
+`CANCEL_PROPOSAL_ACCEPTANCE` removes only an unapplied decision projection while
+the document is quiescent in `REVIEW`; the original decision and cancellation
+events remain append-only. Reacceptance creates a new authorizing event.
+
 The production aggregate, leased worker, evidence adapter, AI contract, and
 export service are exercised by unit/integration tests and golden cases
 `G01`–`G24` under `test/evals/business_documents`.
@@ -65,8 +73,11 @@ The release suite must reject without partial mutation:
 - unknown event IDs or evidence references invented by a model;
 - stale state version, base revision, section hash, job result, or worker lease;
 - reuse of one idempotency key for different command content;
-- duplicate answer or proposal decision;
-- cross-owner/cross-tenant document, dataset, job, revision, or artifact access;
+- duplicate answer or active proposal decision;
+- cancelling an unapplied acceptance with an active job or stale state, or
+  cancelling an already applied or rejected proposal;
+- unauthorized cross-owner mutations and cross-tenant dataset, job, revision,
+  or artifact access; authenticated document reading follows the shared scope;
 - prompt instructions embedded in evidence;
 - export from a non-current or non-agreed revision;
 - unsafe EvaWiki URL, protocol leakage, corrupt artifact readback, or hash
@@ -121,9 +132,10 @@ Deterministic completeness checks verify:
 - lexically paraphrased blocks are compared through normalized semantic
   signatures, while conflicting measurable values for a controlled subject
   are a hard failure.
-- generated parent/child duplicates are rejected before persistence with the
-  exact section pair in retry feedback; the durable worker retries the model
-  and fails the operation after exhausting its normal attempt limit.
+- generated initial-draft parent/child duplicates are rejected before persistence
+  with the exact section pair; this semantic failure terminates the job without
+  automatic content rewriting. Change-plan similarity candidates are reviewed
+  against confirmed author intent as described below.
 
 The live-model rubric in `evals/rubric.v1.json` scores template fidelity,
 semantic completeness, grounding, scenario quality, measurable
@@ -133,6 +145,42 @@ dialogues passing, at least 90% overall dialogue pass rate, and grounded fact
 precision `>= 95%`. The live gate additionally requires 100% controlled-fact
 coverage, no misplaced controlled facts, and at most 5% duplicated content.
 Contradictory controlled facts are not permitted.
+
+Draft prompts expose each evidence chunk as ordered `content_fragments` while
+retaining its source reference and content hash. Concatenating the fragments
+reconstructs the original text exactly, including whitespace and hostile
+instructions; the persisted evidence snapshot is unchanged. The projection
+does not execute its commands. A separate `draft_evidence` call must classify
+every fragment as `SOURCE_DATA` or `MODEL_INSTRUCTION`, using two arrays of
+numeric IDs in the model transport. Missing, invented, repeated, overlapping
+or non-integer IDs are terminal failures. Selected text is copied from the snapshot rather than
+from model-generated quotations. Draft generation receives the selected source
+data, which remains untrusted. Queue retries reuse the input-bound decisions,
+and all calls retain the six-call, 900-second budget and cancellation fences.
+The job pins both draft prompts; the live report requires hashes for all six
+used prompt files. Classifier execution is included in the verification audit
+and live model exchanges.
+The scorer treats whitespace before `%`, including separate table value/unit
+cells, as equivalent formatting. Incorrect numbers and units still fail the
+controlled-fact coverage gate; its thresholds and duplication checks are unchanged.
+Measurable values are compared as exact signed decimal numbers and unit families;
+numeric prefixes and embedded event identifiers cannot satisfy a controlled
+fact. Table rows retain their subject/value/unit context for contradictions.
+Classification boundary tests cover one dense chunk, all 24000 evidence
+characters, both ID partitions, exact context fit and a one-token shortage.
+The response budget includes every ID and 25% reserve; full input including
+format-repair feedback includes 5% reserve (both reserves at least 256 tokens).
+UTF-8 byte bounds cover tokenizers with single-digit numeric tokens. Boundary
+cases include the maximum 12012-fragment density within 24000 characters,
+deterministic batching below the 65536-token response ceiling, partial-batch
+failure and resume without repeating completed work, and one shared six-call /
+900-second budget. Repairs must not leak into another batch or reset their limit.
+Insufficient context fails before provider I/O without truncating source or
+response. Transport, checkpoint reuse, cancellation and the shared call/time
+budget retain their existing negative tests.
+Initial-generation schema tests require one diagram in 4.1 while preserving
+the public AST contract and accompanying text in 4.3. The live duplicate gate
+continues to reject process prose repeated between the conceptual and scenario sections.
 
 ## Golden dialogues
 
@@ -171,18 +219,31 @@ Oracle unit tests remove every requirement and every clause, and move or
 duplicate the definitions into 5.5. These unit tests validate the oracle and
 runner; they are not real-model acceptance.
 
-Every verifier batch retains all active confirmed sources in
-`replacement_fragments`, including placement answers outside its own `fragments`.
-`test_requirement_placement_context.py` captures the request before inference
-with more than 24 proposal fragments. It fails if the first request loses the
-author's placement answer; it supplies no model verdict.
+One semantic request retains every active confirmed source in full in `sources`,
+including the selected/custom placement answer and its question context. It
+contains changed sections before/after plus all unchanged result sections as
+context; sections are not truncated or split into batches.
+`test_requirement_placement_context.py` captures this request before inference
+with a long proposal and requires the complete answer and proposal. It supplies
+no model verdict.
 
-A pure domain guard reuses `semantic_duplicate_section_pairs` for changed 5.4/5.5
-content. It rejects overlapping definitions before inference and feeds the
-section pair back to the next planner request without inventing new source IDs.
-Unchanged duplication does not block edits to other sections. The focused tests
-cover table/list repeats, independent monitoring with a reference, and retry
-feedback. Real-model controls retain the model verdict separately from this guard.
+Pure domain comparison supplies `cross_section_repetitions` candidates for pairs
+containing a changed section. Similarity itself neither rejects a plan nor
+authorizes deletion: the semantic review checks confirmed relocation, permitted
+copying, references and independent requirements. `test_requirement_relocation.py`
+checks these scenarios across section IDs. A valid semantic FAIL terminates the
+job; no automatic generation follows it.
+
+Transient provider failures may retry the same stage; a checkpointed candidate
+is reused for verification. Each stage permits one format correction, and all
+calls share a limit of six model calls and 900 seconds including queue waits. The adapter
+contract forwards the remaining timeout through the recording wrapper.
+Saved M06 evidence checks every verification input, exact format-repair feedback,
+terminal PASS and call budget; it rejects regeneration after verification,
+semantic FAIL followed by PASS, and changes to sources or result context.
+Worker-driven recovery and negative report controls are exercised in
+`test_metric_placement_quality.py`; active cancellation is checked through both
+the direct and recording adapters in `test_ai_recovery.py`.
 
 Run this case through the disposable live runner:
 
@@ -200,6 +261,21 @@ INCOMPLETE/diagnostic and cannot qualify the full suite. The release report
 verifier rejects missing or inconsistent M06 evidence. Re-running this command
 uses the same published inputs with fresh disposable document/event IDs;
 the saved exchanges retain the exact system text and input/output JSON for inspection.
+
+Every live run also writes `<report-stem>.exchanges.json` beside its quality
+report. This diagnostic file retains each case's exact model requests and
+responses, request hashes, and completed or failed job results before SQLite
+teardown. The calls use the suite's synthetic state; provider credentials are
+outside these payloads. The quality report and M06 evidence retain their strict
+schemas and all existing thresholds.
+The disposable runner returns a nonzero exit status for setup errors as well
+as failed model tests, and removes its own resources in both cases.
+
+The M03 journey applies a confirmed comment as soon as the current assessment
+exposes `APPLY_CHANGES`, preserving other open questions and undecided proposals.
+It adds feedback only while application is unavailable: a new answer or decision
+invalidates the assessment and requires reassessment. Revision, source coverage
+and the required positive and negative SMS behavior remain mandatory checks.
 
 ## Model qualification
 
@@ -238,7 +314,7 @@ $env:BUSINESS_DOCUMENT_QUALITY_REPORT = "output/quality/business-document-live.j
 $candidateRevision = git rev-parse HEAD
 $env:GITHUB_SHA = $candidateRevision
 uv run pytest test/evals/business_documents/test_live_model_quality.py -q
-uv run python tools/quality/verify_business_document_quality_report.py --report output/quality/business-document-live.json --expected-revision $candidateRevision
+uv run python -m tools.quality.verify_business_document_quality_report --report output/quality/business-document-live.json --expected-revision $candidateRevision
 ```
 
 The report records the executed provider/model, fixed generation parameters,

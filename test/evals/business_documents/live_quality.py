@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 import re
 from typing import Any, Mapping, Sequence
 
@@ -10,7 +11,7 @@ from business_documents.domain.content_quality import meaningful_text_block_coun
 
 
 _MEASURABLE_CLAIM = re.compile(
-    r"\b\d+(?:[.,]\d+)?\s*(?:%(?!\w)|(?:мс|ms|сек(?:\.|унд(?:а|ы)?)?|минут(?:а|ы)?|rps)\b)",
+    r"(?<![\w.,+\-−])[+\-−]?\d+(?:[.,]\d+)?\s*(?:%(?![\w%‰])|(?:мс|ms|сек(?:\.|унд(?:а|ы)?)?|минут(?:а|ы)?|rps)\b)",
     flags=re.IGNORECASE,
 )
 _CYRILLIC = re.compile(r"[А-Яа-яЁё]")
@@ -100,11 +101,7 @@ def score_document_quality(
 
     fact_occurrences, missing_fact_ids, misplaced_fact_count = _fact_distribution(sections, controlled_facts)
     semantic_coverage = (len(controlled_facts) - len(missing_fact_ids)) / len(controlled_facts) if controlled_facts else 1.0
-    duplicate_fact_details = [
-        f"fact:{fact_id}:repeat:{repeat_index}"
-        for fact_id, count in fact_occurrences.items()
-        for repeat_index in range(1, count)
-    ]
+    duplicate_fact_details = [f"fact:{fact_id}:repeat:{repeat_index}" for fact_id, count in fact_occurrences.items() for repeat_index in range(1, count)]
     duplicate_block_details, meaningful_block_count = _duplicate_blocks(sections)
     duplicate_content = duplicate_fact_details + duplicate_block_details
     duplicate_content_count = len(duplicate_content)
@@ -201,7 +198,15 @@ def score_document_quality(
 
 def _controlled_fact_present(fact_id: str, normalized_text: str, controlled_facts: Sequence[ControlledFact]) -> bool:
     fact = next((item for item in controlled_facts if item.fact_id == fact_id), None)
-    return fact is not None and any(_normalize(alias) in normalized_text for alias in fact.aliases)
+    return fact is not None and any(_alias_present(alias, normalized_text) for alias in fact.aliases)
+
+
+def _alias_present(alias: str, normalized_text: str) -> bool:
+    normalized_alias = _normalize(alias)
+    if _MEASURABLE_CLAIM.fullmatch(normalized_alias.rstrip(".")):
+        expected = _measure_key(normalized_alias)
+        return any(_measure_key(match.group(0)) == expected for match in _MEASURABLE_CLAIM.finditer(normalized_text))
+    return bool(normalized_alias and re.search(r"(?<!\w)" + re.escape(normalized_alias) + r"(?!\w)", normalized_text))
 
 
 def _fact_distribution(
@@ -216,8 +221,7 @@ def _fact_distribution(
         section_id = section.get("id")
         section_text = _normalize(_section_text(section))
         for fact in controlled_facts:
-            aliases = {_normalize(alias) for alias in fact.aliases if _normalize(alias)}
-            present = any(alias in section_text for alias in aliases)
+            present = any(_alias_present(alias, section_text) for alias in fact.aliases)
             occurrences[fact.fact_id] += int(present)
             if present and fact.expected_section_ids and section_id not in fact.expected_section_ids:
                 misplaced += 1
@@ -236,12 +240,9 @@ def _semantic_content_strings(value: object) -> list[str]:
     if isinstance(value, list):
         return [text for item in value for text in _semantic_content_strings(item)]
     if isinstance(value, dict):
-        return [
-            text
-            for key, item in value.items()
-            if key not in {"evidence_refs", "source", "type", "url"}
-            for text in _semantic_content_strings(item)
-        ]
+        if value.get("type") == "table":
+            return [" ".join(_semantic_content_strings(row)) for row in [value.get("headers", []), *value.get("rows", [])]]
+        return [text for key, item in value.items() if key not in {"evidence_refs", "source", "type", "url"} for text in _semantic_content_strings(item)]
     return []
 
 
@@ -269,10 +270,10 @@ def _contradictions(sections: Sequence[object], controlled_facts: Sequence[Contr
     return contradictions
 
 
-def _measure_key(claim: str) -> tuple[str, str]:
+def _measure_key(claim: str) -> tuple[Decimal, str]:
     normalized = _normalize(claim)
-    number_match = re.search(r"\d+(?:\.\d+)?", normalized)
-    number = str(float(number_match.group(0))) if number_match else ""
+    number_match = re.search(r"[+\-−]?\d+(?:\.\d+)?", normalized)
+    number = Decimal(number_match.group(0).replace("−", "-")) if number_match else Decimal(0)
     if "%" in normalized:
         family = "percent"
     elif re.search(r"\b(?:мс|ms)\b", normalized):
@@ -294,21 +295,21 @@ def _grounded_claims(
     grounded = 0
     observed = 0
     unsupported: list[str] = []
-    allowed_measurable_aliases = {_normalize(alias) for fact in controlled_facts for alias in fact.aliases if _MEASURABLE_CLAIM.search(alias)}
+    allowed_measures = {_measure_key(match.group(0)) for fact in controlled_facts for alias in fact.aliases for match in _MEASURABLE_CLAIM.finditer(_normalize(alias))}
     for section in sections:
         if not isinstance(section, dict):
             continue
         section_text = _normalize(_section_text(section))
         section_refs = {source_ref for source_ref in section.get("evidence_refs", []) if isinstance(source_ref, str)}
         for fact in controlled_facts:
-            if not any(_normalize(alias) in section_text for alias in fact.aliases):
+            if not any(_alias_present(alias, section_text) for alias in fact.aliases):
                 continue
             observed += 1
             if fact.source_ref in available_refs and fact.source_ref in section_refs:
                 grounded += 1
         for match in _MEASURABLE_CLAIM.finditer(section_text):
             claim = _normalize(match.group(0))
-            if any(claim in alias or alias in claim for alias in allowed_measurable_aliases):
+            if _measure_key(claim) in allowed_measures:
                 continue
             observed += 1
             unsupported.append(match.group(0))
@@ -337,11 +338,7 @@ def _protocol_is_separate(body_text: str, protocol: dict[str, Any] | None) -> bo
             if collection == "proposals" and row.get("decision") == "ACCEPTED":
                 continue
             disposition = row.get("disposition")
-            if (
-                collection == "comments"
-                and isinstance(disposition, dict)
-                and disposition.get("disposition") == "CONFIRMED_CHANGE"
-            ):
+            if collection == "comments" and isinstance(disposition, dict) and disposition.get("disposition") == "CONFIRMED_CHANGE":
                 continue
             text = row.get("text")
             if isinstance(text, str) and len(text.strip()) >= 20 and _normalize(text) in body_text:
@@ -370,4 +367,5 @@ def _content_strings(value: object) -> list[str]:
 
 
 def _normalize(value: str) -> str:
-    return " ".join(value.casefold().replace(",", ".").split())
+    normalized = " ".join(value.casefold().replace(",", ".").split())
+    return re.sub(r"(?<=\d)\s+(?=%)", "", normalized)

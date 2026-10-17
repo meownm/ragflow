@@ -45,7 +45,7 @@ function requirementIssues(error: OperationError) {
   });
 }
 
-export function BusinessDocumentError({ error }: { error: OperationError }) {
+function errorContent(error: OperationError) {
   const message =
     typeof error === 'string'
       ? error
@@ -67,6 +67,16 @@ export function BusinessDocumentError({ error }: { error: OperationError }) {
           pair.every((id) => typeof id === 'string' && id.trim()),
       )
     : [];
+  return { message: message.trim(), issues, duplicatePairs };
+}
+
+export function hasBusinessDocumentError(error: OperationError) {
+  const { message, issues, duplicatePairs } = errorContent(error);
+  return Boolean(message || issues.length || duplicatePairs.length);
+}
+
+export function BusinessDocumentError({ error }: { error: OperationError }) {
+  const { message, issues, duplicatePairs } = errorContent(error);
   return (
     <div className="min-w-0 whitespace-pre-wrap break-words">
       <p>{message}</p>

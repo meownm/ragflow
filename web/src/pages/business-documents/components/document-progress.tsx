@@ -5,7 +5,10 @@ import type {
   BusinessDocumentJobSummary,
   BusinessDocumentOperationState,
 } from '../types';
-import { BusinessDocumentError } from './document-error';
+import {
+  BusinessDocumentError,
+  hasBusinessDocumentError,
+} from './document-error';
 
 const stageLabels: Record<string, string> = {
   QUEUED: 'Ожидает запуска',
@@ -174,10 +177,10 @@ export function BusinessDocumentProgress({
           {[elapsed, attempt].filter(Boolean).join(' · ')}
         </span>
       )}
-      {job?.error && (
+      {hasBusinessDocumentError(job?.error) && (
         <div className="w-full min-w-0 text-[11px] text-state-warning">
           <span>Предыдущая ошибка: </span>
-          <BusinessDocumentError error={job.error} />
+          <BusinessDocumentError error={job?.error} />
         </div>
       )}
     </div>

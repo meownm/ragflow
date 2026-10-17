@@ -30,10 +30,10 @@ def model_boundary(monkeypatch):
             calls["bundle"].append((args, kwargs))
             self.mdl = SimpleNamespace(last_usage={"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5})
 
-        def __enter__(self):
+        async def __aenter__(self):
             return self
 
-        def __exit__(self, *_args):
+        async def __aexit__(self, *_args):
             calls["closed"] += 1
 
         async def async_chat(self, *_args):
@@ -145,7 +145,7 @@ async def test_quality_override_is_local_to_requested_attempt(model_boundary, mo
     assert calls["bundle"][0][0][1]["llm_name"] == "qualified-local-model"
     assert calls["bundle"][0][0][1]["max_tokens"] == window
     assert config["llm_name"] == "local-chat" and config["max_tokens"] == 131072
-    assert len(lookups) == 1 and len(calls["bundle"]) == 2
+    assert len(lookups) == len(calls["bundle"]) == 2
     assert all(parameters["extra_body"] == {"num_ctx": window} for parameters in calls["parameters"])
 
 
@@ -185,6 +185,42 @@ async def test_context_budget_and_native_window_agree(model_boundary, window, st
     assert len(calls["bundle"]) == 1
     assert json.dumps(payload, ensure_ascii=False) == snapshot
     assert validate_ai_audit(adapter.consume_execution_audit())["parameters"] == calls["parameters"][0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("window", [65536, 131072, 262144])
+async def test_complete_change_prompt_fits_budget_without_truncating_history(model_boundary, monkeypatch, window):
+    from common.token_utils import encoder
+    from test.unit_test.api.apps.business_documents.test_business_document_ai_export_boundaries import _coverage_job
+
+    config, _, bundle, calls = model_boundary
+    config["max_tokens"] = window
+    job = _coverage_job()
+    job.payload["source_events"].append({"event_id": "historical", "event_type": "ChangesApplied", "payload": {"text": " complete history" * 40000}})
+    snapshot = json.dumps(job.payload, ensure_ascii=False)
+    prompt = ai_module.BusinessDocumentAI._prompt(job)
+    serialized = json.dumps(prompt.input_payload, ensure_ascii=False)
+    used = len(encoder.encode(prompt.system)) + len(encoder.encode(serialized)) + 256
+    assert 65536 < used < 131072
+
+    async def chat(_self, system, messages, _parameters):
+        assert system == prompt.system
+        assert messages == [{"role": "user", "content": serialized}]
+        return "result"
+
+    monkeypatch.setattr(bundle, "async_chat", chat)
+    adapter = RAGFlowLLMAdapter()
+    if window == 65536:
+        with pytest.raises(BusinessDocumentError) as caught:
+            await adapter.async_generate("tenant", prompt.system, prompt.input_payload)
+        assert caught.value.code == "MODEL_CONTEXT_TOO_LARGE" and not calls["bundle"]
+    else:
+        assert await adapter.async_generate("tenant", prompt.system, prompt.input_payload) == "result"
+        audit = adapter.consume_execution_audit()
+        assert audit["parameters"]["max_completion_tokens"] == min(65536, window - used)
+        assert audit["parameters"]["extra_body"] == {"num_ctx": window}
+        assert len(calls["bundle"]) == calls["closed"] == calls["drained"] == 1
+    assert json.dumps(job.payload, ensure_ascii=False) == snapshot
 
 
 @pytest.mark.asyncio

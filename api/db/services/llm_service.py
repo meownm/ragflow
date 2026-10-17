@@ -90,6 +90,21 @@ class LLMBundle(LLM4Tenant):
         """Enter context manager."""
         return self
 
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        try:
+            await self.aclose()
+        except asyncio.CancelledError:
+            if not isinstance(exc_val, asyncio.CancelledError):
+                raise
+        except Exception:
+            if exc_val is None:
+                raise
+            logging.warning("LLMBundle async cleanup failed; preserving the operation error", exc_info=True)
+        return False
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Exit context manager and release resources."""
         self.close()

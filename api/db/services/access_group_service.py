@@ -50,6 +50,8 @@ def sections_for_request(blueprint, route):
         return ("dataset", "chat", "search", "agent")
     if blueprint == "chat_api" and path in {"/chat/mindmap", "/chat/recommendation"}:
         return ("chat", "search")
+    if blueprint == "document_api" and path == "/thumbnails":
+        return ("dataset", "chat", "search", "agent")
     if blueprint == "bot_api" and path.startswith("/searchbots/"):
         return ("search",)
     if blueprint == "business_document_api":

@@ -1825,7 +1825,7 @@ class BusinessDocumentProposal(DataBaseModel):
 
 
 class BusinessDocumentProposalDecision(DataBaseModel):
-    """Immutable and unique decision for a published proposal."""
+    """Current unique decision; document events retain acceptance and cancellation history."""
 
     id = CharField(max_length=32, primary_key=True)
     document_id = CharField(max_length=32, null=False, index=True)

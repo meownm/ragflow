@@ -51,6 +51,7 @@ class DocumentReader(Protocol):
     def job(self, document_id: str, job_id: str) -> Record | None: ...
     def stream_events(self, job_id: str, after: int) -> tuple[list[dict[str, Any]], str | None]: ...
     def latest_job(self, document_id: str) -> Record | None: ...
+    def proposal_jobs(self, document_id: str, after_version: int) -> Iterable[Record]: ...
     def preview(self, document: Record, now: int) -> Record | None: ...
     def exports(self, document_id: str) -> Iterable[Record]: ...
     def catalog(self) -> Iterable[Record]: ...
@@ -61,7 +62,7 @@ def project_job(row: Record | None) -> dict[str, Any] | None:
     if row is None:
         return None
     fields = ("job_type", "status", "progress", "progress_stage", "progress_message", "attempt", "max_attempts", "available_at", "lease_expires_at", "error", "create_time", "update_time")
-    return {"job_id": row["id"], **{name: row[name] for name in fields}}
+    return {"job_id": row["id"], **{name: row[name] for name in fields}, "error": row["error"] or None}
 
 
 def _display_name(user_id: str | None, users: Mapping[str, Record]) -> str | None:
@@ -274,6 +275,7 @@ class DocumentQueries:
         permissions = access.permissions(document["owner_id"])
         preview = self._reader.preview(document, self._clock())
         commands = available_commands(document, review, preview=preview)
+        awaiting = review.accepted_inputs & review.active_inputs
         fields = (
             "tenant_id",
             "owner_id",
@@ -298,7 +300,12 @@ class DocumentQueries:
             "permissions": permissions,
             "owner_name": _display_name(document["owner_id"], self._reader.users({document["owner_id"]})),
             "current_revision": self.revision(document, document["current_revision_id"]) if document["current_revision_id"] else None,
-            "protocol": project_protocol(review, document["current_revision_id"]),
+            "protocol": project_protocol(
+                review,
+                document["current_revision_id"],
+                self._reader.proposal_jobs(document["id"], min(review.events_by_id[event_id]["sequence"] for event_id in awaiting)) if awaiting else (),
+                preview_id=preview["id"] if preview else None,
+            ),
             "allowed_commands": commands if permissions["edit"] else [],
             "latest_job": project_job(self._reader.latest_job(document["id"])),
             "change_preview": {"job_id": preview["id"], "base_revision_id": preview["base_revision_id"]} if preview else None,
@@ -382,8 +389,24 @@ class DocumentQueries:
         }
 
 
-def project_protocol(review: ReviewState, current_revision_id: str | None) -> dict[str, Any]:
+def project_protocol(review: ReviewState, current_revision_id: str | None, proposal_jobs: Iterable[Record] = (), *, preview_id: str | None = None) -> dict[str, Any]:
     applied_proposal_events = review.accepted_inputs - review.active_inputs
+    applications = {}
+    awaiting = review.accepted_inputs & review.active_inputs
+    # Jobs arrive newest first. Match the exact decision, including after cancellation/reacceptance.
+    for job in proposal_jobs if awaiting else ():
+        payload = job["payload"]
+        for event_id in awaiting.intersection(payload.get("active_change_input_event_ids", [])):
+            if event_id not in applications:
+                status = job["status"]
+                if payload.get("preview_only") and status == "COMPLETED":
+                    status = "PREPARED" if job["id"] == preview_id else "PREVIEW_STALE"
+                applications[event_id] = {
+                    "status": status,
+                    "error": job.get("error") or None,
+                }
+        if len(applications) == len(awaiting):
+            break
     questions = []
     for question in review.questions:
         answer = review.answers.get(question["id"])
@@ -425,6 +448,9 @@ def project_protocol(review: ReviewState, current_revision_id: str | None) -> di
                 "decision": review.decisions[row["id"]]["decision"] if row["id"] in review.decisions else "PENDING",
                 "decision_event_id": review.protocol_events["decisions"].get(row["id"]),
                 "applied": review.protocol_events["decisions"].get(row["id"]) in applied_proposal_events,
+                "application": applications.get(review.protocol_events["decisions"].get(row["id"]), {"status": "WAITING", "error": None})
+                if review.protocol_events["decisions"].get(row["id"]) in awaiting
+                else None,
             }
             for row in review.proposals
         ],

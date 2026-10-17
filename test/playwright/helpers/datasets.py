@@ -19,7 +19,7 @@ def wait_for_dataset_detail(page, timeout_ms: int) -> None:
 
 
 def wait_for_dataset_detail_ready(page, expect, timeout_ms: int) -> None:
-    """Wait for dataset detail UI to become ready/visible."""
+    """Wait for the document list and its upload action."""
     wait_for_dataset_detail(page, timeout_ms=timeout_ms)
     try:
         page.wait_for_load_state("networkidle", timeout=timeout_ms)
@@ -29,20 +29,9 @@ def wait_for_dataset_detail_ready(page, expect, timeout_ms: int) -> None:
         except Exception:
             pass
 
-    heading = page.locator("[role='heading']").first
-    main = page.locator("[role='main']").first
-    if main.count() > 0:
-        anchor = main.locator("text=/\\b(add|upload|file|document)\\b/i").first
-    else:
-        anchor = page.locator("text=/\\b(add|upload|file|document)\\b/i").first
     try:
-        if heading.count() > 0:
-            expect(heading).to_be_visible(timeout=timeout_ms)
-            return
-        if main.count() > 0:
-            expect(main).to_be_visible(timeout=timeout_ms)
-            return
-        expect(anchor).to_be_visible(timeout=timeout_ms)
+        expect(page.get_by_test_id("dataset-documents")).to_be_visible(timeout=timeout_ms)
+        expect(page.get_by_test_id("dataset-add-file")).to_be_visible(timeout=timeout_ms)
     except AssertionError:
         if env_bool("PW_DEBUG_DUMP"):
             url = page.url

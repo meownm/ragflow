@@ -139,7 +139,7 @@ def verify_report(report_path: Path, root: Path, expected_revision: str | None =
     template = _json(asset_root / "templates" / "business_requirements.v1.json")
     golden_path = asset_root / "golden_model_quality" / "v2.json"
     golden = _json(golden_path)
-    prompt_names = ("intake.v1.md", "draft.v1.md", "review.v1.md", "change_planner.v1.md", "requirement_coverage.v1.md")
+    prompt_names = ("intake.v1.md", "draft.v1.md", "draft_evidence.v1.md", "review.v1.md", "change_planner.v1.md", "requirement_coverage.v1.md")
     prompt_hashes = {name: f"sha256:{hashlib.sha256((asset_root / 'prompts' / name).read_bytes()).hexdigest()}" for name in prompt_names}
 
     required = {

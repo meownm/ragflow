@@ -367,6 +367,7 @@ export type BusinessDocumentCommandType =
   | 'REQUEST_DRAFT'
   | 'DECIDE_PROPOSAL'
   | 'ACCEPT_PROPOSAL'
+  | 'CANCEL_PROPOSAL_ACCEPTANCE'
   | 'ADD_COMMENT'
   | 'APPLY_CHANGES'
   | 'PREPARE_CHANGES'
@@ -509,6 +510,18 @@ export interface BusinessDocumentProposal {
   rationale?: string;
   decision: 'PENDING' | 'ACCEPTED' | 'REJECTED';
   applied?: boolean;
+  application?: {
+    status:
+      | 'WAITING'
+      | 'PENDING'
+      | 'RUNNING'
+      | 'RETRY'
+      | 'DEAD'
+      | 'COMPLETED'
+      | 'PREPARED'
+      | 'PREVIEW_STALE';
+    error?: BusinessDocumentOperationError | string | null;
+  } | null;
 }
 
 export interface BusinessDocumentCommentAnchor {

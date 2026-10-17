@@ -20,6 +20,13 @@ def _require_live_contour() -> None:
         pytest.skip("Requires the explicitly enabled local Docker connector contour")
 
 
+@pytest.fixture(autouse=True)
+def local_connector_runtime():
+    _require_live_contour()
+    # Settings/Redis must be initialized by the ORM before eager connector imports.
+    from api.db import db_models  # noqa: F401
+
+
 def _connector_by_name(name: str):
     from api.db.db_models import Connector
 
@@ -55,7 +62,6 @@ class _FaultOnceSession:
 
 @pytest.mark.p0
 def test_openmetadata_live_read_write_retry_and_restore():
-    _require_live_contour()
     from api.apps.services.openmetadata_copilot_service import OpenMetadataClient, OpenMetadataConfig
     from common.data_source.openmetadata_connector import OpenMetadataConnector
 
@@ -109,7 +115,6 @@ def test_openmetadata_live_read_write_retry_and_restore():
 
 @pytest.mark.p0
 def test_eva_live_retry_create_publish_update_and_cleanup():
-    _require_live_contour()
     from common.data_source.eva_wiki_connector import EvaWikiConnector, EvaWikiMutationClient
 
     config, credentials = _connector_by_name(os.environ.get("RAGFLOW_EVA_TEST_CONNECTOR", "EVA Wiki native smoke"))

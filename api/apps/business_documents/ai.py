@@ -51,6 +51,7 @@ from business_documents.domain.content_quality import parent_child_section_pairs
 from business_documents.domain.requirement_coverage import changed_section_repetitions, validate_requirement_coverage
 from business_documents.domain.change_plan import validate_snapshot_sources, validate_evidence_sources
 from business_documents.domain.errors import RuleViolation
+from business_documents.domain.hashing import stable_hash
 from api.db.db_models import BusinessDocumentJob
 
 
@@ -187,13 +188,29 @@ class BusinessDocumentAIAdapter(Protocol):
     def generate(self, tenant_id: str, system_prompt: str, input_payload: dict[str, Any], *, timeout_seconds: float | None = None) -> str | dict[str, Any]: ...
 
 
+def _classification_response_tokens(identifiers: list[int]) -> int:
+    # ASCII bytes bound byte-based tokenizers, including Qwen's single-digit
+    # tokens. Include readable whitespace and both partition layouts.
+    required = max(
+        len(json.dumps({"source_data_ids": source, "model_instruction_ids": instructions}, indent=2).encode("utf-8"))
+        for source, instructions in ((identifiers, []), ([], identifiers), (identifiers[:1], identifiers[1:]))
+    )
+    return required + max(256, math.ceil(required / 4))
+
+
+def _classification_batches(identifiers: list[int]) -> list[list[int]]:
+    if _classification_response_tokens(identifiers) <= 65536:
+        return [identifiers]
+    middle = len(identifiers) // 2
+    return _classification_batches(identifiers[:middle]) + _classification_batches(identifiers[middle:])
+
+
 class RAGFlowLLMAdapter:
     """Thin injectable adapter over the tenant's configured default chat model."""
 
     def __init__(self, model_name_override: str | None = None):
         self._execution_audit: dict[str, Any] | None = None
         self._model_name_override = model_name_override
-        self._override_context: tuple[tuple[str, str, str], int] | None = None
 
     def consume_execution_audit(self) -> dict[str, Any] | None:
         audit = self._execution_audit
@@ -213,26 +230,35 @@ class RAGFlowLLMAdapter:
 
         self._execution_audit = None
         model_config = get_tenant_default_model_by_type(tenant_id, LLMType.CHAT)
-        if self._model_name_override is not None:
-            if model_config.get("llm_factory") != "Ollama":
-                raise ValueError("Quality model override requires Ollama")
+        if self._model_name_override is not None and model_config.get("llm_factory") != "Ollama":
+            raise ValueError("Quality model override requires Ollama")
+        if model_config.get("llm_factory") == "Ollama" and (model_config.get("api_base") or self._model_name_override is not None):
             import httpx
 
             base = str(model_config.get("api_base") or "").rstrip("/")
             if base.endswith("/v1"):
                 base = base[:-3]
-            key = (base, str(model_config.get("api_key") or ""), self._model_name_override)
-            if self._override_context is None or self._override_context[0] != key:
-                headers = {"Authorization": f"Bearer {key[1]}"} if key[1] else {}
-                async with httpx.AsyncClient(timeout=10) as client:
-                    response = await client.post(f"{base}/api/show", headers=headers, json={"model": self._model_name_override})
-                    response.raise_for_status()
-                    info = response.json().get("model_info", {})
-                context = next((value for name, value in info.items() if name.endswith(".context_length") and type(value) is int and value > 0), None) if isinstance(info, dict) else None
-                if context is None:
-                    raise ValidationError("MODEL_CONTEXT_UNAVAILABLE", "The selected Ollama model does not publish its context window")
-                self._override_context = key, context
-            model_config = {**model_config, "llm_name": self._model_name_override, "max_tokens": self._override_context[1]}
+            name = self._model_name_override or model_config["llm_name"]
+            api_key = model_config.get("api_key")
+            headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+            # Resolve each request so a replaced model or changed context cannot
+            # retain a stale catalog limit in this long-lived worker adapter.
+            async with httpx.AsyncClient(timeout=10) as client:
+                response = await client.post(f"{base}/api/show", headers=headers, json={"model": name})
+                response.raise_for_status()
+                try:
+                    metadata = response.json()
+                except ValueError as error:
+                    raise ValidationError("MODEL_CONTEXT_UNAVAILABLE", "The selected Ollama model does not publish its context window") from error
+            info = metadata.get("model_info", {}) if isinstance(metadata, dict) else {}
+            details = metadata.get("details") if isinstance(metadata, dict) else None
+            family = details.get("family", "") if isinstance(details, dict) else ""
+            context = (info.get(f"{family}.context_length") or info.get("general.context_length")) if isinstance(info, dict) else None
+            if context is None and isinstance(info, dict):
+                context = next((value for key, value in info.items() if key.endswith(".context_length") and type(value) is int and value > 0), None)
+            if type(context) is not int or context <= 0:
+                raise ValidationError("MODEL_CONTEXT_UNAVAILABLE", "The selected Ollama model does not publish its context window")
+            model_config = {**model_config, "llm_name": name, "max_tokens": context}
         from common.token_utils import encoder
 
         context_window = model_config.get("max_tokens")
@@ -265,9 +291,15 @@ class RAGFlowLLMAdapter:
         if type(context_window) is not int or context_window <= 0:
             raise ValidationError("MODEL_CONTEXT_UNAVAILABLE", "Configure the selected model's context window")
         content = json.dumps(input_payload, ensure_ascii=False)
-        available = context_window - len(encoder.encode(system_prompt, disallowed_special=())) - len(encoder.encode(content, disallowed_special=())) - 256
         task_type = input_payload.get("job_input", {}).get("task_type")
-        if task_type == "PLAN_CHANGES":
+        input_tokens = len(encoder.encode(system_prompt, disallowed_special=())) + len(encoder.encode(content, disallowed_special=()))
+        if task_type == "CLASSIFY_DRAFT_EVIDENCE":
+            input_tokens = max(input_tokens, len(system_prompt.encode("utf-8")) + len(content.encode("utf-8")))
+        input_reserve = max(256, math.ceil(input_tokens / 20)) if task_type == "CLASSIFY_DRAFT_EVIDENCE" else 256
+        available = context_window - input_tokens - input_reserve
+        if task_type == "CLASSIFY_DRAFT_EVIDENCE":
+            output_limit = _classification_response_tokens([int(identifier) for identifier in input_payload["fragments"]])
+        elif task_type == "PLAN_CHANGES":
             output_limit = 65536
         elif task_type == "VERIFY_REQUIREMENT_COVERAGE":
             output_limit = _REQUIREMENT_VERIFICATION_OUTPUT_TOKENS
@@ -275,9 +307,18 @@ class RAGFlowLLMAdapter:
             output_limit = 8192
         else:
             output_limit = 4096
-        if available <= 0 or (task_type == "VERIFY_REQUIREMENT_COVERAGE" and available < output_limit):
+        if available <= 0 or (task_type in {"VERIFY_REQUIREMENT_COVERAGE", "CLASSIFY_DRAFT_EVIDENCE"} and (available < output_limit or output_limit > 65536)):
             code = "REQUIREMENT_CONTEXT_TOO_LARGE" if task_type == "VERIFY_REQUIREMENT_COVERAGE" else "MODEL_CONTEXT_TOO_LARGE"
-            raise ValidationError(code, "The complete input and response budget do not fit the selected model context")
+            raise ValidationError(
+                code,
+                "The complete input and response budget do not fit the selected model context",
+                {
+                    "input_tokens": input_tokens,
+                    "input_reserve": input_reserve,
+                    "required_response_tokens": output_limit,
+                    "context_window": context_window,
+                },
+            )
         output_limit = min(output_limit, available)
         limit_parameter = "max_tokens" if model_config.get("llm_factory") == "OpenAI-API-Compatible" else "max_completion_tokens"
         generation_parameters = {
@@ -290,7 +331,7 @@ class RAGFlowLLMAdapter:
         elif (
             model_config.get("llm_factory") == "OpenAI-API-Compatible"
             and str(model_config.get("llm_name") or model_config.get("model_name") or "").lower().split("/")[-1].startswith("qwen3")
-            and task_type in {"PLAN_CHANGES", "VERIFY_REQUIREMENT_COVERAGE"}
+            and task_type in {"PLAN_CHANGES", "VERIFY_REQUIREMENT_COVERAGE", "CLASSIFY_DRAFT_EVIDENCE"}
         ):
             generation_parameters["reasoning_effort"] = "none"
         provider = " ".join(str(model_config.get("llm_factory") or "unknown").split())[:128]
@@ -318,56 +359,57 @@ class RAGFlowLLMAdapter:
 
             span_context = nullcontext(None)
 
-        with span_context as span, LLMBundle(tenant_id, model_config, lang="Russian", max_retries=0, raise_on_error=True) as bundle:
-            try:
-                history = [{"role": "user", "content": content}]
-                if on_chunk is None:
-                    result = await bundle.async_chat(system_prompt, history, generation_parameters)
-                else:
-                    chunks: list[str] = []
-                    try:
-                        async for chunk in bundle.async_chat_streamly_delta(system_prompt, history, generation_parameters):
-                            chunks.append(chunk)
-                            on_chunk(chunk)
-                        result = "".join(chunks)
-                    except RuntimeError as error:
-                        if chunks or "does not implement" not in str(error):
-                            raise
+        with span_context as span:
+            async with LLMBundle(tenant_id, model_config, lang="Russian", max_retries=0, raise_on_error=True) as bundle:
+                try:
+                    history = [{"role": "user", "content": content}]
+                    if on_chunk is None:
                         result = await bundle.async_chat(system_prompt, history, generation_parameters)
-                raw_usage = getattr(getattr(bundle, "mdl", None), "last_usage", None) or {}
-                token_usage = {
-                    "prompt_tokens": max(0, int(raw_usage.get("prompt_tokens", 0) or 0)),
-                    "completion_tokens": max(0, int(raw_usage.get("completion_tokens", 0) or 0)),
-                    "total_tokens": max(0, int(raw_usage.get("total_tokens", 0) or 0)),
-                }
-                duration_ms = max(0.0, (time.perf_counter() - started_at) * 1000)
-                if not math.isfinite(duration_ms):
-                    duration_ms = 0.0
-                self._execution_audit = {
-                    "provider": provider,
-                    "model": model,
-                    "model_type": model_type,
-                    "parameters": generation_parameters,
-                    "duration_ms": round(duration_ms, 3),
-                    "token_usage": token_usage,
-                }
-                if span is not None:
-                    span.set_attribute("gen_ai.usage.input_tokens", token_usage["prompt_tokens"])
-                    span.set_attribute("gen_ai.usage.output_tokens", token_usage["completion_tokens"])
-                    span.set_attribute("gen_ai.usage.total_tokens", token_usage["total_tokens"])
-                logging.info(
-                    "business_document.ai.complete task_type=%s provider=%s model=%s duration_ms=%.3f prompt_tokens=%d completion_tokens=%d total_tokens=%d",
-                    task_type,
-                    provider,
-                    model,
-                    duration_ms,
-                    token_usage["prompt_tokens"],
-                    token_usage["completion_tokens"],
-                    token_usage["total_tokens"],
-                )
-                return result
-            finally:
-                await _drain_litellm_callbacks()
+                    else:
+                        chunks: list[str] = []
+                        try:
+                            async for chunk in bundle.async_chat_streamly_delta(system_prompt, history, generation_parameters):
+                                chunks.append(chunk)
+                                on_chunk(chunk)
+                            result = "".join(chunks)
+                        except RuntimeError as error:
+                            if chunks or "does not implement" not in str(error):
+                                raise
+                            result = await bundle.async_chat(system_prompt, history, generation_parameters)
+                    raw_usage = getattr(getattr(bundle, "mdl", None), "last_usage", None) or {}
+                    token_usage = {
+                        "prompt_tokens": max(0, int(raw_usage.get("prompt_tokens", 0) or 0)),
+                        "completion_tokens": max(0, int(raw_usage.get("completion_tokens", 0) or 0)),
+                        "total_tokens": max(0, int(raw_usage.get("total_tokens", 0) or 0)),
+                    }
+                    duration_ms = max(0.0, (time.perf_counter() - started_at) * 1000)
+                    if not math.isfinite(duration_ms):
+                        duration_ms = 0.0
+                    self._execution_audit = {
+                        "provider": provider,
+                        "model": model,
+                        "model_type": model_type,
+                        "parameters": generation_parameters,
+                        "duration_ms": round(duration_ms, 3),
+                        "token_usage": token_usage,
+                    }
+                    if span is not None:
+                        span.set_attribute("gen_ai.usage.input_tokens", token_usage["prompt_tokens"])
+                        span.set_attribute("gen_ai.usage.output_tokens", token_usage["completion_tokens"])
+                        span.set_attribute("gen_ai.usage.total_tokens", token_usage["total_tokens"])
+                    logging.info(
+                        "business_document.ai.complete task_type=%s provider=%s model=%s duration_ms=%.3f prompt_tokens=%d completion_tokens=%d total_tokens=%d",
+                        task_type,
+                        provider,
+                        model,
+                        duration_ms,
+                        token_usage["prompt_tokens"],
+                        token_usage["completion_tokens"],
+                        token_usage["total_tokens"],
+                    )
+                    return result
+                finally:
+                    await _drain_litellm_callbacks()
 
     def generate(self, tenant_id: str, system_prompt: str, input_payload: dict[str, Any], *, timeout_seconds: float | None = None) -> str:
         return run_in_worker_loop(asyncio.wait_for(self.async_generate(tenant_id, system_prompt, input_payload), timeout=timeout_seconds))
@@ -408,6 +450,8 @@ class BusinessDocumentAI:
         prompt = self._prompt(job, evidence)
         self._recovery = recovery = recovery or AIRecovery()
         recovery.checkpoint()
+        if job.job_type == "GENERATE_DRAFT":
+            prompt = self._prepare_draft_evidence(job, prompt, recovery)
         final = None
         cached = recovery.state["candidate"]
         if cached is not None:
@@ -442,6 +486,91 @@ class BusinessDocumentAI:
         recovery.remaining_seconds()
         return validated
 
+    def _prepare_draft_evidence(self, job: BusinessDocumentJob, prompt: PromptBundle, recovery: AIRecovery) -> PromptBundle:
+        evidence = prompt.input_payload.get("evidence") or {}
+        fragments = {
+            f"c{chunk_index}.f{fragment_index}": text for chunk_index, chunk in enumerate(evidence.get("chunks", [])) for fragment_index, text in enumerate(chunk.get("content_fragments", []))
+        }
+        if not fragments:
+            return prompt
+        ordered_ids = list(fragments)
+        inputs = {
+            "prompt": job.payload["prompt"],
+            "job_input": {"task_type": "CLASSIFY_DRAFT_EVIDENCE", "job_id": getattr(job, "id", None), "idea": job.payload.get("idea", "")},
+            "source_refs": [chunk["source_ref"] for chunk in evidence.get("chunks", [])],
+            "fragments": {str(index): text for index, text in enumerate(fragments.values())},
+        }
+        input_hash = stable_hash(inputs)
+        batches = _classification_batches(list(range(len(fragments))))
+
+        def decisions(value, expected):
+            if not isinstance(value, dict) or set(value) != expected or any(not isinstance(label, str) or label not in {"SOURCE_DATA", "MODEL_INSTRUCTION"} for label in value.values()):
+                raise ValidationError("INVALID_EVIDENCE_CLASSIFICATION", "Every pinned evidence fragment must have exactly one source-data or model-instruction decision")
+            return value
+
+        classified = {}
+        cached = recovery.state.get("draft_evidence")
+        if cached is not None:
+            if not isinstance(cached, dict) or cached.get("input_hash") != input_hash:
+                raise ValidationError("STALE_EVIDENCE_CLASSIFICATION", "Evidence classification does not match the immutable job input")
+            value = cached.get("decisions")
+            completed = len(value) if isinstance(value, dict) else -1
+            boundaries, count = {0}, 0
+            for batch in batches:
+                count += len(batch)
+                boundaries.add(count)
+            if completed not in boundaries:
+                raise ValidationError("INVALID_EVIDENCE_CLASSIFICATION", "Cached decisions must cover complete source batches")
+            classified = decisions(value, set(ordered_ids[:completed]))
+        for batch in batches:
+            if ordered_ids[batch[0]] in classified:
+                continue
+            batch_inputs = {**inputs, "fragments": {str(index): inputs["fragments"][str(index)] for index in batch}}
+            batch_hash = stable_hash(batch_inputs)
+            schema = {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["source_data_ids", "model_instruction_ids"],
+                "properties": {
+                    name: {"type": "array", "uniqueItems": True, "items": {"type": "integer", "minimum": batch[0], "maximum": batch[-1]}} for name in ("source_data_ids", "model_instruction_ids")
+                },
+            }
+            system = (
+                prompt_text("draft_evidence")
+                .replace("`{{context_json}}`", "Фрагменты переданы отдельным JSON-сообщением пользователя.")
+                .replace("`{{output_schema_json}}`", json.dumps(schema, ensure_ascii=False))
+            )
+            while True:
+                raw = self._generate(job.tenant_id, system, batch_inputs, "verification", recovery)
+                try:
+                    parsed = self._parse(raw)
+                except ValidationError as error:
+                    if error.code not in REPAIRABLE_OUTPUT_CODES or not recovery.repair("verification", raw, error):
+                        raise
+                    recovery.state["feedback"]["verification"]["evidence_batch_hash"] = batch_hash
+                    recovery.checkpoint()
+                    continue
+                if set(parsed) != {"source_data_ids", "model_instruction_ids"} or any(not isinstance(values, list) for values in parsed.values()):
+                    raise ValidationError("INVALID_EVIDENCE_CLASSIFICATION", "Evidence classification must contain only the two ID partitions")
+                data_ids, instruction_ids = parsed["source_data_ids"], parsed["model_instruction_ids"]
+                identifiers = data_ids + instruction_ids
+                if any(type(identifier) is not int for identifier in identifiers) or len(identifiers) != len(batch) or set(identifiers) != set(batch):
+                    raise ValidationError("INVALID_EVIDENCE_CLASSIFICATION", "Every pinned evidence fragment must have exactly one source-data or model-instruction decision")
+                classified.update({ordered_ids[index]: label for identifiers, label in ((data_ids, "SOURCE_DATA"), (instruction_ids, "MODEL_INSTRUCTION")) for index in identifiers})
+                break
+            recovery.state["draft_evidence"] = {"input_hash": input_hash, "decisions": deepcopy(classified)}
+            recovery.checkpoint()
+        decisions(classified, set(fragments))
+        selected = deepcopy(evidence)
+        for chunk_index, chunk in enumerate(selected.get("chunks", [])):
+            chunk["content_fragments"] = [text for fragment_index, text in enumerate(chunk.get("content_fragments", [])) if classified[f"c{chunk_index}.f{fragment_index}"] == "SOURCE_DATA"]
+            if "content_hash" in chunk:
+                chunk["source_content_hash"] = chunk.pop("content_hash")
+        selected["chunks"] = [chunk for chunk in selected.get("chunks", []) if chunk["content_fragments"]]
+        if "evidence_hash" in selected:
+            selected["source_evidence_hash"] = selected.pop("evidence_hash")
+        return PromptBundle(prompt.version, prompt.system, {**prompt.input_payload, "evidence": selected})
+
     @staticmethod
     def _candidate_document(job: BusinessDocumentJob, validated: dict[str, Any]) -> dict[str, Any] | None:
         if job.job_type != "PLAN_CHANGES":
@@ -468,7 +597,11 @@ class BusinessDocumentAI:
 
     def _generate(self, tenant_id: str, system: str, payload: dict[str, Any], stage: str, recovery: AIRecovery, on_chunk: Callable[[str], None] | None = None) -> object:
         remaining = recovery.before_call()
+        classification_hash = stable_hash(payload) if payload.get("job_input", {}).get("task_type") == "CLASSIFY_DRAFT_EVIDENCE" else None
         payload = recovery.input_payload(stage, payload)
+        feedback_hash = payload.get("format_repair", {}).get("evidence_batch_hash")
+        if classification_hash is not None and feedback_hash is not None and classification_hash != feedback_hash:
+            payload.pop("format_repair")
         if "format_repair" in payload:
             system += _FORMAT_REPAIR_INSTRUCTION
         consumer = getattr(self._adapter, "consume_execution_audit", None)
@@ -622,6 +755,14 @@ class BusinessDocumentAI:
         if not isinstance(pinned, dict) or pinned != current:
             raise ValidationError("PROMPT_ASSET_CHANGED", "The prompt pinned by the job is unavailable or has changed")
         schemas = {name: contract_schema(name) for name in contract_names}
+        if job.job_type == "GENERATE_DRAFT":
+            schemas["document_draft"] = deepcopy(schemas["document_draft"])
+            schemas["document_draft"]["properties"]["sections"]["items"].setdefault("allOf", []).append(
+                {
+                    "if": {"properties": {"id": {"const": "4.1"}}},
+                    "then": {"properties": {"blocks": {"minItems": 1, "maxItems": 1, "items": {"properties": {"type": {"const": "plantuml"}}}}}},
+                }
+            )
         if job.job_type == "PLAN_CHANGES":
             base_document = (job.payload.get("current_revision") or {}).get("document_ast") or {}
             document_contract = "document_draft_v2" if base_document.get("schema_version") == "2" else "document_draft"
@@ -673,6 +814,24 @@ class BusinessDocumentAI:
                 if text.strip()
             }
         if job.job_type == "ASSESS_REVIEW":
+            active_cycle = job_input.get("active_review_cycle")
+            comment_event_ids = list(
+                dict.fromkeys(
+                    comment["source_event_id"]
+                    for comment in (job_input.get("protocol") or {}).get("comments", [])
+                    if isinstance(comment, dict) and isinstance(comment.get("source_event_id"), str) and comment.get("review_cycle", active_cycle) == active_cycle
+                )
+            )
+            job_input["active_review_comment_event_ids"] = comment_event_ids
+            system += (
+                "\n\n# Обязательная классификация комментариев\n"
+                "В comment_dispositions верни ровно по одному решению для каждого event_id из "
+                f"job_input.active_review_comment_event_ids: {json.dumps(comment_event_ids, ensure_ascii=False)}. "
+                "Скопируй каждый идентификатор в comment_event_id без изменения. Это source_event_id комментария "
+                "из job_input.protocol.comments; comment_id и revision_id обозначают другие сущности. "
+                "Не заменяй классификацию комментария предложением: даже при наличии proposals нужен отдельный "
+                "comment_dispositions. При пустом списке верни comment_dispositions: []."
+            )
             closed_questions, resolved_comment_questions = _closed_review_question_context(job_input)
             if closed_questions:
                 closed_tags = list(dict.fromkeys(question["semantic_tag"] for question in closed_questions))
@@ -712,13 +871,20 @@ class BusinessDocumentAI:
                 "отсутствие изменения для события, уже использованного в операции. "
                 "Не используй question_id, proposal_id и comment_id вместо event_id."
             )
+        model_evidence = evidence
+        if job.job_type == "GENERATE_DRAFT" and evidence is not None:
+            # Keep the pinned snapshot intact; every fragment remains untrusted source text.
+            model_evidence = deepcopy(evidence)
+            for chunk in model_evidence.get("chunks", []):
+                if isinstance(chunk.get("content"), str):
+                    chunk["content_fragments"] = re.split(r"(?<=[.!?;])(?=\s)", chunk.pop("content"))
         return PromptBundle(
             version=pinned["version"],
             system=system,
             input_payload={
                 "prompt": pinned,
                 "job_input": job_input,
-                "evidence": evidence,
+                "evidence": model_evidence,
             },
         )
 
@@ -1030,8 +1196,12 @@ class BusinessDocumentAI:
         return bound
 
     @staticmethod
+    def _evidence_source_refs(evidence: dict[str, Any] | None) -> frozenset[str]:
+        return frozenset(chunk["source_ref"] for chunk in (evidence or {}).get("chunks", []) if isinstance(chunk, dict) and isinstance(chunk.get("source_ref"), str))
+
+    @staticmethod
     def _filter_evidence_refs(output: dict[str, Any], evidence: dict[str, Any] | None) -> dict[str, Any]:
-        allowed = {chunk["source_ref"] for chunk in (evidence or {}).get("chunks", []) if isinstance(chunk, dict) and isinstance(chunk.get("source_ref"), str)}
+        allowed = BusinessDocumentAI._evidence_source_refs(evidence)
 
         def scrub(value: Any) -> Any:
             if isinstance(value, dict):
@@ -1086,7 +1256,7 @@ class BusinessDocumentAI:
                 raise ValidationError("STALE_AI_RESULT", "Change plan does not match its immutable job snapshot")
             try:
                 allowed = frozenset(_active_change_input_event_ids(job.payload))
-                evidence_refs = frozenset((evidence or {}).get("source_refs", []))
+                evidence_refs = BusinessDocumentAI._evidence_source_refs(evidence)
                 for operation in output["operations"]:
                     validate_snapshot_sources(allowed, operation["source_event_ids"])
                     validate_evidence_sources(evidence_refs, operation.get("evidence_refs", []))

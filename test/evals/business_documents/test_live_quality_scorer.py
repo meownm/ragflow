@@ -181,6 +181,61 @@ def test_scorer_allows_confirmed_review_inputs_in_document_body():
     assert score.weighted_score >= RUBRIC["pass_threshold"]
 
 
+@pytest.mark.parametrize(
+    "value,unit,expected",
+    [
+        ("99,9", "%", True),
+        ("99.90", "%", True),
+        ("+99,90", "%", True),
+        ("99,8", "%", False),
+        ("199,9", "%", False),
+        ("999,9", "%", False),
+        ("99,95", "%", False),
+        ("-99,9", "%", False),
+        ("−99,9", "%", False),
+        ("99,9", "‰", False),
+        ("99", "5%", False),
+    ],
+)
+def test_scorer_reads_table_value_and_unit_without_accepting_wrong_percent(value, unit, expected):
+    document = _document_ast()
+    monitoring = next(section for section in document["sections"] if section["id"] == "5.5")
+    monitoring["blocks"] = [
+        {
+            "type": "table",
+            "headers": ["Показатель", "Значение", "Единица"],
+            "rows": [
+                ["Доступность", value, unit],
+                ["p95 времени ответа", "2", "секунды"],
+                ["Бизнес-событие", "application_submitted", "—"],
+                ["Метрика ошибок", "application_submit_error_total", "—"],
+            ],
+        }
+    ]
+
+    score = score_document_quality(document, _protocol(), TEMPLATE, RUBRIC, FACTS, SNAPSHOT)
+
+    assert (score.semantic_coverage == 1.0) is expected
+    assert ("availability" not in score.missing_fact_ids) is expected
+    if expected:
+        assert score.grounded_reference_precision == 1.0
+    elif unit == "%":
+        assert score.grounded_reference_precision < 1.0
+        assert score.contradiction_count > 0
+
+
+def test_scorer_does_not_match_an_embedded_event_identifier():
+    document = _document_ast()
+    monitoring = next(section for section in document["sections"] if section["id"] == "5.5")
+    for block in monitoring["blocks"]:
+        if block.get("type") == "paragraph":
+            block["text"] = block["text"].replace("application_submitted", "other_application_submitted_extra")
+        if block.get("type") == "table":
+            block["rows"] = [[cell.replace("application_submitted", "other_application_submitted_extra") for cell in row] for row in block["rows"]]
+    score = score_document_quality(document, _protocol(), TEMPLATE, RUBRIC, FACTS, SNAPSHOT)
+    assert "business_event" in score.missing_fact_ids
+
+
 def test_scorer_penalizes_missing_duplicated_and_misplaced_information():
     document = _document_ast()
     by_id = {section["id"]: section for section in document["sections"]}

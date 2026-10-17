@@ -224,6 +224,10 @@ class PeeweeDocumentWriter:
         self._require_transaction()
         BusinessDocumentProposalDecision.create(**values, **timestamps())
 
+    def delete_decision(self, document_id, proposal_id):
+        self._require_transaction()
+        BusinessDocumentProposalDecision.delete().where((BusinessDocumentProposalDecision.document_id == document_id) & (BusinessDocumentProposalDecision.proposal_id == proposal_id)).execute()
+
     def insert_comment(self, **values):
         self._require_transaction()
         BusinessDocumentComment.create(**values, **timestamps())

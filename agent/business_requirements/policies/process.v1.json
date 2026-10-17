@@ -1,7 +1,7 @@
 {
   "schema_version": "1",
   "policy_id": "business-requirements-process",
-  "policy_version": "1.1.0",
+  "policy_version": "1.2.0",
   "language": "ru",
   "lifecycle_states": ["INTAKE", "REVIEW", "AGREED", "ARCHIVED"],
   "operation_states": [
@@ -30,6 +30,8 @@
     "OPEN_REVIEW_QUESTIONS_PRESERVE_REVIEW",
     "ONLY_ACCEPTED_PROPOSALS_MAY_BE_APPLIED",
     "COMMENTS_QUESTIONS_PROPOSALS_AND_ANSWERS_ARE_APPEND_ONLY",
+    "PROPOSAL_DECISION_EVENTS_ARE_APPEND_ONLY",
+    "ONLY_UNAPPLIED_ACCEPTANCE_MAY_BE_CANCELLED_IN_QUIESCENT_REVIEW",
     "ONE_CHAT_MAPS_TO_ONE_DOCUMENT",
     "EXPORT_DOES_NOT_MUTATE_A_REVISION",
     "EVA_WIKI_REQUIRES_AGREED_REVISION",
@@ -51,6 +53,7 @@
       "ANSWER_QUESTION",
       "DECIDE_PROPOSAL",
       "ACCEPT_PROPOSAL",
+      "CANCEL_PROPOSAL_ACCEPTANCE",
       "ADD_COMMENT",
       "REQUEST_REVIEW_ASSESSMENT",
       "APPLY_CHANGES",

@@ -10,7 +10,7 @@ from business_documents.domain.errors import StateConflict
 
 
 Record = Mapping[str, Any]
-REVIEW_FEEDBACK = frozenset({"QuestionAnswered", "ProposalDecided", "AuthorCommentAdded", "EvaDocumentPulled"})
+REVIEW_FEEDBACK = frozenset({"QuestionAnswered", "ProposalDecided", "ProposalAcceptanceCancelled", "AuthorCommentAdded", "EvaDocumentPulled"})
 _REVIEW_BOUNDARIES = frozenset({"DraftCreated", "ReviewCycleStarted", "ReviewAssessed"})
 _RESOLUTION_EVENTS = frozenset({"ChangesApplied", "ReviewAgreedWithoutChanges", "ReviewContinuedWithoutChanges"})
 
@@ -148,6 +148,11 @@ def build_review_state(
                 protocol_events["decisions"][payload["proposal_id"]] = event_id
             if row and row["review_cycle"] == review_cycle and payload.get("decision") == "ACCEPTED":
                 accepted.add(event_id)
+        elif kind == "ProposalAcceptanceCancelled":
+            proposal_id = payload.get("proposal_id")
+            accepted.discard(payload.get("decision_event_id"))
+            protocol_events["decisions"].pop(proposal_id, None)
+            continue
         elif kind == "AuthorCommentAdded":
             row = comments_by_id.get(payload.get("comment_id"))
             if payload.get("comment_id"):

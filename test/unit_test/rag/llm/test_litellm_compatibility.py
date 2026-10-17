@@ -68,7 +68,14 @@ def provider():
                     "usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5},
                 }
             streaming = body.get("stream") and state.status == 200
-            if streaming:
+            if streaming and self.path == "/api/chat":
+                data = (
+                    json.dumps({"model": body["model"], "message": {"role": "assistant", "content": "OK"}, "done": False})
+                    + "\n"
+                    + json.dumps({"model": body["model"], "message": {"role": "assistant", "content": ""}, "done": True, "prompt_eval_count": 3, "eval_count": 2})
+                    + "\n"
+                ).encode()
+            elif streaming:
                 payload = [
                     {
                         "id": "chatcmpl-local",
@@ -181,9 +188,17 @@ async def test_typed_provider_failure(model_factory, provider, status, error_cla
     assert len(provider.requests) == 1
 
 
-async def test_ollama_native_thinking_and_context(model_factory, provider):
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_ollama_native_thinking_and_context(model_factory, provider, streaming):
     model = model_factory("Ollama", "qwen3:8b")
-    assert await model.async_chat("", [{"role": "user", "content": "hello"}], {}, num_ctx=8192) == ("OK", 5)
+    config = {"extra_body": {"num_ctx": 8192}, "max_completion_tokens": 64}
+    if streaming:
+        chunks = [chunk async for chunk in model.async_chat_streamly("", [{"role": "user", "content": "hello"}], config)]
+        assert "".join(chunk for chunk in chunks if isinstance(chunk, str)) == "OK"
+        assert chunks[-1] == 5
+    else:
+        assert await model.async_chat("", [{"role": "user", "content": "hello"}], config) == ("OK", 5)
+    assert config == {"extra_body": {"num_ctx": 8192}, "max_completion_tokens": 64}
     path, headers, body = provider.requests[0]
     assert path == "/api/chat"
     assert headers["authorization"] == "Bearer test-key"

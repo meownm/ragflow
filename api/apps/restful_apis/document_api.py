@@ -1298,6 +1298,8 @@ def list_thumbnails():
 
     try:
         docs = DocumentService.get_thumbnails(doc_ids)
+        readable_datasets = {dataset_id for dataset_id in {doc["kb_id"] for doc in docs} if KnowledgebaseService.accessible(dataset_id, current_user.id)}
+        docs = [doc for doc in docs if doc["kb_id"] in readable_datasets]
 
         for doc_item in docs:
             if doc_item["thumbnail"] and not doc_item["thumbnail"].startswith(IMG_BASE64_PREFIX):

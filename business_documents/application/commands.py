@@ -50,6 +50,10 @@ class CommandWriter(DocumentWriter, Protocol):
 
     def insert_decision(self, **values: Any) -> None: ...
 
+    def delete_decision(self, document_id: str, proposal_id: str) -> None: ...
+
+    def has_active_job(self, document_id: str) -> bool: ...
+
     def insert_comment(self, **values: Any) -> None: ...
 
     def insert_job(self, **values: Any) -> None: ...
@@ -182,6 +186,8 @@ class DocumentCommands:
                 return self._answer_question(document, actor_id, envelope)
             case CommandType.DECIDE_PROPOSAL | CommandType.ACCEPT_PROPOSAL:
                 return self._decide_proposal(document, actor_id, envelope)
+            case CommandType.CANCEL_PROPOSAL_ACCEPTANCE:
+                return self._cancel_proposal_acceptance(document, actor_id, envelope)
             case CommandType.ADD_COMMENT:
                 return self._add_comment(document, actor_id, envelope)
             case CommandType.APPLY_CHANGES | CommandType.PREPARE_CHANGES:
@@ -329,7 +335,7 @@ class DocumentCommands:
             raise ValidationError("PROPOSAL_NOT_FOUND", "Proposal does not belong to the active review cycle")
         decided = self._writer.has_decision(document["id"], proposal["id"])
         if decided and not apply:
-            raise ConflictError("PROPOSAL_ALREADY_DECIDED", "Published proposal decisions are immutable")
+            raise ConflictError("PROPOSAL_ALREADY_DECIDED", "The current proposal decision cannot be overwritten")
         decision = "ACCEPTED" if apply else envelope.payload.get("decision")
         if decision not in {"ACCEPTED", "REJECTED"}:
             raise ValidationError("INVALID_PROPOSAL_DECISION", "decision must be ACCEPTED or REJECTED")
@@ -349,6 +355,32 @@ class DocumentCommands:
                 raise ConflictError(error.code, error.message, error.details) from error
             return self._request_job(document, actor_id, envelope, "PLAN_CHANGES", OperationState.APPLYING_CHANGES, review=selected)
         return self._command_response(document, new_version, event_id)
+
+    def _cancel_proposal_acceptance(self, document: Record, actor_id: str, envelope: _CommandEnvelope) -> dict[str, Any]:
+        if self._writer.has_active_job(document["id"]):
+            raise ConflictError("OPERATION_IN_PROGRESS", "Another operation is already in progress")
+        proposal_id = envelope.payload["proposal_id"]
+        if self._writer.proposal(document["id"], proposal_id, document["active_review_cycle"]) is None:
+            raise ValidationError("PROPOSAL_NOT_FOUND", "Proposal does not belong to the active review cycle")
+        review = self._writer.review(document["id"], document["active_review_cycle"])
+        try:
+            review.for_proposal_application(proposal_id)
+        except RuleViolation as error:
+            raise ConflictError(error.code, error.message, error.details) from error
+        decision = review.decisions[proposal_id]
+        self._writer.delete_decision(document["id"], proposal_id)
+        version = document["state_version"] + 1
+        document = self._writer.update_document(document, {"state_version": version})
+        event_id = self._writer.append_event(
+            document["id"],
+            version,
+            "ProposalAcceptanceCancelled",
+            "USER",
+            actor_id,
+            {"proposal_id": proposal_id, "decision_id": decision["id"], "decision_event_id": review.protocol_events["decisions"][proposal_id]},
+            envelope.command_id,
+        )
+        return self._command_response(document, version, event_id)
 
     def _add_comment(self, document: Record, actor_id: str, envelope: _CommandEnvelope) -> dict[str, Any]:
         text = envelope.payload.get("text")

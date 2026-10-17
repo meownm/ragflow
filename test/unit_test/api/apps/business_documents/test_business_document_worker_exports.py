@@ -10,11 +10,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import sys
 import threading
 import zipfile
+from queue import Empty, Queue
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC
 from datetime import datetime as DateTime
@@ -495,31 +497,289 @@ def test_retry_error_remains_visible_while_next_attempt_is_running(database):
 
 
 @pytest.mark.p1
-def test_worker_start_is_singleton_and_wake_interrupts_idle_wait(database, monkeypatch):
-    ready = threading.Event()
+@pytest.mark.parametrize("concurrency", [1, 4, 8])
+def test_worker_pool_start_is_bounded_singleton_and_wake_interrupts_idle_wait(database, monkeypatch, concurrency):
+    ready = threading.Barrier(concurrency + 1)
     stop = threading.Event()
+    members = []
 
     class FakeWorker:
-        def run_forever(self, stop_event, *, poll_seconds):
+        def run_forever(self, stop_event, *, poll_seconds, maintenance_lock):
             assert poll_seconds == 0.25
-            ready.set()
+            members.append((self, maintenance_lock))
+            ready.wait(timeout=3)
             stop_event.wait(2)
 
     monkeypatch.setattr(worker_module, "BusinessDocumentWorker", FakeWorker)
-    monkeypatch.setattr(worker_module, "_WORKER_THREAD", None)
+    monkeypatch.setattr(worker_module, "_WORKER_THREADS", ())
     monkeypatch.setenv("BUSINESS_DOCUMENT_WORKER_ENABLED", "true")
+    monkeypatch.setenv("BUSINESS_DOCUMENT_WORKER_CONCURRENCY", str(concurrency))
     monkeypatch.setenv("BUSINESS_DOCUMENT_WORKER_POLL_SECONDS", "0.25")
     worker_module._WAKE_EVENT.clear()
 
-    thread = worker_module.start_business_document_worker(stop)
-    assert thread is not None and ready.wait(1)
-    assert worker_module.start_business_document_worker(stop) is thread
-    worker_module.wake_business_document_worker()
-    assert worker_module._WAKE_EVENT.is_set()
+    threads = worker_module.start_business_document_workers(stop)
+    try:
+        ready.wait(timeout=3)
+        assert len(threads) == concurrency
+        assert len({id(member) for member, _ in members}) == concurrency
+        assert len({id(lock) for _, lock in members}) == 1
+        assert worker_module.start_business_document_workers(stop) is threads
+        worker_module.wake_business_document_worker()
+        assert worker_module._WAKE_EVENT.is_set()
+    finally:
+        stop.set()
+        for thread in threads:
+            thread.join(timeout=3)
+        assert all(not thread.is_alive() for thread in threads)
 
-    stop.set()
-    thread.join(timeout=1)
-    assert not thread.is_alive()
+
+@pytest.mark.parametrize(
+    "name,value",
+    [
+        ("BUSINESS_DOCUMENT_WORKER_CONCURRENCY", "0"),
+        ("BUSINESS_DOCUMENT_WORKER_CONCURRENCY", "9"),
+        ("BUSINESS_DOCUMENT_WORKER_CONCURRENCY", "bad"),
+        ("BUSINESS_DOCUMENT_WORKER_POLL_SECONDS", "0"),
+        ("BUSINESS_DOCUMENT_WORKER_POLL_SECONDS", "nan"),
+        ("BUSINESS_DOCUMENT_WORKER_POLL_SECONDS", "inf"),
+    ],
+)
+def test_worker_pool_rejects_invalid_limits_before_starting(monkeypatch, name, value):
+    monkeypatch.setattr(worker_module, "_WORKER_THREADS", ())
+    monkeypatch.setenv("BUSINESS_DOCUMENT_WORKER_ENABLED", "true")
+    monkeypatch.setenv(name, value)
+    with pytest.raises(ValueError):
+        worker_module.start_business_document_workers(threading.Event())
+    assert worker_module._WORKER_THREADS == ()
+
+
+def test_disabled_worker_pool_starts_no_threads(monkeypatch):
+    monkeypatch.setenv("BUSINESS_DOCUMENT_WORKER_ENABLED", "false")
+    assert worker_module.start_business_document_workers(threading.Event()) == ()
+
+
+def test_worker_pool_replaces_dead_member_without_duplicating_survivors(monkeypatch):
+    stop = threading.Event()
+    ready = threading.Barrier(4)
+    members = []
+
+    class FakeWorker:
+        def __init__(self):
+            self.index = len(members)
+            members.append(self)
+
+        def run_forever(self, stop_event, **_kwargs):
+            if self.index == 0:
+                return
+            if self.index < 4:
+                ready.wait(timeout=3)
+            stop_event.wait(3)
+
+    monkeypatch.setattr(worker_module, "BusinessDocumentWorker", FakeWorker)
+    monkeypatch.setattr(worker_module, "_WORKER_THREADS", ())
+    monkeypatch.setenv("BUSINESS_DOCUMENT_WORKER_ENABLED", "true")
+    monkeypatch.setenv("BUSINESS_DOCUMENT_WORKER_CONCURRENCY", "4")
+    first = worker_module.start_business_document_workers(stop)
+    current = first
+    try:
+        ready.wait(timeout=3)
+        first[0].join(timeout=3)
+        current = worker_module.start_business_document_workers(stop)
+        assert current[0] is not first[0]
+        assert current[1:] == first[1:]
+        assert len(members) == 5 and all(thread.is_alive() for thread in current)
+        assert worker_module.start_business_document_workers(stop) is current
+    finally:
+        stop.set()
+        for thread in current:
+            thread.join(timeout=3)
+        assert all(not thread.is_alive() for thread in current)
+
+
+def test_cancelled_worker_keeps_pool_and_hands_lease_recovery_to_survivor(tmp_path, monkeypatch):
+    database = PooledSqliteDatabase(str(tmp_path / "cancel.sqlite"), max_connections=8, check_same_thread=False, timeout=5)
+    stop, owner_waiting, allow_followers, transferred, completed = (threading.Event() for _ in range(5))
+    reclaimed, finish_ai = threading.Event(), threading.Event()
+    workers, cancelled_jobs, recovered_by, completed_by = [], [], [], []
+    worker_type = BusinessDocumentWorker
+    maintenance_lock = threading.Lock()
+
+    class ReclaimedAI(CompleteIntakeAI):
+        def process(self, job):
+            reclaimed.set()
+            assert finish_ai.wait(5)
+            return super().process(job)
+
+    class CancelOnceAI(ReclaimedAI):
+        def process(self, job):
+            if not cancelled_jobs:
+                cancelled_jobs.append(job)
+                raise asyncio.CancelledError()
+            return super().process(job)
+
+    class ScheduledWake(threading.Event):
+        def wait(self, timeout=None):
+            if cancelled_jobs and threading.current_thread().name == "business-document-worker-1":
+                owner_waiting.set()
+                assert transferred.wait(5)
+                return True
+            return super().wait(timeout)
+
+    def factory():
+        worker = worker_type(ai=CancelOnceAI() if not workers else ReclaimedAI())
+        original_poll = worker.run_once
+        original_recover = worker.recover_stale
+        original_forever = worker.run_forever
+
+        def poll():
+            worked = original_poll()
+            if worked:
+                completed_by.append(worker.worker_id)
+                completed.set()
+            return worked
+
+        def recover():
+            result = original_recover()
+            if result[0]:
+                recovered_by.append(worker.worker_id)
+                transferred.set()
+            return result
+
+        def follower(stop_event, **kwargs):
+            assert allow_followers.wait(5)
+            original_forever(stop_event, **kwargs)
+
+        worker.run_once = poll
+        worker.recover_stale = recover
+        worker.reconcile_exports = lambda: {"cleaned": 0}
+        if workers:
+            worker.run_forever = follower
+        workers.append(worker)
+        return worker
+
+    monkeypatch.setattr(worker_module, "BusinessDocumentWorker", factory)
+    monkeypatch.setattr(worker_module, "_WORKER_THREADS", ())
+    monkeypatch.setattr(worker_module, "_MAINTENANCE_LOCK", maintenance_lock)
+    monkeypatch.setattr(worker_module, "_WAKE_EVENT", ScheduledWake())
+    monkeypatch.setenv("BUSINESS_DOCUMENT_WORKER_ENABLED", "true")
+    monkeypatch.setenv("BUSINESS_DOCUMENT_WORKER_CONCURRENCY", "4")
+    monkeypatch.setenv("BUSINESS_DOCUMENT_WORKER_POLL_SECONDS", "0.01")
+    with database.bind_ctx(DOCUMENT_TABLES, bind_refs=False, bind_backrefs=False):
+        database.connect()
+        database.create_tables(DOCUMENT_TABLES)
+        document = _create()
+        requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
+        threads = ()
+        try:
+            threads = worker_module.start_business_document_workers(stop)
+            assert owner_waiting.wait(5)
+            abandoned = BusinessDocumentJob.get_by_id(requested["job_id"])
+            assert abandoned.status == "RUNNING" and abandoned.attempt == 1
+            assert not maintenance_lock.locked()
+            assert all(thread.is_alive() for thread in threads)
+            assert not any(thread.name == f"business-document-lease-{abandoned.id}" for thread in threading.enumerate())
+            assert worker_module.start_business_document_workers(stop) is threads
+            BusinessDocumentJob.update(lease_expires_at=current_timestamp() - 1).where(BusinessDocumentJob.id == abandoned.id).execute()
+            allow_followers.set()
+            assert transferred.wait(5) and reclaimed.wait(5)
+            current = BusinessDocumentJob.get_by_id(abandoned.id)
+            assert current.status == "RUNNING" and current.attempt == 2
+            assert current.lease_token != abandoned.lease_token
+            assert len(recovered_by) == 1 and recovered_by[0] != workers[0].worker_id
+            with pytest.raises(BusinessDocumentError) as lost:
+                job_completion.complete(TENANT, workers[0].worker_id, current.id, CompleteIntakeAI().process(current), abandoned.lease_token)
+            assert lost.value.code == "JOB_LEASE_LOST"
+            finish_ai.set()
+            assert completed.wait(5)
+            assert BusinessDocumentJob.get_by_id(current.id).status == "COMPLETED"
+            assert len(completed_by) == 1
+            assert BusinessDocumentEvent.select().where((BusinessDocumentEvent.document_id == document["document_id"]) & (BusinessDocumentEvent.event_type == "IntakeAssessed")).count() == 1
+            assert all(thread.is_alive() for thread in threads)
+        finally:
+            stop.set()
+            finish_ai.set()
+            allow_followers.set()
+            transferred.set()
+            worker_module.wake_business_document_worker()
+            for thread in threads:
+                thread.join(timeout=5)
+            assert all(not thread.is_alive() for thread in threads)
+            assert not maintenance_lock.locked()
+            assert len(database._in_use) == 1
+            database.close_all()
+
+
+def test_worker_pool_limits_jobs_and_releases_connections_after_failure_and_stop(tmp_path, monkeypatch):
+    database = PooledSqliteDatabase(str(tmp_path / "pool.sqlite"), max_connections=6, stale_timeout=30, check_same_thread=False)
+    work = Queue()
+    for item in range(12):
+        work.put(item)
+    stop, release = threading.Event(), threading.Event()
+    saturated = threading.Event()
+    lock = threading.Lock()
+    active = 0
+    peak = 0
+    fail_first_poll = True
+    finished, adapters, maintainers = [], set(), set()
+
+    def poll(worker):
+        nonlocal active, peak, fail_first_poll
+        assert database.execute_sql("SELECT 1").fetchone() == (1,)
+        with lock:
+            if fail_first_poll:
+                fail_first_poll = False
+                raise RuntimeError("injected poll failure")
+        try:
+            item = work.get_nowait()
+        except Empty:
+            return False
+        with lock:
+            active += 1
+            peak = max(peak, active)
+            adapters.add(id(worker.ai))
+            if active == 4:
+                saturated.set()
+        assert release.wait(3)
+        with lock:
+            active -= 1
+            finished.append(item)
+            if len(finished) == 12:
+                stop.set()
+        return True
+
+    def maintain(worker):
+        with lock:
+            maintainers.add(worker.worker_id)
+        return False
+
+    monkeypatch.setattr(worker_module, "_WORKER_THREADS", ())
+    monkeypatch.setattr(BusinessDocumentWorker, "run_once", poll)
+    monkeypatch.setattr(BusinessDocumentWorker, "_maintain", maintain)
+    monkeypatch.setenv("BUSINESS_DOCUMENT_WORKER_ENABLED", "true")
+    monkeypatch.delenv("BUSINESS_DOCUMENT_WORKER_CONCURRENCY", raising=False)
+    monkeypatch.setenv("BUSINESS_DOCUMENT_WORKER_POLL_SECONDS", "0.01")
+    with database.bind_ctx([BusinessDocumentJob], bind_refs=False, bind_backrefs=False):
+        try:
+            foreground = database.connection()
+            threads = worker_module.start_business_document_workers(stop)
+            try:
+                assert saturated.wait(3)
+                assert peak == 4 and len(finished) == 0 and work.qsize() == 8
+                assert worker_module.start_business_document_workers(stop) is threads
+                release.set()
+                assert stop.wait(3)
+            finally:
+                release.set()
+                stop.set()
+                for thread in threads:
+                    thread.join(timeout=3)
+                assert all(not thread.is_alive() for thread in threads)
+            assert sorted(finished) == list(range(12))
+            assert peak == len(adapters) == 4 and len(maintainers) == 1
+            assert len(database._in_use) == 1
+            assert database.connection() is foreground
+        finally:
+            database.close_all()
 
 
 @pytest.mark.p0

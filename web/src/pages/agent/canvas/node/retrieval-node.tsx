@@ -25,13 +25,13 @@ function InnerRetrievalNode({
 }: NodeProps<BaseNode<RetrievalFormSchemaType>>) {
   const knowledgeBaseIds: string[] = get(data, 'form.dataset_ids', []);
   const memoryIds: string[] = get(data, 'form.memory_ids', []);
-  const { list: knowledgeList } = useFetchKnowledgeList(true);
+  const { list: knowledgeList } = useFetchKnowledgeList(true, '', 'sources');
 
   const { getLabel } = useGetVariableLabelOrTypeByValue({ nodeId: id });
 
   const isMemory = data.form?.retrieval_from === RetrievalFrom.Memory;
 
-  const memoryList = useFetchAllMemoryList();
+  const memoryList = useFetchAllMemoryList(isMemory);
 
   return (
     <ToolBar selected={selected} id={id} label={data.label}>

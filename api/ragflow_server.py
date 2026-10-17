@@ -163,9 +163,9 @@ if __name__ == "__main__":
 
     def start_business_documents():
         try:
-            from api.apps.business_documents.worker import start_business_document_worker
+            from api.apps.business_documents.worker import start_business_document_workers
 
-            start_business_document_worker(stop_event)
+            start_business_document_workers(stop_event)
             logging.info("Started business document worker")
         except Exception:
             logging.exception("Failed to start business document worker")

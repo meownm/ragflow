@@ -239,6 +239,16 @@ class PeeweeDocumentReader:
         job = BusinessDocumentJob
         return job.select(*_JOB_FIELDS).where(job.document_id == document_id).order_by(job.create_time.desc(), job.id.desc()).dicts().first()
 
+    def proposal_jobs(self, document_id: str, after_version: int):
+        job = BusinessDocumentJob
+        return (
+            job.select(job.id, job.status, job.error, job.payload)
+            .where((job.document_id == document_id) & (job.job_type == "PLAN_CHANGES") & (job.source_state_version >= after_version))
+            .order_by(job.source_state_version.desc(), job.create_time.desc(), job.id.desc())
+            .dicts()
+            .iterator()
+        )
+
     def preview(self, document: Mapping[str, Any], now: int):
         row = find_change_preview_row(document, now)
         return dict(row.__data__) if row is not None else None

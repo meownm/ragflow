@@ -185,6 +185,21 @@ def test_original_source_can_also_support_another_section(database):
     assert BusinessDocumentRevision.select().count() == 1
 
 
+def test_overlapping_comment_does_not_replace_accepted_proposal_source(database):
+    _, job, plan = _request_placement()
+    proposal = job.payload["protocol"]["proposals"][0]["decision_event_id"]
+    plan["operations"][1]["source_event_ids"].remove(proposal)
+    adapter = PlacementAdapter(plan)
+
+    assert BusinessDocumentWorker(ai=BusinessDocumentAI(adapter)).run_once()
+
+    failed = BusinessDocumentJob.get_by_id(job.id)
+    assert failed.error["code"] == "ACCEPTED_PROPOSAL_OMITTED"
+    assert document_queries.get_document(job.document_id, AUTHOR)["change_preview"] is None
+    assert [payload["job_input"]["task_type"] for _, payload in adapter.calls] == ["PLAN_CHANGES", "VERIFY_REQUIREMENT_COVERAGE"]
+    assert BusinessDocumentRevision.select().count() == 1
+
+
 def test_planner_receives_complete_confirmed_content_independent_of_its_original_section(database):
     _, job, _ = _request_placement()
     snapshot = deepcopy(job.payload)

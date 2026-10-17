@@ -10,6 +10,7 @@ import pytest
 from playwright.sync_api import expect
 
 from test.playwright.helpers._next_apps_helpers import RESULT_TIMEOUT_MS
+from test.playwright.helpers.navigation import click_navigation
 
 ROOT = Path(__file__).resolve().parents[3]
 GOLDEN_TEMPLATE = ROOT / "web" / "src" / "pages" / "business-documents" / "constructor" / "templates" / "sql-query-step-by-step.v1.json"
@@ -1097,16 +1098,22 @@ def _open_constructor(page, base_url):
 
 @pytest.mark.p1
 @pytest.mark.auth
-def test_constructor_navigation_opens_document_and_sql_scenarios(page, base_url):
+@pytest.mark.parametrize("viewport", [{"width": 3840, "height": 1080}, {"width": 390, "height": 844}], ids=["desktop", "compact"])
+def test_constructor_navigation_opens_document_and_sql_scenarios(page, base_url, viewport):
     stub = DocumentConstructorStub()
     _install_session(page)
     page.route("**/api/v1/**", stub)
     _open_constructor(page, base_url)
-    expect(page.get_by_test_id("nav-document-constructor").first).to_be_visible()
-    page.get_by_test_id("nav-sql-projects").first.click()
+    page.set_viewport_size(viewport)
+    menu = page.get_by_role("banner").get_by_role("button", name="Menu", exact=True)
+    if viewport["width"] > 3000:
+        expect(menu).to_have_count(0)
+    else:
+        expect(menu).to_be_visible()
+    click_navigation(page, "nav-sql-projects", "/sql-projects")
     expect(page).to_have_url(re.compile(r"/sql-projects$"), timeout=RESULT_TIMEOUT_MS)
     expect(page.get_by_test_id("sql-agent-workbench")).to_be_visible()
-    page.get_by_test_id("nav-document-constructor").first.click()
+    click_navigation(page, "nav-document-constructor", "/document-constructor")
     expect(page.get_by_test_id("document-constructor-page")).to_be_visible()
 
 

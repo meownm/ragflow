@@ -16,6 +16,10 @@ from urllib.request import Request, urlopen
 import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT))
+
+from test.playwright.helpers.redaction import redact_browser_secrets
+
 OUT = Path(__file__).resolve().parent
 PROJECT = "ragflow-t1-live-20260906-b-" + secrets.token_hex(4)
 BASE = "http://127.0.0.1:19382"
@@ -31,11 +35,21 @@ def models_for_run(tests: list[str], skip_browser_tests: bool) -> tuple[tuple[st
     return MODELS
 
 
+def model_context_length(metadata: dict) -> int:
+    """Use the model's native context window, never a guessed QA default."""
+    info = metadata.get("model_info", {})
+    architecture = info.get("general.architecture")
+    context = info.get(f"{architecture}.context_length")
+    if not architecture or type(context) is not int or context <= 0:
+        raise ValueError("Ollama /api/show must declare a positive architecture context_length")
+    return context
+
+
 def sanitized(text):
     for value in SECRET_VALUES:
         if value:
             text = text.replace(value, "[REDACTED]")
-    return text
+    return redact_browser_secrets(text)
 
 
 def command(args, *, env, log, input=None, check=True, cwd=None, timeout=180):
@@ -90,6 +104,7 @@ def main():
     global OUT
     sys.dont_write_bytecode = True
     parser = argparse.ArgumentParser()
+    parser.add_argument("--app-image", help="Explicit disposable QA image; recorded by immutable image ID")
     parser.add_argument("--source-root", type=Path, required=True)
     parser.add_argument("--dist-root", type=Path, required=True)
     parser.add_argument("--evidence-dir", type=Path, required=True)
@@ -144,6 +159,8 @@ def main():
     compose = yaml.safe_load(Path(__file__).with_name("compose.yml").read_text(encoding="utf-8"))
     compose["name"] = PROJECT
     app = compose["services"]["app"]
+    if args.app_image:
+        app["image"] = args.app_image
     app["ports"] = ["127.0.0.1:19382:80", "127.0.0.1:19383:9381"]
     app["command"].append("--workers=1")
     app["environment"].update(
@@ -185,6 +202,10 @@ def main():
         tags = {model["name"]: model for model in json.load(response)["models"]}
     identity["ollama_models"] = {name: {key: tags[name][key] for key in ("digest", "size")} for name, _ in models}
     assert all(model["size"] > 1_000_000 for model in identity["ollama_models"].values()), "Only installed local model weights are allowed"
+    for model, _ in models:
+        request = Request(f"{OLLAMA_HOST_URL}/api/show", data=json.dumps({"model": model}).encode(), headers={"Content-Type": "application/json"})
+        with urlopen(request, timeout=30) as response:
+            identity["ollama_models"][model]["context_length"] = model_context_length(json.load(response))
     if candidate and not args.skip_browser_tests:
         assert args.frontend_archive, "Frozen live proof requires the matching frontend artifact"
         archive = args.frontend_archive.resolve()
@@ -227,7 +248,12 @@ def main():
         SECRET_VALUES.append(token)
         print("Synthetic superuser authenticated; configuring real local Ollama", flush=True)
         for model, kind in models:
-            api("/v1/llm/add_llm", "POST", {"llm_factory": "Ollama", "llm_name": model, "model_type": kind, "api_base": OLLAMA_CONTAINER_URL, "max_tokens": 4096}, token)
+            api(
+                "/v1/llm/add_llm",
+                "POST",
+                {"llm_factory": "Ollama", "llm_name": model, "model_type": kind, "api_base": OLLAMA_CONTAINER_URL, "max_tokens": identity["ollama_models"][model]["context_length"]},
+                token,
+            )
             print(f"Validated local {kind} model {model}", flush=True)
         api("/api/v1/providers", "PUT", {"provider_name": "Ollama"}, token)
         api(
@@ -238,7 +264,7 @@ def main():
                 "api_key": "",
                 "base_url": OLLAMA_CONTAINER_URL,
                 "region": "default",
-                "model_info": [{"model_name": model, "model_type": [kind], "max_tokens": 4096} for model, kind in models],
+                "model_info": [{"model_name": model, "model_type": [kind], "max_tokens": identity["ollama_models"][model]["context_length"]} for model, kind in models],
             },
             token,
         )
@@ -418,6 +444,7 @@ with DB.connection_context():
             exit_code = exit_code or quality_result.returncode or (2 if args.business_documents_case_id else 0)
             print(f"Business Documents real-model exit={quality_result.returncode}; see business-quality.log", flush=True)
     except Exception as exc:
+        exit_code = exit_code or 1
         (OUT / "failure.txt").write_text(sanitized(str(exc)), encoding="utf-8")
         print(sanitized(str(exc)), flush=True)
     finally:

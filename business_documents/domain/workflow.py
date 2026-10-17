@@ -24,6 +24,7 @@ class CommandType(StrEnum):
     REQUEST_DRAFT = "REQUEST_DRAFT"
     DECIDE_PROPOSAL = "DECIDE_PROPOSAL"
     ACCEPT_PROPOSAL = "ACCEPT_PROPOSAL"
+    CANCEL_PROPOSAL_ACCEPTANCE = "CANCEL_PROPOSAL_ACCEPTANCE"
     ADD_COMMENT = "ADD_COMMENT"
     APPLY_CHANGES = "APPLY_CHANGES"
     PREPARE_CHANGES = "PREPARE_CHANGES"
@@ -160,7 +161,7 @@ def command_problem(
             if not document["current_revision_id"]:
                 return StateConflict("CURRENT_REVISION_REQUIRED", "A current revision is required to apply a proposal")
             return None
-        case CommandType.DECIDE_PROPOSAL | CommandType.ADD_COMMENT:
+        case CommandType.DECIDE_PROPOSAL | CommandType.CANCEL_PROPOSAL_ACCEPTANCE | CommandType.ADD_COMMENT:
             return _idle_problem(document) or _lifecycle_problem(document, "REVIEW")
         case CommandType.START_REVIEW:
             return _idle_problem(document) or _lifecycle_problem(document, "AGREED")
@@ -195,6 +196,8 @@ def available_commands(document: Mapping[str, Any], review: ReviewState, *, prev
             commands.append("REQUEST_INTAKE_ASSESSMENT")
     elif lifecycle == "REVIEW":
         commands = ["DECIDE_PROPOSAL", "ACCEPT_PROPOSAL", "ADD_COMMENT", "ARCHIVE"]
+        if review.accepted_inputs & review.active_inputs:
+            commands.append("CANCEL_PROPOSAL_ACCEPTANCE")
         if review.open_question_ids("REVIEW"):
             commands.append("ANSWER_QUESTION")
             if review.has_unassessed_feedback:

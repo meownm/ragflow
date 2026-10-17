@@ -45,6 +45,8 @@ def test_section_mapping_covers_protected_application_entrypoints():
     assert sections_for_request("chat_api", "/api/v1/chat/completions") == ("chat",)
     assert sections_for_request("bot_api", "/api/v1/searchbots/mindmap") == ("search",)
     assert sections_for_request("bot_api", "/api/v1/agentbots/completions") == ("agent",)
+    assert sections_for_request("document_api", "/api/v1/thumbnails") == ("dataset", "chat", "search", "agent")
+    assert sections_for_request("document_api", "/api/v1/documents/upload") == ("dataset",)
 
 
 def test_group_sections_are_unioned_and_superuser_bypasses(monkeypatch):

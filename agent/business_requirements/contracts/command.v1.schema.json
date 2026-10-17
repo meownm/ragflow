@@ -24,6 +24,7 @@
         "REQUEST_DRAFT",
         "DECIDE_PROPOSAL",
         "ACCEPT_PROPOSAL",
+        "CANCEL_PROPOSAL_ACCEPTANCE",
         "ADD_COMMENT",
         "REQUEST_REVIEW_ASSESSMENT",
         "APPLY_CHANGES",
@@ -153,7 +154,7 @@
       "then": {"properties": {"payload": {"$ref": "#/$defs/decideProposalPayload"}}}
     },
     {
-      "if": {"properties": {"type": {"const": "ACCEPT_PROPOSAL"}}},
+      "if": {"properties": {"type": {"enum": ["ACCEPT_PROPOSAL", "CANCEL_PROPOSAL_ACCEPTANCE"]}}},
       "then": {"properties": {"payload": {"$ref": "#/$defs/acceptProposalPayload"}}}
     },
     {

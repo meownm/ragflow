@@ -2605,7 +2605,7 @@ def test_question_schema_boundary_rejects_five_options_and_rolls_back(database):
 
 
 @pytest.mark.p0
-def test_question_answers_and_proposal_decisions_are_immutable(database):
+def test_answers_cannot_be_replaced_and_current_proposal_decisions_cannot_be_overwritten(database):
     document = _create()
     assessment = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
     document = _complete(assessment["job_id"], _question_batch(), worker="worker")

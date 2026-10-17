@@ -42,7 +42,7 @@ from test.evals.business_documents.metric_placement import run_metric_placement
 ASSET_ROOT = REPO_ROOT / "agent" / "business_requirements"
 MODEL_GOLDEN_PATH = ASSET_ROOT / "golden_model_quality" / "v2.json"
 RUBRIC = json.loads((ASSET_ROOT / "evals" / "rubric.v1.json").read_text(encoding="utf-8"))
-PROMPT_NAMES = ("intake.v1.md", "draft.v1.md", "review.v1.md", "change_planner.v1.md", "requirement_coverage.v1.md")
+PROMPT_NAMES = ("intake.v1.md", "draft.v1.md", "draft_evidence.v1.md", "review.v1.md", "change_planner.v1.md", "requirement_coverage.v1.md")
 
 
 @dataclass(frozen=True)

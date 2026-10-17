@@ -16,7 +16,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import math
 import os
 import threading
 from datetime import datetime
@@ -42,7 +44,9 @@ from common.time_utils import current_timestamp
 _ACTIVE_STATUSES = ("PENDING", "RETRY")
 _WAKE_EVENT = threading.Event()
 _START_LOCK = threading.Lock()
-_WORKER_THREAD: threading.Thread | None = None
+_MAINTENANCE_LOCK = threading.Lock()
+_WORKER_THREADS: tuple[threading.Thread, ...] = ()
+_MAX_WORKERS = 8
 
 
 def _error_payload(error: Exception) -> dict[str, Any]:
@@ -517,74 +521,103 @@ class BusinessDocumentWorker:
                 self.export_service.discard(prepared_export, storage=self.storage)
         return True
 
-    def run_forever(self, stop_event: threading.Event, *, poll_seconds: float = 2.0) -> None:
+    def _maintain(self) -> bool:
+        recovered = dead = 0
         try:
-            self.recover_stale()
+            recovered, dead = self.recover_stale()
         except Exception:
             logging.exception("Business document stale-job recovery failed")
+        reconciled = {"cleaned": 0}
         try:
-            self.reconcile_exports()
+            reconciled = self.reconcile_exports()
         except Exception:
             logging.exception("Business document export-stage reconciliation failed")
-        next_maintenance_at = monotonic() + self.maintenance_interval_seconds
-        while not stop_event.is_set():
-            try:
-                worked = self.run_once()
-            except Exception:
-                logging.exception("Business document worker poll failed")
+        return bool(recovered or dead or reconciled["cleaned"])
+
+    def run_forever(self, stop_event: threading.Event, *, poll_seconds: float = 2.0, maintenance_lock: threading.Lock | None = None) -> None:
+        database = BusinessDocumentJob._meta.database
+        maintenance_lock = maintenance_lock if maintenance_lock is not None else threading.Lock()
+        maintenance = False
+        next_maintenance_at = 0.0
+        try:
+            while not stop_event.is_set():
                 worked = False
-            if worked:
-                if monotonic() >= next_maintenance_at:
-                    try:
-                        self.recover_stale()
-                    except Exception:
-                        logging.exception("Business document periodic stale-job recovery failed")
-                    try:
-                        self.reconcile_exports()
-                    except Exception:
-                        logging.exception("Business document periodic export-stage reconciliation failed")
-                    next_maintenance_at = monotonic() + self.maintenance_interval_seconds
-                continue
-            recovered = dead = 0
-            try:
-                recovered, dead = self.recover_stale()
-            except Exception:
-                logging.exception("Business document periodic stale-job recovery failed")
-            reconciled = {"cleaned": 0}
-            try:
-                reconciled = self.reconcile_exports()
-            except Exception:
-                logging.exception("Business document periodic export-stage reconciliation failed")
-            next_maintenance_at = monotonic() + self.maintenance_interval_seconds
-            if recovered or dead or reconciled["cleaned"]:
-                continue
-            _WAKE_EVENT.wait(poll_seconds)
-            _WAKE_EVENT.clear()
+                try:
+                    # Peewee connections are thread-local. Return each worker's
+                    # connection before sleeping or taking another job.
+                    with database.connection_context():
+                        if not maintenance and maintenance_lock.acquire(blocking=False):
+                            maintenance = True
+                            self._maintain()
+                            next_maintenance_at = monotonic() + self.maintenance_interval_seconds
+                        worked = self.run_once()
+                        if maintenance and (not worked or monotonic() >= next_maintenance_at):
+                            changed = self._maintain()
+                            next_maintenance_at = monotonic() + self.maintenance_interval_seconds
+                            worked = worked or changed
+                except asyncio.CancelledError:
+                    # run_once has stopped the heartbeat. Leave the durable job
+                    # fenced until lease recovery, and let another member maintain.
+                    logging.warning("Business document operation cancelled for worker %s", self.worker_id)
+                    if maintenance:
+                        maintenance = False
+                        maintenance_lock.release()
+                    worked = False
+                except Exception:
+                    logging.exception("Business document worker poll failed")
+                if worked:
+                    continue
+                _WAKE_EVENT.wait(poll_seconds)
+                _WAKE_EVENT.clear()
+        finally:
+            if maintenance:
+                maintenance_lock.release()
 
 
 def wake_business_document_worker() -> None:
-    """Wake the in-process poller; the durable row remains the source of truth."""
+    """Wake idle pool members; the durable row remains the source of truth."""
 
     _WAKE_EVENT.set()
 
 
-def start_business_document_worker(stop_event: threading.Event) -> threading.Thread | None:
-    """Start one poller in this process; DB leasing coordinates all processes."""
+def start_business_document_workers(stop_event: threading.Event) -> tuple[threading.Thread, ...]:
+    """Start a bounded pool per API process; DB leases fence every execution."""
 
-    global _WORKER_THREAD
+    global _WORKER_THREADS
     if os.environ.get("BUSINESS_DOCUMENT_WORKER_ENABLED", "true").lower() not in {"1", "true", "yes", "on"}:
-        return None
+        return ()
     with _START_LOCK:
-        if _WORKER_THREAD is not None and _WORKER_THREAD.is_alive():
-            return _WORKER_THREAD
+        if any(thread.is_alive() for thread in _WORKER_THREADS):
+            if all(thread.is_alive() for thread in _WORKER_THREADS):
+                return _WORKER_THREADS
+            concurrency = len(_WORKER_THREADS)
+        else:
+            concurrency = int(os.environ.get("BUSINESS_DOCUMENT_WORKER_CONCURRENCY", "4"))
+        if not 1 <= concurrency <= _MAX_WORKERS:
+            raise ValueError(f"BUSINESS_DOCUMENT_WORKER_CONCURRENCY must be between 1 and {_MAX_WORKERS}")
         poll_seconds = float(os.environ.get("BUSINESS_DOCUMENT_WORKER_POLL_SECONDS", "2"))
-        worker = BusinessDocumentWorker()
-        _WORKER_THREAD = threading.Thread(
-            target=worker.run_forever,
-            args=(stop_event,),
-            kwargs={"poll_seconds": poll_seconds},
-            daemon=True,
-            name="business-document-worker",
-        )
-        _WORKER_THREAD.start()
-        return _WORKER_THREAD
+        if not math.isfinite(poll_seconds) or poll_seconds <= 0:
+            raise ValueError("BUSINESS_DOCUMENT_WORKER_POLL_SECONDS must be positive and finite")
+        # Adapters retain per-job audits and recovery state; do not share them.
+        # Surviving members retain their identity when a dead slot is replaced.
+        threads = []
+        started = []
+        for index in range(concurrency):
+            if index < len(_WORKER_THREADS) and _WORKER_THREADS[index].is_alive():
+                threads.append(_WORKER_THREADS[index])
+                continue
+            worker = BusinessDocumentWorker()
+            thread = threading.Thread(
+                target=worker.run_forever,
+                args=(stop_event,),
+                kwargs={"poll_seconds": poll_seconds, "maintenance_lock": _MAINTENANCE_LOCK},
+                daemon=True,
+                name=f"business-document-worker-{index + 1}",
+            )
+            threads.append(thread)
+            started.append(thread)
+        _WORKER_THREADS = tuple(threads)
+        for thread in started:
+            thread.start()
+        logging.info("Started %s business document workers in this process", concurrency)
+        return _WORKER_THREADS

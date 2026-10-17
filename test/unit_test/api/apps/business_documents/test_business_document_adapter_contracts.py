@@ -82,10 +82,10 @@ def test_llm_adapter_preserves_tenant_prompt_payload_and_retry_contract(monkeypa
                 {"last_usage": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18}},
             )()
 
-        def __enter__(self):
+        async def __aenter__(self):
             return self
 
-        def __exit__(self, *_args):
+        async def __aexit__(self, *_args):
             return False
 
         async def async_chat(self, system_prompt, messages, options):

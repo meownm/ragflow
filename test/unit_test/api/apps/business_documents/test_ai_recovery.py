@@ -3,6 +3,7 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import httpx
@@ -10,6 +11,7 @@ import pytest
 
 from test.unit_test.api.apps.business_documents.test_structured_changes import PlanAdapter, request_plan, database as structured_database
 from api.apps.business_documents.ai import BusinessDocumentAI, RAGFlowLLMAdapter
+from api.apps.business_documents import recovery as recovery_module, worker as worker_module
 from api.apps.business_documents.recovery import AIRecovery, is_transient_failure, retry_delay_ms
 from api.apps.business_documents.worker import BusinessDocumentJobQueue, BusinessDocumentWorker
 from api.apps.business_documents.runtime import document_queries
@@ -49,16 +51,29 @@ def test_only_known_transient_failures_are_retryable(error, transient):
     assert is_transient_failure(error) is transient
 
 
-@pytest.mark.parametrize("value,expected", [("30", 30000), ("0", 5000), ("bad", 5000), ("nan", 5000), ("-1", 5000)])
+@pytest.mark.parametrize(
+    "value,expected",
+    [(None, 5000), ("30", 30000), ("0", 5000), ("bad", 5000), ("nan", 5000), ("inf", 5000), ("-inf", 5000), ("-1", 5000), ("172800", 172800000)],
+)
 def test_provider_retry_after_is_respected(value, expected):
     assert retry_delay_ms(_http_error(429, value), 5000) == expected
+
+
+def test_provider_retry_after_preserves_long_http_date(monkeypatch):
+    now = datetime(2026, 10, 17, tzinfo=timezone.utc)
+    monkeypatch.setattr(recovery_module, "datetime", SimpleNamespace(now=lambda _tz: now))
+    assert retry_delay_ms(_http_error(429, "Mon, 19 Oct 2026 00:00:00 GMT"), 5000) == 172800000
+
+
+def test_large_finite_retry_after_does_not_overflow():
+    assert retry_delay_ms(_http_error(429, "1e308"), 5000) > 900000
 
 
 @pytest.mark.parametrize("status,expected", [(401, "DEAD"), (429, "RETRY"), (503, "RETRY")])
 def test_worker_classifies_provider_failure_without_changing_revision(database, status, expected):
     requested, plan = request_plan()
     adapter = PlanAdapter(plan, None)
-    adapter.generate = lambda *_args: (_ for _ in ()).throw(_http_error(status, "30"))
+    adapter.generate = lambda *_args, **_kwargs: (_ for _ in ()).throw(_http_error(status, "30"))
     assert BusinessDocumentWorker(ai=BusinessDocumentAI(adapter), retry_base_ms=0).run_once()
     job = BusinessDocumentJob.get_by_id(requested["job_id"])
     assert job.status == expected and job.attempt == 1
@@ -74,8 +89,8 @@ def test_format_repair_receives_error_and_preserves_complete_original_context(da
     adapter = PlanAdapter(plan, None)
     generate = adapter.generate
 
-    def first_invalid(tenant, system, payload):
-        result = generate(tenant, system, payload)
+    def first_invalid(tenant, system, payload, *, timeout_seconds=None):
+        result = generate(tenant, system, payload, timeout_seconds=timeout_seconds)
         if payload["job_input"]["task_type"] == "PLAN_CHANGES" and "format_repair" not in payload:
             result["operations"][0]["content"]["blocks"] = [{"type": "bpmn", "source": "<xml/>"}]
         return result
@@ -115,8 +130,8 @@ def test_second_invalid_verdict_does_not_pass_or_regenerate(database):
     adapter = PlanAdapter(plan, None)
     generate = adapter.generate
 
-    def invalid_verdict(tenant, system, payload):
-        result = generate(tenant, system, payload)
+    def invalid_verdict(tenant, system, payload, *, timeout_seconds=None):
+        result = generate(tenant, system, payload, timeout_seconds=timeout_seconds)
         return {"status": "FAIL", "issues": []} if payload["job_input"]["task_type"] == "VERIFY_REQUIREMENT_COVERAGE" else result
 
     adapter.generate = invalid_verdict
@@ -138,6 +153,71 @@ def test_checkpointed_candidate_is_not_a_published_revision_or_preview(database)
     assert view["current_revision"]["revision_id"] == job.base_revision_id
     assert "result" not in view["latest_job"]
     assert not BusinessDocumentJobStreamEvent.select().where(BusinessDocumentJobStreamEvent.event_type == "preview_ready").exists()
+
+
+def test_crashed_worker_resumes_checkpointed_candidate_within_original_budget(database, monkeypatch):
+    requested, plan = request_plan()
+    adapter = PlanAdapter(plan, None)
+    generate = adapter.generate
+
+    def crash_before_verification(tenant, system, payload, *, timeout_seconds=None):
+        if payload["job_input"]["task_type"] == "VERIFY_REQUIREMENT_COVERAGE":
+            raise SystemExit("Simulated process exit before verification")
+        return generate(tenant, system, payload, timeout_seconds=timeout_seconds)
+
+    adapter.generate = crash_before_verification
+    with pytest.raises(SystemExit):
+        BusinessDocumentWorker(ai=BusinessDocumentAI(adapter)).run_once()
+    job = BusinessDocumentJob.get_by_id(requested["job_id"])
+    state = deepcopy(job.result["recovery"])
+    assert job.status == "RUNNING" and state["candidate"]
+    assert BusinessDocumentRevision.select().count() == 1
+
+    # First idle recovery poll after the crashed worker's default lease expires.
+    resumed_at = job.lease_expires_at + 2000
+    monkeypatch.setattr(worker_module, "current_timestamp", lambda: resumed_at)
+    monkeypatch.setattr(worker_module, "AIRecovery", lambda *args, **kwargs: AIRecovery(*args, **kwargs, clock=lambda: resumed_at / 1000))
+    assert BusinessDocumentJobQueue.recover_stale(now_ms=resumed_at) == (1, 0)
+
+    def resume_verification(tenant, system, payload, *, timeout_seconds=None):
+        resumed_state = BusinessDocumentJob.get_by_id(job.id).result["recovery"]
+        assert resumed_state["started_at"] == state["started_at"]
+        assert resumed_state["calls"] == 3
+        assert resumed_state["candidate"] == state["candidate"]
+        assert timeout_seconds == pytest.approx(900 - (resumed_at / 1000 - state["started_at"]))
+        return generate(tenant, system, payload, timeout_seconds=timeout_seconds)
+
+    adapter.generate = resume_verification
+    assert BusinessDocumentWorker(ai=BusinessDocumentAI(adapter)).run_once(now_ms=resumed_at)
+    completed = BusinessDocumentJob.get_by_id(job.id)
+    assert completed.status == "COMPLETED", completed.error
+    assert completed.attempt == 2
+    assert [call["job_input"]["task_type"] for call in adapter.calls] == ["PLAN_CHANGES", "VERIFY_REQUIREMENT_COVERAGE"]
+    assert completed.result["output"]["change_plan"] == plan
+    assert BusinessDocumentRevision.select().count() == 2
+
+
+def test_renewed_default_lease_protects_running_job_and_rejects_old_attempt(database, monkeypatch):
+    requested, _plan = request_plan()
+    worker = BusinessDocumentWorker(worker_id="worker")
+    job = BusinessDocumentJobQueue.claim(worker.worker_id, lease_ms=worker.lease_ms)
+    assert job.id == requested["job_id"]
+    original_expiry = job.lease_expires_at
+    clock = SimpleNamespace(now=original_expiry - worker.lease_ms // 3)
+    monkeypatch.setattr(worker_module, "current_timestamp", lambda: clock.now)
+    assert BusinessDocumentJobQueue.renew(job.id, worker.worker_id, job.lease_token, lease_ms=worker.lease_ms)
+    clock.now = original_expiry + 2000
+    assert BusinessDocumentJobQueue.recover_stale(now_ms=clock.now) == (0, 0)
+    assert BusinessDocumentJobQueue.claim("other-worker", now_ms=clock.now) is None
+    BusinessDocumentJobQueue.checkpoint_ai(job, worker.worker_id, AIRecovery().state)
+
+    clock.now = BusinessDocumentJob.get_by_id(job.id).lease_expires_at + 2000
+    assert BusinessDocumentJobQueue.recover_stale(now_ms=clock.now) == (1, 0)
+    replacement = BusinessDocumentJobQueue.claim(worker.worker_id, now_ms=clock.now)
+    assert replacement.id == job.id and replacement.lease_token != job.lease_token
+    with pytest.raises(BusinessDocumentError) as caught:
+        BusinessDocumentJobQueue.checkpoint_ai(job, worker.worker_id, AIRecovery().state)
+    assert caught.value.code == "JOB_LEASE_LOST"
 
 
 @pytest.mark.parametrize("damage", ["deadline", "calls", "snapshot"])
@@ -167,8 +247,8 @@ def test_lease_loss_after_generation_stops_before_verifier(database):
     adapter = PlanAdapter(plan, None)
     generate = adapter.generate
 
-    def lose_lease(*args):
-        result = generate(*args)
+    def lose_lease(*args, **kwargs):
+        result = generate(*args, **kwargs)
         BusinessDocumentJob.update(lease_expires_at=0).where(BusinessDocumentJob.id == requested["job_id"]).execute()
         return result
 
@@ -183,7 +263,7 @@ def test_cancelled_call_has_no_repair_or_publication(database):
     adapter = PlanAdapter(plan, None)
     count = 0
 
-    def cancel(*_args):
+    def cancel(*_args, **_kwargs):
         nonlocal count
         count += 1
         raise asyncio.CancelledError()
@@ -206,7 +286,10 @@ def test_lease_guard_rejects_checkpoint_from_an_old_worker(database):
     assert not BusinessDocumentJob.get_by_id(job.id).result
 
 
-def test_adapter_deadline_cancels_active_request(monkeypatch):
+@pytest.mark.parametrize("recorded", [False, True])
+def test_adapter_deadline_cancels_active_request(monkeypatch, recorded):
+    from test.evals.business_documents.metric_placement import RecordedModel
+
     cancelled = []
     loops = []
 
@@ -219,9 +302,13 @@ def test_adapter_deadline_cancels_active_request(monkeypatch):
 
     adapter = RAGFlowLLMAdapter()
     monkeypatch.setattr(adapter, "async_generate", slow)
+    ai = BusinessDocumentAI(RecordedModel(adapter) if recorded else adapter)
+    clock = SimpleNamespace(now=0)
+    recovery = AIRecovery(clock=lambda: clock.now)
+    clock.now = 899.99
     with ThreadPoolExecutor(max_workers=1) as executor:
         with pytest.raises(TimeoutError):
-            executor.submit(adapter.generate, "tenant", "system", {}, timeout_seconds=0.01).result()
+            executor.submit(ai._generate, "tenant", "system", {"job_input": {"task_type": "PLAN_CHANGES"}}, "generation", recovery).result()
     assert cancelled == [True]
     assert len(loops) == 1 and loops[0].is_closed()
 
@@ -236,10 +323,11 @@ def test_elapsed_budget_stops_after_call_before_any_next_step():
     assert caught.value.code == "AI_TIME_BUDGET_EXCEEDED"
 
 
-def test_retry_after_cannot_keep_job_pending_beyond_deadline(database):
+@pytest.mark.parametrize("retry_after", ["3600", "172800", "1e308", "Mon, 19 Oct 2099 00:00:00 GMT"])
+def test_retry_after_cannot_keep_job_pending_beyond_deadline(database, retry_after):
     requested, plan = request_plan()
     adapter = PlanAdapter(plan, None)
-    adapter.generate = lambda *_args: (_ for _ in ()).throw(_http_error(429, "3600"))
+    adapter.generate = lambda *_args, **_kwargs: (_ for _ in ()).throw(_http_error(429, retry_after))
     assert BusinessDocumentWorker(ai=BusinessDocumentAI(adapter)).run_once()
     job = BusinessDocumentJob.get_by_id(requested["job_id"])
     assert job.status == "DEAD" and job.error["code"] == "AI_TIME_BUDGET_EXCEEDED"
@@ -251,8 +339,8 @@ def test_repair_budget_is_not_reset_after_transport_failure(database):
     adapter = PlanAdapter(plan, None)
     generate = adapter.generate
 
-    def invalid_then_timeout(tenant, system, payload):
-        generate(tenant, system, payload)
+    def invalid_then_timeout(tenant, system, payload, *, timeout_seconds=None):
+        generate(tenant, system, payload, timeout_seconds=timeout_seconds)
         if len(adapter.calls) == 2:
             raise TimeoutError("Interrupted format repair")
         return {"operations": []}
@@ -277,7 +365,7 @@ def test_stream_repair_clears_preliminary_sections_before_validation(database):
     BusinessDocumentJob.update(payload=payload).where(BusinessDocumentJob.id == job.id).execute()
 
     class StreamingAdapter(PlanAdapter):
-        def generate_stream(self, tenant, system, payload, on_chunk):
+        def generate_stream(self, tenant, system, payload, on_chunk, *, timeout_seconds=None):
             valid = self.generate(tenant, system, payload)
             valid["schema_version"] = "wrong"
             raw = json.dumps(valid)

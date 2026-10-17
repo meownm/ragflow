@@ -184,7 +184,7 @@ def _closed_review_question_context(job_payload: dict[str, Any]) -> tuple[list[d
 
 
 class BusinessDocumentAIAdapter(Protocol):
-    def generate(self, tenant_id: str, system_prompt: str, input_payload: dict[str, Any]) -> str | dict[str, Any]: ...
+    def generate(self, tenant_id: str, system_prompt: str, input_payload: dict[str, Any], *, timeout_seconds: float | None = None) -> str | dict[str, Any]: ...
 
 
 class RAGFlowLLMAdapter:
@@ -471,12 +471,11 @@ class BusinessDocumentAI:
         payload = recovery.input_payload(stage, payload)
         if "format_repair" in payload:
             system += _FORMAT_REPAIR_INSTRUCTION
-        options = {"timeout_seconds": remaining} if isinstance(self._adapter, RAGFlowLLMAdapter) else {}
         consumer = getattr(self._adapter, "consume_execution_audit", None)
         try:
             if on_chunk is not None:
-                return self._adapter.generate_stream(tenant_id, system, payload, on_chunk, **options)
-            return self._adapter.generate(tenant_id, system, payload, **options)
+                return self._adapter.generate_stream(tenant_id, system, payload, on_chunk, timeout_seconds=remaining)
+            return self._adapter.generate(tenant_id, system, payload, timeout_seconds=remaining)
         finally:
             recovery.after_call(stage, consumer() if callable(consumer) else None)
 
@@ -665,68 +664,14 @@ class BusinessDocumentAI:
                 "draft соответствует document_draft, review_questions соответствует question_batch со stage REVIEW, "
                 "proposals соответствует массиву proposals из review_plan."
             )
-        job_input = deepcopy(job.payload) if job.job_type != "PLAN_CHANGES" else job.payload
+        job_input = deepcopy(job.payload)
         if job.job_type == "PLAN_CHANGES":
-            active = set(_active_change_input_event_ids(job.payload))
-            confirmed = _confirmed_change_sources(job.payload)
-            job_input = {
-                key: deepcopy(value)
-                for key, value in job_input.items()
-                if key
-                in {
-                    "schema_version",
-                    "task_type",
-                    "document_id",
-                    "document_type",
-                    "title",
-                    "idea",
-                    "template_version",
-                    "policy_version",
-                    "active_review_cycle",
-                    "state_version",
-                    "current_revision",
-                    "apply_proposal_id",
-                }
+            job_input["confirmed_requirement_fragments"] = {
+                f"{source_id}:{index}": {"source_id": source_id, "text": text.strip(), **({"context": source["context"]} if "context" in source else {})}
+                for source_id, source in _confirmed_change_sources(job_input).items()
+                for index, text in enumerate(re.split(r"(?<=[.!?;])\s+|\n+", source["text"]))
+                if text.strip()
             }
-            job_input["source_events"] = [
-                deepcopy(event) if event.get("event_type") == "EvaDocumentPulled" else {key: event[key] for key in ("event_id", "event_type") if key in event}
-                for event in job.payload.get("source_events", [])
-                if event.get("event_id") in active
-            ]
-            protocol = job.payload.get("protocol") or {}
-            job_input["protocol"] = {
-                "questions": [
-                    {
-                        **{key: deepcopy(value) for key, value in question.items() if key not in {"text", "options", "answer"}},
-                        "answer": {key: value for key, value in question["answer"].items() if key in {"source_event_id", "selected_option_id"}},
-                    }
-                    if question.get("answer") and question["answer"].get("source_event_id") in confirmed
-                    else deepcopy(question)
-                    for question in protocol.get("questions", [])
-                    if not question.get("answer") or question["answer"].get("source_event_id") in active
-                ],
-                "proposals": [
-                    {key: deepcopy(value) for key, value in proposal.items() if key != "text"}
-                    for proposal in protocol.get("proposals", [])
-                    if proposal.get("decision_event_id") in active and proposal.get("decision") == "ACCEPTED"
-                ],
-                "comments": [
-                    {key: deepcopy(value) for key, value in comment.items() if key != "text"} if comment.get("source_event_id") in confirmed else deepcopy(comment)
-                    for comment in protocol.get("comments", [])
-                    if comment.get("source_event_id") in active
-                ],
-            }
-            job_input["active_change_input_event_ids"] = sorted(active)
-            job_input["confirmed_change_sources"] = confirmed
-            revision = job_input.get("current_revision")
-            if isinstance(revision, dict):
-                job_input["current_revision"] = {key: value for key, value in revision.items() if key in {"revision_id", "document_ast", "section_hashes"}}
-        previous_error = getattr(job, "error", None)
-        if job.job_type == "PLAN_CHANGES" and isinstance(previous_error, dict) and previous_error.get("code") == "REQUIREMENT_COVERAGE_FAILED":
-            details = previous_error.get("details")
-            requirements = details.get("requirements") if isinstance(details, dict) else None
-            if isinstance(requirements, list) and requirements:
-                job_input["requirement_coverage_feedback"] = deepcopy(requirements)
         if job.job_type == "ASSESS_REVIEW":
             closed_questions, resolved_comment_questions = _closed_review_question_context(job_input)
             if closed_questions:
@@ -754,6 +699,9 @@ class BusinessDocumentAI:
         if job.job_type == "PLAN_CHANGES":
             active_event_ids = _active_change_input_event_ids(job_input)
             job_input["active_change_input_event_ids"] = active_event_ids
+            if isinstance(job_input.get("source_events"), list):
+                active = set(active_event_ids)
+                job_input["active_change_inputs"] = [event for event in job_input["source_events"] if isinstance(event, dict) and event.get("event_id") in active]
             system += (
                 "\n\n# Активные основания текущего цикла\n"
                 "В operations.source_event_ids и acknowledged_no_change_event_ids используй только event_id из "

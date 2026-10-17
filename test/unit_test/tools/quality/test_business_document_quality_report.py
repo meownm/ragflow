@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -67,7 +68,12 @@ def _placement_evidence(case):
         if task == "PLAN_CHANGES":
             payload["job_input"].update(
                 current_revision={"document_ast": case["seed"]["base_document"]},
-                confirmed_change_sources=sources,
+                confirmed_requirement_fragments={
+                    f"{source_id}:{index}": {"source_id": source_id, "text": text.strip(), **({"context": source["context"]} if "context" in source else {})}
+                    for source_id, source in sources.items()
+                    for index, text in enumerate(re.split(r"(?<=[.!?;])\s+|\n+", source["text"]))
+                    if text.strip()
+                },
                 active_change_input_event_ids=["answer", "proposal"],
                 protocol={
                     "questions": [{"question_id": "question", "target_section_id": "5", "answer": {"source_event_id": "answer", "selected_option_id": case["seed"]["selected_option_id"]}}],

@@ -136,7 +136,7 @@ class Verifier:
     def __init__(self, verdict):
         self.verdict, self.calls = verdict, []
 
-    def generate(self, tenant, system, payload):
+    def generate(self, tenant, system, payload, *, timeout_seconds=None):
         self.calls.append(deepcopy(payload["job_input"]))
         return deepcopy(self.verdict)
 
@@ -197,7 +197,7 @@ def test_semantic_relocation_failure_does_not_rewrite_the_author_decision():
     issue = {"source_id": "placement", "section_id": "3.1", "reason": "Полное определение осталось в исходном разделе."}
 
     class PlanAndVerifier(Verifier):
-        def generate(self, tenant, system, payload):
+        def generate(self, tenant, system, payload, *, timeout_seconds=None):
             self.calls.append(deepcopy(payload["job_input"]))
             return deepcopy(plan if payload["job_input"]["task_type"] == "PLAN_CHANGES" else self.verdict)
 

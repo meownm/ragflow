@@ -162,6 +162,8 @@ or verification stage permits one targeted format correction; the original
 input and validation diagnostics accompany the response being corrected.
 The domain validators and final authorization checks remain mandatory.
 
+The worker holds a 60-second fenced lease and renews it every 20 seconds, independently of the 900-second AI budget. Each renewal opens and releases its database connection inside the heartbeat thread, including rejected leases and SQL errors. The adapter port carries the remaining timeout through wrappers. A valid Retry-After beyond the remaining budget terminates recovery.
+
 Before semantic review, the validated candidate and call/audit/repair state are
 checkpointed in the existing job.result, without changing immutable job.payload.
 A retry of the verifier reuses that candidate, checks the snapshot fingerprint,

@@ -100,11 +100,14 @@ def test_metrics_cannot_be_moved_or_duplicated_in_monitoring(duplicate):
 class FixedTransport:
     """Test the runner only; it is never selected by the live gate."""
 
-    def __init__(self):
+    def __init__(self, failures=()):
         self.audit = None
+        self.failures = list(failures)
+        self.timeouts = []
 
-    def generate(self, tenant, system, payload):
+    def generate(self, tenant, system, payload, *, timeout_seconds=None):
         job = payload["job_input"]
+        self.timeouts.append(timeout_seconds)
         self.audit = {
             "provider": "Fixture",
             "model": "unit",
@@ -114,6 +117,11 @@ class FixedTransport:
             "token_usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
         }
         if job["task_type"] != "PLAN_CHANGES":
+            if self.failures:
+                failure = self.failures.pop(0)
+                if failure == "transport":
+                    raise TimeoutError("Verifier temporarily unavailable")
+                return {"status": "FAIL", "issues": []}
             return {"status": "PASS", "issues": []}
         sections = {s["id"]: s for s in job["current_revision"]["document_ast"]["sections"]}
         ideal = {s["id"]: s for s in _ideal_ast()["sections"]}
@@ -143,14 +151,16 @@ class FixedTransport:
 
 
 @pytest.fixture()
-def case_execution(monkeypatch):
+def case_execution(monkeypatch, request):
     database = SqliteDatabase(":memory:")
     with database.bind_ctx((*DOCUMENT_TABLES, User), bind_refs=False, bind_backrefs=False):
         database.connect()
         database.create_tables((*DOCUMENT_TABLES, User))
-        monkeypatch.setattr(live, "RAGFlowLLMAdapter", lambda **_: FixedTransport())
+        adapter = FixedTransport(getattr(request, "param", ()))
+        monkeypatch.setattr(live, "RAGFlowLLMAdapter", lambda **_: adapter)
         execution = live._run_model_case(CASE, "metric-placement-quality", [])
         assert execution.result["status"] == "PASS", execution.result["failures"]
+        assert all(timeout is not None and 0 < timeout <= 900 for timeout in adapter.timeouts)
         yield execution
         database.close()
 
@@ -254,7 +264,7 @@ def test_saved_pass_requires_the_actual_plan_and_successful_matching_review(tmp_
     elif damage == "generator_unrelated":
         plan["response"]["operations"][0]["content"]["blocks"] = [{"type": "paragraph", "text": "Unrelated result"}]
     elif damage == "generator_sources":
-        plan["input_payload"]["job_input"]["confirmed_change_sources"]["proposal"]["text"] = "Another requirement"
+        plan["input_payload"]["job_input"]["confirmed_requirement_fragments"]["proposal:0"]["text"] = "Another requirement"
     elif damage == "generator_base":
         plan["input_payload"]["job_input"]["current_revision"]["document_ast"]["sections"][0]["title"] = "Another base"
     else:
@@ -270,7 +280,7 @@ def test_saved_pass_requires_the_actual_plan_and_successful_matching_review(tmp_
         verify_report(path, live.REPO_ROOT, "candidate-sha")
 
 
-@pytest.mark.parametrize("transport", ["json", "envelope", "schema_echo", "aliases", "server_hash", "numeric_version", "retry"])
+@pytest.mark.parametrize("transport", ["json", "envelope", "schema_echo", "aliases", "server_hash", "numeric_version", "generator_transport"])
 def test_saved_proof_accepts_supported_transport_and_successful_retry(tmp_path, transport):
     report = _report()
     evidence = next(result["evidence"] for result in report["case_results"] if result["case_id"] == CASE["id"])
@@ -291,13 +301,69 @@ def test_saved_proof_accepts_supported_transport_and_successful_retry(tmp_path, 
     elif transport == "numeric_version":
         call["response"]["schema_version"] = 1
     else:
-        failed_pair = deepcopy(evidence["model_calls"])
-        failed_pair[1]["response"] = {"status": "FAIL", "issues": [{"source_id": "proposal", "section_id": "5.4", "reason": "Missing metric"}]}
-        failed_pair[1]["response_sha256"] = hashlib.sha256(json.dumps(failed_pair[1]["response"], ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
-        evidence["model_calls"][:0] = failed_pair
+        failed_call = deepcopy(call)
+        failed_call.pop("response")
+        failed_call.pop("response_sha256")
+        failed_call.update(error_type="TimeoutError", retryable=True)
+        evidence["model_calls"].insert(0, failed_call)
         evidence["attempts"] = 2
     raw = call["response"] if isinstance(call["response"], str) else json.dumps(call["response"], ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     call["response_sha256"] = hashlib.sha256(raw.encode("utf-8")).hexdigest()
     path = tmp_path / "normalized-proof.json"
     path.write_text(json.dumps(report), encoding="utf-8")
     assert verify_report(path, live.REPO_ROOT, "candidate-sha")["status"] == "PASS"
+
+
+@pytest.mark.parametrize("case_execution", [("transport",), ("format",), ("format", "transport")], indirect=True)
+def test_saved_proof_accepts_worker_verifier_recovery_without_regenerating(case_execution, tmp_path):
+    report = _report()
+    result = next(result for result in report["case_results"] if result["case_id"] == CASE["id"])
+    result.update(deepcopy(case_execution.result))
+    calls = result["evidence"]["model_calls"]
+    assert sum(call["task_type"] == "PLAN_CHANGES" for call in calls) == 1
+    assert len(calls) >= 3
+    path = tmp_path / "recovered.json"
+    path.write_text(json.dumps(report), encoding="utf-8")
+    assert verify_report(path, live.REPO_ROOT, "candidate-sha")["status"] == "PASS"
+
+
+@pytest.mark.parametrize(
+    "damage", ["semantic_fail", "hidden_semantic_fail", "regenerate_after_fail", "nonretryable", "second_format_repair", "changed_input", "invented_repair", "changed_repair", "call_budget"]
+)
+def test_saved_proof_rejects_unsupported_recovery(tmp_path, damage):
+    report = _report()
+    evidence = next(result["evidence"] for result in report["case_results"] if result["case_id"] == CASE["id"])
+    plan, review = evidence["model_calls"]
+    failed = deepcopy(review)
+    failed["response"] = {"status": "FAIL", "issues": [{"source_id": "proposal", "section_id": "5.4", "reason": "Missing metric"}]}
+    evidence["model_calls"].insert(1, failed)
+    if damage == "regenerate_after_fail":
+        evidence["model_calls"].insert(2, deepcopy(plan))
+    elif damage == "hidden_semantic_fail":
+        failed.update(error_type="TimeoutError", retryable=True)
+    elif damage == "nonretryable":
+        failed.update(error_type="PermissionError", retryable=False)
+    elif damage in {"second_format_repair", "changed_input", "invented_repair", "changed_repair"}:
+        failed["response"] = {"status": "FAIL", "issues": []}
+        review["input_payload"]["format_repair"] = {
+            "previous_response": failed["response"],
+            "error": {"code": "INVALID_REQUIREMENT_COVERAGE", "message": "Semantic verification must return PASS without issues or FAIL with up to four source-scoped issues", "details": {}},
+        }
+        if damage == "second_format_repair":
+            evidence["model_calls"].insert(2, deepcopy(failed))
+        elif damage == "changed_input":
+            review["input_payload"]["job_input"]["sources"]["proposal"]["text"] = "Different author decision"
+        elif damage == "invented_repair":
+            review["input_payload"]["format_repair"]["previous_response"] = {}
+        else:
+            review["input_payload"]["format_repair"]["error"]["code"] = "REQUIREMENT_COVERAGE_FAILED"
+    elif damage == "call_budget":
+        evidence["model_calls"] = [deepcopy(plan)] * 6 + [review]
+    for call in evidence["model_calls"]:
+        for field in ("response", "input_payload"):
+            raw = call[field] if isinstance(call[field], str) else json.dumps(call[field], ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            call["response_sha256" if field == "response" else "input_sha256"] = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    path = tmp_path / "invalid-recovery.json"
+    path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(QualityGateFailed):
+        verify_report(path, live.REPO_ROOT, "candidate-sha")

@@ -144,7 +144,7 @@ class PlacementAdapter:
         self.verdict = verdict or {"status": "PASS", "issues": []}
         self.calls = []
 
-    def generate(self, tenant, system, payload):
+    def generate(self, tenant, system, payload, *, timeout_seconds=None):
         self.calls.append((system, deepcopy(payload)))
         return deepcopy(self.plan if payload["job_input"]["task_type"] == "PLAN_CHANGES" else self.verdict)
 
@@ -189,19 +189,22 @@ def test_planner_receives_complete_confirmed_content_independent_of_its_original
     _, job, _ = _request_placement()
     snapshot = deepcopy(job.payload)
     prompt = BusinessDocumentAI._prompt(job)
-    sources = prompt.input_payload["job_input"]["confirmed_change_sources"]
+    fragments = prompt.input_payload["job_input"]["confirmed_requirement_fragments"]
     proposal = job.payload["protocol"]["proposals"][0]["decision_event_id"]
     answer = job.payload["protocol"]["questions"][0]["answer"]["source_event_id"]
-    assert all(metric in sources[proposal]["text"] for metric in METRICS)
-    assert "5.4" in sources[answer]["text"]
-    assert "Куда поместить" in sources[answer]["context"]
-    assert set(sources) == set(prompt.input_payload["job_input"]["active_change_input_event_ids"])
+    assert all(metric in "\n".join(fragment["text"] for fragment in fragments.values() if fragment["source_id"] == proposal) for metric in METRICS)
+    assert "5.4" in fragments[f"{answer}:0"]["text"]
+    assert "Куда поместить" in fragments[f"{answer}:0"]["context"]
+    assert {fragment["source_id"] for fragment in fragments.values()} == set(prompt.input_payload["job_input"]["active_change_input_event_ids"])
+    assert prompt.input_payload["job_input"]["protocol"] == snapshot["protocol"]
     assert job.payload == snapshot
 
     inactive = deepcopy(job.payload["protocol"]["proposals"][0])
     inactive.update(decision="REJECTED", decision_event_id="rejected-event", text="Удалить все метрики")
     job.payload["protocol"]["proposals"].append(inactive)
-    assert "rejected-event" not in BusinessDocumentAI._prompt(job).input_payload["job_input"]["confirmed_change_sources"]
+    inputs = BusinessDocumentAI._prompt(job).input_payload["job_input"]
+    assert "rejected-event" not in {fragment["source_id"] for fragment in inputs["confirmed_requirement_fragments"].values()}
+    assert inputs["protocol"]["proposals"][-1] == inactive
 
 
 @pytest.mark.parametrize("damage", ["missing_metric", "missing_monitoring", "wrong_placement"])

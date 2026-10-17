@@ -3,6 +3,7 @@
 from copy import deepcopy
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+import math
 import time
 from typing import Any, Callable
 
@@ -38,9 +39,10 @@ def retry_delay_ms(error: Exception, default: int) -> int:
             seconds = (parsedate_to_datetime(value) - datetime.now(timezone.utc)).total_seconds()
         except (TypeError, ValueError, OverflowError):
             return default
-    if not 0 <= seconds <= 86400:
+    if not math.isfinite(seconds) or seconds < 0:
         return default
-    return max(default, int(seconds * 1000))
+    # Multiply integer seconds first so a large finite delay cannot overflow.
+    return max(default, int(seconds) * 1000 + int((seconds % 1) * 1000))
 
 
 class AIRecovery:

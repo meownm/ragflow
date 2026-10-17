@@ -21,7 +21,7 @@ def test_every_verifier_request_retains_the_confirmed_placement_answer():
     evidence = _placement_evidence(case)
     seed = case["seed"]
     selected = next(option["label"] for option in seed["options"] if option["option_id"] == seed["selected_option_id"])
-    # The placement answer follows more than one legacy batch of proposal facts.
+    # A long proposal must not displace the author's confirmed placement answer.
     proposal = "\n".join(f"Поле отчёта {number}: исходное значение сохраняется." for number in range(30))
     payload = {
         "active_change_input_event_ids": ["proposal", "answer"],
@@ -29,13 +29,12 @@ def test_every_verifier_request_retains_the_confirmed_placement_answer():
         "protocol": {
             "comments": [],
             "proposals": [{"decision": "ACCEPTED", "decision_event_id": "proposal", "text": proposal}],
-            "questions": [{"text": seed["question"], "options": seed["options"],
-                           "answer": {"source_event_id": "answer", "selected_option_id": seed["selected_option_id"], "custom_answer": None}}],
+            "questions": [{"text": seed["question"], "options": seed["options"], "answer": {"source_event_id": "answer", "selected_option_id": seed["selected_option_id"], "custom_answer": None}}],
         },
     }
 
     class Capture:
-        def generate(self, tenant, system, request):
+        def generate(self, tenant, system, request, *, timeout_seconds=None):
             self.request = request["job_input"]
             raise RequestCaptured
 
@@ -43,14 +42,5 @@ def test_every_verifier_request_retains_the_confirmed_placement_answer():
     with pytest.raises(RequestCaptured):
         BusinessDocumentAI(capture)._verify_requirements(SimpleNamespace(tenant_id="quality-context", payload=payload), evidence["change_plan"])
     request = capture.request
-    if "fragments" in request:
-        assert len(request["fragments"]) == 24
-        assert not any(value["source_id"] == "answer" for value in request["fragments"].values())
-        context = [value for value in request["replacement_fragments"].values() if value["source_id"] == "answer"]
-        assert context
-        assert all(value["context"] == seed["question"] for value in context)
-        text = " ".join(value["text"] for value in context)
-    else:
-        text = request["sources"]["answer"]["text"]
-        assert request["sources"]["answer"]["context"] == seed["question"]
-    assert " ".join(text.split()) == " ".join(selected.split())
+    assert request["sources"] == {"proposal": {"text": proposal}, "answer": {"text": selected, "context": seed["question"]}}
+    assert not {"fragments", "replacement_fragments"} & request.keys()

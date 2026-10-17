@@ -92,7 +92,7 @@ class ScriptedAIAdapter:
         self.responses = {job_type: deque(items) for job_type, items in responses.items()}
         self.requests: list[dict[str, Any]] = []
 
-    def generate(self, tenant_id: str, system_prompt: str, input_payload: dict[str, Any]):
+    def generate(self, tenant_id: str, system_prompt: str, input_payload: dict[str, Any], *, timeout_seconds=None):
         assert tenant_id
         assert "недовер" in system_prompt.lower()
         self.requests.append(input_payload)

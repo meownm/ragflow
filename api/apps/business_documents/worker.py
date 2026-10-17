@@ -319,12 +319,14 @@ class _LeaseHeartbeat:
         def run():
             while not self._stop_event.wait(interval):
                 try:
-                    if not BusinessDocumentJobQueue.renew(
-                        self._job_id,
-                        self._worker_id,
-                        self._lease_token,
-                        lease_ms=self._lease_ms,
-                    ):
+                    with BusinessDocumentJob._meta.database.connection_context():
+                        renewed = BusinessDocumentJobQueue.renew(
+                            self._job_id,
+                            self._worker_id,
+                            self._lease_token,
+                            lease_ms=self._lease_ms,
+                        )
+                    if not renewed:
                         self._lost_event.set()
                         return
                 except Exception:
@@ -355,7 +357,7 @@ class BusinessDocumentWorker:
         export_service: type[BusinessDocumentExportService] = BusinessDocumentExportService,
         storage=None,
         sql_agent_runner: BusinessDocumentSqlAgentRunner | None = None,
-        lease_ms: int = 900_000,
+        lease_ms: int = 60_000,
         retry_base_ms: int = 5_000,
         maintenance_interval_seconds: float = 60.0,
     ):

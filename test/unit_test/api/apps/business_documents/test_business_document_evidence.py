@@ -108,7 +108,7 @@ class CapturingLLM:
         self.response = response or {"schema_version": "1", "outcome": "COMPLETE", "questions": []}
         self.calls = []
 
-    def generate(self, tenant_id, system_prompt, input_payload):
+    def generate(self, tenant_id, system_prompt, input_payload, *, timeout_seconds=None):
         self.calls.append((tenant_id, system_prompt, input_payload))
         return self.response
 

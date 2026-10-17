@@ -441,7 +441,7 @@ class CapturingAdapter:
         self.response = response
         self.calls = []
 
-    def generate(self, tenant_id, system_prompt, input_payload):
+    def generate(self, tenant_id, system_prompt, input_payload, *, timeout_seconds=None):
         self.calls.append((tenant_id, system_prompt, input_payload))
         return self.response
 
@@ -500,7 +500,7 @@ class CoverageAdapter:
         self.missing = missing
         self.calls = []
 
-    def generate(self, tenant_id, system_prompt, input_payload):
+    def generate(self, tenant_id, system_prompt, input_payload, *, timeout_seconds=None):
         self.calls.append(input_payload)
         if input_payload["job_input"]["task_type"] == "PLAN_CHANGES":
             return _coverage_plan()
@@ -557,20 +557,20 @@ def test_coverage_receives_absent_template_sections_and_actual_custom_titles():
     assert not any(section["id"] == "5.4" for section in base["sections"])
 
 
-def test_change_retry_includes_actual_missing_requirements_without_mutating_snapshot():
+def test_semantic_rejection_preserves_complete_confirmed_inputs_without_regeneration():
     job = _coverage_job()
+    snapshot = deepcopy(job.payload)
     adapter = CoverageAdapter(missing=True)
-    ai = BusinessDocumentAI(adapter)
     with pytest.raises(BusinessDocumentError) as caught:
-        ai.process(job)
-    job.error = {"code": caught.value.code, "details": caught.value.details}
-    adapter.missing = False
-    ai.process(job)
-    assert "requirement_coverage_feedback" not in adapter.calls[0]["job_input"]
-    assert adapter.calls[2]["job_input"]["requirement_coverage_feedback"] == caught.value.details["requirements"]
-    assert adapter.calls[0]["job_input"]["confirmed_change_sources"]["comment-event"]["text"] == "Хранить 90 дней. Повтор не меняет первую дату."
-    assert "text" not in adapter.calls[0]["job_input"]["protocol"]["comments"][0]
-    assert "requirement_coverage_feedback" not in job.payload
+        BusinessDocumentAI(adapter).process(job)
+    assert caught.value.code == "REQUIREMENT_COVERAGE_FAILED"
+    assert [call["job_input"]["task_type"] for call in adapter.calls] == ["PLAN_CHANGES", "VERIFY_REQUIREMENT_COVERAGE"]
+    assert adapter.calls[0]["job_input"]["confirmed_requirement_fragments"] == {
+        "comment-event:0": {"source_id": "comment-event", "text": "Хранить 90 дней."},
+        "comment-event:1": {"source_id": "comment-event", "text": "Повтор не меняет первую дату."},
+    }
+    assert adapter.calls[0]["job_input"]["protocol"]["comments"] == job.payload["protocol"]["comments"]
+    assert job.payload == snapshot
 
 
 def test_change_coverage_retains_generation_and_verification_model_audits():
@@ -608,6 +608,7 @@ def test_one_semantic_call_receives_all_sources_and_the_complete_result_document
     adapter = CoverageAdapter()
     result = BusinessDocumentAI(adapter).process(job)
     assert len(adapter.calls) == 2
+    assert len(adapter.calls[0]["job_input"]["confirmed_requirement_fragments"]) == 60
     verification = adapter.calls[1]["job_input"]
     assert verification["sources"]["comment-event"]["text"] == text
     assert set(verification["sources"]) == {"comment-event"}
@@ -619,18 +620,25 @@ def test_one_semantic_call_receives_all_sources_and_the_complete_result_document
     assert result["requirement_coverage"] == {"status": "PASS", "issues": []}
 
 
-def test_change_prompt_does_not_grow_with_resolved_events_and_protocol():
+def test_change_prompt_retains_history_and_marks_only_active_inputs():
     job = _coverage_job()
-    before = BusinessDocumentAI._prompt(job).input_payload
     job.payload["source_events"].extend({"event_id": f"old-{index}", "event_type": "ChangesApplied", "payload": {"execution": "x" * 1000}} for index in range(100))
     job.payload["protocol"]["questions"] = [{"text": "Resolved", "answer": {"source_event_id": "old-answer", "custom_answer": "x" * 1000}}]
     job.payload["protocol"]["proposals"] = [{"decision": "ACCEPTED", "decision_event_id": "old-decision", "text": "x" * 1000}]
     job.payload["current_revision"]["change_basis"] = [{"summary": "x" * 1000}]
+    job.payload["current_revision"].update(body_markdown="Duplicate markdown", section_texts={"1": "Duplicate text"})
     snapshot = deepcopy(job.payload)
-    after = BusinessDocumentAI._prompt(job).input_payload
-    assert after == before
+    inputs = BusinessDocumentAI._prompt(job).input_payload["job_input"]
+    assert inputs["source_events"] == snapshot["source_events"]
+    assert inputs["protocol"] == snapshot["protocol"]
+    assert inputs["current_revision"] == {key: value for key, value in snapshot["current_revision"].items() if key not in {"body_markdown", "section_texts"}}
+    assert inputs["active_change_input_event_ids"] == ["comment-event"]
+    assert inputs["active_change_inputs"] == [event for event in snapshot["source_events"] if event["event_id"] == "comment-event"]
+    assert {fragment["source_id"] for fragment in inputs["confirmed_requirement_fragments"].values()} == {"comment-event"}
     assert job.payload == snapshot
-    assert "active_change_inputs" not in after["job_input"]
+    inputs["protocol"]["comments"][0]["text"] = "Changed copy"
+    inputs["source_events"][0]["payload"] = {}
+    assert job.payload == snapshot
 
 
 def test_verification_sends_complete_requirements_without_guessing_a_context_limit():
@@ -692,7 +700,7 @@ def test_large_model_context_preserves_every_unchanged_section():
     assert len(encoder.encode(json.dumps(verification, ensure_ascii=False))) > 32768
 
 
-def test_change_prompt_keeps_confirmed_text_once_and_preserves_other_context():
+def test_change_prompt_preserves_full_protocol_and_summarizes_only_active_confirmed_text():
     job = _coverage_job()
     protocol = job.payload["protocol"]
     protocol["proposals"] = [{"proposal_id": "proposal", "decision_event_id": "accepted", "decision": "ACCEPTED", "text": "Unique accepted requirement"}]
@@ -718,9 +726,15 @@ def test_change_prompt_keeps_confirmed_text_once_and_preserves_other_context():
     snapshot = deepcopy(job.payload)
     payload = BusinessDocumentAI._prompt(job).input_payload
     encoded = json.dumps(payload, ensure_ascii=False)
-    for text in [protocol["comments"][0]["text"], "Unique accepted requirement", "Unique selected requirement", "Unique question context", "Unique custom requirement", "Unique custom question"]:
-        assert encoded.count(text) == 1, text
-    assert "Rejected option text" not in encoded
+    inputs = payload["job_input"]
+    assert inputs["protocol"] == snapshot["protocol"]
+    assert inputs["source_events"] == snapshot["source_events"]
+    fragments = inputs["confirmed_requirement_fragments"]
+    assert {fragment["source_id"] for fragment in fragments.values()} == {"comment-event", "accepted", "answer", "custom-answer"}
+    assert fragments["answer:0"] == {"source_id": "answer", "text": "Unique selected requirement", "context": "Unique question context"}
+    assert fragments["custom-answer:0"] == {"source_id": "custom-answer", "text": "Unique custom requirement", "context": "Unique custom question"}
+    assert fragments["accepted:0"] == {"source_id": "accepted", "text": "Unique accepted requirement"}
+    assert "Rejected option text" in encoded
     for text in ["Unanswered context", "Open option", "Unchanged comment context", "EVA context"]:
         assert text in encoded
     assert payload["job_input"]["protocol"]["questions"][0]["answer"] == {"source_event_id": "answer", "selected_option_id": "selected"}
@@ -761,7 +775,7 @@ def test_stream_previews_hash_only_their_targets(monkeypatch):
     monkeypatch.setattr(ai_module, "section_hash", counted_hash)
 
     class StreamingAdapter(CoverageAdapter):
-        def generate_stream(self, tenant, system, payload, on_chunk):
+        def generate_stream(self, tenant, system, payload, on_chunk, *, timeout_seconds=None):
             self.calls.append(payload)
             raw = json.dumps(plan, ensure_ascii=False)
             on_chunk(raw)
@@ -895,7 +909,7 @@ def test_worker_stops_semantic_duplicate_without_automatic_content_rewrite(datab
             self.responses = iter(responses)
             self.calls = []
 
-        def generate(self, tenant_id, system_prompt, input_payload):
+        def generate(self, tenant_id, system_prompt, input_payload, *, timeout_seconds=None):
             self.calls.append((tenant_id, system_prompt, input_payload))
             return next(self.responses)
 

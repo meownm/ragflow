@@ -11,6 +11,7 @@ from json_repair import repair_json
 
 from business_documents.domain.content import apply_change_plan, render_section_text, validate_contract
 from business_documents.domain.errors import RuleViolation
+from business_documents.domain.job_recovery import MAX_AI_CALLS
 from business_documents.domain.requirement_coverage import changed_section_repetitions, validate_requirement_coverage
 
 
@@ -29,7 +30,7 @@ class RecordedModel:
         self.adapter = adapter
         self.calls = []
 
-    def generate(self, tenant_id, system_prompt, input_payload):
+    def generate(self, tenant_id, system_prompt, input_payload, *, timeout_seconds=None):
         call = {
             "task_type": input_payload["job_input"]["task_type"],
             "system_prompt": system_prompt,
@@ -39,9 +40,12 @@ class RecordedModel:
         }
         self.calls.append(call)
         try:
-            response = self.adapter.generate(tenant_id, system_prompt, input_payload)
+            response = self.adapter.generate(tenant_id, system_prompt, input_payload, timeout_seconds=timeout_seconds)
         except Exception as error:
+            from api.apps.business_documents.recovery import is_transient_failure
+
             call["error_type"] = type(error).__name__
+            call["retryable"] = is_transient_failure(error)
             raise
         call["response"] = response
         call["response_sha256"] = _hash(response if isinstance(response, str) else _json(response))
@@ -249,6 +253,42 @@ def _response(call):
     return deepcopy(raw) if isinstance(raw, dict) else repair_json(raw, return_objects=True) if isinstance(raw, str) else None
 
 
+def _verification_evidence_failures(calls, job_input, sources, titles):
+    """Replay one verification stage, including its single format repair."""
+    failures, feedback, passed = [], None, False
+    for call in calls:
+        if passed:
+            failures.append("unexpected_model_sequence")
+        expected = {"job_input": job_input, **({"format_repair": feedback} if feedback is not None else {})}
+        if call.get("input_payload") != expected:
+            failures.append("verification_input_mismatch")
+        if "error_type" in call:
+            if call.get("retryable") is not True:
+                failures.append("nonretryable_model_error")
+            continue
+        raw = call.get("response")
+        try:
+            if not isinstance(raw, dict) and (not isinstance(raw, str) or not raw.strip()):
+                raise RuleViolation("EMPTY_AI_RESPONSE", "AI response is empty")
+            try:
+                verdict = _response(call)
+            except Exception as error:
+                raise RuleViolation("INVALID_AI_JSON", "AI response is not valid JSON") from error
+            if not isinstance(verdict, dict):
+                raise RuleViolation("INVALID_AI_JSON", "AI response must be a JSON object")
+            validate_requirement_coverage(verdict, sources, titles)
+        except RuleViolation as error:
+            if feedback is not None or error.code not in {"EMPTY_AI_RESPONSE", "INVALID_AI_JSON", "INVALID_REQUIREMENT_COVERAGE"}:
+                failures.append("invalid_final_verdict")
+            else:
+                feedback = {"previous_response": raw, "error": {"code": error.code, "message": error.message[:800], "details": {}}}
+        else:
+            passed = True
+    if not passed:
+        failures.append("invalid_final_verdict")
+    return failures
+
+
 def evidence_failures(case, evidence, prompts, template, schema, change_schema):
     """Fail closed when a saved model-quality report loses its replayable proof."""
     if not isinstance(evidence, dict) or evidence.get("fixture_sha256") != _hash(_json(case)):
@@ -256,6 +296,8 @@ def evidence_failures(case, evidence, prompts, template, schema, change_schema):
     required = {"fixture_sha256", "model_calls", "expected_sources", "final_ast", "change_plan", "requirement_ids", "attempts"}
     if set(evidence) != required:
         return ["incomplete_placement_evidence"]
+    if not isinstance(evidence["model_calls"], list) or not 2 <= len(evidence["model_calls"]) <= MAX_AI_CALLS:
+        return ["invalid_model_call_budget"]
     failures = placement_failures(case, evidence["final_ast"])
     if evidence["requirement_ids"] != [r["id"] for r in case["seed"]["requirements"]]:
         failures.append("incomplete_requirement_inventory")
@@ -293,15 +335,23 @@ def evidence_failures(case, evidence, prompts, template, schema, change_schema):
     for section in base:
         if section["id"] != "5.5" and final.get(section["id"]) != section:
             failures.append(f"unrelated_section_changed:{section['id']}")
-    last_plan = last_verification = None
+    last_plan, verification_calls = None, []
     for call in evidence["model_calls"]:
+        fields = {"task_type", "system_prompt", "input_payload", "system_sha256", "input_sha256"}
+        fields.update({"error_type", "retryable"} if "error_type" in call else {"response", "response_sha256"})
+        if set(call) != fields:
+            failures.append("invalid_model_exchange")
         task = call["task_type"]
         if task == "PLAN_CHANGES":
-            last_plan, last_verification = call, None
-        elif task == "VERIFY_REQUIREMENT_COVERAGE":
-            if last_plan is None or last_verification is not None:
+            if verification_calls:
                 failures.append("unexpected_model_sequence")
-            last_verification = call
+            last_plan = call
+            if "error_type" in call and call.get("retryable") is not True:
+                failures.append("nonretryable_model_error")
+        elif task == "VERIFY_REQUIREMENT_COVERAGE":
+            if last_plan is None or "error_type" in last_plan:
+                failures.append("unexpected_model_sequence")
+            verification_calls.append(call)
         name = "change_planner" if task == "PLAN_CHANGES" else "requirement_coverage" if task == "VERIFY_REQUIREMENT_COVERAGE" else None
         if name is None or not call["system_prompt"].startswith(prompts[name].split("# Вход")[0]):
             failures.append("unexpected_prompt")
@@ -309,7 +359,7 @@ def evidence_failures(case, evidence, prompts, template, schema, change_schema):
             failures.append("model_input_hash")
         if "error_type" not in call and call["response_sha256"] != _hash(call["response"] if isinstance(call["response"], str) else _json(call["response"])):
             failures.append("model_response_hash")
-    if last_plan is None or last_verification is None or "error_type" in last_plan or "error_type" in last_verification:
+    if last_plan is None or not verification_calls or "error_type" in last_plan or "error_type" in verification_calls[-1]:
         failures.append("missing_real_model_exchanges")
     else:
         inputs = last_plan["input_payload"]["job_input"]
@@ -326,7 +376,13 @@ def evidence_failures(case, evidence, prompts, template, schema, change_schema):
             sources["5"][0]: {"text": next(option["label"] for option in case["seed"]["options"] if option["option_id"] == case["seed"]["selected_option_id"]), "context": case["seed"]["question"]},
             sources["5.5"][0]: {"text": "Мониторинг включает:\n" + "\n".join(requirement["text"] for requirement in case["seed"]["requirements"])},
         }
-        if inputs.get("confirmed_change_sources") != expected_sources or inputs.get("current_revision", {}).get("document_ast") != case["seed"]["base_document"]:
+        expected_fragments = {
+            f"{source_id}:{index}": {"source_id": source_id, "text": text.strip(), **({"context": source["context"]} if "context" in source else {})}
+            for source_id, source in expected_sources.items()
+            for index, text in enumerate(re.split(r"(?<=[.!?;])\s+|\n+", source["text"]))
+            if text.strip()
+        }
+        if inputs.get("confirmed_requirement_fragments") != expected_fragments or inputs.get("current_revision", {}).get("document_ast") != case["seed"]["base_document"]:
             failures.append("source_input_mismatch")
         generated = _response(last_plan)
         if isinstance(generated, dict) and "change_plan" in generated:
@@ -363,10 +419,5 @@ def evidence_failures(case, evidence, prompts, template, schema, change_schema):
             "section_titles": titles,
         }
         verification_input["cross_section_repetitions"] = [list(pair) for pair in changed_section_repetitions(case["seed"]["base_document"], evidence["final_ast"])]
-        if last_verification.get("input_payload") != {"job_input": verification_input}:
-            failures.append("verification_input_mismatch")
-        try:
-            validate_requirement_coverage(_response(last_verification), {**expected_sources, **{f"section:{key}": {"text": value} for key, value in before.items()}}, titles)
-        except RuleViolation:
-            failures.append("invalid_final_verdict")
+        failures.extend(_verification_evidence_failures(verification_calls, verification_input, {**expected_sources, **{f"section:{key}": {"text": value} for key, value in before.items()}}, titles))
     return list(dict.fromkeys(failures))

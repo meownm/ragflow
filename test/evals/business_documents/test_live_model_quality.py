@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -48,6 +50,36 @@ class CaseExecution:
     result: dict[str, Any]
     score: QualityScore | None
     ai_audits: tuple[dict[str, Any], ...]
+
+
+def _record_model_calls(monkeypatch, calls: list[dict[str, Any]]) -> None:
+    """Retain synthetic inputs and outputs without changing the live adapter."""
+    generate = RAGFlowLLMAdapter.async_generate
+
+    async def recorded(self, tenant_id, system_prompt, input_payload, on_chunk=None):
+        request = {"system_prompt": system_prompt, "input_payload": deepcopy(input_payload)}
+        call = {
+            **request,
+            "request_sha256": hashlib.sha256(json.dumps(request, ensure_ascii=False, sort_keys=True).encode()).hexdigest(),
+        }
+        calls.append(call)
+        try:
+            response = await generate(self, tenant_id, system_prompt, input_payload, on_chunk)
+        except Exception as error:
+            call["error"] = {"type": type(error).__name__, "message": str(error)}
+            raise
+        call["response"] = response
+        return response
+
+    monkeypatch.setattr(RAGFlowLLMAdapter, "async_generate", recorded)
+
+
+def _case_job_evidence(previous_ids: set[str]) -> list[dict[str, Any]]:
+    return [
+        {"job_id": job.id, "job_type": job.job_type, "status": job.status, "attempt": job.attempt, "error": job.error, "result": job.result}
+        for job in BusinessDocumentJob.select().order_by(BusinessDocumentJob.create_time, BusinessDocumentJob.id)
+        if job.id not in previous_ids
+    ]
 
 
 class ControlledEvidenceSearch:
@@ -302,6 +334,8 @@ def _apply_review_change(
     for _round in range(6):
         document, review_job = _complete_requested_job(worker, tenant_id, document, "REQUEST_REVIEW_ASSESSMENT")
         audits.append(_ai_audit(review_job))
+        if "APPLY_CHANGES" in document["allowed_commands"]:
+            break
         for question in [item for item in document["protocol"]["questions"] if item["status"] == "OPEN"]:
             document_commands.execute(
                 tenant_id,
@@ -489,6 +523,14 @@ def _asset_hashes() -> dict[str, str]:
     return {name: f"sha256:{hashlib.sha256((ASSET_ROOT / 'prompts' / name).read_bytes()).hexdigest()}" for name in PROMPT_NAMES}
 
 
+def _write_json(path: str | Path, value: dict[str, Any]) -> None:
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_suffix(destination.suffix + ".tmp")
+    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(destination)
+
+
 def _write_report(
     path: str,
     suite: dict[str, Any],
@@ -528,11 +570,7 @@ def _write_report(
         "case_results": case_results,
         "metrics": _aggregate_metrics(scores, case_results) if case_results else None,
     }
-    destination = Path(path)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary = destination.with_suffix(destination.suffix + ".tmp")
-    temporary.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    temporary.replace(destination)
+    _write_json(path, report)
 
 
 def test_partial_live_report_identifies_unfinished_case(tmp_path):
@@ -552,6 +590,79 @@ def test_execution_error_keeps_full_report_incomplete(tmp_path):
     path = tmp_path / "quality.json"
     _write_report(str(path), suite, results, [], [])
     assert json.loads(path.read_text(encoding="utf-8"))["status"] == "INCOMPLETE"
+
+
+def test_model_call_evidence_preserves_inputs_response_and_stream_callback(monkeypatch):
+    calls = []
+    payload = {"job_input": {"task_type": "GENERATE_DRAFT"}, "evidence": {"chunks": [{"content": "Подтвержденный факт"}]}}
+
+    def callback(_chunk):
+        pass
+
+    async def generate(self, tenant_id, system_prompt, input_payload, on_chunk=None):
+        assert tenant_id == "synthetic-tenant" and system_prompt == "trusted prompt"
+        assert input_payload is payload and on_chunk is callback
+        input_payload["job_input"]["changed_after_call"] = True
+        return '{"draft": {}}'
+
+    monkeypatch.setattr(RAGFlowLLMAdapter, "async_generate", generate)
+    _record_model_calls(monkeypatch, calls)
+    adapter = RAGFlowLLMAdapter()
+    result = asyncio.run(adapter.async_generate("synthetic-tenant", "trusted prompt", payload, callback))
+    assert result == calls[0]["response"] == '{"draft": {}}'
+    assert "changed_after_call" not in calls[0]["input_payload"]["job_input"]
+    request = {key: calls[0][key] for key in ("system_prompt", "input_payload")}
+    assert calls[0]["request_sha256"] == hashlib.sha256(json.dumps(request, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
+def test_model_call_evidence_does_not_retry_or_hide_provider_errors(monkeypatch):
+    calls = []
+    error = TimeoutError("synthetic timeout")
+
+    async def generate(*_args, **_kwargs):
+        raise error
+
+    monkeypatch.setattr(RAGFlowLLMAdapter, "async_generate", generate)
+    _record_model_calls(monkeypatch, calls)
+    with pytest.raises(TimeoutError) as caught:
+        asyncio.run(RAGFlowLLMAdapter().async_generate("synthetic-tenant", "prompt", {}))
+    assert caught.value is error
+    assert len(calls) == 1 and calls[0]["error"] == {"type": "TimeoutError", "message": "synthetic timeout"}
+    assert "response" not in calls[0]
+
+
+def test_review_journey_applies_ready_change_before_creating_more_feedback(monkeypatch):
+    revision = {"revision_id": "revision-1", "revision_number": 1, "content_hash": "before", "section_texts": {"4.3": "Existing scenario"}}
+    document = {"document_id": "synthetic-document", "state_version": 1, "current_revision": revision}
+    assessed = {
+        **document,
+        "allowed_commands": ["APPLY_CHANGES"],
+        "protocol": {
+            "questions": [{"question_id": "open-question", "status": "OPEN"}],
+            "proposals": [{"proposal_id": "undecided-proposal", "decision": "PENDING"}],
+        },
+    }
+    commands = []
+    jobs = []
+
+    def execute(_tenant, _actor, _document, command):
+        commands.append(command["type"])
+        assert command["type"] == "ADD_COMMENT", "Ready partial changes must not be invalidated by new feedback"
+
+    def complete(_worker, _tenant, _document, command_type, payload=None):
+        jobs.append(command_type)
+        if command_type == "REQUEST_REVIEW_ASSESSMENT":
+            return assessed, SimpleNamespace(result={"execution": {"ai": {"task": command_type}}})
+        assert command_type == "APPLY_CHANGES" and payload == {"base_revision_id": revision["revision_id"]}
+        return {**assessed, "current_revision": {**revision, "revision_number": 2, "content_hash": "after"}}, SimpleNamespace(result={"execution": {"ai": {"task": command_type}}})
+
+    monkeypatch.setattr(document_commands, "execute", execute)
+    monkeypatch.setattr(document_queries, "get_document", lambda *_: assessed)
+    monkeypatch.setattr(sys.modules[__name__], "_complete_requested_job", complete)
+    result = _apply_review_change({"review_comment": "Confirmed business change"}, "synthetic-tenant", document, object(), [])
+    assert commands == ["ADD_COMMENT"]
+    assert jobs == ["REQUEST_REVIEW_ASSESSMENT", "APPLY_CHANGES"]
+    assert result["protocol"] == assessed["protocol"]
 
 
 @pytest.mark.p1
@@ -582,6 +693,9 @@ def test_live_model_golden_suite(database, monkeypatch):
     )
     monkeypatch.setattr(sys.modules[BusinessDocumentWorker.__module__], "related_file_search_enabled", lambda: True)
     executions: list[CaseExecution] = []
+    model_calls: list[dict[str, Any]] = []
+    case_exchanges: list[dict[str, Any]] = []
+    _record_model_calls(monkeypatch, model_calls)
     report_path = os.environ.get("BUSINESS_DOCUMENT_QUALITY_REPORT", "").strip()
 
     def persist(active_case_id: str | None = None) -> None:
@@ -602,6 +716,8 @@ def test_live_model_golden_suite(database, monkeypatch):
         persist(case["id"])
         started = time.monotonic()
         case_audits: list[dict[str, Any]] = []
+        previous_job_ids = {job.id for job in BusinessDocumentJob.select(BusinessDocumentJob.id)}
+        first_call = len(model_calls)
         try:
             executions.append(_run_model_case(case, config.tenant_id, case_audits))
         except Exception as error:  # noqa: BLE001 - preserve the unfinished case without attributing it to model quality
@@ -618,6 +734,9 @@ def test_live_model_golden_suite(database, monkeypatch):
                     ai_audits=tuple(case_audits),
                 )
             )
+        if report_path:
+            case_exchanges.append({"case_id": case["id"], "adapter_calls": model_calls[first_call:], "jobs": _case_job_evidence(previous_job_ids)})
+            _write_json(Path(report_path).with_suffix(".exchanges.json"), {"schema_version": "1", "cases": case_exchanges})
         executions[-1].result["duration_ms"] = round((time.monotonic() - started) * 1000)
         persist()
     case_results = [execution.result for execution in executions]

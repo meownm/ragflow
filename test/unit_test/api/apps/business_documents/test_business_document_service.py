@@ -3244,7 +3244,7 @@ def test_reporting_subsection_is_previewed_and_confirmed_with_scoped_sources(dat
         )
 
     class Adapter:
-        def generate(self, tenant_id, system_prompt, input_payload):
+        def generate(self, tenant_id, system_prompt, input_payload, *, timeout_seconds=None):
             if input_payload["job_input"]["task_type"] == "PLAN_CHANGES":
                 return plan
             # This test exercises worker/authorization/preview, not model accuracy.
@@ -4266,19 +4266,19 @@ def test_worker_publishes_checked_section_before_full_plan_is_committed(database
         ],
     }
     observed_during_generation = []
-    observed_coverage_feedback = []
+    observed_generation_inputs = []
 
     class StreamingAdapter:
         coverage_calls = 0
 
-        def generate(self, tenant_id, system_prompt, input_payload):
+        def generate(self, tenant_id, system_prompt, input_payload, *, timeout_seconds=None):
             self.coverage_calls += 1
             if coverage_fails_first and self.coverage_calls == 1:
                 return {"status": "FAIL", "issues": [{"source_id": source_id, "section_id": "5.5", "reason": "Не уточнён контроль ошибок."}]}
             return {"status": "PASS", "issues": []}
 
-        def generate_stream(self, tenant_id, system_prompt, input_payload, on_chunk):
-            observed_coverage_feedback.append(input_payload["job_input"].get("requirement_coverage_feedback"))
+        def generate_stream(self, tenant_id, system_prompt, input_payload, on_chunk, *, timeout_seconds=None):
+            observed_generation_inputs.append(deepcopy(input_payload["job_input"]))
             raw = json.dumps({"change_plan": plan}, ensure_ascii=False)
             cut = raw.rfind("}]") + 1
             on_chunk(raw[:cut])
@@ -4295,11 +4295,11 @@ def test_worker_publishes_checked_section_before_full_plan_is_committed(database
         assert unchanged["current_revision"]["revision_id"] == base["revision_id"]
         assert unchanged["change_preview"] is None
         assert not worker.run_once()
-        assert len(observed_coverage_feedback) == 1
+        assert len(observed_generation_inputs) == 1
         replay = document_queries.read_job_stream_events(TENANT, AUTHOR, document["document_id"], requested["job_id"], 0)
         assert replay["events"][-1]["type"] == "failed"
         return
-    assert observed_coverage_feedback[0] is None
+    assert len(observed_generation_inputs) == 1
     assert any(event["type"] == "section_preview" and event["payload"]["after"] == "Новый контроль ошибок" for event in observed_during_generation)
     assert BusinessDocumentJob.get_by_id(requested["job_id"]).status == "COMPLETED"
     replay = document_queries.read_job_stream_events(TENANT, AUTHOR, document["document_id"], requested["job_id"], 0)

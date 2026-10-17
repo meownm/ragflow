@@ -35,7 +35,7 @@ class PlanAdapter:
         self.calls = []
         self.audit = None
 
-    def generate(self, tenant_id, system, payload):
+    def generate(self, tenant_id, system, payload, *, timeout_seconds=None):
         task = payload["job_input"]["task_type"]
         self.calls.append(deepcopy(payload))
         self.audit = {
@@ -209,8 +209,8 @@ def test_lease_lost_during_verification_prevents_commit(database):
     adapter = PlanAdapter(plan, failure=None)
     generate = adapter.generate
 
-    def expire_after_verification(tenant, system, payload):
-        result = generate(tenant, system, payload)
+    def expire_after_verification(tenant, system, payload, *, timeout_seconds=None):
+        result = generate(tenant, system, payload, timeout_seconds=timeout_seconds)
         if payload["job_input"]["task_type"] == "VERIFY_REQUIREMENT_COVERAGE":
             BusinessDocumentJob.update(lease_expires_at=0).where(BusinessDocumentJob.id == job.id).execute()
         return result
@@ -376,7 +376,7 @@ def test_mixed_diff_and_already_satisfied_answer_keep_full_context(database, pre
     }
 
     class MixedAdapter(PlanAdapter):
-        def generate(self, tenant, system, payload):
+        def generate(self, tenant, system, payload, *, timeout_seconds=None):
             if payload["job_input"]["task_type"] == "VERIFY_REQUIREMENT_COVERAGE":
                 verification = payload["job_input"]
                 assert verification["sources"][answer]["text"] == selected["label"]

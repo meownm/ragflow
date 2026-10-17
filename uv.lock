@@ -7890,7 +7890,7 @@ wheels = [
 
 [[package]]
 name = "ragflow"
-version = "1.39.10"
+version = "1.39.11"
 source = { virtual = "." }
 dependencies = [
     { name = "agentrun-sdk" },

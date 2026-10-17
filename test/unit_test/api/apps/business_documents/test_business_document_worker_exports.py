@@ -15,13 +15,16 @@ import io
 import sys
 import threading
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC
 from datetime import datetime as DateTime
 from pathlib import Path
 from types import ModuleType
+from unittest.mock import Mock
 
 import pytest
 from peewee import SqliteDatabase
+from playhouse.pool import PooledSqliteDatabase
 
 from test.unit_test.api.apps.business_documents.helpers import required_section_blocks, temporary_common_settings
 
@@ -321,11 +324,75 @@ def test_heartbeat_records_lease_loss_when_renewal_is_rejected(database, monkeyp
     heartbeat.start()
     try:
         assert renew_called.wait(timeout=2)
+        heartbeat._thread.join(timeout=2)
+        assert not heartbeat._thread.is_alive()
         with pytest.raises(BusinessDocumentError) as caught:
             heartbeat.ensure_current()
         assert caught.value.code == "JOB_LEASE_LOST"
     finally:
         heartbeat.stop()
+
+
+@pytest.mark.p0
+@pytest.mark.parametrize("renewal_outcome", ["renewed", "stale_token", "database_error"])
+def test_heartbeat_releases_bounded_pool_connection(tmp_path, renewal_outcome):
+    database = PooledSqliteDatabase(str(tmp_path / "heartbeat.sqlite"), max_connections=2, stale_timeout=30, check_same_thread=False)
+    with database.bind_ctx([BusinessDocumentJob], bind_refs=False, bind_backrefs=False):
+        try:
+            database.create_tables([BusinessDocumentJob])
+            lease_ms = BusinessDocumentWorker().lease_ms
+            original_expiry = current_timestamp() + lease_ms
+            job = BusinessDocumentJob.create(
+                id="pooled-heartbeat",
+                tenant_id=TENANT,
+                document_id="document",
+                job_type="PLAN_CHANGES",
+                status="RUNNING",
+                dedupe_key="pooled-heartbeat",
+                source_state_version=1,
+                payload={},
+                correlation_id="pooled-heartbeat",
+                available_at=current_timestamp(),
+                lease_owner="heartbeat-worker",
+                lease_token="original-token",
+                lease_expires_at=original_expiry,
+            )
+            foreground_connection = database.connection()
+            if renewal_outcome == "stale_token":
+                BusinessDocumentJob.update(lease_token="replacement-token").where(BusinessDocumentJob.id == job.id).execute()
+            elif renewal_outcome == "database_error":
+                database.drop_tables([BusinessDocumentJob])
+
+            def borrow_remaining_connection():
+                with database.connection_context():
+                    return database.execute_sql("SELECT 1").fetchone()
+
+            with ThreadPoolExecutor(max_workers=1) as borrower:
+                for _ in range(4):
+                    heartbeat = worker_module._LeaseHeartbeat(job, "heartbeat-worker", lease_ms)
+                    # Accelerate scheduling while keeping real threads, ORM and pool.
+                    heartbeat._stop_event = Mock(wait=Mock(side_effect=[False, True]))
+                    heartbeat.start()
+                    try:
+                        heartbeat._thread.join(timeout=3)
+                        assert not heartbeat._thread.is_alive()
+                        if renewal_outcome == "renewed":
+                            heartbeat.ensure_current()
+                        else:
+                            with pytest.raises(BusinessDocumentError) as caught:
+                                heartbeat.ensure_current()
+                            assert caught.value.code == "JOB_LEASE_LOST"
+                    finally:
+                        heartbeat.stop()
+                    assert borrower.submit(borrow_remaining_connection).result(timeout=3) == (1,)
+                    assert not database.is_closed()
+                    assert database.connection() is foreground_connection
+                    if renewal_outcome == "stale_token":
+                        current = BusinessDocumentJob.get_by_id(job.id)
+                        assert current.lease_token == "replacement-token"
+                        assert current.lease_expires_at == original_expiry
+        finally:
+            database.close_all()
 
 
 @pytest.mark.p0

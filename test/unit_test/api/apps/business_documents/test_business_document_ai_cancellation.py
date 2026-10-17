@@ -323,7 +323,7 @@ async def test_non_ollama_or_cold_compatible_keeps_its_configured_window(model_b
     assert calls["parameters"] == [{"temperature": 0, "top_p": 0.1, "max_tokens": 65536}]
 
 
-@pytest.mark.parametrize("response, code", [(None, "EMPTY_AI_RESPONSE"), ("[]", "INVALID_AI_JSON")])
+@pytest.mark.parametrize("response, code", [(None, "EMPTY_AI_RESPONSE")])
 def test_ai_worker_rejects_empty_and_non_object_model_response(response, code):
     adapter = SimpleNamespace(generate=Mock(return_value=response))
     job = BusinessDocumentJob(tenant_id="disposable-tenant", job_type="ASSESS_INTAKE", attempt=1, payload={"prompt": prompt_descriptor("ASSESS_INTAKE")})
@@ -332,6 +332,15 @@ def test_ai_worker_rejects_empty_and_non_object_model_response(response, code):
     assert caught.value.code == code
     assert adapter.generate.call_count == 2
     assert adapter.generate.call_args.args[2]["format_repair"]["error"]["code"] == code
+
+
+def test_non_object_intake_response_is_retained_as_an_unanswered_free_text_question():
+    adapter = SimpleNamespace(generate=Mock(return_value="[]"))
+    job = BusinessDocumentJob(tenant_id="disposable-tenant", job_type="ASSESS_INTAKE", attempt=1, payload={"prompt": prompt_descriptor("ASSESS_INTAKE")})
+    output = ai_module.BusinessDocumentAI(adapter).process(job)
+    assert output["outcome"] == "NEEDS_INPUT" and output["questions"][0]["text"] == "[]"
+    assert output["questions"][0]["allow_custom_answer"] and output["warnings"]
+    assert adapter.generate.call_count == 1
 
 
 def test_job_with_changed_prompt_is_rejected_before_calling_model():

@@ -559,6 +559,7 @@ export interface BusinessDocumentComment {
 }
 
 export interface BusinessDocumentReviewCycle {
+  warnings?: BusinessDocumentWarning[];
   questions: BusinessDocumentQuestion[];
   proposals: BusinessDocumentProposal[];
   comments: BusinessDocumentComment[];
@@ -603,6 +604,7 @@ export interface BusinessDocumentJobStreamEvent {
     | 'stage'
     | 'section_preview'
     | 'preview_ready'
+    | 'not_applied'
     | 'retry'
     | 'failed'
     | 'applied'

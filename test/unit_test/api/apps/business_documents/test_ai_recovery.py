@@ -113,14 +113,16 @@ def test_format_repair_receives_error_and_preserves_complete_original_context(da
     assert _aggregate_ai_audits([audit])["execution_count"] == 3
 
 
-def test_second_invalid_format_stops_without_verification_or_revision(database):
+def test_second_invalid_format_is_preserved_without_verification_or_revision(database):
     requested, plan = request_plan()
     plan["operations"].append(deepcopy(plan["operations"][0]))
     adapter = PlanAdapter(plan, None)
     worker = BusinessDocumentWorker(ai=BusinessDocumentAI(adapter))
     assert worker.run_once()
     job = BusinessDocumentJob.get_by_id(requested["job_id"])
-    assert job.status == "DEAD" and job.error["code"] == "DUPLICATE_CHANGE_TARGET"
+    assert job.status == "COMPLETED" and not job.error
+    assert job.result["output"]["unapplied_changes"]
+    assert job.result["output"]["warnings"][0]["code"] == "CHANGE_FORMAT_NOT_APPLIED"
     assert len(adapter.calls) == 2 and not worker.run_once()
     assert BusinessDocumentRevision.select().count() == 1
 
@@ -363,7 +365,9 @@ def test_repair_budget_is_not_reset_after_transport_failure(database):
         generate(tenant, system, payload, timeout_seconds=timeout_seconds)
         if len(adapter.calls) == 2:
             raise TimeoutError("Interrupted format repair")
-        return {"operations": []}
+        invalid = deepcopy(plan)
+        invalid["operations"][0]["type"] = "UNKNOWN_OPERATION"
+        return invalid
 
     adapter.generate = invalid_then_timeout
     assert BusinessDocumentWorker(ai=BusinessDocumentAI(adapter), retry_base_ms=0).run_once()
@@ -371,9 +375,10 @@ def test_repair_budget_is_not_reset_after_transport_failure(database):
     assert job.status == "RETRY" and job.result["recovery"]["calls"] == 2
     assert BusinessDocumentWorker(ai=BusinessDocumentAI(adapter), retry_base_ms=0).run_once()
     job = BusinessDocumentJob.get_by_id(job.id)
-    assert job.status == "DEAD" and job.error["code"] == "INVALID_CHANGE_PLAN"
-    assert len(adapter.calls) == job.result["recovery"]["calls"] == 3
+    assert job.status == "COMPLETED" and job.result["output"]["unapplied_changes"]
+    assert len(adapter.calls) == 3 and len(job.result["execution"]["ai"]["recovery"]) == 2
     assert adapter.calls[1]["format_repair"] == adapter.calls[2]["format_repair"]
+    assert BusinessDocumentRevision.select().count() == 1
 
 
 def test_stream_repair_clears_preliminary_sections_before_validation(database):

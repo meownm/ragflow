@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import html
 import io
+import json
 import logging
 import re
 from collections.abc import Mapping
@@ -30,7 +31,7 @@ from docx import Document as WordDocument
 from peewee import IntegrityError
 
 from api.apps.business_documents.assets import published_template, rendering_policy, render_document_ast
-from business_documents.domain.content import render_block_source
+from business_documents.domain.content import render_block_source, document_warning_texts, render_document_warning_appendix
 from business_documents.application.export import PreparedExport
 from business_documents.application.errors import BusinessDocumentError, ConflictError, ValidationError
 from api.db.db_models import BusinessDocument, BusinessDocumentExportArtifact, BusinessDocumentExportStage, BusinessDocumentJob, BusinessDocumentRevision
@@ -832,7 +833,8 @@ class BusinessDocumentExportService:
     @classmethod
     def _render(cls, export_format: str, revision: BusinessDocumentRevision) -> bytes:
         if export_format == "MARKDOWN":
-            return render_document_ast(revision.document_ast).encode("utf-8")
+            body = render_document_ast(revision.document_ast) + render_document_warning_appendix(revision.document_ast.get("warnings", []))
+            return body.encode("utf-8")
         if export_format == "DOCX":
             return cls._render_docx(revision.document_ast)
         if export_format == "EVA_WIKI":
@@ -866,6 +868,11 @@ class BusinessDocumentExportService:
                     document.add_paragraph(f"{block.get('alt') or block.get('label')}: {block['url']}")
                 else:
                     document.add_paragraph(render_block_source(block), style="No Spacing")
+        warnings = document_warning_texts(document_ast.get("warnings", []))
+        if warnings:
+            document.add_heading("Замечания к документу", level=1)
+            for warning in warnings:
+                document.add_paragraph(warning, style="List Bullet")
         buffer = io.BytesIO()
         document.save(buffer)
         return buffer.getvalue()
@@ -929,5 +936,11 @@ class BusinessDocumentExportService:
                     lines.append(f'<p data-id="{block_node_id}"><a data-id="{block_node_id}-a" href="{html.escape(reference_url)}">{html.escape(block["label"])}</a></p>')
                 else:
                     lines.append(f'<pre data-id="{block_node_id}"><code data-id="{block_node_id}-code">{html.escape(render_block_source(block))}</code></pre>')
+        warnings = document_warning_texts(document_ast.get("warnings", []))
+        if warnings:
+            metadata = html.escape(json.dumps(document_ast["warnings"], ensure_ascii=False), quote=True)
+            lines.append(f'<aside class="business-document-warnings" data-document-warnings="{metadata}"><h2>Замечания к документу</h2><ul>')
+            lines.extend("<li>" + html.escape(warning).replace("\n", "<br/>") + "</li>" for warning in warnings)
+            lines.append("</ul></aside>")
         lines.append("</div>")
         return "\n".join(lines)

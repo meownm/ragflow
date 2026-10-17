@@ -937,7 +937,7 @@ export default function BusinessDocumentsPage() {
       streamJobId,
       controller.signal,
       (event) => {
-        if (event.type === 'retry' || event.type === 'failed') {
+        if (['retry', 'failed', 'not_applied'].includes(event.type)) {
           setStreamPreview({
             jobId: streamJobId,
             attempt: event.attempt,
@@ -973,9 +973,13 @@ export default function BusinessDocumentsPage() {
           });
         }
         if (
-          ['preview_ready', 'failed', 'applied', 'discarded'].includes(
-            event.type,
-          )
+          [
+            'preview_ready',
+            'failed',
+            'applied',
+            'discarded',
+            'not_applied',
+          ].includes(event.type)
         ) {
           void queryClient.invalidateQueries({
             queryKey: BusinessDocumentKeys.detail(documentId),
@@ -1260,9 +1264,16 @@ export default function BusinessDocumentsPage() {
     : undefined;
   const documentWarnings = historyOpen
     ? (displayedRevision?.document_ast.warnings ?? [])
-    : (inlineChangePreview?.warnings ??
-      displayedRevision?.document_ast.warnings ??
-      []);
+    : Array.from(
+        new Map(
+          [
+            ...(document?.protocol.warnings ?? []),
+            ...(inlineChangePreview?.warnings ??
+              displayedRevision?.document_ast.warnings ??
+              []),
+          ].map((warning) => [JSON.stringify(warning), warning]),
+        ).values(),
+      );
   const documentHighlightedSectionIds =
     historyOpen && displayedRevision && previousDisplayedRevision
       ? displayedRevision.document_ast.sections
@@ -2060,7 +2071,10 @@ export default function BusinessDocumentsPage() {
               open
             >
               <summary className="cursor-pointer font-medium text-text-primary">
-                Документ сохранён с замечаниями ({documentWarnings.length})
+                {document.current_revision
+                  ? 'Документ сохранён с замечаниями'
+                  : 'Замечания к подготовке документа'}{' '}
+                ({documentWarnings.length})
               </summary>
               <ul className="mt-2 max-h-40 list-disc space-y-1 overflow-y-auto ps-5 text-xs text-text-secondary">
                 {documentWarnings.map((warning, index) => (

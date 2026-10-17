@@ -69,6 +69,7 @@ def is_current_change_preview(document: Mapping[str, Any], job: Mapping[str, Any
         and job["payload"].get("preview_only") is True
         and job["payload"].get("active_review_cycle") == document["active_review_cycle"]
         and isinstance(job["result"], dict)
+        and not (isinstance(job["result"].get("output"), dict) and "unapplied_changes" in job["result"]["output"])
         and now - job["update_time"] <= CHANGE_PREVIEW_TTL_MS
     )
 

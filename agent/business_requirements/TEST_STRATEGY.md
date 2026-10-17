@@ -185,7 +185,10 @@ continues to reject process prose repeated between the conceptual and scenario s
 ## Golden dialogues
 
 Published golden suites are immutable. `golden_dialogs/v1.json` remains the
-original suite; `golden_dialogs/v2.json` is the active suite for partial review
+original suite and `golden_dialogs/v2.json` retains the partial-review baseline.
+`golden_dialogs/v3.json` is the active suite: question-choice counts are advisory,
+all choices and free-text answers survive, and unanswered questions still block
+implicit agreement. It retains the partial review
 application. Each case contains an ID, priority, category, user turns, and hard
 assertions. The deterministic runner reports both case and assertion
 denominators by P0/P1 and fails on unknown, skipped, or unexecuted P0 behavior.

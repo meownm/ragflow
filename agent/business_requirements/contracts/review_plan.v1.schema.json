@@ -6,10 +6,22 @@
   "additionalProperties": false,
   "required": ["schema_version", "questions", "proposals", "comment_dispositions"],
   "properties": {
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "message"],
+        "properties": {
+          "code": {"type": "string"},
+          "message": {"type": "string"},
+          "section_id": {"type": "string"}
+        }
+      }
+    },
     "schema_version": {"const": "1"},
     "questions": {
       "type": "array",
-      "maxItems": 4,
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -23,11 +35,9 @@
             "uniqueItems": true,
             "items": {"type": "string", "pattern": "^ragflow://dataset/[^\\s]+/document/[^\\s]+/chunk/[^\\s]+$"}
           },
-          "text": {"type": "string", "minLength": 1, "maxLength": 2000},
+          "text": {"type": "string", "minLength": 1},
           "options": {
             "type": "array",
-            "minItems": 2,
-            "maxItems": 4,
             "uniqueItems": true,
             "items": {
               "type": "object",
@@ -35,12 +45,12 @@
               "required": ["option_id", "label"],
               "properties": {
                 "option_id": {"type": "string", "minLength": 1, "maxLength": 64},
-                "label": {"type": "string", "minLength": 1, "maxLength": 500}
+                "label": {"type": "string", "minLength": 1}
               }
             }
           },
           "allow_custom_answer": {"const": true},
-          "reason": {"type": "string", "maxLength": 1000}
+          "reason": {"type": "string"}
         }
       }
     },
@@ -52,8 +62,8 @@
         "required": ["target_section_id", "text", "rationale", "source_event_ids"],
         "properties": {
           "target_section_id": {"type": "string", "minLength": 1, "maxLength": 16},
-          "text": {"type": "string", "minLength": 1, "maxLength": 2000},
-          "rationale": {"type": "string", "minLength": 1, "maxLength": 2000},
+          "text": {"type": "string", "minLength": 1},
+          "rationale": {"type": "string", "minLength": 1},
           "source_event_ids": {
             "type": "array",
             "minItems": 1,

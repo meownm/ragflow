@@ -32,6 +32,7 @@ from markdownify import markdownify
 from peewee import fn
 
 from business_documents.application.errors import BusinessDocumentError, ConflictError, ValidationError
+from business_documents.domain.content import decode_document_warnings, document_warning_texts, render_document_warning_appendix, with_document_warnings
 from api.db.db_models import BusinessDocumentEvaChange, BusinessDocumentEvaChangeEvent, Connector
 from api.db.services.business_document_settings_service import DocumentsEvaConnection, get_business_documents_eva_connector_id, get_documents_eva_connection
 from api.db.services.connector_service import ConnectorService
@@ -104,9 +105,25 @@ def _sanitize_html(value: str) -> str:
 
 
 def _html_to_markdown(value: str) -> str:
-    safe_html = _sanitize_html(value)
-    converted = markdownify(safe_html, heading_style="ATX", bullets="-")
-    return _canonical_markdown(converted)
+    soup = BeautifulSoup(_sanitize_html(value), "html.parser")
+    warnings = []
+    for aside in soup.select("aside.business-document-warnings[data-document-warnings]"):
+        decoded = decode_document_warnings(aside.get("data-document-warnings"))
+        if decoded is None:
+            continue
+        texts = document_warning_texts(decoded)
+        expected_text = "Замечания к документу" + "".join(line.strip() for text in texts for line in text.splitlines())
+        if (
+            [li.get_text(separator="\n") for li in aside.select("ul > li")] != texts
+            or "".join(aside.stripped_strings) != expected_text
+            or any(tag.name not in {"h2", "ul", "li", "br"} or tag.attrs for tag in aside.find_all(True))
+            or set(aside.attrs) != {"class", "data-document-warnings"}
+        ):
+            decoded = with_document_warnings({"warnings": decoded}, [{"code": "EXPORTED_WARNINGS_EDITED", "message": "Изменённое приложение с замечаниями сохранено: " + str(aside)}])["warnings"]
+        warnings.extend(decoded)
+        aside.decompose()
+    converted = markdownify(str(soup), heading_style="ATX", bullets="-")
+    return _canonical_markdown(converted) + render_document_warning_appendix(warnings)
 
 
 def _markdown_to_html(value: str) -> str:

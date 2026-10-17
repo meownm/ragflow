@@ -175,15 +175,115 @@ def _normalize_blocks(document, template, schema, previous_document):
                 blocks.extend(_paragraph_blocks(text))
             if valid and projected != block:
                 extra = {key: value for key, value in block.items() if key not in fields[kind]}
-                message = "Дополнительные поля блока сохранены в замечаниях: " + render_block_source(extra)
+                message = "Дополнительные поля блока сохранены в замечаниях: " + json.dumps(extra, ensure_ascii=False, indent=2)
+            elif not valid:
+                message += " Исходный блок: " + json.dumps(block, ensure_ascii=False, indent=2)
             document.setdefault("warnings", []).append({"code": "BLOCK_FORMAT_NORMALIZED", "section_id": section["id"], "message": message})
         section["blocks"] = blocks
     return document
 
 
+def _valid_warnings(value: object) -> bool:
+    return isinstance(value, list) and all(
+        isinstance(item, dict)
+        and isinstance(item.get("code"), str)
+        and isinstance(item.get("message"), str)
+        and set(item) <= {"code", "message", "section_id"}
+        and ("section_id" not in item or isinstance(item["section_id"], str))
+        for item in value
+    )
+
+
+def _normalized_warnings(value: object) -> list[dict[str, Any]]:
+    if _valid_warnings(value):
+        return value
+    return [{"code": "DOCUMENT_FORMAT_NORMALIZED", "message": "Неструктурированные замечания: " + json.dumps(value, ensure_ascii=False, indent=2)}]
+
+
 def with_document_warnings(document: dict[str, Any], warnings: list[dict[str, Any]]) -> dict[str, Any]:
-    combined = list({stable_hash(item): item for item in [*document.get("warnings", []), *warnings]}.values())
+    combined = list({stable_hash(item): item for item in [*_normalized_warnings(document.get("warnings", [])), *_normalized_warnings(warnings)]}.values())
     return {**document, "warnings": combined} if combined else document
+
+
+def document_warning_texts(warnings: list[dict[str, Any]]) -> list[str]:
+    return [(f"Раздел {warning['section_id']}: " if warning.get("section_id") else "") + warning["message"] for warning in warnings]
+
+
+def decode_document_warnings(payload: str) -> list[dict[str, Any]] | None:
+    """Read only warning values; external metadata never grants source authority."""
+    try:
+        value = json.loads(payload)
+    except (ValueError, TypeError):
+        return None
+    return value if _valid_warnings(value) else None
+
+
+def render_document_warning_appendix(warnings: list[dict[str, Any]]) -> str:
+    if not warnings:
+        return ""
+    payload = json.dumps(warnings, ensure_ascii=False).replace("<", "\\u003c").replace(">", "\\u003e").replace("--", "\\u002d\\u002d")
+    body = "## Замечания к документу\n\n" + "\n".join("- " + warning.replace("\n", "\n  ") for warning in document_warning_texts(warnings))
+    return "\n\n<!-- ragflow-document-warnings:v1\n" + payload + "\n-->\n" + body + "\n<!-- /ragflow-document-warnings -->"
+
+
+def _split_document_warning_appendix(markdown: str) -> tuple[str, list[dict[str, Any]]]:
+    appendix = re.search(r"\n\n<!-- ragflow-document-warnings:v1\n(.*?)\n-->\n(.*?)\n<!-- /ragflow-document-warnings -->\s*$", markdown, re.DOTALL)
+    if appendix is None or (warnings := decode_document_warnings(appendix[1])) is None:
+        return markdown, []
+    expected = render_document_warning_appendix(warnings).split("-->\n", 1)[1].rsplit("\n<!--", 1)[0] if warnings else ""
+    if appendix[2] != expected:
+        warnings = with_document_warnings({"warnings": warnings}, [{"code": "EXPORTED_WARNINGS_EDITED", "message": "Изменённый текст приложения с замечаниями сохранён: " + appendix[2]}])["warnings"]
+    return markdown[: appendix.start()], warnings
+
+
+def generated_document_from_text(text: str, template: dict[str, Any]) -> dict[str, Any]:
+    """Recover numbered model output without relaxing the EVA import contract."""
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    headings = _markdown_headings(normalized)
+    sections, unassigned, seen = [], [], set()
+    expected = {section["id"] for section in template["sections"]}
+    if headings:
+        unassigned.append(normalized[: headings[0][2]])
+    else:
+        unassigned.append(normalized)
+    for index, (section_id, title, start, body_start) in enumerate(headings):
+        end = headings[index + 1][2] if index + 1 < len(headings) else len(normalized)
+        if section_id in expected and section_id not in seen:
+            sections.append({"id": section_id, "title": title, "blocks": _import_markdown_blocks(normalized[body_start:end].strip())})
+            seen.add(section_id)
+        else:
+            unassigned.append(normalized[start:end])
+    remainder = "\n\n".join(part for part in unassigned if part.strip())
+    if remainder:
+        sections.append({"id": "1.1", "title": "Текст для распределения по разделам", "blocks": _paragraph_blocks(remainder)})
+    return {
+        "schema_version": "1",
+        "document_type": "business_requirements",
+        "template_version": template["template_version"],
+        "sections": sections,
+        "warnings": [{"code": "DOCUMENT_FORMAT_NORMALIZED", "message": "Ответ модели восстановлен из текста. Распознанные заголовки распределены по разделам; остальное сохранено для уточнения."}],
+    }
+
+
+def _markdown_headings(text: str, base_level: int | None = None) -> list[tuple[str, str, int, int]]:
+    found, offset, active_fence = [], 0, None
+    for line in text.splitlines(keepends=True):
+        stripped_line = line.rstrip("\n")
+        fence = _FENCE_LINE.match(stripped_line)
+        if fence:
+            marker = fence.group("marker")
+            if active_fence is None:
+                active_fence = marker[0], len(marker)
+            elif marker[0] == active_fence[0] and len(marker) >= active_fence[1]:
+                active_fence = None
+        else:
+            heading = _MARKDOWN_SECTION_HEADING.match(stripped_line)
+            if active_fence is None and heading:
+                section_id = heading.group(2)
+                if base_level is None or len(heading.group(1)) == base_level + section_id.count("."):
+                    found.append((section_id, heading.group(3).strip(), offset, offset + len(line)))
+        offset += len(line)
+    return found
 
 
 def import_document_markdown(markdown: object, template: dict[str, Any], schema: dict[str, Any], *, required_schema: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -197,34 +297,12 @@ def import_document_markdown(markdown: object, template: dict[str, Any], schema:
 
     if not isinstance(markdown, str) or not markdown.strip():
         raise RuleViolation("EVA_DOCUMENT_EMPTY", "Страница EVA не содержит опубликованного текста")
-    normalized = markdown.replace("\r\n", "\n").replace("\r", "\n").strip()
+    normalized, imported_warnings = _split_document_warning_appendix(markdown.replace("\r\n", "\n").replace("\r", "\n").strip())
     template_sections = template["sections"]
     expected = {section["id"]: section for section in template_sections}
     base_level = int(template.get("rendering", {}).get("body_heading_base_level", 2))
 
-    found: list[tuple[str, str, int, int]] = []
-    offset = 0
-    active_fence: tuple[str, int] | None = None
-    for line in normalized.splitlines(keepends=True):
-        stripped_line = line.rstrip("\n")
-        fence = _FENCE_LINE.match(stripped_line)
-        if fence:
-            marker = fence.group("marker")
-            fence_kind = marker[0]
-            if active_fence is None:
-                active_fence = (fence_kind, len(marker))
-            elif fence_kind == active_fence[0] and len(marker) >= active_fence[1]:
-                active_fence = None
-            offset += len(line)
-            continue
-        heading = _MARKDOWN_SECTION_HEADING.match(stripped_line)
-        if active_fence is None and heading:
-            section_id = heading.group(2)
-            expected_level = base_level + section_id.count(".")
-            title = heading.group(3).strip()
-            if len(heading.group(1)) == expected_level:
-                found.append((section_id, title, offset, offset + len(line)))
-        offset += len(line)
+    found = _markdown_headings(normalized, base_level)
 
     actual_ids = [item[0] for item in found if item[0] in expected]
     expected_ids = [section["id"] for section in template_sections]
@@ -262,6 +340,7 @@ def import_document_markdown(markdown: object, template: dict[str, Any], schema:
             "template_version": template["template_version"],
             **({"section_scope": "required"} if required_only else {}),
             "sections": sections,
+            **({"warnings": imported_warnings} if imported_warnings else {}),
         },
         template,
         required_schema if required_only else schema,
@@ -311,20 +390,14 @@ def normalize_document_ast(document: object, template: dict[str, Any]) -> object
         return document
     expected_ids = {section["id"] for section in template_sections}
     normalized = deepcopy(document)
-    supplied_warnings = normalized.get("warnings", [])
-    if not isinstance(supplied_warnings, list) or not all(
-        isinstance(item, dict)
-        and isinstance(item.get("code"), str)
-        and isinstance(item.get("message"), str)
-        and set(item) <= {"code", "message", "section_id"}
-        and ("section_id" not in item or isinstance(item["section_id"], str))
-        for item in supplied_warnings
-    ):
-        normalized["warnings"] = [{"code": "DOCUMENT_FORMAT_NORMALIZED", "message": "Неструктурированные замечания: " + render_block_source(supplied_warnings)}]
+    if "warnings" in normalized:
+        normalized["warnings"] = _normalized_warnings(normalized["warnings"])
     extra_fields = set(normalized) - {"schema_version", "document_type", "template_version", "section_scope", "sections", "warnings"}
     if extra_fields:
         values = {field: normalized.pop(field) for field in sorted(extra_fields)}
-        normalized.setdefault("warnings", []).append({"code": "DOCUMENT_FORMAT_NORMALIZED", "message": "Дополнительные поля сохранены в замечаниях: " + render_block_source(values)})
+        normalized.setdefault("warnings", []).append(
+            {"code": "DOCUMENT_FORMAT_NORMALIZED", "message": "Дополнительные поля сохранены в замечаниях: " + json.dumps(values, ensure_ascii=False, indent=2)}
+        )
     flattened_sections = []
     for section in normalized["sections"]:
         blocks = section.get("blocks")
@@ -364,7 +437,9 @@ def normalize_document_ast(document: object, template: dict[str, Any]) -> object
         extra_fields = set(section) - {"id", "title", "blocks", "evidence_refs"}
         if extra_fields:
             values = {field: section.pop(field) for field in sorted(extra_fields)}
-            normalized.setdefault("warnings", []).append({"code": "SECTION_FORMAT_NORMALIZED", "section_id": section["id"], "message": "Дополнительные поля раздела: " + render_block_source(values)})
+            normalized.setdefault("warnings", []).append(
+                {"code": "SECTION_FORMAT_NORMALIZED", "section_id": section["id"], "message": "Дополнительные поля раздела: " + json.dumps(values, ensure_ascii=False, indent=2)}
+            )
         if not isinstance(section.get("blocks"), list):
             value = section.get("blocks")
             section["blocks"] = _paragraph_blocks(value if isinstance(value, str) else render_block_source(value)) if value is not None else []
@@ -444,10 +519,6 @@ def apply_change_plan(base_document: dict[str, Any], change_plan: dict[str, Any]
         section["blocks"] = operation["content"]["blocks"]
         if "evidence_refs" in operation:
             section["evidence_refs"] = operation["evidence_refs"]
-    if seen_sections and result.get("warnings"):
-        result["warnings"] = [
-            item for item in result["warnings"] if item.get("section_id") not in seen_sections and item["code"] not in {"REQUIREMENT_COVERAGE_FAILED", "REQUIREMENT_VERIFICATION_UNAVAILABLE"}
-        ]
     validated = validate_document_ast(result, template, schema, previous_document=base_document)
     # Normalization can return its input unchanged for noncanonical saved ASTs.
     return deepcopy(validated) if validated is result else validated
@@ -495,7 +566,7 @@ def render_block_source(block: object) -> str:
     """Keep unsupported content visible as literal source, never executable markup."""
     if isinstance(block, dict):
         for key in ("source", "text"):
-            if isinstance(block.get(key), str) and block[key].strip():
+            if set(block) <= {"type", key} and isinstance(block.get(key), str) and block[key].strip():
                 return block[key]
     return json.dumps(block, ensure_ascii=False, indent=2)
 

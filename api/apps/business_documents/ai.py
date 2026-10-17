@@ -40,7 +40,8 @@ from api.apps.business_documents.assets import (
     validate_contract,
     validate_document_ast,
 )
-from business_documents.domain.content import bind_change_plan_snapshot
+from business_documents.domain.content import bind_change_plan_snapshot, generated_document_from_text, with_document_warnings
+from business_documents.domain.assessment import normalize_assessment_output
 from api.apps.business_documents.async_runtime import run_in_worker_loop
 from api.apps.business_documents.recovery import AIRecovery, is_transient_failure
 from business_documents.application.errors import ValidationError
@@ -464,12 +465,14 @@ class BusinessDocumentAI:
         recovery.checkpoint()
         if job.job_type == "GENERATE_DRAFT":
             prompt = self._prepare_draft_evidence(job, prompt, recovery)
+            selected = prompt.input_payload.get("evidence") or {}
+            evidence = {**selected, "chunks": [{**chunk, "content": "".join(chunk["content_fragments"])} if "content_fragments" in chunk else chunk for chunk in selected.get("chunks", [])]}
         final = None
         cached = recovery.state["candidate"]
         if cached is not None:
             # Only validated plans are checkpointed. Recheck against this lease's
             # evidence and pinned prompt before another semantic review.
-            validated = self._validate(job, cached["change_plan"], evidence)
+            validated = {**cached, **self._validate(job, cached["change_plan"], evidence)}
             final = self._candidate_document(job, validated)
         else:
             while True:
@@ -485,17 +488,38 @@ class BusinessDocumentAI:
                     validated = self._normalize_and_validate(job, raw, evidence)
                     final = self._candidate_document(job, validated)
                 except ValidationError as error:
-                    if error.code not in REPAIRABLE_OUTPUT_CODES or not recovery.repair("generation", raw, error):
+                    if error.code not in REPAIRABLE_OUTPUT_CODES:
                         raise
+                    if not recovery.repair("generation", raw, error):
+                        path = str((error.details or {}).get("path", ""))
+                        if error.code == "EMPTY_AI_RESPONSE" or any(
+                            field in path.split(".") for field in ("source_event_ids", "evidence_refs", "expected_section_hash", "base_revision_id", "source_state_version")
+                        ):
+                            raise
+                        if job.job_type == "PLAN_CHANGES":
+                            validated = self._unapplied_changes(raw)
+                        elif job.job_type in {"ASSESS_INTAKE", "ASSESS_REVIEW"}:
+                            text = raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=False, indent=2)
+                            validated = {
+                                "unapplied_assessment": text,
+                                "warnings": [
+                                    {"code": "ASSESSMENT_FORMAT_NOT_APPLIED", "message": "Ответ модели сохранён для проверки пользователем. Решения обсуждения не приняты. Исходный ответ: " + text}
+                                ],
+                            }
+                        else:
+                            raise
+                        break
                     continue
                 break
-            if job.job_type == "PLAN_CHANGES":
+            if job.job_type == "PLAN_CHANGES" and "change_plan" in validated:
                 recovery.state["candidate"] = deepcopy(validated)
                 recovery.checkpoint()
-        if job.job_type == "PLAN_CHANGES":
+        if job.job_type == "GENERATE_DRAFT":
+            validated["draft"] = with_document_warnings(validated["draft"], (recovery.state.get("draft_evidence") or {}).get("warnings", []))
+        if job.job_type == "PLAN_CHANGES" and "change_plan" in validated:
             validated["requirement_coverage"] = self._verify_requirements(job, validated["change_plan"], recovery=recovery, final=final)
             coverage = validated["requirement_coverage"]
-            warnings = list((final or {}).get("warnings", []))
+            warnings = [*validated.get("warnings", []), *(final or {}).get("warnings", [])]
             warnings.extend({"code": "REQUIREMENT_COVERAGE_FAILED", "section_id": issue["section_id"], "message": issue["reason"]} for issue in coverage["issues"])
             if coverage["status"] == "UNAVAILABLE":
                 warnings.append({"code": "REQUIREMENT_VERIFICATION_UNAVAILABLE", "message": "Смысловую проверку завершить не удалось. Проверьте подготовленные изменения перед подтверждением."})
@@ -522,11 +546,12 @@ class BusinessDocumentAI:
         batches = _classification_batches(list(range(len(fragments))))
 
         def decisions(value, expected):
-            if not isinstance(value, dict) or set(value) != expected or any(not isinstance(label, str) or label not in {"SOURCE_DATA", "MODEL_INSTRUCTION"} for label in value.values()):
+            if not isinstance(value, dict) or set(value) != expected or any(not isinstance(label, str) or label not in {"SOURCE_DATA", "MODEL_INSTRUCTION", "EXCLUDED"} for label in value.values()):
                 raise ValidationError("INVALID_EVIDENCE_CLASSIFICATION", "Every pinned evidence fragment must have exactly one source-data or model-instruction decision")
             return value
 
         classified = {}
+        warnings = []
         cached = recovery.state.get("draft_evidence")
         if cached is not None:
             if not isinstance(cached, dict) or cached.get("input_hash") != input_hash:
@@ -540,6 +565,7 @@ class BusinessDocumentAI:
             if completed not in boundaries:
                 raise ValidationError("INVALID_EVIDENCE_CLASSIFICATION", "Cached decisions must cover complete source batches")
             classified = decisions(value, set(ordered_ids[:completed]))
+            warnings = list(cached.get("warnings", []))
         for batch in batches:
             if ordered_ids[batch[0]] in classified:
                 continue
@@ -562,21 +588,38 @@ class BusinessDocumentAI:
                 raw = self._generate(job.tenant_id, system, batch_inputs, "verification", recovery)
                 try:
                     parsed = self._parse(raw)
+                    fields = {"source_data_ids", "model_instruction_ids"}
+                    if not fields.issubset(parsed) or any(not isinstance(parsed[name], list) for name in fields):
+                        raise ValidationError("INVALID_EVIDENCE_CLASSIFICATION", "Evidence classification requires the two ID partitions")
+                    extra = {key: value for key, value in parsed.items() if key not in fields}
+                    data_ids, instruction_ids = (
+                        [int(value) if isinstance(value, str) and re.fullmatch(r"[0-9]+", value) else value for value in parsed[name]] for name in ("source_data_ids", "model_instruction_ids")
+                    )
+                    identifiers = data_ids + instruction_ids
+                    if any(type(identifier) is not int for identifier in identifiers) or len(identifiers) != len(batch) or set(identifiers) != set(batch):
+                        raise ValidationError("INVALID_EVIDENCE_CLASSIFICATION", "Every pinned evidence fragment must have exactly one source-data or model-instruction decision")
                 except ValidationError as error:
-                    if error.code not in REPAIRABLE_OUTPUT_CODES or not recovery.repair("verification", raw, error):
+                    if error.code not in {"INVALID_EVIDENCE_CLASSIFICATION", "INVALID_AI_JSON", "EMPTY_AI_RESPONSE"}:
                         raise
-                    recovery.state["feedback"]["verification"]["evidence_batch_hash"] = batch_hash
-                    recovery.checkpoint()
-                    continue
-                if set(parsed) != {"source_data_ids", "model_instruction_ids"} or any(not isinstance(values, list) for values in parsed.values()):
-                    raise ValidationError("INVALID_EVIDENCE_CLASSIFICATION", "Evidence classification must contain only the two ID partitions")
-                data_ids, instruction_ids = parsed["source_data_ids"], parsed["model_instruction_ids"]
-                identifiers = data_ids + instruction_ids
-                if any(type(identifier) is not int for identifier in identifiers) or len(identifiers) != len(batch) or set(identifiers) != set(batch):
-                    raise ValidationError("INVALID_EVIDENCE_CLASSIFICATION", "Every pinned evidence fragment must have exactly one source-data or model-instruction decision")
+                    if recovery.repair("verification", raw, error):
+                        recovery.state["feedback"]["verification"]["evidence_batch_hash"] = batch_hash
+                        recovery.checkpoint()
+                        continue
+                    classified.update({ordered_ids[index]: "EXCLUDED" for index in batch})
+                    warnings.append(
+                        {
+                            "code": "EVIDENCE_CLASSIFICATION_UNAVAILABLE",
+                            "message": f"Не удалось безопасно классифицировать {len(batch)} фрагментов источников; они исключены из генерации. Требуется проверить полноту документа.",
+                        }
+                    )
+                    break
+                if extra or any(isinstance(identifier, str) for name in fields for identifier in parsed[name]):
+                    warnings.append(
+                        {"code": "EVIDENCE_CLASSIFICATION_NORMALIZED", "message": "Формат классификации источников восстановлен. Дополнительные данные: " + json.dumps(extra, ensure_ascii=False)}
+                    )
                 classified.update({ordered_ids[index]: label for identifiers, label in ((data_ids, "SOURCE_DATA"), (instruction_ids, "MODEL_INSTRUCTION")) for index in identifiers})
                 break
-            recovery.state["draft_evidence"] = {"input_hash": input_hash, "decisions": deepcopy(classified)}
+            recovery.state["draft_evidence"] = {"input_hash": input_hash, "decisions": deepcopy(classified), **({"warnings": warnings} if warnings else {})}
             recovery.checkpoint()
         decisions(classified, set(fragments))
         selected = deepcopy(evidence)
@@ -591,7 +634,7 @@ class BusinessDocumentAI:
 
     @staticmethod
     def _candidate_document(job: BusinessDocumentJob, validated: dict[str, Any]) -> dict[str, Any] | None:
-        if job.job_type != "PLAN_CHANGES":
+        if job.job_type != "PLAN_CHANGES" or "change_plan" not in validated:
             return None
         base = job.payload["current_revision"]["document_ast"]
         plan = validated["change_plan"]
@@ -634,30 +677,40 @@ class BusinessDocumentAI:
         try:
             parsed = self._parse(raw)
         except ValidationError as error:
-            if job.job_type != "GENERATE_DRAFT" or error.code != "INVALID_AI_JSON" or not isinstance(raw, str) or not raw.strip():
+            if error.code != "INVALID_AI_JSON" or not isinstance(raw, str) or not raw.strip():
                 raise
-            parsed = None
+            if job.job_type == "PLAN_CHANGES":
+                return self._unapplied_changes(raw)
+            if job.job_type in {"ASSESS_INTAKE", "ASSESS_REVIEW"}:
+                parsed = {"questions": [{"text": raw}]}
+            elif job.job_type == "GENERATE_DRAFT":
+                parsed = None
+            else:
+                raise
         if job.job_type == "GENERATE_DRAFT" and isinstance(raw, str) and raw.strip() and (parsed is None or (not raw.lstrip().startswith("{") and not {"draft", "sections"}.intersection(parsed))):
             # JSON repair can extract diagram braces from an otherwise plain
             # Markdown document. Preserve that response in full as draft text.
-            parsed = {
-                "draft": {
-                    "schema_version": "1",
-                    "document_type": "business_requirements",
-                    "template_version": job.payload["template_version"],
-                    "sections": [{"id": "1.1", "title": "Текст для распределения по разделам", "blocks": [{"type": "paragraph", "text": raw}]}],
-                    "warnings": [{"code": "DOCUMENT_FORMAT_NORMALIZED", "message": "Модель вернула неструктурированный текст. Он сохранён целиком для дальнейшего распределения по разделам."}],
-                }
-            }
+            parsed = {"draft": generated_document_from_text(raw, published_template())}
         if job.job_type == "GENERATE_DRAFT" and "draft" not in parsed and isinstance(parsed.get("sections"), list):
             parsed = {"draft": parsed}
+        if job.job_type == "GENERATE_DRAFT" and "draft" not in parsed and isinstance(parsed.get("document_draft"), dict):
+            parsed = {"draft": parsed["document_draft"], **{key: value for key, value in parsed.items() if key != "document_draft"}}
         if job.job_type == "GENERATE_DRAFT" and isinstance(parsed.get("draft"), dict):
             parsed = {**parsed, "draft": {"schema_version": "1", "document_type": "business_requirements", "template_version": job.payload["template_version"], **parsed["draft"]}}
+            extra = {key: value for key, value in parsed.items() if key not in {"draft", "review_questions", "proposals"}}
+            if extra:
+                parsed["draft"] = with_document_warnings(
+                    parsed["draft"], [{"code": "DRAFT_ENVELOPE_FORMAT", "message": "Дополнительные данные ответа сохранены: " + json.dumps(extra, ensure_ascii=False)}]
+                )
         parsed = self._normalize_contract_envelope(job, parsed)
         parsed = self._normalize_schema_versions(parsed)
-        parsed = self._normalize_question_fields(job, parsed)
-        parsed = self._bind_question_stages(job, parsed)
-        parsed = self._normalize_draft_review_outcome(job, parsed)
+        format_warnings = []
+        if job.job_type == "PLAN_CHANGES":
+            parsed, format_warnings = self._normalize_change_fields(parsed)
+        try:
+            parsed = self._normalize_question_fields(job, parsed)
+        except RuleViolation as error:
+            raise ValidationError(error.code, error.message, error.details) from error
         parsed = self._drop_answered_questions(job, parsed)
         parsed = self._drop_existing_proposals(job, parsed)
         parsed = self._drop_unknown_comment_dispositions(job, parsed)
@@ -665,7 +718,64 @@ class BusinessDocumentAI:
         parsed = self._bind_exact_draft_evidence_refs(job, parsed, evidence)
         if job.job_type != "PLAN_CHANGES":
             parsed = self._filter_evidence_refs(parsed, evidence)
-        return self._validate(job, parsed, evidence)
+        try:
+            validated = self._validate(job, parsed, evidence)
+            if format_warnings:
+                validated["warnings"] = format_warnings
+            return validated
+        except ValidationError as error:
+            path = str((error.details or {}).get("path", ""))
+            if (
+                job.job_type != "GENERATE_DRAFT"
+                or error.code not in {"INVALID_DOCUMENT_DRAFT", "INVALID_SUBSECTION", "TEMPLATE_STRUCTURE_MISMATCH"}
+                or any(field in path.split(".") for field in ("blocks", "evidence_refs"))
+            ):
+                raise
+            text = raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=False, indent=2)
+            return self._validate(job, {"draft": generated_document_from_text(text, published_template())}, evidence)
+
+    @staticmethod
+    def _unapplied_changes(raw: object) -> dict[str, Any]:
+        text = raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=False, indent=2)
+        return {"unapplied_changes": text, "warnings": [{"code": "CHANGE_FORMAT_NOT_APPLIED", "message": "Ответ модели сохранён для уточнения; изменения не применены. Исходный ответ: " + text}]}
+
+    @staticmethod
+    def _normalize_change_fields(output: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        result, warnings = deepcopy(output), []
+        schema = contract_schema("change_plan")
+
+        def project(value, fields, section_id=None):
+            extra = {key: value.pop(key) for key in list(value) if key not in fields}
+            if extra:
+                warnings.append(
+                    {
+                        "code": "CHANGE_FORMAT_NORMALIZED",
+                        **({"section_id": section_id} if isinstance(section_id, str) else {}),
+                        "message": "Дополнительные данные плана сохранены: " + json.dumps(extra, ensure_ascii=False),
+                    }
+                )
+
+        project(result, schema["properties"])
+        result.setdefault("schema_version", "1")
+        result.setdefault("acknowledged_no_change_event_ids", [])
+        operations = result.get("operations")
+        if isinstance(operations, list):
+            fields = schema["properties"]["operations"]["items"]["properties"]
+            for index, operation in enumerate(operations):
+                if not isinstance(operation, dict):
+                    continue
+                section_id = operation.get("section_id")
+                project(operation, fields, section_id)
+                operation.setdefault("operation_id", f"operation-{index + 1}")
+                content = operation.get("content")
+                if isinstance(content, str):
+                    content = {"text": content}
+                    operation["content"] = content
+                if isinstance(content, dict):
+                    if "blocks" not in content and isinstance(content.get("text"), str):
+                        content["blocks"] = [{"type": "paragraph", "text": content["text"]}]
+                    project(content, {"blocks"}, section_id)
+        return result, warnings
 
     def _verify_requirements(self, job: BusinessDocumentJob, plan: dict[str, Any], *, recovery: AIRecovery | None = None, final: dict[str, Any] | None = None) -> dict[str, Any]:
         base = job.payload["current_revision"]["document_ast"]
@@ -965,6 +1075,11 @@ class BusinessDocumentAI:
         }.get(job.job_type)
         if envelope and set(output) == {envelope} and isinstance(output[envelope], dict):
             return output[envelope]
+        nested = output.get(envelope)
+        field = "operations" if job.job_type == "PLAN_CHANGES" else "questions"
+        if envelope and isinstance(nested, dict) and field in nested:
+            extra = {key: value for key, value in output.items() if key != envelope}
+            return {**nested, **({"transport_metadata": extra} if extra else {})}
         if envelope in output:
             without_envelope = {key: value for key, value in output.items() if key != envelope}
             try:
@@ -981,13 +1096,6 @@ class BusinessDocumentAI:
                             pass
                         else:
                             return schema_echo_candidate
-                if isinstance(nested, dict):
-                    try:
-                        validate_contract(envelope, nested)
-                    except ValidationError:
-                        pass
-                    else:
-                        return nested
             else:
                 return without_envelope
         return output
@@ -1006,74 +1114,17 @@ class BusinessDocumentAI:
         return normalize(output)
 
     @staticmethod
-    def _bind_question_stages(job: BusinessDocumentJob, output: dict[str, Any]) -> dict[str, Any]:
-        """Bind redundant model stage discriminators to the authoritative job."""
-
-        if job.job_type == "ASSESS_INTAKE":
-            questions = output.get("questions")
-            if not isinstance(questions, list) or not any(isinstance(question, dict) and question.get("stage") != "INTAKE" for question in questions):
-                return output
-            bound = deepcopy(output)
-            for question in bound["questions"]:
-                if isinstance(question, dict) and question.get("stage") in {"INTAKE", "REVIEW"}:
-                    question["stage"] = "INTAKE"
-            return bound
-        if job.job_type != "GENERATE_DRAFT":
-            return output
-        review = output.get("review_questions")
-        questions = review.get("questions") if isinstance(review, dict) else None
-        if not isinstance(questions, list) or not any(isinstance(question, dict) and question.get("stage") != "REVIEW" for question in questions):
-            return output
-        bound = deepcopy(output)
-        for question in bound["review_questions"]["questions"]:
-            if isinstance(question, dict) and question.get("stage") in {"INTAKE", "REVIEW"}:
-                question["stage"] = "REVIEW"
-        return bound
-
-    @staticmethod
     def _normalize_question_fields(job: BusinessDocumentJob, output: dict[str, Any]) -> dict[str, Any]:
-        """Remove fields copied by a model from adjacent question/proposal schemas."""
-
-        if job.job_type == "ASSESS_REVIEW":
-            schema_name = "review_plan"
-            questions = output.get("questions")
-            path = ("questions",)
-        elif job.job_type == "ASSESS_INTAKE":
-            schema_name = "question_batch"
-            questions = output.get("questions")
-            path = ("questions",)
-        elif job.job_type == "GENERATE_DRAFT" and isinstance(output.get("review_questions"), dict):
-            schema_name = "question_batch"
-            questions = output["review_questions"].get("questions")
-            path = ("review_questions", "questions")
-        else:
-            return output
-        if not isinstance(questions, list):
-            return output
-        schema = contract_schema(schema_name)
-        question_schema = schema["properties"]["questions"]["items"]
-        allowed_question_fields = set(question_schema["properties"])
-        option_schema = question_schema["properties"]["options"]["items"]
-        allowed_option_fields = set(option_schema["properties"])
-        if not any(
-            isinstance(question, dict) and (set(question) - allowed_question_fields or any(isinstance(option, dict) and set(option) - allowed_option_fields for option in question.get("options", [])))
-            for question in questions
-        ):
-            return output
-        normalized = deepcopy(output)
-        normalized_questions = normalized[path[0]] if len(path) == 1 else normalized[path[0]][path[1]]
-        for question in normalized_questions:
-            if not isinstance(question, dict):
-                continue
-            for field in set(question) - allowed_question_fields:
-                question.pop(field)
-            options = question.get("options")
-            if isinstance(options, list):
-                for option in options:
-                    if isinstance(option, dict):
-                        for field in set(option) - allowed_option_fields:
-                            option.pop(field)
-        return normalized
+        context = {
+            "section_ids": frozenset(section["id"] for section in published_template()["sections"]),
+            "known_questions": getattr(job, "payload", {}).get("protocol", {}).get("questions", []),
+        }
+        if job.job_type in {"ASSESS_INTAKE", "ASSESS_REVIEW"}:
+            intake = job.job_type == "ASSESS_INTAKE"
+            return normalize_assessment_output(output, "INTAKE" if intake else "REVIEW", contract_schema("question_batch" if intake else "review_plan"), **context)
+        if job.job_type == "GENERATE_DRAFT" and isinstance(output.get("review_questions"), dict):
+            return {**output, "review_questions": normalize_assessment_output(output["review_questions"], "REVIEW", contract_schema("question_batch"), **context)}
+        return output
 
     @staticmethod
     def _bind_exact_draft_evidence_refs(job: BusinessDocumentJob, output: dict[str, Any], evidence: dict[str, Any] | None) -> dict[str, Any]:
@@ -1128,24 +1179,6 @@ class BusinessDocumentAI:
         if len(filtered) == len(questions):
             return output
         return {**output, "outcome": "COMPLETE" if not filtered else "NEEDS_INPUT", "questions": filtered}
-
-    @staticmethod
-    def _normalize_draft_review_outcome(job: BusinessDocumentJob, output: dict[str, Any]) -> dict[str, Any]:
-        if job.job_type != "GENERATE_DRAFT":
-            return output
-        review_questions = output.get("review_questions")
-        if not isinstance(review_questions, dict) or review_questions.get("outcome") != "REVIEW":
-            return output
-        questions = review_questions.get("questions")
-        if not isinstance(questions, list):
-            return output
-        return {
-            **output,
-            "review_questions": {
-                **review_questions,
-                "outcome": "NEEDS_INPUT" if questions else "COMPLETE",
-            },
-        }
 
     @staticmethod
     def _drop_existing_proposals(job: BusinessDocumentJob, output: dict[str, Any]) -> dict[str, Any]:
@@ -1252,6 +1285,8 @@ class BusinessDocumentAI:
                     )
                 else:
                     result[field] = value
+                    if field == "review_questions":
+                        result["draft"] = draft = with_document_warnings(draft, value.get("warnings", []))
             return result
         if job.job_type == "PLAN_CHANGES":
             revision = job.payload.get("current_revision")

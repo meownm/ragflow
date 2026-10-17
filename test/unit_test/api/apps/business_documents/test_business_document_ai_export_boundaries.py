@@ -1029,9 +1029,9 @@ def test_ai_repairs_json_validates_schema_and_persists_pinned_prompt_audit(datab
         _command(document_queries.get_document(document["document_id"], AUTHOR), "REQUEST_DRAFT"),
     )
     invalid = CapturingAdapter("{}")
-    with pytest.raises(BusinessDocumentError) as caught:
-        BusinessDocumentAI(invalid).process(BusinessDocumentJob.get_by_id(next_request["job_id"]))
-    assert caught.value.code == "INVALID_DOCUMENT_DRAFT"
+    recovered = BusinessDocumentAI(invalid).process(BusinessDocumentJob.get_by_id(next_request["job_id"]))
+    assert recovered["draft"]["warnings"][0]["code"] == "DOCUMENT_FORMAT_NORMALIZED"
+    assert "{}" in render_document_ast(recovered["draft"])
 
 
 @pytest.mark.p0
@@ -1129,7 +1129,8 @@ def test_ai_drops_redundant_contract_name_property_when_root_contract_is_valid(d
 
     job = BusinessDocumentJob.get_by_id(requested["job_id"])
     assert job.status == "COMPLETED"
-    assert job.result["output"] == contract
+    assert {key: job.result["output"][key] for key in contract} == contract
+    assert "question_batch" not in job.result["output"]
 
 
 @pytest.mark.p0
@@ -1159,7 +1160,8 @@ def test_ai_uses_valid_named_contract_when_sibling_properties_are_invalid(databa
 
     job = BusinessDocumentJob.get_by_id(requested["job_id"])
     assert job.status == "COMPLETED"
-    assert job.result["output"] == contract
+    assert {key: job.result["output"][key] for key in contract} == contract
+    assert "done" in str(job.result["output"]["warnings"])
 
 
 @pytest.mark.p0
@@ -1429,10 +1431,11 @@ def test_ai_maps_draft_review_lifecycle_marker_to_question_outcome(questions, ex
         "proposals": [],
     }
 
-    normalized = BusinessDocumentAI._normalize_draft_review_outcome(job, output)
+    normalized = BusinessDocumentAI._normalize_question_fields(job, output)
 
     assert normalized["review_questions"]["outcome"] == expected
-    assert normalized["review_questions"]["questions"] == questions
+    assert len(normalized["review_questions"]["questions"]) == len(questions)
+    assert output["review_questions"]["outcome"] == "REVIEW"
 
 
 @pytest.mark.p0
@@ -1440,7 +1443,7 @@ def test_ai_binds_question_stage_to_authoritative_intake_job():
     job = SimpleNamespace(job_type="ASSESS_INTAKE")
     output = {"questions": [{"stage": "REVIEW"}, {"stage": "INTAKE"}]}
 
-    normalized = BusinessDocumentAI._bind_question_stages(job, output)
+    normalized = BusinessDocumentAI._normalize_question_fields(job, output)
 
     assert [question["stage"] for question in normalized["questions"]] == ["INTAKE", "INTAKE"]
     assert output["questions"][0]["stage"] == "REVIEW"

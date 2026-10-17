@@ -18,6 +18,7 @@ from business_documents.domain.change_plan import validate_evidence_sources, val
 from business_documents.domain.errors import RuleViolation
 from business_documents.domain.execution_audit import validate_audit_envelope, validate_ai_audit, validate_retrieval_audit, verify_pinned_evidence
 from business_documents.domain.job import SnapshotIndex, has_current_lease, prompt_audit, requested_by
+from business_documents.domain.content import with_document_warnings
 
 
 Record = Mapping[str, Any]
@@ -139,6 +140,20 @@ class JobCompletion:
             elif not isinstance(output, dict):
                 raise ValidationError("INVALID_JOB_OUTPUT", "Worker output must be a JSON object")
             match job["job_type"]:
+                case "ASSESS_INTAKE" | "ASSESS_REVIEW" if isinstance(output.get("unapplied_assessment"), str):
+                    intake = job["job_type"] == "ASSESS_INTAKE"
+                    if document["operation_state"] != ("ANALYZING" if intake else "ANALYZING_REVIEW") or document["lifecycle_state"] != ("INTAKE" if intake else "REVIEW"):
+                        raise ConflictError("JOB_STATE_CONFLICT", "Assessment is not active")
+                    self._content.validate_contract("question_batch", {"schema_version": "1", "outcome": "COMPLETE", "questions": [], "warnings": output.get("warnings", [])})
+                    document = self._finish(
+                        document,
+                        job,
+                        actor_id,
+                        execution,
+                        self._new_id(),
+                        "IntakeAssessmentNotApplied" if intake else "ReviewAssessmentNotApplied",
+                        {"warnings": output.get("warnings", []), "review_cycle": 0 if intake else document["active_review_cycle"]},
+                    )
                 case "ASSESS_INTAKE":
                     self._intake(document, job, actor_id, output, execution)
                 case "ASSESS_REVIEW":
@@ -146,8 +161,16 @@ class JobCompletion:
                 case "GENERATE_DRAFT":
                     self._draft(document, job, actor_id, output, execution)
                 case "PLAN_CHANGES":
-                    mode = ChangeMode.PREVIEW if job["payload"].get("preview_only") is True else ChangeMode.APPLY
-                    document = self._changes.execute(document, job, actor_id, output, execution, mode=mode)
+                    if isinstance(output.get("unapplied_changes"), str):
+                        if document["operation_state"] != "APPLYING_CHANGES" or document["lifecycle_state"] != "REVIEW" or job["base_revision_id"] != document["current_revision_id"]:
+                            raise ConflictError("JOB_STATE_CONFLICT", "Unapplied changes do not target the active review revision")
+                        self._content.validate_contract("question_batch", {"schema_version": "1", "outcome": "COMPLETE", "questions": [], "warnings": output.get("warnings", [])})
+                        document = self._finish(
+                            document, job, actor_id, execution, self._new_id(), "ChangePlanNotApplied", {"warnings": output.get("warnings", []), "review_cycle": document["active_review_cycle"]}
+                        )
+                    else:
+                        mode = ChangeMode.PREVIEW if job["payload"].get("preview_only") is True else ChangeMode.APPLY
+                        document = self._changes.execute(document, job, actor_id, output, execution, mode=mode)
                 case "GENERATE_EXPORT":
                     self._export(document, job, actor_id, output)
                 case _:
@@ -166,7 +189,7 @@ class JobCompletion:
                 },
             )
             if job["job_type"] == "PLAN_CHANGES":
-                event_type = "preview_ready" if job["payload"].get("preview_only") is True else "applied"
+                event_type = "not_applied" if output.get("unapplied_changes") else "preview_ready" if job["payload"].get("preview_only") is True else "applied"
                 self._writer.append_job_event(job["id"], event_type, {"state_version": document["state_version"]})
         return self._queries.project(self._writer.document(tenant_id, document["id"]))
 
@@ -234,7 +257,15 @@ class JobCompletion:
         batch = _AssessmentBatch(self._writer, self._content, self._new_id, document["id"], 0, SnapshotIndex.build(job, execution))
         event_id = self._new_id()
         count = sum(int(batch.add_question(question, "INTAKE", event_id)[1]) for question in output["questions"])
-        return self._finish(document, job, actor_id, execution, event_id, "IntakeAssessed", {"review_cycle": 0, "outcome": batch.outcome("INTAKE"), "question_count": count})
+        return self._finish(
+            document,
+            job,
+            actor_id,
+            execution,
+            event_id,
+            "IntakeAssessed",
+            {"review_cycle": 0, "outcome": batch.outcome("INTAKE"), "question_count": count, **({"warnings": output["warnings"]} if output.get("warnings") else {})},
+        )
 
     def _review(self, document: Record, job: Record, actor_id: str, output: Record, execution: Record) -> dict[str, Any]:
         if document["operation_state"] != "ANALYZING_REVIEW" or document["lifecycle_state"] != "REVIEW":
@@ -282,6 +313,7 @@ class JobCompletion:
                 "question_count": question_count,
                 "proposal_count": proposal_count,
                 "comment_dispositions": dispositions,
+                **({"warnings": output["warnings"]} if output.get("warnings") else {}),
             },
         )
 
@@ -291,6 +323,7 @@ class JobCompletion:
         if document["current_revision_id"] is not None or self._writer.open_questions(document["id"], "INTAKE", 0):
             raise ConflictError("DRAFT_PRECONDITION_FAILED", "Draft preconditions changed while the worker was running")
         draft = self._content.validate_document_ast(output.get("draft"))
+        draft = with_document_warnings(draft, job["payload"].get("protocol", {}).get("warnings", []))
         snapshot = SnapshotIndex.build(job, execution)
         try:
             for section in draft["sections"]:

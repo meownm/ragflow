@@ -2523,6 +2523,139 @@ test('keeps the document usable and displays saved revision advice after reloadi
   ).toHaveTextContent('Дополните сценарий диаграммой.');
 });
 
+test('shows persisted intake advice before a revision exists and retains it after reload', async () => {
+  mockedFetch.mockResolvedValue({
+    ...projection,
+    lifecycle_state: 'INTAKE',
+    active_review_cycle: 0,
+    current_revision: null,
+    allowed_commands: ['REQUEST_INTAKE_ASSESSMENT'],
+    protocol: {
+      questions: [],
+      proposals: [],
+      comments: [],
+      warnings: [
+        {
+          code: 'ASSESSMENT_FORMAT_NORMALIZED',
+          message: 'Все пять вопросов сохранены.',
+        },
+      ],
+    },
+  });
+  const { unmount } = renderPage();
+  const warnings = await screen.findByTestId('business-document-warnings');
+  expect(warnings).toHaveTextContent('Замечания к подготовке документа (1)');
+  expect(warnings).toHaveTextContent('Все пять вопросов сохранены.');
+  unmount();
+  renderPage();
+  expect(
+    await screen.findByTestId('business-document-warnings'),
+  ).toHaveTextContent('Все пять вопросов сохранены.');
+});
+
+test('preserves protocol advice alongside a revision without duplicating the same warning', async () => {
+  const warning = {
+    code: 'SECTION_FORMAT_NORMALIZED',
+    section_id: '1',
+    message: 'Не потерять исходное примечание.',
+  };
+  mockedFetch.mockResolvedValue({
+    ...projection,
+    protocol: { ...projection.protocol, warnings: [warning] },
+    current_revision: {
+      ...projection.current_revision!,
+      document_ast: {
+        ...projection.current_revision!.document_ast,
+        warnings: [warning],
+      },
+    },
+  });
+  renderPage();
+  const warnings = await screen.findByTestId('business-document-warnings');
+  expect(warnings).toHaveTextContent('Документ сохранён с замечаниями (1)');
+  expect(
+    within(warnings).getAllByText(/Не потерять исходное примечание/),
+  ).toHaveLength(1);
+});
+
+test('clears preliminary text when a completed plan could not be applied and shows its saved advice', async () => {
+  mockedFetch.mockResolvedValue({
+    ...projection,
+    operation_state: 'APPLYING_CHANGES',
+    allowed_commands: [],
+    latest_job: {
+      job_id: 'job-unapplied',
+      job_type: 'PLAN_CHANGES',
+      status: 'RUNNING',
+      attempt: 1,
+      max_attempts: 3,
+    },
+  });
+  let emit: ((event: BusinessDocumentJobStreamEvent) => void) | undefined;
+  mockedWatch.mockImplementation(
+    async (_documentId, _jobId, _signal, onEvent) => {
+      emit = onEvent;
+    },
+  );
+  renderPage();
+  await waitFor(() => expect(emit).toBeDefined());
+  act(() =>
+    emit!({
+      id: 1,
+      job_id: 'job-unapplied',
+      attempt: 1,
+      base_revision_id: 'revision-3',
+      type: 'section_preview',
+      payload: {
+        section_id: '1',
+        title: 'Цель',
+        before: firstSectionText,
+        after: 'Неприменённый текст.',
+        source_event_ids: ['event-1'],
+      },
+    }),
+  );
+  expect(
+    await screen.findByTestId('business-document-change-preview'),
+  ).toBeVisible();
+  mockedFetch.mockResolvedValue({
+    ...projection,
+    change_preview: null,
+    allowed_commands: ['PREPARE_CHANGES'],
+    protocol: {
+      ...projection.protocol,
+      warnings: [
+        {
+          code: 'CHANGE_FORMAT_NOT_APPLIED',
+          message: 'Ответ сохранён для уточнения; изменения не применены.',
+        },
+      ],
+    },
+  });
+  act(() =>
+    emit!({
+      id: 2,
+      job_id: 'job-unapplied',
+      attempt: 1,
+      base_revision_id: 'revision-3',
+      type: 'not_applied',
+      payload: { state_version: 18 },
+    }),
+  );
+  expect(
+    await screen.findByTestId('business-document-warnings'),
+  ).toHaveTextContent('изменения не применены');
+  expect(
+    screen.queryByTestId('business-document-change-preview'),
+  ).not.toBeInTheDocument();
+  expect(screen.getByTestId('business-document-markdown')).toHaveTextContent(
+    firstSectionText,
+  );
+  expect(
+    screen.queryByRole('button', { name: 'Подтвердить применение' }),
+  ).not.toBeInTheDocument();
+});
+
 test('shows semantic advice alongside prepared text and keeps confirmation available', async () => {
   mockedFetch.mockResolvedValue({
     ...projection,

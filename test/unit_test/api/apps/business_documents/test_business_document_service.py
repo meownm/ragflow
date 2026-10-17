@@ -2587,7 +2587,7 @@ def test_draft_requires_complete_assessment_after_last_intake_answer(database):
 
 
 @pytest.mark.p0
-def test_question_schema_boundary_rejects_five_options_and_rolls_back(database):
+def test_question_schema_preserves_five_options_without_implicitly_answering(database):
     document = _create()
     requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
     invalid = _question_batch()
@@ -2596,12 +2596,13 @@ def test_question_schema_boundary_rejects_five_options_and_rolls_back(database):
         {"option_id": "fourth", "label": "Четвертый"},
         {"option_id": "fifth", "label": "Пятый"},
     ]
-    with pytest.raises(BusinessDocumentError) as caught:
-        _complete(requested["job_id"], invalid)
-    assert caught.value.code == "INVALID_QUESTION_BATCH"
+    _complete(requested["job_id"], invalid)
     job = BusinessDocumentJob.get_by_id(requested["job_id"])
-    assert job.status == "RUNNING"
-    assert document_queries.get_document(document["document_id"], AUTHOR)["operation_state"] == "ANALYZING"
+    assert job.status == "COMPLETED"
+    view = document_queries.get_document(document["document_id"], AUTHOR)
+    assert view["operation_state"] == "IDLE"
+    assert view["protocol"]["questions"][0]["options"] == invalid["questions"][0]["options"]
+    assert view["protocol"]["questions"][0]["status"] == "OPEN" and "REQUEST_DRAFT" not in view["allowed_commands"]
 
 
 @pytest.mark.p0

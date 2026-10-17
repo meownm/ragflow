@@ -1,15 +1,155 @@
 """Normalization and reference rules for generated questions and proposals."""
 
 from collections.abc import Mapping
+from copy import deepcopy
+import json
 from typing import Any
 import unicodedata
 
 from business_documents.domain.errors import RuleViolation
 from business_documents.domain.hashing import stable_hash
+from business_documents.domain.content import with_document_warnings
 
 
 def canonical_tag(value: str) -> str:
     return unicodedata.normalize("NFKC", value).strip().casefold()
+
+
+def normalize_assessment_output(output: dict[str, Any], stage: str, schema: Mapping[str, Any], *, section_ids: frozenset[str], known_questions=()) -> dict[str, Any]:
+    """Preserve presentation deviations without making decisions for the author."""
+    result, warnings = deepcopy(output), []
+
+    def note(value, section_id=None):
+        warnings.append(
+            {
+                "code": "ASSESSMENT_FORMAT_NORMALIZED",
+                **({"section_id": section_id} if isinstance(section_id, str) else {}),
+                "message": "Оформление уточнений упрощено; исходные данные: " + json.dumps(value, ensure_ascii=False),
+            }
+        )
+
+    supplied = result.pop("warnings", [])
+    if isinstance(supplied, list) and all(
+        isinstance(w, dict)
+        and isinstance(w.get("code"), str)
+        and isinstance(w.get("message"), str)
+        and set(w) <= {"code", "message", "section_id"}
+        and ("section_id" not in w or isinstance(w["section_id"], str))
+        for w in supplied
+    ):
+        warnings.extend(supplied)
+    else:
+        note(supplied)
+    extra = {key: result.pop(key) for key in list(result) if key not in schema["properties"]}
+    if extra:
+        note(extra)
+    if result.get("schema_version") != "1":
+        note({"schema_version": result.get("schema_version")})
+    result["schema_version"] = "1"
+    questions = result.get("questions", [])
+    if not isinstance(questions, list):
+        note(questions)
+        questions = [questions]
+    if stage == "INTAKE" and not questions and result.get("outcome") != "COMPLETE":
+        note(output)
+        questions = [{"text": "Уточните исходные данные с учётом замечаний модели."}]
+    question_fields = schema["properties"]["questions"]["items"]["properties"]
+    option_fields = question_fields["options"]["items"]["properties"]
+
+    def fingerprint(question):
+        return stable_hash({"section": question.get("target_section_id"), "text": " ".join(unicodedata.normalize("NFKC", question.get("text", "")).split()).casefold()})
+
+    normalized = []
+    tag_aliases = {}
+    tags = {canonical_tag(q["semantic_tag"]): fingerprint(q) for q in known_questions if isinstance(q, Mapping) and isinstance(q.get("semantic_tag"), str)}
+    for raw in questions:
+        question = dict(raw) if isinstance(raw, dict) else {"text": raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=False)}
+        extra = {key: question.pop(key) for key in list(question) if key not in question_fields and key != "stage"}
+        if extra:
+            note(extra, question.get("target_section_id"))
+        if "stage" in question_fields:
+            question["stage"] = stage
+        else:
+            question.pop("stage", None)
+        question.setdefault("target_section_id", "1")
+        section_id = question["target_section_id"]
+        if type(section_id) in {int, float} and str(section_id) in section_ids:
+            note({"target_section_id": section_id})
+            question["target_section_id"] = str(section_id)
+        elif not isinstance(section_id, str) or section_id not in section_ids:
+            note({"question_with_unknown_section": raw, "question_shown_in_section": "1"})
+            question["target_section_id"] = "1"
+        if "reason" in question and not isinstance(question["reason"], str):
+            note({"reason": question.pop("reason")}, question["target_section_id"])
+        if not isinstance(question.get("text"), str) or not question["text"].strip():
+            note(raw, question.get("target_section_id"))
+            question["text"] = "Уточните вводные по сохранённым замечаниям модели."
+        tag = question.get("semantic_tag")
+        if not isinstance(tag, str) or not tag.strip() or len(tag) > 128:
+            note({"semantic_tag": tag}, question.get("target_section_id"))
+            question["semantic_tag"] = "question:" + stable_hash({"section": question["target_section_id"], "text": question["text"]}).removeprefix("sha256:")
+        original_tag = canonical_tag(question["semantic_tag"])
+        question_fingerprint = fingerprint(question)
+        if original_tag in tags and tags[original_tag] != question_fingerprint:
+            note(raw, question.get("target_section_id"))
+            question["semantic_tag"] = "question:" + question_fingerprint.removeprefix("sha256:")
+        tags[canonical_tag(question["semantic_tag"])] = question_fingerprint
+        tag_aliases.setdefault(tag if isinstance(tag, str) else question["semantic_tag"], set()).add(question["semantic_tag"])
+        options = question.get("options", [])
+        if not isinstance(options, list):
+            note({"options": options}, question.get("target_section_id"))
+            options = []
+        normalized_options, seen = [], set()
+        for index, raw_option in enumerate(options):
+            option = dict(raw_option) if isinstance(raw_option, dict) else {"label": str(raw_option)}
+            extra = {key: option.pop(key) for key in list(option) if key not in option_fields}
+            identifier = option.get("option_id")
+            if extra or not isinstance(identifier, str) or not identifier or len(identifier) > 64 or identifier in seen or not isinstance(option.get("label"), str) or not option["label"].strip():
+                note(raw_option, question.get("target_section_id"))
+                option = {
+                    "option_id": f"option-{index + 1}-" + question_fingerprint[-8:],
+                    "label": option.get("label") if isinstance(option.get("label"), str) and option["label"].strip() else json.dumps(raw_option, ensure_ascii=False),
+                }
+            while option["option_id"] in seen:
+                option["option_id"] = "option-" + stable_hash([index, option["option_id"]])[-32:]
+            seen.add(option["option_id"])
+            normalized_options.append(option)
+        if not 2 <= len(options) <= 4:
+            note({"options_count": len(options), "free_text_answer_available": True}, question.get("target_section_id"))
+        question["options"], question["allow_custom_answer"] = normalized_options, True
+        normalized.append(question)
+    if len(normalized) > 4:
+        note({"question_count": len(normalized), "message": "Все вопросы сохранены; лимит на итерацию является рекомендацией."})
+    result["questions"] = normalized
+    if "outcome" in schema["properties"]:
+        outcome = "NEEDS_INPUT" if normalized else "COMPLETE"
+        if result.get("outcome") != outcome:
+            note({"outcome": result.get("outcome")})
+        result["outcome"] = outcome
+    if "proposals" in schema["properties"]:
+        fields = schema["properties"]["proposals"]["items"]["properties"]
+        proposals = result.setdefault("proposals", [])
+        if isinstance(proposals, list):
+            for proposal in proposals:
+                if isinstance(proposal, dict):
+                    extra = {key: proposal.pop(key) for key in list(proposal) if key not in fields}
+                    if extra:
+                        note(extra, proposal.get("target_section_id"))
+        result.setdefault("comment_dispositions", [])
+        dispositions = result["comment_dispositions"]
+        if isinstance(dispositions, list):
+            fields = schema["properties"]["comment_dispositions"]["items"]["properties"]
+            for disposition in dispositions:
+                if isinstance(disposition, dict):
+                    extra = {key: disposition.pop(key) for key in list(disposition) if key not in fields}
+                    if extra:
+                        note({"comment_event_id": disposition.get("comment_event_id"), **extra})
+                    tag = disposition.get("question_semantic_tag")
+                    if isinstance(tag, str) and tag in tag_aliases:
+                        if len(tag_aliases[tag]) != 1:
+                            raise RuleViolation("INVALID_REVIEW_PLAN", "Comment references an ambiguous model question tag", {"path": "comment_dispositions"})
+                        disposition["question_semantic_tag"] = next(iter(tag_aliases[tag]))
+    return with_document_warnings(result, warnings)
 
 
 def normalize_question(raw: object, stage: str, section_ids: frozenset[str]) -> dict[str, Any]:
@@ -20,8 +160,8 @@ def normalize_question(raw: object, stage: str, section_ids: frozenset[str]) -> 
         raise RuleViolation("QUESTION_STAGE_CONFLICT", "Question stage does not match the active workflow stage")
     if raw.get("target_section_id") not in section_ids:
         raise RuleViolation("QUESTION_SECTION_NOT_FOUND", "Question target_section_id is not in the published template")
-    if not isinstance(text, str) or not text.strip() or not isinstance(options, list) or not 2 <= len(options) <= 4:
-        raise RuleViolation("INVALID_QUESTION", "Question requires text and 2 to 4 options")
+    if not isinstance(text, str) or not text.strip() or not isinstance(options, list):
+        raise RuleViolation("INVALID_QUESTION", "Question requires text and an array of options; a free-text answer is always available")
     normalized_options, seen_ids = [], set()
     for option in options:
         if not isinstance(option, dict) or not isinstance(option.get("option_id"), str) or not option["option_id"] or not isinstance(option.get("label"), str) or not option["label"].strip():

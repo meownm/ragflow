@@ -35,6 +35,27 @@ changes. Access, source provenance, revision freshness,
 transaction and worker-lease checks still reject unsafe writes. Optional
 `warnings` metadata is supported by document AST v1 and v2.
 
+Question counts and suggested choices guide the model rather than reject its
+answer: open questions support free text, and presentation notes persist in
+the protocol before the first revision and travel into subsequent revisions.
+Unstructured change responses are retained as unapplied advice; they cannot
+be confirmed as a prepared plan or resolve review inputs. A failed source
+classification excludes the ambiguous source batch and adds a completeness
+warning, while pinned provenance, cancellation and lease checks stay strict.
+Edits preserve informational warnings; only deterministic completeness checks
+are recalculated. Markdown, DOCX and EVA exports include a separate warning
+appendix alongside the document body.
+
+Assessment normalization binds question stages once, preserves distinct questions
+even when model tags differ only by case or Unicode presentation, and retains
+unknown section labels in advice while keeping the question answerable. An
+assessment that still cannot be represented after one repair is saved as
+unapplied advice; it cannot complete intake or classify unresolved review inputs.
+Empty provider responses and access/provenance/concurrency failures remain errors.
+Exported Markdown and EVA HTML carry structured warning metadata alongside the
+visible appendix. Import restores those notes separately from section content;
+edits to the visible appendix are retained as additional advice.
+
 The Workbench calls the document API directly. Do not route calls back into the
 same deployment through the Canvas `Invoke` component: its SSRF controls must
 continue to reject private and loopback targets. If a Canvas adapter is added,

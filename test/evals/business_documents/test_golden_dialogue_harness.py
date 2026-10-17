@@ -49,7 +49,7 @@ from api.db.db_models import (
 from test.unit_test.api.apps.business_documents.helpers import required_section_blocks
 
 
-GOLDEN_PATH = Path(__file__).parents[3] / "agent" / "business_requirements" / "golden_dialogs" / "v2.json"
+GOLDEN_PATH = Path(__file__).parents[3] / "agent" / "business_requirements" / "golden_dialogs" / "v3.json"
 KNOWN_P1_GAPS: dict[str, str] = {}
 
 
@@ -850,11 +850,11 @@ class GoldenDialogueRunner:
             ),
         )
 
-    def _invalid_question_observation(self, case, option_count):
+    def _question_options_observation(self, case, option_count):
         document = self._create(case)
         invalid = self._question_batch(count=1)
         invalid["questions"][0]["options"] = [{"option_id": f"option-{index}", "label": f"Вариант {index}"} for index in range(1, option_count + 1)]
-        adapter = ScriptedAIAdapter({"ASSESS_INTAKE": [invalid, deepcopy(invalid)]})
+        adapter = ScriptedAIAdapter({"ASSESS_INTAKE": [invalid]})
         requested = document_commands.execute(
             self.tenant_id,
             self.actor_id,
@@ -862,26 +862,28 @@ class GoldenDialogueRunner:
             self._command(document, "REQUEST_INTAKE_ASSESSMENT"),
         )
         self._work(adapter)
-        assert len(adapter.requests) == 2
-        assert adapter.requests[1]["format_repair"]["error"]["code"] == "INVALID_QUESTION_BATCH"
+        assert len(adapter.requests) == 1
         projection = document_queries.get_document(document["document_id"], self.actor_id)
         job = BusinessDocumentJob.get_by_id(requested["job_id"])
+        question = projection["protocol"]["questions"][0]
         facts = {
-            "structured_output_rejected" if job.status == "DEAD" and job.error["code"] == "INVALID_QUESTION_BATCH" else "",
-            "no_question_published" if projection["protocol"]["questions"] == [] else "",
-            "no_invalid_question_published" if projection["protocol"]["questions"] == [] else "",
-            "question_must_be_split" if option_count > 4 and job.error["code"] == "INVALID_QUESTION_BATCH" else "",
+            "job_completed" if job.status == "COMPLETED" and not job.error else "",
+            "all_options_preserved" if question["options"] == invalid["questions"][0]["options"] else "",
+            "free_text_allowed" if question["allow_custom_answer"] else "",
+            "question_remains_open" if question["status"] == "OPEN" else "",
+            "format_warning_persisted" if projection["protocol"].get("warnings") else "",
+            "draft_still_requires_answers" if "REQUEST_DRAFT" not in projection["allowed_commands"] else "",
         }
         return GoldenObservation(
-            values={"operation_state": "retry" if job.status == "RETRY" else projection["operation_state"]},
+            values={"operation_state": projection["operation_state"]},
             facts=frozenset(facts - {""}),
         )
 
     def _g15(self, case):
-        return self._invalid_question_observation(case, 1)
+        return self._question_options_observation(case, 1)
 
     def _g16(self, case):
-        return self._invalid_question_observation(case, 5)
+        return self._question_options_observation(case, 5)
 
     def _g17(self, case):
         projection = self._to_review(case, review_questions=self._question_batch("REVIEW", target_section_id="5.5", count=1))

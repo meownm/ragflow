@@ -60,16 +60,17 @@ class ApplyChanges:
         except RuleViolation as error:
             raise ValidationError(error.code, error.message, error.details) from error
 
+        warnings = [*job["payload"].get("protocol", {}).get("warnings", []), *output.get("warnings", [])]
         draft = None
         if plan["operations"]:
             base = self._writer.revision(document["id"], document["current_revision_id"])
             draft = self._content.apply_change_plan(base["document_ast"], plan)
             if draft["template_version"] != document["template_version"]:
                 raise ValidationError("TEMPLATE_VERSION_CONFLICT", "Updated document does not use the pinned template")
-            draft = with_document_warnings(draft, output.get("warnings", []))
-        elif output.get("warnings"):
+            draft = with_document_warnings(draft, warnings)
+        elif warnings:
             base = self._writer.revision(document["id"], document["current_revision_id"])
-            draft = with_document_warnings(base["document_ast"], output["warnings"])
+            draft = with_document_warnings(base["document_ast"], warnings)
 
         next_lifecycle = "REVIEW" if proposal_id is not None else inputs.next_lifecycle
         if next_lifecycle == "AGREED" and mode is not ChangeMode.CONFIRM:

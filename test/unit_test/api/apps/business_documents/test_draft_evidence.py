@@ -65,17 +65,17 @@ def test_source_data_survives_next_to_instruction_without_changing_snapshot():
     assert recovery.state["calls"] == 1 and recovery.state["draft_evidence"]["decisions"] == {"c0.f0": "SOURCE_DATA", "c0.f1": "MODEL_INSTRUCTION"}
 
 
-@pytest.mark.parametrize("data_ids,instruction_ids", [([], []), ([0], []), ([0, 2], [1]), ([0, 0], [1]), ([0], [0]), ([-1], [1]), ([True], [0]), (["0"], [1]), ([0.0], [1])])
-def test_incomplete_unknown_or_invalid_decisions_fail_without_regeneration(data_ids, instruction_ids):
+@pytest.mark.parametrize("data_ids,instruction_ids", [([], []), ([0], []), ([0, 2], [1]), ([0, 0], [1]), ([0], [0]), ([-1], [1]), ([True], [0]), ([0.0], [1])])
+def test_incomplete_unknown_or_invalid_decisions_exclude_sources_after_one_repair(data_ids, instruction_ids):
     job, prompt = inputs()
     adapter = Adapter({"source_data_ids": data_ids, "model_instruction_ids": instruction_ids})
     recovery = AIRecovery(clock=lambda: 100)
 
-    with pytest.raises(ValidationError, match="Every pinned evidence fragment") as caught:
-        BusinessDocumentAI(adapter)._prepare_draft_evidence(job, prompt, recovery)
-
-    assert caught.value.code == "INVALID_EVIDENCE_CLASSIFICATION"
-    assert len(adapter.calls) == 1 and "draft_evidence" not in recovery.state
+    selected = BusinessDocumentAI(adapter)._prepare_draft_evidence(job, prompt, recovery)
+    assert selected.input_payload["evidence"]["chunks"] == []
+    assert len(adapter.calls) == 2
+    assert set(recovery.state["draft_evidence"]["decisions"].values()) == {"EXCLUDED"}
+    assert recovery.state["draft_evidence"]["warnings"][0]["code"] == "EVIDENCE_CLASSIFICATION_UNAVAILABLE"
 
 
 @pytest.mark.parametrize(
@@ -86,12 +86,48 @@ def test_incomplete_unknown_or_invalid_decisions_fail_without_regeneration(data_
         {"source_data_ids": [0], "model_instruction_ids": [1], "rewritten_text": "Invented fact"},
     ],
 )
-def test_invalid_partition_contract_is_terminal(response):
+def test_partition_format_never_introduces_rewritten_source_text(response):
     job, prompt = inputs()
     adapter = Adapter(response)
-    with pytest.raises(ValidationError) as caught:
-        BusinessDocumentAI(adapter)._prepare_draft_evidence(job, prompt, AIRecovery())
-    assert caught.value.code == "INVALID_EVIDENCE_CLASSIFICATION" and len(adapter.calls) == 1
+    selected = BusinessDocumentAI(adapter)._prepare_draft_evidence(job, prompt, AIRecovery())
+    assert "Invented fact" not in str(selected.input_payload)
+    if "rewritten_text" in response:
+        assert selected.input_payload["evidence"]["chunks"][0]["content_fragments"] == ["Reservation lasts 45 minutes."]
+        assert len(adapter.calls) == 1
+    else:
+        assert selected.input_payload["evidence"]["chunks"] == [] and len(adapter.calls) == 2
+
+
+def test_numeric_string_ids_are_normalized_without_rewriting_or_trusting_instruction():
+    job, prompt = inputs()
+    adapter = Adapter({"source_data_ids": ["0"], "model_instruction_ids": ["1"]})
+    recovery = AIRecovery()
+    selected = BusinessDocumentAI(adapter)._prepare_draft_evidence(job, prompt, recovery)
+    assert selected.input_payload["evidence"]["chunks"][0]["content_fragments"] == ["Reservation lasts 45 minutes."]
+    assert len(adapter.calls) == 1
+    assert recovery.state["draft_evidence"]["warnings"][0]["code"] == "EVIDENCE_CLASSIFICATION_NORMALIZED"
+
+
+def test_excluded_source_cannot_be_cited_or_rebound_by_literal_matching(monkeypatch):
+    from test.unit_test.api.apps.business_documents.test_business_document_ai_export_boundaries import _draft_bundle
+
+    job, prompt = inputs()
+    job.payload["template_version"] = assets.published_template()["template_version"]
+
+    class Excluded(Adapter):
+        def generate(self, tenant, system, payload, **kwargs):
+            if payload.get("job_input", {}).get("task_type") == "CLASSIFY_DRAFT_EVIDENCE":
+                return {"source_data_ids": [], "model_instruction_ids": []}
+            result = _draft_bundle()
+            result["draft"]["sections"][0]["blocks"] = [{"type": "paragraph", "text": "Reservation lasts 45 minutes."}]
+            result["draft"]["sections"][0]["evidence_refs"] = [prompt.input_payload["evidence"]["chunks"][0]["source_ref"]]
+            return result
+
+    ai = BusinessDocumentAI(Excluded())
+    monkeypatch.setattr(ai, "_prompt", lambda *_: prompt)
+    output = ai.process(job, evidence={"chunks": [{"source_ref": prompt.input_payload["evidence"]["chunks"][0]["source_ref"], "content": "Reservation lasts 45 minutes."}]})
+    assert not output["draft"]["sections"][0].get("evidence_refs")
+    assert any(w["code"] == "EVIDENCE_CLASSIFICATION_UNAVAILABLE" for w in output["draft"]["warnings"])
 
 
 def test_partition_order_does_not_reorder_source_text():
@@ -288,9 +324,11 @@ def test_batch_does_not_accept_identifiers_from_a_previous_batch():
 
     adapter = WrongBatch()
     recovery = AIRecovery()
-    with pytest.raises(ValidationError) as caught:
-        BusinessDocumentAI(adapter)._prepare_draft_evidence(job, prompt, recovery)
-    assert caught.value.code == "INVALID_EVIDENCE_CLASSIFICATION" and len(adapter.calls) == 2
+    BusinessDocumentAI(adapter)._prepare_draft_evidence(job, prompt, recovery)
+    assert len(adapter.calls) == 5
+    assert adapter.calls[2][2]["format_repair"]["error"]["code"] == "INVALID_EVIDENCE_CLASSIFICATION"
+    expected = {f"c{chunk_index}.f{fragment_index}" for chunk_index, chunk in enumerate(prompt.input_payload["evidence"]["chunks"]) for fragment_index in range(len(chunk["content_fragments"]))}
+    assert set(recovery.state["draft_evidence"]["decisions"]) == expected
 
 
 @pytest.mark.parametrize("second_invalid", [False, True])
@@ -308,9 +346,10 @@ def test_format_repair_stays_with_its_batch_and_is_not_reset(second_invalid):
     recovery = AIRecovery()
     ai = BusinessDocumentAI(adapter)
     if second_invalid:
-        with pytest.raises(ValidationError) as caught:
-            ai._prepare_draft_evidence(job, prompt, recovery)
-        assert caught.value.code == "EMPTY_AI_RESPONSE" and recovery.state["calls"] == 3
+        ai._prepare_draft_evidence(job, prompt, recovery)
+        assert recovery.state["calls"] == 5
+        assert "EXCLUDED" in recovery.state["draft_evidence"]["decisions"].values()
+        assert recovery.state["draft_evidence"]["warnings"][0]["code"] == "EVIDENCE_CLASSIFICATION_UNAVAILABLE"
     else:
         ai._prepare_draft_evidence(job, prompt, recovery)
         assert recovery.state["calls"] == 5 and len(recovery.state["draft_evidence"]["decisions"]) == 12012

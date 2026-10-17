@@ -110,7 +110,7 @@ def validate_group_payload(payload, *, partial=False):
 
 class AccessGroupService:
     @staticmethod
-    def _validate_references(payload):
+    def _validate_references(payload, *, group_id=None):
         if "user_ids" in payload:
             found = {row.id for row in User.select(User.id).where(User.id.in_(payload["user_ids"]))}
             missing = sorted(set(payload["user_ids"]) - found)
@@ -118,9 +118,16 @@ class AccessGroupService:
                 raise AccessGroupValidationError(f"Unknown user IDs: {', '.join(missing)}")
         if "dataset_ids" in payload:
             found = {row.id for row in Knowledgebase.select(Knowledgebase.id).where(Knowledgebase.id.in_(payload["dataset_ids"]))}
-            missing = sorted(set(payload["dataset_ids"]) - found)
+            missing = set(payload["dataset_ids"]) - found
+            if missing and group_id is not None:
+                # Saved forms may still contain this group's now-deleted datasets.
+                previous = {
+                    row.dataset_id for row in AccessGroupDataset.select(AccessGroupDataset.dataset_id).where((AccessGroupDataset.group_id == group_id) & AccessGroupDataset.dataset_id.in_(missing))
+                }
+                missing -= previous
             if missing:
-                raise AccessGroupValidationError(f"Unknown dataset IDs: {', '.join(missing)}")
+                raise AccessGroupValidationError(f"Unknown dataset IDs: {', '.join(sorted(missing))}")
+            payload["dataset_ids"] = [dataset_id for dataset_id in payload["dataset_ids"] if dataset_id in found]
 
     @staticmethod
     @DB.connection_context()
@@ -195,18 +202,19 @@ class AccessGroupService:
     @DB.connection_context()
     def update(cls, group_id, payload):
         data = validate_group_payload(payload, partial=True)
-        cls._validate_references(data)
-        if AccessGroup.get_or_none(AccessGroup.id == group_id) is None:
-            raise LookupError("Access group not found")
         values = {key: value for key, value in data.items() if key in {"name", "description"}}
         values["update_time"] = current_timestamp()
         values["update_date"] = datetime_format(datetime.now())
         with DB.atomic():
+            if AccessGroup.get_or_none(AccessGroup.id == group_id) is None:
+                raise LookupError("Access group not found")
+            cls._validate_references(data, group_id=group_id)
             try:
                 AccessGroup.update(values).where(AccessGroup.id == group_id).execute()
             except IntegrityError as error:
                 raise AccessGroupValidationError("A group with this name already exists") from error
             cls._replace_links(group_id, data)
+            AccessGroupDataset.delete().where((AccessGroupDataset.group_id == group_id) & AccessGroupDataset.dataset_id.not_in(Knowledgebase.select(Knowledgebase.id))).execute()
         return next(group for group in cls.list_groups() if group["id"] == group_id)
 
     @staticmethod

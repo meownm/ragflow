@@ -88,6 +88,78 @@ def test_group_unknown_reference_does_not_replace_existing_grants(group_database
     assert service.AccessGroupService.effective_policy("member") == {"sections": {"dataset"}, "dataset_ids": {"dataset"}}
 
 
+def _add_deleted_dataset_link(group_id):
+    Knowledgebase.create(id="deleted", tenant_id="tenant", name="Deleted", embd_id="synthetic", created_by="member")
+    AccessGroupDataset.create(group_id=group_id, dataset_id="deleted")
+    Knowledgebase.delete_by_id("deleted")
+
+
+@pytest.mark.parametrize("full_form", [False, True])
+def test_saving_sections_removes_deleted_datasets_and_preserves_live_grants(group_database, full_form):
+    group = _group("Original", ["dataset"])
+    _add_deleted_dataset_link(group["id"])
+    payload = {"sections": ["business_documents", "translator"]}
+    if full_form:
+        payload.update(name=group["name"], description="", user_ids=group["user_ids"], dataset_ids=["dataset", "deleted"])
+
+    updated = service.AccessGroupService.update(group["id"], payload)
+
+    assert updated["sections"] == ["business_documents", "translator"]
+    assert updated["dataset_ids"] == ["dataset"]
+    assert updated["user_ids"] == ["member"]
+    assert not AccessGroupDataset.select().where(AccessGroupDataset.dataset_id == "deleted").exists()
+
+
+def test_new_unknown_dataset_is_rejected_without_cleaning_or_changing_grants(group_database):
+    group = _group("Original", ["dataset"])
+    _add_deleted_dataset_link(group["id"])
+    with pytest.raises(service.AccessGroupValidationError, match="Unknown dataset IDs: new-missing$"):
+        service.AccessGroupService.update(group["id"], {"name": "Changed", "sections": ["chat"], "dataset_ids": ["dataset", "deleted", "new-missing"]})
+    assert AccessGroup.get_by_id(group["id"]).name == "Original"
+    assert service.AccessGroupService.effective_policy("member") == {"sections": {"dataset"}, "dataset_ids": {"dataset", "deleted"}}
+
+
+def test_successful_save_does_not_clean_or_change_another_group(group_database):
+    first = _group("First", ["dataset"])
+    second = _group("Second", ["chat"])
+    _add_deleted_dataset_link(first["id"])
+    AccessGroupDataset.create(group_id=second["id"], dataset_id="deleted")
+    service.AccessGroupService.update(first["id"], {"sections": ["translator"]})
+    groups = {group["id"]: group for group in service.AccessGroupService.list_groups()}
+    assert groups[first["id"]]["dataset_ids"] == ["dataset"]
+    assert groups[second["id"]]["dataset_ids"] == ["dataset", "deleted"]
+    assert groups[second["id"]]["sections"] == ["chat"]
+
+
+def test_deleted_dataset_link_in_another_group_does_not_authorize_unknown_id(group_database):
+    first = _group("First", ["dataset"])
+    second = _group("Second", ["chat"])
+    _add_deleted_dataset_link(first["id"])
+    with pytest.raises(service.AccessGroupValidationError, match="Unknown dataset IDs: deleted$"):
+        service.AccessGroupService.update(second["id"], {"dataset_ids": ["deleted"]})
+    assert next(group for group in service.AccessGroupService.list_groups() if group["id"] == second["id"])["dataset_ids"] == ["dataset"]
+
+
+def test_create_still_rejects_deleted_dataset_even_when_another_group_keeps_a_link(group_database):
+    group = _group("Original", ["dataset"])
+    _add_deleted_dataset_link(group["id"])
+    with pytest.raises(service.AccessGroupValidationError, match="Unknown dataset IDs: deleted$"):
+        service.AccessGroupService.create({"name": "New", "dataset_ids": ["deleted"], "sections": ["chat"]})
+    assert AccessGroup.select().count() == 1
+
+
+def test_orphan_cleanup_failure_rolls_back_saved_sections_and_group_fields(group_database):
+    group = _group("Original", ["dataset"])
+    _add_deleted_dataset_link(group["id"])
+    group_database.execute_sql(
+        "CREATE TRIGGER refuse_orphan_cleanup BEFORE DELETE ON access_group_dataset WHEN OLD.dataset_id = 'deleted' BEGIN SELECT RAISE(ABORT, 'synthetic orphan cleanup failure'); END"
+    )
+    with pytest.raises(IntegrityError, match="synthetic orphan cleanup failure"):
+        service.AccessGroupService.update(group["id"], {"name": "Changed", "sections": ["chat"]})
+    assert AccessGroup.get_by_id(group["id"]).name == "Original"
+    assert service.AccessGroupService.effective_policy("member") == {"sections": {"dataset"}, "dataset_ids": {"dataset", "deleted"}}
+
+
 @pytest.mark.parametrize("section", NAVIGATION_SECTIONS)
 def test_every_section_is_independently_persisted_and_listed(group_database, section):
     group = _group("Independent", [section])

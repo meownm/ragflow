@@ -16,40 +16,40 @@ def _template(*sections):
     return {"sections": [{"id": section_id, "title": section_id, "required": required, "allowed_blocks": allowed} for section_id, required, allowed in sections]}
 
 
-def test_inheritance_uses_original_child_and_block_order_before_sorting():
+def test_missing_parent_does_not_copy_child_content():
     template = _template(("1", True, ["paragraph", "list"]))
     document = {"sections": [_section("1.3", {"type": "list", "items": ["First"]}, {"type": "paragraph", "text": "Second"}), _section("1.1", {"type": "paragraph", "text": "Third"})]}
 
     normalized = normalize_document_ast(document, template)
 
     assert [section["id"] for section in normalized["sections"]] == ["1", "1.1", "1.3"]
-    assert normalized["sections"][0]["blocks"] == [{"type": "list", "items": ["First"]}]
+    assert normalized["sections"][0]["blocks"] == []
+    assert normalized["sections"][2]["blocks"] == document["sections"][0]["blocks"]
 
 
-def test_ancestors_choose_their_allowed_types_without_sharing_mutable_blocks():
+def test_empty_ancestors_preserve_child_content_without_mutable_sharing():
     template = _template(("1", True, ["paragraph"]), ("1.1", True, ["image"]))
     document = {"sections": [_section("1.1.2", {"type": "image", "url": "image.png"}, {"type": "paragraph", "text": "Text"})]}
     original = deepcopy(document)
 
     normalized = normalize_document_ast(document, template)
 
-    assert normalized["sections"][0]["blocks"] == [{"type": "paragraph", "text": "Text"}]
-    assert normalized["sections"][1]["blocks"] == [{"type": "image", "url": "image.png"}]
-    normalized["sections"][0]["blocks"][0]["text"] = "Updated"
-    normalized["sections"][1]["blocks"][0]["url"] = "updated.png"
-    assert normalized["sections"][2]["blocks"] == original["sections"][0]["blocks"]
+    assert normalized["sections"][0]["blocks"] == []
+    assert normalized["sections"][1]["blocks"] == []
+    normalized["sections"][2]["blocks"][0]["url"] = "updated.png"
     assert document == original
 
 
-def test_nested_sections_precede_their_parent_when_selecting_inherited_content():
+def test_nested_sections_are_flattened_without_copying_their_content():
     template = _template(("1", True, ["paragraph"]))
     nested = _section("1.2.1", {"type": "paragraph", "text": "Nested"})
     document = {"sections": [_section("1.2", {"type": "paragraph", "text": "Parent"}, nested)]}
 
     normalized = normalize_document_ast(document, template)
 
-    assert normalized["sections"][0]["blocks"] == [{"type": "paragraph", "text": "Nested"}]
+    assert normalized["sections"][0]["blocks"] == []
     assert normalized["sections"][1]["blocks"] == [{"type": "paragraph", "text": "Parent"}]
+    assert normalized["sections"][2]["blocks"] == nested["blocks"]
     assert document["sections"][0]["blocks"][1] == nested
 
 
@@ -73,7 +73,9 @@ def test_optional_sections_stay_empty_and_template_fields_are_removed_from_owned
     assert normalized["sections"][0]["blocks"] == []
     assert set(normalized["sections"][1]) == {"id", "title", "blocks"}
     assert normalized["sections"][2]["blocks"] == [{"type": "paragraph", "text": "Existing"}]
-    normalized["metadata"]["tags"].append("new")
+    assert "metadata" not in normalized
+    assert "original" in normalized["warnings"][0]["message"]
+    normalized["warnings"][0]["message"] = "Updated"
     assert document == original
 
 

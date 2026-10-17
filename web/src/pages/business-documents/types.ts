@@ -402,6 +402,13 @@ export interface BusinessDocumentAst {
   template_version: string;
   section_scope?: 'required';
   sections: BusinessDocumentSection[];
+  warnings?: BusinessDocumentWarning[];
+}
+
+export interface BusinessDocumentWarning {
+  code: string;
+  message: string;
+  section_id?: string;
 }
 
 export interface BusinessDocumentRevision {
@@ -604,6 +611,7 @@ export interface BusinessDocumentJobStreamEvent {
 }
 
 export interface BusinessDocumentChangePreview {
+  warnings?: BusinessDocumentWarning[];
   job_id: string;
   base_revision_id: string;
   state_version: number;

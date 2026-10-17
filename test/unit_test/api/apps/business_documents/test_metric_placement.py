@@ -223,7 +223,7 @@ def test_planner_receives_complete_confirmed_content_independent_of_its_original
 
 
 @pytest.mark.parametrize("damage", ["missing_metric", "missing_monitoring", "wrong_placement"])
-def test_semantic_rejection_prevents_preview_of_incomplete_or_misplaced_requirements(database, damage):
+def test_semantic_issues_accompany_preview_of_incomplete_or_misplaced_requirements(database, damage):
     _, job, plan = _request_placement()
     plan["operations"][0]["source_event_ids"].append(plan["operations"][1]["source_event_ids"][0])
     if damage == "missing_monitoring":
@@ -236,9 +236,10 @@ def test_semantic_rejection_prevents_preview_of_incomplete_or_misplaced_requirem
         source, section = plan["operations"][1]["source_event_ids"][0], "5.4"
     adapter = PlacementAdapter(plan, {"status": "FAIL", "issues": [{"source_id": source, "section_id": section, "reason": "Подтверждённое требование потеряно или размещено вопреки выбору автора."}]})
     assert BusinessDocumentWorker(ai=BusinessDocumentAI(adapter)).run_once()
-    assert BusinessDocumentJob.get_by_id(job.id).error["code"] == "REQUIREMENT_COVERAGE_FAILED"
-    failed = BusinessDocumentJob.get_by_id(job.id)
-    assert failed.status == "DEAD" and "output" not in (failed.result or {})
-    assert document_queries.get_document(job.document_id, AUTHOR)["change_preview"] is None
+    completed = BusinessDocumentJob.get_by_id(job.id)
+    assert completed.status == "COMPLETED" and not completed.error
+    assert completed.result["output"]["requirement_coverage"]["status"] == "FAIL"
+    assert document_queries.get_document(job.document_id, AUTHOR)["change_preview"]["job_id"] == job.id
+    assert document_queries.get_change_preview(job.document_id, job.id)["warnings"][0]["code"] == "REQUIREMENT_COVERAGE_FAILED"
     assert [payload["job_input"]["task_type"] for _, payload in adapter.calls] == ["PLAN_CHANGES", "VERIFY_REQUIREMENT_COVERAGE"]
     assert BusinessDocumentRevision.select().count() == 1

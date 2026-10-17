@@ -6,6 +6,19 @@
   "additionalProperties": false,
   "required": ["schema_version", "document_type", "template_version", "section_scope", "sections"],
   "properties": {
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "message"],
+        "properties": {
+          "code": {"type": "string"},
+          "message": {"type": "string"},
+          "section_id": {"type": "string"}
+        }
+      }
+    },
     "schema_version": {"const": "2"},
     "document_type": {"const": "business_requirements"},
     "template_version": {"type": "string", "minLength": 1},

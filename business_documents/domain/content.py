@@ -61,17 +61,19 @@ def validate_contract(name: str, value: object, schema: dict[str, Any]) -> None:
     )
 
 
-def validate_document_ast(document: object, template: dict[str, Any], schema: dict[str, Any], *, allow_incomplete: bool = False, previous_document: dict[str, Any] | None = None) -> dict[str, Any]:
+def validate_document_ast(document: object, template: dict[str, Any], schema: dict[str, Any], *, previous_document: dict[str, Any] | None = None) -> dict[str, Any]:
+    original = document
     document = normalize_document_ast(document, template)
+    if document is original and isinstance(document, dict):
+        document = deepcopy(document)
+    document = _normalize_blocks(document, template, schema, previous_document)
     validation_document = document
     preserved_diagrams = set()
-    new_section_blocks = {}
     if previous_document is not None and isinstance(document, dict) and isinstance(document.get("sections"), list):
         previous = {section["id"]: Counter(stable_hash(block) for block in section["blocks"]) for section in previous_document["sections"]}
         validation_sections = []
         for section in document["sections"]:
             remaining = previous.get(section["id"], Counter()).copy()
-            new_blocks = []
             checked_blocks = []
             for block in section["blocks"]:
                 fingerprint = stable_hash(block)
@@ -82,9 +84,7 @@ def validate_document_ast(document: object, template: dict[str, Any], schema: di
                     if isinstance(block, dict) and block.get("type") not in {"paragraph", "list", "table", "image", "reference"} and isinstance(block.get("source"), str) and block["source"].strip():
                         preserved_diagrams.add(section["id"])
                 else:
-                    new_blocks.append(block)
                     checked_blocks.append(block)
-            new_section_blocks[section["id"]] = new_blocks
             validation_sections.append({**section, "blocks": checked_blocks})
         validation_document = {**document, "sections": validation_sections}
     validate_contract("document_draft", validation_document, schema)
@@ -114,32 +114,76 @@ def validate_document_ast(document: object, template: dict[str, Any], schema: di
                 {"section_id": section_id, "parent_section_id": parent_id or None},
             )
     required_ids = {section["id"] for section in template["sections"] if section["required"]}
-    allowed_blocks = {section["id"]: set(section["allowed_blocks"]) for section in template["sections"]}
-    disallowed = [
-        {"section_id": section["id"], "block_type": block["type"]}
-        for section in document["sections"]
-        for block in new_section_blocks.get(section["id"], section["blocks"])
-        if block["type"] not in allowed_blocks.get(section["id"], _CUSTOM_SECTION_ALLOWED_BLOCKS)
-    ]
-    if disallowed:
-        raise RuleViolation(
-            "BLOCK_TYPE_NOT_ALLOWED",
-            "Этот тип содержимого нельзя использовать в выбранном разделе шаблона",
-            {"blocks": disallowed},
-        )
-    if allow_incomplete:
-        return document
+    warnings = [item for item in document.get("warnings", []) if item["code"] not in {"REQUIRED_SECTION_EMPTY", "CONCEPTUAL_DIAGRAM_REQUIRED", "ACTIVITY_SCENARIO_REQUIRED"}]
     empty_required = [section["id"] for section in document["sections"] if section["id"] in required_ids and not any(_block_has_content(block) for block in section["blocks"])]
-    if empty_required:
-        raise RuleViolation(
-            "REQUIRED_SECTION_EMPTY",
-            "Required template sections must contain substantive content",
-            {"section_ids": empty_required},
-        )
+    for section_id in empty_required:
+        warnings.append({"code": "REQUIRED_SECTION_EMPTY", "section_id": section_id, "message": "Обязательный раздел пока не заполнен; требуется уточнение."})
     sections = {section["id"]: section for section in document["sections"]}
-    _validate_conceptual_diagram(sections["4.1"], preserved_diagram="4.1" in preserved_diagrams)
-    _validate_client_scenario(sections["4.3"], preserved_diagram="4.3" in preserved_diagrams)
+    if "4.1" in sections and "4.1" not in preserved_diagrams and not any(block.get("type") == "plantuml" for block in sections["4.1"]["blocks"]):
+        warnings.append({"code": "CONCEPTUAL_DIAGRAM_REQUIRED", "section_id": "4.1", "message": "Концептуальную схему рекомендуется дополнить диаграммой PlantUML."})
+    if "4.3" in sections:
+        blocks = sections["4.3"]["blocks"]
+        if ("4.3" not in preserved_diagrams and not any(block.get("type") == "plantuml" for block in blocks)) or not any(
+            block.get("type") != "plantuml" and _block_has_content(block) for block in blocks
+        ):
+            warnings.append({"code": "ACTIVITY_SCENARIO_REQUIRED", "section_id": "4.3", "message": "Клиентский сценарий рекомендуется дополнить диаграммой деятельности и сопровождающим текстом."})
+    if warnings:
+        document["warnings"] = list({stable_hash(item): item for item in warnings}.values())
+    else:
+        document.pop("warnings", None)
     return document
+
+
+def _normalize_blocks(document, template, schema, previous_document):
+    """Keep renderable text even when the model misses the block representation."""
+    if not isinstance(document, dict) or not isinstance(document.get("sections"), list):
+        return document
+    block_schema = schema["properties"]["sections"]["items"]["properties"]["blocks"]["items"]
+    validator = Draft202012Validator(block_schema)
+    fields = {branch["properties"]["type"]["const"]: set(branch["properties"]) for branch in block_schema["oneOf"]}
+    allowed = {section["id"]: set(section["allowed_blocks"]) for section in template["sections"]}
+    previous = {section["id"]: Counter(stable_hash(block) for block in section["blocks"]) for section in (previous_document or {}).get("sections", [])}
+    for section in document["sections"]:
+        if not isinstance(section, dict) or not isinstance(section.get("id"), str) or not isinstance(section.get("blocks"), list):
+            continue
+        remaining = previous.get(section.get("id"), Counter()).copy()
+        blocks = []
+        for block in section["blocks"]:
+            message = "Оформление блока упрощено; исходное содержимое сохранено."
+            fingerprint = stable_hash(block)
+            if remaining[fingerprint]:
+                remaining[fingerprint] -= 1
+                blocks.append(block)
+                continue
+            kind = block.get("type") if isinstance(block, dict) else None
+            kind = kind if isinstance(kind, str) else None
+            projected = {key: value for key, value in block.items() if key in fields.get(kind, ())} if isinstance(block, dict) else block
+            if kind in {"image", "reference"} and isinstance(block.get("url"), str) and not re.match(r"^https?://[^\s]+$", block["url"]):
+                validate_contract("document_draft", document, schema)
+            valid = validator.is_valid(projected)
+            if valid and kind in allowed.get(section.get("id"), _CUSTOM_SECTION_ALLOWED_BLOCKS):
+                blocks.append(projected)
+                if projected == block:
+                    continue
+            else:
+                if valid:
+                    text = render_section_text({"blocks": [projected]})
+                elif kind == "paragraph" and isinstance(block.get("text"), str):
+                    text = block["text"]
+                else:
+                    text = render_section_text({"blocks": [{"type": "literal", "source": render_block_source(block)}]})
+                blocks.extend(_paragraph_blocks(text))
+            if valid and projected != block:
+                extra = {key: value for key, value in block.items() if key not in fields[kind]}
+                message = "Дополнительные поля блока сохранены в замечаниях: " + render_block_source(extra)
+            document.setdefault("warnings", []).append({"code": "BLOCK_FORMAT_NORMALIZED", "section_id": section["id"], "message": message})
+        section["blocks"] = blocks
+    return document
+
+
+def with_document_warnings(document: dict[str, Any], warnings: list[dict[str, Any]]) -> dict[str, Any]:
+    combined = list({stable_hash(item): item for item in [*document.get("warnings", []), *warnings]}.values())
+    return {**document, "warnings": combined} if combined else document
 
 
 def import_document_markdown(markdown: object, template: dict[str, Any], schema: dict[str, Any], *, required_schema: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -267,6 +311,20 @@ def normalize_document_ast(document: object, template: dict[str, Any]) -> object
         return document
     expected_ids = {section["id"] for section in template_sections}
     normalized = deepcopy(document)
+    supplied_warnings = normalized.get("warnings", [])
+    if not isinstance(supplied_warnings, list) or not all(
+        isinstance(item, dict)
+        and isinstance(item.get("code"), str)
+        and isinstance(item.get("message"), str)
+        and set(item) <= {"code", "message", "section_id"}
+        and ("section_id" not in item or isinstance(item["section_id"], str))
+        for item in supplied_warnings
+    ):
+        normalized["warnings"] = [{"code": "DOCUMENT_FORMAT_NORMALIZED", "message": "Неструктурированные замечания: " + render_block_source(supplied_warnings)}]
+    extra_fields = set(normalized) - {"schema_version", "document_type", "template_version", "section_scope", "sections", "warnings"}
+    if extra_fields:
+        values = {field: normalized.pop(field) for field in sorted(extra_fields)}
+        normalized.setdefault("warnings", []).append({"code": "DOCUMENT_FORMAT_NORMALIZED", "message": "Дополнительные поля сохранены в замечаниях: " + render_block_source(values)})
     flattened_sections = []
     for section in normalized["sections"]:
         blocks = section.get("blocks")
@@ -283,7 +341,6 @@ def normalize_document_ast(document: object, template: dict[str, Any]) -> object
     if len(actual_ids) != len(set(actual_ids)):
         return document
     by_id = {section["id"]: section for section in flattened_sections}
-    inherited_blocks = None
     normalized_sections = []
     for template_section in template_sections:
         if document.get("section_scope") == "required" and not template_section["required"] and template_section["id"] not in by_id:
@@ -292,73 +349,29 @@ def normalize_document_ast(document: object, template: dict[str, Any]) -> object
             template_section["id"],
             {"id": template_section["id"], "title": template_section["title"], "blocks": []},
         )
-        if document.get("section_scope") != "required" and template_section["required"] and not any(_block_has_content(block) for block in section.get("blocks", [])):
-            if inherited_blocks is None:
-                inherited_blocks = _first_descendant_blocks(flattened_sections, expected_ids)
-            candidates = inherited_blocks.get(template_section["id"], {})
-            inherited = min((candidates[kind] for kind in template_section["allowed_blocks"] if kind in candidates), key=lambda item: item[:2], default=None)
-            if inherited is not None:
-                section["blocks"] = [deepcopy(inherited[2])]
-        for template_only_field in ("parent_id", "required", "allowed_blocks", "semantic_requirements"):
-            section.pop(template_only_field, None)
+        if section.get("title") != template_section["title"]:
+            old_title = section.get("title", "")
+            section["title"] = template_section["title"]
+            normalized.setdefault("warnings", []).append({"code": "SECTION_TITLE_NORMALIZED", "section_id": section["id"], "message": f"Заголовок «{old_title}» приведён к шаблону."})
         normalized_sections.append(section)
     for section in flattened_sections:
         if section["id"] in expected_ids:
             continue
-        for template_only_field in ("parent_id", "required", "allowed_blocks", "semantic_requirements"):
-            section.pop(template_only_field, None)
         normalized_sections.append(section)
+    for section in normalized_sections:
+        for field in ("parent_id", "required", "allowed_blocks", "semantic_requirements"):
+            section.pop(field, None)
+        extra_fields = set(section) - {"id", "title", "blocks", "evidence_refs"}
+        if extra_fields:
+            values = {field: section.pop(field) for field in sorted(extra_fields)}
+            normalized.setdefault("warnings", []).append({"code": "SECTION_FORMAT_NORMALIZED", "section_id": section["id"], "message": "Дополнительные поля раздела: " + render_block_source(values)})
+        if not isinstance(section.get("blocks"), list):
+            value = section.get("blocks")
+            section["blocks"] = _paragraph_blocks(value if isinstance(value, str) else render_block_source(value)) if value is not None else []
+            normalized.setdefault("warnings", []).append({"code": "SECTION_FORMAT_NORMALIZED", "section_id": section["id"], "message": "Содержимое раздела сохранено обычным текстом."})
     normalized_sections.sort(key=lambda section: _section_sort_key(section["id"]))
     normalized["sections"] = normalized_sections
     return normalized
-
-
-def _first_descendant_blocks(sections: list[dict[str, Any]], parent_ids: set[str]) -> dict[str, dict[str, tuple[int, int, dict[str, Any]]]]:
-    """Index the first original block of each type below each template parent."""
-
-    result: dict[str, dict[str, tuple[int, int, dict[str, Any]]]] = {}
-    for section_position, section in enumerate(sections):
-        ancestors = []
-        ancestor = section["id"]
-        while "." in ancestor:
-            ancestor = ancestor.rsplit(".", 1)[0]
-            if ancestor in parent_ids:
-                ancestors.append(ancestor)
-        if not ancestors:
-            continue
-        first = {}
-        for block_position, block in enumerate(section.get("blocks", [])):
-            if not isinstance(block, dict):
-                continue
-            kind = block.get("type")
-            if kind not in first and _block_has_content(block):
-                first[kind] = (section_position, block_position, block)
-        for ancestor in ancestors:
-            candidates = result.setdefault(ancestor, {})
-            for kind, candidate in first.items():
-                candidates.setdefault(kind, candidate)
-    return result
-
-
-def _validate_conceptual_diagram(section: dict[str, Any], *, preserved_diagram: bool = False) -> None:
-    diagrams = [block for block in section["blocks"] if isinstance(block, dict) and block.get("type") == "plantuml"]
-    if not diagrams and not preserved_diagram:
-        raise RuleViolation(
-            "CONCEPTUAL_DIAGRAM_REQUIRED",
-            "Section 4.1 must contain a PlantUML conceptual diagram",
-            {"section_id": "4.1"},
-        )
-
-
-def _validate_client_scenario(section: dict[str, Any], *, preserved_diagram: bool = False) -> None:
-    diagrams = [block for block in section["blocks"] if isinstance(block, dict) and block.get("type") == "plantuml"]
-    accompanying = [block for block in section["blocks"] if isinstance(block, dict) and block.get("type") in {"paragraph", "list", "table", "image", "reference"} and _block_has_content(block)]
-    if (not diagrams and not preserved_diagram) or not accompanying:
-        raise RuleViolation(
-            "ACTIVITY_SCENARIO_REQUIRED",
-            "Section 4.3 must contain a PlantUML activity diagram and accompanying scenario text",
-            {"section_id": "4.3"},
-        )
 
 
 def _block_has_content(block: object) -> bool:
@@ -431,7 +444,11 @@ def apply_change_plan(base_document: dict[str, Any], change_plan: dict[str, Any]
         section["blocks"] = operation["content"]["blocks"]
         if "evidence_refs" in operation:
             section["evidence_refs"] = operation["evidence_refs"]
-    validated = validate_document_ast(result, template, schema, allow_incomplete=base_document.get("section_scope") == "required", previous_document=base_document)
+    if seen_sections and result.get("warnings"):
+        result["warnings"] = [
+            item for item in result["warnings"] if item.get("section_id") not in seen_sections and item["code"] not in {"REQUIREMENT_COVERAGE_FAILED", "REQUIREMENT_VERIFICATION_UNAVAILABLE"}
+        ]
+    validated = validate_document_ast(result, template, schema, previous_document=base_document)
     # Normalization can return its input unchanged for noncanonical saved ASTs.
     return deepcopy(validated) if validated is result else validated
 

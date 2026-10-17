@@ -92,7 +92,7 @@ def test_format_repair_receives_error_and_preserves_complete_original_context(da
     def first_invalid(tenant, system, payload, *, timeout_seconds=None):
         result = generate(tenant, system, payload, timeout_seconds=timeout_seconds)
         if payload["job_input"]["task_type"] == "PLAN_CHANGES" and "format_repair" not in payload:
-            result["operations"][0]["content"]["blocks"] = [{"type": "bpmn", "source": "<xml/>"}]
+            result["operations"][0]["type"] = "UNKNOWN_OPERATION"
         return result
 
     adapter.generate = first_invalid
@@ -102,9 +102,9 @@ def test_format_repair_receives_error_and_preserves_complete_original_context(da
     assert len(adapter.calls) == 3 and job.attempt == 1
     assert adapter.calls[0]["job_input"] == adapter.calls[1]["job_input"]
     feedback = adapter.calls[1]["format_repair"]
-    assert feedback["error"]["code"] == "INVALID_DOCUMENT_DRAFT"
-    assert "blocks" in feedback["error"]["details"]["path"]
-    assert feedback["previous_response"]["operations"][0]["content"]["blocks"][0]["type"] == "bpmn"
+    assert feedback["error"]["code"] == "INVALID_CHANGE_PLAN"
+    assert "type" in feedback["error"]["details"]["path"]
+    assert feedback["previous_response"]["operations"][0]["type"] == "UNKNOWN_OPERATION"
     assert job.result["output"]["change_plan"] == plan
     audit = job.result["execution"]["ai"]
     assert len(audit["recovery"]) == 1
@@ -125,7 +125,7 @@ def test_second_invalid_format_stops_without_verification_or_revision(database):
     assert BusinessDocumentRevision.select().count() == 1
 
 
-def test_second_invalid_verdict_does_not_pass_or_regenerate(database):
+def test_second_invalid_verdict_saves_advice_without_claiming_a_pass(database):
     requested, plan = request_plan()
     adapter = PlanAdapter(plan, None)
     generate = adapter.generate
@@ -137,16 +137,27 @@ def test_second_invalid_verdict_does_not_pass_or_regenerate(database):
     adapter.generate = invalid_verdict
     assert BusinessDocumentWorker(ai=BusinessDocumentAI(adapter)).run_once()
     job = BusinessDocumentJob.get_by_id(requested["job_id"])
-    assert job.status == "DEAD" and job.error["code"] == "INVALID_REQUIREMENT_COVERAGE"
+    assert job.status == "COMPLETED" and not job.error
+    assert job.result["output"]["requirement_coverage"]["status"] == "UNAVAILABLE"
     assert len(adapter.calls) == 3
-    assert BusinessDocumentRevision.select().count() == 1
+    assert BusinessDocumentRevision.select().count() == 2
 
 
 def test_checkpointed_candidate_is_not_a_published_revision_or_preview(database):
     requested, plan = request_plan()
-    assert BusinessDocumentWorker(ai=BusinessDocumentAI(PlanAdapter(plan)), retry_base_ms=0).run_once()
+    adapter = PlanAdapter(plan, None)
+    generate = adapter.generate
+
+    def crash_before_verification(*args, **kwargs):
+        if args[2]["job_input"]["task_type"] == "VERIFY_REQUIREMENT_COVERAGE":
+            raise SystemExit("Crash after candidate checkpoint")
+        return generate(*args, **kwargs)
+
+    adapter.generate = crash_before_verification
+    with pytest.raises(SystemExit):
+        BusinessDocumentWorker(ai=BusinessDocumentAI(adapter), retry_base_ms=0).run_once()
     job = BusinessDocumentJob.get_by_id(requested["job_id"])
-    assert job.status == "RETRY" and job.result["recovery"]["candidate"]
+    assert job.status == "RUNNING" and job.result["recovery"]["candidate"]
     from test.unit_test.api.apps.business_documents.test_business_document_service import AUTHOR
 
     view = document_queries.get_document(job.document_id, AUTHOR)
@@ -223,7 +234,16 @@ def test_renewed_default_lease_protects_running_job_and_rejects_old_attempt(data
 @pytest.mark.parametrize("damage", ["deadline", "calls", "snapshot"])
 def test_restart_cannot_reset_limits_or_replace_snapshot(database, damage):
     requested, plan = request_plan()
-    adapter = PlanAdapter(plan)
+    adapter = PlanAdapter(plan, None)
+    generate = adapter.generate
+
+    def interrupted_generation(*args, **kwargs):
+        result = generate(*args, **kwargs)
+        if len(adapter.calls) == 1:
+            raise TimeoutError("Generation interrupted")
+        return result
+
+    adapter.generate = interrupted_generation
     assert BusinessDocumentWorker(ai=BusinessDocumentAI(adapter), retry_base_ms=0).run_once()
     job = BusinessDocumentJob.get_by_id(requested["job_id"])
     state = deepcopy(job.result["recovery"])
@@ -238,7 +258,7 @@ def test_restart_cannot_reset_limits_or_replace_snapshot(database, damage):
     assert BusinessDocumentWorker(ai=BusinessDocumentAI(adapter), retry_base_ms=0).run_once()
     job = BusinessDocumentJob.get_by_id(job.id)
     assert job.status == "DEAD" and job.error["code"] == expected
-    assert len(adapter.calls) == 2
+    assert len(adapter.calls) == 1
     assert BusinessDocumentRevision.select().count() == 1
 
 

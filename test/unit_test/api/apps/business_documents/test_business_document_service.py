@@ -2705,13 +2705,11 @@ def test_stale_worker_result_cannot_create_revision(database):
 
 
 @pytest.mark.p0
-def test_required_sections_cannot_be_empty_and_child_headings_are_nested(database):
+def test_incomplete_content_is_advisory_and_child_headings_are_nested(database):
     draft = _draft()
     section = next(item for item in draft["sections"] if item["id"] == "5.5")
     section["blocks"] = []
-    with pytest.raises(BusinessDocumentError) as caught:
-        validate_document_ast(draft)
-    assert caught.value.code == "REQUIRED_SECTION_EMPTY"
+    assert validate_document_ast(draft)["warnings"][0]["code"] == "REQUIRED_SECTION_EMPTY"
 
     markdown = render_document_ast(_draft())
     assert "## 3. Целевая аудитория" in markdown
@@ -2728,16 +2726,12 @@ def test_required_sections_cannot_be_empty_and_child_headings_are_nested(databas
     wrong_diagram = _draft()
     scenario = next(item for item in wrong_diagram["sections"] if item["id"] == "4.3")
     scenario["blocks"] = [{"type": "paragraph", "text": "Только текст"}]
-    with pytest.raises(BusinessDocumentError) as caught:
-        validate_document_ast(wrong_diagram)
-    assert caught.value.code == "ACTIVITY_SCENARIO_REQUIRED"
+    assert validate_document_ast(wrong_diagram)["warnings"][0]["code"] == "ACTIVITY_SCENARIO_REQUIRED"
 
     missing_concept = _draft()
     conceptual = next(item for item in missing_concept["sections"] if item["id"] == "4.1")
     conceptual["blocks"] = [{"type": "paragraph", "text": "Только текст"}]
-    with pytest.raises(BusinessDocumentError) as caught:
-        validate_document_ast(missing_concept)
-    assert caught.value.code == "CONCEPTUAL_DIAGRAM_REQUIRED"
+    assert validate_document_ast(missing_concept)["warnings"][0]["code"] == "CONCEPTUAL_DIAGRAM_REQUIRED"
 
     unrenderable_activity = _draft()
     scenario = next(item for item in unrenderable_activity["sections"] if item["id"] == "4.3")
@@ -4289,15 +4283,16 @@ def test_worker_publishes_checked_section_before_full_plan_is_committed(database
     worker = BusinessDocumentWorker(worker_id="stream-worker", ai=BusinessDocumentAI(StreamingAdapter()), lease_ms=60_000, retry_base_ms=0)
     assert worker.run_once() is True
     if coverage_fails_first:
-        failed = BusinessDocumentJob.get_by_id(requested["job_id"])
-        assert failed.status == "DEAD" and failed.error["code"] == "REQUIREMENT_COVERAGE_FAILED"
+        completed = BusinessDocumentJob.get_by_id(requested["job_id"])
+        assert completed.status == "COMPLETED" and not completed.error
         unchanged = document_queries.get_document(document["document_id"], AUTHOR)
         assert unchanged["current_revision"]["revision_id"] == base["revision_id"]
-        assert unchanged["change_preview"] is None
+        assert unchanged["change_preview"]["job_id"] == requested["job_id"]
+        assert document_queries.get_change_preview(document["document_id"], requested["job_id"])["warnings"][0]["code"] == "REQUIREMENT_COVERAGE_FAILED"
         assert not worker.run_once()
         assert len(observed_generation_inputs) == 1
         replay = document_queries.read_job_stream_events(TENANT, AUTHOR, document["document_id"], requested["job_id"], 0)
-        assert replay["events"][-1]["type"] == "failed"
+        assert replay["events"][-1]["type"] == "preview_ready"
         return
     assert len(observed_generation_inputs) == 1
     assert any(event["type"] == "section_preview" and event["payload"]["after"] == "Новый контроль ошибок" for event in observed_during_generation)

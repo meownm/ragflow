@@ -11,6 +11,7 @@ from business_documents.application.errors import ConflictError, ValidationError
 from business_documents.application.persistence import DocumentWriter
 from business_documents.domain.change_plan import validate_change_inputs
 from business_documents.domain.errors import RuleViolation
+from business_documents.domain.content import with_document_warnings
 from business_documents.domain.job import SnapshotIndex, prompt_audit, requested_by
 from business_documents.domain.review import ReviewState
 
@@ -65,17 +66,17 @@ class ApplyChanges:
             draft = self._content.apply_change_plan(base["document_ast"], plan)
             if draft["template_version"] != document["template_version"]:
                 raise ValidationError("TEMPLATE_VERSION_CONFLICT", "Updated document does not use the pinned template")
+            draft = with_document_warnings(draft, output.get("warnings", []))
+        elif output.get("warnings"):
+            base = self._writer.revision(document["id"], document["current_revision_id"])
+            draft = with_document_warnings(base["document_ast"], output["warnings"])
 
         next_lifecycle = "REVIEW" if proposal_id is not None else inputs.next_lifecycle
-        if next_lifecycle == "AGREED":
+        if next_lifecycle == "AGREED" and mode is not ChangeMode.CONFIRM:
             current = draft if draft is not None else self._writer.revision(document["id"], document["current_revision_id"])["document_ast"]
-            if current.get("section_scope") == "required":
-                try:
-                    self._content.validate_document_ast(current, previous_document=base["document_ast"] if draft is not None else current)
-                except ValidationError as error:
-                    if error.code not in {"REQUIRED_SECTION_EMPTY", "CONCEPTUAL_DIAGRAM_REQUIRED", "ACTIVITY_SCENARIO_REQUIRED"}:
-                        raise
-                    next_lifecycle = "REVIEW"
+            checked = self._content.validate_document_ast(current, previous_document=current) if current.get("section_scope") == "required" else current
+            if checked.get("warnings") or output.get("warnings"):
+                next_lifecycle = "REVIEW"
 
         version = document["state_version"] + 1
         event_id = self._new_id()

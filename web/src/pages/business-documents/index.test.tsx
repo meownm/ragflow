@@ -2490,6 +2490,80 @@ test('cancels acceptance and returns the proposal to the decision controls', asy
   expect(screen.queryByTestId('proposal-application-proposal-12')).toBeNull();
 });
 
+test('keeps the document usable and displays saved revision advice after reloading', async () => {
+  mockedFetch.mockResolvedValue({
+    ...projection,
+    current_revision: {
+      ...projection.current_revision!,
+      document_ast: {
+        ...projection.current_revision!.document_ast,
+        warnings: [
+          {
+            code: 'ACTIVITY_SCENARIO_REQUIRED',
+            section_id: '4.3',
+            message: 'Дополните сценарий диаграммой.',
+          },
+        ],
+      },
+    },
+  });
+  const { unmount } = renderPage();
+  const warnings = await screen.findByTestId('business-document-warnings');
+  expect(warnings).toHaveTextContent('Документ сохранён с замечаниями (1)');
+  expect(warnings).toHaveTextContent(
+    'Раздел 4.3: Дополните сценарий диаграммой.',
+  );
+  expect(screen.getByTestId('business-document-markdown')).toHaveTextContent(
+    firstSectionText,
+  );
+  unmount();
+  renderPage();
+  expect(
+    await screen.findByTestId('business-document-warnings'),
+  ).toHaveTextContent('Дополните сценарий диаграммой.');
+});
+
+test('shows semantic advice alongside prepared text and keeps confirmation available', async () => {
+  mockedFetch.mockResolvedValue({
+    ...projection,
+    change_preview: { job_id: 'job-advice', base_revision_id: 'revision-3' },
+    allowed_commands: ['CONFIRM_PREPARED_CHANGES', 'DISCARD_PREPARED_CHANGES'],
+  });
+  mockedFetchPreview.mockResolvedValue({
+    job_id: 'job-advice',
+    base_revision_id: 'revision-3',
+    state_version: 18,
+    sections: [
+      {
+        section_id: '1',
+        title: 'Цель',
+        before: firstSectionText,
+        after: 'Новая цель',
+        source_event_ids: ['event-1'],
+      },
+    ],
+    acknowledged_no_change_event_ids: [],
+    warnings: [
+      {
+        code: 'REQUIREMENT_COVERAGE_FAILED',
+        section_id: '1',
+        message: 'Проверьте полноту результата <script>alert(1)</script>',
+      },
+    ],
+  });
+  renderPage();
+  expect(
+    await screen.findByTestId('business-document-warnings'),
+  ).toHaveTextContent('Проверьте полноту результата <script>alert(1)</script>');
+  expect(document.querySelector('script')).toBeNull();
+  expect(
+    screen.getByRole('button', { name: 'Подтвердить применение' }),
+  ).toBeEnabled();
+  expect(screen.getByTestId('business-document-markdown')).toHaveTextContent(
+    'Новая цель',
+  );
+});
+
 test('shows a new optional reporting section before confirming its application', async () => {
   mockedFetch.mockResolvedValue({
     ...projection,

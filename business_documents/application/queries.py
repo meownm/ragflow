@@ -383,6 +383,7 @@ class DocumentQueries:
             "job_id": job["id"],
             "base_revision_id": job["base_revision_id"],
             "state_version": document["state_version"],
+            **({"warnings": output["warnings"]} if output.get("warnings") else {}),
             "sections": sections,
             "acknowledged_no_change_event_ids": plan["acknowledged_no_change_event_ids"],
             "acknowledged_no_change_sources": sources.describe(plan["acknowledged_no_change_event_ids"]),

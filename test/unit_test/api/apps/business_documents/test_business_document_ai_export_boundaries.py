@@ -227,15 +227,16 @@ def test_eva_import_ignores_numbered_headings_inside_plantuml_fences(database):
 
 
 @pytest.mark.p0
-def test_document_ast_rejects_subsection_that_replaces_template_section(database):
+def test_document_ast_restores_a_paraphrased_title_without_losing_content(database):
     draft = _draft()
     section = next(item for item in draft["sections"] if item["id"] == "4.3")
     section["title"] = "Подмена обязательного раздела"
 
-    with pytest.raises(BusinessDocumentError, match="сохранять все разделы опубликованного шаблона") as caught:
-        validate_document_ast(draft)
-
-    assert caught.value.code == "TEMPLATE_STRUCTURE_MISMATCH"
+    normalized = validate_document_ast(draft)
+    actual = next(item for item in normalized["sections"] if item["id"] == "4.3")
+    assert actual["title"] == next(item for item in published_template()["sections"] if item["id"] == "4.3")["title"]
+    assert actual["blocks"] == section["blocks"]
+    assert normalized["warnings"][0]["code"] == "SECTION_TITLE_NORMALIZED"
 
 
 @pytest.mark.p0
@@ -320,16 +321,15 @@ def test_change_plan_adds_optional_reporting_and_preserves_real_monitoring(datab
 
 
 @pytest.mark.p0
-def test_document_ast_restores_required_structural_parents_from_child_content(database):
+def test_document_ast_restores_empty_structural_parents_without_copying_child_content(database):
     draft = _draft()
     draft["sections"] = [section for section in draft["sections"] if section["id"] not in {"3", "4", "5"}]
 
     normalized = validate_document_ast(draft)
 
     sections = {section["id"]: section for section in normalized["sections"]}
-    assert sections["3"]["blocks"]
-    assert sections["4"]["blocks"][0]["type"] == "paragraph"
-    assert sections["5"]["blocks"]
+    assert sections["3"]["blocks"] == sections["4"]["blocks"] == sections["5"]["blocks"] == []
+    assert {item["section_id"] for item in normalized["warnings"] if item["code"] == "REQUIRED_SECTION_EMPTY"} == {"3", "4", "5"}
 
 
 @pytest.mark.p0
@@ -529,7 +529,7 @@ def test_saved_unsupported_block_is_preserved_while_other_content_is_edited(sche
 
 
 @pytest.mark.parametrize("damage", ["changed_source", "duplicate", "different_section"])
-def test_saved_unsupported_block_does_not_authorize_new_or_modified_unsupported_content(damage):
+def test_new_or_modified_unsupported_content_is_preserved_as_literal_text(damage):
     job = _coverage_job()
     base = job.payload["current_revision"]["document_ast"]
     scenario = next(section for section in base["sections"] if section["id"] == "4.3")
@@ -546,11 +546,10 @@ def test_saved_unsupported_block_does_not_authorize_new_or_modified_unsupported_
     else:
         operation.update(section_id="5.5", expected_section_hash=section_hash(next(section for section in base["sections"] if section["id"] == "5.5")))
 
-    with pytest.raises(BusinessDocumentError) as caught:
-        apply_change_plan(base, plan)
-
-    assert caught.value.code == "INVALID_DOCUMENT_DRAFT"
-    assert caught.value.details["block_type"] == "bpmn"
+    result = apply_change_plan(base, plan)
+    target = next(section for section in result["sections"] if section["id"] == operation["section_id"])
+    assert any(item["code"] == "BLOCK_FORMAT_NORMALIZED" for item in result["warnings"])
+    assert any(block["type"] == "paragraph" and "<definitions>" in block["text"] for block in target["blocks"])
     assert base == original
 
 
@@ -658,10 +657,10 @@ def test_generation_and_semantic_verification_accept_model_output_without_server
 @pytest.mark.parametrize("preview_only", [False, True])
 def test_change_generation_checks_all_requirements_before_returning_a_result(preview_only):
     adapter = CoverageAdapter(missing=True)
-    with pytest.raises(BusinessDocumentError) as caught:
-        BusinessDocumentAI(adapter).process(_coverage_job(preview_only=preview_only))
-    assert caught.value.code == "REQUIREMENT_COVERAGE_FAILED"
-    assert caught.value.details["requirements"][0]["source_id"] == "comment-event"
+    result = BusinessDocumentAI(adapter).process(_coverage_job(preview_only=preview_only))
+    assert result["requirement_coverage"]["status"] == "FAIL"
+    assert result["requirement_coverage"]["issues"][0]["source_id"] == "comment-event"
+    assert result["warnings"][0]["code"] == "REQUIREMENT_COVERAGE_FAILED"
     assert len(adapter.calls) == 2
 
 
@@ -709,9 +708,8 @@ def test_semantic_rejection_preserves_complete_confirmed_inputs_without_regenera
     job = _coverage_job()
     snapshot = deepcopy(job.payload)
     adapter = CoverageAdapter(missing=True)
-    with pytest.raises(BusinessDocumentError) as caught:
-        BusinessDocumentAI(adapter).process(job)
-    assert caught.value.code == "REQUIREMENT_COVERAGE_FAILED"
+    result = BusinessDocumentAI(adapter).process(job)
+    assert result["requirement_coverage"]["status"] == "FAIL"
     assert [call["job_input"]["task_type"] for call in adapter.calls] == ["PLAN_CHANGES", "VERIFY_REQUIREMENT_COVERAGE"]
     assert adapter.calls[0]["job_input"]["confirmed_requirement_fragments"] == {
         "comment-event:0": {"source_id": "comment-event", "text": "Хранить 90 дней."},
@@ -1033,25 +1031,23 @@ def test_ai_repairs_json_validates_schema_and_persists_pinned_prompt_audit(datab
     invalid = CapturingAdapter("{}")
     with pytest.raises(BusinessDocumentError) as caught:
         BusinessDocumentAI(invalid).process(BusinessDocumentJob.get_by_id(next_request["job_id"]))
-    assert caught.value.code == "INVALID_DRAFT_BUNDLE"
+    assert caught.value.code == "INVALID_DOCUMENT_DRAFT"
 
 
 @pytest.mark.p0
-def test_ai_rejects_semantic_duplicate_between_parent_and_child_section():
+def test_ai_returns_semantic_duplicates_as_advice_without_rewriting():
     job = SimpleNamespace(
         job_type="GENERATE_DRAFT",
         payload={"template_version": published_template()["template_version"]},
     )
 
-    with pytest.raises(BusinessDocumentError) as caught:
-        BusinessDocumentAI._validate(job, _draft_bundle(_draft_with_parent_child_duplicate()))
-
-    assert caught.value.code == "DUPLICATE_SECTION_CONTENT"
-    assert caught.value.details == {"section_pairs": [{"parent_section_id": "4", "child_section_id": "4.3"}]}
+    result = BusinessDocumentAI._validate(job, _draft_bundle(_draft_with_parent_child_duplicate()))
+    assert result["draft"]["sections"] == _draft_with_parent_child_duplicate()["sections"]
+    assert result["draft"]["warnings"][0]["code"] == "DUPLICATE_SECTION_CONTENT"
 
 
 @pytest.mark.p0
-def test_worker_stops_semantic_duplicate_without_automatic_content_rewrite(database):
+def test_worker_saves_semantic_duplicate_without_automatic_content_rewrite(database):
     class SequencedAdapter:
         def __init__(self, responses):
             self.responses = iter(responses)
@@ -1093,8 +1089,8 @@ def test_worker_stops_semantic_duplicate_without_automatic_content_rewrite(datab
 
     assert worker.run_once() is True
     retried = BusinessDocumentJob.get_by_id(requested["job_id"])
-    assert retried.status == "DEAD"
-    assert retried.error["code"] == "DUPLICATE_SECTION_CONTENT"
+    assert retried.status == "COMPLETED" and not retried.error
+    assert retried.result["output"]["draft"]["warnings"][0]["code"] == "DUPLICATE_SECTION_CONTENT"
     assert not worker.run_once()
     assert len(adapter.calls) == 1
 
@@ -1270,7 +1266,7 @@ def test_change_prompt_includes_the_current_document_block_contract(schema_versi
 
 
 @pytest.mark.parametrize("schema_version", ["1", "2"])
-def test_change_plan_rejects_bpmn_with_compact_retry_feedback_and_preserves_plantuml(schema_version):
+def test_change_plan_retains_bpmn_as_plain_text_and_preserves_plantuml(schema_version):
     job = _coverage_job()
     base = job.payload["current_revision"]["document_ast"]
     base["schema_version"] = schema_version
@@ -1287,20 +1283,10 @@ def test_change_plan_rejects_bpmn_with_compact_retry_feedback_and_preserves_plan
         content={"blocks": [scenario["blocks"][0], {"type": "bpmn", "source": xml}]},
     )
 
-    with pytest.raises(BusinessDocumentError) as caught:
-        BusinessDocumentAI(CapturingAdapter(plan)).process(job)
-
-    error = caught.value
-    assert error.code == "INVALID_DOCUMENT_DRAFT"
-    assert error.details == {
-        "path": "sections.9.blocks.1",
-        "validator": "oneOf",
-        "block_type": "bpmn",
-        "allowed_block_types": ["paragraph", "list", "table", "plantuml", "image", "reference"],
-    }
-    assert len(error.message) < 400
-    assert "private scenario" not in error.message
-    assert "PlantUML" in error.message
+    result = apply_change_plan(base, plan)
+    target = next(section for section in result["sections"] if section["id"] == "4.3")
+    assert target["blocks"][1] == {"type": "paragraph", "text": f"```text\n{xml}\n```"}
+    assert result["warnings"][0]["code"] == "BLOCK_FORMAT_NORMALIZED"
     assert json.dumps(base, ensure_ascii=False) == original
     operation["content"]["blocks"] = scenario["blocks"]
     assert BusinessDocumentAI._validate(job, plan) == {"change_plan": plan}
@@ -1489,7 +1475,6 @@ def test_ai_removes_fields_copied_from_adjacent_question_schemas(job_type, neste
 
 @pytest.mark.p0
 def test_ai_keeps_disallowed_draft_content_in_section_as_plain_text():
-    job = SimpleNamespace(job_type="GENERATE_DRAFT")
     draft = _draft()
     audience = next(section for section in draft["sections"] if section["id"] == "3")
     audience["blocks"].extend(
@@ -1502,14 +1487,14 @@ def test_ai_keeps_disallowed_draft_content_in_section_as_plain_text():
     functions["blocks"].append({"type": "plantuml", "source": "@startuml\nA -> B\n@enduml"})
     output = {"draft": draft, "review_questions": {"questions": []}, "proposals": []}
 
-    normalized = BusinessDocumentAI._normalize_draft_block_placement(job, output)
+    normalized = {"draft": validate_document_ast(output["draft"])}
 
     normalized_audience = next(section for section in normalized["draft"]["sections"] if section["id"] == "3")
     normalized_functions = next(section for section in normalized["draft"]["sections"] if section["id"] == "4")
     assert {block["type"] for block in normalized_audience["blocks"]} == {"paragraph"}
     assert "Физические лица" in normalized_audience["blocks"][-2]["text"]
     assert "Новые клиенты" in normalized_audience["blocks"][-1]["text"]
-    assert normalized_functions["blocks"][-1] == {"type": "paragraph", "text": "@startuml\nA -> B\n@enduml"}
+    assert "@startuml\nA -> B\n@enduml" in normalized_functions["blocks"][-1]["text"]
     assert audience["blocks"][-2]["type"] == "table"
     conceptual = next(section for section in normalized["draft"]["sections"] if section["id"] == "4.1")
     scenario = next(section for section in normalized["draft"]["sections"] if section["id"] == "4.3")

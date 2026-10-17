@@ -103,6 +103,7 @@ import { ReviewActivity } from './components/review-activity';
 import { RevisionHistoryPanel } from './components/revision-history-panel';
 import { appendVoiceTranscript, VoiceInput } from './components/voice-input';
 import type {
+  BusinessDocumentChangePreview,
   BusinessDocumentCommand,
   BusinessDocumentCommandType,
   BusinessDocumentLifecycleState,
@@ -1002,30 +1003,32 @@ export default function BusinessDocumentsPage() {
     ),
     retry: false,
   });
-  const inlineChangePreview = useMemo(() => {
-    if (document?.change_preview) {
-      const preview = changePreviewQuery.data;
-      return preview?.job_id === document.change_preview.job_id &&
-        preview.base_revision_id === document.current_revision?.revision_id
-        ? preview
-        : null;
-    }
-    if (
-      !document ||
-      !streamJobId ||
-      streamPreview?.jobId !== streamJobId ||
-      streamPreview.baseRevisionId !== document.current_revision?.revision_id ||
-      !streamPreview.sections.length
-    )
-      return null;
-    return {
-      job_id: streamJobId,
-      base_revision_id: document.current_revision?.revision_id ?? '',
-      state_version: document.state_version,
-      sections: streamPreview.sections,
-      acknowledged_no_change_event_ids: [],
-    };
-  }, [document, changePreviewQuery.data, streamPreview, streamJobId]);
+  const inlineChangePreview =
+    useMemo<BusinessDocumentChangePreview | null>(() => {
+      if (document?.change_preview) {
+        const preview = changePreviewQuery.data;
+        return preview?.job_id === document.change_preview.job_id &&
+          preview.base_revision_id === document.current_revision?.revision_id
+          ? preview
+          : null;
+      }
+      if (
+        !document ||
+        !streamJobId ||
+        streamPreview?.jobId !== streamJobId ||
+        streamPreview.baseRevisionId !==
+          document.current_revision?.revision_id ||
+        !streamPreview.sections.length
+      )
+        return null;
+      return {
+        job_id: streamJobId,
+        base_revision_id: document.current_revision?.revision_id ?? '',
+        state_version: document.state_version,
+        sections: streamPreview.sections,
+        acknowledged_no_change_event_ids: [],
+      };
+    }, [document, changePreviewQuery.data, streamPreview, streamJobId]);
   useEffect(() => setSelection(null), [inlineChangePreview?.sections]);
   const focusSection = useCallback((sectionId: string) => {
     setSectionFocus((current) => ({
@@ -1255,6 +1258,11 @@ export default function BusinessDocumentsPage() {
           (displayedRevision?.revision_number ?? 0) - 1,
       )
     : undefined;
+  const documentWarnings = historyOpen
+    ? (displayedRevision?.document_ast.warnings ?? [])
+    : (inlineChangePreview?.warnings ??
+      displayedRevision?.document_ast.warnings ??
+      []);
   const documentHighlightedSectionIds =
     historyOpen && displayedRevision && previousDisplayedRevision
       ? displayedRevision.document_ast.sections
@@ -2045,6 +2053,25 @@ export default function BusinessDocumentsPage() {
         }
       >
         <div className="row-span-2 flex min-h-0 flex-col max-lg:row-start-2 max-lg:row-span-1">
+          {documentWarnings.length > 0 && (
+            <details
+              className="shrink-0 border-b border-state-warning/30 bg-state-warning/5 px-5 py-3 text-sm"
+              data-testid="business-document-warnings"
+              open
+            >
+              <summary className="cursor-pointer font-medium text-text-primary">
+                Документ сохранён с замечаниями ({documentWarnings.length})
+              </summary>
+              <ul className="mt-2 max-h-40 list-disc space-y-1 overflow-y-auto ps-5 text-xs text-text-secondary">
+                {documentWarnings.map((warning, index) => (
+                  <li key={`${warning.code}-${warning.section_id}-${index}`}>
+                    {warning.section_id && `Раздел ${warning.section_id}: `}
+                    {warning.message}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
           {inlineChangePreview && (
             <ChangePreviewPanel
               preliminary={!document.change_preview}

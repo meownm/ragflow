@@ -20,13 +20,10 @@ def test_pass_is_one_verdict_without_per_sentence_citations():
 
 
 @pytest.mark.parametrize("source_id", ["comment", "section:1"])
-def test_failure_preserves_actual_source_text_for_the_next_diff(source_id):
+def test_failure_returns_source_scoped_advice(source_id):
     report = _failure()
     report["issues"][0]["source_id"] = source_id
-    with pytest.raises(RuleViolation) as caught:
-        validate_requirement_coverage(report, SOURCES, SECTIONS)
-    assert caught.value.code == "REQUIREMENT_COVERAGE_FAILED"
-    assert caught.value.details["requirements"] == [{**report["issues"][0], "text": SOURCES[source_id]["text"]}]
+    assert validate_requirement_coverage(report, SOURCES, SECTIONS) == report
 
 
 @pytest.mark.parametrize(
@@ -35,17 +32,13 @@ def test_failure_preserves_actual_source_text_for_the_next_diff(source_id):
         lambda r: r.update(status="PASS"),
         lambda r: r.update(status=[]),
         lambda r: r.update(issues=[]),
-        lambda r: r.update(issues=[r["issues"][0]] * 5),
         lambda r: r.update(issues=None),
         lambda r: r["issues"][0].update(source_id="invented"),
         lambda r: r["issues"][0].update(source_id=[]),
         lambda r: r["issues"][0].update(section_id="missing"),
         lambda r: r["issues"][0].update(section_id=[]),
         lambda r: r["issues"][0].update(reason=" "),
-        lambda r: r["issues"][0].update(reason="x" * 201),
         lambda r: r["issues"][0].update(reason=None),
-        lambda r: r["issues"][0].update(quote="invented"),
-        lambda r: r.update(extra=True),
         lambda r: r.pop("status"),
     ],
 )
@@ -55,3 +48,15 @@ def test_malformed_or_invented_semantic_verdict_fails_closed(mutate):
     with pytest.raises(RuleViolation) as caught:
         validate_requirement_coverage(report, SOURCES, SECTIONS)
     assert caught.value.code == "INVALID_REQUIREMENT_COVERAGE"
+
+
+def test_advisory_report_accepts_extra_fields_and_longer_reasons():
+    report = _failure()
+    report.update(summary="Проверено")
+    report["issues"][0].update(reason="Подробное замечание. " * 30, quote="Дополнительное пояснение")
+    report["issues"] *= 5
+    normalized = validate_requirement_coverage(report, SOURCES, SECTIONS)
+    assert normalized["status"] == "FAIL" and len(normalized["issues"]) == 5
+    assert normalized["issues"][0]["reason"] == report["issues"][0]["reason"]
+    assert set(normalized["issues"][0]) == {"source_id", "section_id", "reason"}
+    assert validate_requirement_coverage({"status": "PASS", "issues": [], "summary": "Готово"}, SOURCES, SECTIONS) == {"status": "PASS", "issues": []}

@@ -135,7 +135,7 @@ def test_change_plan_citations_use_the_pinned_chunk_provenance(database, known_r
 
 
 @pytest.mark.parametrize("with_evidence", [False, True])
-def test_restart_verifies_the_same_candidate_without_regeneration(database, monkeypatch, with_evidence):
+def test_verifier_outage_saves_the_candidate_with_advice(database, monkeypatch, with_evidence):
     requested, plan = request_plan()
     adapter = PlanAdapter(plan, "transport")
 
@@ -158,18 +158,14 @@ def test_restart_verifies_the_same_candidate_without_regeneration(database, monk
     evidence = Evidence() if with_evidence else None
     assert BusinessDocumentWorker(ai=BusinessDocumentAI(adapter), evidence=evidence, retry_base_ms=0).run_once()
     job = BusinessDocumentJob.get_by_id(requested["job_id"])
-    assert job.status == "RETRY"
-    assert job.result["recovery"]["candidate"]["change_plan"] == plan
-    assert job.result["recovery"]["calls"] == 2
-    assert BusinessDocumentRevision.select().count() == 1
-    assert BusinessDocumentWorker(ai=BusinessDocumentAI(adapter), evidence=evidence, retry_base_ms=0).run_once()
-    job = BusinessDocumentJob.get_by_id(job.id)
     assert job.status == "COMPLETED"
-    assert [call["job_input"]["task_type"] for call in adapter.calls] == ["PLAN_CHANGES", "VERIFY_REQUIREMENT_COVERAGE", "VERIFY_REQUIREMENT_COVERAGE"]
-    assert adapter.calls[1] == adapter.calls[2]
-    assert len(job.result["execution"]["ai"]["verification"]) == 2
+    assert job.result["output"]["change_plan"] == plan
+    assert job.result["output"]["requirement_coverage"]["status"] == "UNAVAILABLE"
+    assert job.result["output"]["warnings"][0]["code"] == "REQUIREMENT_VERIFICATION_UNAVAILABLE"
+    assert [call["job_input"]["task_type"] for call in adapter.calls] == ["PLAN_CHANGES", "VERIFY_REQUIREMENT_COVERAGE"]
+    assert job.result["execution"]["ai"]["verification"]["duration_ms"] == 10
     if with_evidence:
-        assert job.result["execution"]["retrieval"]["attempt"] == 2
+        assert job.result["execution"]["retrieval"]["attempt"] == 1
     assert BusinessDocumentRevision.select().count() == 2
 
 
@@ -185,17 +181,20 @@ def test_malformed_verdict_is_repaired_without_rewriting_candidate(database):
     assert job.result["output"]["change_plan"] == plan
 
 
-def test_semantically_rejected_candidate_is_terminal_and_never_reused(database):
+def test_semantic_issues_are_saved_with_the_document_for_review(database):
     requested, plan = request_plan()
     adapter = PlanAdapter(plan, "missing")
     worker = BusinessDocumentWorker(ai=BusinessDocumentAI(adapter), retry_base_ms=0)
     assert worker.run_once()
     job = BusinessDocumentJob.get_by_id(requested["job_id"])
-    assert job.status == "DEAD"
-    assert job.error["code"] == "REQUIREMENT_COVERAGE_FAILED"
+    assert job.status == "COMPLETED" and not job.error
+    assert job.result["output"]["requirement_coverage"]["status"] == "FAIL"
+    current = document_queries.get_document(job.document_id, AUTHOR)
+    assert current["lifecycle_state"] == "REVIEW"
+    assert current["current_revision"]["document_ast"]["warnings"][0]["code"] == "REQUIREMENT_COVERAGE_FAILED"
     assert not worker.run_once()
     assert len(adapter.calls) == 2
-    assert BusinessDocumentRevision.select().count() == 1
+    assert BusinessDocumentRevision.select().count() == 2
 
 
 def test_invalid_sources_fail_before_semantic_verification(database):
@@ -233,7 +232,16 @@ def test_foreign_document_source_fails_before_semantic_verification(database):
 
 def test_stale_document_cannot_commit_a_new_diff(database):
     requested, plan = request_plan()
-    adapter = PlanAdapter(plan)
+    adapter = PlanAdapter(plan, None)
+    generate = adapter.generate
+
+    def interrupted_generation(*args, **kwargs):
+        result = generate(*args, **kwargs)
+        if len(adapter.calls) == 1:
+            raise TimeoutError("Generation interrupted")
+        return result
+
+    adapter.generate = interrupted_generation
     worker = BusinessDocumentWorker(ai=BusinessDocumentAI(adapter), retry_base_ms=0)
     assert worker.run_once()
     job = BusinessDocumentJob.get_by_id(requested["job_id"])
@@ -241,7 +249,7 @@ def test_stale_document_cannot_commit_a_new_diff(database):
     assert worker.run_once()
     job = BusinessDocumentJob.get_by_id(job.id)
     assert job.error["code"] == "STALE_AI_RESULT"
-    assert len(adapter.calls) == 2
+    assert len(adapter.calls) == 1
     assert job.status == "DEAD"
     current = BusinessDocument.get_by_id(job.document_id)
     assert current.state_version == job.source_state_version + 1 and current.operation_state == "IDLE"

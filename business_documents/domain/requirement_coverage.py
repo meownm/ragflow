@@ -34,31 +34,17 @@ def changed_section_repetitions(before: Mapping, after: Mapping) -> tuple[tuple[
 
 def validate_requirement_coverage(report: object, sources: Mapping[str, Mapping[str, str]], sections: Mapping[str, str]) -> dict:
     def invalid():
-        raise RuleViolation("INVALID_REQUIREMENT_COVERAGE", "Semantic verification must return PASS without issues or FAIL with up to four source-scoped issues")
+        raise RuleViolation("INVALID_REQUIREMENT_COVERAGE", "Semantic verification must return PASS without issues or FAIL with source-scoped issues")
 
-    if not isinstance(report, dict) or set(report) != {"status", "issues"}:
+    if not isinstance(report, dict):
         invalid()
-    status, issues = report["status"], report["issues"]
-    if status not in ("PASS", "FAIL") or not isinstance(issues, list) or len(issues) > 4 or (status == "PASS") != (len(issues) == 0):
+    status, issues = report.get("status"), report.get("issues")
+    if status not in ("PASS", "FAIL") or not isinstance(issues, list) or (status == "PASS") != (len(issues) == 0):
         invalid()
     for issue in issues:
-        if not isinstance(issue, dict) or set(issue) != {"source_id", "section_id", "reason"}:
+        if not isinstance(issue, dict) or not {"source_id", "section_id", "reason"} <= issue.keys():
             invalid()
         source_id, section_id, reason = issue["source_id"], issue["section_id"], issue["reason"]
-        if (
-            not isinstance(source_id, str)
-            or source_id not in sources
-            or not isinstance(section_id, str)
-            or section_id not in sections
-            or not isinstance(reason, str)
-            or not reason.strip()
-            or len(reason) > 200
-        ):
+        if not isinstance(source_id, str) or source_id not in sources or not isinstance(section_id, str) or section_id not in sections or not isinstance(reason, str) or not reason.strip():
             invalid()
-    if issues:
-        raise RuleViolation(
-            "REQUIREMENT_COVERAGE_FAILED",
-            "Generated changes omit, contradict or misplace confirmed requirements",
-            {"requirements": [{**issue, "text": sources[issue["source_id"]]["text"]} for issue in issues]},
-        )
-    return report
+    return {"status": status, "issues": [{key: issue[key] for key in ("source_id", "section_id", "reason")} for issue in issues]}

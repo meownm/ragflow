@@ -42,12 +42,12 @@ from api.apps.business_documents.assets import (
 )
 from business_documents.domain.content import bind_change_plan_snapshot
 from api.apps.business_documents.async_runtime import run_in_worker_loop
-from api.apps.business_documents.recovery import AIRecovery
+from api.apps.business_documents.recovery import AIRecovery, is_transient_failure
 from business_documents.application.errors import ValidationError
 from business_documents.domain.job_recovery import REPAIRABLE_OUTPUT_CODES
 from business_documents.domain.content import render_section_text, section_hash
-from business_documents.domain.change_stream import ChangeOperationStream
 from business_documents.domain.content_quality import parent_child_section_pairs, semantic_duplicate_section_pairs
+from business_documents.domain.change_stream import ChangeOperationStream
 from business_documents.domain.requirement_coverage import changed_section_repetitions, validate_requirement_coverage
 from business_documents.domain.change_plan import validate_snapshot_sources, validate_evidence_sources
 from business_documents.domain.errors import RuleViolation
@@ -494,8 +494,14 @@ class BusinessDocumentAI:
                 recovery.checkpoint()
         if job.job_type == "PLAN_CHANGES":
             validated["requirement_coverage"] = self._verify_requirements(job, validated["change_plan"], recovery=recovery, final=final)
+            coverage = validated["requirement_coverage"]
+            warnings = list((final or {}).get("warnings", []))
+            warnings.extend({"code": "REQUIREMENT_COVERAGE_FAILED", "section_id": issue["section_id"], "message": issue["reason"]} for issue in coverage["issues"])
+            if coverage["status"] == "UNAVAILABLE":
+                warnings.append({"code": "REQUIREMENT_VERIFICATION_UNAVAILABLE", "message": "Смысловую проверку завершить не удалось. Проверьте подготовленные изменения перед подтверждением."})
+            if warnings:
+                validated["warnings"] = warnings
         recovery.checkpoint()
-        recovery.remaining_seconds()
         return validated
 
     def _prepare_draft_evidence(self, job: BusinessDocumentJob, prompt: PromptBundle, recovery: AIRecovery) -> PromptBundle:
@@ -625,13 +631,33 @@ class BusinessDocumentAI:
             recovery.after_call(stage, consumer() if callable(consumer) else None)
 
     def _normalize_and_validate(self, job: BusinessDocumentJob, raw: object, evidence: dict[str, Any] | None) -> dict[str, Any]:
-        parsed = self._parse(raw)
+        try:
+            parsed = self._parse(raw)
+        except ValidationError as error:
+            if job.job_type != "GENERATE_DRAFT" or error.code != "INVALID_AI_JSON" or not isinstance(raw, str) or not raw.strip():
+                raise
+            parsed = None
+        if job.job_type == "GENERATE_DRAFT" and isinstance(raw, str) and raw.strip() and (parsed is None or (not raw.lstrip().startswith("{") and not {"draft", "sections"}.intersection(parsed))):
+            # JSON repair can extract diagram braces from an otherwise plain
+            # Markdown document. Preserve that response in full as draft text.
+            parsed = {
+                "draft": {
+                    "schema_version": "1",
+                    "document_type": "business_requirements",
+                    "template_version": job.payload["template_version"],
+                    "sections": [{"id": "1.1", "title": "Текст для распределения по разделам", "blocks": [{"type": "paragraph", "text": raw}]}],
+                    "warnings": [{"code": "DOCUMENT_FORMAT_NORMALIZED", "message": "Модель вернула неструктурированный текст. Он сохранён целиком для дальнейшего распределения по разделам."}],
+                }
+            }
+        if job.job_type == "GENERATE_DRAFT" and "draft" not in parsed and isinstance(parsed.get("sections"), list):
+            parsed = {"draft": parsed}
+        if job.job_type == "GENERATE_DRAFT" and isinstance(parsed.get("draft"), dict):
+            parsed = {**parsed, "draft": {"schema_version": "1", "document_type": "business_requirements", "template_version": job.payload["template_version"], **parsed["draft"]}}
         parsed = self._normalize_contract_envelope(job, parsed)
         parsed = self._normalize_schema_versions(parsed)
         parsed = self._normalize_question_fields(job, parsed)
         parsed = self._bind_question_stages(job, parsed)
         parsed = self._normalize_draft_review_outcome(job, parsed)
-        parsed = self._normalize_draft_block_placement(job, parsed)
         parsed = self._drop_answered_questions(job, parsed)
         parsed = self._drop_existing_proposals(job, parsed)
         parsed = self._drop_unknown_comment_dispositions(job, parsed)
@@ -679,14 +705,21 @@ class BusinessDocumentAI:
         recovery = recovery or AIRecovery()
         review_sources = {**sources, **{f"section:{section_id}": {"text": text} for section_id, text in before.items()}}
         while True:
-            raw = self._generate(job.tenant_id, system, payload, "verification", recovery)
             try:
+                raw = self._generate(job.tenant_id, system, payload, "verification", recovery)
                 return validate_requirement_coverage(self._parse(raw), review_sources, titles)
-            except RuleViolation as error:
-                if error.code not in {"EMPTY_AI_RESPONSE", "INVALID_AI_JSON", "INVALID_REQUIREMENT_COVERAGE"} or not recovery.repair(
-                    "verification", raw, ValidationError(error.code, error.message, error.details)
+            except Exception as error:
+                code = getattr(error, "code", None)
+                if code in {"EMPTY_AI_RESPONSE", "INVALID_AI_JSON", "INVALID_REQUIREMENT_COVERAGE"}:
+                    if recovery.repair("verification", raw, ValidationError(error.code, error.message, error.details)):
+                        continue
+                elif (
+                    not is_transient_failure(error)
+                    and getattr(error, "status_code", None) is None
+                    and code not in {"REQUIREMENT_CONTEXT_TOO_LARGE", "MODEL_CONTEXT_UNAVAILABLE", "AI_TIME_BUDGET_EXCEEDED", "AI_CALL_BUDGET_EXCEEDED"}
                 ):
-                    raise ValidationError(error.code, error.message, error.details) from error
+                    raise
+                return {"status": "UNAVAILABLE", "issues": []}
 
     def process_stream(
         self,
@@ -1043,51 +1076,6 @@ class BusinessDocumentAI:
         return normalized
 
     @staticmethod
-    def _normalize_draft_block_placement(job: BusinessDocumentJob, output: dict[str, Any]) -> dict[str, Any]:
-        """Keep model content in its section while degrading unsupported formatting."""
-
-        if job.job_type != "GENERATE_DRAFT" or not isinstance(output.get("draft"), dict):
-            return output
-        sections = output["draft"].get("sections")
-        if not isinstance(sections, list):
-            return output
-        allowed_by_section = {section["id"]: set(section["allowed_blocks"]) for section in published_template()["sections"]}
-        normalized = deepcopy(output)
-        changed = False
-        for section in normalized["draft"].get("sections", []):
-            if not isinstance(section, dict) or not isinstance(section.get("blocks"), list):
-                continue
-            allowed = allowed_by_section.get(section.get("id"))
-            if not allowed or "paragraph" not in allowed:
-                continue
-            for index, block in enumerate(section["blocks"]):
-                if not isinstance(block, dict) or block.get("type") in allowed:
-                    continue
-                text = BusinessDocumentAI._unsupported_block_text(block)
-                if text is None or not 1 <= len(text) <= 20_000:
-                    continue
-                section["blocks"][index] = {"type": "paragraph", "text": text}
-                changed = True
-        return normalized if changed else output
-
-    @staticmethod
-    def _unsupported_block_text(block: dict[str, Any]) -> str | None:
-        block_type = block.get("type")
-        if block_type == "list" and isinstance(block.get("items"), list):
-            return "\n".join(f"• {item}" for item in block["items"] if isinstance(item, str)).strip() or None
-        if block_type == "table" and isinstance(block.get("headers"), list) and isinstance(block.get("rows"), list):
-            rows = [block["headers"], *block["rows"]]
-            return "\n".join(" | ".join(str(cell) for cell in row) for row in rows if isinstance(row, list)).strip() or None
-        if block_type == "plantuml" and isinstance(block.get("source"), str):
-            return block["source"].strip() or None
-        if block_type in {"image", "reference"}:
-            label = block.get("alt") if block_type == "image" else block.get("label")
-            url = block.get("url")
-            if isinstance(label, str) and isinstance(url, str):
-                return f"{label.strip()}: {url.strip()}".strip(" :") or None
-        return None
-
-    @staticmethod
     def _bind_exact_draft_evidence_refs(job: BusinessDocumentJob, output: dict[str, Any], evidence: dict[str, Any] | None) -> dict[str, Any]:
         """Attach a source only when the section repeats a distinctive literal."""
 
@@ -1243,29 +1231,28 @@ class BusinessDocumentAI:
             validate_contract("review_plan", output)
             return output
         if job.job_type == "GENERATE_DRAFT":
-            if set(output) != {"draft", "review_questions", "proposals"}:
-                raise ValidationError("INVALID_DRAFT_BUNDLE", "Draft result must contain only draft, review_questions and proposals")
-            draft = validate_document_ast(output["draft"])
+            draft = validate_document_ast(output.get("draft"))
             if draft["template_version"] != job.payload["template_version"]:
                 raise ValidationError("TEMPLATE_VERSION_CONFLICT", "Draft does not use the job's pinned template")
-            duplicate_pairs = semantic_duplicate_section_pairs(
-                draft["sections"],
-                section_pairs=parent_child_section_pairs(draft["sections"]),
-            )
-            if duplicate_pairs:
-                raise ValidationError(
-                    "DUPLICATE_SECTION_CONTENT",
-                    "A parent section repeats content already owned by a subsection",
-                    {"section_pairs": [{"parent_section_id": parent_id, "child_section_id": child_id} for parent_id, child_id in duplicate_pairs]},
+            for parent, child in semantic_duplicate_section_pairs(draft["sections"], section_pairs=parent_child_section_pairs(draft["sections"])):
+                draft.setdefault("warnings", []).append(
+                    {"code": "DUPLICATE_SECTION_CONTENT", "section_id": parent, "message": f"Возможно повторение содержания подраздела {child}; проверьте необходимость повтора."}
                 )
-            validate_contract("question_batch", output["review_questions"])
-            if any(question["stage"] != "REVIEW" for question in output["review_questions"]["questions"]):
-                raise ValidationError("QUESTION_STAGE_CONFLICT", "Draft review protocol emitted a non-review question")
-            validate_contract(
-                "review_plan",
-                {"schema_version": "1", "questions": [], "proposals": output["proposals"], "comment_dispositions": []},
-            )
-            return {**output, "draft": draft}
+            result = {"draft": draft, "review_questions": {"schema_version": "1", "outcome": "COMPLETE", "questions": []}, "proposals": []}
+            for field, name in (("review_questions", "question_batch"), ("proposals", "review_plan")):
+                value = output.get(field, result[field])
+                checked = value if field == "review_questions" else {"schema_version": "1", "questions": [], "proposals": value, "comment_dispositions": []}
+                try:
+                    validate_contract(name, checked)
+                    if field == "review_questions" and any(question["stage"] != "REVIEW" for question in value["questions"]):
+                        raise ValidationError("QUESTION_STAGE_CONFLICT", "Draft review protocol emitted a non-review question")
+                except ValidationError:
+                    draft.setdefault("warnings", []).append(
+                        {"code": "DRAFT_PROTOCOL_FORMAT", "message": "Уточнения или предложения сохранены без структурирования: " + json.dumps(value, ensure_ascii=False)}
+                    )
+                else:
+                    result[field] = value
+            return result
         if job.job_type == "PLAN_CHANGES":
             revision = job.payload.get("current_revision")
             if not isinstance(revision, dict) or not isinstance(revision.get("document_ast"), dict):

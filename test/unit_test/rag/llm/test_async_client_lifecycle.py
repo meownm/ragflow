@@ -72,10 +72,9 @@ def provider():
         thread.join(5)
 
 
-@pytest.mark.parametrize("streaming", [False, True])
-@pytest.mark.parametrize("mode", ["success", "provider_error", "timeout", "cancel"])
-def test_adapter_closes_real_sdk_on_its_request_loop(provider, monkeypatch, streaming, mode):
-    models, loops, chunks = [], [], []
+@pytest.fixture
+def adapter_models(provider, monkeypatch):
+    models = []
     config = {"llm_factory": "OpenAI-API-Compatible", "llm_name": "local", "model_type": "chat", "max_tokens": 65536, "api_base": provider.url}
 
     def model_instance(_config, **kwargs):
@@ -88,6 +87,17 @@ def test_adapter_closes_real_sdk_on_its_request_loop(provider, monkeypatch, stre
     monkeypatch.setattr(tenant_model_service, "get_tenant_default_model_by_type", lambda *_args: config)
     monkeypatch.setattr(tenant_llm_service.TenantLLMService, "model_instance", model_instance)
     monkeypatch.setattr(tenant_llm_service.TenantLangfuseService, "filter_by_tenant", lambda **_kwargs: None)
+    try:
+        yield models
+    finally:
+        for model in models:
+            model.client.close()
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("mode", ["success", "provider_error", "timeout", "cancel"])
+def test_adapter_closes_real_sdk_on_its_request_loop(provider, adapter_models, streaming, mode):
+    models, loops, chunks = adapter_models, [], []
     provider.status = 503 if mode == "provider_error" else 200
     provider.hold = mode in {"timeout", "cancel"}
 
@@ -115,13 +125,93 @@ def test_adapter_closes_real_sdk_on_its_request_loop(provider, monkeypatch, stre
             assert models and all(model.async_client.is_closed() for model in models)
             assert not loop.is_closed()
 
-    try:
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            executor.submit(run_in_worker_loop, call()).result(timeout=10)
-        assert len(models) == 1 and loops[0].is_closed()
-    finally:
-        for model in models:
-            model.client.close()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        executor.submit(run_in_worker_loop, call()).result(timeout=10)
+    assert len(models) == 1 and loops[0].is_closed()
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("primary", ["503", "cancel", "timeout", "success"])
+@pytest.mark.parametrize("flush_failure", ["error", "cancel"])
+def test_adapter_preserves_operation_error_when_callback_flush_fails(provider, adapter_models, monkeypatch, caplog, streaming, primary, flush_failure):
+    from litellm.litellm_core_utils.logging_worker import GLOBAL_LOGGING_WORKER
+
+    cleanup_error = RuntimeError("injected callback flush failure")
+    operation_errors, loops = [], []
+    provider.status = 503 if primary == "503" else 200
+    provider.hold = primary in {"cancel", "timeout"}
+    original_chat = llm_service.LLMBundle.async_chat
+    original_stream = llm_service.LLMBundle.async_chat_streamly_delta
+
+    async def tracked_chat(self, *args, **kwargs):
+        try:
+            return await original_chat(self, *args, **kwargs)
+        except BaseException as error:
+            operation_errors.append(error)
+            raise
+
+    async def tracked_stream(self, *args, **kwargs):
+        try:
+            async for chunk in original_stream(self, *args, **kwargs):
+                yield chunk
+        except BaseException as error:
+            operation_errors.append(error)
+            raise
+
+    monkeypatch.setattr(llm_service.LLMBundle, "async_chat", tracked_chat)
+    monkeypatch.setattr(llm_service.LLMBundle, "async_chat_streamly_delta", tracked_stream)
+
+    async def call():
+        loop = asyncio.get_running_loop()
+        loops.append(loop)
+        task = None
+        chunks = []
+        flush_calls = []
+
+        async def failing_flush():
+            flush_calls.append(True)
+            if flush_failure == "error":
+                raise cleanup_error
+            # A new cancellation during flush must propagate, while a repeat
+            # cancellation must preserve the original operation's exception.
+            task.cancel("callback cleanup cancellation")
+            await asyncio.sleep(0)
+
+        monkeypatch.setattr(GLOBAL_LOGGING_WORKER, "flush", failing_flush)
+        task = asyncio.create_task(ai_module.RAGFlowLLMAdapter().async_generate("tenant", "system", {}, chunks.append if streaming else None))
+        try:
+            if provider.hold:
+                assert await asyncio.to_thread(provider.received.wait, 3)
+            if primary == "timeout":
+                with pytest.raises(TimeoutError) as caught:
+                    await asyncio.wait_for(task, timeout=0.05)
+                assert caught.value.__cause__ is operation_errors[0]
+            else:
+                if primary == "cancel":
+                    task.cancel("original operation cancellation")
+                expected = asyncio.CancelledError if flush_failure == "cancel" or primary == "cancel" else openai.InternalServerError if primary == "503" else RuntimeError
+                with pytest.raises(expected) as caught:
+                    await task
+                if primary == "cancel" or (primary == "503" and flush_failure == "error"):
+                    assert caught.value is operation_errors[0]
+                elif flush_failure == "error":
+                    assert caught.value is cleanup_error
+                else:
+                    assert caught.value.args == ("callback cleanup cancellation",)
+                if primary == "503" and flush_failure == "error":
+                    assert is_transient_failure(caught.value)
+            assert flush_calls == [True]
+            if primary == "success":
+                assert chunks == (["{}"] if streaming else [])
+        finally:
+            assert adapter_models and all(model.async_client.is_closed() for model in adapter_models)
+            assert not loop.is_closed()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        executor.submit(run_in_worker_loop, call()).result(timeout=10)
+    assert loops[0].is_closed()
+    if primary != "success" and flush_failure == "error":
+        assert "callback cleanup failed; preserving the operation error" in caplog.text
 
 
 def test_async_bundle_closes_only_its_model_and_preserves_sync_cleanup():

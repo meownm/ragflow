@@ -361,6 +361,7 @@ class RAGFlowLLMAdapter:
 
         with span_context as span:
             async with LLMBundle(tenant_id, model_config, lang="Russian", max_retries=0, raise_on_error=True) as bundle:
+                operation_error = None
                 try:
                     history = [{"role": "user", "content": content}]
                     if on_chunk is None:
@@ -408,8 +409,19 @@ class RAGFlowLLMAdapter:
                         token_usage["total_tokens"],
                     )
                     return result
+                except BaseException as error:
+                    operation_error = error
+                    raise
                 finally:
-                    await _drain_litellm_callbacks()
+                    try:
+                        await _drain_litellm_callbacks()
+                    except asyncio.CancelledError:
+                        if not isinstance(operation_error, asyncio.CancelledError):
+                            raise
+                    except Exception:
+                        if operation_error is None:
+                            raise
+                        logging.warning("LiteLLM callback cleanup failed; preserving the operation error", exc_info=True)
 
     def generate(self, tenant_id: str, system_prompt: str, input_payload: dict[str, Any], *, timeout_seconds: float | None = None) -> str:
         return run_in_worker_loop(asyncio.wait_for(self.async_generate(tenant_id, system_prompt, input_payload), timeout=timeout_seconds))

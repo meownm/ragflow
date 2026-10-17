@@ -29,7 +29,8 @@ from urllib.parse import urlsplit
 from docx import Document as WordDocument
 from peewee import IntegrityError
 
-from api.apps.business_documents.assets import published_template, rendering_policy
+from api.apps.business_documents.assets import published_template, rendering_policy, render_document_ast
+from business_documents.domain.content import render_block_source
 from business_documents.application.export import PreparedExport
 from business_documents.application.errors import BusinessDocumentError, ConflictError, ValidationError
 from api.db.db_models import BusinessDocument, BusinessDocumentExportArtifact, BusinessDocumentExportStage, BusinessDocumentJob, BusinessDocumentRevision
@@ -831,7 +832,7 @@ class BusinessDocumentExportService:
     @classmethod
     def _render(cls, export_format: str, revision: BusinessDocumentRevision) -> bytes:
         if export_format == "MARKDOWN":
-            return revision.body_markdown.encode("utf-8")
+            return render_document_ast(revision.document_ast).encode("utf-8")
         if export_format == "DOCX":
             return cls._render_docx(revision.document_ast)
         if export_format == "EVA_WIKI":
@@ -845,7 +846,7 @@ class BusinessDocumentExportService:
             level = min(9, 1 + section["id"].count("."))
             document.add_heading(f"{section['id']}. {section['title']}", level=level)
             for block in section["blocks"]:
-                block_type = block["type"]
+                block_type = block.get("type") if isinstance(block, dict) else None
                 if block_type == "paragraph":
                     document.add_paragraph(block["text"])
                 elif block_type == "list":
@@ -863,6 +864,8 @@ class BusinessDocumentExportService:
                     document.add_paragraph(block["source"], style="No Spacing")
                 elif block_type in {"image", "reference"}:
                     document.add_paragraph(f"{block.get('alt') or block.get('label')}: {block['url']}")
+                else:
+                    document.add_paragraph(render_block_source(block), style="No Spacing")
         buffer = io.BytesIO()
         document.save(buffer)
         return buffer.getvalue()
@@ -882,7 +885,7 @@ class BusinessDocumentExportService:
             section_node_id = f"br-r{revision_number}-s{section_index + 1}"
             lines.append(f'<h{heading_level} data-id="{section_node_id}">{section_id}. {html.escape(section["title"])}</h{heading_level}>')
             for block_index, block in enumerate(section["blocks"]):
-                block_type = block["type"]
+                block_type = block.get("type") if isinstance(block, dict) else None
                 block_node_id = f"{section_node_id}-b{block_index + 1}"
                 if block_type == "paragraph":
                     if str(block["text"]).strip():
@@ -924,5 +927,7 @@ class BusinessDocumentExportService:
                 elif block_type == "reference":
                     reference_url = _safe_external_url(block["url"])
                     lines.append(f'<p data-id="{block_node_id}"><a data-id="{block_node_id}-a" href="{html.escape(reference_url)}">{html.escape(block["label"])}</a></p>')
+                else:
+                    lines.append(f'<pre data-id="{block_node_id}"><code data-id="{block_node_id}-code">{html.escape(render_block_source(block))}</code></pre>')
         lines.append("</div>")
         return "\n".join(lines)

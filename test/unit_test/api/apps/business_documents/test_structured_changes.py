@@ -25,6 +25,35 @@ from business_documents.domain.content import section_hash
 from business_documents.application.errors import ValidationError
 
 
+@pytest.mark.parametrize("kind", ["PREPARE_CHANGES", "APPLY_CHANGES", "ACCEPT_PROPOSAL"])
+def test_saved_unsupported_block_survives_command_replay_and_worker_application(database, kind):
+    document = _document(open_questions=False)
+    proposal_id = document["protocol"]["proposals"][0]["proposal_id"]
+    if kind != "ACCEPT_PROPOSAL":
+        document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "DECIDE_PROPOSAL", {"proposal_id": proposal_id, "decision": "ACCEPTED"}))
+        document = _complete_review_assessment(document_queries.get_document(document["document_id"], AUTHOR))
+    revision = BusinessDocumentRevision.get_by_id(document["current_revision"]["revision_id"])
+    invalid_ast = deepcopy(revision.document_ast)
+    next(section for section in invalid_ast["sections"] if section["id"] == "4.3")["blocks"].append({"type": "bpmn", "source": "<definitions/>"})
+    BusinessDocumentRevision.update(document_ast=invalid_ast).where(BusinessDocumentRevision.id == revision.id).execute()
+    jobs_before = BusinessDocumentJob.select().count()
+    command = _command(document, kind, {"proposal_id": proposal_id} if kind == "ACCEPT_PROPOSAL" else {"base_revision_id": revision.id})
+
+    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], command)
+    assert document_commands.execute(TENANT, AUTHOR, document["document_id"], command)["idempotent_replay"]
+    adapter = PlanAdapter(_plan(document, requested)["change_plan"], None)
+    assert BusinessDocumentWorker(ai=BusinessDocumentAI(adapter)).run_once()
+
+    current = document_queries.get_document(document["document_id"], AUTHOR)
+    assert current["operation_state"] == "IDLE"
+    assert BusinessDocumentJob.select().count() == jobs_before + 1
+    assert BusinessDocumentJob.get_by_id(requested["job_id"]).status == "COMPLETED"
+    old_scenario = next(section for section in invalid_ast["sections"] if section["id"] == "4.3")
+    assert next(section for section in current["current_revision"]["document_ast"]["sections"] if section["id"] == "4.3") == old_scenario
+    assert "<definitions/>" in current["current_revision"]["section_texts"]["4.3"]
+    assert BusinessDocumentRevision.get_by_id(revision.id).document_ast == invalid_ast
+
+
 @pytest.fixture()
 def database():
     yield from proposal_database.__wrapped__()

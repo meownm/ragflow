@@ -16,7 +16,9 @@
 
 from __future__ import annotations
 
+import json
 import re
+from collections import Counter
 from copy import deepcopy
 from typing import Any
 
@@ -59,9 +61,33 @@ def validate_contract(name: str, value: object, schema: dict[str, Any]) -> None:
     )
 
 
-def validate_document_ast(document: object, template: dict[str, Any], schema: dict[str, Any], *, allow_incomplete: bool = False) -> dict[str, Any]:
+def validate_document_ast(document: object, template: dict[str, Any], schema: dict[str, Any], *, allow_incomplete: bool = False, previous_document: dict[str, Any] | None = None) -> dict[str, Any]:
     document = normalize_document_ast(document, template)
-    validate_contract("document_draft", document, schema)
+    validation_document = document
+    preserved_diagrams = set()
+    new_section_blocks = {}
+    if previous_document is not None and isinstance(document, dict) and isinstance(document.get("sections"), list):
+        previous = {section["id"]: Counter(stable_hash(block) for block in section["blocks"]) for section in previous_document["sections"]}
+        validation_sections = []
+        for section in document["sections"]:
+            remaining = previous.get(section["id"], Counter()).copy()
+            new_blocks = []
+            checked_blocks = []
+            for block in section["blocks"]:
+                fingerprint = stable_hash(block)
+                if remaining[fingerprint]:
+                    remaining[fingerprint] -= 1
+                    # Retain positions in validation errors without revalidating saved content.
+                    checked_blocks.append({"type": "paragraph", "text": "_"})
+                    if isinstance(block, dict) and block.get("type") not in {"paragraph", "list", "table", "image", "reference"} and isinstance(block.get("source"), str) and block["source"].strip():
+                        preserved_diagrams.add(section["id"])
+                else:
+                    new_blocks.append(block)
+                    checked_blocks.append(block)
+            new_section_blocks[section["id"]] = new_blocks
+            validation_sections.append({**section, "blocks": checked_blocks})
+        validation_document = {**document, "sections": validation_sections}
+    validate_contract("document_draft", validation_document, schema)
     assert isinstance(document, dict)
     if document["template_version"] != template["template_version"]:
         raise RuleViolation("TEMPLATE_VERSION_CONFLICT", "Draft does not use the document template version")
@@ -92,7 +118,7 @@ def validate_document_ast(document: object, template: dict[str, Any], schema: di
     disallowed = [
         {"section_id": section["id"], "block_type": block["type"]}
         for section in document["sections"]
-        for block in section["blocks"]
+        for block in new_section_blocks.get(section["id"], section["blocks"])
         if block["type"] not in allowed_blocks.get(section["id"], _CUSTOM_SECTION_ALLOWED_BLOCKS)
     ]
     if disallowed:
@@ -111,8 +137,8 @@ def validate_document_ast(document: object, template: dict[str, Any], schema: di
             {"section_ids": empty_required},
         )
     sections = {section["id"]: section for section in document["sections"]}
-    _validate_conceptual_diagram(sections["4.1"])
-    _validate_client_scenario(sections["4.3"])
+    _validate_conceptual_diagram(sections["4.1"], preserved_diagram="4.1" in preserved_diagrams)
+    _validate_client_scenario(sections["4.3"], preserved_diagram="4.3" in preserved_diagrams)
     return document
 
 
@@ -314,9 +340,9 @@ def _first_descendant_blocks(sections: list[dict[str, Any]], parent_ids: set[str
     return result
 
 
-def _validate_conceptual_diagram(section: dict[str, Any]) -> None:
-    diagrams = [block for block in section["blocks"] if block.get("type") == "plantuml"]
-    if not diagrams:
+def _validate_conceptual_diagram(section: dict[str, Any], *, preserved_diagram: bool = False) -> None:
+    diagrams = [block for block in section["blocks"] if isinstance(block, dict) and block.get("type") == "plantuml"]
+    if not diagrams and not preserved_diagram:
         raise RuleViolation(
             "CONCEPTUAL_DIAGRAM_REQUIRED",
             "Section 4.1 must contain a PlantUML conceptual diagram",
@@ -324,10 +350,10 @@ def _validate_conceptual_diagram(section: dict[str, Any]) -> None:
         )
 
 
-def _validate_client_scenario(section: dict[str, Any]) -> None:
-    diagrams = [block for block in section["blocks"] if block.get("type") == "plantuml"]
-    accompanying = [block for block in section["blocks"] if block.get("type") != "plantuml" and _block_has_content(block)]
-    if not diagrams or not accompanying:
+def _validate_client_scenario(section: dict[str, Any], *, preserved_diagram: bool = False) -> None:
+    diagrams = [block for block in section["blocks"] if isinstance(block, dict) and block.get("type") == "plantuml"]
+    accompanying = [block for block in section["blocks"] if isinstance(block, dict) and block.get("type") in {"paragraph", "list", "table", "image", "reference"} and _block_has_content(block)]
+    if (not diagrams and not preserved_diagram) or not accompanying:
         raise RuleViolation(
             "ACTIVITY_SCENARIO_REQUIRED",
             "Section 4.3 must contain a PlantUML activity diagram and accompanying scenario text",
@@ -335,7 +361,9 @@ def _validate_client_scenario(section: dict[str, Any]) -> None:
         )
 
 
-def _block_has_content(block: dict[str, Any]) -> bool:
+def _block_has_content(block: object) -> bool:
+    if not isinstance(block, dict):
+        return bool(render_block_source(block).strip())
     block_type = block.get("type")
     if block_type == "paragraph":
         return bool(str(block.get("text", "")).strip())
@@ -347,24 +375,27 @@ def _block_has_content(block: dict[str, Any]) -> bool:
         return bool(str(block.get("source", "")).strip())
     if block_type in {"image", "reference"}:
         return bool(str(block.get("url", "")).strip())
-    return False
+    return bool(render_block_source(block).strip())
 
 
 def section_hash(section: dict[str, Any]) -> str:
     return stable_hash(section)
 
 
-def bind_change_plan_section_hashes(base_document: dict[str, Any], change_plan: object) -> object:
-    """Bind concurrency hashes from the immutable server snapshot.
+def bind_change_plan_snapshot(base_document: dict[str, Any], change_plan: object, *, base_revision_id: str, source_state_version: int) -> object:
+    """Bind concurrency metadata from the immutable server snapshot.
 
     A language model selects and rewrites sections; it does not calculate the
     optimistic-concurrency token used to protect those sections.
     """
 
-    if not isinstance(change_plan, dict) or not isinstance(change_plan.get("operations"), list) or not change_plan["operations"]:
+    if not isinstance(change_plan, dict):
         return change_plan
-    hashes = {section["id"]: section_hash(section) for section in base_document.get("sections", []) if isinstance(section, dict) and isinstance(section.get("id"), str)}
     bound = deepcopy(change_plan)
+    bound.update(base_revision_id=base_revision_id, source_state_version=source_state_version)
+    if not isinstance(bound.get("operations"), list) or not bound["operations"]:
+        return bound
+    hashes = {section["id"]: section_hash(section) for section in base_document.get("sections", []) if isinstance(section, dict) and isinstance(section.get("id"), str)}
     for operation in bound["operations"]:
         if not isinstance(operation, dict):
             continue
@@ -400,7 +431,7 @@ def apply_change_plan(base_document: dict[str, Any], change_plan: dict[str, Any]
         section["blocks"] = operation["content"]["blocks"]
         if "evidence_refs" in operation:
             section["evidence_refs"] = operation["evidence_refs"]
-    validated = validate_document_ast(result, template, schema, allow_incomplete=base_document.get("section_scope") == "required")
+    validated = validate_document_ast(result, template, schema, allow_incomplete=base_document.get("section_scope") == "required", previous_document=base_document)
     # Normalization can return its input unchanged for noncanonical saved ASTs.
     return deepcopy(validated) if validated is result else validated
 
@@ -417,7 +448,7 @@ def render_section_text(section: dict[str, Any]) -> str:
 
     lines: list[str] = []
     for block in section["blocks"]:
-        block_type = block["type"]
+        block_type = block.get("type") if isinstance(block, dict) else None
         if block_type == "paragraph":
             lines.append(str(block.get("text", "")).strip())
         elif block_type == "list":
@@ -436,7 +467,20 @@ def render_section_text(section: dict[str, Any]) -> str:
         elif block_type == "reference":
             label = block.get("label") or block.get("url") or "Источник"
             lines.append(f"[{label}]({block.get('url', '')})")
+        else:
+            source = render_block_source(block)
+            fence = "`" * max(3, max((len(run) + 1 for run in re.findall(r"`+", source)), default=0))
+            lines.append(f"{fence}text\n{source}\n{fence}")
     return "\n".join(lines).strip()
+
+
+def render_block_source(block: object) -> str:
+    """Keep unsupported content visible as literal source, never executable markup."""
+    if isinstance(block, dict):
+        for key in ("source", "text"):
+            if isinstance(block.get(key), str) and block[key].strip():
+                return block[key]
+    return json.dumps(block, ensure_ascii=False, indent=2)
 
 
 def _canonical_scalar(value: object) -> str:

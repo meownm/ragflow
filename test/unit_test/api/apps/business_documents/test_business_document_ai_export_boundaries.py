@@ -38,7 +38,7 @@ from api.apps.business_documents.assets import (
     render_document_ast,
     validate_document_ast,
 )
-from business_documents.domain.content import bind_change_plan_section_hashes, render_section_text, section_hash
+from business_documents.domain.content import bind_change_plan_snapshot, render_section_text, section_hash
 from business_documents.application.errors import BusinessDocumentError
 from api.apps.business_documents.exports import BusinessDocumentExportService
 from api.apps.business_documents.runtime import document_queries, job_completion
@@ -353,7 +353,7 @@ def test_change_plan_hashes_are_bound_from_server_snapshot(database):
         ],
     }
 
-    bound = bind_change_plan_section_hashes(base, plan)
+    bound = bind_change_plan_snapshot(base, plan, base_revision_id="revision-1", source_state_version=7)
 
     assert bound["operations"][0]["expected_section_hash"] == section_hash(target)
     assert plan["operations"][0]["expected_section_hash"] == "sha256:not-a-model-owned-value"
@@ -505,6 +505,154 @@ class CoverageAdapter:
         if input_payload["job_input"]["task_type"] == "PLAN_CHANGES":
             return _coverage_plan()
         return {"status": "FAIL", "issues": [{"source_id": "comment-event", "section_id": "1", "reason": "Повтор не должен менять первую дату."}]} if self.missing else {"status": "PASS", "issues": []}
+
+
+@pytest.mark.parametrize("schema_version", ["1", "2"])
+def test_saved_unsupported_block_is_preserved_while_other_content_is_edited(schema_version):
+    job = _coverage_job()
+    base = job.payload["current_revision"]["document_ast"]
+    base["schema_version"] = schema_version
+    if schema_version == "2":
+        base["section_scope"] = "required"
+    scenario = next(section for section in base["sections"] if section["id"] == "4.3")
+    scenario["blocks"] = [scenario["blocks"][0], {"type": "bpmn", "source": "<definitions>saved private data</definitions>"}]
+    original = deepcopy(job.payload)
+    adapter = CoverageAdapter()
+
+    result = BusinessDocumentAI(adapter).process(job)
+    candidate = BusinessDocumentAI._candidate_document(job, result)
+
+    assert next(section for section in candidate["sections"] if section["id"] == "4.3") == scenario
+    assert "<definitions>saved private data</definitions>" in render_document_ast(candidate)
+    assert [call["job_input"]["task_type"] for call in adapter.calls] == ["PLAN_CHANGES", "VERIFY_REQUIREMENT_COVERAGE"]
+    assert job.payload == original
+
+
+@pytest.mark.parametrize("damage", ["changed_source", "duplicate", "different_section"])
+def test_saved_unsupported_block_does_not_authorize_new_or_modified_unsupported_content(damage):
+    job = _coverage_job()
+    base = job.payload["current_revision"]["document_ast"]
+    scenario = next(section for section in base["sections"] if section["id"] == "4.3")
+    saved = {"type": "bpmn", "source": "<definitions>original</definitions>"}
+    scenario["blocks"] = [scenario["blocks"][0], saved]
+    original = deepcopy(base)
+    plan = _coverage_plan()
+    operation = plan["operations"][0]
+    operation.update(section_id="4.3", expected_section_hash=section_hash(scenario), content={"blocks": deepcopy(scenario["blocks"])})
+    if damage == "changed_source":
+        operation["content"]["blocks"][1]["source"] = "<definitions>rewritten</definitions>"
+    elif damage == "duplicate":
+        operation["content"]["blocks"].append(deepcopy(saved))
+    else:
+        operation.update(section_id="5.5", expected_section_hash=section_hash(next(section for section in base["sections"] if section["id"] == "5.5")))
+
+    with pytest.raises(BusinessDocumentError) as caught:
+        apply_change_plan(base, plan)
+
+    assert caught.value.code == "INVALID_DOCUMENT_DRAFT"
+    assert caught.value.details["block_type"] == "bpmn"
+    assert base == original
+
+
+def test_old_diagram_can_be_kept_in_an_edited_section_or_replaced_with_current_format():
+    job = _coverage_job()
+    base = job.payload["current_revision"]["document_ast"]
+    scenario = next(section for section in base["sections"] if section["id"] == "4.3")
+    current_diagram = deepcopy(scenario["blocks"][-1])
+    scenario["blocks"] = [scenario["blocks"][0], {"type": "bpmn", "source": "<definitions>original</definitions>"}]
+    plan = _coverage_plan()
+    operation = plan["operations"][0]
+    operation.update(
+        section_id="4.3", expected_section_hash=section_hash(scenario), content={"blocks": [*deepcopy(scenario["blocks"]), {"type": "paragraph", "text": "Новое подтверждённое уточнение."}]}
+    )
+
+    result = apply_change_plan(base, plan)
+    assert next(section for section in result["sections"] if section["id"] == "4.3")["blocks"][1] == scenario["blocks"][1]
+    operation["content"]["blocks"][1] = current_diagram
+    converted = apply_change_plan(base, plan)
+    validate_document_ast(converted)
+    assert scenario["blocks"][1]["type"] == "bpmn"
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        {"type": "bpmn", "source": '<definitions>\n```\n<script>alert("x")</script>\n</definitions>\n'},
+        {"type": "future-format", "payload": {"enabled": True, "text": "Сохранённое содержимое"}},
+        {"type": "future-format", "source": "", "payload": {"state": "saved"}},
+    ],
+)
+def test_unsupported_blocks_are_visible_and_exported_as_literal_source(block):
+    import html
+    import io
+    from docx import Document
+    from business_documents.domain.content import render_block_source
+
+    ast = _draft()
+    next(section for section in ast["sections"] if section["id"] == "4.3")["blocks"].append(block)
+    original = deepcopy(ast)
+    source = render_block_source(block)
+    markdown = render_document_ast(ast)
+    section_text = render_section_text(next(section for section in ast["sections"] if section["id"] == "4.3"))
+    assert source in section_text and source in markdown
+    if "```" in source:
+        assert "````text\n" in section_text
+    revision = SimpleNamespace(document_ast=ast, body_markdown="Stale cached Markdown without the block")
+    assert BusinessDocumentExportService._render("MARKDOWN", revision).decode("utf-8") == markdown
+    wiki = BusinessDocumentExportService._render_eva_wiki(ast, 1)
+    assert html.escape(source) in wiki
+    assert '<script>alert("x")</script>' not in wiki
+    docx = Document(io.BytesIO(BusinessDocumentExportService._render_docx(ast)))
+    assert source in [paragraph.text for paragraph in docx.paragraphs]
+    assert ast == original
+
+
+@pytest.mark.parametrize("metadata", ["missing", "incorrect"])
+@pytest.mark.parametrize("empty_plan", [False, True])
+def test_model_metadata_is_bound_from_the_job_even_when_missing_or_incorrect(metadata, empty_plan):
+    job = _coverage_job()
+    plan = _coverage_plan()
+    if empty_plan:
+        plan["operations"] = []
+        plan["acknowledged_no_change_event_ids"] = ["comment-event"]
+    if metadata == "missing":
+        plan.pop("base_revision_id")
+        plan.pop("source_state_version")
+        for operation in plan["operations"]:
+            operation.pop("expected_section_hash")
+    else:
+        plan.update(base_revision_id="invented-revision", source_state_version=-100)
+        for operation in plan["operations"]:
+            operation["expected_section_hash"] = "not-a-hash"
+    original = deepcopy(plan)
+
+    bound = BusinessDocumentAI._validate(job, plan)["change_plan"]
+
+    assert bound["base_revision_id"] == job.base_revision_id
+    assert bound["source_state_version"] == job.source_state_version
+    assert plan == original
+    if not empty_plan:
+        assert bound["operations"][0]["expected_section_hash"] == section_hash(job.payload["current_revision"]["document_ast"]["sections"][0])
+
+
+def test_generation_and_semantic_verification_accept_model_output_without_server_metadata():
+    class ContentAdapter(CoverageAdapter):
+        def generate(self, tenant_id, system_prompt, input_payload, *, timeout_seconds=None):
+            output = super().generate(tenant_id, system_prompt, input_payload, timeout_seconds=timeout_seconds)
+            if input_payload["job_input"]["task_type"] == "PLAN_CHANGES":
+                output.pop("base_revision_id")
+                output.pop("source_state_version")
+                for operation in output["operations"]:
+                    operation.pop("expected_section_hash")
+            return output
+
+    adapter = ContentAdapter()
+    job = _coverage_job()
+    result = BusinessDocumentAI(adapter).process(job)
+
+    assert result["change_plan"] == _coverage_plan()
+    assert result["requirement_coverage"] == {"status": "PASS", "issues": []}
+    assert [call["job_input"]["task_type"] for call in adapter.calls] == ["PLAN_CHANGES", "VERIFY_REQUIREMENT_COVERAGE"]
 
 
 @pytest.mark.parametrize("preview_only", [False, True])
@@ -672,7 +820,7 @@ def test_sparse_document_still_uses_one_semantic_check():
     base = job.payload["current_revision"]["document_ast"]
     base.update(schema_version="2", section_scope="required")
     base["sections"] = [{**section, "blocks": []} for section in base["sections"] if "." not in section["id"]]
-    plan = bind_change_plan_section_hashes(base, _coverage_plan())
+    plan = bind_change_plan_snapshot(base, _coverage_plan(), base_revision_id=job.base_revision_id, source_state_version=job.source_state_version)
     adapter = CoverageAdapter()
     result = BusinessDocumentAI(adapter)._verify_requirements(job, plan)
     assert result == {"status": "PASS", "issues": []}
@@ -1105,7 +1253,16 @@ def test_change_prompt_includes_the_current_document_block_contract(schema_versi
     prompt = BusinessDocumentAI._prompt(job)
     schemas, _ = json.JSONDecoder().raw_decode(prompt.system.split("# Контракт выхода\n\n", 1)[1])
 
-    assert schemas["change_plan"] == contract_schema("change_plan")
+    public_plan = contract_schema("change_plan")
+    expected_plan = deepcopy(public_plan)
+    for name in ("base_revision_id", "source_state_version"):
+        expected_plan["properties"].pop(name)
+        expected_plan["required"].remove(name)
+    operation = expected_plan["properties"]["operations"]["items"]
+    operation["properties"].pop("expected_section_hash")
+    operation["required"].remove("expected_section_hash")
+    assert schemas["change_plan"] == expected_plan
+    assert contract_schema("change_plan") == public_plan
     assert schemas["document_draft"] == contract_schema("document_draft_v2" if schema_version == "2" else "document_draft")
     assert "XML BPMN не поддерживаются" in prompt.system
     assert "Диаграммы допустимы только как `plantuml` в разделах 4.1 и 4.3" in prompt.system

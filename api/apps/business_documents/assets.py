@@ -146,10 +146,10 @@ def validate_contract(name: str, value: object) -> None:
         content.validate_contract(name, value, contract_schema(name))
 
 
-def validate_document_ast(document: object) -> dict[str, Any]:
+def validate_document_ast(document: object, *, previous_document: dict[str, Any] | None = None) -> dict[str, Any]:
     with _validation_errors():
         name = "document_draft_v2" if isinstance(document, dict) and document.get("schema_version") == "2" else "document_draft"
-        return content.validate_document_ast(document, published_template(), contract_schema(name))
+        return content.validate_document_ast(document, published_template(), contract_schema(name), previous_document=previous_document)
 
 
 def import_document_markdown(markdown: object) -> dict[str, Any]:

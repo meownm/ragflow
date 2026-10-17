@@ -71,7 +71,7 @@ class ApplyChanges:
             current = draft if draft is not None else self._writer.revision(document["id"], document["current_revision_id"])["document_ast"]
             if current.get("section_scope") == "required":
                 try:
-                    self._content.validate_document_ast(current)
+                    self._content.validate_document_ast(current, previous_document=base["document_ast"] if draft is not None else current)
                 except ValidationError as error:
                     if error.code not in {"REQUIRED_SECTION_EMPTY", "CONCEPTUAL_DIAGRAM_REQUIRED", "ACTIVITY_SCENARIO_REQUIRED"}:
                         raise

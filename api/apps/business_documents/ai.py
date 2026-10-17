@@ -40,7 +40,7 @@ from api.apps.business_documents.assets import (
     validate_contract,
     validate_document_ast,
 )
-from business_documents.domain.content import bind_change_plan_section_hashes
+from business_documents.domain.content import bind_change_plan_snapshot
 from api.apps.business_documents.async_runtime import run_in_worker_loop
 from api.apps.business_documents.recovery import AIRecovery
 from business_documents.application.errors import ValidationError
@@ -776,6 +776,14 @@ class BusinessDocumentAI:
                 }
             )
         if job.job_type == "PLAN_CHANGES":
+            schemas["change_plan"] = deepcopy(schemas["change_plan"])
+            plan_schema = schemas["change_plan"]
+            for name in ("base_revision_id", "source_state_version"):
+                plan_schema["properties"].pop(name)
+                plan_schema["required"].remove(name)
+            operation_schema = plan_schema["properties"]["operations"]["items"]
+            operation_schema["properties"].pop("expected_section_hash")
+            operation_schema["required"].remove("expected_section_hash")
             base_document = (job.payload.get("current_revision") or {}).get("document_ast") or {}
             document_contract = "document_draft_v2" if base_document.get("schema_version") == "2" else "document_draft"
             schemas["document_draft"] = contract_schema(document_contract)
@@ -1262,10 +1270,8 @@ class BusinessDocumentAI:
             revision = job.payload.get("current_revision")
             if not isinstance(revision, dict) or not isinstance(revision.get("document_ast"), dict):
                 raise ValidationError("INVALID_JOB_SNAPSHOT", "Change plan job is missing the base document AST")
-            output = bind_change_plan_section_hashes(revision["document_ast"], output)
+            output = bind_change_plan_snapshot(revision["document_ast"], output, base_revision_id=job.base_revision_id, source_state_version=job.source_state_version)
             validate_contract("change_plan", output)
-            if output["base_revision_id"] != job.base_revision_id or output["source_state_version"] != job.source_state_version:
-                raise ValidationError("STALE_AI_RESULT", "Change plan does not match its immutable job snapshot")
             try:
                 allowed = frozenset(_active_change_input_event_ids(job.payload))
                 evidence_refs = BusinessDocumentAI._evidence_source_refs(evidence)

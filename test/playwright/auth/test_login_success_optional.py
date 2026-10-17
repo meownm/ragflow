@@ -17,19 +17,6 @@ from test.playwright.helpers.auth_waits import wait_for_login_complete
 from test.playwright.helpers.env_utils import env_bool
 from test.playwright.helpers.flow_steps import require
 
-DEMO_EMAIL = "qa@infiniflow.com"
-DEMO_PASSWORD = "123"
-
-
-def _resolve_creds():
-    if env_bool("DEMO_CREDS"):
-        return DEMO_EMAIL, DEMO_PASSWORD, "demo"
-    email = os.getenv("SEEDED_USER_EMAIL")
-    password = os.getenv("SEEDED_USER_PASSWORD")
-    if not email or not password:
-        return None
-    return email, password, "env"
-
 
 def _debug_login_state(page, label: str) -> None:
     if not env_bool("PW_DEBUG_DUMP"):
@@ -65,17 +52,8 @@ def step_01_open_login(
     auth_click,
     seeded_user_credentials,
 ):
-    _ = seeded_user_credentials
-    creds = _resolve_creds()
-    if not creds:
-        pytest.skip("SEEDED_USER_EMAIL/SEEDED_USER_PASSWORD not set and DEMO_CREDS=1 not enabled")
-    seeded_email, seeded_password, source = creds
-    if source == "env":
-        lowered = seeded_email.lower()
-        example_domain = "infiniflow.io"
-        if lowered.endswith(f"@{example_domain}"):
-            raise AssertionError("SEEDED_USER_EMAIL must be a real account (not *@example.com). Set valid credentials or use DEMO_CREDS=1 for demo mode.")
-    print(f"[AUTH] using email: {seeded_email} (source={source})", flush=True)
+    seeded_email, seeded_password = seeded_user_credentials
+    print(f"[AUTH] using email: {seeded_email}", flush=True)
     flow_state["seeded_email"] = seeded_email
     flow_state["seeded_password"] = seeded_password
     flow_state["login_opened"] = True

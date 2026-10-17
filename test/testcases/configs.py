@@ -15,6 +15,8 @@
 #
 import os
 
+from test.login_credentials import local_login_credentials
+
 HOST_ADDRESS = os.getenv("HOST_ADDRESS", "http://127.0.0.1:9380")
 ADMIN_HOST_ADDRESS = os.getenv("ADMIN_HOST_ADDRESS", "http://127.0.0.1:9381")
 VERSION = "v1"
@@ -32,6 +34,16 @@ EMAIL = "qa@infiniflow.org"
 PASSWORD = """ctAseGvejiaSWWZ88T/m4FQVOpQyUvP+x7sXtdv3feqZACiQleuewkUi35E16wSd5C5QcnkkcV9cYc8TKPTRZlxappDuirxghxoOvFcJxFU4ixLsD
 fN33jCHRoDUW81IH9zjij/vaw8IbVyb6vuwg6MX6inOEBRRzVbRYxXOu1wkWY6SsI8X70oF9aeLFp/PzQpjoe/YbSqpTq8qqrmHzn9vO+yvyYyvmDsphXe
 X8f7fp9c7vUsfOCkM+gHY3PadG+QHa7KI7mzTKgUTZImK6BZtfRBATDTthEUbbaTewY4H0MnWiCeeDhcbeQao6cFy1To8pE3RpmxnGnS8BsBn8w=="""
+
+_local_credentials = local_login_credentials(HOST_ADDRESS)
+EMAIL = os.getenv("SEEDED_USER_EMAIL") or (_local_credentials[0] if _local_credentials else EMAIL)
+_plain_password = os.getenv("SEEDED_USER_PASSWORD")
+if not _plain_password and _local_credentials and EMAIL == _local_credentials[0]:
+    _plain_password = _local_credentials[1]
+if _plain_password:
+    from api.utils.crypt import crypt
+
+    PASSWORD = crypt(_plain_password)
 
 # password is "admin"
 ENCRYPTED_ADMIN_PASSWORD = """WBPsJbL/W+1HN+hchm5pgu1YC3yMEb/9MFtsanZrpKEE9kAj4u09EIIVDtIDZhJOdTjz5pp5QW9TwqXBfQ2qzDqVJiwK7HGcNsoPi4wQPCmnLo0fs62QklMlg7l1Q7fjGRgV+KWtvNUce2PFzgrcAGDqRIuA/slSclKUEISEiK4z62rdDgvHT8LyuACuF1lPUY5wV0m/MbmGijRJlgvglAF8BX0BP8rQr8wZeaJdcnAy/keuODCjltMZDL06tYluN7HoiU+qlhBB+ltqG411oO/+vVhBgWsuVVOHd8uMjJEL320GUWUicprDUZvjlLaSSqVyyOiRMHpqAE9eHEecWg=="""

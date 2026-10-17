@@ -52,6 +52,31 @@ BASE_URL=http://localhost:9222 E2E_ADMIN_EMAIL=admin@ragflow.io E2E_ADMIN_PASSWO
 - `E2E_ADMIN_PASSWORD`: login password for authenticated flows.
 - `PW_FIXTURE_DEBUG=1`: optional; prints fixture provisioning details.
 
+Authenticated journeys reuse one existing account: `qa@infiniflow.org` by default
+(or `REG_EMAIL_BASE`). Set `SEEDED_USER_PASSWORD` to that account's current password.
+For the persistent local service at `http://127.0.0.1:9380`, browser and API tests
+also read `.env.test.local` in the repository root (ignored by Git):
+
+```dotenv
+RAGFLOW_TEST_BASE_URL=http://127.0.0.1:9380
+SEEDED_USER_EMAIL=qa@infiniflow.org
+SEEDED_USER_PASSWORD=<current strong password>
+```
+
+The local file is used only for that loopback service; explicit environment
+credentials take precedence. API tests encrypt the password for the login request.
+Also set `SEEDED_USER_EMAIL` to use another provisioned account;
+`E2E_ADMIN_EMAIL` and `E2E_ADMIN_PASSWORD` supply the existing admin account
+in the commands above. The fixture never registers users or generates login suffixes.
+A missing password fails fixture setup. An unknown, disabled account or wrong
+password must fail its login journey. The registration test password `123` is
+not assumed to be the password of an existing account.
+
+Registration journeys create accounts and require a disposable application stack
+with `RAGFLOW_TEST_DISPOSABLE=1`. Set `REG_EMAIL_UNIQUE=1` for a fresh registration
+address. Dispose of that stack after the run; do not run registration journeys
+against the persistent local database.
+
 ## Output and artifacts
 
 - JUnit XML files are written to `/tmp/...` from `--junitxml`.

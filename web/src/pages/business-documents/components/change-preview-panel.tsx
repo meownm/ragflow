@@ -2,6 +2,7 @@ import { Button } from '@/components/ui/button';
 import { CheckCircle2, X } from 'lucide-react';
 import type { BusinessDocumentChangePreview } from '../types';
 import { EvidenceRefsDiff } from './evidence-refs-diff';
+import { RevisionTextDiff } from './revision-text-diff';
 
 type FocusSource = (
   kind: 'question' | 'proposal' | 'comment',
@@ -48,19 +49,28 @@ export function DocumentSectionChange({
   onFocusSource?: FocusSource;
 }) {
   return (
-    <details className="mb-5 text-xs text-text-secondary">
-      <summary className="cursor-pointer py-1 font-medium text-accent-primary">
-        Прежний текст и основания · {change.source_event_ids.length}
-      </summary>
-      <pre className="my-2 whitespace-pre-wrap break-words border-s-2 border-border-button ps-3 font-sans text-sm leading-6">
-        {change.before || 'Требования отсутствуют'}
-      </pre>
-      <EvidenceRefsDiff
-        before={change.before_evidence_refs}
-        after={change.after_evidence_refs}
-      />
-      <ChangeSources sources={change.sources} onFocusSource={onFocusSource} />
-    </details>
+    <div className="mb-5 space-y-3 text-xs text-text-secondary">
+      <p className="font-medium text-accent-primary">Было → стало</p>
+      {(change.blocks ?? [change]).map((block, index) => (
+        <div
+          key={'block_id' in block ? block.block_id : index}
+          data-block-id={'block_id' in block ? block.block_id : undefined}
+          className="border-s-2 border-accent-primary/30 ps-3"
+        >
+          <RevisionTextDiff before={block.before} after={block.after} />
+        </div>
+      ))}
+      <details>
+        <summary className="cursor-pointer py-1 font-medium text-accent-primary">
+          Основания изменений · {change.source_event_ids.length}
+        </summary>
+        <EvidenceRefsDiff
+          before={change.before_evidence_refs}
+          after={change.after_evidence_refs}
+        />
+        <ChangeSources sources={change.sources} onFocusSource={onFocusSource} />
+      </details>
+    </div>
   );
 }
 

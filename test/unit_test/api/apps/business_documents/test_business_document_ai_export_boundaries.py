@@ -38,6 +38,7 @@ from api.apps.business_documents.assets import (
     render_document_ast,
     validate_document_ast,
 )
+from business_documents.domain.block_diff import with_block_ids
 from business_documents.domain.content import bind_change_plan_snapshot, render_section_text, section_hash
 from business_documents.application.errors import BusinessDocumentError
 from api.apps.business_documents.exports import BusinessDocumentExportService
@@ -159,7 +160,10 @@ def test_document_ast_flattens_template_sections_returned_inside_parent_blocks(d
     normalized = validate_document_ast(draft)
 
     assert [section["id"] for section in normalized["sections"]] == [section["id"] for section in published_template()["sections"]]
-    assert all("id" not in block for block in normalized["sections"][2]["blocks"])
+    parent_blocks = normalized["sections"][2]["blocks"]
+    assert parent_blocks == with_block_ids({"sections": [{**draft["sections"][2], "blocks": draft["sections"][2]["blocks"][:-1]}]})["sections"][0]["blocks"]
+    assert len({block["id"] for block in parent_blocks}) == len(parent_blocks)
+    assert with_block_ids(normalized) == normalized
     assert normalized["sections"][3]["id"] == "3.1"
     assert set(normalized["sections"][3]) == {"id", "title", "blocks"}
 
@@ -235,7 +239,7 @@ def test_document_ast_restores_a_paraphrased_title_without_losing_content(databa
     normalized = validate_document_ast(draft)
     actual = next(item for item in normalized["sections"] if item["id"] == "4.3")
     assert actual["title"] == next(item for item in published_template()["sections"] if item["id"] == "4.3")["title"]
-    assert actual["blocks"] == section["blocks"]
+    assert actual["blocks"] == with_block_ids({"sections": [section]})["sections"][0]["blocks"]
     assert normalized["warnings"][0]["code"] == "SECTION_TITLE_NORMALIZED"
 
 
@@ -267,8 +271,8 @@ def test_change_plan_can_add_a_numbered_subsection_to_an_existing_parent(databas
 
     changed = apply_change_plan(base, plan)
 
-    assert next(item for item in changed["sections"] if item["id"] == "4.4") == child
-    assert next(item for item in changed["sections"] if item["id"] == "4")["blocks"] == parent["blocks"]
+    assert next(item for item in changed["sections"] if item["id"] == "4.4") == with_block_ids({"sections": [child]})["sections"][0]
+    assert next(item for item in changed["sections"] if item["id"] == "4")["blocks"] == with_block_ids({"sections": [parent]})["sections"][0]["blocks"]
 
 
 def test_change_plan_adds_optional_reporting_and_preserves_real_monitoring(database):
@@ -312,9 +316,17 @@ def test_change_plan_adds_optional_reporting_and_preserves_real_monitoring(datab
     result = apply_change_plan(base, plan)
     sections = {section["id"]: section for section in result["sections"]}
     assert sections["5.4"]["title"] == "Требования к отчетности"
-    assert sections["5.4"]["blocks"] == report_blocks
-    assert sections["5.5"]["blocks"] == [monitoring_block]
-    assert sections["5"]["blocks"] == parent["blocks"]
+    expected_sections = with_block_ids(
+        {
+            "sections": [
+                {"id": "5.4", "blocks": report_blocks},
+                {"id": "5.5", "blocks": [monitoring_block]},
+                parent,
+            ]
+        }
+    )["sections"]
+    for expected in expected_sections:
+        assert sections[expected["id"]]["blocks"] == expected["blocks"]
     assert [section["id"] for section in result["sections"]][-3:] == ["5", "5.4", "5.5"]
     assert "5.2" not in sections and "5.3" not in sections
     assert base == before
@@ -426,7 +438,11 @@ def test_preliminary_section_requires_valid_content_and_active_source():
     assert preview["after"] == "Новая проверяемая потребность."
     assert "Содержание раздела 3.3." in preview["before"]
     assert BusinessDocumentAI._preliminary_section(job, {**operation, "source_event_ids": ["old-comment"]}, sections, active_sources) is None
-    assert BusinessDocumentAI._preliminary_section(job, {**operation, "content": {"blocks": [{"type": "unknown"}]}}, sections, active_sources) is None
+    literal_preview = BusinessDocumentAI._preliminary_section(job, {**operation, "content": {"blocks": [{"type": "unknown"}]}}, sections, active_sources)
+    assert literal_preview["section_id"] == "3.3"
+    assert literal_preview["before"] == preview["before"]
+    assert literal_preview["after"] == '```text\n{\n  "type": "unknown"\n}\n```'
+    assert literal_preview["blocks"]
     assert BusinessDocumentAI._preliminary_section(job, {**operation, "section_id": "unknown"}, sections, active_sources) is None
 
 
@@ -522,7 +538,7 @@ def test_saved_unsupported_block_is_preserved_while_other_content_is_edited(sche
     result = BusinessDocumentAI(adapter).process(job)
     candidate = BusinessDocumentAI._candidate_document(job, result)
 
-    assert next(section for section in candidate["sections"] if section["id"] == "4.3") == scenario
+    assert next(section for section in candidate["sections"] if section["id"] == "4.3") == with_block_ids({"sections": [scenario]})["sections"][0]
     assert "<definitions>saved private data</definitions>" in render_document_ast(candidate)
     assert [call["job_input"]["task_type"] for call in adapter.calls] == ["PLAN_CHANGES", "VERIFY_REQUIREMENT_COVERAGE"]
     assert job.payload == original
@@ -566,7 +582,7 @@ def test_old_diagram_can_be_kept_in_an_edited_section_or_replaced_with_current_f
     )
 
     result = apply_change_plan(base, plan)
-    assert next(section for section in result["sections"] if section["id"] == "4.3")["blocks"][1] == scenario["blocks"][1]
+    assert next(section for section in result["sections"] if section["id"] == "4.3")["blocks"][1] == with_block_ids({"sections": [scenario]})["sections"][0]["blocks"][1]
     operation["content"]["blocks"][1] = current_diagram
     converted = apply_change_plan(base, plan)
     validate_document_ast(converted)
@@ -777,7 +793,9 @@ def test_change_prompt_retains_history_and_marks_only_active_inputs():
     inputs = BusinessDocumentAI._prompt(job).input_payload["job_input"]
     assert inputs["source_events"] == snapshot["source_events"]
     assert inputs["protocol"] == snapshot["protocol"]
-    assert inputs["current_revision"] == {key: value for key, value in snapshot["current_revision"].items() if key not in {"body_markdown", "section_texts"}}
+    expected_revision = {key: value for key, value in snapshot["current_revision"].items() if key not in {"body_markdown", "section_texts"}}
+    expected_revision["document_ast"] = with_block_ids(expected_revision["document_ast"])
+    assert inputs["current_revision"] == expected_revision
     assert inputs["active_change_input_event_ids"] == ["comment-event"]
     assert inputs["active_change_inputs"] == [event for event in snapshot["source_events"] if event["event_id"] == "comment-event"]
     assert {fragment["source_id"] for fragment in inputs["confirmed_requirement_fragments"].values()} == {"comment-event"}
@@ -891,7 +909,6 @@ def test_change_prompt_preserves_full_protocol_and_summarizes_only_active_confir
 
 
 def test_stream_previews_hash_only_their_targets(monkeypatch):
-    from api.apps.business_documents import ai as ai_module
     from business_documents.domain import content
 
     job = _coverage_job()
@@ -918,14 +935,14 @@ def test_stream_previews_hash_only_their_targets(monkeypatch):
         return hash_section(section)
 
     monkeypatch.setattr(content, "section_hash", counted_hash)
-    monkeypatch.setattr(ai_module, "section_hash", counted_hash)
 
     class StreamingAdapter(CoverageAdapter):
         def generate_stream(self, tenant, system, payload, on_chunk, *, timeout_seconds=None):
             self.calls.append(payload)
             raw = json.dumps(plan, ensure_ascii=False)
             on_chunk(raw)
-            assert calls == targets
+            # Server binding and independent stale-content validation each hash the target.
+            assert calls == [section_id for section_id in targets for _ in range(2)]
             return raw
 
     adapter = StreamingAdapter()
@@ -1042,7 +1059,7 @@ def test_ai_returns_semantic_duplicates_as_advice_without_rewriting():
     )
 
     result = BusinessDocumentAI._validate(job, _draft_bundle(_draft_with_parent_child_duplicate()))
-    assert result["draft"]["sections"] == _draft_with_parent_child_duplicate()["sections"]
+    assert result["draft"]["sections"] == with_block_ids(_draft_with_parent_child_duplicate())["sections"]
     assert result["draft"]["warnings"][0]["code"] == "DUPLICATE_SECTION_CONTENT"
 
 
@@ -1259,6 +1276,10 @@ def test_change_prompt_includes_the_current_document_block_contract(schema_versi
     operation = expected_plan["properties"]["operations"]["items"]
     operation["properties"].pop("expected_section_hash")
     operation["required"].remove("expected_section_hash")
+    supported_operations = ["ADD_SECTION", "DELETE_BLOCK", "INSERT_BLOCK", "REPLACE_BLOCK"]
+    operation["properties"]["type"]["enum"] = supported_operations
+    operation["allOf"] = [variant for variant in operation["allOf"] if variant["if"]["properties"]["type"]["const"] in supported_operations]
+    assert "REPLACE_SECTION_CONTENT" in public_plan["properties"]["operations"]["items"]["properties"]["type"]["enum"]
     assert schemas["change_plan"] == expected_plan
     assert contract_schema("change_plan") == public_plan
     assert schemas["document_draft"] == contract_schema("document_draft_v2" if schema_version == "2" else "document_draft")
@@ -1287,7 +1308,8 @@ def test_change_plan_retains_bpmn_as_plain_text_and_preserves_plantuml(schema_ve
 
     result = apply_change_plan(base, plan)
     target = next(section for section in result["sections"] if section["id"] == "4.3")
-    assert target["blocks"][1] == {"type": "paragraph", "text": f"```text\n{xml}\n```"}
+    expected = with_block_ids({"sections": [{"id": "4.3", "blocks": [scenario["blocks"][0], {"type": "paragraph", "text": f"```text\n{xml}\n```"}]}]})
+    assert target["blocks"][1] == expected["sections"][0]["blocks"][1]
     assert result["warnings"][0]["code"] == "BLOCK_FORMAT_NORMALIZED"
     assert json.dumps(base, ensure_ascii=False) == original
     operation["content"]["blocks"] = scenario["blocks"]

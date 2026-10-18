@@ -23,6 +23,7 @@ from test.unit_test.api.apps.business_documents.test_metric_placement import Pla
 from api.apps.business_documents.ai import BusinessDocumentAI
 from api.apps.business_documents.assets import validate_contract, apply_change_plan, import_document_markdown
 from api.apps.business_documents.exports import BusinessDocumentExportService
+from business_documents.domain.block_diff import with_block_ids
 from business_documents.domain.content import section_hash
 from api.apps.business_documents.runtime import document_commands, document_queries
 from api.apps.business_documents.worker import BusinessDocumentWorker
@@ -160,7 +161,14 @@ def test_original_block_metadata_and_section_notes_survive_same_content_edit_and
     job = BusinessDocumentJob.get_by_id(requested["job_id"])
     assert job.status == "COMPLETED", job.error
     ast = document_queries.get_document(job.document_id, AUTHOR)["current_revision"]["document_ast"]
-    changed = apply_change_plan(ast, {"operations": [{"section_id": "1", "expected_section_hash": section_hash(ast["sections"][0]), "content": {"blocks": deepcopy(ast["sections"][0]["blocks"])}}]})
+    changed = apply_change_plan(
+        ast,
+        {
+            "operations": [
+                {"type": "REPLACE_SECTION_CONTENT", "section_id": "1", "expected_section_hash": section_hash(ast["sections"][0]), "content": {"blocks": deepcopy(ast["sections"][0]["blocks"])}}
+            ]
+        },
+    )
     assert changed["warnings"] == ast["warnings"]
     revision = SimpleNamespace(document_ast=changed, revision_number=2)
     text_outputs = [BusinessDocumentExportService._render(fmt, revision).decode("utf-8") for fmt in ("MARKDOWN", "EVA_WIKI")]
@@ -209,7 +217,7 @@ def test_numbered_model_markdown_is_distributed_without_synthetic_empty_section_
     ast = document_queries.get_document(job.document_id, AUTHOR)["current_revision"]["document_ast"]
     assert not any(w["code"] == "REQUIRED_SECTION_EMPTY" for w in ast["warnings"])
     assert [s["id"] for s in ast["sections"]] == [s["id"] for s in draft["sections"]]
-    assert next(s for s in ast["sections"] if s["id"] == "1")["blocks"] == draft["sections"][0]["blocks"]
+    assert next(s for s in ast["sections"] if s["id"] == "1")["blocks"] == with_block_ids(draft)["sections"][0]["blocks"]
 
 
 def test_intake_presentation_advice_persists_after_answers_reassessment_and_draft(database):

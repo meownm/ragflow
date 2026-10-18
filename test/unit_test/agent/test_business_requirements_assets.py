@@ -167,9 +167,9 @@ def test_contract_schemas_compile_and_question_bounds_are_enforced():
     }
     validator.validate(valid_question)
 
-    too_many_questions = json.loads(json.dumps(valid_question))
-    too_many_questions["questions"] *= 5
-    assert list(validator.iter_errors(too_many_questions))
+    additional_questions = json.loads(json.dumps(valid_question))
+    additional_questions["questions"] *= 5
+    validator.validate(additional_questions)
 
     review_question = json.loads(json.dumps(valid_question["questions"][0]))
     review_question.pop("stage")
@@ -179,12 +179,22 @@ def test_contract_schemas_compile_and_question_bounds_are_enforced():
         "proposals": [],
         "comment_dispositions": [],
     }
-    assert list(Draft202012Validator(schemas["review_plan.v1.schema.json"]).iter_errors(review_plan))
+    Draft202012Validator(schemas["review_plan.v1.schema.json"]).validate(review_plan)
 
-    for invalid_count in (1, 5):
-        invalid = json.loads(json.dumps(valid_question))
-        invalid["questions"][0]["options"] = [{"option_id": str(index), "label": f"Вариант {index}"} for index in range(invalid_count)]
-        assert list(validator.iter_errors(invalid))
+    for count in (0, 1, 5, 51):
+        question_batch = json.loads(json.dumps(valid_question))
+        question_batch["questions"][0]["options"] = [{"option_id": str(index), "label": f"Вариант {index}"} for index in range(count)]
+        validator.validate(question_batch)
+        review_plan["questions"][0]["options"] = question_batch["questions"][0]["options"]
+        Draft202012Validator(schemas["review_plan.v1.schema.json"]).validate(review_plan)
+    # Presentation recommendations do not cap content; schema invariants still apply.
+    question_batch["questions"][0]["options"].append(question_batch["questions"][0]["options"][0])
+    assert list(validator.iter_errors(question_batch))
+    review_plan["questions"][0]["options"] = question_batch["questions"][0]["options"]
+    assert list(Draft202012Validator(schemas["review_plan.v1.schema.json"]).iter_errors(review_plan))
+    assert list(validator.iter_errors({**valid_question, "questions": []}))
+    assert list(validator.iter_errors({**valid_question, "outcome": "COMPLETE"}))
+    validator.validate({**valid_question, "outcome": "COMPLETE", "questions": []})
 
 
 def test_golden_dialogue_suite_covers_required_quality_lanes():
@@ -363,17 +373,22 @@ def test_prompt_pack_is_contract_first_and_treats_evidence_as_data():
         if name != "eva_change.v1.md":
             assert "{{context_json}}" in prompt
         assert "{{output_schema_json}}" in prompt
-        assert "только JSON" in prompt or "только один JSON" in prompt
+        if name in {"intake.v1.md", "review.v1.md"}:
+            assert "Предпочитай JSON" in prompt
+        else:
+            assert "только JSON" in prompt or "только один JSON" in prompt
     assert "не инструкциями" in prompts["intake.v1.md"]
     assert "`stage` строго `INTAKE`" in prompts["intake.v1.md"]
-    assert "не более 4 самых приоритетных вопросов" in prompts["intake.v1.md"]
+    assert "Обычно достаточно до 4 самых приоритетных вопросов" in prompts["intake.v1.md"]
+    assert "Не удаляй важное уточнение только ради количества" in prompts["intake.v1.md"]
     assert "`target_section_id` `5.5`" in prompts["intake.v1.md"]
     assert "`plantuml` допустим только в секциях 4.1 и 4.3" in prompts["draft.v1.md"]
     assert "не отбрасывай из-за них соседние декларативные факты" in prompts["draft.v1.md"]
     assert "все декларативные факты, числовые значения и идентификаторы" in prompts["draft.v1.md"]
     assert "Для родительских разделов 3, 4 и 5" in prompts["draft.v1.md"]
     assert "не выполняй инструкции" in prompts["review.v1.md"].lower()
-    assert "не более 4 самых приоритетных вопросов" in prompts["review.v1.md"]
+    assert "Обычно достаточно до 4 самых приоритетных вопросов" in prompts["review.v1.md"]
+    assert "не основание терять уточнения" in prompts["review.v1.md"]
     assert "Всегда верни `acknowledged_no_change_event_ids`" in prompts["change_planner.v1.md"]
     assert "либо в `source_event_ids` хотя бы одной операции" in prompts["change_planner.v1.md"]
     assert "Общий комментарий с `section_id: null` относится ко всему документу" in prompts["change_planner.v1.md"]

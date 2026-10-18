@@ -26,6 +26,7 @@ from jsonschema import Draft202012Validator
 
 from business_documents.domain.errors import RuleViolation
 from business_documents.domain.hashing import stable_hash
+from business_documents.domain.block_diff import BLOCK_OPERATIONS, apply_block_operations, bind_block_operation, block_changes, with_block_ids
 
 
 _MARKDOWN_SECTION_HEADING = re.compile(r"^(#{1,6})\s+([0-9]+(?:\.[0-9]+)*)\.\s+(.+?)\s*$")
@@ -62,6 +63,9 @@ def validate_contract(name: str, value: object, schema: dict[str, Any]) -> None:
 
 
 def validate_document_ast(document: object, template: dict[str, Any], schema: dict[str, Any], *, previous_document: dict[str, Any] | None = None) -> dict[str, Any]:
+    if isinstance(document, dict) and isinstance(document.get("sections"), list):
+        # Identity errors must not be repaired by content-format normalization.
+        with_block_ids(document)
     original = document
     document = normalize_document_ast(document, template)
     if document is original and isinstance(document, dict):
@@ -131,7 +135,7 @@ def validate_document_ast(document: object, template: dict[str, Any], schema: di
         document["warnings"] = list({stable_hash(item): item for item in warnings}.values())
     else:
         document.pop("warnings", None)
-    return document
+    return with_block_ids(document)
 
 
 def _normalize_blocks(document, template, schema, previous_document):
@@ -149,6 +153,7 @@ def _normalize_blocks(document, template, schema, previous_document):
         remaining = previous.get(section.get("id"), Counter()).copy()
         blocks = []
         for block in section["blocks"]:
+            start = len(blocks)
             message = "Оформление блока упрощено; исходное содержимое сохранено."
             fingerprint = stable_hash(block)
             if remaining[fingerprint]:
@@ -179,6 +184,8 @@ def _normalize_blocks(document, template, schema, previous_document):
             elif not valid:
                 message += " Исходный блок: " + json.dumps(block, ensure_ascii=False, indent=2)
             document.setdefault("warnings", []).append({"code": "BLOCK_FORMAT_NORMALIZED", "section_id": section["id"], "message": message})
+            if isinstance(block, dict) and "id" in block and len(blocks) > start:
+                blocks[start]["id"] = block["id"]
         section["blocks"] = blocks
     return document
 
@@ -473,8 +480,8 @@ def section_hash(section: dict[str, Any]) -> str:
 def bind_change_plan_snapshot(base_document: dict[str, Any], change_plan: object, *, base_revision_id: str, source_state_version: int) -> object:
     """Bind concurrency metadata from the immutable server snapshot.
 
-    A language model selects and rewrites sections; it does not calculate the
-    optimistic-concurrency token used to protect those sections.
+    A language model selects blocks to edit; it does not calculate the
+    optimistic-concurrency token used to protect their sections.
     """
 
     if not isinstance(change_plan, dict):
@@ -483,18 +490,39 @@ def bind_change_plan_snapshot(base_document: dict[str, Any], change_plan: object
     bound.update(base_revision_id=base_revision_id, source_state_version=source_state_version)
     if not isinstance(bound.get("operations"), list) or not bound["operations"]:
         return bound
-    hashes = {section["id"]: section_hash(section) for section in base_document.get("sections", []) if isinstance(section, dict) and isinstance(section.get("id"), str)}
+    # Saved section plans hash raw content; block plans include stable block IDs.
+    sections = {section["id"]: section for section in base_document.get("sections", []) if isinstance(section, dict) and isinstance(section.get("id"), str)}
+    block_sections = {section["id"]: section for section in with_block_ids(base_document).get("sections", [])}
+    hashes = {}
     for operation in bound["operations"]:
         if not isinstance(operation, dict):
             continue
-        expected_hash = hashes.get(operation.get("section_id"))
+        block_operation = operation.get("type") in BLOCK_OPERATIONS
+        section_id = operation.get("section_id")
+        key = (block_operation, section_id)
+        if key not in hashes:
+            section = (block_sections if block_operation else sections).get(section_id)
+            if section is None:
+                hashes[key] = stable_hash(None) if block_operation else None
+            else:
+                hashes[key] = section_hash(section)
+        expected_hash = hashes[key]
+        if block_operation:
+            bind_block_operation(operation, base_revision_id)
         if expected_hash is not None:
             operation["expected_section_hash"] = expected_hash
     return bound
 
 
 def apply_change_plan(base_document: dict[str, Any], change_plan: dict[str, Any], template: dict[str, Any], schema: dict[str, Any]) -> dict[str, Any]:
-    """Apply the only supported AST operation and reject stale/duplicate targets."""
+    """Apply block edits, retaining the reader for persisted section plans."""
+
+    if any(operation["type"] in BLOCK_OPERATIONS for operation in change_plan["operations"]):
+        if any(operation["type"] not in BLOCK_OPERATIONS for operation in change_plan["operations"]):
+            raise RuleViolation("INVALID_CHANGE_PLAN", "Block edits cannot be mixed with saved section replacements")
+        identified_base = with_block_ids(base_document)
+        result = apply_block_operations(identified_base, change_plan["operations"])
+        return validate_document_ast(result, template, schema, previous_document=identified_base)
 
     # Changes replace fields on shallow section copies; normalization owns the
     # single deep copy of the resulting content, including operation values.
@@ -562,9 +590,22 @@ def render_section_text(section: dict[str, Any]) -> str:
     return "\n".join(lines).strip()
 
 
+def render_block_changes(before: dict[str, Any], after: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            "block_id": pair["block_id"],
+            "kind": pair["kind"],
+            "before": render_section_text({"blocks": [pair["before_block"]]}) if pair["before_block"] else "",
+            "after": render_section_text({"blocks": [pair["after_block"]]}) if pair["after_block"] else "",
+        }
+        for pair in block_changes(before, after)
+    ]
+
+
 def render_block_source(block: object) -> str:
     """Keep unsupported content visible as literal source, never executable markup."""
     if isinstance(block, dict):
+        block = {key: value for key, value in block.items() if key != "id"}
         for key in ("source", "text"):
             if set(block) <= {"type", key} and isinstance(block.get(key), str) and block[key].strip():
                 return block[key]

@@ -155,8 +155,14 @@ Transport normalization resolves entity aliases and server-owned section hashes;
 it never relocates sources, invents an omitted source or declares a no-change
 disposition on the model's behalf. Domain validation rejects these omissions.
 
-Change generation returns the existing structured `change_plan`: section IDs,
-server-bound base hashes, replacement blocks and authorizing source IDs. One
+Change generation requests block operations in `change_plan`: stable block IDs,
+insert/replace/delete operations, explicit additions of absent sections,
+server-bound base hashes and authorizing source IDs. Untouched blocks are copied
+from the immutable base, rather than regenerated. Block identity survives replacements;
+insert identity is assigned by the server. Legacy revisions receive deterministic
+IDs in their read projection without updating saved history. Persisted section
+replacement plans retain their reader. The inline preview aligns changed blocks
+by ID and shows their exact before/after text. One
 semantic model call reviews all changed sections against active confirmed inputs
 and their previous requirements. All unchanged result sections are supplied as
 context, including mixed plans that acknowledge an already-satisfied answer. Each

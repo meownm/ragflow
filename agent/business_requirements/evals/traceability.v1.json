@@ -22,8 +22,8 @@
       "tests": [
         "test/evals/business_documents/test_live_quality_scorer.py::test_scorer_penalizes_missing_duplicated_and_misplaced_information",
         "test/evals/business_documents/test_live_quality_scorer.py::test_scorer_detects_semantic_paraphrase_across_sections",
-        "test/unit_test/api/apps/business_documents/test_business_document_ai_export_boundaries.py::test_ai_rejects_semantic_duplicate_between_parent_and_child_section",
-        "test/unit_test/api/apps/business_documents/test_business_document_ai_export_boundaries.py::test_worker_stops_semantic_duplicate_without_automatic_content_rewrite",
+        "test/unit_test/api/apps/business_documents/test_business_document_ai_export_boundaries.py::test_ai_returns_semantic_duplicates_as_advice_without_rewriting",
+        "test/unit_test/api/apps/business_documents/test_business_document_ai_export_boundaries.py::test_worker_saves_semantic_duplicate_without_automatic_content_rewrite",
         "test/evals/business_documents/test_requirement_relocation.py::test_failure_identifies_the_confirmed_decision_and_remaining_source_copy",
         "test/evals/business_documents/test_live_model_quality.py::test_live_model_golden_suite"
       ]

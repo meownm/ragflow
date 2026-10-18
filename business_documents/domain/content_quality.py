@@ -122,10 +122,5 @@ def _semantic_content_strings(value: object) -> list[str]:
     if isinstance(value, list):
         return [text for item in value for text in _semantic_content_strings(item)]
     if isinstance(value, dict):
-        return [
-            text
-            for key, item in value.items()
-            if key not in {"evidence_refs", "source", "type", "url"}
-            for text in _semantic_content_strings(item)
-        ]
+        return [text for key, item in value.items() if key not in {"id", "evidence_refs", "source", "type", "url"} for text in _semantic_content_strings(item)]
     return []

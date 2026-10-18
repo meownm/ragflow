@@ -285,6 +285,7 @@ def test_applied_ast_owns_changed_and_unchanged_content_without_mutating_inputs(
     plan = {
         "operations": [
             {
+                "type": "REPLACE_SECTION_CONTENT",
                 "section_id": "5.5",
                 "expected_section_hash": section_hash(section),
                 "content": {"blocks": [{"type": "paragraph", "text": "Changed"}]},

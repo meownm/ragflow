@@ -10,6 +10,7 @@ from business_documents.application.content import DocumentContent
 from business_documents.application.errors import ConflictError, ValidationError
 from business_documents.application.persistence import DocumentWriter
 from business_documents.domain.change_plan import validate_change_inputs
+from business_documents.domain.block_diff import with_block_ids
 from business_documents.domain.errors import RuleViolation
 from business_documents.domain.content import with_document_warnings
 from business_documents.domain.job import SnapshotIndex, prompt_audit, requested_by
@@ -100,7 +101,7 @@ class ApplyChanges:
                 **({"execution": execution} if execution else {}),
             }
             kind = "ReviewContinuedWithoutChanges" if next_lifecycle == "REVIEW" else "ReviewAgreedWithoutChanges"
-            if draft is not None and not _same_json_value(draft, base["document_ast"]):
+            if draft is not None and not _same_json_value(draft, with_block_ids(base["document_ast"])):
                 body = self._content.render_document_ast(draft)
                 revision_id = self._writer.insert_revision(
                     document["id"],

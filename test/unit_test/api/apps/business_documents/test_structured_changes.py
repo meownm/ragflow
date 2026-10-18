@@ -22,6 +22,7 @@ from api.apps.business_documents.runtime import document_commands, document_quer
 from api.apps.business_documents.worker import BusinessDocumentWorker
 from api.db.db_models import BusinessDocument, BusinessDocumentEvent, BusinessDocumentEvidenceSnapshot, BusinessDocumentJob, BusinessDocumentRevision
 from business_documents.domain.content import section_hash
+from business_documents.domain.block_diff import with_block_ids
 from business_documents.application.errors import ValidationError
 
 
@@ -48,7 +49,7 @@ def test_saved_unsupported_block_survives_command_replay_and_worker_application(
     assert current["operation_state"] == "IDLE"
     assert BusinessDocumentJob.select().count() == jobs_before + 1
     assert BusinessDocumentJob.get_by_id(requested["job_id"]).status == "COMPLETED"
-    old_scenario = next(section for section in invalid_ast["sections"] if section["id"] == "4.3")
+    old_scenario = next(section for section in with_block_ids(invalid_ast)["sections"] if section["id"] == "4.3")
     assert next(section for section in current["current_revision"]["document_ast"]["sections"] if section["id"] == "4.3") == old_scenario
     assert "<definitions/>" in current["current_revision"]["section_texts"]["4.3"]
     assert BusinessDocumentRevision.get_by_id(revision.id).document_ast == invalid_ast

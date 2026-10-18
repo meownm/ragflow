@@ -1427,7 +1427,7 @@ def test_full_workflow_is_versioned_idempotent_and_append_only(database):
     before_sections = {section["id"]: section for section in revision_one["document_ast"]["sections"]}
     after_sections = {section["id"]: section for section in document["current_revision"]["document_ast"]["sections"]}
     assert after_sections["1"] == before_sections["1"]
-    assert after_sections["5.5"]["blocks"] == [{"type": "paragraph", "text": "Контроль ошибок"}]
+    assert after_sections["5.5"]["blocks"] == [{"id": after_sections["5.5"]["blocks"][0]["id"], "type": "paragraph", "text": "Контроль ошибок"}]
     revisions = document_queries.list_revisions(document["document_id"])
     assert revisions[0] == revision_one
     assert len(revisions) == 2

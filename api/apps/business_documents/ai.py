@@ -41,12 +41,13 @@ from api.apps.business_documents.assets import (
     validate_document_ast,
 )
 from business_documents.domain.content import bind_change_plan_snapshot, generated_document_from_text, with_document_warnings
+from business_documents.domain.block_diff import BLOCK_OPERATIONS, with_block_ids
 from business_documents.domain.assessment import normalize_assessment_output
 from api.apps.business_documents.async_runtime import run_in_worker_loop
 from api.apps.business_documents.recovery import AIRecovery, is_transient_failure
 from business_documents.application.errors import ValidationError
 from business_documents.domain.job_recovery import REPAIRABLE_OUTPUT_CODES
-from business_documents.domain.content import render_section_text, section_hash
+from business_documents.domain.content import render_block_changes, render_section_text
 from business_documents.domain.content_quality import parent_child_section_pairs, semantic_duplicate_section_pairs
 from business_documents.domain.change_stream import ChangeOperationStream
 from business_documents.domain.requirement_coverage import changed_section_repetitions, validate_requirement_coverage
@@ -647,9 +648,12 @@ class BusinessDocumentAI:
             sections = {section["id"]: section for section in job.payload["current_revision"]["document_ast"]["sections"]}
             active_sources = frozenset(_active_change_input_event_ids(job.payload))
 
+            candidates = []
+
             def on_chunk(chunk: str) -> None:
                 for operation in stream.feed(chunk):
-                    preview = self._preliminary_section(job, operation, sections, active_sources)
+                    candidates.append(operation)
+                    preview = self._preliminary_section(job, operation, sections, active_sources, candidates)
                     if preview is not None:
                         on_section_preview(preview)
 
@@ -840,7 +844,9 @@ class BusinessDocumentAI:
         return self.process(job, evidence, on_section_preview)
 
     @staticmethod
-    def _preliminary_section(job: BusinessDocumentJob, operation: dict[str, Any], sections: dict[str, dict[str, Any]], active_sources: frozenset[str]) -> dict[str, Any] | None:
+    def _preliminary_section(
+        job: BusinessDocumentJob, operation: dict[str, Any], sections: dict[str, dict[str, Any]], active_sources: frozenset[str], candidates: list[dict[str, Any]] | None = None
+    ) -> dict[str, Any] | None:
         revision = job.payload.get("current_revision")
         base = revision.get("document_ast") if isinstance(revision, dict) else None
         if not isinstance(base, dict):
@@ -849,29 +855,38 @@ class BusinessDocumentAI:
         if not isinstance(sources, list) or not sources or not all(isinstance(source, str) for source in sources) or not set(sources) <= active_sources:
             return None
         before = sections.get(operation.get("section_id"))
-        if before is None:
+        if before is None and operation.get("type") != "ADD_SECTION":
+            return None
+        selected = [candidate for candidate in (candidates or [operation]) if candidate.get("section_id") == operation.get("section_id")]
+        if any(not candidate.get("source_event_ids") or not set(candidate["source_event_ids"]) <= active_sources for candidate in selected):
             return None
         plan = {
             "schema_version": "1",
             "base_revision_id": job.base_revision_id,
             "source_state_version": job.source_state_version,
             "acknowledged_no_change_event_ids": [],
-            "operations": [{**operation, "expected_section_hash": section_hash(before)}],
+            "operations": selected,
         }
         try:
+            # A preliminary section needs no copies or scans of unrelated content.
+            # The complete candidate still passes normal whole-document validation.
+            preview_base = {**base, "sections": [before] if before is not None else []}
+            plan = bind_change_plan_snapshot(preview_base, plan, base_revision_id=job.base_revision_id, source_state_version=job.source_state_version)
             validate_contract("change_plan", plan)
-            after = {**before, "blocks": operation["content"]["blocks"]}
-            name = "document_draft_v2" if base.get("schema_version") == "2" else "document_draft"
-            validate_contract(name, {**base, "sections": [after]})
-        except ValidationError:
+            final = apply_change_plan(preview_base, plan)
+            after = next(section for section in final["sections"] if section["id"] == operation["section_id"])
+        except (ValidationError, RuleViolation):
             return None
+        before = before or {"id": operation["section_id"], "blocks": []}
+        sources = list(dict.fromkeys(source for candidate in selected for source in candidate["source_event_ids"]))
         section_id = operation["section_id"]
         return {
             "section_id": section_id,
-            "title": before["title"],
+            "title": after["title"],
             "before": render_section_text(before),
             "after": render_section_text(after),
             "source_event_ids": sources,
+            "blocks": render_block_changes(before, after),
         }
 
     def generate_eva_change(self, tenant_id: str, base_markdown: str, change_request: str) -> dict[str, Any]:
@@ -927,6 +942,8 @@ class BusinessDocumentAI:
             operation_schema = plan_schema["properties"]["operations"]["items"]
             operation_schema["properties"].pop("expected_section_hash")
             operation_schema["required"].remove("expected_section_hash")
+            operation_schema["properties"]["type"]["enum"] = sorted(BLOCK_OPERATIONS)
+            operation_schema["allOf"] = [variant for variant in operation_schema["allOf"] if variant["if"]["properties"]["type"]["const"] in BLOCK_OPERATIONS]
             base_document = (job.payload.get("current_revision") or {}).get("document_ast") or {}
             document_contract = "document_draft_v2" if base_document.get("schema_version") == "2" else "document_draft"
             schemas["document_draft"] = contract_schema(document_contract)
@@ -1013,6 +1030,8 @@ class BusinessDocumentAI:
                 )
         revision = job_input.get("current_revision")
         if isinstance(revision, dict):
+            if job.job_type == "PLAN_CHANGES" and isinstance(revision.get("document_ast"), dict):
+                revision["document_ast"] = with_block_ids(revision["document_ast"])
             # The AST is the canonical model input.  Markdown and flattened
             # section texts duplicate it and materially increase local-model
             # latency without adding information.
@@ -1292,7 +1311,10 @@ class BusinessDocumentAI:
             revision = job.payload.get("current_revision")
             if not isinstance(revision, dict) or not isinstance(revision.get("document_ast"), dict):
                 raise ValidationError("INVALID_JOB_SNAPSHOT", "Change plan job is missing the base document AST")
-            output = bind_change_plan_snapshot(revision["document_ast"], output, base_revision_id=job.base_revision_id, source_state_version=job.source_state_version)
+            try:
+                output = bind_change_plan_snapshot(revision["document_ast"], output, base_revision_id=job.base_revision_id, source_state_version=job.source_state_version)
+            except RuleViolation as error:
+                raise ValidationError(error.code, error.message, error.details) from error
             validate_contract("change_plan", output)
             try:
                 allowed = frozenset(_active_change_input_event_ids(job.payload))

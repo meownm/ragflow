@@ -20,10 +20,10 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["operation_id", "type", "section_id", "expected_section_hash", "source_event_ids", "content"],
+        "required": ["operation_id", "type", "section_id", "expected_section_hash", "source_event_ids"],
         "properties": {
           "operation_id": {"type": "string", "minLength": 1, "maxLength": 64},
-          "type": {"enum": ["REPLACE_SECTION_CONTENT"]},
+          "type": {"enum": ["REPLACE_SECTION_CONTENT", "INSERT_BLOCK", "REPLACE_BLOCK", "DELETE_BLOCK", "ADD_SECTION"]},
           "section_id": {"type": "string", "minLength": 1, "maxLength": 16},
           "expected_section_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
           "source_event_ids": {
@@ -38,6 +38,10 @@
             "uniqueItems": true,
             "items": {"type": "string", "pattern": "^ragflow://dataset/[^\\s]+/document/[^\\s]+/chunk/[^\\s]+$"}
           },
+          "block_id": {"type": "string", "minLength": 1, "maxLength": 80},
+          "after_block_id": {"type": ["string", "null"], "minLength": 1, "maxLength": 80},
+          "title": {"type": "string", "minLength": 1, "maxLength": 500},
+          "block": {"type": "object", "required": ["type"]},
           "content": {
             "type": "object",
             "additionalProperties": false,
@@ -46,7 +50,14 @@
               "blocks": {"type": "array"}
             }
           }
-        }
+        },
+        "allOf": [
+          {"if": {"properties": {"type": {"const": "REPLACE_SECTION_CONTENT"}}}, "then": {"required": ["content"], "not": {"anyOf": [{"required": ["block_id"]}, {"required": ["after_block_id"]}, {"required": ["block"]}, {"required": ["title"]}]}}},
+          {"if": {"properties": {"type": {"const": "INSERT_BLOCK"}}}, "then": {"required": ["block", "after_block_id"], "not": {"anyOf": [{"required": ["block_id"]}, {"required": ["content"]}, {"required": ["title"]}]}}},
+          {"if": {"properties": {"type": {"const": "REPLACE_BLOCK"}}}, "then": {"required": ["block", "block_id"], "not": {"anyOf": [{"required": ["after_block_id"]}, {"required": ["content"]}, {"required": ["title"]}]}}},
+          {"if": {"properties": {"type": {"const": "DELETE_BLOCK"}}}, "then": {"required": ["block_id"], "not": {"anyOf": [{"required": ["after_block_id"]}, {"required": ["block"]}, {"required": ["content"]}, {"required": ["title"]}]}}},
+          {"if": {"properties": {"type": {"const": "ADD_SECTION"}}}, "then": {"required": ["title", "content"], "not": {"anyOf": [{"required": ["block_id"]}, {"required": ["after_block_id"]}, {"required": ["block"]}]}, "properties": {"content": {"properties": {"blocks": {"items": {"type": "object", "required": ["type"]}}}}}}}
+        ]
       }
     }
   }

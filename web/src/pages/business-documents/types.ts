@@ -378,7 +378,7 @@ export type BusinessDocumentCommandType =
   | 'REQUEST_EXPORT'
   | 'ARCHIVE';
 
-export type BusinessDocumentBlock =
+export type BusinessDocumentBlock = { id?: string } & (
   | { type: 'paragraph'; text: string }
   | { type: 'list'; items: string[] }
   | {
@@ -388,7 +388,8 @@ export type BusinessDocumentBlock =
     }
   | { type: 'plantuml'; source: string }
   | { type: 'image'; alt: string; url: string }
-  | { type: 'reference'; label: string; url: string };
+  | { type: 'reference'; label: string; url: string }
+);
 
 export interface BusinessDocumentSection {
   id: string;
@@ -594,13 +595,8 @@ export interface BusinessDocumentJobSummary {
   update_time?: number | null;
 }
 
-export interface BusinessDocumentSectionStreamPreview {
-  section_id: string;
-  title: string;
-  before: string;
-  after: string;
-  source_event_ids: string[];
-}
+export type BusinessDocumentSectionStreamPreview =
+  BusinessDocumentChangePreview['sections'][number];
 
 export interface BusinessDocumentJobStreamEvent {
   id: number;
@@ -629,6 +625,12 @@ export interface BusinessDocumentChangePreview {
     title: string;
     before: string;
     after: string;
+    blocks?: {
+      block_id: string;
+      kind: 'insert' | 'replace' | 'delete';
+      before: string;
+      after: string;
+    }[];
     before_evidence_refs?: string[];
     after_evidence_refs?: string[];
     source_event_ids: string[];

@@ -7,7 +7,8 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from business_documents.application.content import DocumentContent
-from business_documents.domain.content import render_section_text, section_hash, with_document_warnings
+from business_documents.domain.content import render_block_changes, render_section_text, section_hash, with_document_warnings
+from business_documents.domain.block_diff import with_block_ids
 from business_documents.application.errors import BusinessDocumentError, ConflictError, NotFoundError, PermissionDeniedError, ValidationError
 from business_documents.domain.access import BusinessDocumentRole, DocumentAccess, normalize_role
 from business_documents.domain.review import ReviewState
@@ -235,7 +236,7 @@ class DocumentQueries:
                     "author_id": author_id,
                     "author_name": author.get("nickname") or None,
                     "author_login": author.get("email") or None,
-                    "document_ast": row["document_ast"],
+                    "document_ast": with_block_ids(row["document_ast"]) if isinstance(row["document_ast"], dict) else row["document_ast"],
                     "body_markdown": row["body_markdown"],
                     "content_hash": row["content_hash"],
                     "source_event_ids": row["source_event_ids"],
@@ -360,33 +361,39 @@ class DocumentQueries:
             draft = self._content.apply_change_plan(base, plan)
             before, after = ({section["id"]: section for section in ast["sections"]} for ast in (base, draft))
         sources = PreviewSources.from_snapshot(job["payload"] if isinstance(job["payload"], dict) else {})
-        sections = []
+        sections = {}
         for operation in plan["operations"]:
             targets = [
                 operation["section_id"],
-                *[block["id"] for block in operation["content"]["blocks"] if isinstance(block, dict) and isinstance(block.get("id"), str) and block["id"] not in before and block["id"] in after],
+                *[
+                    block["id"]
+                    for block in operation.get("content", {}).get("blocks", [])
+                    if isinstance(block, dict) and "type" not in block and isinstance(block.get("id"), str) and block["id"] not in before and block["id"] in after
+                ],
             ]
             for section_id in targets:
                 old = before.get(section_id, {"blocks": []})
                 new = after[section_id]
-                sections.append(
-                    {
+                if section_id not in sections:
+                    sections[section_id] = {
                         "section_id": section_id,
                         "title": new["title"],
                         "before": render_section_text(old),
                         "after": render_section_text(new),
                         "before_evidence_refs": old.get("evidence_refs", []),
                         "after_evidence_refs": new.get("evidence_refs", []),
-                        "source_event_ids": operation["source_event_ids"],
-                        "sources": sources.describe(operation["source_event_ids"]),
+                        "source_event_ids": [],
+                        "blocks": render_block_changes(old, new),
                     }
-                )
+                change = sections[section_id]
+                change["source_event_ids"] = list(dict.fromkeys([*change["source_event_ids"], *operation["source_event_ids"]]))
+                change["sources"] = sources.describe(change["source_event_ids"])
         return {
             "job_id": job["id"],
             "base_revision_id": job["base_revision_id"],
             "state_version": document["state_version"],
             **({"warnings": output["warnings"]} if output.get("warnings") else {}),
-            "sections": sections,
+            "sections": list(sections.values()),
             "acknowledged_no_change_event_ids": plan["acknowledged_no_change_event_ids"],
             "acknowledged_no_change_sources": sources.describe(plan["acknowledged_no_change_event_ids"]),
         }

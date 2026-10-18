@@ -18,6 +18,9 @@ PURE_ROOTS = (
 PURE_FILES = (
     ROOT / "api" / "source_workbench" / "processing.py",
     ROOT / "api" / "source_workbench" / "service.py",
+    ROOT / "api" / "source_workbench" / "linked_domain.py",
+    ROOT / "api" / "source_workbench" / "linked_application.py",
+    ROOT / "api" / "source_workbench" / "errors.py",
 )
 INFRA_IMPORTS = (
     "api.db",
@@ -69,6 +72,8 @@ def test_owned_layers_import_only_inward():
         "business_documents/sql_query": ("business_documents.application",),
         "api/source_workbench/processing.py": ("api.source_workbench.service", "api.source_workbench.adapters"),
         "api/source_workbench/service.py": ("api.source_workbench.adapters",),
+        "api/source_workbench/linked_domain.py": ("api.source_workbench.linked_application", "api.source_workbench.linked_storage", "api.source_workbench.linked_runtime"),
+        "api/source_workbench/linked_application.py": ("api.source_workbench.linked_storage", "api.source_workbench.linked_runtime", "api.source_workbench.adapters"),
     }
     violations = []
     for location, modules in forbidden.items():

@@ -71,21 +71,6 @@ class MetaConfig(BaseConfig):
         return result
 
 
-class MySQLConfig(MetaConfig):
-    username: str
-    password: str
-
-    def to_dict(self) -> dict[str, Any]:
-        result = super().to_dict()
-        if "extra" not in result:
-            result["extra"] = dict()
-        extra_dict = result["extra"].copy()
-        extra_dict["username"] = self.username
-        extra_dict["password"] = self.password
-        result["extra"] = extra_dict
-        return result
-
-
 class PostgresConfig(MetaConfig):
     def to_dict(self) -> dict[str, Any]:
         result = super().to_dict()
@@ -304,17 +289,6 @@ def load_configurations(config_path: str) -> list[BaseConfig]:
                 password = v.get("password")
                 db: int = v.get("db")
                 config = RedisConfig(id=id_count, name=name, host=host, port=port, password=password, database=db, service_type="message_queue", mq_type="redis", detail_func_name="get_redis_info")
-                configurations.append(config)
-                id_count += 1
-            case "mysql":
-                name: str = "mysql"
-                host: str = v.get("host")
-                port: int = v.get("port")
-                username = v.get("user")
-                password = v.get("password")
-                config = MySQLConfig(
-                    id=id_count, name=name, host=host, port=port, username=username, password=password, service_type="meta_data", meta_type="mysql", detail_func_name="get_mysql_status"
-                )
                 configurations.append(config)
                 id_count += 1
             case "postgres":

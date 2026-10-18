@@ -4,7 +4,7 @@
 
 Admin Service is a dedicated management component designed to monitor, maintain, and administrate the RAGFlow system. It provides comprehensive tools for ensuring system stability, performing operational tasks, and managing users and permissions efficiently.
 
-The service offers real-time monitoring of critical components, including the RAGFlow server, Task Executor processes, and dependent services such as MySQL, Infinity, Elasticsearch, Redis, and MinIO. It automatically checks their health status, resource usage, and uptime, and performs restarts in case of failures to minimize downtime.
+The service offers real-time monitoring of critical components, including the RAGFlow server, Task Executor processes, and dependent services such as PostgreSQL, Infinity, Elasticsearch, Redis, and MinIO. It automatically checks their health status, resource usage, and uptime, and performs restarts in case of failures to minimize downtime.
 
 For user and system management, it supports listing, creating, modifying, and deleting users and their associated resources like knowledge bases and Agents.
 
@@ -127,7 +127,7 @@ admin> list services;
 | extra                                                                                     | host      | id | name          | port  | service_type   |
 +-------------------------------------------------------------------------------------------+-----------+----+---------------+-------+----------------+
 | {}                                                                                        | 0.0.0.0   | 0  | ragflow_0     | 9380  | ragflow_server |
-| {'meta_type': 'mysql', 'password': 'infini_rag_flow', 'username': 'root'}                 | localhost | 1  | mysql         | 5455  | meta_data      |
+| {'meta_type': 'postgres', 'password': 'infini_rag_flow', 'username': 'root'}                 | localhost | 1  | postgres         | 5432  | meta_data      |
 | {'password': 'infini_rag_flow', 'store_type': 'minio', 'user': 'rag_flow'}                | localhost | 2  | minio         | 9000  | file_store     |
 | {'password': 'infini_rag_flow', 'retrieval_type': 'elasticsearch', 'username': 'elastic'} | localhost | 3  | elasticsearch | 1200  | retrieval      |
 | {'db_name': 'default_db', 'retrieval_type': 'infinity'}                                   | localhost | 4  | infinity      | 23817 | retrieval      |

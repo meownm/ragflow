@@ -23,8 +23,10 @@ SET GLOBAL max_allowed_packet={}
 def get_opendal_config():
     try:
         opendal_config = get_base_config("opendal", {})
-        if opendal_config.get("scheme", "mysql") == "mysql":
-            mysql_config = get_base_config("mysql", {})
+        if opendal_config.get("scheme") == "mysql":
+            mysql_config = opendal_config.get("config", {})
+            if not all(mysql_config.get(key) for key in ("host", "user", "name")):
+                raise ValueError("OpenDAL requires its own explicit host, user and name configuration")
             max_packet = mysql_config.get("max_allowed_packet", 134217728)
             kwargs = {
                 "scheme": "mysql",
@@ -65,7 +67,7 @@ def get_opendal_config():
 class OpenDALStorage:
     def __init__(self):
         self._kwargs = get_opendal_config()
-        self._scheme = self._kwargs.get("scheme", "mysql")
+        self._scheme = self._kwargs["scheme"]
         if self._scheme == "mysql":
             self.init_db_config()
             self.init_opendal_mysql_table()

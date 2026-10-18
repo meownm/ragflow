@@ -38,10 +38,6 @@ var GlobalServerStore = &ServerStore{
 // UpdateServerInfo updates or adds a server status
 func (s *ServerStore) UpdateServerInfo(serverName string, status *common.BaseMessage) {
 
-	//switch serviceType {
-	//case "meta_data":
-	//	return s.getMySQLStatus(name)
-
 	switch status.ServerType {
 	case common.ServerTypeAPI:
 		s.mu.Lock()

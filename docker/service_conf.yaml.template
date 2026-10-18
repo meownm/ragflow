@@ -4,15 +4,6 @@ ragflow:
 admin:
   host: ${RAGFLOW_HOST:-0.0.0.0}
   http_port: 9381
-mysql:
-  name: '${MYSQL_DBNAME:-rag_flow}'
-  user: '${MYSQL_USER:-root}'
-  password: '${MYSQL_PASSWORD:-infini_rag_flow}'
-  host: '${MYSQL_HOST:-mysql}'
-  port: ${MYSQL_PORT:-3306}
-  max_connections: 900
-  stale_timeout: 300
-  max_allowed_packet: ${MYSQL_MAX_PACKET:-1073741824}
 minio:
   user: '${MINIO_USER:-rag_flow}'
   password: '${MINIO_PASSWORD:-infini_rag_flow}'
@@ -40,7 +31,7 @@ infinity:
   postgres_port: 5432
   db_name: 'default_db'
 oceanbase:
-  scheme: 'oceanbase' # set 'mysql' to create connection using mysql config
+  scheme: 'oceanbase'
   config:
     db_name: '${OCEANBASE_DOC_DBNAME:-test}'
     user: '${OCEANBASE_USER:-root@ragflow}'
@@ -116,11 +107,6 @@ asr:
 #   tenant_id: 'tenant_id'
 #   container_name: 'container_name'
 #   cloud: 'public'  # Azure cloud: 'public', 'china', 'government', or 'germany'
-# The OSS object storage uses the MySQL configuration above by default. If you need to switch to another object storage service, please uncomment and configure the following parameters.
-# opendal:
-#   scheme: 'mysql'  # Storage type, such as s3, oss, azure, etc.
-#   config:
-#     oss_table: 'opendal_storage'
 # user_default_llm:
 #   factory: 'BAAI'
 #   api_key: 'backup'

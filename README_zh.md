@@ -256,7 +256,7 @@
 
 系统配置涉及以下三份文件：
 
-- [.env](./docker/.env)：存放一些基本的系统环境变量，比如 `SVR_HTTP_PORT`、`MYSQL_PASSWORD`、`MINIO_PASSWORD` 等。
+- [.env](./docker/.env)：存放一些基本的系统环境变量，比如 `SVR_HTTP_PORT`、`POSTGRES_PASSWORD`、`MINIO_PASSWORD` 等。
 - [service_conf.yaml.template](./docker/service_conf.yaml.template)：配置各类后台服务。
 - [docker-compose.yml](./docker/docker-compose.yml): 系统依赖该文件完成启动。
 
@@ -334,7 +334,7 @@ docker build --platform linux/amd64 \
    lefthook install
    ```
 
-3. 通过 Docker Compose 启动依赖的服务（MinIO, Elasticsearch, Redis, and MySQL）：
+3. 通过 Docker Compose 启动依赖的服务（MinIO, Elasticsearch, Redis, and PostgreSQL）：
 
    ```bash
    docker compose -f docker/docker-compose-base.yml up -d

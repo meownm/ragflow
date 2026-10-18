@@ -22,7 +22,7 @@ type ChatChannel struct {
 	TenantID string  `gorm:"column:tenant_id;size:32;not null;index" json:"tenant_id"`
 	Name     string  `gorm:"column:name;size:128;not null" json:"name"`
 	Channel  string  `gorm:"column:channel;size:128;not null;index" json:"channel"`
-	Config   JSONMap `gorm:"column:config;type:longtext;not null" json:"config"`
+	Config   JSONMap `gorm:"column:config;type:text;not null" json:"config"`
 	ChatID   *string `gorm:"column:chat_id;size:32;index" json:"chat_id,omitempty"`
 	Status   int     `gorm:"column:status;index;default:1" json:"status,omitempty"`
 	BaseModel

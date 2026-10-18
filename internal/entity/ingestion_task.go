@@ -21,7 +21,7 @@ type IngestionTask struct {
 	UserID     string  `gorm:"column:user_id;size:32;not null" json:"user_id"`
 	DocumentID string  `gorm:"column:document_id;size:32;not null;index" json:"document_id"`
 	DatasetID  string  `gorm:"column:dataset_id;size:32;not null" json:"dataset_id"`
-	Schema     JSONMap `gorm:"column:schema;type:longtext" json:"schema"`
+	Schema     JSONMap `gorm:"column:schema;type:text" json:"schema"`
 	Status     string  `gorm:"column:status;size:32;not null;" json:"status"`
 	BaseModel
 }
@@ -34,7 +34,7 @@ func (IngestionTask) TableName() string {
 type IngestionTaskLog struct {
 	ID         int     `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
 	TaskID     string  `gorm:"column:task_id;size:32;not null;index" json:"task_id"`
-	Checkpoint JSONMap `gorm:"column:checkpoint;type:longtext;not null" json:"checkpoint"`
+	Checkpoint JSONMap `gorm:"column:checkpoint;type:text;not null" json:"checkpoint"`
 	BaseModel
 }
 
@@ -46,7 +46,7 @@ func (IngestionTaskLog) TableName() string {
 type IngestionTasklet struct {
 	ID     string  `gorm:"column:id;primaryKey;size:32" json:"id"`
 	TaskID string  `gorm:"column:task_id;size:32;not null;index" json:"task_id"`
-	Schema JSONMap `gorm:"column:schema;type:longtext" json:"schema"`
+	Schema JSONMap `gorm:"column:schema;type:text" json:"schema"`
 	Status string  `gorm:"column:status;size:32;not null;" json:"status"`
 	BaseModel
 }
@@ -59,7 +59,7 @@ func (IngestionTasklet) TableName() string {
 type IngestionTaskletLog struct {
 	ID         int     `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
 	TaskletID  string  `gorm:"column:tasklet_id;size:32;not null;index" json:"tasklet_id"`
-	Checkpoint JSONMap `gorm:"column:checkpoint;type:longtext;not null" json:"checkpoint"`
+	Checkpoint JSONMap `gorm:"column:checkpoint;type:text;not null" json:"checkpoint"`
 	BaseModel
 }
 

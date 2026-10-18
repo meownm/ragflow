@@ -478,7 +478,7 @@ func (s *SystemService) ListEnvironments() ([]map[string]interface{}, error) {
 	// DB_TYPE
 	dbType := os.Getenv("DB_TYPE")
 	if dbType == "" {
-		dbType = "mysql"
+		dbType = "postgres"
 	}
 	result = append(result, map[string]interface{}{
 		"env":   "DB_TYPE",

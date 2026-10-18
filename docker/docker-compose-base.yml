@@ -183,32 +183,21 @@ services:
       retries: 120
     restart: unless-stopped
 
-  mysql:
-    # mysql:5.7 linux/arm64 image is unavailable.
-    image: mysql:8.0.39
-    env_file: .env
+  postgres:
+    image: postgres:16-alpine
     environment:
-      - MYSQL_ROOT_PASSWORD=${MYSQL_PASSWORD}
-    command:
-      --max_connections=1000
-      --character-set-server=utf8mb4
-      --collation-server=utf8mb4_unicode_ci
-      --default-authentication-plugin=mysql_native_password
-      --tls_version="TLSv1.2,TLSv1.3"
-      --init-file /data/application/init.sql
-      --binlog_expire_logs_seconds=604800
-    ports:
-      - ${EXPOSE_MYSQL_PORT}:3306
+      POSTGRES_DB: ${POSTGRES_DBNAME:-rag_flow}
+      POSTGRES_USER: ${POSTGRES_USER:-rag_flow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
     volumes:
-      - mysql_data:/var/lib/mysql
-      - ./init.sql:/data/application/init.sql
+      - postgres_data:/var/lib/postgresql/data
     networks:
       - ragflow
     healthcheck:
-      test: ["CMD", "mysqladmin" ,"ping", "-uroot", "-p${MYSQL_PASSWORD}"]
-      interval: 10s
-      timeout: 10s
-      retries: 120
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
     restart: unless-stopped
 
   minio:
@@ -338,7 +327,7 @@ volumes:
     driver: local
   seekdb_data:
     driver: local
-  mysql_data:
+  postgres_data:
     driver: local
   minio_data:
     driver: local

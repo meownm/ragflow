@@ -19,16 +19,16 @@ package entity
 // UserCanvas user canvas model
 type UserCanvas struct {
 	ID             string  `gorm:"column:id;primaryKey;size:32" json:"id"`
-	Avatar         *string `gorm:"column:avatar;type:longtext" json:"avatar,omitempty"`
+	Avatar         *string `gorm:"column:avatar;type:text" json:"avatar,omitempty"`
 	UserID         string  `gorm:"column:user_id;size:255;not null;index" json:"user_id"`
 	Tags           string  `gorm:"column:tags;size:512;not null;default:'';index" json:"tags"`
 	Title          *string `gorm:"column:title;size:255" json:"title,omitempty"`
 	Permission     string  `gorm:"column:permission;size:16;not null;default:me;index" json:"permission"`
 	Release        bool    `gorm:"column:release;not null;default:false;index" json:"release"`
-	Description    *string `gorm:"column:description;type:longtext" json:"description,omitempty"`
+	Description    *string `gorm:"column:description;type:text" json:"description,omitempty"`
 	CanvasType     *string `gorm:"column:canvas_type;size:32;index" json:"canvas_type,omitempty"`
 	CanvasCategory string  `gorm:"column:canvas_category;size:32;not null;default:agent_canvas;index" json:"canvas_category"`
-	DSL            JSONMap `gorm:"column:dsl;type:longtext" json:"dsl,omitempty"`
+	DSL            JSONMap `gorm:"column:dsl;type:text" json:"dsl,omitempty"`
 	BaseModel
 }
 
@@ -40,13 +40,13 @@ func (UserCanvas) TableName() string {
 // CanvasTemplate canvas template model
 type CanvasTemplate struct {
 	ID             string    `gorm:"column:id;primaryKey;size:32" json:"id"`
-	Avatar         *string   `gorm:"column:avatar;type:longtext" json:"avatar,omitempty"`
-	Title          JSONMap   `gorm:"column:title;type:longtext" json:"title"`
-	Description    JSONMap   `gorm:"column:description;type:longtext" json:"description"`
+	Avatar         *string   `gorm:"column:avatar;type:text" json:"avatar,omitempty"`
+	Title          JSONMap   `gorm:"column:title;type:text" json:"title"`
+	Description    JSONMap   `gorm:"column:description;type:text" json:"description"`
 	CanvasType     *string   `gorm:"column:canvas_type;size:32;index" json:"canvas_type,omitempty"`
-	CanvasTypes    JSONSlice `gorm:"column:canvas_types;type:longtext" json:"canvas_types,omitempty"`
+	CanvasTypes    JSONSlice `gorm:"column:canvas_types;type:text" json:"canvas_types,omitempty"`
 	CanvasCategory string    `gorm:"column:canvas_category;size:32;not null;default:agent_canvas;index" json:"canvas_category"`
-	DSL            JSONMap   `gorm:"column:dsl;type:longtext" json:"dsl,omitempty"`
+	DSL            JSONMap   `gorm:"column:dsl;type:text" json:"dsl,omitempty"`
 	BaseModel
 }
 
@@ -60,9 +60,9 @@ type UserCanvasVersion struct {
 	ID           string  `gorm:"column:id;primaryKey;size:32" json:"id"`
 	UserCanvasID string  `gorm:"column:user_canvas_id;size:255;not null;index" json:"user_canvas_id"`
 	Title        *string `gorm:"column:title;size:255" json:"title,omitempty"`
-	Description  *string `gorm:"column:description;type:longtext" json:"description,omitempty"`
+	Description  *string `gorm:"column:description;type:text" json:"description,omitempty"`
 	Release      bool    `gorm:"column:release;not null;default:false;index" json:"release"`
-	DSL          JSONMap `gorm:"column:dsl;type:longtext" json:"dsl,omitempty"`
+	DSL          JSONMap `gorm:"column:dsl;type:text" json:"dsl,omitempty"`
 	BaseModel
 }
 

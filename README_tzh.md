@@ -258,7 +258,7 @@
 
 系統配置涉及以下三份文件：
 
-- [.env](./docker/.env)：存放一些系統環境變量，例如 `SVR_HTTP_PORT`、`MYSQL_PASSWORD`、`MINIO_PASSWORD` 等。
+- [.env](./docker/.env)：存放一些系統環境變量，例如 `SVR_HTTP_PORT`、`POSTGRES_PASSWORD`、`MINIO_PASSWORD` 等。
 - [service_conf.yaml.template](./docker/service_conf.yaml.template)：設定各類別後台服務。
 - [docker-compose.yml](./docker/docker-compose.yml): 系統依賴該檔案完成啟動。
 
@@ -333,7 +333,7 @@ docker build --platform linux/amd64 \
    uv run python3 ragflow_deps/download_deps.py
    lefthook install
    ```
-3. 透過 Docker Compose 啟動依賴的服務（MinIO, Elasticsearch, Redis, and MySQL）：
+3. 透過 Docker Compose 啟動依賴的服務（MinIO, Elasticsearch, Redis, and PostgreSQL）：
 
    ```bash
    docker compose -f docker/docker-compose-base.yml up -d

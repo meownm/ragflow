@@ -252,7 +252,7 @@ Essayez notre service cloud sur [https://cloud.ragflow.io](https://cloud.ragflow
 
 En ce qui concerne les configurations système, vous devrez gérer les fichiers suivants :
 
-- [.env](./docker/.env) : Conserve les paramètres de base du système, tels que `SVR_HTTP_PORT`, `MYSQL_PASSWORD` et `MINIO_PASSWORD`.
+- [.env](./docker/.env) : Conserve les paramètres de base du système, tels que `SVR_HTTP_PORT`, `POSTGRES_PASSWORD` et `MINIO_PASSWORD`.
 - [service_conf.yaml.template](./docker/service_conf.yaml.template) : Configure les services back-end. Les variables d'environnement dans ce fichier seront automatiquement renseignées au démarrage du conteneur Docker. Toutes les variables d'environnement définies dans le conteneur Docker seront disponibles, vous permettant de personnaliser le comportement du service en fonction de l'environnement de déploiement.
 - [docker-compose.yml](./docker/docker-compose.yml) : Le système s'appuie sur [docker-compose.yml](./docker/docker-compose.yml) pour démarrer.
 
@@ -324,7 +324,7 @@ docker build --platform linux/amd64 \
    uv run python3 ragflow_deps/download_deps.py
    lefthook install
    ```
-3. Lancez les services dépendants (MinIO, Elasticsearch, Redis et MySQL) avec Docker Compose :
+3. Lancez les services dépendants (MinIO, Elasticsearch, Redis et PostgreSQL) avec Docker Compose :
 
    ```bash
    docker compose -f docker/docker-compose-base.yml up -d

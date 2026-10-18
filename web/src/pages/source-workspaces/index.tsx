@@ -1,6 +1,8 @@
+import { DocumentWorkbench } from '@/components/source-workbench/document-workbench';
 import { SourceChat } from '@/components/source-workbench/source-chat';
 import { SourcePicker } from '@/components/source-workbench/source-picker';
 import { SourceProcessor } from '@/components/source-workbench/source-processor';
+import { SourceSearchSettings } from '@/components/source-workbench/source-search-settings';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -26,6 +28,8 @@ export default function SourceWorkspacesPage() {
   const [busy, setBusy] = useState(false);
   const [selectionBusy, setSelectionBusy] = useState(false);
   const [processingBusy, setProcessingBusy] = useState(false);
+  const [documentBusy, setDocumentBusy] = useState(false);
+  const [view, setView] = useState<'documents' | 'sources'>('documents');
   const [error, setError] = useState('');
   const datasetNames = useMemo(
     () =>
@@ -68,7 +72,7 @@ export default function SourceWorkspacesPage() {
 
   const create = async (event: FormEvent) => {
     event.preventDefault();
-    if (!title.trim() || !datasetIds.length || busy) return;
+    if (!title.trim() || busy) return;
     setBusy(true);
     setError('');
     try {
@@ -112,20 +116,21 @@ export default function SourceWorkspacesPage() {
         <div className="mb-6 flex items-start justify-between gap-4">
           <div>
             <h1 className="text-2xl font-semibold text-text-primary">
-              Работа со статьями
+              Связанные документы
             </h1>
             <p className="mt-1 text-sm text-text-secondary">
-              Найдите статьи и сохраните набор источников для дальнейшей работы.
+              Составляйте документы по источникам и согласовывайте изменения
+              требований.
             </p>
           </div>
           {active && (
             <Button
               type="button"
               variant="outline"
-              disabled={processingBusy || selectionBusy}
+              disabled={processingBusy || selectionBusy || documentBusy}
               onClick={() => setActive(null)}
             >
-              К подборкам
+              К рабочим пространствам
             </Button>
           )}
         </div>
@@ -147,58 +152,105 @@ export default function SourceWorkspacesPage() {
                   .join(', ')}
               </p>
             </div>
-            <nav
-              aria-label="Этапы работы со статьями"
-              className="sticky top-0 z-10 mb-6 flex flex-wrap gap-4 border-b border-border-button bg-bg-base py-3 text-sm"
+            <div
+              className="mb-4 flex flex-wrap gap-3"
+              role="group"
+              aria-label="Рабочее пространство"
             >
-              <a
-                className="text-accent-primary hover:underline"
-                href="#source-picker"
+              <Button
+                variant={view === 'documents' ? 'default' : 'outline'}
+                disabled={processingBusy || selectionBusy || documentBusy}
+                onClick={() => setView('documents')}
               >
-                Источники · {active.selected_documents.length} выбрано
-              </a>
-              <a
-                className="text-accent-primary hover:underline"
-                href="#source-questions"
+                Документы
+              </Button>
+              <Button
+                variant={view === 'sources' ? 'default' : 'outline'}
+                disabled={processingBusy || selectionBusy || documentBusy}
+                onClick={() => setView('sources')}
               >
-                Вопросы
-              </a>
-              <a
-                className="text-accent-primary hover:underline"
-                href="#source-processing"
-              >
-                Обработка
-              </a>
-            </nav>
-            <div id="source-picker" className="scroll-mt-16">
-              <SourcePicker
+                Поиск и обработка статей
+              </Button>
+            </div>
+            <div hidden={view !== 'documents'}>
+              <DocumentWorkbench
                 key={active.id}
                 workspace={active}
-                datasetNames={datasetNames}
-                selectionLocked={processingBusy}
+                onBusyChange={setDocumentBusy}
+                visible={view === 'documents'}
+                onWorkspaceChange={update}
+              />
+            </div>
+            <div hidden={view !== 'sources'}>
+              <SourceSearchSettings
+                key={active.id}
+                workspace={active}
+                datasets={datasets}
+                disabled={
+                  processingBusy ||
+                  selectionBusy ||
+                  (!!active.role && !['owner', 'editor'].includes(active.role))
+                }
                 onChange={update}
                 onMutationChange={setSelectionBusy}
               />
-            </div>
-            <div id="source-questions" className="scroll-mt-16">
-              <SourceChat key={active.id} workspace={active} />
-            </div>
-            <div id="source-processing" className="scroll-mt-16">
-              <SourceProcessor
-                key={active.id}
-                workspace={active}
-                selectionBusy={selectionBusy}
-                onBusyChange={setProcessingBusy}
-              />
+              <nav
+                aria-label="Этапы работы со статьями"
+                className="sticky top-0 z-10 mb-6 flex flex-wrap gap-4 border-b border-border-button bg-bg-base py-3 text-sm"
+              >
+                <a
+                  className="text-accent-primary hover:underline"
+                  href="#source-picker"
+                >
+                  Источники · {active.selected_documents.length} выбрано
+                </a>
+                <a
+                  className="text-accent-primary hover:underline"
+                  href="#source-questions"
+                >
+                  Вопросы
+                </a>
+                <a
+                  className="text-accent-primary hover:underline"
+                  href="#source-processing"
+                >
+                  Обработка
+                </a>
+              </nav>
+              <div id="source-picker" className="scroll-mt-16">
+                <SourcePicker
+                  key={active.id}
+                  workspace={active}
+                  datasetNames={datasetNames}
+                  selectionLocked={
+                    processingBusy ||
+                    (!!active.role &&
+                      !['owner', 'editor'].includes(active.role))
+                  }
+                  onChange={update}
+                  onMutationChange={setSelectionBusy}
+                />
+              </div>
+              <div id="source-questions" className="scroll-mt-16">
+                <SourceChat key={active.id} workspace={active} />
+              </div>
+              <div id="source-processing" className="scroll-mt-16">
+                <SourceProcessor
+                  key={active.id}
+                  workspace={active}
+                  selectionBusy={selectionBusy}
+                  onBusyChange={setProcessingBusy}
+                />
+              </div>
             </div>
           </>
         ) : (
           <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_22rem]">
             <section>
-              <h2 className="text-lg font-medium">Сохранённые подборки</h2>
+              <h2 className="text-lg font-medium">Рабочие пространства</h2>
               {!workspaces.length && (
                 <p className="mt-4 text-sm text-text-secondary">
-                  Подборок пока нет.
+                  Рабочих пространств пока нет.
                 </p>
               )}
               <ul className="mt-4 space-y-2">
@@ -225,7 +277,7 @@ export default function SourceWorkspacesPage() {
               className="rounded-md border border-border-button p-4"
               onSubmit={create}
             >
-              <h2 className="font-medium">Новая подборка</h2>
+              <h2 className="font-medium">Новое рабочее пространство</h2>
               <Input
                 className="mt-4"
                 aria-label="Название подборки"
@@ -285,7 +337,7 @@ export default function SourceWorkspacesPage() {
               <Button
                 className="mt-5"
                 type="submit"
-                disabled={busy || !title.trim() || !datasetIds.length}
+                disabled={busy || !title.trim()}
               >
                 Создать
               </Button>

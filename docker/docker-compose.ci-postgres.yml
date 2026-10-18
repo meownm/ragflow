@@ -13,10 +13,6 @@ services:
       # provider-free REST suite can exercise them without seeded cloud users.
       MANAGED_RESOURCE_OWNER_EMAIL: "qa@infiniflow.org"
 
-  mysql:
-    profiles: !override
-      - mysql-disabled
-
   postgres:
     image: postgres:16-alpine
     environment:

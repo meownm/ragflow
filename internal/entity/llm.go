@@ -19,7 +19,7 @@ package entity
 // LLMFactories LLM factory model
 type LLMFactories struct {
 	Name   string  `gorm:"column:name;primaryKey;size:128" json:"name"`
-	Logo   *string `gorm:"column:logo;type:longtext" json:"logo,omitempty"`
+	Logo   *string `gorm:"column:logo;type:text" json:"logo,omitempty"`
 	Tags   string  `gorm:"column:tags;size:255;not null;index" json:"tags"`
 	Rank   int64   `gorm:"column:rank;default:0" json:"rank"`
 	Status *string `gorm:"column:status;size:1;index" json:"status,omitempty"`

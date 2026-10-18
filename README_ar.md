@@ -258,7 +258,7 @@
 
 عندما يتعلق الأمر بتكوينات النظام، ستحتاج إلى إدارة الملفات التالية:
 
-- [.env](./docker/.env): يحتفظ بالإعدادات الأساسية للنظام، مثل `SVR_HTTP_PORT`، `MYSQL_PASSWORD`، و
+- [.env](./docker/.env): يحتفظ بالإعدادات الأساسية للنظام، مثل `SVR_HTTP_PORT`، `POSTGRES_PASSWORD`، و
   `MINIO_PASSWORD`.
 - [service_conf.yaml.template](./docker/service_conf.yaml.template): تكوين الخدمات الخلفية. سيتم ملء متغيرات البيئة في هذا الملف تلقائيًا عند بدء تشغيل الحاوية Docker. ستكون أي متغيرات بيئة تم تعيينها داخل حاوية Docker متاحة للاستخدام، مما يسمح لك بتخصيص سلوك الخدمة استنادًا إلى بيئة النشر.
 - [docker-compose.yml](./docker/docker-compose.yml): يعتمد النظام على [docker-compose.yml](./docker/docker-compose.yml) لبدء التشغيل.
@@ -333,7 +333,7 @@ docker build --platform linux/amd64 \
    uv run python3 ragflow_deps/download_deps.py
    lefthook install
    ```
-3. قم بتشغيل الخدمات التابعة (MinIO وElasticsearch وRedis وMySQL) باستخدام Docker Compose:
+3. قم بتشغيل الخدمات التابعة (MinIO وElasticsearch وRedis وPostgreSQL) باستخدام Docker Compose:
 
    ```bash
    docker compose -f docker/docker-compose-base.yml up -d

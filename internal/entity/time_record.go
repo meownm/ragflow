@@ -23,7 +23,7 @@ import (
 // TimeRecord time record model
 type TimeRecord struct {
 	ID        int64     `gorm:"column:id;primaryKey;autoIncrement" json:"id"`
-	Data      string    `gorm:"column:data;type:longtext;not null" json:"data"`
+	Data      string    `gorm:"column:data;type:text;not null" json:"data"`
 	CreatedAt time.Time `gorm:"column:created_at;type:timestamp;default:CURRENT_TIMESTAMP" json:"created_at"`
 }
 

@@ -28,11 +28,18 @@ from common.time_utils import current_timestamp, datetime_format
 
 
 def _is_deadlock_error(exc: OperationalError) -> bool:
-    return isinstance(exc, OperationalError) and bool(getattr(exc, "args", ())) and exc.args[0] == 1213
+    if not isinstance(exc, OperationalError):
+        return False
+    current = exc
+    while current is not None:
+        if getattr(current, "pgcode", None) == "40P01":
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 def retry_deadlock_operation(max_retries=3, retry_delay=0.1):
-    """Retry a full DB operation when MySQL/OceanBase aborts it due to deadlock."""
+    """Retry a full PostgreSQL transaction after a detected deadlock."""
 
     def decorator(func):
         @wraps(func)

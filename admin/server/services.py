@@ -282,7 +282,7 @@ class ServiceMgr:
     @staticmethod
     def get_all_services():
         doc_engine = os.getenv("DOC_ENGINE", "elasticsearch")
-        database_type = os.getenv("DB_TYPE", "mysql").lower()
+        database_type = os.getenv("DB_TYPE", "postgres").lower()
         result = []
         configs = SERVICE_CONFIGS.configs
         for service_id, config in enumerate(configs):
@@ -327,7 +327,7 @@ class ServiceMgr:
         if service_config.service_type == "retrieval":
             if service_config.retrieval_type != doc_engine:
                 raise AdminException(f"invalid service_index: {service_idx}")
-        database_type = os.getenv("DB_TYPE", "mysql").lower()
+        database_type = os.getenv("DB_TYPE", "postgres").lower()
         if service_config.service_type == "meta_data":
             if service_config.meta_type != database_type:
                 raise AdminException(f"invalid service_index: {service_idx}")
@@ -459,7 +459,7 @@ class EnvironmentsMgr:
         env_kv = {"env": "DEFAULT_SUPERUSER_EMAIL", "value": os.getenv("DEFAULT_SUPERUSER_EMAIL", "admin@ragflow.io")}
         result.append(env_kv)
 
-        env_kv = {"env": "DB_TYPE", "value": os.getenv("DB_TYPE", "mysql")}
+        env_kv = {"env": "DB_TYPE", "value": os.getenv("DB_TYPE", "postgres")}
         result.append(env_kv)
 
         env_kv = {"env": "DEVICE", "value": os.getenv("DEVICE", "cpu")}

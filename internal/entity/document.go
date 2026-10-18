@@ -21,11 +21,11 @@ import "time"
 // Document document model
 type Document struct {
 	ID              string     `gorm:"column:id;primaryKey;size:32" json:"id"`
-	Thumbnail       *string    `gorm:"column:thumbnail;type:longtext" json:"thumbnail,omitempty"`
+	Thumbnail       *string    `gorm:"column:thumbnail;type:text" json:"thumbnail,omitempty"`
 	KbID            string     `gorm:"column:kb_id;size:256;not null;index" json:"kb_id"`
 	ParserID        string     `gorm:"column:parser_id;size:32;not null;index" json:"parser_id"`
 	PipelineID      *string    `gorm:"column:pipeline_id;size:32;index" json:"pipeline_id,omitempty"`
-	ParserConfig    JSONMap    `gorm:"column:parser_config;type:longtext;not null" json:"parser_config"`
+	ParserConfig    JSONMap    `gorm:"column:parser_config;type:text;not null" json:"parser_config"`
 	SourceType      string     `gorm:"column:source_type;size:128;not null;default:local;index" json:"source_type"`
 	Type            string     `gorm:"column:type;size:32;not null;index" json:"type"`
 	CreatedBy       string     `gorm:"column:created_by;size:32;not null;index" json:"created_by"`
@@ -35,11 +35,11 @@ type Document struct {
 	TokenNum        int64      `gorm:"column:token_num;default:0;index" json:"token_num"`
 	ChunkNum        int64      `gorm:"column:chunk_num;default:0;index" json:"chunk_num"`
 	Progress        float64    `gorm:"column:progress;default:0;index" json:"progress"`
-	ProgressMsg     *string    `gorm:"column:progress_msg;type:longtext" json:"progress_msg,omitempty"`
+	ProgressMsg     *string    `gorm:"column:progress_msg;type:text" json:"progress_msg,omitempty"`
 	ProcessBeginAt  *time.Time `gorm:"column:process_begin_at;index" json:"process_begin_at,omitempty"`
 	ProcessDuration float64    `gorm:"column:process_duration;default:0" json:"process_duration"`
 	ContentHash     *string    `gorm:"column:content_hash;size:32;index" json:"content_hash,omitempty"`
-	MetaFields      *JSONMap   `gorm:"column:meta_fields;type:longtext" json:"meta_fields,omitempty"`
+	MetaFields      *JSONMap   `gorm:"column:meta_fields;type:text" json:"meta_fields,omitempty"`
 	Suffix          string     `gorm:"column:suffix;size:32;not null;index" json:"suffix"`
 	Run             *string    `gorm:"column:run;size:1;index" json:"run,omitempty"`
 	Status          *string    `gorm:"column:status;size:1;index" json:"status,omitempty"`

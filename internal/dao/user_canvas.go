@@ -97,7 +97,7 @@ func applyUserCanvasTagFilter(query *gorm.DB, tags []string) *gorm.DB {
 			continue
 		}
 		pattern := "(^|,)[[:space:]]*" + regexp.QuoteMeta(tag) + "[[:space:]]*(,|$)"
-		cond := DB.Where("user_canvas.tags REGEXP ?", pattern)
+		cond := DB.Where("user_canvas.tags ~* ?", pattern)
 		if !hasTag {
 			tagQuery = tagQuery.Where(cond)
 			hasTag = true
@@ -233,7 +233,7 @@ func (dao *UserCanvasDAO) Accessible(canvasID, userID string, tenantIDs []string
 func (dao *UserCanvasDAO) Delete(id string) error {
 	// gorm v2 treats the first non-int inline arg as a column name, not a
 	// primary-key value — passing `id` verbatim produced WHERE ID = ?
-	// and made MySQL complain about an unknown "AGENT_ID" column. The
+	// and interpreted the supplied ID as a column name. The
 	// explicit Where+Delete form is the same pattern used by
 	// API4ConversationDAO.Delete (see api_token.go:142-144).
 	return DB.Where("id = ?", id).Delete(&entity.UserCanvas{}).Error
@@ -363,14 +363,14 @@ func (dao *UserCanvasDAO) ListByTenantIDs(ownerIDs []string, userID string, page
 			user_canvas.permission,
 			user_canvas.user_id,
 			user_canvas.user_id AS tenant_id,
-			user.nickname,
-			user.avatar AS tenant_avatar,
+			"user".nickname,
+			"user".avatar AS tenant_avatar,
 			user_canvas.canvas_type,
 			user_canvas.canvas_category,
 			user_canvas.tags,
 			user_canvas.create_time,
 			user_canvas.update_time`).
-		Joins("LEFT JOIN user ON user_canvas.user_id = user.id").
+		Joins("LEFT JOIN \"user\" ON user_canvas.user_id = \"user\".id").
 		Where(
 			DB.Where("user_canvas.user_id IN ? AND user_canvas.permission = ?", ownerIDs, "team").
 				Or("user_canvas.user_id = ?", userID),

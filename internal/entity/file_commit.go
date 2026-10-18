@@ -24,7 +24,7 @@ type FileCommit struct {
 	Message   string  `gorm:"column:message;size:512;not null;default:''" json:"message"`
 	AuthorID  string  `gorm:"column:author_id;size:32;not null;index" json:"author_id"`
 	FileCount int     `gorm:"column:file_count;default:0" json:"file_count"`
-	TreeState *string `gorm:"column:tree_state;type:longtext" json:"tree_state,omitempty"`
+	TreeState *string `gorm:"column:tree_state;type:text" json:"tree_state,omitempty"`
 	BaseModel
 }
 

@@ -5,7 +5,7 @@ services:
   ragflow:
     platform: linux/amd64
     depends_on:
-      mysql:
+      postgres:
         condition: service_healthy
     build:
       context: ../
@@ -29,7 +29,7 @@ services:
       - "host.docker.internal:host-gateway"
   # executor:
   #   depends_on:
-  #     mysql:
+  #     postgres:
   #       condition: service_healthy
   #   image: ${RAGFLOW_IMAGE}
   #   volumes:

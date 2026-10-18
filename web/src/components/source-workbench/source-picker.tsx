@@ -176,6 +176,7 @@ export function SourcePicker({
 
   const search = async (event: FormEvent) => {
     event.preventDefault();
+    if (!workspace.dataset_ids.length) return;
     await runSearch(query.trim(), 1);
   };
 
@@ -274,7 +275,10 @@ export function SourcePicker({
             className="min-h-20 min-w-0 flex-1 resize-y rounded-md border border-border-button bg-bg-input px-3 py-2 text-sm text-text-primary outline-none placeholder:text-text-disabled focus-visible:ring-1 focus-visible:ring-accent-primary"
             onChange={(event) => setQuery(event.target.value)}
           />
-          <Button type="submit" disabled={busy || !query.trim()}>
+          <Button
+            type="submit"
+            disabled={busy || !query.trim() || !workspace.dataset_ids.length}
+          >
             Найти
           </Button>
         </form>

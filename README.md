@@ -258,7 +258,7 @@ releases! 🌟
 
 When it comes to system configurations, you will need to manage the following files:
 
-- [.env](./docker/.env): Keeps the fundamental setups for the system, such as `SVR_HTTP_PORT`, `MYSQL_PASSWORD`, and
+- [.env](./docker/.env): Keeps the fundamental setups for the system, such as `SVR_HTTP_PORT`, `POSTGRES_PASSWORD`, and
   `MINIO_PASSWORD`.
 - [service_conf.yaml.template](./docker/service_conf.yaml.template): Configures the back-end services. The environment variables in this file will be automatically populated when the Docker container starts. Any environment variables set within the Docker container will be available for use, allowing you to customize service behavior based on the deployment environment.
 - [docker-compose.yml](./docker/docker-compose.yml): The system relies on [docker-compose.yml](./docker/docker-compose.yml) to start up.
@@ -336,7 +336,7 @@ docker build --platform linux/amd64 \
    uv run python3 ragflow_deps/download_deps.py
    lefthook install
    ```
-3. Launch the dependent services (MinIO, Elasticsearch, Redis, and MySQL) using Docker Compose:
+3. Launch the dependent services (MinIO, Elasticsearch, Redis, and PostgreSQL) using Docker Compose:
 
    ```bash
    docker compose -f docker/docker-compose-base.yml up -d

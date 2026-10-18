@@ -177,7 +177,7 @@ Listing all services
 | extra                                                                                     | host      | id | name          | port  | service_type   | status  |
 +-------------------------------------------------------------------------------------------+-----------+----+---------------+-------+----------------+---------+
 | {}                                                                                        | 0.0.0.0   | 0  | ragflow_0     | 9380  | ragflow_server | Timeout |
-| {'meta_type': 'mysql', 'password': 'infini_rag_flow', 'username': 'root'}                 | localhost | 1  | mysql         | 5455  | meta_data      | Alive   |
+| {'meta_type': 'postgres', 'password': 'infini_rag_flow', 'username': 'root'}                 | localhost | 1  | postgres         | 5432  | meta_data      | Alive   |
 | {'password': 'infini_rag_flow', 'store_type': 'minio', 'user': 'rag_flow'}                | localhost | 2  | minio         | 9000  | file_store     | Alive   |
 | {'password': 'infini_rag_flow', 'retrieval_type': 'elasticsearch', 'username': 'elastic'} | localhost | 3  | elasticsearch | 1200  | retrieval      | Alive   |
 | {'db_name': 'default_db', 'retrieval_type': 'infinity'}                                   | localhost | 4  | infinity      | 23817 | retrieval      | Timeout |
@@ -198,13 +198,13 @@ Service ragflow_0 is alive. Detail:
 Confirm elapsed: 26.0 ms.
 ```
 
-- Show mysql.
+- Show postgres.
 
 ```
 ragflow> show service 1;
 command: show service 1;
 Showing service: 1
-Service mysql is alive. Detail:
+Service postgres is alive. Detail:
 +---------+----------+------------------+------+------------------+------------------------+-------+-----------------+
 | command | db       | host             | id   | info             | state                  | time  | user            |
 +---------+----------+------------------+------+------------------+------------------------+-------+-----------------+
@@ -517,7 +517,7 @@ ragflow> list configs;
 | extra                                                                                     | host      | id | name          | port  | service_type   |
 +-------------------------------------------------------------------------------------------+-----------+----+---------------+-------+----------------+
 | {}                                                                                        | 0.0.0.0   | 0  | ragflow_0     | 9380  | ragflow_server |
-| {'meta_type': 'mysql', 'password': 'infini_rag_flow', 'username': 'root'}                 | localhost | 1  | mysql         | 5455  | meta_data      |
+| {'meta_type': 'postgres', 'password': 'infini_rag_flow', 'username': 'root'}                 | localhost | 1  | postgres         | 5432  | meta_data      |
 | {'password': 'infini_rag_flow', 'store_type': 'minio', 'user': 'rag_flow'}                | localhost | 2  | minio         | 9000  | file_store     |
 | {'password': 'infini_rag_flow', 'retrieval_type': 'elasticsearch', 'username': 'elastic'} | localhost | 3  | elasticsearch | 1200  | retrieval      |
 | {'db_name': 'default_db', 'retrieval_type': 'infinity'}                                   | localhost | 4  | infinity      | 23817 | retrieval      |
@@ -537,7 +537,7 @@ ragflow> list envs;
 +-------------------------+------------------+
 | DOC_ENGINE              | elasticsearch    |
 | DEFAULT_SUPERUSER_EMAIL | admin@ragflow.io |
-| DB_TYPE                 | mysql            |
+| DB_TYPE                 | postgres            |
 | DEVICE                  | cpu              |
 | STORAGE_IMPL            | MINIO            |
 +-------------------------+------------------+

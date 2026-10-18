@@ -28,6 +28,8 @@ export interface SourceArticle extends SourceCandidate {
 
 export interface SourceWorkspace {
   id: string;
+  role?: 'owner' | 'editor' | 'reviewer' | 'reader';
+  tenant_id?: string | null;
   title: string;
   dataset_ids: string[];
   selected_documents: SourceReference[];
@@ -54,6 +56,8 @@ export interface SourceWorkspaceDraft {
   source_version: number;
   sources: SourceReference[];
   version: number;
+  change_policy?: 'working' | 'approval' | 'locked';
+  pending_change_id?: string;
   created_at: string;
   updated_at: string;
 }
@@ -252,6 +256,7 @@ export async function chatWithSourceWorkspace(
   const response = await request.post<Envelope<SourceChatAnswer>>(
     api.sourceWorkspaceChat(workspace.id),
     { question, previous_question, expected_version: workspace.version },
+    { timeout: 1_980_000 },
   );
   return unwrap(response.data);
 }

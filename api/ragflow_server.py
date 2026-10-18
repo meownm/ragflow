@@ -170,15 +170,22 @@ if __name__ == "__main__":
         except Exception:
             logging.exception("Failed to start business document worker")
 
+    def start_linked_documents():
+        from api.source_workbench.linked_worker import start_linked_document_worker
+
+        start_linked_document_worker(stop_event)
+
     if RuntimeConfig.DEBUG:
         if os.environ.get("WERKZEUG_RUN_MAIN") == "true":
             threading.Timer(1.0, delayed_start_update_progress).start()
             start_chat_channels()
             start_business_documents()
+            start_linked_documents()
     else:
         threading.Timer(1.0, delayed_start_update_progress).start()
         start_chat_channels()
         start_business_documents()
+        start_linked_documents()
 
     # start http server
     try:

@@ -256,7 +256,7 @@ Coba layanan cloud kami di [https://cloud.ragflow.io](https://cloud.ragflow.io).
 
 Untuk konfigurasi sistem, Anda perlu mengelola file-file berikut:
 
-- [.env](./docker/.env): Menyimpan pengaturan dasar sistem, seperti `SVR_HTTP_PORT`, `MYSQL_PASSWORD`, dan
+- [.env](./docker/.env): Menyimpan pengaturan dasar sistem, seperti `SVR_HTTP_PORT`, `POSTGRES_PASSWORD`, dan
   `MINIO_PASSWORD`.
 - [service_conf.yaml.template](./docker/service_conf.yaml.template): Mengonfigurasi aplikasi backend.
 - [docker-compose.yml](./docker/docker-compose.yml): Sistem ini bergantung pada [docker-compose.yml](./docker/docker-compose.yml) untuk memulai.
@@ -305,7 +305,7 @@ docker build --platform linux/amd64 \
    uv run python3 ragflow_deps/download_deps.py
    lefthook install
    ```
-3. Jalankan aplikasi yang diperlukan (MinIO, Elasticsearch, Redis, dan MySQL) menggunakan Docker Compose:
+3. Jalankan aplikasi yang diperlukan (MinIO, Elasticsearch, Redis, dan PostgreSQL) menggunakan Docker Compose:
 
    ```bash
    docker compose -f docker/docker-compose-base.yml up -d

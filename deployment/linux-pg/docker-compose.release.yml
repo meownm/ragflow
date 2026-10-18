@@ -29,10 +29,6 @@ services:
   t-one-asr:
     image: ${T_ONE_ASR_IMAGE:-ragflow/t-one-asr:1.12.0}
 
-  mysql:
-    profiles: !override
-      - mysql-disabled
-
   sandbox-executor-manager:
     profiles: !reset []
     image: ${SANDBOX_EXECUTOR_MANAGER_IMAGE:-infiniflow/sandbox-executor-manager:latest}

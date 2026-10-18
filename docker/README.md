@@ -15,7 +15,7 @@
 - **docker-compose.yml**
   Sets up environment for RAGFlow and its dependencies.
 - **docker-compose-base.yml**
-  Sets up environment for RAGFlow's dependencies: Elasticsearch/[Infinity](https://github.com/infiniflow/infinity), MySQL, MinIO, and Redis.
+  Sets up environment for RAGFlow's dependencies: Elasticsearch/[Infinity](https://github.com/infiniflow/infinity), PostgreSQL, MinIO, and Redis.
 
 > [!CAUTION]
 > We do not actively maintain **docker-compose-CN-oc9.yml**, **docker-compose-macos.yml**, so use them at your own risk. However, you are welcome to file a pull request to improve any of them.
@@ -47,14 +47,13 @@ The [.env](./.env) file contains important environment variables for Docker.
 - `MEM_LIMIT`
   The maximum amount of the memory, in bytes, that *a specific* Docker container can use while running. Defaults to `8073741824`.
 
-### MySQL
+### PostgreSQL
 
-- `MYSQL_PASSWORD`
-  The password for MySQL.
-- `MYSQL_PORT`
-  The port to connect to MySQL from RAGFlow container. Defaults to `3306`. Change this if you use an external MySQL.
-- `EXPOSE_MYSQL_PORT`
-  The port used to expose the MySQL service to the host machine, allowing **external** access to the MySQL database running inside the Docker container. Defaults to `5455`.
+- `POSTGRES_PASSWORD`
+  The password for PostgreSQL.
+- `POSTGRES_PORT`
+  The port to connect to PostgreSQL from RAGFlow container. Defaults to `5432`. Change this if you use an external PostgreSQL.
+PostgreSQL is kept on the Compose network; external databases use `POSTGRES_HOST` and `POSTGRES_PORT`.
 
 ### MinIO
 
@@ -185,12 +184,12 @@ Before setting `DOC_ENGINE=oceanbase`, make sure the host OS allows the file des
   - `port`: Serving port inside the container. Defaults to `9390`.
   - Health check: `curl -f http://localhost:9390/health` every 10s.
 
-- `mysql`
-  - `name`: The MySQL database name. Defaults to `rag_flow`.
-  - `user`: The username for MySQL.
-  - `password`: The password for MySQL.
-  - `port`: The MySQL serving port inside the Docker container. Defaults to `3306`.
-  - `max_connections`: The maximum number of concurrent connections to the MySQL database. Defaults to `100`.
+- `postgres`
+  - `name`: The PostgreSQL database name. Defaults to `rag_flow`.
+  - `user`: The username for PostgreSQL.
+  - `password`: The password for PostgreSQL.
+  - `port`: The PostgreSQL serving port inside the Docker container. Defaults to `5432`.
+  - `max_connections`: The maximum number of concurrent connections to the PostgreSQL database. Defaults to `100`.
   - `stale_timeout`: Timeout in seconds.
 
 - `minio`
@@ -199,7 +198,7 @@ Before setting `DOC_ENGINE=oceanbase`, make sure the host OS allows the file des
   - `host`: The MinIO serving IP *and* port inside the Docker container. Defaults to `minio:9000`.
 
 - `oceanbase`
-  - `scheme`: The connection scheme. Set to `mysql` to use mysql config, or other values to use config below.
+  - `scheme`: Use `oceanbase` and configure its independent `config` section.
   - `config`:
     - `db_name`: The OceanBase database name.
     - `user`: The username for OceanBase.

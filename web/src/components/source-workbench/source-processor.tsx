@@ -420,13 +420,25 @@ export function SourceProcessor({
             }
             onClick={save}
           >
-            {savedDraft ? 'Сохранить правки' : 'Сохранить черновик'}
+            {savedDraft?.change_policy === 'approval'
+              ? 'Отправить правки на согласование'
+              : savedDraft
+                ? 'Сохранить правки'
+                : 'Сохранить черновик'}
           </Button>
-          {savedDraft && (
-            <p className="mt-2 text-xs text-text-secondary">
-              Черновик сохранён. Источники закреплены по версии подборки{' '}
-              {savedDraft.source_version}.
+          {savedDraft?.pending_change_id ? (
+            <p role="status" className="mt-2 text-sm text-accent-primary">
+              Ручные правки отправлены на согласование. Текущий текст не
+              изменён. Решение доступно в разделе «Документы», во вкладке
+              «Изменения».
             </p>
+          ) : (
+            savedDraft && (
+              <p className="mt-2 text-xs text-text-secondary">
+                Черновик сохранён. Источники закреплены по версии подборки{' '}
+                {savedDraft.source_version}.
+              </p>
+            )
           )}
           {resultVersion !== workspace.version && (
             <p className="mt-2 text-sm text-text-secondary">

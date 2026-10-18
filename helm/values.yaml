@@ -30,16 +30,18 @@ env:
   # At least one uppercase letter, one lowercase letter, one digit, and one special character
   OPENSEARCH_PASSWORD: infini_rag_flow_OS_01
 
-  # The password for MySQL
-  MYSQL_PASSWORD: infini_rag_flow_helm
-  # The database of the MySQL service to use
-  MYSQL_DBNAME: rag_flow
-  # External MySQL host (only required when mysql.enabled=false)
-  # MYSQL_HOST: ""
-  # External MySQL port (defaults to 3306 if not set)
-  # MYSQL_PORT: "3306"
-  # External MySQL user (only when mysql.enabled=false), default is root if omitted
-  # MYSQL_USER: "root"
+  # The password for PostgreSQL
+  DB_TYPE: postgres
+  POSTGRES_USER: rag_flow
+  POSTGRES_PASSWORD: infini_rag_flow_helm
+  # The database of the PostgreSQL service to use
+  POSTGRES_DBNAME: rag_flow
+  # External PostgreSQL host (only required when postgres.enabled=false)
+  # POSTGRES_HOST: ""
+  # External PostgreSQL port (defaults to 5432 if not set)
+  # POSTGRES_PORT: "5432"
+  # External PostgreSQL user (only when postgres.enabled=false), default is rag_flow if omitted
+  # POSTGRES_USER: "rag_flow"
 
   # The username for MinIO.
   MINIO_ROOT_USER: rag_flow
@@ -206,11 +208,11 @@ minio:
   service:
     type: ClusterIP
 
-mysql:
+postgres:
   enabled: true
   image:
-    repository: mysql
-    tag: 8.0.39
+    repository: postgres
+    tag: 16-alpine
     pullPolicy: IfNotPresent
     pullSecrets: []
   storage:

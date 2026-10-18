@@ -49,6 +49,12 @@ def route_app(monkeypatch):
 
         async def chat(self, owner_id, workspace_id, data):
             calls.append((owner_id, workspace_id, data))
+            if data.get("question") == "unknown context":
+                from api.source_workbench.processing import ProcessingError
+
+                raise ProcessingError("MODEL_CONTEXT_UNAVAILABLE", "Configure model context", 503)
+            if data.get("question") == "timeout":
+                raise TimeoutError
             if data.get("question") == "invalid citation":
                 raise FakeError("INVALID_CITATION", "Citation is outside the evidence", 502)
             return {"answer": "Answer [1]", "sources": [], "version": 2}
@@ -100,6 +106,14 @@ async def test_source_dataset_choices_use_authenticated_owner(route_app):
     assert response.status_code == 200
     assert (await response.get_json())["data"][0]["id"] == "kb-1"
     assert calls == [("owner-a", "datasets")]
+
+
+@pytest.mark.parametrize("question,status,code", [("unknown context", 503, "MODEL_CONTEXT_UNAVAILABLE"), ("timeout", 504, "MODEL_TIMEOUT")])
+async def test_chat_returns_explicit_model_budget_and_timeout_errors(route_app, question, status, code):
+    app, _ = route_app
+    response = await app.test_client().post("/source-workspaces/workspace-1/chat", json={"question": question, "expected_version": 2})
+    assert response.status_code == status
+    assert (await response.get_json())["data"]["error_code"] == code
 
 
 async def test_preview_passes_authenticated_owner_and_workspace(route_app):

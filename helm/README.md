@@ -2,7 +2,7 @@
 
 A Helm chart to deploy RAGFlow and its dependencies on Kubernetes.
 
-- Components: RAGFlow (web/api) and optional dependencies (Infinity/Elasticsearch/OpenSearch, MySQL, MinIO, Redis)
+- Components: RAGFlow (web/api) and optional dependencies (Infinity/Elasticsearch/OpenSearch, PostgreSQL, MinIO, Redis)
 - Requirements: Kubernetes >= 1.24, Helm >= 3.10
 
 ## Install
@@ -30,16 +30,16 @@ helm uninstall ragflow -n ragflow
         - name: regcred
     ```
 
-## External Services (MySQL / MinIO / Redis)
+## External Services (PostgreSQL / MinIO / Redis)
 
 The chart can deploy in-cluster services or connect to external ones. Toggle with `*.enabled`. When disabled, provide host/port via `env.*`.
 
-- MySQL
-  - `mysql.enabled`: default `true`
+- PostgreSQL
+  - `postgres.enabled`: default `true`
   - If `false`, set:
-    - `env.MYSQL_HOST` (required), `env.MYSQL_PORT` (default `3306`)
-    - `env.MYSQL_DBNAME` (default `rag_flow`), `env.MYSQL_PASSWORD` (required)
-    - `env.MYSQL_USER` (default `root` if omitted)
+    - `env.POSTGRES_HOST` (required), `env.POSTGRES_PORT` (default `5432`)
+    - `env.POSTGRES_DBNAME` (default `rag_flow`), `env.POSTGRES_PASSWORD` (required)
+    - `env.POSTGRES_USER` (default `rag_flow` if omitted)
 - MinIO
   - `minio.enabled`: default `true`
   - Configure:
@@ -53,26 +53,26 @@ The chart can deploy in-cluster services or connect to external ones. Toggle wit
 
 Notes:
 - When `*.enabled=true`, the chart renders in-cluster resources and injects corresponding `*_HOST`/`*_PORT` automatically.
-- Sensitive variables like `MYSQL_PASSWORD` are required; `MINIO_PASSWORD` and `REDIS_PASSWORD` are optional. All secrets are stored in a Secret.
+- Sensitive variables like `POSTGRES_PASSWORD` are required; `MINIO_PASSWORD` and `REDIS_PASSWORD` are optional. All secrets are stored in a Secret.
 
-### Example: use external MySQL, MinIO, and Redis
+### Example: use external PostgreSQL, MinIO, and Redis
 
 ```yaml
 # values.override.yaml
-mysql:
-  enabled: false  # use external MySQL
+postgres:
+  enabled: false  # use external PostgreSQL
 minio:
   enabled: false  # use external MinIO (S3 compatible)
 redis:
   enabled: false  # use external Redis/Valkey
 
 env:
-  # MySQL
-  MYSQL_HOST: mydb.example.com
-  MYSQL_PORT: "3306"
-  MYSQL_USER: root
-  MYSQL_DBNAME: rag_flow
-  MYSQL_PASSWORD: "<your-mysql-password>"
+  # PostgreSQL
+  POSTGRES_HOST: mydb.example.com
+  POSTGRES_PORT: "5432"
+  POSTGRES_USER: rag_flow
+  POSTGRES_DBNAME: rag_flow
+  POSTGRES_PASSWORD: "<your-postgres-password>"
 
   # MinIO
   MINIO_HOST: s3.example.com
@@ -128,6 +128,6 @@ helm template ragflow ./helm > rendered.yaml
 
 ## Notes
 
-- By default, the chart uses `DOC_ENGINE: infinity` and deploys in-cluster MySQL, MinIO, and Redis.
+- By default, the chart uses `DOC_ENGINE: infinity` and deploys in-cluster PostgreSQL, MinIO, and Redis.
 - The chart injects derived `*_HOST`/`*_PORT` and required secrets into a single Secret (`<release>-ragflow-env-config`).
 - `global.repo` and `global.imagePullSecrets` apply to all Pods; per-component `*.image.pullSecrets` still work and are merged with global settings.

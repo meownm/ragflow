@@ -272,3 +272,40 @@ test('opens and edits a saved draft before another processing run', async () => 
     screen.getByLabelText('Исходный текст для правок (необязательно)'),
   ).toHaveValue('Edited text');
 });
+
+test('legacy editor submits approval changes without claiming the current text was saved', async () => {
+  const draft = {
+    id: 'draft-approval',
+    workspace_id: workspace.id,
+    content: 'Исходный текст',
+    prompt: 'Task',
+    mode: 'all' as const,
+    source_version: 3,
+    sources: [],
+    version: 2,
+    created_at: '2026-10-18T10:00:00Z',
+    updated_at: '2026-10-18T10:00:00Z',
+    change_policy: 'approval' as const,
+  };
+  mockedListDrafts.mockResolvedValue([draft]);
+  mockedGetDraft.mockResolvedValue(draft);
+  mockedUpdateDraft.mockResolvedValue({
+    ...draft,
+    pending_change_id: 'manual-change',
+  });
+  render(<SourceProcessor workspace={workspace} />);
+  fireEvent.click(
+    await screen.findByRole('button', { name: /Открыть черновик/ }),
+  );
+  await screen.findByRole('article', { name: 'Результат обработки' });
+  fireEvent.click(screen.getByRole('button', { name: 'Редактировать текст' }));
+  const editor = screen.getByRole('textbox', { name: 'Редактор результата' });
+  fireEvent.change(editor, { target: { value: 'Предложенный новый текст' } });
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Отправить правки на согласование' }),
+  );
+  expect(await screen.findByRole('status')).toHaveTextContent(
+    'Текущий текст не изменён',
+  );
+  expect(editor).toHaveValue('Исходный текст');
+});

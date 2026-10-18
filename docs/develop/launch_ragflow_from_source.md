@@ -38,7 +38,7 @@ cd ragflow/
 ### Install Python dependencies
 
 1. Install uv:
-   
+
    ```bash
    pipx install uv
    ```
@@ -58,7 +58,7 @@ cd ragflow/
 
 ### Launch third-party services
 
-The following command launches the 'base' services (MinIO, Elasticsearch, Redis, and MySQL) using Docker Compose:
+The following command launches the 'base' services (MinIO, Elasticsearch, Redis, and PostgreSQL) using Docker Compose:
 
 ```bash
 docker compose -f docker/docker-compose-base.yml up -d
@@ -69,10 +69,10 @@ docker compose -f docker/docker-compose-base.yml up -d
 1. Add the following line to `/etc/hosts` to resolve all hosts specified in **docker/service_conf.yaml.template** to `127.0.0.1`:
 
    ```
-   127.0.0.1       es01 infinity mysql minio redis
+   127.0.0.1       es01 infinity postgres minio redis
    ```
 
-2. In **docker/service_conf.yaml.template**, update mysql port to `5455` and es port to `1200`, as specified in **docker/.env**.
+2. In **docker/service_conf.yaml.template**, update postgres port to `5432` and es port to `1200`, as specified in **docker/.env**.
 
 ### Launch the RAGFlow backend service
 
@@ -96,7 +96,7 @@ docker compose -f docker/docker-compose-base.yml up -d
    ```
 
 4. Check the configuration in **conf/service_conf.yaml**, ensuring all hosts and ports are correctly set.
-   
+
 5. Run the **entrypoint.sh** script to launch the backend service:
 
    ```shell
@@ -125,10 +125,10 @@ docker compose -f docker/docker-compose-base.yml up -d
 3. Start up the RAGFlow frontend service:
 
    ```bash
-   npm run dev 
+   npm run dev
    ```
 
-   *The following message appears, showing the IP address and port number of your frontend service:*  
+   *The following message appears, showing the IP address and port number of your frontend service:*
 
    ![](https://github.com/user-attachments/assets/0daf462c-a24d-4496-a66f-92533534e187)
 

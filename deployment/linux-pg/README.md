@@ -145,14 +145,14 @@ Chat LLM и embedding-модели не входят в базовую пост�
 
 - полный source tree RAGFlow из проверенного архива;
 - frontend, собранный из этого же дерева в контейнере Node.js 20;
-- PostgreSQL 16 вместо MySQL;
+- PostgreSQL 16 для служебной БД;
 - Elasticsearch, Valkey, MinIO и PlantUML;
 - T-One ASR;
 - Grafana, Prometheus, Loki, Tempo и OpenTelemetry Collector;
 - sandbox manager и изолированный пул CodeExec под gVisor/runsc;
 - первого пользователя с `is_superuser=true`.
 
-MySQL в этом профиле выключен. Интерфейс публикуется на
+Служебная БД работает только на PostgreSQL. Интерфейс публикуется на
 `0.0.0.0:80` и доступен по IP или DNS-имени сервера. Сетевой доступ должен быть
 ограничен корпоративным firewall или TLS reverse proxy. Grafana (`3001`) и
 Prometheus (`9090`) публикуются только на `127.0.0.1`.

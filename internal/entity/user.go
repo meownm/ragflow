@@ -25,7 +25,7 @@ type User struct {
 	Nickname        string     `gorm:"column:nickname;size:100;not null;index" json:"nickname"`
 	Password        *string    `gorm:"column:password;size:255;index" json:"-"`
 	Email           string     `gorm:"column:email;size:255;not null;unique" json:"email"`
-	Avatar          *string    `gorm:"column:avatar;type:longtext" json:"avatar,omitempty"`
+	Avatar          *string    `gorm:"column:avatar;type:text" json:"avatar,omitempty"`
 	Language        *string    `gorm:"column:language;size:32;index" json:"language,omitempty"`
 	ColorSchema     *string    `gorm:"column:color_schema;size:32;index" json:"color_schema,omitempty"`
 	Timezone        *string    `gorm:"column:timezone;size:64;index" json:"timezone,omitempty"`

@@ -22,7 +22,6 @@ import sys
 import time
 import typing
 from datetime import datetime, timezone
-from enum import Enum
 from functools import wraps
 
 from quart_auth import AuthUser
@@ -47,8 +46,8 @@ from peewee import (
     TextField,
     PrimaryKeyField,
 )
-from playhouse.migrate import MySQLMigrator, PostgresqlMigrator, migrate
-from playhouse.pool import PooledMySQLDatabase, PooledPostgresqlDatabase
+from playhouse.migrate import PostgresqlMigrator, migrate
+from playhouse.pool import PooledPostgresqlDatabase
 
 from api import utils
 from api.db import SerializedType
@@ -65,14 +64,8 @@ CONTINUOUS_FIELD_TYPE = {IntegerField, FloatField, DateTimeField}
 AUTO_DATE_TIMESTAMP_FIELD_PREFIX = {"create", "start", "end", "update", "read_access", "write_access"}
 
 
-class TextFieldType(Enum):
-    MYSQL = "LONGTEXT"
-    OCEANBASE = "LONGTEXT"
-    POSTGRES = "TEXT"
-
-
 class LongTextField(TextField):
-    field_type = TextFieldType[settings.DATABASE_TYPE.upper()].value
+    field_type = "TEXT"
 
 
 class JSONField(LongTextField):
@@ -259,67 +252,6 @@ class JsonSerializedField(SerializedField):
         super(JsonSerializedField, self).__init__(serialized_type=SerializedType.JSON, object_hook=object_hook, object_pairs_hook=object_pairs_hook, **kwargs)
 
 
-class RetryingPooledMySQLDatabase(PooledMySQLDatabase):
-    def __init__(self, *args, **kwargs):
-        self.max_retries = kwargs.pop("max_retries", 5)
-        self.retry_delay = kwargs.pop("retry_delay", 1)
-        super().__init__(*args, **kwargs)
-
-    def execute_sql(self, sql, params=None, commit=True):
-        for attempt in range(self.max_retries + 1):
-            try:
-                return super().execute_sql(sql, params, commit)
-            except (OperationalError, InterfaceError) as e:
-                error_codes = [2013, 2006]
-                error_messages = ["", "Lost connection"]
-                should_retry = (hasattr(e, "args") and e.args and e.args[0] in error_codes) or (str(e) in error_messages) or (hasattr(e, "__class__") and e.__class__.__name__ == "InterfaceError")
-
-                if should_retry and attempt < self.max_retries:
-                    logging.warning(f"Database connection issue (attempt {attempt + 1}/{self.max_retries}): {e}")
-                    self._handle_connection_loss()
-                    time.sleep(self.retry_delay * (2**attempt))
-                else:
-                    logging.error(f"DB execution failure: {e}")
-                    raise
-        return None
-
-    def _handle_connection_loss(self):
-        # self.close_all()
-        # self.connect()
-        try:
-            self.close()
-        except Exception:
-            pass
-        try:
-            self.connect()
-        except Exception as e:
-            logging.error(f"Failed to reconnect: {e}")
-            time.sleep(0.1)
-            try:
-                self.connect()
-            except Exception as e2:
-                logging.error(f"Failed to reconnect on second attempt: {e2}")
-                raise
-
-    def begin(self):
-        for attempt in range(self.max_retries + 1):
-            try:
-                return super().begin()
-            except (OperationalError, InterfaceError) as e:
-                error_codes = [2013, 2006]
-                error_messages = ["", "Lost connection"]
-
-                should_retry = (hasattr(e, "args") and e.args and e.args[0] in error_codes) or (str(e) in error_messages) or (hasattr(e, "__class__") and e.__class__.__name__ == "InterfaceError")
-
-                if should_retry and attempt < self.max_retries:
-                    logging.warning(f"Lost connection during transaction (attempt {attempt + 1}/{self.max_retries})")
-                    self._handle_connection_loss()
-                    time.sleep(self.retry_delay * (2**attempt))
-                else:
-                    raise
-        return None
-
-
 class RetryingPooledPostgresqlDatabase(PooledPostgresqlDatabase):
     def __init__(self, *args, **kwargs):
         self.max_retries = kwargs.pop("max_retries", 5)
@@ -385,91 +317,6 @@ class RetryingPooledPostgresqlDatabase(PooledPostgresqlDatabase):
         return None
 
 
-class RetryingPooledOceanBaseDatabase(PooledMySQLDatabase):
-    """Pooled OceanBase database with retry mechanism.
-
-    OceanBase is compatible with MySQL protocol, so we inherit from PooledMySQLDatabase.
-    This class provides connection pooling and automatic retry for connection issues.
-    """
-
-    def __init__(self, *args, **kwargs):
-        self.max_retries = kwargs.pop("max_retries", 5)
-        self.retry_delay = kwargs.pop("retry_delay", 1)
-        super().__init__(*args, **kwargs)
-
-    def execute_sql(self, sql, params=None, commit=True):
-        for attempt in range(self.max_retries + 1):
-            try:
-                return super().execute_sql(sql, params, commit)
-            except (OperationalError, InterfaceError) as e:
-                # OceanBase/MySQL specific error codes
-                # 2013: Lost connection to MySQL server during query
-                # 2006: MySQL server has gone away
-                error_codes = [2013, 2006]
-                error_messages = ["", "Lost connection", "gone away"]
-
-                should_retry = (
-                    (hasattr(e, "args") and e.args and e.args[0] in error_codes)
-                    or any(msg in str(e).lower() for msg in error_messages)
-                    or (hasattr(e, "__class__") and e.__class__.__name__ == "InterfaceError")
-                )
-
-                if should_retry and attempt < self.max_retries:
-                    logging.warning(f"OceanBase connection issue (attempt {attempt + 1}/{self.max_retries}): {e}")
-                    self._handle_connection_loss()
-                    time.sleep(self.retry_delay * (2**attempt))
-                else:
-                    logging.error(f"OceanBase execution failure: {e}")
-                    raise
-        return None
-
-    def _handle_connection_loss(self):
-        try:
-            self.close()
-        except Exception:
-            pass
-        try:
-            self.connect()
-        except Exception as e:
-            logging.error(f"Failed to reconnect to OceanBase: {e}")
-            time.sleep(0.1)
-            try:
-                self.connect()
-            except Exception as e2:
-                logging.error(f"Failed to reconnect to OceanBase on second attempt: {e2}")
-                raise
-
-    def begin(self):
-        for attempt in range(self.max_retries + 1):
-            try:
-                return super().begin()
-            except (OperationalError, InterfaceError) as e:
-                error_codes = [2013, 2006]
-                error_messages = ["", "Lost connection"]
-
-                should_retry = (hasattr(e, "args") and e.args and e.args[0] in error_codes) or (str(e) in error_messages) or (hasattr(e, "__class__") and e.__class__.__name__ == "InterfaceError")
-
-                if should_retry and attempt < self.max_retries:
-                    logging.warning(f"Lost connection during transaction (attempt {attempt + 1}/{self.max_retries})")
-                    self._handle_connection_loss()
-                    time.sleep(self.retry_delay * (2**attempt))
-                else:
-                    raise
-        return None
-
-
-class PooledDatabase(Enum):
-    MYSQL = RetryingPooledMySQLDatabase
-    OCEANBASE = RetryingPooledOceanBaseDatabase
-    POSTGRES = RetryingPooledPostgresqlDatabase
-
-
-class DatabaseMigrator(Enum):
-    MYSQL = MySQLMigrator
-    OCEANBASE = MySQLMigrator
-    POSTGRES = PostgresqlMigrator
-
-
 @singleton
 class BaseDataBase:
     def __init__(self):
@@ -481,8 +328,7 @@ class BaseDataBase:
             "retry_delay": 1,
         }
         database_config.update(pool_config)
-        self.database_connection = PooledDatabase[settings.DATABASE_TYPE.upper()].value(db_name, **database_config)
-        # self.database_connection = PooledDatabase[settings.DATABASE_TYPE.upper()].value(db_name, **database_config)
+        self.database_connection = RetryingPooledPostgresqlDatabase(db_name, **database_config)
         logging.info("init database on cluster mode successfully")
 
 
@@ -574,61 +420,8 @@ class PostgresDatabaseLock:
         return magic
 
 
-class MysqlDatabaseLock:
-    def __init__(self, lock_name, timeout=10, db=None):
-        self.lock_name = lock_name
-        self.timeout = int(timeout)
-        self.db = db if db else DB
-
-    @with_retry(max_retries=3, retry_delay=1.0)
-    def lock(self):
-        # SQL parameters only support %s format placeholders
-        cursor = self.db.execute_sql("SELECT GET_LOCK(%s, %s)", (self.lock_name, self.timeout))
-        ret = cursor.fetchone()
-        if ret[0] == 0:
-            raise Exception(f"acquire mysql lock {self.lock_name} timeout")
-        elif ret[0] == 1:
-            return True
-        else:
-            raise Exception(f"failed to acquire lock {self.lock_name}")
-
-    @with_retry(max_retries=3, retry_delay=1.0)
-    def unlock(self):
-        cursor = self.db.execute_sql("SELECT RELEASE_LOCK(%s)", (self.lock_name,))
-        ret = cursor.fetchone()
-        if ret[0] == 0:
-            raise Exception(f"mysql lock {self.lock_name} was not established by this thread")
-        elif ret[0] == 1:
-            return True
-        else:
-            raise Exception(f"mysql lock {self.lock_name} does not exist")
-
-    def __enter__(self):
-        if isinstance(self.db, PooledMySQLDatabase):
-            self.lock()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if isinstance(self.db, PooledMySQLDatabase):
-            self.unlock()
-
-    def __call__(self, func):
-        @wraps(func)
-        def magic(*args, **kwargs):
-            with self:
-                return func(*args, **kwargs)
-
-        return magic
-
-
-class DatabaseLock(Enum):
-    MYSQL = MysqlDatabaseLock
-    OCEANBASE = MysqlDatabaseLock
-    POSTGRES = PostgresDatabaseLock
-
-
 DB = BaseDataBase().database_connection
-DB.lock = DatabaseLock[settings.DATABASE_TYPE.upper()].value
+DB.lock = PostgresDatabaseLock
 
 
 def close_connection():
@@ -669,6 +462,9 @@ def init_database_tables(alter_fields=[]):
         logging.error(f"create tables failed: {create_failed_list}")
         raise Exception(f"create tables failed: {create_failed_list}")
     migrate_db()
+    from api.source_workbench.linked_migrations import migrate_linked_documents
+
+    migrate_linked_documents()
 
 
 def fill_db_model_object(model_object, human_model_dict):
@@ -1118,6 +914,7 @@ class SourceWorkspace(DataBaseModel):
 
     id = CharField(max_length=32, primary_key=True)
     owner_id = CharField(max_length=32, null=False, index=True)
+    tenant_id = CharField(max_length=32, null=True, index=True)
     title = CharField(max_length=255, null=False)
     dataset_ids = JSONField(null=False, default=list)
     selected_documents = JSONField(null=False, default=list)
@@ -1131,7 +928,7 @@ class SourceWorkspace(DataBaseModel):
 
 
 class SourceWorkspaceDraft(DataBaseModel):
-    """An editable result saved within one user's source workspace."""
+    """Current working-document projection; content is written with a revision."""
 
     id = CharField(max_length=32, primary_key=True)
     workspace_id = CharField(max_length=32, null=False, index=True)
@@ -1141,12 +938,168 @@ class SourceWorkspaceDraft(DataBaseModel):
     mode = CharField(max_length=16, null=False)
     source_version = IntegerField(null=False)
     sources = JSONField(null=False, default=list)
+    title = CharField(max_length=255, null=False, default="Черновик")
+    document_type = CharField(max_length=32, null=False, default="other")
+    change_policy = CharField(max_length=16, null=False, default="working")
+    source_kind = CharField(max_length=16, null=False, default="local")
+    source_ref = JSONField(null=True)
+    origin_key = CharField(max_length=64, null=True)
+    current_revision_id = CharField(max_length=32, null=True, index=True)
+    approved_revision_id = CharField(max_length=32, null=True)
+    responsible_id = CharField(max_length=32, null=True)
+    approver_id = CharField(max_length=32, null=True)
+    provenance_state = CharField(max_length=24, null=False, default="unresolved")
     version = IntegerField(null=False, default=1)
     created_at = DateTimeField(null=False, default=lambda: datetime.now(timezone.utc))
     updated_at = DateTimeField(null=False, default=lambda: datetime.now(timezone.utc))
 
     class Meta:
         db_table = "source_workspace_draft"
+        indexes = ((("workspace_id", "origin_key"), True),)
+
+
+class SourceWorkspaceMember(DataBaseModel):
+    workspace_id = CharField(max_length=32)
+    user_id = CharField(max_length=32)
+    role = CharField(max_length=16)
+
+    class Meta:
+        db_table = "source_workspace_member"
+        primary_key = CompositeKey("workspace_id", "user_id")
+
+
+class SourceDocumentRevision(DataBaseModel):
+    """Immutable, lossless section snapshots for local and indexed documents."""
+
+    id = CharField(max_length=32, primary_key=True)
+    document_id = CharField(max_length=32, index=True)
+    number = IntegerField()
+    parent_id = CharField(max_length=32, null=True)
+    sections = JSONField()
+    content_hash = CharField(max_length=64)
+    text_length = IntegerField(default=0)
+    author_id = CharField(max_length=32)
+    source_revision = TextField(null=True)
+    source_metadata = JSONField(null=True)
+    created_at = DateTimeField(default=lambda: datetime.now(timezone.utc))
+
+    class Meta:
+        db_table = "source_document_revision"
+        indexes = ((("document_id", "number"), True),)
+
+
+class SourceDocumentDependency(DataBaseModel):
+    id = CharField(max_length=32, primary_key=True)
+    workspace_id = CharField(max_length=32, index=True)
+    source_id = CharField(max_length=32, index=True)
+    target_id = CharField(max_length=32, index=True)
+    relation = CharField(max_length=24)
+    required = BooleanField(default=True)
+    source_scope = JSONField(default=list)
+    target_scope = JSONField(default=list)
+    refresh_on = CharField(max_length=16, default="saved")
+    maintenance = CharField(max_length=16, default="manual")
+    blocks_approval = BooleanField(default=True)
+    reviewed_revision_id = CharField(max_length=32, null=True)
+    reviewed_target_revision_id = CharField(max_length=32, null=True)
+    version = IntegerField(default=1)
+
+    class Meta:
+        db_table = "source_document_dependency"
+        indexes = ((("source_id", "target_id"), True),)
+
+
+class SourceDocumentInput(DataBaseModel):
+    revision_id = CharField(max_length=32, index=True)
+    dependency_id = CharField(max_length=32)
+    source_revision_id = CharField(max_length=32, index=True)
+    policy = JSONField()
+
+    class Meta:
+        db_table = "source_document_input"
+        primary_key = CompositeKey("revision_id", "dependency_id")
+
+
+class SourceDocumentImpact(DataBaseModel):
+    id = CharField(max_length=32, primary_key=True)
+    dependency_id = CharField(max_length=32, index=True)
+    source_revision_id = CharField(max_length=32)
+    previous_revision_id = CharField(max_length=32, null=True)
+    target_revision_id = CharField(max_length=32)
+    dependency_version = IntegerField()
+    state = CharField(max_length=24, default="pending")
+    explanation = TextField(default="")
+
+    class Meta:
+        db_table = "source_document_impact"
+        indexes = ((("dependency_id", "source_revision_id", "target_revision_id", "dependency_version"), True),)
+
+
+class SourceDocumentChange(DataBaseModel):
+    id = CharField(max_length=32, primary_key=True)
+    workspace_id = CharField(max_length=32, index=True)
+    document_id = CharField(max_length=32, index=True)
+    base_revision_id = CharField(max_length=32)
+    document_version = IntegerField()
+    policy_version = CharField(max_length=32, default="linked-documents-v1")
+    origin = CharField(max_length=16, default="model")
+    author_id = CharField(max_length=32, null=True)
+    candidate_sections = JSONField(null=True)
+    inputs = JSONField(default=list)
+    plan = JSONField(default=dict)
+    verification = JSONField(default=dict)
+    status = CharField(max_length=24, default="ready")
+    applied_revision_id = CharField(max_length=32, null=True)
+    created_at = DateTimeField(default=lambda: datetime.now(timezone.utc))
+
+    class Meta:
+        db_table = "source_document_change"
+
+
+class SourceDocumentDecision(DataBaseModel):
+    id = CharField(max_length=32, primary_key=True)
+    change_id = CharField(max_length=32, index=True)
+    actor_id = CharField(max_length=32)
+    action = CharField(max_length=16)
+    comment = TextField(default="")
+    created_at = DateTimeField(default=lambda: datetime.now(timezone.utc))
+
+    class Meta:
+        db_table = "source_document_decision"
+
+
+class SourceDocumentJob(DataBaseModel):
+    id = CharField(max_length=32, primary_key=True)
+    workspace_id = CharField(max_length=32, index=True)
+    document_id = CharField(max_length=32, index=True)
+    actor_id = CharField(max_length=32)
+    request_key = CharField(max_length=64, unique=True)
+    payload = JSONField()
+    checkpoint = JSONField(null=True)
+    status = CharField(max_length=16, default="queued", index=True)
+    stage = CharField(max_length=32, default="queued")
+    result_id = CharField(max_length=32, null=True)
+    error = JSONField(null=True)
+    lease_token = CharField(max_length=32, null=True)
+    lease_until = BigIntegerField(default=0)
+    attempts = IntegerField(default=0)
+    created_at = DateTimeField(default=lambda: datetime.now(timezone.utc))
+
+    class Meta:
+        db_table = "source_document_job"
+
+
+class SourceDocumentEvent(DataBaseModel):
+    id = CharField(max_length=32, primary_key=True)
+    workspace_id = CharField(max_length=32, index=True)
+    document_id = CharField(max_length=32, index=True)
+    actor_id = CharField(max_length=32)
+    kind = CharField(max_length=32)
+    payload = JSONField(default=dict)
+    created_at = DateTimeField(default=lambda: datetime.now(timezone.utc))
+
+    class Meta:
+        db_table = "source_document_event"
 
 
 class APIToken(DataBaseModel):
@@ -2242,13 +2195,8 @@ class TenantModelGroupMapping(DataBaseModel):
 def alter_db_add_column(migrator, table_name, column_name, column_type):
     try:
         migrate(migrator.add_column(table_name, column_name, column_type))
-    except OperationalError as ex:
-        error_codes = [1060]
-        error_messages = ["Duplicate column name"]
-
-        should_skip_error = (hasattr(ex, "args") and ex.args and ex.args[0] in error_codes) or (str(ex) in error_messages)
-
-        if not should_skip_error:
+    except (OperationalError, ProgrammingError) as ex:
+        if "already exists" not in str(ex).lower():
             logging.critical(f"Failed to add {settings.DATABASE_TYPE.upper()}.{table_name} column {column_name}, operation error: {ex}")
 
     except Exception as ex:
@@ -2277,38 +2225,16 @@ def migrate_add_unique_email(migrator):
     """Deduplicates user emails and add UNIQUE constraint to email column (idempotent)"""
     # step 0: check existing index state on user.email and prepare for unique constraint
     try:
-        if settings.DATABASE_TYPE.upper() == "POSTGRES":
-            cursor = DB.execute_sql("""
-                SELECT COUNT(*)
-                FROM pg_indexes
-                WHERE tablename = 'user'
-                  AND indexname = 'user_email'
-            """)
-            result = cursor.fetchone()
-            if result and result[0] > 0:
-                logging.info("UNIQUE index on user.email already exists, skipping migration")
-                return
-        else:
-            # Fetch the first index on email: tells us both the name and whether it's unique.
-            # non_unique=0 means unique, non_unique=1 means non-unique.
-            cursor = DB.execute_sql("""
-                SELECT index_name, non_unique
-                FROM information_schema.statistics
-                WHERE table_schema = DATABASE()
-                  AND table_name = 'user'
-                  AND column_name = 'email'
-                LIMIT 1
-            """)
-            row = cursor.fetchone()
-            if row:
-                index_name, non_unique = row
-                if non_unique == 0:
-                    logging.info("UNIQUE index on user.email already exists, skipping migration")
-                    return
-                # Non-unique index exists (e.g. from old peewee index=True); drop it so
-                # the upcoming ADD UNIQUE INDEX does not hit MySQL error 1061 "Duplicate key name".
-                DB.execute_sql(f"ALTER TABLE `user` DROP INDEX `{index_name}`")
-                logging.info(f"Dropped non-unique index '{index_name}' on user.email before adding unique index")
+        cursor = DB.execute_sql("""
+            SELECT COUNT(*)
+            FROM pg_indexes
+            WHERE tablename = 'user'
+              AND indexname = 'user_email'
+        """)
+        result = cursor.fetchone()
+        if result and result[0] > 0:
+            logging.info("UNIQUE index on user.email already exists, skipping migration")
+            return
     except Exception as ex:
         logging.warning(f"Failed to check/prepare email index on user table: {ex}, continuing with migration")
 
@@ -2331,8 +2257,8 @@ def migrate_add_unique_email(migrator):
         migrate(migrator.add_index("user", ("email",), unique=True))
     except (OperationalError, ProgrammingError) as ex:
         msg = str(ex)
-        # MySQL 1061 "Duplicate key name" or PostgreSQL "already exists" -> already migrated
-        if "1061" in msg or "Duplicate key name" in msg or "already exists" in msg.lower():
+        # An existing PostgreSQL index means the migration already ran.
+        if "already exists" in msg.lower():
             pass
         else:
             logging.critical("Failed to add UNIQUE constraint on user.email: %s", ex)
@@ -2366,12 +2292,9 @@ def migrate_business_document_title_key(migrator):
     try:
         migrate(migrator.add_index("business_document", ("title_key",), unique=True))
     except (OperationalError, ProgrammingError) as ex:
-        if "already exists" not in str(ex).lower() and "duplicate key name" not in str(ex).lower() and "1061" not in str(ex):
+        if "already exists" not in str(ex).lower():
             raise
-    if settings.DATABASE_TYPE.upper() == "POSTGRES":
-        DB.execute_sql("ALTER TABLE business_document ALTER COLUMN title_key SET NOT NULL")
-    else:
-        DB.execute_sql("ALTER TABLE business_document MODIFY title_key VARCHAR(64) NOT NULL")
+    DB.execute_sql("ALTER TABLE business_document ALTER COLUMN title_key SET NOT NULL")
 
 
 def migrate_business_document_catalog():
@@ -2447,69 +2370,6 @@ def migrate_business_document_eva_bindings():
 
 
 def update_tenant_llm_to_id_primary_key():
-    """Add ID and set to primary key step by step."""
-    if settings.DATABASE_TYPE.upper() == "POSTGRES":
-        _update_tenant_llm_to_id_primary_key_postgres()
-    else:
-        _update_tenant_llm_to_id_primary_key_mysql()
-
-
-def _update_tenant_llm_to_id_primary_key_mysql():
-    """MySQL implementation: Add ID column and set as AUTO_INCREMENT primary key."""
-    try:
-        with DB.atomic():
-            # 0. Check if 'id' column already exists
-            cursor = DB.execute_sql("""
-                            SELECT COLUMN_NAME
-                            FROM INFORMATION_SCHEMA.COLUMNS
-                            WHERE TABLE_SCHEMA = DATABASE()
-                            AND TABLE_NAME = 'tenant_llm'
-                            AND COLUMN_NAME = 'id'
-                        """)
-            if cursor.rowcount > 0:
-                return
-
-            # 1. Add nullable column
-            DB.execute_sql("ALTER TABLE tenant_llm ADD COLUMN temp_id INT NULL")
-
-            # 2. Set ID using MySQL user variables
-            DB.execute_sql("SET @row = 0;")
-            DB.execute_sql("UPDATE tenant_llm SET temp_id = (@row := @row + 1) ORDER BY tenant_id, llm_factory, llm_name;")
-
-            # 3. Drop old primary key
-            DB.execute_sql("ALTER TABLE tenant_llm DROP PRIMARY KEY")
-
-            # 4. Update ID column to primary key with AUTO_INCREMENT
-            DB.execute_sql("""
-            ALTER TABLE tenant_llm
-            MODIFY COLUMN temp_id INT NOT NULL AUTO_INCREMENT PRIMARY KEY
-            """)
-
-            # 5. Add unique key
-            DB.execute_sql("""
-                ALTER TABLE tenant_llm
-                ADD CONSTRAINT uk_tenant_llm UNIQUE (tenant_id, llm_factory, llm_name)
-            """)
-
-            # 6. rename
-            DB.execute_sql("ALTER TABLE tenant_llm RENAME COLUMN temp_id TO id")
-
-            logging.info("Successfully updated tenant_llm to id primary key.")
-
-    except Exception as e:
-        logging.error(str(e))
-        cursor = DB.execute_sql("""
-                                    SELECT COLUMN_NAME
-                                    FROM INFORMATION_SCHEMA.COLUMNS
-                                    WHERE TABLE_SCHEMA = DATABASE()
-                                    AND TABLE_NAME = 'tenant_llm'
-                                    AND COLUMN_NAME = 'temp_id'
-                                """)
-        if cursor.rowcount > 0:
-            DB.execute_sql("ALTER TABLE tenant_llm DROP COLUMN temp_id")
-
-
-def _update_tenant_llm_to_id_primary_key_postgres():
     """PostgreSQL implementation: Add SERIAL primary key column to tenant_llm."""
     try:
         with DB.atomic():
@@ -2587,7 +2447,7 @@ def _update_tenant_llm_to_id_primary_key_postgres():
 
 def migrate_db():
     logging.disable(logging.ERROR)
-    migrator = DatabaseMigrator[settings.DATABASE_TYPE.upper()].value(DB)
+    migrator = PostgresqlMigrator(DB)
     alter_db_add_column(migrator, "business_document_sql_query_run", "kind", CharField(max_length=16, null=False, default="SQL", index=True))
     alter_db_add_column(migrator, "business_document_sql_query_run", "source_run_id", CharField(max_length=32, null=True, index=True))
     alter_db_add_column(migrator, "business_document_sql_query_run", "job_id", CharField(max_length=32, null=True, unique=True))

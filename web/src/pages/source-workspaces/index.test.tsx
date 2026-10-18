@@ -21,6 +21,12 @@ jest.mock('@/components/source-workbench/source-chat', () => ({
 jest.mock('@/components/source-workbench/source-processor', () => ({
   SourceProcessor: () => null,
 }));
+jest.mock('@/components/source-workbench/document-workbench', () => ({
+  DocumentWorkbench: () => null,
+}));
+jest.mock('@/components/source-workbench/source-search-settings', () => ({
+  SourceSearchSettings: () => null,
+}));
 
 test('search users can choose assigned sources with matching tenant and embedding model', async () => {
   jest.mocked(listSourceWorkspaces).mockResolvedValue([]);

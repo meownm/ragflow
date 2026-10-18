@@ -91,7 +91,7 @@ const menuItems: Array<{
   {
     path: Routes.SourceWorkspaces,
     name: 'header.sourceWorkspaces',
-    fallbackName: 'Работа со статьями',
+    fallbackName: 'Связанные документы',
     icon: LucideFolderOpen,
     section: 'search',
     'data-testid': 'nav-source-workspaces',

@@ -18,7 +18,7 @@ def _success(data, status=200):
     return jsonify({"code": 0, "data": data}), status
 
 
-def _error(error: SourceWorkspaceError):
+def _error(error: SourceWorkspaceError | ProcessingError):
     return jsonify({"code": error.status, "message": error.message, "data": {"error_code": error.code}}), error.status
 
 
@@ -30,6 +30,177 @@ async def _body():
     if not isinstance(data, dict):
         raise SourceWorkspaceError("INVALID_INPUT", "Request body must be a JSON object")
     return data
+
+
+def _linked():
+    from api.source_workbench.linked_runtime import build_linked_documents
+
+    return build_linked_documents()
+
+
+@manager.route("/source-workspaces/<workspace_id>/documents", methods=["GET", "POST"])  # noqa: F821
+@login_required
+async def linked_documents(workspace_id):
+    from quart import request
+
+    try:
+        service = _linked()
+        actor = str(current_user.id)
+        if request.method == "POST":
+            return _success(await service.create(actor, workspace_id, await _body()), 201)
+        return _success(await service.list(actor, workspace_id))
+    except (SourceWorkspaceError, ProcessingError) as error:
+        return _error(error)
+
+
+@manager.route("/source-workspaces/<workspace_id>/documents/import", methods=["POST"])  # noqa: F821
+@login_required
+async def import_linked_document(workspace_id):
+    try:
+        return _success(await _linked().import_source(str(current_user.id), workspace_id, await _body()), 201)
+    except (SourceWorkspaceError, ProcessingError) as error:
+        return _error(error)
+
+
+@manager.route("/source-workspaces/<workspace_id>/documents/<document_id>", methods=["GET", "PUT"])  # noqa: F821
+@login_required
+async def linked_document(workspace_id, document_id):
+    from quart import request
+
+    try:
+        service = _linked()
+        actor = str(current_user.id)
+        if request.method == "PUT":
+            return _success(await service.edit(actor, workspace_id, document_id, await _body()))
+        return _success(await service.get(actor, workspace_id, document_id))
+    except (SourceWorkspaceError, ProcessingError) as error:
+        return _error(error)
+
+
+@manager.route("/source-workspaces/<workspace_id>/documents/<document_id>/revisions/<revision_id>", methods=["GET"])  # noqa: F821
+@login_required
+async def linked_revision(workspace_id, document_id, revision_id):
+    try:
+        return _success(await _linked().history(str(current_user.id), workspace_id, document_id, revision_id))
+    except SourceWorkspaceError as error:
+        return _error(error)
+
+
+@manager.route("/source-workspaces/<workspace_id>/documents/<document_id>/dependencies", methods=["POST"])  # noqa: F821
+@manager.route("/source-workspaces/<workspace_id>/documents/<document_id>/dependencies/<dependency_id>", methods=["PUT"])  # noqa: F821
+@login_required
+async def linked_dependency(workspace_id, document_id, dependency_id=None):
+    try:
+        return _success(await _linked().dependency(str(current_user.id), workspace_id, document_id, await _body(), dependency_id))
+    except SourceWorkspaceError as error:
+        return _error(error)
+
+
+@manager.route("/source-workspaces/<workspace_id>/documents/<document_id>/dependencies/<dependency_id>", methods=["DELETE"])  # noqa: F821
+@login_required
+async def remove_linked_dependency(workspace_id, document_id, dependency_id):
+    try:
+        return _success(await _linked().remove_dependency(str(current_user.id), workspace_id, document_id, dependency_id, await _body()))
+    except SourceWorkspaceError as error:
+        return _error(error)
+
+
+@manager.route("/source-workspaces/<workspace_id>/documents/<document_id>/refresh", methods=["POST"])  # noqa: F821
+@login_required
+async def refresh_linked_document(workspace_id, document_id):
+    try:
+        return _success(await _linked().refresh(str(current_user.id), workspace_id, document_id))
+    except SourceWorkspaceError as error:
+        return _error(error)
+
+
+@manager.route("/source-workspaces/<workspace_id>/documents/<document_id>/prepare", methods=["POST"])  # noqa: F821
+@login_required
+async def prepare_linked_document(workspace_id, document_id):
+    try:
+        return _success(await _linked().prepare(str(current_user.id), workspace_id, document_id, await _body()), 202)
+    except (SourceWorkspaceError, ProcessingError) as error:
+        return _error(error)
+
+
+@manager.route("/source-workspaces/<workspace_id>/documents/<document_id>/approve", methods=["POST"])  # noqa: F821
+@login_required
+async def approve_linked_document(workspace_id, document_id):
+    try:
+        return _success(await _linked().approve(str(current_user.id), workspace_id, document_id, await _body()))
+    except SourceWorkspaceError as error:
+        return _error(error)
+
+
+@manager.route("/source-workspaces/<workspace_id>/documents/<document_id>/baseline", methods=["POST"])  # noqa: F821
+@login_required
+async def baseline_linked_document(workspace_id, document_id):
+    try:
+        return _success(await _linked().baseline(str(current_user.id), workspace_id, document_id, await _body()))
+    except SourceWorkspaceError as error:
+        return _error(error)
+
+
+@manager.route("/source-workspaces/<workspace_id>/documents/<document_id>/changes/<change_id>/decision", methods=["POST"])  # noqa: F821
+@login_required
+async def decide_linked_change(workspace_id, document_id, change_id):
+    try:
+        return _success(await _linked().decide(str(current_user.id), workspace_id, document_id, change_id, await _body()))
+    except SourceWorkspaceError as error:
+        return _error(error)
+
+
+@manager.route("/source-workspaces/<workspace_id>/documents/<document_id>/changes/<change_id>/selection", methods=["POST"])  # noqa: F821
+@login_required
+async def select_linked_changes(workspace_id, document_id, change_id):
+    try:
+        return _success(await _linked().prepare_selection(str(current_user.id), workspace_id, document_id, change_id, await _body()), 202)
+    except SourceWorkspaceError as error:
+        return _error(error)
+
+
+@manager.route("/source-workspaces/<workspace_id>/documents/<document_id>/jobs/<job_id>/cancel", methods=["POST"])  # noqa: F821
+@login_required
+async def cancel_linked_job(workspace_id, document_id, job_id):
+    try:
+        return _success(await _linked().cancel(str(current_user.id), workspace_id, document_id, job_id))
+    except SourceWorkspaceError as error:
+        return _error(error)
+
+
+@manager.route("/source-workspaces/<workspace_id>/members", methods=["GET", "PUT"])  # noqa: F821
+@login_required
+async def linked_workspace_members(workspace_id):
+    from quart import request
+
+    try:
+        service = _linked()
+        actor = str(current_user.id)
+        if request.method == "PUT":
+            return _success(await service.set_member(actor, workspace_id, await _body()))
+        return _success(await service.members(actor, workspace_id))
+    except SourceWorkspaceError as error:
+        return _error(error)
+
+
+@manager.route("/source-workspaces/<workspace_id>/datasets", methods=["PUT"])  # noqa: F821
+@login_required
+async def configure_linked_workspace_search(workspace_id):
+    try:
+        return _success(await _linked().configure_search(str(current_user.id), workspace_id, await _body()))
+    except SourceWorkspaceError as error:
+        return _error(error)
+
+
+@manager.route("/source-workspaces/<workspace_id>/organization", methods=["GET", "PUT"])  # noqa: F821
+@login_required
+async def linked_workspace_organization(workspace_id):
+    from quart import request
+
+    try:
+        return _success(await _linked().organization(str(current_user.id), workspace_id, await _body() if request.method == "PUT" else None))
+    except SourceWorkspaceError as error:
+        return _error(error)
 
 
 @manager.route("/source-workspaces", methods=["POST"])  # noqa: F821
@@ -141,8 +312,10 @@ async def retrieve_source_workspace_documents(workspace_id):
 async def chat_with_source_workspace(workspace_id):
     try:
         return _success(await build_source_workspace_service().chat(str(current_user.id), workspace_id, await _body()))
-    except SourceWorkspaceError as error:
+    except (SourceWorkspaceError, ProcessingError) as error:
         return _error(error)
+    except TimeoutError:
+        return _error(SourceWorkspaceError("MODEL_TIMEOUT", "Модель не завершила ответ за 30 минут", 504))
 
 
 @manager.route("/source-workspaces/<workspace_id>/process", methods=["POST"])  # noqa: F821
@@ -181,7 +354,7 @@ async def process_source_workspace(workspace_id):
                     yield f"event: error\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
                     break
                 except TimeoutError:
-                    event = {"event": "error", "code": "MODEL_TIMEOUT", "message": "Модель не завершила этап за 5 минут"}
+                    event = {"event": "error", "code": "MODEL_TIMEOUT", "message": "Модель не завершила этап за 30 минут"}
                     yield f"event: error\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
                     break
                 except Exception:

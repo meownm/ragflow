@@ -232,7 +232,7 @@
 
 시스템 설정과 관련하여 다음 파일들을 관리해야 합니다:
 
-- [.env](./docker/.env): `SVR_HTTP_PORT`, `MYSQL_PASSWORD`, `MINIO_PASSWORD`와 같은 시스템의 기본 설정을 포함합니다.
+- [.env](./docker/.env): `SVR_HTTP_PORT`, `POSTGRES_PASSWORD`, `MINIO_PASSWORD`와 같은 시스템의 기본 설정을 포함합니다.
 - [service_conf.yaml.template](./docker/service_conf.yaml.template): 백엔드 서비스를 구성합니다.
 - [docker-compose.yml](./docker/docker-compose.yml): 시스템은 [docker-compose.yml](./docker/docker-compose.yml)을 사용하여 시작됩니다.
 
@@ -302,7 +302,7 @@ docker build --platform linux/amd64 \
    lefthook install
    ```
 
-3. Docker Compose를 사용하여 의존 서비스(MinIO, Elasticsearch, Redis 및 MySQL)를 시작합니다:
+3. Docker Compose를 사용하여 의존 서비스(MinIO, Elasticsearch, Redis 및 PostgreSQL)를 시작합니다:
 
    ```bash
    docker compose -f docker/docker-compose-base.yml up -d

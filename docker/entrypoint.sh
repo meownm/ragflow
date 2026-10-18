@@ -16,7 +16,6 @@ function usage() {
     echo "  --disable-datasync              Disables synchronization of datasource workers."
     echo "  --enable-mcpserver              Enables the MCP server."
     echo "  --enable-adminserver            Enables the Admin server."
-    echo "  --init-model-provider-tables  Run model provider table migrations and exit."
     echo "  --init-superuser                Initializes the superuser."
     echo "  --consumer-no-beg=<num>         Start range for consumers (if using range-based)."
     echo "  --consumer-no-end=<num>         End range for consumers (if using range-based)."
@@ -39,7 +38,6 @@ ENABLE_DATASYNC=1
 ENABLE_MCP_SERVER=0
 ENABLE_ADMIN_SERVER=0 # Default close admin server
 INIT_SUPERUSER_ARGS="" # Default to not initialize superuser
-INIT_MODEL_PROVIDER_TABLES=0
 CONSUMER_NO_BEG=0
 CONSUMER_NO_END=0
 WORKERS=1
@@ -89,10 +87,6 @@ for arg in "$@"; do
       ;;
     --enable-adminserver)
       ENABLE_ADMIN_SERVER=1
-      shift
-      ;;
-    --init-model-provider-tables)
-      INIT_MODEL_PROVIDER_TABLES=1
       shift
       ;;
     --init-superuser)
@@ -277,18 +271,6 @@ function wait_for_ragflow_backend() {
 ensure_docling
 ensure_db_init
 
-if [[ "${INIT_MODEL_PROVIDER_TABLES}" -eq 1 && "${DB_TYPE:-mysql}" == "mysql" ]]; then
-    echo "Running model provider table migrations..."
-    "$PY" tools/scripts/mysql_migration.py \
-        --stages tenant_model_provider,tenant_model_instance,tenant_model,model_id_config \
-        --config conf/service_conf.yaml \
-        --execute \
-        --database-version "v0.26.1" \
-        --mark-database-version-on-success
-    echo "Model provider table migrations completed."
-elif [[ "${INIT_MODEL_PROVIDER_TABLES}" -eq 1 ]]; then
-    echo "Skipping MySQL-only model provider migration for DB_TYPE=${DB_TYPE}."
-fi
 
 if [[ "${ENABLE_ADMIN_SERVER}" -eq 1 ]]; then
     if [[ "${API_PROXY_SCHEME}" == "hybrid" ]] || [[ "${API_PROXY_SCHEME}" == "python" ]] || [[ "${API_PROXY_SCHEME}" == "go" ]]; then

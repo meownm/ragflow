@@ -1,4 +1,4 @@
-# The RAGFlow team do not actively maintain docker-compose-CN-oc9.yml, so use them at your own risk. 
+# The RAGFlow team do not actively maintain docker-compose-CN-oc9.yml, so use them at your own risk.
 # However, you are welcome to file a pull request to improve it.
 include:
   - ./docker-compose-base.yml
@@ -6,7 +6,7 @@ include:
 services:
   ragflow-cpu:
     depends_on:
-      mysql:
+      postgres:
         condition: service_healthy
     profiles:
       - cpu
@@ -31,7 +31,7 @@ services:
 
   ragflow-gpu:
     depends_on:
-      mysql:
+      postgres:
         condition: service_healthy
     profiles:
       - gpu

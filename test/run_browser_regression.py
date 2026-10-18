@@ -17,6 +17,7 @@ SUITES = [
     "test/playwright/e2e/test_sql_revision_ui.py",
     "test/playwright/e2e/test_business_documents_access_ui.py",
     "test/playwright/e2e/test_business_documents_ui.py",
+    "test/playwright/e2e/test_linked_documents_ui.py",
     "test/playwright/e2e/test_navigation_visibility_admin.py",
     "test/playwright/e2e/test_auth_boundaries_ui.py",
     "test/playwright/e2e/test_managed_datasets_access_ui.py",

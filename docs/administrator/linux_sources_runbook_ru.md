@@ -28,7 +28,7 @@ DNF-репозиторием `cifra-docker`. Интернет-инсталлят
 | `minio` | внутреннее объектное хранилище | не публикуется |
 | `plantuml-server` | рендеринг диаграмм | не публикуется |
 
-MySQL отсутствует в итоговом Compose. PostgreSQL хранит метаданные приложения,
+PostgreSQL отсутствует в итоговом Compose. PostgreSQL хранит метаданные приложения,
 а Elasticsearch — документы и векторы, поэтому `pgvector` этому профилю не
 нужен.
 
@@ -52,7 +52,7 @@ Runtime RAGFlow состоит из закреплённого upstream-обра
 4. `deployment/linux-pg/docker-compose.release.yml`.
 
 Второй файл монтирует текущие backend-модули и собранный `web/dist`, третий
-отключает Docker Desktop bootstrap на Linux, четвёртый убирает MySQL и
+отключает Docker Desktop bootstrap на Linux, четвёртый убирает PostgreSQL и
 ограничивает публикацию RAGFlow loopback-адресом. Запуск только первого
 Compose-файла означает потерю PostgreSQL-профиля и кастомного кода.
 
@@ -275,7 +275,7 @@ sudo env \
    Elasticsearch, MinIO и Valkey, а также постоянным ключом шифрования
    персональных EVA-токенов.
 7. Валидирует объединённый Compose, требует `postgres`, `t-one-asr`, sandbox и
-   observability-сервисы и аварийно завершает работу, если активен `mysql`.
+   observability-сервисы и аварийно завершает работу, если активен `postgres`.
 8. Запускает все сервисы и ждёт полного RAGFlow health до 10 минут.
 9. Создаёт superuser и проверяет его через фактические сервисы RAGFlow.
 
@@ -344,18 +344,18 @@ sudo grep -Eq '^RAGFLOW_CREDENTIALS_KEY=[0-9a-f]{64}$' \
 со статусом `OK`. `RAGFLOW_IMAGE` — закреплённая upstream-основа; версию
 кастомного релиза определяют архив, manifest и локальные монтирования.
 
-### 10.2. Сервисы и отсутствие MySQL
+### 10.2. Сервисы и отсутствие PostgreSQL
 
 ```bash
 rf_compose config --quiet
 rf_compose config --services | sort
 rf_compose ps
 
-if rf_compose config --services | grep -qx mysql; then
-  echo 'ERROR: MySQL is active' >&2
+if rf_compose config --services | grep -qx postgres; then
+  echo 'ERROR: PostgreSQL is active' >&2
   exit 1
 else
-  echo 'OK: MySQL is absent'
+  echo 'OK: PostgreSQL is absent'
 fi
 
 sudo docker ps -a \
@@ -366,7 +366,7 @@ sudo docker ps -a \
 Ожидаются 13 постоянных сервисов: `es01`, `minio`, `plantuml-server`, `postgres`,
 `ragflow-cpu`, `redis`, `t-one-asr`, `sandbox-executor-manager`, `otel-collector`,
 `tempo`, `loki`, `prometheus`, `grafana`, а также шесть динамических sandbox
-контейнеров пула. MySQL быть не должно.
+контейнеров пула. PostgreSQL быть не должно.
 
 ### 10.3. Health RAGFlow и PostgreSQL
 
@@ -613,7 +613,7 @@ Preflight проверяет Compose, зарегистрированный `runs
 - [ ] Frontend собран из того же release-архива.
 - [ ] Постоянный `RAGFLOW_CREDENTIALS_KEY` сгенерирован и входит в защищённый backup.
 - [ ] Compose config валиден и содержит 13 ожидаемых постоянных сервисов.
-- [ ] Сервис и контейнер MySQL отсутствуют.
+- [ ] Сервис и контейнер PostgreSQL отсутствуют.
 - [ ] RAGFlow health возвращает `db/doc_engine/redis/storage=ok`.
 - [ ] PostgreSQL содержит схему RAGFlow; `DB_TYPE=postgres`.
 - [ ] UI доступен только через loopback/tunnel либо TLS reverse proxy.
@@ -666,7 +666,7 @@ free -h
 sysctl vm.max_map_count
 ```
 
-### Появился MySQL
+### Появился PostgreSQL
 
 Убедиться, что используется `deployment/linux-pg/docker-compose.release.yml`,
 а `COMPOSE_PROFILES` не переопределён вручную. Installer обязан остановиться

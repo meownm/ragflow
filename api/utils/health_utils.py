@@ -35,7 +35,7 @@ def _ok_nok(ok: bool) -> str:
 def check_db() -> tuple[bool, dict]:
     st = timer()
     try:
-        # lightweight probe; works for MySQL/Postgres
+        # Lightweight PostgreSQL probe.
         DB.execute_sql("SELECT 1")
         return True, {"elapsed": f"{(timer() - st) * 1000.0:.1f}"}
     except Exception as e:
@@ -190,20 +190,6 @@ def check_oceanbase_health() -> dict:
         }
     except Exception as e:
         return {"status": "unhealthy", "details": {"connection": "disconnected", "error": str(e)}}
-
-
-def get_mysql_status():
-    try:
-        cursor = DB.execute_sql("SHOW PROCESSLIST;")
-        res_rows = cursor.fetchall()
-        headers = ["id", "user", "host", "db", "command", "time", "state", "info"]
-        cursor.close()
-        return {"status": "alive", "message": [dict(zip(headers, r)) for r in res_rows]}
-    except Exception as e:
-        return {
-            "status": "timeout",
-            "message": f"error: {str(e)}",
-        }
 
 
 def get_postgres_status():

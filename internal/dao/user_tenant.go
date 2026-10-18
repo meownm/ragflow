@@ -144,10 +144,10 @@ func (dao *UserTenantDAO) GetMembersByTenantID(tenantID string) ([]*TenantMember
 	var results []*TenantMemberItem
 	err := DB.Table("user_tenant").
 		Select("user_tenant.id, user_tenant.user_id, user_tenant.role, user_tenant.status, "+
-			"user.nickname, user.email, user.avatar, user.is_authenticated, "+
-			"user.status AS is_active, user.is_anonymous, user.is_superuser, "+
-			"DATE_FORMAT(user.update_date, '%Y-%m-%dT%H:%i:%s') AS update_date").
-		Joins("JOIN user ON user_tenant.user_id = user.id").
+			"\"user\".nickname, \"user\".email, \"user\".avatar, \"user\".is_authenticated, "+
+			"\"user\".status AS is_active, \"user\".is_anonymous, \"user\".is_superuser, "+
+			"TO_CHAR(\"user\".update_date, 'YYYY-MM-DD') || 'T' || TO_CHAR(\"user\".update_date, 'HH24:MI:SS') AS update_date").
+		Joins("JOIN \"user\" ON user_tenant.user_id = \"user\".id").
 		Where("user_tenant.tenant_id = ? AND user_tenant.status = ? AND user_tenant.role != ?",
 			tenantID, "1", "owner").
 		Scan(&results).Error
@@ -158,8 +158,8 @@ func (dao *UserTenantDAO) GetMembersByTenantID(tenantID string) ([]*TenantMember
 func (dao *UserTenantDAO) GetTenantsByUserID(userID string) ([]*TenantInfoByUserID, error) {
 	var results []*TenantInfoByUserID
 	err := DB.Table("user_tenant").
-		Select("user_tenant.tenant_id, user_tenant.role, user.nickname, user.email, user.avatar, user.update_date").
-		Joins("JOIN user ON user_tenant.tenant_id = user.id AND user_tenant.user_id = ? AND user_tenant.status = ?", userID, "1").
+		Select("user_tenant.tenant_id, user_tenant.role, \"user\".nickname, \"user\".email, \"user\".avatar, \"user\".update_date").
+		Joins("JOIN \"user\" ON user_tenant.tenant_id = \"user\".id AND user_tenant.user_id = ? AND user_tenant.status = ?", userID, "1").
 		Where("user_tenant.status = ?", "1").
 		Scan(&results).Error
 	return results, err

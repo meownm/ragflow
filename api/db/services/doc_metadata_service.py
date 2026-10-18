@@ -17,7 +17,7 @@
 Document Metadata Service
 
 Manages document-level metadata storage in ES/Infinity.
-This is the SOLE source of truth for document metadata - MySQL meta_fields column has been removed.
+This is the SOLE source of truth for document metadata - relational meta_fields column has been removed.
 """
 
 import json
@@ -377,7 +377,7 @@ class DocMetadataService:
                 "kb_id": kb_id,
             }
 
-            # Store metadata as JSON object in meta_fields column (same as MySQL structure)
+            # Store metadata as JSON object in meta_fields column (same relational structure)
             if meta_fields:
                 # Post-process to split combined values by common delimiters
                 meta_fields = cls._split_combined_values(meta_fields)

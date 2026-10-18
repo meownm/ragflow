@@ -198,7 +198,7 @@ docker compose up -d
 docker compose ps --all
 ```
 
-Обязательны healthy-состояния `openmetadata_mysql`, `openmetadata_elasticsearch`, `openmetadata_fuseki` и `openmetadata_server`. Контейнер миграции должен завершиться с кодом `0`.
+Обязательны healthy-состояния `openmetadata_postgres`, `openmetadata_elasticsearch`, `openmetadata_fuseki` и `openmetadata_server`. Контейнер миграции должен завершиться с кодом `0`.
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8585/api/v1/system/version
@@ -784,7 +784,7 @@ Restore сначала репетировать в отдельном Compose pr
 
 | Симптом                                                                           | Проверить                                                     | Действие                                                                                               |
 | --------------------------------------------------------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| Startup пытается подключиться к `mysql` при `DB_TYPE=postgres`                    | локальный `docker/entrypoint.sh` и его bind mount             | восстановить проверенную версию с условным запуском MySQL migration; не добавлять MySQL                |
+| Startup пытается подключиться к `postgres` при `DB_TYPE=postgres`                    | локальный `docker/entrypoint.sh` и его bind mount             | восстановить проверенную версию с условным запуском PostgreSQL migration; не добавлять PostgreSQL                |
 | `/` или SPA route отвечает `500`, в nginx `rewrite or internal redirection cycle` | наличие `web/dist/index.html`                                 | восстановить matching artifacts или успешно пересобрать frontend                                       |
 | После recreate временный `502`                                                    | `WAIT_FOR_BACKEND_BEFORE_NGINX=true`, backend health          | проверить startup gate и backend logs, не считать это отказом БД без evidence                          |
 | S3 Test connection не проходит                                                    | endpoint и network context                                    | из Docker использовать `host.docker.internal:9000`, не `localhost` и не console port `9001`            |

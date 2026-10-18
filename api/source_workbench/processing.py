@@ -23,19 +23,22 @@ class ModelBudget:
     context_tokens: int
     output_tokens: int
     input_tokens: int
-    assumed_context: bool
     count_tokens: Callable[[str], int]
+    output_limit: int | None = None
 
     @classmethod
-    def from_context(cls, configured_limit: Any, count_tokens: Callable[[str], int]) -> ModelBudget:
-        # A missing/zero model limit is unknown, not unlimited.
-        assumed = type(configured_limit) is not int or configured_limit <= 0
-        context = 8192 if assumed else configured_limit
+    def from_context(cls, configured_limit: Any, count_tokens: Callable[[str], int], *, output_limit: int | None = None) -> ModelBudget:
+        if type(configured_limit) is not int or configured_limit <= 0:
+            raise ProcessingError("MODEL_CONTEXT_UNAVAILABLE", "Настройте окно контекста выбранной модели", 503)
+        if output_limit is not None and (type(output_limit) is not int or output_limit <= 0):
+            raise ProcessingError("MODEL_OUTPUT_LIMIT_UNAVAILABLE", "Настройте лимит ответа выбранной модели", 503)
+        context = configured_limit
         if context < 2048:
             raise ProcessingError("MODEL_CONTEXT_TOO_SMALL", "У выбранной модели слишком маленькое окно контекста")
-        output = context // 3
         reserve = max(512, context // 16)
-        return cls(context, output, context - output - reserve, assumed, count_tokens)
+        # Keep space for generation when splitting long articles; each actual
+        # request receives all remaining context, including unused input space.
+        return cls(context, context - reserve, context - context // 3 - reserve, count_tokens, output_limit)
 
     def estimate(self, system: str, payload: dict[str, Any]) -> int:
         serialized = json.dumps(payload, ensure_ascii=False)
@@ -46,13 +49,32 @@ class ModelBudget:
         return math.ceil(counted * 1.25) + 64
 
     def fits(self, system: str, payload: dict[str, Any]) -> bool:
-        return self.estimate(system, payload) <= self.input_tokens
+        try:
+            self.response_tokens(system, payload)
+        except ProcessingError as error:
+            if error.code == "TOKENIZER_UNAVAILABLE":
+                raise
+            return False
+        return True
 
     def require_fit(self, system: str, payload: dict[str, Any], *, draft: bool = False) -> None:
+        self.response_tokens(system, payload, draft=draft)
+
+    def response_tokens(self, system: str, payload: dict[str, Any], *, draft: bool = False) -> int:
         required = self.estimate(system, payload)
+        available = self.output_tokens - required
+        if self.output_limit is not None:
+            available = min(available, self.output_limit)
+        text = payload.get("draft", "")
+        required_output = math.ceil(self.count_tokens(text) * 1.25) + 256 if text else 1
+        if required <= self.input_tokens and available >= required_output:
+            return available
         if required <= self.input_tokens:
-            return
-        code = "DRAFT_TOO_LARGE_FOR_MODEL" if draft else "MODEL_CONTEXT_EXCEEDED"
+            raise ProcessingError(
+                "DRAFT_TOO_LARGE_FOR_MODEL",
+                f"Полный черновик требует примерно {required_output} выходных токенов при доступных {available}. Выберите модель с большим контекстом или сократите исходный текст.",
+            )
+        code = "DRAFT_TOO_LARGE_FOR_MODEL" if draft or text else "MODEL_CONTEXT_EXCEEDED"
         raise ProcessingError(
             code,
             f"Запрос требует примерно {required} входных токенов при доступных {self.input_tokens}. "
@@ -60,20 +82,10 @@ class ModelBudget:
             413,
         )
 
-    def require_output_room(self, draft: str) -> None:
-        if not draft:
-            return
-        required = math.ceil(self.count_tokens(draft) * 1.25) + 256
-        if required > self.output_tokens:
-            raise ProcessingError(
-                "DRAFT_TOO_LARGE_FOR_MODEL",
-                f"Полный черновик требует примерно {required} выходных токенов при доступных {self.output_tokens}. Выберите модель с большим лимитом ответа или сократите черновик.",
-            )
-
-    def require_complete_output(self, result: str) -> None:
+    def require_complete_output(self, result: str, output_tokens: int) -> None:
         # The upstream streaming API does not expose finish_reason. A response
         # near the cap cannot safely be treated as a complete replacement draft.
-        if math.ceil(self.count_tokens(result) * 1.25) >= self.output_tokens * 0.9:
+        if math.ceil(self.count_tokens(result) * 1.25) >= output_tokens * 0.9:
             raise ProcessingError("MODEL_OUTPUT_LIMIT_REACHED", "Ответ приблизился к лимиту модели и мог быть обрезан. Выберите модель с большим лимитом ответа.", 502)
 
 

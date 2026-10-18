@@ -233,7 +233,7 @@
 
 システムコンフィグに関しては、以下のファイルを管理する必要がある:
 
-- [.env](./docker/.env): `SVR_HTTP_PORT`、`MYSQL_PASSWORD`、`MINIO_PASSWORD` などのシステムの基本設定を保持する。
+- [.env](./docker/.env): `SVR_HTTP_PORT`、`POSTGRES_PASSWORD`、`MINIO_PASSWORD` などのシステムの基本設定を保持する。
 - [service_conf.yaml.template](./docker/service_conf.yaml.template): バックエンドのサービスを設定します。
 - [docker-compose.yml](./docker/docker-compose.yml): システムの起動は [docker-compose.yml](./docker/docker-compose.yml) に依存している。
 
@@ -306,7 +306,7 @@ docker build --platform linux/amd64 \
    uv run python3 ragflow_deps/download_deps.py
    lefthook install
    ```
-3. Docker Compose を使用して依存サービス（MinIO、Elasticsearch、Redis、MySQL）を起動する:
+3. Docker Compose を使用して依存サービス（MinIO、Elasticsearch、Redis、PostgreSQL）を起動する:
 
    ```bash
    docker compose -f docker/docker-compose-base.yml up -d

@@ -199,16 +199,6 @@ ensure_db_init() {
     echo "Database tables initialized."
 }
 
-run_mysql_migrations() {
-    echo "Running model provider table migrations..."
-    "$PY" tools/scripts/mysql_migration.py \
-        --stages tenant_model_provider,tenant_model_instance,tenant_model,model_id_config \
-        --config conf/service_conf.yaml \
-        --execute \
-        --database-version "v0.26.1" \
-        --mark-database-version-on-success
-    echo "Model provider table migrations completed."
-}
 
 prepare_for_go() {
     if [ -d /usr/share/infinity/resource ]; then
@@ -267,7 +257,6 @@ done
 
 if [[ "$START_RAGFLOW" -eq 1 ]]; then
   ensure_db_init
-  run_mysql_migrations
 fi
 
 # Start task executors

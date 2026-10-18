@@ -15,7 +15,6 @@
 #
 import logging
 from datetime import datetime
-import os
 from typing import Optional, Tuple, List
 
 from anthropic import BaseModel
@@ -246,11 +245,7 @@ class SyncLogsService(CommonService):
         if connector_id:
             query = query.where(cls.model.connector_id == connector_id)
         else:
-            database_type = os.getenv("DB_TYPE", "mysql")
-            if "postgres" in database_type.lower():
-                expr = SQL(f"NOW() AT TIME ZONE '{TIMEZONE}' - make_interval(mins => t2.refresh_freq)")
-            else:
-                expr = SQL("NOW() - INTERVAL `t2`.`refresh_freq` MINUTE")
+            expr = SQL(f"NOW() AT TIME ZONE '{TIMEZONE}' - make_interval(mins => t2.refresh_freq)")
             query = query.where(Connector.input_type == InputType.POLL, Connector.status == TaskStatus.SCHEDULE, cls.model.status == TaskStatus.SCHEDULE, cls.model.update_date < expr)
 
         query = query.distinct().order_by(cls.model.update_time.desc())
@@ -325,11 +320,7 @@ class SyncLogsService(CommonService):
             cls.model.task_type == task_type,
         )
 
-        database_type = os.getenv("DB_TYPE", "mysql")
-        if "postgres" in database_type.lower():
-            expr = SQL(f"NOW() AT TIME ZONE '{TIMEZONE}' - make_interval(mins => t2.{freq_field})")
-        else:
-            expr = SQL(f"NOW() - INTERVAL `t2`.`{freq_field}` MINUTE")
+        expr = SQL(f"NOW() AT TIME ZONE '{TIMEZONE}' - make_interval(mins => t2.{freq_field})")
         query = query.where(cls.model.update_date < expr)
 
         return list(query.distinct().order_by(cls.model.update_time.desc()).dicts())

@@ -58,7 +58,8 @@ async def test_preview_reads_full_article_after_workspace_and_dataset_access(sou
 async def test_preview_rejects_document_outside_workspace_before_loading(source_module):
     calls = []
     service = source_module.SourceWorkspaceService(
-        SimpleNamespace(get=lambda owner, workspace: _workspace()), _gateway(calls),
+        SimpleNamespace(get=lambda owner, workspace: _workspace()),
+        _gateway(calls),
     )
     with pytest.raises(source_module.SourceWorkspaceError) as error:
         await service.preview_document("owner-a", "workspace-id", {"dataset_id": "foreign", "document_id": "doc-1"})
@@ -76,7 +77,8 @@ async def test_preview_rejects_revoked_dataset_access(source_module):
 
     gateway.validate_datasets = denied
     service = source_module.SourceWorkspaceService(
-        SimpleNamespace(get=lambda owner, workspace: _workspace()), gateway,
+        SimpleNamespace(get=lambda owner, workspace: _workspace()),
+        gateway,
     )
     with pytest.raises(source_module.SourceWorkspaceError) as error:
         await service.preview_document("owner-a", "workspace-id", {"dataset_id": "dataset-a", "document_id": "doc-1"})
@@ -91,7 +93,8 @@ async def test_preview_rejects_changed_article_after_read(source_module):
     revisions = iter(("old", "new"))
     gateway.document_revisions = lambda documents: [{**documents[0], "revision": next(revisions)}]
     service = source_module.SourceWorkspaceService(
-        SimpleNamespace(get=lambda owner, workspace: _workspace()), gateway,
+        SimpleNamespace(get=lambda owner, workspace: _workspace()),
+        gateway,
     )
     with pytest.raises(source_module.SourceWorkspaceError) as error:
         await service.preview_document("owner-a", "workspace-id", {"dataset_id": "dataset-a", "document_id": "doc-1"})
@@ -109,7 +112,8 @@ async def test_preview_rejects_article_in_another_dataset(source_module):
     gateway.document_revisions = unavailable
     gateway.load_document = lambda _document: pytest.fail("Foreign article text must not be loaded")
     service = source_module.SourceWorkspaceService(
-        SimpleNamespace(get=lambda owner, workspace: _workspace()), gateway,
+        SimpleNamespace(get=lambda owner, workspace: _workspace()),
+        gateway,
     )
     with pytest.raises(source_module.SourceWorkspaceError) as error:
         await service.preview_document("owner-a", "workspace-id", {"dataset_id": "dataset-a", "document_id": "foreign-doc"})
@@ -419,7 +423,7 @@ async def test_search_can_request_next_page_without_repeating_query_history(sour
     assert not any(call[0] == "saved" for call in calls)
 
 
-def _processor(calls, context_tokens=8192):
+def _processor(calls, context_tokens=8192, output_tokens=None):
     async def stream(system, payload, output_tokens):
         calls.append((system, payload, output_tokens))
         if "fragment" in payload or "notes" in payload:
@@ -430,13 +434,14 @@ def _processor(calls, context_tokens=8192):
 
     async def open_processor(owner):
         calls.append(("open", owner))
-        return SimpleNamespace(context_tokens=context_tokens, count_tokens=num_tokens_from_string, stream=stream)
+        return SimpleNamespace(context_tokens=context_tokens, output_tokens=output_tokens, count_tokens=num_tokens_from_string, stream=stream)
 
     return SimpleNamespace(open_processor=open_processor)
 
 
 @pytest.mark.asyncio
-async def test_process_streams_complete_selected_articles_in_one_call(source_module):
+@pytest.mark.parametrize("context_tokens,output_tokens", [(8192, None), (1047576, 32768)])
+async def test_process_streams_complete_selected_articles_in_one_call(source_module, context_tokens, output_tokens):
     calls = []
     selection = [
         {"dataset_id": "dataset-a", "document_id": "doc-1", "revision": "hash:1:2"},
@@ -445,7 +450,7 @@ async def test_process_streams_complete_selected_articles_in_one_call(source_mod
     gateway = _gateway(calls)
     gateway.describe_chunks = lambda documents, datasets: [{"dataset_id": "dataset-a", "document_id": item["document_id"], "title": item["document_id"]} for item in reversed(documents)]
     gateway.load_document = lambda document: f"Text of {document['document_id']}"
-    service = source_module.SourceWorkspaceService(SimpleNamespace(get=lambda owner, workspace: _workspace(selection)), gateway, _processor(calls))
+    service = source_module.SourceWorkspaceService(SimpleNamespace(get=lambda owner, workspace: _workspace(selection)), gateway, _processor(calls, context_tokens, output_tokens))
     stream = await service.process_stream("owner-a", "workspace-id", {"mode": "all", "prompt": "Create", "draft": "Existing", "expected_version": 3})
     events = [event async for event in stream]
     assert "".join(event["text"] for event in events if event["event"] == "delta") == "Article [1]"
@@ -453,6 +458,12 @@ async def test_process_streams_complete_selected_articles_in_one_call(source_mod
     assert events[-1]["text"] == "Article [1]"
     call = next(item for item in calls if isinstance(item[0], str) and "Выполни задачу" in item[0])
     assert [article["text"] for article in call[1]["articles"]] == ["Text of doc-1", "Text of doc-2"]
+    assert call[2] > 2730
+    assert next(event for event in events if event.get("stage") == "generate")["output_tokens"] == call[2]
+    loading_budget = next(event for event in events if event.get("stage") == "loading")["output_tokens"]
+    assert loading_budget == (output_tokens if output_tokens is not None else context_tokens - max(512, context_tokens // 16))
+    if output_tokens is not None:
+        assert call[2] == output_tokens
     assert [entry[0] for entry in calls].count("revisions") == 4
 
 
@@ -563,6 +574,22 @@ async def test_sequential_mode_rejects_draft_that_cannot_fit_before_chunk_proces
 
 
 @pytest.mark.asyncio
+async def test_processing_accepts_full_draft_above_the_former_output_budget(source_module):
+    calls = []
+    selection = [{"dataset_id": "dataset-a", "document_id": "doc-1", "revision": "hash:1:2"}]
+    gateway = _gateway(calls)
+    gateway.load_document = lambda document: "One source fact"
+    service = source_module.SourceWorkspaceService(SimpleNamespace(get=lambda owner, workspace: _workspace(selection)), gateway, _processor(calls, 8192))
+    draft = "word " * 2400
+    stream = await service.process_stream("owner-a", "workspace-id", {"mode": "sequential", "prompt": "Revise", "draft": draft, "expected_version": 3})
+    events = [event async for event in stream]
+    model_call = next(call for call in calls if len(call) == 3 and isinstance(call[1], dict) and "draft" in call[1])
+    assert model_call[1]["draft"] == draft
+    assert model_call[2] > 2730
+    assert events[-1]["event"] == "done"
+
+
+@pytest.mark.asyncio
 async def test_processing_rejects_draft_that_fits_input_but_not_full_output(source_module):
     from api.source_workbench.processing import ProcessingError
 
@@ -570,7 +597,7 @@ async def test_processing_rejects_draft_that_fits_input_but_not_full_output(sour
     selection = [{"dataset_id": "dataset-a", "document_id": "doc-1", "revision": "hash:1:2"}]
     service = source_module.SourceWorkspaceService(SimpleNamespace(get=lambda owner, workspace: _workspace(selection)), _gateway(calls), _processor(calls, 8192))
     with pytest.raises(ProcessingError) as error:
-        await service.process_stream("owner-a", "workspace-id", {"mode": "sequential", "prompt": "Revise", "draft": "word " * 2400, "expected_version": 3})
+        await service.process_stream("owner-a", "workspace-id", {"mode": "sequential", "prompt": "Revise", "draft": "word " * 3200, "expected_version": 3})
     assert error.value.code == "DRAFT_TOO_LARGE_FOR_MODEL"
     assert not any(call[0] == "load" for call in calls)
 
@@ -596,7 +623,7 @@ async def test_processing_does_not_mark_output_near_limit_complete(source_module
     selection = [{"dataset_id": "dataset-a", "document_id": "doc-1", "revision": "hash:1:2"}]
 
     async def model_stream(system, payload, output_tokens):
-        yield "word " * 2000
+        yield "word " * int(output_tokens * 0.8)
 
     async def open_processor(owner):
         return SimpleNamespace(context_tokens=8192, count_tokens=num_tokens_from_string, stream=model_stream)
@@ -676,6 +703,7 @@ async def test_draft_edit_requires_version_and_workspace_owner(source_module):
     repository = SimpleNamespace(
         get=get,
         update_draft=lambda *args: calls.append(args) or {"id": args[2], "version": args[3] + 1},
+        get_draft=lambda *_args: {"id": "draft-1"},
     )
     service = source_module.SourceWorkspaceService(repository, _gateway([]))
     updated = await service.update_draft("owner-a", "workspace-id", "draft-1", {"content": "Edited", "expected_version": 1})
@@ -694,8 +722,9 @@ async def test_revoked_dataset_access_blocks_saved_draft_reads(source_module):
         raise source_module.SourceWorkspaceError("DATASET_UNAVAILABLE", "Dataset unavailable", 403)
 
     repository = SimpleNamespace(
-        get=lambda owner, workspace: _workspace(),
-        list_drafts=lambda *_args: pytest.fail("Draft text must not be read"),
+        get=lambda owner, workspace: {**_workspace(), "dataset_ids": []},
+        list_drafts=lambda *_args: [{"id": "draft-1", "_access_datasets": ["kb-1"]}],
+        get_draft=lambda *_args: {"id": "draft-1", "content": "Saved", "_access_datasets": ["kb-1"]},
     )
     gateway = _gateway([])
     gateway.validate_datasets = denied
@@ -704,3 +733,47 @@ async def test_revoked_dataset_access_blocks_saved_draft_reads(source_module):
     with pytest.raises(source_module.SourceWorkspaceError) as error:
         await service.list_drafts("owner-a", "workspace-id")
     assert error.value.status == 403
+    with pytest.raises(source_module.SourceWorkspaceError) as error:
+        await service.get_draft("owner-a", "workspace-id", "draft-1")
+    assert error.value.status == 403
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["list", "get", "update"])
+@pytest.mark.parametrize("revoked", [False, True])
+async def test_saved_draft_access_uses_own_provenance_after_search_selection_cleared(source_module, operation, revoked):
+    calls = []
+    workspace = {**_workspace(), "dataset_ids": []}
+
+    def draft():
+        return {"id": "saved", "content": "Preserved text", "version": 1, "_access_datasets": ["historical-dataset"]}
+
+    def validate(owner, datasets):
+        assert datasets == ["historical-dataset"]
+        calls.append(datasets)
+        if revoked:
+            raise source_module.SourceWorkspaceError("DATASET_UNAVAILABLE", "Access revoked", 403)
+
+    repository = SimpleNamespace(
+        get=lambda *_: workspace,
+        list_drafts=lambda *_: [draft()],
+        get_draft=lambda *_: draft(),
+        update_draft=lambda *_: {"id": "saved", "content": "Updated text"},
+    )
+    service = source_module.SourceWorkspaceService(repository, SimpleNamespace(validate_datasets=validate))
+
+    async def run():
+        if operation == "list":
+            return await service.list_drafts("author", "workspace-id")
+        if operation == "get":
+            return await service.get_draft("author", "workspace-id", "saved")
+        return await service.update_draft("author", "workspace-id", "saved", {"expected_version": 1, "content": "Updated text"})
+
+    if revoked:
+        with pytest.raises(source_module.SourceWorkspaceError) as error:
+            await run()
+        assert error.value.status == 403
+    else:
+        result = await run()
+        assert result
+    assert calls == [["historical-dataset"]]

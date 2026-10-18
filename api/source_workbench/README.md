@@ -62,15 +62,22 @@ chat or a future document workflow can consume the same source set.
   mode, and source version on the server. A stale selection is rejected; edits
   use a draft version to prevent overwriting another update. Drafts are owned
   by the workspace user. They are not published into a knowledge base.
-- The budget uses the model's configured `max_tokens` context; for Ollama it
+- The budget uses the model's configured `max_tokens` context; for native Ollama it
   reads the current model context from `/api/show` and sends `num_ctx` with
   article-processing requests so the serving window matches the plan. It reserves output
   and safety space, and estimates input with the repository's `cl100k_base`
   tokenizer plus 25% headroom. The upstream stream has no finish-reason signal,
   so the output-cap check is conservative and cannot prove semantic completeness.
-  Missing context uses a disclosed 8192-token
-  planning fallback. This is an estimate for non-cl100k providers; a provider
-  can still reject an overlong request. Model stages have a five-minute limit;
+  Compatible Ollama uses `/api/ps` to resolve the loaded model's actual window;
+  optional discovery failures retain the configured window for other providers.
+  Missing context fails explicitly instead of assuming an 8192-token window.
+  Answers, extraction notes, reduction and final generation each receive all
+  remaining context after their actual input and safety reserve. The input
+  planner reserves generation space when splitting large articles; it does not
+  cap replies at one third of the window. The full draft must fit both input
+  and output, and each stage checks its actual response budget for truncation.
+  This is an estimate for non-cl100k providers; a provider
+  can still reject an overlong request. Model stages have a 30-minute limit;
   the interactive stream has a 30-minute deadline and retains completed steps
   in the browser if that deadline is reached.
   The indexed-text loader retains its existing 2-million-character-per-document
@@ -98,4 +105,6 @@ error. Set `SOURCE_WORKBENCH_SIMILARITY_THRESHOLD=0.4` in the application
 container environment when tuning retrieval (`docker/.env`, or
 `docker/.env.local` for the local Compose overlay). Recreate the application
 container after changing it. The ordinary user interface does not expose it.
-It does not implement document comparison or publication yet.
+Versioned documents, comparison, typed dependencies and direct impact proposals
+are described in [the linked-document guide](../../docs/develop/source-workbench-linked-documents-ru.md).
+Publication and Business Documents integration remain separate work.

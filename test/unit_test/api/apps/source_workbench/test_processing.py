@@ -19,24 +19,27 @@ def make_budget(configured_limit):
 def test_budget_uses_configured_context_and_reserves_output():
     budget = make_budget(8192)
     assert budget.context_tokens == 8192
-    assert budget.assumed_context is False
-    assert budget.output_tokens == 2730
-    assert budget.input_tokens < 8192 - budget.output_tokens
+    available = budget.response_tokens("system", {"task": "Create a document"})
+    assert available > 2730
+    assert available + budget.estimate("system", {"task": "Create a document"}) == 8192 - 512
 
 
 def test_large_model_context_reserves_room_for_long_input_and_answer():
     budget = make_budget(131072)
     assert budget.input_tokens > 75000
-    assert budget.output_tokens == 43690
+    assert budget.response_tokens("", {"article": "short"}) > 100000
     assert budget.fits("", {"article": "word " * 36888})
 
 
 def test_budget_rejects_output_near_generation_cap():
     budget = make_budget(2048)
     with pytest.raises(ProcessingError) as error:
-        budget.require_complete_output("word " * 500)
+        limit = budget.response_tokens("", {})
+        budget.require_complete_output("word " * limit, limit)
     assert error.value.code == "MODEL_OUTPUT_LIMIT_REACHED"
-    assert make_budget(0).assumed_context is True
+    with pytest.raises(ProcessingError) as error:
+        make_budget(0)
+    assert error.value.code == "MODEL_CONTEXT_UNAVAILABLE"
     with pytest.raises(ProcessingError) as error:
         make_budget(1024)
     assert error.value.code == "MODEL_CONTEXT_TOO_SMALL"
@@ -232,3 +235,19 @@ def test_stream_filter_hides_split_reasoning_tags():
     chunks = ["Начало <thi", "nk>скрыто", "</thi", "nk> ответ"]
     result = "".join(visible.feed(chunk) for chunk in chunks) + visible.finish()
     assert result == "Начало  ответ"
+
+
+def test_provider_output_ceiling_caps_response_without_shrinking_input_context():
+    budget = ModelBudget.from_context(1047576, num_tokens_from_string, output_limit=32768)
+    assert budget.response_tokens("system", {"article": "full input"}) == 32768
+    assert budget.input_tokens > 600000
+    with pytest.raises(ProcessingError) as error:
+        budget.require_fit("system", {"draft": "word " * 30000}, draft=True)
+    assert error.value.code == "DRAFT_TOO_LARGE_FOR_MODEL"
+
+
+@pytest.mark.parametrize("limit", [0, -1, True, "32768"])
+def test_output_ceiling_must_be_positive_integer(limit):
+    with pytest.raises(ProcessingError) as error:
+        ModelBudget.from_context(131072, num_tokens_from_string, output_limit=limit)
+    assert error.value.code == "MODEL_OUTPUT_LIMIT_UNAVAILABLE"

@@ -256,7 +256,7 @@ Bulut hizmetimizi [https://cloud.ragflow.io](https://cloud.ragflow.io) adresinde
 
 Sistem yapılandırmaları söz konusu olduğunda, aşağıdaki dosyaları yönetmeniz gerekecektir:
 
-- [.env](./docker/.env): `SVR_HTTP_PORT`, `MYSQL_PASSWORD` ve `MINIO_PASSWORD` gibi temel sistem ayarlarını içerir.
+- [.env](./docker/.env): `SVR_HTTP_PORT`, `POSTGRES_PASSWORD` ve `MINIO_PASSWORD` gibi temel sistem ayarlarını içerir.
 - [service_conf.yaml.template](./docker/service_conf.yaml.template): Arka uç hizmetlerini yapılandırır. Bu dosyadaki ortam değişkenleri, Docker konteyneri başladığında otomatik olarak doldurulacaktır. Docker konteyneri içinde ayarlanan tüm ortam değişkenleri kullanıma hazır olacak ve hizmet davranışını dağıtım ortamına göre özelleştirmenize olanak tanıyacaktır.
 - [docker-compose.yml](./docker/docker-compose.yml): Sistem, başlatılmak için [docker-compose.yml](./docker/docker-compose.yml) dosyasına dayanır.
 
@@ -328,7 +328,7 @@ docker build --platform linux/amd64 \
    uv run python3 ragflow_deps/download_deps.py
    lefthook install
    ```
-3. Bağımlı hizmetleri (MinIO, Elasticsearch, Redis ve MySQL) Docker Compose kullanarak başlatın:
+3. Bağımlı hizmetleri (MinIO, Elasticsearch, Redis ve PostgreSQL) Docker Compose kullanarak başlatın:
 
    ```bash
    docker compose -f docker/docker-compose-base.yml up -d

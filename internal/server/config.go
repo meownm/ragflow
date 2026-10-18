@@ -135,13 +135,13 @@ type ServerConfig struct {
 
 // DatabaseConfig database configuration
 type DatabaseConfig struct {
-	Driver   string `mapstructure:"driver"` // mysql
+	Driver   string `mapstructure:"driver"` // postgres
 	Host     string `mapstructure:"host"`
 	Port     int    `mapstructure:"port"`
 	Database string `mapstructure:"database"`
 	Username string `mapstructure:"username"`
 	Password string `mapstructure:"password"`
-	Charset  string `mapstructure:"charset"`
+	SSLMode  string `mapstructure:"sslmode"`
 }
 
 // LogConfig logging configuration.
@@ -381,24 +381,19 @@ func Init(configPath string) error {
 			}
 			delete(configDict, "password")
 			delete(configDict, "db")
-		case "mysql":
+		case "postgres":
 			host := getString(configDict, "host")
 			port := getInt(configDict, "port")
-			user := getString(configDict, "user")
-			password := getString(configDict, "password")
 			configDict["id"] = id
-			configDict["name"] = "mysql"
+			configDict["name"] = "postgres"
 			configDict["host"] = host
 			configDict["port"] = port
 			configDict["service_type"] = "meta_data"
 			configDict["extra"] = map[string]interface{}{
-				"meta_type": "mysql",
-				"username":  user,
-				"password":  password,
+				"meta_type": "postgres",
 			}
 			delete(configDict, "stale_timeout")
 			delete(configDict, "max_connections")
-			delete(configDict, "max_allowed_packet")
 			delete(configDict, "user")
 			delete(configDict, "password")
 		case "task_executor":
@@ -514,13 +509,13 @@ func FromEnvironments() error {
 	// Meta database
 	databaseType := strings.ToLower(os.Getenv("DB_TYPE"))
 	switch databaseType {
-	case "mysql":
-		globalConfig.Database.Driver = "mysql"
+	case "postgres":
+		globalConfig.Database.Driver = "postgres"
 	case "":
-		// Default
-		if globalConfig.Database.Driver == "" {
-			globalConfig.Database.Driver = "mysql"
+		if globalConfig.Database.Driver != "" && globalConfig.Database.Driver != "postgres" {
+			return fmt.Errorf("PostgreSQL is the only supported metadata database")
 		}
+		globalConfig.Database.Driver = "postgres"
 	default:
 		return fmt.Errorf("invalid database type: %s", databaseType)
 	}
@@ -634,7 +629,7 @@ func FromConfigFile(configPath string) error {
 
 	// authentication section
 	if globalConfig != nil {
-		// Try to map from mysql section
+		// Try to map from postgres section
 		globalConfig.Authentication.DisablePasswordLogin = false
 		globalConfig.Authentication.RegisterEnabled = true
 		if v.IsSet("authentication") {
@@ -650,19 +645,19 @@ func FromConfigFile(configPath string) error {
 		}
 	}
 
-	// If we loaded service_conf.yaml, map mysql fields to DatabaseConfig
+	// If we loaded service_conf.yaml, map postgres fields to DatabaseConfig
 	if globalConfig != nil && globalConfig.Database.Host == "" {
-		// Try to map from mysql section
-		if v.IsSet("mysql") {
-			mysqlConfig := v.Sub("mysql")
-			if mysqlConfig != nil {
-				globalConfig.Database.Driver = "mysql"
-				globalConfig.Database.Host = mysqlConfig.GetString("host")
-				globalConfig.Database.Port = mysqlConfig.GetInt("port")
-				globalConfig.Database.Database = mysqlConfig.GetString("name")
-				globalConfig.Database.Username = mysqlConfig.GetString("user")
-				globalConfig.Database.Password = mysqlConfig.GetString("password")
-				globalConfig.Database.Charset = "utf8mb4"
+		// Try to map from postgres section
+		if v.IsSet("postgres") {
+			postgresConfig := v.Sub("postgres")
+			if postgresConfig != nil {
+				globalConfig.Database.Driver = "postgres"
+				globalConfig.Database.Host = postgresConfig.GetString("host")
+				globalConfig.Database.Port = postgresConfig.GetInt("port")
+				globalConfig.Database.Database = postgresConfig.GetString("name")
+				globalConfig.Database.Username = postgresConfig.GetString("user")
+				globalConfig.Database.Password = postgresConfig.GetString("password")
+				globalConfig.Database.SSLMode = postgresConfig.GetString("sslmode")
 			}
 		}
 	}

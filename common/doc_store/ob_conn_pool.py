@@ -42,24 +42,13 @@ class OceanBaseConnectionPool:
         else:
             self.OB_CONFIG = settings.get_base_config("oceanbase", {})
 
-        scheme = self.OB_CONFIG.get("scheme")
         ob_config = self.OB_CONFIG.get("config", {})
-
-        if scheme and scheme.lower() == "mysql":
-            mysql_config = settings.get_base_config("mysql", {})
-            logger.info("Use MySQL scheme to create OceanBase connection.")
-            host = mysql_config.get("host", "localhost")
-            port = mysql_config.get("port", 2881)
-            self.username = mysql_config.get("user", "root@test")
-            self.password = mysql_config.get("password", "infini_rag_flow")
-            max_connections = mysql_config.get("max_connections", 300)
-        else:
-            logger.info("Use customized config to create OceanBase connection.")
-            host = ob_config.get("host", "localhost")
-            port = ob_config.get("port", 2881)
-            self.username = ob_config.get("user", "root@test")
-            self.password = ob_config.get("password", "infini_rag_flow")
-            max_connections = ob_config.get("max_connections", 300)
+        logger.info("Use customized config to create OceanBase connection.")
+        host = ob_config.get("host", "localhost")
+        port = ob_config.get("port", 2881)
+        self.username = ob_config.get("user", "root@test")
+        self.password = ob_config.get("password", "infini_rag_flow")
+        max_connections = ob_config.get("max_connections", 300)
 
         self.db_name = ob_config.get("db_name", "test")
         self.uri = f"{host}:{port}"

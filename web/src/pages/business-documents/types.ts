@@ -374,6 +374,7 @@ export type BusinessDocumentCommandType =
   | 'CONFIRM_PREPARED_CHANGES'
   | 'DISCARD_PREPARED_CHANGES'
   | 'START_REVIEW'
+  | 'RESTORE_REVISION'
   | 'REQUEST_EXPORT'
   | 'ARCHIVE';
 
@@ -428,7 +429,13 @@ export interface BusinessDocumentRevision {
 
 export interface BusinessDocumentRevisionBasis {
   event_id: string;
-  type: 'INITIAL_DRAFT' | 'QUESTION' | 'PROPOSAL' | 'COMMENT' | 'EVA_SYNC';
+  type:
+    | 'INITIAL_DRAFT'
+    | 'QUESTION'
+    | 'PROPOSAL'
+    | 'COMMENT'
+    | 'EVA_SYNC'
+    | 'RESTORE';
   title: string;
   summary: string;
   details?: string | null;

@@ -32,6 +32,7 @@
         "CONFIRM_PREPARED_CHANGES",
         "DISCARD_PREPARED_CHANGES",
         "START_REVIEW",
+        "RESTORE_REVISION",
         "REQUEST_EXPORT",
         "ARCHIVE"
       ]
@@ -130,6 +131,14 @@
         "job_id": {"type": "string", "minLength": 1, "maxLength": 64}
       }
     },
+    "restoreRevisionPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["revision_id"],
+      "properties": {
+        "revision_id": {"type": "string", "minLength": 1, "maxLength": 64}
+      }
+    },
     "requestExportPayload": {
       "type": "object",
       "additionalProperties": false,
@@ -141,6 +150,10 @@
     }
   },
   "allOf": [
+    {
+      "if": {"properties": {"type": {"const": "RESTORE_REVISION"}}},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/restoreRevisionPayload"}}}
+    },
     {
       "if": {"properties": {"type": {"enum": ["REQUEST_INTAKE_ASSESSMENT", "REQUEST_REVIEW_ASSESSMENT", "REQUEST_DRAFT", "START_REVIEW", "ARCHIVE"]}}},
       "then": {"properties": {"payload": {"$ref": "#/$defs/emptyPayload"}}}

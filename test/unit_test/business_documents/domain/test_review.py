@@ -77,6 +77,7 @@ def test_new_eva_input_invalidates_assessment_and_available_commands():
         "ARCHIVE",
         "CANCEL_PROPOSAL_ACCEPTANCE",
         "REQUEST_REVIEW_ASSESSMENT",
+        "RESTORE_REVISION",
     ]
 
 

@@ -149,6 +149,8 @@ def _change_basis(document: Record, row: Record, history: RevisionHistory) -> li
                 details=str(payload.get("remote_version") or "") or None,
                 section_id=None,
             )
+        elif kind == "RevisionRestored":
+            item.update(type="RESTORE", title="Восстановление из истории", summary=f"Восстановлена ревизия {payload['restored_from_revision_number']}", section_id=None)
         else:
             continue
         for prefix, user_id in (("initiated_by_actor", requested_by), ("actor", event["actor_id"] if event["actor_type"] == "USER" else None)):

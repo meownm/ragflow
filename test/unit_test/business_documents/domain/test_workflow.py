@@ -57,7 +57,7 @@ def test_completed_intake_prefers_draft_but_direct_reassessment_remains_valid():
 def test_preview_replaces_apply_in_ui_but_explicit_reprepare_remains_valid():
     document, review, preview = _document(operation_state="IDLE"), _review(), {"id": "preview"}
     commands = available_commands(document, review, preview=preview)
-    assert commands == ["DECIDE_PROPOSAL", "ACCEPT_PROPOSAL", "ADD_COMMENT", "ARCHIVE", "CANCEL_PROPOSAL_ACCEPTANCE", "CONFIRM_PREPARED_CHANGES", "DISCARD_PREPARED_CHANGES"]
+    assert commands == ["DECIDE_PROPOSAL", "ACCEPT_PROPOSAL", "ADD_COMMENT", "ARCHIVE", "CANCEL_PROPOSAL_ACCEPTANCE", "RESTORE_REVISION", "CONFIRM_PREPARED_CHANGES", "DISCARD_PREPARED_CHANGES"]
     assert all(command_problem(command, document, review, preview=preview) is None for command in commands)
     assert command_problem("PREPARE_CHANGES", document, review, {"base_revision_id": "revision"}, preview=preview) is None
 

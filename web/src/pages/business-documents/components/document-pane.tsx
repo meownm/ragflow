@@ -11,9 +11,12 @@ import type {
   BusinessDocumentSelection,
 } from '../types';
 import { DocumentSectionChange } from './change-preview-panel';
+import { RevisionTextDiff } from './revision-text-diff';
 
 interface DocumentPaneProps {
   revision: BusinessDocumentRevision | null;
+  historyMode?: boolean;
+  previousRevision?: BusinessDocumentRevision;
   onSelectionChange: (selection: BusinessDocumentSelection | null) => void;
   highlightedSectionIds?: string[];
   focusRequest?: { sectionId: string; sequence: number } | null;
@@ -222,6 +225,8 @@ export function DocumentPane({
   changePreview,
   preliminary = false,
   onFocusSource,
+  historyMode = false,
+  previousRevision,
 }: DocumentPaneProps) {
   const paneRef = useRef<HTMLDivElement>(null);
   const [selectionError, setSelectionError] = useState<string | null>(null);
@@ -355,7 +360,7 @@ export function DocumentPane({
       <div className="flex h-9 shrink-0 items-center justify-between border-b border-border-button px-5">
         <div className="flex items-center gap-2 text-sm font-medium text-text-primary">
           <FileText className="size-4 text-text-secondary" />
-          Документ
+          {historyMode ? 'Просмотр истории' : 'Документ'}
         </div>
         {revision && (
           <span className="font-mono text-xs text-text-secondary">
@@ -383,7 +388,7 @@ export function DocumentPane({
       ) : (
         <div
           ref={paneRef}
-          onMouseUp={captureSelection}
+          onMouseUp={historyMode ? undefined : captureSelection}
           className="min-h-0 flex-1 overflow-y-auto px-6 pt-4 pb-8 scrollbar-auto md:px-10 lg:px-14"
           data-testid="business-document-markdown"
         >
@@ -531,6 +536,25 @@ export function DocumentPane({
                       {displayedSectionText}
                     </ReactMarkdown>
                   </div>
+                  {previousRevision &&
+                    previousRevision.section_texts[section.id] !==
+                      sectionText && (
+                      <details
+                        open
+                        className="mb-6 rounded border border-border-button bg-bg-card p-3"
+                      >
+                        <summary className="mb-3 cursor-pointer text-xs font-medium">
+                          Изменения относительно ревизии{' '}
+                          {previousRevision.revision_number}
+                        </summary>
+                        <RevisionTextDiff
+                          before={
+                            previousRevision.section_texts[section.id] ?? ''
+                          }
+                          after={sectionText}
+                        />
+                      </details>
+                    )}
                   {change && (
                     <DocumentSectionChange
                       change={change}

@@ -3513,6 +3513,7 @@ def test_verified_eva_binding_supports_governed_pull_and_outbound_change(databas
         "ADD_COMMENT",
         "ARCHIVE",
         "REQUEST_REVIEW_ASSESSMENT",
+        "RESTORE_REVISION",
     ]
     assert pulled["document"]["eva_binding"]["last_pulled_content_hash"].startswith("sha256:")
     pull_event = BusinessDocumentEvent.get(BusinessDocumentEvent.id == pulled["sync"]["event_id"])

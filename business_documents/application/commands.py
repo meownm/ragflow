@@ -46,6 +46,8 @@ class CommandWriter(DocumentWriter, Protocol):
 
     def revision_or_none(self, document_id: str, revision_id: str) -> Record | None: ...
 
+    def next_revision_number(self, document_id: str) -> int: ...
+
     def insert_answer(self, **values: Any) -> None: ...
 
     def insert_decision(self, **values: Any) -> None: ...
@@ -152,7 +154,7 @@ class DocumentCommands:
         return response
 
     def _command_result(self, response: dict[str, Any], envelope: _CommandEnvelope, access: DocumentAccess, document_id: str) -> dict[str, Any]:
-        if envelope.type in {CommandType.CONFIRM_PREPARED_CHANGES, CommandType.ACCEPT_PROPOSAL}:
+        if envelope.type in {CommandType.CONFIRM_PREPARED_CHANGES, CommandType.ACCEPT_PROPOSAL, CommandType.RESTORE_REVISION}:
             # Keep the durable receipt small; return the current view with this caller's permissions, including on replay.
             return {**response, "document": self._queries.get_document(document_id, access.actor_id, access.is_admin, access.assigned_role)}
         return response
@@ -213,11 +215,52 @@ class DocumentCommands:
                 }
             case CommandType.START_REVIEW:
                 return self._transition(document, actor_id, envelope, "ReviewCycleStarted", lifecycle_state="REVIEW", active_review_cycle=document["active_review_cycle"] + 1)
+            case CommandType.RESTORE_REVISION:
+                return self._restore_revision(document, actor_id, envelope)
             case CommandType.REQUEST_EXPORT:
                 return self._request_job(document, actor_id, envelope, "GENERATE_EXPORT", OperationState.EXPORTING)
             case CommandType.ARCHIVE:
                 return self._transition(document, actor_id, envelope, "DocumentArchived", lifecycle_state="ARCHIVED")
         raise AssertionError("Command policy accepted an unsupported command")
+
+    def _restore_revision(self, document: Record, actor_id: str, envelope: _CommandEnvelope) -> dict[str, Any]:
+        if self._writer.has_active_job(document["id"]):
+            raise ConflictError("OPERATION_IN_PROGRESS", "Another operation is already in progress")
+        source = self._writer.revision_or_none(document["id"], envelope.payload["revision_id"])
+        if source is None:
+            raise BusinessDocumentError("REVISION_NOT_FOUND", "Business document revision not found", 404)
+        version = document["state_version"] + 1
+        event_id, revision_id = self._new_id(), self._new_id()
+        number = self._writer.next_revision_number(document["id"])
+        self._writer.insert_revision(document["id"], number, source["document_ast"], source["body_markdown"], [event_id], actor_id, revision_id=revision_id)
+        document = self._writer.update_document(
+            document,
+            {
+                "state_version": version,
+                "current_revision_id": revision_id,
+                "active_review_cycle": document["active_review_cycle"] + 1,
+                "lifecycle_state": "REVIEW",
+                "operation_state": "IDLE",
+                "last_error": None,
+            },
+        )
+        self._writer.append_event(
+            document["id"],
+            version,
+            "RevisionRestored",
+            "USER",
+            actor_id,
+            {
+                "revision_id": revision_id,
+                "revision_number": number,
+                "restored_from_revision_id": source["id"],
+                "restored_from_revision_number": source["revision_number"],
+                "review_cycle": document["active_review_cycle"],
+            },
+            envelope.command_id,
+            event_id=event_id,
+        )
+        return self._command_response(document, version, event_id)
 
     def _request_job(self, document: Record, actor_id: str, envelope: _CommandEnvelope, job_type: str, operation_state: OperationState, *, review=None) -> dict[str, Any]:
         new_version = document["state_version"] + 1

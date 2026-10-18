@@ -1,3 +1,14 @@
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import {
   CircleHelp,
@@ -13,6 +24,7 @@ import type {
   BusinessDocumentRevisionBasis,
 } from '../types';
 import { EvidenceRefsDiff, evidenceRefsChanged } from './evidence-refs-diff';
+import { RevisionTextDiff } from './revision-text-diff';
 
 const basisIcons: Record<
   BusinessDocumentRevisionBasis['type'],
@@ -23,6 +35,7 @@ const basisIcons: Record<
   PROPOSAL: Lightbulb,
   COMMENT: MessageSquareText,
   EVA_SYNC: Link2,
+  RESTORE: FileClock,
 };
 
 function formatRevisionTime(value?: number | null) {
@@ -60,6 +73,9 @@ interface RevisionHistoryPanelProps {
   error?: Error | null;
   onSelect: (revision: BusinessDocumentRevision) => void;
   onClose: () => void;
+  canRestore?: boolean;
+  pending?: boolean;
+  onRestore?: (revision: BusinessDocumentRevision) => void;
 }
 
 export function RevisionHistoryPanel({
@@ -70,6 +86,9 @@ export function RevisionHistoryPanel({
   error,
   onSelect,
   onClose,
+  canRestore,
+  pending,
+  onRestore,
 }: RevisionHistoryPanelProps) {
   const ordered = [...revisions].sort(
     (left, right) => right.revision_number - left.revision_number,
@@ -81,19 +100,33 @@ export function RevisionHistoryPanel({
     (revision) =>
       revision.revision_number === (selectedRevision?.revision_number ?? 0) - 1,
   );
+  const beforeSections = new Map(
+    previousRevision?.document_ast.sections.map((section) => [
+      section.id,
+      section,
+    ]),
+  );
+  const afterSections = new Map(
+    selectedRevision?.document_ast.sections.map((section) => [
+      section.id,
+      section,
+    ]),
+  );
   const changedSections =
     selectedRevision && previousRevision
-      ? selectedRevision.document_ast.sections.filter(
-          (section) =>
-            selectedRevision.section_texts[section.id] !==
-              previousRevision.section_texts[section.id] ||
-            evidenceRefsChanged(
-              previousRevision.document_ast.sections.find(
-                (item) => item.id === section.id,
-              )?.evidence_refs,
-              section.evidence_refs,
-            ),
-        )
+      ? [...new Set([...afterSections.keys(), ...beforeSections.keys()])]
+          .map((id) => ({
+            id,
+            before: beforeSections.get(id),
+            after: afterSections.get(id),
+          }))
+          .filter(
+            ({ id, before, after }) =>
+              before?.title !== after?.title ||
+              selectedRevision.section_texts[id] !==
+                previousRevision.section_texts[id] ||
+              evidenceRefsChanged(before?.evidence_refs, after?.evidence_refs),
+          )
       : [];
 
   return (
@@ -139,6 +172,69 @@ export function RevisionHistoryPanel({
         </p>
       )}
 
+      {selectedRevision && (
+        <section className="space-y-3 border-b border-border-button px-5 py-4">
+          <label className="block space-y-1 text-xs text-text-secondary">
+            <span>Ревизия для просмотра</span>
+            <select
+              className="w-full rounded border border-border-button bg-bg-base px-3 py-2 text-sm text-text-primary"
+              value={selectedRevisionId}
+              onChange={(event) => {
+                const revision = ordered.find(
+                  (item) => item.revision_id === event.target.value,
+                );
+                if (revision) onSelect(revision);
+              }}
+            >
+              {ordered.map((revision) => (
+                <option key={revision.revision_id} value={revision.revision_id}>
+                  Ревизия {revision.revision_number}
+                  {revision.revision_id === currentRevisionId
+                    ? ' · текущая'
+                    : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p className="text-sm font-medium">
+            Просмотр ревизии {selectedRevision.revision_number}
+          </p>
+          <p className="text-xs text-text-secondary">
+            Полный текст выбранной ревизии показан слева. Изменения сравниваются
+            с предыдущей ревизией.
+          </p>
+          {canRestore && selectedRevision.revision_id !== currentRevisionId && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="secondary" disabled={pending}>
+                  Восстановить эту ревизию
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>
+                    Восстановить ревизию {selectedRevision.revision_number}?
+                  </AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Будет создана новая ревизия с этим содержимым и новый цикл
+                    проверки. Текущая версия останется в истории. Незавершённые
+                    обсуждения и подготовленные правки не переносятся.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Отмена</AlertDialogCancel>
+                  <AlertDialogAction
+                    disabled={pending}
+                    onClick={() => onRestore?.(selectedRevision)}
+                  >
+                    Восстановить документ
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
+        </section>
+      )}
       {previousRevision && changedSections.length > 0 && (
         <section
           className="border-b border-border-button px-5 py-4"
@@ -148,38 +244,23 @@ export function RevisionHistoryPanel({
             Изменения ревизии {selectedRevision?.revision_number}
           </h3>
           <div className="mt-3 space-y-2">
-            {changedSections.map((section) => (
+            {changedSections.map(({ id, before, after }) => (
               <details
-                key={section.id}
+                key={id}
                 className="rounded-md border border-border-button"
               >
                 <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-accent-primary">
-                  § {section.id} {section.title} · изменён
+                  § {id} {after?.title ?? before?.title} ·{' '}
+                  {!after ? 'удалён' : !before ? 'добавлен' : 'изменён'}
                 </summary>
                 <div className="space-y-2 border-t border-border-button p-3 text-xs">
-                  <div>
-                    <span className="font-semibold text-state-error">Было</span>
-                    <pre className="mt-1 whitespace-pre-wrap break-words font-sans leading-5 text-text-secondary">
-                      {previousRevision.section_texts[section.id] ||
-                        'Требования отсутствуют'}
-                    </pre>
-                  </div>
-                  <div>
-                    <span className="font-semibold text-state-success">
-                      Стало
-                    </span>
-                    <pre className="mt-1 whitespace-pre-wrap break-words font-sans leading-5 text-text-primary">
-                      {selectedRevision?.section_texts[section.id] ||
-                        'Требования отсутствуют'}
-                    </pre>
-                  </div>
+                  <RevisionTextDiff
+                    before={previousRevision.section_texts[id] ?? ''}
+                    after={selectedRevision?.section_texts[id] ?? ''}
+                  />
                   <EvidenceRefsDiff
-                    before={
-                      previousRevision.document_ast.sections.find(
-                        (item) => item.id === section.id,
-                      )?.evidence_refs
-                    }
-                    after={section.evidence_refs}
+                    before={before?.evidence_refs}
+                    after={after?.evidence_refs}
                   />
                 </div>
               </details>
@@ -204,6 +285,7 @@ export function RevisionHistoryPanel({
               />
               <button
                 type="button"
+                aria-pressed={selected}
                 className="w-full py-4 text-start outline-none transition-colors hover:text-accent-primary focus-visible:ring-1 focus-visible:ring-accent-primary"
                 onClick={() => onSelect(revision)}
                 data-testid={`business-document-revision-${revision.revision_number}`}

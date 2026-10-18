@@ -31,6 +31,7 @@ class CommandType(StrEnum):
     CONFIRM_PREPARED_CHANGES = "CONFIRM_PREPARED_CHANGES"
     DISCARD_PREPARED_CHANGES = "DISCARD_PREPARED_CHANGES"
     START_REVIEW = "START_REVIEW"
+    RESTORE_REVISION = "RESTORE_REVISION"
     REQUEST_EXPORT = "REQUEST_EXPORT"
     ARCHIVE = "ARCHIVE"
 
@@ -166,6 +167,14 @@ def command_problem(
             return _idle_problem(document) or _lifecycle_problem(document, "REVIEW")
         case CommandType.START_REVIEW:
             return _idle_problem(document) or _lifecycle_problem(document, "AGREED")
+        case CommandType.RESTORE_REVISION:
+            if problem := _idle_problem(document):
+                return problem
+            if document["lifecycle_state"] not in {"REVIEW", "AGREED"} or not document["current_revision_id"]:
+                return StateConflict("CURRENT_REVISION_REQUIRED", "Restoring requires an existing review or agreed revision")
+            if payload is not None and payload.get("revision_id") == document["current_revision_id"]:
+                return StateConflict("REVISION_ALREADY_CURRENT", "The selected revision is already current")
+            return None
         case CommandType.REQUEST_EXPORT:
             if document["lifecycle_state"] != "AGREED":
                 return StateConflict("AGREED_REVISION_REQUIRED", "Export requires an agreed document revision")
@@ -211,6 +220,8 @@ def available_commands(document: Mapping[str, Any], review: ReviewState, *, prev
         commands = ["START_REVIEW", "REQUEST_EXPORT", "ARCHIVE"]
     else:
         return []
+    if document["current_revision_id"]:
+        commands.append("RESTORE_REVISION")
     if preview is not None:
         commands = [command for command in commands if command not in {"APPLY_CHANGES", "PREPARE_CHANGES"}]
         commands.extend(("CONFIRM_PREPARED_CHANGES", "DISCARD_PREPARED_CHANGES"))

@@ -800,6 +800,11 @@ test('keeps the section diff available in revision history', async () => {
   );
   const diff = await screen.findByTestId('business-document-revision-diff');
   expect(diff).toHaveTextContent('Изменения ревизии 3');
+  expect(
+    within(
+      screen.getAllByTestId('business-document-section')[0],
+    ).getAllByTestId('revision-text-diff'),
+  ).toHaveLength(1);
   expect(diff).toHaveTextContent('Старая цель.');
   expect(diff).toHaveTextContent(firstSectionText);
   expect(screen.getAllByTestId('business-document-section')[0]).toHaveClass(
@@ -4247,3 +4252,125 @@ test.each(['prepare', 'publish'])(
     expect(actionMock).toHaveBeenCalledTimes(1);
   },
 );
+
+test('previews a historical revision and restores it from the authoritative response', async () => {
+  const oldRevision = {
+    ...projection.current_revision!,
+    revision_id: 'revision-2',
+    revision_number: 2,
+    section_texts: {
+      ...projection.current_revision!.section_texts,
+      '1': 'Старая цель.',
+    },
+  };
+  const restored = {
+    ...projection,
+    state_version: projection.state_version + 1,
+    current_revision: {
+      ...oldRevision,
+      revision_id: 'revision-4',
+      revision_number: 4,
+    },
+    allowed_commands: [
+      'RESTORE_REVISION',
+    ] as BusinessDocumentProjection['allowed_commands'],
+  };
+  mockedFetch.mockResolvedValue({
+    ...projection,
+    allowed_commands: [...projection.allowed_commands, 'RESTORE_REVISION'],
+  });
+  mockedListRevisions.mockResolvedValueOnce([
+    projection.current_revision!,
+    oldRevision,
+  ]);
+  mockedSubmit.mockResolvedValueOnce({ ...commandResult, document: restored });
+  renderPage();
+  fireEvent.click(
+    await screen.findByTestId('business-document-history-toggle'),
+  );
+  fireEvent.click(await screen.findByTestId('business-document-revision-2'));
+  expect(screen.getByTestId('business-document-markdown')).toHaveTextContent(
+    'Старая цель.',
+  );
+  expect(screen.getByText('Просмотр истории')).toBeVisible();
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Восстановить эту ревизию' }),
+  );
+  expect(mockedSubmit).not.toHaveBeenCalled();
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Восстановить документ' }),
+  );
+  await waitFor(() =>
+    expect(mockedSubmit).toHaveBeenCalledWith(
+      'doc-1',
+      expect.objectContaining({
+        type: 'RESTORE_REVISION',
+        expected_state_version: projection.state_version,
+        payload: { revision_id: 'revision-2' },
+      }),
+    ),
+  );
+  await waitFor(() =>
+    expect(
+      screen.queryByTestId('business-document-history'),
+    ).not.toBeInTheDocument(),
+  );
+  expect(screen.getByTestId('business-document-markdown')).toHaveTextContent(
+    'Старая цель.',
+  );
+  expect(screen.getByText('Ревизия 4')).toBeVisible();
+  expect(mockedFetch).toHaveBeenCalledTimes(1);
+});
+
+test('lets a reader inspect history without restore actions', async () => {
+  mockedFetch.mockResolvedValue({
+    ...projection,
+    permissions: { ...projection.permissions!, edit: false },
+    allowed_commands: ['RESTORE_REVISION'],
+  });
+  mockedListRevisions.mockResolvedValueOnce([
+    projection.current_revision!,
+    {
+      ...projection.current_revision!,
+      revision_id: 'revision-2',
+      revision_number: 2,
+    },
+  ]);
+  renderPage();
+  fireEvent.click(
+    await screen.findByTestId('business-document-history-toggle'),
+  );
+  fireEvent.click(await screen.findByTestId('business-document-revision-2'));
+  expect(
+    screen.queryByRole('button', { name: 'Восстановить эту ревизию' }),
+  ).not.toBeInTheDocument();
+});
+
+test('shows removed sections in the historical diff', async () => {
+  const current = projection.current_revision!;
+  const removed = {
+    ...current.document_ast.sections[0],
+    id: '9',
+    title: 'Удалённый раздел',
+  };
+  mockedListRevisions.mockResolvedValueOnce([
+    current,
+    {
+      ...current,
+      revision_id: 'revision-2',
+      revision_number: 2,
+      document_ast: {
+        ...current.document_ast,
+        sections: [...current.document_ast.sections, removed],
+      },
+      section_texts: { ...current.section_texts, '9': 'Прежнее содержание.' },
+    },
+  ]);
+  renderPage();
+  fireEvent.click(
+    await screen.findByTestId('business-document-history-toggle'),
+  );
+  const diff = await screen.findByTestId('business-document-revision-diff');
+  expect(diff).toHaveTextContent('Удалённый раздел · удалён');
+  expect(diff).toHaveTextContent('Прежнее содержание.');
+});

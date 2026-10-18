@@ -11,7 +11,7 @@ from business_documents.domain.errors import StateConflict
 
 Record = Mapping[str, Any]
 REVIEW_FEEDBACK = frozenset({"QuestionAnswered", "ProposalDecided", "ProposalAcceptanceCancelled", "AuthorCommentAdded", "EvaDocumentPulled"})
-_REVIEW_BOUNDARIES = frozenset({"DraftCreated", "ReviewCycleStarted", "ReviewAssessed"})
+_REVIEW_BOUNDARIES = frozenset({"DraftCreated", "ReviewCycleStarted", "RevisionRestored", "ReviewAssessed"})
 _RESOLUTION_EVENTS = frozenset({"ChangesApplied", "ReviewAgreedWithoutChanges", "ReviewContinuedWithoutChanges"})
 
 

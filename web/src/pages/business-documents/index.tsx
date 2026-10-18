@@ -1187,7 +1187,11 @@ export default function BusinessDocumentsPage() {
               ? current
               : updatedDocument,
         );
-        if (type === 'CONFIRM_PREPARED_CHANGES' || type === 'ACCEPT_PROPOSAL') {
+        if (
+          type === 'CONFIRM_PREPARED_CHANGES' ||
+          type === 'ACCEPT_PROPOSAL' ||
+          type === 'RESTORE_REVISION'
+        ) {
           if (activeDocumentId.current === targetDocumentId) {
             setHistoryOpen(false);
             setSelectedRevisionId(undefined);
@@ -2108,6 +2112,8 @@ export default function BusinessDocumentsPage() {
           )}
           <DocumentPane
             revision={displayedRevision}
+            historyMode={historyOpen}
+            previousRevision={previousDisplayedRevision}
             changePreview={historyOpen ? null : inlineChangePreview}
             preliminary={!document.change_preview}
             onFocusSource={focusSource}
@@ -2170,6 +2176,13 @@ export default function BusinessDocumentsPage() {
               currentRevisionId={document.current_revision?.revision_id}
               loading={revisionsQuery.isLoading}
               error={revisionsQuery.error}
+              canRestore={allowed.has('RESTORE_REVISION')}
+              pending={isBusy}
+              onRestore={(revision) =>
+                runDocumentCommand('RESTORE_REVISION', {
+                  revision_id: revision.revision_id,
+                })
+              }
               onSelect={(revision) => {
                 setSelectedRevisionId(revision.revision_id);
                 clearSelection();

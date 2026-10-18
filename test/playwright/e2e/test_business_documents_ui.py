@@ -679,3 +679,70 @@ def test_prepared_document_changes_are_visible_before_confirmation(page, base_ur
     expect(preview).to_have_count(0)
     assert submitted[1]["type"] == "CONFIRM_PREPARED_CHANGES"
     assert submitted[1]["payload"] == {"job_id": "job-preview"}
+
+
+@pytest.mark.p1
+def test_revision_history_restore(page, base_url):
+    """Browse, inspect a word diff, cancel, restore and reload a historical snapshot."""
+    from copy import deepcopy
+
+    _install_session(page)
+    _install_common_routes(page)
+    page.set_viewport_size({"width": 1440, "height": 1000})
+    projection = _projection(allowed_commands=["RESTORE_REVISION"])
+    current = projection["current_revision"]
+    previous = deepcopy(current)
+    previous.update(revision_id="revision-2", revision_number=2, section_texts={"1": "Сократить время перевода до пяти минут."})
+    previous["document_ast"]["sections"][0]["blocks"][0]["text"] = previous["section_texts"]["1"]
+    previous["body_markdown"] = "## 1. Цель\n" + previous["section_texts"]["1"]
+    revisions = [previous, current]
+    submitted, detail_reads = [], []
+
+    def detail(route):
+        detail_reads.append(route.request.url)
+        route.fulfill(status=200, content_type="application/json", body=json.dumps(_envelope(projection), ensure_ascii=False))
+
+    def restore(route):
+        command = route.request.post_data_json
+        submitted.append(command)
+        assert command["type"] == "RESTORE_REVISION"
+        assert command["payload"] == {"revision_id": "revision-2"}
+        assert command["expected_state_version"] == projection["state_version"]
+        restored = {**previous, "revision_id": "revision-4", "revision_number": 4}
+        projection.update(current_revision=restored, state_version=projection["state_version"] + 1, active_review_cycle=3)
+        revisions.append(restored)
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(_envelope({"accepted": True, "document_id": projection["document_id"], "state_version": projection["state_version"], "document": projection}), ensure_ascii=False),
+        )
+
+    page.route("**/api/v1/business-documents/doc-ui-1", detail)
+    page.route("**/api/v1/business-documents/doc-ui-1/revisions", lambda route: route.fulfill(status=200, content_type="application/json", body=json.dumps(_envelope(revisions), ensure_ascii=False)))
+    page.route("**/api/v1/business-documents/doc-ui-1/commands", restore)
+    page.goto(f"{base_url.rstrip('/')}/business-documents/doc-ui-1")
+    page.get_by_test_id("business-document-history-toggle").click()
+    selector = page.get_by_label("Ревизия для просмотра")
+    expect(selector).to_have_value("revision-3")
+    section = page.locator('[data-section-id="1"]')
+    expect(section.get_by_test_id("revision-text-diff")).to_have_count(1)
+    expect(section.locator("del")).to_have_text(["пяти", "минут"])
+    expect(section.locator("ins")).to_have_text(["одной", "минуты"])
+    evidence = Path(os.environ.get("PW_ARTIFACTS_DIR", "output/playwright/revision-history"))
+    evidence.mkdir(parents=True, exist_ok=True)
+    page.screenshot(path=str(evidence / "revision-history.png"), full_page=True)
+    selector.select_option("revision-2")
+    expect(section.locator("[data-section-body]")).to_contain_text(previous["section_texts"]["1"])
+    page.get_by_role("button", name="Восстановить эту ревизию").click()
+    page.get_by_role("button", name="Отмена", exact=True).click()
+    assert submitted == []
+    page.get_by_role("button", name="Восстановить эту ревизию").click()
+    page.get_by_role("button", name="Восстановить документ", exact=True).click()
+    expect(page.get_by_test_id("business-document-history")).to_have_count(0)
+    expect(page.get_by_text("Ревизия 4", exact=True)).to_be_visible()
+    expect(section.locator("[data-section-body]")).to_contain_text(previous["section_texts"]["1"])
+    assert len(submitted) == 1
+    assert len(detail_reads) == 1
+    page.reload()
+    expect(page.get_by_text("Ревизия 4", exact=True)).to_be_visible()
+    expect(section.locator("[data-section-body]")).to_contain_text(previous["section_texts"]["1"])

@@ -59,19 +59,12 @@ IOSchedulingClass=idle
 TimeoutStartSec=15min
 UMask=0027
 EOF
-sudo -n tee /etc/systemd/system/ragflow-retention.timer >/dev/null <<'EOF'
-[Unit]
-Description=Retry verified RAGFlow rollback retention after completed upgrades
-[Timer]
-OnCalendar=hourly
-Persistent=true
-[Install]
-WantedBy=timers.target
-EOF
+if sudo -n systemctl cat ragflow-retention.timer >/dev/null 2>&1; then
+  sudo -n systemctl disable --now ragflow-retention.timer
+  sudo -n rm -f -- /etc/systemd/system/ragflow-retention.timer
+fi
 sudo -n systemd-analyze verify /etc/systemd/system/ragflow-maintenance-{report,elastic}.{service,timer}
-sudo -n systemd-analyze verify /etc/systemd/system/ragflow-retention.{service,timer}
+sudo -n systemd-analyze verify /etc/systemd/system/ragflow-retention.service
 sudo -n systemctl daemon-reload
 sudo -n systemctl enable --now ragflow-maintenance-report.timer ragflow-maintenance-elastic.timer
 sudo -n systemctl start ragflow-maintenance-report.service
-sudo -n systemctl enable --now ragflow-retention.timer
-sudo -n systemctl start ragflow-retention.service

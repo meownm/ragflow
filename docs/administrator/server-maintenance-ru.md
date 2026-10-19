@@ -78,10 +78,10 @@ systemd units. Программа обслуживания установлен�
 
 ## Хранение двух вариантов отката
 
-После успешного обновления `upgrade.sh` запускает `ragflow-retention.service`.
-Почасовой `ragflow-retention.timer` повторяет проверку, в том числе после
-обновлений старым установочным пакетом. Оба запуска используют одну программу
-`/usr/local/lib/ragflow-maintenance/retention.py` и общий с обновлением lock.
+Только после успешного обновления `upgrade.sh` запускает `ragflow-retention.service`.
+Служба использует `/usr/local/lib/ragflow-maintenance/retention.py` и общий
+с обновлением lock. Периодического запуска нет; установщик удаляет ранее
+установленный `ragflow-retention.timer`.
 
 Сохраняются текущая установка и два последних подтверждённых отката. Источником
 служат существующие `UPGRADE.env`, `UPGRADE-COMPLETED.env`, `config/docker.env`

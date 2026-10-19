@@ -481,6 +481,6 @@ echo "Backups are preserved. Configured retention keeps two verified previous re
 # A retention failure must not turn a completed upgrade into a recovery failure.
 if sudo systemctl cat ragflow-retention.service >/dev/null 2>&1; then
   if ! sudo systemctl start --no-block ragflow-retention.service; then
-    echo "Upgrade succeeded; retention dispatch failed. The hourly timer will retry." >&2
+    echo "Upgrade succeeded; retention dispatch failed. Check ragflow-retention.service and retry manually." >&2
   fi
 fi

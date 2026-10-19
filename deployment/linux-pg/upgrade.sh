@@ -475,4 +475,12 @@ echo "RAGFlow upgrade completed: ${FROM_VERSION} -> ${RELEASE_VERSION}"
 echo "Backup: ${BACKUP_DIR}"
 echo "Previous application release: ${PREVIOUS_DIR}"
 echo "Elasticsearch rollback mode: rebuild indexes from PostgreSQL and MinIO."
-echo "Do not remove the backup or previous release until the acceptance window is closed."
+echo "Backups are preserved. Configured retention keeps two verified previous releases."
+
+# The asynchronous service acquires this upgrade's lock after this process exits.
+# A retention failure must not turn a completed upgrade into a recovery failure.
+if sudo systemctl cat ragflow-retention.service >/dev/null 2>&1; then
+  if ! sudo systemctl start --no-block ragflow-retention.service; then
+    echo "Upgrade succeeded; retention dispatch failed. The hourly timer will retry." >&2
+  fi
+fi

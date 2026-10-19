@@ -3,7 +3,6 @@ import { AlertTriangle, FileText, MousePointer2 } from 'lucide-react';
 import type { Nodes, Root } from 'mdast';
 import { isValidElement, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import type {
   BusinessDocumentChangePreview,
@@ -77,7 +76,7 @@ interface NormalizedText {
   ends: number[];
 }
 
-// Parser positions keep labels out of link destinations and other Markdown syntax.
+// Preserve parser positions and display soft line breaks without splitting text nodes.
 function remarkSelectionSource() {
   return (tree: Root) => {
     const visit = (node: Nodes) => {
@@ -87,6 +86,7 @@ function remarkSelectionSource() {
           hName: 'span',
           hProperties: {
             ...node.data?.hProperties,
+            className: 'whitespace-pre-line',
             'data-source-start': node.position.start.offset,
             'data-source-end': node.position.end.offset,
           },
@@ -445,11 +445,7 @@ export function DocumentPane({
                   )}
                   <div data-section-body>
                     <ReactMarkdown
-                      remarkPlugins={[
-                        remarkGfm,
-                        remarkBreaks,
-                        remarkSelectionSource,
-                      ]}
+                      remarkPlugins={[remarkGfm, remarkSelectionSource]}
                       components={{
                         p: ({ children }) => <p className="mb-4">{children}</p>,
                         ul: ({ children }) => (

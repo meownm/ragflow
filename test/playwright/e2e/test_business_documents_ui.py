@@ -8,6 +8,7 @@ import pytest
 from playwright.sync_api import expect
 
 from business_documents.domain.comment_anchor import validate_comment_anchor
+from business_documents.domain.content import render_section_text
 from test.playwright.helpers._next_apps_helpers import RESULT_TIMEOUT_MS, _goto_home
 
 
@@ -533,6 +534,13 @@ def test_narrow_workbench_protocol_controls_remain_reachable(page, base_url, wid
     assert panes.evaluate("el => el.scrollTop > 0"), "Narrow panes must actually scroll to the protocol"
 
 
+_SINGLE_NEWLINE_BLOCKS = [
+    {"type": "paragraph", "text": "Раздел описывает клиентские сценарии 😀."},
+    {"type": "paragraph", "text": "Просмотр и поиск **статьи**."},
+    {"type": "paragraph", "text": "Создание и публикация статьи."},
+]
+
+
 @pytest.mark.p1
 @pytest.mark.parametrize(
     "section_id,source,selected,canonical_selected",
@@ -544,8 +552,22 @@ def test_narrow_workbench_protocol_controls_remain_reachable(page, base_url, wid
         ("4.1", "Первый **важный** пункт.\n\nВторой пункт.", "Первый важный пункт", "Первый **важный** пункт"),
         ("4.3", "Метка 😀: A&nbsp;B &#x1F600;.", "A\u00a0B 😀", "A&nbsp;B &#x1F600;"),
         ("4.1", "Код: `имя\\_поля &amp; значение`.", "имя\\_поля &amp; значение", "имя\\_поля &amp; значение"),
+        ("4.3", _SINGLE_NEWLINE_BLOCKS, "Раздел описывает клиентские сценарии 😀", "Раздел описывает клиентские сценарии 😀"),
+        ("4.3", _SINGLE_NEWLINE_BLOCKS, "поиск статьи.", "поиск **статьи**."),
+        ("4.3", _SINGLE_NEWLINE_BLOCKS, "статьи.\nСоздание", "статьи**.\nСоздание"),
     ],
-    ids=["diagram-prose", "escaped-table-cell", "escape-and-entity", "link-destination", "inline-formatting", "unicode-entities", "literal-code"],
+    ids=[
+        "diagram-prose",
+        "escaped-table-cell",
+        "escape-and-entity",
+        "link-destination",
+        "inline-formatting",
+        "unicode-entities",
+        "literal-code",
+        "single-newline-first-block",
+        "single-newline-formatted-block",
+        "single-newline-cross-block",
+    ],
 )
 def test_business_document_markdown_selection_anchor(page, base_url, section_id, source, selected, canonical_selected):
     _install_session(page)
@@ -554,7 +576,12 @@ def test_business_document_markdown_selection_anchor(page, base_url, section_id,
     page.route("**/api/v1/users/me/models", lambda route: route.fulfill(json=_envelope({"tenant_id": "selection-tenant"})))
     projection = _projection()
     revision = projection["current_revision"]
-    revision["document_ast"]["sections"] = [{"id": section_id, "title": "Логика", "blocks": [{"type": "paragraph", "text": source}]}]
+    blocks = source if isinstance(source, list) else [{"type": "paragraph", "text": source}]
+    section_ast = {"id": section_id, "title": "Логика", "blocks": blocks}
+    source = render_section_text(section_ast)
+    if len(blocks) > 1:
+        assert source == "\n".join(block["text"] for block in blocks)
+    revision["document_ast"]["sections"] = [section_ast]
     revision["section_texts"] = {section_id: source}
     revision["body_markdown"] = f"## {section_id}. Логика\n{source}"
     page.route("**/api/v1/business-documents/doc-ui-1", lambda route: route.fulfill(json=_envelope(projection)))
@@ -565,6 +592,24 @@ def test_business_document_markdown_selection_anchor(page, base_url, section_id,
     expect(section).to_be_visible(timeout=RESULT_TIMEOUT_MS)
     if "plantuml" in source:
         expect(section.locator('[data-diagram-kind="plantuml"] svg')).to_be_visible()
+    if len(blocks) > 1:
+        line_tops = section.locator("[data-section-body]").evaluate(
+            """(body, prefixes) => prefixes.map(prefix => {
+                const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+                let node;
+                while ((node = walker.nextNode())) {
+                    const offset = node.textContent.indexOf(prefix);
+                    if (offset < 0) continue;
+                    const range = document.createRange();
+                    range.setStart(node, offset);
+                    range.setEnd(node, offset + 1);
+                    return range.getBoundingClientRect().top;
+                }
+                throw new Error('Missing paragraph: ' + prefix);
+            })""",
+            [block["text"][:8] for block in blocks],
+        )
+        assert line_tops[0] < line_tops[1] < line_tops[2], "Single newlines must remain visible line breaks"
     section.locator("[data-section-body]").evaluate(
         """(body, selected) => {
             const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);

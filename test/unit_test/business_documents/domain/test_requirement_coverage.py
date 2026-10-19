@@ -3,11 +3,88 @@ from copy import deepcopy
 import pytest
 
 from business_documents.domain.errors import RuleViolation
-from business_documents.domain.requirement_coverage import validate_requirement_coverage
+from business_documents.domain.requirement_coverage import agreement_decisions, validate_requirement_coverage
 
 
 SOURCES = {"comment": {"text": "Хранить 90 дней. Повтор не меняет первую дату."}, "section:1": {"text": "Не создавать дубликат."}}
 SECTIONS = {"1": "Общие требования", "5.4": "Требования к отчетности", "5.5": "Мониторинг"}
+
+
+@pytest.mark.parametrize(
+    "changes,status,event_id",
+    [
+        ([], "ACCEPTED", "accept"),
+        ([("cancel", "ProposalAcceptanceCancelled", {"proposal_id": "p", "decision_event_id": "accept"})], "CANCELLED", "accept"),
+        (
+            [("cancel", "ProposalAcceptanceCancelled", {"proposal_id": "p", "decision_event_id": "accept"}), ("reaccept", "ProposalDecided", {"proposal_id": "p", "decision": "ACCEPTED"})],
+            "ACCEPTED",
+            "reaccept",
+        ),
+        (
+            [("reaccept", "ProposalDecided", {"proposal_id": "p", "decision": "ACCEPTED"}), ("stale-cancel", "ProposalAcceptanceCancelled", {"proposal_id": "p", "decision_event_id": "accept"})],
+            "ACCEPTED",
+            "reaccept",
+        ),
+        ([("reject", "ProposalDecided", {"proposal_id": "p", "decision": "REJECTED"})], "REJECTED", "reject"),
+    ],
+)
+def test_proposal_projection_resolves_exact_cancellation_and_latest_decision(changes, status, event_id):
+    records = [("accept", "ProposalDecided", {"proposal_id": "p", "decision": "ACCEPTED"}), *changes]
+    snapshot = {
+        "agreement_history": {"proposals": [{"id": "p", "review_cycle": 1, "text": "Не создавать дубликаты."}]},
+        "source_events": [{"event_id": identifier, "sequence": sequence, "event_type": kind, "payload": payload} for sequence, (identifier, kind, payload) in enumerate(records, 1)],
+        "active_change_input_event_ids": [],
+    }
+    original = deepcopy(snapshot)
+    state = agreement_decisions(snapshot)["proposals"]
+    assert len(state) == 1
+    assert state[0]["status"] == status and state[0]["event_id"] == event_id
+    assert state[0]["text"] == "Не создавать дубликаты."
+    assert ("cancellation_event_id" in state[0]) == (status == "CANCELLED")
+    assert snapshot == original
+
+
+def test_answer_projection_keeps_old_limits_selected_text_and_later_clarifications():
+    snapshot = {
+        "agreement_history": {
+            "questions": [
+                {"id": "q-old", "review_cycle": 0, "text": "Срок хранения?", "options": [{"option_id": "chosen", "label": "90 дней."}, {"option_id": "other", "label": "Без ограничений."}]},
+                {"id": "q-later", "review_cycle": 1, "text": "Что меняется для архива?", "options": []},
+            ],
+            "answers": [
+                {"id": "a-old", "question_id": "q-old", "selected_option_id": "chosen"},
+                {"id": "a-later", "question_id": "q-later", "custom_answer": "Для архива 120 дней, остальные сроки без изменений."},
+            ],
+        },
+        "source_events": [
+            {"event_id": "old", "sequence": 1, "event_type": "QuestionAnswered", "payload": {"question_id": "q-old", "answer_id": "a-old"}},
+            {"event_id": "later", "sequence": 2, "event_type": "QuestionAnswered", "payload": {"question_id": "q-later", "answer_id": "a-later"}},
+        ],
+    }
+    original = deepcopy(snapshot)
+    answers = agreement_decisions(snapshot)["answers"]
+    assert [(answer["event_id"], answer["text"]) for answer in answers] == [("old", "90 дней."), ("later", "Для архива 120 дней, остальные сроки без изменений.")]
+    assert answers[0]["context"] == "Срок хранения?" and answers[0]["review_cycle"] == 0
+    assert "Без ограничений." not in str(answers)
+    assert snapshot == original
+
+
+def test_missing_historical_text_is_explicit_and_current_protocol_can_supply_known_bodies():
+    snapshot = {
+        "source_events": [
+            {"event_id": "old", "event_type": "QuestionAnswered", "payload": {"question_id": "q-old", "answer_id": "a-old"}},
+            {"event_id": "current", "event_type": "QuestionAnswered", "payload": {"question_id": "q", "answer_id": "a"}},
+            {"event_id": "accepted", "event_type": "ProposalDecided", "payload": {"proposal_id": "p", "decision": "ACCEPTED"}},
+        ],
+        "protocol": {
+            "questions": [{"question_id": "q", "text": "Уточнение?", "answer": {"answer_id": "a", "custom_answer": "Сохранить запрет."}}],
+            "proposals": [{"proposal_id": "p", "text": "Не менять первую дату."}],
+        },
+    }
+    state = agreement_decisions(snapshot)
+    assert state["answers"][0]["event_id"] == "old" and state["answers"][0]["text"] is None
+    assert state["answers"][1]["text"] == "Сохранить запрет."
+    assert state["proposals"][0]["status"] == "ACCEPTED" and state["proposals"][0]["text"] == "Не менять первую дату."
 
 
 def _failure():

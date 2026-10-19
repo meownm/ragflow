@@ -283,6 +283,23 @@ class PeeweeDocumentWriter:
     def review(self, document_id, review_cycle):
         return load_review_state(document_id, review_cycle)
 
+    def agreement_history(self, document_id):
+        # Decision, cancellation and application history is in source_events.
+        # Pin the immutable bodies those events reference across every cycle.
+        fields = {
+            "questions": (
+                BusinessDocumentQuestion,
+                ("id", "review_cycle", "stage", "target_section_id", "semantic_tag", "text", "options", "allow_custom_answer", "source_event_ids", "evidence_refs"),
+            ),
+            "answers": (BusinessDocumentAnswer, ("id", "question_id", "actor_id", "selected_option_id", "custom_answer")),
+            "proposals": (BusinessDocumentProposal, ("id", "review_cycle", "target_section_id", "text", "rationale", "source_event_ids", "evidence_refs")),
+            "comments": (BusinessDocumentComment, ("id", "review_cycle", "revision_id", "actor_id", "section_id", "text", "anchor")),
+        }
+        return {
+            key: list(model.select(*(getattr(model, name) for name in names)).where(model.document_id == document_id).order_by(model.create_time.asc(), model.id.asc()).dicts())
+            for key, (model, names) in fields.items()
+        }
+
     def assessment(self, document_id, review_cycle, *, comments=False):
         questions = tuple(
             BusinessDocumentQuestion.select(BusinessDocumentQuestion.id, BusinessDocumentQuestion.stage, BusinessDocumentQuestion.semantic_tag)

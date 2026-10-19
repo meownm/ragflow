@@ -127,9 +127,9 @@ so unrelated operations and earlier acceptances do not explain the current state
 
 ### Finalization
 
-The model returns only section replacement operations with the expected base
-section hash and authorizing event IDs. Every active-cycle answer, accepted
-proposal, and applicable author comment must either authorize an operation or
+The model returns block insertion, replacement and deletion operations or section
+additions, with the expected base section hash and authorizing event IDs. Every
+active-cycle answer, accepted proposal, and applicable author comment must either authorize an operation or
 appear in `acknowledged_no_change_event_ids`. The domain verifies this disposition,
 current-cycle provenance, evidence references, and section hashes, applies
 operations to the stored base AST, validates the result, and renders Markdown
@@ -142,6 +142,23 @@ proposals for later answers and decisions. Inputs resolved by a
 partial pass cannot authorize another change. The document reaches `AGREED`
 only after no question remains unanswered and no proposal remains undecided;
 a final fully acknowledged no-op does not manufacture a duplicate revision.
+
+Semantic review receives the complete result document, changed sections before
+application, active confirmed inputs, and the full ordered event history. Each
+`PLAN_CHANGES` snapshot also pins question/answer/proposal/comment bodies from
+all cycles, including intake; workers never reload them from mutable runtime
+state. Prior confirmed decisions constrain current changes unless explicitly
+superseded by later confirmed decisions. Rejections, acceptance cancellations
+and applied-input events distinguish historical context from active authority.
+The pure semantic-review projection resolves selected answer texts and the latest
+proposal status in one pass over pinned events. Acceptance cancellation targets
+its exact decision event; a later acceptance is effective under its own event ID.
+The model uses this projection to interpret conditional fallback instructions,
+while comparing later clarifications semantically against the complete history.
+Diagnostics may cite `history:<event_id>` only for an event in that snapshot;
+historical inputs do not gain permission to authorize new operations. Old pinned
+jobs without historical bodies use only their available context. Context-window
+limits apply to the entire review without truncating or batching history.
 
 ### Export and continuation
 

@@ -34,6 +34,8 @@ class CommandWriter(DocumentWriter, Protocol):
 
     def review(self, document_id: str, review_cycle: int) -> ReviewState: ...
 
+    def agreement_history(self, document_id: str) -> dict[str, list[Record]]: ...
+
     def preview(self, document: Record, now: int) -> Record | None: ...
 
     def question(self, document_id: str, question_id: str) -> Record | None: ...
@@ -267,6 +269,8 @@ class DocumentCommands:
         job_id = self._new_id()
         snapshot = self._job_snapshot(document, envelope.payload, review)
         snapshot["task_type"] = job_type
+        if job_type == "PLAN_CHANGES":
+            snapshot["agreement_history"] = self._writer.agreement_history(document["id"])
         if envelope.type == CommandType.PREPARE_CHANGES:
             snapshot["preview_only"] = True
         snapshot["requested_by_actor_id"] = actor_id

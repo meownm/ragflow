@@ -50,7 +50,7 @@ from business_documents.domain.job_recovery import REPAIRABLE_OUTPUT_CODES
 from business_documents.domain.content import render_block_changes, render_section_text
 from business_documents.domain.content_quality import parent_child_section_pairs, semantic_duplicate_section_pairs
 from business_documents.domain.change_stream import ChangeOperationStream
-from business_documents.domain.requirement_coverage import changed_section_repetitions, validate_requirement_coverage
+from business_documents.domain.requirement_coverage import agreement_decisions, changed_section_repetitions, validate_requirement_coverage
 from business_documents.domain.change_plan import validate_snapshot_sources, validate_evidence_sources
 from business_documents.domain.errors import RuleViolation
 from business_documents.domain.hashing import stable_hash
@@ -820,6 +820,11 @@ class BusinessDocumentAI:
                 "context_sections": context,
                 "section_titles": titles,
                 "cross_section_repetitions": [list(pair) for pair in changed_section_repetitions(base, final)],
+                "source_events": deepcopy(job.payload.get("source_events", [])),
+                "agreement_history": deepcopy(job.payload.get("agreement_history", {})),
+                "agreement_decisions": agreement_decisions(job.payload),
+                "protocol": deepcopy(job.payload.get("protocol", {})),
+                "active_review_cycle": job.payload.get("active_review_cycle"),
             }
         }
         system = prompt_text("requirement_coverage")
@@ -827,10 +832,11 @@ class BusinessDocumentAI:
         # it resolves or sets; semantic review never truncates or batches it.
         recovery = recovery or AIRecovery()
         review_sources = {**sources, **{f"section:{section_id}": {"text": text} for section_id, text in before.items()}}
+        history_event_ids = frozenset(event["event_id"] for event in payload["job_input"]["source_events"] if isinstance(event.get("event_id"), str))
         while True:
             try:
                 raw = self._generate(job.tenant_id, system, payload, "verification", recovery)
-                return validate_requirement_coverage(self._parse(raw), review_sources, titles)
+                return validate_requirement_coverage(self._parse(raw), review_sources, titles, history_event_ids=history_event_ids)
             except Exception as error:
                 code = getattr(error, "code", None)
                 if code in {"EMPTY_AI_RESPONSE", "INVALID_AI_JSON", "INVALID_REQUIREMENT_COVERAGE"}:

@@ -1,9 +1,62 @@
 """Validate the bounded verdict of one semantic review of a structured diff."""
 
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 
 from business_documents.domain.errors import RuleViolation
 from business_documents.domain.content_quality import semantic_duplicate_section_pairs
+
+
+def agreement_decisions(snapshot: Mapping) -> dict:
+    """Project answer contents and latest proposal decisions from pinned, ordered events.
+
+    This is review context, not change authorization. Textual supersession stays
+    a semantic question; a later event alone never retires another requirement.
+    """
+    history, protocol = snapshot.get("agreement_history", {}), snapshot.get("protocol", {})
+    questions = {row["id"]: row for row in history.get("questions", [])}
+    answers = {row["id"]: row for row in history.get("answers", [])}
+    proposals = {row["id"]: row for row in history.get("proposals", [])}
+    for question in protocol.get("questions", []):
+        if question.get("question_id"):
+            questions.setdefault(question["question_id"], question)
+        answer = question.get("answer") or {}
+        if answer.get("answer_id"):
+            answers.setdefault(answer["answer_id"], answer)
+    for proposal in protocol.get("proposals", []):
+        if proposal.get("proposal_id"):
+            proposals.setdefault(proposal["proposal_id"], proposal)
+    answered, decided = {}, {}
+    for event in snapshot.get("source_events", []):
+        payload = event.get("payload") or {}
+        kind = event["event_type"]
+        if kind == "QuestionAnswered":
+            question_id = payload.get("question_id")
+            question = questions.get(question_id, {})
+            answer = answers.get(payload.get("answer_id"), {})
+            selected = next((option for option in question.get("options", []) if option.get("option_id") == answer.get("selected_option_id")), {})
+            answered[question_id] = {
+                "question_id": question_id,
+                "event_id": event["event_id"],
+                "sequence": event.get("sequence"),
+                "review_cycle": question.get("review_cycle"),
+                "context": question.get("text"),
+                "text": answer.get("custom_answer") or selected.get("label"),
+            }
+        elif kind == "ProposalDecided":
+            proposal_id = payload["proposal_id"]
+            decided[proposal_id] = {
+                "proposal_id": proposal_id,
+                "event_id": event["event_id"],
+                "sequence": event.get("sequence"),
+                "review_cycle": proposals.get(proposal_id, {}).get("review_cycle"),
+                "status": payload["decision"],
+                "text": proposals.get(proposal_id, {}).get("text"),
+            }
+        elif kind == "ProposalAcceptanceCancelled":
+            decision = decided.get(payload.get("proposal_id"))
+            if decision and decision["event_id"] == payload.get("decision_event_id"):
+                decision.update(status="CANCELLED", cancellation_event_id=event["event_id"])
+    return {"answers": list(answered.values()), "proposals": list(decided.values())}
 
 
 def changed_section_repetitions(before: Mapping, after: Mapping) -> tuple[tuple[str, str], ...]:
@@ -32,7 +85,7 @@ def changed_section_repetitions(before: Mapping, after: Mapping) -> tuple[tuple[
     return semantic_duplicate_section_pairs(comparable, section_pairs=pairs)
 
 
-def validate_requirement_coverage(report: object, sources: Mapping[str, Mapping[str, str]], sections: Mapping[str, str]) -> dict:
+def validate_requirement_coverage(report: object, sources: Mapping[str, Mapping[str, str]], sections: Mapping[str, str], *, history_event_ids: Collection[str] = ()) -> dict:
     def invalid():
         raise RuleViolation("INVALID_REQUIREMENT_COVERAGE", "Semantic verification must return PASS without issues or FAIL with source-scoped issues")
 
@@ -45,6 +98,13 @@ def validate_requirement_coverage(report: object, sources: Mapping[str, Mapping[
         if not isinstance(issue, dict) or not {"source_id", "section_id", "reason"} <= issue.keys():
             invalid()
         source_id, section_id, reason = issue["source_id"], issue["section_id"], issue["reason"]
-        if not isinstance(source_id, str) or source_id not in sources or not isinstance(section_id, str) or section_id not in sections or not isinstance(reason, str) or not reason.strip():
+        if (
+            not isinstance(source_id, str)
+            or (source_id not in sources and not (source_id.startswith("history:") and source_id.removeprefix("history:") in history_event_ids))
+            or not isinstance(section_id, str)
+            or section_id not in sections
+            or not isinstance(reason, str)
+            or not reason.strip()
+        ):
             invalid()
     return {"status": status, "issues": [{key: issue[key] for key in ("source_id", "section_id", "reason")} for issue in issues]}

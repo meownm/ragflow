@@ -22,7 +22,7 @@ from typing import Any
 
 from common.time_utils import current_timestamp, datetime_format
 from datetime import datetime
-from flask import Blueprint, Response, request
+from flask import Blueprint, Response, request, send_file
 from flask_login import current_user, login_required, logout_user
 
 from auth import login_verify, login_admin, check_admin_auth
@@ -54,6 +54,7 @@ from api.utils.api_utils import generate_confirmation_token
 from common.log_utils import get_log_levels, set_log_level
 from audit_feed import AuditFeed
 from document_quality import document_quality_dashboard, failed_jobs_page
+from document_quality_evidence import evidence_archive
 from document_quality_runs import (
     enqueue_quality_run,
     get_quality_campaign,
@@ -172,6 +173,29 @@ def document_quality_jobs():
 def document_quality_run_detail(run_id):
     row = get_quality_run(run_id)
     return success_response(row, "Get quality run", 0) if row else error_response("Quality run not found", 404)
+
+
+@admin_bp.route("/document-quality/runs/<run_id>/diagnostics", methods=["GET"], defaults={"kind": "run"})
+@admin_bp.route("/document-quality/campaigns/<run_id>/diagnostics", methods=["GET"], defaults={"kind": "campaign"})
+@login_required
+@check_admin_auth
+def document_quality_diagnostics(run_id, kind):
+    if not (get_quality_campaign(run_id) if kind == "campaign" else get_quality_run(run_id)):
+        response, _ = error_response("Quality execution not found", 404)
+        return response, 404
+    try:
+        archive = evidence_archive(kind, run_id)
+    except FileNotFoundError:
+        response, _ = error_response("Quality diagnostics not retained", 404)
+        return response, 404
+    except (OSError, ValueError):
+        logging.exception("Failed to read quality diagnostics")
+        response, _ = error_response("Quality diagnostics unavailable", 503)
+        return response, 503
+    response = send_file(archive, mimetype="application/zip", as_attachment=True, download_name=f"quality-{run_id}.zip", max_age=0)
+    response.headers["Cache-Control"] = "no-store"
+    response.call_on_close(archive.close)
+    return response
 
 
 @admin_bp.route("/document-quality/campaigns", methods=["GET"])

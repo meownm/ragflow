@@ -49,6 +49,8 @@ def client(monkeypatch):
         ("get", "/document-quality/campaigns"),
         ("get", "/document-quality/campaigns/campaign-1"),
         ("get", "/document-quality/models"),
+        ("get", "/document-quality/runs/run-1/diagnostics"),
+        ("get", "/document-quality/campaigns/campaign-1/diagnostics"),
     ],
 )
 @pytest.mark.parametrize(
@@ -74,6 +76,41 @@ def test_version_route_uses_admin_authorization_handler(client, monkeypatch):
     response = client.get("/api/v1/admin/version", headers={"Authorization": "test"})
     assert response.status_code == 403
     assert response.json == {"code": 403, "message": "Not admin", "data": None}
+
+
+@pytest.mark.parametrize("collection,kind,lookup", [("runs", "run", "get_quality_run"), ("campaigns", "campaign", "get_quality_campaign")])
+def test_admin_downloads_private_evidence_archive(client, monkeypatch, tmp_path, collection, kind, lookup):
+    import io
+    from zipfile import ZipFile
+    from document_quality_evidence import record_quality_evidence
+
+    monkeypatch.setenv("BUSINESS_DOCUMENT_QUALITY_EVIDENCE_DIR", str(tmp_path / "evidence"))
+    monkeypatch.setattr(routes, lookup, lambda _: {"id": "execution"})
+    url = f"/api/v1/admin/document-quality/{collection}/execution/diagnostics"
+    headers = {"Authorization": "test"}
+    assert client.get(url, headers=headers).status_code == 404
+    with record_quality_evidence(kind, "execution", {}) as directory:
+        (directory / "report.calls.jsonl").write_text("private response", encoding="utf-8")
+    response = client.get(url, headers=headers)
+    assert response.status_code == 200 and response.mimetype == "application/zip"
+    assert response.headers["Cache-Control"] == "no-store"
+    with ZipFile(io.BytesIO(response.data)) as archive:
+        assert archive.read("report.calls.jsonl") == b"private response"
+    response.close()
+    monkeypatch.setattr(routes, lookup, lambda _: None)
+    assert client.get(url, headers=headers).status_code == 404
+
+
+def test_archive_io_failure_does_not_expose_details(client, monkeypatch):
+    monkeypatch.setattr(routes, "get_quality_run", lambda _: {"id": "execution"})
+
+    def unavailable(*_):
+        raise OSError("private filesystem detail")
+
+    monkeypatch.setattr(routes, "evidence_archive", unavailable)
+    response = client.get("/api/v1/admin/document-quality/runs/execution/diagnostics", headers={"Authorization": "test"})
+    assert response.status_code == 503
+    assert b"private filesystem detail" not in response.data
 
 
 def test_manual_route_validates_body_before_queueing(client, monkeypatch):

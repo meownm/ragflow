@@ -53,6 +53,7 @@ services:
     ports: !override
       - "0.0.0.0:9380:80"
     volumes:
+      - business_document_quality_evidence:/ragflow/quality-evidence
       - ../api/db/services/connector_service.py:/ragflow/api/db/services/connector_service.py:ro
       - ../api/db/services/access_group_service.py:/ragflow/api/db/services/access_group_service.py:ro
       - ../api/db/services/business_document_catalog_service.py:/ragflow/api/db/services/business_document_catalog_service.py:ro
@@ -97,6 +98,7 @@ services:
       - ../admin/server/audit_feed.py:/ragflow/admin/server/audit_feed.py:ro
       - ../admin/server/document_quality.py:/ragflow/admin/server/document_quality.py:ro
       - ../admin/server/document_quality_runs.py:/ragflow/admin/server/document_quality_runs.py:ro
+      - ../admin/server/document_quality_evidence.py:/ragflow/admin/server/document_quality_evidence.py:ro
       - ../admin/server/document_quality_models.py:/ragflow/admin/server/document_quality_models.py:ro
       - ../admin/server/admin_server.py:/ragflow/admin/server/admin_server.py:ro
       - ../admin/server/services.py:/ragflow/admin/server/services.py:ro
@@ -228,3 +230,4 @@ services:
 
 volumes:
   postgres_data:
+  business_document_quality_evidence:

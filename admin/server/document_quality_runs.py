@@ -20,6 +20,7 @@ from common.misc_utils import get_uuid
 from common.time_utils import current_timestamp
 from tools.quality.verify_business_document_quality_report import QualityGateFailed, verify_report
 from document_quality_models import quality_model_catalog, quality_model_configuration, quality_model_digest
+from document_quality_evidence import evidence_available, record_quality_evidence
 from business_documents.domain.job_recovery import REPAIRABLE_OUTPUT_CODES, TRANSIENT_FAILURE_CODES
 
 
@@ -91,6 +92,7 @@ _JOB_CODES = (
             "UNFINISHED_JOB",
             "AI_TIME_BUDGET_EXCEEDED",
             "AI_CALL_BUDGET_EXCEEDED",
+            "WORKER_FAILURE",
         }
     )
 )
@@ -256,6 +258,7 @@ def _public_run(row: BusinessDocumentQualityRun, *, detail: bool = False) -> dic
         "reason_code": row.reason_code,
         "reason": None,
         "report": report,
+        "diagnostics_available": evidence_available("run", row.id),
     }
 
 
@@ -287,6 +290,7 @@ def _public_campaign(row: BusinessDocumentQualityCampaign, *, detail: bool = Fal
         "reason_code": row.reason_code,
         "models": row.models if detail else None,
         "runs": [_public_run(item) for item in runs],
+        "diagnostics_available": evidence_available("campaign", row.id),
     }
 
 
@@ -458,16 +462,22 @@ def _run_suite(test_path: str, env: dict[str, str], temp: Path, *, deadline: flo
     timeout = RUN_TIMEOUT_SECONDS if deadline is None else min(RUN_TIMEOUT_SECONDS, deadline - time.monotonic())
     if timeout <= 0:
         raise subprocess.TimeoutExpired(test_path, RUN_TIMEOUT_SECONDS)
-    with (temp / "pytest.log").open("w", encoding="utf-8") as log:
-        completed = subprocess.run(
-            [sys.executable, "-B", "-m", "pytest", "-q", "-p", "no:cacheprovider", test_path, "--basetemp", str(temp / "pytest")],
-            cwd=ROOT,
-            env=env,
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            timeout=timeout,
-            check=False,
-        )
+    with tempfile.TemporaryDirectory(prefix="business-document-pytest-") as scratch, (temp / "pytest.log").open("a", encoding="utf-8") as log:
+        log.write(f"\n=== {Path(test_path).name} ===\n")
+        log.flush()
+        try:
+            completed = subprocess.run(
+                [sys.executable, "-B", "-m", "pytest", "-vv", "--tb=long", "-p", "no:cacheprovider", test_path, "--basetemp", str(Path(scratch) / "pytest")],
+                cwd=ROOT,
+                env=env,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            log.write(f"\nQuality suite exceeded {timeout:.1f} seconds\n")
+            raise
     if completed.returncode:
         logging.warning("Business Documents quality suite failed: %s (pytest exit %d)", test_path, completed.returncode)
     return completed.returncode
@@ -682,8 +692,19 @@ def _execute(row: BusinessDocumentQualityRun) -> tuple[str, dict | None, str | N
     if model_name and model_digest and quality_model_digest(tenant, model_name) != model_digest:
         return "INCOMPLETE", None, "Model digest changed before execution"
     initial_configuration = quality_model_configuration(tenant, model_name) if model_name else None
-    with tempfile.TemporaryDirectory(prefix="business-document-quality-") as directory:
-        temp = Path(directory)
+    with record_quality_evidence(
+        "run",
+        row.id,
+        {
+            "source_revision": row.source_revision,
+            "source_fingerprint": initial_fingerprint,
+            "model": model_name,
+            "model_digest": model_digest,
+            "campaign_id": getattr(row, "campaign_id", None),
+            "scope": getattr(row, "scope", "FULL"),
+            "case_id": getattr(row, "case_id", None),
+        },
+    ) as temp:
         report_path = temp / "report.json"
         golden_report_path = temp / "golden.json"
         env = os.environ.copy()
@@ -775,8 +796,7 @@ def _run_campaign_baseline(campaign: BusinessDocumentQualityCampaign) -> tuple[s
     golden_test = ROOT / "test/evals/business_documents/test_golden_dialogue_harness.py"
     if not golden_test.is_file() or importlib.util.find_spec("pytest") is None:
         return "INCOMPLETE", "TEST_ASSETS_MISSING"
-    with tempfile.TemporaryDirectory(prefix="business-document-baseline-") as directory:
-        temp = Path(directory)
+    with record_quality_evidence("campaign", campaign.id, {"source_revision": campaign.source_revision}) as temp:
         env = {**os.environ, "BUSINESS_DOCUMENT_RELATED_FILE_SEARCH_ENABLED": "true", "BUSINESS_DOCUMENT_GOLDEN_REPORT": str(temp / "golden.json"), "PYTHONDONTWRITEBYTECODE": "1"}
         try:
             exit_code = _run_suite(str(golden_test), env, temp)

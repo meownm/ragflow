@@ -18,6 +18,11 @@ import document_quality_runs as runs
 from api.db.db_models import BusinessDocumentQualityCampaign, BusinessDocumentQualityRun
 
 
+@pytest.fixture(autouse=True)
+def private_evidence(monkeypatch, tmp_path):
+    monkeypatch.setenv("BUSINESS_DOCUMENT_QUALITY_EVIDENCE_DIR", str(tmp_path / "evidence"))
+
+
 def test_schedule_is_idempotent_and_manual_run_is_persisted(monkeypatch):
     database = SqliteDatabase(":memory:")
     monkeypatch.setattr(runs, "_configured_tenant", lambda: "dedicated-qa")
@@ -139,10 +144,11 @@ def test_diagnostic_requires_completed_selected_case(monkeypatch):
         return 1
 
     monkeypatch.setattr(runs, "_run_suite", write_report)
-    row = SimpleNamespace(source_revision="revision", campaign_id=None, model_name=None, model_digest=None, scope="CASE", case_id="M04")
+    row = SimpleNamespace(id="execution", source_revision="revision", campaign_id=None, model_name=None, model_digest=None, scope="CASE", case_id="M04")
     monkeypatch.setenv("TEST_CASE_STATUS", "INCOMPLETE")
     status, _, _ = runs._execute(row)
     assert status == "INCOMPLETE"
+    row.id = "second-execution"
     monkeypatch.setenv("TEST_CASE_STATUS", "FAIL")
     status, _, _ = runs._execute(row)
     assert status == "DIAGNOSTIC"
@@ -226,7 +232,7 @@ def test_scheduled_golden_suite_enables_controlled_retrieval(monkeypatch):
         return 1
 
     monkeypatch.setattr(runs, "_run_suite", fail_golden)
-    status, _, _ = runs._execute(SimpleNamespace(source_revision="revision"))
+    status, _, _ = runs._execute(SimpleNamespace(id="execution", source_revision="revision"))
     assert status == "INCOMPLETE"
     assert observed == ["true"]
 
@@ -306,7 +312,7 @@ def test_model_digest_mismatch_does_not_run_suite(monkeypatch):
     monkeypatch.setattr(runs, "_configured_tenant", lambda: "qa")
     monkeypatch.setattr(runs, "_source_revision", lambda: "revision")
     monkeypatch.setattr(runs, "quality_model_digest", lambda *_: "different")
-    status, report, reason = runs._execute(SimpleNamespace(source_revision="revision", campaign_id=None, model_name="qwen", model_digest="a" * 64, scope="CASE", case_id="M04"))
+    status, report, reason = runs._execute(SimpleNamespace(id="execution", source_revision="revision", campaign_id=None, model_name="qwen", model_digest="a" * 64, scope="CASE", case_id="M04"))
     assert status == "INCOMPLETE" and report is None
     assert "digest" in reason
 
@@ -338,12 +344,14 @@ def test_one_model_timeout_is_incomplete(monkeypatch):
     monkeypatch.setattr(runs, "_source_revision", lambda: "revision")
     monkeypatch.setattr(runs, "_configured_tenant", lambda: "qa")
 
-    def timeout(*_, **_kwargs):
+    def timeout(_path, _env, directory, **_kwargs):
+        (directory / "report.calls.jsonl").write_text("partial model answer", encoding="utf-8")
         raise subprocess.TimeoutExpired("pytest", 1200)
 
     monkeypatch.setattr(runs, "_run_suite", timeout)
     status, report, reason = runs._execute(
         SimpleNamespace(
+            id="execution",
             source_revision="revision",
             campaign_id=None,
             model_name=None,
@@ -354,6 +362,26 @@ def test_one_model_timeout_is_incomplete(monkeypatch):
     )
     assert status == "INCOMPLETE" and report is None
     assert reason == "Live model suite timed out"
+    import document_quality_evidence as evidence
+    from zipfile import ZipFile
+
+    with evidence.evidence_archive("run", "execution") as stream, ZipFile(stream) as archive:
+        assert archive.read("report.calls.jsonl") == b"partial model answer"
+
+
+def test_pytest_stages_append_logs_and_keep_timeout_details(monkeypatch, tmp_path):
+    def execute(*_args, **kwargs):
+        kwargs["stdout"].write("full failure detail\n")
+        raise subprocess.TimeoutExpired("pytest", 1)
+
+    monkeypatch.setattr(runs.subprocess, "run", execute)
+    for stage in ("golden.py", "live.py"):
+        with pytest.raises(subprocess.TimeoutExpired):
+            runs._run_suite(stage, {}, tmp_path)
+    log = (tmp_path / "pytest.log").read_text(encoding="utf-8")
+    assert "golden.py" in log and "live.py" in log
+    assert log.count("full failure detail") == 2
+    assert log.count("Quality suite exceeded") == 2
 
 
 def test_changed_digest_after_execution_cannot_pass(monkeypatch):
@@ -379,6 +407,7 @@ def test_changed_digest_after_execution_cannot_pass(monkeypatch):
     monkeypatch.setattr(runs, "_run_suite", write_report)
     status, report, reason = runs._execute(
         SimpleNamespace(
+            id="execution",
             source_revision="revision",
             campaign_id=None,
             model_name="qwen",
@@ -413,6 +442,7 @@ def test_changed_source_after_execution_cannot_pass(monkeypatch):
     monkeypatch.setattr(runs, "_run_suite", write_report)
     status, _, reason = runs._execute(
         SimpleNamespace(
+            id="execution",
             source_revision="revision",
             campaign_id=None,
             model_name=None,
@@ -509,7 +539,7 @@ def test_cross_model_parameters_do_not_mask_case_failure_but_temporal_changes_do
         BusinessDocumentQualityCampaign.create(id="campaign", schedule_key="nightly:day", source_revision="revision", models={}, baseline_status="PASS")
         reference = {**runs._report_summary(raw), "parameter_profiles": [{"extra_body": {"num_ctx": 393216}}]}
         BusinessDocumentQualityRun.create(id="reference", campaign_id="campaign", trigger="NIGHTLY", status="FAIL", report=reference)
-        row = SimpleNamespace(source_revision="revision", campaign_id="campaign", model_name="qwen", model_digest="a" * 64, scope="FULL")
+        row = SimpleNamespace(id="execution", source_revision="revision", campaign_id="campaign", model_name="qwen", model_digest="a" * 64, scope="FULL")
         status, summary, reason = runs._execute(row)
         assert reason == expected
         assert status == ("INCOMPLETE" if change == "parameters" else "FAIL")
@@ -528,15 +558,16 @@ def test_m06_diagnostics_keep_job_and_oracle_codes_without_generated_text():
     assert runs._public_report({"cases": [{"case_id": "M06", "diagnostics": result}]}, detail=True)["cases"][0]["diagnostics"] == result
 
 
-def test_execution_diagnostic_keeps_safe_class_and_job_code_only():
+@pytest.mark.parametrize("job_code", ["MODEL_CONTEXT_TOO_LARGE", "WORKER_FAILURE"])
+def test_execution_diagnostic_keeps_safe_class_and_job_code_only(job_code):
     result = runs._safe_case_diagnostics(
         {
             "status": "INCOMPLETE",
-            "execution_error": {"error_type": "AssertionError", "job_code": "MODEL_CONTEXT_TOO_LARGE", "message": "private exception", "code": "PRIVATE"},
+            "execution_error": {"error_type": "AssertionError", "job_code": job_code, "check_id": "job_completed", "message": "private exception", "code": "PRIVATE"},
             "failures": ["AssertionError: private exception"],
         }
     )
-    assert result == [{"code": "EXECUTION_ERROR", "error_type": "AssertionError", "job_code": "MODEL_CONTEXT_TOO_LARGE"}]
+    assert result == [{"code": "EXECUTION_ERROR", "error_type": "AssertionError", "job_code": job_code, "check_id": "job_completed"}]
 
 
 def test_admin_run_detail_never_returns_legacy_raw_content_or_exception():

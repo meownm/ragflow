@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import sys
 import time
+import traceback
 from types import ModuleType, SimpleNamespace
 from typing import Any
 from uuid import uuid4
@@ -53,7 +54,12 @@ class CaseExecution:
     ai_audits: tuple[dict[str, Any], ...]
 
 
-def _record_model_calls(monkeypatch, calls: list[dict[str, Any]]) -> None:
+def _append_evidence(path: Path, event: dict[str, Any]) -> None:
+    with path.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps({"recorded_at": datetime.now(timezone.utc).isoformat(), **event}, ensure_ascii=False) + "\n")
+
+
+def _record_model_calls(monkeypatch, calls: list[dict[str, Any]], journal_path: Path | None = None) -> None:
     """Retain synthetic inputs and outputs without changing the live adapter."""
     generate = RAGFlowLLMAdapter.async_generate
 
@@ -64,12 +70,28 @@ def _record_model_calls(monkeypatch, calls: list[dict[str, Any]]) -> None:
             "request_sha256": hashlib.sha256(json.dumps(request, ensure_ascii=False, sort_keys=True).encode()).hexdigest(),
         }
         calls.append(call)
+        call_id = len(calls)
+
+        def record(event, **detail):
+            if journal_path is not None:
+                _append_evidence(journal_path, {"event": event, "call_id": call_id, **detail})
+
+        record("request", **call)
+        callback = on_chunk
+        if journal_path is not None and on_chunk is not None:
+
+            def callback(chunk):
+                record("chunk", text=chunk)
+                on_chunk(chunk)
+
         try:
-            response = await generate(self, tenant_id, system_prompt, input_payload, on_chunk)
-        except Exception as error:
+            response = await generate(self, tenant_id, system_prompt, input_payload, callback)
+        except BaseException as error:
             call["error"] = {"type": type(error).__name__, "message": str(error)}
+            record("error", error=call["error"], traceback=traceback.format_exc())
             raise
         call["response"] = response
+        record("response", text=response, sha256=hashlib.sha256(response.encode("utf-8")).hexdigest())
         return response
 
     monkeypatch.setattr(RAGFlowLLMAdapter, "async_generate", recorded)
@@ -87,7 +109,11 @@ def _execution_error(error: Exception) -> dict[str, Any]:
     detail = error.args[0] if error.args and isinstance(error.args[0], dict) else {}
     job_error = detail.get("error")
     code = getattr(error, "code", None) or (job_error.get("code") if isinstance(job_error, dict) else None)
-    return {"error_type": type(error).__name__, "job_code": code if isinstance(code, str) else None}
+    return {
+        "error_type": type(error).__name__,
+        "job_code": code if isinstance(code, str) else None,
+        **({"check_id": detail["check_id"]} if isinstance(detail.get("check_id"), str) else {}),
+    }
 
 
 class ControlledEvidenceSearch:
@@ -153,13 +179,17 @@ def _complete_requested_job(worker, tenant_id, projection, command_type, payload
         job = BusinessDocumentJob.get_by_id(job.id)
         if job.status in {"COMPLETED", "DEAD"}:
             break
-    assert job.status == "COMPLETED", {
-        "job_id": job.id,
-        "job_type": job.job_type,
-        "status": job.status,
-        "attempt": job.attempt,
-        "error": job.error,
-    }
+    if job.status != "COMPLETED":
+        raise AssertionError(
+            {
+                "check_id": "job_completed",
+                "job_id": job.id,
+                "job_type": job.job_type,
+                "status": job.status,
+                "attempt": job.attempt,
+                "error": job.error,
+            }
+        )
     return document_queries.get_document(projection["document_id"], tenant_id), job
 
 
@@ -391,6 +421,7 @@ def _apply_review_change(
         raise AssertionError(
             {
                 "message": "Live model did not make the confirmed review change applicable",
+                "check_id": "review_change_applicable",
                 "allowed_commands": document["allowed_commands"],
                 "open_question_tags": [item["semantic_tag"] for item in document["protocol"]["questions"] if item["status"] == "OPEN"],
                 "pending_proposals": [item["text"] for item in document["protocol"]["proposals"] if item["decision"] in {None, "PENDING"}],
@@ -405,8 +436,10 @@ def _apply_review_change(
         {"base_revision_id": original_revision["revision_id"]},
     )
     audits.append(_ai_audit(change_job))
-    assert document["current_revision"]["revision_number"] == original_revision["revision_number"] + 1
-    assert document["current_revision"]["content_hash"] != original_revision["content_hash"]
+    if document["current_revision"]["revision_number"] != original_revision["revision_number"] + 1:
+        raise AssertionError({"check_id": "review_revision_created"})
+    if document["current_revision"]["content_hash"] == original_revision["content_hash"]:
+        raise AssertionError({"check_id": "review_content_changed"})
     return document
 
 
@@ -629,7 +662,18 @@ def test_case_execution_error_preserves_codes_without_error_text(error, expected
     assert _execution_error(error) == expected
 
 
-def test_model_call_evidence_preserves_inputs_response_and_stream_callback(monkeypatch):
+def test_failed_live_job_preserves_diagnostic_through_pytest_assertion_rewriting(monkeypatch):
+    job = SimpleNamespace(id="failed-job", job_type="PLAN_CHANGES", max_attempts=1, status="DEAD", attempt=1, error={"code": "REQUIREMENT_COVERAGE_FAILED", "message": "private content"})
+    monkeypatch.setattr(document_commands, "execute", lambda *_: {"job_id": job.id})
+    monkeypatch.setattr(BusinessDocumentJob, "get_by_id", lambda *_: job)
+    document = {"document_id": "document", "state_version": 1}
+    with pytest.raises(AssertionError) as caught:
+        _complete_requested_job(SimpleNamespace(run_once=lambda: True), "tenant", document, "APPLY_CHANGES")
+    assert _execution_error(caught.value) == {"error_type": "AssertionError", "job_code": "REQUIREMENT_COVERAGE_FAILED", "check_id": "job_completed"}
+
+
+@pytest.mark.asyncio
+async def test_model_call_evidence_preserves_inputs_response_and_stream_callback(monkeypatch):
     calls = []
     payload = {"job_input": {"task_type": "GENERATE_DRAFT"}, "evidence": {"chunks": [{"content": "Подтвержденный факт"}]}}
 
@@ -645,14 +689,15 @@ def test_model_call_evidence_preserves_inputs_response_and_stream_callback(monke
     monkeypatch.setattr(RAGFlowLLMAdapter, "async_generate", generate)
     _record_model_calls(monkeypatch, calls)
     adapter = RAGFlowLLMAdapter()
-    result = asyncio.run(adapter.async_generate("synthetic-tenant", "trusted prompt", payload, callback))
+    result = await adapter.async_generate("synthetic-tenant", "trusted prompt", payload, callback)
     assert result == calls[0]["response"] == '{"draft": {}}'
     assert "changed_after_call" not in calls[0]["input_payload"]["job_input"]
     request = {key: calls[0][key] for key in ("system_prompt", "input_payload")}
     assert calls[0]["request_sha256"] == hashlib.sha256(json.dumps(request, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
-def test_model_call_evidence_does_not_retry_or_hide_provider_errors(monkeypatch):
+@pytest.mark.asyncio
+async def test_model_call_evidence_does_not_retry_or_hide_provider_errors(monkeypatch):
     calls = []
     error = TimeoutError("synthetic timeout")
 
@@ -662,10 +707,50 @@ def test_model_call_evidence_does_not_retry_or_hide_provider_errors(monkeypatch)
     monkeypatch.setattr(RAGFlowLLMAdapter, "async_generate", generate)
     _record_model_calls(monkeypatch, calls)
     with pytest.raises(TimeoutError) as caught:
-        asyncio.run(RAGFlowLLMAdapter().async_generate("synthetic-tenant", "prompt", {}))
+        await RAGFlowLLMAdapter().async_generate("synthetic-tenant", "prompt", {})
     assert caught.value is error
     assert len(calls) == 1 and calls[0]["error"] == {"type": "TimeoutError", "message": "synthetic timeout"}
     assert "response" not in calls[0]
+
+
+@pytest.mark.parametrize("failure", [TimeoutError("provider timeout"), asyncio.CancelledError("cancelled")])
+@pytest.mark.asyncio
+async def test_model_journal_retains_request_and_partial_stream_on_failure(monkeypatch, tmp_path, failure):
+    journal = tmp_path / "calls.jsonl"
+    chunks = []
+
+    async def generate(self, tenant_id, system_prompt, input_payload, on_chunk=None):
+        assert json.loads(journal.read_text(encoding="utf-8"))["event"] == "request"
+        on_chunk("частичный ответ")
+        assert len(journal.read_text(encoding="utf-8").splitlines()) == 2
+        raise failure
+
+    monkeypatch.setattr(RAGFlowLLMAdapter, "async_generate", generate)
+    calls = []
+    _record_model_calls(monkeypatch, calls, journal)
+    with pytest.raises(type(failure)) as caught:
+        await RAGFlowLLMAdapter().async_generate("synthetic", "full prompt", {"data": "input"}, chunks.append)
+    assert caught.value is failure and chunks == ["частичный ответ"]
+    events = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines()]
+    assert [item["event"] for item in events] == ["request", "chunk", "error"]
+    assert events[0]["system_prompt"] == "full prompt"
+    assert events[-1]["error"]["type"] in events[-1]["traceback"]
+
+
+@pytest.mark.asyncio
+async def test_model_journal_keeps_complete_untruncated_response(monkeypatch, tmp_path):
+    response = "полный ответ\n" * 10000
+
+    async def generate(*_args, **_kwargs):
+        return response
+
+    monkeypatch.setattr(RAGFlowLLMAdapter, "async_generate", generate)
+    journal = tmp_path / "calls.jsonl"
+    _record_model_calls(monkeypatch, [], journal)
+    assert await RAGFlowLLMAdapter().async_generate("synthetic", "prompt", {}) == response
+    final = json.loads(journal.read_text(encoding="utf-8").splitlines()[-1])
+    assert final["text"] == response
+    assert final["sha256"] == hashlib.sha256(response.encode()).hexdigest()
 
 
 def test_review_journey_applies_ready_change_before_creating_more_feedback(monkeypatch):
@@ -732,8 +817,8 @@ def test_live_model_golden_suite(database, monkeypatch):
     executions: list[CaseExecution] = []
     model_calls: list[dict[str, Any]] = []
     case_exchanges: list[dict[str, Any]] = []
-    _record_model_calls(monkeypatch, model_calls)
     report_path = os.environ.get("BUSINESS_DOCUMENT_QUALITY_REPORT", "").strip()
+    _record_model_calls(monkeypatch, model_calls, Path(report_path).with_suffix(".calls.jsonl") if report_path else None)
 
     def persist(active_case_id: str | None = None) -> None:
         if not report_path:
@@ -755,9 +840,15 @@ def test_live_model_golden_suite(database, monkeypatch):
         case_audits: list[dict[str, Any]] = []
         previous_job_ids = {job.id for job in BusinessDocumentJob.select(BusinessDocumentJob.id)}
         first_call = len(model_calls)
+        if report_path:
+            _append_evidence(Path(report_path).with_suffix(".calls.jsonl"), {"event": "case_start", "case_id": case["id"], "first_call_id": first_call + 1})
         try:
             executions.append(_run_model_case(case, config.tenant_id, case_audits))
         except Exception as error:  # noqa: BLE001 - preserve the unfinished case without attributing it to model quality
+            if report_path:
+                _append_evidence(
+                    Path(report_path).with_suffix(".errors.jsonl"), {"case_id": case["id"], "error": str(error), "traceback": traceback.format_exc(), "jobs": _case_job_evidence(previous_job_ids)}
+                )
             executions.append(
                 CaseExecution(
                     result={
@@ -773,6 +864,7 @@ def test_live_model_golden_suite(database, monkeypatch):
                 )
             )
         if report_path:
+            _append_evidence(Path(report_path).with_suffix(".calls.jsonl"), {"event": "case_end", "case_id": case["id"], "status": executions[-1].result["status"], "last_call_id": len(model_calls)})
             case_exchanges.append({"case_id": case["id"], "adapter_calls": model_calls[first_call:], "jobs": _case_job_evidence(previous_job_ids)})
             _write_json(Path(report_path).with_suffix(".exchanges.json"), {"schema_version": "1", "cases": case_exchanges})
         executions[-1].result["duration_ms"] = round((time.monotonic() - started) * 1000)

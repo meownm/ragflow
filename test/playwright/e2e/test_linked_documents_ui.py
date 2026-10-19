@@ -40,6 +40,11 @@ def _document(role):
         "source_kind": "local",
         "current_revision_id": "rev1",
         "approved_revision_id": None,
+        "implemented_revision_id": None,
+        "implementation_event_id": None,
+        "implementation_history": [],
+        "can_implement": role in {"owner", "editor"},
+        "required_for_readiness": False,
         "responsible_id": "user",
         "approver_id": "user",
         "version": 1,
@@ -97,6 +102,14 @@ class LinkedDocumentApi:
         self.hold_organization = False
         self.held_document = None
         self.hold_next_document = False
+        self.fail_next_implementation = False
+        self.hold_business = False
+        self.held_business = None
+        self.extra_documents = []
+        self.cycle_error = False
+        self.document_unavailable = False
+        self.hold_implementation = False
+        self.held_implementation = None
 
     @staticmethod
     def respond(route, value):
@@ -146,6 +159,44 @@ class LinkedDocumentApi:
             return self.respond(route, self.organization(workspace))
         if parts[1] == "members":
             return self.respond(route, [{"user_id": "user", "role": "owner", "name": "QA"}])
+        if parts[1] == "document-overview":
+            state = (
+                "preparing"
+                if any(job["status"] in {"queued", "running"} for job in self.document["jobs"])
+                else "awaiting_decision"
+                if any(change["status"] == "ready" for change in self.document["changes"])
+                else "needs_review"
+            )
+            item = {
+                **self.document,
+                "state": state,
+                "action": "text",
+                "responsible_name": "QA",
+                "reasons": [{"message": "Требуется проверка"}],
+                "blockers": [],
+                "source_ids": [],
+                "dependent_ids": [],
+                "mine": True,
+            }
+            required = self.document["required_for_readiness"]
+            agreed = required and self.document["approved_revision_id"] == self.document["current_revision_id"]
+            others = [
+                {**other, "state": "current", "action": "text", "responsible_name": "QA", "reasons": [], "blockers": [], "source_ids": [], "dependent_ids": [], "mine": True}
+                for other in self.extra_documents
+            ]
+            return self.respond(
+                route,
+                {
+                    "items": [item, *others],
+                    "can_manage": workspace["role"] == "owner",
+                    "readiness": {"configured": required, "required_count": int(required), "documents_agreed": agreed, "maintenance_complete": agreed, "blockers": []},
+                },
+            )
+        if parts[1] == "business-document-sources":
+            if self.hold_business:
+                self.held_business = route
+                return
+            return self.respond(route, {"items": [{"document_id": "native", "title": "Бизнес-требования", "revision_number": 2}], "page": 1, "has_more": False})
         if parts[1] == "drafts":
             if len(parts) == 2:
                 return self.respond(route, [self.draft()])
@@ -157,14 +208,60 @@ class LinkedDocumentApi:
             if len(parts) == 2:
                 return self.respond(route, [self.document])
             if len(parts) == 3:
+                if request.method == "GET" and parts[2] != "doc":
+                    return self.respond(route, next(item for item in self.extra_documents if item["id"] == parts[2]))
+                if request.method == "GET" and self.document_unavailable:
+                    return route.fulfill(
+                        status=409, content_type="application/json", body=json.dumps({"code": 409, "message": "Согласованный источник недоступен", "data": {"error_code": "DOCUMENT_UNAVAILABLE"}})
+                    )
                 if request.method == "GET" and self.hold_next_document:
                     self.hold_next_document = False
                     self.held_document = (route, deepcopy(self.document))
                     return
                 if request.method == "PUT":
                     assert payload["expected_version"] == self.document["version"]
-                    self.update_content(payload["content"])
+                    if "content" in payload:
+                        self.update_content(payload["content"])
+                    else:
+                        self.document.update({key: value for key, value in payload.items() if key != "expected_version"})
+                        self.document["version"] += 1
                 return self.respond(route, self.document)
+            if parts[3] == "implementation":
+                if self.hold_implementation:
+                    self.held_implementation = route
+                    return
+                if self.fail_next_implementation:
+                    self.fail_next_implementation = False
+                    return route.fulfill(status=503, content_type="application/json", body=json.dumps({"code": 503, "message": "Временная ошибка сети"}))
+                assert payload["expected_version"] == self.document["version"]
+                revoke = parts[-1] == "revoke"
+                if revoke:
+                    assert payload["implementation_event_id"] == self.document["implementation_event_id"] and payload["reason"].strip()
+                    self.document.update(implemented_revision_id=None, implementation_event_id=None)
+                else:
+                    assert payload["revision_id"] == self.document["approved_revision_id"]
+                    self.document.update(implemented_revision_id=payload["revision_id"], implementation_event_id="confirmation")
+                self.document["version"] += 1
+                self.document["implementation_history"].insert(
+                    0,
+                    {
+                        "id": str(self.document["version"]),
+                        "actor_id": "user",
+                        "actor_name": "QA",
+                        "created_at": NOW,
+                        "kind": "implementation_revoked" if revoke else "implementation_confirmed",
+                        "payload": {"revision_id": "rev1", "comment": payload.get("reason", payload.get("comment", ""))},
+                    },
+                )
+                return self.respond(route, self.document)
+            if parts[3] == "dependencies" and self.cycle_error:
+                return route.fulfill(
+                    status=409,
+                    content_type="application/json",
+                    body=json.dumps(
+                        {"code": 409, "message": "Связь создаёт цикл: Контрольный документ → Основание → Контрольный документ", "data": {"error_code": "DEPENDENCY_CYCLE"}}, ensure_ascii=False
+                    ),
+                )
             if parts[-1] == "refresh":
                 return self.respond(route, self.document)
             if parts[-1] == "decision":
@@ -359,3 +456,137 @@ def test_non_current_proposal_does_not_offer_document_preview(page, base_url, li
     if status == "stale":
         expect(page.get_by_role("button", name="Подтвердить и применить", exact=True)).to_be_disabled()
     assert linked_api.matching("POST", DETAIL + "/changes/change/decision") == []
+
+
+def test_implementation_confirmation_revoke_and_history_survive_reload(page, base_url, linked_api):
+    linked_api.document["approved_revision_id"] = "rev1"
+    _open_workspace(page, base_url)
+    _open_document(page)
+    panel = page.get_by_role("region", name="Реализация документа")
+    panel.get_by_role("button", name="Реализация и история", exact=True).click()
+    expect(panel.get_by_text("Подтвердить реализацию утверждённой редакции 1 целиком.")).to_be_visible()
+    panel.get_by_role("textbox", name="Комментарий о реализации").fill("Проверено на стенде")
+    linked_api.fail_next_implementation = True
+    with page.expect_response(lambda response: _response(response, "POST", DETAIL + "/implementation")):
+        panel.get_by_role("button", name="Подтвердить реализацию", exact=True).click()
+    expect(page.get_by_role("alert").filter(has_text="Временная ошибка сети")).to_be_visible()
+    expect(panel.get_by_role("textbox", name="Комментарий о реализации")).to_have_value("Проверено на стенде")
+    with page.expect_response(lambda response: _response(response, "POST", DETAIL + "/implementation")):
+        panel.get_by_role("button", name="Подтвердить реализацию", exact=True).click()
+    expect(panel.get_by_text("Реализация: подтверждена редакция 1.", exact=True)).to_be_visible()
+    expect(panel.get_by_role("button", name="Отменить подтверждение реализации")).to_be_disabled()
+    panel.get_by_role("textbox", name="Причина отмены реализации").fill("Найдено несоответствие")
+    with page.expect_response(lambda response: _response(response, "POST", DETAIL + "/implementation/revoke")):
+        panel.get_by_role("button", name="Отменить подтверждение реализации").click()
+    expect(panel.get_by_text("Реализация: не подтверждена.", exact=True)).to_be_visible()
+    assert len(linked_api.matching("POST", DETAIL + "/implementation")) == 2
+    assert len(linked_api.matching("POST", DETAIL + "/implementation/revoke")) == 1
+    page.reload()
+    page.get_by_role("button", name="Пространство A Статей: 0").click()
+    _open_document(page)
+    panel.get_by_text("История реализации", exact=True).click()
+    expect(panel.get_by_text("Найдено несоответствие", exact=True)).to_be_visible()
+    expect(panel.get_by_text("Проверено на стенде", exact=True)).to_be_visible()
+
+
+def test_overview_search_required_set_and_business_picker_on_narrow_screen(page, base_url, linked_api):
+    page.set_viewport_size({"width": 620, "height": 900})
+    _open_workspace(page, base_url)
+    overview = page.get_by_role("region", name="Обзор актуализации")
+    expect(overview.get_by_text("Комплект не настроен.", exact=False)).to_be_visible()
+    overview.get_by_role("textbox", name="Найти документ по названию").fill("Нет такого")
+    expect(overview.get_by_text("Нет документов по выбранному фильтру.")).to_be_visible()
+    overview.get_by_role("button", name="Показать все документы").click()
+    _open_document(page)
+    page.get_by_role("button", name="Источники и связи", exact=True).click()
+    page.get_by_text("Свойства документа", exact=True).click()
+    with page.expect_response(lambda response: _response(response, "PUT", DETAIL)):
+        page.get_by_role("checkbox", name="Входит в обязательный комплект").click()
+    expect(page.get_by_role("checkbox", name="Входит в обязательный комплект")).to_be_checked()
+    expect(overview.get_by_text("Обязательных документов: 1")).to_be_visible()
+    page.get_by_text("Подключить Business Documents", exact=True).click()
+    with page.expect_response(lambda response: _response(response, "GET", f"{BASE}/a/business-document-sources")):
+        page.get_by_role("button", name="Найти источники", exact=True).click()
+    expect(page.get_by_text("Бизнес-требования · согласованная редакция 2")).to_be_visible()
+    assert not page.evaluate("document.documentElement.scrollWidth > window.innerWidth")
+
+
+def test_late_business_catalog_cannot_replace_new_workspace(page, base_url, linked_api):
+    linked_api.hold_business = True
+    _open_workspace(page, base_url)
+    page.get_by_text("Подключить Business Documents", exact=True).click()
+    with page.expect_request(lambda request: urlsplit(request.url).path == f"{BASE}/a/business-document-sources"):
+        page.get_by_role("button", name="Найти источники", exact=True).click()
+    expect(page.get_by_role("button", name="Найти источники", exact=True)).to_be_disabled()
+    page.get_by_role("button", name="К рабочим пространствам", exact=True).click()
+    page.get_by_role("button", name="Пространство B Статей: 0").click()
+    assert linked_api.held_business is not None
+    with page.expect_response(lambda response: _response(response, "GET", f"{BASE}/a/business-document-sources")) as response:
+        linked_api.respond(linked_api.held_business, {"items": [{"document_id": "closed", "title": "Закрытый старый источник", "revision_number": 2}], "page": 1, "has_more": False})
+    response.value.finished()
+    page.get_by_text("Подключить Business Documents", exact=True).click()
+    expect(page.get_by_text("Закрытый старый источник", exact=False)).to_have_count(0)
+    expect(page.get_by_role("heading", name="Пространство B", exact=True)).to_be_visible()
+
+
+def test_worker_completion_updates_overview_without_user_action(page, base_url, linked_api):
+    page.clock.install(time="2026-10-18T10:00:00Z")
+    linked_api.document["jobs"] = [{"id": "job", "status": "running", "stage": "planning", "result_id": None, "error": None}]
+    _open_workspace(page, base_url)
+    _open_document(page)
+    expect(page.get_by_role("button", name="Проверить источники", exact=True)).to_be_enabled()
+    overview = page.get_by_role("region", name="Обзор актуализации")
+    expect(overview.get_by_text("Техническое задание · Подготовка предложений")).to_be_visible()
+    linked_api.document["changes"] = [_change()]
+    linked_api.document["jobs"][0].update(status="done", stage="done", result_id="change")
+    with page.expect_response(lambda response: _response(response, "GET", f"{BASE}/a/document-overview")):
+        page.clock.run_for(2100)
+    expect(overview.get_by_text("Техническое задание · Ожидает согласования")).to_be_visible()
+
+
+def test_cycle_path_keeps_dependency_form_and_current_text(page, base_url, linked_api):
+    linked_api.cycle_error = True
+    source = {**_document("owner"), "id": "source", "title": "Основание"}
+    linked_api.extra_documents = [source]
+    _open_workspace(page, base_url)
+    _open_document(page)
+    page.get_by_role("button", name="Источники и связи", exact=True).click()
+    page.get_by_role("combobox", name="Документ-источник").select_option("source")
+    with page.expect_response(lambda response: _response(response, "POST", DETAIL + "/dependencies")):
+        page.get_by_role("button", name="Сохранить связь", exact=True).click()
+    expect(page.get_by_role("alert")).to_contain_text("Контрольный документ → Основание → Контрольный документ")
+    expect(page.get_by_role("combobox", name="Документ-источник")).to_have_value("source")
+    assert linked_api.document["version"] == 1 and not linked_api.document["dependencies"]
+
+
+def test_access_loss_removes_cached_document_and_does_not_reopen_it(page, base_url, linked_api):
+    _open_workspace(page, base_url)
+    _open_document(page)
+    expect(page.get_by_role("article", name="Хранение", exact=True)).to_contain_text("30 дней")
+    linked_api.document_unavailable = True
+    with page.expect_response(lambda response: _response(response, "GET", DETAIL)):
+        page.get_by_role("button", name="Контрольный документ", exact=False).click()
+    expect(page.get_by_role("alert")).to_contain_text("Согласованный источник недоступен")
+    expect(page.get_by_role("article", name="Хранение", exact=True)).to_have_count(0)
+    with page.expect_response(lambda response: _response(response, "GET", DETAIL)):
+        page.get_by_role("button", name="Контрольный документ", exact=False).press("Enter")
+    expect(page.get_by_role("article", name="Хранение", exact=True)).to_have_count(0)
+
+
+def test_double_click_submits_one_implementation_and_keeps_pending_form(page, base_url, linked_api):
+    linked_api.hold_implementation = True
+    linked_api.document["approved_revision_id"] = "rev1"
+    _open_workspace(page, base_url)
+    _open_document(page)
+    panel = page.get_by_role("region", name="Реализация документа")
+    panel.get_by_role("button", name="Реализация и история", exact=True).click()
+    submit = panel.get_by_role("button", name="Подтвердить реализацию", exact=True)
+    with page.expect_request(lambda request: request.method == "POST" and urlsplit(request.url).path == DETAIL + "/implementation"):
+        submit.dblclick()
+    expect(submit).to_be_disabled()
+    assert len(linked_api.matching("POST", DETAIL + "/implementation")) == 1
+    assert linked_api.held_implementation is not None
+    linked_api.document.update(version=2, implemented_revision_id="rev1", implementation_event_id="confirmed")
+    with page.expect_response(lambda response: _response(response, "POST", DETAIL + "/implementation")):
+        linked_api.respond(linked_api.held_implementation, linked_api.document)
+    expect(panel.get_by_text("Реализация: подтверждена редакция 1.", exact=True)).to_be_visible()

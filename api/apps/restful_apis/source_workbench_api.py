@@ -203,6 +203,46 @@ async def linked_workspace_organization(workspace_id):
         return _error(error)
 
 
+@manager.route("/source-workspaces/<workspace_id>/document-overview", methods=["GET"])  # noqa: F821
+@login_required
+async def linked_document_overview(workspace_id):
+    try:
+        return _success(await _linked().overview(str(current_user.id), workspace_id))
+    except SourceWorkspaceError as error:
+        return _error(error)
+
+
+@manager.route("/source-workspaces/<workspace_id>/business-document-sources", methods=["GET"])  # noqa: F821
+@login_required
+async def linked_business_sources(workspace_id):
+    from quart import request
+
+    try:
+        return _success(await _linked().business_sources(str(current_user.id), workspace_id, request.args.get("query", ""), int(request.args.get("page", 1))))
+    except ValueError:
+        return _error(SourceWorkspaceError("INVALID_INPUT", "Некорректная страница"))
+    except SourceWorkspaceError as error:
+        return _error(error)
+
+
+@manager.route("/source-workspaces/<workspace_id>/documents/<document_id>/implementation", methods=["POST"])  # noqa: F821
+@login_required
+async def confirm_linked_implementation(workspace_id, document_id):
+    try:
+        return _success(await _linked().implementation(str(current_user.id), workspace_id, document_id, await _body()))
+    except SourceWorkspaceError as error:
+        return _error(error)
+
+
+@manager.route("/source-workspaces/<workspace_id>/documents/<document_id>/implementation/revoke", methods=["POST"])  # noqa: F821
+@login_required
+async def revoke_linked_implementation(workspace_id, document_id):
+    try:
+        return _success(await _linked().implementation(str(current_user.id), workspace_id, document_id, await _body(), revoke=True))
+    except SourceWorkspaceError as error:
+        return _error(error)
+
+
 @manager.route("/source-workspaces", methods=["POST"])  # noqa: F821
 @login_required
 async def create_source_workspace():

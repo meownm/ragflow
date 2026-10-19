@@ -186,11 +186,31 @@ def manual_candidate(change: dict) -> list[dict]:
     return sections
 
 
+def source_state(source, dependency):
+    if not source:
+        return None, ""
+    if dependency["refresh_on"] == "implemented":
+        return source.get("implemented_revision_id"), source.get("implementation_event_id") or ""
+    revision = source.get("approved_revision_id") if dependency["refresh_on"] == "approved" and source.get("source_kind") != "business" else source.get("current_revision_id")
+    reference = source.get("source_ref") or {}
+    return revision, reference.get("agreement_event_id", "") if source.get("source_kind") == "business" else ""
+
+
+def input_reviewed(dependency, revision_id, target_id, token=""):
+    return dependency["reviewed_revision_id"] == revision_id and dependency["reviewed_target_revision_id"] == target_id and (dependency.get("reviewed_source_state_token") or "") == token
+
+
 def assert_current_inputs(inputs: list[dict], sources: dict[str, dict], dependencies: dict[str, dict]):
     for item in inputs:
         source, dependency = sources.get(item["source_id"]), dependencies.get(item["dependency_id"])
-        revision_id = source.get("approved_revision_id") if source and item["policy"]["refresh_on"] == "approved" else source.get("current_revision_id") if source else None
-        if not dependency or dependency["version"] != item["policy"]["version"] or dependency["source_id"] != item["source_id"] or revision_id != item["source_revision_id"]:
+        revision_id, token = source_state(source, item["policy"])
+        if (
+            not dependency
+            or dependency["version"] != item["policy"]["version"]
+            or dependency["source_id"] != item["source_id"]
+            or revision_id != item["source_revision_id"]
+            or token != item.get("source_state_token", "")
+        ):
             fail("SOURCE_CHANGED", "Основания изменились; подготовьте правки заново", 409)
 
 
@@ -224,7 +244,7 @@ def assert_approval(actor: str, document: dict, version: int, inputs: list[dict]
         fail("BASELINE_REQUIRED", "Исторические основания документа не восстановлены", 409)
     for item in inputs:
         dependency = dependencies[item["dependency_id"]]
-        if dependency["blocks_approval"] and (dependency["reviewed_revision_id"] != item["source_revision_id"] or dependency["reviewed_target_revision_id"] != document["current_revision_id"]):
+        if dependency["blocks_approval"] and not input_reviewed(dependency, item["source_revision_id"], document["current_revision_id"], item.get("source_state_token", "")):
             fail("UNRESOLVED_DEPENDENCY", "Перед утверждением разберите влияние обязательных оснований", 409)
 
 

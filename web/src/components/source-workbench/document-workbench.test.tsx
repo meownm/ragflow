@@ -19,6 +19,8 @@ jest.mock('@/services/source-workbench-service', () => ({
 jest.mock('@/services/linked-document-service', () => ({
   ...jest.requireActual('@/services/linked-document-service'),
   listWorkspaceDocuments: jest.fn(),
+  getDocumentOverview: jest.fn(),
+  createWorkspaceDocument: jest.fn(),
   getWorkspaceDocument: jest.fn(),
   refreshWorkspaceDocument: jest.fn(),
   prepareDocumentChanges: jest.fn(),
@@ -164,6 +166,26 @@ beforeEach(() => {
     .mocked(service.listWorkspaceDocuments)
     .mockResolvedValue([initial, source]);
   jest.mocked(service.getWorkspaceDocument).mockResolvedValue(initial);
+  jest.mocked(service.getDocumentOverview).mockImplementation(async () => ({
+    items: (await service.listWorkspaceDocuments(workspace.id)).map((item) => ({
+      ...item,
+      responsible_name: 'Автор',
+      state: 'needs_review',
+      action: 'text',
+      mine: true,
+      reasons: [],
+      source_ids: [],
+      dependent_ids: [],
+    })),
+    can_manage: true,
+    readiness: {
+      configured: false,
+      documents_agreed: false,
+      maintenance_complete: false,
+      required_count: 0,
+      blockers: [],
+    },
+  }));
 });
 
 function deferred<T>() {
@@ -186,6 +208,105 @@ const running = {
     },
   ],
 };
+
+function overviewData(
+  item: typeof initial,
+  state: string,
+): import('@/services/linked-document-service').DocumentOverviewData {
+  return {
+    items: [
+      {
+        ...item,
+        responsible_name: 'Автор',
+        state,
+        action: 'text',
+        mine: true,
+        reasons: [],
+        source_ids: [],
+        dependent_ids: [],
+      },
+    ],
+    can_manage: true,
+    readiness: {
+      configured: false,
+      documents_agreed: false,
+      maintenance_complete: false,
+      required_count: 0,
+      blockers: [],
+    },
+  };
+}
+
+test('initial delayed overview cannot hide a newly created document', async () => {
+  const first =
+    deferred<
+      import('@/services/linked-document-service').DocumentOverviewData
+    >();
+  const created = { ...initial, id: 'new', title: 'Новый документ' };
+  jest
+    .mocked(service.getDocumentOverview)
+    .mockReturnValueOnce(first.promise)
+    .mockResolvedValue(overviewData(created, 'draft'));
+  jest.mocked(service.createWorkspaceDocument).mockResolvedValue(created);
+  render(<DocumentWorkbench workspace={workspace} />);
+  fireEvent.change(
+    screen.getByRole('textbox', { name: 'Название нового документа' }),
+    { target: { value: created.title } },
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Создать документ' }));
+  expect(
+    await screen.findByRole('button', { name: /^Новый документ:/ }),
+  ).toBeVisible();
+  await act(async () => {
+    first.resolve(overviewData(initial, 'needs_review'));
+  });
+  expect(
+    screen.getByRole('button', { name: /^Новый документ:/ }),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole('button', { name: /^ТЗ:/ }),
+  ).not.toBeInTheDocument();
+});
+
+test('completed background proposal refreshes overview without another action', async () => {
+  jest.useFakeTimers();
+  try {
+    jest
+      .mocked(service.getDocumentOverview)
+      .mockResolvedValueOnce(overviewData(initial, 'preparing'))
+      .mockResolvedValueOnce(overviewData(initial, 'preparing'))
+      .mockResolvedValue(overviewData(initial, 'awaiting_decision'));
+    jest
+      .mocked(service.getWorkspaceDocument)
+      .mockResolvedValueOnce(running)
+      .mockResolvedValue({
+        ...initial,
+        changes: [change],
+        jobs: [
+          {
+            ...running.jobs[0],
+            status: 'done',
+            stage: 'done',
+            result_id: change.id,
+          },
+        ],
+      });
+    render(<DocumentWorkbench workspace={workspace} />);
+    await openTarget();
+    expect(
+      screen.getByText('Техническое задание · Подготовка предложений'),
+    ).toBeVisible();
+    await act(async () => {
+      jest.advanceTimersByTime(2000);
+    });
+    expect(
+      screen.getByText('Техническое задание · Ожидает согласования'),
+    ).toBeVisible();
+    expect(service.getDocumentOverview).toHaveBeenCalledTimes(3); // Initial, open, completion.
+  } finally {
+    jest.useRealTimers();
+  }
+});
 
 test('returning from the source editor refreshes the active document before the next save', async () => {
   const updated = {
@@ -472,6 +593,59 @@ test('stale proposal cannot be confirmed and source settings are independent of 
         refresh_on: 'approved',
         expected_version: 4,
       }),
+      undefined,
+    ),
+  );
+});
+
+test('switching to an external source clears the unsupported implementation trigger', async () => {
+  const local = {
+    ...source,
+    id: 'local-source',
+    title: 'Другое ТЗ',
+    source_kind: 'local' as const,
+  };
+  jest
+    .mocked(service.listWorkspaceDocuments)
+    .mockResolvedValue([initial, source, local]);
+  jest
+    .mocked(service.getWorkspaceDocument)
+    .mockImplementation(async (_workspace, id) =>
+      id === local.id ? local : id === source.id ? source : initial,
+    );
+  jest
+    .mocked(service.saveDocumentDependency)
+    .mockResolvedValue({ ...initial, version: 4 });
+  render(<DocumentWorkbench workspace={workspace} />);
+  await openTarget();
+  fireEvent.click(screen.getByRole('button', { name: 'Источники и связи' }));
+  fireEvent.change(
+    screen.getByRole('combobox', { name: 'Документ-источник' }),
+    { target: { value: local.id } },
+  );
+  await screen.findByRole('option', { name: 'После подтверждения реализации' });
+  fireEvent.change(
+    screen.getByRole('combobox', { name: 'Когда учитывать изменения' }),
+    { target: { value: 'implemented' } },
+  );
+  fireEvent.change(
+    screen.getByRole('combobox', { name: 'Документ-источник' }),
+    { target: { value: source.id } },
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByRole('combobox', { name: 'Когда учитывать изменения' }),
+    ).toHaveValue('saved'),
+  );
+  expect(
+    screen.queryByRole('option', { name: 'После подтверждения реализации' }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Сохранить связь' }));
+  await waitFor(() =>
+    expect(service.saveDocumentDependency).toHaveBeenCalledWith(
+      'workspace',
+      'target',
+      expect.objectContaining({ source_id: source.id, refresh_on: 'saved' }),
       undefined,
     ),
   );

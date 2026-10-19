@@ -41,6 +41,10 @@ class RevisionHistory:
 
 
 class DocumentReader(Protocol):
+    def lock_source_documents(self, document_ids: list[str]) -> None: ...
+    def source_documents(self, document_ids=None, query="", offset=0, limit=None) -> tuple[Record, ...]: ...
+    def source_agreements(self, document_ids: list[str]) -> tuple[Record, ...]: ...
+    def source_revisions(self, revision_ids: set[str], *, include_body=False) -> tuple[Record, ...]: ...
     def document(self, document_id: str) -> Record | None: ...
     def revision(self, document_id: str, revision_id: str) -> Record | None: ...
     def page(self, owner_id: str | None, page: int, page_size: int) -> DocumentPage: ...
@@ -170,6 +174,67 @@ class DocumentQueries:
         self._reader = reader
         self._content = content
         self._clock = clock
+
+    def agreed_sources(self, actor_id, document_ids, access_role=BusinessDocumentRole.AUTHOR_CREATOR, is_admin=False, *, include_body=False, lock=False):
+        access = DocumentAccess(actor_id, access_role, is_admin)
+        if not access.capabilities()["read"]:
+            raise PermissionDeniedError()
+        if lock:
+            self._reader.lock_source_documents(sorted(set(document_ids)))
+        documents = self._reader.source_documents(document_ids=document_ids)
+        events = self._reader.source_agreements([item["id"] for item in documents])
+        candidates = []
+        for event in events:
+            payload = event["payload"]
+            if isinstance(payload, dict) and (event["event_type"] == "ReviewAgreedWithoutChanges" or payload.get("review_continues") is False) and isinstance(payload.get("revision_id"), str):
+                candidates.append(event)
+        revisions = self._reader.source_revisions({event["payload"]["revision_id"] for event in candidates})
+        by_revision = {revision["id"]: revision for revision in revisions}
+        latest = {}
+        for event in candidates:
+            revision = by_revision.get(event["payload"]["revision_id"])
+            if not revision or revision["document_id"] != event["document_id"]:
+                continue
+            if event["document_id"] not in latest or event["sequence"] > latest[event["document_id"]]["sequence"]:
+                latest[event["document_id"]] = event
+        result = []
+        if include_body:
+            bodies = self._reader.source_revisions({event["payload"]["revision_id"] for event in latest.values()}, include_body=True)
+            by_revision = {revision["id"]: revision for revision in bodies}
+        for document in documents:
+            event = latest.get(document["id"])
+            if event and access.permissions(document["owner_id"])["read"]:
+                revision = by_revision.get(event["payload"]["revision_id"])
+                if revision is None:
+                    continue
+                result.append(
+                    {
+                        "document_id": document["id"],
+                        "title": document["title"],
+                        "document_type": document["document_type"],
+                        "revision_id": revision["id"],
+                        "revision_number": revision["revision_number"],
+                        "content_hash": revision["content_hash"],
+                        "agreement_event_id": event["id"],
+                        "agreed_at": event["create_time"],
+                        **({"body_markdown": revision["body_markdown"]} if include_body else {}),
+                    }
+                )
+        return result
+
+    def list_agreed_sources(self, actor_id, query="", page=1, access_role=BusinessDocumentRole.AUTHOR_CREATOR, is_admin=False):
+        if type(page) is not int or not 1 <= page <= 1000 or not isinstance(query, str) or len(query) > 255:
+            raise ValidationError("INVALID_PAGINATION", "Некорректный поиск источников")
+        # Scan bounded catalog batches; paginate after proving agreement.
+        eligible, offset = [], 0
+        while len(eligible) < page * 20 + 1:
+            documents = self._reader.source_documents(query=query, offset=offset, limit=100)
+            eligible.extend(self.agreed_sources(actor_id, [item["id"] for item in documents], access_role, is_admin))
+            offset += len(documents)
+            if len(documents) < 100:
+                break
+        start = (page - 1) * 20
+        return {"items": eligible[start : start + 20], "has_more": len(eligible) > start + 20, "page": page}
 
     def _document(self, document_id: str) -> Record:
         document = self._reader.document(document_id)

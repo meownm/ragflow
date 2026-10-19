@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
+import json
 from typing import Any
 
-from peewee import JOIN, fn
+from peewee import JOIN, fn, SqliteDatabase
 
 from api.apps.business_documents.adapters.review import load_review_state
 from api.db.db_models import (
@@ -121,6 +122,51 @@ def find_change_preview_row(document: Mapping[str, Any], now: int):
 
 
 class PeeweeDocumentReader:
+    def lock_source_documents(self, document_ids):
+        database = BusinessDocument._meta.database
+        if not database.in_transaction():
+            raise RuntimeError("Source agreement locks require the caller transaction")
+        query = BusinessDocument.select(BusinessDocument.id).where(BusinessDocument.id.in_(document_ids)).order_by(BusinessDocument.id)
+        if not isinstance(database, SqliteDatabase):
+            query = query.for_update()
+        list(query)
+
+    def source_documents(self, document_ids=None, query="", offset=0, limit=None):
+        rows = BusinessDocument.select(BusinessDocument.id, BusinessDocument.owner_id, BusinessDocument.title, BusinessDocument.document_type).order_by(BusinessDocument.title, BusinessDocument.id)
+        if document_ids is not None:
+            rows = rows.where(BusinessDocument.id.in_(document_ids))
+        if query:
+            rows = rows.where(fn.LOWER(BusinessDocument.title).contains(query.lower()))
+        if limit is not None:
+            rows = rows.offset(offset).limit(limit)
+        return tuple(rows.dicts())
+
+    def source_agreements(self, document_ids):
+        event = BusinessDocumentEvent
+        # Read proof fields only, without historical execution audits or document text.
+        if isinstance(event._meta.database, SqliteDatabase):
+            proof = fn.json_extract(event.payload, "$.revision_id", "$.review_continues")
+        else:
+            payload = event.payload.cast("jsonb")
+            proof = fn.jsonb_build_array(fn.jsonb_extract_path(payload, "revision_id"), fn.jsonb_extract_path(payload, "review_continues"))
+        rows = (
+            event.select(event.id, event.document_id, event.event_type, event.sequence, proof.alias("proof"), event.create_time)
+            .where(event.document_id.in_(document_ids) & event.event_type.in_(["ChangesApplied", "ReviewAgreedWithoutChanges"]))
+            .dicts()
+        )
+        result = []
+        for row in rows:
+            values = row.pop("proof")
+            values = json.loads(values) if isinstance(values, str) else values
+            result.append({**row, "payload": {"revision_id": values[0], "review_continues": values[1]}})
+        return tuple(result)
+
+    def source_revisions(self, revision_ids, *, include_body=False):
+        fields = [BusinessDocumentRevision.id, BusinessDocumentRevision.document_id, BusinessDocumentRevision.revision_number, BusinessDocumentRevision.content_hash]
+        if include_body:
+            fields.append(BusinessDocumentRevision.body_markdown)
+        return tuple(BusinessDocumentRevision.select(*fields).where(BusinessDocumentRevision.id.in_(revision_ids)).dicts())
+
     def document(self, document_id: str):
         return BusinessDocument.select().where(BusinessDocument.id == document_id).dicts().first()
 

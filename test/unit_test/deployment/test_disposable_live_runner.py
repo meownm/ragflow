@@ -14,7 +14,7 @@ from test.integration.live_ragflow import runner
 
 
 def test_quality_setup_failure_returns_nonzero_and_cleans_own_project(tmp_path, monkeypatch):
-    from test.playwright import conftest as browser_fixtures
+    from api.utils import crypt as encryption
 
     logs = []
 
@@ -53,7 +53,7 @@ def test_quality_setup_failure_returns_nonzero_and_cleans_own_project(tmp_path, 
     monkeypatch.setattr(runner, "SECRET_VALUES", [])
     monkeypatch.setattr(runner.subprocess, "check_output", git_output)
     monkeypatch.setattr(runner.socket, "socket", lambda *_: nullcontext(SimpleNamespace(bind=lambda *_: None)))
-    monkeypatch.setattr(browser_fixtures, "_rsa_encrypt_password", lambda _: "synthetic-encrypted-password")
+    monkeypatch.setattr(encryption, "crypt", lambda _: "synthetic-encrypted-password")
 
     assert runner.main() != 0
     assert (tmp_path / "evidence/failure.txt").read_text(encoding="utf-8") == "Synthetic SDK setup failure"

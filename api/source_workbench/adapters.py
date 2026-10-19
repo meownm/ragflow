@@ -96,13 +96,21 @@ def _draft_projection(row: SourceWorkspaceDraft | dict[str, Any], *, include_con
     return result
 
 
-def _draft_access_datasets(workspace_id: str, draft_id: str | list[str]) -> list[str]:
+def _draft_access_datasets(actor_id: str, workspace_id: str, draft_id: str | list[str]) -> list[str]:
     from .linked_storage import LinkedDocumentRepository
 
-    datasets = set()
+    datasets, business = set(), []
     for document in LinkedDocumentRepository().provenance_documents(workspace_id, draft_id):
+        if document["source_kind"] == "business":
+            business.append(document["source_ref"])
+            continue
         for reference in [*(document.get("sources") or []), *([document["source_ref"]] if document.get("source_ref") else [])]:
             datasets.add(reference["dataset_id"])
+    if business:
+        from api.apps.business_documents.runtime import document_queries
+        from .business_source import BusinessDocumentSources
+
+        BusinessDocumentSources(document_queries).validate(actor_id, business)
     return sorted(datasets)
 
 
@@ -185,7 +193,7 @@ class SourceWorkspaceRepository:
             .order_by(SourceWorkspaceDraft.updated_at.desc())
         )
         rows = list(rows)
-        datasets = _draft_access_datasets(workspace_id, [row.id for row in rows])
+        datasets = _draft_access_datasets(owner_id, workspace_id, [row.id for row in rows])
         return [{**_draft_projection(row, include_content=False), "_access_datasets": datasets} for row in rows]
 
     @staticmethod
@@ -194,7 +202,7 @@ class SourceWorkspaceRepository:
         row = SourceWorkspaceDraft.get_or_none((SourceWorkspaceDraft.id == draft_id) & (SourceWorkspaceDraft.owner_id == owner_id) & (SourceWorkspaceDraft.workspace_id == workspace_id))
         if row is None:
             raise SourceWorkspaceError("DRAFT_NOT_FOUND", "Draft not found", 404)
-        return {**_draft_projection(row), "_access_datasets": _draft_access_datasets(workspace_id, row.id)}
+        return {**_draft_projection(row), "_access_datasets": _draft_access_datasets(owner_id, workspace_id, row.id)}
 
     @staticmethod
     def create_draft(owner_id: str, workspace_id: str, content: str, prompt: str, mode: str, source_version: int, sources: list[dict[str, str]]) -> dict[str, Any]:

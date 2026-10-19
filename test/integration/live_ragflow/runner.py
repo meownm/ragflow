@@ -239,9 +239,9 @@ def main():
         seed = Path(__file__).with_name("seed_catalog.py").read_text(encoding="utf-8")
         command([*cmd, "exec", "-T", "app", "/ragflow/.venv/bin/python", "-"], env=env, log="catalog.log", input=seed)
         sys.path.insert(0, str(source))
-        from test.playwright.conftest import _rsa_encrypt_password
+        from api.utils.crypt import crypt
 
-        encrypted = _rsa_encrypt_password(env["QA_ADMIN_PASSWORD"])
+        encrypted = crypt(env["QA_ADMIN_PASSWORD"])
         SECRET_VALUES.append(encrypted)
         user, token = api("/api/v1/auth/login", "POST", {"email": env["QA_ADMIN_EMAIL"], "password": encrypted})
         assert token and user.get("is_superuser"), "Synthetic managed-resource admin login failed"

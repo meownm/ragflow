@@ -249,6 +249,7 @@ export function DocumentSettings({
         | 'change_policy'
         | 'responsible_id'
         | 'approver_id'
+        | 'required_for_readiness'
       >
     >,
   ) =>
@@ -274,6 +275,19 @@ export function DocumentSettings({
     >
       <summary className="cursor-pointer text-sm">Свойства документа</summary>
       <div className="mt-3 space-y-3">
+        {document.source_kind === 'local' && (
+          <label className="flex gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={!!document.required_for_readiness}
+              disabled={disabled || !document.capabilities.manage}
+              onChange={(event) =>
+                update({ required_for_readiness: event.target.checked })
+              }
+            />
+            Входит в обязательный комплект
+          </label>
+        )}
         <form
           className="flex flex-wrap gap-2"
           onSubmit={(event) => {

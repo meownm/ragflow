@@ -948,6 +948,9 @@ class SourceWorkspaceDraft(DataBaseModel):
     origin_key = CharField(max_length=64, null=True)
     current_revision_id = CharField(max_length=32, null=True, index=True)
     approved_revision_id = CharField(max_length=32, null=True)
+    required_for_readiness = BooleanField(default=False)
+    implemented_revision_id = CharField(max_length=32, null=True)
+    implementation_event_id = CharField(max_length=32, null=True)
     responsible_id = CharField(max_length=32, null=True)
     approver_id = CharField(max_length=32, null=True)
     provenance_state = CharField(max_length=24, null=False, default="unresolved")
@@ -1004,6 +1007,7 @@ class SourceDocumentDependency(DataBaseModel):
     blocks_approval = BooleanField(default=True)
     reviewed_revision_id = CharField(max_length=32, null=True)
     reviewed_target_revision_id = CharField(max_length=32, null=True)
+    reviewed_source_state_token = CharField(max_length=128, null=True)
     version = IntegerField(default=1)
 
     class Meta:
@@ -1015,6 +1019,7 @@ class SourceDocumentInput(DataBaseModel):
     revision_id = CharField(max_length=32, index=True)
     dependency_id = CharField(max_length=32)
     source_revision_id = CharField(max_length=32, index=True)
+    source_state_token = CharField(max_length=128, default="")
     policy = JSONField()
 
     class Meta:
@@ -1029,12 +1034,13 @@ class SourceDocumentImpact(DataBaseModel):
     previous_revision_id = CharField(max_length=32, null=True)
     target_revision_id = CharField(max_length=32)
     dependency_version = IntegerField()
+    source_state_token = CharField(max_length=128, default="")
     state = CharField(max_length=24, default="pending")
     explanation = TextField(default="")
 
     class Meta:
         db_table = "source_document_impact"
-        indexes = ((("dependency_id", "source_revision_id", "target_revision_id", "dependency_version"), True),)
+        indexes = ((("dependency_id", "source_revision_id", "target_revision_id", "dependency_version", "source_state_token"), True),)
 
 
 class SourceDocumentChange(DataBaseModel):

@@ -89,6 +89,35 @@ async def test_http_invalid_payload_and_revision_ownership(linked_client):
     assert response.status_code == 404
 
 
+async def test_http_implementation_permissions_conflict_and_revoke_reason(linked, linked_client):
+    from api.db.db_models import SourceWorkspaceMember
+
+    client, actor = linked_client
+    base = "/source-workspaces/workspace/documents"
+    document = await linked.service.create("author", "workspace", {"title": "ТЗ"})
+    document = await linked.service.approve("author", "workspace", document["id"], {"expected_version": document["version"]})
+    url = base + "/" + document["id"]
+    payload = {"revision_id": document["approved_revision_id"], "expected_version": document["version"]}
+    for role in ("reviewer", "reader"):
+        SourceWorkspaceMember.replace(workspace_id="workspace", user_id="reviewer", role=role).execute()
+        actor.id = "reviewer"
+        response = await client.post(url + "/implementation", json=payload)
+        assert response.status_code == 403
+    actor.id = "outsider"
+    assert (await client.post(url + "/implementation", json=payload)).status_code == 404
+    actor.id = "author"
+    assert (await client.post(url + "/implementation", json={**payload, "expected_version": 999})).status_code == 409
+    response = await client.post(url + "/implementation", json=payload)
+    assert response.status_code == 200
+    current = (await response.get_json())["data"]
+    repeated = await client.post(url + "/implementation", json=payload)
+    assert (await repeated.get_json())["data"]["implementation_event_id"] == current["implementation_event_id"]
+    revoke = {"expected_version": current["version"], "implementation_event_id": current["implementation_event_id"], "reason": ""}
+    assert (await client.post(url + "/implementation/revoke", json=revoke)).status_code == 422
+    assert (await client.post(url + "/implementation/revoke", json={**revoke, "reason": "Ошибка"})).status_code == 200
+    assert (await client.get("/source-workspaces/workspace/document-overview")).status_code == 200
+
+
 @pytest.mark.asyncio
 async def test_http_manual_approval_never_replaces_text_before_reviewer_decision(linked, linked_client):
     client, current_user = linked_client

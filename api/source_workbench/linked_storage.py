@@ -7,7 +7,7 @@ from functools import reduce
 from operator import or_
 import time
 
-from peewee import IntegrityError, SqliteDatabase
+from peewee import IntegrityError, SqliteDatabase, fn
 
 from api.db.db_models import (
     SourceWorkspace,
@@ -43,7 +43,9 @@ from .linked_domain import (
     manual_plan,
     render,
     split_sections,
+    input_reviewed,
 )
+from .linked_graph import assert_acyclic_link, cyclic_components
 
 
 def connected(method):
@@ -61,6 +63,102 @@ def record(row):
 
 
 class LinkedDocumentRepository:
+    def __init__(self, business=None):
+        self.business = business
+
+    def _guard_business(self, actor, inputs):
+        if not self.business:
+            return
+        ids = [item["source_id"] for item in inputs]
+        documents = {row.id: row for row in Document.select(Document.id, Document.source_kind, Document.source_ref).where(Document.id.in_(ids))}
+        references = [
+            {**documents[item["source_id"]].source_ref, "revision": item["source_marker"]}
+            for item in inputs
+            if documents.get(item["source_id"]) and documents[item["source_id"]].source_kind == "business"
+        ]
+        if references:
+            self.business.validate(actor, references, lock=True, fresh=True)
+
+    def _lock_workspace(self, workspace_id):
+        query = SourceWorkspace.select(SourceWorkspace.id).where(SourceWorkspace.id == workspace_id)
+        if not isinstance(self.database, SqliteDatabase):
+            query = query.for_update()
+        if query.first() is None:
+            fail("NOT_FOUND", "Рабочее пространство не найдено", 404)
+
+    @connected
+    def graph_data(self, workspace_id):
+        with self.database.atomic():
+            if not isinstance(self.database, SqliteDatabase):
+                self.database.execute_sql("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+            documents = [
+                record(row) for row in Document.select(*[field for name, field in Document._meta.fields.items() if name not in {"content", "prompt"}]).where(Document.workspace_id == workspace_id)
+            ]
+            links = [record(row) for row in Dependency.select().where(Dependency.workspace_id == workspace_id)]
+
+            def latest(model, names):
+                ranked = (
+                    model.select(*[getattr(model, name) for name in names], fn.ROW_NUMBER().over(partition_by=[model.document_id], order_by=[model.created_at.desc(), model.id.desc()]).alias("rank"))
+                    .where(model.workspace_id == workspace_id)
+                    .cte("latest")
+                )
+                return list(ranked.select_from(*[getattr(ranked.c, name) for name in names]).where(ranked.c.rank == 1).dicts())
+
+            changes = latest(Change, ["document_id", "document_version", "status"])
+            jobs = latest(Job, ["document_id", "status"])
+            users = {row.id: row.nickname for row in User.select(User.id, User.nickname).where(User.id.in_({row[key] for row in documents for key in ("responsible_id", "approver_id")}))}
+            return documents, links, changes, jobs, users
+
+    @connected
+    def assert_no_cycle(self, workspace_id, document_id):
+        links = [record(row) for row in Dependency.select().where(Dependency.workspace_id == workspace_id)]
+        if any(document_id in component for component in cyclic_components(links)):
+            fail("DEPENDENCY_CYCLE", "Устраните цикл актуализации в источниках и связях", 409)
+
+    @connected
+    def implementation_history(self, document_id):
+        rows = list(
+            Event.select().where((Event.document_id == document_id) & Event.kind.in_(["implementation_confirmed", "implementation_revoked"])).order_by(Event.created_at.desc(), Event.id.desc())
+        )
+        users = {row.id: row.nickname for row in User.select(User.id, User.nickname).where(User.id.in_({row.actor_id for row in rows}))} if rows else {}
+        return [{**record(row), "actor_name": users.get(row.actor_id, "Пользователь удалён")} for row in rows]
+
+    @connected
+    def implementation(self, actor, workspace_id, document_id, version, *, revision_id=None, event_id=None, comment="", evidence_url=""):
+        with self.database.atomic():
+            self.workspace(actor, workspace_id, "edit")
+            row = self._lock_documents([document_id]).get(document_id)
+            if row is None or row.workspace_id != workspace_id:
+                fail("DOCUMENT_NOT_FOUND", "Документ не найден", 404)
+            active = User.select(User.id).where((User.id == actor) & (User.status == "1") & (User.is_active == "1")).exists()
+            if row.source_kind != "local" or row.responsible_id != actor or not active:
+                fail("PERMISSION_DENIED", "Реализацию подтверждает ответственный за документ", 403)
+            if revision_id:
+                if revision_id != row.approved_revision_id:
+                    fail("REVISION_NOT_APPROVED", "Выберите последнюю утверждённую редакцию", 409)
+                if row.implemented_revision_id == revision_id and row.implementation_event_id:
+                    return record(row)
+            else:
+                if any(item["payload"].get("implementation_event_id") == event_id for item in self.implementation_history(document_id) if item["kind"] == "implementation_revoked"):
+                    return record(row)
+                if not event_id or event_id != row.implementation_event_id:
+                    fail("IMPLEMENTATION_CHANGED", "Подтверждение реализации изменилось", 409)
+            assert_version(record(row), version)
+            event = Event.create(
+                id=identifier(),
+                workspace_id=workspace_id,
+                document_id=document_id,
+                actor_id=actor,
+                kind="implementation_confirmed" if revision_id else "implementation_revoked",
+                payload={"revision_id": revision_id or row.implemented_revision_id, "implementation_event_id": event_id, "comment": comment, "evidence_url": evidence_url},
+            )
+            row.implemented_revision_id = revision_id
+            row.implementation_event_id = event.id if revision_id else None
+            row.version += 1
+            row.updated_at = datetime.now(timezone.utc)
+            row.save()
+            return record(row)
+
     @property
     def database(self):
         return Document._meta.database
@@ -77,6 +175,9 @@ class LinkedDocumentRepository:
 
     @connected
     def workspace(self, actor, workspace_id, capability="read"):
+        # Every mutating transaction orders workspace before membership/document locks.
+        if capability != "read" and self.database.in_transaction():
+            self._lock_workspace(workspace_id)
         row = SourceWorkspace.get_or_none(SourceWorkspace.id == workspace_id)
         if row is None:
             fail("NOT_FOUND", "Рабочее пространство не найдено", 404)
@@ -223,7 +324,7 @@ class LinkedDocumentRepository:
             text_length=len(render(sections)),
             author_id=actor,
             source_revision=source_revision,
-            source_metadata=row.source_ref if row.source_kind == "indexed" else None,
+            source_metadata=row.source_ref if row.source_kind in {"indexed", "business"} else None,
         )
         row.content = render(sections)
         row.current_revision_id = revision.id
@@ -234,7 +335,13 @@ class LinkedDocumentRepository:
         by_dependency = {item["dependency_id"]: item for item in inherited}
         by_dependency.update({item["dependency_id"]: item for item in inputs or []})
         for item in by_dependency.values():
-            RevisionInput.create(revision_id=revision.id, dependency_id=item["dependency_id"], source_revision_id=item["source_revision_id"], policy=item["policy"])
+            RevisionInput.create(
+                revision_id=revision.id,
+                dependency_id=item["dependency_id"],
+                source_revision_id=item["source_revision_id"],
+                source_state_token=item.get("source_state_token", ""),
+                policy=item["policy"],
+            )
         self._event(actor, row, "revision_created", {"revision_id": revision.id, "parent_id": previous_id})
         return revision
 
@@ -288,7 +395,8 @@ class LinkedDocumentRepository:
             appended = False
             if sections is not None:
                 current = Revision.get_by_id(row.current_revision_id)
-                if current.content_hash != digest(render(sections)) and not manual:
+                evidence_changed = row.source_kind == "business" and source_revision is not None and current.source_revision != source_revision
+                if (current.content_hash != digest(render(sections)) or evidence_changed) and not manual:
                     self._append_revision(actor, row, sections, source_revision)
                     appended = True
             if settings and not appended:
@@ -388,7 +496,10 @@ class LinkedDocumentRepository:
     @connected
     def approve_document(self, actor, workspace_id, document_id, version, inputs):
         with self.database.atomic():
+            self._lock_workspace(workspace_id)
             self.workspace(actor, workspace_id, "approve")
+            self.assert_no_cycle(workspace_id, document_id)
+            self._guard_business(actor, inputs)
             locked = self._lock_documents([document_id, *[item["source_id"] for item in inputs]])
             row = locked.get(document_id)
             if row is None or row.workspace_id != workspace_id:
@@ -404,6 +515,7 @@ class LinkedDocumentRepository:
     @connected
     def save_dependency(self, actor, workspace_id, target_id, target_version, values, dependency_id=None):
         with self.database.atomic():
+            self._lock_workspace(workspace_id)
             self.workspace(actor, workspace_id, "edit")
             documents = self._lock_documents([target_id, values["source_id"]])
             if set(documents) != {target_id, values["source_id"]} or any(row.workspace_id != workspace_id for row in documents.values()):
@@ -411,6 +523,9 @@ class LinkedDocumentRepository:
             target = documents[target_id]
             if target.version != target_version:
                 fail("VERSION_CONFLICT", "Документ или его связи изменились", 409)
+            links = [record(item) for item in Dependency.select().where(Dependency.workspace_id == workspace_id) if item.id != dependency_id]
+            titles = dict(Document.select(Document.id, Document.title).where(Document.workspace_id == workspace_id).tuples())
+            assert_acyclic_link(links, {**values, "target_id": target_id}, titles)
             if dependency_id:
                 row = Dependency.get_or_none((Dependency.id == dependency_id) & (Dependency.target_id == target_id) & (Dependency.workspace_id == workspace_id))
                 if row is None or row.source_id != values["source_id"]:
@@ -420,6 +535,7 @@ class LinkedDocumentRepository:
                 row.version += 1
                 row.reviewed_revision_id = None
                 row.reviewed_target_revision_id = None
+                row.reviewed_source_state_token = None
                 row.save()
             else:
                 if Dependency.select().where((Dependency.source_id == values["source_id"]) & (Dependency.target_id == target_id)).exists():
@@ -444,23 +560,25 @@ class LinkedDocumentRepository:
             # Confirmations can update reviewed fields without changing the link version.
             inputs = [{**item, "policy": dependencies[item["dependency_id"]]} for item in inputs]
             active_ids = []
-            pending = [item for item in inputs if item["policy"]["reviewed_revision_id"] != item["source_revision_id"] or item["policy"]["reviewed_target_revision_id"] != base_id]
+            pending = [item for item in inputs if not input_reviewed(item["policy"], item["source_revision_id"], base_id, item.get("source_state_token", ""))]
             clauses = [
                 (Impact.dependency_id == item["dependency_id"])
                 & (Impact.source_revision_id == item["source_revision_id"])
                 & (Impact.target_revision_id == base_id)
                 & (Impact.dependency_version == item["policy"]["version"])
+                & (Impact.source_state_token == item.get("source_state_token", ""))
                 for item in pending
             ]
-            existing = {row.dependency_id: row for row in Impact.select().where(reduce(or_, clauses))} if clauses else {}
+            existing = {(row.dependency_id, row.source_state_token): row for row in Impact.select().where(reduce(or_, clauses))} if clauses else {}
             for item in pending:
-                impact = existing.get(item["dependency_id"])
+                impact = existing.get((item["dependency_id"], item.get("source_state_token", "")))
                 if impact is None:
                     impact, _ = Impact.get_or_create(
                         dependency_id=item["dependency_id"],
                         source_revision_id=item["source_revision_id"],
                         target_revision_id=base_id,
                         dependency_version=item["policy"]["version"],
+                        source_state_token=item.get("source_state_token", ""),
                         defaults={"id": identifier(), "previous_revision_id": item["policy"]["reviewed_revision_id"]},
                     )
                 active_ids.append(impact.id)
@@ -471,6 +589,7 @@ class LinkedDocumentRepository:
     @connected
     def remove_dependency(self, actor, workspace_id, target_id, dependency_id, version):
         with self.database.atomic():
+            self._lock_workspace(workspace_id)
             self.workspace(actor, workspace_id, "edit")
             target = self._lock_documents([target_id]).get(target_id)
             if not target or target.workspace_id != workspace_id:
@@ -576,9 +695,13 @@ class LinkedDocumentRepository:
     @connected
     def finish_job(self, job_id, token, change=None, error=None):
         with self.database.atomic():
+            pending = Job.get_by_id(job_id)
+            self._lock_workspace(pending.workspace_id)
             self.lease(job_id, token)
             row = Job.get_by_id(job_id)
             if change:
+                self.assert_no_cycle(row.workspace_id, row.document_id)
+                self._guard_business(row.actor_id, change["inputs"])
                 locked = self._lock_documents([row.document_id, *[item["source_id"] for item in change["inputs"]]])
                 target = locked[row.document_id]
                 assert_version(record(target), change["document_version"], code="STALE_CHANGE")
@@ -602,6 +725,7 @@ class LinkedDocumentRepository:
     @connected
     def finalize(self, actor, workspace_id, document_id, change_id, sections, inputs, comment, action):
         with self.database.atomic():
+            self._lock_workspace(workspace_id)
             self.workspace(actor, workspace_id, "approve")
             query = Change.select().where((Change.id == change_id) & (Change.workspace_id == workspace_id) & (Change.document_id == document_id))
             if not isinstance(self.database, SqliteDatabase):
@@ -609,6 +733,8 @@ class LinkedDocumentRepository:
             change = query.first()
             if change is None:
                 fail("CHANGE_NOT_FOUND", "Предложение не найдено", 404)
+            if action == "accept" and change.status != "applied":
+                self._guard_business(actor, inputs)
             locked = self._lock_documents([document_id, *[item["source_id"] for item in inputs]])
             target = locked[document_id]
             assert_approver(actor, record(target))
@@ -627,12 +753,15 @@ class LinkedDocumentRepository:
                     target.version += 1
                     target.save()
                 for item in resolved_inputs:
-                    Dependency.update(reviewed_revision_id=item["source_revision_id"], reviewed_target_revision_id=target.current_revision_id).where(Dependency.id == item["dependency_id"]).execute()
+                    Dependency.update(
+                        reviewed_revision_id=item["source_revision_id"], reviewed_target_revision_id=target.current_revision_id, reviewed_source_state_token=item.get("source_state_token", "")
+                    ).where(Dependency.id == item["dependency_id"]).execute()
                     Impact.update(state="resolved", explanation=change.plan["summary"]).where(
                         (Impact.dependency_id == item["dependency_id"])
                         & (Impact.source_revision_id == item["source_revision_id"])
                         & (Impact.target_revision_id == change.base_revision_id)
                         & (Impact.dependency_version == item["policy"]["version"])
+                        & (Impact.source_state_token == item.get("source_state_token", ""))
                     ).execute()
                 change.status = "applied"
             else:

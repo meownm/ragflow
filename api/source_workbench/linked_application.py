@@ -26,7 +26,9 @@ from .linked_domain import (
     text,
     validate_scope,
     validate_sections,
+    source_state,
 )
+from .linked_graph import overview
 from .processing import ModelBudget, VisibleStreamFilter
 
 
@@ -71,8 +73,41 @@ def _public_job(job):
 
 
 class LinkedDocuments:
-    def __init__(self, repository: Any, sources: Any, models: Any):
+    def __init__(self, repository: Any, sources: Any, models: Any, business=None):
         self.repo, self.sources, self.models = repository, sources, models
+        self.business = business
+
+    async def overview(self, actor, workspace_id):
+        workspace = await self.access(actor, workspace_id)
+        documents, links, changes, jobs, names = await self._call(self.repo.graph_data, workspace_id)
+        native_sources = await self._validate_provenance(actor, documents)
+        for document in documents:
+            if document["source_kind"] == "business":
+                reference = document["source_ref"]
+                document["source_update_available"] = native_sources[reference["document_id"]]["revision"] != reference["revision"]
+        result = overview(documents, links, changes, jobs, names, actor)
+        for item in result["items"]:
+            item.pop("source_ref", None)
+            item.pop("sources", None)
+        return {**result, "can_manage": workspace["role"] == "owner"}
+
+    async def implementation(self, actor, workspace_id, document_id, data, *, revoke=False):
+        await self.access(actor, workspace_id, document_id, "edit")
+        version = expected(data.get("expected_version"))
+        comment = text(data.get("reason" if revoke else "comment", ""), "Причина" if revoke else "Комментарий", 6000, empty=not revoke)
+        reference = text(data.get("evidence_url", ""), "Подтверждающий материал", 2000, empty=True)
+        if reference:
+            from urllib.parse import urlsplit
+
+            try:
+                parsed = urlsplit(reference)
+            except ValueError:
+                fail("INVALID_INPUT", "Некорректная ссылка подтверждающего материала")
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                fail("INVALID_INPUT", "Укажите HTTP или HTTPS ссылку")
+        values = {"event_id": text(data.get("implementation_event_id"), "Подтверждение", 32)} if revoke else {"revision_id": text(data.get("revision_id"), "Редакция", 32)}
+        await self._call(self.repo.implementation, actor, workspace_id, document_id, version, **values, comment=comment, evidence_url=reference)
+        return await self.get(actor, workspace_id, document_id)
 
     async def _call(self, method, *args, **kwargs):
         return await asyncio.to_thread(method, *args, **kwargs)
@@ -82,18 +117,42 @@ class LinkedDocuments:
         if document_id:
             document = await self._call(self.repo.document, workspace_id, document_id, include_content)
             provenance = await self._call(self.repo.provenance_documents, workspace_id, document_id)
-            await self._validate_provenance(actor, provenance)
+            native_sources = await self._validate_provenance(actor, provenance)
+            if document["source_kind"] == "business":
+                reference = document["source_ref"]
+                document["source_update_available"] = native_sources[reference["document_id"]]["revision"] != reference["revision"]
             return document
         return workspace
 
     async def _validate_provenance(self, actor, documents):
         datasets = set()
+        business = []
         for item in documents:
+            if item.get("source_kind") == "business":
+                business.append(item["source_ref"])
+                continue
             for reference in [*(item.get("sources") or []), *([item["source_ref"]] if item.get("source_ref") else [])]:
                 datasets.add(reference["dataset_id"])
         # Search-model compatibility is a query constraint, not a document-link constraint.
         for dataset_id in sorted(datasets):
             await self._call(self.sources.validate_datasets, actor, [dataset_id])
+        if business:
+            return await self._call(self.business.validate, actor, business)
+        return {}
+
+    async def business_sources(self, actor, workspace_id, query="", page=1):
+        await self.access(actor, workspace_id, capability="edit")
+        return await self._call(self.business.list, actor, query, page)
+
+    async def _business_snapshot(self, actor, document_id):
+        document_id = text(document_id, "Документ", 32)
+        rows = await self._call(self.business.read_many, actor, [document_id], body=True)
+        source = rows.get(document_id)
+        if not source:
+            fail("DOCUMENT_UNAVAILABLE", "У документа нет доступной согласованной редакции", 409)
+        markdown = text(source.pop("body_markdown"), "Содержание источника", 2_000_000)
+        await self._call(self.business.validate, actor, [source], fresh=True)
+        return {**source, "retrieved_at": datetime.now(timezone.utc).isoformat()}, markdown
 
     async def list(self, actor, workspace_id):
         await self.access(actor, workspace_id)
@@ -122,13 +181,15 @@ class LinkedDocuments:
             "capabilities": {
                 "edit": workspace["role"] in {"owner", "editor"},
                 "manage": workspace["role"] == "owner",
-                "approve": workspace["role"] in {"owner", "reviewer"} and actor == (document["approver_id"] or document["owner_id"]),
+                "approve": document["source_kind"] != "business" and workspace["role"] in {"owner", "reviewer"} and actor == (document["approver_id"] or document["owner_id"]),
             },
             "impacts": impacts,
             "waiting": waiting,
             "revisions": [{key: value for key, value in item.items() if key != "sections"} for item in revisions],
             "changes": await self._call(self.repo.changes, workspace_id, document_id),
             "jobs": [_public_job(job) for job in await self._call(self.repo.jobs, workspace_id, document_id)],
+            "implementation_history": await self._call(self.repo.implementation_history, document_id),
+            "can_implement": workspace["role"] in {"owner", "editor"} and document["source_kind"] == "local" and actor == document["responsible_id"],
         }
 
     async def history(self, actor, workspace_id, document_id, revision_id):
@@ -166,18 +227,24 @@ class LinkedDocuments:
 
     async def import_source(self, actor, workspace_id, data):
         await self.access(actor, workspace_id, capability="edit")
-        reference, markdown = await self._snapshot(actor, data)
+        business = data.get("kind") == "business_document"
+        if data.get("kind") not in {None, "indexed", "business_document"}:
+            fail("INVALID_INPUT", "Неизвестный тип источника")
+        reference, markdown = await self._business_snapshot(actor, data.get("document_id")) if business else await self._snapshot(actor, data)
         if "revision" in data and data["revision"] != reference["revision"]:
             fail("SOURCE_CHANGED", "Выбранная статья изменилась; обновите подборку", 409)
-        origin_key = digest({"dataset_id": reference["dataset_id"], "document_id": reference["document_id"]})
+        origin_key = (
+            digest({"kind": "business_document", "document_id": reference["document_id"]}) if business else digest({"dataset_id": reference["dataset_id"], "document_id": reference["document_id"]})
+        )
         existing = await self._call(self.repo.document_by_origin, workspace_id, origin_key)
         if existing:
             return await self._store_snapshot(actor, workspace_id, existing, reference, markdown)
+        source_type = reference.get("document_type", "other") if business else "reference"
         values = {
             "title": reference["title"],
-            "document_type": choice(data.get("document_type", "reference"), DOCUMENT_TYPES, "Тип источника"),
+            "document_type": choice(data.get("document_type", source_type if source_type in DOCUMENT_TYPES else "other"), DOCUMENT_TYPES, "Тип источника"),
             "change_policy": "locked",
-            "source_kind": "indexed",
+            "source_kind": "business" if business else "indexed",
             "source_ref": reference,
             "origin_key": origin_key,
         }
@@ -189,9 +256,10 @@ class LinkedDocuments:
     async def _store_snapshot(self, actor, workspace_id, document, reference, markdown):
         header = await self._call(self.repo.revision, document["id"], document["current_revision_id"], False)
         changed = header["content_hash"] != digest(markdown)
+        evidence_changed = document["source_kind"] == "business" and reference["revision"] != document["source_ref"]["revision"]
         if changed or reference["revision"] != document["source_ref"]["revision"]:
             sections = None
-            if changed:
+            if changed or evidence_changed:
                 previous = await self._call(self.repo.revision, document["id"], document["current_revision_id"])
                 sections = split_sections(markdown, previous["sections"], maximum=2_000_000)
             await self._call(self.repo.edit_document, actor, workspace_id, document["id"], document["version"], sections, {"source_ref": reference}, source_revision=reference["revision"])
@@ -223,6 +291,11 @@ class LinkedDocuments:
                 fail("INVALID_INPUT", "Передайте текст или разделы документа")
             sections = validate_sections(data["sections"])
         settings = {}
+        if "required_for_readiness" in data:
+            await self.access(actor, workspace_id, capability="manage")
+            if type(data["required_for_readiness"]) is not bool or document["source_kind"] != "local":
+                fail("INVALID_INPUT", "В обязательный комплект входят только рабочие документы")
+            settings["required_for_readiness"] = data["required_for_readiness"]
         for key, allowed in (("document_type", DOCUMENT_TYPES), ("change_policy", CHANGE_POLICIES)):
             if key in data:
                 settings[key] = choice(data[key], allowed, key)
@@ -250,6 +323,8 @@ class LinkedDocuments:
         if source_id == target_id:
             fail("SELF_DEPENDENCY", "Документ не может зависеть от самого себя")
         source = await self.access(actor, workspace_id, source_id)
+        if data.get("refresh_on") == "implemented" and source["source_kind"] != "local":
+            fail("INVALID_INPUT", "Реализация подтверждается у рабочего документа")
         source_revision = await self._call(self.repo.revision, source_id, source["current_revision_id"])
         target_revision = await self._call(self.repo.revision, target_id, target["current_revision_id"])
         for key in ("required", "blocks_approval"):
@@ -262,7 +337,7 @@ class LinkedDocuments:
             "blocks_approval": data.get("blocks_approval", True),
             "source_scope": validate_scope(data.get("source_scope", []), source_revision["sections"]),
             "target_scope": validate_scope(data.get("target_scope", []), target_revision["sections"]),
-            "refresh_on": choice(data.get("refresh_on", "saved"), {"saved", "approved"}, "Событие актуализации"),
+            "refresh_on": choice(data.get("refresh_on", "saved"), {"saved", "approved", "implemented"}, "Событие актуализации"),
             "maintenance": choice(data.get("maintenance", "manual"), {"manual", "auto"}, "Сопровождение"),
         }
         previous = next((item for item in await self._call(self.repo.dependencies, workspace_id, target_id) if item["id"] == dependency_id), None)
@@ -283,8 +358,10 @@ class LinkedDocuments:
 
     async def refresh(self, actor, workspace_id, document_id, *, automatic=False):
         document = await self.access(actor, workspace_id, document_id, "edit")
-        if document["source_kind"] == "indexed":
-            reference, markdown = await self._snapshot(actor, document["source_ref"])
+        if document["source_kind"] in {"indexed", "business"}:
+            reference, markdown = (
+                await self._business_snapshot(actor, document["source_ref"]["document_id"]) if document["source_kind"] == "business" else await self._snapshot(actor, document["source_ref"])
+            )
             return await self._store_snapshot(actor, workspace_id, document, reference, markdown)
         else:
             dependencies = await self._call(self.repo.dependencies, workspace_id, document_id)
@@ -292,11 +369,12 @@ class LinkedDocuments:
                 if automatic and dependency["maintenance"] != "auto":
                     continue
                 source = await self.access(actor, workspace_id, dependency["source_id"])
-                if source["source_kind"] == "indexed":
+                if source["source_kind"] in {"indexed", "business"}:
                     await self.refresh(actor, workspace_id, source["id"])
         return await self.get(actor, workspace_id, document_id)
 
     async def inspect_automatic(self, actor, workspace_id, document_id):
+        await self._call(self.repo.assert_no_cycle, workspace_id, document_id)
         current = await self.refresh(actor, workspace_id, document_id, automatic=True)
         automatic_ids = {item["id"] for item in current["dependencies"] if item["maintenance"] == "auto"}
         if any(item["dependency_id"] in automatic_ids and item["state"] == "pending" and item["target_revision_id"] == current["current_revision_id"] for item in current["impacts"]):
@@ -316,7 +394,7 @@ class LinkedDocuments:
         revision_ids = set()
         for dependency in dependencies:
             source = sources[dependency["source_id"]]
-            revision_id = source["approved_revision_id"] if dependency["refresh_on"] == "approved" else source["current_revision_id"]
+            revision_id, _ = source_state(source, dependency)
             revision_ids.update(item for item in (revision_id, dependency["reviewed_revision_id"]) if item)
         headers = await self._call(self.repo.source_revisions, revision_ids)
         if set(headers) != revision_ids:
@@ -325,7 +403,7 @@ class LinkedDocuments:
             fail("SELECTION_TOO_LARGE", "Снимки оснований превышают лимит чтения; выберите меньше источников", 413)
         for dependency in dependencies:
             source = sources[dependency["source_id"]]
-            for revision_id in (source["approved_revision_id"] if dependency["refresh_on"] == "approved" else source["current_revision_id"], dependency["reviewed_revision_id"]):
+            for revision_id in (source_state(source, dependency)[0], dependency["reviewed_revision_id"]):
                 if revision_id and headers[revision_id]["document_id"] != source["id"]:
                     fail("SOURCE_CHANGED", "Редакция не принадлежит источнику", 409)
         revisions = await self._call(self.repo.source_revisions, revision_ids, True) if include_sections else {}
@@ -333,13 +411,13 @@ class LinkedDocuments:
         loaded_characters = 0
         for dependency in dependencies:
             source = sources[dependency["source_id"]]
-            revision_id = source["approved_revision_id"] if dependency["refresh_on"] == "approved" else source["current_revision_id"]
+            revision_id, state_token = source_state(source, dependency)
             if not revision_id:
                 waiting.append(
                     {
                         "dependency_id": dependency["id"],
                         "source_id": source["id"],
-                        "reason": "Ожидается утверждение источника",
+                        "reason": "Ожидается подтверждение реализации" if dependency["refresh_on"] == "implemented" else "Ожидается утверждение источника",
                         "blocks_approval": dependency["blocks_approval"],
                         "required": dependency["required"],
                     }
@@ -363,6 +441,7 @@ class LinkedDocuments:
                     "dependency_id": dependency["id"],
                     "source_id": source["id"],
                     "source_revision_id": revision_id,
+                    **({"source_state_token": state_token} if state_token else {}),
                     "title": source["title"],
                     "document_type": source["document_type"],
                     "policy": dependency,
@@ -396,6 +475,8 @@ class LinkedDocuments:
 
     async def approve(self, actor, workspace_id, document_id, data):
         document = await self.access(actor, workspace_id, document_id, "approve")
+        if document["source_kind"] == "business":
+            fail("SOURCE_READ_ONLY", "Согласование источника выполняется в Business Documents", 403)
         inputs, waiting = await self.inputs(actor, workspace_id, document_id, include_sections=False)
         if document["provenance_state"] == "unresolved" or any(item["blocks_approval"] for item in waiting):
             fail("UNRESOLVED_DEPENDENCY", "Сначала подтвердите основания документа", 409)
@@ -442,6 +523,7 @@ class LinkedDocuments:
 
     async def prepare(self, actor, workspace_id, document_id, data):
         document = await self.access(actor, workspace_id, document_id, "edit")
+        await self._call(self.repo.assert_no_cycle, workspace_id, document_id)
         if expected(data.get("expected_version")) != document["version"]:
             fail("VERSION_CONFLICT", "Документ изменился", 409)
         assert_editable(document)
@@ -472,6 +554,7 @@ class LinkedDocuments:
         return _public_job(job)
 
     async def _assert_inputs(self, actor, workspace_id, document_id, payload, capability="read"):
+        await self._call(self.repo.assert_no_cycle, workspace_id, document_id)
         if payload.get("policy", payload.get("policy_version")) != PLAN_POLICY:
             fail("STALE_POLICY", "Правила подготовки изменились; подготовьте предложение заново", 409)
         document = await self.access(actor, workspace_id, document_id, capability)
@@ -486,6 +569,8 @@ class LinkedDocuments:
         # External text is immutable in our snapshot, but its actual locator must still be current.
         active_sources = await self._call(self.repo.source_documents, workspace_id, {item["source_id"] for item in current})
         for source in active_sources.values():
+            if source["source_kind"] == "business":
+                await self._call(self.business.validate, actor, [source["source_ref"]], fresh=True)
             if source["source_kind"] == "indexed":
                 reference = source["source_ref"]
                 actual = (await self._call(self.sources.document_revisions, [reference]))[0]

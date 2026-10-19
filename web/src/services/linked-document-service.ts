@@ -32,7 +32,7 @@ export type Dependency = {
   required: boolean;
   source_scope: string[];
   target_scope: string[];
-  refresh_on: 'saved' | 'approved';
+  refresh_on: 'saved' | 'approved' | 'implemented';
   maintenance: 'manual' | 'auto';
   blocks_approval: boolean;
   reviewed_revision_id: string | null;
@@ -44,9 +44,13 @@ export type DocumentSummary = {
   title: string;
   document_type: DocumentType;
   change_policy: DocumentPolicy;
-  source_kind: 'local' | 'indexed';
+  source_kind: 'local' | 'indexed' | 'business';
   current_revision_id: string;
   approved_revision_id: string | null;
+  required_for_readiness?: boolean;
+  implemented_revision_id?: string | null;
+  implementation_event_id?: string | null;
+  source_update_available?: boolean;
   responsible_id: string;
   approver_id: string;
   version: number;
@@ -122,14 +126,24 @@ export type DocumentJob = {
   error: { code: string; message: string } | null;
 };
 export type WorkspaceDocument = DocumentSummary & {
+  can_implement?: boolean;
+  implementation_history?: {
+    id: string;
+    actor_id: string;
+    actor_name: string;
+    created_at: string;
+    kind: string;
+    payload: { revision_id: string; comment: string; evidence_url?: string };
+  }[];
   capabilities: { edit: boolean; approve: boolean; manage: boolean };
   content: string;
   sections: Section[];
   source_ref: {
-    dataset_id: string;
+    dataset_id?: string;
     document_id: string;
     revision: string;
     source_url?: string;
+    revision_number?: number;
   } | null;
   dependencies: Dependency[];
   impacts: {
@@ -225,9 +239,80 @@ export const updateWorkspaceDocument = (
       | 'content'
       | 'responsible_id'
       | 'approver_id'
+      | 'required_for_readiness'
     >
   > & { expected_version: number },
 ) => write<WorkspaceDocument>(doc(workspaceId, documentId), input, 'put');
+
+export type DocumentOverviewRow = DocumentSummary & {
+  responsible_name: string;
+  state: string;
+  action: string;
+  mine: boolean;
+  reasons: { message: string; source_id?: string; action: string }[];
+  source_ids: string[];
+  dependent_ids: string[];
+};
+export type DocumentOverviewData = {
+  items: DocumentOverviewRow[];
+  can_manage: boolean;
+  readiness: {
+    configured: boolean;
+    documents_agreed: boolean;
+    maintenance_complete: boolean;
+    required_count: number;
+    blockers: { document_id: string; message: string; action: string }[];
+  };
+};
+export const getDocumentOverview = (workspaceId: string) =>
+  get<DocumentOverviewData>(
+    `${api.sourceWorkspace(workspaceId)}/document-overview`,
+  );
+export const confirmDocumentImplementation = (
+  workspaceId: string,
+  document: WorkspaceDocument,
+  comment: string,
+  evidenceUrl: string,
+) =>
+  write<WorkspaceDocument>(`${doc(workspaceId, document.id)}/implementation`, {
+    revision_id: document.approved_revision_id,
+    expected_version: document.version,
+    comment,
+    evidence_url: evidenceUrl,
+  });
+export const revokeDocumentImplementation = (
+  workspaceId: string,
+  document: WorkspaceDocument,
+  reason: string,
+) =>
+  write<WorkspaceDocument>(
+    `${doc(workspaceId, document.id)}/implementation/revoke`,
+    {
+      implementation_event_id: document.implementation_event_id,
+      expected_version: document.version,
+      reason,
+    },
+  );
+export type BusinessSource = {
+  document_id: string;
+  title: string;
+  revision_id: string;
+  revision_number: number;
+  agreement_event_id: string;
+};
+export const listBusinessSources = (
+  workspaceId: string,
+  query: string,
+  page = 1,
+) =>
+  get<{ items: BusinessSource[]; has_more: boolean; page: number }>(
+    `${api.sourceWorkspace(workspaceId)}/business-document-sources?query=${encodeURIComponent(query)}&page=${page}`,
+  );
+export const importBusinessSource = (workspaceId: string, documentId: string) =>
+  write<WorkspaceDocument>(`${base(workspaceId)}/import`, {
+    kind: 'business_document',
+    document_id: documentId,
+  });
 export const saveDocumentDependency = (
   workspaceId: string,
   documentId: string,

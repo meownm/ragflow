@@ -66,7 +66,13 @@ export function DocumentDependencies({
     setSourceDocument(null);
     getWorkspaceDocument(workspace.id, sourceId)
       .then((item) => {
-        if (!cancelled) setSourceDocument(item);
+        if (!cancelled) {
+          setSourceDocument(item);
+          if (item.source_kind !== 'local')
+            setRefreshOn((value) =>
+              value === 'implemented' ? 'saved' : value,
+            );
+        }
       })
       .catch((cause) => {
         if (!cancelled)
@@ -136,7 +142,11 @@ export function DocumentDependencies({
       <div className="space-y-6">
         {active.source_ref && (
           <p className="text-sm">
-            Сохранён снимок индексированного текста.{' '}
+            {active.source_kind === 'business'
+              ? `Сохранена согласованная редакция ${active.source_ref.revision_number} Business Documents. `
+              : 'Сохранён снимок индексированного текста. '}
+            {active.source_update_available &&
+              'Доступна новая согласованная редакция. Нажмите «Проверить источники» для обновления снимка. '}
             {active.source_ref.source_url && (
               <a
                 className="text-accent-primary"
@@ -181,7 +191,9 @@ export function DocumentDependencies({
               <p className="text-xs text-text-secondary">
                 {dependency.refresh_on === 'approved'
                   ? 'После утверждения источника'
-                  : 'После сохранения источника'}{' '}
+                  : dependency.refresh_on === 'implemented'
+                    ? 'После подтверждения реализации'
+                    : 'После сохранения источника'}{' '}
                 ·{' '}
                 {dependency.maintenance === 'auto'
                   ? 'Автоматический анализ'
@@ -300,6 +312,9 @@ export function DocumentDependencies({
                 options={{
                   saved: 'После сохранения источника',
                   approved: 'После утверждения источника',
+                  ...(sourceDocument?.source_kind === 'local'
+                    ? { implemented: 'После подтверждения реализации' }
+                    : {}),
                 }}
                 onChange={(value) =>
                   setRefreshOn(value as Dependency['refresh_on'])

@@ -6,13 +6,14 @@ import {
   createWorkspaceDocument,
   documentTypes,
   establishDocumentBaseline,
+  getDocumentOverview,
   getDocumentRevision,
   getWorkspaceDocument,
   importWorkspaceSource,
-  listWorkspaceDocuments,
   refreshWorkspaceDocument,
   updateWorkspaceDocument,
   type ChangeSet,
+  type DocumentOverviewData,
   type DocumentSummary,
   type DocumentType,
   type Revision,
@@ -24,6 +25,7 @@ import {
   type SourceWorkspace,
 } from '@/services/source-workbench-service';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { BusinessSourcePicker } from './business-source-picker';
 import { DocumentChanges } from './document-changes';
 import {
   Choice,
@@ -31,6 +33,8 @@ import {
   documentInputClass as selectClass,
 } from './document-controls';
 import { DocumentDependencies } from './document-dependencies';
+import { DocumentImplementation } from './document-implementation';
+import { DocumentOverview } from './document-overview';
 import { WorkspaceMembers, policies } from './document-settings';
 import { SourceArticleContent } from './source-article-content';
 
@@ -43,6 +47,17 @@ const stages: Record<string, string> = {
   failed: 'Ошибка',
   cancelled: 'Отменено',
 };
+function lostDocumentAccess(cause: unknown) {
+  const response = (
+    cause as {
+      response?: { status?: number; data?: { data?: { error_code?: string } } };
+    }
+  )?.response;
+  return (
+    [403, 404].includes(response?.status || 0) ||
+    response?.data?.data?.error_code === 'DOCUMENT_UNAVAILABLE'
+  );
+}
 function ProposalText({
   section,
   change,
@@ -138,6 +153,8 @@ export function DocumentWorkbench({
   onWorkspaceChange?(workspace: SourceWorkspace): void;
 }) {
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
+  const [overview, setOverview] = useState<DocumentOverviewData | null>(null);
+  const [implementationOpen, setImplementationOpen] = useState(false);
   const [active, setActive] = useState<WorkspaceDocument | null>(null);
   const [editor, setEditor] = useState('');
   const [editing, setEditing] = useState(false);
@@ -176,20 +193,42 @@ export function DocumentWorkbench({
   const preview = currentProposal && tab === 'text' ? proposal : undefined;
 
   const loadList = useCallback(async () => {
-    const list = await listWorkspaceDocuments(workspace.id);
-    setDocuments(list);
+    const requestGeneration = generation.current;
+    const result = await getDocumentOverview(workspace.id);
+    if (requestGeneration === generation.current) {
+      setDocuments(result.items);
+      setOverview(result);
+    }
+  }, [workspace.id]);
+
+  useEffect(() => {
+    setOverview(null);
+    setDocuments([]);
+    setActive(null);
+    setEditor('');
   }, [workspace.id]);
 
   useEffect(() => {
     if (!visible) return;
     let cancelled = false;
-    listWorkspaceDocuments(workspace.id)
-      .then((items) => {
-        if (!cancelled) setDocuments(items);
+    const requestGeneration = generation.current;
+    getDocumentOverview(workspace.id)
+      .then((result) => {
+        if (!cancelled && requestGeneration === generation.current) {
+          setDocuments(result.items);
+          setOverview(result);
+        }
       })
       .catch((cause) => {
-        if (!cancelled)
+        if (!cancelled && requestGeneration === generation.current) {
+          if (lostDocumentAccess(cause)) {
+            setActive(null);
+            setEditor('');
+            setDocuments([]);
+            setOverview(null);
+          }
           setError(sourceRequestError(cause, 'Не удалось загрузить документы'));
+        }
       });
     return () => {
       cancelled = true;
@@ -211,6 +250,7 @@ export function DocumentWorkbench({
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
     const requestGeneration = generation.current;
+    let jobsState = '';
     const refresh = async () => {
       try {
         const item = await getWorkspaceDocument(workspace.id, activeId);
@@ -219,10 +259,22 @@ export function DocumentWorkbench({
             setActive(item);
             setEditor(item.content);
           }
+          const nextJobsState = JSON.stringify(
+            item.jobs.map((job) => [job.id, job.status, job.result_id]),
+          );
+          if (nextJobsState !== jobsState) {
+            jobsState = nextJobsState;
+            await loadList();
+          }
         }
       } catch (cause) {
-        if (!cancelled && requestGeneration === generation.current)
+        if (!cancelled && requestGeneration === generation.current) {
+          if (lostDocumentAccess(cause)) {
+            setActive(null);
+            setEditor('');
+          }
           setError(sourceRequestError(cause, 'Не удалось обновить документ'));
+        }
       } finally {
         if (!cancelled && pending) timer = setTimeout(refresh, 2000);
       }
@@ -235,7 +287,16 @@ export function DocumentWorkbench({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [workspace.id, activeId, activeVersion, pending, dirty, busy, visible]);
+  }, [
+    workspace.id,
+    activeId,
+    activeVersion,
+    pending,
+    dirty,
+    busy,
+    visible,
+    loadList,
+  ]);
 
   const show = (document: WorkspaceDocument) => {
     setActive(document);
@@ -258,14 +319,20 @@ export function DocumentWorkbench({
         await loadList();
       }
     } catch (cause) {
-      if (requestGeneration === generation.current)
+      if (requestGeneration === generation.current) {
+        if (lostDocumentAccess(cause)) {
+          setActive(null);
+          setEditor('');
+          setHistory(null);
+        }
         setError(sourceRequestError(cause, 'Действие не выполнено'));
+      }
     } finally {
       if (requestGeneration === generation.current) setBusy(false);
     }
   };
 
-  const open = (id: string) => {
+  const open = (id: string, action = 'text') => {
     if (dirty) {
       setError(
         'Сохраните или отмените ручные правки перед переключением документа.',
@@ -273,6 +340,8 @@ export function DocumentWorkbench({
       return;
     }
     setSelectedChange('');
+    setTab(action === 'sources' || action === 'changes' ? action : 'text');
+    setImplementationOpen(action === 'implementation');
     void perform(() => getWorkspaceDocument(workspace.id, id));
   };
 
@@ -294,37 +363,17 @@ export function DocumentWorkbench({
           {error}
         </p>
       )}
+      {overview && (
+        <DocumentOverview data={overview} disabled={busy} open={open} />
+      )}
       <div className="grid min-w-0 gap-6 xl:grid-cols-[15rem_minmax(0,1fr)]">
         <aside className="space-y-5">
           <div>
-            <h2 className="font-semibold">Документы пространства</h2>
+            <h2 className="font-semibold">Добавить документы</h2>
             <p className="mt-1 text-xs text-text-secondary">
               Источники, рабочие документы и их редакции.
             </p>
           </div>
-          <ul className="space-y-1">
-            {documents.map((document) => (
-              <li key={document.id}>
-                <button
-                  className={`w-full rounded p-3 text-start text-sm ${active?.id === document.id ? 'bg-bg-card ring-1 ring-border-button' : 'hover:bg-bg-card'}`}
-                  disabled={busy}
-                  aria-current={active?.id === document.id ? 'page' : undefined}
-                  onClick={() => open(document.id)}
-                >
-                  <span className="block font-medium">{document.title}</span>
-                  <span className="text-xs text-text-secondary">
-                    {documentTypes[document.document_type]} ·{' '}
-                    {document.source_kind === 'indexed'
-                      ? 'Источник'
-                      : document.approved_revision_id ===
-                          document.current_revision_id
-                        ? 'Утверждён'
-                        : 'Рабочая редакция'}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
           {!documents.length && (
             <p className="text-sm text-text-secondary">
               Создайте документ или подключите выбранные статьи.
@@ -391,6 +440,13 @@ export function DocumentWorkbench({
             canManage={!workspace.role || workspace.role === 'owner'}
             onWorkspaceChange={onWorkspaceChange}
           />
+          {canEditWorkspace && (
+            <BusinessSourcePicker
+              workspaceId={workspace.id}
+              disabled={busy || dirty}
+              run={perform}
+            />
+          )}
         </aside>
         {active ? (
           <div className="min-w-0">
@@ -468,6 +524,16 @@ export function DocumentWorkbench({
                   Подтвердить текущую базу источников
                 </Button>
               </div>
+            )}
+            {tab === 'text' && (
+              <DocumentImplementation
+                key={active.id}
+                workspaceId={workspace.id}
+                document={active}
+                disabled={busy || dirty}
+                run={perform}
+                initiallyOpen={implementationOpen}
+              />
             )}
             <nav aria-label="Документ" className="my-4 flex flex-wrap gap-4">
               {(
@@ -652,16 +718,37 @@ export function DocumentWorkbench({
               </>
             )}
             {tab === 'sources' && (
-              <DocumentDependencies
-                key={active.id}
-                workspace={workspace}
-                active={active}
-                documents={documents}
-                busy={busy}
-                dirty={dirty}
-                perform={perform}
-                open={open}
-              />
+              <div className="space-y-4">
+                <div className="text-sm">
+                  <p>Зависимые документы:</p>
+                  {overview?.items
+                    .filter((item) =>
+                      overview.items
+                        .find((row) => row.id === active.id)
+                        ?.dependent_ids.includes(item.id),
+                    )
+                    .map((item) => (
+                      <Button
+                        key={item.id}
+                        variant="outline"
+                        disabled={busy}
+                        onClick={() => open(item.id)}
+                      >
+                        {item.title}
+                      </Button>
+                    ))}
+                </div>
+                <DocumentDependencies
+                  key={active.id}
+                  workspace={workspace}
+                  active={active}
+                  documents={documents}
+                  busy={busy}
+                  dirty={dirty}
+                  perform={perform}
+                  open={open}
+                />
+              </div>
             )}
             <div hidden={tab !== 'changes'}>
               <DocumentChanges

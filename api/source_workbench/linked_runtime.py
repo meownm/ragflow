@@ -6,4 +6,8 @@ from .linked_storage import LinkedDocumentRepository
 
 
 def build_linked_documents():
-    return LinkedDocuments(LinkedDocumentRepository(), RAGFlowSourceGateway(), RAGFlowAnswerGateway())
+    from api.apps.business_documents.runtime import document_queries
+    from .business_source import BusinessDocumentSources
+
+    business = BusinessDocumentSources(document_queries)
+    return LinkedDocuments(LinkedDocumentRepository(business), RAGFlowSourceGateway(), RAGFlowAnswerGateway(), business)

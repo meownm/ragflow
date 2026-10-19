@@ -86,6 +86,7 @@ import {
 import { Link, useNavigate, useParams } from 'react-router';
 import { ChangePreviewPanel } from './components/change-preview-panel';
 import { BusinessDocumentError } from './components/document-error';
+import { DocumentMarkdown } from './components/document-markdown';
 import { DocumentPane } from './components/document-pane';
 import {
   BusinessDocumentProgress,
@@ -2061,8 +2062,9 @@ export default function BusinessDocumentsPage() {
               <ul className="mt-2 max-h-40 list-disc space-y-1 overflow-y-auto ps-5 text-xs text-text-secondary">
                 {documentWarnings.map((warning, index) => (
                   <li key={`${warning.code}-${warning.section_id}-${index}`}>
-                    {warning.section_id && `Раздел ${warning.section_id}: `}
-                    {warning.message}
+                    <DocumentMarkdown>
+                      {`${warning.section_id ? `Раздел ${warning.section_id}: ` : ''}${warning.message}`}
+                    </DocumentMarkdown>
                   </li>
                 ))}
               </ul>

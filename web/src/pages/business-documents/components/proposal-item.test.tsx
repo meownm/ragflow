@@ -88,3 +88,19 @@ test('accepts a pending proposal as a decision', () => {
     decision: 'ACCEPTED',
   });
 });
+
+test('renders proposal and rationale Markdown without changing the decision payload', () => {
+  const callbacks = show({
+    ...proposal,
+    text: '**Новое** требование',
+    rationale: '*Обоснование*',
+    decision: 'PENDING',
+  });
+  expect(screen.getByText('Новое').tagName).toBe('STRONG');
+  expect(screen.getByText('Обоснование').tagName).toBe('EM');
+  fireEvent.click(screen.getByRole('button', { name: 'Принять' }));
+  expect(callbacks.onDecide).toHaveBeenCalledWith({
+    proposal_id: 'p1',
+    decision: 'ACCEPTED',
+  });
+});

@@ -263,3 +263,81 @@ def test_eva_export_drops_empty_paragraphs_and_list_items():
     assert "A &lt; B" in html
     assert 'data-id="br-r1-s1-b1"' not in html
     assert 'data-id="br-r1-s1-b2"' not in html
+
+
+def test_eva_export_renders_markdown_in_paragraphs_lists_and_table_cells():
+    from bs4 import BeautifulSoup
+
+    blocks = [
+        {"type": "paragraph", "text": "**Жирный** и *курсив*, ***оба***, ~~удалено~~, `код`.\nСтрока\n\n[Источник](https://example.test)"},
+        {"type": "list", "items": ["**Первый**", "*Второй*"]},
+        {"type": "table", "headers": ["**Поле**"], "rows": [["*Значение*"]]},
+        {"type": "paragraph", "text": "| Поле |\n| --- |\n| Тест |\n\n3. Шаг\n\n> Цитата"},
+        {"type": "paragraph", "text": '<script>alert(1)</script>\n\n<img src=x onerror="alert(1)">'},
+    ]
+    ast = {"sections": [{"id": "1", "title": "Scope", "blocks": blocks}]}
+    soup = BeautifulSoup(BusinessDocumentExportService._render_eva_wiki(ast, 1), "html.parser")
+    assert soup.select_one("strong").text == "Жирный"
+    assert soup.select_one("em").text == "курсив"
+    assert soup.select_one("em strong, strong em").text == "оба"
+    assert soup.select_one("del").text == "удалено"
+    assert soup.select_one("code").text == "код"
+    assert soup.select_one("br") is not None
+    assert soup.select_one("a")["href"] == "https://example.test"
+    assert soup.select_one("li strong").text == "Первый"
+    assert soup.select_one("th strong").text == "Поле"
+    assert soup.select_one("td em").text == "Значение"
+    assert len(soup.select('div[data-macros="wikitables"] table')) == 2
+    assert all(cell.find("p", recursive=False) is not None for cell in soup.select("th, td"))
+    assert all(item.find("p", recursive=False) is not None for item in soup.select("li"))
+    assert soup.select_one("ol")["start"] == "3"
+    assert soup.select_one("blockquote").text.strip() == "Цитата"
+    assert not soup.select("script, img, [onerror]")
+    ids = [tag["data-id"] for tag in soup.select("[data-id]")]
+    assert len(ids) == len(set(ids))
+
+
+@pytest.mark.parametrize("url", ["javascript:alert%281%29", "file:///private-document", "data:text/html,unsafe"])
+@pytest.mark.parametrize("kind", ["paragraph", "list", "table"])
+@pytest.mark.parametrize("prefix", ["", "!"])
+def test_eva_export_keeps_unsafe_markdown_urls_inert_in_every_text_block(kind, url, prefix):
+    text = f"{prefix}[Источник]({url})"
+    block = {"type": kind, **({"text": text} if kind == "paragraph" else {"items": [text]} if kind == "list" else {"headers": ["Поле"], "rows": [[text]]})}
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(BusinessDocumentExportService._render_eva_wiki({"sections": [{"id": "1", "title": "Scope", "blocks": [block]}]}, 1), "html.parser")
+    assert not soup.select("a, img")
+    assert "Источник" in soup.get_text()
+
+
+@pytest.mark.parametrize(
+    "source,href",
+    [
+        ("<support@example.test>", "mailto:support@example.test"),
+        ("[Поддержка](mailto:support@example.test)", "mailto:support@example.test"),
+        ("[Раздел](#section)", "#section"),
+        ("[Документ](/relative/path)", "/relative/path"),
+    ],
+)
+def test_eva_export_preserves_safe_markdown_links(source, href):
+    from bs4 import BeautifulSoup
+
+    ast = {"sections": [{"id": "1", "title": "Scope", "blocks": [{"type": "paragraph", "text": source}]}]}
+    soup = BeautifulSoup(BusinessDocumentExportService._render_eva_wiki(ast, 1), "html.parser")
+    assert soup.select_one("a")["href"] == href
+
+
+def test_eva_export_resolves_section_references_across_paragraph_list_and_table_blocks():
+    from bs4 import BeautifulSoup
+
+    blocks = [
+        {"type": "paragraph", "text": "[spec]: https://example.test/spec\n[mail]: mailto:support@example.test"},
+        {"type": "paragraph", "text": "См. [спецификацию][spec]."},
+        {"type": "list", "items": ["[Спецификация][spec]"]},
+        {"type": "table", "headers": ["[Источник][spec]"], "rows": [["[Поддержка][mail]"]]},
+    ]
+    ast = {"sections": [{"id": "1", "title": "Scope", "blocks": blocks}, {"id": "2", "title": "Other", "blocks": [{"type": "paragraph", "text": "[Вне контекста][spec]"}]}]}
+    soup = BeautifulSoup(BusinessDocumentExportService._render_eva_wiki(ast, 1), "html.parser")
+    assert [link["href"] for link in soup.select("a")] == ["https://example.test/spec"] * 3 + ["mailto:support@example.test"]
+    assert "[Вне контекста][spec]" in soup.get_text()
+    assert "[spec]:" not in soup.get_text()

@@ -11,6 +11,7 @@ import { cn } from '@/lib/utils';
 import { CheckCircle2, ChevronDown, CircleHelp, CircleOff } from 'lucide-react';
 import { type Ref, useEffect, useState } from 'react';
 import type { BusinessDocumentQuestion } from '../types';
+import { DocumentMarkdown } from './document-markdown';
 import { appendVoiceTranscript, VoiceInput } from './voice-input';
 
 const questionStatusPresentation = {
@@ -82,6 +83,11 @@ export function QuestionItem({
     !pending &&
     Boolean(selectedOptionId || customAnswer.trim());
 
+  const selectOption = (value: string) => {
+    setSelectedOptionId(value);
+    setCustomAnswer('');
+  };
+
   useEffect(() => {
     setSelectedOptionId(question.answer?.selected_option_id ?? '');
     setCustomAnswer(question.answer?.custom_answer ?? '');
@@ -116,12 +122,12 @@ export function QuestionItem({
             <div className="flex items-start gap-2">
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                  <span className="text-xs font-medium uppercase tracking-wide text-text-secondary">
+                  <h3 className="text-xs font-medium uppercase tracking-wide text-text-secondary">
                     Вопрос
                     {question.sequence_number
                       ? ` ${question.sequence_number}`
                       : ''}
-                  </span>
+                  </h3>
                   {question.target_section_id && (
                     <span className="font-mono text-[11px] text-text-secondary">
                       § {question.target_section_id}
@@ -138,14 +144,14 @@ export function QuestionItem({
                     {status.label}
                   </Badge>
                 </div>
-                <h3
+                <DocumentMarkdown
                   className={cn(
-                    'mt-2 whitespace-pre-wrap break-words text-sm font-medium leading-6 text-text-primary',
+                    'mt-2 text-sm font-medium leading-6 text-text-primary',
                     !expanded && 'line-clamp-2',
                   )}
                 >
                   {question.text}
-                </h3>
+                </DocumentMarkdown>
               </div>
               <CollapsibleTrigger asChild>
                 <button
@@ -173,32 +179,45 @@ export function QuestionItem({
                 className="mt-4 gap-2"
                 value={selectedOptionId}
                 disabled={!canAnswer || !isOpen || pending}
-                onValueChange={(value) => {
-                  setSelectedOptionId(value);
-                  setCustomAnswer('');
-                }}
+                onValueChange={selectOption}
               >
                 {question.options.map((option) => (
-                  <label
+                  <div
                     key={option.option_id}
                     className="flex cursor-pointer items-start gap-2.5 rounded-md px-2 py-2 text-sm transition-colors hover:bg-bg-card has-[:disabled]:cursor-default"
+                    role="presentation"
+                    onClick={(event) => {
+                      if (
+                        !canAnswer ||
+                        !isOpen ||
+                        pending ||
+                        (event.target as HTMLElement).closest(
+                          'a, button, input',
+                        )
+                      )
+                        return;
+                      selectOption(option.option_id);
+                    }}
                   >
                     <RadioGroupItem
                       value={option.option_id}
-                      aria-label={option.label}
+                      aria-labelledby={`question-option-${question.question_id}-${option.option_id}`}
                       className="mt-0.5"
                     />
-                    <span className="min-w-0">
-                      <span className="block whitespace-pre-wrap break-words text-text-primary">
+                    <div className="min-w-0 flex-1">
+                      <DocumentMarkdown
+                        id={`question-option-${question.question_id}-${option.option_id}`}
+                        className="text-text-primary"
+                      >
                         {option.label}
-                      </span>
+                      </DocumentMarkdown>
                       {option.description && (
-                        <span className="mt-0.5 block whitespace-pre-wrap break-words text-xs leading-5 text-text-secondary">
+                        <DocumentMarkdown className="mt-0.5 text-xs leading-5 text-text-secondary">
                           {option.description}
-                        </span>
+                        </DocumentMarkdown>
                       )}
-                    </span>
-                  </label>
+                    </div>
+                  </div>
                 ))}
               </RadioGroup>
 

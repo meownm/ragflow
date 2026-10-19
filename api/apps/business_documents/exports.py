@@ -25,13 +25,13 @@ import re
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any, Callable
-from urllib.parse import urlsplit
-
+from bs4 import BeautifulSoup
 from docx import Document as WordDocument
 from peewee import IntegrityError
 
 from api.apps.business_documents.assets import published_template, rendering_policy, render_document_ast
-from business_documents.domain.content import render_block_source, document_warning_texts, render_document_warning_appendix
+from business_documents.domain.content import render_block_source, render_section_text, document_warning_texts, render_document_warning_appendix
+from api.apps.business_documents.markdown_rendering import markdown_environment, render_markdown, render_inline_markdown, validate_external_url
 from business_documents.application.export import PreparedExport
 from business_documents.application.errors import BusinessDocumentError, ConflictError, ValidationError
 from api.db.db_models import BusinessDocument, BusinessDocumentExportArtifact, BusinessDocumentExportStage, BusinessDocumentJob, BusinessDocumentRevision
@@ -67,11 +67,19 @@ def _safe_filename(value: str) -> str:
     return normalized[:160] or "business_requirements"
 
 
-def _safe_external_url(value: str) -> str:
-    parsed = urlsplit(value)
-    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
-        raise ValidationError("UNSAFE_EXPORT_URL", "Only absolute HTTP(S) links are allowed in exported documents")
-    return value
+def _eva_markdown(value: str, node_id: str, policy: dict[str, Any], environment: dict[str, Any]) -> str:
+    soup = BeautifulSoup(render_markdown(value, environment), "html.parser")
+    for index, tag in enumerate(soup.find_all(True)):
+        tag["data-id"] = node_id if index == 0 else f"{node_id}-md{index}"
+        if tag.name == "ul":
+            tag["class"] = policy["nested_list_class"] if tag.find_parent(["ul", "ol"]) else policy["root_list_class"]
+        elif tag.name == "table":
+            wrapper = soup.new_tag("div", attrs={"class": policy["table_wrapper_class"], "data-macros": policy["table_wrapper_macro"], "data-id": f"{tag['data-id']}-wrap"})
+            tag.wrap(wrapper)
+            for y, row in enumerate(tag.find_all("tr")):
+                for x, cell in enumerate(row.find_all(["th", "td"])):
+                    cell.attrs.update({"colspan": "1", "rowspan": "1", "data-x": str(x), "data-y": str(y)})
+    return str(soup).strip()
 
 
 def _artifact_dict(row: BusinessDocumentExportArtifact) -> dict[str, Any]:
@@ -887,6 +895,7 @@ class BusinessDocumentExportService:
             f'<div class="business-requirements" data-template-version="{html.escape(published_template()["template_version"])}" data-revision="{revision_number}" data-generated-at="{generated_at}">'
         ]
         for section_index, section in enumerate(document_ast["sections"]):
+            environment = markdown_environment(render_section_text(section))
             heading_level = min(6, 2 + section["id"].count("."))
             section_id = html.escape(section["id"])
             section_node_id = f"br-r{revision_number}-s{section_index + 1}"
@@ -896,10 +905,10 @@ class BusinessDocumentExportService:
                 block_node_id = f"{section_node_id}-b{block_index + 1}"
                 if block_type == "paragraph":
                     if str(block["text"]).strip():
-                        lines.append(f'<p data-id="{block_node_id}">{html.escape(block["text"])}</p>')
+                        lines.append(_eva_markdown(block["text"], block_node_id, policy, environment))
                 elif block_type == "list":
                     items = "".join(
-                        f'<li data-id="{block_node_id}-li{item_index}"><p data-id="{block_node_id}-li{item_index}-p">{html.escape(str(item))}</p></li>'
+                        f'<li data-id="{block_node_id}-li{item_index}"><p data-id="{block_node_id}-li{item_index}-p">{render_inline_markdown(item, environment)}</p></li>'
                         for item_index, item in enumerate(block["items"], start=1)
                         if str(item).strip()
                     )
@@ -907,7 +916,7 @@ class BusinessDocumentExportService:
                         lines.append(f'<ul class="{policy["root_list_class"]}" style="list-style-type: disc;" data-id="{block_node_id}">{items}</ul>')
                 elif block_type == "table":
                     headers = "".join(
-                        f'<th colspan="1" rowspan="1" data-x="{x}" data-y="0" data-id="{block_node_id}-h{x}"><p data-id="{block_node_id}-h{x}-p">{html.escape(str(item)) or "&#160;"}</p></th>'
+                        f'<th colspan="1" rowspan="1" data-x="{x}" data-y="0" data-id="{block_node_id}-h{x}"><p data-id="{block_node_id}-h{x}-p">{render_inline_markdown(item, environment) or "&#160;"}</p></th>'
                         for x, item in enumerate(block["headers"])
                     )
                     rows = "".join(
@@ -915,7 +924,7 @@ class BusinessDocumentExportService:
                         + "".join(
                             f'<td colspan="1" rowspan="1" data-x="{x}" data-y="{y}" data-id="{block_node_id}-c{x}-{y}">'
                             f'<p data-id="{block_node_id}-c{x}-{y}-p">'
-                            f"{html.escape('' if value is None else str(value)) or '&#160;'}</p></td>"
+                            f"{render_inline_markdown('' if value is None else value, environment) or '&#160;'}</p></td>"
                             for x, value in enumerate(row)
                         )
                         + "</tr>"
@@ -929,10 +938,10 @@ class BusinessDocumentExportService:
                 elif block_type == "plantuml":
                     lines.append(f'<pre class="{policy["plantuml_class"]}" data-id="{block_node_id}"><code data-id="{block_node_id}-code">{html.escape(block["source"])}</code></pre>')
                 elif block_type == "image":
-                    image_url = _safe_external_url(block["url"])
+                    image_url = validate_external_url(block["url"])
                     lines.append(f'<img data-id="{block_node_id}" alt="{html.escape(block["alt"])}" src="{html.escape(image_url)}" />')
                 elif block_type == "reference":
-                    reference_url = _safe_external_url(block["url"])
+                    reference_url = validate_external_url(block["url"])
                     lines.append(f'<p data-id="{block_node_id}"><a data-id="{block_node_id}-a" href="{html.escape(reference_url)}">{html.escape(block["label"])}</a></p>')
                 else:
                     lines.append(f'<pre data-id="{block_node_id}"><code data-id="{block_node_id}-code">{html.escape(render_block_source(block))}</code></pre>')

@@ -1151,6 +1151,24 @@ def test_markdown_html_is_sanitized_before_eva_draft(database):
     assert "javascript:" not in stored.draft_html
 
 
+def test_eva_draft_uses_the_same_markdown_representation_as_export(database):
+    from bs4 import BeautifulSoup
+    from api.apps.business_documents.exports import BusinessDocumentExportService
+
+    source = "~~Устаревшее~~ **Правило**\nНовая строка\n\n[Поддержка](mailto:support@example.test)"
+    client = FakeEvaClient()
+    created = _create(client)
+    draft = _generate(created, source)
+    stored = BusinessDocumentEvaChange.get_by_id(draft["change_id"])
+    ast = {"sections": [{"id": "1", "title": "Scope", "blocks": [{"type": "paragraph", "text": source}]}]}
+    exported = BeautifulSoup(BusinessDocumentExportService._render_eva_wiki(ast, 1), "html.parser")
+    actual = BeautifulSoup(stored.draft_html, "html.parser")
+    assert actual.select_one("del").text == exported.select_one("del").text == "Устаревшее"
+    assert actual.select_one("strong").text == exported.select_one("strong").text == "Правило"
+    assert len(actual.select("br")) == len(exported.select("br")) == 1
+    assert actual.select_one("a")["href"] == exported.select_one("a")["href"] == "mailto:support@example.test"
+
+
 def test_publish_recovers_when_eva_committed_before_client_error(database):
     client = FakeEvaClient()
     created = _create(client)

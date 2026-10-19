@@ -41,6 +41,7 @@ import type {
   EvaDocumentChangeAction,
   EvaDocumentChangeState,
 } from '../types';
+import { DocumentMarkdown } from './document-markdown';
 import { EvaAccessNotice, isEvaAccessError, useEvaAccess } from './eva-access';
 import { appendVoiceTranscript, VoiceInput } from './voice-input';
 
@@ -326,13 +327,13 @@ export function EvaChangeWorkbench({ changeId }: { changeId: string }) {
             <p className="text-xs font-medium text-text-secondary">
               Задача на доработку
             </p>
-            <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-text-primary">
+            <DocumentMarkdown className="mt-2 text-sm leading-6 text-text-primary">
               {change.change_summary}
-            </p>
+            </DocumentMarkdown>
           </div>
-          <pre className="whitespace-pre-wrap break-words px-5 py-5 font-sans text-sm leading-6 text-text-secondary">
+          <DocumentMarkdown className="px-5 py-5 text-sm leading-6 text-text-secondary">
             {change.base_markdown}
-          </pre>
+          </DocumentMarkdown>
         </section>
 
         <section
@@ -366,12 +367,12 @@ export function EvaChangeWorkbench({ changeId }: { changeId: string }) {
           {view === 'draft' ? (
             <div className="flex min-h-0 flex-1 flex-col p-4">
               <div className="min-h-0 flex-1 overflow-y-auto rounded-md border border-border-button bg-bg-card/40 p-4 scrollbar-auto">
-                <pre
-                  className="whitespace-pre-wrap break-words font-sans text-sm leading-6 text-text-primary"
+                <DocumentMarkdown
+                  className="text-sm leading-6 text-text-primary"
                   data-testid="eva-agent-draft"
                 >
                   {change.draft_markdown}
-                </pre>
+                </DocumentMarkdown>
               </div>
               <p className="mt-3 text-xs leading-5 text-text-secondary">
                 Текст формирует агент. Для корректировки результата уточните

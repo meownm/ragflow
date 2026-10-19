@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import type { BusinessDocumentProposal } from '../types';
 import { BusinessDocumentError } from './document-error';
+import { DocumentMarkdown } from './document-markdown';
 
 interface ProposalItemProps {
   proposal: BusinessDocumentProposal;
@@ -151,13 +152,13 @@ export function ProposalItem({
                   : status.label}
             </Badge>
           </div>
-          <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-text-primary">
+          <DocumentMarkdown className="mt-2 text-sm leading-6 text-text-primary">
             {proposal.text}
-          </p>
+          </DocumentMarkdown>
           {proposal.rationale && (
-            <p className="mt-2 whitespace-pre-wrap break-words text-xs leading-5 text-text-secondary">
+            <DocumentMarkdown className="mt-2 text-xs leading-5 text-text-secondary">
               {proposal.rationale}
-            </p>
+            </DocumentMarkdown>
           )}
           {isClosedWithoutDecision && (
             <p

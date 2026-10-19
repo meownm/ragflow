@@ -14,6 +14,7 @@ import type {
   BusinessDocumentRevision,
   BusinessDocumentSelection,
 } from '../types';
+import { DocumentMarkdown } from './document-markdown';
 import { ProposalItem } from './proposal-item';
 import { QuestionItem } from './question-item';
 import { appendVoiceTranscript, VoiceInput } from './voice-input';
@@ -424,13 +425,15 @@ export function ProtocolPane({
                       : 'border-accent-primary/60'
                   }`}
                 >
-                  {item.anchor.selected_text}
+                  <DocumentMarkdown>
+                    {item.anchor.selected_text}
+                  </DocumentMarkdown>
                 </blockquote>
               </div>
             )}
-            <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-text-primary">
+            <DocumentMarkdown className="mt-2 text-sm leading-6 text-text-primary">
               {item.text}
-            </p>
+            </DocumentMarkdown>
             {item.disposition && (
               <p
                 className="mt-2 text-[11px] font-medium text-text-secondary"

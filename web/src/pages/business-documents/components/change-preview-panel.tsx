@@ -1,6 +1,8 @@
 import { Button } from '@/components/ui/button';
 import { X } from 'lucide-react';
+import { useId } from 'react';
 import type { BusinessDocumentChangePreview } from '../types';
+import { DocumentMarkdown } from './document-markdown';
 import { EvidenceRefsDiff } from './evidence-refs-diff';
 import { RevisionTextDiff } from './revision-text-diff';
 
@@ -16,29 +18,44 @@ function ChangeSources({
   sources: BusinessDocumentChangePreview['acknowledged_no_change_sources'];
   onFocusSource?: FocusSource;
 }) {
-  return sources?.map((source) =>
-    source.entity_id && source.kind !== 'eva' ? (
-      <button
-        key={source.event_id}
-        type="button"
-        className="block text-left text-accent-primary hover:underline"
-        onClick={() =>
-          onFocusSource?.(
-            source.kind as 'question' | 'proposal' | 'comment',
-            source.entity_id!,
-          )
-        }
-      >
-        {source.label}
-        {source.text ? `: ${source.text}` : ''} · показать в обсуждении
-      </button>
-    ) : (
-      <p key={source.event_id}>
-        {source.label}
-        {source.text ? `: ${source.text}` : ''}
-      </p>
-    ),
-  );
+  const instanceId = useId();
+  return sources?.map((source) => (
+    <div key={source.event_id}>
+      {source.entity_id && source.kind !== 'eva' ? (
+        <button
+          type="button"
+          aria-labelledby={
+            source.text
+              ? `source-label-${instanceId}-${source.event_id} source-text-${instanceId}-${source.event_id} source-hint-${instanceId}-${source.event_id}`
+              : undefined
+          }
+          className="block text-left text-accent-primary hover:underline"
+          onClick={() =>
+            onFocusSource?.(
+              source.kind as 'question' | 'proposal' | 'comment',
+              source.entity_id!,
+            )
+          }
+        >
+          <span id={`source-label-${instanceId}-${source.event_id}`}>
+            {source.label}
+            {source.text ? ':' : ''}
+          </span>
+          <span id={`source-hint-${instanceId}-${source.event_id}`}>
+            {' '}
+            · показать в обсуждении
+          </span>
+        </button>
+      ) : (
+        <p>{source.label}</p>
+      )}
+      {source.text && (
+        <DocumentMarkdown id={`source-text-${instanceId}-${source.event_id}`}>
+          {source.text}
+        </DocumentMarkdown>
+      )}
+    </div>
+  ));
 }
 
 export function DocumentSectionChange({

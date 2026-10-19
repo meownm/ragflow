@@ -186,6 +186,57 @@ def _install_common_routes(page):
 
 
 @pytest.mark.p1
+@pytest.mark.parametrize("width", [1440, 390])
+def test_business_document_protocol_markdown_and_decisions(page, base_url, width):
+    _install_session(page)
+    page.route("**/api/v1/**", lambda route: route.fulfill(json=_envelope({})))
+    _install_common_routes(page)
+    projection = _projection()
+    projection["protocol"]["warnings"] = [{"code": "REVIEW_NOTE", "message": "**Замечание проверки**"}]
+    question = projection["protocol"]["questions"][0]
+    question["text"] = "**Согласовать** *сроки*?\n\n| Этап | Срок |\n| --- | --- |\n| Проверка | 1 день |\n\n<script>alert(1)</script>"
+    question["options"][0]["label"] = "**По времени** [условия](https://example.test/conditions)"
+    question["options"][1]["label"] = "*По качеству*"
+    proposal = projection["protocol"]["proposals"][0]
+    proposal["text"] = "**Добавить метрику**\n\n- Измерить время\n- Проверить результат"
+    proposal["rationale"] = "*Обоснование* и `идентификатор`"
+    projection["protocol"]["comments"] = [{"comment_id": "comment-md", "text": "> **Комментарий автора**", "section_id": "1"}]
+    page.route("**/api/v1/business-documents/doc-ui-1", lambda route: route.fulfill(json=_envelope(projection)))
+    page.route("**/api/v1/business-documents/doc-ui-1/commands", lambda route: route.fulfill(json=_envelope({"accepted": True, "state_version": 19})))
+    page.set_viewport_size({"width": width, "height": 960})
+    page.goto(f"{base_url.rstrip('/')}/business-documents/doc-ui-1")
+    card = page.get_by_test_id("business-document-question")
+    expect(card.locator("strong").first).to_have_text("Согласовать", timeout=RESULT_TIMEOUT_MS)
+    expect(card.locator("em").first).to_have_text("сроки")
+    expect(card.get_by_role("table")).to_contain_text("Проверка")
+    expect(card.locator("script")).to_have_count(0)
+    expect(card.get_by_role("link", name="условия")).to_have_attribute("href", "https://example.test/conditions")
+    warning_panel = page.get_by_test_id("business-document-warnings")
+    warning_panel.locator("summary").click()
+    expect(warning_panel.locator("strong")).to_have_text("Замечание проверки")
+    radio = card.get_by_role("radio", name="По времени условия")
+    radio.focus()
+    radio.press("ArrowDown", delay=100)
+    expect(card.get_by_role("radio", name="По качеству")).to_be_checked()
+    card.get_by_text("По времени", exact=True).click()
+    expect(radio).to_be_checked()
+    with page.expect_request("**/api/v1/business-documents/doc-ui-1/commands") as answer_request:
+        card.get_by_role("button", name="Ответить", exact=True).click()
+    answer = answer_request.value.post_data_json
+    assert answer["type"] == "ANSWER_QUESTION"
+    assert answer["payload"] == {"question_id": "question-1", "selected_option_id": "time", "custom_answer": None}
+    proposal_card = page.get_by_test_id("business-document-proposal")
+    expect(proposal_card.locator("strong")).to_have_text("Добавить метрику")
+    expect(proposal_card.get_by_role("listitem")).to_have_count(2)
+    expect(proposal_card.locator("em")).to_have_text("Обоснование")
+    expect(proposal_card.locator("code")).to_have_text("идентификатор")
+    expect(page.get_by_test_id("business-document-comment").locator("blockquote strong")).to_have_text("Комментарий автора")
+    with page.expect_request("**/api/v1/business-documents/doc-ui-1/commands") as decision_request:
+        proposal_card.get_by_role("button", name="Принять", exact=True).click()
+    assert decision_request.value.post_data_json["payload"] == {"proposal_id": "proposal-1", "decision": "ACCEPTED"}
+
+
+@pytest.mark.p1
 @pytest.mark.auth
 def test_business_documents_list_validation_and_create_navigation(
     page,

@@ -33,6 +33,10 @@ const config: Config = {
     },
   },
   testPathIgnorePatterns: ['/node_modules/', '/dist/'],
+  // Render Markdown in component tests using the same ESM parser as the SPA.
+  transformIgnorePatterns: [
+    '/node_modules/(?!(?:\\.pnpm|@ungap/structured-clone|react-markdown|remark-[^/]+|unified|bail|is-plain-obj|trough|vfile(?:-message)?|unist-util-[^/]+|mdast-util-[^/]+|hast-util-[^/]+|micromark[^/]*|decode-named-character-reference|character-entities|property-information|space-separated-tokens|comma-separated-tokens|estree-util-[^/]+|ccount|escape-string-regexp|trim-lines|devlop|zwitch|html-url-attributes|longest-streak|markdown-table)/)',
+  ],
 };
 
 export default config;

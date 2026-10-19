@@ -27,7 +27,7 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 from bs4 import BeautifulSoup
-from markdown import markdown as render_markdown
+from api.apps.business_documents.markdown_rendering import render_markdown
 from markdownify import markdownify
 from peewee import fn
 
@@ -127,12 +127,7 @@ def _html_to_markdown(value: str) -> str:
 
 
 def _markdown_to_html(value: str) -> str:
-    rendered = render_markdown(
-        _canonical_markdown(value),
-        extensions=["extra", "sane_lists"],
-        output_format="html5",
-    )
-    return _sanitize_html(rendered)
+    return render_markdown(_canonical_markdown(value))
 
 
 def _split_sections(markdown: str) -> list[dict[str, Any]]:

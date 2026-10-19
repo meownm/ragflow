@@ -23,6 +23,7 @@ import type {
   BusinessDocumentRevision,
   BusinessDocumentRevisionBasis,
 } from '../types';
+import { DocumentMarkdown } from './document-markdown';
 import { EvidenceRefsDiff, evidenceRefsChanged } from './evidence-refs-diff';
 import { RevisionTextDiff } from './revision-text-diff';
 
@@ -354,9 +355,14 @@ export function RevisionHistoryPanel({
                                   : basis.actor_id}
                               </span>
                             )}
-                            <span className="mt-0.5 block whitespace-pre-wrap text-xs leading-5 text-text-secondary">
+                            <DocumentMarkdown
+                              className="mt-0.5 text-xs leading-5 text-text-secondary"
+                              components={{
+                                a: ({ children }) => <span>{children}</span>,
+                              }}
+                            >
                               {basis.summary}
-                            </span>
+                            </DocumentMarkdown>
                             {basis.details && (
                               <span className="mt-1 block border-s border-border-button ps-2 text-[11px] leading-4 text-text-disabled">
                                 {basis.details}

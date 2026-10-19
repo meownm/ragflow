@@ -17,6 +17,7 @@
 import json
 import secrets
 import logging
+from pathlib import Path
 from typing import Any
 
 from common.time_utils import current_timestamp, datetime_format
@@ -63,6 +64,26 @@ from document_quality_runs import (
 )
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/api/v1/admin")
+
+
+@admin_bp.route("/maintenance", methods=["GET"])
+@login_required
+@check_admin_auth
+def get_maintenance_status():
+    path = Path(__file__).resolve().parents[2] / "logs" / "maintenance" / "status.json"
+    try:
+        if path.stat().st_size > 256 * 1024:
+            raise ValueError("Maintenance report is too large")
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or data.get("schema_version") != 1:
+            raise ValueError("Invalid maintenance report")
+        return success_response(data, "Get maintenance status", 0)
+    except FileNotFoundError:
+        return success_response({"configured": False}, "Maintenance is not configured", 0)
+    except (OSError, ValueError):
+        logging.exception("Failed to read maintenance report")
+        response, _ = error_response("Maintenance report unavailable", 503)
+        return response, 503
 
 
 @admin_bp.errorhandler(AdminException)

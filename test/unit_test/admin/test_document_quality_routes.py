@@ -40,6 +40,7 @@ def client(monkeypatch):
 @pytest.mark.parametrize(
     "method,path",
     [
+        ("get", "/maintenance"),
         ("get", "/document-quality"),
         ("get", "/document-quality/runs"),
         ("get", "/document-quality/jobs"),
@@ -93,3 +94,17 @@ def test_invalid_operational_window_and_offset_are_rejected(client):
     headers = {"Authorization": "test"}
     for path in ("/document-quality?days=bad", "/document-quality/jobs?days=bad", "/document-quality/jobs?days=2", "/document-quality/jobs?offset=-1"):
         assert client.get("/api/v1/admin" + path, headers=headers).status_code == 400
+
+
+def test_maintenance_reports_unconfigured_and_corrupt_state(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(routes, "__file__", str(tmp_path / "admin/server/routes.py"))
+    url = "/api/v1/admin/maintenance"
+    headers = {"Authorization": "test"}
+    assert client.get(url, headers=headers).json["data"] == {"configured": False}
+    report = tmp_path / "logs/maintenance/status.json"
+    report.parent.mkdir(parents=True)
+    report.write_text('{"schema_version": 1, "configured": true}', encoding="utf-8")
+    assert client.get(url, headers=headers).json["data"]["configured"] is True
+    for value in ("[]", "{broken", '"' + "a" * (256 * 1024) + '"'):
+        report.write_text(value, encoding="utf-8")
+        assert client.get(url, headers=headers).status_code == 503

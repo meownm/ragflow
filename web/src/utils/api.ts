@@ -515,6 +515,7 @@ export default {
     `${restAPIv1}/admin/users/${username}/agents`,
 
   adminListServices: `${restAPIv1}/admin/services`,
+  adminMaintenance: `${restAPIv1}/admin/maintenance`,
   adminShowServiceDetails: (serviceId: string) =>
     `${restAPIv1}/admin/services/${serviceId}`,
 

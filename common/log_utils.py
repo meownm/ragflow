@@ -20,7 +20,7 @@ import logging
 import json
 import re
 from datetime import datetime, timezone
-from logging.handlers import RotatingFileHandler
+from logging.handlers import TimedRotatingFileHandler
 from common.file_utils import get_project_base_directory
 from common.observability import get_log_context
 
@@ -74,7 +74,7 @@ def init_root_logger(logfile_basename: str, log_format: str | None = None):
     selected_format = os.getenv("LOG_FORMAT", "json").strip().lower()
     formatter = JsonLogFormatter() if selected_format == "json" and log_format is None else logging.Formatter(log_format or "%(asctime)-15s %(levelname)-8s %(process)d %(message)s")
 
-    handler1 = RotatingFileHandler(log_path, maxBytes=10 * 1024 * 1024, backupCount=5)
+    handler1 = TimedRotatingFileHandler(log_path, when="midnight", backupCount=60, utc=True)
     handler1.setFormatter(formatter)
     logger.addHandler(handler1)
 

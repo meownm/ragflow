@@ -70,6 +70,7 @@ import {
 import JsonView from 'react18-json-view';
 import 'react18-json-view/src/style.css';
 
+import MaintenanceStatus from './maintenance-status';
 import ServiceDetail from './service-detail';
 import TaskExecutorDetail from './task-executor-detail';
 
@@ -298,6 +299,7 @@ function AdminServiceStatus() {
           </CardHeader>
 
           <CardContent>
+            <MaintenanceStatus />
             <Table>
               <colgroup>
                 <col className="w-[6%]" />

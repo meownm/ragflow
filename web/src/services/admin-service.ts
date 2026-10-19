@@ -17,6 +17,33 @@ const request = axios.create({
   timeout: 300000,
 });
 
+export const getMaintenanceStatus = () =>
+  request.get<{ code: number; message?: string; data: AdminMaintenanceReport }>(
+    api.adminMaintenance,
+  );
+
+export interface AdminMaintenanceReport {
+  configured: boolean;
+  generated_at?: string;
+  disk?: { total_bytes: number; free_bytes: number; used_percent: number };
+  logs?: {
+    retention_days: number;
+    loki_retention_hours: number;
+    scope: string[];
+  };
+  elastic?: {
+    store_bytes: number;
+    deleted_documents: number;
+    last_run?: {
+      finished_at: string;
+      outcome: string;
+      indices: { index: string; outcome: string }[];
+    };
+  };
+  next_run?: { report: string; elastic: string };
+  error?: string;
+}
+
 request.interceptors.request.use((config) => {
   const data = convertTheKeysOfTheObjectToSnake(config.data);
   const params = convertTheKeysOfTheObjectToSnake(config.params) as any;

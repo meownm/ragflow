@@ -9,7 +9,8 @@ from uuid import uuid4
 
 from json_repair import repair_json
 
-from business_documents.domain.content import apply_change_plan, render_section_text, validate_contract
+from business_documents.domain.block_diff import BLOCK_OPERATIONS, with_block_ids
+from business_documents.domain.content import apply_change_plan, bind_change_plan_snapshot, render_section_text, validate_contract
 from business_documents.domain.errors import RuleViolation
 from business_documents.domain.job_recovery import MAX_AI_CALLS
 from business_documents.domain.requirement_coverage import changed_section_repetitions, validate_requirement_coverage
@@ -225,6 +226,9 @@ def run_metric_placement(case, tenant, adapter):
         return result, []
     failures = result["failures"]
     output = job.result["output"]
+    if "unapplied_changes" in output:
+        failures.append("job:CHANGE_FORMAT_NOT_APPLIED")
+        return result, [job.result["execution"]["ai"]]
     document = document_queries.get_document(document["document_id"], tenant)
     if document["current_revision"] != base:
         failures.append("preview_mutated_revision")
@@ -250,7 +254,15 @@ def run_metric_placement(case, tenant, adapter):
 
 def _response(call):
     raw = call.get("response")
-    return deepcopy(raw) if isinstance(raw, dict) else repair_json(raw, return_objects=True) if isinstance(raw, str) else None
+    parsed = deepcopy(raw) if isinstance(raw, dict) else repair_json(raw, return_objects=True) if isinstance(raw, str) else None
+    if isinstance(raw, str) and not isinstance(parsed, dict):
+        fenced = re.findall(r"(?ms)^```json[ \t]*\r?\n(.*?)^```[ \t]*$", raw)
+        if len(fenced) == 1:
+            try:
+                parsed = json.loads(fenced[0])
+            except ValueError:
+                pass
+    return parsed
 
 
 def _verification_evidence_failures(calls, job_input, sources, titles):
@@ -276,7 +288,9 @@ def _verification_evidence_failures(calls, job_input, sources, titles):
                 raise RuleViolation("INVALID_AI_JSON", "AI response is not valid JSON") from error
             if not isinstance(verdict, dict):
                 raise RuleViolation("INVALID_AI_JSON", "AI response must be a JSON object")
-            validate_requirement_coverage(verdict, sources, titles)
+            verdict = validate_requirement_coverage(verdict, sources, titles)
+            if verdict["status"] != "PASS":
+                raise RuleViolation("REQUIREMENT_COVERAGE_FAILED", "The recorded semantic verdict rejected the changes")
         except RuleViolation as error:
             if feedback is not None or error.code not in {"EMPTY_AI_RESPONSE", "INVALID_AI_JSON", "INVALID_REQUIREMENT_COVERAGE"}:
                 failures.append("invalid_final_verdict")
@@ -307,7 +321,7 @@ def evidence_failures(case, evidence, prompts, template, schema, change_schema):
     plan = evidence["change_plan"]
     if plan["acknowledged_no_change_event_ids"]:
         failures.append("unapplied_confirmed_source")
-    if len(plan["operations"]) != 2 or {o["section_id"] for o in plan["operations"]} != set(sources):
+    if not plan["operations"] or any(o["type"] not in BLOCK_OPERATIONS or o["section_id"] not in {"5.4", "5.5"} for o in plan["operations"]):
         failures.append("unexpected_operations")
     # The inventory retains original locations for replay, not section limits.
     allowed_sources = set(sources["5"] + sources["5.5"])
@@ -328,7 +342,8 @@ def evidence_failures(case, evidence, prompts, template, schema, change_schema):
         if replayed != evidence["final_ast"]:
             failures.append("plan_ast_mismatch")
     final = {s["id"]: s for s in evidence["final_ast"]["sections"]}
-    base = case["seed"]["base_document"]["sections"]
+    identified_base = with_block_ids(case["seed"]["base_document"])
+    base = identified_base["sections"]
     base_ids = {section["id"] for section in base}
     if set(final) != base_ids | {"5.4"}:
         failures.append("section_inventory")
@@ -382,7 +397,7 @@ def evidence_failures(case, evidence, prompts, template, schema, change_schema):
             for index, text in enumerate(re.split(r"(?<=[.!?;])\s+|\n+", source["text"]))
             if text.strip()
         }
-        if inputs.get("confirmed_requirement_fragments") != expected_fragments or inputs.get("current_revision", {}).get("document_ast") != case["seed"]["base_document"]:
+        if inputs.get("confirmed_requirement_fragments") != expected_fragments or inputs.get("current_revision", {}).get("document_ast") != identified_base:
             failures.append("source_input_mismatch")
         generated = _response(last_plan)
         if isinstance(generated, dict) and "change_plan" in generated:
@@ -395,13 +410,19 @@ def evidence_failures(case, evidence, prompts, template, schema, change_schema):
                 generated["schema_version"] = "1"
             aliases = {q["question_id"]: q["answer"]["source_event_id"] for q in protocol.get("questions", []) if q.get("question_id") and (q.get("answer") or {}).get("source_event_id")}
             aliases.update({p["proposal_id"]: p["decision_event_id"] for p in protocol.get("proposals", []) if p.get("proposal_id") and p.get("decision_event_id")})
-            hashes = {operation["section_id"]: operation["expected_section_hash"] for operation in plan["operations"]}
             for operation in generated.get("operations", []) if isinstance(generated.get("operations"), list) else []:
                 if isinstance(operation, dict) and isinstance(operation.get("section_id"), str):
-                    if operation["section_id"] in hashes:
-                        operation["expected_section_hash"] = hashes[operation["section_id"]]
                     if isinstance(operation.get("source_event_ids"), list):
                         operation["source_event_ids"] = [aliases.get(value, value) if isinstance(value, str) else value for value in operation["source_event_ids"]]
+            revision_id = inputs.get("current_revision", {}).get("revision_id")
+            state_version = inputs.get("state_version")
+            if not isinstance(revision_id, str) or type(state_version) is not int:
+                failures.append("source_input_mismatch")
+            else:
+                try:
+                    generated = bind_change_plan_snapshot(identified_base, generated, base_revision_id=revision_id, source_state_version=state_version)
+                except RuleViolation:
+                    failures.append("model_plan_mismatch")
         if _json(generated) != _json(plan):
             failures.append("model_plan_mismatch")
         changed = {operation["section_id"] for operation in plan["operations"]}

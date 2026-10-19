@@ -96,16 +96,8 @@ export interface IFlowTemplate {
   id: string;
   update_date: string;
   update_time: number;
-  description: {
-    en: string;
-    zh: string;
-    de: string;
-  };
-  title: {
-    en: string;
-    zh: string;
-    de: string;
-  };
+  description: Record<string, string>;
+  title: Record<string, string>;
 }
 
 export interface IGenerateForm {

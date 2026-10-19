@@ -12,9 +12,8 @@ from test.evals.business_documents import test_live_model_quality as live
 from test.evals.business_documents.metric_placement import placement_failures
 from api.apps.business_documents.adapters.persistence import DOCUMENT_TABLES
 from api.db.db_models import User
-from business_documents.domain.content import section_hash
 from tools.quality.verify_business_document_quality_report import QualityGateFailed, verify_report
-from test.unit_test.tools.quality.test_business_document_quality_report import _report
+from test.unit_test.tools.quality.test_business_document_quality_report import _placement_evidence, _report
 
 
 CASE = next(case for case in json.loads(live.MODEL_GOLDEN_PATH.read_text(encoding="utf-8"))["cases"] if case["workflow"] == "metric_placement")
@@ -57,6 +56,33 @@ def test_active_suite_preserves_original_cases_and_registers_admin_diagnostic(mo
     active = json.loads(live.MODEL_GOLDEN_PATH.read_text(encoding="utf-8"))
     assert active["cases"][:-1] == baseline["cases"]
     assert CASE["id"] in _known_case_ids()
+
+
+def test_injection_fixture_answers_limit_and_sla_without_removing_attack_or_facts():
+    suite = json.loads(live.MODEL_GOLDEN_PATH.read_text(encoding="utf-8"))
+    case = next(case for case in suite["cases"] if case["id"].startswith("M04_"))
+    assert "одной активной заявки на сотрудника" in live._answer_for(case, {"target_section_id": "4"})
+    answer = live._answer_for(case, {"target_section_id": "5.5"})
+    assert all(value in answer for value in ("99,5%", "3 секунды", "equipment_request_submitted", "equipment_request_error_total"))
+    assert len(case["controlled_facts"]) == 5
+    assert case["evidence_chunks"] and case["expected"]
+
+
+def test_unapplied_model_reply_reports_format_failure_before_confirmation(monkeypatch):
+    class Unapplied(FixedTransport):
+        def generate(self, tenant, system, payload, **kwargs):
+            super().generate(tenant, system, payload, **kwargs)
+            return "Please clarify the requested change."
+
+    database = SqliteDatabase(":memory:")
+    with database.bind_ctx((*DOCUMENT_TABLES, User), bind_refs=False, bind_backrefs=False), database.connection_context():
+        database.create_tables((*DOCUMENT_TABLES, User))
+        monkeypatch.setattr(live, "RAGFlowLLMAdapter", lambda **_: Unapplied())
+        execution = live._run_model_case(CASE, "metric-placement-quality", [])
+        assert execution.result["status"] == "FAIL"
+        assert execution.result["failures"] == ["job:CHANGE_FORMAT_NOT_APPLIED"]
+        assert "final_ast" not in execution.result["evidence"]
+        assert len(execution.result["evidence"]["model_calls"]) == 1
 
 
 @pytest.mark.parametrize("requirement", CASE["seed"]["requirements"], ids=lambda r: r["id"])
@@ -134,14 +160,17 @@ class FixedTransport:
             "acknowledged_no_change_event_ids": [],
             "operations": [
                 {
-                    "operation_id": section,
-                    "type": "REPLACE_SECTION_CONTENT",
-                    "section_id": section,
-                    "expected_section_hash": section_hash(sections[section]),
-                    "source_event_ids": [source],
-                    "content": {"blocks": [*deepcopy(sections["5"]["blocks"]), deepcopy(ideal["5.4"])] if section == "5" else deepcopy(ideal["5.5"]["blocks"])},
-                }
-                for section, source in [("5", answer), ("5.5", proposal)]
+                    "operation_id": "report",
+                    "type": "ADD_SECTION",
+                    "section_id": "5.4",
+                    "title": ideal["5.4"]["title"],
+                    "source_event_ids": [answer],
+                    "content": {"blocks": deepcopy(ideal["5.4"]["blocks"])},
+                },
+                *[
+                    {"operation_id": f"monitor-{index}", "type": "REPLACE_BLOCK", "section_id": "5.5", "block_id": original["id"], "source_event_ids": [proposal], "block": deepcopy(block)}
+                    for index, (original, block) in enumerate(zip(sections["5.5"]["blocks"], ideal["5.5"]["blocks"], strict=True))
+                ],
             ],
         }
 
@@ -153,8 +182,7 @@ class FixedTransport:
 @pytest.fixture()
 def case_execution(monkeypatch, request):
     database = SqliteDatabase(":memory:")
-    with database.bind_ctx((*DOCUMENT_TABLES, User), bind_refs=False, bind_backrefs=False):
-        database.connect()
+    with database.bind_ctx((*DOCUMENT_TABLES, User), bind_refs=False, bind_backrefs=False), database.connection_context():
         database.create_tables((*DOCUMENT_TABLES, User))
         adapter = FixedTransport(getattr(request, "param", ()))
         monkeypatch.setattr(live, "RAGFlowLLMAdapter", lambda **_: adapter)
@@ -162,7 +190,6 @@ def case_execution(monkeypatch, request):
         assert execution.result["status"] == "PASS", execution.result["failures"]
         assert all(timeout is not None and 0 < timeout <= 900 for timeout in adapter.timeouts)
         yield execution
-        database.close()
 
 
 def test_registered_workflow_records_actual_prompt_and_model_exchanges(case_execution, tmp_path):
@@ -180,6 +207,19 @@ def test_registered_workflow_records_actual_prompt_and_model_exchanges(case_exec
     assert "requirement_coverage.v1.md" in report["prompts"]
 
 
+def test_insert_block_proof_preserves_requirements_and_replay(tmp_path):
+    report = _report()
+    result = next(item for item in report["case_results"] if item["case_id"] == CASE["id"])
+    result["evidence"] = _placement_evidence(CASE, insert_monitor=True)
+    path = tmp_path / "insert-proof.json"
+    path.write_text(json.dumps(report), encoding="utf-8")
+    assert verify_report(path, live.REPO_ROOT, "candidate-sha")["status"] == "PASS"
+    next(s for s in result["evidence"]["final_ast"]["sections"] if s["id"] == "5.5")["blocks"][0]["text"] = "The monitoring requirement disappeared"
+    path.write_text(json.dumps(report), encoding="utf-8")
+    with pytest.raises(QualityGateFailed):
+        verify_report(path, live.REPO_ROOT, "candidate-sha")
+
+
 @pytest.mark.parametrize("damage", [None, "source", "metric", "hash", "prompt", "missing", "plan", "source_inventory"])
 def test_release_report_requires_replayable_placement_proof(case_execution, tmp_path, damage):
     report = _report()
@@ -187,7 +227,8 @@ def test_release_report_requires_replayable_placement_proof(case_execution, tmp_
     result.update(deepcopy(case_execution.result))
     evidence = result["evidence"]
     if damage == "source":
-        evidence["change_plan"]["operations"][0]["source_event_ids"] = evidence["expected_sources"]["5.5"]
+        for operation in evidence["change_plan"]["operations"]:
+            operation["source_event_ids"] = evidence["expected_sources"]["5.5"]
     elif damage == "metric":
         next(s for s in evidence["final_ast"]["sections"] if s["id"] == "5.4")["blocks"][0]["rows"].pop()
     elif damage == "hash":
@@ -197,7 +238,7 @@ def test_release_report_requires_replayable_placement_proof(case_execution, tmp_
     elif damage == "missing":
         del result["evidence"]
     elif damage == "plan":
-        evidence["change_plan"]["operations"][1]["content"]["blocks"] = [{"type": "paragraph", "text": "SLA 8 часов"}]
+        evidence["change_plan"]["operations"][1]["block"]["text"] = "SLA 8 часов"
     elif damage == "source_inventory":
         evidence["expected_sources"]["5"] = ["invented"]
         evidence["change_plan"]["operations"][0]["source_event_ids"] = ["invented"]
@@ -218,7 +259,7 @@ def test_release_report_accepts_confirmed_sources_across_sections(case_execution
     evidence = result["evidence"]
     sources = evidence["expected_sources"]
     for operation in evidence["change_plan"]["operations"]:
-        operation["source_event_ids"] = sources["5"] + sources["5.5"] if shared else sources["5.5" if operation["section_id"] == "5" else "5"]
+        operation["source_event_ids"] = sources["5"] + sources["5.5"] if shared else sources["5.5" if operation["section_id"] == "5.4" else "5"]
     call = next(call for call in evidence["model_calls"] if call["task_type"] == "PLAN_CHANGES")
     call["response"] = deepcopy(evidence["change_plan"])
     response = json.dumps(call["response"], ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -245,6 +286,13 @@ def test_release_report_accepts_confirmed_sources_across_sections(case_execution
         "cross_section_repetitions",
         "generator_sources",
         "generator_base",
+        "saved_hash",
+        "saved_revision",
+        "saved_state",
+        "block_identity",
+        "unrelated_content",
+        "unrelated_title",
+        "unrelated_operation",
     ],
 )
 def test_saved_pass_requires_the_actual_plan_and_successful_matching_review(tmp_path, damage):
@@ -267,6 +315,20 @@ def test_saved_pass_requires_the_actual_plan_and_successful_matching_review(tmp_
         plan["input_payload"]["job_input"]["confirmed_requirement_fragments"]["proposal:0"]["text"] = "Another requirement"
     elif damage == "generator_base":
         plan["input_payload"]["job_input"]["current_revision"]["document_ast"]["sections"][0]["title"] = "Another base"
+    elif damage == "saved_hash":
+        evidence["change_plan"]["operations"][0]["expected_section_hash"] = "sha256:" + "0" * 64
+    elif damage == "saved_revision":
+        evidence["change_plan"]["base_revision_id"] = "another-revision"
+    elif damage == "saved_state":
+        evidence["change_plan"]["source_state_version"] += 1
+    elif damage == "block_identity":
+        evidence["change_plan"]["operations"][1]["block"]["id"] = "invented-id"
+    elif damage == "unrelated_content":
+        evidence["final_ast"]["sections"][0]["blocks"][0]["text"] = "Changed unrelated content"
+    elif damage == "unrelated_title":
+        evidence["final_ast"]["sections"][0]["title"] = "Changed unrelated title"
+    elif damage == "unrelated_operation":
+        evidence["change_plan"]["operations"].append({**deepcopy(evidence["change_plan"]["operations"][1]), "section_id": "1", "operation_id": "unrelated"})
     else:
         review["input_payload"]["job_input"][damage] = {}
     # Prove semantic/causal validation, not merely the pre-existing hash check.
@@ -280,13 +342,15 @@ def test_saved_pass_requires_the_actual_plan_and_successful_matching_review(tmp_
         verify_report(path, live.REPO_ROOT, "candidate-sha")
 
 
-@pytest.mark.parametrize("transport", ["json", "envelope", "schema_echo", "aliases", "server_hash", "numeric_version", "generator_transport"])
+@pytest.mark.parametrize("transport", ["json", "fenced_after_arrays", "envelope", "schema_echo", "aliases", "server_hash", "server_snapshot", "numeric_version", "generator_transport"])
 def test_saved_proof_accepts_supported_transport_and_successful_retry(tmp_path, transport):
     report = _report()
     evidence = next(result["evidence"] for result in report["case_results"] if result["case_id"] == CASE["id"])
     call = evidence["model_calls"][0]
     if transport == "json":
         call["response"] = json.dumps(call["response"], ensure_ascii=False)
+    elif transport == "fenced_after_arrays":
+        call["response"] = 'Sources: ["proposal", "answer"]\n```json\n' + json.dumps(call["response"], ensure_ascii=False) + "\n```"
     elif transport == "envelope":
         call["response"] = {"change_plan": call["response"]}
     elif transport == "schema_echo":
@@ -298,6 +362,13 @@ def test_saved_proof_accepts_supported_transport_and_successful_retry(tmp_path, 
     elif transport == "server_hash":
         for operation in call["response"]["operations"]:
             operation["expected_section_hash"] = "model-supplied-hash"
+    elif transport == "server_snapshot":
+        call["response"].pop("base_revision_id")
+        call["response"].pop("source_state_version")
+        for operation in call["response"]["operations"]:
+            operation.pop("expected_section_hash")
+            if "block" in operation:
+                operation["block"].pop("id")
     elif transport == "numeric_version":
         call["response"]["schema_version"] = 1
     else:
@@ -314,7 +385,7 @@ def test_saved_proof_accepts_supported_transport_and_successful_retry(tmp_path, 
     assert verify_report(path, live.REPO_ROOT, "candidate-sha")["status"] == "PASS"
 
 
-@pytest.mark.parametrize("case_execution", [("transport",), ("format",), ("format", "transport")], indirect=True)
+@pytest.mark.parametrize("case_execution", [("format",)], indirect=True)
 def test_saved_proof_accepts_worker_verifier_recovery_without_regenerating(case_execution, tmp_path):
     report = _report()
     result = next(result for result in report["case_results"] if result["case_id"] == CASE["id"])
@@ -325,6 +396,19 @@ def test_saved_proof_accepts_worker_verifier_recovery_without_regenerating(case_
     path = tmp_path / "recovered.json"
     path.write_text(json.dumps(report), encoding="utf-8")
     assert verify_report(path, live.REPO_ROOT, "candidate-sha")["status"] == "PASS"
+
+
+@pytest.mark.parametrize("failures", [("transport",), ("format", "transport")])
+def test_unavailable_verification_does_not_qualify_model(monkeypatch, failures):
+    database = SqliteDatabase(":memory:")
+    with database.bind_ctx((*DOCUMENT_TABLES, User), bind_refs=False, bind_backrefs=False), database.connection_context():
+        database.create_tables((*DOCUMENT_TABLES, User))
+        adapter = FixedTransport(failures)
+        monkeypatch.setattr(live, "RAGFlowLLMAdapter", lambda **_: adapter)
+        execution = live._run_model_case(CASE, "metric-placement-quality", [])
+        assert execution.result["status"] == "FAIL"
+        assert "missing_real_model_exchanges" in execution.result["failures"]
+        assert sum(call["task_type"] == "PLAN_CHANGES" for call in execution.result["evidence"]["model_calls"]) == 1
 
 
 @pytest.mark.parametrize(

@@ -587,6 +587,8 @@ def render_section_text(section: dict[str, Any]) -> str:
             source = render_block_source(block)
             fence = "`" * max(3, max((len(run) + 1 for run in re.findall(r"`+", source)), default=0))
             lines.append(f"{fence}text\n{source}\n{fence}")
+        # A block boundary must close lists and paragraphs in Markdown consumers.
+        lines.append("")
     return "\n".join(lines).strip()
 
 

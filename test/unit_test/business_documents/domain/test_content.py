@@ -4,7 +4,7 @@ from copy import deepcopy
 
 import pytest
 
-from business_documents.domain.content import normalize_document_ast, render_document_ast, section_hash, validate_contract
+from business_documents.domain.content import normalize_document_ast, render_document_ast, render_section_text, section_hash, validate_contract
 from business_documents.domain.errors import RuleViolation
 
 
@@ -14,6 +14,23 @@ def _section(section_id, *blocks):
 
 def _template(*sections):
     return {"sections": [{"id": section_id, "title": section_id, "required": required, "allowed_blocks": allowed} for section_id, required, allowed in sections]}
+
+
+def test_markdown_separates_paragraphs_from_lists_without_changing_block_contents():
+    section = _section(
+        "4.3",
+        {"type": "paragraph", "text": "Просмотр статьи."},
+        {"type": "list", "items": ["Поиск статьи.", "Проверка доступа."]},
+        {"type": "paragraph", "text": "Создание статьи.\nСопровождающий текст."},
+        {"type": "list", "items": ["Сохранение черновика.", "Публикация."]},
+        {"type": "paragraph", "text": "Конец сценариев."},
+    )
+    original = deepcopy(section)
+    expected = "Просмотр статьи.\n\n- Поиск статьи.\n- Проверка доступа.\n\nСоздание статьи.\nСопровождающий текст.\n\n- Сохранение черновика.\n- Публикация.\n\nКонец сценариев."
+
+    assert render_section_text(section) == expected
+    assert render_document_ast({"sections": [section]}, {}) == "### 4.3. 4.3\n" + expected
+    assert section == original
 
 
 def test_missing_parent_does_not_copy_child_content():

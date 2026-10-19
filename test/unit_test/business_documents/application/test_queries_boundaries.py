@@ -435,7 +435,7 @@ def test_revision_text_projection_preserves_supported_list_image_and_reference_b
     ]
     reader.revisions.return_value = history([revision(document_ast={"sections": [{**section(), "blocks": blocks}]})])
     result = scenario.get_revision("doc", "revision")
-    assert result["section_texts"] == {"1": "- First\n- Second\n![Architecture](https://images.invalid/architecture.png)\n[Evidence](https://evidence.invalid/source)"}
+    assert result["section_texts"] == {"1": "- First\n- Second\n\n![Architecture](https://images.invalid/architecture.png)\n\n[Evidence](https://evidence.invalid/source)"}
     identified = result["document_ast"]["sections"][0]["blocks"]
     assert all(block["id"] for block in identified)
     assert [{key: value for key, value in block.items() if key != "id"} for block in identified] == blocks

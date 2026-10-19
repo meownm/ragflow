@@ -534,7 +534,7 @@ def test_narrow_workbench_protocol_controls_remain_reachable(page, base_url, wid
     assert panes.evaluate("el => el.scrollTop > 0"), "Narrow panes must actually scroll to the protocol"
 
 
-_SINGLE_NEWLINE_BLOCKS = [
+_PARAGRAPH_BLOCKS = [
     {"type": "paragraph", "text": "Раздел описывает клиентские сценарии 😀."},
     {"type": "paragraph", "text": "Просмотр и поиск **статьи**."},
     {"type": "paragraph", "text": "Создание и публикация статьи."},
@@ -552,9 +552,9 @@ _SINGLE_NEWLINE_BLOCKS = [
         ("4.1", "Первый **важный** пункт.\n\nВторой пункт.", "Первый важный пункт", "Первый **важный** пункт"),
         ("4.3", "Метка 😀: A&nbsp;B &#x1F600;.", "A\u00a0B 😀", "A&nbsp;B &#x1F600;"),
         ("4.1", "Код: `имя\\_поля &amp; значение`.", "имя\\_поля &amp; значение", "имя\\_поля &amp; значение"),
-        ("4.3", _SINGLE_NEWLINE_BLOCKS, "Раздел описывает клиентские сценарии 😀", "Раздел описывает клиентские сценарии 😀"),
-        ("4.3", _SINGLE_NEWLINE_BLOCKS, "поиск статьи.", "поиск **статьи**."),
-        ("4.3", _SINGLE_NEWLINE_BLOCKS, "статьи.\nСоздание", "статьи**.\nСоздание"),
+        ("4.3", _PARAGRAPH_BLOCKS, "Раздел описывает клиентские сценарии 😀", "Раздел описывает клиентские сценарии 😀"),
+        ("4.3", _PARAGRAPH_BLOCKS, "поиск статьи.", "поиск **статьи**."),
+        ("4.3", _PARAGRAPH_BLOCKS, "статьи.\nСоздание", "статьи**.\n\nСоздание"),
     ],
     ids=[
         "diagram-prose",
@@ -564,9 +564,9 @@ _SINGLE_NEWLINE_BLOCKS = [
         "inline-formatting",
         "unicode-entities",
         "literal-code",
-        "single-newline-first-block",
-        "single-newline-formatted-block",
-        "single-newline-cross-block",
+        "paragraph-first-block",
+        "paragraph-formatted-block",
+        "paragraph-cross-block",
     ],
 )
 def test_business_document_markdown_selection_anchor(page, base_url, section_id, source, selected, canonical_selected):
@@ -580,7 +580,7 @@ def test_business_document_markdown_selection_anchor(page, base_url, section_id,
     section_ast = {"id": section_id, "title": "Логика", "blocks": blocks}
     source = render_section_text(section_ast)
     if len(blocks) > 1:
-        assert source == "\n".join(block["text"] for block in blocks)
+        assert source == "\n\n".join(block["text"] for block in blocks)
     revision["document_ast"]["sections"] = [section_ast]
     revision["section_texts"] = {section_id: source}
     revision["body_markdown"] = f"## {section_id}. Логика\n{source}"
@@ -609,7 +609,7 @@ def test_business_document_markdown_selection_anchor(page, base_url, section_id,
             })""",
             [block["text"][:8] for block in blocks],
         )
-        assert line_tops[0] < line_tops[1] < line_tops[2], "Single newlines must remain visible line breaks"
+        assert line_tops[0] < line_tops[1] < line_tops[2], "Paragraph blocks must remain visually separate"
     section.locator("[data-section-body]").evaluate(
         """(body, selected) => {
             const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
@@ -652,6 +652,49 @@ def test_business_document_markdown_selection_anchor(page, base_url, section_id,
         "suffix": source[end : end + 64],
     }
     validate_comment_anchor(anchor, "revision-3", section_id, source)
+
+
+@pytest.mark.p1
+@pytest.mark.parametrize("width", [1280, 768])
+def test_paragraph_after_list_resets_indent_and_keeps_block_spacing(page, base_url, width):
+    page.set_viewport_size({"width": width, "height": 1000})
+    _install_session(page)
+    page.route("**/api/v1/**", lambda route: route.fulfill(json=_envelope({})))
+    _install_common_routes(page)
+    projection = _projection()
+    section = {
+        "id": "4.3",
+        "title": "Клиентские сценарии",
+        "blocks": [
+            {"type": "paragraph", "text": "Просмотр статьи."},
+            {"type": "list", "items": ["Поиск статьи.", "Проверка доступа."]},
+            {"type": "paragraph", "text": "Создание и публикация статьи."},
+            {"type": "list", "items": ["Сохранение черновика.", "Публикация."]},
+            {"type": "paragraph", "text": "Конец сценариев."},
+        ],
+    }
+    revision = projection["current_revision"]
+    revision["document_ast"]["sections"] = [section]
+    revision["section_texts"] = {"4.3": render_section_text(section)}
+    page.route("**/api/v1/business-documents/doc-ui-1", lambda route: route.fulfill(json=_envelope(projection)))
+    page.goto(f"{base_url.rstrip('/')}/business-documents/doc-ui-1")
+    body = page.locator('[data-section-id="4.3"] [data-section-body]')
+    expect(body).to_be_visible(timeout=RESULT_TIMEOUT_MS)
+    expect(body.locator(":scope > p")).to_have_count(3)
+    expect(body.locator(":scope > ul")).to_have_count(2)
+    expect(body.locator("li")).to_have_count(4)
+    geometry = body.evaluate(
+        """body => [...body.children].map(element => {
+            const bounds = element.getBoundingClientRect();
+            const style = getComputedStyle(element);
+            return {left: bounds.left, top: bounds.top, bottom: bounds.bottom,
+                    indent: style.textIndent, padding: style.paddingInlineStart};
+        })"""
+    )
+    assert geometry[0]["left"] == geometry[2]["left"] == geometry[4]["left"]
+    assert all(geometry[index]["indent"] == "0px" and geometry[index]["padding"] == "0px" for index in (0, 2, 4))
+    gaps = [following["top"] - current["bottom"] for current, following in zip(geometry, geometry[1:])]
+    assert all(abs(gap - gaps[0]) < 1 for gap in gaps) and gaps[0] > 0, gaps
 
 
 @pytest.mark.p1

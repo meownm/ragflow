@@ -6,6 +6,8 @@ must not change the selection of unit tests or P0 document requirements.
 | Lane | Command from repository root | Boundary |
 | --- | --- | --- |
 | Python unit | `python run_tests.py -i` | In-process dependencies and fixtures |
+| Resource names | `python -m pytest test/unit_test/test_resource_names.py test/unit_test/test_team_resource_visibility.py` | Owner/category namespaces, private-name non-disclosure, validation and team/session access; disposable SQLite |
+| Resource-name races | `python -m pytest test/integration/test_resource_name_postgres.py` | Requires loopback-only disposable `RESOURCE_NAME_TEST_POSTGRES_DSN`; temporary schemas, actual indexes, separate concurrent connections and bounded dataset suffix retries; no shared application data |
 | Business Documents load harness | `python -B -m pytest -q test/load/test_business_documents.py` | 50 distinct simulated HTTP users, OpenAI-compatible LLM emulator, current intake response contract, failure/timeout/cleanup controls; fake API, not application or GPU capacity evidence. See `test/load/README.md` for the opt-in isolated API run with an estimated single-H200 Qwen3.8-27B profile |
 | Standalone route units | `python -m pytest -o "pythonpath=. test/testcases" --confcutdir=test/testcases/restful_api test/testcases/restful_api/test_user_tenant_routes_unit.py test/testcases/restful_api/test_connector_routes_unit.py` | Only these reviewed in-process modules; excludes the parent live-model setup, keeps local fixtures and all test cases |
 | Browser result assertions | `python -m pytest test/unit_test/playwright test/unit_test/api/apps/services/test_search_consistency_assertions.py` | Reject missing requests, empty/error/truncated answers, and invalid search results |

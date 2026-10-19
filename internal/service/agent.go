@@ -330,20 +330,23 @@ func (s *AgentService) CreateAgent(ctx context.Context, req *CreateAgentRequest)
 	if req.Title == nil || strings.TrimSpace(*req.Title) == "" {
 		return nil, common.CodeArgumentError, errors.New("no title in request")
 	}
-	title := strings.TrimSpace(*req.Title)
+	title, err := common.NormalizeResourceName(*req.Title, 255, false)
+	if err != nil {
+		return nil, common.CodeArgumentError, err
+	}
 	req.Title = &title
+	if req.CanvasCategory == "" {
+		req.CanvasCategory = "agent_canvas"
+	}
 
 	if existing, err := s.canvasDAO.GetByUserAndTitle(req.UserID, title, req.CanvasCategory); err != nil {
-		return nil, common.CodeServerError, fmt.Errorf("check duplicate title: %w", err)
+		return nil, common.CodeServerError, ErrAgentStorageError
 	} else if existing != nil {
 		return nil, common.CodeDataError, errors.New(title + " already exists.")
 	}
 
 	if req.Permission == "" {
 		req.Permission = "me"
-	}
-	if req.CanvasCategory == "" {
-		req.CanvasCategory = "agent_canvas"
 	}
 	// Normalize legacy v1 / Go-v2 payloads to a React-Flow-shaped graph so
 	// the front-end can render the canvas without a migration. Idempotent;
@@ -360,7 +363,10 @@ func (s *AgentService) CreateAgent(ctx context.Context, req *CreateAgentRequest)
 		DSL:            req.DSL,
 	}
 	if err := s.canvasDAO.Create(row); err != nil {
-		return nil, common.CodeServerError, fmt.Errorf("create agent: %w", err)
+		if dao.IsResourceNameConflict(err, dao.CanvasNameIndex) {
+			return nil, common.CodeDataError, errors.New("Agent title already exists.")
+		}
+		return nil, common.CodeServerError, ErrAgentStorageError
 	}
 	return row, common.CodeSuccess, nil
 }
@@ -414,6 +420,68 @@ func (s *AgentService) GetAgent(ctx context.Context, userID, canvasID string) (*
 	return s.loadCanvasForUser(ctx, userID, canvasID)
 }
 
+// prepareAgentNameUpdates prevents team editors from probing the owner's private
+// name namespace. Unchanged fields are omitted to avoid stale autosave renames.
+func (s *AgentService) prepareAgentNameUpdates(canvas *entity.UserCanvas, userID string, patch map[string]interface{}) (map[string]interface{}, error) {
+	updates := map[string]interface{}{}
+	title := ""
+	if canvas.Title != nil {
+		title = *canvas.Title
+	}
+	category := canvas.CanvasCategory
+	for _, key := range []string{"title", "canvas_category", "permission"} {
+		value, present := patch[key]
+		if !present || value == nil {
+			continue
+		}
+		text, ok := value.(string)
+		if !ok {
+			return nil, fmt.Errorf("%s must be a string", key)
+		}
+		text = strings.TrimSpace(text)
+		current := category
+		if key == "title" {
+			current = title
+		} else if key == "permission" {
+			current = canvas.Permission
+		}
+		if text == current {
+			continue
+		}
+		if userID != canvas.UserID {
+			return nil, ErrAgentNotOwner
+		}
+		if key == "title" {
+			var err error
+			text, err = common.NormalizeResourceName(text, 255, false)
+			if err != nil {
+				return nil, err
+			}
+			title = text
+		} else if key == "canvas_category" {
+			if text == "" || len(text) > 32 {
+				return nil, errors.New("Invalid canvas category")
+			}
+			category = text
+		} else if text != "me" && text != "team" {
+			return nil, errors.New("Invalid agent permission")
+		}
+		updates[key] = text
+	}
+	_, changesTitle := updates["title"]
+	_, changesCategory := updates["canvas_category"]
+	if changesTitle || changesCategory {
+		existing, err := s.canvasDAO.GetByUserAndTitle(canvas.UserID, title, category, canvas.ID)
+		if err != nil {
+			return nil, ErrAgentStorageError
+		}
+		if existing != nil {
+			return nil, errors.New("Agent title already exists.")
+		}
+	}
+	return updates, nil
+}
+
 // UpdateAgent applies a draft patch to user_canvas. Settings updates may omit
 // dsl; in that case the existing draft DSL must be preserved.
 func (s *AgentService) UpdateAgent(ctx context.Context, userID, canvasID string, patch map[string]interface{}) error {
@@ -422,16 +490,13 @@ func (s *AgentService) UpdateAgent(ctx context.Context, userID, canvasID string,
 		return err
 	}
 
-	updates := map[string]interface{}{
-		"release": false,
+	updates, err := s.prepareAgentNameUpdates(canvasInstance, userID, patch)
+	if err != nil {
+		return err
 	}
-	for _, key := range []string{"title", "avatar", "description", "permission", "canvas_type", "canvas_category"} {
+	updates["release"] = false
+	for _, key := range []string{"avatar", "description", "canvas_type"} {
 		if value, ok := patch[key]; ok && value != nil {
-			if key == "title" {
-				if title, ok := value.(string); ok {
-					value = strings.TrimSpace(title)
-				}
-			}
 			updates[key] = value
 		}
 	}
@@ -449,7 +514,10 @@ func (s *AgentService) UpdateAgent(ctx context.Context, userID, canvasID string,
 
 	_, err = s.canvasDAO.UpdateFields(canvasID, updates)
 	if err != nil {
-		return fmt.Errorf("update agent %s: %w", canvasID, err)
+		if dao.IsResourceNameConflict(err, dao.CanvasNameIndex) {
+			return errors.New("Agent title already exists.")
+		}
+		return ErrAgentStorageError
 	}
 	if dslValue, ok := updates["dsl"]; ok {
 		dsl, ok := dslValue.(entity.JSONMap)
@@ -497,8 +565,8 @@ func (s *AgentService) ResetAgent(ctx context.Context, userID, canvasID string) 
 	// reset that left the legacy short-form DSL intact.
 	row.DSL = dslpkg.NormalizeForCanvas(reset)
 	row.Release = false
-	if err := s.canvasDAO.Update(row); err != nil {
-		return nil, fmt.Errorf("reset agent %s: %w", canvasID, err)
+	if _, err := s.canvasDAO.UpdateFields(canvasID, map[string]interface{}{"dsl": row.DSL, "release": false}); err != nil {
+		return nil, ErrAgentStorageError
 	}
 	return row.DSL, nil
 }
@@ -555,16 +623,29 @@ func (s *AgentService) PublishAgent(ctx context.Context, userID, canvasID string
 	dsl := canvasInstance.DSL
 	title := canvasInstance.Title
 	description := canvasInstance.Description
+	patch := map[string]interface{}{}
 	if req != nil {
 		if req.DSL != nil {
 			dsl = dslpkg.NormalizeForCanvas(req.DSL)
 		}
 		if req.Title != nil {
-			title = req.Title
+			patch["title"] = *req.Title
 		}
 		if req.Description != nil {
 			description = req.Description
 		}
+	}
+	updates, err := s.prepareAgentNameUpdates(canvasInstance, userID, patch)
+	if err != nil {
+		return nil, err
+	}
+	if value, ok := updates["title"].(string); ok {
+		title = &value
+	}
+	updates["dsl"] = dsl
+	updates["release"] = true
+	if req != nil && req.Description != nil {
+		updates["description"] = description
 	}
 	row := &entity.UserCanvasVersion{
 		ID:           utility.GenerateUUID(),
@@ -577,16 +658,15 @@ func (s *AgentService) PublishAgent(ctx context.Context, userID, canvasID string
 		if err = s.versionDAO.CreateTx(tx, row); err != nil {
 			return fmt.Errorf("publish agent %s: insert version: %w", canvasID, err)
 		}
-		canvasInstance.DSL = dsl
-		canvasInstance.Title = title
-		canvasInstance.Description = description
-		canvasInstance.Release = true
-		if err = s.canvasDAO.UpdateTx(tx, canvasInstance); err != nil {
-			return fmt.Errorf("publish agent %s: update parent: %w", canvasID, err)
+		if err = s.canvasDAO.UpdateFieldsTx(tx, canvasID, updates); err != nil {
+			return err
 		}
 		return nil
 	}); err != nil {
-		return nil, err
+		if dao.IsResourceNameConflict(err, dao.CanvasNameIndex) {
+			return nil, errors.New("Agent title already exists.")
+		}
+		return nil, ErrAgentStorageError
 	}
 	return row, nil
 }

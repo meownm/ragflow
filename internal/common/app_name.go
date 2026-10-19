@@ -21,6 +21,7 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // splitNameCounter splits a filename into base name and counter
@@ -97,6 +98,69 @@ func DuplicateName(queryFunc func(name string, tenantID string) bool, name strin
 }
 
 const AppNameLimit = 256
+
+// NormalizeResourceName applies the character limit used by chats, agents and datasets.
+func NormalizeResourceName(name string, maxChars int, bmpOnly bool) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", fmt.Errorf("name cannot be empty")
+	}
+	if !utf8.ValidString(name) || strings.ContainsRune(name, 0) {
+		return "", fmt.Errorf("name contains invalid characters")
+	}
+	if utf8.RuneCountInString(name) > maxChars {
+		return "", fmt.Errorf("name must have at most %d characters", maxChars)
+	}
+	if bmpOnly {
+		for _, char := range name {
+			if char > 0xffff || (char >= 0xd800 && char <= 0xdfff) {
+				return "", fmt.Errorf("name must contain only BMP characters")
+			}
+		}
+	}
+	return name, nil
+}
+
+// DuplicateNameWithLimit finds a bounded character-length name and propagates
+// storage errors. Existing file extensions and numeric suffixes are preserved.
+func DuplicateNameWithLimit(query func(string, string) (bool, error), name, tenantID string, maxChars int) (string, error) {
+	var err error
+	name, err = NormalizeResourceName(name, maxChars, false)
+	if err != nil {
+		return "", err
+	}
+	ext := path.Ext(name)
+	stem, counter := splitNameCounter(strings.TrimSuffix(name, ext))
+	next := 1
+	if counter != nil {
+		next = *counter + 1
+	}
+	candidate := name
+	for attempt := 0; attempt < 1000; attempt++ {
+		exists, err := query(candidate, tenantID)
+		if err != nil {
+			return "", err
+		}
+		if !exists {
+			return candidate, nil
+		}
+		suffix := fmt.Sprintf("(%d)", next+attempt)
+		budget := maxChars - utf8.RuneCountInString(suffix)
+		if budget < 1 {
+			return "", fmt.Errorf("name limit cannot accommodate a suffix")
+		}
+		extRunes := []rune(ext)
+		if len(extRunes) >= budget {
+			extRunes = extRunes[:budget-1]
+		}
+		stemRunes := []rune(stem)
+		if len(stemRunes) > budget-len(extRunes) {
+			stemRunes = stemRunes[:budget-len(extRunes)]
+		}
+		candidate = string(stemRunes) + suffix + string(extRunes)
+	}
+	return "", fmt.Errorf("failed to generate a unique name after 1000 attempts")
+}
 
 func ValidateName(name string) error {
 	// Validate name is not empty after trimming

@@ -7,10 +7,11 @@ import { z } from 'zod';
 export const NameFormSchema = {
   name: z
     .string()
+    .trim()
     .min(1, {
       message: i18n.t('common.namePlaceholder'),
     })
-    .trim(),
+    .refine((value) => Array.from(value).length <= 255),
 };
 
 export function NameFormField() {

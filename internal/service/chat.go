@@ -223,6 +223,9 @@ func (s *ChatService) Create(userID string, req map[string]interface{}) (map[str
 
 	chat := buildCreateChatEntity(req, userID)
 	if err = s.chatDAO.Create(chat); err != nil {
+		if dao.IsResourceNameConflict(err, dao.DialogNameIndex) {
+			return nil, common.CodeDataError, errors.New("Duplicated chat name in creating chat.")
+		}
 		return nil, common.CodeDataError, errors.New("Failed to create chat.")
 	}
 
@@ -250,10 +253,10 @@ func validateCreateChatName(value interface{}) (string, error) {
 	if name == "" {
 		return "", errors.New("`name` is required.")
 	}
-	if len([]byte(name)) > 255 {
-		return "", fmt.Errorf("Chat name length is %d which is larger than 255.", len([]byte(name)))
+	if utf8.RuneCountInString(name) > 255 {
+		return "", fmt.Errorf("Chat name length is %d which is larger than 255.", utf8.RuneCountInString(name))
 	}
-	return name, nil
+	return common.NormalizeResourceName(name, 255, false)
 }
 
 func (s *ChatService) validateCreateDatasetIDs(value interface{}, tenantID string) ([]string, error) {
@@ -817,25 +820,20 @@ func (s *ChatService) updateChatREST(userID, chatID string, req map[string]inter
 	updates := filterRESTChatUpdates(req)
 	if value, ok := updates["name"]; ok {
 		name := value.(string)
-		currentName := ""
-		if currentChat.Name != nil {
-			currentName = *currentChat.Name
+		exists, err := s.chatDAO.ExistsByNameTenantStatus(name, currentChat.TenantID, string(entity.StatusValid), chatID)
+		if err != nil {
+			return nil, errors.New("Failed to check chat name.")
 		}
-		if strings.ToLower(name) != strings.ToLower(currentName) {
-			existingNames, err := s.chatDAO.GetExistingNames(userID, string(entity.StatusValid))
-			if err != nil {
-				return nil, err
-			}
-			for _, existingName := range existingNames {
-				if existingName == name {
-					return nil, errors.New("Duplicated chat name.")
-				}
-			}
+		if exists {
+			return nil, errors.New("Duplicated chat name.")
 		}
 	}
 
 	if len(updates) > 0 {
 		if err := s.chatDAO.UpdateByID(chatID, updates); err != nil {
+			if dao.IsResourceNameConflict(err, dao.DialogNameIndex) {
+				return nil, errors.New("Duplicated chat name.")
+			}
 			if patch {
 				return nil, errors.New("Failed to update chat.")
 			}
@@ -868,8 +866,11 @@ func validateRESTChatName(value interface{}, required bool) (string, bool, error
 		}
 		return "", false, errors.New("`name` cannot be empty.")
 	}
-	if len([]byte(name)) > 255 {
-		return "", false, fmt.Errorf("Chat name length is %d which is larger than 255.", len([]byte(name)))
+	if utf8.RuneCountInString(name) > 255 {
+		return "", false, fmt.Errorf("Chat name length is %d which is larger than 255.", utf8.RuneCountInString(name))
+	}
+	if _, err := common.NormalizeResourceName(name, 255, false); err != nil {
+		return "", false, err
 	}
 	return name, true, nil
 }

@@ -2263,8 +2263,9 @@ func (d *DatasetService) CreateDataset(req *CreateDatasetRequest, tenantID strin
 	if name == "" {
 		return nil, common.CodeDataError, errors.New("Dataset name can't be empty.")
 	}
-	if len(name) > entity.DatasetNameLimit {
-		return nil, common.CodeDataError, fmt.Errorf("Dataset name length is %d which is large than %d", len(name), entity.DatasetNameLimit)
+	name, err := common.NormalizeResourceName(name, entity.DatasetNameLimit, true)
+	if err != nil {
+		return nil, common.CodeDataError, err
 	}
 
 	tenant, err := d.tenantDAO.GetByID(tenantID)
@@ -2337,8 +2338,9 @@ func (d *DatasetService) CreateDataset(req *CreateDatasetRequest, tenantID strin
 			if nameValue == "" {
 				return nil, common.CodeDataError, errors.New("Dataset name can't be empty.")
 			}
-			if len(nameValue) > entity.DatasetNameLimit {
-				return nil, common.CodeDataError, fmt.Errorf("Dataset name length is %d which is large than %d", len(nameValue), entity.DatasetNameLimit)
+			nameValue, err = common.NormalizeResourceName(nameValue, entity.DatasetNameLimit, true)
+			if err != nil {
+				return nil, common.CodeDataError, err
 			}
 			name = nameValue
 		case "description":
@@ -2457,18 +2459,10 @@ func (d *DatasetService) CreateDataset(req *CreateDatasetRequest, tenantID strin
 	kbID := utility.GenerateToken()
 
 	status := string(entity.StatusValid)
-	// Deduplicate name within tenant
-	duplicateName, err := common.DuplicateName(func(n, tid string) bool {
-		existing, err := d.kbDAO.GetByName(n, tid)
-		return err == nil && existing != nil
-	}, name, tenantID)
-	if err != nil {
-		return nil, common.CodeDataError, err
-	}
 
 	kb := &entity.Knowledgebase{
 		ID:           kbID,
-		Name:         duplicateName,
+		Name:         name,
 		TenantID:     tenantID,
 		CreatedBy:    tenantID,
 		ParserID:     parserID,
@@ -2489,7 +2483,22 @@ func (d *DatasetService) CreateDataset(req *CreateDatasetRequest, tenantID strin
 		kb.Language = language
 	}
 
-	if err = d.kbDAO.Create(kb); err != nil {
+	_, err = common.DuplicateNameWithLimit(func(candidate, ownerID string) (bool, error) {
+		existing, lookupErr := d.kbDAO.GetByName(candidate, ownerID)
+		if lookupErr != nil && !dao.IsNotFoundErr(lookupErr) {
+			return false, lookupErr
+		}
+		if existing != nil {
+			return true, nil
+		}
+		kb.Name = candidate
+		writeErr := d.kbDAO.Create(kb)
+		if dao.IsResourceNameConflict(writeErr, dao.KnowledgebaseNameIndex) {
+			return true, nil
+		}
+		return false, writeErr
+	}, name, tenantID, entity.DatasetNameLimit)
+	if err != nil {
 		return nil, common.CodeServerError, errors.New("Failed to save dataset")
 	}
 
@@ -2667,14 +2676,7 @@ func (d *DatasetService) UpdateDataset(datasetID, tenantID string, req UpdateDat
 	extUpdates := normalizeDatasetUpdateExt(req.Ext)
 
 	if req.Name != nil {
-		name := strings.TrimSpace(*req.Name)
-		if name == "" {
-			return nil, common.CodeDataError, errors.New("String should have at least 1 character")
-		}
-		if len(name) > 128 {
-			return nil, common.CodeDataError, errors.New("String should have at most 128 characters")
-		}
-		updates["name"] = name
+		updates["name"] = *req.Name
 	}
 	if req.Avatar != nil {
 		if len(*req.Avatar) > 65535 {
@@ -2719,6 +2721,21 @@ func (d *DatasetService) UpdateDataset(datasetID, tenantID string, req UpdateDat
 		if _, exists := updates[key]; !exists {
 			updates[key] = value
 		}
+	}
+
+	if value, present := updates["name"]; present {
+		name, ok := value.(string)
+		if !ok {
+			return nil, common.CodeDataError, errors.New("Dataset name must be string.")
+		}
+		if strings.TrimSpace(name) == "" {
+			return nil, common.CodeDataError, errors.New("String should have at least 1 character")
+		}
+		name, err = common.NormalizeResourceName(name, entity.DatasetNameLimit, true)
+		if err != nil {
+			return nil, common.CodeDataError, err
+		}
+		updates["name"] = name
 	}
 
 	parserID, parserIDProvided, err := datasetUpdateParserID(req)
@@ -2815,12 +2832,12 @@ func (d *DatasetService) UpdateDataset(datasetID, tenantID string, req UpdateDat
 		}
 	}
 
-	if nameValue, ok := updates["name"].(string); ok && strings.ToLower(nameValue) != strings.ToLower(kb.Name) {
+	if nameValue, ok := updates["name"].(string); ok {
 		existing, lookupErr := d.kbDAO.GetByName(nameValue, tenantID)
 		if lookupErr != nil && !dao.IsNotFoundErr(lookupErr) {
 			return nil, common.CodeServerError, errors.New("Database operation failed")
 		}
-		if existing != nil {
+		if existing != nil && existing.ID != kb.ID {
 			return nil, common.CodeDataError, fmt.Errorf("Dataset name '%s' already exists", nameValue)
 		}
 	}
@@ -2831,6 +2848,9 @@ func (d *DatasetService) UpdateDataset(datasetID, tenantID string, req UpdateDat
 
 	if len(updates) > 0 {
 		if err = d.kbDAO.UpdateByID(kb.ID, updates); err != nil {
+			if dao.IsResourceNameConflict(err, dao.KnowledgebaseNameIndex) {
+				return nil, common.CodeDataError, errors.New("Dataset name already exists")
+			}
 			return nil, common.CodeServerError, errors.New("Update dataset error.(Database error)")
 		}
 	}
@@ -2927,7 +2947,7 @@ func normalizeDatasetUpdateExt(ext map[string]interface{}) map[string]interface{
 			updates["embd_id"] = value
 		case "chunk_method":
 			updates["parser_id"] = value
-		case "connectors", "auto_metadata_config", "ext", "parse_type":
+		case "connectors", "auto_metadata_config", "ext", "parse_type", "id", "tenant_id", "created_by", "status":
 			continue
 		default:
 			updates[key] = value

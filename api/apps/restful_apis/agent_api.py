@@ -28,6 +28,10 @@ import time
 from functools import partial, wraps
 from typing import Set
 
+from peewee import IntegrityError
+from api.db.resource_name_schema import is_resource_name_conflict
+from common.resource_names import validate_resource_name
+
 from api.utils.file_response import (
     apply_download_file_response_headers,
     apply_preview_file_response_headers,
@@ -901,15 +905,21 @@ async def create_agent(tenant_id):
             code=RetCode.ARGUMENT_ERROR,
         )
 
-    req["title"] = req["title"].strip()
-    for canvas in UserCanvasService.query(user_id=tenant_id, canvas_category=req["canvas_category"]):
-        canvas_title = getattr(canvas, "title", req["title"])
-        if canvas_title and canvas_title.lower() == req["title"].lower():
-            return get_data_error_result(message=f"{req['title']} already exists.")
+    try:
+        req["title"] = validate_resource_name(req["title"], limit=255, label="Agent title")
+    except ValueError as exc:
+        return get_data_error_result(message=str(exc))
+    if UserCanvasService.name_exists(tenant_id, req["title"], req["canvas_category"]):
+        return get_data_error_result(message="Agent title already exists.")
 
     req["id"] = get_uuid()
-    if not UserCanvasService.save(**req):
-        return get_data_error_result(message="Fail to create agent.")
+    try:
+        if not UserCanvasService.save(**req):
+            return get_data_error_result(message="Fail to create agent.")
+    except IntegrityError as exc:
+        if is_resource_name_conflict(exc, "user_canvas_owner_title_unique"):
+            return get_data_error_result(message="Agent title already exists.")
+        raise
 
     owner_nickname = _get_user_nickname(tenant_id)
     UserCanvasVersionService.save_or_replace_latest(
@@ -1146,18 +1156,33 @@ async def update_agent(agent_id, tenant_id):
         return get_data_error_result(message="Agent not found.")
     if "permission" in req and current_agent.user_id != tenant_id and req["permission"] != current_agent.permission:
         return get_json_result(data=False, message="Only the owner can change agent permissions.", code=RetCode.OPERATING_ERROR)
+    if current_agent.user_id != tenant_id:
+        req.pop("permission", None)
+        for field in ("title", "canvas_category"):
+            if field in req and req[field] != getattr(current_agent, field):
+                return get_json_result(data=False, message="Only the owner can rename or change the category of an agent.", code=RetCode.OPERATING_ERROR)
+            req.pop(field, None)
     if req.get("title") is not None:
-        req["title"] = req["title"].strip()
-        canvas_category_for_duplicate_check = req.get("canvas_category") or (current_agent.canvas_category if current_agent else CanvasCategory.Agent)
-        for canvas in UserCanvasService.query(user_id=tenant_id, canvas_category=canvas_category_for_duplicate_check):
-            canvas_title = getattr(canvas, "title", "")
-            if getattr(canvas, "id", None) != agent_id and canvas_title and canvas_title.lower() == req["title"].lower():
-                return get_data_error_result(message=f"{req['title']} already exists.")
+        try:
+            req["title"] = validate_resource_name(req["title"], limit=255, label="Agent title")
+        except ValueError as exc:
+            return get_data_error_result(message=str(exc))
+    if "title" in req or "canvas_category" in req:
+        category = req.get("canvas_category") or current_agent.canvas_category
+        if "canvas_category" in req:
+            req["canvas_category"] = category
+        if UserCanvasService.name_exists(current_agent.user_id, req.get("title", current_agent.title), category, exclude_id=agent_id):
+            return get_data_error_result(message="Agent title already exists.")
 
     agent_title_for_version = req.get("title") or (current_agent.title if current_agent else "")
     canvas_category = req.get("canvas_category") or (current_agent.canvas_category if current_agent else CanvasCategory.Agent)
     owner_nickname = _get_user_nickname(tenant_id)
-    UserCanvasService.update_by_id(agent_id, req)
+    try:
+        UserCanvasService.update_by_id(agent_id, req)
+    except IntegrityError as exc:
+        if is_resource_name_conflict(exc, "user_canvas_owner_title_unique"):
+            return get_data_error_result(message="Agent title already exists.")
+        raise
 
     if req.get("dsl") is not None:
         UserCanvasVersionService.save_or_replace_latest(

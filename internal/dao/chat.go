@@ -164,27 +164,21 @@ func (dao *ChatDAO) GetByIDAndStatus(id string, status string) (*entity.Chat, er
 	return &chat, nil
 }
 
-// GetExistingNames gets existing dialog names for a tenant
-func (dao *ChatDAO) GetExistingNames(tenantID string, status string) ([]string, error) {
-	var names []string
-	err := DB.Model(&entity.Chat{}).
-		Where("tenant_id = ? AND status = ?", tenantID, status).
-		Pluck("name", &names).Error
-	return names, err
-}
-
 // ExistsByNameTenantStatus checks whether a chat with the given name exists.
-func (dao *ChatDAO) ExistsByNameTenantStatus(name, tenantID, status string) (bool, error) {
+func (dao *ChatDAO) ExistsByNameTenantStatus(name, tenantID, status string, excludeIDs ...string) (bool, error) {
 	var count int64
-	err := DB.Model(&entity.Chat{}).
-		Where("name = ? AND tenant_id = ? AND status = ?", name, tenantID, status).
-		Count(&count).Error
+	query := DB.Model(&entity.Chat{}).
+		Where("LOWER(TRIM(name)) = LOWER(TRIM(?)) AND tenant_id = ? AND status = ?", name, tenantID, status)
+	if len(excludeIDs) > 0 {
+		query = query.Where("id NOT IN ?", excludeIDs)
+	}
+	err := query.Count(&count).Error
 	return count > 0, err
 }
 
 // Create creates a new chat/dialog
 func (dao *ChatDAO) Create(chat *entity.Chat) error {
-	return DB.Create(chat).Error
+	return resourceNameWrite(DB).Create(chat).Error
 }
 
 // UpdateByID updates a chat by ID
@@ -197,7 +191,7 @@ func (dao *ChatDAO) UpdateByID(id string, updates map[string]interface{}) error 
 	updates["update_time"] = now.UnixMilli()
 	updates["update_date"] = now.Truncate(time.Second)
 
-	result := DB.Session(&gorm.Session{SkipHooks: true}).Model(&entity.Chat{}).Where("id = ?", id).Updates(updates)
+	result := resourceNameWrite(DB).Session(&gorm.Session{SkipHooks: true}).Model(&entity.Chat{}).Where("id = ?", id).Updates(updates)
 	if result.Error != nil {
 		return result.Error
 	}

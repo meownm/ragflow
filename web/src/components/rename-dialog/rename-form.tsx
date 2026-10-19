@@ -27,10 +27,10 @@ export function RenameForm({
   const FormSchema = z.object({
     name: z
       .string()
+      .trim()
       .min(1, {
         message: t('common.namePlaceholder'),
-      })
-      .trim(),
+      }),
   });
 
   const form = useForm<z.infer<typeof FormSchema>>({

@@ -143,8 +143,14 @@ Creates a dataset.
 
 The unique name of the dataset to create. It must adhere to the following requirements:
 
+- Unique within its owner's active datasets, including both personal and shared datasets.
+- Leading and trailing whitespace is removed; BMP characters only.
 - Maximum 128 characters.
 - Case-insensitive.
+
+On creation, a duplicate receives a numeric suffix such as `(1)`. The base is
+shortened when necessary so the complete generated name remains within 128
+characters. Renaming to another dataset's name is rejected.
 
 ##### avatar: `string`
 

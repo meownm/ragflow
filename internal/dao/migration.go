@@ -44,7 +44,40 @@ func RunMigrations(db *gorm.DB) error {
 	if err := migrateSkillSearchTables(db); err != nil {
 		return err
 	}
-	return migrateSkillSpaceTables(db)
+	if err := migrateSkillSpaceTables(db); err != nil {
+		return err
+	}
+	return migrateResourceNames(db)
+}
+
+func migrateResourceNames(db *gorm.DB) error {
+	indexes := []struct{ table, columns, predicate, name string }{
+		{"dialog", "tenant_id, LOWER(TRIM(name))", " WHERE status = '1'", DialogNameIndex},
+		{"user_canvas", "user_id, canvas_category, LOWER(TRIM(title))", "", CanvasNameIndex},
+		{"knowledgebase", "tenant_id, LOWER(TRIM(name))", " WHERE status = '1'", KnowledgebaseNameIndex},
+	}
+	return db.Transaction(func(tx *gorm.DB) error {
+		for _, index := range indexes {
+			if !tx.Migrator().HasTable(index.table) {
+				continue
+			}
+			if err := tx.Exec("LOCK TABLE " + index.table + " IN SHARE ROW EXCLUSIVE MODE").Error; err != nil {
+				return fmt.Errorf("lock resource names for %s", index.table)
+			}
+			var duplicateCount int64
+			query := "SELECT COUNT(*) FROM (SELECT 1 FROM " + index.table + index.predicate + " GROUP BY " + index.columns + " HAVING COUNT(*) > 1) duplicates"
+			if err := tx.Raw(query).Scan(&duplicateCount).Error; err != nil {
+				return fmt.Errorf("inspect resource names for %s", index.table)
+			}
+			if duplicateCount > 0 {
+				return fmt.Errorf("duplicate resource names prevent creating %s", index.name)
+			}
+			if err := tx.Exec("CREATE UNIQUE INDEX IF NOT EXISTS " + index.name + " ON " + index.table + " (" + index.columns + ")" + index.predicate).Error; err != nil {
+				return fmt.Errorf("create resource name index %s", index.name)
+			}
+		}
+		return nil
+	})
 }
 
 func migrateTenantLLMPrimaryKey(db *gorm.DB) error {

@@ -28,6 +28,7 @@ from pydantic_core import PydanticCustomError
 from werkzeug.exceptions import BadRequest, UnsupportedMediaType
 
 from api.constants import DATASET_NAME_LIMIT, FILE_NAME_LEN_LIMIT
+from common.resource_names import validate_resource_name
 from api.db import FileType
 from api.utils.pagination_utils import validate_rest_api_page_size
 from common.constants import RetCode
@@ -539,6 +540,11 @@ class CreateDatasetReq(Base):
     parser_config: Annotated[ParserConfig | None, Field(default=None)]
     auto_metadata_config: Annotated[AutoMetadataConfig | None, Field(default=None)]
     ext: Annotated[dict, Field(default={})]
+
+    @field_validator("name")
+    @classmethod
+    def validate_dataset_name(cls, value):
+        return validate_resource_name(value, limit=DATASET_NAME_LIMIT, label="Dataset name", bmp_only=True)
 
     @field_validator("pipeline_id", mode="before")
     @classmethod

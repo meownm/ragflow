@@ -42,7 +42,7 @@ def _split_name_counter(filename: str) -> tuple[str, int | None]:
     return filename, None
 
 
-def duplicate_name(query_func, name_field: str = "name", **kwargs) -> str:
+def duplicate_name(query_func, name_field: str = "name", *, max_length: int | None = None, **kwargs) -> str:
     """
     Generates a unique filename by appending/incrementing a counter when duplicates exist.
 
@@ -91,7 +91,11 @@ def duplicate_name(query_func, name_field: str = "name", **kwargs) -> str:
         main_part, counter = _split_name_counter(stem)
         counter = counter + 1 if counter else 1
 
-        new_name = f"{main_part}({counter}){suffix}"
+        marker = f"({counter})"
+        if max_length is not None:
+            suffix = suffix[: max(0, max_length - len(marker) - 1)]
+            main_part = main_part[: max_length - len(marker) - len(suffix)]
+        new_name = f"{main_part}{marker}{suffix}"
 
         kwargs[name_field] = new_name
         current_name = new_name

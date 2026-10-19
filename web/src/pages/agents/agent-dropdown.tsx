@@ -10,6 +10,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useDeleteAgent } from '@/hooks/use-agent-request';
+import { useFetchUserInfo } from '@/hooks/use-user-setting-request';
 import { IFlow } from '@/interfaces/database/agent';
 import { PenLine, Tag, Trash2 } from 'lucide-react';
 import {
@@ -32,6 +33,7 @@ export function AgentDropdown({
   }) {
   const { t } = useTranslation();
   const { deleteAgent } = useDeleteAgent();
+  const { data: userInfo } = useFetchUserInfo();
   const [tagEditorOpen, setTagEditorOpen] = useState(false);
 
   const handleShowAgentRenameModal: MouseEventHandler<HTMLDivElement> =
@@ -57,9 +59,11 @@ export function AgentDropdown({
       <DropdownMenu>
         <DropdownMenuTrigger asChild>{children}</DropdownMenuTrigger>
         <DropdownMenuContent>
-          <DropdownMenuItem onClick={handleShowAgentRenameModal}>
-            {t('common.rename')} <PenLine />
-          </DropdownMenuItem>
+          {agent.user_id === userInfo.id && (
+            <DropdownMenuItem onClick={handleShowAgentRenameModal}>
+              {t('common.rename')} <PenLine />
+            </DropdownMenuItem>
+          )}
           <DropdownMenuItem onClick={handleEditTags}>
             {t('flow.editTags')} <Tag />
           </DropdownMenuItem>

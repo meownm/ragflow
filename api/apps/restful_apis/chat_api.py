@@ -25,6 +25,10 @@ import time
 from copy import deepcopy
 from types import SimpleNamespace
 
+from peewee import IntegrityError
+from api.db.resource_name_schema import is_resource_name_conflict
+from common.resource_names import validate_resource_name
+
 from quart import Response, request
 
 from api.apps import current_user, login_required
@@ -151,9 +155,12 @@ def _validate_name(name, *, required=True):
     name = name.strip()
     if not name:
         return None, "`name` is required." if required else "`name` cannot be empty."
-    if len(name.encode("utf-8")) > 255:
-        return None, f"Chat name length is {len(name.encode('utf-8'))} which is larger than 255."
-    return name, None
+    if len(name) > 255:
+        return None, f"Chat name length is {len(name)} which is larger than 255."
+    try:
+        return validate_resource_name(name, limit=255, label="Chat name"), None
+    except ValueError as exc:
+        return None, str(exc)
 
 
 def _build_session_response(conv: dict) -> dict:
@@ -447,7 +454,13 @@ async def create():
 
         req["id"] = get_uuid()
         req["tenant_id"] = current_user.id
-        if not DialogService.save(**req):
+        try:
+            saved = DialogService.save(**req)
+        except IntegrityError as exc:
+            if is_resource_name_conflict(exc, "dialog_owner_name_unique"):
+                return get_data_error_result(message="Duplicated chat name in creating chat.")
+            raise
+        if not saved:
             return get_data_error_result(message="Failed to create chat.")
 
         ok, chat = DialogService.get_by_id(req["id"])
@@ -580,10 +593,16 @@ async def update_chat(chat_id):
         for field in _READONLY_FIELDS:
             req.pop(field, None)
 
-        if "name" in req and req["name"].lower() != current_chat["name"].lower() and DialogService.name_exists(current_user.id, req["name"], exclude_id=chat_id):
+        if "name" in req and DialogService.name_exists(current_user.id, req["name"], exclude_id=chat_id):
             return get_data_error_result(message="Duplicated chat name.")
 
-        if not DialogService.update_by_id(chat_id, req):
+        try:
+            updated = DialogService.update_by_id(chat_id, req)
+        except IntegrityError as exc:
+            if is_resource_name_conflict(exc, "dialog_owner_name_unique"):
+                return get_data_error_result(message="Duplicated chat name.")
+            raise
+        if not updated:
             return get_data_error_result(message="Chat not found!")
 
         ok, chat = DialogService.get_by_id(chat_id)
@@ -662,10 +681,16 @@ async def patch_chat(chat_id):
         for field in _READONLY_FIELDS:
             req.pop(field, None)
 
-        if "name" in req and req["name"].lower() != current_chat["name"].lower() and DialogService.name_exists(current_user.id, req["name"], exclude_id=chat_id):
+        if "name" in req and DialogService.name_exists(current_user.id, req["name"], exclude_id=chat_id):
             return get_data_error_result(message="Duplicated chat name.")
 
-        if not DialogService.update_by_id(chat_id, req):
+        try:
+            updated = DialogService.update_by_id(chat_id, req)
+        except IntegrityError as exc:
+            if is_resource_name_conflict(exc, "dialog_owner_name_unique"):
+                return get_data_error_result(message="Duplicated chat name.")
+            raise
+        if not updated:
             return get_data_error_result(message="Failed to update chat.")
 
         ok, chat = DialogService.get_by_id(chat_id)

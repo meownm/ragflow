@@ -27,6 +27,31 @@ A complete reference for RAGFlow's RESTful API. Before proceeding, please ensure
 
 ---
 
+## Resource names
+
+Chat, agent and dataset names are unique within their owner's resources, independently
+for each resource type. Canvas names also have separate namespaces for agents and
+dataflows. Personal and shared resources of one owner use the same namespace;
+resources belonging to different owners may have the same name.
+
+Names are trimmed, must be nonempty, and are compared using PostgreSQL
+`LOWER(TRIM(name))`; Unicode compatibility normalization is not applied. Chat and
+agent names permit up to 255 Unicode characters. Dataset names permit up to 128
+BMP characters. NUL and surrogate characters are rejected.
+
+Chat and agent creation or renaming rejects a duplicate. Dataset creation chooses
+`name(1)`, `name(2)`, etc., shortening the base when necessary to keep the complete
+name within 128 characters; dataset renaming rejects duplicates. Concurrent writes
+are protected by owner-scoped database indexes. Deleted chats/datasets do not
+reserve names. Session names may repeat.
+
+Only an agent's owner can change its title or category. A teammate may save the
+shared agent's DSL with the unchanged title. Unauthorized rename attempts are
+rejected before name lookup, so they cannot reveal private names.
+
+Database initialization refuses existing duplicate groups without renaming or
+deleting records. Resolve such collisions before retrying the schema migration.
+
 ## Deprecated API Aliases
 
 The following v0.24.0 REST API paths are deprecated. They remain available through the backward compatibility layer, but new integrations should use the replacement endpoints.

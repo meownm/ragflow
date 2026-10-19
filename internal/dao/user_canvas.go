@@ -123,7 +123,7 @@ func NewUserCanvasDAO() *UserCanvasDAO {
 
 // Create user canvas
 func (dao *UserCanvasDAO) Create(userCanvas *entity.UserCanvas) error {
-	return DB.Create(userCanvas).Error
+	return resourceNameWrite(DB).Create(userCanvas).Error
 }
 
 // GetByID get user canvas by ID
@@ -177,11 +177,6 @@ func (dao *UserCanvasDAO) GetByIDForUser(canvasID, userID string, tenantIDs []st
 		return nil, err
 	}
 	return &canvas, nil
-}
-
-// Update update user canvas
-func (dao *UserCanvasDAO) Update(userCanvas *entity.UserCanvas) error {
-	return DB.Save(userCanvas).Error
 }
 
 // Accessible reports whether canvasID is reachable by userID under
@@ -239,13 +234,6 @@ func (dao *UserCanvasDAO) Delete(id string) error {
 	return DB.Where("id = ?", id).Delete(&entity.UserCanvas{}).Error
 }
 
-// UpdateTx is the transactional variant of Update. Callers wrap a sequence
-// of *Tx calls in dao.DB.Transaction(func(tx *gorm.DB) error { ... }) so
-// multi-step writes (e.g. publish-agent, delete-agent) are atomic.
-func (dao *UserCanvasDAO) UpdateTx(tx *gorm.DB, userCanvas *entity.UserCanvas) error {
-	return tx.Save(userCanvas).Error
-}
-
 // DeleteTx is the transactional variant of Delete. The canvas must
 // already be loaded and access-checked by the caller.
 func (dao *UserCanvasDAO) DeleteTx(tx *gorm.DB, id string) error {
@@ -253,15 +241,12 @@ func (dao *UserCanvasDAO) DeleteTx(tx *gorm.DB, id string) error {
 	return tx.Where("id = ?", id).Delete(&entity.UserCanvas{}).Error
 }
 
-// GetByUserAndTitle returns the canvas matching user_id + title (and
-// optional canvas_category), or (nil, nil) when no such canvas exists.
-// Used by service.AgentService.CreateAgent to enforce the "title
-// already exists" rule that the Python agent API mirrors with
-// UserCanvasService.query(user_id=..., title=...).
-func (dao *UserCanvasDAO) GetByUserAndTitle(userID, title, canvasCategory string) (*entity.UserCanvas, error) {
-	q := DB.Where("user_id = ? AND title = ?", userID, title)
-	if canvasCategory != "" {
-		q = q.Where("canvas_category = ?", canvasCategory)
+// GetByUserAndTitle looks up an owner/category title with database casing.
+// Excluded IDs allow renaming the current canvas without matching itself.
+func (dao *UserCanvasDAO) GetByUserAndTitle(userID, title, canvasCategory string, excludeIDs ...string) (*entity.UserCanvas, error) {
+	q := DB.Where("user_id = ? AND LOWER(TRIM(title)) = LOWER(TRIM(?)) AND canvas_category = ?", userID, title, canvasCategory)
+	if len(excludeIDs) > 0 {
+		q = q.Where("id NOT IN ?", excludeIDs)
 	}
 	var row entity.UserCanvas
 	if err := q.First(&row).Error; err != nil {
@@ -491,8 +476,13 @@ func (dao *UserCanvasDAO) UpdateDSL(canvasID string, dsl entity.JSONMap) (int64,
 
 // UpdateFields updates only the supplied user_canvas columns.
 func (dao *UserCanvasDAO) UpdateFields(canvasID string, fields map[string]interface{}) (int64, error) {
-	result := DB.Model(&entity.UserCanvas{}).Where("id = ?", canvasID).Updates(fields)
+	result := resourceNameWrite(DB).Model(&entity.UserCanvas{}).Where("id = ?", canvasID).Updates(fields)
 	return result.RowsAffected, result.Error
+}
+
+// UpdateFieldsTx updates the supplied fields within the caller's transaction.
+func (dao *UserCanvasDAO) UpdateFieldsTx(tx *gorm.DB, canvasID string, fields map[string]interface{}) error {
+	return resourceNameWrite(tx).Model(&entity.UserCanvas{}).Where("id = ?", canvasID).Updates(fields).Error
 }
 
 // UpdateTags updates a canvas's comma-separated tags by canvas ID.

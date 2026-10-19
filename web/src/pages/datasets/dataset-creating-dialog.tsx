@@ -45,10 +45,13 @@ export function InputForm({ onOk }: IModalProps<any>) {
     .object({
       name: z
         .string()
+        .trim()
         .min(1, {
           message: t('knowledgeList.namePlaceholder'),
         })
-        .trim(),
+        .max(128)
+        .regex(/^[^\uD800-\uDFFF]+$/)
+        .refine((value) => !value.includes('\0')),
       parseType: z.nativeEnum(ParseType).optional(),
       embedding_model: z
         .string()

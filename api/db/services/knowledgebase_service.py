@@ -15,7 +15,10 @@
 #
 from datetime import datetime
 
-from peewee import fn, JOIN
+from peewee import fn, JOIN, IntegrityError
+
+from api.db.resource_name_schema import is_resource_name_conflict
+from common.resource_names import validate_resource_name
 
 from api.db.db_models import DB, Document, Knowledgebase, User, UserCanvas
 from api.db.services.common_service import CommonService
@@ -375,7 +378,24 @@ class KnowledgebaseService(CommonService):
     @DB.connection_context()
     def query_by_name_case_insensitive(cls, *, name, tenant_id, status):
         """Find active tenant datasets by name using database-neutral casing."""
-        return cls.model.select().where((cls.model.tenant_id == tenant_id) & (cls.model.status == status) & (fn.LOWER(cls.model.name) == name.lower()))
+        return cls.model.select().where((cls.model.tenant_id == tenant_id) & (cls.model.status == status) & (fn.LOWER(fn.TRIM(cls.model.name)) == fn.LOWER(fn.TRIM(name))))
+
+    @classmethod
+    def save_with_unique_name(cls, payload):
+        """Retry only an owner/name conflict, inside its own savepoint."""
+        original_name = payload["name"]
+        for _ in range(1000):
+            payload["name"] = duplicate_name(
+                cls.query_by_name_case_insensitive, name=original_name,
+                tenant_id=payload["tenant_id"], status=StatusEnum.VALID.value, max_length=DATASET_NAME_LIMIT,
+            )
+            try:
+                with DB.atomic():
+                    return cls.model(**payload).save(force_insert=True)
+            except IntegrityError as exc:
+                if not is_resource_name_conflict(exc, "knowledgebase_owner_name_unique"):
+                    raise
+        raise ValueError("Unable to allocate a unique dataset name. Please retry.")
 
     @classmethod
     @DB.connection_context()
@@ -388,23 +408,11 @@ class KnowledgebaseService(CommonService):
     @classmethod
     @DB.connection_context()
     def create_with_name(cls, *, name: str, tenant_id: str, parser_id: str | None = None, **kwargs):
-        """Create a dataset (knowledgebase) by name with kb_app defaults.
-
-        This encapsulates the creation logic used in kb_app.create so other callers
-        (including RESTFul endpoints) can reuse the same behavior.
-
-        Returns:
-            (ok: bool, model_or_msg): On success, returns (True, Knowledgebase model instance);
-                                      on failure, returns (False, error_message).
-        """
-        # Validate name
-        if not isinstance(name, str):
-            return False, get_data_error_result(message="Dataset name must be string.")
-        dataset_name = name.strip()
-        if dataset_name == "":
-            return False, get_data_error_result(message="Dataset name can't be empty.")
-        if len(dataset_name.encode("utf-8")) > DATASET_NAME_LIMIT:
-            return False, get_data_error_result(message=f"Dataset name length is {len(dataset_name)} which is large than {DATASET_NAME_LIMIT}")
+        """Prepare a validated dataset payload; insertion allocates the final name."""
+        try:
+            dataset_name = validate_resource_name(name, limit=DATASET_NAME_LIMIT, label="Dataset name", bmp_only=True)
+        except ValueError as exc:
+            return False, get_data_error_result(message=str(exc))
 
         # Deduplicate name within tenant
         dataset_name = duplicate_name(
@@ -412,6 +420,7 @@ class KnowledgebaseService(CommonService):
             name=dataset_name,
             tenant_id=tenant_id,
             status=StatusEnum.VALID.value,
+            max_length=DATASET_NAME_LIMIT,
         )
 
         # Verify tenant exists

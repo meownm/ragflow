@@ -22,7 +22,9 @@ from werkzeug.datastructures import MultiDict
 
 from api.db import TenantPermission, UserTenantRole
 from api.utils.pagination_utils import validate_rest_list_args
-from common.constants import RetCode, StatusEnum
+from common.constants import ParserType, RetCode, StatusEnum
+from common.resource_names import validate_resource_name
+from api.db.resource_name_schema import install_resource_name_indexes, is_resource_name_conflict
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -43,6 +45,7 @@ def load_definitions(path, names, namespace, *, methods=None):
 @pytest.fixture
 def resources(tmp_path, monkeypatch):
     test_db = peewee.SqliteDatabase(tmp_path / "team.sqlite")
+    test_db.register_function(lambda value: value.lower() if value is not None else None, "lower", 1, deterministic=True)
 
     class Base(peewee.Model):
         create_time = peewee.IntegerField(default=1)
@@ -60,11 +63,12 @@ def resources(tmp_path, monkeypatch):
         def getter_by(cls, name):
             return getattr(cls, name)
 
-    namespace = {**vars(peewee), "DataBaseModel": Base, "AuthUser": object, "JSONField": JSONField, "LongTextField": peewee.TextField, "os": os}
-    model_names = ["User", "Tenant", "UserTenant", "Dialog", "Conversation", "API4Conversation", "UserCanvas", "UserCanvasVersion"]
+    namespace = {**vars(peewee), "DataBaseModel": Base, "AuthUser": object, "JSONField": JSONField, "LongTextField": peewee.TextField, "os": os, "ParserType": ParserType}
+    model_names = ["User", "Tenant", "UserTenant", "Dialog", "Conversation", "API4Conversation", "UserCanvas", "UserCanvasVersion", "Knowledgebase"]
     load_definitions("api/db/db_models.py", model_names, namespace, methods={"Meta"})
     models = [namespace[name] for name in model_names]
     test_db.create_tables(models)
+    install_resource_name_indexes(test_db)
 
     class CommonService:
         @classmethod
@@ -91,7 +95,7 @@ def resources(tmp_path, monkeypatch):
     namespace.update(DB=test_db, CommonService=CommonService, StatusEnum=StatusEnum, UserTenantRole=UserTenantRole, TenantPermission=TenantPermission, logging=logging, reduce=reduce, or_=or_)
     load_definitions("api/db/services/user_service.py", ["UserTenantService"], namespace, methods={"get_team_owner_ids"})
     load_definitions("api/db/services/dialog_service.py", ["DialogService"], namespace, methods={"get_accessible_chat", "get_by_tenant_ids", "name_exists"})
-    load_definitions("api/db/services/canvas_service.py", ["UserCanvasService"], namespace, methods={"get_by_canvas_id", "get_by_tenant_ids", "accessible", "list_tags", "get_agent_dsl_with_release"})
+    load_definitions("api/db/services/canvas_service.py", ["UserCanvasService"], namespace, methods={"name_exists", "get_by_canvas_id", "get_by_tenant_ids", "accessible", "list_tags", "get_agent_dsl_with_release"})
     load_definitions("api/db/services/conversation_service.py", ["ConversationService"], namespace, methods={"get_list"})
     load_definitions(
         "api/db/services/api_service.py",
@@ -175,6 +179,8 @@ def resources(tmp_path, monkeypatch):
         wraps=wraps,
         get_result=lambda **kwargs: {"code": 0, **kwargs},
         get_error_data_result=lambda message: {"code": 102, "message": message},
+        validate_resource_name=validate_resource_name,
+        is_resource_name_conflict=is_resource_name_conflict,
     )
     namespace["TenantService"] = SimpleNamespace(get_by_id=lambda user_id: (True, SimpleNamespace(llm_id="test-model")))
     tree = ast.parse((ROOT / "api/apps/restful_apis/chat_api.py").read_text(encoding="utf-8"))
@@ -213,6 +219,7 @@ def resources(tmp_path, monkeypatch):
         "api/apps/restful_apis/agent_api.py",
         [
             "list_agents",
+            "create_agent",
             "update_agent",
             "_require_canvas_access_sync",
             "_require_canvas_access_async",

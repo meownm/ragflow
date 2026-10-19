@@ -47,6 +47,17 @@ class UserCanvasService(CommonService):
     model = UserCanvas
 
     @classmethod
+    def name_exists(cls, owner_id, title, category, *, exclude_id=None):
+        query = cls.model.select(cls.model.id).where(
+            (cls.model.user_id == owner_id)
+            & (cls.model.canvas_category == category)
+            & (fn.LOWER(fn.TRIM(cls.model.title)) == fn.LOWER(fn.TRIM(title)))
+        )
+        if exclude_id:
+            query = query.where(cls.model.id != exclude_id)
+        return query.exists()
+
+    @classmethod
     @DB.connection_context()
     def get_list(cls, tenant_id, page_number, items_per_page, orderby, desc, id, title, canvas_category=CanvasCategory.Agent):
         agents = cls.model.select()

@@ -19,10 +19,8 @@ package dao
 import (
 	"errors"
 	"fmt"
-	"path"
 	"ragflow/internal/entity"
 
-	"strconv"
 	"strings"
 
 	"gorm.io/gorm"
@@ -55,17 +53,17 @@ func NewKnowledgebaseDAO() *KnowledgebaseDAO {
 
 // Create creates a new knowledge base record
 func (dao *KnowledgebaseDAO) Create(kb *entity.Knowledgebase) error {
-	return DB.Create(kb).Error
+	return resourceNameWrite(DB).Create(kb).Error
 }
 
 // Update updates a knowledge base record
 func (dao *KnowledgebaseDAO) Update(kb *entity.Knowledgebase) error {
-	return DB.Save(kb).Error
+	return resourceNameWrite(DB).Save(kb).Error
 }
 
 // UpdateByID updates a knowledge base by ID with the given fields
 func (dao *KnowledgebaseDAO) UpdateByID(id string, updates map[string]interface{}) error {
-	return DB.Model(&entity.Knowledgebase{}).Where("id = ?", id).Updates(updates).Error
+	return resourceNameWrite(DB).Model(&entity.Knowledgebase{}).Where("id = ?", id).Updates(updates).Error
 }
 
 // Delete soft deletes a knowledge base by setting status to invalid
@@ -103,7 +101,7 @@ func (dao *KnowledgebaseDAO) GetByIDs(ids []string) ([]*entity.Knowledgebase, er
 // GetByName retrieves a knowledge base by name and tenant ID
 func (dao *KnowledgebaseDAO) GetByName(name, tenantID string) (*entity.Knowledgebase, error) {
 	var kb entity.Knowledgebase
-	err := DB.Where("name = ? AND tenant_id = ? AND status = ?", name, tenantID, string(entity.StatusValid)).First(&kb).Error
+	err := DB.Where("LOWER(TRIM(name)) = LOWER(TRIM(?)) AND tenant_id = ? AND status = ?", name, tenantID, string(entity.StatusValid)).First(&kb).Error
 	if err != nil {
 		return nil, err
 	}
@@ -299,54 +297,6 @@ func (dao *KnowledgebaseDAO) Accessible4Deletion(kbID, userID string) bool {
 		return false
 	}
 	return count > 0
-}
-
-// DuplicateName generates a unique name by appending parentheses if name already exists
-// This matches the Python duplicate_name function behavior
-func (dao *KnowledgebaseDAO) DuplicateName(name, tenantID string) string {
-	const maxRetries = 1000
-
-	currentName := name
-	for retries := 0; retries < maxRetries; retries++ {
-		var count int64
-		err := DB.Model(&entity.Knowledgebase{}).
-			Where("LOWER(name) = ? AND tenant_id = ? AND status = ?", strings.ToLower(currentName), tenantID, string(entity.StatusValid)).
-			Count(&count).Error
-		if err != nil || count == 0 {
-			return currentName
-		}
-
-		suffix := path.Ext(currentName)
-		stem := strings.TrimSuffix(currentName, suffix)
-		mainPart, counter := splitNameCounter(stem)
-		nextCounter := 1
-		if counter > 0 {
-			nextCounter = counter + 1
-		}
-
-		currentName = mainPart + "(" + strconv.Itoa(nextCounter) + ")" + suffix
-	}
-
-	return currentName
-}
-
-func splitNameCounter(name string) (string, int) {
-	if !strings.HasSuffix(name, ")") {
-		return name, 0
-	}
-
-	leftBracketIndex := strings.LastIndex(name, "(")
-	if leftBracketIndex < 0 || leftBracketIndex >= len(name)-1 {
-		return name, 0
-	}
-
-	counterValue := name[leftBracketIndex+1 : len(name)-1]
-	counter, err := strconv.Atoi(counterValue)
-	if err != nil {
-		return name, 0
-	}
-
-	return strings.TrimRight(name[:leftBracketIndex], " "), counter
 }
 
 // AtomicIncreaseDocNumByID atomically increments the document count

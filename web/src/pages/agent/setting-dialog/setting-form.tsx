@@ -14,7 +14,11 @@ import { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 
 const formSchema = z.object({
-  title: z.string().min(1, {}),
+  title: z
+    .string()
+    .trim()
+    .min(1, {})
+    .refine((value) => Array.from(value).length <= 255),
   avatar: z.string().optional().nullable(),
   description: z.string().optional().nullable(),
   permission: z.string(),
@@ -58,7 +62,7 @@ export function SettingForm({ submit }: SettingFormProps) {
         id={AgentSettingId}
       >
         <RAGFlowFormItem name="title" label={t('title')}>
-          <Input />
+          <Input readOnly={data.user_id !== userInfo.id} />
         </RAGFlowFormItem>
         <RAGFlowFormItem name="avatar" label={t('photo')}>
           <AvatarUpload></AvatarUpload>

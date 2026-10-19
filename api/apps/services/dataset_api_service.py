@@ -18,6 +18,10 @@ import json
 import os
 import re
 
+from peewee import IntegrityError
+from api.db.resource_name_schema import is_resource_name_conflict
+from common.resource_names import validate_resource_name
+
 from api.db.joint_services.tenant_model_service import get_model_config_from_provider_instance
 from common.constants import PAGERANK_FLD
 from common import settings
@@ -91,6 +95,9 @@ async def create_dataset(tenant_id: str, req: dict):
         req["parser_config"] = parser_cfg
     req.update(ext_fields)
 
+    for field in ("id", "tenant_id", "created_by", "status", "create_time", "create_date", "update_time", "update_date"):
+        req.pop(field, None)
+
     e, create_dict = KnowledgebaseService.create_with_name(name=req.pop("name", None), tenant_id=tenant_id, parser_id=req.pop("parser_id", None), **req)
 
     if not e:
@@ -107,7 +114,7 @@ async def create_dataset(tenant_id: str, req: dict):
         if not ok:
             return False, err
 
-    if not KnowledgebaseService.save(**create_dict):
+    if not KnowledgebaseService.save_with_unique_name(create_dict):
         return False, "Failed to save dataset"
     ok, k = KnowledgebaseService.get_by_id(create_dict["id"])
     if not ok:
@@ -292,6 +299,8 @@ async def update_dataset(tenant_id: str, dataset_id: str, req: dict):
 
     # Merge ext fields with req
     req.update(ext_fields)
+    for field in ("id", "tenant_id", "created_by", "status", "create_time", "create_date", "update_time", "update_date"):
+        req.pop(field, None)
 
     # Extract connectors from request
     connectors = []
@@ -335,8 +344,13 @@ async def update_dataset(tenant_id: str, dataset_id: str, req: dict):
         # shift to use parser_id, delete old pipeline_id
         req["pipeline_id"] = ""
 
-    if "name" in req and req["name"].lower() != kb.name.lower():
-        exists = KnowledgebaseService.query_by_name_case_insensitive(name=req["name"], tenant_id=kb.tenant_id, status=StatusEnum.VALID.value)
+    if "name" in req:
+        try:
+            req["name"] = validate_resource_name(req["name"], limit=128, label="Dataset name", bmp_only=True)
+        except ValueError as exc:
+            return False, str(exc)
+    if "name" in req and req["name"] != kb.name:
+        exists = KnowledgebaseService.query_by_name_case_insensitive(name=req["name"], tenant_id=kb.tenant_id, status=StatusEnum.VALID.value).where(KnowledgebaseService.model.id != kb.id).exists()
         if exists:
             return False, f"Dataset name '{req['name']}' already exists"
 
@@ -363,8 +377,13 @@ async def update_dataset(tenant_id: str, dataset_id: str, req: dict):
     if "parse_type" in req:
         del req["parse_type"]
 
-    if not KnowledgebaseService.update_by_id(kb.id, req):
-        return False, "Update dataset error.(Database error)"
+    try:
+        if not KnowledgebaseService.update_by_id(kb.id, req):
+            return False, "Update dataset error.(Database error)"
+    except IntegrityError as exc:
+        if is_resource_name_conflict(exc, "knowledgebase_owner_name_unique"):
+            return False, "Dataset name already exists."
+        raise
 
     ok, k = KnowledgebaseService.get_by_id(kb.id)
     if not ok:

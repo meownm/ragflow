@@ -145,7 +145,7 @@ export default function AdminBusinessDocumentsQuality() {
       </span>
       <span className="text-text-secondary">{date(run.started_at || run.requested_at)}
         {(run.source_revision !== runs.data?.source_revision || run.source_revision === 'unverified' || run.report?.source_dirty)
-          && <strong className="block text-xs text-state-warning">{label('historicalSource')}</strong>}</span>
+          && <strong className="block text-xs">{label('historicalSource')}</strong>}</span>
     </button>
   );
 
@@ -187,7 +187,7 @@ export default function AdminBusinessDocumentsQuality() {
               <p>{label('latestRun')}: <span className={statusColor(latestRun.status)}>{label(`statuses.${latestRun.status}`)}</span> · {date(latestRun.started_at || latestRun.requested_at)}</p>
               <p>{latestRun.model_name || latestRun.report?.model || label(`triggers.${latestRun.trigger}`)} · {latestRun.reason_code || latestRun.reason || '—'}</p>
               <p>{label('latestComparable')}: {latestFull ? `${latestFull.report?.model || latestFull.model_name} · ${latestFull.report?.executed_cases}/${latestFull.report?.expected_cases} · ${date(latestFull.finished_at)}` : label('noComparable')}
-                {latestFull && (latestFull.source_revision !== runs.data?.source_revision || latestFull.source_revision === 'unverified') && <strong className="ml-2 text-state-warning">{label('historicalSource')}</strong>}</p>
+                {latestFull && (latestFull.source_revision !== runs.data?.source_revision || latestFull.source_revision === 'unverified') && <strong className="ml-2">{label('historicalSource')}</strong>}</p>
             </div> : runs.data && <p className="mt-4 text-text-secondary">{label('noRuns')}</p>}
             {allCampaigns[0] && <p className="mt-3 text-sm text-text-secondary">{label('nightlyCampaign')}: {allCampaigns[0].status} · {allCampaigns[0].runs.filter(run => !['PENDING', 'RUNNING'].includes(run.status)).length}/{allCampaigns[0].runs.length} {label('models')}</p>}
           </div>
@@ -239,7 +239,7 @@ export default function AdminBusinessDocumentsQuality() {
         {!chosenCampaign && campaigns.data && <p className="text-text-secondary">{label('noCampaigns')}</p>}
         {chosenCampaign && <div className="rounded-lg border border-border-button bg-bg-card p-5">
           <p className="mb-3 text-sm text-text-secondary">{label('source')}: {chosenCampaign.source_revision} · {label('baseline')}: {chosenCampaign.baseline_status || '—'} · {label('completed')}: {chosenCampaign.runs.filter(run => !['PENDING', 'RUNNING'].includes(run.status)).length}/{chosenCampaign.runs.length}
-            {(chosenCampaign.source_revision !== runs.data?.source_revision || chosenCampaign.source_revision === 'unverified') && <strong className="ml-2 text-state-warning">{label('historicalSource')}</strong>}</p>
+            {(chosenCampaign.source_revision !== runs.data?.source_revision || chosenCampaign.source_revision === 'unverified') && <strong className="ml-2">{label('historicalSource')}</strong>}</p>
           {chosenCampaign.reason_code && <p className="mb-3 text-state-warning">{chosenCampaign.reason_code}</p>}
           {chosenCampaign.baseline_report?.cases?.filter(item => item.status === 'FAIL').map(item =>
             <p key={item.case_id} className="mb-2 text-sm text-state-error">{item.case_id} · {label('baseline')} · {item.diagnostics?.map(diagnostic => diagnostic.code).join(', ')}</p>)}
@@ -332,7 +332,7 @@ export default function AdminBusinessDocumentsQuality() {
         {detail.error && <p role="alert" className="mt-3 text-state-error">{label('runsLoadError')}</p>}
         {selectedDetail && <div className="mt-3 space-y-3 text-sm">
           <p className="text-text-secondary">{selectedDetail.model_name || selectedDetail.report?.model || '—'} · {selectedDetail.model_digest || '—'} · {selectedDetail.source_revision} · {date(selectedDetail.finished_at)}</p>
-          {(selectedDetail.source_revision !== runs.data?.source_revision || selectedDetail.source_revision === 'unverified' || selectedDetail.report?.source_dirty) && <p className="text-state-warning">{label('historicalSource')}</p>}
+          {(selectedDetail.source_revision !== runs.data?.source_revision || selectedDetail.source_revision === 'unverified' || selectedDetail.report?.source_dirty) && <p>{label('historicalSource')}</p>}
           {selectedDetail.reason_code && <p className="text-state-warning">{selectedDetail.reason_code}</p>}
           {!selectedDetail.report?.cases?.length && <p className="text-text-secondary">{label('detailsUnavailable')}</p>}
           {selectedDetail.report?.gate_checks?.filter(check => !check.passed).map(check => <p key={check.metric} className="text-state-error">{check.metric}: {check.actual} · {label('threshold')}: {check.threshold}</p>)}

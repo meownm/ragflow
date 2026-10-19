@@ -2859,7 +2859,7 @@ export default {
         unverified: 'Ревизия не подтверждена',
         latestRun: 'Последний запуск',
         latestComparable: 'Последний полный запуск',
-        historicalSource: 'Другой или неподтверждённый образ',
+        historicalSource: 'Другой или неподтверждённый билд',
         noComparable: 'Пока нет',
         nightlyCampaign: 'Ночная серия',
         noCampaigns: 'Ночных серий пока нет.',

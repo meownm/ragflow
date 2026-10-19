@@ -149,7 +149,7 @@ export const AddedChannelCard = (props: IAddedChannelCardProps) => {
                     setQrError('');
                     setQrVisible(true);
                   }}
-                  title="Show QR"
+                  title={t('setting.showQr')}
                 >
                   <QrCode size={14} />
                 </Button>
@@ -183,13 +183,13 @@ export const AddedChannelCard = (props: IAddedChannelCardProps) => {
       <Modal
         open={qrVisible}
         onOpenChange={(open) => !open && setQrVisible(false)}
-        title="WhatsApp QR Code"
+        title={t('setting.whatsappQr')}
         size="large"
         footer={
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => void loadQr()}>
               <RefreshCw className={qrLoading ? 'animate-spin' : ''} />
-              Refresh
+              {t('common.refresh')}
             </Button>
             <Button onClick={() => setQrVisible(false)}>
               {t('common.close')}
@@ -210,12 +210,12 @@ export const AddedChannelCard = (props: IAddedChannelCardProps) => {
           {qrData ? (
             <img
               src={qrData}
-              alt="WhatsApp QR"
+              alt={t('setting.whatsappQr')}
               className="mx-auto w-56 max-w-full rounded-lg border border-border-button bg-white"
             />
           ) : (
             <div className="text-sm text-text-secondary">
-              QR is not ready yet.
+              {t('setting.qrNotReady')}
             </div>
           )}
         </div>

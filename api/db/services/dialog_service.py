@@ -29,6 +29,7 @@ from peewee import fn
 from api.db.services.file_service import FileService
 from common.constants import LLMType, ParserType, StatusEnum
 from api.db.db_models import DB, Dialog
+from api.db import TenantPermission
 from api.db.services.common_service import CommonService
 from api.db.services.doc_metadata_service import DocMetadataService
 from api.db.services.knowledgebase_service import KnowledgebaseService
@@ -142,6 +143,20 @@ class DialogService(CommonService):
     model = Dialog
 
     @classmethod
+    @DB.connection_context()
+    def get_accessible_chat(cls, chat_id, user_id):
+        from api.db.services.user_service import UserTenantService
+
+        owners = UserTenantService.get_team_owner_ids(user_id)
+        return list(
+            cls.model.select().where(
+                cls.model.id == chat_id,
+                cls.model.status == StatusEnum.VALID.value,
+                (cls.model.tenant_id == user_id) | ((cls.model.tenant_id.in_(owners)) & (cls.model.permission == TenantPermission.TEAM.value)),
+            )
+        )
+
+    @classmethod
     def name_exists(cls, tenant_id: str, name: str, *, exclude_id: str | None = None) -> bool:
         """Return whether an active dialog name exists, case-insensitively."""
         query = cls.model.select(cls.model.id).where((cls.model.tenant_id == tenant_id) & (cls.model.status == StatusEnum.VALID.value) & (fn.LOWER(cls.model.name) == name.lower()))
@@ -213,12 +228,14 @@ class DialogService(CommonService):
         keywords,
         id=None,
         name=None,
+        owner_ids=None,
     ):
         from api.db.db_models import User
 
         fields = [
             cls.model.id,
             cls.model.tenant_id,
+            cls.model.permission,
             cls.model.name,
             cls.model.description,
             cls.model.language,
@@ -244,9 +261,12 @@ class DialogService(CommonService):
             cls.model.select(*fields)
             .join(User, on=(cls.model.tenant_id == User.id))
             .where(
-                (cls.model.tenant_id.in_(joined_tenant_ids) | (cls.model.tenant_id == user_id)) & (cls.model.status == StatusEnum.VALID.value),
+                (((cls.model.tenant_id.in_(joined_tenant_ids)) & (cls.model.permission == TenantPermission.TEAM.value)) | (cls.model.tenant_id == user_id))
+                & (cls.model.status == StatusEnum.VALID.value),
             )
         )
+        if owner_ids:
+            dialogs = dialogs.where(cls.model.tenant_id.in_(owner_ids))
         if id:
             dialogs = dialogs.where(cls.model.id == id)
         if name:

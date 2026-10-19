@@ -24,6 +24,7 @@ import { cn } from '@/lib/utils';
 import { t } from 'i18next';
 import { get, isEmpty, isEqual, uniqWith } from 'lodash';
 import { useCallback, useEffect, useMemo } from 'react';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 import { Operator } from '../constant';
 import { JsonViewer } from '../form/components/json-viewer';
 import { useCacheChatLog } from '../hooks/use-cache-chat-log';
@@ -38,32 +39,32 @@ type LogFlowTimelineProps = Pick<
   isShare?: boolean;
 };
 
-export const typeMap = {
-  begin: t('flow.logTimeline.begin'),
-  agent: t('flow.logTimeline.agent'),
-  retrieval: t('flow.logTimeline.retrieval'),
-  message: t('flow.logTimeline.message'),
-  awaitResponse: t('flow.logTimeline.awaitResponse'),
-  switch: t('flow.logTimeline.switch'),
-  iteration: t('flow.logTimeline.iteration'),
-  categorize: t('flow.logTimeline.categorize'),
-  code: t('flow.logTimeline.code'),
-  textProcessing: t('flow.logTimeline.textProcessing'),
-  tavilySearch: t('flow.logTimeline.tavilySearch'),
-  tavilyExtract: t('flow.logTimeline.tavilyExtract'),
-  exeSQL: t('flow.logTimeline.exeSQL'),
-  google: t('flow.logTimeline.google'),
-  duckDuckGo: t('flow.logTimeline.google'),
-  wikipedia: t('flow.logTimeline.wikipedia'),
-  googleScholar: t('flow.logTimeline.googleScholar'),
-  arXiv: t('flow.logTimeline.googleScholar'),
-  pubMed: t('flow.logTimeline.googleScholar'),
-  gitHub: t('flow.logTimeline.gitHub'),
-  email: t('flow.logTimeline.email'),
-  httpRequest: t('flow.logTimeline.httpRequest'),
-  wenCai: t('flow.logTimeline.wenCai'),
-  yahooFinance: t('flow.logTimeline.yahooFinance'),
-  userFillUp: t('flow.logTimeline.userFillUp'),
+const typeMap = {
+  begin: 'flow.logTimeline.begin',
+  agent: 'flow.logTimeline.agent',
+  retrieval: 'flow.logTimeline.retrieval',
+  message: 'flow.logTimeline.message',
+  awaitResponse: 'flow.logTimeline.awaitResponse',
+  switch: 'flow.logTimeline.switch',
+  iteration: 'flow.logTimeline.iteration',
+  categorize: 'flow.logTimeline.categorize',
+  code: 'flow.logTimeline.code',
+  textProcessing: 'flow.logTimeline.textProcessing',
+  tavilySearch: 'flow.logTimeline.tavilySearch',
+  tavilyExtract: 'flow.logTimeline.tavilyExtract',
+  exeSQL: 'flow.logTimeline.exeSQL',
+  google: 'flow.logTimeline.google',
+  duckDuckGo: 'flow.logTimeline.google',
+  wikipedia: 'flow.logTimeline.wikipedia',
+  googleScholar: 'flow.logTimeline.googleScholar',
+  arXiv: 'flow.logTimeline.googleScholar',
+  pubMed: 'flow.logTimeline.googleScholar',
+  gitHub: 'flow.logTimeline.gitHub',
+  email: 'flow.logTimeline.email',
+  httpRequest: 'flow.logTimeline.httpRequest',
+  wenCai: 'flow.logTimeline.wenCai',
+  yahooFinance: 'flow.yahooFinance',
+  userFillUp: 'flow.logTimeline.userFillUp',
 };
 export const toLowerCaseStringAndDeleteChar = (
   str: string,
@@ -71,7 +72,7 @@ export const toLowerCaseStringAndDeleteChar = (
 ) => str.toLowerCase().replace(/ /g, '').replaceAll(char, '');
 
 // Convert all keys in typeMap to lowercase and output the new typeMap
-export const typeMapLowerCase = Object.fromEntries(
+const typeMapLowerCase = Object.fromEntries(
   Object.entries(typeMap).map(([key, value]) => [
     toLowerCaseStringAndDeleteChar(key),
     value,
@@ -97,6 +98,7 @@ export const WorkFlowTimeline = ({
   sendLoading,
   isShare,
 }: LogFlowTimelineProps) => {
+  const { t: tUi } = useUiTranslation();
   // const getNode = useGraphStore((state) => state.getNode);
 
   const {
@@ -200,6 +202,8 @@ export const WorkFlowTimeline = ({
         const inputs = getInputsOrOutputs(nodeDataList, 'inputs');
         const outputs = getInputsOrOutputs(nodeDataList, 'outputs');
         const nodeLabel = x.data.component_type;
+        const typeKey =
+          typeMapLowerCase[toLowerCaseStringAndDeleteChar(nodeLabel)];
         return (
           <>
             <TimelineItem
@@ -261,13 +265,7 @@ export const WorkFlowTimeline = ({
                         <div className="flex gap-2 items-center">
                           <span>
                             {!isShare && getNodeName(x.data?.component_name)}
-                            {isShare &&
-                              (typeMapLowerCase[
-                                toLowerCaseStringAndDeleteChar(
-                                  nodeLabel,
-                                ) as keyof typeof typeMap
-                              ] ??
-                                nodeLabel)}
+                            {isShare && (typeKey ? tUi(typeKey) : nodeLabel)}
                           </span>
                           <span className="text-text-secondary text-xs">
                             {getElapsedTime(x.data.component_id)
@@ -282,7 +280,9 @@ export const WorkFlowTimeline = ({
                               { 'bg-state--error': !isEmpty(x.data.error) },
                             )}
                           >
-                            <span className="sr-only">Online</span>
+                            <span className="sr-only">
+                              {tUi('flow.online')}
+                            </span>
                           </span>
                         </div>
                       </AccordionTrigger>
@@ -293,7 +293,7 @@ export const WorkFlowTimeline = ({
                               <>
                                 <JsonViewer
                                   data={inputs}
-                                  title="Input"
+                                  title={tUi('flow.input')}
                                 ></JsonViewer>
 
                                 <JsonViewer

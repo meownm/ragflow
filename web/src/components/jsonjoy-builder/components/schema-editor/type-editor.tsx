@@ -1,4 +1,5 @@
 import { lazy, Suspense } from 'react';
+import { useTranslation } from 'react-i18next';
 import type {
   JSONSchema,
   ObjectJSONSchema,
@@ -27,6 +28,7 @@ const TypeEditor: React.FC<TypeEditorProps> = ({
   onChange,
   depth = 0,
 }) => {
+  const { t } = useTranslation();
   const type = withObjectSchema(
     schema,
     (s) => (s.type || 'object') as SchemaType,
@@ -34,7 +36,7 @@ const TypeEditor: React.FC<TypeEditorProps> = ({
   );
 
   return (
-    <Suspense fallback={<div>Loading editor...</div>}>
+    <Suspense fallback={<div>{t('common.loadingEditor')}</div>}>
       {type === 'string' && (
         <StringEditor
           schema={schema}

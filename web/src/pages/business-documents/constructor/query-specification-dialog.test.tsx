@@ -1,3 +1,4 @@
+import '@/locales/config';
 import {
   compileBusinessDocumentSqlQuery,
   planBusinessDocumentSqlQuery,
@@ -300,7 +301,7 @@ describe('QuerySpecificationDialog', () => {
     expect(screen.getByTestId('query-compile-status')).toHaveTextContent(
       'READY',
     );
-    expect(screen.getByText('SQLGuard')).toBeInTheDocument();
+    expect(screen.getByText('Проверка безопасности SQL')).toBeInTheDocument();
   });
 
   it('does not offer compilation without a READY schema snapshot', () => {
@@ -389,9 +390,7 @@ describe('QuerySpecificationDialog', () => {
     ).toHaveTextContent('Warehouse RO');
     expect(
       screen.getByTestId('query-execution-relation-mappings'),
-    ).toHaveTextContent(
-      'warehouse.analytics.dwh.order_fact → dwh.order_fact',
-    );
+    ).toHaveTextContent('warehouse.analytics.dwh.order_fact → dwh.order_fact');
     expect(mockedCompile).not.toHaveBeenCalled();
   });
 });

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 
 import { FileUploader } from '@/components/file-uploader';
 import { Button } from '@/components/ui/button';
@@ -96,6 +97,7 @@ const withRedirectUri = (credentials: string, redirectUri: string): string => {
 };
 
 const GmailTokenField = ({ value, onChange }: GmailTokenFieldProps) => {
+  const { t: tUi } = useUiTranslation();
   const [files, setFiles] = useState<File[]>([]);
   const [pendingCredentials, setPendingCredentials] = useState<string>('');
   const [redirectUri, setRedirectUri] = useState('');
@@ -345,17 +347,17 @@ const GmailTokenField = ({ value, onChange }: GmailTokenFieldProps) => {
           <div className="flex flex-wrap items-center gap-2">
             {hasVerifiedTokens ? (
               <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-emerald-700">
-                Verified
+                {tUi('setting.verified')}
               </span>
             ) : null}
             {hasUploadedButUnverified ? (
               <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-amber-700">
-                Needs authorization
+                {tUi('setting.needsAuthorization')}
               </span>
             ) : null}
             {pendingCredentials && !hasVerifiedTokens ? (
               <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-blue-700">
-                Uploaded (pending)
+                {tUi('setting.uploadedPending')}
               </span>
             ) : null}
           </div>
@@ -387,16 +389,19 @@ const GmailTokenField = ({ value, onChange }: GmailTokenFieldProps) => {
           onEscapeKeyDown={(e) => e.preventDefault()}
         >
           <DialogHeader>
-            <DialogTitle>Complete Gmail verification</DialogTitle>
+            <DialogTitle>
+              {tUi('setting.completeGmailVerification')}
+            </DialogTitle>
             <DialogDescription>
-              The uploaded client credentials do not contain a refresh token.
-              Run the verification flow once to mint reusable tokens.
+              {tUi('setting.oauthRefreshTokenDescription')}
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
             <div className="space-y-1">
-              <label className="text-sm font-medium">Redirect URI</label>
+              <label className="text-sm font-medium">
+                {tUi('setting.redirectUri')}
+              </label>
               <Input
                 value={redirectUri}
                 placeholder="https://example.com/gmail/oauth/callback"
@@ -405,13 +410,9 @@ const GmailTokenField = ({ value, onChange }: GmailTokenFieldProps) => {
             </div>
             <div className="rounded-md border border-dashed border-muted-foreground/40 bg-muted/10 px-4 py-4 text-sm text-muted-foreground">
               <div className="text-sm font-semibold text-foreground">
-                Authorize in browser
+                {tUi('setting.authorizeInBrowser')}
               </div>
-              <p className="mt-2">
-                We will open Google&apos;s consent page in a new window. Sign in
-                with the admin account, grant access, and return here. Your
-                credentials will update automatically.
-              </p>
+              <p className="mt-2">{tUi('setting.googleConsentDescription')}</p>
               {webStatus !== 'idle' && (
                 <p
                   className={`mt-2 text-xs ${
@@ -431,7 +432,7 @@ const GmailTokenField = ({ value, onChange }: GmailTokenFieldProps) => {
                   {webAuthLoading && (
                     <Loader2 className="mr-2 size-4 animate-spin" />
                   )}
-                  Authorize with Google
+                  {tUi('setting.authorizeWithGoogle')}
                 </Button>
                 {webFlowId ? (
                   <Button
@@ -439,7 +440,7 @@ const GmailTokenField = ({ value, onChange }: GmailTokenFieldProps) => {
                     onClick={handleManualWebCheck}
                     disabled={webStatus === 'success'}
                   >
-                    Refresh status
+                    {tUi('setting.refreshStatus')}
                   </Button>
                 ) : null}
               </div>
@@ -448,7 +449,7 @@ const GmailTokenField = ({ value, onChange }: GmailTokenFieldProps) => {
 
           <DialogFooter className="pt-2">
             <Button variant="ghost" onClick={handleCancel}>
-              Cancel
+              {tUi('common.cancel')}
             </Button>
           </DialogFooter>
         </DialogContent>

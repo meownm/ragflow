@@ -491,6 +491,10 @@ class BusinessDocumentAI:
                     self._stream_callback(job, on_section_preview) if not recovery.state["feedback"].get("generation") else None,
                 )
                 try:
+                    if job.job_type == "GENERATE_DRAFT" and isinstance(raw, str) and "generation" not in recovery.state["feedback"]:
+                        candidate = self._parse(raw)
+                        if not {"draft", "document_draft", "sections"}.intersection(candidate):
+                            raise ValidationError("INVALID_AI_JSON", "Return the completed draft JSON object, without analysis or planning notes")
                     validated = self._normalize_and_validate(job, raw, evidence)
                     final = self._candidate_document(job, validated)
                 except ValidationError as error:
@@ -1085,6 +1089,15 @@ class BusinessDocumentAI:
             parsed = repair_json(raw, return_objects=True)
         except Exception as exc:
             raise ValidationError("INVALID_AI_JSON", "AI response is not valid JSON") from exc
+        if not isinstance(parsed, dict):
+            # Explanations can contain ID arrays before the actual fenced reply.
+            # Select only an explicit, single JSON object; never merge candidates.
+            fenced = re.findall(r"(?ms)^```json[ \t]*\r?\n(.*?)^```[ \t]*$", raw)
+            if len(fenced) == 1:
+                try:
+                    parsed = json.loads(fenced[0])
+                except ValueError:
+                    pass
         if not isinstance(parsed, dict):
             raise ValidationError("INVALID_AI_JSON", "AI response must be a JSON object")
         return parsed

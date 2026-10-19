@@ -8,6 +8,7 @@ import Dropzone, {
   type DropzoneProps,
   type FileRejection,
 } from 'react-dropzone';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -52,6 +53,7 @@ function FilePreview({ file }: FilePreviewProps) {
 }
 
 function FileCard({ file, progress, onRemove }: FileCardProps) {
+  const { t: tUi } = useUiTranslation();
   return (
     <div className="relative flex items-center gap-2.5">
       <div className="flex flex-1 gap-2.5 overflow-hidden">
@@ -86,7 +88,7 @@ function FileCard({ file, progress, onRemove }: FileCardProps) {
           onClick={onRemove}
         >
           <LucideTrash2 className="size-4" aria-hidden="true" />
-          <span className="sr-only">Remove file</span>
+          <span className="sr-only">{tUi('common.removeFile')}</span>
         </Button>
       </div>
     </div>

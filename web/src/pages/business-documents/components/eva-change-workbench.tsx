@@ -35,6 +35,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import type {
   EvaDocumentChange,
@@ -81,6 +82,7 @@ function updateCachedChange(
 }
 
 export function EvaChangeWorkbench({ changeId }: { changeId: string }) {
+  const { t: tUi } = useUiTranslation();
   const queryClient = useQueryClient();
   const [refinement, setRefinement] = useState('');
   const [view, setView] = useState<'draft' | 'diff'>('diff');
@@ -354,7 +356,7 @@ export function EvaChangeWorkbench({ changeId }: { changeId: string }) {
                 variant={view === 'diff' ? 'secondary' : 'ghost'}
                 onClick={() => setView('diff')}
               >
-                Diff
+                {tUi('common.diff')}
                 {change.diff.changed && (
                   <span className="ms-1 text-[11px] text-text-secondary">
                     {change.diff.changed_sections}

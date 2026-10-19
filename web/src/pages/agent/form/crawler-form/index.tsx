@@ -12,6 +12,7 @@ import { useTranslate } from '@/hooks/common-hooks';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { memo, useMemo } from 'react';
 import { useForm, useFormContext } from 'react-hook-form';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 import { z } from 'zod';
 import { initialCrawlerValues } from '../../constant';
 import { useWatchFormChange } from '../../hooks/use-watch-form-change';
@@ -20,6 +21,7 @@ import { CrawlerResultOptions } from '../../options';
 import { QueryVariable } from '../components/query-variable';
 
 export function CrawlerProxyFormField() {
+  const { t: tUi } = useUiTranslation();
   const { t } = useTranslate('flow');
   const form = useFormContext();
 
@@ -31,7 +33,7 @@ export function CrawlerProxyFormField() {
         <FormItem>
           <FormLabel>{t('proxy')}</FormLabel>
           <FormControl>
-            <Input placeholder="like: http://127.0.0.1:8888" {...field} />
+            <Input placeholder={tUi('flow.proxyUrlPlaceholder')} {...field} />
           </FormControl>
           <FormMessage />
         </FormItem>

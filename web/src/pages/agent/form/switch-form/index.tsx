@@ -201,7 +201,10 @@ function SwitchForm({ node }: IOperatorForm) {
               <div className="flex justify-between items-center">
                 <section>
                   <span>{index === 0 ? 'IF' : 'ELSEIF'}</span>
-                  <div className="text-text-secondary">Case {index + 1}</div>
+                  <div className="text-text-secondary">
+                    {t('flow.case')}
+                    {index + 1}
+                  </div>
                 </section>
                 {index !== 0 && (
                   <Button

@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/tooltip';
 import { Eye, Tag, Trash2 } from 'lucide-react';
 import React, { memo } from 'react';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 import type { Skill } from '../types';
 
 interface SkillCardProps {
@@ -36,6 +37,7 @@ const SkillCard: React.FC<SkillCardProps> = ({
   onDelete,
   formatRelative,
 }) => {
+  const { t: tUi } = useUiTranslation();
   const fileCount = skill.files.filter((f) => !f.is_dir).length;
   const filesLoading = skill.files.length === 0 && (skill as any)._folderId;
 
@@ -73,7 +75,7 @@ const SkillCard: React.FC<SkillCardProps> = ({
                       <Eye className="size-4" />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent>View</TooltipContent>
+                  <TooltipContent>{tUi('common.view')}</TooltipContent>
                 </Tooltip>
 
                 <AlertDialog>
@@ -89,18 +91,21 @@ const SkillCard: React.FC<SkillCardProps> = ({
                         </Button>
                       </AlertDialogTrigger>
                     </TooltipTrigger>
-                    <TooltipContent>Delete</TooltipContent>
+                    <TooltipContent>{tUi('common.delete')}</TooltipContent>
                   </Tooltip>
                   <AlertDialogContent>
                     <AlertDialogHeader>
-                      <AlertDialogTitle>Delete Skill</AlertDialogTitle>
+                      <AlertDialogTitle>
+                        {tUi('skills.deleteTitle')}
+                      </AlertDialogTitle>
                       <AlertDialogDescription>
-                        Are you sure you want to delete this skill? This action
-                        cannot be undone.
+                        {tUi('skills.deleteDescription')}
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
-                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                      <AlertDialogCancel>
+                        {tUi('common.cancel')}
+                      </AlertDialogCancel>
                       <AlertDialogAction
                         onClick={() =>
                           onDelete(
@@ -111,7 +116,7 @@ const SkillCard: React.FC<SkillCardProps> = ({
                         }
                         className="bg-state-error hover:bg-state-error/90"
                       >
-                        Delete
+                        {tUi('common.delete')}
                       </AlertDialogAction>
                     </AlertDialogFooter>
                   </AlertDialogContent>

@@ -102,7 +102,7 @@ export const ru: Translation = {
   stringFormatDateTime: 'Дата-Время',
   stringFormatDate: 'Дата',
   stringFormatTime: 'Время',
-  stringFormatEmail: 'Email',
+  stringFormatEmail: 'Электронная почта',
   stringFormatUri: 'URI',
   stringFormatUuid: 'UUID',
   stringFormatHostname: 'Имя хоста',

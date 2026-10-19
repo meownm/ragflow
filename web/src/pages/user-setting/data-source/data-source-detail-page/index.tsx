@@ -9,16 +9,16 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import { RunningStatus, RunningStatusOld } from '@/constants/knowledge';
-import { t } from 'i18next';
 import { isEqual } from 'lodash';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FieldValues } from 'react-hook-form';
+import { useTranslation } from 'react-i18next';
 import { SettingsAccessGuard } from '../../settings-access-guard';
 import {
-  DataSourceFormBaseFields,
   DataSourceFormDefaultValues,
   DataSourceKey,
   getCommonExtraDefaultValues,
+  getDataSourceBaseFields,
   getDataSourceFieldsWithExtras,
   mergeDataSourceFormValues,
   useDataSourceInfo,
@@ -32,6 +32,7 @@ import {
 import { DataSourceLogsTable } from './log-table';
 
 const SourceDetailPageContent = () => {
+  const { t } = useTranslation();
   const formRef = useRef<DynamicFormRef>(null);
 
   const { data: detail } = useFetchDataSourceDetail();
@@ -44,7 +45,6 @@ const SourceDetailPageContent = () => {
     }
   }, [detail, dataSourceInfo]);
 
-  const [fields, setFields] = useState<FormFieldConfig[]>([]);
   const [isDirty, setIsDirty] = useState(false);
   const [defaultValues, setDefaultValues] = useState<FieldValues>(
     DataSourceFormDefaultValues[
@@ -55,7 +55,7 @@ const SourceDetailPageContent = () => {
   const customFields = useMemo(() => {
     return [
       {
-        label: 'Prune Freq',
+        label: t('setting.connectorFields.pruneFreq'),
         name: 'prune_freq',
         type: FormFieldType.Number,
         required: false,
@@ -75,7 +75,7 @@ const SourceDetailPageContent = () => {
         },
       },
       {
-        label: 'Refresh Freq',
+        label: t('setting.connectorFields.refreshFreq'),
         name: 'refresh_freq',
         type: FormFieldType.Number,
         required: false,
@@ -92,7 +92,7 @@ const SourceDetailPageContent = () => {
         ),
       },
       {
-        label: 'Timeout Secs',
+        label: t('setting.connectorFields.timeoutSecs'),
         name: 'timeout_secs',
         type: FormFieldType.Number,
         required: false,
@@ -113,7 +113,7 @@ const SourceDetailPageContent = () => {
         ),
       },
     ];
-  }, []);
+  }, [t]);
 
   const { addLoading, handleAddOk } = useAddDataSource({ isEdit: true });
   const { loading: testLoading, handleTest } = useTestDataSource();
@@ -165,40 +165,35 @@ const SourceDetailPageContent = () => {
   }, [actionMode, onSubmit, updateStatus]);
 
   const primaryActionLabel = useMemo(() => {
-    if (actionMode === 'stop') return 'Stop';
-    if (actionMode === 'resume') return 'Resume';
-    return 'Save';
-  }, [actionMode]);
+    if (actionMode === 'stop') return t('setting.stop');
+    if (actionMode === 'resume') return t('setting.resume');
+    return t('common.save');
+  }, [actionMode, t]);
 
-  useEffect(() => {
-    const baseFields = DataSourceFormBaseFields.map((field) => {
+  const fields = useMemo<FormFieldConfig[]>(() => {
+    if (!detail) return [];
+    const baseFields = getDataSourceBaseFields(t).map((field) => {
       if (field.name === 'name') {
         return {
           ...field,
           disabled: true,
         };
-      } else {
-        return {
-          ...field,
-        };
       }
+      return field;
     });
+    return [
+      ...baseFields,
+      ...getDataSourceFieldsWithExtras(detail.source as any, t),
+      ...customFields,
+    ].map((field) => ({
+      ...field,
+      horizontal: true,
+      onChange: undefined,
+    })) as FormFieldConfig[];
+  }, [detail, customFields, t]);
+
+  useEffect(() => {
     if (detail) {
-      const fields = [
-        ...baseFields,
-        ...getDataSourceFieldsWithExtras(detail.source as any),
-        ...customFields,
-      ] as FormFieldConfig[];
-
-      const newFields = fields.map((field) => {
-        return {
-          ...field,
-          horizontal: true,
-          onChange: undefined,
-        };
-      });
-      setFields(newFields);
-
       const defaultValueTemp = {
         ...mergeDataSourceFormValues(
           DataSourceFormDefaultValues[
@@ -211,7 +206,7 @@ const SourceDetailPageContent = () => {
       setDefaultValues(defaultValueTemp);
       setIsDirty(false);
     }
-  }, [detail, customFields, onSubmit]);
+  }, [detail]);
 
   useEffect(() => {
     const instance = formRef.current;

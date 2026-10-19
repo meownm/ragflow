@@ -29,6 +29,12 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
+
+def _run(operation):
+    with asyncio.Runner(loop_factory=asyncio.new_event_loop) as runner:
+        return runner.run(operation)
+
+
 from api.utils.pagination_utils import validate_rest_list_args
 
 
@@ -81,7 +87,7 @@ def _load_agent_api(monkeypatch, *, storage_get):
     services_module.__path__ = []
     _stub(monkeypatch, "api.apps.services.agent_file_service", upload_agent_files=lambda *_a, **_k: None)
     _stub(monkeypatch, "api.apps.services.canvas_replica_service", CanvasReplicaService=SimpleNamespace())
-    _stub(monkeypatch, "api.db", CanvasCategory=SimpleNamespace())
+    _stub(monkeypatch, "api.db", CanvasCategory=SimpleNamespace(), TenantPermission=SimpleNamespace(ME=SimpleNamespace(value="me"), TEAM=SimpleNamespace(value="team")))
     _stub(monkeypatch, "api.db.db_models", Task=SimpleNamespace())
     _stub(
         monkeypatch,
@@ -115,7 +121,7 @@ def _load_agent_api(monkeypatch, *, storage_get):
     _stub(
         monkeypatch,
         "api.db.services.user_service",
-        TenantService=SimpleNamespace(),
+        UserTenantService=SimpleNamespace(),
         UserService=SimpleNamespace(get_by_id=lambda *_a, **_k: (False, None)),
     )
     _stub(monkeypatch, "api.db.services.user_canvas_version", UserCanvasVersionService=SimpleNamespace())
@@ -184,9 +190,9 @@ def _load_agent_api(monkeypatch, *, storage_get):
     # Pin every module global that download_attachment resolves at call time.
     # The sys.modules stubs above only guarantee the import *succeeds*. In the
     # full test environment `from common import settings` (and the api_utils /
-    # misc_utils imports) can bind the REAL modules instead of our stubs — e.g.
+    # misc_utils imports) can bind the REAL modules instead of our stubs РІР‚вЂќ e.g.
     # if another test already imported common.settings, it is an attribute on the
-    # already-loaded `common` package and the sys.modules stub is bypassed — so
+    # already-loaded `common` package and the sys.modules stub is bypassed РІР‚вЂќ so
     # settings.STORAGE_IMPL would be the uninitialised real None and the handler
     # would 500 with "'NoneType' object has no attribute 'get'". Overriding the
     # globals on the loaded module makes behaviour identical in both the
@@ -204,13 +210,13 @@ def _load_agent_api(monkeypatch, *, storage_get):
 
 @pytest.mark.p1
 class TestAttachmentDownloadMissingBlob:
-    """Regression for #15502: missing-blob → structured 4xx, not HTTP 500."""
+    """Regression for #15502: missing-blob РІвЂ вЂ™ structured 4xx, not HTTP 500."""
 
     def test_empty_blob_returns_not_found(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Storage returns None (orphaned metadata) → 'Document not found!' 4xx,
+        """Storage returns None (orphaned metadata) РІвЂ вЂ™ 'Document not found!' 4xx,
         not a TypeError 500 from make_response(None)."""
         module = _load_agent_api(monkeypatch, storage_get=lambda *_a, **_k: None)
-        result = asyncio.run(module.download_attachment(tenant_id="t1", attachment_id="orphan"))
+        result = _run(module.download_attachment(tenant_id="t1", attachment_id="orphan"))
         # 'data_error' is the get_data_error_result shape from our stub above.
         # If the empty-blob guard is missing, make_response(None) raises and
         # the result instead has `kind == "server_error"`.
@@ -220,13 +226,13 @@ class TestAttachmentDownloadMissingBlob:
     def test_empty_bytes_returns_not_found(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Same path when storage returns b'' instead of None."""
         module = _load_agent_api(monkeypatch, storage_get=lambda *_a, **_k: b"")
-        result = asyncio.run(module.download_attachment(tenant_id="t1", attachment_id="empty"))
+        result = _run(module.download_attachment(tenant_id="t1", attachment_id="empty"))
         assert isinstance(result, dict) and result.get("kind") == "data_error"
         assert "not found" in result["message"].lower()
 
     def test_nonempty_blob_proceeds(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Happy path: real bytes flow through make_response untouched."""
         module = _load_agent_api(monkeypatch, storage_get=lambda *_a, **_k: b"PDFDATA")
-        result = asyncio.run(module.download_attachment(tenant_id="t1", attachment_id="good"))
+        result = _run(module.download_attachment(tenant_id="t1", attachment_id="good"))
         # SimpleNamespace from our _make_response stub
         assert hasattr(result, "payload") and result.payload == b"PDFDATA"

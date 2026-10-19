@@ -1,5 +1,6 @@
 import { useTranslate } from '@/hooks/common-hooks';
 import { useFormContext } from 'react-hook-form';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 import PasswordInput from './originui/password-input';
 import {
   FormControl,
@@ -17,6 +18,7 @@ interface IProps {
 export function TavilyFormField({
   name = 'prompt_config.tavily_api_key',
 }: IProps) {
+  const { t: tUi } = useUiTranslation();
   const form = useFormContext();
   const { t } = useTranslate('chat');
 
@@ -26,7 +28,9 @@ export function TavilyFormField({
       name={name}
       render={({ field }) => (
         <FormItem>
-          <FormLabel tooltip={t('tavilyApiKeyTip')}>Tavily API Key</FormLabel>
+          <FormLabel tooltip={t('tavilyApiKeyTip')}>
+            {tUi('flow.tavilyApiKey')}
+          </FormLabel>
           <FormControl>
             <PasswordInput
               {...field}

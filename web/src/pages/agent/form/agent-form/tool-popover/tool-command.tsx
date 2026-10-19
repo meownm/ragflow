@@ -14,7 +14,10 @@ import { t } from 'i18next';
 import { lowerFirst } from 'lodash';
 import { LucidePlus } from 'lucide-react';
 import { PropsWithChildren, useCallback, useEffect, useState } from 'react';
-import { useTranslation } from 'react-i18next';
+import {
+  useTranslation,
+  useTranslation as useUiTranslation,
+} from 'react-i18next';
 import { useGetNodeTools, useUpdateAgentNodeTools } from './use-update-tools';
 
 const Menus = [
@@ -119,7 +122,7 @@ export function ToolCommand(_props: ToolCommandProps) {
     <Command>
       <CommandInput placeholder={t('flow.typeCommandORsearch')} />
       <CommandList>
-        <CommandEmpty>No results found.</CommandEmpty>
+        <CommandEmpty>{t('common.noResults')}</CommandEmpty>
         {Menus.map((x) => (
           <CommandGroup heading={x.label} key={x.label}>
             {x.list.map((y) => (
@@ -141,6 +144,7 @@ export function ToolCommand(_props: ToolCommandProps) {
 }
 
 export function MCPCommand({ onChange, value }: ToolCommandProps) {
+  const { t: tUi } = useUiTranslation();
   const { data } = useListMcpServer();
   const { toggleOption, currentValue } = useHandleSelectChange({
     onChange,
@@ -149,9 +153,9 @@ export function MCPCommand({ onChange, value }: ToolCommandProps) {
 
   return (
     <Command>
-      <CommandInput placeholder="Type a command or search..." />
+      <CommandInput placeholder={tUi('flow.commandPlaceholder')} />
       <CommandList>
-        <CommandEmpty>No results found.</CommandEmpty>
+        <CommandEmpty>{tUi('common.noResults')}</CommandEmpty>
         {data.mcp_servers.map((item) => {
           const isSelected = currentValue.includes(item.id);
 

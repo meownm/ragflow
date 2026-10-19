@@ -7,6 +7,7 @@ import {
 import { IModalProps } from '@/interfaces/common';
 import { cn } from '@/lib/utils';
 import { NotebookText } from 'lucide-react';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 import 'react18-json-view/src/style.css';
 import { useCacheChatLog } from '../hooks/use-cache-chat-log';
 import { WorkFlowTimeline } from './workflow-timeline';
@@ -23,6 +24,7 @@ export function LogSheet({
   currentMessageId,
   sendLoading,
 }: LogSheetProps) {
+  const { t: tUi } = useUiTranslation();
   return (
     <Sheet open onOpenChange={hideModal} modal={false}>
       <SheetContent
@@ -32,7 +34,7 @@ export function LogSheet({
         <SheetHeader>
           <SheetTitle className="flex items-center gap-1">
             <NotebookText className="size-4" />
-            Log
+            {tUi('flow.log')}
           </SheetTitle>
         </SheetHeader>
         <section className="max-h-[82vh] overflow-auto mt-6">

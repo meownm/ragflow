@@ -142,7 +142,7 @@ export default function AdminAccessGroups() {
                   <Button
                     size="icon"
                     variant="ghost"
-                    aria-label={t('admin.edit')}
+                    aria-label={t('common.edit')}
                     onClick={() => edit(group)}
                   >
                     <LucidePencil className="size-4" />

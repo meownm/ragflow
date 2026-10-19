@@ -1,6 +1,7 @@
 import { Card, CardContent } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
 import { Annoyed } from 'lucide-react';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 
 interface ParsedPageCardProps {
   page: string;
@@ -26,6 +27,7 @@ interface ChunkCardProps {
 }
 
 export function ChunkCard({ content }: ChunkCardProps) {
+  const { t: tUi } = useUiTranslation();
   return (
     <Card className="bg-colors-outline-neutral-standard border-colors-outline-neutral-strong rounded-3xl">
       <CardContent className="p-4">
@@ -33,7 +35,9 @@ export function ChunkCard({ content }: ChunkCardProps) {
           <Annoyed />
           <div className="flex items-center space-x-2">
             <Switch />
-            <span className="text-colors-text-neutral-strong">Active</span>
+            <span className="text-colors-text-neutral-strong">
+              {tUi('common.active')}
+            </span>
           </div>
         </div>
         <div className="text-colors-text-neutral-strong text-lg mt-2 line-clamp-4">

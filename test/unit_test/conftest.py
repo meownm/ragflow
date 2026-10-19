@@ -30,6 +30,8 @@ when present, and download only what is still missing.
 import asyncio
 import os
 
+_STANDARD_GET_EVENT_LOOP = asyncio.DefaultEventLoopPolicy.get_event_loop
+
 import nltk
 import pytest
 
@@ -43,7 +45,12 @@ def event_loop_policy():
     policy before that probe, and restore the caller's policy at session end.
     """
     previous = asyncio.get_event_loop_policy()
-    policy = asyncio.DefaultEventLoopPolicy()
+
+    class TestEventLoopPolicy(asyncio.DefaultEventLoopPolicy):
+        # Runtime imports can patch the base policy to create unowned loops.
+        get_event_loop = _STANDARD_GET_EVENT_LOOP
+
+    policy = TestEventLoopPolicy()
     policy.set_event_loop(None)
     asyncio.set_event_loop_policy(policy)
     try:

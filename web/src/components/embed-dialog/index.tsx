@@ -323,8 +323,12 @@ window.addEventListener('message',e=>{
             <form className="space-y-5">
               <Tabs defaultValue="embed" className="w-full">
                 <TabsList className="grid w-full grid-cols-2">
-                  <TabsTrigger value="embed">Embed Setup</TabsTrigger>
-                  <TabsTrigger value="widget">Widget Customization</TabsTrigger>
+                  <TabsTrigger value="embed">
+                    {t('chat.embedSetup')}
+                  </TabsTrigger>
+                  <TabsTrigger value="widget">
+                    {t('chat.widgetCustomization')}
+                  </TabsTrigger>
                 </TabsList>
                 <TabsContent value="embed" className="space-y-5">
                   <FormField
@@ -434,24 +438,34 @@ window.addEventListener('message',e=>{
                 </TabsContent>
                 <TabsContent value="widget" className="space-y-5">
                   <div className="rounded-md border border-border p-3 text-xs text-text-secondary">
-                    These settings apply to the floating widget embed.
+                    {t('chat.widgetSettingsDescription')}
                   </div>
                   <div className="grid gap-4 md:grid-cols-2">
-                    <RAGFlowFormItem name="widgetTitle" label="Widget title">
-                      <Input placeholder="Chat Support"></Input>
+                    <RAGFlowFormItem
+                      name="widgetTitle"
+                      label={t('chat.widgetTitle')}
+                    >
+                      <Input
+                        placeholder={t('chat.widgetTitlePlaceholder')}
+                      ></Input>
                     </RAGFlowFormItem>
-                    <RAGFlowFormItem name="widgetSubtitle" label="Subtitle">
-                      <Input placeholder="We typically reply instantly"></Input>
+                    <RAGFlowFormItem
+                      name="widgetSubtitle"
+                      label={t('chat.widgetSubtitle')}
+                    >
+                      <Input
+                        placeholder={t('chat.widgetSubtitlePlaceholder')}
+                      ></Input>
                     </RAGFlowFormItem>
                     <RAGFlowFormItem
                       name="widgetFooterText"
-                      label="Footer text"
+                      label={t('flow.footerText')}
                     >
                       <Input placeholder="Powered by Агент Раггер"></Input>
                     </RAGFlowFormItem>
                     <RAGFlowFormItem
                       name="widgetFooterLink"
-                      label="Footer redirect link"
+                      label={t('chat.widgetFooterLink')}
                     >
                       <Input placeholder="https://ragflow.io"></Input>
                     </RAGFlowFormItem>
@@ -460,7 +474,7 @@ window.addEventListener('message',e=>{
                       name="widgetAccentColor"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Widget accent color</FormLabel>
+                          <FormLabel>{t('chat.widgetAccentColor')}</FormLabel>
                           <FormControl>
                             <div className="flex items-center gap-3">
                               <Input
@@ -484,7 +498,9 @@ window.addEventListener('message',e=>{
                       name="widgetBackgroundColor"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Background color</FormLabel>
+                          <FormLabel>
+                            {t('chat.widgetBackgroundColor')}
+                          </FormLabel>
                           <FormControl>
                             <div className="flex items-center gap-3">
                               <Input
@@ -508,7 +524,7 @@ window.addEventListener('message',e=>{
                       name="widgetTextColor"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Text color</FormLabel>
+                          <FormLabel>{t('chat.widgetTextColor')}</FormLabel>
                           <FormControl>
                             <div className="flex items-center gap-3">
                               <Input
@@ -532,7 +548,9 @@ window.addEventListener('message',e=>{
                       name="widgetHeaderTextColor"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Header text color</FormLabel>
+                          <FormLabel>
+                            {t('chat.widgetHeaderTextColor')}
+                          </FormLabel>
                           <FormControl>
                             <div className="flex items-center gap-3">
                               <Input
@@ -556,7 +574,9 @@ window.addEventListener('message',e=>{
                       name="widgetFooterTextColor"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Footer text color</FormLabel>
+                          <FormLabel>
+                            {t('chat.widgetFooterTextColor')}
+                          </FormLabel>
                           <FormControl>
                             <div className="flex items-center gap-3">
                               <Input
@@ -604,7 +624,7 @@ window.addEventListener('message',e=>{
                 className="flex-1"
                 variant="secondary"
               >
-                {t('flow.save')} widget settings
+                {t('chat.saveWidgetSettings')}
               </ButtonLoading>
             )}
             <Button

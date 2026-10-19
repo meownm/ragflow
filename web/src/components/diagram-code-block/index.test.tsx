@@ -1,3 +1,4 @@
+import '@/locales/config';
 import { render, screen, waitFor } from '@testing-library/react';
 import mermaid from 'mermaid';
 import { DiagramCodeBlock, getDiagramKind } from '.';

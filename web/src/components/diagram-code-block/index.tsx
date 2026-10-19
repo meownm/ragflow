@@ -1,6 +1,7 @@
 import DOMPurify from 'dompurify';
 import mermaid from 'mermaid';
 import { useEffect, useState } from 'react';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 
 type DiagramKind = 'mermaid' | 'plantuml';
 
@@ -77,6 +78,7 @@ export function DiagramCodeBlock({
   language: string;
   source: string;
 }) {
+  const { t: tUi } = useUiTranslation();
   const kind = getDiagramKind(language);
   const [svg, setSvg] = useState('');
   const [error, setError] = useState('');
@@ -152,7 +154,7 @@ export function DiagramCodeBlock({
         </div>
       ) : (
         <div role="status" className="text-sm text-slate-500">
-          Rendering diagram…
+          {tUi('common.renderingDiagram')}
         </div>
       )}
     </figure>

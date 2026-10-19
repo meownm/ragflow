@@ -95,7 +95,7 @@ function CodeForm({ node }: INextOperatorForm) {
               <FormItem>
                 <FormLabel>
                   <section className="flex items-center justify-between">
-                    Code
+                    {t('flow.code')}
                     <div className="flex items-center gap-4">
                       <FormField
                         control={form.control}
@@ -154,9 +154,8 @@ function CodeForm({ node }: INextOperatorForm) {
               <div className="flex items-start gap-2 rounded-md border border-state-error/40 bg-state-error/10 px-3 py-2 text-sm text-text-primary">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-state-error" />
                 <p>
-                  This CodeExec node uses the deprecated multi-output schema:{' '}
-                  {legacyOutputs.join(', ')}. Keep one business output here and
-                  move field extraction to downstream nodes.
+                  {t('flow.multiOutputNotice')} {legacyOutputs.join(', ')}
+                  {t('flow.multiOutputAdvice')}
                 </p>
               </div>
             )}
@@ -166,7 +165,7 @@ function CodeForm({ node }: INextOperatorForm) {
                 name="output.name"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Name</FormLabel>
+                    <FormLabel>{t('common.name')}</FormLabel>
                     <FormControl>
                       <Input
                         {...field}
@@ -182,7 +181,7 @@ function CodeForm({ node }: INextOperatorForm) {
                 name="output.type"
                 render={({ field }) => (
                   <FormItem className="flex-1">
-                    <FormLabel>Type</FormLabel>
+                    <FormLabel>{t('common.type')}</FormLabel>
                     <FormControl>
                       <RAGFlowSelect
                         placeholder={t('common.pleaseSelect')}
@@ -199,10 +198,10 @@ function CodeForm({ node }: INextOperatorForm) {
         </FormWrapper>
         <div className="space-y-4 p-5">
           <Output list={buildOutputList(displayedBusinessOutputs)}>
-            Business
+            {t('common.business')}
           </Output>
           <Output list={buildOutputList(CodeExecPanelSystemOutputs)}>
-            System
+            {t('common.system')}
           </Output>
         </div>
       </div>

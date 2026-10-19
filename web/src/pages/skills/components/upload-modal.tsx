@@ -817,7 +817,7 @@ const UploadModal: React.FC<UploadModalProps> = ({
                       {parsedMetadata.name && (
                         <div className="text-sm mt-1">
                           <span className="text-text-secondary">
-                            {t('skills.name') || 'Name'}:{' '}
+                            {t('skills.skillName') || 'Name'}:{' '}
                           </span>
                           <span>{parsedMetadata.name}</span>
                         </div>
@@ -825,7 +825,7 @@ const UploadModal: React.FC<UploadModalProps> = ({
                       {parsedMetadata.description && (
                         <div className="text-sm mt-1">
                           <span className="text-text-secondary">
-                            {t('skills.description') || 'Description'}:{' '}
+                            {t('common.description') || 'Description'}:{' '}
                           </span>
                           <span>
                             {parsedMetadata.description.slice(0, 100)}

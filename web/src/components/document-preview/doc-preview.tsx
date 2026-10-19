@@ -9,6 +9,7 @@ import {
 import classNames from 'classnames';
 import { ZoomIn, ZoomOut } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 
 import {
   isZipLikeBlob,
@@ -28,6 +29,7 @@ export const DocPreviewer: React.FC<DocPreviewerProps> = ({
   className,
   url,
 }) => {
+  const { t: tUi } = useUiTranslation();
   const editor = useDocxEditor({ initialFileName: 'document.docx' });
   const { importDocxFile, status, totalPages } = editor;
   const { layout } = useDocxPageLayout(editor);
@@ -140,7 +142,7 @@ export const DocPreviewer: React.FC<DocPreviewerProps> = ({
             disabled={loading || !!error || zoomScale <= minZoom}
             className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 transition-opacity"
             onClick={handleZoomOut}
-            aria-label="Zoom out"
+            aria-label={tUi('common.zoomOut')}
           >
             <ZoomOut className="w-4 h-4" />
           </button>
@@ -152,7 +154,7 @@ export const DocPreviewer: React.FC<DocPreviewerProps> = ({
             disabled={loading || !!error || zoomScale >= maxZoom}
             className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 transition-opacity"
             onClick={handleZoomIn}
-            aria-label="Zoom in"
+            aria-label={tUi('common.zoomIn')}
           >
             <ZoomIn className="w-4 h-4" />
           </button>
@@ -174,11 +176,10 @@ export const DocPreviewer: React.FC<DocPreviewerProps> = ({
           <div className="flex items-center justify-center h-full p-8">
             <div className="border border-dashed border-border-normal rounded-xl p-8 max-w-2xl text-center">
               <p className="text-2xl font-bold mb-4">
-                Preview is not available for this Word document
+                {tUi('common.wordPreviewUnavailable')}
               </p>
               <p className="italic text-sm text-muted-foreground leading-relaxed">
-                @extend-ai/react-docx supports modern <code>.docx</code> files
-                only.
+                {tUi('common.wordPreviewFormats')}
                 <br />
                 {error}
               </p>

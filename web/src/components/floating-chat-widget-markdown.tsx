@@ -155,7 +155,7 @@ const FloatingChatWidgetMarkdown = ({
       if (!info) {
         return (
           <div className="p-2 text-xs text-red-500">
-            Error: Missing document information.
+            {t('chat.missingDocumentInfo')}
           </div>
         );
       }
@@ -241,7 +241,7 @@ const FloatingChatWidgetMarkdown = ({
         </div>
       );
     },
-    [getReferenceInfo, handleDocumentButtonClick],
+    [getReferenceInfo, handleDocumentButtonClick, t],
   );
 
   const renderReference = useCallback(
@@ -256,7 +256,7 @@ const FloatingChatWidgetMarkdown = ({
               <TooltipTrigger asChild>
                 <Info className={styles.referenceIcon} />
               </TooltipTrigger>
-              <TooltipContent>Reference unavailable</TooltipContent>
+              <TooltipContent>{t('chat.referenceUnavailable')}</TooltipContent>
             </Tooltip>
           );
         }
@@ -290,7 +290,7 @@ const FloatingChatWidgetMarkdown = ({
         );
       });
     },
-    [getPopoverContent, getReferenceInfo, handleDocumentButtonClick],
+    [getPopoverContent, getReferenceInfo, handleDocumentButtonClick, t],
   );
 
   const dir = getDirAttribute(content.replace(citationMarkerReg, ''));

@@ -189,7 +189,10 @@ export const useProviderFields = ({
           placeholder: placeholderText,
           tooltip: tooltipText,
           options: field.options?.map((o) => ({
-            label: o.label as string,
+            label:
+              field.name === 'model_type'
+                ? t(`modelTypes.${o.value}`)
+                : (o.label as string),
             value: o.value,
           })) as any,
           defaultValue: field.defaultValue,

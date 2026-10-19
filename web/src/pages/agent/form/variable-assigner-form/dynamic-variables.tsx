@@ -12,6 +12,7 @@ import * as RadioGroupPrimitive from '@radix-ui/react-radio-group';
 import { X } from 'lucide-react';
 import { ReactNode, forwardRef, useCallback } from 'react';
 import { useFieldArray, useFormContext } from 'react-hook-form';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 import {
   JsonSchemaDataType,
   VariableAssignerLogicalArrayOperator,
@@ -44,6 +45,7 @@ type RadioButtonProps = Partial<
 >;
 
 function RadioButton({ value, onChange }: RadioButtonProps) {
+  const { t: tUi } = useUiTranslation();
   return (
     <RadioGroup
       defaultValue="yes"
@@ -53,11 +55,11 @@ function RadioButton({ value, onChange }: RadioButtonProps) {
     >
       <div className="flex items-center gap-3">
         <RadioGroupItem value="yes" id="r1" />
-        <Label htmlFor="r1">Yes</Label>
+        <Label htmlFor="r1">{tUi('common.yes')}</Label>
       </div>
       <div className="flex items-center gap-3">
         <RadioGroupItem value="no" id="r2" />
-        <Label htmlFor="r2">No</Label>
+        <Label htmlFor="r2">{tUi('common.no')}</Label>
       </div>
     </RadioGroup>
   );

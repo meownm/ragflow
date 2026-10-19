@@ -3,6 +3,7 @@ import { useTranslate } from '@/hooks/common-hooks';
 import { IProviderModelItem } from '@/interfaces/request/llm';
 import { Pencil } from 'lucide-react';
 import { useMemo } from 'react';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 
 interface UseListModelsOptionsParams {
   models: IProviderModelItem[];
@@ -21,6 +22,7 @@ export const useListModelsOptions = ({
   handleToggleAll,
   onEditModel,
 }: UseListModelsOptionsParams) => {
+  const { t: tUi } = useUiTranslation();
   const { t } = useTranslate('setting');
 
   return useMemo(() => {
@@ -67,8 +69,8 @@ export const useListModelsOptions = ({
               {onEditModel && (
                 <button
                   type="button"
-                  aria-label="Edit model"
-                  title="Edit model"
+                  aria-label={tUi('setting.editCustomModelTitle')}
+                  title={tUi('setting.editCustomModelTitle')}
                   className="p-1 rounded hover:bg-bg-card text-text-secondary"
                   onClick={(e) => {
                     e.stopPropagation();
@@ -104,5 +106,6 @@ export const useListModelsOptions = ({
     handleToggleAll,
     onEditModel,
     t,
+    tUi,
   ]);
 };

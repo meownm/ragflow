@@ -1,5 +1,6 @@
 'use client';
 
+import { useCalendarLabels, useDateLocale } from '@/hooks/use-date-locale';
 import { cn } from '@/lib/utils';
 import { ChevronLeftIcon, ChevronRightIcon } from 'lucide-react';
 import * as React from 'react';
@@ -15,8 +16,12 @@ function Calendar({
   classNames,
   showOutsideDays = true,
   components: userComponents,
+  locale,
+  labels,
   ...props
 }: React.ComponentProps<typeof DayPicker>) {
+  const dateLocale = useDateLocale();
+  const calendarLabels = useCalendarLabels();
   const defaultClassNames = {
     months: 'relative flex flex-col sm:flex-row gap-4',
     month: 'w-full',
@@ -83,6 +88,8 @@ function Calendar({
 
   return (
     <DayPicker
+      locale={locale ?? dateLocale}
+      labels={{ ...calendarLabels, ...labels }}
       showOutsideDays={showOutsideDays}
       className={cn('w-fit', className)}
       classNames={mergedClassNames}

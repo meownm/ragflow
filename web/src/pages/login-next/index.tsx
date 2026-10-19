@@ -7,10 +7,13 @@ import {
   useRegister,
 } from '@/hooks/use-login-request';
 import { SystemConfigKeys, useSystemConfig } from '@/hooks/use-system-request';
-import { useQueryClient } from '@tanstack/react-query';
 import { rsaPsw } from '@/utils';
+import { useQueryClient } from '@tanstack/react-query';
 import { useContext, useEffect, useState } from 'react';
-import { useTranslation } from 'react-i18next';
+import {
+  useTranslation,
+  useTranslation as useUiTranslation,
+} from 'react-i18next';
 import { useNavigate } from 'react-router';
 
 import Spotlight from '@/components/spotlight';
@@ -204,7 +207,7 @@ function LoginFormContent({
                     height={20}
                     style={{ marginRight: 5 }}
                   />
-                  Sign in with {item.display_name}
+                  {t('signInWith', { provider: item.display_name })}
                 </div>
               </Button>
             ))}
@@ -247,6 +250,7 @@ function LoginFormContent({
 }
 
 const Login = () => {
+  const { t: tUi } = useUiTranslation();
   const [title, setTitle] = useState('login');
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -306,7 +310,7 @@ const Login = () => {
       if (!data.nickname) {
         ctx.addIssue({
           path: ['nickname'],
-          message: 'nicknamePlaceholder',
+          message: t('nicknamePlaceholder'),
           code: z.ZodIssueCode.custom,
         });
         return;
@@ -385,7 +389,7 @@ const Login = () => {
             <div className="w-12 h-12 p-2 rounded-lg flex items-center justify-center mr-3">
               <img
                 src={'/app-icon.png'}
-                alt="logo"
+                alt={tUi('common.logo')}
                 className="size-8 mr-[12] cursor-pointer"
               />
             </div>

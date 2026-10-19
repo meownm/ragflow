@@ -14,7 +14,10 @@ import { cn } from '@/lib/utils';
 import { formatDate } from '@/utils/date';
 import { ColumnDef } from '@tanstack/table-core';
 import { ArrowUpDown } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
+import {
+  useTranslation,
+  useTranslation as useUiTranslation,
+} from 'react-i18next';
 import { useParams } from 'react-router';
 import { MetadataType } from '../components/metedata/constant';
 import { ShowManageMetadataModalProps } from '../components/metedata/interface';
@@ -37,6 +40,7 @@ export function useDatasetTableColumns({
   showLog,
   readOnly = false,
 }: UseDatasetTableColumnsType) {
+  const { t: tUi } = useUiTranslation();
   const { t } = useTranslation('translation', {
     keyPrefix: 'knowledgeDetails',
   });
@@ -55,14 +59,14 @@ export function useDatasetTableColumns({
             (table.getIsSomePageRowsSelected() && 'indeterminate')
           }
           onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
-          aria-label="Select all"
+          aria-label={tUi('common.selectAll')}
         />
       ),
       cell: ({ row }) => (
         <Checkbox
           checked={row.getIsSelected()}
           onCheckedChange={(value) => row.toggleSelected(!!value)}
-          aria-label="Select row"
+          aria-label={tUi('common.selectRow')}
         />
       ),
       enableSorting: false,
@@ -284,6 +288,8 @@ export function useDatasetTableColumns({
   ];
 
   return readOnly
-    ? columns.filter((column) => column.id !== 'select' && column.id !== 'actions')
+    ? columns.filter(
+        (column) => column.id !== 'select' && column.id !== 'actions',
+      )
     : columns;
 }

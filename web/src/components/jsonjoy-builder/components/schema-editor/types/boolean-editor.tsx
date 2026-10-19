@@ -76,7 +76,7 @@ const BooleanEditor: React.FC<TypeEditorProps> = ({ schema, onChange }) => {
   return (
     <div className="space-y-4">
       <div className="space-y-2 pt-2">
-        <Label>Allowed Values</Label>
+        <Label>{t.numberAllowedValuesEnumLabel}</Label>
 
         <div className="space-y-3">
           <div className="flex items-center space-x-2">

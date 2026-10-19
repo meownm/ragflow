@@ -2,6 +2,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import type { SqlQueryCompileResponse } from '@/pages/business-documents/types';
 import { CheckCircle2, LoaderCircle } from 'lucide-react';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 import type { QueryDraftIssue } from './query-specification';
 
 export function QueryCompilerPanel({
@@ -17,13 +18,12 @@ export function QueryCompilerPanel({
   compiling: boolean;
   onCompile: () => void;
 }) {
+  const { t: tUi } = useUiTranslation();
   return (
     <section className="space-y-3 border-t border-border-button pt-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h3 className="text-sm font-semibold">
-            6. Серверная проверка и SQL
-          </h3>
+          <h3 className="text-sm font-semibold">6. Серверная проверка и SQL</h3>
           <p className="mt-1 text-xs text-text-secondary">
             Компилятор принимает только закрытую спецификацию и каталоговые ID.
             SQLGuard повторно разбирает готовый SQL.
@@ -98,7 +98,9 @@ export function QueryCompilerPanel({
               </pre>
             </div>
             <div>
-              <h4 className="text-xs font-semibold">SQLGuard</h4>
+              <h4 className="text-xs font-semibold">
+                {tUi('common.sqlGuard')}
+              </h4>
               <pre className="mt-1 overflow-x-auto rounded-md border border-border-button bg-bg-card p-3 text-xs">
                 {JSON.stringify(result.guard, null, 2)}
               </pre>

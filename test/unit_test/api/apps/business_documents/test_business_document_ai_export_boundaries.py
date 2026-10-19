@@ -41,6 +41,7 @@ from api.apps.business_documents.assets import (
 from business_documents.domain.block_diff import with_block_ids
 from business_documents.domain.content import bind_change_plan_snapshot, render_section_text, section_hash
 from business_documents.application.errors import BusinessDocumentError
+from business_documents.application.errors import ValidationError
 from api.apps.business_documents.exports import BusinessDocumentExportService
 from api.apps.business_documents.runtime import document_queries, job_completion
 from api.apps.business_documents.runtime import document_commands
@@ -54,6 +55,26 @@ from common.time_utils import current_timestamp
 
 TENANT = "tenant-ai-boundary"
 AUTHOR = "author-ai-boundary"
+
+
+def test_ai_extracts_single_fenced_object_after_explanatory_id_arrays():
+    plan = {"change_plan": {"schema_version": "1", "operations": []}}
+    raw = 'Sources: ["proposal", "answer"]\n\n```json\n' + json.dumps(plan) + "\n```"
+    assert BusinessDocumentAI._parse(raw) == plan
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '[{"operations": []}, {"operations": [1]}]',
+        '```json\n{"operations": []}\n```\n```json\n{"operations": [1]}\n```',
+        'Sources: ["proposal"]\n```json\n[1, 2]\n```',
+        'Sources: ["proposal"]\n```json\n{broken\n```',
+    ],
+)
+def test_ai_rejects_ambiguous_or_nonobject_fenced_replies(raw):
+    with pytest.raises(ValidationError, match="JSON"):
+        BusinessDocumentAI._parse(raw)
 
 
 @pytest.fixture()

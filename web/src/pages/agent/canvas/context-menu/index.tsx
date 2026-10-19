@@ -1,5 +1,6 @@
 import { NodeMouseHandler, useReactFlow } from '@xyflow/react';
 import { useCallback, useRef, useState } from 'react';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 
 import styles from './index.module.less';
 
@@ -20,6 +21,7 @@ export function NodeContextMenu({
   bottom,
   ...props
 }: INodeContextMenu) {
+  const { t: tUi } = useUiTranslation();
   const { getNode, setNodes, addNodes, setEdges } = useReactFlow();
 
   const duplicateNode = useCallback(() => {
@@ -52,13 +54,16 @@ export function NodeContextMenu({
       {...props}
     >
       <p style={{ margin: '0.5em' }}>
-        <small>node: {id}</small>
+        <small>
+          {tUi('flow.nodeLabel')}
+          {id}
+        </small>
       </p>
       <button onClick={duplicateNode} type={'button'}>
-        duplicate
+        {tUi('flow.duplicateLabel')}
       </button>
       <button onClick={deleteNode} type={'button'}>
-        delete
+        {tUi('common.deleteLabel')}
       </button>
     </div>
   );

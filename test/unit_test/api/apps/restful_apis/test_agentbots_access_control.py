@@ -32,6 +32,11 @@ from types import ModuleType, SimpleNamespace
 import pytest
 
 
+def _run(operation):
+    with asyncio.Runner(loop_factory=asyncio.new_event_loop) as runner:
+        return runner.run(operation)
+
+
 class _PassthroughManager:
     def route(self, *_args, **_kwargs):
         return lambda func: func
@@ -141,7 +146,7 @@ class TestAgentBotAccessControl:
         calls = {}
         module = _load_bot_api(monkeypatch, accessible=False, calls=calls)
 
-        result = asyncio.run(module.begin_inputs(agent_id="victim-agent"))
+        result = _run(module.begin_inputs(agent_id="victim-agent"))
 
         assert result == {"code": 102, "message": "Can't find agent by ID: victim-agent", "data": None}
         # Must short-circuit before ever loading the foreign agent.
@@ -152,7 +157,7 @@ class TestAgentBotAccessControl:
         calls = {}
         module = _load_bot_api(monkeypatch, accessible=False, calls=calls)
 
-        result = asyncio.run(module.agent_bot_completions(agent_id="victim-agent"))
+        result = _run(module.agent_bot_completions(agent_id="victim-agent"))
 
         assert result == {"code": 102, "message": "Can't find agent by ID: victim-agent", "data": None}
         # Must short-circuit before ever running the foreign agent.
@@ -163,7 +168,7 @@ class TestAgentBotAccessControl:
         calls = {}
         module = _load_bot_api(monkeypatch, accessible=True, calls=calls)
 
-        result = asyncio.run(module.begin_inputs(agent_id="own-agent"))
+        result = _run(module.begin_inputs(agent_id="own-agent"))
 
         assert calls.get("get_by_id") == "own-agent"
         assert result["code"] == 0
@@ -173,7 +178,7 @@ class TestAgentBotAccessControl:
         calls = {}
         module = _load_bot_api(monkeypatch, accessible=True, calls=calls)
 
-        result = asyncio.run(module.agent_bot_completions(agent_id="own-agent"))
+        result = _run(module.agent_bot_completions(agent_id="own-agent"))
 
         assert calls.get("completion") is True
         assert result["code"] == 0
@@ -187,11 +192,11 @@ class TestAgentBotAccessControl:
             files=_AwaitableFiles([SimpleNamespace(filename="secret.txt")]),
         )
 
-        result = asyncio.run(
+        result = _run(
             module.upload_agent_bot_file(
                 agent_id="victim-agent",
                 tenant_id="attacker-tenant",
-            )
+            ),
         )
 
         assert result == {"code": 102, "message": "Can't find agent by ID: victim-agent", "data": None}
@@ -206,11 +211,11 @@ class TestAgentBotAccessControl:
             files=_AwaitableFiles([SimpleNamespace(filename="source.txt")]),
         )
 
-        result = asyncio.run(
+        result = _run(
             module.upload_agent_bot_file(
                 agent_id="own-agent",
                 tenant_id="attacker-tenant",
-            )
+            ),
         )
 
         assert result["code"] == 0

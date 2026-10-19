@@ -346,8 +346,15 @@ async def agent_bot_logs(shared_id, message_id):
         )
         return get_error_data_result(message="API token is not bound to an agent.")
 
+    actor_id = objs[0].tenant_id
+    if not await thread_pool_exec(UserCanvasService.accessible, agent_id, actor_id):
+        return get_error_data_result(message="Session not found!")
+    session = await thread_pool_exec(API4ConversationService.get_session_for_message, agent_id, message_id, actor_id)
+    if session is None:
+        return get_error_data_result(message="Session not found!")
+
     try:
-        binary = await thread_pool_exec(REDIS_CONN.get, f"{agent_id}-{message_id}-logs")
+        binary = await thread_pool_exec(REDIS_CONN.get, f"{session.id}-{message_id}-logs")
         if not binary:
             return get_json_result(data={})
         payload = binary.decode("utf-8") if isinstance(binary, bytes) else binary

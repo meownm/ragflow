@@ -15,6 +15,7 @@ import {
   useContext,
   useMemo,
 } from 'react';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 import { LabelCard } from '../../canvas/node/card';
 import { Operator } from '../../constant';
 import { AgentInstanceContext } from '../../context';
@@ -39,6 +40,7 @@ export function ToolCard({
   isNodeTool = true,
   ...props
 }: ToolCardProps) {
+  const { t: tUi } = useUiTranslation();
   const element = useMemo(() => {
     return (
       <LabelCard
@@ -59,7 +61,7 @@ export function ToolCard({
       <Tooltip>
         <TooltipTrigger asChild>{element}</TooltipTrigger>
         <TooltipContent>
-          <p>It doesn't have any config.</p>
+          <p>{tUi('flow.noConfiguration')}</p>
         </TooltipContent>
       </Tooltip>
     );

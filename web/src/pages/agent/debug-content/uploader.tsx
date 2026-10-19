@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { useUploadAgentFile } from '@/hooks/use-agent-request';
 import { Upload, X } from 'lucide-react';
 import * as React from 'react';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 type FileUploadDirectUploadProps = {
@@ -29,6 +30,7 @@ export function FileUploadDirectUpload({
   onChange,
   maxFiles,
 }: FileUploadDirectUploadProps) {
+  const { t: tUi } = useUiTranslation();
   const [files, setFiles] = React.useState<File[]>([]);
   const uploadedFilesRef = React.useRef<Record<string, any>[]>(
     Array.isArray(value) ? value : value ? [value] : [],
@@ -111,14 +113,14 @@ export function FileUploadDirectUpload({
           <div className="flex items-center justify-center rounded-full border p-2.5">
             <Upload className="size-6 text-muted-foreground" />
           </div>
-          <p className="font-medium text-sm">Drag & drop files here</p>
+          <p className="font-medium text-sm">{tUi('chat.dropFilesHere')}</p>
           <p className="text-muted-foreground text-xs">
-            Or click to browse (max {(maxFiles ?? 5) as number} files)
+            {tUi('flow.browseFilesLimit', { count: maxFiles ?? 5 })}
           </p>
         </div>
         <FileUploadTrigger asChild>
           <Button variant="outline" size="sm" className="mt-2 w-fit">
-            Browse files
+            {tUi('common.browseFiles')}
           </Button>
         </FileUploadTrigger>
       </FileUploadDropzone>

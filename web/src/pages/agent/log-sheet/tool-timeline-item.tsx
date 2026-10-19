@@ -13,10 +13,14 @@ import {
 } from '@/components/ui/accordion';
 import { cn } from '@/lib/utils';
 import { isEmpty } from 'lodash';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 import { Operator } from '../constant';
 import { JsonViewer } from '../form/components/json-viewer';
 import OperatorIcon, { SVGIconMap } from '../operator-icon';
-import { toLowerCaseStringAndDeleteChar, typeMap } from './workflow-timeline';
+import {
+  toLowerCaseStringAndDeleteChar,
+  typeMapLowerCase,
+} from './workflow-timeline';
 type IToolIcon =
   | Operator.ArXiv
   | Operator.GitHub
@@ -55,6 +59,7 @@ const ToolTimelineItem = ({
   sendLoading: boolean;
   isShare?: boolean;
 }) => {
+  const { t: tUi } = useUiTranslation();
   if (!tools || tools.length === 0 || !Array.isArray(tools)) return null;
   const blackList = ['add_memory', 'gen_citations'];
   const filteredTools = tools.filter(
@@ -73,6 +78,8 @@ const ToolTimelineItem = ({
   return (
     <>
       {filteredTools?.map((tool, idx) => {
+        const typeKey =
+          typeMapLowerCase[toLowerCaseStringAndDeleteChar(tool.tool_name)];
         const toolName = capitalizeWords(tool.tool_name, '_').join('');
 
         return (
@@ -149,11 +156,9 @@ const ToolTimelineItem = ({
                         )}
                         {isShare && (
                           <span>
-                            {typeMap[
-                              toLowerCaseStringAndDeleteChar(
-                                tool.tool_name,
-                              ) as keyof typeof typeMap
-                            ] ?? changeToolName(tool.tool_name)}
+                            {typeKey
+                              ? tUi(typeKey)
+                              : changeToolName(tool.tool_name)}
                           </span>
                         )}
                         <span className="text-text-secondary text-xs">
@@ -166,7 +171,7 @@ const ToolTimelineItem = ({
                             'border-background  -end-1 -top-1 size-2 rounded-full bg-state--success',
                           )}
                         >
-                          <span className="sr-only">Online</span>
+                          <span className="sr-only">{tUi('flow.online')}</span>
                         </span>
                       </div>
                     </AccordionTrigger>
@@ -175,7 +180,7 @@ const ToolTimelineItem = ({
                         <div className="space-y-2">
                           <JsonViewer
                             data={tool.result}
-                            title="content"
+                            title={tUi('common.contentLabel')}
                           ></JsonViewer>
                         </div>
                       </AccordionContent>

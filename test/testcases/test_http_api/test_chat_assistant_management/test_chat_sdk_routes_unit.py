@@ -24,6 +24,7 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
+from api.db import TenantPermission
 
 
 class _DummyManager:
@@ -165,6 +166,10 @@ def set_tenant_info():
 
 
 def _load_chat_module(monkeypatch):
+    db_module = ModuleType("api.db")
+    db_module.__path__ = [str(Path(__file__).resolve().parents[4] / "api/db")]
+    db_module.TenantPermission = TenantPermission
+    monkeypatch.setitem(sys.modules, "api.db", db_module)
     repo_root = Path(__file__).resolve().parents[4]
     module_name = "test_chat_restful_routes_unit_module"
     module_path = repo_root / "api" / "apps" / "restful_apis" / "chat_api.py"
@@ -240,6 +245,7 @@ def _load_chat_module(monkeypatch):
                 fields={
                     "id": None,
                     "tenant_id": None,
+                    "permission": None,
                     "name": None,
                     "description": None,
                     "icon": None,
@@ -268,6 +274,10 @@ def _load_chat_module(monkeypatch):
             return []
 
         @staticmethod
+        def name_exists(tenant_id, name, *, exclude_id=None):
+            return any(getattr(row, "id", None) != exclude_id for row in _StubDialogService.query(tenant_id=tenant_id, name=name))
+
+        @staticmethod
         def save(**_kwargs):
             return True
 
@@ -283,6 +293,13 @@ def _load_chat_module(monkeypatch):
         def get_by_tenant_ids(*_args, **_kwargs):
             return [], 0
 
+        @staticmethod
+        def get_accessible_chat(chat_id, user_id):
+            rows = _StubDialogService.query(id=chat_id, tenant_id=user_id, status="1")
+            for row in rows:
+                row.tenant_id = user_id
+            return rows
+
     dialog_service_mod.DialogService = _StubDialogService
     dialog_service_mod.async_ask = lambda *_args, **_kwargs: None
     dialog_service_mod.async_chat = lambda *_args, **_kwargs: None
@@ -292,6 +309,8 @@ def _load_chat_module(monkeypatch):
     conversation_service_mod = ModuleType("api.db.services.conversation_service")
 
     class _StubConversationService:
+        model = SimpleNamespace(_meta=SimpleNamespace(fields={name: None for name in ("id", "dialog_id", "user_id", "name", "message", "reference", "create_time", "update_time")}))
+
         @staticmethod
         def query(**_kwargs):
             return []
@@ -338,26 +357,6 @@ def _load_chat_module(monkeypatch):
     kb_service_mod.KnowledgebaseService = _StubKnowledgebaseService
     monkeypatch.setitem(sys.modules, "api.db.services.knowledgebase_service", kb_service_mod)
 
-    tenant_llm_service_mod = ModuleType("api.db.services.tenant_llm_service")
-
-    class _StubTenantLLMService:
-        @staticmethod
-        def split_model_name_and_factory(model_name):
-            if model_name and "@" in model_name:
-                return tuple(model_name.split("@", 1))
-            return model_name, None
-
-        @staticmethod
-        def query(**_kwargs):
-            return []
-
-        @staticmethod
-        def get_api_key(*_args, **_kwargs):
-            return SimpleNamespace(id=1)
-
-    tenant_llm_service_mod.TenantLLMService = _StubTenantLLMService
-    monkeypatch.setitem(sys.modules, "api.db.services.tenant_llm_service", tenant_llm_service_mod)
-
     llm_service_mod = ModuleType("api.db.services.llm_service")
 
     class _StubLLMBundle:
@@ -390,6 +389,10 @@ def _load_chat_module(monkeypatch):
             return True, SimpleNamespace(llm_id="glm-4")
 
     class _StubUserTenantService:
+        @staticmethod
+        def get_team_owner_ids(user_id):
+            return [user_id]
+
         @staticmethod
         def query(**_kwargs):
             return []
@@ -481,8 +484,6 @@ def test_create_chat_uses_direct_chat_fields(monkeypatch):
     monkeypatch.setattr(module.KnowledgebaseService, "accessible", lambda **_kwargs: [SimpleNamespace(id="kb-1")])
     monkeypatch.setattr(module.KnowledgebaseService, "query", lambda **_kwargs: [_DummyKB()])
     monkeypatch.setattr(module.KnowledgebaseService, "get_by_id", lambda _id: (True, _DummyKB()))
-    monkeypatch.setattr(module.TenantLLMService, "split_model_name_and_factory", lambda model: (model.split("@")[0], "factory"))
-    monkeypatch.setattr(module.TenantLLMService, "query", lambda **_kwargs: [SimpleNamespace(id="llm-1")])
 
     def _save(**kwargs):
         saved.update(kwargs)
@@ -556,32 +557,11 @@ def test_create_chat_accepts_provider_scoped_rerank_id(monkeypatch):
     monkeypatch.setattr(module.KnowledgebaseService, "query", lambda **_kwargs: [_DummyKB()])
     monkeypatch.setattr(module.KnowledgebaseService, "get_by_id", lambda _id: (True, _DummyKB()))
 
-    def _split_model_name_and_factory(model_name):
-        return {
-            "glm-4@ZHIPU-AI": ("glm-4", "ZHIPU-AI"),
-            "custom-reranker@OpenAI": ("custom-reranker", "OpenAI"),
-        }.get(model_name, (model_name, None))
-
-    def _query(**kwargs):
+    def _model_config(**kwargs):
         query_calls.append(kwargs)
-        if kwargs == {
-            "tenant_id": "tenant-1",
-            "llm_name": "glm-4",
-            "llm_factory": "ZHIPU-AI",
-            "model_type": "chat",
-        }:
-            return [SimpleNamespace(id="llm-1")]
-        if kwargs == {
-            "tenant_id": "tenant-1",
-            "llm_name": "custom-reranker",
-            "llm_factory": "OpenAI",
-            "model_type": "rerank",
-        }:
-            return [SimpleNamespace(id="rerank-1")]
-        return []
+        return {}
 
-    monkeypatch.setattr(module.TenantLLMService, "split_model_name_and_factory", _split_model_name_and_factory)
-    monkeypatch.setattr(module.TenantLLMService, "query", _query)
+    monkeypatch.setattr(module, "get_model_config_from_provider_instance", _model_config)
 
     def _save(**kwargs):
         saved.update(kwargs)
@@ -596,8 +576,7 @@ def test_create_chat_accepts_provider_scoped_rerank_id(monkeypatch):
     assert saved["rerank_id"] == "custom-reranker@OpenAI"
     assert {
         "tenant_id": "tenant-1",
-        "llm_name": "custom-reranker",
-        "llm_factory": "OpenAI",
+        "model_name": "custom-reranker@OpenAI",
         "model_type": "rerank",
     } in query_calls
 
@@ -610,7 +589,6 @@ def test_create_chat_allows_default_knowledge_placeholder_without_sources(monkey
     _set_request_json(monkeypatch, module, {"name": "chat-a"})
     monkeypatch.setattr(module.TenantService, "get_by_id", lambda _tid: (True, SimpleNamespace(llm_id="glm-4")))
     monkeypatch.setattr(module.DialogService, "query", lambda **_kwargs: [])
-    monkeypatch.setattr(module.TenantLLMService, "get_api_key", lambda *_args, **_kwargs: SimpleNamespace(id=1))
 
     def _save(**kwargs):
         saved.update(kwargs)
@@ -651,7 +629,6 @@ def test_create_chat_uses_tenant_default_llm_when_llm_id_is_null(monkeypatch):
     monkeypatch.setattr(module.KnowledgebaseService, "accessible", lambda **_kwargs: [SimpleNamespace(id="kb-1")])
     monkeypatch.setattr(module.KnowledgebaseService, "query", lambda **_kwargs: [_DummyKB()])
     monkeypatch.setattr(module.KnowledgebaseService, "get_by_id", lambda _id: (True, _DummyKB()))
-    monkeypatch.setattr(module.TenantLLMService, "get_api_key", lambda *_args, **_kwargs: SimpleNamespace(id=1))
 
     def _save(**kwargs):
         saved.update(kwargs)
@@ -730,8 +707,6 @@ def test_patch_chat_drops_response_only_fields_before_update(monkeypatch):
     monkeypatch.setattr(module.TenantService, "get_by_id", lambda _tid: (True, SimpleNamespace(llm_id="glm-4")))
     monkeypatch.setattr(module.KnowledgebaseService, "accessible", lambda **_kwargs: [SimpleNamespace(id="kb-1")])
     monkeypatch.setattr(module.KnowledgebaseService, "query", lambda **_kwargs: [_DummyKB()])
-    monkeypatch.setattr(module.TenantLLMService, "split_model_name_and_factory", lambda model: (model.split("@")[0], "factory"))
-    monkeypatch.setattr(module.TenantLLMService, "query", lambda **_kwargs: [SimpleNamespace(id="llm-1")])
 
     def _update(_chat_id, req):
         updated.update(req)
@@ -777,8 +752,6 @@ def test_update_chat_allows_knowledge_placeholder_without_sources(monkeypatch):
     monkeypatch.setattr(module.DialogService, "query", lambda **_kwargs: [SimpleNamespace(id="chat-1")])
     monkeypatch.setattr(module.DialogService, "get_by_id", lambda _id: (True, _DummyDialogRecord(existing)))
     monkeypatch.setattr(module.TenantService, "get_by_id", lambda _tid: (True, SimpleNamespace(llm_id="glm-4")))
-    monkeypatch.setattr(module.TenantLLMService, "split_model_name_and_factory", lambda model: (model.split("@")[0], "factory"))
-    monkeypatch.setattr(module.TenantLLMService, "query", lambda **_kwargs: [SimpleNamespace(id="llm-1")])
     updated = {}
 
     def _update(_chat_id, payload):

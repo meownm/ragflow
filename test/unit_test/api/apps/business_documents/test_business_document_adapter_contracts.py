@@ -50,6 +50,31 @@ def test_worker_loop_is_closed_after_operation_finishes():
     assert loop.is_closed()
 
 
+def test_worker_loop_preserves_the_callers_policy_loop():
+    async def capture_loop():
+        return asyncio.get_running_loop()
+
+    def run_with_policy_loop():
+        previous = asyncio.new_event_loop()
+        asyncio.set_event_loop(previous)
+        observed = None
+        operation_loop = None
+        try:
+            operation_loop = run_in_worker_loop(capture_loop())
+            observed = asyncio.get_event_loop()
+            assert operation_loop is not previous
+            assert operation_loop.is_closed()
+            assert observed is previous
+        finally:
+            if observed is not None and observed is not previous and not observed.is_closed():
+                observed.close()
+            previous.close()
+            asyncio.set_event_loop(None)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        executor.submit(run_with_policy_loop).result()
+
+
 @pytest.mark.p1
 @pytest.mark.parametrize(("factory", "limit_parameter"), [(None, "max_completion_tokens"), ("OpenAI-API-Compatible", "max_tokens"), ("Ollama", "max_completion_tokens")])
 @pytest.mark.parametrize(

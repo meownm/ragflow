@@ -1,5 +1,6 @@
 import { IModalProps } from '@/interfaces/common';
 import { IFeedbackRequestBody } from '@/interfaces/request/chat';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 import HighLightMarkdown from './highlight-markdown';
 import SvgIcon from './svg-icon';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
@@ -13,6 +14,7 @@ export function PromptDialog({
   hideModal,
   prompt,
 }: PromptDialogProps) {
+  const { t: tUi } = useUiTranslation();
   return (
     <Dialog open={visible} onOpenChange={hideModal}>
       <DialogContent className="max-w-[80vw]">
@@ -20,7 +22,7 @@ export function PromptDialog({
           <DialogTitle>
             <div className="space-x-2">
               <SvgIcon name={`prompt`} width={18}></SvgIcon>
-              <span> Prompt</span>
+              <span> {tUi('flow.prompt')}</span>
             </div>
           </DialogTitle>
         </DialogHeader>

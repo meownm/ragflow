@@ -87,14 +87,14 @@ export function TagTable() {
             (table.getIsSomePageRowsSelected() && 'indeterminate')
           }
           onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
-          aria-label="Select all"
+          aria-label={t('common.selectAll')}
         />
       ),
       cell: ({ row }) => (
         <Checkbox
           checked={row.getIsSelected()}
           onCheckedChange={(value) => row.toggleSelected(!!value)}
-          aria-label="Select row"
+          aria-label={t('common.selectRow')}
         />
       ),
       enableSorting: false,
@@ -263,7 +263,7 @@ export function TagTable() {
                   colSpan={columns.length}
                   className="h-24 text-center"
                 >
-                  No results.
+                  {t('common.noResultsLabel')}
                 </TableCell>
               </TableRow>
             )}
@@ -272,8 +272,10 @@ export function TagTable() {
       </div>
       <div className="flex items-center justify-end space-x-2 py-4">
         <div className="flex-1 text-sm text-muted-foreground">
-          {selectedRowLength} of {table.getFilteredRowModel().rows.length}{' '}
-          row(s) selected.
+          {t('common.selectedRows', {
+            selected: selectedRowLength,
+            total: table.getFilteredRowModel().rows.length,
+          })}
         </div>
         <div className="space-x-2">
           <Button

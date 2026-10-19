@@ -25,6 +25,7 @@ import {
 import { t } from 'i18next';
 import { pick } from 'lodash';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router';
 import { useLogListDataSource } from '../hooks';
 import { IDataSourceLog } from '../interface';
@@ -62,13 +63,18 @@ const getTaskCountdownSeconds = (row: IDataSourceLog, now: number) => {
 };
 
 const TaskCountdown = ({ row, now }: { row: IDataSourceLog; now: number }) => {
+  const { t } = useTranslation();
   const remainingSeconds = getTaskCountdownSeconds(row, now);
 
   if (remainingSeconds === null) {
     return '';
   }
 
-  return <span>Task starts in {formatDuration(remainingSeconds)}</span>;
+  return (
+    <span>
+      {t('flow.taskStartsIn', { time: formatDuration(remainingSeconds) })}
+    </span>
+  );
 };
 
 const getSummary = (row: IDataSourceLog, now: number) => {

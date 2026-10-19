@@ -270,10 +270,9 @@ class UserCanvasService(CommonService):
         if not e:
             return False
 
-        tids = [t.tenant_id for t in UserTenantService.query(user_id=tenant_id)]
         if c["user_id"] == tenant_id:
             return True
-        if c["user_id"] not in tids:
+        if c["user_id"] not in UserTenantService.get_team_owner_ids(tenant_id):
             return False
         if c["permission"] != TenantPermission.TEAM.value:
             return False
@@ -300,6 +299,8 @@ class UserCanvasService(CommonService):
 
 
 async def completion(tenant_id, agent_id, session_id=None, **kwargs):
+    if not await thread_pool_exec(UserCanvasService.accessible, agent_id, tenant_id):
+        raise PermissionError("No authorization for this agent.")
     query = kwargs.get("query", "") or kwargs.get("question", "")
     files = kwargs.get("files", [])
     inputs = kwargs.get("inputs", {})
@@ -309,7 +310,7 @@ async def completion(tenant_id, agent_id, session_id=None, **kwargs):
     release_mode = str(kwargs.get("release", "")).strip().lower()
 
     if session_id:
-        e, conv = await thread_pool_exec(API4ConversationService.get_by_id, session_id)
+        e, conv = await thread_pool_exec(API4ConversationService.get_owned_session, session_id, agent_id, tenant_id)
         if not e:
             raise LookupError("Session not found!")
         if not conv.message:
@@ -325,7 +326,7 @@ async def completion(tenant_id, agent_id, session_id=None, **kwargs):
         canvas.reset()
         # Get the version title based on release_mode
         version_title = await thread_pool_exec(UserCanvasVersionService.get_latest_version_title, cvs.id, release_mode=release_mode == "true")
-        conv = {"id": session_id, "dialog_id": cvs.id, "user_id": user_id, "message": [], "source": "agent", "dsl": dsl, "reference": [], "version_title": version_title}
+        conv = {"id": session_id, "dialog_id": cvs.id, "user_id": user_id, "created_by": tenant_id, "message": [], "source": "agent", "dsl": dsl, "reference": [], "version_title": version_title}
         await thread_pool_exec(API4ConversationService.save, **conv)
         conv = API4Conversation(**conv)
 
@@ -345,6 +346,9 @@ async def completion(tenant_id, agent_id, session_id=None, **kwargs):
 
     try:
         async for ans in canvas.run(**run_kwargs):
+            if ans.get("message_id") and not conv.message[-1].get("runtime_message_id"):
+                conv.message[-1]["runtime_message_id"] = ans["message_id"]
+                await thread_pool_exec(API4ConversationService.update_by_id, session_id, {"message": conv.message})
             ans["session_id"] = session_id
             if ans["event"] == "message":
                 txt += ans["data"]["content"]
@@ -374,7 +378,7 @@ async def completion(tenant_id, agent_id, session_id=None, **kwargs):
 async def completion_openai(tenant_id, agent_id, question, session_id=None, stream=True, **kwargs):
     tiktoken_encoder = tiktoken.get_encoding("cl100k_base")
     prompt_tokens = len(tiktoken_encoder.encode(str(question)))
-    user_id = kwargs.get("user_id", "")
+    user_id = kwargs.pop("user_id", "")
 
     if stream:
         completion_tokens = 0

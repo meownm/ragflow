@@ -1,3 +1,4 @@
+import '@/locales/config';
 import {
   cancelBusinessDocumentSqlRun,
   compileBusinessDocumentSqlProject,

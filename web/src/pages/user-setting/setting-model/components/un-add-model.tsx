@@ -131,7 +131,7 @@ export const AvailableModels: FC<{
             className="leading-none px-1 py-0.5 rounded-sm text-xs"
             onClick={() => setSelectedTag(null)}
           >
-            All
+            {t('common.all')}
             <span className="ml-1 tabular-nums opacity-60">
               {searchedModels.length}
             </span>

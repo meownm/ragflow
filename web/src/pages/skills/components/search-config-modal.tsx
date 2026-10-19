@@ -135,7 +135,7 @@ export const SearchConfigModal: React.FC<SearchConfigModalProps> = ({
   };
 
   const getSearchTypeLabel = (weight: number) => {
-    if (weight === 0) return t('skillSearch.pureKeyword');
+    if (weight === 0) return t('skillSearch.keywordOnly');
     if (weight === 1) return t('skillSearch.pureVector');
     return `${t('skillSearch.hybrid')} (${Math.round((1 - weight) * 100)}% ${t('skillSearch.keyword')} + ${Math.round(weight * 100)}% ${t('skillSearch.vector')})`;
   };

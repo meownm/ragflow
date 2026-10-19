@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -102,14 +103,30 @@ class ControlledEvidenceSearch:
 
 @pytest.fixture()
 def database(tmp_path):
-    database = SqliteDatabase(tmp_path / "live-quality.sqlite")
+    database = SqliteDatabase(tmp_path / "live-quality.sqlite", timeout=30, pragmas={"journal_mode": "wal"})
     tables = DOCUMENT_TABLES
-    with database.bind_ctx(tables, bind_refs=False, bind_backrefs=False):
-        database.connect()
+    with database.bind_ctx(tables, bind_refs=False, bind_backrefs=False), database.connection_context():
         database.create_tables(tables)
         yield database
         database.drop_tables(tables)
-        database.close()
+
+
+def test_live_database_allows_checkpoint_while_reader_is_open(database):
+    database.execute_sql("CREATE TABLE checkpoint_probe (value INTEGER)")
+    database.execute_sql("INSERT INTO checkpoint_probe VALUES (0)")
+
+    def checkpoint():
+        with database.connection_context():
+            database.execute_sql("UPDATE checkpoint_probe SET value = 1")
+
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            with database.atomic():
+                assert database.execute_sql("SELECT value FROM checkpoint_probe").fetchone() == (0,)
+                pool.submit(checkpoint).result(timeout=5)
+        assert database.execute_sql("SELECT value FROM checkpoint_probe").fetchone() == (1,)
+    finally:
+        database.execute_sql("DROP TABLE checkpoint_probe")
 
 
 def _command(projection, command_type, payload=None):
@@ -314,6 +331,7 @@ def _apply_review_change(
 ):
     original_revision = document["current_revision"]
     selected_text = original_revision["section_texts"]["4.3"]
+    assert selected_text.strip(), "Generated draft has an empty review target section 4.3"
     document_commands.execute(
         tenant_id,
         tenant_id,

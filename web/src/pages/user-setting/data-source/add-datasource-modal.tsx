@@ -1,13 +1,13 @@
 import { DynamicForm, FormFieldConfig } from '@/components/dynamic-form';
 import { Modal } from '@/components/ui/modal/modal';
 import { IModalProps } from '@/interfaces/common';
-import { useEffect, useState } from 'react';
+import { useMemo } from 'react';
 import { FieldValues } from 'react-hook-form';
 import { useTranslation } from 'react-i18next';
 import {
-  DataSourceFormBaseFields,
   DataSourceFormDefaultValues,
   getCommonExtraDefaultValues,
+  getDataSourceBaseFields,
   getDataSourceFieldsWithExtras,
   mergeDataSourceFormValues,
 } from './constant';
@@ -21,16 +21,16 @@ const AddDataSourceModal = ({
   onOk,
 }: IModalProps<FieldValues> & { sourceData?: IDataSorceInfo }) => {
   const { t } = useTranslation();
-  const [fields, setFields] = useState<FormFieldConfig[]>([]);
-
-  useEffect(() => {
-    if (sourceData) {
-      setFields([
-        ...DataSourceFormBaseFields,
-        ...getDataSourceFieldsWithExtras(sourceData.id as any),
-      ] as FormFieldConfig[]);
-    }
-  }, [sourceData]);
+  const fields = useMemo<FormFieldConfig[]>(
+    () =>
+      sourceData
+        ? ([
+            ...getDataSourceBaseFields(t),
+            ...getDataSourceFieldsWithExtras(sourceData.id as any, t),
+          ] as FormFieldConfig[])
+        : [],
+    [sourceData, t],
+  );
 
   const handleOk = async (values?: FieldValues) => {
     await onOk?.(values);

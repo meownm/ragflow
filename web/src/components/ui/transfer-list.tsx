@@ -9,6 +9,7 @@ import {
   SquareIcon,
 } from 'lucide-react';
 import React, { ReactNode, memo, useCallback, useEffect } from 'react';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 
 export type TransferListItemType = {
   key: string;
@@ -40,6 +41,7 @@ export const TransferList = memo(function ({
   targetKeys,
   children,
 }: TransferListProps) {
+  const { t: tUi } = useUiTranslation();
   const [leftList, setLeftList] = React.useState<TransferListItemType[]>([]);
   const [rightList, setRightList] = React.useState<TransferListItemType[]>([]);
   const [leftSearch, setLeftSearch] = React.useState('');
@@ -103,7 +105,7 @@ export const TransferList = memo(function ({
       <div className="w-1/2 shadow-sm bg-background rounded-sm">
         <div className="flex items-center justify-between">
           <Input
-            placeholder="Search"
+            placeholder={tUi('common.search')}
             className="rounded-br-none rounded-bl-none rounded-tr-none focus-visible:ring-0 focus-visible:border-blue-500"
             value={leftSearch}
             onChange={(e) => setLeftSearch(e.target.value)}
@@ -157,7 +159,7 @@ export const TransferList = memo(function ({
             <ChevronLeftIcon className="h-4 w-4" />
           </Button>
           <Input
-            placeholder="Search"
+            placeholder={tUi('common.search')}
             className="rounded-bl-none rounded-br-none rounded-tl-none focus-visible:ring-0 focus-visible:border-blue-500"
             value={rightSearch}
             onChange={(e) => setRightSearch(e.target.value)}

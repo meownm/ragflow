@@ -8,6 +8,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Textarea } from '@/components/ui/textarea';
 import { useTranslate } from '@/hooks/common-hooks';
 import { useFetchAgent } from '@/hooks/use-agent-request';
+import { useFetchUserInfo } from '@/hooks/use-user-setting-request';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
@@ -30,6 +31,7 @@ type SettingFormProps = {
 export function SettingForm({ submit }: SettingFormProps) {
   const { t } = useTranslate('flow.settings');
   const { data } = useFetchAgent();
+  const { data: userInfo } = useFetchUserInfo();
 
   const form = useForm<SettingFormSchemaType>({
     resolver: zodResolver(formSchema),
@@ -72,6 +74,7 @@ export function SettingForm({ submit }: SettingFormProps) {
         >
           {(field) => (
             <RadioGroup
+              disabled={data.user_id !== userInfo.id}
               onValueChange={field.onChange}
               value={field.value}
               className="flex"

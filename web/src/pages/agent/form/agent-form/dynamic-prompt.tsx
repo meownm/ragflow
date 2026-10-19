@@ -14,13 +14,12 @@ import { useTranslation } from 'react-i18next';
 import { PromptRole } from '../../constant';
 import { PromptEditor } from '../components/prompt-editor';
 
-const options = [
-  { label: 'User', value: PromptRole.User },
-  { label: 'Assistant', value: PromptRole.Assistant },
-];
-
 const DynamicPrompt = () => {
   const { t } = useTranslation();
+  const options = [
+    { label: t('flow.promptRoleUser'), value: PromptRole.User },
+    { label: t('flow.promptRoleAssistant'), value: PromptRole.Assistant },
+  ];
   const form = useFormContext();
   const name = 'prompts';
 
@@ -84,7 +83,7 @@ const DynamicPrompt = () => {
       <BlockButton
         onClick={() => append({ content: '', role: PromptRole.User })}
       >
-        Add
+        {t('common.add')}
       </BlockButton>
     </FormItem>
   );

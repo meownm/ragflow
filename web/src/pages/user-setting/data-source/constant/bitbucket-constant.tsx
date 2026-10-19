@@ -3,42 +3,45 @@ import { TFunction } from 'i18next';
 
 export const bitbucketConstant = (t: TFunction) => [
   {
-    label: 'Bitbucket Account Email',
+    label: t('setting.connectorFields.bitbucketAccountEmail'),
     name: 'config.credentials.bitbucket_account_email',
     type: FormFieldType.Email,
     required: true,
   },
   {
-    label: 'Bitbucket API Token',
+    label: t('setting.connectorFields.bitbucketApiToken'),
     name: 'config.credentials.bitbucket_api_token',
     type: FormFieldType.Password,
     required: true,
   },
   {
-    label: 'Workspace',
+    label: t('setting.connectorFields.workspace'),
     name: 'config.workspace',
     type: FormFieldType.Text,
     required: true,
     tooltip: t('setting.bitbucketTopWorkspaceTip'),
   },
   {
-    label: 'Index Mode',
+    label: t('setting.connectorFields.indexMode'),
     name: 'config.index_mode',
     type: FormFieldType.Segmented,
     options: [
-      { label: 'Repositories', value: 'repositories' },
-      { label: 'Project(s)', value: 'projects' },
-      { label: 'Workspace', value: 'workspace' },
+      {
+        label: t('setting.connectorFields.repositories'),
+        value: 'repositories',
+      },
+      { label: t('setting.connectorFields.projectS'), value: 'projects' },
+      { label: t('setting.connectorFields.workspace'), value: 'workspace' },
     ],
   },
   {
-    label: 'Repository Slugs',
+    label: t('setting.connectorFields.repositorySlugs'),
     name: 'config.repository_slugs',
     type: FormFieldType.Text,
     customValidate: (val: string, formValues: any) => {
       const index_mode = formValues?.config?.index_mode;
       if (!val && index_mode === 'repositories') {
-        return 'Repository Slugs is required';
+        return t('setting.connectorMessages.repositorySlugsIsRequired');
       }
       return true;
     },
@@ -49,13 +52,13 @@ export const bitbucketConstant = (t: TFunction) => [
     tooltip: t('setting.bitbucketRepositorySlugsTip'),
   },
   {
-    label: 'Projects',
+    label: t('setting.connectorFields.projects'),
     name: 'config.projects',
     type: FormFieldType.Text,
     customValidate: (val: string, formValues: any) => {
       const index_mode = formValues?.config?.index_mode;
       if (!val && index_mode === 'projects') {
-        return 'Projects is required';
+        return t('setting.connectorMessages.projectsIsRequired');
       }
       return true;
     },

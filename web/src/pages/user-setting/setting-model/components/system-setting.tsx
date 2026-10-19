@@ -35,7 +35,7 @@ function ModelFieldItem({
 
   return (
     <div className="flex gap-3">
-      <label className="block text-sm font-normal text-text-secondary mb-1 w-1/4">
+      <label className="block text-sm font-normal text-text-secondary mb-1 w-1/3 shrink-0 break-words">
         {isRequired && <span className="text-state-error">*</span>}
         {label}
         {tooltip && (
@@ -50,7 +50,7 @@ function ModelFieldItem({
           </Tooltip>
         )}
       </label>
-      <div className="w-3/4">
+      <div className="min-w-0 flex-1">
         <ModelTreeSelect
           modelTypes={ModelTypeMap[id as keyof typeof ModelTypeMap] ?? ['chat']}
           value={value}

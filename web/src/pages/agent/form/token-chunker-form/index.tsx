@@ -79,7 +79,7 @@ const TokenChunkerForm = ({ node }: INextOperatorForm) => {
             type: FormFieldType.Segmented,
             label: '',
             options: [
-              { label: 'Token Size', value: 'token_size' },
+              { label: t('flow.tokenSize'), value: 'token_size' },
               { label: t('flow.delimiters'), value: 'delimiter' },
               { label: t('flow.one'), value: 'one' },
             ],
@@ -119,7 +119,7 @@ const TokenChunkerForm = ({ node }: INextOperatorForm) => {
                     <div className="space-y-2 flex-1">
                       <RAGFlowFormItem
                         name={`${name}.${index}.value`}
-                        label="delimiter"
+                        label={t('flow.delimiter')}
                         labelClassName="!hidden"
                       >
                         <DelimiterInput className="!m-0"></DelimiterInput>
@@ -184,7 +184,7 @@ const TokenChunkerForm = ({ node }: INextOperatorForm) => {
                   <div key={field.id} className="flex items-center gap-2">
                     <RAGFlowFormItem
                       name={`children_delimiters.${index}.value`}
-                      label="children_delimiter"
+                      label={t('flow.childrenDelimiter')}
                       labelClassName="!hidden"
                       className="flex-auto space-y-0"
                     >

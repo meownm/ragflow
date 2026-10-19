@@ -10,6 +10,7 @@ import {
 import { useTranslate } from '@/hooks/common-hooks';
 import { useFetchTenantInfo } from '@/hooks/use-user-setting-request';
 import { useCallback, useMemo, useState } from 'react';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 
 type IEmbedAppModalProps = {
   open: any;
@@ -21,6 +22,7 @@ type IEmbedAppModalProps = {
 };
 
 const EmbedAppModal = (props: IEmbedAppModalProps) => {
+  const { t: tUi } = useUiTranslation();
   const { t } = useTranslate('search');
   const { data: tenantInfo } = useFetchTenantInfo();
   const tenantId = tenantInfo.tenant_id;
@@ -125,7 +127,7 @@ const EmbedAppModal = (props: IEmbedAppModalProps) => {
                 message.success(t('copySuccess'));
               }}
               className="ml-2 p-2 hover:text-white transition-colors"
-              title="Copy ID"
+              title={tUi('common.copyId')}
             >
               <svg
                 xmlns="http://www.w3.org/2000/svg"

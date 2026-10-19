@@ -19,7 +19,7 @@ export function WebhookResponse() {
   });
 
   return (
-    <Collapse title={<div>Response</div>}>
+    <Collapse title={<div>{t('flow.response')}</div>}>
       <section className="space-y-4">
         <RAGFlowFormItem
           name="execution_mode"

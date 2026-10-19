@@ -20,6 +20,7 @@ import {
 } from '@/services/business-document-service';
 import { AlertTriangle, Braces, Plus, Trash2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 import type { DocumentConstructorStorageScope } from './draft-storage';
 import { ExecutionBindingPanel } from './execution-binding-panel';
 import { QueryCompilerPanel } from './query-compiler-panel';
@@ -143,6 +144,7 @@ export function QuerySpecificationDialog({
 }: {
   scope: DocumentConstructorStorageScope;
 }) {
+  const { t: tUi } = useUiTranslation();
   const [open, setOpen] = useState(false);
   const [workspace, setWorkspace] = useState<SchemaWorkspaceState>(() =>
     emptySchemaWorkspace(),
@@ -428,7 +430,8 @@ export function QuerySpecificationDialog({
                         key={table.id}
                       >
                         <span className="block truncate" title={table.fqn}>
-                          Alias · {table.fqn}
+                          {tUi('common.aliasLabel')}
+                          {table.fqn}
                         </span>
                         <Input
                           aria-label={`Alias таблицы ${table.fqn}`}

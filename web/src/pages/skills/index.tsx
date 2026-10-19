@@ -552,7 +552,7 @@ const SkillsPage: React.FC = () => {
         className="text-text-secondary cursor-pointer hover:text-text-primary"
         onClick={() => navigate(Routes.Files)}
       >
-        root
+        {t('common.rootFolder')}
       </span>
       <span className="text-text-secondary">/</span>
       <span>{t('skills.title')}</span>
@@ -566,7 +566,7 @@ const SkillsPage: React.FC = () => {
         className="text-text-secondary cursor-pointer hover:text-text-primary"
         onClick={() => navigate(Routes.Files)}
       >
-        root
+        {t('common.rootFolder')}
       </span>
       <span className="text-text-secondary">/</span>
       <span
@@ -917,8 +917,8 @@ const SkillsPage: React.FC = () => {
               onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
               title={
                 sortOrder === 'asc'
-                  ? t('skills.sortDesc') || 'Sort Descending'
-                  : t('skills.sortAsc') || 'Sort Ascending'
+                  ? t('common.sortDescending') || 'Sort Descending'
+                  : t('common.sortAscending') || 'Sort Ascending'
               }
             >
               {sortOrder === 'asc' ? (

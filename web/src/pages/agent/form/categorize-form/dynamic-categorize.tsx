@@ -30,6 +30,7 @@ import {
   useState,
 } from 'react';
 import { UseFormReturn, useFieldArray, useFormContext } from 'react-hook-form';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 import { v4 as uuid } from 'uuid';
 import { z } from 'zod';
 import useGraphStore from '../../store';
@@ -173,6 +174,7 @@ const InnerFormSet = ({ index }: IProps & { index: number }) => {
 const FormSet = memo(InnerFormSet);
 
 const DynamicCategorize = ({ nodeId }: IProps) => {
+  const { t: tUi } = useUiTranslation();
   const updateNodeInternals = useUpdateNodeInternals();
 
   const deleteCategorizeCaseEdges = useGraphStore(
@@ -225,7 +227,7 @@ const DynamicCategorize = ({ nodeId }: IProps) => {
                   </Button>
                   <Button variant="ghost" size="sm" className="w-9 p-0">
                     <ChevronsUpDown className="h-4 w-4" />
-                    <span className="sr-only">Toggle</span>
+                    <span className="sr-only">{tUi('common.toggle')}</span>
                   </Button>
                 </div>
               </CollapsibleTrigger>

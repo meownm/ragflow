@@ -1,16 +1,20 @@
 import { Card, CardContent } from '@/components/ui/card';
 import { ArrowRight, X } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
+import {
+  useTranslation,
+  useTranslation as useUiTranslation,
+} from 'react-i18next';
 
 function BannerCard() {
+  const { t: tUi } = useUiTranslation();
   return (
     <Card className="w-auto border-none h-3/4">
       <CardContent className="p-4">
         <span className="inline-block bg-backgroundCoreWeak rounded-sm px-1 text-xs">
-          System
+          {tUi('common.system')}
         </span>
         <div className="flex mt-1 gap-4">
-          <span className="text-lg truncate">Setting up your LLM</span>
+          <span className="text-lg truncate">{tUi('common.setupLlm')}</span>
           <ArrowRight />
         </div>
       </CardContent>

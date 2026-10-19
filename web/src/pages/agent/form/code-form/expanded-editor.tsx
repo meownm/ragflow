@@ -1,6 +1,7 @@
 import { Button } from '@/components/ui/button';
 import Editor from '@monaco-editor/react';
 import { Minimize2 } from 'lucide-react';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 import { CodeEditorOptions } from './monaco-config';
 
 interface ExpandedEditorProps {
@@ -20,12 +21,13 @@ export function ExpandedEditor({
   value,
   onChange,
 }: ExpandedEditorProps) {
+  const { t: tUi } = useUiTranslation();
   if (!visible) return null;
 
   return (
     <div className="absolute inset-0 z-10 flex flex-col bg-bg-base">
       <div className="flex items-center justify-between border-b px-5 py-3">
-        <span className="font-medium">Code</span>
+        <span className="font-medium">{tUi('flow.code')}</span>
         <Button variant="ghost" onClick={onClose} type="button">
           <Minimize2 className="size-4" />
         </Button>

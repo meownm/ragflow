@@ -341,7 +341,8 @@ function MarkdownContent({
           <HoverCard key={i}>
             <HoverCardTrigger>
               <bdi className="text-text-secondary bg-bg-card rounded-2xl px-1 mx-1 text-nowrap inline-block">
-                Fig. {chunkIndex + 1}
+                {t('common.figure')}
+                {chunkIndex + 1}
               </bdi>
             </HoverCardTrigger>
             <HoverCardContent className="max-w-3xl">
@@ -353,7 +354,7 @@ function MarkdownContent({
 
       return replacedText;
     },
-    [renderPopoverContent],
+    [renderPopoverContent, t],
   );
 
   const dir = getDirAttribute(content.replace(citationMarkerReg, ''));

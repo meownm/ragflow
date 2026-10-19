@@ -8,9 +8,11 @@ import {
 import { X } from 'lucide-react';
 import { memo } from 'react';
 import { useFieldArray, useFormContext } from 'react-hook-form';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 import { PromptEditor } from '../components/prompt-editor';
 
 const DynamicTool = () => {
+  const { t: tUi } = useUiTranslation();
   const form = useFormContext();
   const name = 'tools';
 
@@ -54,7 +56,7 @@ const DynamicTool = () => {
       </div>
       <FormMessage />
       <BlockButton onClick={() => append({ component_name: '' })}>
-        Add
+        {tUi('common.add')}
       </BlockButton>
     </FormItem>
   );

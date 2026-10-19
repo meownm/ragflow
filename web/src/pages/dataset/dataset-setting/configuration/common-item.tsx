@@ -576,7 +576,7 @@ export function LLMModelItem({ line = 1, isEdit, label, name }: IProps) {
                   'w-1/4': line === 1,
                 })}
               >
-                {label ?? t('llmModel')}
+                {label ?? t('globalIndexModel')}
               </FormLabel>
               <div
                 className={cn('text-text-secondary', { 'w-3/4': line === 1 })}

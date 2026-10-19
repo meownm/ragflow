@@ -6,6 +6,7 @@ import { useTranslate } from '@/hooks/common-hooks';
 import { camelCase, isEqual } from 'lodash';
 import React, { useCallback } from 'react';
 import { useFormContext } from 'react-hook-form';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 import { z } from 'zod';
 import { Collapse } from '../collapse';
 import {
@@ -87,6 +88,7 @@ export function LlmSettingFieldItems({
   llmId,
   showCollapse = false,
 }: LlmSettingFieldItemsProps) {
+  const { t: tUi } = useUiTranslation();
   const form = useFormContext();
   const { t } = useTranslate('chat');
 
@@ -191,7 +193,7 @@ export function LlmSettingFieldItems({
             <SliderInputSwitchFormField
               name={getFieldWithPrefix('temperature')}
               checkName="temperatureEnabled"
-              label="temperature"
+              label={tUi('chat.temperatureLabel')}
               max={1}
               step={0.01}
               min={0}
@@ -204,7 +206,7 @@ export function LlmSettingFieldItems({
             <SliderInputSwitchFormField
               name={getFieldWithPrefix('top_p')}
               checkName="topPEnabled"
-              label="topP"
+              label={tUi('chat.topPLabel')}
               max={1}
               step={0.01}
               min={0}
@@ -217,7 +219,7 @@ export function LlmSettingFieldItems({
             <SliderInputSwitchFormField
               name={getFieldWithPrefix('presence_penalty')}
               checkName="presencePenaltyEnabled"
-              label="presencePenalty"
+              label={tUi('chat.presencePenaltyLabel')}
               max={1}
               step={0.01}
               min={0}
@@ -230,7 +232,7 @@ export function LlmSettingFieldItems({
             <SliderInputSwitchFormField
               name={getFieldWithPrefix('frequency_penalty')}
               checkName="frequencyPenaltyEnabled"
-              label="frequencyPenalty"
+              label={tUi('chat.frequencyPenaltyLabel')}
               max={1}
               step={0.01}
               min={0}
@@ -244,7 +246,7 @@ export function LlmSettingFieldItems({
               name={getFieldWithPrefix('max_tokens')}
               checkName="maxTokensEnabled"
               numberInputClassName="w-20"
-              label="maxTokens"
+              label={tUi('chat.maxTokensLabel')}
               max={128000}
               min={0}
               onChange={() => {

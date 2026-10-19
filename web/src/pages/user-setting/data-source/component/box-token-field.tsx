@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -52,6 +53,7 @@ const parseBoxCredentials = (content?: string): BoxCredentials | null => {
 };
 
 const BoxTokenField = ({ value, onChange }: BoxTokenFieldProps) => {
+  const { t: tUi } = useUiTranslation();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [clientId, setClientId] = useState('');
   const [clientSecret, setClientSecret] = useState('');
@@ -328,12 +330,12 @@ const BoxTokenField = ({ value, onChange }: BoxTokenFieldProps) => {
           <div className="flex flex-wrap items-center gap-2">
             {hasAuthorized ? (
               <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-emerald-700">
-                Authorized
+                {tUi('setting.authorized')}
               </span>
             ) : null}
             {hasConfigured ? (
               <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-blue-700">
-                Configured
+                {tUi('setting.configured')}
               </span>
             ) : null}
           </div>
@@ -365,34 +367,38 @@ const BoxTokenField = ({ value, onChange }: BoxTokenFieldProps) => {
           onEscapeKeyDown={(e) => e.preventDefault()}
         >
           <DialogHeader>
-            <DialogTitle>Configure Box OAuth credentials</DialogTitle>
+            <DialogTitle>{tUi('setting.boxConfigureOauth')}</DialogTitle>
             <DialogDescription>
-              Enter your Box application&apos;s Client ID, Client Secret, and
-              Redirect URI. These values will be stored in the form field and
-              can be used later to start the OAuth flow.
+              {tUi('setting.boxOauthDescription')}
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-3 pt-2">
             <div className="space-y-1">
-              <label className="text-sm font-medium">Client ID</label>
+              <label className="text-sm font-medium">
+                {tUi('setting.clientId')}
+              </label>
               <Input
                 value={clientId}
-                placeholder="Enter Box Client ID"
+                placeholder={tUi('setting.boxClientIdPlaceholder')}
                 onChange={(e) => setClientId(e.target.value)}
               />
             </div>
             <div className="space-y-1">
-              <label className="text-sm font-medium">Client Secret</label>
+              <label className="text-sm font-medium">
+                {tUi('setting.clientSecret')}
+              </label>
               <Input
                 type="password"
                 value={clientSecret}
-                placeholder="Enter Box Client Secret"
+                placeholder={tUi('setting.boxClientSecretPlaceholder')}
                 onChange={(e) => setClientSecret(e.target.value)}
               />
             </div>
             <div className="space-y-1">
-              <label className="text-sm font-medium">Redirect URI</label>
+              <label className="text-sm font-medium">
+                {tUi('setting.redirectUri')}
+              </label>
               <Input
                 value={redirectUri}
                 placeholder="https://example.com/box/oauth/callback"
@@ -402,7 +408,7 @@ const BoxTokenField = ({ value, onChange }: BoxTokenFieldProps) => {
             {webStatus !== 'idle' && (
               <div className="rounded-md border border-dashed border-muted-foreground/40 bg-muted/10 px-4 py-4 text-sm text-muted-foreground">
                 <div className="text-sm font-semibold text-foreground">
-                  Browser authorization
+                  {tUi('setting.browserAuthorization')}
                 </div>
                 <p
                   className={`mt-2 text-xs ${
@@ -420,7 +426,7 @@ const BoxTokenField = ({ value, onChange }: BoxTokenFieldProps) => {
                       size="sm"
                       onClick={handleManualWebCheck}
                     >
-                      Refresh status
+                      {tUi('setting.refreshStatus')}
                     </Button>
                   </div>
                 ) : null}
@@ -434,13 +440,13 @@ const BoxTokenField = ({ value, onChange }: BoxTokenFieldProps) => {
               onClick={handleCloseDialog}
               disabled={submitLoading}
             >
-              Cancel
+              {tUi('common.cancel')}
             </Button>
             <Button onClick={handleSubmit} disabled={submitLoading}>
               {submitLoading && (
                 <Loader2 className="mr-2 size-4 animate-spin" />
               )}
-              Submit & Authorize
+              {tUi('setting.submitAndAuthorize')}
             </Button>
           </DialogFooter>
         </DialogContent>

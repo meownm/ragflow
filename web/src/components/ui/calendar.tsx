@@ -9,6 +9,7 @@ import {
 } from 'react-day-picker';
 
 import { Button, buttonVariants } from '@/components/ui/button';
+import { useCalendarLabels, useDateLocale } from '@/hooks/use-date-locale';
 import { cn } from '@/lib/utils';
 import {
   ChevronDownIcon,
@@ -23,12 +24,16 @@ function Calendar({
   captionLayout = 'label',
   buttonVariant = 'ghost',
   locale,
+  labels,
   formatters,
   components,
   ...props
 }: React.ComponentProps<typeof DayPicker> & {
   buttonVariant?: React.ComponentProps<typeof Button>['variant'];
 }) {
+  const dateLocale = useDateLocale();
+  const calendarLabels = useCalendarLabels();
+  locale ??= dateLocale;
   const defaultClassNames = getDefaultClassNames();
 
   return (
@@ -40,6 +45,7 @@ function Calendar({
       )}
       captionLayout={captionLayout}
       locale={locale}
+      labels={{ ...calendarLabels, ...labels }}
       formatters={{
         formatMonthDropdown: (date) =>
           date.toLocaleString(locale?.code, { month: 'short' }),

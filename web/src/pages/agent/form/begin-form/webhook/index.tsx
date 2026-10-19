@@ -68,7 +68,7 @@ export function WebHook() {
         )}
       </RAGFlowFormItem>
 
-      <Collapse title={<div>Security</div>}>
+      <Collapse title={<div>{t('flow.security')}</div>}>
         <section className="space-y-4">
           <RAGFlowFormItem
             name="security.auth_type"

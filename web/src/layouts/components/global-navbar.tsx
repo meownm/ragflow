@@ -378,7 +378,7 @@ export function MobileNavbar({ renderFooter }: MobileNavbarProps) {
           variant="ghost"
           size="icon"
           className="size-10 shrink-0"
-          aria-label="Menu"
+          aria-label={t('common.menu')}
         >
           <LucideMenu className="size-6 stroke-[1.75]" />
         </Button>

@@ -2,6 +2,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import type { SqlQueryPlanResponse } from '@/pages/business-documents/types';
 import { LoaderCircle, Sparkles } from 'lucide-react';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 
 export function QueryPlannerPanel({
   result,
@@ -14,6 +15,7 @@ export function QueryPlannerPanel({
   planning: boolean;
   onPlan: () => void;
 }) {
+  const { t: tUi } = useUiTranslation();
   return (
     <section
       className="space-y-3 rounded-md border border-accent-primary/30 bg-accent-primary/5 p-4"
@@ -84,7 +86,8 @@ export function QueryPlannerPanel({
       )}
       {result?.llm.prompt && (
         <p className="text-[11px] text-text-secondary">
-          Prompt: {result.llm.prompt.name} v{result.llm.prompt.version} ·{' '}
+          {tUi('common.promptLabel')}
+          {result.llm.prompt.name} v{result.llm.prompt.version} ·{' '}
           {result.llm.prompt.content_hash}
         </p>
       )}

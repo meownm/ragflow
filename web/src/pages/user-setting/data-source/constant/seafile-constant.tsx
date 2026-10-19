@@ -3,7 +3,7 @@ import { TFunction } from 'i18next';
 
 export const seafileConstant = (t: TFunction) => [
   {
-    label: 'SeaFile Server URL',
+    label: t('setting.connectorFields.seafileServerUrl'),
     name: 'config.seafile_url',
     type: FormFieldType.Text,
     required: true,
@@ -11,13 +11,16 @@ export const seafileConstant = (t: TFunction) => [
     tooltip: t('setting.seafileUrlTip'),
   },
   {
-    label: 'Sync Scope',
+    label: t('setting.connectorFields.syncScope'),
     name: 'config.sync_scope',
     type: FormFieldType.Segmented,
     options: [
-      { label: 'Entire Account', value: 'account' },
-      { label: 'Single Library', value: 'library' },
-      { label: 'Specific Directory', value: 'directory' },
+      { label: t('setting.connectorFields.entireAccount'), value: 'account' },
+      { label: t('setting.connectorFields.singleLibrary'), value: 'library' },
+      {
+        label: t('setting.connectorFields.specificDirectory'),
+        value: 'directory',
+      },
     ],
     tooltip: t('setting.seafileSyncScopeTip'),
   },
@@ -37,7 +40,7 @@ export const seafileConstant = (t: TFunction) => [
     ),
   },
   {
-    label: 'Account API Token',
+    label: t('setting.connectorFields.accountApiToken'),
     name: 'config.credentials.seafile_token',
     type: FormFieldType.Password,
     required: false,
@@ -56,7 +59,7 @@ export const seafileConstant = (t: TFunction) => [
     },
   },
   {
-    label: 'Include Shared Libraries',
+    label: t('setting.connectorFields.includeSharedLibraries'),
     name: 'config.include_shared',
     type: FormFieldType.Checkbox,
     required: false,
@@ -84,11 +87,15 @@ export const seafileConstant = (t: TFunction) => [
         </p>
         <ul className="list-disc list-inside space-y-0.5">
           <li>
-            <span className="font-medium">Account API Token</span>
+            <span className="font-medium">
+              {t('setting.connectorFields.accountApiToken')}
+            </span>
             {' ' + t('setting.seafileTokenPanelAccountBullet')}
           </li>
           <li>
-            <span className="font-medium">Library Token</span>
+            <span className="font-medium">
+              {t('setting.connectorFields.libraryToken')}
+            </span>
             {' ' + t('setting.seafileTokenPanelLibraryBullet')}
           </li>
         </ul>
@@ -96,7 +103,7 @@ export const seafileConstant = (t: TFunction) => [
     ),
   },
   {
-    label: 'Account API Token',
+    label: t('setting.connectorFields.accountApiToken'),
     name: 'config.credentials.seafile_token',
     type: FormFieldType.Password,
     required: false,
@@ -107,7 +114,7 @@ export const seafileConstant = (t: TFunction) => [
     },
   },
   {
-    label: 'Library Token',
+    label: t('setting.connectorFields.libraryToken'),
     name: 'config.credentials.repo_token',
     type: FormFieldType.Password,
     required: false,
@@ -130,7 +137,7 @@ export const seafileConstant = (t: TFunction) => [
     },
   },
   {
-    label: 'Library ID',
+    label: t('setting.connectorFields.libraryId'),
     name: 'config.repo_id',
     type: FormFieldType.Text,
     required: false,
@@ -150,7 +157,7 @@ export const seafileConstant = (t: TFunction) => [
   },
 
   {
-    label: 'Directory Path',
+    label: t('setting.connectorFields.directoryPath'),
     name: 'config.sync_path',
     type: FormFieldType.Text,
     required: false,
@@ -168,7 +175,7 @@ export const seafileConstant = (t: TFunction) => [
   },
 
   {
-    label: 'Batch Size',
+    label: t('setting.connectorFields.batchSize'),
     name: 'config.batch_size',
     type: FormFieldType.Number,
     required: false,
@@ -177,35 +184,35 @@ export const seafileConstant = (t: TFunction) => [
   },
 
   {
-    label: 'Account API Token',
+    label: t('setting.connectorFields.accountApiToken'),
     name: 'config.credentials.seafile_token',
     type: FormFieldType.Password,
     required: false,
     hidden: true,
   },
   {
-    label: 'Library Token',
+    label: t('setting.connectorFields.libraryToken'),
     name: 'config.credentials.repo_token',
     type: FormFieldType.Password,
     required: false,
     hidden: true,
   },
   {
-    label: 'Library ID',
+    label: t('setting.connectorFields.libraryId'),
     name: 'config.repo_id',
     type: FormFieldType.Text,
     required: false,
     hidden: true,
   },
   {
-    label: 'Directory Path',
+    label: t('setting.connectorFields.directoryPath'),
     name: 'config.sync_path',
     type: FormFieldType.Text,
     required: false,
     hidden: true,
   },
   {
-    label: 'Include Shared Libraries',
+    label: t('setting.connectorFields.includeSharedLibraries'),
     name: 'config.include_shared',
     type: FormFieldType.Checkbox,
     required: false,

@@ -15,7 +15,6 @@ import {
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
-import { t } from 'i18next';
 import {
   Atom,
   CircleStop,
@@ -27,6 +26,7 @@ import {
 } from 'lucide-react';
 import * as React from 'react';
 import { useCallback, useEffect, useState } from 'react';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { AudioButton } from '../ui/audio-button';
 
@@ -75,6 +75,7 @@ export function NextMessageInput({
   showReasoning = false,
   showInternet = false,
 }: NextMessageInputProps) {
+  const { t: tUi } = useUiTranslation();
   const [files, setFiles] = React.useState<File[]>([]);
   const [audioInputValue, setAudioInputValue] = React.useState<string | null>(
     null,
@@ -119,11 +120,17 @@ export function NextMessageInput({
     pressEnter,
   ]);
 
-  const onFileReject = React.useCallback((file: File, message: string) => {
-    toast(message, {
-      description: `"${file.name.length > 20 ? `${file.name.slice(0, 20)}...` : file.name}" has been rejected`,
-    });
-  }, []);
+  const onFileReject = React.useCallback(
+    (file: File, message: string) => {
+      toast(message, {
+        description: tUi('chat.fileRejected', {
+          name:
+            file.name.length > 20 ? `${file.name.slice(0, 20)}...` : file.name,
+        }),
+      });
+    },
+    [tUi],
+  );
 
   const submit = React.useCallback(() => {
     if (isUploading) return;
@@ -172,9 +179,9 @@ export function NextMessageInput({
           <div className="flex items-center justify-center rounded-full border p-2.5">
             <Upload className="size-6 text-muted-foreground" />
           </div>
-          <p className="font-medium text-sm">Drag & drop files here</p>
+          <p className="font-medium text-sm">{tUi('chat.dropFilesHere')}</p>
           <p className="text-muted-foreground text-xs">
-            Upload max 5 files each up to 5MB
+            {tUi('chat.uploadLimits')}
           </p>
         </div>
       </FileUploadDropzone>
@@ -215,7 +222,7 @@ export function NextMessageInput({
           data-testid="chat-textarea"
           value={value}
           onChange={onInputChange}
-          placeholder={t('chat.messagePlaceholder')}
+          placeholder={tUi('chat.messagePlaceholder')}
           className="
             min-h-10 max-h-40 w-full p-0 overflow-auto
             !outline-none !border-transparent !bg-transparent !shadow-none !ring-transparent !ring-offset-transparent
@@ -239,7 +246,7 @@ export function NextMessageInput({
                   data-testid="chat-detail-attach"
                 >
                   <Paperclip className="size-3.5" />
-                  <span className="sr-only">Attach file</span>
+                  <span className="sr-only">{tUi('chat.attachFile')}</span>
                 </Button>
               </FileUploadTrigger>
             )}
@@ -256,7 +263,7 @@ export function NextMessageInput({
                 data-testid="chat-detail-thinking-toggle"
               >
                 <Atom />
-                <span>Thinking</span>
+                <span>{tUi('chat.thinking')}</span>
               </Button>
             )}
 
@@ -302,7 +309,7 @@ export function NextMessageInput({
                 data-testid="chat-detail-send"
               >
                 <Send />
-                <span className="sr-only">Send message</span>
+                <span className="sr-only">{tUi('chat.sendMessage')}</span>
               </Button>
             </div>
           )}

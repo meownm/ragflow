@@ -73,14 +73,12 @@ export const useMetadataColumns = ({
   };
 
   const saveEditedValue = useCallback(
-    (
-      newValue?: {
-        field: string;
-        value: string;
-        newValue: string;
-        valueType: MetadataValueType;
-      },
-    ) => {
+    (newValue?: {
+      field: string;
+      value: string;
+      newValue: string;
+      valueType: MetadataValueType;
+    }) => {
       const realValue = newValue || editingValue;
       if (realValue) {
         setTableData((prev) => {
@@ -138,14 +136,14 @@ export const useMetadataColumns = ({
                   onCheckedChange={(value) =>
                     table.toggleAllPageRowsSelected(!!value)
                   }
-                  aria-label="Select all"
+                  aria-label={t('common.selectAll')}
                 />
               ),
               cell: ({ row }: { row: Row<IMetaDataTableData> }) => (
                 <Checkbox
                   checked={row.getIsSelected()}
                   onCheckedChange={(value) => row.toggleSelected(!!value)}
-                  aria-label="Select row"
+                  aria-label={t('common.selectRow')}
                 />
               ),
               enableSorting: false,
@@ -308,10 +306,11 @@ export const useMetadataColumns = ({
                         handleEditValue(
                           row.getValue('field'),
                           value,
-                          row.original.valueType || metadataValueTypeEnum.string,
+                          row.original.valueType ||
+                            metadataValueTypeEnum.string,
                         )
                       }
-                      aria-label="Edit"
+                      aria-label={t('common.edit')}
                     >
                       <div className="flex gap-1 items-center">
                         <div className="text-sm truncate max-w-24">

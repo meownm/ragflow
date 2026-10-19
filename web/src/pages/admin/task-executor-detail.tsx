@@ -1,5 +1,6 @@
 import dayjs from 'dayjs';
 import { isPlainObject } from 'lodash';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 import JsonView from 'react18-json-view';
 import 'react18-json-view/src/style.css';
 
@@ -72,6 +73,7 @@ function CustomAxisTick({ x, y, payload }: any) {
 }
 
 function TaskExecutorDetail({ content }: TaskExecutorDetailProps) {
+  const { t: tUi } = useUiTranslation();
   if (!isPlainObject(content)) {
     return <ServiceDetail content={content} />;
   }
@@ -94,8 +96,14 @@ function TaskExecutorDetail({ content }: TaskExecutorDetailProps) {
               <CardTitle>{name}</CardTitle>
 
               <div className="text-sm text-text-secondary space-x-4">
-                <span>Lag: {lastItem?.lag}</span>
-                <span>Pending: {lastItem?.pending}</span>
+                <span>
+                  {tUi('admin.lagLabel')}
+                  {lastItem?.lag}
+                </span>
+                <span>
+                  {tUi('admin.pendingLabel')}
+                  {lastItem?.pending}
+                </span>
               </div>
             </CardHeader>
 

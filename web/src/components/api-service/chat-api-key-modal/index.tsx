@@ -18,6 +18,7 @@ import { useTranslate } from '@/hooks/common-hooks';
 import { IModalProps } from '@/interfaces/common';
 import { formatDate } from '@/utils/date';
 import { Trash2 } from 'lucide-react';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 import { useOperateApiKey } from '../hooks';
 
 const ChatApiKeyModal = ({
@@ -25,6 +26,7 @@ const ChatApiKeyModal = ({
   hideModal,
   idKey,
 }: IModalProps<any> & { dialogId?: string; idKey: string }) => {
+  const { t: tUi } = useUiTranslation();
   const { createToken, removeToken, tokenList, listLoading, creatingLoading } =
     useOperateApiKey(idKey, dialogId);
   const { t } = useTranslate('chat');
@@ -38,12 +40,14 @@ const ChatApiKeyModal = ({
           </DialogHeader>
           <div className="space-y-4">
             {listLoading ? (
-              <div className="flex justify-center py-8">Loading...</div>
+              <div className="flex justify-center py-8">
+                {tUi('common.loading')}
+              </div>
             ) : (
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Token</TableHead>
+                    <TableHead>{tUi('common.token')}</TableHead>
                     <TableHead>{t('created')}</TableHead>
                     <TableHead>{t('action')}</TableHead>
                   </TableRow>

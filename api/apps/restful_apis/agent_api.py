@@ -39,7 +39,7 @@ from quart import Response, jsonify, request, make_response
 from api.apps import current_user, login_required
 from api.apps.services.agent_file_service import upload_agent_files
 from api.apps.services.canvas_replica_service import CanvasReplicaService
-from api.db import CanvasCategory
+from api.db import CanvasCategory, TenantPermission
 from api.db.db_models import Task
 from api.db.services.api_service import API4ConversationService
 from api.db.services.canvas_service import (
@@ -53,7 +53,7 @@ from api.db.services.file_service import FileService
 from api.db.services.knowledgebase_service import KnowledgebaseService
 from api.db.services.pipeline_operation_log_service import PipelineOperationLogService
 from api.db.services.task_service import CANVAS_DEBUG_DOC_ID, TaskService, queue_dataflow
-from api.db.services.user_service import TenantService, UserService
+from api.db.services.user_service import UserService, UserTenantService
 from api.db.services.user_canvas_version import UserCanvasVersionService
 from api.utils.api_utils import (
     add_tenant_id_to_kwargs,
@@ -393,6 +393,11 @@ async def _run_workflow_session(
         await thread_pool_exec(API4ConversationService.append_message, session_id, workflow_conv)
         await commit_runtime_replica()
 
+    async def bind_runtime_message(event):
+        if event.get("message_id") and workflow_conv["message"] and not workflow_conv["message"][-1].get("runtime_message_id"):
+            workflow_conv["message"][-1]["runtime_message_id"] = event["message_id"]
+            await thread_pool_exec(API4ConversationService.update_by_id, session_id, {"message": workflow_conv["message"]})
+
     if stream:
 
         async def sse():
@@ -400,6 +405,7 @@ async def _run_workflow_session(
             done_sent = False
             try:
                 async for ans in canvas.run(**run_kwargs):
+                    await bind_runtime_message(ans)
                     ans["session_id"] = session_id
                     if ans.get("event") == "message":
                         full_content += ans.get("data", {}).get("content", "")
@@ -460,6 +466,7 @@ async def _run_workflow_session(
 
     try:
         async for ans in canvas.run(**run_kwargs):
+            await bind_runtime_message(ans)
             ans["session_id"] = session_id
             if ans.get("event") == "message":
                 full_content += ans.get("data", {}).get("content", "")
@@ -532,7 +539,7 @@ def list_agent_sessions(agent_id, tenant_id):
     desc = request.args.get("desc") not in {"False", "false"}
 
     if exp_user_id:
-        sessions = API4ConversationService.get_names(agent_id, exp_user_id)
+        sessions = API4ConversationService.get_names(agent_id, exp_user_id, tenant_id)
         return _agent_session_list_result(sessions, len(sessions))
 
     include_dsl = request.args.get("dsl") not in {"False", "false"}
@@ -585,6 +592,7 @@ async def create_agent_session(agent_id, tenant_id):
         "dialog_id": cvs.id,
         "user_id": user_id,
         "exp_user_id": user_id,
+        "created_by": tenant_id,
         "message": [{"role": "assistant", "content": canvas.get_prologue()}],
         "source": "agent",
         "dsl": cvs.dsl,
@@ -600,8 +608,8 @@ async def create_agent_session(agent_id, tenant_id):
 @add_tenant_id_to_kwargs
 @_require_canvas_access_sync
 def get_agent_session(agent_id, session_id, tenant_id):
-    exists, conv = API4ConversationService.get_by_id(session_id)
-    if not exists or conv.dialog_id != agent_id:
+    exists, conv = API4ConversationService.get_owned_session(session_id, agent_id, tenant_id)
+    if not exists:
         return get_data_error_result(message="Session not found!")
     return get_json_result(data=conv.to_dict())
 
@@ -611,8 +619,8 @@ def get_agent_session(agent_id, session_id, tenant_id):
 @add_tenant_id_to_kwargs
 @_require_canvas_access_sync
 def delete_agent_session_item(agent_id, session_id, tenant_id):
-    exists, conv = API4ConversationService.get_by_id(session_id)
-    if not exists or conv.dialog_id != agent_id:
+    exists, conv = API4ConversationService.get_owned_session(session_id, agent_id, tenant_id)
+    if not exists:
         return get_data_error_result(message="Session not found!")
     return get_json_result(data=API4ConversationService.delete_by_id(session_id))
 
@@ -625,17 +633,13 @@ async def delete_agent_session(tenant_id, agent_id):
     errors = []
     success_count = 0
     req = await get_request_json()
-    cvs = await thread_pool_exec(UserCanvasService.query, user_id=tenant_id, id=agent_id)
-    if not cvs:
-        return get_error_data_result(f"You don't own the agent {agent_id}")
-
     if not req:
         return get_result()
 
     ids = req.get("ids")
     if not ids:
         if req.get("delete_all") is True:
-            ids = [conv.id for conv in await thread_pool_exec(API4ConversationService.query, dialog_id=agent_id)]
+            ids = [conv.id for conv in await thread_pool_exec(API4ConversationService.query, dialog_id=agent_id, created_by=tenant_id)]
             if not ids:
                 return get_result()
         else:
@@ -647,8 +651,8 @@ async def delete_agent_session(tenant_id, agent_id):
     conv_list = unique_conv_ids
 
     for session_id in conv_list:
-        conv = await thread_pool_exec(API4ConversationService.query, id=session_id, dialog_id=agent_id)
-        if not conv:
+        exists, conv = await thread_pool_exec(API4ConversationService.get_owned_session, session_id, agent_id, tenant_id)
+        if not exists:
             errors.append(f"The agent doesn't own the session {session_id}")
             continue
         await thread_pool_exec(API4ConversationService.delete_by_id, session_id)
@@ -773,9 +777,7 @@ def list_agents(tenant_id):
     items_per_page = validate_rest_api_page_size(int(request.args.get("page_size", 0)))
     order_by = request.args.get("orderby", "create_time")
     desc = str(request.args.get("desc", "true")).lower() != "false"
-    tenants = TenantService.get_joined_tenants_by_user_id(tenant_id)
-    authorized_owner_ids = {member["tenant_id"] for member in tenants}
-    authorized_owner_ids.add(tenant_id)
+    authorized_owner_ids = set(UserTenantService.get_team_owner_ids(tenant_id))
 
     if owner_ids:
         requested_owner_ids = set(owner_ids)
@@ -812,8 +814,7 @@ def list_agents(tenant_id):
 def list_agent_tags(tenant_id):
     """Aggregate tag usage counts across agents visible to the caller."""
     canvas_category = request.args.get("canvas_category")
-    tenants = TenantService.get_joined_tenants_by_user_id(tenant_id)
-    joined_ids = list({member["tenant_id"] for member in tenants} | {tenant_id})
+    joined_ids = UserTenantService.get_team_owner_ids(tenant_id)
     counts = UserCanvasService.list_tags(joined_ids, tenant_id, canvas_category)
     logging.info(
         "list_agent_tags tenant=%s canvas_category=%s tags_count=%d",
@@ -870,6 +871,8 @@ async def update_agent_tags(tenant_id, canvas_id):
 @add_tenant_id_to_kwargs
 async def create_agent(tenant_id):
     req = {k: v for k, v in (await get_request_json()).items() if v is not None}
+    if "permission" in req and req["permission"] not in (TenantPermission.ME.value, TenantPermission.TEAM.value):
+        return get_data_error_result(message="`permission` must be 'me' or 'team'.")
     req["canvas_type"] = req.get("canvas_type", "")
     req["user_id"] = tenant_id
     req["canvas_category"] = req.get("canvas_category") or CanvasCategory.Agent
@@ -1089,10 +1092,13 @@ def get_agent_version(agent_id, version_id, tenant_id):
 @add_tenant_id_to_kwargs
 @_require_canvas_access_async
 async def get_agent_logs(agent_id, message_id, tenant_id):
+    session = await thread_pool_exec(API4ConversationService.get_session_for_message, agent_id, message_id, tenant_id)
+    if session is None:
+        return get_data_error_result(message="Session not found!")
     try:
         from rag.utils.redis_conn import REDIS_CONN
 
-        binary = await thread_pool_exec(REDIS_CONN.get, f"{agent_id}-{message_id}-logs")
+        binary = await thread_pool_exec(REDIS_CONN.get, f"{session.id}-{message_id}-logs")
         if not binary:
             return get_json_result(data={})
 
@@ -1118,6 +1124,10 @@ def delete_agent(agent_id, tenant_id):
 @_require_canvas_access_async
 async def update_agent(agent_id, tenant_id):
     req = {k: v for k, v in (await get_request_json()).items() if v is not None}
+    for field in ("id", "user_id", "create_time", "create_date", "update_time", "update_date"):
+        req.pop(field, None)
+    if "permission" in req and req["permission"] not in (TenantPermission.ME.value, TenantPermission.TEAM.value):
+        return get_data_error_result(message="`permission` must be 'me' or 'team'.")
     req["canvas_type"] = req.get("canvas_type", "")
     req["release"] = bool(req.get("release", ""))
 
@@ -1131,7 +1141,11 @@ async def update_agent(agent_id, tenant_id):
                 code=RetCode.ARGUMENT_ERROR,
             )
 
-    _, current_agent = UserCanvasService.get_by_id(agent_id)
+    exists, current_agent = UserCanvasService.get_by_id(agent_id)
+    if not exists:
+        return get_data_error_result(message="Agent not found.")
+    if "permission" in req and current_agent.user_id != tenant_id and req["permission"] != current_agent.permission:
+        return get_json_result(data=False, message="Only the owner can change agent permissions.", code=RetCode.OPERATING_ERROR)
     if req.get("title") is not None:
         req["title"] = req["title"].strip()
         canvas_category_for_duplicate_check = req.get("canvas_category") or (current_agent.canvas_category if current_agent else CanvasCategory.Agent)
@@ -1394,13 +1408,13 @@ async def agent_chat_completion(tenant_id, agent_id=None):
     # 1. Draft/runtime execution without session state. The request runs against the caller's
     #    runtime replica, which is populated from the editable canvas state.
     # 2. Session continuation with an existing session_id. The request resumes from the stored
-    #    API4Conversation state and must stay bound to the same agent and an accessible canvas.
+    #    API4Conversation state and must belong to the authenticated creator and this agent.
     #
     # Security constraints:
     # - agent_id is always supplied at the route layer and is not forwarded downstream as a free-form kwarg.
-    # - New runs without session_id must pass UserCanvasService.accessible(...) before the runtime replica is loaded.
-    # - Existing sessions are validated here at the route layer before handing control to the lower-level
-    #   completion functions, so canvas_service only executes a pre-authorized session payload.
+    # - All session selectors are normalized before authorization, for both response formats.
+    # - Agent access and session authorship are checked before loading any runtime state.
+    # - The shared completion service also checks access for embedded/API entrypoints.
     #
     # Response modes:
     # - Regular mode emits internal agent events.
@@ -1418,25 +1432,26 @@ async def agent_chat_completion(tenant_id, agent_id=None):
     req = dict(req)
     req.pop("agent_id", None)
     req.pop("openai-compatible", None)
-    session_id = req.get("session_id")
+    selectors = [req.get("session_id")]
+    if openai_compatible:
+        metadata = req.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            return get_data_error_result(message="`metadata` must be an object.")
+        selectors.extend([req.pop("id", None), metadata.get("id")])
+    selectors = [value for value in selectors if value is not None and value != ""]
+    if any(not isinstance(value, str) for value in selectors) or len(set(selectors)) > 1:
+        return get_data_error_result(message="Provide one consistent string session identifier.")
+    session_id = selectors[0] if selectors else None
+    req["session_id"] = session_id
+    req.pop("created_by", None)
+    if not await thread_pool_exec(UserCanvasService.accessible, agent_id, tenant_id):
+        return get_json_result(data=False, message="Only authorized users can access this agent.", code=RetCode.OPERATING_ERROR)
     workflow_session = False
     workflow_conv = None
     if session_id:
-        exists, conv = API4ConversationService.get_by_id(session_id)
+        exists, conv = await thread_pool_exec(API4ConversationService.get_owned_session, session_id, agent_id, tenant_id)
         if not exists:
             return get_data_error_result(message="Session not found!")
-        if conv.dialog_id != agent_id:
-            return get_json_result(
-                data=False,
-                message="Session does not belong to the requested agent.",
-                code=RetCode.OPERATING_ERROR,
-            )
-        if not UserCanvasService.accessible(agent_id, tenant_id):
-            return get_json_result(
-                data=False,
-                message="Only authorized users can access this agent session.",
-                code=RetCode.OPERATING_ERROR,
-            )
         workflow_session = getattr(conv, "source", "") == "workflow"
         if workflow_session:
             workflow_conv = conv.to_dict()
@@ -1448,7 +1463,7 @@ async def agent_chat_completion(tenant_id, agent_id=None):
             return get_data_error_result(message="You must provide at least one message.")
         question = next((m.get("content", "") for m in reversed(messages) if m.get("role") == "user"), "")
         stream = req.pop("stream", False)
-        session_id = req.pop("session_id", req.get("id", "")) or req.get("metadata", {}).get("id", "")
+        req.pop("session_id", None)
         if stream:
             return _build_sse_response(
                 completion_openai(
@@ -1537,13 +1552,6 @@ async def agent_chat_completion(tenant_id, agent_id=None):
         )
 
     if not session_id:
-        if not UserCanvasService.accessible(agent_id, tenant_id):
-            return get_json_result(
-                data=False,
-                message="Make sure you have permission to access the agent.",
-                code=RetCode.OPERATING_ERROR,
-            )
-
         # Keep the original workflow execution path, but assign a session_id so the
         # response shape stays closer to the older agent completion contract.
         query = req.get("query", "") or req.get("question", "")
@@ -1592,6 +1600,7 @@ async def agent_chat_completion(tenant_id, agent_id=None):
                 "dialog_id": cvs.id,
                 "user_id": user_id,
                 "exp_user_id": user_id,
+                "created_by": tenant_id,
                 "name": req.get("name", ""),
                 "message": [
                     {
@@ -1645,6 +1654,7 @@ async def agent_chat_completion(tenant_id, agent_id=None):
             "dialog_id": cvs.id,
             "user_id": user_id,
             "exp_user_id": user_id,
+            "created_by": tenant_id,
             "name": req.get("name") or (query[:250] if query else "") or "",
             "message": [
                 {

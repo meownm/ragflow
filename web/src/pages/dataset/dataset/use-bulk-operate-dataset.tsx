@@ -61,7 +61,7 @@ export function useBulkOperateDataset({
       );
 
       if (nonVirtualKeys.length === 0) {
-        toast.error(t('Please select a non-empty file list'));
+        toast.error(t('knowledgeDetails.selectNonEmptyFileList'));
         return;
       }
       await runDocumentByIds({
@@ -112,7 +112,9 @@ export function useBulkOperateDataset({
           .some((y) => y.id === x),
     );
     if (deletedKeys.length === 0) {
-      toast.error(t('theDocumentBeingParsedCannotBeDeleted'));
+      toast.error(
+        t('knowledgeConfiguration.theDocumentBeingParsedCannotBeDeleted'),
+      );
       return;
     }
 

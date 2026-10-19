@@ -15,6 +15,7 @@ import { useAwaitComponentData } from '@/pages/agent/hooks/use-chat-logic';
 import { buildMessageUuidWithRole } from '@/utils/chat';
 import { isEmpty } from 'lodash';
 import React, { forwardRef, useCallback } from 'react';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 import {
   useGetSharedChatSearchParams,
   useSendButtonDisabled,
@@ -23,6 +24,7 @@ import {
 import { ParameterDialog } from './parameter-dialog';
 
 const ChatContainer = () => {
+  const { t: tUi } = useUiTranslation();
   const {
     sharedId: conversationId,
     locale,
@@ -112,7 +114,7 @@ const ChatContainer = () => {
     showBeginParameterDialog();
   };
   if (!conversationId) {
-    return <div>empty</div>;
+    return <div>{tUi('common.noDataLabel')}</div>;
   }
 
   return (

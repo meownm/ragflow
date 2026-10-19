@@ -27,7 +27,7 @@ export const LLMHeader = ({ name }: { name: string }) => {
       </div>
       <Button className=" px-2 items-center gap-0 text-xs h-6  rounded-md transition-colors hidden group-hover:flex">
         <Plus size={12} />
-        {t('addTheModel')}
+        {t('setting.addTheModel')}
       </Button>
     </div>
   );

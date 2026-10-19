@@ -45,6 +45,7 @@ from peewee import (
     Model,
     TextField,
     PrimaryKeyField,
+    SQL,
 )
 from playhouse.migrate import PostgresqlMigrator, migrate
 from playhouse.pool import PooledPostgresqlDatabase
@@ -866,6 +867,7 @@ class Task(DataBaseModel):
 class Dialog(DataBaseModel):
     id = CharField(max_length=32, primary_key=True)
     tenant_id = CharField(max_length=32, null=False, index=True)
+    permission = CharField(max_length=16, null=False, help_text="me|team", default="me", constraints=[SQL("DEFAULT 'me'")], index=True)
     name = CharField(max_length=255, null=True, help_text="dialog application name", index=True)
     description = TextField(null=True, help_text="Dialog description")
     icon = TextField(null=True, help_text="icon base64 string")
@@ -1127,6 +1129,8 @@ class API4Conversation(DataBaseModel):
     name = CharField(max_length=255, null=True, help_text="conversation name", index=False)
     dialog_id = CharField(max_length=32, null=False, index=True)
     user_id = CharField(max_length=255, null=False, help_text="user_id", index=True)
+    # Null means attribution is unknown; user_id is a client-supplied external identity.
+    created_by = CharField(max_length=32, null=True, help_text="authenticated session creator", index=True)
     exp_user_id = CharField(max_length=255, null=True, help_text="exp_user_id", index=True)
     message = JSONField(null=True)
     reference = JSONField(null=True, default=[])
@@ -2495,6 +2499,9 @@ def migrate_db():
     alter_db_add_column(migrator, "file", "source_type", CharField(max_length=128, null=False, default="", help_text="where dose this document come from", index=True))
     alter_db_add_column(migrator, "tenant", "rerank_id", CharField(max_length=128, null=False, default="BAAI/bge-reranker-v2-m3", help_text="default rerank model ID"))
     alter_db_add_column(migrator, "dialog", "rerank_id", CharField(max_length=128, null=False, default="", help_text="default rerank model ID"))
+    alter_db_add_column(migrator, "dialog", "permission", CharField(max_length=16, null=False, help_text="me|team", default="me", constraints=[SQL("DEFAULT 'me'")], index=True))
+    migrate(migrator.add_column_default("dialog", "permission", "me"))
+    alter_db_add_column(migrator, "api_4_conversation", "created_by", CharField(max_length=32, null=True, help_text="authenticated session creator", index=True))
     alter_db_column_type(migrator, "dialog", "top_k", IntegerField(default=1024))
     alter_db_add_column(migrator, "tenant_llm", "api_key", CharField(max_length=2048, null=True, help_text="API KEY", index=True))
     alter_db_add_column(migrator, "api_token", "source", CharField(max_length=16, null=True, help_text="none|agent|dialog", index=True))

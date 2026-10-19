@@ -2,6 +2,7 @@ import { cn } from '@/lib/utils';
 import { Clock } from 'lucide-react';
 import * as React from 'react';
 import { forwardRef } from 'react';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -143,7 +144,7 @@ const TimePicker = forwardRef<HTMLDivElement, TimePickerProps>(
       onChange,
       format = 'HH:mm:ss',
       disabled = false,
-      placeholder = 'Select time',
+      placeholder,
       className,
       hourStep = 1,
       minuteStep = 1,
@@ -174,6 +175,7 @@ const TimePicker = forwardRef<HTMLDivElement, TimePickerProps>(
     },
     ref,
   ) => {
+    const { t: tUi } = useUiTranslation();
     const [isOpen, setIsOpen] = React.useState(false);
     const [inputValue, setInputValue] = React.useState('');
     const internalOpen = open !== undefined ? open : isOpen;
@@ -501,7 +503,7 @@ const TimePicker = forwardRef<HTMLDivElement, TimePickerProps>(
                 type="text"
                 value={inputValue}
                 onChange={handleInputChange}
-                placeholder={placeholder}
+                placeholder={placeholder ?? tUi('common.selectTime')}
                 disabled={disabled}
                 readOnly={inputReadOnly}
                 className={cn(
@@ -619,7 +621,7 @@ const TimePicker = forwardRef<HTMLDivElement, TimePickerProps>(
                   onClick={handleSetNow}
                   className="w-full text-xs"
                 >
-                  Now
+                  {tUi('common.now')}
                 </Button>
               </div>
             )}

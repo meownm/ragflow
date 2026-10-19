@@ -28,6 +28,7 @@ from types import SimpleNamespace
 from quart import Response, request
 
 from api.apps import current_user, login_required
+from api.db import TenantPermission
 from api.apps.restful_apis._generation_params import merge_generation_config, pop_generation_config
 from api.db.joint_services.tenant_model_service import get_tenant_default_model_by_type, get_model_config_from_provider_instance, get_model_type_by_name, split_model_name
 from api.db.services.chunk_feedback_service import ChunkFeedbackService
@@ -164,6 +165,23 @@ def _build_session_response(conv: dict) -> dict:
 
 async def _ensure_owned_chat(chat_id):
     return await thread_pool_exec(DialogService.query, tenant_id=current_user.id, id=chat_id, status=StatusEnum.VALID.value)
+
+
+async def _ensure_accessible_chat(chat_id):
+    return await thread_pool_exec(DialogService.get_accessible_chat, chat_id, current_user.id)
+
+
+async def _session_scope(chat_id):
+    chats = await _ensure_accessible_chat(chat_id)
+    if not chats:
+        return None
+    return {"dialog_id": chat_id, "user_id": current_user.id}
+
+
+def _validate_permission(req):
+    if "permission" in req and req["permission"] not in (TenantPermission.ME.value, TenantPermission.TEAM.value):
+        return "`permission` must be 'me' or 'team'."
+    return None
 
 
 def _build_default_completion_dialog():
@@ -370,6 +388,9 @@ async def create():
         if req.get("tenant_id"):
             return get_data_error_result(message="`tenant_id` must not be provided.")
 
+        if err := _validate_permission(req):
+            return get_data_error_result(message=err)
+
         # Validate name
         name, err = _validate_name(req.get("name"), required=True)
         if err:
@@ -459,35 +480,21 @@ async def list_chats():
         except ValueError as exc:
             return get_data_error_result(message=str(exc))
 
-        if owner_ids:
-            chats, total = await thread_pool_exec(
-                DialogService.get_by_tenant_ids,
-                owner_ids,
-                current_user.id,
-                0,
-                0,
-                orderby,
-                desc,
-                keywords,
-                **exact_filters,
-            )
-            chats = [chat for chat in chats if chat["tenant_id"] in owner_ids]
-            total = len(chats)
-            if page_number and items_per_page:
-                start = (page_number - 1) * items_per_page
-                chats = chats[start : start + items_per_page]
-        else:
-            chats, total = await thread_pool_exec(
-                DialogService.get_by_tenant_ids,
-                [],
-                current_user.id,
-                page_number,
-                items_per_page,
-                orderby,
-                desc,
-                keywords,
-                **exact_filters,
-            )
+        authorized_owners = await thread_pool_exec(UserTenantService.get_team_owner_ids, current_user.id)
+        if set(owner_ids) - set(authorized_owners):
+            return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)
+        chats, total = await thread_pool_exec(
+            DialogService.get_by_tenant_ids,
+            authorized_owners,
+            current_user.id,
+            page_number,
+            items_per_page,
+            orderby,
+            desc,
+            keywords,
+            owner_ids=owner_ids,
+            **exact_filters,
+        )
 
         return get_json_result(data={"chats": [_build_chat_response(chat) for chat in chats], "total": total})
     except Exception as ex:
@@ -498,26 +505,15 @@ async def list_chats():
 @login_required
 async def get_chat(chat_id):
     try:
-        tenants = await thread_pool_exec(UserTenantService.query, user_id=current_user.id)
-        for tenant in tenants:
-            if await thread_pool_exec(
-                DialogService.query,
-                tenant_id=tenant.tenant_id,
-                id=chat_id,
-                status=StatusEnum.VALID.value,
-            ):
-                break
-        else:
+        chats = await _ensure_accessible_chat(chat_id)
+        if not chats:
             return get_json_result(
                 data=False,
                 message="No authorization.",
                 code=RetCode.AUTHENTICATION_ERROR,
             )
 
-        ok, chat = await thread_pool_exec(DialogService.get_by_id, chat_id)
-        if not ok:
-            return get_data_error_result(message="Chat not found!")
-        return get_json_result(data=_build_chat_response(chat))
+        return get_json_result(data=_build_chat_response(chats[0]))
     except Exception as ex:
         return server_error_response(ex)
 
@@ -530,6 +526,8 @@ async def update_chat(chat_id):
 
     try:
         req = await get_request_json()
+        if err := _validate_permission(req):
+            return get_data_error_result(message=err)
         ok, tenant = TenantService.get_by_id(current_user.id)
         if not ok:
             return get_data_error_result(message="Tenant not found!")
@@ -604,6 +602,8 @@ async def patch_chat(chat_id):
 
     try:
         req = await get_request_json()
+        if err := _validate_permission(req):
+            return get_data_error_result(message=err)
         ok, tenant = TenantService.get_by_id(current_user.id)
         if not ok:
             return get_data_error_result(message="Tenant not found!")
@@ -707,6 +707,8 @@ async def bulk_delete_chats():
             # keep backward compatibility, DELETE with chat_id in request body
             chat_id = req.get("chat_id")
             if chat_id:
+                if not await _ensure_owned_chat(chat_id):
+                    return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)
                 try:
                     if not DialogService.update_by_id(chat_id, {"status": StatusEnum.INVALID.value}):
                         return get_data_error_result(message=f"Failed to delete chat {chat_id}")
@@ -741,7 +743,7 @@ async def bulk_delete_chats():
 @login_required
 async def create_session(chat_id):
     """Create a new conversation session for the given chat, owned by the authenticated user."""
-    if not await _ensure_owned_chat(chat_id):
+    if not await _ensure_accessible_chat(chat_id):
         return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)
     try:
         req = await get_request_json()
@@ -777,7 +779,8 @@ async def list_sessions(chat_id):
     Page zero addresses the first page; page_size zero returns an empty list.
     """
     try:
-        if not await _ensure_owned_chat(chat_id):
+        scope = await _session_scope(chat_id)
+        if scope is None:
             return get_json_result(
                 data=False,
                 message="No authorization.",
@@ -790,7 +793,7 @@ async def list_sessions(chat_id):
         desc = request.args.get("desc", "true").lower() != "false"
         session_id = request.args.get("id")
         name = request.args.get("name")
-        user_id = request.args.get("user_id")
+        user_id = scope["user_id"]
         convs = ConversationService.get_list(chat_id, page_number, items_per_page, orderby, desc, session_id, name, user_id)
         if items_per_page == 0:
             convs = []
@@ -802,7 +805,8 @@ async def list_sessions(chat_id):
 @manager.route("/chats/<chat_id>/sessions/<session_id>", methods=["GET"])  # noqa: F821
 @login_required
 async def get_session(chat_id, session_id):
-    if not await _ensure_owned_chat(chat_id):
+    scope = await _session_scope(chat_id)
+    if scope is None or not await thread_pool_exec(ConversationService.query, id=session_id, **scope):
         return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)
     try:
         ok, conv = await thread_pool_exec(ConversationService.get_by_id, session_id)
@@ -810,7 +814,7 @@ async def get_session(chat_id, session_id):
             return get_data_error_result(message="Session not found!")
         if conv.dialog_id != chat_id:
             return get_data_error_result(message="Session does not belong to this chat!")
-        dialog = await _ensure_owned_chat(chat_id)
+        dialog = await _ensure_accessible_chat(chat_id)
         avatar = dialog[0].icon if dialog else ""
         for ref in conv.reference:
             if isinstance(ref, list):
@@ -827,13 +831,14 @@ async def get_session(chat_id, session_id):
 @login_required
 async def update_session(chat_id, session_id):
     """Update supported session fields; non-object bodies and unknown fields return code 102."""
-    if not await _ensure_owned_chat(chat_id):
+    scope = await _session_scope(chat_id)
+    if scope is None:
         return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)
     try:
         req = await get_request_json()
         if not isinstance(req, dict):
             return get_data_error_result(message="request must be an object")
-        if not ConversationService.query(id=session_id, dialog_id=chat_id):
+        if not ConversationService.query(id=session_id, **scope):
             return get_data_error_result(message="Session not found!")
         if "message" in req or "messages" in req:
             return get_data_error_result(message="`messages` cannot be changed.")
@@ -861,7 +866,8 @@ async def update_session(chat_id, session_id):
 @manager.route("/chats/<chat_id>/sessions", methods=["DELETE"])  # noqa: F821
 @login_required
 async def delete_sessions(chat_id):
-    if not await _ensure_owned_chat(chat_id):
+    scope = await _session_scope(chat_id)
+    if scope is None:
         return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)
     try:
         req = await get_request_json()
@@ -871,7 +877,7 @@ async def delete_sessions(chat_id):
         session_ids = req.get("ids")
         if not session_ids:
             if req.get("delete_all") is True:
-                session_ids = [conv.id for conv in ConversationService.query(dialog_id=chat_id)]
+                session_ids = [conv.id for conv in ConversationService.query(**scope)]
                 if not session_ids:
                     return get_json_result(data={})
             else:
@@ -880,7 +886,7 @@ async def delete_sessions(chat_id):
         errors = []
         success_count = 0
         for sid in unique_ids:
-            if not ConversationService.query(id=sid, dialog_id=chat_id):
+            if not ConversationService.query(id=sid, **scope):
                 errors.append(f"The chat doesn't own the session {sid}")
                 continue
             ok, conv = ConversationService.get_by_id(sid)
@@ -912,7 +918,8 @@ async def delete_sessions(chat_id):
 @manager.route("/chats/<chat_id>/sessions/<session_id>/messages/<msg_id>", methods=["DELETE"])  # noqa: F821
 @login_required
 async def delete_session_message(chat_id, session_id, msg_id):
-    if not await _ensure_owned_chat(chat_id):
+    scope = await _session_scope(chat_id)
+    if scope is None or not await thread_pool_exec(ConversationService.query, id=session_id, **scope):
         return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)
     try:
         ok, conv = ConversationService.get_by_id(session_id)
@@ -937,8 +944,8 @@ async def delete_session_message(chat_id, session_id, msg_id):
 @manager.route("/chats/<chat_id>/sessions/<session_id>/messages/<msg_id>/feedback", methods=["PUT"])  # noqa: F821
 @login_required
 async def update_message_feedback(chat_id, session_id, msg_id):
-    owned = await _ensure_owned_chat(chat_id)
-    if not owned:
+    scope = await _session_scope(chat_id)
+    if scope is None or not await thread_pool_exec(ConversationService.query, id=session_id, **scope):
         return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)
     try:
         req = await get_request_json()
@@ -1250,7 +1257,7 @@ async def session_completion(chat_id_in_arg=""):
             return get_data_error_result(message="`chat_id` is required when `session_id` is provided.")
 
         if chat_id:
-            if not await _ensure_owned_chat(chat_id):
+            if not await _ensure_accessible_chat(chat_id):
                 return get_json_result(
                     data=False,
                     message="No authorization.",
@@ -1267,6 +1274,9 @@ async def session_completion(chat_id_in_arg=""):
                     code=RetCode.AUTHENTICATION_ERROR,
                 ), 403
             if session_id:
+                scope = await _session_scope(chat_id)
+                if scope is None or not await thread_pool_exec(ConversationService.query, id=session_id, **scope):
+                    return get_json_result(data=False, message="No authorization.", code=RetCode.AUTHENTICATION_ERROR)
                 e, conv = await thread_pool_exec(ConversationService.get_by_id, session_id)
                 if not e:
                     return get_data_error_result(message="Session not found!")

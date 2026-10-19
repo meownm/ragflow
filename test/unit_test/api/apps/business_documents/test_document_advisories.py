@@ -105,7 +105,9 @@ def test_worker_saves_document_and_advice_after_format_deviation(database, kind)
     assert BusinessDocumentWorker(ai=BusinessDocumentAI(adapter)).run_once()
     job = BusinessDocumentJob.get_by_id(requested["job_id"])
     assert job.status == "COMPLETED", job.error
-    assert not job.error and len(adapter.calls) == 1
+    assert not job.error and len(adapter.calls) == (2 if kind in {"plain_text", "markdown_diagram"} else 1)
+    if kind in {"plain_text", "markdown_diagram"}:
+        assert adapter.calls[1][2]["format_repair"]["previous_response"] == output
     view = document_queries.get_document(job.document_id, AUTHOR)
     ast = view["current_revision"]["document_ast"]
     validate_contract("document_draft", ast)
@@ -125,6 +127,24 @@ def test_worker_saves_document_and_advice_after_format_deviation(database, kind)
         assert "Проверять SLA" in str(ast["warnings"])
     if kind == "protocol":
         assert "Кто отвечает" in str(ast["warnings"]) and "Уточнить срок" in str(ast["warnings"])
+
+
+def test_analysis_only_draft_gets_one_format_repair_before_saving(database):
+    requested = _request_draft()
+
+    class AnalysisThenDraft(CapturingAdapter):
+        def generate(self, tenant, system, payload, **kwargs):
+            response = super().generate(tenant, system, payload, **kwargs)
+            return "Analysis of sources and planned sections. Preparing the final JSON." if len(self.calls) == 1 else response
+
+    adapter = AnalysisThenDraft(_draft_bundle())
+    assert BusinessDocumentWorker(ai=BusinessDocumentAI(adapter)).run_once()
+    job = BusinessDocumentJob.get_by_id(requested["job_id"])
+    assert job.status == "COMPLETED", job.error
+    assert len(adapter.calls) == 2
+    assert adapter.calls[1][2]["format_repair"]["error"]["code"] == "INVALID_AI_JSON"
+    assert job.result["output"]["draft"]["sections"]
+    assert "Preparing the final JSON" not in str(job.result["output"]["draft"])
 
 
 @pytest.mark.parametrize("confirm", [True, False])

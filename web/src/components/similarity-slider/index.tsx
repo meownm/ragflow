@@ -2,6 +2,7 @@ import { FormLayout } from '@/constants/form';
 import { useTranslate } from '@/hooks/common-hooks';
 import { cn } from '@/lib/utils';
 import { useFormContext } from 'react-hook-form';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 import { z } from 'zod';
 import { SliderInputFormField } from '../slider-input-form-field';
 import { SingleFormSlider } from '../ui/dual-range-slider';
@@ -50,6 +51,7 @@ export function SimilaritySliderFormField({
   isTooltipShown,
   numberInputClassName,
 }: SimilaritySliderFormFieldProps) {
+  const { t: tUi } = useUiTranslation();
   const { t } = useTranslate('knowledgeDetails');
   const form = useFormContext();
   const isVector = similarityWeightType === 'vector';
@@ -100,7 +102,7 @@ export function SimilaritySliderFormField({
                   <div className="flex justify-between items-center">
                     <div className="flex items-center gap-1">
                       <label className="italic text-xs text-text-secondary">
-                        vector
+                        {tUi('chat.vectorSearch')}
                       </label>
                       <span className="bg-bg-card rounded-md p-1 w-10 text-center text-xs">
                         {getVectorWeight(field.value).toFixed(2)}
@@ -108,7 +110,7 @@ export function SimilaritySliderFormField({
                     </div>
                     <div className="flex  items-center gap-1">
                       <label className="italic text-xs text-text-secondary">
-                        full-text
+                        {tUi('chat.fullTextSearch')}
                       </label>
                       <span className="bg-bg-card rounded-md p-1 w-10 text-center text-xs">
                         {getFullTextWeight(field.value).toFixed(2)}

@@ -2,6 +2,7 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { FileCog, Hash, Languages, ListTree } from 'lucide-react';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 import {
   MAX_HEADING_BASE_LEVEL,
   MIN_HEADING_BASE_LEVEL,
@@ -17,6 +18,7 @@ const selectClassName =
   'h-8 w-full rounded-md border border-border-button bg-bg-input px-3 text-sm text-text-primary outline-none transition-colors focus-visible:ring-1 focus-visible:ring-accent-primary';
 
 export function TemplateSettings({ draft, onChange }: TemplateSettingsProps) {
+  const { t: tUi } = useUiTranslation();
   const requiredCount = draft.sections.filter(
     (section) => section.required,
   ).length;
@@ -96,7 +98,7 @@ export function TemplateSettings({ draft, onChange }: TemplateSettingsProps) {
               aria-label="Язык шаблона"
             >
               <option value="ru">Русский</option>
-              <option value="en">English</option>
+              <option value="en">{tUi('common.english')}</option>
             </select>
           </label>
           <label className="block space-y-2 text-xs font-medium text-text-secondary">

@@ -627,7 +627,7 @@ export default function OpenMetadataPage() {
                 : t('openMetadata.fresh')}
             </Badge>
             {status.governance_allowed && (
-              <Badge variant="outline">Governance</Badge>
+              <Badge variant="outline">{t('openMetadata.governance')}</Badge>
             )}
             {status.knowledge_graph?.enabled && (
               <Badge variant="outline">

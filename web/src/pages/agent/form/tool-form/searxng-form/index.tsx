@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { memo } from 'react';
 import { useForm } from 'react-hook-form';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 import { z } from 'zod';
 import { useValues } from '../use-values';
 import { useWatchFormChange } from '../use-watch-change';
@@ -22,6 +23,7 @@ const FormSchema = z.object({
 });
 
 function SearXNGForm() {
+  const { t: tUi } = useUiTranslation();
   const values = useValues();
 
   const form = useForm<z.infer<typeof FormSchema>>({
@@ -40,7 +42,7 @@ function SearXNGForm() {
           name="searxng_url"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>SearXNG URL</FormLabel>
+              <FormLabel>{tUi('flow.searxngUrl')}</FormLabel>
               <FormControl>
                 <Input {...field} placeholder="http://localhost:4000" />
               </FormControl>

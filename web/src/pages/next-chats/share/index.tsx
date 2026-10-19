@@ -9,6 +9,7 @@ import { useFetchExternalChatInfo } from '@/hooks/use-chat-request';
 import i18n, { changeLanguageAsync } from '@/locales/config';
 import { buildMessageUuidWithRole } from '@/utils/chat';
 import React, { forwardRef } from 'react';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 import { useSendButtonDisabled } from '../hooks/use-button-disabled';
 import {
   useGetSharedChatSearchParams,
@@ -17,6 +18,7 @@ import {
 import { buildMessageItemReference } from '../utils';
 
 const ChatContainer = () => {
+  const { t: tUi } = useUiTranslation();
   const {
     sharedId: conversationId,
     locale,
@@ -51,7 +53,7 @@ const ChatContainer = () => {
   const avatarDialogSrc = chatInfo.avatar;
 
   if (!conversationId) {
-    return <div>empty</div>;
+    return <div>{tUi('common.noDataLabel')}</div>;
   }
 
   return (

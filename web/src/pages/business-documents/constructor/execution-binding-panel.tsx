@@ -12,6 +12,7 @@ import {
   LoaderCircle,
 } from 'lucide-react';
 import { useState } from 'react';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 
 const SELECT_CLASS =
   'h-8 w-full rounded-md border border-border-button bg-bg-input px-3 text-sm text-text-primary outline-none focus:ring-1 focus:ring-accent-primary';
@@ -35,6 +36,7 @@ export function ExecutionBindingPanel({
 }: {
   request: SqlQueryPlanRequest;
 }) {
+  const { t: tUi } = useUiTranslation();
   const [result, setResult] = useState<SqlExecutionBindingResponse | null>(
     null,
   );
@@ -192,7 +194,9 @@ export function ExecutionBindingPanel({
             </div>
           </div>
           <div>
-            <p className="text-text-secondary">Statement timeout</p>
+            <p className="text-text-secondary">
+              {tUi('common.statementTimeout')}
+            </p>
             <p className="font-medium">{profile.statement_timeout_ms} мс</p>
           </div>
           <div>

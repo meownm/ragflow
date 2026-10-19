@@ -5,6 +5,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
+import { useDateLocale } from '@/hooks/use-date-locale';
 import { cn } from '@/lib/utils';
 import {
   endOfDay,
@@ -20,12 +21,14 @@ import {
 } from 'date-fns';
 import { CalendarIcon } from 'lucide-react';
 import { useEffect, useId, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 
 const CalendarComp = ({
   selectDateRange,
   onSelect,
   ...props
 }: ITimeRangePickerProps) => {
+  const { t } = useTranslation();
   const today = new Date();
   const yesterday = {
     from: startOfDay(subDays(today, 1)),
@@ -56,7 +59,7 @@ const CalendarComp = ({
     to: endOfYear(subYears(today, 1)),
   };
   const dateRangeList = [
-    { key: 'yestday', value: yesterday },
+    { key: 'yesterday', value: yesterday },
     { key: 'last7Days', value: last7Days },
     { key: 'last30Days', value: last30Days },
     { key: 'monthToDate', value: monthToDate },
@@ -88,7 +91,7 @@ const CalendarComp = ({
                     onSelect?.(newDateRange);
                   }}
                 >
-                  Today
+                  {t('common.today')}
                 </Button>
                 {dateRangeList.map((dateRange) => (
                   <Button
@@ -102,7 +105,7 @@ const CalendarComp = ({
                       onSelect?.(dateRange.value);
                     }}
                   >
-                    {dateRange.key}
+                    {t(`common.${dateRange.key}`)}
                   </Button>
                 ))}
               </div>
@@ -146,6 +149,8 @@ const TimeRangePicker = ({
   selectDateRange,
   ...props
 }: ITimeRangePickerProps) => {
+  const { t } = useTranslation();
+  const locale = useDateLocale();
   const id = useId();
   const today = new Date();
 
@@ -200,14 +205,14 @@ const TimeRangePicker = ({
             {date?.from ? (
               date.to ? (
                 <>
-                  {format(date.from, 'LLL dd, y')} -{' '}
-                  {format(date.to, 'LLL dd, y')}
+                  {format(date.from, 'PP', { locale })} -{' '}
+                  {format(date.to, 'PP', { locale })}
                 </>
               ) : (
-                format(date.from, 'LLL dd, y')
+                format(date.from, 'PP', { locale })
               )
             ) : (
-              'Pick a date range'
+              t('common.pickDateRange')
             )}
           </span>
           <CalendarIcon

@@ -782,9 +782,7 @@ export const useSkills = () => {
               );
 
               if (existingVersion) {
-                message.error(
-                  t('skills.versionExists') || 'This version already exists',
-                );
+                message.error(t('skills.validation.versionExists'));
                 return false;
               }
             }

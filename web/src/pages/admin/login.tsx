@@ -1,7 +1,10 @@
 import { type AxiosResponseHeaders } from 'axios';
 import { useContext, useEffect, useId } from 'react';
 import { useForm } from 'react-hook-form';
-import { useTranslation } from 'react-i18next';
+import {
+  useTranslation,
+  useTranslation as useUiTranslation,
+} from 'react-i18next';
 import { useNavigate } from 'react-router';
 
 import { useMutation } from '@tanstack/react-query';
@@ -39,6 +42,7 @@ import { BgSvg } from '../login-next/bg';
 import { CurrentUserInfoContext } from './layouts/root-layout';
 
 function AdminLogin() {
+  const { t: tUi } = useUiTranslation();
   const navigate = useNavigate();
   const [, setCurrentUserInfo] = useContext(CurrentUserInfoContext);
   const { t } = useTranslation('translation', { keyPrefix: 'login' });
@@ -136,7 +140,11 @@ function AdminLogin() {
 
         <div className="absolute top-3 left-0 w-full">
           <div className="absolute mt-12 ml-12 flex items-center">
-            <img className="size-8 mr-5" src="/app-icon.png" alt="logo" />
+            <img
+              className="size-8 mr-5"
+              src="/app-icon.png"
+              alt={tUi('common.logo')}
+            />
             <span className="text-xl font-bold">Агент Раггер</span>
           </div>
 

@@ -139,7 +139,9 @@ export const StructuredOutputSecondaryMenu = forwardRef(
             )}
           >
             <span>{data.label}</span>
-            <span className="ml-auto text-xs text-text-secondary">object</span>
+            <span className="ml-auto text-xs text-text-secondary">
+              {t('flow.objectType')}
+            </span>
             <ChevronRight className="size-[1em] text-text-secondary" />
           </li>
         </HoverCardTrigger>

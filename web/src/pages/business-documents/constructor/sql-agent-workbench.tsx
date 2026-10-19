@@ -60,6 +60,7 @@ import {
   X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 import { GuidedSqlForm } from './guided-sql-form';
 import {
   applySchemaCandidateDetails,
@@ -893,6 +894,7 @@ function CompletedProject({
   compileError: string | null;
   onRefresh: () => Promise<void>;
 }) {
+  const { t: tUi } = useUiTranslation();
   const [copied, setCopied] = useState(false);
   const [showSql, setShowSql] = useState(false);
   const [showRepeat, setShowRepeat] = useState(false);
@@ -1804,7 +1806,9 @@ function CompletedProject({
               </pre>
               <div className="mt-4 grid gap-4 sm:grid-cols-2">
                 <div className="border-s-2 border-state-success ps-3">
-                  <p className="text-xs text-text-secondary">SQL Guard</p>
+                  <p className="text-xs text-text-secondary">
+                    {tUi('common.sqlGuard')}
+                  </p>
                   <p className="mt-1 text-sm font-medium">
                     {compiled.guard.status === 'PASS'
                       ? 'Read-only · проверка пройдена'

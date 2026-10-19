@@ -87,7 +87,7 @@ class _DummyUploadFile:
 
 
 def _run(coro):
-    with asyncio.Runner() as runner:
+    with asyncio.Runner(loop_factory=asyncio.new_event_loop) as runner:
         return runner.run(coro)
 
 
@@ -866,6 +866,18 @@ def _load_agent_api_module(monkeypatch):
     module.manager = _DummyManager()
     monkeypatch.setitem(sys.modules, "test_agent_api_unit_module", module)
     spec.loader.exec_module(module)
+
+    def owned_session(session_id, agent_id, actor_id):
+        rows = module.API4ConversationService.query(id=session_id, dialog_id=agent_id, created_by=actor_id)
+        if rows:
+            return True, rows[0]
+        exists, conv = module.API4ConversationService.get_by_id(session_id)
+        if exists and getattr(conv, "dialog_id", None) == agent_id and getattr(conv, "created_by", "tenant-1") == actor_id:
+            return True, conv
+        return False, None
+
+    module.API4ConversationService.get_owned_session = owned_session
+    module.API4ConversationService.get_session_for_message = lambda *_args: SimpleNamespace(id="session-1")
     return module
 
 
@@ -1222,6 +1234,8 @@ def test_openai_nonstream_forwards_generation_params_unit(monkeypatch):
 @pytest.mark.p2
 def test_agents_openai_compatibility_unit(monkeypatch):
     module = _load_agent_api_module(monkeypatch)
+    monkeypatch.setattr(module.UserCanvasService, "accessible", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(module.API4ConversationService, "get_by_id", lambda _session_id: (True, SimpleNamespace(dialog_id="agent-1", created_by="tenant-1")))
 
     monkeypatch.setattr(module, "Response", _StubResponse)
     monkeypatch.setattr(module, "jsonify", lambda payload: payload)
@@ -2017,7 +2031,7 @@ def _load_chat_api_module(monkeypatch):
     conv_svc_mod.ConversationService = SimpleNamespace(
         save=lambda **_k: True,
         get_by_id=lambda _id: (True, _make_conv(_id)),
-        query=lambda **_k: [],
+        query=lambda **values: [_make_conv(values["id"])] if values.get("id") else [],
         get_list=lambda *_a, **_k: [],
     )
     conv_svc_mod.structure_answer = lambda *_a, **_k: {}
@@ -2026,6 +2040,7 @@ def _load_chat_api_module(monkeypatch):
     dialog_svc_mod = ModuleType("api.db.services.dialog_service")
     dialog_svc_mod.DialogService = SimpleNamespace(
         model=SimpleNamespace(_meta=SimpleNamespace(fields=[])),
+        get_accessible_chat=lambda chat_id, user_id: [SimpleNamespace(id=chat_id, tenant_id=user_id, icon="")],
         query=lambda **_k: [SimpleNamespace(id="chat-1", icon="")],
         get_by_id=lambda _id: (
             True,

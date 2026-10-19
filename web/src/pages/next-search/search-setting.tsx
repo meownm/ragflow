@@ -464,7 +464,7 @@ const SearchSetting: React.FC<SearchSettingProps> = ({
                   name="search_config.top_k"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Top K</FormLabel>
+                      <FormLabel>{t('chat.topK')}</FormLabel>
                       <div
                         className={cn(
                           'flex items-center gap-4 justify-between',

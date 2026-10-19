@@ -1,5 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useTranslation } from 'react-i18next';
+import {
+  useTranslation,
+  useTranslation as useUiTranslation,
+} from 'react-i18next';
 import './css/cloud9_night.less';
 import './css/index.less';
 import { JsonEditorOptions, JsonEditorProps } from './interface';
@@ -23,6 +26,7 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
   className = '',
   options = {},
 }) => {
+  const { t: tUi } = useUiTranslation();
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<any>(null);
   const { i18n } = useTranslation();
@@ -174,7 +178,9 @@ const JsonEditor: React.FC<JsonEditorProps> = ({
     >
       {isLoading && (
         <div className="flex items-center justify-center h-full">
-          <div className="text-text-secondary">Loading editor...</div>
+          <div className="text-text-secondary">
+            {tUi('common.loadingEditor')}
+          </div>
         </div>
       )}
     </div>

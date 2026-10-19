@@ -61,6 +61,7 @@ const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
       minYear = 1900,
       maxYear = 2100,
       placeholder,
+      locale,
       ...props
     },
     ref,
@@ -339,6 +340,7 @@ const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(
     const renderDatePicker = () => (
       <>
         <Calendar
+          locale={locale}
           mode="single"
           selected={selectedDate}
           onSelect={handleDateSelect}

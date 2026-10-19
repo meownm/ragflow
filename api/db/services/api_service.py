@@ -45,6 +45,29 @@ class APITokenService(CommonService):
 class API4ConversationService(CommonService):
     model = API4Conversation
 
+    @classmethod
+    @DB.connection_context()
+    def get_owned_session(cls, session_id, dialog_id, actor_id):
+        if not actor_id:
+            return False, None
+        session = cls.model.get_or_none((cls.model.id == session_id) & (cls.model.dialog_id == dialog_id) & (cls.model.created_by == actor_id))
+        return session is not None, session
+
+    @classmethod
+    @DB.connection_context()
+    def get_session_for_message(cls, dialog_id, message_id, actor_id):
+        if not actor_id or not message_id:
+            return None
+        sessions = cls.model.select(cls.model.id, cls.model.message).where(
+            cls.model.dialog_id == dialog_id,
+            cls.model.created_by == actor_id,
+            cls.model.message.cast("TEXT").contains(message_id),
+        )
+        for session in sessions:
+            if any(message.get("id") == message_id or message.get("runtime_message_id") == message_id for message in (session.message or []) if isinstance(message, dict)):
+                return session
+        return None
+
     @staticmethod
     def _normalize_query_date(value, is_end=False):
         if "T" in value:
@@ -56,11 +79,13 @@ class API4ConversationService(CommonService):
     @classmethod
     @DB.connection_context()
     def get_list(cls, dialog_id, tenant_id, page_number, items_per_page, orderby, desc, id=None, user_id=None, include_dsl=True, keywords="", from_date=None, to_date=None, exp_user_id=None):
+        if not tenant_id:
+            return 0, []
         if include_dsl:
-            sessions = cls.model.select().where(cls.model.dialog_id == dialog_id)
+            sessions = cls.model.select().where(cls.model.dialog_id == dialog_id, cls.model.created_by == tenant_id)
         else:
             fields = [field for field in cls.model._meta.fields.values() if field.name != "dsl"]
-            sessions = cls.model.select(*fields).where(cls.model.dialog_id == dialog_id)
+            sessions = cls.model.select(*fields).where(cls.model.dialog_id == dialog_id, cls.model.created_by == tenant_id)
         if id:
             sessions = sessions.where(cls.model.id == id)
         if user_id:
@@ -91,12 +116,18 @@ class API4ConversationService(CommonService):
 
     @classmethod
     @DB.connection_context()
-    def get_names(cls, dialog_id, exp_user_id):
+    def get_names(cls, dialog_id, exp_user_id, actor_id):
+        if not actor_id:
+            return []
         fields = [
             cls.model.id,
             cls.model.name,
         ]
-        sessions = cls.model.select(*fields).where(cls.model.dialog_id == dialog_id, cls.model.exp_user_id == exp_user_id).order_by(cls.model.getter_by("create_date").desc())
+        sessions = (
+            cls.model.select(*fields)
+            .where(cls.model.dialog_id == dialog_id, cls.model.exp_user_id == exp_user_id, cls.model.created_by == actor_id)
+            .order_by(cls.model.getter_by("create_date").desc())
+        )
 
         return list(sessions.dicts())
 

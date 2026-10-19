@@ -13,6 +13,7 @@ import {
 } from '@tanstack/react-table';
 import { ArrowUpDown } from 'lucide-react';
 import * as React from 'react';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 
 import { FileIcon } from '@/components/icon-font';
 import { RenameDialog } from '@/components/rename-dialog';
@@ -75,6 +76,7 @@ export function FilesTable({
   showMoveFileModal,
   connectKnowledgeModal,
 }: FilesTableProps) {
+  const { t: tUi } = useUiTranslation();
   const [sorting, setSorting] = React.useState<SortingState>([]);
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>(
     [],
@@ -151,14 +153,14 @@ export function FilesTable({
             (table.getIsSomePageRowsSelected() && 'indeterminate')
           }
           onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
-          aria-label="Select all"
+          aria-label={tUi('common.selectAll')}
         />
       ),
       cell: ({ row }) => (
         <Checkbox
           checked={row.getIsSelected()}
           onCheckedChange={(value) => row.toggleSelected(!!value)}
-          aria-label="Select row"
+          aria-label={tUi('common.selectRow')}
           disabled={!row.getCanSelect()}
         />
       ),

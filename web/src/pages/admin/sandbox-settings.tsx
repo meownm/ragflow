@@ -588,7 +588,7 @@ function AdminSandboxSettings() {
                                 <CollapsibleTrigger className="group w-full text-left">
                                   <div className="flex items-center justify-between rounded-md border border-border-button px-4 py-3 transition-colors hover:bg-bg-card">
                                     <h4 className="text-sm font-medium text-text-primary">
-                                      Runtime Settings
+                                      {t('admin.runtimeSettings')}
                                     </h4>
                                     <LucideChevronDown className="size-4 text-text-secondary transition-transform group-data-[state=open]:rotate-180" />
                                   </div>
@@ -652,11 +652,10 @@ function AdminSandboxSettings() {
                                               <span className="text-state-error">
                                                 *
                                               </span>
-                                              Authentication
+                                              {t('admin.authentication')}
                                             </h4>
                                             <p className="text-xs text-text-secondary mt-1">
-                                              Choose one authentication method
-                                              for the SSH connection.
+                                              {t('admin.sshAuthDescription')}
                                             </p>
                                           </div>
 
@@ -673,10 +672,10 @@ function AdminSandboxSettings() {
                                           >
                                             <TabsList className="grid w-full grid-cols-2">
                                               <TabsTrigger value="password">
-                                                Password
+                                                {t('login.passwordLabel')}
                                               </TabsTrigger>
                                               <TabsTrigger value="private_key">
-                                                Private Key
+                                                {t('admin.privateKey')}
                                               </TabsTrigger>
                                             </TabsList>
 
@@ -759,9 +758,9 @@ function AdminSandboxSettings() {
                                                     {fieldName ===
                                                       'passphrase' && (
                                                       <p className="text-xs text-text-secondary">
-                                                        Only required when the
-                                                        private key itself is
-                                                        encrypted.
+                                                        {t(
+                                                          'admin.privateKeyPassphraseDescription',
+                                                        )}
                                                       </p>
                                                     )}
                                                   </div>
@@ -776,12 +775,12 @@ function AdminSandboxSettings() {
                                         <div className="space-y-4 rounded-md border border-border-button p-4">
                                           <div>
                                             <h4 className="text-sm font-medium text-text-primary">
-                                              Execution
+                                              {t('admin.execution')}
                                             </h4>
                                             <p className="text-xs text-text-secondary mt-1">
-                                              Configure the remote workspace and
-                                              language runtimes used on the SSH
-                                              host.
+                                              {t(
+                                                'admin.sshExecutionDescription',
+                                              )}
                                             </p>
                                           </div>
 
@@ -871,12 +870,12 @@ function AdminSandboxSettings() {
                                   <div className="flex items-center justify-between rounded-md border border-border-button px-4 py-3 transition-colors hover:bg-bg-card">
                                     <div>
                                       <h4 className="text-sm font-medium">
-                                        Deployment Defaults
+                                        {t('admin.deploymentDefaults')}
                                       </h4>
                                       <p className="text-xs text-text-secondary mt-1">
-                                        Read-only values loaded from the current
-                                        environment for the default
-                                        executor-manager deployment.
+                                        {t(
+                                          'admin.deploymentDefaultsDescription',
+                                        )}
                                       </p>
                                     </div>
                                     <LucideChevronDown className="size-4 text-text-secondary transition-transform group-data-[state=open]:rotate-180" />

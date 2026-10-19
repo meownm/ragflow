@@ -7,7 +7,10 @@ import {
 import { Operator } from '@/constants/agent';
 import useGraphStore from '@/pages/agent/store';
 import { PropsWithChildren, useCallback, useMemo } from 'react';
-import { useTranslation } from 'react-i18next';
+import {
+  useTranslation,
+  useTranslation as useUiTranslation,
+} from 'react-i18next';
 import { OperatorItemList } from './operator-item-list';
 
 function OperatorAccordionTrigger({ children }: PropsWithChildren) {
@@ -165,6 +168,7 @@ export function PipelineAccordionOperators({
   mousePosition?: { x: number; y: number };
   nodeId?: string;
 }) {
+  const { t: tUi } = useUiTranslation();
   const restrictSingleOperatorOnCanvas = useRestrictSingleOperatorOnCanvas();
   const { getOperatorTypeFromId } = useGraphStore((state) => state);
 
@@ -208,7 +212,7 @@ export function PipelineAccordionOperators({
         >
           <AccordionItem value="item-1">
             <AccordionTrigger className="translate-y-2 hover:no-underline text-text-primary font-normal">
-              Chunker
+              {tUi('flow.chunker')}
             </AccordionTrigger>
             <AccordionContent className="flex flex-col gap-4">
               <OperatorItemList

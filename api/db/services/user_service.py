@@ -248,6 +248,38 @@ class UserTenantService(CommonService):
 
     @classmethod
     @DB.connection_context()
+    def get_team_owner_ids(cls, user_id):
+        """Resource owners sharing an active, accepted team with this user."""
+        roles = [UserTenantRole.OWNER, UserTenantRole.ADMIN, UserTenantRole.NORMAL]
+        membership = cls.model.alias("membership")
+        teams = (
+            membership.select(membership.tenant_id)
+            .join(User, on=(membership.user_id == User.id))
+            .where(
+                membership.user_id == user_id,
+                membership.status == StatusEnum.VALID.value,
+                membership.role.in_(roles),
+                User.status == StatusEnum.VALID.value,
+            )
+        )
+        members = (
+            cls.model.select(cls.model.user_id)
+            .join(Tenant, on=(cls.model.tenant_id == Tenant.id))
+            .switch(cls.model)
+            .join(User, on=(cls.model.user_id == User.id))
+            .where(
+                cls.model.tenant_id.in_(teams),
+                cls.model.status == StatusEnum.VALID.value,
+                cls.model.role.in_(roles),
+                Tenant.status == StatusEnum.VALID.value,
+                User.status == StatusEnum.VALID.value,
+            )
+            .distinct()
+        )
+        return sorted({user_id, *(member.user_id for member in members)})
+
+    @classmethod
+    @DB.connection_context()
     def filter_by_id(cls, user_tenant_id):
         try:
             user_tenant = cls.model.select().where((cls.model.id == user_tenant_id) & (cls.model.status == StatusEnum.VALID.value)).get()

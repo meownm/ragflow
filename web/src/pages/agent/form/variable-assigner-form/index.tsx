@@ -2,6 +2,7 @@ import { Form } from '@/components/ui/form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { memo } from 'react';
 import { useForm } from 'react-hook-form';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 import { z } from 'zod';
 import { initialDataOperationsValues } from '../../constant';
 import { useFormValues } from '../../hooks/use-form-values';
@@ -25,6 +26,7 @@ export const FormSchema = z.object(VariableAssignerSchema);
 export type VariableAssignerFormSchemaType = z.infer<typeof FormSchema>;
 
 function VariableAssignerForm({ node }: INextOperatorForm) {
+  const { t: tUi } = useUiTranslation();
   const defaultValues = useFormValues(initialDataOperationsValues, node);
 
   const form = useForm<VariableAssignerFormSchemaType>({
@@ -38,7 +40,10 @@ function VariableAssignerForm({ node }: INextOperatorForm) {
   return (
     <Form {...form}>
       <FormWrapper>
-        <DynamicVariables name="variables" label="Variables"></DynamicVariables>
+        <DynamicVariables
+          name="variables"
+          label={tUi('flow.variables')}
+        ></DynamicVariables>
       </FormWrapper>
     </Form>
   );

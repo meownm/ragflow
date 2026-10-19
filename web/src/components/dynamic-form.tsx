@@ -5,6 +5,7 @@ import {
   useEffect,
   useImperativeHandle,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import {
@@ -27,6 +28,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { t } from 'i18next';
+import { isEqual } from 'lodash';
 import { Loader } from 'lucide-react';
 import { MultiSelect, MultiSelectOptionType } from './ui/multi-select';
 import { Segmented } from './ui/segmented';
@@ -139,13 +141,13 @@ export const generateSchema = (fields: FormFieldConfig[]): ZodSchema<any> => {
     } else {
       switch (field.type) {
         case FormFieldType.Email:
-          fieldSchema = z.string().email('Please enter a valid email address');
+          fieldSchema = z.string().email(t('common.invalidEmail'));
           break;
         case FormFieldType.MultiSelect:
           fieldSchema = z.array(z.string()).optional();
           if (field.required) {
             fieldSchema = z.array(z.string()).min(1, {
-              message: `${field.label} is required`,
+              message: t('common.fieldRequired', { field: field.label }),
             });
           }
           break;
@@ -158,14 +160,14 @@ export const generateSchema = (fields: FormFieldConfig[]): ZodSchema<any> => {
             fieldSchema = (fieldSchema as z.ZodNumber).min(
               field.validation.min,
               field.validation.message ||
-                `Value cannot be less than ${field.validation.min}`,
+                t('common.minimumValue', { min: field.validation.min }),
             );
           }
           if (field.validation?.max !== undefined) {
             fieldSchema = (fieldSchema as z.ZodNumber).max(
               field.validation.max,
               field.validation.message ||
-                `Value cannot be greater than ${field.validation.max}`,
+                t('common.maximumValue', { max: field.validation.max }),
             );
           }
           break;
@@ -185,7 +187,8 @@ export const generateSchema = (fields: FormFieldConfig[]): ZodSchema<any> => {
     // Handle required fields
     if (field.required) {
       const requiredMessage =
-        field.validation?.message || `${field.label} is required`;
+        field.validation?.message ||
+        t('common.fieldRequired', { field: field.label });
 
       if (field.type === FormFieldType.Checkbox) {
         fieldSchema = (fieldSchema as z.ZodBoolean).refine(
@@ -224,7 +227,7 @@ export const generateSchema = (fields: FormFieldConfig[]): ZodSchema<any> => {
         fieldSchema = (fieldSchema as z.ZodString).min(
           field.validation.minLength,
           field.validation.message ||
-            `Enter at least ${field.validation.minLength} characters`,
+            t('common.minimumLength', { min: field.validation.minLength }),
         );
       }
 
@@ -232,14 +235,14 @@ export const generateSchema = (fields: FormFieldConfig[]): ZodSchema<any> => {
         fieldSchema = (fieldSchema as z.ZodString).max(
           field.validation.maxLength,
           field.validation.message ||
-            `Enter up to ${field.validation.maxLength} characters`,
+            t('common.maximumLength', { max: field.validation.maxLength }),
         );
       }
 
       if (field.validation?.pattern) {
         fieldSchema = (fieldSchema as z.ZodString).regex(
           field.validation.pattern,
-          field.validation.message || 'Invalid input format',
+          field.validation.message || t('common.invalidFormat'),
         );
       }
     }
@@ -663,6 +666,7 @@ const DynamicForm = {
     }, [fields, formDefaultValues]);
 
     // Initialize form
+    const appliedDefaults = useRef<DefaultValues<T>>();
     const form = useForm<T>({
       resolver: async (data, context, options) => {
         // Filter out fields that should not render
@@ -701,14 +705,17 @@ const DynamicForm = {
                 fieldErrors[field.name] = {
                   type: 'custom',
                   message:
-                    field.validation?.message || `${field.label} is invalid`,
+                    field.validation?.message ||
+                    t('common.fieldInvalid', { field: field.label }),
                 };
               }
             } catch (error) {
               fieldErrors[field.name] = {
                 type: 'custom',
                 message:
-                  error instanceof Error ? error.message : 'Validation failed',
+                  error instanceof Error
+                    ? error.message
+                    : t('common.validationFailed'),
               };
             }
           }
@@ -874,13 +881,15 @@ const DynamicForm = {
     );
     (form as any).filterActiveValues = filterActiveValues;
     useEffect(() => {
-      if (formDefaultValues && Object.keys(formDefaultValues).length > 0) {
-        form.reset({
-          ...generateDefaultValues(fields),
-          ...formDefaultValues,
-        });
+      if (
+        Object.keys(formDefaultValues).length > 0 &&
+        !isEqual(appliedDefaults.current, defaultValues)
+      ) {
+        // Translated labels can change without discarding entered values.
+        form.reset(defaultValues);
+        appliedDefaults.current = defaultValues;
       }
-    }, [form, formDefaultValues, fields]);
+    }, [form, formDefaultValues, defaultValues]);
 
     // Submit handler
     //   const handleSubmit = form.handleSubmit(onSubmit);

@@ -73,7 +73,7 @@ const ExtractorForm = ({ node }: INextOperatorForm) => {
                 handleFieldNameChange(value);
               }}
               value={field.value}
-              placeholder={t('dataFlowPlaceholder')}
+              placeholder={t('knowledgeConfiguration.dataFlowPlaceholder')}
               options={options}
             ></SelectWithSearch>
           )}

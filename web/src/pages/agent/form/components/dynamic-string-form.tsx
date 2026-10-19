@@ -3,10 +3,12 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Trash2 } from 'lucide-react';
 import { useFieldArray, useFormContext } from 'react-hook-form';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 import { DynamicFormHeader, FormListHeaderProps } from './dynamic-fom-header';
 
 type DynamicStringFormProps = { name: string } & FormListHeaderProps;
 export function DynamicStringForm({ name, label }: DynamicStringFormProps) {
+  const { t: tUi } = useUiTranslation();
   const form = useFormContext();
 
   const { fields, append, remove } = useFieldArray({
@@ -25,7 +27,7 @@ export function DynamicStringForm({ name, label }: DynamicStringFormProps) {
           <div key={field.id} className="flex items-center gap-2">
             <RAGFlowFormItem
               name={`${name}.${index}.value`}
-              label="delimiter"
+              label={tUi('flow.delimiter')}
               labelClassName="!hidden"
               className="flex-1 !m-0"
             >

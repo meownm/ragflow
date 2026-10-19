@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { memo } from 'react';
 import { useForm } from 'react-hook-form';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 import { z } from 'zod';
 import { initialSearXNGValues } from '../../constant';
 import { useFormValues } from '../../hooks/use-form-values';
@@ -31,6 +32,7 @@ const FormSchema = z.object({
 const outputList = buildOutputList(initialSearXNGValues.outputs);
 
 function SearXNGForm({ node }: INextOperatorForm) {
+  const { t: tUi } = useUiTranslation();
   const defaultValues = useFormValues(initialSearXNGValues, node);
 
   const form = useForm<z.infer<typeof FormSchema>>({
@@ -51,7 +53,7 @@ function SearXNGForm({ node }: INextOperatorForm) {
             name="searxng_url"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>SearXNG URL</FormLabel>
+                <FormLabel>{tUi('flow.searxngUrl')}</FormLabel>
                 <FormControl>
                   <Input {...field} placeholder="http://localhost:4000" />
                 </FormControl>

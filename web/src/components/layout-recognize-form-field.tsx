@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils';
 import { camelCase } from 'lodash';
 import { ReactNode, useMemo } from 'react';
 import { useFormContext } from 'react-hook-form';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 import { MinerUOptionsFormField } from './mineru-options-form-field';
 import { buildModelTree } from './model-tree-select';
 import { PaddleOCROptionsFormField } from './paddleocr-options-form-field';
@@ -41,6 +42,7 @@ export function LayoutRecognizeFormField({
   showPaddleocrOptions?: boolean;
   testId?: string;
 }) {
+  const { t: tUi } = useUiTranslation();
   const form = useFormContext();
 
   const { t } = useTranslate('knowledgeDetails');
@@ -74,14 +76,14 @@ export function LayoutRecognizeFormField({
             {node.label}
           </span>
           <span className="text-state-error text-sm flex-shrink-0">
-            Experimental
+            {tUi('common.experimental')}
           </span>
         </div>
       ),
     );
 
     return [...prependNodes, ...modelTree];
-  }, [allAddedModels, optionsWithoutLLM, t]);
+  }, [allAddedModels, optionsWithoutLLM, t, tUi]);
 
   return (
     <FormField

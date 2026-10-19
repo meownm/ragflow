@@ -108,7 +108,7 @@ export function LangfuseConfigurationForm({ onOk }: IModalProps<any>) {
           name="host"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Host</FormLabel>
+              <FormLabel>{t('setting.host')}</FormLabel>
               <FormControl>
                 <Input
                   placeholder={'https://cloud.langfuse.com'}

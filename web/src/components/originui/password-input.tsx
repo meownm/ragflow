@@ -3,10 +3,12 @@
 'use client';
 
 import React, { useId } from 'react';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 import { Input, InputProps } from '../ui/input';
 
 export default React.forwardRef<HTMLInputElement, InputProps>(
   function PasswordInput({ ...props }, ref) {
+    const { t: tUi } = useUiTranslation();
     const id = useId();
 
     return (
@@ -16,7 +18,7 @@ export default React.forwardRef<HTMLInputElement, InputProps>(
           <Input
             id={id}
             className="pe-9"
-            placeholder="Password"
+            placeholder={tUi('login.passwordLabel')}
             type="password"
             ref={ref}
             {...props}

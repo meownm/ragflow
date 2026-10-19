@@ -23,6 +23,12 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
+
+def _run(operation):
+    with asyncio.Runner(loop_factory=asyncio.new_event_loop) as runner:
+        return runner.run(operation)
+
+
 _MODULE_NAME = "test_rerun_agent_agent_api"
 _REPO_ROOT = Path(__file__).resolve().parents[5]
 _AGENT_API_PATH = _REPO_ROOT / "api" / "apps" / "restful_apis" / "agent_api.py"
@@ -54,7 +60,7 @@ def _load_agent_api_for_rerun(monkeypatch, *, documents_info, accessible):
     services_module.__path__ = []
     _stub(monkeypatch, "api.apps.services.agent_file_service", upload_agent_files=lambda *_a, **_k: None)
     _stub(monkeypatch, "api.apps.services.canvas_replica_service", CanvasReplicaService=SimpleNamespace())
-    _stub(monkeypatch, "api.db", CanvasCategory=SimpleNamespace())
+    _stub(monkeypatch, "api.db", CanvasCategory=SimpleNamespace(), TenantPermission=SimpleNamespace(ME=SimpleNamespace(value="me"), TEAM=SimpleNamespace(value="team")))
 
     task_model = SimpleNamespace()
     task_model.doc_id = "doc_id_field"
@@ -114,7 +120,7 @@ def _load_agent_api_for_rerun(monkeypatch, *, documents_info, accessible):
         TaskService=_TaskService,
         queue_dataflow=lambda *_a, **_k: destructive_calls.__setitem__("queue", destructive_calls["queue"] + 1),
     )
-    _stub(monkeypatch, "api.db.services.user_service", TenantService=SimpleNamespace(), UserService=SimpleNamespace(get_by_id=lambda *_a, **_k: (False, None)))
+    _stub(monkeypatch, "api.db.services.user_service", UserTenantService=SimpleNamespace(), UserService=SimpleNamespace(get_by_id=lambda *_a, **_k: (False, None)))
     _stub(monkeypatch, "api.db.services.user_canvas_version", UserCanvasVersionService=SimpleNamespace())
 
     request_body = {"id": "log-victim", "component_id": "Parser:0", "dsl": {"path": [], "components": {}}}
@@ -190,7 +196,7 @@ class TestRerunAgentAuthorization:
             accessible=lambda _doc_id, user_id: user_id == "user-owner",
         )
 
-        result = asyncio.run(module.rerun_agent(tenant_id="user-attacker"))
+        result = _run(module.rerun_agent(tenant_id="user-attacker"))
 
         assert result == {"code": 102, "message": "Document not found.", "data": None}
         assert module._destructive_calls["clear"] == 0
@@ -204,14 +210,14 @@ class TestRerunAgentAuthorization:
             accessible=lambda *_a, **_k: True,
         )
 
-        missing = asyncio.run(module.rerun_agent(tenant_id="user-owner"))
+        missing = _run(module.rerun_agent(tenant_id="user-owner"))
 
         module = _load_agent_api_for_rerun(
             monkeypatch,
             documents_info=[{"id": "doc-victim", "name": "x.pdf", "progress": 0, "kb_id": "kb-victim"}],
             accessible=lambda *_a, **_k: False,
         )
-        unauthorized = asyncio.run(module.rerun_agent(tenant_id="user-owner"))
+        unauthorized = _run(module.rerun_agent(tenant_id="user-owner"))
 
         assert missing["message"] == unauthorized["message"] == "Document not found."
 
@@ -228,7 +234,7 @@ class TestRerunAgentAuthorization:
             accessible=lambda *_a, **_k: True,
         )
 
-        result = asyncio.run(module.rerun_agent(tenant_id="user-owner"))
+        result = _run(module.rerun_agent(tenant_id="user-owner"))
 
         assert result == {"code": 0, "message": "", "data": True}
         assert module._destructive_calls["clear"] == 1

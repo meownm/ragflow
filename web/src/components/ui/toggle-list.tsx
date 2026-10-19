@@ -3,6 +3,7 @@
 import { cn } from '@/lib/utils';
 import { ChevronsDown, Loader2, Search, X } from 'lucide-react';
 import * as React from 'react';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 
 export interface ToggleListOption<V = unknown> {
   /** Arbitrary value, including objects. Used as the React key when primitive. */
@@ -124,10 +125,10 @@ export function ToggleList<V = unknown>({
   listClassName,
   itemClassName,
   buttonClassName,
-  emptyText = 'No options',
-  noResultsText = 'No matching results',
+  emptyText,
+  noResultsText,
   searchable = false,
-  searchPlaceholder = 'Search…',
+  searchPlaceholder,
   onSearch,
   searchLoading = false,
   searchClassName,
@@ -136,6 +137,7 @@ export function ToggleList<V = unknown>({
   footer,
   footerClassName,
 }: ToggleListProps<V>) {
+  const { t: tUi } = useUiTranslation();
   const [open, setOpen] = React.useState(false);
   const [query, setQuery] = React.useState('');
   const containerRef = React.useRef<HTMLDivElement>(null);
@@ -243,7 +245,9 @@ export function ToggleList<V = unknown>({
                 type="text"
                 value={query}
                 onChange={(e) => handleQueryChange(e.target.value)}
-                placeholder={searchPlaceholder}
+                placeholder={
+                  searchPlaceholder ?? tUi('common.searchPlaceholder')
+                }
                 className="flex-1 min-w-0 bg-transparent text-sm outline-none placeholder:text-text-secondary/60"
               />
               {searchLoading && (
@@ -252,7 +256,7 @@ export function ToggleList<V = unknown>({
               {query && !searchLoading && (
                 <button
                   type="button"
-                  aria-label="Clear search"
+                  aria-label={tUi('common.clearSearch')}
                   onClick={() => handleQueryChange('')}
                   className="text-text-secondary hover:text-text-primary"
                 >
@@ -267,12 +271,14 @@ export function ToggleList<V = unknown>({
           >
             {showEmpty && (
               <div className="px-3 py-2 text-sm text-text-secondary">
-                {emptyText}
+                {emptyText === undefined ? tUi('common.noOptions') : emptyText}
               </div>
             )}
             {showNoResults && (
               <div className="px-3 py-2 text-sm text-text-secondary">
-                {noResultsText}
+                {noResultsText === undefined
+                  ? tUi('common.noResults')
+                  : noResultsText}
               </div>
             )}
             {!showEmpty &&
@@ -318,10 +324,11 @@ export function ToggleList<V = unknown>({
                 >
                   {loadMore.loading ? (
                     <span className="inline-flex items-center justify-center gap-2">
-                      <Loader2 className="size-3.5 animate-spin" /> Loading…
+                      <Loader2 className="size-3.5 animate-spin" />{' '}
+                      {tUi('common.loading')}
                     </span>
                   ) : (
-                    (loadMore.text ?? 'Load more')
+                    (loadMore.text ?? tUi('common.viewMore'))
                   )}
                 </button>
               )}

@@ -19,5 +19,5 @@ def run_in_worker_loop(operation: Coroutine[Any, Any, _ResultT]) -> _ResultT:
     executor.
     """
 
-    with asyncio.Runner() as runner:
+    with asyncio.Runner(loop_factory=asyncio.new_event_loop) as runner:
         return runner.run(operation)

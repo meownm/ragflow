@@ -21,26 +21,35 @@ import { useFetchAllAddedModels } from '@/hooks/use-llm-request';
 import { cn } from '@/lib/utils';
 import { parseModelValue } from '@/utils/llm-util';
 import { PropsWithChildren, useMemo } from 'react';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 
 export function CardWithForm() {
+  const { t: tUi } = useUiTranslation();
   return (
     <Card className="w-[350px]">
       <CardHeader>
-        <CardTitle>Create project</CardTitle>
-        <CardDescription>Deploy your new project in one-click.</CardDescription>
+        <CardTitle>{tUi('common.createProject')}</CardTitle>
+        <CardDescription>
+          {tUi('common.deployProjectDescription')}
+        </CardDescription>
       </CardHeader>
       <CardContent>
         <form>
           <div className="grid w-full items-center gap-4">
             <div className="flex flex-col space-y-1.5">
-              <Label htmlFor="name">Name</Label>
-              <Input id="name" placeholder="Name of your project" />
+              <Label htmlFor="name">{tUi('common.name')}</Label>
+              <Input
+                id="name"
+                placeholder={tUi('common.projectNamePlaceholder')}
+              />
             </div>
             <div className="flex flex-col space-y-1.5">
-              <Label htmlFor="framework">Framework</Label>
+              <Label htmlFor="framework">{tUi('common.framework')}</Label>
               <Select>
                 <SelectTrigger id="framework">
-                  <SelectValue placeholder="Select" />
+                  <SelectValue
+                    placeholder={tUi('common.selectPlaceholderLabel')}
+                  />
                 </SelectTrigger>
                 <SelectContent position="popper">
                   <SelectItem value="next">Next.js</SelectItem>
@@ -54,8 +63,8 @@ export function CardWithForm() {
         </form>
       </CardContent>
       <CardFooter className="flex justify-between">
-        <Button variant="outline">Cancel</Button>
-        <Button>Deploy</Button>
+        <Button variant="outline">{tUi('common.cancel')}</Button>
+        <Button>{tUi('common.deploy')}</Button>
       </CardFooter>
     </Card>
   );

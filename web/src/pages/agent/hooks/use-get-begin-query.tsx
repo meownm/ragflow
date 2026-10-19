@@ -13,6 +13,7 @@ import { flatten, isEmpty, toLower } from 'lodash';
 import get from 'lodash/get';
 import { MessageSquareCode } from 'lucide-react';
 import { useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 import {
   AgentDialogueMode,
   AgentVariableType,
@@ -398,6 +399,7 @@ export function useFilterQueryVariableOptionsByTypes({
 }
 
 export function useBuildComponentIdOptions(nodeId?: string, parentId?: string) {
+  const { t: tUi } = useUiTranslation();
   const nodes = useGraphStore((state) => state.nodes);
 
   // Limit the nodes inside iteration to only reference peer nodes with the same parentId and other external nodes other than their parent nodes
@@ -429,7 +431,7 @@ export function useBuildComponentIdOptions(nodeId?: string, parentId?: string) {
 
   return [
     {
-      label: <span>Component Output</span>,
+      label: <span>{tUi('flow.componentOutput')}</span>,
       title: 'Component Output',
       options: componentIdOptions,
     },

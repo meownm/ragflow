@@ -36,7 +36,9 @@ export default function SearchHome({
           <div className="flex flex-col justify-center items-center  w-2/3">
             {!isSearching && (
               <>
-                <p className="mb-4 transition-opacity">👋 Hi there</p>
+                <p className="mb-4 transition-opacity">
+                  {t('common.greeting')}
+                </p>
                 <p className="mb-10 transition-opacity">
                   {userInfo && (
                     <>

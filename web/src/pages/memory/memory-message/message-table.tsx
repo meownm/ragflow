@@ -53,6 +53,7 @@ import {
 import * as React from 'react';
 import { useMemo, useState } from 'react';
 import { CopyToClipboard } from 'react-copy-to-clipboard';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 import { useMessageAction } from './hook';
 import { IMessageInfo } from './interface';
 
@@ -81,6 +82,7 @@ export function MemoryTable({
   pagination,
   setPagination,
 }: MemoryTableProps) {
+  const { t: tUi } = useUiTranslation();
   const [sorting, setSorting] = React.useState<SortingState>([]);
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>(
     [],
@@ -283,7 +285,7 @@ export function MemoryTable({
               variant={'delete'}
               disabled={disabledRowFunc(row)}
               className="bg-transparent"
-              aria-label="Edit"
+              aria-label={tUi('common.edit')}
               onClick={() => {
                 handleClickDeleteMessage(row.original);
               }}
@@ -294,7 +296,7 @@ export function MemoryTable({
         ),
       },
     ],
-    [handleClickDeleteMessage],
+    [handleClickDeleteMessage, tUi],
   );
 
   const currentPagination = useMemo(() => {

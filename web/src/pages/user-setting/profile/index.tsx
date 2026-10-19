@@ -21,6 +21,7 @@ import { t } from 'i18next';
 import { Loader2Icon, PenLine } from 'lucide-react';
 import { FC, useEffect, useMemo } from 'react';
 import { useForm } from 'react-hook-form';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 import { z } from 'zod';
 import { ProfileSettingWrapperCard } from '../components/user-setting-header';
 import { NICKNAME_MAX_LENGTH, NICKNAME_PATTERN } from './constants';
@@ -90,6 +91,7 @@ const passwordSchema = baseSchema
   });
 
 const ProfilePage: FC = () => {
+  const { t: tUi } = useUiTranslation();
   const { t } = useTranslate('setting');
 
   const {
@@ -305,7 +307,7 @@ const ProfilePage: FC = () => {
                         </FormLabel>
                         <SelectWithSearch
                           options={timezoneOptions}
-                          placeholder="Select a timeZone"
+                          placeholder={tUi('setting.timezonePlaceholderLabel')}
                           onChange={field.onChange}
                           value={field.value}
                         />

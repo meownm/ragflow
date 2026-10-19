@@ -1,113 +1,130 @@
 import { FormFieldConfig, FormFieldType } from '@/components/dynamic-form';
+import { TFunction } from 'i18next';
 
-export const openMetadataConstant: FormFieldConfig[] = [
+export const openMetadataConstant = (t: TFunction): FormFieldConfig[] => [
   {
-    label: 'OpenMetadata API Base URL',
+    label: t('setting.connectorFields.openmetadataApiBaseUrl'),
     name: 'config.base_url',
     type: FormFieldType.Text,
     required: true,
     placeholder: 'http://host.docker.internal:8585',
-    tooltip: 'Server-side URL reachable from the Агент Раггер container.',
+    tooltip: t('setting.openMetadataServerUrlTip'),
   },
   {
-    label: 'OpenMetadata Public URL',
+    label: t('setting.connectorFields.openmetadataPublicUrl'),
     name: 'config.public_url',
     type: FormFieldType.Text,
     required: false,
     placeholder: 'http://127.0.0.1:8585',
-    tooltip: 'Browser URL used in citations. Defaults to the API URL.',
+    tooltip: t(
+      'setting.connectorMessages.browserUrlUsedInCitationsDefaultsToTheApiUrl',
+    ),
   },
   {
-    label: 'Username',
+    label: t('setting.connectorFields.username'),
     name: 'config.credentials.openmetadata_username',
     type: FormFieldType.Text,
     required: false,
     placeholder: 'admin@example.com',
-    tooltip: 'Use username and password, or provide a JWT token below.',
+    tooltip: t(
+      'setting.connectorMessages.useUsernameAndPasswordOrProvideAJwtTokenBelow',
+    ),
   },
   {
-    label: 'Password',
+    label: t('setting.connectorFields.password'),
     name: 'config.credentials.openmetadata_password',
     type: FormFieldType.Password,
     required: false,
-    placeholder: 'Leave blank when editing to keep the saved password',
+    placeholder: t(
+      'setting.connectorMessages.leaveBlankWhenEditingToKeepTheSavedPassword',
+    ),
   },
   {
-    label: 'JWT Token',
+    label: t('setting.connectorFields.jwtToken'),
     name: 'config.credentials.openmetadata_jwt_token',
     type: FormFieldType.Password,
     required: false,
-    placeholder: 'Alternative to username and password',
+    placeholder: t(
+      'setting.connectorMessages.alternativeToUsernameAndPassword',
+    ),
   },
   {
-    label: 'Services',
+    label: t('setting.connectorFields.services'),
     name: 'config.services',
     type: FormFieldType.Tag,
     required: false,
-    tooltip: 'Optional exact service names. Empty means all database services.',
+    tooltip: t(
+      'setting.connectorMessages.optionalExactServiceNamesEmptyMeansAllDatabaseServices',
+    ),
   },
   {
-    label: 'Domains',
+    label: t('setting.connectorFields.domains'),
     name: 'config.domains',
     type: FormFieldType.Tag,
     required: false,
-    tooltip: 'Optional exact domain names. The Dataset must remain private.',
+    tooltip: t(
+      'setting.connectorMessages.optionalExactDomainNamesTheDatasetMustRemainPrivate',
+    ),
   },
   {
-    label: 'Tags',
+    label: t('setting.connectorFields.tags'),
     name: 'config.tags',
     type: FormFieldType.Tag,
     required: false,
-    tooltip: 'Optional exact OpenMetadata tags.',
+    tooltip: t('setting.connectorMessages.optionalExactOpenmetadataTags'),
   },
   {
-    label: 'Include Columns',
+    label: t('setting.connectorFields.includeColumns'),
     name: 'config.include_columns',
     type: FormFieldType.Checkbox,
     required: false,
   },
   {
-    label: 'Batch Size',
+    label: t('setting.connectorFields.batchSize'),
     name: 'config.batch_size',
     type: FormFieldType.Number,
     required: false,
     validation: {
       min: 1,
       max: 1000,
-      message: 'Batch Size must be between 1 and 1000',
+      message: t('setting.connectorMessages.batchSizeMustBeBetween1And1000'),
     },
   },
   {
-    label: 'Maximum Tables',
+    label: t('setting.connectorFields.maximumTables'),
     name: 'config.max_entities',
     type: FormFieldType.Number,
     required: false,
     validation: {
       min: 1,
       max: 100000,
-      message: 'Maximum Tables must be between 1 and 100000',
+      message: t(
+        'setting.connectorMessages.maximumTablesMustBeBetween1And100000',
+      ),
     },
   },
   {
-    label: 'Request Timeout (seconds)',
+    label: t('setting.connectorFields.requestTimeoutSeconds'),
     name: 'config.timeout_seconds',
     type: FormFieldType.Number,
     required: false,
     validation: {
       min: 1,
       max: 120,
-      message: 'Timeout must be between 1 and 120 seconds',
+      message: t(
+        'setting.connectorMessages.timeoutMustBeBetween1And120Seconds',
+      ),
     },
   },
   {
-    label: 'Retry Count',
+    label: t('setting.connectorFields.retryCount'),
     name: 'config.retry_count',
     type: FormFieldType.Number,
     required: false,
     validation: {
       min: 0,
       max: 10,
-      message: 'Retry Count must be between 0 and 10',
+      message: t('setting.connectorMessages.retryCountMustBeBetween0And10'),
     },
   },
 ];

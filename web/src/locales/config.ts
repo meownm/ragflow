@@ -1,25 +1,27 @@
 import { LanguageAbbreviation } from '@/constants/common';
 import storage from '@/utils/authorization-util';
 import dayjs from 'dayjs';
+import 'dayjs/locale/ru';
 import i18n from 'i18next';
 import LanguageDetector from 'i18next-browser-languagedetector';
 import { upperFirst } from 'lodash';
 import { initReactI18next } from 'react-i18next';
 import translation_en from './en';
+import translation_ru from './ru';
 
 //The language is based on the .ng file stored in the client's local storage.
 // The language stored in the database is for agent template resources, as these resources reside on the server.
 // When a user logs in from a different machine, the login page language is the language configured by VITE_DEFAULT_LANGUAGE_CODE.
 
 const languageImports: Record<string, () => Promise<{ default: any }>> = {
-  [LanguageAbbreviation.En]: () => import('./en'),
+  [LanguageAbbreviation.En]: () => Promise.resolve({ default: translation_en }),
   [LanguageAbbreviation.Zh]: () => import('./zh'),
   [LanguageAbbreviation.ZhTraditional]: () => import('./zh-traditional'),
   [LanguageAbbreviation.Id]: () => import('./id'),
   [LanguageAbbreviation.Ja]: () => import('./ja'),
   [LanguageAbbreviation.Es]: () => import('./es'),
   [LanguageAbbreviation.Vi]: () => import('./vi'),
-  [LanguageAbbreviation.Ru]: () => import('./ru'),
+  [LanguageAbbreviation.Ru]: () => Promise.resolve({ default: translation_ru }),
   [LanguageAbbreviation.PtBr]: () => import('./pt-br'),
   [LanguageAbbreviation.De]: () => import('./de'),
   [LanguageAbbreviation.Fr]: () => import('./fr'),
@@ -50,6 +52,7 @@ export const DEFAULT_LANGUAGE_CODE =
 
 const resources = {
   [LanguageAbbreviation.En]: translation_en,
+  [LanguageAbbreviation.Ru]: translation_ru,
 };
 
 const updateDocumentLocale = (lng: string) => {
@@ -69,7 +72,7 @@ i18n
     },
     supportedLngs: supportedLanguageCodes,
     resources,
-    fallbackLng: DEFAULT_LANGUAGE_CODE,
+    fallbackLng: [...new Set([DEFAULT_LANGUAGE_CODE, LanguageAbbreviation.En])],
     interpolation: {
       escapeValue: false,
     },

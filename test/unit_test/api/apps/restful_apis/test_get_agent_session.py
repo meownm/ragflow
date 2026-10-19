@@ -73,19 +73,24 @@ def _load_agent_api(monkeypatch, get_by_id_result, delete_calls=None):
         delete_calls.append(session_id)
         return True
 
+    def _owned_session(session_id, agent_id, actor_id):
+        exists, conv = get_by_id_result
+        return (True, conv) if exists and conv.dialog_id == agent_id and actor_id == "tenant-1" else (False, None)
+
     apps_module = _stub(monkeypatch, "api.apps", current_user=SimpleNamespace(id="tenant-1"), login_required=lambda func: func)
     apps_module.__path__ = []
     services_module = _stub(monkeypatch, "api.apps.services")
     services_module.__path__ = []
     _stub(monkeypatch, "api.apps.services.agent_file_service", upload_agent_files=lambda *_a, **_k: None)
     _stub(monkeypatch, "api.apps.services.canvas_replica_service", CanvasReplicaService=SimpleNamespace())
-    _stub(monkeypatch, "api.db", CanvasCategory=SimpleNamespace())
+    _stub(monkeypatch, "api.db", CanvasCategory=SimpleNamespace(), TenantPermission=SimpleNamespace(ME=SimpleNamespace(value="me"), TEAM=SimpleNamespace(value="team")))
     _stub(monkeypatch, "api.db.db_models", Task=SimpleNamespace())
     _stub(
         monkeypatch,
         "api.db.services.api_service",
         API4ConversationService=SimpleNamespace(
             get_by_id=lambda _session_id: get_by_id_result,
+            get_owned_session=_owned_session,
             save=lambda **_kwargs: True,
             delete_by_id=_delete_by_id,
             query=lambda **_kwargs: [],
@@ -104,7 +109,7 @@ def _load_agent_api(monkeypatch, get_by_id_result, delete_calls=None):
     _stub(monkeypatch, "api.db.services.knowledgebase_service", KnowledgebaseService=SimpleNamespace())
     _stub(monkeypatch, "api.db.services.pipeline_operation_log_service", PipelineOperationLogService=SimpleNamespace())
     _stub(monkeypatch, "api.db.services.task_service", CANVAS_DEBUG_DOC_ID="", TaskService=SimpleNamespace(), queue_dataflow=lambda *_a, **_k: None)
-    _stub(monkeypatch, "api.db.services.user_service", TenantService=SimpleNamespace(), UserService=SimpleNamespace(get_by_id=lambda *_a, **_k: (False, None)))
+    _stub(monkeypatch, "api.db.services.user_service", UserTenantService=SimpleNamespace(), UserService=SimpleNamespace(get_by_id=lambda *_a, **_k: (False, None)))
     _stub(monkeypatch, "api.db.services.user_canvas_version", UserCanvasVersionService=SimpleNamespace())
     _stub(
         monkeypatch,

@@ -81,7 +81,7 @@ function DocGeneratorForm({ node }: INextOperatorForm) {
             name="output_format"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Output Format</FormLabel>
+                <FormLabel>{t('flow.outputFormatLabel')}</FormLabel>
                 <FormControl>
                   <RAGFlowSelect
                     {...field}
@@ -108,7 +108,7 @@ function DocGeneratorForm({ node }: INextOperatorForm) {
                   <PromptEditor
                     {...field}
                     showToolbar={true}
-                    placeholder="Enter markdown content..."
+                    placeholder={t('flow.markdownPlaceholder')}
                   ></PromptEditor>
                 </FormControl>
                 <FormMessage />
@@ -148,7 +148,7 @@ function DocGeneratorForm({ node }: INextOperatorForm) {
                 <FormControl>
                   <Input
                     {...field}
-                    placeholder="document.ext (auto-generated if empty)"
+                    placeholder={t('flow.outputFileNamePlaceholder')}
                   />
                 </FormControl>
                 <FormMessage />
@@ -189,9 +189,12 @@ function DocGeneratorForm({ node }: INextOperatorForm) {
                 name="header"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Header Text</FormLabel>
+                    <FormLabel>{t('flow.headerText')}</FormLabel>
                     <FormControl>
-                      <Input {...field} placeholder="Header text" />
+                      <Input
+                        {...field}
+                        placeholder={t('flow.headerTextLabel')}
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -203,9 +206,9 @@ function DocGeneratorForm({ node }: INextOperatorForm) {
                 name="footer"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Footer Text</FormLabel>
+                    <FormLabel>{t('flow.footerTextLabel')}</FormLabel>
                     <FormControl>
-                      <Input {...field} placeholder="Footer text" />
+                      <Input {...field} placeholder={t('flow.footerText')} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -219,7 +222,10 @@ function DocGeneratorForm({ node }: INextOperatorForm) {
                     <FormItem>
                       <FormLabel>{t('flow.watermarkText')}</FormLabel>
                       <FormControl>
-                        <Input {...field} placeholder="Watermark text" />
+                        <Input
+                          {...field}
+                          placeholder={t('flow.watermarkTextLabel')}
+                        />
                       </FormControl>
                       <FormMessage />
                     </FormItem>

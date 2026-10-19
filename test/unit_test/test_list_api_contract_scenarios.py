@@ -85,6 +85,7 @@ def list_handlers():
         "validate_rest_list_args": validate_rest_list_args,
         "DocumentService": service,
         "DialogService": service,
+        "UserTenantService": SimpleNamespace(get_team_owner_ids=lambda user_id: [user_id]),
         "ConversationService": conversations,
         "RetCode": ret,
         "current_user": SimpleNamespace(id="tenant"),
@@ -105,6 +106,12 @@ def list_handlers():
         return True
 
     namespace["_ensure_owned_chat"] = ensure_owned_chat
+
+    async def accessible_chat(chat_id):
+        return [SimpleNamespace(tenant_id="tenant")] if await namespace["_ensure_owned_chat"](chat_id) else []
+
+    namespace["_ensure_accessible_chat"] = accessible_chat
+    _load_handler("chat_api.py", "_session_scope", namespace)
     document = _load_handler("document_api.py", "_get_docs_with_request", namespace)
     chat = _load_handler("chat_api.py", "list_chats", namespace)
     _load_handler("chat_api.py", "_build_session_response", namespace)
@@ -268,7 +275,7 @@ def session_update_handler(list_handlers):
 
     def query(**filters):
         reads.append(filters)
-        return [state] if filters == {"id": "session", "dialog_id": "chat"} else []
+        return [state] if filters == {"id": "session", "dialog_id": "chat", "user_id": "tenant"} else []
 
     def update(identity, values):
         writes.append((identity, deepcopy(values)))

@@ -5,6 +5,7 @@ import { DatasetMetadata } from '@/constants/chat';
 import { useSetModalState } from '@/hooks/common-hooks';
 import { useFetchChat, useUpdateChat } from '@/hooks/use-chat-request';
 import { useFindLlmByUuid } from '@/hooks/use-llm-request';
+import { useFetchUserInfo } from '@/hooks/use-user-setting-request';
 import { cn } from '@/lib/utils';
 import {
   removeUselessFieldsFromValues,
@@ -28,6 +29,7 @@ type ChatSettingsProps = { hasSingleChatBox: boolean };
 export function ChatSettings({ hasSingleChatBox }: ChatSettingsProps) {
   const formSchema = useChatSettingSchema();
   const { data } = useFetchChat();
+  const { data: userInfo } = useFetchUserInfo();
   const { updateChat, loading } = useUpdateChat();
   const findLlmByUuid = useFindLlmByUuid();
   const { id } = useParams();
@@ -45,6 +47,7 @@ export function ChatSettings({ hasSingleChatBox }: ChatSettingsProps) {
       name: '',
       icon: '',
       description: '',
+      permission: 'me',
       dataset_ids: [],
       prompt_config: {
         quote: true,
@@ -131,6 +134,7 @@ export function ChatSettings({ hasSingleChatBox }: ChatSettingsProps) {
 
     const nextData = {
       ...data,
+      permission: data.permission || 'me',
       prompt_config: {
         ...data.prompt_config,
         reference_metadata: normalizedReferenceMetadata,
@@ -142,6 +146,10 @@ export function ChatSettings({ hasSingleChatBox }: ChatSettingsProps) {
       form.reset(nextData as FormSchemaType);
     }
   }, [data, form]);
+
+  if (!userInfo.id || data.tenant_id !== userInfo.id) {
+    return null;
+  }
 
   return (
     <>

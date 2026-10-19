@@ -1,6 +1,7 @@
 import { useFetchAppConf } from '@/hooks/logic-hooks';
 import { RefreshCcw } from 'lucide-react';
 import { PropsWithChildren } from 'react';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 import { RAGFlowAvatar } from './ragflow-avatar';
 import { Button } from './ui/button';
 
@@ -16,6 +17,7 @@ export function EmbedContainer({
   children,
   handleReset,
 }: EmbedContainerProps) {
+  const { t: tUi } = useUiTranslation();
   const appConf = useFetchAppConf();
 
   return (
@@ -49,7 +51,9 @@ export function EmbedContainer({
           >
             <div className="flex gap-1 items-center">
               <RefreshCcw size={14} />
-              <span className="hidden text-lg md:inline-block">Reset</span>
+              <span className="hidden text-lg md:inline-block">
+                {tUi('common.reset')}
+              </span>
             </div>
           </Button>
         </div>

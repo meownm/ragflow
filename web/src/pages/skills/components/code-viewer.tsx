@@ -1,6 +1,7 @@
 import { useIsDarkTheme } from '@/components/theme-provider';
 import { Badge } from '@/components/ui/badge';
 import React, { memo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import {
   oneDark,
@@ -67,6 +68,7 @@ const getLang = (filename: string): string => {
 };
 
 const CodeViewer: React.FC<CodeViewerProps> = ({ content, filename }) => {
+  const { t } = useTranslation();
   const isDarkTheme = useIsDarkTheme();
   const language = getLang(filename);
 
@@ -88,7 +90,8 @@ const CodeViewer: React.FC<CodeViewerProps> = ({ content, filename }) => {
         <div className="flex items-center gap-2">
           <Badge variant="secondary">{language}</Badge>
           <span className="text-xs text-muted-foreground">
-            {lineCount} lines | {formatSize(charCount)}
+            {t('skills.codeLines', { count: lineCount })} |{' '}
+            {formatSize(charCount)}
           </span>
         </div>
       </div>

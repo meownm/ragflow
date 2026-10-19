@@ -268,7 +268,7 @@ const SkillDetail: React.FC<SkillDetailProps> = ({
       return (
         <div className="flex flex-col items-center justify-center py-24 text-text-secondary">
           <FileText className="size-12 mb-4 opacity-50" />
-          <p>Select a file to view</p>
+          <p>{t('skills.selectFileToView')}</p>
         </div>
       );
     }
@@ -462,7 +462,7 @@ const SkillDetail: React.FC<SkillDetailProps> = ({
                     {t('skills.files')}
                     {currentFiles.length > 0 && (
                       <span className="ml-1 text-text-tertiary">
-                        ({currentFiles.filter((f) => !f.is_dir).length} files)
+                        ({currentFiles.filter((f) => !f.is_dir).length})
                       </span>
                     )}
                   </p>

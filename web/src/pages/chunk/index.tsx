@@ -16,9 +16,11 @@ import {
 import { Routes } from '@/routes';
 import { EllipsisVertical, Save } from 'lucide-react';
 import { useMemo } from 'react';
+import { useTranslation as useUiTranslation } from 'react-i18next';
 import { Outlet, useLocation } from 'react-router';
 
 export default function ChunkPage() {
+  const { t: tUi } = useUiTranslation();
   const { navigateToDataset, getQueryString, navigateToChunk } =
     useNavigatePage();
   const location = useLocation();
@@ -55,7 +57,7 @@ export default function ChunkPage() {
                   getQueryString(QueryStringMap.KnowledgeId) as string,
                 )}
               >
-                Agent
+                {tUi('header.flow')}
               </BreadcrumbLink>
             </BreadcrumbItem>
             <BreadcrumbSeparator />
@@ -77,7 +79,7 @@ export default function ChunkPage() {
           </Button>
           <Button size={'sm'}>
             <Save />
-            Save
+            {tUi('common.save')}
           </Button>
         </div>
       </PageHeader>

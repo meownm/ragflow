@@ -1,0 +1,331 @@
+"""Working TЗ scenarios, composed with value-only repository and AI ports."""
+
+import asyncio
+from copy import deepcopy
+from datetime import UTC, datetime
+
+from .domain import SpecificationError, assert_context, context, draft, empty_sections, eva_identity, fail, identifier, merge_sections, parse_markdown, sections, text, version
+
+
+class Specifications:
+    def __init__(self, repository, ai, run_sync, eva=None):
+        self.repository, self.ai, self.run, self.eva = repository, ai, run_sync, eva
+
+    async def list(self, actor, workspace):
+        return await self.run(self.repository.list, actor, workspace)
+
+    async def create(self, actor, workspace, data):
+        return await self.run(self.repository.create, actor, workspace, text(data.get("title"), "Название", 255), empty_sections())
+
+    async def get(self, actor, workspace, document_id):
+        return await self.run(self.repository.get, actor, workspace, document_id)
+
+    async def eva_pages(self, actor, workspace, query):
+        await self.run(self.repository.access, actor, workspace, "edit")
+        maximum = 2000 if isinstance(query, str) and query.strip().casefold().startswith(("http://", "https://")) else 500
+        result = await self.run(self.eva.search_sources, actor, text(query, "Поиск Eva", maximum, empty=True), 20)
+        identities = [eva_identity({**page, "document_id": page["id"]}) for page in result["items"]]
+        occupied = await self.run(self.repository.origin_matches, actor, workspace, identities)
+        items = [{**page, **occupied.get(identity, {"linked_document": None, "binding_available": True})} for page, identity in zip(result["items"], identities, strict=True)]
+        return {**result, "items": items}
+
+    async def import_eva(self, actor, workspace, data):
+        await self.run(self.repository.access, actor, workspace, "edit")
+        selected = data.get("selection")
+        if selected is not None and (not isinstance(selected, dict) or set(selected) != {"id", "project_id", "version"} or any(not isinstance(value, str) or not value for value in selected.values())):
+            fail("INVALID_INPUT", "Выберите страницу Eva заново")
+        binding = await self.run(self.eva.resolve_page_url, actor, text(data.get("url"), "Адрес страницы", 2000))
+        if selected and (selected["id"], selected["project_id"]) != (binding.get("document_id"), binding.get("project_id")):
+            fail("EVA_CHANGED", "По ссылке открывается другая страница. Найдите и выберите её заново", 409)
+        origin = eva_identity(binding)
+        copy = data.get("copy", False)
+        if type(copy) is not bool:
+            fail("INVALID_INPUT", "Укажите, нужна ли независимая копия")
+        if not copy:
+            existing = await self.run(self.repository.find_origin, actor, workspace, origin)
+            if existing:
+                return existing
+        binding, remote = await self.run(self.eva.read_connected_page, actor, binding)
+        if selected is not None and (selected["id"], selected["project_id"], selected["version"]) != (binding.get("document_id"), binding.get("project_id"), binding.get("remote_version")):
+            fail("EVA_CHANGED", "Страница Eva изменилась. Найдите и выберите её заново", 409)
+        content = parse_markdown(remote) if remote.strip() else empty_sections()
+        title = text(binding.get("document_name"), "Название страницы", 255)
+        if copy:
+            title = title[:245] + " (копия)"
+        else:
+            binding = {**binding, "base": content}
+        provenance = {key: binding.get(key) for key in ("connector_id", "eva_origin", "project_id", "document_id", "page_url", "remote_version")}
+        return await self.run(self.repository.create, actor, workspace, title, content, binding=None if copy else binding, origin_key=None if copy else origin, provenance=provenance)
+
+    async def pull(self, actor, workspace, document_id, data):
+        snapshot = await self.get(actor, workspace, document_id)
+        await self.run(self.repository.access, actor, workspace, "edit")
+        if snapshot["version"] != version(data.get("version")):
+            fail("VERSION_CONFLICT", "ТЗ изменилось", 409)
+        if not snapshot["eva"]:
+            fail("EVA_NOT_BOUND", "ТЗ не связано со страницей Eva", 409)
+        binding, remote = await self.run(self.eva.read_connected_page, actor, snapshot["eva"])
+        content = parse_markdown(remote) if remote.strip() else empty_sections()
+        if content == snapshot["eva"]["base"] and binding.get("remote_version") == snapshot["eva"].get("remote_version"):
+            return snapshot
+        merged = merge_sections(snapshot["eva"]["base"], snapshot["sections"], content)
+        proposal = {
+            "id": identifier(),
+            "source": "eva",
+            "author_id": actor,
+            "base_revision": snapshot["revision"],
+            "sections": merged["sections"],
+            "conflicts": merged["conflicts"],
+            "base": snapshot["eva"]["base"],
+            "remote": content,
+            "binding": binding,
+            "status": "needs_resolution" if merged["conflicts"] else "ready",
+        }
+
+        def update(doc):
+            same = next(
+                (
+                    item
+                    for item in doc["proposals"]
+                    if item.get("source") == "eva" and item["base_revision"] == doc["revision"] and item.get("binding") == binding and item["status"] in {"ready", "needs_resolution"}
+                ),
+                None,
+            )
+            if not same:
+                doc["proposals"].append(proposal)
+
+        return await self.run(self.repository.change, actor, workspace, document_id, snapshot["version"], update, "pull")
+
+    async def resolve_eva(self, actor, workspace, document_id, data):
+        snapshot = await self.get(actor, workspace, document_id)
+        await self.run(self.repository.access, actor, workspace, "edit")
+        proposal = next((item for item in snapshot["proposals"] if item["id"] == data.get("proposal_id") and item.get("source") == "eva"), None)
+        if not proposal or proposal["base_revision"] != snapshot["revision"] or snapshot["version"] != version(data.get("version")):
+            fail("STALE_PROPOSAL", "Подготовьте объединение заново", 409)
+        if not isinstance(data.get("choice"), str) or data["choice"] not in {"local", "remote"}:
+            fail("INVALID_INPUT", "Выберите, какие значения сохранить")
+        if proposal["status"] == "applied":
+            return snapshot
+        await self._check_eva(actor, proposal)
+        candidate = sections(await self.ai.resolve_merge(actor, proposal["base"], snapshot["sections"], proposal["remote"], data["choice"]))
+        await self._check_eva(actor, proposal)
+
+        def update(doc):
+            item = next(item for item in doc["proposals"] if item["id"] == proposal["id"])
+            if doc["revision"] != snapshot["revision"] or item != proposal:
+                fail("STALE_PROPOSAL", "Предложение изменилось. Обновите объединение", 409)
+            item.update(sections=candidate, status="ready", resolution=data["choice"], issues=[])
+
+        return await self.run(self.repository.change, actor, workspace, document_id, None, update, "resolve", latest=True)
+
+    async def edit(self, actor, workspace, document_id, data):
+        content = sections(data.get("sections"))
+        title = text(data.get("title"), "Название", 255)
+
+        def update(doc):
+            doc.update(sections=content, title=title)
+
+        return await self.run(self.repository.change, actor, workspace, document_id, data.get("version"), update, "edit")
+
+    async def save_draft(self, actor, workspace, document_id, data):
+        return await self.run(self.repository.save_draft, actor, workspace, document_id, data.get("version"), draft(data.get("draft"), document_id))
+
+    async def get_draft(self, actor, workspace, document_id):
+        return await self.run(self.repository.get_draft, actor, workspace, document_id)
+
+    async def history(self, actor, workspace, document_id, number=None):
+        return await self.run(self.repository.history, actor, workspace, document_id, number)
+
+    async def restore(self, actor, workspace, document_id, data):
+        revision = await self.history(actor, workspace, document_id, version(data.get("revision")))
+
+        def update(doc):
+            doc["sections"] = revision["sections"]
+            doc["title"] = revision["title"]
+
+        return await self.run(self.repository.change, actor, workspace, document_id, data.get("version"), update, "restore")
+
+    async def comment(self, actor, workspace, document_id, data):
+        action = data.get("action", "add")
+        if not isinstance(action, str) or action not in {"add", "reply", "resolve"}:
+            fail("INVALID_INPUT", "Неизвестное действие с комментарием")
+        item_id = data.get("comment_id")
+        content = text(data.get("text"), "Комментарий", 10_000) if action in {"add", "reply"} else None
+        scope = context(data.get("context"), document_id) if action == "add" else None
+        message_id = text(data.get("message_id"), "Идентификатор комментария", 64) if action in {"add", "reply"} else None
+        if message_id:
+            snapshot = await self.get(actor, workspace, document_id)
+            await self.run(self.repository.access, actor, workspace, "edit")
+            for parent in snapshot["comments"]:
+                for item in [parent, *parent["replies"]]:
+                    if item["id"] != message_id:
+                        continue
+                    right_target = (action == "add" and item is parent and item["context"] == scope) or (action == "reply" and item is not parent and parent["id"] == item_id)
+                    if right_target and item["author_id"] == actor and item["text"] == content:
+                        return snapshot
+                    fail("IDEMPOTENCY_KEY_REUSED", "Идентификатор комментария уже использован", 409)
+
+        def update(doc):
+            if action == "add":
+                assert_context(scope, doc["sections"])
+                doc["comments"].append({"id": message_id, "author_id": actor, "created_at": datetime.now(UTC).isoformat(), "context": scope, "text": content, "resolved": False, "replies": []})
+                return
+            item = next((item for item in doc["comments"] if item["id"] == item_id), None)
+            if item is None:
+                fail("NOT_FOUND", "Комментарий не найден", 404)
+            if action == "reply":
+                item["replies"].append({"id": message_id, "author_id": actor, "created_at": datetime.now(UTC).isoformat(), "text": content})
+            elif action == "resolve" and type(data.get("resolved")) is bool:
+                item["resolved"] = data["resolved"]
+            else:
+                fail("INVALID_INPUT", "Неизвестное действие с комментарием")
+
+        return await self.run(self.repository.change, actor, workspace, document_id, data.get("version"), update, "comment")
+
+    async def chat(self, actor, workspace, document_id, data):
+        snapshot = await self.get(actor, workspace, document_id)
+        # A read-only member cannot consume a model and then create a proposal.
+        await self.run(self.repository.access, actor, workspace, "edit")
+        message = draft(data.get("draft"), document_id)
+        existing = next((item for item in snapshot["messages"] if item.get("id") == message["message_id"]), None)
+        if existing:
+            if existing.get("role") != "user" or existing.get("author_id") != actor or any(existing.get(key) != message[key] for key in ("text", "context")):
+                fail("IDEMPOTENCY_KEY_REUSED", "Идентификатор сообщения уже использован с другим содержимым", 409)
+            if existing.get("status", "completed") == "completed":
+                return snapshot
+            if existing.get("status") == "processing" and (datetime.now(UTC) - datetime.fromisoformat(existing["started_at"])).total_seconds() < 360:
+                return snapshot
+            if existing["source_revision"] != snapshot["revision"]:
+                fail("STALE_MESSAGE", "ТЗ изменилось. Отправьте новый вопрос; исходное сообщение осталось в чате", 409)
+        elif version(data.get("version")) != snapshot["version"]:
+            fail("VERSION_CONFLICT", "ТЗ изменилось. Обновите его перед отправкой", 409)
+        text(message["text"], "Сообщение", 10_000)
+        assert_context(message["context"], snapshot["sections"])
+        attempt = identifier()
+
+        def accept(doc):
+            item = next((item for item in doc["messages"] if item.get("id") == message["message_id"]), None)
+            if item is None:
+                item = {
+                    "id": message["message_id"],
+                    "role": "user",
+                    "text": message["text"],
+                    "context": message["context"],
+                    "author_id": actor,
+                    "source_revision": snapshot["revision"],
+                    "created_at": datetime.now(UTC).isoformat(),
+                }
+                doc["messages"].append(item)
+            item.update(status="processing", attempt=attempt, started_at=datetime.now(UTC).isoformat(), error=None)
+
+        await self.run(self.repository.change, actor, workspace, document_id, snapshot["version"], accept, "chat-accepted")
+        result_ready = False
+        try:
+            result = await self.ai.chat(actor, snapshot, message)
+            answer = text(result.get("answer"), "Ответ помощника", 30_000)
+            candidate = self._chat_candidate(snapshot, message, result)
+            proposal = None
+            if candidate != snapshot["sections"]:
+                proposal = {"id": identifier(), "base_revision": snapshot["revision"], "sections": candidate, "source": "chat", "author_id": actor, "status": "ready"}
+
+            def complete(doc):
+                item = next(item for item in doc["messages"] if item.get("id") == message["message_id"])
+                if item.get("attempt") != attempt or item.get("status") != "processing":
+                    return
+                item.update(status="completed", error=None)
+                doc["messages"].append(
+                    {"id": identifier(), "reply_to": message["message_id"], "role": "assistant", "text": answer, "source_revision": snapshot["revision"], "created_at": datetime.now(UTC).isoformat()}
+                )
+                if proposal:
+                    doc["proposals"].append(proposal)
+
+            result_ready = True
+            return await self.run(self.repository.change, actor, workspace, document_id, None, complete, "chat-completed", latest=True)
+        except (Exception, asyncio.CancelledError) as error:
+            code = "RESULT_SAVE_FAILED" if result_ready else "MODEL_FAILED"
+            explanation = "Не удалось сохранить ответ. Повторите сообщение" if result_ready else "Не удалось получить ответ. Можно повторить сообщение"
+            failure = {"code": error.code[:64] if isinstance(error, SpecificationError) else code, "message": error.message[:500] if isinstance(error, SpecificationError) else explanation}
+
+            def failed(doc):
+                item = next(item for item in doc["messages"] if item.get("id") == message["message_id"])
+                if item.get("attempt") == attempt and item.get("status") == "processing":
+                    item.update(status="failed", error=failure)
+
+            await asyncio.shield(self.run(self.repository.change, actor, workspace, document_id, None, failed, "chat-failed", latest=True))
+            raise
+
+    @staticmethod
+    def _chat_candidate(snapshot, message, result):
+        patches = result.get("patches", {})
+        if not isinstance(patches, dict) or set(patches) - set(snapshot["sections"]):
+            fail("MODEL_INVALID_OUTPUT", "Помощник вернул некорректные разделы", 502)
+        scope = message["context"]["scope"]
+        if scope not in {"all", "selection"} and set(patches) - {scope}:
+            fail("OUTSIDE_SCOPE", "Изменение требует других разделов. Явно выберите контекст «Всё ТЗ»", 409)
+        candidate = sections({**snapshot["sections"], **patches})
+        if scope == "selection" and patches:
+            anchor = message["context"]["anchor"]
+            key, quote = anchor["section"], anchor["quote"]
+            if set(patches) != {key}:
+                fail("OUTSIDE_SCOPE", "Правка выходит за выделенный фрагмент", 409)
+            original = snapshot["sections"][key]
+            start = original.index(anchor["prefix"] + quote + anchor["suffix"]) + len(anchor["prefix"])
+            before, after = original[:start], original[start + len(quote) :]
+            if not candidate[key].startswith(before) or not candidate[key].endswith(after) or len(candidate[key]) < len(before) + len(after):
+                fail("OUTSIDE_SCOPE", "Правка выходит за выделенный фрагмент", 409)
+        return candidate
+
+    async def _check_eva(self, actor, proposal):
+        fresh, remote = await self.run(self.eva.read_connected_page, actor, proposal["binding"])
+        content = parse_markdown(remote) if remote.strip() else empty_sections()
+        if content != proposal["remote"] or fresh.get("remote_version") != proposal["binding"].get("remote_version"):
+            fail("EVA_CHANGED", "Страница Eva изменилась. Получите изменения заново", 409)
+
+    async def apply(self, actor, workspace, document_id, data):
+        snapshot = await self.get(actor, workspace, document_id)
+        await self.run(self.repository.access, actor, workspace, "edit")
+        requested = text(data.get("proposal_id"), "Предложение", 32)
+        proposal = next((item for item in snapshot["proposals"] if item["id"] == requested), None)
+        if proposal is None:
+            fail("NOT_FOUND", "Предложение не найдено", 404)
+        if proposal["status"] == "applied":
+            return snapshot
+        if proposal["status"] != "ready":
+            fail("UNRESOLVED_CONFLICT", "Выберите результат объединения связанных изменений", 409)
+        if snapshot["version"] != version(data.get("version")) or proposal["base_revision"] != snapshot["revision"]:
+            fail("STALE_PROPOSAL", "ТЗ изменилось. Подготовьте правку заново", 409)
+        candidate = sections(proposal["sections"])
+        if proposal.get("source") == "eva":
+            await self._check_eva(actor, proposal)
+        # Edited resolutions are checked as a whole, including unaffected sections.
+        if proposal.get("source") == "eva":
+            verification = await self.ai.verify(actor, snapshot["sections"], candidate, merge={"base": proposal["base"], "remote": proposal["remote"], "choice": proposal.get("resolution")})
+        else:
+            verification = await self.ai.verify(actor, snapshot["sections"], candidate)
+        if not isinstance(verification.get("issues"), list) or any(not isinstance(issue, str) for issue in verification["issues"]):
+            fail("MODEL_INVALID_OUTPUT", "Помощник вернул некорректную проверку", 502)
+        if proposal.get("source") == "eva":
+            await self._check_eva(actor, proposal)
+        if verification.get("valid") is not True or verification["issues"]:
+
+            def blocked(doc):
+                item = next(item for item in doc["proposals"] if item["id"] == requested)
+                if doc["revision"] != snapshot["revision"] or item != proposal:
+                    fail("STALE_PROPOSAL", "Предложение изменилось. Подготовьте проверку заново", 409)
+                item.update(status="needs_resolution", issues=verification["issues"] or ["Не удалось подтвердить согласованность ТЗ"])
+
+            return await self.run(self.repository.change, actor, workspace, document_id, None, blocked, "proposal-blocked", latest=True)
+
+        def update(doc):
+            item = next(item for item in doc["proposals"] if item["id"] == requested)
+            if item["status"] == "applied":
+                return
+            if item["base_revision"] != doc["revision"] or item != proposal:
+                fail("STALE_PROPOSAL", "Подготовьте правку заново", 409)
+            changed = candidate != doc["sections"]
+            doc["sections"] = deepcopy(candidate)
+            item.update(status="applied", applied_revision=doc["revision"] + int(changed))
+            if item.get("source") == "eva":
+                doc["eva"] = {**item["binding"], "base": item["remote"]}
+
+        return await self.run(self.repository.change, actor, workspace, document_id, None, update, "apply", latest=True)

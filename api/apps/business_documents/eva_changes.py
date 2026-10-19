@@ -18,18 +18,20 @@
 
 from __future__ import annotations
 
-import hashlib
 import re
+from contextlib import contextmanager
 from datetime import datetime
 from difflib import SequenceMatcher
 from enum import StrEnum
 from typing import Any
-from urllib.parse import unquote, urlparse
 
 from bs4 import BeautifulSoup
 from api.apps.business_documents.markdown_rendering import render_markdown
 from api.apps.business_documents.html_formatting import EvaMarkdownConverter, prepare_eva_html, restore_eva_formatting, sanitize_html
 from peewee import fn
+
+from api.document_exchange.content import canonical_markdown as _canonical_markdown, content_hash as _content_hash
+from api.document_exchange.pages import EvaPageError, EvaPages
 
 from business_documents.application.errors import BusinessDocumentError, ConflictError, ValidationError
 from business_documents.domain.content import decode_document_warnings, document_warning_texts, render_document_warning_appendix, with_document_warnings
@@ -69,19 +71,6 @@ def _timestamps() -> dict[str, Any]:
     now = datetime.now()
     timestamp = current_timestamp()
     return {"create_time": timestamp, "create_date": now, "update_time": timestamp, "update_date": now}
-
-
-def _canonical_markdown(value: str) -> str:
-    lines = str(value or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    while lines and not lines[0].strip():
-        lines.pop(0)
-    while lines and not lines[-1].strip():
-        lines.pop()
-    return "\n".join(lines)
-
-
-def _content_hash(markdown: str) -> str:
-    return f"sha256:{hashlib.sha256(_canonical_markdown(markdown).encode('utf-8')).hexdigest()}"
 
 
 def _html_to_markdown(value: str) -> str:
@@ -340,6 +329,8 @@ class EvaDocumentChangeService:
     def _map_external_error(error: Exception) -> BusinessDocumentError:
         if isinstance(error, BusinessDocumentError):
             return error
+        if isinstance(error, EvaPageError):
+            return BusinessDocumentError(error.code, error.message, error.status)
         if isinstance(error, EvaAuthenticationError):
             return BusinessDocumentError("EVA_USER_TOKEN_REJECTED", "EVA не принимает ваш личный токен. Возможно, он истёк или был отозван.", 403)
         if isinstance(error, (InsufficientPermissionsError, EvaProjectAccessError)):
@@ -395,147 +386,58 @@ class EvaDocumentChangeService:
         return normalized if required and field != "draft_markdown" else value
 
     @classmethod
-    def search_sources(cls, actor_id: str, query: str = "", limit: int = 20) -> dict[str, Any]:
-        normalized_query = str(query or "").strip()
-        if len(normalized_query) > 500:
-            raise ValidationError("INVALID_EVA_SEARCH", "query is too long", {"maximum": 500})
-        safe_limit = min(max(int(limit), 1), 100)
-        connector_id = cls._configured_connector_id()
-        connector, client = cls._connector(connector_id, actor_id)
+    @contextmanager
+    def _page_connection(cls, actor_id, connector_id=None):
+        client = None
         try:
-            documents = client.search_documents(normalized_query, safe_limit)
-        except Exception as error:
+            connector, client = cls._connector(connector_id or cls._configured_connector_id(), actor_id)
+            yield connector, client
+        except (BusinessDocumentError, EvaPageError, ConnectorValidationError, InsufficientPermissionsError, ConnectorMissingCredentialError, ExternalCredentialError) as error:
             raise cls._map_external_error(error) from error
-        return {
-            "items": [{**document, "connector_id": connector.id, "connector_name": connector.name} for document in documents],
-            "connectors": [{"connector_id": connector.id, "connector_name": connector.name}],
-        }
+        finally:
+            if client is not None:
+                client.close()
+
+    @classmethod
+    def pages(cls):
+        """Compose shared page reads with the configured personal-token access."""
+        return EvaPages(cls._page_connection, _html_to_markdown, EvaWikiConnector._url_origin)
+
+    @classmethod
+    def search_sources(cls, actor_id: str, query: str = "", limit: int = 20) -> dict[str, Any]:
+        try:
+            return cls.pages().search_sources(actor_id, str(query or "").strip(), min(max(int(limit), 1), 100))
+        except EvaPageError as error:
+            raise cls._map_external_error(error) from error
 
     @classmethod
     def find_title_matches(cls, actor_id: str, title: str) -> list[dict[str, Any]]:
-        """Find exact-title pages in the EVA space configured for Documents."""
-
         try:
-            connector_id = cls._configured_connector_id()
+            return cls.pages().find_title_matches(actor_id, title)
         except BusinessDocumentError as error:
             if error.code == "EVA_SPACE_NOT_CONFIGURED":
                 return []
             raise
-        connector, client = cls._connector(connector_id, actor_id)
-        try:
-            documents = client.find_documents_by_exact_title(title)
-        except Exception as error:
-            raise cls._map_external_error(error) from error
-        eva_origin = EvaWikiConnector._url_origin(client.api_base_url)
-        return [
-            {
-                **document,
-                "connector_id": connector.id,
-                "connector_name": connector.name,
-                "eva_origin": eva_origin,
-            }
-            for document in documents
-        ]
 
     @classmethod
     def resolve_page_url(cls, actor_id: str, page_url: object) -> dict[str, Any]:
-        """Resolve a user-facing EVA URL without ever requesting that URL directly.
-
-        The URL is matched against the Documents connection. An unmatched URL
-        remains a read-only link; capabilities require verification through
-        EVA's authenticated API.
-        """
-
-        normalized_url = cls._validate_text(page_url, "eva_page_url", maximum=2048)
+        # Optional BT linking retains an explicit read-only link when Eva is
+        # unavailable. The shared reader itself reports the failure to TЗ.
+        normalized = cls._validate_text(page_url, "eva_page_url", maximum=2048)
         try:
-            parsed = urlparse(normalized_url)
-            hostname = parsed.hostname
-        except ValueError as error:
-            raise ValidationError("INVALID_EVA_PAGE_URL", "eva_page_url must be an absolute HTTP(S) URL") from error
-        if parsed.scheme.casefold() not in {"http", "https"} or not hostname or parsed.username or parsed.password:
-            raise ValidationError("INVALID_EVA_PAGE_URL", "eva_page_url must be an absolute HTTP(S) URL")
-        canonical_url = parsed._replace(query="", fragment="").geturl().rstrip("/")
-        marker = "/project/Document/"
-        marker_index = parsed.path.casefold().find(marker.casefold())
-        code = unquote(parsed.path[marker_index + len(marker) :].strip("/")) if marker_index >= 0 else ""
-
-        binding: dict[str, Any] = {
-            "page_url": canonical_url,
-            "status": "LINK_ONLY",
-            "capabilities": ["OPEN"],
-            "connector_id": None,
-            "project_id": None,
-            "document_id": None,
-            "document_code": code or None,
-            "document_name": None,
-            "remote_version": None,
-            "remote_content_hash": None,
-            "last_pulled_content_hash": None,
-        }
+            binding = EvaPages.link(normalized)
+        except EvaPageError as error:
+            raise cls._map_external_error(error) from error
         try:
-            connector_id = cls._configured_connector_id()
-            connector, client = cls._connector(connector_id, actor_id)
-            page_origin = EvaWikiConnector._url_origin(normalized_url)
-            configured_origins = {EvaWikiConnector._url_origin(base_url) for base_url in (client.web_base_url, client.api_base_url) if str(base_url or "").strip()}
-            if page_origin not in configured_origins:
-                return binding
-            candidates = client.search_documents(code, 100) if code else []
-            source = next(
-                (
-                    candidate
-                    for candidate in candidates
-                    if str(candidate.get("web_url") or "").rstrip("/").casefold() == canonical_url.casefold() or (code and str(candidate.get("code") or "").casefold() == code.casefold())
-                ),
-                None,
-            )
-            if source is None:
-                return binding
-            remote = client.get_document_for_edit(str(source["id"]))
-            remote_markdown = _html_to_markdown(str(remote.get("html") or ""))
-            return {
-                **binding,
-                "page_url": str(remote.get("web_url") or canonical_url),
-                "status": "CONNECTED",
-                "capabilities": ["OPEN", "PULL_FROM_EVA", "CREATE_EVA_CHANGE"],
-                "connector_id": connector.id,
-                "eva_origin": EvaWikiConnector._url_origin(client.api_base_url),
-                "project_id": str(remote.get("project_id") or "") or None,
-                "document_id": str(remote.get("id") or "") or None,
-                "document_code": str(remote.get("code") or "") or None,
-                "document_name": str(remote.get("name") or "") or None,
-                "remote_version": str(remote.get("version") or "") or None,
-                "remote_content_hash": _content_hash(remote_markdown) if remote_markdown else None,
-            }
+            return cls.pages().resolve_page_url(actor_id, normalized)
         except Exception:
-            # Optional linking must not make document creation depend on EVA
-            # availability; the URL remains an explicit read-only link.
             return binding
 
     @classmethod
     def read_connected_page(cls, actor_id: str, binding: dict[str, Any]) -> tuple[dict[str, Any], str]:
-        """Read one already resolved EVA page for deterministic document import."""
-
-        connector_id = cls._validate_text(binding.get("connector_id"), "connector_id", maximum=32)
-        document_id = cls._validate_text(binding.get("document_id"), "document_id", maximum=128)
-        try:
-            _, client = cls._connector(connector_id, actor_id)
-            remote = client.get_document_for_edit(document_id)
-        except Exception as error:
-            raise cls._map_external_error(error) from error
-        remote_markdown = _html_to_markdown(str(remote.get("html") or ""))
-        updated_binding = {
-            **binding,
-            "page_url": str(remote.get("web_url") or binding.get("page_url") or ""),
-            "status": "CONNECTED",
-            "capabilities": ["OPEN", "PULL_FROM_EVA", "CREATE_EVA_CHANGE"],
-            "project_id": str(remote.get("project_id") or binding.get("project_id") or "") or None,
-            "document_id": str(remote.get("id") or document_id),
-            "document_code": str(remote.get("code") or binding.get("document_code") or "") or None,
-            "document_name": str(remote.get("name") or binding.get("document_name") or "") or None,
-            "remote_version": str(remote.get("version") or "") or None,
-            "remote_content_hash": _content_hash(remote_markdown),
-        }
-        return updated_binding, remote_markdown
+        cls._validate_text(binding.get("connector_id"), "connector_id", maximum=32)
+        cls._validate_text(binding.get("document_id"), "document_id", maximum=128)
+        return cls.pages().read_connected_page(actor_id, binding)
 
     @classmethod
     def create_change(

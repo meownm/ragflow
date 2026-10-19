@@ -109,10 +109,15 @@ def test_repeated_diagrams_render_once_and_retain_unique_macro_ids():
 
 
 class FakeEvaClient:
+    def close(self):
+        self.closed = True
+
     def render_plantuml(self, source):
         return '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="40"><text x="1" y="20">Схема процесса</text></svg>'
 
     def __init__(self):
+        self.api_base_url = "https://eva.example.com"
+        self.web_base_url = self.api_base_url
         self.publish_calls = 0
         self.document = {
             "id": "CmfDocument:doc-1",
@@ -404,7 +409,7 @@ def test_resolve_page_url_materializes_connectors_before_nested_access_queries(m
     monkeypatch.setattr(
         EvaDocumentChangeService,
         "_connector",
-        classmethod(lambda _cls, _connector_id, _actor_id: (connector, SimpleNamespace(web_base_url="https://other.example.com"))),
+        classmethod(lambda _cls, _connector_id, _actor_id: (connector, SimpleNamespace(web_base_url="https://other.example.com", close=lambda: None))),
     )
 
     binding = EvaDocumentChangeService.resolve_page_url(AUTHOR, "https://eva.example.com/project/Document/BR-42")
@@ -427,6 +432,7 @@ def test_resolve_page_url_accepts_configured_api_origin_and_returns_web_url(monk
             yield connector
 
     client = SimpleNamespace(
+        close=lambda: None,
         api_base_url="http://host.docker.internal:8084",
         web_base_url="https://eva.example.com",
         search_documents=lambda query, _limit: [
@@ -490,6 +496,7 @@ def test_read_connected_page_returns_current_markdown_and_refreshes_binding():
     assert refreshed["document_name"] == client.document["name"]
     assert refreshed["remote_version"] == client.document["version"]
     assert refreshed["remote_content_hash"].startswith("sha256:")
+    assert client.closed
 
 
 @pytest.mark.parametrize("html", ["", "<p><br></p>", "<p> </p>"])

@@ -243,6 +243,7 @@ export default {
       memories: 'Memory',
       openMetadata: 'Catalog',
       businessDocuments: 'Business requirements',
+      technicalSpecifications: 'Technical specifications',
       documentConstructor: 'Constructor',
       sqlProjects: 'SQL projects',
       transcription: 'Transcription',

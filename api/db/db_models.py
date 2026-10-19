@@ -21,7 +21,7 @@ import os
 import sys
 import time
 import typing
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from functools import wraps
 
 from quart_auth import AuthUser
@@ -911,6 +911,49 @@ class Conversation(DataBaseModel):
 
     class Meta:
         db_table = "conversation"
+
+
+class TechnicalSpecification(DataBaseModel):
+    """Working TЗ projection; workspace membership owns access control."""
+
+    id = CharField(max_length=32, primary_key=True)
+    workspace_id = CharField(max_length=32, index=True)
+    tenant_id = CharField(max_length=32, index=True)
+    title = CharField(max_length=255)
+    version = IntegerField(default=1)
+    revision = IntegerField(default=1)
+    payload = JSONField(default=dict)
+    origin_key = CharField(max_length=64, null=True)
+    updated_at = DateTimeField(default=lambda: datetime.now(UTC))
+
+    class Meta:
+        db_table = "technical_specification"
+        indexes = ((("tenant_id", "origin_key"), True),)
+
+
+class TechnicalSpecificationRevision(DataBaseModel):
+    document_id = CharField(max_length=32)
+    number = IntegerField()
+    title = CharField(max_length=255)
+    sections = JSONField()
+    author_id = CharField(max_length=32)
+    reason = CharField(max_length=32)
+    created_at = DateTimeField(default=lambda: datetime.now(UTC))
+
+    class Meta:
+        db_table = "technical_specification_revision"
+        primary_key = CompositeKey("document_id", "number")
+
+
+class TechnicalSpecificationDraft(DataBaseModel):
+    document_id = CharField(max_length=32)
+    author_id = CharField(max_length=32)
+    version = IntegerField(default=1)
+    payload = JSONField()
+
+    class Meta:
+        db_table = "technical_specification_draft"
+        primary_key = CompositeKey("document_id", "author_id")
 
 
 class SourceWorkspace(DataBaseModel):

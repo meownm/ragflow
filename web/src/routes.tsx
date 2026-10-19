@@ -26,6 +26,7 @@ export enum Routes {
   Memories = '/memories',
   OpenMetadata = '/openmetadata',
   BusinessDocuments = '/business-documents',
+  TechnicalSpecifications = '/technical-specifications',
   DocumentConstructor = '/document-constructor',
   SqlProjects = '/sql-projects',
   SqlSources = '/sql-sources',
@@ -255,6 +256,10 @@ const routeConfigOptions = [
       {
         path: Routes.BusinessDocuments,
         Component: () => import('@/pages/business-documents'),
+      },
+      {
+        path: Routes.TechnicalSpecifications,
+        Component: () => import('@/pages/technical-specifications'),
       },
       {
         path: Routes.DocumentConstructor,

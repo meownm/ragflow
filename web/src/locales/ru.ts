@@ -242,6 +242,7 @@ export default {
       memories: 'Память',
       openMetadata: 'Каталог',
       businessDocuments: 'Бизнес-требования',
+      technicalSpecifications: 'Технические задания',
       documentConstructor: 'Конструктор',
       sqlProjects: 'SQL-проекты',
       transcription: 'Расшифровка',

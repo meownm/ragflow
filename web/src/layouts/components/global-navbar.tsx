@@ -40,6 +40,7 @@ const PathMap = {
   [Routes.Memories]: [Routes.Memories, Routes.Memory, Routes.MemoryMessage],
   [Routes.OpenMetadata]: [Routes.OpenMetadata],
   [Routes.BusinessDocuments]: [Routes.BusinessDocuments],
+  [Routes.TechnicalSpecifications]: [Routes.TechnicalSpecifications],
   [Routes.DocumentConstructor]: [Routes.DocumentConstructor],
   [Routes.SqlProjects]: [Routes.SqlProjects],
   [Routes.Transcription]: [Routes.Transcription],
@@ -123,6 +124,14 @@ const menuItems: Array<{
     icon: FilePenLine,
     section: 'business_documents',
     'data-testid': 'nav-business-documents',
+  },
+  {
+    path: Routes.TechnicalSpecifications,
+    name: 'header.technicalSpecifications',
+    fallbackName: 'Технические задания',
+    icon: FilePenLine,
+    section: 'business_documents',
+    'data-testid': 'nav-technical-specifications',
   },
   {
     path: Routes.DocumentConstructor,

@@ -1083,6 +1083,12 @@ def test_personal_eva_credential_profile_routes_never_return_token(monkeypatch, 
         @staticmethod
         def validate_personal_token(connector, token):
             validation.append((connector.id, token))
+            return {"expires_at": 456, "expiry_checked_at": 123}
+
+        @staticmethod
+        def personal_token_expiry(connector, user_id):
+            assert user_id == "current-user"
+            return {"expires_at": 456, "expiry_checked_at": 123}
 
     validation_mod = ModuleType("api.apps.business_documents.eva_changes")
     validation_mod.EvaDocumentChangeService = _ValidationService
@@ -1152,7 +1158,8 @@ def test_personal_eva_credential_profile_routes_never_return_token(monkeypatch, 
             }
 
         @staticmethod
-        def put_eva_wiki_token(user_id, api_base_url, token):
+        def put_eva_wiki_token(user_id, api_base_url, token, **expiry):
+            assert expiry == {"expires_at": 456, "expiry_checked_at": 123}
             calls.append(("put", user_id, api_base_url, token))
             return {"configured": True, "scope": api_base_url.rstrip("/"), "credential_version": 3}
 
@@ -1182,6 +1189,8 @@ def test_personal_eva_credential_profile_routes_never_return_token(monkeypatch, 
             "credential_version": 2,
             "update_time": 123,
             "connector_id": connector.id,
+            "expires_at": 456,
+            "expiry_checked_at": 123,
             "connectors": [{"id": connector.id, "name": connector.name}],
         }
     ]
@@ -1209,6 +1218,10 @@ def test_personal_eva_credential_profile_routes_never_return_token(monkeypatch, 
     assert res["code"] == 0
     assert res["data"] == {"deleted": True}
     assert calls[-1] == ("delete", "current-user", "https://eva.example/api/")
+    previous_calls = list(calls)
+    assert _run(module.put_user_eva_credential("other-tenant-connector"))["code"] != 0
+    assert _run(module.delete_user_eva_credential("other-tenant-connector"))["code"] != 0
+    assert calls == previous_calls
 
 
 @pytest.mark.p2

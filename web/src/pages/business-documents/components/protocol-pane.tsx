@@ -28,7 +28,6 @@ interface ProtocolPaneProps {
   documentId: string;
   storageIdentity: string | null;
   reviewCycle: BusinessDocumentReviewCycle | null;
-  reviewCycleNumber: number;
   proposalDecisionsOpen: boolean;
   revision: BusinessDocumentRevision | null;
   selection: BusinessDocumentSelection | null;
@@ -52,7 +51,6 @@ export function ProtocolPane({
   documentId,
   storageIdentity,
   reviewCycle,
-  reviewCycleNumber,
   proposalDecisionsOpen,
   revision,
   selection,
@@ -273,18 +271,6 @@ export function ProtocolPane({
       aria-label="Обсуждение"
       data-testid="business-document-protocol"
     >
-      <div className="flex h-11 shrink-0 items-center justify-between border-b border-border-button px-5">
-        <div className="flex items-center gap-2 text-sm font-medium">
-          <MessageSquareText className="size-4 text-text-secondary" />
-          Обсуждение
-        </div>
-        {reviewCycleNumber > 0 && (
-          <span className="font-mono text-xs text-text-secondary">
-            Цикл {reviewCycleNumber}
-          </span>
-        )}
-      </div>
-
       {(questions.length > 0 || proposals.length > 0) && (
         <div
           className="grid shrink-0 grid-cols-2 gap-4 border-b border-border-button px-5 py-2"
@@ -393,15 +379,9 @@ export function ProtocolPane({
             proposal={proposal}
             proposalDecisionsOpen={proposalDecisionsOpen}
             canDecide={allowed.has('DECIDE_PROPOSAL')}
-            canAccept={allowed.has('ACCEPT_PROPOSAL')}
             canCancelAcceptance={allowed.has('CANCEL_PROPOSAL_ACCEPTANCE')}
             pending={pending}
             onDecide={(payload) => onCommand('DECIDE_PROPOSAL', payload)}
-            onAccept={() =>
-              onCommand('ACCEPT_PROPOSAL', {
-                proposal_id: proposal.proposal_id,
-              })
-            }
             onCancelAcceptance={() =>
               onCommand('CANCEL_PROPOSAL_ACCEPTANCE', {
                 proposal_id: proposal.proposal_id,

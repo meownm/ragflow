@@ -10,7 +10,7 @@ from typing import Any
 
 from json_repair import repair_json
 
-from api.apps.business_documents.ai import RAGFlowLLMAdapter
+from api.apps.business_documents.ai import MODEL_TIMEOUT_SECONDS, RAGFlowLLMAdapter
 from api.apps.business_documents.assets import contract_schema, prompt_descriptor, prompt_text, validate_contract
 from api.apps.business_documents.authorization import BusinessDocumentAccess
 from api.apps.services.openmetadata_copilot_service import normalize_table
@@ -34,7 +34,6 @@ from business_documents.sql_query.schema_resolution import (
 from common.misc_utils import thread_pool_exec
 
 LOGGER = logging.getLogger(__name__)
-_LLM_TIMEOUT_SECONDS = 90.0
 _MAX_PROMPT_COLUMNS = 40
 _MAX_PROMPT_TEXT = 2_000
 
@@ -173,7 +172,7 @@ class OpenMetadataCatalogResolver:
 class TenantSchemaInterpreter:
     """One bounded tenant-LLM call over catalog-backed candidates."""
 
-    def __init__(self, llm=None, *, timeout_seconds: float = _LLM_TIMEOUT_SECONDS):
+    def __init__(self, llm=None, *, timeout_seconds: float = MODEL_TIMEOUT_SECONDS):
         self._llm = llm if llm is not None else RAGFlowLLMAdapter()
         self._timeout_seconds = timeout_seconds
 

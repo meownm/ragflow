@@ -609,6 +609,8 @@ class UserExternalCredential(DataBaseModel):
     scope = CharField(max_length=512, null=False, index=True)
     encrypted_secret = TextField(null=False)
     credential_version = IntegerField(null=False, default=1)
+    expires_at = BigIntegerField(null=True)
+    expiry_checked_at = BigIntegerField(null=True)
 
     class Meta:
         db_table = "user_external_credential"
@@ -2445,9 +2447,15 @@ def update_tenant_llm_to_id_primary_key():
             DB.execute_sql("ALTER TABLE tenant_llm DROP COLUMN temp_id")
 
 
+def _migrate_user_external_credential_expiry(migrator):
+    alter_db_add_column(migrator, "user_external_credential", "expires_at", BigIntegerField(null=True))
+    alter_db_add_column(migrator, "user_external_credential", "expiry_checked_at", BigIntegerField(null=True))
+
+
 def migrate_db():
     logging.disable(logging.ERROR)
     migrator = PostgresqlMigrator(DB)
+    _migrate_user_external_credential_expiry(migrator)
     alter_db_add_column(migrator, "business_document_sql_query_run", "kind", CharField(max_length=16, null=False, default="SQL", index=True))
     alter_db_add_column(migrator, "business_document_sql_query_run", "source_run_id", CharField(max_length=32, null=True, index=True))
     alter_db_add_column(migrator, "business_document_sql_query_run", "job_id", CharField(max_length=32, null=True, unique=True))

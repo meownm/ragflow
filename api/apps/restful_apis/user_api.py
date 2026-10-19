@@ -450,9 +450,12 @@ async def list_user_eva_credentials():
     """Return per-EVA-origin credential status without returning any token."""
 
     from api.db.services.user_external_credential_service import ExternalCredentialError, UserExternalCredentialService
+    from api.apps.business_documents.eva_changes import EvaDocumentChangeService
+    from common.misc_utils import thread_pool_exec
 
     statuses = UserExternalCredentialService.list_eva_wiki_statuses(current_user.id)
     origins: dict[str, dict] = {}
+    expiry_connectors: dict[str, object] = {}
     for connector in _accessible_eva_profile_connectors(current_user.id):
         try:
             scope = UserExternalCredentialService.normalize_http_scope((connector.config or {}).get("api_base_url", ""))
@@ -465,12 +468,21 @@ async def list_user_eva_credentials():
                 "configured": False,
                 "credential_version": None,
                 "update_time": None,
+                "expires_at": None,
+                "expiry_checked_at": None,
                 "connector_id": connector.id,
                 "connectors": [],
             },
         )
         item["connectors"].append({"id": connector.id, "name": connector.name})
         item.update(statuses.get(scope, {}))
+        if item["configured"]:
+            expiry_connectors.setdefault(scope, connector)
+    for scope, connector in expiry_connectors.items():
+        try:
+            origins[scope].update(await thread_pool_exec(EvaDocumentChangeService.personal_token_expiry, connector, current_user.id))
+        except ExternalCredentialError:
+            pass  # Rotation/deletion during this request must not expose a credential.
     return get_json_result(data={"items": list(origins.values())})
 
 
@@ -491,11 +503,12 @@ async def put_user_eva_credential(connector_id):
     if not isinstance(req, dict):
         return get_json_result(data=False, message="Request body must be an object.", code=RetCode.ARGUMENT_ERROR)
     try:
-        await thread_pool_exec(EvaDocumentChangeService.validate_personal_token, connector, req.get("eva_api_token", ""))
+        expiry = await thread_pool_exec(EvaDocumentChangeService.validate_personal_token, connector, req.get("eva_api_token", ""))
         status = UserExternalCredentialService.put_eva_wiki_token(
             current_user.id,
             (connector.config or {}).get("api_base_url", ""),
             req.get("eva_api_token", ""),
+            **expiry,
         )
     except (ExternalCredentialError, BusinessDocumentError) as exc:
         return get_json_result(data=False, message=str(exc), code=RetCode.ARGUMENT_ERROR)

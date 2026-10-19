@@ -4,7 +4,7 @@ from copy import deepcopy
 
 import pytest
 
-from test.unit_test.api.apps.business_documents.test_accept_proposal import _document, _plan, database as proposal_database
+from test.unit_test.api.apps.business_documents.test_accept_proposal import _document, _plan, _request_changes, database as proposal_database
 from test.unit_test.api.apps.business_documents.test_business_document_service import (
     AUTHOR,
     TENANT,
@@ -26,19 +26,18 @@ from business_documents.domain.block_diff import with_block_ids
 from business_documents.application.errors import ValidationError
 
 
-@pytest.mark.parametrize("kind", ["PREPARE_CHANGES", "APPLY_CHANGES", "ACCEPT_PROPOSAL"])
+@pytest.mark.parametrize("kind", ["PREPARE_CHANGES", "APPLY_CHANGES"])
 def test_saved_unsupported_block_survives_command_replay_and_worker_application(database, kind):
     document = _document(open_questions=False)
     proposal_id = document["protocol"]["proposals"][0]["proposal_id"]
-    if kind != "ACCEPT_PROPOSAL":
-        document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "DECIDE_PROPOSAL", {"proposal_id": proposal_id, "decision": "ACCEPTED"}))
-        document = _complete_review_assessment(document_queries.get_document(document["document_id"], AUTHOR))
+    document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "DECIDE_PROPOSAL", {"proposal_id": proposal_id, "decision": "ACCEPTED"}))
+    document = _complete_review_assessment(document_queries.get_document(document["document_id"], AUTHOR))
     revision = BusinessDocumentRevision.get_by_id(document["current_revision"]["revision_id"])
     invalid_ast = deepcopy(revision.document_ast)
     next(section for section in invalid_ast["sections"] if section["id"] == "4.3")["blocks"].append({"type": "bpmn", "source": "<definitions/>"})
     BusinessDocumentRevision.update(document_ast=invalid_ast).where(BusinessDocumentRevision.id == revision.id).execute()
     jobs_before = BusinessDocumentJob.select().count()
-    command = _command(document, kind, {"proposal_id": proposal_id} if kind == "ACCEPT_PROPOSAL" else {"base_revision_id": revision.id})
+    command = _command(document, kind, {"base_revision_id": revision.id})
 
     requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], command)
     assert document_commands.execute(TENANT, AUTHOR, document["document_id"], command)["idempotent_replay"]
@@ -102,7 +101,7 @@ class PlanAdapter:
 
 def request_plan():
     document = _document()
-    requested = document_commands.execute(
+    document_commands.execute(
         TENANT,
         AUTHOR,
         document["document_id"],
@@ -114,6 +113,7 @@ def request_plan():
             },
         ),
     )
+    document, requested = _request_changes(document, preview=False)
     return requested, _plan(document, requested)["change_plan"]
 
 

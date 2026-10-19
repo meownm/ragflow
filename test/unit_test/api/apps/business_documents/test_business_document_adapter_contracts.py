@@ -52,13 +52,28 @@ def test_worker_loop_is_closed_after_operation_finishes():
 
 @pytest.mark.p1
 @pytest.mark.parametrize(("factory", "limit_parameter"), [(None, "max_completion_tokens"), ("OpenAI-API-Compatible", "max_tokens"), ("Ollama", "max_completion_tokens")])
-@pytest.mark.parametrize(("task_type", "expected_limit"), [("GENERATE_DRAFT", 8192), ("PLAN_CHANGES", 65536), ("VERIFY_REQUIREMENT_COVERAGE", 2048), ("ASSESS_INTAKE", 4096)])
-def test_llm_adapter_preserves_tenant_prompt_payload_and_retry_contract(monkeypatch, task_type, expected_limit, factory, limit_parameter):
+@pytest.mark.parametrize(
+    "task_type",
+    [
+        "GENERATE_DRAFT",
+        "GENERATE_EVA_CHANGE",
+        "PLAN_CHANGES",
+        "VERIFY_REQUIREMENT_COVERAGE",
+        "ASSESS_INTAKE",
+        "ASSESS_REVIEW",
+        "ANALYZE_SQL_REQUIREMENTS",
+        "PLAN_SQL_QUERY",
+        "RESOLVE_SQL_SCHEMA",
+        "REVISE_SQL_PROJECT",
+        "PROPOSE_SQL_CONCLUSION",
+    ],
+)
+def test_llm_adapter_preserves_tenant_prompt_payload_and_retry_contract(monkeypatch, task_type, factory, limit_parameter):
     lookup_calls = []
     bundle_calls = []
     chat_calls = []
     drain_calls = []
-    model_config = {"model_name": "configured-chat", "max_tokens": 131072}
+    model_config = {"model_name": "configured-chat", "max_tokens": 131072, "max_output_tokens": 131072}
     if factory:
         model_config["llm_factory"] = factory
 
@@ -115,12 +130,15 @@ def test_llm_adapter_preserves_tenant_prompt_payload_and_retry_contract(monkeypa
     assert result == "adapter-result"
     assert lookup_calls[0][0] == "tenant-1"
     assert getattr(lookup_calls[0][1], "value", lookup_calls[0][1]) == "chat"
-    assert bundle_calls == [(("tenant-1", model_config), {"lang": "Russian", "max_retries": 0, "raise_on_error": True})]
+    assert bundle_calls == [(("tenant-1", model_config), {"lang": "Russian", "max_retries": 0, "raise_on_error": True, "timeout": 1800})]
     assert len(chat_calls) == 1
     system_prompt, messages, options = chat_calls[0]
     assert system_prompt == "system contract"
     assert messages[0]["role"] == "user"
     assert json.loads(messages[0]["content"]) == payload
+    from common.token_utils import encoder
+
+    expected_limit = 131072 - len(encoder.encode(system_prompt)) - len(encoder.encode(messages[0]["content"])) - 256
     assert options == {"temperature": 0, "top_p": 0.1, limit_parameter: expected_limit, **({"extra_body": {"num_ctx": 131072}} if factory == "Ollama" else {})}
     assert drain_calls == [True]
     audit = adapter.consume_execution_audit()

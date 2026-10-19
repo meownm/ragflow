@@ -24,7 +24,7 @@ def test_ai_execution_audit_is_canonicalized_for_persistence():
 
 
 @pytest.mark.parametrize("limit_parameter", ["max_tokens", "max_completion_tokens"])
-@pytest.mark.parametrize("limit", [1, 2047, 2048, 4096, 8192, 65535, 65536])
+@pytest.mark.parametrize("limit", [1, 2047, 2048, 4096, 8192, 65535, 65536, 65537, 131072, 262144])
 def test_supported_completion_parameters_are_preserved(limit_parameter, limit):
     audit = _ai_execution_audit()
     audit["parameters"] = {"temperature": 0, "top_p": 0.1, limit_parameter: limit}
@@ -32,7 +32,7 @@ def test_supported_completion_parameters_are_preserved(limit_parameter, limit):
 
 
 @pytest.mark.parametrize(
-    "limits", [{}, {"max_tokens": 65536, "max_completion_tokens": 8192}, {"max_tokens": 65537}, {"max_completion_tokens": 0}, {"max_completion_tokens": True}, {"token_limit": 8192}]
+    "limits", [{}, {"max_tokens": 65536, "max_completion_tokens": 8192}, {"max_tokens": -1}, {"max_completion_tokens": 0}, {"max_completion_tokens": True}, {"max_tokens": 1.5}, {"token_limit": 8192}]
 )
 def test_ambiguous_or_unsupported_completion_limits_fail_closed(limits):
     audit = _ai_execution_audit()
@@ -68,8 +68,6 @@ def test_recovery_cannot_hide_invalid_or_nested_model_audits(recovery):
 def test_ollama_context_is_preserved_in_execution_audit(window):
     audit = _ai_execution_audit()
     audit["parameters"].update(max_completion_tokens=window // 2, extra_body={"num_ctx": window})
-    if window == 262144:
-        audit["parameters"]["max_completion_tokens"] = 65536
     assert validate_ai_audit(audit) == audit
 
 

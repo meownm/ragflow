@@ -981,6 +981,16 @@ export default function BusinessDocumentsPage() {
             'not_applied',
           ].includes(event.type)
         ) {
+          if (event.type === 'applied') {
+            if (activeDocumentId.current === documentId) {
+              setHistoryOpen(false);
+              setSelectedRevisionId(undefined);
+            }
+            void queryClient.invalidateQueries({
+              queryKey: ['business-document-revisions', documentId],
+              refetchType: 'none',
+            });
+          }
           void queryClient.invalidateQueries({
             queryKey: BusinessDocumentKeys.detail(documentId),
           });
@@ -1187,25 +1197,26 @@ export default function BusinessDocumentsPage() {
               ? current
               : updatedDocument,
         );
-        if (
-          type === 'CONFIRM_PREPARED_CHANGES' ||
-          type === 'ACCEPT_PROPOSAL' ||
-          type === 'RESTORE_REVISION'
-        ) {
-          if (activeDocumentId.current === targetDocumentId) {
-            setHistoryOpen(false);
-            setSelectedRevisionId(undefined);
-          }
-          await queryClient.invalidateQueries({
-            queryKey: ['business-document-revisions', targetDocumentId],
-            refetchType: 'none',
-          });
-        }
-        return;
       }
-      await queryClient.invalidateQueries({
-        queryKey: BusinessDocumentKeys.detail(targetDocumentId),
-      });
+      if (
+        type === 'APPLY_CHANGES' ||
+        type === 'CONFIRM_PREPARED_CHANGES' ||
+        type === 'RESTORE_REVISION'
+      ) {
+        if (activeDocumentId.current === targetDocumentId) {
+          setHistoryOpen(false);
+          setSelectedRevisionId(undefined);
+        }
+        await queryClient.invalidateQueries({
+          queryKey: ['business-document-revisions', targetDocumentId],
+          refetchType: 'none',
+        });
+      }
+      if (!updatedDocument) {
+        await queryClient.invalidateQueries({
+          queryKey: BusinessDocumentKeys.detail(targetDocumentId),
+        });
+      }
     },
     onError: (error) => {
       if (
@@ -1428,7 +1439,6 @@ export default function BusinessDocumentsPage() {
       Record<BusinessDocumentCommandType, Record<string, unknown>>
     > = {
       APPLY_CHANGES: { base_revision_id: revisionId },
-      PREPARE_CHANGES: { base_revision_id: revisionId },
     };
     submitCommand(type, payload ?? payloadByCommand[type] ?? {});
   };
@@ -1644,58 +1654,26 @@ export default function BusinessDocumentsPage() {
               </Button>
             </>
           )}
-          {allowed.has('PREPARE_CHANGES') && (
+          {(allowed.has('APPLY_CHANGES') ||
+            (document.change_preview &&
+              allowed.has('CONFIRM_PREPARED_CHANGES'))) && (
             <Button
               size="sm"
-              variant="accent"
-              disabled={isBusy}
-              loading={commandMutation.isPending}
-              data-testid="prepare-changes-button"
-              onClick={() => runDocumentCommand('PREPARE_CHANGES')}
-            >
-              <Sparkles className="size-4" />
-              Подготовить исправления
-            </Button>
-          )}
-          {allowed.has('APPLY_CHANGES') && !allowed.has('PREPARE_CHANGES') && (
-            <Button
-              size="sm"
-              variant="default"
               disabled={isBusy}
               loading={commandMutation.isPending}
               data-testid="apply-changes-button"
-              onClick={() => runDocumentCommand('APPLY_CHANGES')}
+              onClick={() =>
+                document.change_preview &&
+                allowed.has('CONFIRM_PREPARED_CHANGES')
+                  ? runDocumentCommand('CONFIRM_PREPARED_CHANGES', {
+                      job_id: document.change_preview.job_id,
+                    })
+                  : runDocumentCommand('APPLY_CHANGES')
+              }
             >
               <CheckCircle2 className="size-4" />
               Применить исправления
             </Button>
-          )}
-          {allowed.has('ARCHIVE') && (
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button size="sm" variant="ghost" disabled={isBusy}>
-                  <Archive className="size-4" />В архив
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Архивировать документ?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    Работа с документом будет завершена. История и ревизии
-                    останутся доступны для чтения.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Отмена</AlertDialogCancel>
-                  <AlertDialogAction
-                    className="bg-state-error text-white hover:bg-state-error/90"
-                    onClick={() => runDocumentCommand('ARCHIVE')}
-                  >
-                    Архивировать
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
           )}
           {document.permissions?.delete && (
             <AlertDialog>
@@ -2095,14 +2073,8 @@ export default function BusinessDocumentsPage() {
               preliminary={!document.change_preview}
               preview={inlineChangePreview}
               pending={isBusy}
-              canConfirm={allowed.has('CONFIRM_PREPARED_CHANGES')}
               canDiscard={allowed.has('DISCARD_PREPARED_CHANGES')}
               onFocusSource={focusSource}
-              onConfirm={() =>
-                runDocumentCommand('CONFIRM_PREPARED_CHANGES', {
-                  job_id: inlineChangePreview.job_id,
-                })
-              }
               onDiscard={() =>
                 runDocumentCommand('DISCARD_PREPARED_CHANGES', {
                   job_id: inlineChangePreview.job_id,
@@ -2197,7 +2169,6 @@ export default function BusinessDocumentsPage() {
               documentId={document.document_id}
               storageIdentity={promptStorageIdentity}
               reviewCycle={document.protocol}
-              reviewCycleNumber={document.active_review_cycle}
               proposalDecisionsOpen={document.lifecycle_state === 'REVIEW'}
               revision={document.current_revision}
               selection={selection}

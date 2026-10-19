@@ -16,8 +16,10 @@
 
 import pytest
 from peewee import SqliteDatabase
+from playhouse.migrate import SqliteMigrator
 
 from api.db.db_models import UserExternalCredential
+from api.db.db_models import _migrate_user_external_credential_expiry
 from api.db.services.user_external_credential_service import (
     ExternalCredentialError,
     ExternalCredentialDecryptionError,
@@ -50,6 +52,8 @@ def test_eva_token_is_encrypted_scoped_and_rotated(credential_database):
         "configured": True,
         "scope": "https://eva.example.com/api",
         "credential_version": 1,
+        "expires_at": None,
+        "expiry_checked_at": None,
     }
     assert "personal-token-v1" not in row.encrypted_secret
     assert row.create_time is not None
@@ -114,8 +118,50 @@ def test_eva_statuses_exclude_other_users_and_repeated_delete_is_safe(credential
     UserExternalCredentialService.put_eva_wiki_token("user-2", "https://other-eva.example.com", "synthetic-token-two")
     statuses = UserExternalCredentialService.list_eva_wiki_statuses("user-1")
     assert set(statuses) == {"https://eva.example.com"}
-    assert set(statuses["https://eva.example.com"]) == {"configured", "scope", "credential_version", "update_time"}
+    assert set(statuses["https://eva.example.com"]) == {"configured", "scope", "credential_version", "update_time", "expires_at", "expiry_checked_at"}
     assert UserExternalCredentialService.delete_eva_wiki_token("user-1", "https://eva.example.com") is True
     assert UserExternalCredentialService.delete_eva_wiki_token("user-1", "https://eva.example.com") is False
     assert UserExternalCredentialService.list_eva_wiki_statuses("user-1") == {}
     assert UserExternalCredentialService.get_eva_wiki_token("user-2", "https://other-eva.example.com").secret == "synthetic-token-two"
+
+
+def test_expiration_is_persisted_and_rotation_clears_old_metadata(credential_database):
+    service = UserExternalCredentialService
+    service.put_eva_wiki_token("user-1", "https://eva.example.com", "first", expires_at=1_800_000_000_000, expiry_checked_at=123)
+    value = service.get_eva_wiki_token("user-1", "https://eva.example.com")
+    assert value.expires_at == 1_800_000_000_000
+    assert value.expiry_checked_at == 123
+    status = service.list_eva_wiki_statuses("user-1")[value.scope]
+    assert status["expires_at"] == value.expires_at
+    service.put_eva_wiki_token("user-1", value.scope, "second")
+    assert service.get_eva_wiki_token("user-1", value.scope).expiry_checked_at is None
+    assert not service.update_eva_wiki_expiry("user-1", value.scope, value.credential_id, value.credential_version, expires_at=value.expires_at, expiry_checked_at=124)
+    assert service.get_eva_wiki_token("user-1", value.scope).expires_at is None
+
+
+def test_expiry_update_is_scoped_and_cannot_resurrect_deleted_token(credential_database):
+    service = UserExternalCredentialService
+    service.put_eva_wiki_token("user-1", "https://eva.example.com", "first")
+    value = service.get_eva_wiki_token("user-1", "https://eva.example.com")
+    args = (value.scope, value.credential_id, value.credential_version)
+    assert not service.update_eva_wiki_expiry("user-2", *args, expires_at=456, expiry_checked_at=123)
+    assert service.update_eva_wiki_expiry("user-1", *args, expires_at=None, expiry_checked_at=123)
+    assert service.get_eva_wiki_token("user-1", value.scope).expiry_checked_at == 123
+    service.delete_eva_wiki_token("user-1", value.scope)
+    service.put_eva_wiki_token("user-1", value.scope, "replacement")
+    assert not service.update_eva_wiki_expiry("user-1", *args, expires_at=456, expiry_checked_at=123)
+    assert service.get_eva_wiki_token("user-1", value.scope).expiry_checked_at is None
+
+
+def test_expiry_migration_preserves_existing_secret_and_is_repeatable(credential_database):
+    service = UserExternalCredentialService
+    service.put_eva_wiki_token("user-1", "https://eva.example.com", "existing-token")
+    encrypted = UserExternalCredential.get().encrypted_secret
+    for column in ("expires_at", "expiry_checked_at"):
+        credential_database.execute_sql(f'ALTER TABLE user_external_credential DROP COLUMN "{column}"')
+    for _ in range(2):
+        _migrate_user_external_credential_expiry(SqliteMigrator(credential_database))
+        value = service.get_eva_wiki_token("user-1", "https://eva.example.com")
+        assert value.secret == "existing-token"
+        assert value.expires_at is None and value.expiry_checked_at is None
+        assert UserExternalCredential.get().encrypted_secret == encrypted

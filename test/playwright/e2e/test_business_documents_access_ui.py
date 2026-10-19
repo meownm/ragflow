@@ -621,14 +621,20 @@ class AdminDocumentRoleStub:
 def _open_documents(page, base_url, stub):
     _install_session(page, is_superuser=stub.role == "ADMIN")
     page.route("**/api/v1/**", stub)
-    page.goto(f"{base_url.rstrip('/')}/business-documents")
+    with page.expect_response(lambda response: response.request.method == "GET" and urlparse(response.url).path == "/api/v1/business-documents/capabilities") as capabilities:
+        page.goto(f"{base_url.rstrip('/')}/business-documents")
+    capabilities.value.finished()
+    assert capabilities.value.status == 200
     expect(page.get_by_test_id("business-documents-create")).to_be_visible(timeout=RESULT_TIMEOUT_MS)
 
 
 def _open_document(page, base_url, stub):
     _install_session(page, is_superuser=stub.role == "ADMIN")
     page.route("**/api/v1/**", stub)
-    page.goto(f"{base_url.rstrip('/')}/business-documents/{DOCUMENT_ID}")
+    with page.expect_response(lambda response: response.request.method == "GET" and urlparse(response.url).path == "/api/v1/business-documents/capabilities") as capabilities:
+        page.goto(f"{base_url.rstrip('/')}/business-documents/{DOCUMENT_ID}")
+    capabilities.value.finished()
+    assert capabilities.value.status == 200
     expect(page.get_by_test_id("business-document-workbench")).to_be_visible(timeout=RESULT_TIMEOUT_MS)
 
 
@@ -659,8 +665,7 @@ def test_document_role_matrix_controls_browser_actions(
 
     expect(page.get_by_test_id("business-document-create-panel")).to_have_count(1 if can_create else 0)
 
-    page.goto(f"{base_url.rstrip('/')}/business-documents/{DOCUMENT_ID}")
-    expect(page.get_by_test_id("business-document-workbench")).to_be_visible(timeout=RESULT_TIMEOUT_MS)
+    _open_document(page, base_url, stub)
     option = page.get_by_role("radio", name="По времени")
     expect(option).to_be_enabled(enabled=can_edit_foreign)
     if can_edit_foreign:

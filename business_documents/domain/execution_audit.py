@@ -60,7 +60,7 @@ def validate_generation_parameters(parameters: object, provider: str, model: str
     if not isinstance(parameters, dict) or set(parameters) - {"extra_body", "reasoning_effort"} not in ({"temperature", "top_p", "max_completion_tokens"}, {"temperature", "top_p", "max_tokens"}):
         raise RuleViolation("INVALID_EXECUTION_AUDIT", "Worker AI parameters are invalid")
     limit = parameters["max_tokens" if "max_tokens" in parameters else "max_completion_tokens"]
-    if parameters["temperature"] != 0 or parameters["top_p"] != 0.1 or type(limit) is not int or not 1 <= limit <= 65536:
+    if parameters["temperature"] != 0 or parameters["top_p"] != 0.1 or type(limit) is not int or limit <= 0:
         raise RuleViolation("INVALID_EXECUTION_AUDIT", "Worker AI parameters are invalid")
     if "extra_body" in parameters:
         body = parameters["extra_body"]

@@ -154,7 +154,7 @@ class DocumentCommands:
         return response
 
     def _command_result(self, response: dict[str, Any], envelope: _CommandEnvelope, access: DocumentAccess, document_id: str) -> dict[str, Any]:
-        if envelope.type in {CommandType.CONFIRM_PREPARED_CHANGES, CommandType.ACCEPT_PROPOSAL, CommandType.RESTORE_REVISION}:
+        if envelope.type in {CommandType.CONFIRM_PREPARED_CHANGES, CommandType.DECIDE_PROPOSAL, CommandType.ACCEPT_PROPOSAL, CommandType.RESTORE_REVISION}:
             # Keep the durable receipt small; return the current view with this caller's permissions, including on replay.
             return {**response, "document": self._queries.get_document(document_id, access.actor_id, access.is_admin, access.assigned_role)}
         return response
@@ -269,8 +269,6 @@ class DocumentCommands:
         snapshot["task_type"] = job_type
         if envelope.type == CommandType.PREPARE_CHANGES:
             snapshot["preview_only"] = True
-        if envelope.type == CommandType.ACCEPT_PROPOSAL:
-            snapshot["apply_proposal_id"] = envelope.payload["proposal_id"]
         snapshot["requested_by_actor_id"] = actor_id
         prompt = self._content.prompt_descriptor(job_type)
         if prompt is not None:
@@ -371,32 +369,22 @@ class DocumentCommands:
         return self._command_response(document, new_version, event_id)
 
     def _decide_proposal(self, document: Record, actor_id: str, envelope: _CommandEnvelope) -> dict[str, Any]:
-        apply = envelope.type == CommandType.ACCEPT_PROPOSAL
         proposal_id = envelope.payload.get("proposal_id")
         proposal = self._writer.proposal(document["id"], proposal_id, document["active_review_cycle"])
         if proposal is None:
             raise ValidationError("PROPOSAL_NOT_FOUND", "Proposal does not belong to the active review cycle")
-        decided = self._writer.has_decision(document["id"], proposal["id"])
-        if decided and not apply:
+        if self._writer.has_decision(document["id"], proposal["id"]):
             raise ConflictError("PROPOSAL_ALREADY_DECIDED", "The current proposal decision cannot be overwritten")
-        decision = "ACCEPTED" if apply else envelope.payload.get("decision")
+        decision = "ACCEPTED" if envelope.type == CommandType.ACCEPT_PROPOSAL else envelope.payload.get("decision")
         if decision not in {"ACCEPTED", "REJECTED"}:
             raise ValidationError("INVALID_PROPOSAL_DECISION", "decision must be ACCEPTED or REJECTED")
-        if not decided:
-            new_version = document["state_version"] + 1
-            decision_id = self._new_id()
-            self._writer.insert_decision(id=decision_id, document_id=document["id"], proposal_id=proposal["id"], actor_id=actor_id, decision=decision)
-            document = self._writer.update_document(document, {"state_version": new_version})
-            event_id = self._writer.append_event(
-                document["id"], new_version, "ProposalDecided", "USER", actor_id, {"proposal_id": proposal["id"], "decision_id": decision_id, "decision": decision}, envelope.command_id
-            )
-        if apply:
-            review = self._writer.review(document["id"], document["active_review_cycle"])
-            try:
-                selected = review.for_proposal_application(proposal["id"])
-            except RuleViolation as error:
-                raise ConflictError(error.code, error.message, error.details) from error
-            return self._request_job(document, actor_id, envelope, "PLAN_CHANGES", OperationState.APPLYING_CHANGES, review=selected)
+        new_version = document["state_version"] + 1
+        decision_id = self._new_id()
+        self._writer.insert_decision(id=decision_id, document_id=document["id"], proposal_id=proposal["id"], actor_id=actor_id, decision=decision)
+        document = self._writer.update_document(document, {"state_version": new_version})
+        event_id = self._writer.append_event(
+            document["id"], new_version, "ProposalDecided", "USER", actor_id, {"proposal_id": proposal["id"], "decision_id": decision_id, "decision": decision}, envelope.command_id
+        )
         return self._command_response(document, new_version, event_id)
 
     def _cancel_proposal_acceptance(self, document: Record, actor_id: str, envelope: _CommandEnvelope) -> dict[str, Any]:

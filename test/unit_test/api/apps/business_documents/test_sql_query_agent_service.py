@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -68,8 +69,17 @@ class RequirementsRunner:
 
 
 @pytest.mark.asyncio
-async def test_tenant_requirements_analyst_uses_one_bounded_contract_call():
+@pytest.mark.parametrize("deadline", [1, 1800])
+async def test_tenant_requirements_analyst_uses_one_bounded_contract_call(monkeypatch, deadline):
     calls = []
+    deadlines = []
+    wait_for = asyncio.wait_for
+
+    async def wait(coroutine, **options):
+        deadlines.append(options["timeout"])
+        return await wait_for(coroutine, **options)
+
+    monkeypatch.setattr(asyncio, "wait_for", wait)
 
     class FakeLLM:
         async def async_generate(self, tenant_id, system_prompt, payload):
@@ -87,10 +97,12 @@ async def test_tenant_requirements_analyst_uses_one_bounded_contract_call():
                 "questions": [],
             }
 
-    result = await TenantRequirementsAnalyst(FakeLLM(), timeout_seconds=1).propose(AnalyzeRequirementsCommand(tenant_id=TENANT, locale="ru", source_request="Покажи заказы"))
+    analyst = TenantRequirementsAnalyst(FakeLLM(), **({"timeout_seconds": 1} if deadline == 1 else {}))
+    result = await analyst.propose(AnalyzeRequirementsCommand(tenant_id=TENANT, locale="ru", source_request="Покажи заказы"))
 
     assert result["schema_version"] == "1"
     assert len(calls) == 1
+    assert deadlines == [deadline]
     tenant_id, system_prompt, payload = calls[0]
     assert tenant_id == TENANT
     assert "{{context_json}}" not in system_prompt

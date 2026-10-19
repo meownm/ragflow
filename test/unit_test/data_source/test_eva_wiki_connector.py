@@ -1,4 +1,5 @@
 import json
+import hashlib
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
@@ -130,6 +131,41 @@ def test_get_project_returns_display_metadata():
         "name": "Operations",
         "code": "ops",
     }
+
+
+def test_token_expiration_reads_only_current_token_and_normalizes_timezone():
+    connector = _connector(project_id=None)
+    connector._session.post = MagicMock(return_value=_response({"result": [{"expiration_date": "2026-11-01T15:00:00+03:00", "is_revoked": False}]}))
+    assert connector.get_token_expiration() == datetime(2026, 11, 1, 12, tzinfo=timezone.utc)
+    payload = connector._session.post.call_args.kwargs["json"]
+    assert payload["method"] == "CmfAccessToken.list"
+    assert ["hash", "==", hashlib.sha1(b"secret-token").hexdigest()] in json.loads(payload["kwargs"]["filter"])
+    assert payload["kwargs"]["fields"] == ["expiration_date", "is_revoked"]
+    assert "secret-token" not in json.dumps(payload)
+    assert connector._session.post.call_args.kwargs["allow_redirects"] is False
+
+
+def test_token_expiration_explicit_null_means_unlimited():
+    connector = _connector()
+    connector._session.post = MagicMock(return_value=_response({"result": [{"expiration_date": None}]}))
+    assert connector.get_token_expiration() is None
+
+
+@pytest.mark.parametrize("rows", [[], [{}, {}], [{}], [{"expiration_date": ""}], [{"expiration_date": "invalid"}], [{"expiration_date": "2026-11-01T12:00:00"}]])
+def test_token_expiration_missing_or_invalid_is_not_unlimited(rows):
+    connector = _connector()
+    connector._session.post = MagicMock(return_value=_response({"result": rows}))
+    with pytest.raises(ConnectorValidationError):
+        connector.get_token_expiration()
+
+
+@pytest.mark.parametrize("status", [401, 403, 500])
+def test_token_expiration_rejection_and_outage_do_not_expose_token(status):
+    connector = _connector()
+    connector._session.post = MagicMock(return_value=_response(status_code=status))
+    with pytest.raises((InsufficientPermissionsError, ConnectorValidationError)) as error:
+        connector.get_token_expiration()
+    assert "secret-token" not in str(error.value)
 
 
 def test_list_projects_does_not_require_project_id_and_returns_stable_options():

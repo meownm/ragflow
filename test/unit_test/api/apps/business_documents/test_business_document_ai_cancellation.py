@@ -75,8 +75,41 @@ async def test_stream_success_delivers_each_chunk_and_single_consumable_audit(mo
     audit = adapter.consume_execution_audit()
     assert audit["provider"] == "Ollama" and audit["model"] == "local-chat"
     assert audit["token_usage"] == {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5}
-    assert audit["parameters"]["max_completion_tokens"] == 8192
+    assert audit["parameters"]["max_completion_tokens"] > 65536
     assert adapter.consume_execution_audit() is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("task", ["GENERATE_DRAFT", "GENERATE_EVA_CHANGE", "ASSESS_REVIEW", "VERIFY_REQUIREMENT_COVERAGE"])
+async def test_large_model_response_is_returned_complete_with_auditable_budget(model_boundary, monkeypatch, stream, task):
+    from common.token_utils import encoder
+    from business_documents.domain.execution_audit import validate_ai_audit
+
+    _, _, bundle, calls = model_boundary
+    response = json.dumps({"text": "complete requirement " * 12000})
+    response_tokens = len(encoder.encode(response))
+    assert response_tokens > 8192
+
+    async def chat(_self, _system, _messages, parameters):
+        calls["parameters"].append(parameters)
+        return response
+
+    async def chunks(_self, _system, _messages, parameters):
+        calls["parameters"].append(parameters)
+        for offset in range(0, len(response), 8192):
+            yield response[offset : offset + 8192]
+
+    monkeypatch.setattr(bundle, "async_chat", chat)
+    monkeypatch.setattr(bundle, "async_chat_streamly_delta", chunks)
+    received = []
+    adapter = RAGFlowLLMAdapter()
+    assert await adapter.async_generate("tenant", "system", {"job_input": {"task_type": task}}, received.append if stream else None) == response
+    if stream:
+        assert "".join(received) == response
+    audit = validate_ai_audit(adapter.consume_execution_audit())
+    assert audit["parameters"]["max_completion_tokens"] > max(65536, response_tokens)
+    assert calls["closed"] == calls["drained"] == 1
 
 
 @pytest.mark.asyncio
@@ -168,8 +201,8 @@ async def test_override_requires_the_selected_models_window(model_boundary, monk
 @pytest.mark.asyncio
 @pytest.mark.parametrize("window", [65536, 131072, 262144])
 @pytest.mark.parametrize("stream", [False, True])
-@pytest.mark.parametrize("task,desired", [("PLAN_CHANGES", 65536), ("VERIFY_REQUIREMENT_COVERAGE", 2048)])
-async def test_context_budget_and_native_window_agree(model_boundary, window, stream, task, desired):
+@pytest.mark.parametrize("task", ["PLAN_CHANGES", "VERIFY_REQUIREMENT_COVERAGE", "GENERATE_DRAFT", "GENERATE_EVA_CHANGE", "ASSESS_REVIEW"])
+async def test_context_budget_and_native_window_agree(model_boundary, window, stream, task):
     from common.token_utils import encoder
     from business_documents.domain.execution_audit import validate_ai_audit
 
@@ -181,7 +214,7 @@ async def test_context_budget_and_native_window_agree(model_boundary, window, st
     available = window - len(encoder.encode("system")) - len(encoder.encode(snapshot)) - 256
     adapter = RAGFlowLLMAdapter()
     await adapter.async_generate("tenant", "system", payload, (lambda _: None) if stream else None)
-    assert calls["parameters"] == [{"temperature": 0, "top_p": 0.1, "max_completion_tokens": min(desired, available), "extra_body": {"num_ctx": window}}]
+    assert calls["parameters"] == [{"temperature": 0, "top_p": 0.1, "max_completion_tokens": available, "extra_body": {"num_ctx": window}}]
     assert len(calls["bundle"]) == 1
     assert json.dumps(payload, ensure_ascii=False) == snapshot
     assert validate_ai_audit(adapter.consume_execution_audit())["parameters"] == calls["parameters"][0]
@@ -217,7 +250,7 @@ async def test_complete_change_prompt_fits_budget_without_truncating_history(mod
     else:
         assert await adapter.async_generate("tenant", prompt.system, prompt.input_payload) == "result"
         audit = adapter.consume_execution_audit()
-        assert audit["parameters"]["max_completion_tokens"] == min(65536, window - used)
+        assert audit["parameters"]["max_completion_tokens"] == window - used
         assert audit["parameters"]["extra_body"] == {"num_ctx": window}
         assert len(calls["bundle"]) == calls["closed"] == calls["drained"] == 1
     assert json.dumps(job.payload, ensure_ascii=False) == snapshot
@@ -226,7 +259,16 @@ async def test_complete_change_prompt_fits_budget_without_truncating_history(mod
 @pytest.mark.asyncio
 @pytest.mark.parametrize("window", [65536, 131072, 262144])
 @pytest.mark.parametrize(
-    "task,remaining,code", [("PLAN_CHANGES", 0, "MODEL_CONTEXT_TOO_LARGE"), ("VERIFY_REQUIREMENT_COVERAGE", 2047, "REQUIREMENT_CONTEXT_TOO_LARGE"), ("VERIFY_REQUIREMENT_COVERAGE", 2048, None)]
+    "task,remaining,code",
+    [
+        ("PLAN_CHANGES", 0, "MODEL_CONTEXT_TOO_LARGE"),
+        ("VERIFY_REQUIREMENT_COVERAGE", 0, "REQUIREMENT_CONTEXT_TOO_LARGE"),
+        ("VERIFY_REQUIREMENT_COVERAGE", 1, "REQUIREMENT_CONTEXT_TOO_LARGE"),
+        ("VERIFY_REQUIREMENT_COVERAGE", 7, "REQUIREMENT_CONTEXT_TOO_LARGE"),
+        ("VERIFY_REQUIREMENT_COVERAGE", 8, None),
+        ("VERIFY_REQUIREMENT_COVERAGE", 2047, None),
+        ("VERIFY_REQUIREMENT_COVERAGE", 2048, None),
+    ],
 )
 async def test_budget_boundaries_stop_before_provider(model_boundary, monkeypatch, window, task, remaining, code):
     from common import token_utils
@@ -249,7 +291,7 @@ async def test_budget_boundaries_stop_before_provider(model_boundary, monkeypatc
         assert calls["bundle"] == [] and adapter.consume_execution_audit() is None
     else:
         await adapter.async_generate("tenant", "system", {"job_input": {"task_type": task}})
-        assert calls["parameters"][0]["max_completion_tokens"] == 2048
+        assert calls["parameters"][0]["max_completion_tokens"] == remaining
     assert len(encoded) == 2  # Each message is counted once, no repeated budget pass.
 
 
@@ -283,7 +325,7 @@ async def test_compatible_ollama_uses_loaded_window_and_qwen_content_budget(mode
         payload = {"job_input": {"task_type": task, "text": " full requirement" * 12000}}
         available = window - len(encoder.encode("system")) - len(encoder.encode(json.dumps(payload, ensure_ascii=False))) - 256
         await adapter.async_generate("tenant", "system", payload, (lambda _: None) if stream else None)
-        expected = {"temperature": 0, "top_p": 0.1, "max_tokens": min(65536 if task == "PLAN_CHANGES" else 2048, available), "reasoning_effort": "none"}
+        expected = {"temperature": 0, "top_p": 0.1, "max_tokens": available, "reasoning_effort": "none"}
         assert calls["parameters"][-1] == expected
         assert validate_ai_audit(adapter.consume_execution_audit())["parameters"] == expected
     assert len(lookups) == len(calls["bundle"]) == 2
@@ -311,16 +353,19 @@ async def test_compatible_ollama_cannot_invent_a_loaded_model_window(model_bound
 @pytest.mark.parametrize("status,metadata", [(401, None), (404, None), (405, None), (503, None), (200, {"models": []}), (200, {"models": [{"name": "another-model", "context_length": 4096}]})])
 async def test_non_ollama_or_cold_compatible_keeps_its_configured_window(model_boundary, monkeypatch, status, metadata):
     import httpx
+    from common.token_utils import encoder
 
     config, _, _, calls = model_boundary
-    config.update(llm_factory="OpenAI-API-Compatible", llm_name="other-model", api_base="http://provider/v1")
+    config.update(llm_factory="OpenAI-API-Compatible", llm_name="other-model", api_base="http://provider/v1", max_output_tokens=131072)
 
     async def ps(_client, url, **kwargs):
         return httpx.Response(status, json=metadata, request=httpx.Request("GET", url))
 
     monkeypatch.setattr(httpx.AsyncClient, "get", ps)
-    await RAGFlowLLMAdapter().async_generate("tenant", "system", {"job_input": {"task_type": "PLAN_CHANGES"}})
-    assert calls["parameters"] == [{"temperature": 0, "top_p": 0.1, "max_tokens": 65536}]
+    payload = {"job_input": {"task_type": "PLAN_CHANGES"}}
+    await RAGFlowLLMAdapter().async_generate("tenant", "system", payload)
+    available = config["max_tokens"] - len(encoder.encode("system")) - len(encoder.encode(json.dumps(payload))) - 256
+    assert calls["parameters"] == [{"temperature": 0, "top_p": 0.1, "max_tokens": available}]
 
 
 @pytest.mark.parametrize("response, code", [(None, "EMPTY_AI_RESPONSE")])
@@ -359,3 +404,36 @@ def test_export_job_is_rejected_by_model_worker_before_any_provider_call():
         ai_module.BusinessDocumentAI(adapter).process(job)
     assert caught.value.code == "INVALID_AI_JOB"
     adapter.generate.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("task", ["GENERATE_DRAFT", "ASSESS_INTAKE", "PLAN_SQL_QUERY", "ANALYZE_SQL_REQUIREMENTS", "VERIFY_REQUIREMENT_COVERAGE"])
+@pytest.mark.parametrize("stream", [False, True])
+async def test_openai_output_ceiling_is_independent_of_context(model_boundary, task, stream):
+    config, _, _, calls = model_boundary
+    config.update(llm_factory="OpenAI", llm_name="gpt-4.1", max_tokens=1047576)
+    await RAGFlowLLMAdapter().async_generate("tenant", "system", {"job_input": {"task_type": task}}, (lambda _: None) if stream else None)
+    assert calls["parameters"][0]["max_completion_tokens"] == 32768
+    assert config["max_tokens"] == 1047576
+
+
+@pytest.mark.asyncio
+async def test_unknown_provider_output_limit_stops_before_bundle(model_boundary):
+    config, _, _, calls = model_boundary
+    config.update(llm_factory="OpenAI", llm_name="unregistered-future-model", max_tokens=1000000)
+    with pytest.raises(BusinessDocumentError) as error:
+        await RAGFlowLLMAdapter().async_generate("tenant", "system", {})
+    assert error.value.code == "MODEL_OUTPUT_LIMIT_UNAVAILABLE"
+    assert calls["bundle"] == []
+
+
+@pytest.mark.asyncio
+async def test_coverage_output_ceiling_must_fit_minimal_report(model_boundary):
+    config, _, _, calls = model_boundary
+    config["max_output_tokens"] = 7
+    with pytest.raises(BusinessDocumentError) as error:
+        await RAGFlowLLMAdapter().async_generate("tenant", "system", {"job_input": {"task_type": "VERIFY_REQUIREMENT_COVERAGE"}})
+    assert error.value.code == "REQUIREMENT_CONTEXT_TOO_LARGE"
+    assert error.value.details["required_response_tokens"] == 8
+    assert error.value.details["output_limit"] == 7
+    assert calls["bundle"] == []

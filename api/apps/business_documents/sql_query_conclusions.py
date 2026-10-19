@@ -8,7 +8,7 @@ from typing import Any
 
 from json_repair import repair_json
 
-from api.apps.business_documents.ai import RAGFlowLLMAdapter
+from api.apps.business_documents.ai import MODEL_TIMEOUT_SECONDS, RAGFlowLLMAdapter
 from api.apps.business_documents.assets import prompt_descriptor, prompt_text
 from api.apps.business_documents.async_runtime import run_in_worker_loop
 from business_documents.application.errors import BusinessDocumentError
@@ -44,7 +44,7 @@ def propose_conclusion(
                     prompt_text("sql_conclusion"),
                     {"prompt": prompt_descriptor("PROPOSE_SQL_CONCLUSION"), "job_input": {"task_type": "PROPOSE_SQL_CONCLUSION"}, "context": context},
                 ),
-                timeout=60,
+                timeout=MODEL_TIMEOUT_SECONDS,
             )
         )
         proposal = raw if isinstance(raw, dict) else repair_json(raw, return_objects=True)

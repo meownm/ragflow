@@ -223,7 +223,7 @@ test('resolves all SQL schema terms through one business-document request', asyn
   expect(mockedPost).toHaveBeenCalledWith(
     api.businessDocumentSqlSchemaResolve,
     input,
-    { skipErrorNotification: true },
+    { skipErrorNotification: true, timeout: 1_980_000 },
   );
 });
 
@@ -305,7 +305,7 @@ test('requests a catalog-bound SQL plan through the tenant LLM endpoint', async 
   expect(mockedPost).toHaveBeenCalledWith(
     api.businessDocumentSqlQueryPlan,
     input,
-    { skipErrorNotification: true },
+    { skipErrorNotification: true, timeout: 1_980_000 },
   );
 });
 

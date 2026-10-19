@@ -1,3 +1,4 @@
+import { EvaTokenExpiryNotice } from '@/components/eva-token-expiry';
 import PasswordInput from '@/components/originui/password-input';
 import { Button, buttonVariants } from '@/components/ui/button';
 import message from '@/components/ui/message';
@@ -36,6 +37,8 @@ export function EvaCredentialProfile() {
 
   const credentialsQuery = useQuery<EvaUserCredentialStatus[]>({
     queryKey,
+    refetchInterval: 5 * 60_000,
+    refetchOnWindowFocus: 'always',
     queryFn: async () => {
       const { data } = await listEvaUserCredentials();
       if (data.code !== 0)
@@ -123,6 +126,9 @@ export function EvaCredentialProfile() {
                     ? t('evaTokenConfigured')
                     : t('evaTokenNotConfigured')}
                 </div>
+                {item.configured && (
+                  <EvaTokenExpiryNotice expiry={item} showStatus />
+                )}
               </div>
               <Button
                 type="button"

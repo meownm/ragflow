@@ -2,7 +2,7 @@
 
 import pytest
 
-from test.unit_test.api.apps.business_documents.test_accept_proposal import _document, _plan
+from test.unit_test.api.apps.business_documents.test_accept_proposal import _document, _plan, _request_changes
 from test.unit_test.api.apps.business_documents.test_business_document_service import AUTHOR, TENANT, _command, _complete, _complete_review_assessment, database as service_database
 from api.apps.business_documents.runtime import document_commands, document_queries, job_completion
 from api.apps.business_documents.worker import BusinessDocumentJobQueue
@@ -42,10 +42,11 @@ def test_cancel_and_reaccept_preserves_history_and_excludes_cancelled_input(data
     review = document_commands._writer.review(document["document_id"], document["active_review_cycle"])
     assert old_event not in review.active_inputs | review.accepted_inputs
     assert review.has_unassessed_feedback
-    accepted = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(after, "ACCEPT_PROPOSAL", {"proposal_id": proposal_id}))
-    job = BusinessDocumentJob.get_by_id(accepted["job_id"])
+    document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(after, "ACCEPT_PROPOSAL", {"proposal_id": proposal_id}))
+    after, requested = _request_changes(after, preview=False)
+    job = BusinessDocumentJob.get_by_id(requested["job_id"])
     assert old_event not in job.payload["active_change_input_event_ids"]
-    result = _complete(job.id, _plan(after, accepted))
+    result = _complete(job.id, _plan(after, requested))
     assert result["protocol"]["proposals"][0]["applied"]
 
 
@@ -97,7 +98,7 @@ def test_cancel_rejects_active_job_even_if_operation_state_drifted(database):
     from api.db.db_models import BusinessDocument
 
     document, proposal_id, _ = _accepted()
-    document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "ACCEPT_PROPOSAL", {"proposal_id": proposal_id}))
+    _request_changes(document)
     BusinessDocument.update(operation_state="FAILED").where(BusinessDocument.id == document["document_id"]).execute()
     document = document_queries.get_document(document["document_id"], AUTHOR)
     with pytest.raises(BusinessDocumentError) as busy:
@@ -120,7 +121,7 @@ def test_cancel_rejects_active_job_even_if_operation_state_drifted(database):
 def test_cancel_guards_preserve_current_decision_and_text(database, damage, code):
     document, proposal_id, _ = _accepted()
     if damage in {"busy", "applied"}:
-        requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "ACCEPT_PROPOSAL", {"proposal_id": proposal_id}))
+        document, requested = _request_changes(document, preview=False)
         if damage == "applied":
             _complete(requested["job_id"], _plan(document, requested))
         document = document_queries.get_document(document["document_id"], AUTHOR)
@@ -137,8 +138,8 @@ def test_cancel_guards_preserve_current_decision_and_text(database, damage, code
 
 def test_failed_job_reason_survives_unrelated_job_and_clears_on_reacceptance(database):
     document, proposal_id, _ = _accepted()
-    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "ACCEPT_PROPOSAL", {"proposal_id": proposal_id}))
-    queued = requested["document"]["protocol"]["proposals"][0]
+    document, requested = _request_changes(document, preview=False)
+    queued = document_queries.get_document(document["document_id"], AUTHOR)["protocol"]["proposals"][0]
     assert queued["application"]["status"] == "PENDING"
     job = BusinessDocumentJobQueue.claim("worker")
     assert document_queries.get_document(document["document_id"], AUTHOR)["protocol"]["proposals"][0]["application"]["status"] == "RUNNING"
@@ -147,6 +148,13 @@ def test_failed_job_reason_survives_unrelated_job_and_clears_on_reacceptance(dat
     proposal = failed["protocol"]["proposals"][0]
     assert proposal["application"]["error"]["message"] == "Причина ошибки"
     assert proposal["application"]["status"] == "DEAD"
+    document_commands.execute(
+        TENANT,
+        AUTHOR,
+        document["document_id"],
+        _command(failed, "ADD_COMMENT", {"revision_id": failed["current_revision"]["revision_id"], "section_id": None, "anchor": None, "text": "Другое замечание для анализа"}),
+    )
+    failed = document_queries.get_document(document["document_id"], AUTHOR)
     unrelated = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(failed, "REQUEST_REVIEW_ASSESSMENT", {}))
     view = document_queries.get_document(document["document_id"], AUTHOR)
     assert view["latest_job"]["job_id"] == unrelated["job_id"]
@@ -157,4 +165,4 @@ def test_failed_job_reason_survives_unrelated_job_and_clears_on_reacceptance(dat
     document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(view, "CANCEL_PROPOSAL_ACCEPTANCE", {"proposal_id": proposal_id}))
     view = document_queries.get_document(document["document_id"], AUTHOR)
     result = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(view, "ACCEPT_PROPOSAL", {"proposal_id": proposal_id}))
-    assert result["document"]["protocol"]["proposals"][0]["application"] == {"status": "PENDING", "error": None}
+    assert result["document"]["protocol"]["proposals"][0]["application"] == {"status": "WAITING", "error": None}

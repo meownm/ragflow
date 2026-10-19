@@ -1324,9 +1324,11 @@ def test_eva_access_is_read_only_and_closes_transport(monkeypatch, external_erro
     reader = Mock()
     reader.get_project.side_effect = external_error
     monkeypatch.setattr(EvaDocumentChangeService, "_connector", lambda *_args: (CONNECTOR, reader))
+    monkeypatch.setattr(EvaDocumentChangeService, "personal_token_expiry", lambda *_args: {"expires_at": 1_800_000_000_000, "expiry_checked_at": 123})
     result = EvaDocumentChangeService.check_access(AUTHOR)
     assert result["state"] == state
     assert result["connector_id"] == CONNECTOR.id
+    assert result["expires_at"] == 1_800_000_000_000
     reader.get_project.assert_called_once_with()
     reader.close.assert_called_once_with()
     reader.update_document_draft.assert_not_called()
@@ -1359,3 +1361,64 @@ def test_new_token_validation_never_mutates_eva_and_releases_client(monkeypatch,
     reader.close.assert_called_once()
     reader.update_document_draft.assert_not_called()
     reader.publish_document.assert_not_called()
+
+
+@pytest.mark.parametrize("expiration", [None, "dated"])
+def test_new_token_validation_returns_expiry_without_exposing_secret(monkeypatch, expiration):
+    from datetime import datetime, timezone
+    from unittest.mock import Mock
+
+    date = datetime(2026, 11, 1, tzinfo=timezone.utc) if expiration else None
+    reader = Mock()
+    reader.get_token_expiration.return_value = date
+    monkeypatch.setattr(EvaDocumentChangeService, "_read_client", lambda *_args: reader)
+    monkeypatch.setattr(EVA_CHANGES_MODULE, "current_timestamp", lambda: 123)
+    result = EvaDocumentChangeService.validate_personal_token(CONNECTOR, "candidate-token")
+    assert result == {"expires_at": int(date.timestamp() * 1000) if date else None, "expiry_checked_at": 123}
+    reader.get_project.assert_called_once()
+    reader.close.assert_called_once()
+
+
+@pytest.mark.parametrize("error", [InsufficientPermissionsError("denied"), ConnectorValidationError("offline")])
+def test_missing_metadata_does_not_reject_valid_token(monkeypatch, error):
+    from unittest.mock import Mock
+
+    reader = Mock()
+    reader.get_token_expiration.side_effect = error
+    monkeypatch.setattr(EvaDocumentChangeService, "_read_client", lambda *_args: reader)
+    assert EvaDocumentChangeService.validate_personal_token(CONNECTOR, "candidate-token") == {"expires_at": None, "expiry_checked_at": None}
+    reader.close.assert_called_once()
+
+
+@pytest.mark.parametrize("cached,error,updated", [(False, False, True), (False, True, True), (False, False, False), (True, False, True)])
+def test_expiry_backfill_caches_only_matching_credential(monkeypatch, cached, error, updated):
+    from datetime import datetime, timezone
+    from unittest.mock import Mock
+    from api.db.services.user_external_credential_service import ExternalCredentialValue
+
+    now = 1_800_000_000_000
+    credential = ExternalCredentialValue("candidate-token", 7, "https://eva.example.com", "credential-1", 123, now if cached else now - 86_400_000)
+    reader = Mock()
+    reader.get_token_expiration.return_value = datetime(2027, 2, 1, tzinfo=timezone.utc)
+    if error:
+        reader.get_token_expiration.side_effect = ConnectorValidationError("offline")
+    constructor = Mock(return_value=reader)
+    store = Mock(return_value=updated)
+    monkeypatch.setattr(UserExternalCredentialService, "get_eva_wiki_token", lambda *_args: credential)
+    monkeypatch.setattr(UserExternalCredentialService, "update_eva_wiki_expiry", store)
+    monkeypatch.setattr(EvaDocumentChangeService, "_read_client", constructor)
+    monkeypatch.setattr(EVA_CHANGES_MODULE, "current_timestamp", lambda: now)
+    result = EvaDocumentChangeService.personal_token_expiry(CONNECTOR, AUTHOR)
+    if cached or error:
+        assert result == {"expires_at": 123, "expiry_checked_at": credential.expiry_checked_at}
+        store.assert_not_called()
+    elif updated:
+        assert result == {"expires_at": 1_801_440_000_000, "expiry_checked_at": now}
+        store.assert_called_once_with(AUTHOR, credential.scope, credential.credential_id, 7, **result)
+    else:
+        assert result == {"expires_at": None, "expiry_checked_at": None}
+    if cached:
+        constructor.assert_not_called()
+    else:
+        constructor.assert_called_once_with(CONNECTOR, "candidate-token")
+        reader.close.assert_called_once()

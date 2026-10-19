@@ -134,3 +134,25 @@ test('does not offer an external return URL or open an inaccessible token form',
     screen.queryByRole('link', { name: 'evaTokenReturn' }),
   ).not.toBeInTheDocument();
 });
+
+test('shows expiration warning for a configured token', async () => {
+  jest.mocked(listEvaUserCredentials).mockResolvedValue({
+    data: {
+      code: 0,
+      data: {
+        items: [
+          {
+            ...item,
+            configured: true,
+            expires_at: Date.now() + 86_400_000,
+            expiry_checked_at: Date.now(),
+          },
+        ],
+      },
+    },
+  } as never);
+  mount('/user-setting/profile');
+  expect(
+    await screen.findByTestId('eva-token-expiry-warning'),
+  ).toHaveTextContent('evaTokenExpiresDay');
+});

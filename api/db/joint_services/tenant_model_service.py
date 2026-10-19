@@ -302,6 +302,9 @@ def get_model_config_from_provider_instance(tenant_id, model_type: str | enum.En
             "is_tools": model_extra.get("is_tools", is_tool),
             "max_tokens": max_tokens,
         }
+        output_limit = model_extra.get("max_output_tokens", (llm_info or {}).get("max_output_tokens"))
+        if output_limit is not None:
+            model_config["max_output_tokens"] = output_limit
         if provider_name.lower() == "somark":
             # SoMark/OCR factories read parser config (somark_*, parse_method, ...)
             # from model_config["extra"]; see tenant_llm_service.LLMBundle OCR path.
@@ -335,6 +338,8 @@ def get_model_config_from_provider_instance(tenant_id, model_type: str | enum.En
             "is_tools": llm_info.get("is_tools", is_tool),
             "max_tokens": llm_info.get("max_tokens") or 8192,
         }
+        if "max_output_tokens" in llm_info:
+            model_config["max_output_tokens"] = llm_info["max_output_tokens"]
         if api_key_payload is not None:
             model_config["api_key_payload"] = api_key_payload
         return model_config

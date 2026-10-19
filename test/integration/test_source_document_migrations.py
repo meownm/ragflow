@@ -5,6 +5,7 @@ import os
 from types import SimpleNamespace
 
 from peewee import CharField, IntegerField, PostgresqlDatabase, TextField
+from playhouse.migrate import PostgresqlMigrator
 import pytest
 
 from api.db.db_models import (
@@ -16,6 +17,7 @@ from api.db.db_models import (
     SourceDocumentRevision,
     SourceDocumentEvent,
     User,
+    _migrate_user_external_credential_expiry,
 )
 from api.source_workbench.errors import SourceWorkspaceError
 from api.source_workbench.linked_application import LinkedDocuments
@@ -68,6 +70,25 @@ def real_database():
         yield database
         database.drop_tables(models, safe=True)
         database.close()
+
+
+def test_eva_expiry_upgrade_is_repeatable_and_preserves_credentials(real_database):
+    real_database.execute_sql("CREATE TABLE user_external_credential (id VARCHAR(32) PRIMARY KEY, encrypted_secret TEXT NOT NULL, credential_version INTEGER NOT NULL)")
+    try:
+        real_database.execute_sql("INSERT INTO user_external_credential VALUES (%s, %s, %s)", ("existing", "opaque-encrypted-secret", 7))
+        migrator = PostgresqlMigrator(real_database)
+        _migrate_user_external_credential_expiry(migrator)
+        _migrate_user_external_credential_expiry(migrator)
+        columns = {column.name: column for column in real_database.get_columns("user_external_credential")}
+        assert columns["expires_at"].null and columns["expiry_checked_at"].null
+        assert columns["expires_at"].data_type == columns["expiry_checked_at"].data_type == "bigint"
+        row = real_database.execute_sql("SELECT encrypted_secret, credential_version, expires_at, expiry_checked_at FROM user_external_credential WHERE id = %s", ("existing",)).fetchone()
+        assert row == ("opaque-encrypted-secret", 7, None, None)
+        expiry, checked = 1_900_000_000_000, 1_800_000_000_000
+        real_database.execute_sql("UPDATE user_external_credential SET expires_at = %s, expiry_checked_at = %s WHERE id = %s", (expiry, checked, "existing"))
+        assert real_database.execute_sql("SELECT expires_at, expiry_checked_at FROM user_external_credential WHERE id = %s", ("existing",)).fetchone() == (expiry, checked)
+    finally:
+        real_database.execute_sql("DROP TABLE user_external_credential")
 
 
 def test_real_upgrade_preserves_text_and_recovers_after_backfill_failure(real_database, monkeypatch):

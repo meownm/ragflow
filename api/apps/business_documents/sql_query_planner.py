@@ -9,7 +9,7 @@ from typing import Any
 
 from json_repair import repair_json
 
-from api.apps.business_documents.ai import RAGFlowLLMAdapter
+from api.apps.business_documents.ai import MODEL_TIMEOUT_SECONDS, RAGFlowLLMAdapter
 from api.apps.business_documents.assets import contract_schema, prompt_descriptor, prompt_text, validate_contract
 from api.apps.business_documents.authorization import BusinessDocumentAccess
 from business_documents.application.errors import ValidationError
@@ -25,7 +25,6 @@ from business_documents.sql_query.query_planning import (
 
 
 LOGGER = logging.getLogger(__name__)
-_LLM_TIMEOUT_SECONDS = 90.0
 
 
 def query_planner_provenance() -> dict[str, str] | None:
@@ -39,7 +38,7 @@ def query_planner_provenance() -> dict[str, str] | None:
 class TenantQueryPlanner(QueryPlanner):
     """Make one bounded call to the tenant model over accepted catalog IDs."""
 
-    def __init__(self, llm=None, *, timeout_seconds: float = _LLM_TIMEOUT_SECONDS):
+    def __init__(self, llm=None, *, timeout_seconds: float = MODEL_TIMEOUT_SECONDS):
         self._llm = llm if llm is not None else RAGFlowLLMAdapter()
         self._timeout_seconds = timeout_seconds
 

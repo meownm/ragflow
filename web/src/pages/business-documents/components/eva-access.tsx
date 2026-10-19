@@ -1,3 +1,7 @@
+import {
+  EvaTokenExpiryNotice,
+  useEvaTokenExpiryWarning,
+} from '@/components/eva-token-expiry';
 import { Button, buttonVariants } from '@/components/ui/button';
 import {
   Popover,
@@ -26,6 +30,7 @@ export function useEvaAccess(enabled = true) {
     retry: false,
     staleTime: 60_000,
     refetchOnWindowFocus: 'always',
+    refetchInterval: 5 * 60_000,
   });
 }
 
@@ -99,6 +104,7 @@ export function EvaAccessNotice({
   onRetry?: () => void;
 }) {
   const [dismissed, setDismissed] = useState(false);
+  const expiryWarning = useEvaTokenExpiryWarning(access.data?.expires_at);
   const accessError = isEvaAccessError(error)
     ? (error as BusinessDocumentRequestError)
     : undefined;
@@ -116,17 +122,34 @@ export function EvaAccessNotice({
     : (access.data?.state ?? (access.error ? 'UNAVAILABLE' : 'UNCHECKED'));
   useEffect(() => {
     setDismissed(false);
-  }, [state, access.data?.connector_id, accessError?.receivedAt, returnTo]);
-  if (!compact && state === 'AVAILABLE') return null;
-  const tokenAction = ['MISSING', 'REJECTED'].includes(state);
+  }, [
+    state,
+    expiryWarning,
+    access.data?.expires_at,
+    access.data?.connector_id,
+    accessError?.receivedAt,
+    returnTo,
+  ]);
+  if (!compact && state === 'AVAILABLE' && !expiryWarning) return null;
+  const tokenAction =
+    ['MISSING', 'REJECTED'].includes(state) || Boolean(expiryWarning);
+  const label =
+    state === 'AVAILABLE' && expiryWarning
+      ? expiryWarning === 'expired'
+        ? 'EVA: срок токена истёк'
+        : expiryWarning === 'day'
+          ? 'EVA: токен истекает в течение суток'
+          : 'EVA: токен истекает в течение 7 дней'
+      : labels[state].label;
   const settings = `${Routes.UserSetting}/profile?${new URLSearchParams({
     ...(access.data?.connector_id ? { eva: access.data.connector_id } : {}),
     returnTo,
   })}#eva-token`;
   const content = (
     <div className="space-y-3" role="status">
-      <p className="text-sm font-medium">{labels[state].label}</p>
+      <p className="text-sm font-medium">{label}</p>
       <p className="text-xs text-text-secondary">{labels[state].description}</p>
+      {access.data && <EvaTokenExpiryNotice expiry={access.data} />}
       <div className="flex flex-wrap gap-2">
         {tokenAction && (
           <a
@@ -169,9 +192,9 @@ export function EvaAccessNotice({
         <PopoverTrigger asChild>
           <Button size="sm" variant="ghost" data-testid="eva-access-indicator">
             <span
-              className={`size-1.5 rounded-full ${state === 'AVAILABLE' ? 'bg-state-success' : state === 'REJECTED' ? 'bg-state-error' : 'bg-state-warning'}`}
+              className={`size-1.5 rounded-full ${expiryWarning === 'expired' || expiryWarning === 'day' || state === 'REJECTED' ? 'bg-state-error' : state === 'AVAILABLE' && !expiryWarning ? 'bg-state-success' : 'bg-state-warning'}`}
             />
-            {access.isFetching ? 'EVA: проверяем…' : labels[state].label}
+            {access.isFetching ? 'EVA: проверяем…' : label}
           </Button>
         </PopoverTrigger>
         <PopoverContent align="end" className="w-[min(360px,calc(100vw-24px))]">

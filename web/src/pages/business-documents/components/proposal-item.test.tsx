@@ -11,30 +11,28 @@ const proposal: BusinessDocumentProposal = {
 
 function show(item = proposal, canCancel = true) {
   const onCancelAcceptance = jest.fn();
-  const onAccept = jest.fn();
+  const onDecide = jest.fn();
   render(
     <ProposalItem
       proposal={item}
       proposalDecisionsOpen
       canDecide
-      canAccept={canCancel}
       canCancelAcceptance={canCancel}
       pending={false}
-      onDecide={jest.fn()}
-      onAccept={onAccept}
+      onDecide={onDecide}
       onCancelAcceptance={onCancelAcceptance}
     />,
   );
-  return { onCancelAcceptance, onAccept };
+  return { onCancelAcceptance, onDecide };
 }
 
 test.each([
-  ['WAITING', 'Принятие записано, но применение ещё не запущено.'],
+  ['WAITING', 'Предложение принято. Текст документа не изменён.'],
   ['PENDING', 'Применение ожидает запуска задачи.'],
   ['RUNNING', 'Изменения вносятся.'],
   ['RETRY', 'Запланирован автоматический повтор.'],
-  ['DEAD', 'Применение завершилось ошибкой.'],
-  ['PREPARED', 'Изменения подготовлены и ожидают подтверждения.'],
+  ['DEAD', 'Подготовка изменений завершилась ошибкой.'],
+  ['PREPARED', 'Изменения подготовлены.'],
   ['PREVIEW_STALE', 'Подготовленные изменения больше не актуальны'],
   ['COMPLETED', 'применение этого предложения не подтверждено.'],
 ] as const)('explains unapplied proposal state %s', (status, expected) => {
@@ -44,7 +42,7 @@ test.each([
   );
 });
 
-test('shows the saved failure and permits retry or cancellation', () => {
+test('shows the saved failure and permits cancellation without immediate application', () => {
   const callbacks = show({
     ...proposal,
     application: {
@@ -55,16 +53,16 @@ test('shows the saved failure and permits retry or cancellation', () => {
   expect(screen.getByText('Модель недоступна')).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'Отменить принятие' }));
   expect(callbacks.onCancelAcceptance).toHaveBeenCalledTimes(1);
-  fireEvent.click(screen.getByRole('button', { name: 'Применить' }));
-  expect(callbacks.onAccept).toHaveBeenCalledTimes(1);
+  expect(screen.queryByRole('button', { name: 'Применить' })).toBeNull();
+  expect(callbacks.onDecide).not.toHaveBeenCalled();
 });
 
-test('disables cancellation and retry during a job or without edit permission', () => {
+test('disables cancellation during a job or without edit permission', () => {
   show({ ...proposal, application: { status: 'RUNNING' } }, false);
   expect(
     screen.getByRole('button', { name: 'Отменить принятие' }),
   ).toBeDisabled();
-  expect(screen.getByRole('button', { name: 'Применить' })).toBeDisabled();
+  expect(screen.queryByRole('button', { name: 'Применить' })).toBeNull();
 });
 
 test.each(['PENDING', 'REJECTED', 'APPLIED'] as const)(
@@ -81,3 +79,12 @@ test.each(['PENDING', 'REJECTED', 'APPLIED'] as const)(
     expect(screen.queryByTestId('proposal-application-p1')).toBeNull();
   },
 );
+
+test('accepts a pending proposal as a decision', () => {
+  const callbacks = show({ ...proposal, decision: 'PENDING' });
+  fireEvent.click(screen.getByRole('button', { name: 'Принять' }));
+  expect(callbacks.onDecide).toHaveBeenCalledWith({
+    proposal_id: 'p1',
+    decision: 'ACCEPTED',
+  });
+});

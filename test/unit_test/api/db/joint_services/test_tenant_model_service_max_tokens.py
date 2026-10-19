@@ -155,3 +155,19 @@ def test_personal_chat_default_falls_back_to_catalog_when_model_was_removed(monk
         ("catalog-1", "chat", "removed@default@Legacy"),
         ("catalog-1", "chat", "central@default@OpenAI"),
     ]
+
+
+@pytest.mark.parametrize("saved,extra,expected", [(True, {}, 8192), (True, {"max_output_tokens": 4096}, 4096), (False, {}, 8192)])
+def test_output_limit_is_projected_separately_from_context(monkeypatch, saved, extra, expected):
+    import json
+
+    provider = SimpleNamespace(id="provider-1", provider_name="OpenAI")
+    instance = SimpleNamespace(id="instance-1", api_key="sk-test", extra="{}")
+    model = SimpleNamespace(model_name="gpt-test", model_type="chat", status=ActiveStatusEnum.ACTIVE.value, extra=json.dumps(extra)) if saved else None
+    monkeypatch.setattr(tms.TenantModelProviderService, "get_by_tenant_id_and_provider_name", lambda *_args: provider)
+    monkeypatch.setattr(tms.TenantModelInstanceService, "get_by_provider_id_and_instance_name", lambda *_args: instance)
+    monkeypatch.setattr(tms.TenantModelService, "get_by_provider_id_and_instance_id_and_model_type_and_model_name", lambda *_args: model)
+    monkeypatch.setattr(tms.settings, "FACTORY_LLM_INFOS", [{"name": "OpenAI", "llm": [{"llm_name": "gpt-test", "model_type": "chat", "max_tokens": 128000, "max_output_tokens": 8192}]}])
+    config = tms.get_model_config_from_provider_instance("tenant-1", "chat", "gpt-test@default@OpenAI")
+    assert config["max_tokens"] == 128000
+    assert config["max_output_tokens"] == expected

@@ -111,6 +111,8 @@ export interface EvaUserCredentialStatus {
   configured: boolean;
   credential_version?: number | null;
   update_time?: number | null;
+  expires_at?: number | null;
+  expiry_checked_at?: number | null;
   connector_id: string;
   connectors: Array<{ id: string; name: string }>;
 }

@@ -10,7 +10,7 @@ from typing import Any
 
 from json_repair import repair_json
 
-from api.apps.business_documents.ai import RAGFlowLLMAdapter
+from api.apps.business_documents.ai import MODEL_TIMEOUT_SECONDS, RAGFlowLLMAdapter
 from api.apps.business_documents.assets import contract_schema, prompt_descriptor, prompt_text, validate_contract
 from business_documents.sql_query.requirements_analysis import (
     AnalyzeRequirementsCommand,
@@ -20,7 +20,6 @@ from business_documents.sql_query.requirements_analysis import (
 )
 
 LOGGER = logging.getLogger(__name__)
-_LLM_TIMEOUT_SECONDS = 90.0
 
 
 def requirements_prompt_provenance() -> dict[str, str] | None:
@@ -34,7 +33,7 @@ def requirements_prompt_provenance() -> dict[str, str] | None:
 class TenantRequirementsAnalyst(RequirementsAnalyst):
     """Make one bounded tenant-model call; durable queue owns all retries."""
 
-    def __init__(self, llm=None, *, timeout_seconds: float = _LLM_TIMEOUT_SECONDS):
+    def __init__(self, llm=None, *, timeout_seconds: float = MODEL_TIMEOUT_SECONDS):
         self._llm = llm if llm is not None else RAGFlowLLMAdapter()
         self._timeout_seconds = timeout_seconds
 

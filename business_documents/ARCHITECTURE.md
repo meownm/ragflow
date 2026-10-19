@@ -73,8 +73,12 @@ remain unresolved and are excluded from applicable inputs and pinned change sour
 Applying ready inputs preserves the same review cycle and unanswered questions;
 only a review without open questions or pending proposals can become AGREED.
 
-One-click ACCEPT_PROPOSAL is scoped to one accepted decision and does not require
-an assessment or preview; completion always retains REVIEW. Questions, answers,
+DECIDE_PROPOSAL and the published ACCEPT_PROPOSAL command only record a decision;
+neither queues a job nor changes a revision. The UI uses a separate APPLY_CHANGES command
+after assessment; worker completion saves the verified result without another
+confirmation. Published preview commands retain their external contract. Existing
+persisted jobs with apply_proposal_id retain their scoped completion contract.
+Questions, answers,
 proposals, comments and decision/cancellation events are append-only. The unique
 decision row is a current projection: CANCEL_PROPOSAL_ACCEPTANCE may remove an
 unapplied acceptance only in quiescent REVIEW, invalidating prepared changes and
@@ -97,8 +101,9 @@ separate model audits. Semantic verification complements deterministic source
 authorization; it is not a formal proof of equivalence.
 The full verification input is sent without truncation. The provider adapter
 counts the serialized input once, reserves 256 tokens for message framing and
-bounds the output by the remaining context. PLAN_CHANGES requests at most 65536
-output tokens; semantic verification requires room for its full 2048-token report.
+assigns all remaining context to the response for every task, including full
+document generation, EVA changes, assessment, SQL and semantic verification.
+There is no fixed output-token ceiling in the adapter or execution audit.
 Native Ollama resolves its model window through `/api/show` before each request,
 including quality model overrides, and passes it through `num_ctx` in ordinary
 and streaming requests. A stale catalog limit does not override model metadata;
@@ -168,8 +173,8 @@ and their previous requirements. All unchanged result sections are supplied as
 context, including mixed plans that acknowledge an already-satisfied answer. Each
 result section appears once, either in the diff or in context; none is truncated. The bounded
 PASS/FAIL report contains at most four source/section-scoped issues, not a report
-per sentence. Its 2048-token output limit is shared by the provider call and
-context-budget check. The resolved model context is preserved. Oversized input
+per sentence. The response can use the full remaining model context even though
+the requested verdict is compact. The resolved model context is preserved. Oversized input
 fails explicitly without truncation or batching.
 
 The worker retries known temporary provider/retrieval/storage failures only,
@@ -184,6 +189,10 @@ input and validation diagnostics accompany the response being corrected.
 The domain validators and final authorization checks remain mandatory.
 
 The worker holds a 60-second fenced lease and renews it every 20 seconds, independently of the 900-second AI budget. Each renewal opens and releases its database connection inside the heartbeat thread, including rejected leases and SQL errors. The adapter port carries the remaining timeout through wrappers. A valid Retry-After beyond the remaining budget terminates recovery.
+SQL model operations have a 30-minute deadline, including the provider transport.
+Schema resolution allows 32 minutes for catalog access plus interpretation;
+its catalog lookup deadlines remain separate. Synchronous SQL browser requests
+allow 33 minutes so they do not expire before the server's model operation.
 
 Before semantic review, the validated candidate and call/audit/repair state are
 checkpointed in the existing job.result, without changing immutable job.payload.

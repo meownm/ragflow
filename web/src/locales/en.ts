@@ -1700,6 +1700,16 @@ Example: Virtual Hosted Style`,
         'No EVA connections are available. Configure a connection in Documents administration or Data sources.',
       evaTokenConfigured: 'Personal token configured',
       evaTokenNotConfigured: 'Personal token not configured',
+      evaTokenExpiresAt: 'Valid until {{date}}',
+      evaTokenUnlimited: 'No expiration date',
+      evaTokenExpiryUnknown:
+        'Expiration unknown: EVA did not provide an expiration date.',
+      evaTokenExpiresWeek:
+        'Your EVA token expires within 7 days ({{date}}). Replace it in your profile.',
+      evaTokenExpiresDay:
+        'Your EVA token expires within 24 hours ({{date}}). Replace it in your profile.',
+      evaTokenExpired:
+        'Your EVA token expired ({{date}}). Replace it in your profile.',
       evaTokenHowToGet:
         'How to get it: open your profile settings in EVA, find API tokens, select Create token, set its lifetime, and copy the value immediately. If the section is unavailable, contact your EVA administrator.',
       evaTokenUsageDescription:

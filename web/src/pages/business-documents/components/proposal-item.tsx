@@ -16,11 +16,9 @@ interface ProposalItemProps {
   proposal: BusinessDocumentProposal;
   proposalDecisionsOpen: boolean;
   canDecide: boolean;
-  canAccept: boolean;
   canCancelAcceptance: boolean;
   pending: boolean;
   onDecide: (payload: Record<string, unknown>) => void;
-  onAccept: () => void;
   onCancelAcceptance: () => void;
 }
 
@@ -74,18 +72,18 @@ const closedPendingProposalPresentation = {
 
 const applicationMessages = {
   WAITING:
-    'Принятие записано, но применение ещё не запущено. Нажмите «Применить» или отмените принятие.',
+    'Предложение принято. Текст документа не изменён. Проанализируйте замечания и нажмите «Применить исправления».',
   PENDING: 'Применение ожидает запуска задачи.',
   RUNNING: 'Изменения вносятся. Дождитесь завершения задачи.',
   RETRY:
     'Попытка применения завершилась ошибкой. Запланирован автоматический повтор.',
-  DEAD: 'Применение завершилось ошибкой. Можно повторить применение или отменить принятие.',
+  DEAD: 'Подготовка изменений завершилась ошибкой. Повторите подготовку изменений или отмените принятие.',
   PREPARED:
-    'Изменения подготовлены и ожидают подтверждения. После отмены принятия потребуется подготовить их заново.',
+    'Изменения подготовлены. Для сохранения нажмите «Применить исправления». После отмены принятия потребуется подготовить их заново.',
   PREVIEW_STALE:
-    'Подготовленные изменения больше не актуальны или были отклонены. Запустите применение заново или отмените принятие.',
+    'Подготовленные изменения больше не актуальны или были отклонены. Подготовьте изменения заново или отмените принятие.',
   COMPLETED:
-    'Задача завершена, но применение этого предложения не подтверждено. Можно повторить применение или отменить принятие.',
+    'Задача завершена, но применение этого предложения не подтверждено. Подготовьте изменения заново или отмените принятие.',
 } satisfies Record<
   NonNullable<BusinessDocumentProposal['application']>['status'],
   string
@@ -95,11 +93,9 @@ export function ProposalItem({
   proposal,
   proposalDecisionsOpen,
   canDecide,
-  canAccept,
   canCancelAcceptance,
   pending,
   onDecide,
-  onAccept,
   onCancelAcceptance,
 }: ProposalItemProps) {
   const isPending = proposal.decision === 'PENDING';
@@ -216,18 +212,25 @@ export function ProposalItem({
                   Отклонить
                 </Button>
               )}
-              <Button
-                size="sm"
-                variant="accent"
-                className="text-[#102c2a]"
-                disabled={!canAccept || pending}
-                loading={pending}
-                data-testid={`accept-proposal-${proposal.proposal_id}`}
-                onClick={onAccept}
-              >
-                <Check className="size-3.5" />
-                {isPending ? 'Принять' : 'Применить'}
-              </Button>
+              {isPending && (
+                <Button
+                  size="sm"
+                  variant="accent"
+                  className="text-[#102c2a]"
+                  disabled={!canDecide || pending}
+                  loading={pending}
+                  data-testid={`accept-proposal-${proposal.proposal_id}`}
+                  onClick={() =>
+                    onDecide({
+                      proposal_id: proposal.proposal_id,
+                      decision: 'ACCEPTED',
+                    })
+                  }
+                >
+                  <Check className="size-3.5" />
+                  Принять
+                </Button>
+              )}
             </div>
           )}
         </div>

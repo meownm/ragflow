@@ -871,7 +871,7 @@ class SchemaResolutionScenario:
         max_concurrency: int = 3,
         lookup_timeout_seconds: float = 20.0,
         batch_timeout_seconds: float = 45.0,
-        overall_timeout_seconds: float = 120.0,
+        overall_timeout_seconds: float = 1920.0,
     ):
         self._catalog = catalog
         self._interpreter = interpreter

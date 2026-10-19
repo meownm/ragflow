@@ -157,13 +157,7 @@ def command_problem(
             if preview is None or (payload is not None and preview["id"] != payload.get("job_id")):
                 return StateConflict("CHANGE_PREVIEW_STALE", "The prepared changes are no longer current")
             return None
-        case CommandType.ACCEPT_PROPOSAL:
-            if problem := _idle_problem(document) or _lifecycle_problem(document, "REVIEW"):
-                return problem
-            if not document["current_revision_id"]:
-                return StateConflict("CURRENT_REVISION_REQUIRED", "A current revision is required to apply a proposal")
-            return None
-        case CommandType.DECIDE_PROPOSAL | CommandType.CANCEL_PROPOSAL_ACCEPTANCE | CommandType.ADD_COMMENT:
+        case CommandType.DECIDE_PROPOSAL | CommandType.ACCEPT_PROPOSAL | CommandType.CANCEL_PROPOSAL_ACCEPTANCE | CommandType.ADD_COMMENT:
             return _idle_problem(document) or _lifecycle_problem(document, "REVIEW")
         case CommandType.START_REVIEW:
             return _idle_problem(document) or _lifecycle_problem(document, "AGREED")

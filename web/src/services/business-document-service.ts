@@ -169,6 +169,8 @@ export type BusinessDocumentEvaAccess = {
     | 'UNAVAILABLE'
     | 'NOT_CONFIGURED';
   connector_id: string | null;
+  expires_at?: number | null;
+  expiry_checked_at?: number | null;
   error_code?: string;
 };
 
@@ -232,7 +234,7 @@ export async function resolveBusinessDocumentSqlSchema(input: {
     const response = await request.post(
       api.businessDocumentSqlSchemaResolve,
       input,
-      requestConfig(),
+      requestConfig({ timeout: 1_980_000 }),
     );
     return unwrap<SqlSchemaResolutionResponse>(response.data);
   } catch (error) {
@@ -276,7 +278,7 @@ export async function planBusinessDocumentSqlQuery(input: SqlQueryPlanRequest) {
     const response = await request.post(
       api.businessDocumentSqlQueryPlan,
       input,
-      requestConfig(),
+      requestConfig({ timeout: 1_980_000 }),
     );
     return unwrap<SqlQueryPlanResponse>(response.data);
   } catch (error) {
@@ -756,7 +758,7 @@ export async function proposeBusinessDocumentSqlConclusion(
         expected_state_version: expectedStateVersion,
         idempotency_key: idempotencyKey,
       },
-      requestConfig(),
+      requestConfig({ timeout: 1_980_000 }),
     );
     return unwrap<{
       proposal_id: string;

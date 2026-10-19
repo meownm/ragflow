@@ -1,6 +1,6 @@
 import { getBusinessDocumentCapabilities } from '@/services/business-document-service';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import DocumentConstructorPage from '.';
 import { createDocumentConstructorStorageKey } from './draft-storage';
@@ -55,42 +55,63 @@ describe('DocumentConstructorPage', () => {
   });
 
   it('builds a section with requirements and renders a live preview', async () => {
-    renderPage();
+    jest.useFakeTimers();
+    const rendered = renderPage();
+    try {
+      expect(
+        await screen.findByText('Конструктор документов'),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByTestId('sql-agent-workbench'),
+      ).not.toBeInTheDocument();
+      const structure = within(screen.getByLabelText('Структура документа'));
+      expect(
+        structure.getAllByTestId('document-constructor-section-row'),
+      ).toHaveLength(createSqlQueryTemplate().sections.length);
+      expect(
+        structure.getByText('Исходная формулировка запроса целиком'),
+      ).toBeInTheDocument();
+      expect(
+        structure.getByText('Итоговый SQL-запрос целиком'),
+      ).toBeInTheDocument();
+      fireEvent.click(structure.getByText('Раздел', { selector: 'button' }));
+      const inspector = within(screen.getByLabelText('Настройки раздела'));
+      fireEvent.change(inspector.getByLabelText('Название раздела'), {
+        target: { value: 'Риски и ограничения' },
+      });
+      fireEvent.click(inspector.getByRole('button', { name: 'Добавить' }));
+      fireEvent.change(inspector.getByLabelText('Требование 1'), {
+        target: { value: 'Для каждого риска указать владельца и план реакции' },
+      });
+      fireEvent.click(
+        within(structure.getByLabelText('Режим конструктора')).getByRole(
+          'tab',
+          {
+            name: 'Предпросмотр',
+          },
+        ),
+      );
 
-    expect(
-      await screen.findByText('Конструктор документов'),
-    ).toBeInTheDocument();
-    expect(screen.queryByTestId('sql-agent-workbench')).not.toBeInTheDocument();
-    expect(
-      screen.getAllByTestId('document-constructor-section-row'),
-    ).toHaveLength(createSqlQueryTemplate().sections.length);
-    expect(
-      screen.getByText('Исходная формулировка запроса целиком'),
-    ).toBeInTheDocument();
-    expect(screen.getByText('Итоговый SQL-запрос целиком')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Раздел' }));
-    fireEvent.change(
-      screen.getByRole('textbox', { name: 'Название раздела' }),
-      { target: { value: 'Риски и ограничения' } },
-    );
-    fireEvent.click(screen.getByRole('button', { name: 'Добавить' }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'Требование 1' }), {
-      target: { value: 'Для каждого риска указать владельца и план реакции' },
-    });
-    fireEvent.click(screen.getByRole('tab', { name: 'Предпросмотр' }));
+      expect(
+        structure.getByTestId('document-constructor-preview'),
+      ).toHaveTextContent('Риски и ограничения');
+      expect(
+        structure.getByTestId('document-constructor-preview'),
+      ).toHaveTextContent('Для каждого риска указать владельца и план реакции');
 
-    expect(
-      screen.getByTestId('document-constructor-preview'),
-    ).toHaveTextContent('Риски и ограничения');
-    expect(
-      screen.getByTestId('document-constructor-preview'),
-    ).toHaveTextContent('Для каждого риска указать владельца и план реакции');
-
-    await waitFor(() =>
+      act(() => jest.advanceTimersByTime(299));
+      expect(window.localStorage.getItem(storageKey) || '').not.toContain(
+        'Риски и ограничения',
+      );
+      act(() => jest.advanceTimersByTime(1));
       expect(window.localStorage.getItem(storageKey)).toContain(
         'Риски и ограничения',
-      ),
-    );
+      );
+    } finally {
+      rendered.unmount();
+      jest.clearAllTimers();
+      jest.useRealTimers();
+    }
   });
 
   it('shows validation feedback and keeps JSON export disabled by validation', async () => {
@@ -98,7 +119,9 @@ describe('DocumentConstructorPage', () => {
 
     await screen.findByText('Конструктор документов');
     fireEvent.change(
-      screen.getByRole('textbox', { name: 'Технический код шаблона' }),
+      within(screen.getByLabelText('Параметры шаблона')).getByLabelText(
+        'Технический код шаблона',
+      ),
       { target: { value: '!' } },
     );
     fireEvent.click(screen.getByTestId('document-constructor-export'));

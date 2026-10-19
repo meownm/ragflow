@@ -274,13 +274,45 @@ class EvaDocumentChangeService:
         client.load_credentials({"eva_api_token": token})
         return client
 
+    @staticmethod
+    def _read_token_expiry(client: EvaWikiConnector) -> dict[str, int | None]:
+        try:
+            expiration = client.get_token_expiration()
+        except (ConnectorValidationError, InsufficientPermissionsError, ConnectorMissingCredentialError):
+            return {"expires_at": None, "expiry_checked_at": None}
+        return {"expires_at": int(expiration.timestamp() * 1000) if expiration is not None else None, "expiry_checked_at": current_timestamp()}
+
     @classmethod
-    def validate_personal_token(cls, connector: Connector | DocumentsEvaConnection, token: str) -> None:
+    def personal_token_expiry(cls, connector: Connector | DocumentsEvaConnection, actor_id: str) -> dict[str, int | None]:
+        """Cache metadata per credential, preserving known expiry during EVA outages."""
+        credential = UserExternalCredentialService.get_eva_wiki_token(actor_id, (connector.config or {}).get("api_base_url", ""))
+        cached = {"expires_at": credential.expires_at, "expiry_checked_at": credential.expiry_checked_at}
+        if credential.expiry_checked_at is not None and current_timestamp() - credential.expiry_checked_at < 86_400_000:
+            return cached
+        reader = cls._read_client(connector, credential.secret)
+        try:
+            expiry = cls._read_token_expiry(reader)
+        finally:
+            reader.close()
+        if expiry["expiry_checked_at"] is None:
+            return cached
+        updated = UserExternalCredentialService.update_eva_wiki_expiry(
+            actor_id,
+            credential.scope,
+            credential.credential_id,
+            credential.credential_version,
+            **expiry,
+        )
+        return expiry if updated else {"expires_at": None, "expiry_checked_at": None}
+
+    @classmethod
+    def validate_personal_token(cls, connector: Connector | DocumentsEvaConnection, token: str) -> dict[str, int | None]:
         if not isinstance(token, str) or not token.strip() or len(token) > 4096:
             raise BusinessDocumentError("EVA_USER_TOKEN_INVALID", "Укажите личный EVA-токен длиной не более 4096 символов.", 422)
         client = cls._read_client(connector, token.strip())
         try:
             client.get_project()
+            return cls._read_token_expiry(client)
         except Exception as error:
             raise cls._map_external_error(error) from error
         finally:
@@ -292,10 +324,12 @@ class EvaDocumentChangeService:
         if not connector_id:
             return {"state": "NOT_CONFIGURED", "connector_id": None}
         client = None
+        expiry = {"expires_at": None, "expiry_checked_at": None}
         try:
-            _, client = cls._connector(connector_id, actor_id)
+            connector, client = cls._connector(connector_id, actor_id)
+            expiry = cls.personal_token_expiry(connector, actor_id)
             client.get_project()
-            return {"state": "AVAILABLE", "connector_id": connector_id}
+            return {"state": "AVAILABLE", "connector_id": connector_id, **expiry}
         except Exception as error:
             mapped = cls._map_external_error(error)
             state = {
@@ -304,7 +338,7 @@ class EvaDocumentChangeService:
                 "EVA_PERMISSION_DENIED": "FORBIDDEN",
                 "EVA_SPACE_FORBIDDEN": "FORBIDDEN",
             }.get(mapped.code, "UNAVAILABLE")
-            return {"state": state, "connector_id": connector_id, "error_code": mapped.code}
+            return {"state": state, "connector_id": connector_id, "error_code": mapped.code, **expiry}
         finally:
             if client is not None:
                 client.close()

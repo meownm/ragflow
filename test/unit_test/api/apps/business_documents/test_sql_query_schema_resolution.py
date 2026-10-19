@@ -203,7 +203,15 @@ def test_request_contract_is_closed_bounded_and_case_insensitively_unique():
 
 
 @pytest.mark.asyncio
-async def test_llm_recommendation_never_closes_catalog_ambiguity():
+async def test_llm_recommendation_never_closes_catalog_ambiguity(monkeypatch):
+    deadlines = []
+    wait_for = asyncio.wait_for
+
+    async def wait(coroutine, **options):
+        deadlines.append(options["timeout"])
+        return await wait_for(coroutine, **options)
+
+    monkeypatch.setattr(asyncio, "wait_for", wait)
     catalog = FakeCatalog(
         {
             "Заказ": _answer(
@@ -217,6 +225,7 @@ async def test_llm_recommendation_never_closes_catalog_ambiguity():
 
     result = await SchemaResolutionScenario(catalog, interpreter).run(_command("Заказ"))
 
+    assert deadlines[-1] > 1800
     assert result["status"] == "NEEDS_CLARIFICATION"
     assert result["llm"]["status"] == "APPLIED"
     assert result["llm"]["prompt"] == {

@@ -530,14 +530,14 @@ test('renders a dense read-only workbench from the server projection', async () 
   );
 });
 
-test('allows preparing ready changes while an unanswered question stays visible', async () => {
+test('applies ready changes directly while an unanswered question stays visible', async () => {
   mockedFetch.mockResolvedValueOnce({
     ...projection,
-    allowed_commands: ['ANSWER_QUESTION', 'PREPARE_CHANGES'],
+    allowed_commands: ['ANSWER_QUESTION', 'APPLY_CHANGES', 'PREPARE_CHANGES'],
   });
   renderPage();
 
-  const prepare = await screen.findByTestId('prepare-changes-button');
+  const prepare = await screen.findByTestId('apply-changes-button');
   expect(prepare).toBeEnabled();
   expect(screen.getByTestId('business-document-question')).toBeVisible();
   expect(
@@ -548,7 +548,7 @@ test('allows preparing ready changes while an unanswered question stays visible'
     expect(mockedSubmit).toHaveBeenCalledWith(
       'doc-1',
       expect.objectContaining({
-        type: 'PREPARE_CHANGES',
+        type: 'APPLY_CHANGES',
         payload: { base_revision_id: projection.current_revision!.revision_id },
       }),
     ),
@@ -1396,7 +1396,9 @@ test('keeps all agreed-state actions in a wrapping mobile header', async () => {
   expect(
     screen.getByRole('button', { name: 'Создать HTML для EvaWiki' }),
   ).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'В архив' })).toBeInTheDocument();
+  expect(
+    screen.queryByRole('button', { name: 'В архив' }),
+  ).not.toBeInTheDocument();
 });
 
 test('gates every interaction using allowed_commands', async () => {
@@ -1537,8 +1539,8 @@ test('records proposal decisions and author comments as commands', async () => {
   expect(mockedSubmit).toHaveBeenLastCalledWith(
     'doc-1',
     expect.objectContaining({
-      type: 'ACCEPT_PROPOSAL',
-      payload: { proposal_id: 'proposal-12' },
+      type: 'DECIDE_PROPOSAL',
+      payload: { proposal_id: 'proposal-12', decision: 'ACCEPTED' },
     }),
   );
 
@@ -2314,140 +2316,56 @@ test('shows streamed sections as preliminary and clears them on retry', async ()
   ).not.toBeInTheDocument();
 });
 
-test.each([false, true])(
-  'accepts and applies a proposal without confirmation (retry: %s)',
-  async (retry) => {
-    const initial: BusinessDocumentProjection = {
-      ...projection,
-      protocol: {
-        ...projection.protocol,
-        proposals: projection.protocol.proposals.map((proposal) => ({
-          ...proposal,
-          decision: retry ? 'ACCEPTED' : 'PENDING',
-          applied: false,
-        })),
-      },
-    };
-    const applying: BusinessDocumentProjection = {
-      ...initial,
-      state_version: 20,
-      operation_state: 'APPLYING_CHANGES',
-      allowed_commands: [],
-      latest_job: {
-        job_id: 'job-accept',
-        job_type: 'PLAN_CHANGES',
-        status: 'PENDING',
-        attempt: 0,
-        max_attempts: 3,
-      },
-      protocol: {
-        ...initial.protocol,
-        proposals: initial.protocol.proposals.map((proposal) => ({
-          ...proposal,
-          decision: 'ACCEPTED',
-        })),
-      },
-    };
-    const applied: BusinessDocumentProjection = {
-      ...initial,
-      state_version: 21,
-      current_revision: {
-        ...projection.current_revision!,
-        revision_id: 'revision-4',
-        revision_number: 4,
-        document_ast: {
-          ...projection.current_revision!.document_ast,
-          sections: [
-            {
-              id: '1',
-              title: 'Цель',
-              blocks: [
-                {
-                  type: 'paragraph',
-                  text: 'Нагрузка: 100 операций в секунду.',
-                },
-              ],
-            },
-          ],
-        },
-        body_markdown: '## 1. Цель\nНагрузка: 100 операций в секунду.',
-        section_texts: { '1': 'Нагрузка: 100 операций в секунду.' },
-      },
-      protocol: {
-        ...initial.protocol,
-        proposals: initial.protocol.proposals.map((proposal) => ({
-          ...proposal,
-          decision: 'ACCEPTED',
-          applied: true,
-        })),
-      },
-    };
-    mockedFetch.mockResolvedValue(initial);
-    mockedSubmit.mockResolvedValueOnce({
-      ...commandResult,
-      operation_state: 'APPLYING_CHANGES',
-      job_id: 'job-accept',
-      document: applying,
-    });
-    let emit: ((event: BusinessDocumentJobStreamEvent) => void) | undefined;
-    mockedWatch.mockImplementation(
-      async (_document, _job, _signal, onEvent) => {
-        emit = onEvent;
-      },
-    );
-    renderPage();
-    const accept = await screen.findByTestId('accept-proposal-proposal-12');
-    expect(accept).toHaveTextContent(retry ? 'Применить' : 'Принять');
-    fireEvent.click(accept);
-    await waitFor(() => expect(emit).toBeDefined());
+test('accepts a proposal without changing text or starting a worker', async () => {
+  const accepted: BusinessDocumentProjection = {
+    ...projection,
+    state_version: projection.state_version + 1,
+    allowed_commands: [
+      'DECIDE_PROPOSAL',
+      'CANCEL_PROPOSAL_ACCEPTANCE',
+      'REQUEST_REVIEW_ASSESSMENT',
+    ],
+    protocol: {
+      ...projection.protocol,
+      proposals: projection.protocol.proposals.map((proposal) => ({
+        ...proposal,
+        decision: 'ACCEPTED',
+        applied: false,
+        application: { status: 'WAITING', error: null },
+      })),
+    },
+  };
+  mockedSubmit.mockResolvedValueOnce({ ...commandResult, document: accepted });
+  renderPage();
+  fireEvent.click(await screen.findByTestId('accept-proposal-proposal-12'));
+  await waitFor(() =>
     expect(screen.getByTestId('proposal-status-proposal-12')).toHaveTextContent(
       'Принято к применению',
-    );
-    expect(screen.getByTestId('accept-proposal-proposal-12')).toBeDisabled();
-    expect(screen.getByTestId('business-document-markdown')).toHaveTextContent(
-      firstSectionText,
-    );
-    mockedFetch.mockResolvedValue(applied);
-    act(() =>
-      emit!({
-        id: 1,
-        job_id: 'job-accept',
-        attempt: 1,
-        base_revision_id: 'revision-3',
-        type: 'applied',
-        payload: { revision_id: 'revision-4' },
-      }),
-    );
-    await waitFor(() =>
-      expect(
-        screen.getByTestId('business-document-markdown'),
-      ).toHaveTextContent('Нагрузка: 100 операций в секунду.'),
-    );
-    expect(screen.getByTestId('proposal-status-proposal-12')).toHaveTextContent(
-      'Применено',
-    );
-    expect(
-      screen.queryByTestId('accept-proposal-proposal-12'),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole('button', { name: 'Подтвердить применение' }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByTestId('business-document-change-preview'),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.getByText('Какие события необходимо отслеживать?'),
-    ).toBeInTheDocument();
-    expect(mockedSubmit).toHaveBeenCalledTimes(1);
-    expect(mockedSubmit).toHaveBeenCalledWith(
-      'doc-1',
-      expect.objectContaining({
-        type: 'ACCEPT_PROPOSAL',
-        payload: { proposal_id: 'proposal-12' },
-      }),
-    );
-  },
-);
+    ),
+  );
+  expect(screen.getByTestId('business-document-markdown')).toHaveTextContent(
+    firstSectionText,
+  );
+  expect(
+    screen.getByTestId('proposal-application-proposal-12'),
+  ).toHaveTextContent('Текст документа не изменён');
+  expect(
+    screen.queryByTestId('accept-proposal-proposal-12'),
+  ).not.toBeInTheDocument();
+  expect(screen.getByTestId('cancel-acceptance-proposal-12')).toBeEnabled();
+  expect(
+    screen.queryByTestId('business-document-change-preview'),
+  ).not.toBeInTheDocument();
+  expect(mockedWatch).not.toHaveBeenCalled();
+  expect(mockedSubmit).toHaveBeenCalledTimes(1);
+  expect(mockedSubmit).toHaveBeenCalledWith(
+    'doc-1',
+    expect.objectContaining({
+      type: 'DECIDE_PROPOSAL',
+      payload: { proposal_id: 'proposal-12', decision: 'ACCEPTED' },
+    }),
+  );
+});
 
 test('cancels acceptance and returns the proposal to the decision controls', async () => {
   const accepted: BusinessDocumentProjection = {
@@ -2626,7 +2544,7 @@ test('clears preliminary text when a completed plan could not be applied and sho
   mockedFetch.mockResolvedValue({
     ...projection,
     change_preview: null,
-    allowed_commands: ['PREPARE_CHANGES'],
+    allowed_commands: ['APPLY_CHANGES', 'PREPARE_CHANGES'],
     protocol: {
       ...projection.protocol,
       warnings: [
@@ -2661,7 +2579,7 @@ test('clears preliminary text when a completed plan could not be applied and sho
   ).not.toBeInTheDocument();
 });
 
-test('shows semantic advice alongside prepared text and keeps confirmation available', async () => {
+test('shows semantic advice alongside an existing prepared plan and keeps application available', async () => {
   mockedFetch.mockResolvedValue({
     ...projection,
     change_preview: { job_id: 'job-advice', base_revision_id: 'revision-3' },
@@ -2695,7 +2613,7 @@ test('shows semantic advice alongside prepared text and keeps confirmation avail
   ).toHaveTextContent('Проверьте полноту результата <script>alert(1)</script>');
   expect(document.querySelector('script')).toBeNull();
   expect(
-    screen.getByRole('button', { name: 'Подтвердить применение' }),
+    screen.getByRole('button', { name: 'Применить исправления' }),
   ).toBeEnabled();
   expect(screen.getByTestId('business-document-markdown')).toHaveTextContent(
     'Новая цель',
@@ -2727,7 +2645,7 @@ test('shows a new optional reporting section before confirming its application',
   });
   mockedSubmit.mockResolvedValue(commandResult);
   renderPage();
-  const preview = await screen.findByTestId('business-document-change-preview');
+  await screen.findByTestId('business-document-change-preview');
   const section = screen.getAllByTestId('business-document-section').at(-1)!;
   expect(section).toHaveAttribute('data-section-id', '5.4');
   expect(section).toHaveTextContent('Требования к отчетности');
@@ -2736,7 +2654,7 @@ test('shows a new optional reporting section before confirming its application',
   );
   expect(mockedSubmit).not.toHaveBeenCalled();
   fireEvent.click(
-    within(preview).getByRole('button', { name: 'Подтвердить применение' }),
+    screen.getByRole('button', { name: 'Применить исправления' }),
   );
   await waitFor(() =>
     expect(mockedSubmit).toHaveBeenCalledWith(
@@ -2749,20 +2667,20 @@ test('shows a new optional reporting section before confirming its application',
   );
 });
 
-test('prepares changes, then shows new text in the document with expandable context', async () => {
+test('uses one apply action for direct changes and an existing prepared plan', async () => {
   mockedFetch.mockResolvedValueOnce({
     ...projection,
-    allowed_commands: ['PREPARE_CHANGES'],
+    allowed_commands: ['APPLY_CHANGES', 'PREPARE_CHANGES'],
   });
   const { unmount } = renderPage();
   fireEvent.click(
-    await screen.findByRole('button', { name: 'Подготовить исправления' }),
+    await screen.findByRole('button', { name: 'Применить исправления' }),
   );
   await waitFor(() =>
     expect(mockedSubmit).toHaveBeenCalledWith(
       'doc-1',
       expect.objectContaining({
-        type: 'PREPARE_CHANGES',
+        type: 'APPLY_CHANGES',
         payload: { base_revision_id: 'revision-3' },
       }),
     ),
@@ -2807,7 +2725,7 @@ test('prepares changes, then shows new text in the document with expandable cont
     'Новая измеримая цель.',
   );
   expect(section.querySelector('details')).not.toHaveAttribute('open');
-  fireEvent.click(within(section).getByText(/Прежний текст и основания/));
+  fireEvent.click(within(section).getByText(/Основания изменений/));
   expect(section).toHaveTextContent(firstSectionText);
   fireEvent.click(
     within(section).getByRole('button', {
@@ -2816,7 +2734,7 @@ test('prepares changes, then shows new text in the document with expandable cont
   );
   expect(screen.getByTestId('business-document-comment')).toHaveClass('ring-2');
   fireEvent.click(
-    within(preview).getByRole('button', { name: 'Подтвердить применение' }),
+    screen.getByRole('button', { name: 'Применить исправления' }),
   );
   await waitFor(() =>
     expect(mockedSubmit).toHaveBeenCalledWith(
@@ -2971,9 +2889,7 @@ test.each([
       }),
     );
     const { client } = renderPage();
-    const preview = await screen.findByTestId(
-      'business-document-change-preview',
-    );
+    await screen.findByTestId('business-document-change-preview');
     if (historyOpen) {
       fireEvent.click(screen.getByTestId('business-document-history-toggle'));
       await waitFor(() => expect(mockedListRevisions).toHaveBeenCalledTimes(1));
@@ -2992,7 +2908,7 @@ test.each([
       await waitFor(() => expect(mockedFetch).toHaveBeenCalledTimes(2));
     }
     fireEvent.click(
-      within(preview).getByRole('button', { name: 'Подтвердить применение' }),
+      screen.getByRole('button', { name: 'Применить исправления' }),
     );
     const markdown = screen.getByTestId('business-document-markdown');
     expect(markdown).toHaveTextContent(
@@ -3105,11 +3021,9 @@ test.each([
         </MemoryRouter>
       </QueryClientProvider>,
     );
-    const preview = await screen.findByTestId(
-      'business-document-change-preview',
-    );
+    await screen.findByTestId('business-document-change-preview');
     fireEvent.click(
-      within(preview).getByRole('button', { name: 'Подтвердить применение' }),
+      screen.getByRole('button', { name: 'Применить исправления' }),
     );
     await waitFor(() => expect(mockedSubmit).toHaveBeenCalledTimes(1));
     const result: BusinessDocumentCommandResult = {
@@ -3176,11 +3090,9 @@ test.each(['permission', 'version'])(
     });
     mockedSubmit.mockRejectedValueOnce(error);
     renderPage();
-    const preview = await screen.findByTestId(
-      'business-document-change-preview',
-    );
+    await screen.findByTestId('business-document-change-preview');
     fireEvent.click(
-      within(preview).getByRole('button', { name: 'Подтвердить применение' }),
+      screen.getByRole('button', { name: 'Применить исправления' }),
     );
     await screen.findByTestId(
       error instanceof BusinessDocumentConflictError
@@ -3234,7 +3146,7 @@ test('shows evidence changes and named no-change inputs before confirmation', as
   renderPage();
   const preview = await screen.findByTestId('business-document-change-preview');
   const section = screen.getAllByTestId('business-document-section')[0];
-  fireEvent.click(within(section).getByText(/Прежний текст и основания/));
+  fireEvent.click(within(section).getByText(/Основания изменений/));
   expect(section).toHaveTextContent('Источники до');
   expect(section).toHaveTextContent('ragflow://dataset/d/document/new/chunk/1');
   expect(preview).toHaveTextContent('Учтено без изменения текста: 1');
@@ -4252,6 +4164,91 @@ test.each(['prepare', 'publish'])(
     expect(actionMock).toHaveBeenCalledTimes(1);
   },
 );
+
+test('automatically displays the saved worker result after one apply action', async () => {
+  const running: BusinessDocumentProjection = {
+    ...projection,
+    state_version: 20,
+    operation_state: 'APPLYING_CHANGES',
+    allowed_commands: [],
+    latest_job: {
+      job_id: 'job-apply',
+      job_type: 'PLAN_CHANGES',
+      status: 'RUNNING',
+      attempt: 1,
+      max_attempts: 3,
+    },
+  };
+  const applied: BusinessDocumentProjection = {
+    ...projection,
+    state_version: 21,
+    change_preview: null,
+    latest_job: { ...running.latest_job!, status: 'COMPLETED' },
+    current_revision: {
+      ...projection.current_revision!,
+      revision_id: 'revision-4',
+      revision_number: 4,
+      body_markdown: '## 1. Цель\nНовая измеримая цель.',
+      section_texts: { '1': 'Новая измеримая цель.' },
+      document_ast: {
+        ...projection.current_revision!.document_ast,
+        sections: [
+          {
+            id: '1',
+            title: 'Цель',
+            blocks: [{ type: 'paragraph', text: 'Новая измеримая цель.' }],
+          },
+        ],
+      },
+    },
+  };
+  let emit: ((event: BusinessDocumentJobStreamEvent) => void) | undefined;
+  mockedWatch.mockImplementation(async (_document, _job, _signal, onEvent) => {
+    emit = onEvent;
+  });
+  mockedSubmit.mockImplementationOnce(async () => {
+    mockedFetch.mockResolvedValue(running);
+    return {
+      ...commandResult,
+      operation_state: 'APPLYING_CHANGES',
+      job_id: 'job-apply',
+    };
+  });
+  renderPage();
+  fireEvent.click(await screen.findByTestId('apply-changes-button'));
+  await waitFor(() => expect(emit).toBeDefined());
+  expect(
+    screen.queryByRole('button', { name: 'Подтвердить применение' }),
+  ).toBeNull();
+  mockedFetch.mockResolvedValue(applied);
+  act(() =>
+    emit!({
+      id: 1,
+      job_id: 'job-apply',
+      attempt: 1,
+      base_revision_id: 'revision-3',
+      type: 'applied',
+      payload: { revision_id: 'revision-4' },
+    }),
+  );
+  await waitFor(() =>
+    expect(screen.getByTestId('business-document-markdown')).toHaveTextContent(
+      'Новая измеримая цель.',
+    ),
+  );
+  expect(screen.getByTestId('business-document-pane')).toHaveTextContent(
+    'Ревизия 4',
+  );
+  expect(screen.queryByTestId('business-document-change-preview')).toBeNull();
+  expect(mockedSubmit).toHaveBeenCalledTimes(1);
+  expect(mockedSubmit).toHaveBeenCalledWith(
+    'doc-1',
+    expect.objectContaining({
+      type: 'APPLY_CHANGES',
+      payload: { base_revision_id: 'revision-3' },
+    }),
+  );
+});
 
 test('previews a historical revision and restores it from the authoritative response', async () => {
   const oldRevision = {

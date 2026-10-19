@@ -46,6 +46,9 @@ class ExternalCredentialValue:
     secret: str
     credential_version: int
     scope: str
+    credential_id: str
+    expires_at: int | None = None
+    expiry_checked_at: int | None = None
 
 
 class UserExternalCredentialService(CommonService):
@@ -78,7 +81,7 @@ class UserExternalCredentialService(CommonService):
         return scope
 
     @classmethod
-    def put_eva_wiki_token(cls, user_id: str, api_base_url: str, token: str) -> dict:
+    def put_eva_wiki_token(cls, user_id: str, api_base_url: str, token: str, *, expires_at: int | None = None, expiry_checked_at: int | None = None) -> dict:
         normalized_token = str(token or "").strip()
         if not normalized_token:
             raise ExternalCredentialError("EVA API token is required")
@@ -100,6 +103,8 @@ class UserExternalCredentialService(CommonService):
                 cls.model.update(
                     encrypted_secret=encrypted,
                     credential_version=version,
+                    expires_at=expires_at,
+                    expiry_checked_at=expiry_checked_at,
                     update_time=timestamp,
                     update_date=date,
                 ).where(cls.model.id == existing.id).execute()
@@ -111,12 +116,14 @@ class UserExternalCredentialService(CommonService):
                     scope=scope,
                     encrypted_secret=encrypted,
                     credential_version=version,
+                    expires_at=expires_at,
+                    expiry_checked_at=expiry_checked_at,
                     create_time=timestamp,
                     create_date=date,
                     update_time=timestamp,
                     update_date=date,
                 )
-        return {"configured": True, "scope": scope, "credential_version": version}
+        return {"configured": True, "scope": scope, "credential_version": version, "expires_at": expires_at, "expiry_checked_at": expiry_checked_at}
 
     @classmethod
     def get_eva_wiki_token(cls, user_id: str, api_base_url: str) -> ExternalCredentialValue:
@@ -129,7 +136,31 @@ class UserExternalCredentialService(CommonService):
         if credential is None:
             raise ExternalCredentialMissingError("Personal EVA API token is not configured")
         secret = cls._decrypt(user_id, credential.provider, credential.scope, credential.encrypted_secret)
-        return ExternalCredentialValue(secret=secret, credential_version=int(credential.credential_version), scope=credential.scope)
+        return ExternalCredentialValue(
+            secret=secret,
+            credential_version=int(credential.credential_version),
+            scope=credential.scope,
+            credential_id=credential.id,
+            expires_at=credential.expires_at,
+            expiry_checked_at=credential.expiry_checked_at,
+        )
+
+    @classmethod
+    def update_eva_wiki_expiry(cls, user_id: str, api_base_url: str, credential_id: str, credential_version: int, *, expires_at: int | None, expiry_checked_at: int) -> bool:
+        """Do not attach an in-flight lookup to a replaced or deleted credential."""
+        scope = cls.normalize_http_scope(api_base_url)
+        return (
+            cls.model.update(expires_at=expires_at, expiry_checked_at=expiry_checked_at)
+            .where(
+                cls.model.user_id == user_id,
+                cls.model.id == credential_id,
+                cls.model.provider == cls.EVA_WIKI_PROVIDER,
+                cls.model.scope == scope,
+                cls.model.credential_version == credential_version,
+            )
+            .execute()
+            > 0
+        )
 
     @classmethod
     def delete_eva_wiki_token(cls, user_id: str, api_base_url: str) -> bool:
@@ -157,6 +188,8 @@ class UserExternalCredentialService(CommonService):
                 "scope": row.scope,
                 "credential_version": int(row.credential_version),
                 "update_time": row.update_time,
+                "expires_at": row.expires_at,
+                "expiry_checked_at": row.expiry_checked_at,
             }
             for row in rows
         }

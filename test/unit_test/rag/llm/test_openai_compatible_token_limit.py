@@ -6,7 +6,25 @@ from types import SimpleNamespace
 
 import pytest
 
-from rag.llm.chat_model import OpenAI_APIChat
+from rag.llm.chat_model import LiteLLMBase, OpenAI_APIChat
+from rag.llm import chat_model
+
+
+@pytest.mark.parametrize("override,expected", [(None, 600), (1800, 1800)])
+def test_model_request_timeout_reaches_both_sdk_clients(monkeypatch, override, expected):
+    monkeypatch.setenv("LLM_TIMEOUT_SECONDS", "600")
+    for name in ("OpenRouter", "MiniMax"):
+        if not hasattr(chat_model.SupportedLiteLLMProvider, name):
+            monkeypatch.setattr(chat_model.SupportedLiteLLMProvider, name, name, raising=False)
+    options = {} if override is None else {"timeout": override}
+    model = OpenAI_APIChat("synthetic-key", "local", "http://127.0.0.1:1/v1", **options)
+    try:
+        assert model.client.timeout == model.async_client.timeout == expected
+    finally:
+        model.client.close()
+        asyncio.run(model.async_client.close())
+    native = LiteLLMBase("synthetic-key", "local", provider="Ollama", **options)
+    assert native.timeout == expected
 
 
 @pytest.mark.p1
@@ -16,6 +34,7 @@ from rag.llm.chat_model import OpenAI_APIChat
     ("limits", "expected"),
     [
         ({"max_tokens": 65536}, {"max_tokens": 65536}),
+        ({"max_tokens": 220000}, {"max_tokens": 220000}),
         ({"max_completion_tokens": 8192}, {"max_completion_tokens": 8192}),
         ({"max_tokens": 65536, "max_completion_tokens": 8192}, {"max_completion_tokens": 8192}),
     ],

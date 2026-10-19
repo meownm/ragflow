@@ -274,6 +274,36 @@ class EvaWikiConnector(LoadConnector, PollConnector, SlimConnectorWithPermSync):
     def validate_connector_settings(self) -> None:
         self.get_project()
 
+    def get_token_expiration(self) -> datetime | None:
+        """Read expiry of this credential only; None means explicitly unlimited."""
+        self._validate_config(require_project_id=False)
+        token_hash = hashlib.sha1(str(self.credentials["eva_api_token"]).strip().encode(), usedforsecurity=False).hexdigest()
+        rows = self._rpc(
+            "CmfAccessToken.list",
+            {
+                "filter": self._encode_filter([["hash", "==", token_hash], ["type", "==", "api"], ["cmf_deleted", "==", False]]),
+                "fields": ["expiration_date", "is_revoked"],
+                "slice": [0, 2],
+            },
+            timeout=5,
+        )
+        if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict) or "expiration_date" not in rows[0]:
+            raise ConnectorValidationError("EVA token expiration is unavailable")
+        if rows[0].get("is_revoked") is True:
+            raise EvaAuthenticationError("EVA Wiki rejected the API token")
+        value = rows[0]["expiration_date"]
+        if value is None:
+            return None
+        if not isinstance(value, str) or not value.strip():
+            raise ConnectorValidationError("EVA token expiration is invalid")
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ConnectorValidationError("EVA token expiration is invalid") from exc
+        if parsed.tzinfo is None:
+            raise ConnectorValidationError("EVA token expiration must include a timezone")
+        return parsed.astimezone(timezone.utc)
+
     def close(self) -> None:
         self._session.close()
 
@@ -926,6 +956,7 @@ class EvaWikiConnector(LoadConnector, PollConnector, SlimConnectorWithPermSync):
         *,
         args: list[Any] | None = None,
         call_kwargs: dict[str, Any] | None = None,
+        timeout: float = REQUEST_TIMEOUT_SECONDS,
     ) -> Any:
         endpoint = self._resolve_same_origin_api_url(f"api/?m={quote(method, safe='')}")
         request_payload: dict[str, Any] = {"method": method, "kwargs": kwargs, "callid": str(uuid.uuid4()), "jsonrpc": "2.2"}
@@ -937,7 +968,7 @@ class EvaWikiConnector(LoadConnector, PollConnector, SlimConnectorWithPermSync):
             response = self._session.post(
                 endpoint,
                 json=request_payload,
-                timeout=REQUEST_TIMEOUT_SECONDS,
+                timeout=timeout,
                 verify=self.verify_ssl,
                 allow_redirects=False,
             )

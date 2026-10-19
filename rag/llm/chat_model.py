@@ -227,7 +227,7 @@ def _move_litellm_provider_body_fields(provider: SupportedLiteLLMProvider | str 
 
 class Base(ABC):
     def __init__(self, key, model_name, base_url, **kwargs):
-        timeout = int(os.environ.get("LLM_TIMEOUT_SECONDS", 600))
+        timeout = kwargs.get("timeout", int(os.environ.get("LLM_TIMEOUT_SECONDS", 600)))
         self.raise_on_error = kwargs.get("raise_on_error", False)
         retry_options = {"max_retries": 0} if self.raise_on_error else {}
         self.client = OpenAI(api_key=key, base_url=base_url, timeout=timeout, **retry_options)
@@ -1612,7 +1612,7 @@ class LiteLLMBase(ABC):
 
     def __init__(self, key, model_name, base_url=None, **kwargs):
         self.raise_on_error = kwargs.get("raise_on_error", False)
-        self.timeout = int(os.environ.get("LLM_TIMEOUT_SECONDS", 600))
+        self.timeout = kwargs.get("timeout", int(os.environ.get("LLM_TIMEOUT_SECONDS", 600)))
         self.provider = kwargs.get("provider", "")
         self.prefix = LITELLM_PROVIDER_PREFIX.get(self.provider, "")
         self.model_name = f"{self.prefix}{model_name}"

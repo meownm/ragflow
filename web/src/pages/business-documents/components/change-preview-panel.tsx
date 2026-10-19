@@ -1,5 +1,5 @@
 import { Button } from '@/components/ui/button';
-import { CheckCircle2, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import type { BusinessDocumentChangePreview } from '../types';
 import { EvidenceRefsDiff } from './evidence-refs-diff';
 import { RevisionTextDiff } from './revision-text-diff';
@@ -77,19 +77,15 @@ export function DocumentSectionChange({
 export function ChangePreviewPanel({
   preview,
   pending,
-  canConfirm,
   canDiscard,
   onFocusSource,
-  onConfirm,
   onDiscard,
   preliminary = false,
 }: {
   preview: BusinessDocumentChangePreview;
   pending: boolean;
-  canConfirm: boolean;
   canDiscard: boolean;
   onFocusSource?: FocusSource;
-  onConfirm?: () => void;
   onDiscard?: () => void;
   preliminary?: boolean;
 }) {
@@ -111,9 +107,9 @@ export function ChangePreviewPanel({
           <p className="mt-1 text-xs text-text-secondary">
             {preview.sections.length
               ? preliminary
-                ? `Обновлено разделов в документе: ${preview.sections.length}. Текст предварительный; подтвердить можно после полной проверки.`
-                : `Изменения показаны в документе. Разделов: ${preview.sections.length}. Проверьте текст до подтверждения.`
-              : 'Изменений текста нет. Подтверждение завершит текущий цикл согласования.'}
+                ? `Обновлено разделов в документе: ${preview.sections.length}. Текст предварительный; проверенный результат сохранится автоматически.`
+                : `Изменения показаны в документе. Разделов: ${preview.sections.length}. Для сохранения используйте «Применить исправления».`
+              : 'Изменений текста нет. Применение зафиксирует результат обработки замечаний.'}
           </p>
         </div>
         {!preliminary && canDiscard && onDiscard && (
@@ -125,17 +121,6 @@ export function ChangePreviewPanel({
           >
             <X className="size-4" />
             Отказаться
-          </Button>
-        )}
-        {!preliminary && canConfirm && onConfirm && (
-          <Button
-            size="sm"
-            variant="accent"
-            disabled={pending}
-            onClick={onConfirm}
-          >
-            <CheckCircle2 className="size-4" />
-            Подтвердить применение
           </Button>
         )}
       </div>

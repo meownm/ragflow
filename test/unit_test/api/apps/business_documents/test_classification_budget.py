@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from test.unit_test.api.apps.business_documents import test_business_document_ai_cancellation as model_fixtures
-from api.apps.business_documents.ai import BusinessDocumentAI, RAGFlowLLMAdapter
+from api.apps.business_documents.ai import BusinessDocumentAI, RAGFlowLLMAdapter, _classification_response_tokens
 from api.apps.business_documents.assets import prompt_descriptor
 from api.apps.business_documents.evidence import MAX_CHUNK_CHARS, MAX_CHUNKS, MAX_TOTAL_CHARS
 from api.apps.business_documents.recovery import AIRecovery
@@ -63,7 +63,7 @@ async def test_complete_dense_and_large_evidence_has_output_margin(model_boundar
             required = len(response.encode("utf-8"))
             output_budget = calls["parameters"][index]["max_completion_tokens"]
             assert output_budget >= required + math.floor(required / 4)
-            assert output_budget <= 65536
+            assert output_budget > 65536
     assert calls["chat"] == len(batches)
 
 
@@ -74,7 +74,7 @@ async def test_full_input_output_and_reserves_must_fit_before_provider_call(mode
     [(system, payload)] = _classification(["A. " * 1000])
     adapter = RAGFlowLLMAdapter()
     await adapter.async_generate("disposable-tenant", system, payload)
-    required = calls["parameters"][0]["max_completion_tokens"]
+    required = _classification_response_tokens([int(identifier) for identifier in payload["fragments"]])
     serialized = json.dumps(payload, ensure_ascii=False)
     input_tokens = max(len(encoder.encode(system)) + len(encoder.encode(serialized)), len(system.encode("utf-8")) + len(serialized.encode("utf-8")))
     exact_window = input_tokens + max(256, math.ceil(input_tokens / 20)) + required

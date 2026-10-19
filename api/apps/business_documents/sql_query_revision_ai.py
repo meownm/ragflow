@@ -12,7 +12,7 @@ from typing import Any
 import sqlglot
 from json_repair import repair_json
 
-from api.apps.business_documents.ai import RAGFlowLLMAdapter
+from api.apps.business_documents.ai import MODEL_TIMEOUT_SECONDS, RAGFlowLLMAdapter
 from business_documents.sql_query.project_compilation import ProjectCompilationError, build_project_compile_command
 from business_documents.sql_query.query_specification import QuerySpecificationValidationError, SqlGuardError, compile_query_payload
 from business_documents.sql_query.revisions import preserves_document_facts, query_blocks
@@ -49,7 +49,7 @@ async def propose_revision(tenant_id: str, request: Mapping[str, Any], *, llm: A
     if len(json.dumps(context, ensure_ascii=False, default=str).encode("utf-8")) > 120_000:
         raise ValueError("Revision context is too large")
     generator = llm or RAGFlowLLMAdapter()
-    raw = await asyncio.wait_for(generator.async_generate(tenant_id, _SYSTEM, {"job_input": {"task_type": "REVISE_SQL_PROJECT"}, "context": context}), timeout=90)
+    raw = await asyncio.wait_for(generator.async_generate(tenant_id, _SYSTEM, {"job_input": {"task_type": "REVISE_SQL_PROJECT"}, "context": context}), timeout=MODEL_TIMEOUT_SECONDS)
     value = raw if isinstance(raw, dict) else repair_json(raw, return_objects=True)
     if not isinstance(value, dict):
         raise ValueError("Model response must be a JSON object")

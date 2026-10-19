@@ -2,6 +2,7 @@ import json
 import os
 from pathlib import Path
 import re
+from urllib.parse import urlparse
 
 import pytest
 from playwright.sync_api import expect
@@ -76,7 +77,7 @@ def _projection(*, allowed_commands=None):
             ],
             "comments": [],
         },
-        "allowed_commands": allowed_commands or ["ANSWER_QUESTION", "DECIDE_PROPOSAL", "ACCEPT_PROPOSAL", "ADD_COMMENT", "APPLY_CHANGES"],
+        "allowed_commands": allowed_commands if allowed_commands is not None else ["ANSWER_QUESTION", "DECIDE_PROPOSAL", "ACCEPT_PROPOSAL", "ADD_COMMENT", "APPLY_CHANGES"],
         "latest_exports": [
             {
                 "artifact_id": "artifact-md-r3",
@@ -161,6 +162,18 @@ def _install_common_routes(page):
     for pattern, data in (
         ("**/api/v1/tenants", []),
         ("**/api/v1/users/me/eva-credentials", {"items": []}),
+        ("**/api/v1/users/me/models", {"tenant_id": "business-documents-ui-tenant", "llm_id": "", "asr_id": "", "embd_id": ""}),
+        (
+            "**/api/v1/business-documents/eva/access",
+            {"state": "NOT_CONFIGURED", "connector_id": None, "expires_at": None, "expiry_checked_at": None},
+        ),
+        (
+            "**/api/v1/business-documents/capabilities",
+            {
+                "access_role": "AUTHOR_CREATOR",
+                "capabilities": {"read": True, "create": True, "edit_own": True, "edit_all": False, "delete": False, "assign": False},
+            },
+        ),
     ):
         page.route(
             pattern,
@@ -184,6 +197,13 @@ def test_business_documents_list_validation_and_create_navigation(
 
     def route_business_documents(route):
         request = route.request
+        path = request.url.split("?", 1)[0]
+        if path.endswith(("/capabilities", "/eva/access")):
+            route.fallback()
+            return
+        if request.method == "GET" and path.endswith("/doc-ui-1"):
+            route.fulfill(status=200, content_type="application/json", body=json.dumps(_envelope(_projection()), ensure_ascii=False))
+            return
         if request.url.split("?", 1)[0].endswith("/catalog"):
             route.fulfill(
                 status=200,
@@ -262,7 +282,14 @@ def test_business_documents_list_validation_and_create_navigation(
         ),
     )
 
-    _goto_home(page, base_url)
+    with (
+        page.expect_response(lambda response: response.request.method == "GET" and urlparse(response.url).path == "/api/v1/business-documents/capabilities") as capabilities,
+        page.expect_response(lambda response: response.request.method == "GET" and urlparse(response.url).path == "/api/v1/tenants") as tenants,
+    ):
+        _goto_home(page, base_url)
+    for response in (capabilities.value, tenants.value):
+        assert response.finished() is None
+        assert response.status == 200
     expect(page.locator("[data-testid='nav-business-documents']").first).to_have_attribute("href", "/business-documents")
     page.goto(f"{base_url.rstrip('/')}/business-documents")
     expect(page.locator("[data-testid='business-documents-create']")).to_be_visible(timeout=RESULT_TIMEOUT_MS)
@@ -277,6 +304,7 @@ def test_business_documents_list_validation_and_create_navigation(
     submit.click()
 
     expect(page).to_have_url(re.compile(r"/business-documents/doc-ui-1$"))
+    expect(page.get_by_role("heading", name="Переводы одной кнопкой", exact=True)).to_be_visible()
     assert created_payloads == [
         {
             "schema_version": "4",
@@ -425,6 +453,20 @@ def test_narrow_workbench_protocol_controls_remain_reachable(page, base_url, wid
     panes = page.get_by_test_id("business-document-panes")
     expect(panes).to_be_visible(timeout=RESULT_TIMEOUT_MS)
     answer = page.get_by_test_id("answer-question-question-1")
+    expect(page.get_by_test_id("toggle-question-question-1")).to_have_attribute("aria-expanded", "true")
+    content = page.locator('[data-protocol-id="question-1"] [data-state="open"][id]')
+    page.wait_for_function(
+        """content => {
+          const bounds = content.getBoundingClientRect();
+          const animating = content.getAnimations().some(animation =>
+            animation.animationName?.startsWith('accordion-') &&
+            Number.isFinite(animation.effect?.getComputedTiming().endTime) &&
+            (animation.pending || animation.playState === 'running')
+          );
+          return bounds.height > 0 && content.scrollHeight <= Math.ceil(bounds.height) && !animating;
+        }""",
+        arg=content.element_handle(),
+    )
     answer.scroll_into_view_if_needed()
     expect(answer).to_be_in_viewport()
     page.get_by_label("По времени").check()
@@ -582,22 +624,77 @@ def test_streamed_document_section_stays_preliminary_after_reload(page, base_url
     expect(body).to_contain_text("Новая измеримая цель.")
     expect(body).not_to_contain_text("Сократить время перевода до одной минуты.")
     expect(preview.get_by_role("button", name="Подтвердить применение")).to_have_count(0)
-    expect(section.get_by_text("Прежний текст и основания", exact=False)).to_be_visible()
-    expect(section.locator("details pre")).not_to_be_visible()
+    expect(section.get_by_text("Основания изменений", exact=False)).to_be_visible()
+    difference = section.get_by_test_id("revision-text-diff")
+    expect(difference.locator("pre").nth(0)).to_have_text("Сократить время перевода до одной минуты.")
+    expect(difference.locator("pre").nth(1)).to_have_text("Новая измеримая цель.")
+    expect(section.locator("details")).not_to_have_attribute("open", "")
     section.locator("summary").click()
-    expect(section.locator("details pre")).to_contain_text("Сократить время перевода до одной минуты.")
+    expect(section.locator("details")).to_have_attribute("open", "")
 
     page.reload()
     expect(body).to_contain_text("Новая измеримая цель.", timeout=RESULT_TIMEOUT_MS)
-    expect(section.locator("details pre")).not_to_be_visible()
+    expect(preview).to_contain_text("Предварительные изменения")
+    expect(section).to_have_attribute("data-section-preview", "true")
+    expect(difference.locator("pre").nth(0)).to_have_text("Сократить время перевода до одной минуты.")
+    expect(difference.locator("pre").nth(1)).to_have_text("Новая измеримая цель.")
+    expect(section.locator("details")).not_to_have_attribute("open", "")
 
 
 @pytest.mark.p1
-def test_prepared_document_changes_are_visible_before_confirmation(page, base_url):
+def test_document_changes_are_saved_and_visible_without_confirmation(page, base_url):
     _install_session(page)
     _install_common_routes(page)
-    projection = _projection(allowed_commands=["PREPARE_CHANGES"])
+    projection = _projection(allowed_commands=["APPLY_CHANGES", "PREPARE_CHANGES"])
     submitted = []
+    job_id = "job-apply"
+    completed = False
+    streams = []
+
+    def finish_job():
+        nonlocal projection, completed
+        completed = True
+        revision = projection["current_revision"]
+        projection = {
+            **projection,
+            "state_version": 21,
+            "lifecycle_state": "AGREED",
+            "operation_state": "IDLE",
+            "latest_job": {"job_id": job_id, "job_type": "PLAN_CHANGES", "status": "COMPLETED", "attempt": 1, "max_attempts": 3},
+            "change_preview": None,
+            "allowed_commands": [],
+            "current_revision": {
+                **revision,
+                "revision_id": "revision-4",
+                "revision_number": 4,
+                "document_ast": {**revision["document_ast"], "sections": [{**revision["document_ast"]["sections"][0], "blocks": [{"type": "paragraph", "text": "Новая измеримая цель."}]}]},
+                "section_texts": {"1": "Новая измеримая цель."},
+                "body_markdown": "## 1. Цель\nНовая измеримая цель.",
+            },
+        }
+
+    def job_event():
+        return {
+            "id": 2 if completed else 1,
+            "job_id": job_id,
+            "attempt": 1,
+            "base_revision_id": "revision-3",
+            "type": "applied" if completed else "section_preview",
+            "payload": {"revision_id": "revision-4"}
+            if completed
+            else {
+                "section_id": "1",
+                "title": "Цель",
+                "before": "Сократить время перевода до одной минуты.",
+                "after": "Новая измеримая цель.",
+                "source_event_ids": ["event-1"],
+            },
+        }
+
+    def stream_job(route):
+        streams.append(route.request.url)
+        event = job_event()
+        route.fulfill(status=200, content_type="text/event-stream", body=f"id: {event['id']}\nevent: {event['type']}\ndata: {json.dumps(event, ensure_ascii=False)}\n\n")
 
     def route_document(route):
         nonlocal projection
@@ -607,78 +704,116 @@ def test_prepared_document_changes_are_visible_before_confirmation(page, base_ur
             return
         command = request.post_data_json
         submitted.append(command)
-        if command["type"] == "PREPARE_CHANGES":
-            projection = {
-                **projection,
-                "state_version": 20,
-                "change_preview": {"job_id": "job-preview", "base_revision_id": "revision-3"},
-                "allowed_commands": ["CONFIRM_PREPARED_CHANGES", "DISCARD_PREPARED_CHANGES"],
-            }
-        elif command["type"] == "CONFIRM_PREPARED_CHANGES":
-            revision = projection["current_revision"]
-            projection = {
-                **projection,
-                "state_version": 21,
-                "lifecycle_state": "AGREED",
-                "change_preview": None,
-                "allowed_commands": [],
-                "current_revision": {
-                    **revision,
-                    "revision_id": "revision-4",
-                    "revision_number": 4,
-                    "document_ast": {**revision["document_ast"], "sections": [{**revision["document_ast"]["sections"][0], "blocks": [{"type": "paragraph", "text": "Новая измеримая цель."}]}]},
-                    "section_texts": {"1": "Новая измеримая цель."},
-                    "body_markdown": "## 1. Цель\nНовая измеримая цель.",
-                },
-            }
-        route.fulfill(
-            status=200, content_type="application/json", body=json.dumps(_envelope({"accepted": True, "document_id": "doc-ui-1", "state_version": projection["state_version"]}), ensure_ascii=False)
-        )
-
-    def route_preview(route):
+        assert command["type"] == "APPLY_CHANGES"
+        projection = {
+            **projection,
+            "state_version": 19,
+            "operation_state": "APPLYING_CHANGES",
+            "latest_job": {"job_id": job_id, "job_type": "PLAN_CHANGES", "status": "RUNNING", "attempt": 1, "max_attempts": 3},
+            "allowed_commands": [],
+        }
         route.fulfill(
             status=200,
             content_type="application/json",
             body=json.dumps(
-                _envelope(
-                    {
-                        "job_id": "job-preview",
-                        "base_revision_id": "revision-3",
-                        "state_version": 20,
-                        "sections": [{"section_id": "1", "title": "Цель", "before": "Сократить время перевода до одной минуты.", "after": "Новая измеримая цель.", "source_event_ids": ["event-1"]}],
-                        "acknowledged_no_change_event_ids": [],
-                    }
-                ),
-                ensure_ascii=False,
+                _envelope({"accepted": True, "document_id": "doc-ui-1", "state_version": 19, "operation_state": "APPLYING_CHANGES", "job_id": job_id, "allowed_commands": []}), ensure_ascii=False
             ),
         )
 
-    page.route("**/api/v1/business-documents/doc-ui-1/change-previews/job-preview", route_preview)
+    page.route(f"**/api/v1/business-documents/doc-ui-1/jobs/{job_id}/events/stream?after=*", stream_job)
+    page.route(
+        f"**/api/v1/business-documents/doc-ui-1/jobs/{job_id}/events?after=*",
+        lambda route: route.fulfill(json=_envelope({"events": [job_event()], "status": "COMPLETED" if completed else "RUNNING", "job_id": job_id})),
+    )
     page.route("**/api/v1/business-documents/doc-ui-1", route_document)
     page.route("**/api/v1/business-documents/doc-ui-1/commands", route_document)
     page.goto(f"{base_url.rstrip('/')}/business-documents/doc-ui-1")
-    page.get_by_role("button", name="Подготовить исправления").click()
-
-    preview = page.get_by_test_id("business-document-change-preview")
-    expect(preview).to_be_visible(timeout=RESULT_TIMEOUT_MS)
-    expect(preview).to_contain_text("ещё не применено")
+    page.get_by_role("button", name="Применить исправления").click()
     section = page.locator('[data-section-id="1"]')
-    body = section.locator("[data-section-body]")
-    expect(body).to_contain_text("Новая измеримая цель.")
-    expect(body).not_to_contain_text("Сократить время перевода до одной минуты.")
-    expect(section.locator("details pre")).not_to_be_visible()
-    assert submitted[0]["type"] == "PREPARE_CHANGES"
-    assert submitted[0]["payload"] == {"base_revision_id": "revision-3"}
-
+    expect(section.locator("[data-section-body]")).to_contain_text("Новая измеримая цель.", timeout=RESULT_TIMEOUT_MS)
+    expect(section).to_have_attribute("data-section-preview", "true")
+    assert projection["current_revision"]["revision_id"] == "revision-3"
     page.reload()
-    expect(preview).to_be_visible(timeout=RESULT_TIMEOUT_MS)
-    expect(body).to_contain_text("Новая измеримая цель.")
-    preview.get_by_role("button", name="Подтвердить применение").click()
-    expect(page.get_by_test_id("business-document-pane")).to_contain_text("Новая измеримая цель.", timeout=RESULT_TIMEOUT_MS)
+    expect(section).to_have_attribute("data-section-preview", "true", timeout=RESULT_TIMEOUT_MS)
+    expect(section.locator("[data-section-body]")).to_contain_text("Новая измеримая цель.")
+    assert projection["current_revision"]["revision_id"] == "revision-3"
+    assert len(submitted) == 1 and len(streams) >= 2
+
+    finish_job()
     expect(section).to_have_attribute("data-section-preview", "false")
-    expect(preview).to_have_count(0)
-    assert submitted[1]["type"] == "CONFIRM_PREPARED_CHANGES"
-    assert submitted[1]["payload"] == {"job_id": "job-preview"}
+    expect(section.locator("[data-section-body]")).to_contain_text("Новая измеримая цель.")
+    expect(page.get_by_role("button", name="Подтвердить применение")).to_have_count(0)
+    expect(page.get_by_test_id("business-document-change-preview")).to_have_count(0)
+    assert len(submitted) == 1
+    assert submitted[0]["type"] == "APPLY_CHANGES"
+    assert submitted[0]["payload"] == {"base_revision_id": "revision-3"}
+    page.reload()
+    expect(section.locator("[data-section-body]")).to_contain_text("Новая измеримая цель.", timeout=RESULT_TIMEOUT_MS)
+
+
+@pytest.mark.p1
+@pytest.mark.parametrize("decision", ["confirm", "discard"])
+def test_existing_prepared_changes_keep_confirm_and_discard_contracts(page, base_url, decision):
+    _install_session(page)
+    _install_common_routes(page)
+    projection = {
+        **_projection(allowed_commands=["CONFIRM_PREPARED_CHANGES", "DISCARD_PREPARED_CHANGES"]),
+        "change_preview": {"job_id": "job-prepared", "base_revision_id": "revision-3"},
+    }
+    detail_reads, commands = [], []
+
+    def detail(route):
+        detail_reads.append(route.request.url)
+        route.fulfill(json=_envelope(projection))
+
+    def decide(route):
+        command = route.request.post_data_json
+        commands.append(command)
+        expected_type = "CONFIRM_PREPARED_CHANGES" if decision == "confirm" else "DISCARD_PREPARED_CHANGES"
+        assert command["type"] == expected_type
+        assert command["payload"] == {"job_id": "job-prepared"}
+        projection.update(change_preview=None, state_version=19, allowed_commands=[])
+        if decision == "confirm":
+            revision = projection["current_revision"]
+            projection["current_revision"] = {
+                **revision,
+                "revision_id": "revision-4",
+                "revision_number": 4,
+                "document_ast": {**revision["document_ast"], "sections": [{"id": "1", "title": "Цель", "blocks": [{"type": "paragraph", "text": "Новая измеримая цель."}]}]},
+                "section_texts": {"1": "Новая измеримая цель."},
+                "body_markdown": "## 1. Цель\nНовая измеримая цель.",
+            }
+        route.fulfill(json=_envelope({"accepted": True, "document_id": "doc-ui-1", "state_version": 19, "document": projection}))
+
+    page.route("**/api/v1/business-documents/doc-ui-1", detail)
+    page.route("**/api/v1/business-documents/doc-ui-1/commands", decide)
+    page.route(
+        "**/api/v1/business-documents/doc-ui-1/change-previews/job-prepared",
+        lambda route: route.fulfill(
+            json=_envelope(
+                {
+                    "job_id": "job-prepared",
+                    "base_revision_id": "revision-3",
+                    "state_version": 18,
+                    "sections": [{"section_id": "1", "title": "Цель", "before": "Сократить время перевода до одной минуты.", "after": "Новая измеримая цель.", "source_event_ids": []}],
+                    "acknowledged_no_change_event_ids": [],
+                }
+            )
+        ),
+    )
+    page.goto(f"{base_url.rstrip('/')}/business-documents/doc-ui-1")
+    section = page.locator('[data-section-id="1"]')
+    expect(section).to_have_attribute("data-section-preview", "true", timeout=RESULT_TIMEOUT_MS)
+    expect(section.locator("[data-section-body]")).to_contain_text("Новая измеримая цель.")
+    reads_before_command = len(detail_reads)
+    page.get_by_role("button", name="Применить исправления" if decision == "confirm" else "Отказаться", exact=True).click()
+    expect(section).to_have_attribute("data-section-preview", "false")
+    expected_text = "Новая измеримая цель." if decision == "confirm" else "Сократить время перевода до одной минуты."
+    expect(section.locator("[data-section-body]")).to_contain_text(expected_text)
+    assert len(commands) == 1 and len(detail_reads) == reads_before_command
+    page.reload()
+    expect(section.locator("[data-section-body]")).to_contain_text(expected_text, timeout=RESULT_TIMEOUT_MS)
+    expect(section).to_have_attribute("data-section-preview", "false")
 
 
 @pytest.mark.p1

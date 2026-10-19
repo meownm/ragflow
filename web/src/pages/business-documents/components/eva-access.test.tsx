@@ -1,14 +1,43 @@
 import { BusinessDocumentRequestError } from '@/services/business-document-service';
 import { fireEvent, render, screen } from '@testing-library/react';
-import { EvaAccessNotice, useEvaAccess } from './eva-access';
+import { EvaAccessNotice } from './eva-access';
+
+type EvaAccess = ReturnType<typeof import('./eva-access').useEvaAccess>;
+
+jest.mock('@/hooks/common-hooks', () => ({
+  useTranslate: () => ({ t: (key: string) => key }),
+}));
 
 function access(state: string) {
   return {
     data: { state, connector_id: 'eva-1' },
     isFetching: false,
     refetch: jest.fn(),
-  } as unknown as ReturnType<typeof useEvaAccess>;
+  } as unknown as EvaAccess;
 }
+
+test.each([
+  [7, 'evaTokenExpiresWeek'],
+  [1, 'evaTokenExpiresDay'],
+])(
+  'shows token renewal at %s days despite available EVA access',
+  (days, text) => {
+    const available = access('AVAILABLE');
+    available.data!.expires_at = Date.now() + Number(days) * 86_400_000;
+    render(
+      <EvaAccessNotice
+        access={available}
+        returnTo="/business-documents/doc-1"
+      />,
+    );
+    expect(screen.getByTestId('eva-token-expiry-warning')).toHaveTextContent(
+      String(text),
+    );
+    expect(screen.getByTestId('eva-token-settings-link')).toHaveTextContent(
+      'Обновить токен',
+    );
+  },
+);
 test('shows only the compact indicator until it is opened in the list', () => {
   render(
     <EvaAccessNotice
@@ -29,6 +58,33 @@ test('shows only the compact indicator until it is opened in the list', () => {
     '/user-setting/profile?eva=eva-1&returnTo=%2Fbusiness-documents#eva-token',
   );
   expect(screen.queryByTestId('eva-access-notice')).not.toBeInTheDocument();
+});
+
+test('shows the daily warning after the weekly warning was dismissed', () => {
+  const available = access('AVAILABLE');
+  available.data!.expires_at = Date.now() + 6 * 86_400_000;
+  const view = render(
+    <EvaAccessNotice access={available} returnTo="/business-documents/doc-1" />,
+  );
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Закрыть предупреждение EVA' }),
+  );
+  expect(screen.queryByTestId('eva-access-notice')).not.toBeInTheDocument();
+  view.rerender(
+    <EvaAccessNotice
+      access={{ ...available, dataUpdatedAt: Date.now() }}
+      returnTo="/business-documents/doc-1"
+    />,
+  );
+  expect(screen.queryByTestId('eva-access-notice')).not.toBeInTheDocument();
+  const next = access('AVAILABLE');
+  next.data!.expires_at = Date.now() + 3_600_000;
+  view.rerender(
+    <EvaAccessNotice access={next} returnTo="/business-documents/doc-1" />,
+  );
+  expect(screen.getByTestId('eva-token-expiry-warning')).toHaveTextContent(
+    'evaTokenExpiresDay',
+  );
 });
 test('shows token replacement on rejection and preserves the requirement in its tab', () => {
   render(
@@ -151,7 +207,7 @@ test('clears a previous token rejection after a newer successful personal access
   const recovered = {
     ...access('AVAILABLE'),
     dataUpdatedAt: error.receivedAt + 1,
-  } as ReturnType<typeof useEvaAccess>;
+  } as EvaAccess;
   rendered.rerender(
     <EvaAccessNotice
       access={recovered}
@@ -170,7 +226,7 @@ test('a space read check does not clear a known write permission denial', () => 
   const checked = {
     ...access('AVAILABLE'),
     dataUpdatedAt: error.receivedAt + 1,
-  } as ReturnType<typeof useEvaAccess>;
+  } as EvaAccess;
   render(
     <EvaAccessNotice
       access={checked}

@@ -227,12 +227,22 @@ Job snapshot assembly uses a revision projection without UI section rendering;
 AST, Markdown, hashes and provenance remain compatible with AI/evidence consumers.
 Single-document latest-job reads use ordered LIMIT 1; page reads retain ranked batching.
 
-Content normalization owns one AST copy and indexes the first substantive block
-of each type under each template ancestor. Required empty parents select the
-earliest allowed block by its original position, before section sorting. An
-inherited block is copied so a parent and child do not share mutable content.
-Template membership uses a set; schema validation selects its first error with
-a minimum instead of sorting every error. Section hashes retain canonical JSON.
+Content normalization owns one AST copy, restores the pinned outline and retains
+empty sections without copying requirements from their children. New title-only
+documents include every template section, including optional sections. Historical
+required-scope documents retain their saved contract. Draft and review completion
+add questions for empty or missing template sections when the model omitted a
+question; the author supplies information or confirms absence/applicability.
+An existing question with the same gap tag is not repeated. Prompts require the
+whole outline and explicit authorization for additional subsections.
+Template membership uses a set; section hashes retain canonical JSON.
+
+EVA draft preparation converts PlantUML code blocks to native editable macros
+using EVA's authenticated SVG renderer. SVG is restricted to inert geometry and
+text; rendering failure preserves the code. Reading a native macro restores its
+UML source before Markdown conversion, so preview labels and editor chrome do not
+affect content comparisons. The prepared HTML is retained for guarded publication
+and retry; existing personal-token, source-version and draft checks still apply.
 
 ## Transaction and external boundaries
 

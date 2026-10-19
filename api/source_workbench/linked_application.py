@@ -29,6 +29,7 @@ from .linked_domain import (
     source_state,
 )
 from .linked_graph import overview
+from .document_standards import DOCUMENT_STANDARDS, STANDARD_EDIT_RULES
 from .processing import ModelBudget, VisibleStreamFilter
 
 
@@ -598,6 +599,7 @@ class LinkedDocuments:
             "sections": revision["sections"],
             "inputs": inputs,
             "candidate_plan": plan,
+            "document_type": target["document_type"],
             "task": "Проверить независимость выбранной пользователем части подготовленных правок.",
         }
         job = await self._call(self.repo.enqueue, actor, workspace_id, document_id, payload, True)
@@ -609,6 +611,8 @@ class LinkedDocuments:
         await self._assert_inputs(actor, workspace_id, document_id, payload, capability)
         model = await self.models.open_processor(actor)
         budget = ModelBudget.from_context(model.context_tokens, model.count_tokens, output_limit=getattr(model, "output_tokens", None))
+        standard = DOCUMENT_STANDARDS.get(payload.get("document_type"), "")
+        standard_rules = "\n" + standard + STANDARD_EDIT_RULES if standard else ""
 
         async def ask(system, request):
             limit = budget.response_tokens(system, request)
@@ -632,7 +636,7 @@ class LinkedDocuments:
             return value
 
         await self._call(self.repo.lease, job["id"], job["lease_token"], "planning")
-        plan = job.get("checkpoint") or payload.get("candidate_plan") or await ask(PLAN_SYSTEM, payload)
+        plan = job.get("checkpoint") or payload.get("candidate_plan") or await ask(PLAN_SYSTEM + standard_rules, payload)
         partial = bool(payload.get("candidate_plan"))
         sections = apply_plan(payload["sections"], plan, payload["inputs"], allow_deferred=partial)
         await self._call(self.repo.checkpoint, job["id"], job["lease_token"], plan)
@@ -642,7 +646,8 @@ class LinkedDocuments:
         else:
             await self._call(self.repo.lease, job["id"], job["lease_token"], "verifying")
             verification = await ask(
-                PARTIAL_VERIFY_SYSTEM if partial else VERIFY_SYSTEM, {"task": payload["task"], "before": payload["sections"], "after": sections, "inputs": payload["inputs"], "plan": plan}
+                (PARTIAL_VERIFY_SYSTEM if partial else VERIFY_SYSTEM) + standard_rules,
+                {"task": payload["task"], "before": payload["sections"], "after": sections, "inputs": payload["inputs"], "plan": plan},
             )
             choice(verification.get("verdict"), {"PASS", "FAIL"}, "Результат проверки")
             if not isinstance(verification.get("issues"), list) or any(not isinstance(issue, str) for issue in verification["issues"]):

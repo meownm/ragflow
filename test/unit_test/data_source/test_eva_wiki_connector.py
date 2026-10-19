@@ -48,6 +48,17 @@ def _mutation_client():
     return client
 
 
+def test_plantuml_render_uses_authenticated_eva_rpc():
+    connector = _connector()
+    connector._session.post = MagicMock(return_value=_response({"result": "<svg><text>Process</text></svg>"}))
+    source = "@startuml\nA -> B\n@enduml"
+
+    assert connector.render_plantuml(source) == "<svg><text>Process</text></svg>"
+    payload = connector._session.post.call_args.kwargs["json"]
+    assert payload["method"] == "CmfDocument.convert_uml2svg"
+    assert payload["kwargs"] == {"uml": source, "obj_id": None}
+
+
 def _page(**overrides):
     page = {
         "id": "CmfDocument:doc-1",

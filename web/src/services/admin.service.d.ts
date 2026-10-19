@@ -348,7 +348,15 @@ declare namespace AdminService {
     jobs: DocumentQualityJob[];
   };
 
-  export type DocumentQualityDiagnostic = { code: string; fact_id?: string };
+  export type DocumentQualityDiagnostic = {
+    code: string;
+    fact_id?: string;
+    job_code?: string;
+    error_type?: string;
+    requirement_id?: string;
+    check_id?: string;
+    section_id?: string;
+  };
   export type DocumentQualityGateCheck = {
     metric: string;
     actual: number;

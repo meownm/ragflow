@@ -19,7 +19,8 @@ from api.db.db_models import BusinessDocumentQualityCampaign, BusinessDocumentQu
 from common.misc_utils import get_uuid
 from common.time_utils import current_timestamp
 from tools.quality.verify_business_document_quality_report import QualityGateFailed, verify_report
-from document_quality_models import quality_model_catalog, quality_model_digest
+from document_quality_models import quality_model_catalog, quality_model_configuration, quality_model_digest
+from business_documents.domain.job_recovery import REPAIRABLE_OUTPUT_CODES, TRANSIENT_FAILURE_CODES
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -38,9 +39,82 @@ _FAILURE_CODES = {
     "scenario_text_missing",
     "scenario_plantuml_missing",
     "unexpected_revision_created",
+    "missing_section",
+    "metric_row_count",
+    "misplaced_metric",
+    "requirement",
+    "preview_mutated_revision",
+    "revision_count",
+    "proposal_not_applied",
+    "confirmation_not_idempotent",
+    "unexpected_model_sequence",
+    "verification_input_mismatch",
+    "nonretryable_model_error",
+    "invalid_final_verdict",
+    "fixture_identity",
+    "incomplete_placement_evidence",
+    "invalid_model_call_budget",
+    "incomplete_requirement_inventory",
+    "unapplied_confirmed_source",
+    "unexpected_operations",
+    "invalid_change_source",
+    "invalid_source_inventory",
+    "invalid_saved_plan",
+    "plan_ast_mismatch",
+    "section_inventory",
+    "unrelated_section_changed",
+    "invalid_model_exchange",
+    "unexpected_prompt",
+    "model_input_hash",
+    "model_response_hash",
+    "missing_real_model_exchanges",
+    "source_input_mismatch",
+    "model_plan_mismatch",
 }
+_JOB_CODES = (
+    REPAIRABLE_OUTPUT_CODES
+    | TRANSIENT_FAILURE_CODES
+    | frozenset(
+        {
+            "REQUIREMENT_COVERAGE_FAILED",
+            "INVALID_CHANGE_PLAN",
+            "INVALID_DOCUMENT_DRAFT",
+            "DUPLICATE_REQUIREMENT_CONTENT",
+            "MODEL_CONTEXT_UNAVAILABLE",
+            "MODEL_CONTEXT_TOO_LARGE",
+            "MODEL_OUTPUT_LIMIT_UNAVAILABLE",
+            "REQUIREMENT_CONTEXT_TOO_LARGE",
+            "LLM_TIMEOUT",
+            "EMPTY_AI_RESPONSE",
+            "INVALID_AI_JSON",
+            "INVALID_REQUIREMENT_COVERAGE",
+            "UNFINISHED_JOB",
+            "AI_TIME_BUDGET_EXCEEDED",
+            "AI_CALL_BUDGET_EXCEEDED",
+        }
+    )
+)
+_ERROR_TYPES = frozenset(
+    {
+        "AssertionError",
+        "TimeoutError",
+        "ValueError",
+        "LookupError",
+        "ValidationError",
+        "RuleViolation",
+        "RuntimeError",
+        "OperationalError",
+        "IntegrityError",
+        "HTTPStatusError",
+        "ConnectError",
+        "ReadTimeout",
+        "ConnectTimeout",
+        "APITimeoutError",
+        "APIConnectionError",
+    }
+)
 _DIAGNOSTIC_CODES = (
-    {"MISSING_FACT", "UNCLASSIFIED", "ASSERTION_FAILED", "EXECUTION_ERROR"}
+    {"MISSING_FACT", "UNCLASSIFIED", "ASSERTION_FAILED", "EXECUTION_ERROR", "JOB_FAILED"}
     | {code.upper() for code in _FAILURE_CODES}
     | {
         "QUESTIONS_COUNT",
@@ -157,13 +231,7 @@ def _public_report(value, *, detail: bool) -> dict | None:
                 case["metrics"] = {name: numeric for name, raw in metrics.items() if isinstance(name, str) and _SAFE_ID.fullmatch(name) if (numeric := _safe_number(raw)) is not None}
             diagnostics = item.get("diagnostics")
             case["diagnostics"] = (
-                [
-                    {"code": entry["code"], **({"fact_id": entry["fact_id"]} if isinstance(entry.get("fact_id"), str) and _SAFE_ID.fullmatch(entry["fact_id"]) else {})}
-                    for entry in diagnostics[:20]
-                    if isinstance(entry, dict) and entry.get("code") in _DIAGNOSTIC_CODES
-                ]
-                if isinstance(diagnostics, list)
-                else []
+                [_public_diagnostic(entry) for entry in diagnostics[:20] if isinstance(entry, dict) and entry.get("code") in _DIAGNOSTIC_CODES] if isinstance(diagnostics, list) else []
             )
             cases.append(case)
         report["cases"] = cases
@@ -303,7 +371,13 @@ def _known_case_ids() -> set[str]:
 def enqueue_nightly_campaign(day: str) -> dict:
     key = f"nightly:{day}"
     existing = BusinessDocumentQualityCampaign.get_or_none(BusinessDocumentQualityCampaign.schedule_key == key)
-    if existing is not None:
+    retry_catalog = (
+        existing is not None
+        and existing.status == "INCOMPLETE"
+        and existing.reason_code in {"QA_TENANT_MISSING", "CATALOG_UNAVAILABLE", "NO_COMPLETION_MODELS"}
+        and not BusinessDocumentQualityRun.select().where(BusinessDocumentQualityRun.campaign_id == existing.id).exists()
+    )
+    if existing is not None and not retry_catalog:
         return _public_campaign(existing)
     tenant = _configured_tenant()
     if not tenant:
@@ -311,10 +385,13 @@ def enqueue_nightly_campaign(day: str) -> dict:
     try:
         catalog = quality_model_catalog(tenant)
         reason_code = "CATALOG_PARTIAL" if catalog["errors"] else "NO_COMPLETION_MODELS" if not catalog["models"] else None
-    except (OSError, ValueError, TimeoutError):
-        logging.exception("Business Documents quality model catalog is unavailable")
+    except (OSError, ValueError, TimeoutError, LookupError) as error:
+        if existing is None:
+            logging.exception("Business Documents quality model catalog is unavailable")
         catalog = {"models": [], "errors": ["CATALOG_UNAVAILABLE"]}
-        reason_code = "CATALOG_UNAVAILABLE"
+        reason_code = "QA_TENANT_MISSING" if isinstance(error, LookupError) else "CATALOG_UNAVAILABLE"
+    if retry_catalog and not catalog["models"] and reason_code == existing.reason_code:
+        return _public_campaign(existing)
     fingerprint = _source_fingerprint()
     if fingerprint is not None:
         catalog["source_fingerprint"] = fingerprint
@@ -332,6 +409,15 @@ def enqueue_nightly_campaign(day: str) -> dict:
                 "update_time": now,
             },
         )
+        if retry_catalog:
+            campaign.models = catalog
+            campaign.source_revision = _source_revision()
+            campaign.reason_code = reason_code
+            campaign.status = "PENDING" if catalog["models"] else "INCOMPLETE"
+            campaign.save(
+                only=[BusinessDocumentQualityCampaign.models, BusinessDocumentQualityCampaign.source_revision, BusinessDocumentQualityCampaign.reason_code, BusinessDocumentQualityCampaign.status]
+            )
+            created = True
         if created:
             for item in catalog["models"]:
                 BusinessDocumentQualityRun.create(
@@ -359,6 +445,15 @@ def schedule_due(now: datetime | None = None) -> None:
         enqueue_quality_run("MONTHLY", schedule_key=f"monthly:{local.year:04d}-{local.month:02d}")
 
 
+def process_quality_cycle() -> bool:
+    """A scheduling prerequisite failure must not starve already queued runs."""
+    try:
+        schedule_due()
+    except Exception:
+        logging.exception("Business Documents quality scheduling failed")
+    return process_next_run()
+
+
 def _run_suite(test_path: str, env: dict[str, str], temp: Path, *, deadline: float | None = None) -> int:
     timeout = RUN_TIMEOUT_SECONDS if deadline is None else min(RUN_TIMEOUT_SECONDS, deadline - time.monotonic())
     if timeout <= 0:
@@ -378,10 +473,23 @@ def _run_suite(test_path: str, env: dict[str, str], temp: Path, *, deadline: flo
     return completed.returncode
 
 
+def _public_diagnostic(entry: dict) -> dict:
+    result = {"code": entry["code"]}
+    for field in ("fact_id", "requirement_id", "check_id", "section_id"):
+        value = entry.get(field)
+        if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,80}", value):
+            result[field] = value
+    for field, allowed in (("job_code", _JOB_CODES), ("error_type", _ERROR_TYPES)):
+        if isinstance(entry.get(field), str) and entry[field] in allowed:
+            result[field] = entry[field]
+    return result
+
+
 def _safe_case_diagnostics(item: dict) -> list[dict]:
     diagnostics: list[dict] = []
     if item.get("status") == "INCOMPLETE":
-        return [{"code": "EXECUTION_ERROR"}]
+        error = item.get("execution_error")
+        diagnostics.append(_public_diagnostic({**(error if isinstance(error, dict) else {}), "code": "EXECUTION_ERROR"}))
     metrics = item.get("metrics") if isinstance(item.get("metrics"), dict) else {}
     for fact_id in metrics.get("missing_fact_ids") or []:
         if isinstance(fact_id, str) and _SAFE_ID.fullmatch(fact_id):
@@ -390,6 +498,10 @@ def _safe_case_diagnostics(item: dict) -> list[dict]:
         if not isinstance(failure, str):
             continue
         code = failure.split("=", 1)[0].split(":", 1)[0]
+        parts = failure.split(":")
+        if code == "job":
+            diagnostics.append(_public_diagnostic({"code": "JOB_FAILED", "job_code": parts[1] if len(parts) == 2 else None}))
+            continue
         if code == "missing_fact_ids" and diagnostics:
             continue
         if code in _FAILURE_CODES or code in {
@@ -406,7 +518,14 @@ def _safe_case_diagnostics(item: dict) -> list[dict]:
             "forbidden_fragment_present",
             "hard_failures",
         }:
-            diagnostics.append({"code": code.upper()})
+            detail = {}
+            if code == "requirement" and len(parts) == 3:
+                detail = {"requirement_id": parts[1], "check_id": parts[2]}
+            elif code in {"metric_row_count", "misplaced_metric"} and len(parts) == 3:
+                detail = {"requirement_id": parts[1]}
+            elif code in {"missing_section", "unrelated_section_changed"} and len(parts) == 2:
+                detail = {"section_id": parts[1]}
+            diagnostics.append(_public_diagnostic({"code": code.upper(), **detail}))
     if item.get("status") == "FAIL" and not diagnostics:
         diagnostics.append({"code": "UNCLASSIFIED"})
     return diagnostics[:20]
@@ -527,13 +646,13 @@ def _failed_test_names(temp: Path) -> str:
 
 
 def _comparison_signature(summary: dict) -> tuple:
+    """Compare shared assets; model-local configuration is guarded within each run."""
     return (
         summary.get("source_revision"),
         summary.get("suite_sha256"),
         summary.get("rubric_version"),
         summary.get("template_version"),
         json.dumps(summary.get("prompt_hashes"), sort_keys=True),
-        json.dumps(summary.get("parameter_profiles"), sort_keys=True),
         summary.get("source_dirty"),
     )
 
@@ -562,6 +681,7 @@ def _execute(row: BusinessDocumentQualityRun) -> tuple[str, dict | None, str | N
     model_digest = getattr(row, "model_digest", None)
     if model_name and model_digest and quality_model_digest(tenant, model_name) != model_digest:
         return "INCOMPLETE", None, "Model digest changed before execution"
+    initial_configuration = quality_model_configuration(tenant, model_name) if model_name else None
     with tempfile.TemporaryDirectory(prefix="business-document-quality-") as directory:
         temp = Path(directory)
         report_path = temp / "report.json"
@@ -621,6 +741,8 @@ def _execute(row: BusinessDocumentQualityRun) -> tuple[str, dict | None, str | N
             return "INCOMPLETE", summary, "Evaluation source changed during execution"
         if model_name and model_digest and quality_model_digest(tenant, model_name) != model_digest:
             return "INCOMPLETE", summary, "Model digest changed during execution"
+        if model_name and initial_configuration != quality_model_configuration(tenant, model_name):
+            return "INCOMPLETE", summary, "Evaluation conditions changed during model execution"
         if getattr(row, "campaign_id", None):
             comparison = (
                 BusinessDocumentQualityRun.select(BusinessDocumentQualityRun.report)

@@ -13,7 +13,7 @@ from business_documents.application.errors import ConflictError, ValidationError
 from business_documents.application.export import ExportCommitter
 from business_documents.application.persistence import DocumentWriter
 from business_documents.application.queries import DocumentQueries
-from business_documents.domain.assessment import canonical_tag, normalize_proposal, normalize_question, validate_comment_dispositions
+from business_documents.domain.assessment import canonical_tag, empty_section_questions, normalize_proposal, normalize_question, validate_comment_dispositions
 from business_documents.domain.change_plan import validate_evidence_sources, validate_snapshot_sources
 from business_documents.domain.errors import RuleViolation
 from business_documents.domain.execution_audit import validate_audit_envelope, validate_ai_audit, validate_retrieval_audit, verify_pinned_evidence
@@ -283,7 +283,9 @@ class JobCompletion:
             if item["disposition"] == "NEEDS_QUESTION":
                 question_sources.setdefault(canonical_tag(item["question_semantic_tag"]), []).append(item["comment_event_id"])
         question_ids, question_count = {}, 0
-        for raw in output["questions"]:
+        revision = job["payload"].get("current_revision") or {}
+        gap_questions = empty_section_questions(revision.get("document_ast") or {}, self._content.published_template(), output["questions"], batch.records.questions)
+        for raw in [*output["questions"], *gap_questions]:
             tag = canonical_tag(raw["semantic_tag"])
             question_id, inserted = batch.add_question({**raw, "stage": "REVIEW"}, "REVIEW", event_id, question_sources.get(tag, []))
             question_ids.setdefault(tag, question_id)
@@ -347,7 +349,9 @@ class JobCompletion:
         ]
         revision_id = self._writer.insert_revision(document["id"], 1, draft, body, [event_id, *answer_events], requested_by(job, document["owner_id"]), revision_id=self._new_id())
         batch = _AssessmentBatch(self._writer, self._content, self._new_id, document["id"], 1, snapshot)
-        question_count = sum(int(batch.add_question(question, "REVIEW", event_id)[1]) for question in review_questions["questions"])
+        questions = review_questions["questions"]
+        gap_questions = empty_section_questions(draft, self._content.published_template(), questions, batch.records.questions)
+        question_count = sum(int(batch.add_question(question, "REVIEW", event_id)[1]) for question in [*questions, *gap_questions])
         proposal_count = sum(int(batch.add_proposal(proposal, event_id)) for proposal in proposals)
         return self._finish(
             document,

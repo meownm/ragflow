@@ -82,6 +82,13 @@ def _case_job_evidence(previous_ids: set[str]) -> list[dict[str, Any]]:
     ]
 
 
+def _execution_error(error: Exception) -> dict[str, Any]:
+    detail = error.args[0] if error.args and isinstance(error.args[0], dict) else {}
+    job_error = detail.get("error")
+    code = getattr(error, "code", None) or (job_error.get("code") if isinstance(job_error, dict) else None)
+    return {"error_type": type(error).__name__, "job_code": code if isinstance(code, str) else None}
+
+
 class ControlledEvidenceSearch:
     def __init__(self, dataset_id: str, chunks: list[dict[str, Any]]):
         self.dataset_id = dataset_id
@@ -592,6 +599,18 @@ def test_execution_error_keeps_full_report_incomplete(tmp_path):
     assert json.loads(path.read_text(encoding="utf-8"))["status"] == "INCOMPLETE"
 
 
+@pytest.mark.parametrize(
+    "error,expected",
+    [
+        (AssertionError({"error": {"code": "REQUIREMENT_COVERAGE_FAILED", "message": "private document"}}), {"error_type": "AssertionError", "job_code": "REQUIREMENT_COVERAGE_FAILED"}),
+        (AssertionError({"error": "private exception"}), {"error_type": "AssertionError", "job_code": None}),
+        (TimeoutError("private endpoint"), {"error_type": "TimeoutError", "job_code": None}),
+    ],
+)
+def test_case_execution_error_preserves_codes_without_error_text(error, expected):
+    assert _execution_error(error) == expected
+
+
 def test_model_call_evidence_preserves_inputs_response_and_stream_callback(monkeypatch):
     calls = []
     payload = {"job_input": {"task_type": "GENERATE_DRAFT"}, "evidence": {"chunks": [{"content": "Подтвержденный факт"}]}}
@@ -728,6 +747,7 @@ def test_live_model_golden_suite(database, monkeypatch):
                         "priority": case["priority"],
                         "status": "INCOMPLETE",
                         "failures": [f"{type(error).__name__}: {error}"],
+                        "execution_error": _execution_error(error),
                         "metrics": {},
                     },
                     score=None,

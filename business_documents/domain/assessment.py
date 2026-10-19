@@ -1,6 +1,6 @@
 """Normalization and reference rules for generated questions and proposals."""
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 import json
 from typing import Any
@@ -8,11 +8,37 @@ import unicodedata
 
 from business_documents.domain.errors import RuleViolation
 from business_documents.domain.hashing import stable_hash
-from business_documents.domain.content import with_document_warnings
+from business_documents.domain.content import render_section_text, with_document_warnings
 
 
 def canonical_tag(value: str) -> str:
     return unicodedata.normalize("NFKC", value).strip().casefold()
+
+
+def empty_section_questions(
+    document: Mapping[str, Any], template: Mapping[str, Any], questions: Sequence[Mapping[str, Any]], known_questions: Sequence[Mapping[str, Any]] = ()
+) -> list[dict[str, Any]]:
+    """Ask for missing information without declaring its absence on the author's behalf."""
+    sections = {section["id"]: section for section in document.get("sections", [])}
+    covered = {question["target_section_id"] for question in questions}
+    known_tags = {canonical_tag(question["semantic_tag"]) for question in known_questions}
+    result = []
+    for section in template["sections"]:
+        section_id = section["id"]
+        tag = f"empty_section:{section_id}"
+        if section_id in covered or tag in known_tags or render_section_text(sections.get(section_id, {"blocks": []})).strip():
+            continue
+        result.append(
+            {
+                "semantic_tag": tag,
+                "stage": "REVIEW",
+                "target_section_id": section_id,
+                "text": f"По разделу {section_id} «{section['title']}» нет сведений. Предоставьте информацию или подтвердите её отсутствие/неприменимость.",
+                "options": [{"option_id": "ABSENT", "label": "Подтверждаю отсутствие информации"}, {"option_id": "NOT_APPLICABLE", "label": "Раздел неприменим"}],
+                "allow_custom_answer": True,
+            }
+        )
+    return result
 
 
 def normalize_assessment_output(output: dict[str, Any], stage: str, schema: Mapping[str, Any], *, section_ids: frozenset[str], known_questions=()) -> dict[str, Any]:

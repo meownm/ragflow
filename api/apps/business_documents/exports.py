@@ -32,6 +32,7 @@ from peewee import IntegrityError
 from api.apps.business_documents.assets import published_template, rendering_policy, render_document_ast
 from business_documents.domain.content import render_block_source, render_section_text, document_warning_texts, render_document_warning_appendix
 from api.apps.business_documents.markdown_rendering import markdown_environment, render_markdown, render_inline_markdown, validate_external_url
+from api.apps.business_documents.html_formatting import prepare_eva_html
 from business_documents.application.export import PreparedExport
 from business_documents.application.errors import BusinessDocumentError, ConflictError, ValidationError
 from api.db.db_models import BusinessDocument, BusinessDocumentExportArtifact, BusinessDocumentExportStage, BusinessDocumentJob, BusinessDocumentRevision
@@ -76,9 +77,21 @@ def _eva_markdown(value: str, node_id: str, policy: dict[str, Any], environment:
         elif tag.name == "table":
             wrapper = soup.new_tag("div", attrs={"class": policy["table_wrapper_class"], "data-macros": policy["table_wrapper_macro"], "data-id": f"{tag['data-id']}-wrap"})
             tag.wrap(wrapper)
-            for y, row in enumerate(tag.find_all("tr")):
-                for x, cell in enumerate(row.find_all(["th", "td"])):
-                    cell.attrs.update({"colspan": "1", "rowspan": "1", "data-x": str(x), "data-y": str(y)})
+            occupied_until = {}
+            rows = (row for row in tag.find_all("tr") if row.find_parent("table") is tag)
+            for y, row in enumerate(rows):
+                x = 0
+                for cell in row.find_all(["th", "td"], recursive=False):
+                    while occupied_until.get(x, 0) > y:
+                        x += 1
+                    for attribute in ("colspan", "rowspan"):
+                        raw = str(cell.get(attribute, "1"))
+                        cell[attribute] = str(max(1, min(1000, int(raw)))) if re.fullmatch(r"[0-9]{1,6}", raw) else "1"
+                    cell.attrs.update({"data-x": str(x), "data-y": str(y)})
+                    colspan, rowspan = int(cell["colspan"]), int(cell["rowspan"])
+                    for column in range(x, x + colspan):
+                        occupied_until[column] = y + rowspan
+                    x += colspan
     return str(soup).strip()
 
 
@@ -858,7 +871,10 @@ class BusinessDocumentExportService:
             for block in section["blocks"]:
                 block_type = block.get("type") if isinstance(block, dict) else None
                 if block_type == "paragraph":
-                    document.add_paragraph(block["text"])
+                    content = BeautifulSoup(render_markdown(block["text"]), "html.parser")
+                    for line_break in content.select("br"):
+                        line_break.replace_with("\n")
+                    document.add_paragraph(content.get_text().rstrip("\n"))
                 elif block_type == "list":
                     for item in block["items"]:
                         document.add_paragraph(str(item), style="List Bullet")
@@ -952,4 +968,4 @@ class BusinessDocumentExportService:
             lines.extend("<li>" + html.escape(warning).replace("\n", "<br/>") + "</li>" for warning in warnings)
             lines.append("</ul></aside>")
         lines.append("</div>")
-        return "\n".join(lines)
+        return prepare_eva_html("\n".join(lines))

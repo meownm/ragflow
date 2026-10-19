@@ -273,6 +273,7 @@ RUN --mount=type=cache,id=ragflow_npm,target=/root/.npm,sharing=locked \
 # Copy full web source and docs for the frontend build.
 COPY web web
 COPY docs docs
+COPY api/apps/business_documents/html_policy.json api/apps/business_documents/html_policy.json
 RUN --mount=type=cache,id=ragflow_npm,target=/root/.npm,sharing=locked \
     cd web && NODE_OPTIONS="--max-old-space-size=8192" VITE_BUILD_SOURCEMAP=false VITE_MINIFY=esbuild npm run build
 

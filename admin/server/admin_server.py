@@ -37,7 +37,7 @@ from auth import init_default_admin, setup_auth
 from flask_session import Session
 from common.versions import get_ragflow_version
 from common.observability import configure_otel, install_flask_instrumentation
-from document_quality_runs import process_next_run, schedule_due
+from document_quality_runs import process_quality_cycle
 from api.db.db_models import DB
 
 stop_event = threading.Event()
@@ -78,8 +78,7 @@ if __name__ == "__main__":
     def quality_worker():
         while not stop_event.is_set():
             try:
-                schedule_due()
-                process_next_run()
+                process_quality_cycle()
             except Exception:
                 logging.exception("Business Documents quality scheduler failed")
             finally:

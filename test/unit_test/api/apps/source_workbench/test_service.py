@@ -468,6 +468,24 @@ async def test_process_streams_complete_selected_articles_in_one_call(source_mod
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["all", "sequential"])
+async def test_document_standards_reach_article_generation_with_source_evidence(source_module, mode):
+    calls = []
+    selection = [{"dataset_id": "dataset-a", "document_id": "doc-1", "revision": "hash:1:2"}]
+    service = source_module.SourceWorkspaceService(SimpleNamespace(get=lambda owner, workspace: _workspace(selection)), _gateway(calls), _processor(calls))
+    stream = await service.process_stream("owner-a", "workspace-id", {"mode": mode, "prompt": "Составь ТЗ", "expected_version": 3})
+    events = [event async for event in stream]
+    assert events[-1]["event"] == "done"
+    system, payload, _ = next(call for call in calls if len(call) == 3 and isinstance(call[1], dict) and "articles" in call[1])
+    assert payload["articles"][0]["text"] == "Full indexed text"
+    assert "Стандарт «Архитектура»" in system and "Уровень C3" in system
+    assert "Стандарт «Техническое задание»" in system and "9. Журналирование" in system
+    assert "а не latest" in system
+    assert "Для обычной статьи, обзора, ответа и других типов документов эти структуры не требуются" in system
+    assert "Examples are not requirements" in system
+
+
+@pytest.mark.asyncio
 async def test_all_mode_rejects_context_overflow_without_model_call(source_module):
     from api.source_workbench.processing import ProcessingError
 
@@ -497,6 +515,8 @@ async def test_sequential_mode_analyzes_long_article_in_parts_and_streams_final(
     assert events[-2]["strategy"] == "task_relevant_notes"
     assert events[-1]["text"] == "Article [1]"
     assert sum(1 for call in calls if len(call) == 3 and isinstance(call[1], dict) and "fragment" in call[1]) > 1
+    extraction_systems = [call[0] for call in calls if len(call) == 3 and isinstance(call[1], dict) and "fragment" in call[1]]
+    assert all("Preserve configuration, permissions, scenarios, data fields, API errors, logging, components and interactions" in system for system in extraction_systems)
 
 
 @pytest.mark.asyncio

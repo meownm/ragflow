@@ -1,0 +1,21 @@
+{
+  "tags": ["p", "div", "span", "br", "hr", "h1", "h2", "h3", "h4", "h5", "h6", "strong", "b", "em", "i", "del", "s", "strike", "u", "sub", "sup", "mark", "kbd", "abbr", "code", "pre", "blockquote", "ul", "ol", "li", "table", "thead", "tbody", "tfoot", "tr", "th", "td", "a", "img", "input", "font", "dl", "dt", "dd", "details", "summary", "aside"],
+  "dropContent": ["script", "style", "iframe", "object", "embed", "form", "button", "svg", "math", "template", "textarea", "select"],
+  "attributes": {
+    "*": ["title", "dir", "style", "id"],
+    "a": ["href", "data-document-heading-anchor"],
+    "img": ["src", "alt", "width", "height"],
+    "ol": ["start", "reversed", "type"],
+    "li": ["value"],
+    "table": ["width", "border", "cellpadding", "cellspacing", "align"],
+    "th": ["colspan", "rowspan", "width", "height", "align"],
+    "td": ["colspan", "rowspan", "width", "height", "align"],
+    "code": ["class"],
+    "input": ["type", "checked", "disabled"],
+    "font": ["face", "size", "color"],
+    "details": ["open"],
+    "aside": ["class", "data-document-warnings"]
+  },
+  "cssProperties": ["color", "background-color", "font-family", "font-size", "font-weight", "font-style", "text-decoration", "text-align", "vertical-align", "white-space", "list-style-type", "margin-left", "margin-right", "text-indent", "line-height", "border", "border-color", "border-width", "border-style", "border-collapse", "padding", "padding-left", "padding-right", "width", "height"],
+  "cssValuePattern": "^(?:[a-zA-Z0-9#.,%\\s'\"+\\-]+|(?:rgb|rgba|hsl|hsla)\\([0-9.,% /+\\-]+\\))$"
+}

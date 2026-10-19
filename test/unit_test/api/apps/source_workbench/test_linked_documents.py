@@ -126,6 +126,33 @@ async def prepare(linked, target):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("document_type,standard_title", [("architecture", "Архитектура"), ("technical_specification", "Техническое задание"), ("instruction", None)])
+async def test_document_type_selects_standard_for_planning_and_verification(linked, document_type, standard_title, monkeypatch):
+    calls = []
+    original = linked.provider.stream
+
+    async def stream(system, payload, output_tokens):
+        calls.append(system)
+        async for delta in original(system, payload, output_tokens):
+            yield delta
+
+    monkeypatch.setattr(linked.provider, "stream", stream)
+    source = await linked.service.import_source("author", "workspace", {"dataset_id": "dataset", "document_id": "source"})
+    target = await linked.service.create("author", "workspace", {"title": "Документ", "document_type": document_type, "content": "# Хранение\n30 дней\n"})
+    target = await linked.service.dependency("author", "workspace", target["id"], {"source_id": source["id"], "expected_version": target["version"]})
+    change = await prepare(linked, target)
+    assert change["status"] == "ready"
+    assert len(calls) == 2
+    for system in calls:
+        if standard_title:
+            assert f"Стандарт «{standard_title}»" in system
+            assert system.count("Стандарт «") == 1
+            assert "Do not restructure existing documents just for compliance" in system
+        else:
+            assert "Стандарт «" not in system
+
+
+@pytest.mark.asyncio
 async def test_source_change_prepares_and_confirms_specification_without_losing_manual_text(linked):
     source, target = await scenario(linked)
     linked.sources.marker = "second"
@@ -379,10 +406,13 @@ async def test_manual_change_after_verification_requires_new_dependency_review(l
 
 @pytest.mark.asyncio
 async def test_selected_independent_changes_are_reverified_and_leave_deferred_sources_open(linked):
+    verification_systems = []
+
     class TwoSources(Models):
         async def stream(self, system, payload, output_tokens):
             self.calls += 1
             if "verdict" in system:
+                verification_systems.append(system)
                 yield json.dumps({"verdict": "PASS", "issues": []})
                 return
             operations, results = [], []
@@ -413,6 +443,8 @@ async def test_selected_independent_changes_are_reverified_and_leave_deferred_so
     await linked.service.execute(linked.repo.claim())
     verified = (await linked.service.get("author", "workspace", target["id"]))["changes"][0]
     assert linked.provider.calls == 3  # Generator + whole-plan verifier + subset verifier.
+    assert len(verification_systems) == 2
+    assert all("Стандарт «Техническое задание»" in system for system in verification_systems)
     target = await linked.service.decide("author", "workspace", target["id"], verified["id"], {"action": "accept"})
     assert "90 дней" in target["content"] and "Авторский текст не менять" in target["content"]
     assert len(target["impacts"]) == 1

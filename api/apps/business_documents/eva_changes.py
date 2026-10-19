@@ -28,7 +28,7 @@ from urllib.parse import unquote, urlparse
 
 from bs4 import BeautifulSoup
 from api.apps.business_documents.markdown_rendering import render_markdown
-from markdownify import markdownify
+from api.apps.business_documents.html_formatting import EvaMarkdownConverter, prepare_eva_html, restore_eva_formatting, sanitize_html
 from peewee import fn
 
 from business_documents.application.errors import BusinessDocumentError, ConflictError, ValidationError
@@ -47,6 +47,7 @@ from common.data_source.eva_wiki_connector import EvaAuthenticationError, EvaPro
 from common.data_source.exceptions import ConnectorMissingCredentialError, ConnectorValidationError, InsufficientPermissionsError
 from common.misc_utils import get_uuid
 from common.time_utils import current_timestamp
+from api.apps.business_documents.eva_diagrams import render_eva_diagrams, restore_diagram_sources
 
 
 class EvaChangeState(StrEnum):
@@ -60,8 +61,6 @@ class EvaChangeState(StrEnum):
 
 
 _HEADING_PATTERN = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
-_UNSAFE_TAGS = frozenset({"script", "style", "iframe", "object", "embed", "form", "input", "button"})
-_SAFE_URL_SCHEMES = frozenset({"", "http", "https", "mailto"})
 _MAX_DRAFT_SIZE = 1_000_000
 _EXTERNAL_OPERATION_TIMEOUT_MS = 120_000
 
@@ -73,7 +72,7 @@ def _timestamps() -> dict[str, Any]:
 
 
 def _canonical_markdown(value: str) -> str:
-    lines = [line.rstrip() for line in str(value or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")]
+    lines = str(value or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
     while lines and not lines[0].strip():
         lines.pop(0)
     while lines and not lines[-1].strip():
@@ -85,27 +84,11 @@ def _content_hash(markdown: str) -> str:
     return f"sha256:{hashlib.sha256(_canonical_markdown(markdown).encode('utf-8')).hexdigest()}"
 
 
-def _sanitize_html(value: str) -> str:
-    soup = BeautifulSoup(str(value or ""), "html.parser")
-    for tag in soup.find_all(_UNSAFE_TAGS):
-        tag.decompose()
-    for tag in soup.find_all(True):
-        for attribute in list(tag.attrs):
-            lowered = attribute.casefold()
-            if lowered.startswith("on") or lowered in {"style", "srcdoc"}:
-                del tag.attrs[attribute]
-                continue
-            if lowered not in {"href", "src"}:
-                continue
-            raw_url = tag.attrs.get(attribute)
-            candidate = raw_url[0] if isinstance(raw_url, list) and raw_url else raw_url
-            if urlparse(str(candidate or "").strip()).scheme.casefold() not in _SAFE_URL_SCHEMES:
-                del tag.attrs[attribute]
-    return str(soup)
-
-
 def _html_to_markdown(value: str) -> str:
-    soup = BeautifulSoup(_sanitize_html(value), "html.parser")
+    soup = BeautifulSoup(str(value or ""), "html.parser")
+    restore_diagram_sources(soup)
+    restore_eva_formatting(soup)
+    soup = BeautifulSoup(sanitize_html(str(soup)), "html.parser")
     warnings = []
     for aside in soup.select("aside.business-document-warnings[data-document-warnings]"):
         decoded = decode_document_warnings(aside.get("data-document-warnings"))
@@ -122,7 +105,9 @@ def _html_to_markdown(value: str) -> str:
             decoded = with_document_warnings({"warnings": decoded}, [{"code": "EXPORTED_WARNINGS_EDITED", "message": "Изменённое приложение с замечаниями сохранено: " + str(aside)}])["warnings"]
         warnings.extend(decoded)
         aside.decompose()
-    converted = markdownify(str(soup), heading_style="ATX", bullets="-")
+    if not soup.get_text(strip=True) and not soup.select("img, input, pre, hr"):
+        return render_document_warning_appendix(warnings)
+    converted = EvaMarkdownConverter(heading_style="ATX", bullets="-", strip_pre=None).convert_soup(soup)
     return _canonical_markdown(converted) + render_document_warning_appendix(warnings)
 
 
@@ -407,7 +392,7 @@ class EvaDocumentChangeService:
                 f"Поле «{field_label}» не должно превышать {maximum:,} символов.".replace(",", " "),
                 {"field": field, "maximum": maximum},
             )
-        return normalized if required else value
+        return normalized if required and field != "draft_markdown" else value
 
     @classmethod
     def search_sources(cls, actor_id: str, query: str = "", limit: int = 20) -> dict[str, Any]:
@@ -792,7 +777,8 @@ class EvaDocumentChangeService:
                 cls._ensure_draft_unchanged(change, remote)
             user_token_operation = True
             mutation_client, credential_version = cls._mutation_client(connector, actor_id)
-            mutation_client.update_document_draft(change.eva_document_id, change.draft_html, change.eva_document_name)
+            draft_html = render_eva_diagrams(prepare_eva_html(change.draft_html), lambda source: reader.render_plantuml(source))
+            mutation_client.update_document_draft(change.eva_document_id, draft_html, change.eva_document_name)
             user_token_operation = False
             verified = reader.get_document_for_edit(change.eva_document_id)
             cls._ensure_saved_draft(change, verified)
@@ -805,7 +791,7 @@ class EvaDocumentChangeService:
             change = cls._get_change_row(tenant_id, actor_id, change_id)
             if change.workflow_state != EvaChangeState.PREPARING_EVA_DRAFT.value or change.state_version != reservation_version:
                 raise ConflictError("STATE_VERSION_CONFLICT", "The EVA change request changed concurrently")
-            cls._transition(change, EvaChangeState.EVA_DRAFT_READY, eva_draft_at=current_timestamp(), last_error=None)
+            cls._transition(change, EvaChangeState.EVA_DRAFT_READY, draft_html=draft_html, eva_draft_at=current_timestamp(), last_error=None)
             change = cls._get_change_row(tenant_id, actor_id, change_id)
             event_payload = {"draft_content_hash": change.draft_content_hash}
             if credential_version is not None:

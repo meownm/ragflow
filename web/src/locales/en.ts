@@ -3418,6 +3418,8 @@ Important structured information may include: names, dates, locations, events, k
           UNCLASSIFIED: 'Reason not classified',
           ASSERTION_FAILED: 'Golden assertion failed',
           EXECUTION_ERROR: 'The case did not complete because execution failed',
+          JOB_FAILED: 'The job failed',
+          REQUIREMENT: 'A requirement check failed',
         },
         description:
           'Golden evaluations and Business Documents AI job activity.',

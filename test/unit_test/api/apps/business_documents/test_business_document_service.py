@@ -250,7 +250,7 @@ def test_v4_creates_empty_structure_with_all_root_sections_by_title(database, id
     assert document["operation_state"] == "IDLE"
     revision = document["current_revision"]
     assert revision["revision_number"] == 1
-    expected_ids = ["1", "2", "3", "3.1", "3.2", "3.3", "4", "4.1", "4.3", "5", "5.5"]
+    expected_ids = [section["id"] for section in published_template()["sections"]]
     expected = [{"id": section["id"], "title": section["title"], "blocks": []} for section in published_template()["sections"] if section["id"] in expected_ids]
     assert [section["id"] for section in revision["document_ast"]["sections"]] == expected_ids
     assert revision["document_ast"]["sections"] == expected
@@ -307,7 +307,7 @@ def test_title_only_structure_can_be_filled_incrementally_without_agreeing_empty
             "eva_decision": {"mode": "SKIP"},
         },
     )
-    for section_ids, expected_lifecycle in [(["1"], "REVIEW"), ([section["id"] for section in published_template()["sections"] if section["required"]], "AGREED")]:
+    for section_ids in [["1"], [section["id"] for section in published_template()["sections"] if section["required"]]]:
         base = deepcopy(document["current_revision"])
         response = document_commands.execute(
             TENANT,
@@ -351,10 +351,12 @@ def test_title_only_structure_can_be_filled_incrementally_without_agreeing_empty
                 }
             },
         )
-        assert document["lifecycle_state"] == expected_lifecycle
+        # Filling required content does not answer the questions about other sections.
+        assert document["lifecycle_state"] == "REVIEW"
         assert document["current_revision"]["document_ast"]["section_scope"] == "required"
         assert [section["id"] for section in document["current_revision"]["document_ast"]["sections"]] == list(sections)
     assert BusinessDocumentRevision.select().count() == 3
+    assert any(question["target_section_id"] == "5.4" for question in document["protocol"]["questions"])
 
 
 @pytest.mark.p0
@@ -373,19 +375,10 @@ def test_title_only_empty_structure_cannot_be_agreed_by_no_op(database):
         },
     )
     document = _complete_review_assessment(document)
-    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "APPLY_CHANGES", {"base_revision_id": document["current_revision"]["revision_id"]}))
-    document = _complete(
-        requested["job_id"],
-        {
-            "change_plan": {
-                "schema_version": "1",
-                "base_revision_id": document["current_revision"]["revision_id"],
-                "source_state_version": requested["state_version"],
-                "acknowledged_no_change_event_ids": [],
-                "operations": [],
-            }
-        },
-    )
+    assert {question["target_section_id"] for question in document["protocol"]["questions"]} == {section["id"] for section in published_template()["sections"]}
+    with pytest.raises(BusinessDocumentError) as caught:
+        document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "APPLY_CHANGES", {"base_revision_id": document["current_revision"]["revision_id"]}))
+    assert caught.value.code == "REVIEW_ASSESSMENT_REQUIRED"
     assert document["lifecycle_state"] == "REVIEW"
     assert BusinessDocumentRevision.select().count() == 1
 

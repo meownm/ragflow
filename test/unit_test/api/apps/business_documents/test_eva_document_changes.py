@@ -47,7 +47,71 @@ CONNECTOR = SimpleNamespace(id="connector-1", name="EVA Wiki", config={})
 EVA_CHANGES_MODULE = sys.modules[EvaDocumentChangeService.__module__]
 
 
+def test_eva_diagram_round_trip_retains_sources_and_discards_rendered_labels():
+    import json
+    from bs4 import BeautifulSoup
+    from api.apps.business_documents.eva_diagrams import render_eva_diagrams
+
+    source = '@startuml\nactor "Автор & проверяющий" as User\nUser -> Service: <данные>\n@enduml'
+    original = EVA_CHANGES_MODULE._markdown_to_html(f"## 4.3. Сценарий\n\n```plantuml\n{source}\n```\n\nПосле схемы.")
+    rendered = render_eva_diagrams(original, lambda _: '<svg><text>Не часть документа</text><path style="stroke:#333;stroke-width:1.5" d="M0 0 L10 10" /></svg>')
+    soup = BeautifulSoup(rendered, "html.parser")
+    assert json.loads(soup.select_one('[data-macros="plantuml"]')["data-macros-parameters"])["uml"] == source
+    assert soup.path["stroke"] == "#333"
+    assert soup.select_one('[data-macros="plantuml"]')["id"].startswith("plantuml+")
+    assert soup.select_one('[data-macros-action="macros-edit"]').text == "Изменить"
+    assert EVA_CHANGES_MODULE._html_to_markdown(rendered) == EVA_CHANGES_MODULE._html_to_markdown(original)
+
+
+def test_eva_diagram_svg_is_sanitized_without_sending_source_to_external_images():
+    from bs4 import BeautifulSoup
+    from api.apps.business_documents.eva_diagrams import render_eva_diagrams
+
+    original = EVA_CHANGES_MODULE._markdown_to_html("```plantuml\n@startuml\nA -> B\n@enduml\n```")
+    rendered = render_eva_diagrams(
+        original,
+        lambda _: '<svg onload="alert(1)"><script>alert(2)</script><foreignObject><p>Unsafe</p></foreignObject><image href="https://external.test/x"/><path fill="url(https://external.test/x)"/><text>Safe</text></svg>',
+    )
+    soup = BeautifulSoup(rendered, "html.parser")
+    assert soup.svg.text == "Safe"
+    assert not soup.select("script, foreignObject, image, [onload], [href], [fill]")
+
+
+@pytest.mark.parametrize("failure", ["invalid_svg", "renderer_unavailable"])
+def test_eva_diagram_failure_preserves_existing_code(failure):
+    from api.apps.business_documents.eva_diagrams import render_eva_diagrams
+
+    original = EVA_CHANGES_MODULE._markdown_to_html("```plantuml\n@startuml\nA -> B\n@enduml\n```")
+
+    def render(_):
+        if failure == "renderer_unavailable":
+            raise ConnectorValidationError("Unavailable")
+        return "not an SVG"
+
+    result = render_eva_diagrams(original, render)
+    assert EVA_CHANGES_MODULE._html_to_markdown(result) == EVA_CHANGES_MODULE._html_to_markdown(original)
+    assert "data-macros" not in result
+
+
+def test_repeated_diagrams_render_once_and_retain_unique_macro_ids():
+    from bs4 import BeautifulSoup
+    from unittest.mock import Mock
+    from api.apps.business_documents.eva_diagrams import render_eva_diagrams
+
+    original = EVA_CHANGES_MODULE._markdown_to_html("```plantuml\n@startuml\nA -> B\n@enduml\n```\n\n```plantuml\n@startuml\nA -> B\n@enduml\n```")
+    render = Mock(return_value="<svg><text>Process</text></svg>")
+    result = render_eva_diagrams(original, render)
+    macros = BeautifulSoup(result, "html.parser").select('[data-macros="plantuml"]')
+
+    render.assert_called_once_with("@startuml\nA -> B\n@enduml")
+    assert len(macros) == len({macro["id"] for macro in macros}) == 2
+    assert EVA_CHANGES_MODULE._html_to_markdown(result) == EVA_CHANGES_MODULE._html_to_markdown(original)
+
+
 class FakeEvaClient:
+    def render_plantuml(self, source):
+        return '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="40"><text x="1" y="20">Схема процесса</text></svg>'
+
     def __init__(self):
         self.publish_calls = 0
         self.document = {
@@ -803,6 +867,12 @@ def test_agreed_business_document_can_initialize_and_publish_empty_eva_page(data
     assert published["workflow_state"] == "PUBLISHED"
     assert client.document["name"] == "Первоначальные бизнес-требования"
     assert "Первоначальный текст" in client.document["html"]
+    from bs4 import BeautifulSoup
+    import json
+
+    macro = BeautifulSoup(client.document["html"], "html.parser").select_one('[data-macros="plantuml"]')
+    assert macro.select_one(".macros-preview svg text").text == "Схема процесса"
+    assert json.loads(macro["data-macros-parameters"])["uml"] == "@startuml\nПользователь -> Система: Войти\n@enduml"
 
 
 def test_empty_eva_initial_publish_recovers_after_prior_verification_failure(database):

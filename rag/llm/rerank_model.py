@@ -16,7 +16,7 @@
 import json
 import logging
 from abc import ABC
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit, urlunsplit
 from typing import Tuple, List
 from http import HTTPStatus
 
@@ -26,6 +26,31 @@ from yarl import URL
 
 from common.log_utils import log_exception
 from common.token_utils import num_tokens_from_string, truncate, total_token_count_from_response
+
+
+def _rerank_endpoint(base_url: str) -> str:
+    url = urlsplit((base_url or "").strip())
+    path = url.path.rstrip("/")
+    if path.rsplit("/", 1)[-1] != "rerank":
+        path += "/rerank"
+    return urlunsplit(url._replace(path=path))
+
+
+def _rank_from_results(results: list, count: int) -> np.ndarray:
+    if not isinstance(results, list) or len(results) != count:
+        raise ValueError("Rerank response must contain one result per document")
+    rank = np.empty(count, dtype=float)
+    seen = set()
+    for result in results:
+        index = result["index"]
+        if type(index) is not int or index < 0 or index >= count or index in seen:
+            raise ValueError("Rerank response contains an invalid or duplicate document index")
+        score = float(result["relevance_score"])
+        if not np.isfinite(score):
+            raise ValueError("Rerank response contains a non-finite score")
+        seen.add(index)
+        rank[index] = score
+    return rank
 
 
 class Base(ABC):
@@ -96,7 +121,7 @@ class JinaRerank(Base):
     _FACTORY_NAME = "Jina"
 
     def __init__(self, key, model_name="jina-reranker-v2-base-multilingual", base_url="https://api.jina.ai/v1/rerank"):
-        self.base_url = base_url or "https://api.jina.ai/v1/rerank"
+        self.base_url = _rerank_endpoint(base_url or "https://api.jina.ai/v1/rerank")
         self.headers = {"Content-Type": "application/json", "Authorization": f"Bearer {key}"}
         self.model_name = model_name
 
@@ -106,12 +131,7 @@ class JinaRerank(Base):
         response = requests.post(self.base_url, headers=self.headers, json=data, timeout=30)
         response.raise_for_status()
         res = response.json()
-        rank = np.zeros(len(texts), dtype=float)
-        try:
-            for d in res.get("results", []):
-                rank[d["index"]] = d["relevance_score"]
-        except Exception as _e:
-            log_exception(_e, res)
+        rank = _rank_from_results(res.get("results"), len(texts))
         return rank, total_token_count_from_response(res)
 
 
@@ -237,11 +257,7 @@ class OpenAI_APIRerank(Base):
     _FACTORY_NAME = "OpenAI-API-Compatible"
 
     def __init__(self, key, model_name, base_url):
-        normalized_base_url = (base_url or "").strip()
-        if "/rerank" in normalized_base_url:
-            self.base_url = normalized_base_url.rstrip("/")
-        else:
-            self.base_url = urljoin(f"{normalized_base_url.rstrip('/')}/", "rerank").rstrip("/")
+        self.base_url = _rerank_endpoint(base_url)
         self.headers = {"Content-Type": "application/json", "Authorization": f"Bearer {key}"}
         self.model_name = model_name.split("___")[0]
 
@@ -259,12 +275,7 @@ class OpenAI_APIRerank(Base):
         response = requests.post(self.base_url, headers=self.headers, json=data, timeout=30)
         response.raise_for_status()
         res = response.json()
-        rank = np.zeros(len(texts), dtype=float)
-        try:
-            for d in res.get("results", []):
-                rank[d["index"]] = d["relevance_score"]
-        except Exception as _e:
-            log_exception(_e, res)
+        rank = _rank_from_results(res.get("results"), len(texts))
         return rank, token_count
 
 
@@ -276,7 +287,8 @@ class CoHereRerank(Base):
 
         client_kwargs = {"api_key": key, "timeout": 30.0}
         if base_url and base_url.strip():
-            client_kwargs["base_url"] = base_url
+            url = urlsplit(_rerank_endpoint(base_url))
+            client_kwargs["base_url"] = urlunsplit(url._replace(path=url.path.rsplit("/", 1)[0]))
         self.client = Client(**client_kwargs)
         self.model_name = model_name.split("___")[0]
 
@@ -289,12 +301,7 @@ class CoHereRerank(Base):
             top_n=len(texts),
             return_documents=False,
         )
-        rank = np.zeros(len(texts), dtype=float)
-        try:
-            for d in res.results:
-                rank[d.index] = d.relevance_score
-        except Exception as _e:
-            log_exception(_e, res)
+        rank = _rank_from_results([{"index": d.index, "relevance_score": d.relevance_score} for d in res.results], len(texts))
         return rank, token_count
 
 
@@ -619,11 +626,7 @@ class NewAPIRerank(Base):
     _FACTORY_NAME = "New API"
 
     def __init__(self, key, model_name, base_url):
-        normalized_base_url = (base_url or "").strip()
-        if "/rerank" in normalized_base_url:
-            self.base_url = normalized_base_url.rstrip("/")
-        else:
-            self.base_url = urljoin(f"{normalized_base_url.rstrip('/')}/", "rerank").rstrip("/")
+        self.base_url = _rerank_endpoint(base_url)
         self.headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {key}",
@@ -639,11 +642,7 @@ class NewAPIRerank(Base):
             "top_n": len(texts),
         }
         token_count = sum(num_tokens_from_string(t) for t in texts)
-        res = requests.post(self.base_url, headers=self.headers, json=data).json()
-        rank = np.zeros(len(texts), dtype=float)
-        try:
-            for d in res["results"]:
-                rank[d["index"]] = d["relevance_score"]
-        except Exception as _e:
-            log_exception(_e, res)
+        response = requests.post(self.base_url, headers=self.headers, json=data, timeout=30)
+        response.raise_for_status()
+        rank = _rank_from_results(response.json().get("results"), len(texts))
         return rank, token_count

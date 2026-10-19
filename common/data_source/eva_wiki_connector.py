@@ -417,6 +417,14 @@ class EvaWikiConnector(LoadConnector, PollConnector, SlimConnectorWithPermSync):
             matches.append(editable)
         return sorted(matches, key=lambda item: (normalize_title(str(item.get("hierarchy") or "")), str(item.get("id") or "")))
 
+    def render_plantuml(self, source: str) -> str:
+        """Render an embedded diagram using the authenticated EVA renderer."""
+        self._validate_config()
+        result = self._rpc("CmfDocument.convert_uml2svg", {"uml": source, "obj_id": None})
+        if not isinstance(result, str) or not result.strip():
+            raise ConnectorValidationError("EVA Wiki returned an empty PlantUML image")
+        return result
+
     def get_document_for_edit(self, document_id: str) -> dict[str, Any]:
         """Load one published page together with its current EVA draft."""
 

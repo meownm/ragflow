@@ -145,7 +145,9 @@ def test_preview_advice_survives_confirmation_and_disappears_after_discard(datab
     assert "warnings" not in refreshed["latest_job"]
     if confirm:
         assert refreshed["current_revision"]["document_ast"]["warnings"] == preview["warnings"]
-        assert refreshed["lifecycle_state"] == "AGREED"
+        assert refreshed["lifecycle_state"] == "REVIEW"
+        gap = next(question for question in refreshed["protocol"]["questions"] if question["semantic_tag"] == "empty_section:5.4")
+        assert gap["answer"] is None
         assert BusinessDocumentRevision.select().count() == 2
     else:
         assert refreshed["current_revision"] == view["current_revision"]

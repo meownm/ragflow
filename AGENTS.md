@@ -60,6 +60,7 @@ Use this file as the local operating guide for the current codebase. Prefer the 
 - Keep package comments and doc comments aligned with the current runtime path, not with migration history.
 
 ## Working rules
+- For article processing and linked documents, apply the architecture and technical specification standards described in [the document standards guide](docs/develop/article-document-standards-ru.md). Keep their requirements in `api/source_workbench/document_standards.py`; apply them to the requested output type, preserve source evidence and approval boundaries, and do not impose these outlines on ordinary articles.
 - Before a substantive change, record the user scenario, observable acceptance result, error and authorization cases, affected consumers, and intended checks in the task. Keep the brief proportional to the change; do not create a separate architecture document for routine work.
 - One agent owns the integrated diff and its verification report. Give delegated agents bounded, independent questions or file ownership and a required result; the owner checks their findings and runs the relevant checks on the combined source.
 - In a shared checkout, parallel agents may inspect independently but must not edit overlapping files or mutate shared test/runtime state. Parallel editing needs an independently justified isolated checkout and an explicit integration owner. Do not run concurrent deployments against the same environment.

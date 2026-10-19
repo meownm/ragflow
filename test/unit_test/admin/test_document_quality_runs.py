@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
+import pytest
 from peewee import SqliteDatabase
 
 
@@ -360,6 +361,7 @@ def test_changed_digest_after_execution_cannot_pass(monkeypatch):
     monkeypatch.setattr(runs, "_configured_tenant", lambda: "qa")
     digests = iter(["a" * 64, "b" * 64])
     monkeypatch.setattr(runs, "quality_model_digest", lambda *_: next(digests))
+    monkeypatch.setattr(runs, "quality_model_configuration", lambda *_: "configuration")
 
     def write_report(_path, env, _temp, **_kwargs):
         Path(env["BUSINESS_DOCUMENT_QUALITY_REPORT"]).write_text(
@@ -422,7 +424,7 @@ def test_changed_source_after_execution_cannot_pass(monkeypatch):
     assert status == "INCOMPLETE" and "source revision" in reason
 
 
-def test_nightly_comparison_signature_marks_rubric_prompt_and_parameter_changes():
+def test_nightly_comparison_keeps_shared_conditions_and_allows_model_parameters():
     reference = {
         "source_revision": "rev",
         "suite_sha256": "sha256:" + "a" * 64,
@@ -435,10 +437,106 @@ def test_nightly_comparison_signature_marks_rubric_prompt_and_parameter_changes(
     for changed in (
         {"rubric_version": "1.2.0"},
         {"prompt_hashes": {"draft.txt": "sha256:" + "c" * 64}},
-        {"parameter_profiles": [{"temperature": 0.2, "top_p": 0.1}]},
         {"suite_sha256": "sha256:" + "d" * 64},
+        {"source_dirty": True},
     ):
         assert runs._comparison_signature({**reference, **changed}) != signature
+    assert runs._comparison_signature({**reference, "parameter_profiles": [{"extra_body": {"num_ctx": 262144}, "max_completion_tokens": 8192}]}) == signature
+
+
+def test_missing_qa_tenant_is_recorded_and_same_day_recovers(monkeypatch):
+    database = SqliteDatabase(":memory:")
+    monkeypatch.setattr(runs, "_configured_tenant", lambda: "qa")
+    monkeypatch.setattr(runs, "_source_revision", lambda: "revision")
+    monkeypatch.setattr(runs, "_source_fingerprint", lambda: None)
+
+    def unavailable(_tenant):
+        raise LookupError("Tenant not found")
+
+    monkeypatch.setattr(runs, "quality_model_catalog", unavailable)
+    with database.bind_ctx([BusinessDocumentQualityCampaign, BusinessDocumentQualityRun], bind_refs=False, bind_backrefs=False):
+        database.connect()
+        database.create_tables([BusinessDocumentQualityCampaign, BusinessDocumentQualityRun])
+        first = runs.enqueue_nightly_campaign("2026-10-19")
+        assert first["status"] == "INCOMPLETE" and first["reason_code"] == "QA_TENANT_MISSING"
+        assert runs.enqueue_nightly_campaign("2026-10-19")["id"] == first["id"]
+        monkeypatch.setattr(runs, "quality_model_catalog", lambda _: {"models": [{"name": "qwen", "digest": "a" * 64, "aliases": ["qwen"]}], "errors": []})
+        recovered = runs.enqueue_nightly_campaign("2026-10-19")
+        assert recovered["id"] == first["id"] and recovered["status"] == "PENDING"
+        assert recovered["reason_code"] is None
+        runs.enqueue_nightly_campaign("2026-10-19")
+        assert BusinessDocumentQualityCampaign.select().count() == 1
+        assert BusinessDocumentQualityRun.select().count() == 1
+        database.close()
+
+
+def test_scheduler_failure_does_not_starve_pending_runs(monkeypatch):
+    def fail():
+        raise LookupError("missing prerequisite")
+
+    observed = []
+    monkeypatch.setattr(runs, "schedule_due", fail)
+    monkeypatch.setattr(runs, "process_next_run", lambda: observed.append("processed") or True)
+    assert runs.process_quality_cycle() is True
+    assert observed == ["processed"]
+
+
+@pytest.mark.parametrize("change,expected", [("parameters", "Evaluation conditions changed during model execution"), ("stable", "Live model qualification did not pass")])
+def test_cross_model_parameters_do_not_mask_case_failure_but_temporal_changes_do(monkeypatch, change, expected):
+    database = SqliteDatabase(":memory:")
+    monkeypatch.setattr(runs, "_source_revision", lambda: "revision")
+    monkeypatch.setattr(runs, "_source_fingerprint", lambda: None)
+    monkeypatch.setattr(runs, "_configured_tenant", lambda: "qa")
+    monkeypatch.setattr(runs, "quality_model_digest", lambda *_: "a" * 64)
+    configs = iter(["start", "changed" if change == "parameters" else "start"])
+    monkeypatch.setattr(runs, "quality_model_configuration", lambda *_: next(configs))
+    raw = {
+        "source_revision": "revision",
+        "status": "FAIL",
+        "golden_suite": {"expected_case_ids": ["M06"], "executed_case_ids": ["M06"]},
+        "case_results": [{"case_id": "M06", "status": "FAIL", "failures": ["job:REQUIREMENT_COVERAGE_FAILED"]}],
+        "ai": {"parameter_profiles": [{"extra_body": {"num_ctx": 262144}}]},
+    }
+
+    def report(_path, env, _temp, **_kwargs):
+        Path(env["BUSINESS_DOCUMENT_QUALITY_REPORT"]).write_text(json.dumps(raw), encoding="utf-8")
+        return 1
+
+    monkeypatch.setattr(runs, "_run_suite", report)
+    with database.bind_ctx([BusinessDocumentQualityCampaign, BusinessDocumentQualityRun], bind_refs=False, bind_backrefs=False):
+        database.connect()
+        database.create_tables([BusinessDocumentQualityCampaign, BusinessDocumentQualityRun])
+        BusinessDocumentQualityCampaign.create(id="campaign", schedule_key="nightly:day", source_revision="revision", models={}, baseline_status="PASS")
+        reference = {**runs._report_summary(raw), "parameter_profiles": [{"extra_body": {"num_ctx": 393216}}]}
+        BusinessDocumentQualityRun.create(id="reference", campaign_id="campaign", trigger="NIGHTLY", status="FAIL", report=reference)
+        row = SimpleNamespace(source_revision="revision", campaign_id="campaign", model_name="qwen", model_digest="a" * 64, scope="FULL")
+        status, summary, reason = runs._execute(row)
+        assert reason == expected
+        assert status == ("INCOMPLETE" if change == "parameters" else "FAIL")
+        assert summary["cases"][0]["diagnostics"] == [{"code": "JOB_FAILED", "job_code": "REQUIREMENT_COVERAGE_FAILED"}]
+        database.close()
+
+
+def test_m06_diagnostics_keep_job_and_oracle_codes_without_generated_text():
+    item = {"status": "FAIL", "failures": ["job:REQUIREMENT_COVERAGE_FAILED", "requirement:latency:threshold", "unrelated_section_changed:4.1", "private document text"]}
+    result = runs._safe_case_diagnostics(item)
+    assert result == [
+        {"code": "JOB_FAILED", "job_code": "REQUIREMENT_COVERAGE_FAILED"},
+        {"code": "REQUIREMENT", "requirement_id": "latency", "check_id": "threshold"},
+        {"code": "UNRELATED_SECTION_CHANGED", "section_id": "4.1"},
+    ]
+    assert runs._public_report({"cases": [{"case_id": "M06", "diagnostics": result}]}, detail=True)["cases"][0]["diagnostics"] == result
+
+
+def test_execution_diagnostic_keeps_safe_class_and_job_code_only():
+    result = runs._safe_case_diagnostics(
+        {
+            "status": "INCOMPLETE",
+            "execution_error": {"error_type": "AssertionError", "job_code": "MODEL_CONTEXT_TOO_LARGE", "message": "private exception", "code": "PRIVATE"},
+            "failures": ["AssertionError: private exception"],
+        }
+    )
+    assert result == [{"code": "EXECUTION_ERROR", "error_type": "AssertionError", "job_code": "MODEL_CONTEXT_TOO_LARGE"}]
 
 
 def test_admin_run_detail_never_returns_legacy_raw_content_or_exception():

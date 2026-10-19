@@ -169,7 +169,7 @@ class CreateDocument:
             "document_type": "business_requirements",
             "template_version": template["template_version"],
             "section_scope": "required",
-            "sections": [{"id": section["id"], "title": section["title"], "blocks": []} for section in template["sections"] if section["required"] or "parent_id" not in section],
+            "sections": [{"id": section["id"], "title": section["title"], "blocks": []} for section in template["sections"]],
         }
         self._content.validate_contract("document_draft_v2", draft)
         event_id, revision_id = self._new_id(), self._new_id()

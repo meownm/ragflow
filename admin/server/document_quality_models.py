@@ -1,6 +1,7 @@
 """Read the dedicated QA tenant's Ollama inventory without changing its defaults."""
 
 import json
+import hashlib
 from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
@@ -77,3 +78,13 @@ def quality_model_digest(tenant_id: str, name: str) -> str | None:
             digest = item.get("digest")
             return digest.lower() if isinstance(digest, str) else None
     return None
+
+
+def quality_model_configuration(tenant_id: str, name: str) -> str:
+    """Fingerprint one model's configuration without persisting provider secrets."""
+    config = get_tenant_default_model_by_type(tenant_id, LLMType.CHAT)
+    if not isinstance(config, dict) or config.get("llm_factory") != "Ollama":
+        raise ValueError("The dedicated QA Chat model must use Ollama")
+    metadata = _ollama_request(config.get("api_base") or "", "/api/show", config.get("api_key") or "", {"model": name})
+    conditions = {"config": config, "model": name, "model_info": metadata.get("model_info"), "parameters": metadata.get("parameters")}
+    return hashlib.sha256(json.dumps(conditions, sort_keys=True, separators=(",", ":")).encode()).hexdigest()

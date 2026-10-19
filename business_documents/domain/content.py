@@ -304,7 +304,7 @@ def import_document_markdown(markdown: object, template: dict[str, Any], schema:
 
     if not isinstance(markdown, str) or not markdown.strip():
         raise RuleViolation("EVA_DOCUMENT_EMPTY", "Страница EVA не содержит опубликованного текста")
-    normalized, imported_warnings = _split_document_warning_appendix(markdown.replace("\r\n", "\n").replace("\r", "\n").strip())
+    normalized, imported_warnings = _split_document_warning_appendix(markdown.replace("\r\n", "\n").replace("\r", "\n").strip("\n"))
     template_sections = template["sections"]
     expected = {section["id"]: section for section in template_sections}
     base_level = int(template.get("rendering", {}).get("body_heading_base_level", 2))
@@ -332,7 +332,7 @@ def import_document_markdown(markdown: object, template: dict[str, Any], schema:
     sections = []
     for index, (section_id, title, _, body_start) in enumerate(found):
         body_end = found[index + 1][2] if index + 1 < len(found) else len(normalized)
-        body = normalized[body_start:body_end].strip()
+        body = normalized[body_start:body_end].strip("\n")
         sections.append(
             {
                 "id": section_id,
@@ -363,16 +363,18 @@ def _import_markdown_blocks(markdown: str) -> list[dict[str, Any]]:
         is_plantuml = language == "plantuml" or (source.startswith("@startuml") and source.endswith("@enduml"))
         if not is_plantuml:
             continue
-        blocks.extend(_paragraph_blocks(markdown[cursor : match.start()].strip()))
+        blocks.extend(_paragraph_blocks(markdown[cursor : match.start()].strip("\n")))
         if source:
             blocks.append({"type": "plantuml", "source": source})
         cursor = match.end()
-    blocks.extend(_paragraph_blocks(markdown[cursor:].strip()))
+    blocks.extend(_paragraph_blocks(markdown[cursor:].strip("\n")))
     return blocks
 
 
 def _paragraph_blocks(text: str) -> list[dict[str, str]]:
     blocks: list[dict[str, str]] = []
+    if not text.strip():
+        return blocks
     remaining = text
     while remaining:
         if len(remaining) <= _MAX_PARAGRAPH_SIZE:
@@ -566,7 +568,7 @@ def render_section_text(section: dict[str, Any]) -> str:
     for block in section["blocks"]:
         block_type = block.get("type") if isinstance(block, dict) else None
         if block_type == "paragraph":
-            lines.append(str(block.get("text", "")).strip())
+            lines.append(str(block.get("text", "")).strip("\n"))
         elif block_type == "list":
             lines.extend(f"- {item}" for item in block.get("items", []))
         elif block_type == "table":
@@ -589,7 +591,7 @@ def render_section_text(section: dict[str, Any]) -> str:
             lines.append(f"{fence}text\n{source}\n{fence}")
         # A block boundary must close lists and paragraphs in Markdown consumers.
         lines.append("")
-    return "\n".join(lines).strip()
+    return "\n".join(lines).strip("\n")
 
 
 def render_block_changes(before: dict[str, Any], after: dict[str, Any]) -> list[dict[str, Any]]:
@@ -630,4 +632,4 @@ def render_document_ast(document: dict[str, Any], template: dict[str, Any]) -> s
         if section_text:
             lines.extend(section_text.splitlines())
         lines.append("")
-    return "\n".join(lines).strip()
+    return "\n".join(lines).strip("\n")

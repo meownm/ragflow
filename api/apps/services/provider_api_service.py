@@ -408,9 +408,7 @@ async def verify_api_key(provider_id_or_name: str, api_key: str | dict, base_url
         return False, f"Provider '{provider_id_or_name}' not found"
 
     factory_llms = factory_info[0]["llm"]
-    if not factory_llms:
-        if not model_info:
-            return False, f"No models found for provider '{provider_id_or_name}'"
+    if model_info:
         factory_llms = [
             {
                 "model_type": _type,
@@ -422,6 +420,8 @@ async def verify_api_key(provider_id_or_name: str, api_key: str | dict, base_url
         ]
         if not factory_llms:
             return False, f"No valid models found for provider '{provider_id_or_name}'"
+    elif not factory_llms:
+        return False, f"No models found for provider '{provider_id_or_name}'"
 
     # test if api key works
     chat_passed, embd_passed, rerank_passed, ocr_passed, tts_passed = False, False, False, False, False
@@ -494,7 +494,7 @@ async def verify_api_key(provider_id_or_name: str, api_key: str | dict, base_url
                     asyncio.to_thread(mdl.similarity, "What's the weather?", ["Is it sunny today?"]),
                     timeout=timeout_seconds,
                 )
-                if len(arr) == 0 or tc == 0:
+                if len(arr) != 1:
                     raise Exception("Fail")
                 rerank_passed = True
                 logging.debug(f"passed model rerank {llm['llm_name']}")

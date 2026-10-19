@@ -32,7 +32,7 @@ test('renders Markdown blocks, GFM tables, links and inline formatting', () => {
   expect(container.querySelector('pre code')).toHaveTextContent('{"ok":true}');
 });
 
-test('does not interpret raw HTML or allow executable Markdown URLs', () => {
+test('removes unsafe raw HTML and executable Markdown URLs', () => {
   const { container } = render(
     <DocumentMarkdown>
       {

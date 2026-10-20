@@ -11,7 +11,7 @@ from business_documents.application.errors import ConflictError, NotFoundError, 
 from business_documents.application.persistence import DocumentWriter
 from business_documents.application.queries import DocumentQueries
 from business_documents.domain.access import BusinessDocumentRole, DocumentAccess
-from business_documents.domain.eva_binding import binding_keys
+from api.document_exchange.identity import binding_keys
 from business_documents.domain.names import normalize_title, title_key
 from business_documents.domain.workflow import is_operation_quiescent
 
@@ -26,7 +26,7 @@ class DocumentCreationWriter(DocumentWriter, Protocol):
     def title_exists(self, key: str) -> bool: ...
     def chat_exists(self, chat_id: str) -> bool: ...
     def insert_document(self, values: Record) -> dict[str, Any]: ...
-    def binding_occupancy(self, keys: set[str]) -> Mapping[str, Record]: ...
+    def binding_occupancy(self, keys: set[str], tenant_id: str) -> Mapping[str, Record]: ...
     def store_binding(self, document_id: str, binding: Record, *, replace: bool = False) -> None: ...
 
 
@@ -109,7 +109,7 @@ class CreateDocument:
             raise ValidationError("TEMPLATE_NOT_PUBLISHED", "Requested business requirements template version is not published")
         if policy_version != policy["policy_version"]:
             raise ValidationError("POLICY_NOT_PUBLISHED", "Requested business requirements policy version is not published")
-        binding = self._resolve_binding(actor_id, raw, schema_version, display_title)
+        binding = self._resolve_binding(actor_id, raw, schema_version, display_title, tenant_id)
         imported = self._prepare_import(actor_id, schema_version, display_title, binding)
         if imported is not None:
             binding = imported.binding
@@ -186,7 +186,7 @@ class CreateDocument:
         self._writer.insert_revision(document["id"], 1, draft, self._content.render_document_ast(draft), [event_id], actor_id, revision_id=revision_id)
         self._writer.update_document(document, {"lifecycle_state": "REVIEW", "current_revision_id": revision_id, "active_review_cycle": 1, "state_version": 2})
 
-    def _resolve_binding(self, actor_id, raw, schema_version, display_title):
+    def _resolve_binding(self, actor_id, raw, schema_version, display_title, tenant_id):
         if schema_version not in {"2", "3", "4"}:
             return None
         decision = raw.get("eva_decision")
@@ -194,7 +194,7 @@ class CreateDocument:
             return None
         page_url = raw.get("eva_page_url")
         if not page_url:
-            matches = self._matches_with_occupancy(self._eva.find_title_matches(actor_id, display_title))
+            matches = self._matches_with_occupancy(self._eva.find_title_matches(actor_id, display_title), tenant_id)
             if schema_version in {"3", "4"} and len(matches) == 1 and matches[0]["binding_available"]:
                 page_url = matches[0].get("web_url")
             if not page_url:
@@ -209,13 +209,13 @@ class CreateDocument:
             raise ConflictError("EVA_PAGE_TITLE_CHANGED", "The selected EVA page no longer has the document title", {"actual_title": binding.get("document_name")})
         return binding
 
-    def _matches_with_occupancy(self, matches):
+    def _matches_with_occupancy(self, matches, tenant_id):
         keyed = [(match, *binding_keys(match)) for match in matches]
-        occupied = self._writer.binding_occupancy({key for _, url_key, identity in keyed for key in (url_key, identity) if key})
+        occupied = self._writer.binding_occupancy({key for _, url_key, identity in keyed for key in (url_key, identity) if key}, tenant_id)
         result = []
         for match, url_key, identity in keyed:
             owner = occupied.get(identity) or occupied.get(url_key)
-            result.append({**match, "binding_available": owner is None, **({"linked_document": dict(owner)} if owner is not None else {})})
+            result.append({**match, "binding_available": owner is None, **({"linked_document": dict(owner)} if owner is not None and owner.get("document_id") else {})})
         return result
 
     def _prepare_import(self, actor_id, schema_version, display_title, binding):

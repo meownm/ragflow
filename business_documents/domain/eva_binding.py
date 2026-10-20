@@ -1,18 +1,7 @@
 """Reconstruct a saved event-backed EVA binding without changing its history."""
 
 from collections.abc import Iterable, Mapping
-import hashlib
 from typing import Any
-
-
-def binding_keys(binding: Mapping[str, Any]) -> tuple[str, str | None]:
-    """Canonical keys shared with the persisted unique binding indexes."""
-    page_url = str(binding.get("page_url") or "").strip().rstrip("/").casefold()
-    origin = str(binding.get("eva_origin") or "").strip().rstrip("/").casefold()
-    project = str(binding.get("project_id") or "").strip()
-    document = str(binding.get("document_id") or binding.get("id") or "").strip()
-    identity = "\x1f".join((origin, project, document))
-    return hashlib.sha256(page_url.encode("utf-8")).hexdigest(), hashlib.sha256(identity.encode("utf-8")).hexdigest() if origin and project and document else None
 
 
 def binding_from_events(events: Iterable[Mapping[str, Any]]) -> dict[str, Any] | None:

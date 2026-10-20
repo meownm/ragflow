@@ -6,6 +6,7 @@ from copy import deepcopy
 from hashlib import sha256
 from uuid import uuid4
 
+from api.document_exchange.identity import binding_keys
 from api.document_exchange.merge import merge_text
 
 HEADINGS = (
@@ -30,6 +31,21 @@ class SpecificationError(Exception):
 
 def fail(code, message, status=422, details=None):
     raise SpecificationError(code, message, status, details)
+
+
+def scoped_chat_result(result, context):
+    """Reject undeclared patches and turn an explicit scope mismatch into advice."""
+    required, patches = result.get("required_sections"), result.get("patches", {})
+    keys = {str(index) for index in range(1, len(HEADINGS) + 1)}
+    if not isinstance(required, list) or len(required) > len(keys) or any(not isinstance(key, str) or key not in keys for key in required):
+        fail("MODEL_INVALID_OUTPUT", "Помощник не указал необходимые разделы", 502)
+    if not isinstance(patches, dict) or set(patches) - set(required):
+        fail("MODEL_INVALID_OUTPUT", "Правки не совпадают с необходимыми разделами", 502)
+    scope = context["scope"]
+    allowed = keys if scope == "all" else {context["anchor"]["section"] if scope == "selection" else scope}
+    if set(required) - allowed:
+        return {"answer": "Правка требует изменений за пределами выбранного контекста. Выберите «Всё ТЗ» и отправьте запрос снова.", "patches": {}}
+    return {"answer": result.get("answer"), "patches": patches}
 
 
 def identifier():
@@ -59,9 +75,9 @@ def eva_identity(binding):
     scheme, host, port = origin
     if scheme not in ("http", "https") or not isinstance(host, str) or not host or (port is not None and (type(port) is not int or not 0 < port < 65536)):
         fail("EVA_PAGE_UNAVAILABLE", "Не удалось подтвердить адрес источника Eva", 409)
-    return digest(
-        [[scheme, host.casefold(), port or (443 if scheme == "https" else 80)], text(binding.get("project_id"), "Пространство Eva", 128), text(binding.get("document_id"), "Страница Eva", 128)]
-    )
+    text(binding.get("project_id"), "Пространство Eva", 128)
+    text(binding.get("document_id"), "Страница Eva", 128)
+    return binding_keys(binding)[1]
 
 
 def empty_sections():

@@ -591,7 +591,7 @@ def test_v3_does_not_import_an_occupied_title_match(database, monkeypatch):
         "linked_document": {"document_id": "other-document", "title": "Другой документ"},
     }
     monkeypatch.setattr(EvaDocumentChangeService, "find_title_matches", staticmethod(lambda *_args: [match]))
-    monkeypatch.setattr(document_creation, "_matches_with_occupancy", lambda matches: matches)
+    monkeypatch.setattr(document_creation, "_matches_with_occupancy", lambda matches, _tenant: matches)
     monkeypatch.setattr(EvaDocumentChangeService, "resolve_page_url", staticmethod(lambda *_args: pytest.fail("Occupied page must not be imported")))
 
     with pytest.raises(BusinessDocumentError) as caught:
@@ -844,6 +844,54 @@ def test_one_eva_page_cannot_be_linked_to_different_documents(database, monkeypa
     assert caught.value.code == "EVA_PAGE_ALREADY_LINKED"
     assert BusinessDocument.select().count() == 1
     assert BusinessDocumentEvaBinding.select().count() == 1
+
+
+def test_specification_binding_blocks_business_creation_without_leaking_owner(database, monkeypatch):
+    from api.document_exchange.bindings import reserve
+    from api.document_exchange.identity import binding_keys
+    from api.db.db_models import DocumentExchangeBinding
+    from api.apps.business_documents.runtime import document_writer
+
+    binding = {"page_url": "https://eva.test/page", "eva_origin": ["https", "eva.test", 443], "project_id": "project", "document_id": "page", "status": "CONNECTED"}
+    with database.atomic():
+        reserve(TENANT, "technical_specification", "private-specification", binding)
+    occupied = document_writer.binding_occupancy(set(binding_keys(binding)), TENANT)
+    assert occupied[binding_keys(binding)[1]] == {"title": None}
+    assert document_writer.binding_occupancy(set(binding_keys(binding)), "other-tenant") == {}
+    monkeypatch.setattr(document_creation, "_resolve_binding", lambda *_args: binding)
+    with pytest.raises(BusinessDocumentError) as caught:
+        _create(schema_version="2", eva_page_url=binding["page_url"], eva_decision={"mode": "BIND", "confirm_replace": True})
+    assert caught.value.code == "EVA_PAGE_ALREADY_LINKED"
+    assert "private-specification" not in str(caught.value)
+    assert BusinessDocument.select().count() == 0
+    assert BusinessDocumentEvaBinding.select().count() == 0
+    assert DocumentExchangeBinding.select().count() == 1
+
+
+def test_business_rebind_and_delete_update_the_shared_registry_atomically(database, monkeypatch):
+    from api.apps.business_documents.runtime import document_writer
+    from api.document_exchange.bindings import occupancy, reserve
+    from api.document_exchange.identity import binding_keys
+
+    original = {"page_url": "https://eva.test/first", "eva_origin": ["https", "eva.test", 443], "project_id": "project", "document_id": "first", "status": "CONNECTED"}
+    occupied = {**original, "page_url": "https://eva.test/second", "document_id": "second"}
+    replacement = {**original, "page_url": "https://eva.test/third", "document_id": "third"}
+    monkeypatch.setattr(document_creation, "_resolve_binding", lambda *_args: original)
+    document = _create(schema_version="2", eva_page_url=original["page_url"], eva_decision={"mode": "BIND", "confirm_replace": True})
+    document_id = document["document_id"]
+    with database.atomic():
+        reserve(TENANT, "technical_specification", "private-specification", occupied)
+    with pytest.raises(BusinessDocumentError), database.atomic():
+        document_writer.store_binding(document_id, occupied, replace=True)
+    assert BusinessDocumentEvaBinding.get_by_id(document_id).binding == original
+    assert occupancy(TENANT, {binding_keys(original)[1]})
+    with database.atomic():
+        document_writer.store_binding(document_id, replacement, replace=True)
+    assert not occupancy(TENANT, {binding_keys(original)[1]})
+    assert occupancy(TENANT, {binding_keys(replacement)[1]})
+    document_deletion.execute("admin", document_id, is_admin=True)
+    assert not occupancy(TENANT, {binding_keys(replacement)[1]})
+    assert occupancy(TENANT, {binding_keys(occupied)[1]})
 
 
 def test_legacy_event_backfill_populates_unique_eva_binding_projection(database, monkeypatch):
@@ -3475,6 +3523,11 @@ def test_verified_eva_binding_supports_governed_pull_and_outbound_change(databas
     assert captured_change["allow_prefilled_draft"] is True
 
     class EvaClient:
+        api_base_url = "https://eva.example.com/api"
+
+        def close(self):
+            pass
+
         @staticmethod
         def get_document_for_edit(_document_id):
             return {
@@ -4087,7 +4140,9 @@ def test_eva_pull_in_current_cycle_requires_reassessment_for_direct_commands(dat
         "document_name": "Требования EVA",
         "remote_content_hash": "sha256:initial",
     }
-    client = SimpleNamespace(get_document_for_edit=lambda _document_id: {"html": "<h1>Требования EVA</h1><p>Новое требование</p>", "version": "2"})
+    client = SimpleNamespace(
+        api_base_url="https://eva.example.com/api", close=lambda: None, get_document_for_edit=lambda _document_id: {"html": "<h1>Требования EVA</h1><p>Новое требование</p>", "version": "2"}
+    )
     monkeypatch.setattr(EvaDocumentChangeService, "resolve_page_url", staticmethod(lambda *_args: binding))
     monkeypatch.setattr(EvaDocumentChangeService, "_connector", staticmethod(lambda *_args: (None, client)))
     document = _request_and_complete_draft(_create(title=binding["document_name"], schema_version="2", eva_page_url=binding["page_url"], eva_decision={"mode": "BIND", "confirm_replace": True}))

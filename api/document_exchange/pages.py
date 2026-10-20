@@ -1,4 +1,4 @@
-"""Shared Eva page reads; connection policy and content decoding are injected.
+"""Shared Eva page exchange; access and content conversion are injected.
 
 No document lifecycle or local persistence belongs here. The connection context
 owns credentials, error translation and resource lifetime for every read.
@@ -16,8 +16,9 @@ class EvaPageError(Exception):
 
 
 class EvaPages:
-    def __init__(self, connection, decode_html, origin):
+    def __init__(self, connection, decode_html, origin, *, write_connection=None, encode_markdown=None):
         self.connection, self.decode_html, self.origin = connection, decode_html, origin
+        self.write_connection, self.encode_markdown = write_connection, encode_markdown
 
     def search_sources(self, actor_id, query="", limit=20):
         if not isinstance(query, str) or type(limit) is not int or not 1 <= limit <= 100:
@@ -101,6 +102,36 @@ class EvaPages:
             markdown = self.decode_html(str(remote.get("html") or ""))
             return self._binding(connector_id, client, binding, remote, markdown), markdown
 
+    def publish_connected_page(self, actor_id, binding, markdown, name):
+        """Use the ordinary Eva draft/publish API, with checks around both writes."""
+        if self.write_connection is None or self.encode_markdown is None:
+            raise RuntimeError("Eva write access is not configured")
+        document_id = binding["document_id"]
+        with self.write_connection(actor_id, binding["connector_id"]) as (_connector, reader, writer):
+            remote = reader.get_document_for_edit(document_id)
+            if str(remote.get("id")) != document_id or str(remote.get("project_id")) != binding["project_id"]:
+                raise EvaPageError("EVA_CHANGED", "Изменилась страница Eva. Найдите её заново", 409)
+            html = self.encode_markdown(markdown, reader)
+            expected_hash = content_hash(self.decode_html(html))
+            actual_hash = content_hash(self.decode_html(str(remote.get("html") or "")))
+            if actual_hash == expected_hash and str(remote.get("name") or "").strip() == name:
+                return self._binding(binding["connector_id"], reader, binding, remote, self.decode_html(str(remote.get("html") or "")))
+            if str(remote.get("version") or "") != binding["remote_version"] or actual_hash != binding["remote_content_hash"]:
+                raise EvaPageError("EVA_CHANGED", "Страница Eva изменилась. Сначала получите и объедините изменения", 409)
+            draft_hash = content_hash(self.decode_html(str(remote.get("draft_html") or "")))
+            if draft_hash not in {content_hash(""), actual_hash, expected_hash}:
+                raise EvaPageError("EVA_DRAFT_CONFLICT", "В Eva есть другой неопубликованный черновик. Проверьте страницу Eva", 409)
+            writer.update_document_draft(document_id, html, name)
+            saved = reader.get_document_for_edit(document_id)
+            if str(saved.get("id")) != document_id or str(saved.get("project_id")) != binding["project_id"]:
+                raise EvaPageError("EVA_CHANGED", "Не удалось подтвердить страницу после записи черновика", 409)
+            if content_hash(self.decode_html(str(saved.get("html") or ""))) != actual_hash:
+                raise EvaPageError("EVA_CHANGED", "Опубликованный текст Eva изменился во время выгрузки. Проверьте страницу", 409)
+            if content_hash(self.decode_html(str(saved.get("draft_html") or ""))) != expected_hash or str(saved.get("name") or "").strip() != name:
+                raise EvaPageError("EVA_DRAFT_CONFLICT", "Черновик Eva изменился во время выгрузки. Проверьте страницу", 409)
+            published = publish_draft(reader, writer, document_id, expected_hash, name, self.decode_html)
+            return self._binding(binding["connector_id"], reader, binding, published, self.decode_html(str(published.get("html") or "")))
+
     def _binding(self, connector_id, client, binding, remote, markdown):
         return {
             **binding,
@@ -116,3 +147,16 @@ class EvaPages:
             "remote_version": str(remote.get("version") or "") or None,
             "remote_content_hash": content_hash(markdown),
         }
+
+
+def publish_draft(reader, writer, document_id, expected_hash, name, decode_html):
+    """Shared final write and result verification for BT and TZ."""
+    writer.publish_document(document_id)
+    remote = reader.get_document_for_edit(document_id)
+    if str(remote.get("id")) != document_id:
+        raise EvaPageError("EVA_PAGE_UNAVAILABLE", "Не удалось подтвердить опубликованную страницу Eva", 409)
+    if content_hash(decode_html(str(remote.get("html") or ""))) != expected_hash:
+        raise EvaPageError("EVA_PUBLISH_VERIFICATION_FAILED", "Не удалось подтвердить текст после публикации. Проверьте страницу Eva", 409)
+    if str(remote.get("name") or "").strip() != name:
+        raise EvaPageError("EVA_NAME_VERIFICATION_FAILED", "Название страницы Eva изменилось во время публикации", 409)
+    return remote

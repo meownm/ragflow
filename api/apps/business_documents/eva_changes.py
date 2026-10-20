@@ -31,7 +31,7 @@ from api.apps.business_documents.html_formatting import EvaMarkdownConverter, pr
 from peewee import fn
 
 from api.document_exchange.content import canonical_markdown as _canonical_markdown, content_hash as _content_hash
-from api.document_exchange.pages import EvaPageError, EvaPages
+from api.document_exchange.pages import EvaPageError, EvaPages, publish_draft
 
 from business_documents.application.errors import BusinessDocumentError, ConflictError, ValidationError
 from business_documents.domain.content import decode_document_warnings, document_warning_texts, render_document_warning_appendix, with_document_warnings
@@ -320,7 +320,7 @@ class EvaDocumentChangeService:
             api_base_url=config.get("api_base_url", ""),
             project_id=config.get("project_id", ""),
             verify_ssl=config.get("verify_ssl", True),
-            retry_count=config.get("retry_count", EvaWikiConnector.DEFAULT_RETRY_COUNT),
+            retry_count=0,
         )
         client.load_credentials({"eva_api_token": credential.secret})
         return client, credential.credential_version
@@ -400,8 +400,28 @@ class EvaDocumentChangeService:
 
     @classmethod
     def pages(cls):
-        """Compose shared page reads with the configured personal-token access."""
-        return EvaPages(cls._page_connection, _html_to_markdown, EvaWikiConnector._url_origin)
+        """Compose ordinary Eva exchange with personal-token access."""
+        return EvaPages(
+            cls._page_connection,
+            _html_to_markdown,
+            EvaWikiConnector._url_origin,
+            write_connection=cls._page_write_connection,
+            encode_markdown=lambda content, reader: render_eva_diagrams(prepare_eva_html(render_markdown(content)), reader.render_plantuml),
+        )
+
+    @classmethod
+    @contextmanager
+    def _page_write_connection(cls, actor_id, connector_id):
+        writer = None
+        with cls._page_connection(actor_id, connector_id) as (connector, reader):
+            try:
+                writer, _credential_version = cls._mutation_client(connector, actor_id)
+                yield connector, reader, writer
+            except (ExternalCredentialError, ConnectorValidationError, InsufficientPermissionsError, ConnectorMissingCredentialError) as error:
+                raise cls._map_user_token_error(error) from error
+            finally:
+                if writer is not None:
+                    writer.close()
 
     @classmethod
     def search_sources(cls, actor_id: str, query: str = "", limit: int = 20) -> dict[str, Any]:
@@ -740,22 +760,8 @@ class EvaDocumentChangeService:
                         )
                     user_token_operation = True
                     mutation_client, credential_version = cls._mutation_client(connector, actor_id)
-                mutation_client.publish_document(change.eva_document_id)
+                published = publish_draft(reader, mutation_client, change.eva_document_id, serialized_draft_hash, change.eva_document_name, _html_to_markdown)
                 user_token_operation = False
-                published = reader.get_document_for_edit(change.eva_document_id)
-                published_hash = cls._remote_published_hash(published)
-                if published_hash != serialized_draft_hash:
-                    raise ConflictError(
-                        "EVA_PUBLISH_VERIFICATION_FAILED",
-                        "EVA published content does not match the approved draft",
-                        {"expected": serialized_draft_hash, "actual": published_hash},
-                    )
-                if str(published.get("name") or "").strip() != change.eva_document_name:
-                    raise ConflictError(
-                        "EVA_NAME_VERIFICATION_FAILED",
-                        "EVA returned a different document name after publishing",
-                        {"expected": change.eva_document_name, "actual": str(published.get("name") or "").strip()},
-                    )
         except Exception as error:
             recovered = cls._published_remote_if_matching(reader, change)
             if recovered is not None:

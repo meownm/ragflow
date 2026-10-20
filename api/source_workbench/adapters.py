@@ -502,7 +502,7 @@ class RAGFlowProcessModel:
 
         return num_tokens_from_string(text)
 
-    async def stream(self, system: str, payload: dict[str, Any], output_tokens: int):
+    async def stream(self, system: str, payload: dict[str, Any], output_tokens: int, *, json_response: bool = False):
         from api.db.services.llm_service import LLMBundle
 
         self.resolve_output_limit()
@@ -511,6 +511,8 @@ class RAGFlowProcessModel:
         history = [{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}]
         limit_parameter = "max_tokens" if self.model_config.get("llm_factory") == "OpenAI-API-Compatible" else "max_completion_tokens"
         generation = {"temperature": 0, limit_parameter: output_tokens}
+        if json_response and self.model_config.get("llm_factory") in {"Ollama", "OpenAI-API-Compatible"}:
+            generation["response_format"] = {"type": "json_object"}
         if self.model_config.get("llm_factory") == "Ollama" and type(self.context_tokens) is int:
             generation["extra_body"] = {"num_ctx": self.context_tokens}
         with LLMBundle(self.owner_id, self.model_config, lang="Russian", max_retries=0, timeout=1800) as model:

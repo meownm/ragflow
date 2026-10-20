@@ -9,7 +9,7 @@ from test.unit_test.api.apps.business_documents.test_business_document_worker_ex
 from api.apps.business_documents.runtime import document_creation
 from business_documents.application.documents import CreateDocument, DeleteDocument, MAX_EVA_MARKDOWN_SIZE
 from business_documents.application.errors import BusinessDocumentError, PermissionDeniedError, ValidationError
-from business_documents.domain.eva_binding import binding_keys
+from api.document_exchange.identity import binding_keys
 
 
 @pytest.fixture()
@@ -160,11 +160,21 @@ def test_occupied_eva_match_requires_explicit_decision_and_preserves_linked_owne
     owner = {"document_id": "existing-business-document", "title": "A document"}
     writer.binding_occupancy.return_value = {identity: owner}
     with pytest.raises(BusinessDocumentError) as caught:
-        scenario._resolve_binding("actor", {}, "3", "A document")
+        scenario._resolve_binding("actor", {}, "3", "A document", "tenant")
     assert caught.value.code == "EVA_BINDING_DECISION_REQUIRED"
     assert caught.value.details["matches"][0]["binding_available"] is False
     assert caught.value.details["matches"][0]["linked_document"] == owner
     eva.resolve_page_url.assert_not_called()
+
+
+def test_other_product_occupancy_has_no_linked_document_identifiers(creation):
+    scenario, writer, eva, _ = creation
+    match = {"web_url": "https://eva.test/page", "eva_origin": ["https", "eva.test", 443], "project_id": "project", "id": "page"}
+    eva.find_title_matches.return_value = [match]
+    writer.binding_occupancy.return_value = {binding_keys(match)[1]: {"title": None}}
+    with pytest.raises(BusinessDocumentError) as caught:
+        scenario._resolve_binding("actor", {}, "3", "A document", "tenant")
+    assert caught.value.details["matches"][0] == {**match, "binding_available": False}
 
 
 def test_delete_missing_document_never_stages_cleanup():

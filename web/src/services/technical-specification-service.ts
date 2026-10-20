@@ -7,6 +7,9 @@ import type {
 } from '@/pages/technical-specifications/model';
 import { restAPIv1 } from '@/utils/api';
 import request from '@/utils/next-request';
+import type { AxiosRequestConfig } from 'axios';
+
+const handledErrors = { skipErrorNotification: true } as AxiosRequestConfig;
 
 interface Envelope<T> {
   code: number;
@@ -43,27 +46,80 @@ export async function getSpecification(workspace: string, id: string) {
   return unwrap(response.data);
 }
 
+export async function exportSpecification(
+  workspace: string,
+  id: string,
+  revision: number,
+) {
+  const response = await request.post<
+    Envelope<{
+      filename: string;
+      mime_type: string;
+      content: string;
+      revision: number;
+    }>
+  >(`${url(workspace, id)}/export`, { revision });
+  return unwrap(response.data);
+}
+
 export async function importEvaSpecification(
   workspace: string,
   pageUrl: string,
   copy: boolean,
-  selected?: EvaPage,
+  selected: Pick<EvaPage, 'id' | 'project_id' | 'version'>,
+  operationId: string,
 ) {
   const response = await request.post<Envelope<Specification>>(
     `${url(workspace)}/import-eva`,
     {
       url: pageUrl,
       copy,
-      ...(selected
-        ? {
-            selection: {
-              id: selected.id,
-              project_id: selected.project_id,
-              version: selected.version,
-            },
-          }
-        : {}),
+      operation_id: operationId,
+      selection: {
+        id: selected.id,
+        project_id: selected.project_id,
+        version: selected.version,
+      },
     },
+    handledErrors,
+  );
+  return unwrap(response.data);
+}
+
+export interface EvaImportOperation {
+  id: string;
+  state: 'processing' | 'completed' | 'failed' | 'canceled';
+  document?: Specification;
+  document_unavailable?: boolean;
+}
+
+export async function getEvaImport(workspace: string, operationId: string) {
+  const response = await request.get<Envelope<EvaImportOperation | null>>(
+    `${url(workspace)}/import-eva/${encodeURIComponent(operationId)}`,
+    handledErrors,
+  );
+  return unwrap(response.data);
+}
+
+export async function cancelEvaImport(
+  workspace: string,
+  page: Pick<EvaPage, 'id' | 'project_id' | 'version' | 'web_url'>,
+  copy: boolean,
+  operationId: string,
+) {
+  const response = await request.post<Envelope<EvaImportOperation>>(
+    `${url(workspace)}/import-eva/cancel`,
+    {
+      operation_id: operationId,
+      url: page.web_url,
+      copy,
+      selection: {
+        id: page.id,
+        project_id: page.project_id,
+        version: page.version,
+      },
+    },
+    handledErrors,
   );
   return unwrap(response.data);
 }
@@ -75,7 +131,7 @@ export async function searchEvaPages(
 ): Promise<EvaPage[]> {
   const response = await request.get<Envelope<{ items: EvaPage[] }>>(
     `${url(workspace)}/eva-pages`,
-    { params: { query }, signal },
+    { ...handledErrors, params: { query }, signal },
   );
   return unwrap(response.data).items;
 }
@@ -104,6 +160,9 @@ export async function specificationAction(
   const response = await request.post<Envelope<Specification>>(
     `${url(workspace, id)}/${action}`,
     data,
+    action === 'publish-eva' || action === 'connect-eva'
+      ? handledErrors
+      : undefined,
   );
   return unwrap(response.data);
 }

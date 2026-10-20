@@ -25,17 +25,20 @@ from api.db.db_models import (
     BusinessDocumentProposalDecision,
     BusinessDocumentQuestion,
     BusinessDocumentRevision,
+    DocumentExchangeBinding,
 )
+from api.document_exchange.bindings import BindingConflict, occupancy, release, reserve
 from business_documents.application.errors import BusinessDocumentError, ConflictError, NotFoundError
 from business_documents.application.job_completion import AssessmentRecords
 from business_documents.domain.hashing import text_hash
-from business_documents.domain.eva_binding import binding_keys
+from api.document_exchange.identity import binding_keys
 from business_documents.domain.workflow import ACTIVE_JOB_STATUSES
 from common.misc_utils import get_uuid
 from common.time_utils import current_timestamp
 
 
 DOCUMENT_TABLES = (
+    DocumentExchangeBinding,
     BusinessDocumentCatalog,
     BusinessDocument,
     BusinessDocumentRevision,
@@ -115,7 +118,7 @@ class PeeweeDocumentWriter:
             raise
         return row.__data__.copy()
 
-    def binding_occupancy(self, keys):
+    def binding_occupancy(self, keys, tenant_id):
         if not keys:
             return {}
         binding = BusinessDocumentEvaBinding
@@ -131,6 +134,9 @@ class PeeweeDocumentWriter:
             result[row["page_url_key"]] = owner
             if row["eva_identity_key"]:
                 result[row["eva_identity_key"]] = owner
+        for key, owner in occupancy(tenant_id, keys).items():
+            if owner["kind"] != "business_requirements":
+                result[key] = {"title": None}
         return result
 
     def store_binding(self, document_id, binding, *, replace=False):
@@ -140,6 +146,8 @@ class PeeweeDocumentWriter:
         values = {"status": str(binding.get("status") or "LINK_ONLY"), "page_url_key": page_key, "eva_identity_key": identity, "binding": dict(binding), **timestamps()}
         try:
             with model._meta.database.atomic():
+                document = BusinessDocument.get_by_id(document_id)
+                reserve(document.tenant_id, "business_requirements", document_id, binding)
                 existing = model.get_or_none(model.document_id == document_id) if replace else None
                 if existing is not None:
                     values.pop("create_time")
@@ -147,6 +155,8 @@ class PeeweeDocumentWriter:
                     model.update(**values).where(model.document_id == document_id).execute()
                 else:
                     model.create(document_id=document_id, **values)
+        except BindingConflict as error:
+            raise ConflictError("EVA_PAGE_ALREADY_LINKED", "Страница Eva уже связана с другим документом в организации") from error
         except IntegrityError as error:
             occupied = model.page_url_key == page_key
             if identity is not None:
@@ -164,6 +174,8 @@ class PeeweeDocumentWriter:
 
     def delete_document_rows(self, document_id):
         self._require_transaction()
+        document = BusinessDocument.get_by_id(document_id)
+        release(document.tenant_id, "business_requirements", document_id)
         # Durable export stages outlive their document until blob cleanup succeeds.
         for model in (
             BusinessDocumentEvaBinding,

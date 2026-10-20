@@ -1,4 +1,5 @@
 import {
+  exportSpecification,
   getSpecification,
   getSpecificationDraft,
   listSpecifications,
@@ -8,6 +9,7 @@ import {
   specificationHistory,
   specificationRevision,
 } from '@/services/technical-specification-service';
+import { downloadFileFromBlob } from '@/utils/file-util';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   act,
@@ -39,6 +41,7 @@ jest.mock('@/services/source-workbench-service', () => ({
   sourceRequestError: (_error: unknown, fallback: string) => fallback,
 }));
 jest.mock('@/services/technical-specification-service', () => ({
+  exportSpecification: jest.fn(),
   getSpecification: jest.fn(),
   listSpecifications: jest.fn(),
   saveSpecification: jest.fn(),
@@ -48,6 +51,8 @@ jest.mock('@/services/technical-specification-service', () => ({
   specificationHistory: jest.fn(),
   specificationRevision: jest.fn(),
 }));
+
+jest.mock('@/utils/file-util', () => ({ downloadFileFromBlob: jest.fn() }));
 
 const specification: Specification = {
   id: 'doc',
@@ -141,10 +146,113 @@ beforeEach(() => {
       version: value.version + 1,
     }));
 });
+
+test('Eva updates the linked page with one action and reports the exported revision', async () => {
+  const client = await openChat();
+  const linked: Specification = {
+    ...specification,
+    version: 2,
+    eva: {
+      page_url: 'https://eva.test/page',
+      remote_version: 'v1',
+      document_name: 'Страница ТЗ',
+    },
+  };
+  await act(async () => {
+    client.setQueryData(
+      SpecificationKeys.document('actor', 'project', 'doc'),
+      linked,
+    );
+  });
+  jest.mocked(specificationAction).mockResolvedValue({
+    ...linked,
+    version: 4,
+    eva_export: { status: 'published', revision: 1 },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Eva' }));
+  const update = await screen.findByRole('button', { name: 'Обновить в Eva' });
+  await act(async () => {
+    fireEvent.click(update);
+  });
+  await waitFor(() =>
+    expect(specificationAction).toHaveBeenCalledWith(
+      'project',
+      'doc',
+      'publish-eva',
+      { version: 2 },
+    ),
+  );
+  await screen.findByText('Страница Eva обновлена');
+  expect(screen.getByText('В Eva выгружена редакция 1.')).toBeInTheDocument();
+});
+
+test('an unbound specification can select an existing Eva page without replacing local text', async () => {
+  await openChat();
+  jest.mocked(specificationAction).mockResolvedValue({
+    ...specification,
+    version: 2,
+    eva: { page_url: 'https://eva.test/page', remote_version: 'v1' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Eva' }));
+  fireEvent.change(screen.getByLabelText('Ссылка на страницу Eva'), {
+    target: { value: 'https://eva.test/page' },
+  });
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Связать страницу' }));
+  });
+  await waitFor(() =>
+    expect(specificationAction).toHaveBeenCalledWith(
+      'project',
+      'doc',
+      'connect-eva',
+      { version: 1, url: 'https://eva.test/page' },
+    ),
+  );
+  await screen.findByText('Страница Eva связана. Текст ТЗ сохранён');
+  expect(
+    screen.getByRole('button', { name: 'Обновить в Eva' }),
+  ).toBeInTheDocument();
+});
 afterEach(() => {
   router?.dispose();
   jest.useRealTimers();
   jest.restoreAllMocks();
+});
+
+test('export downloads only the server-authorized saved revision', async () => {
+  jest.mocked(exportSpecification).mockResolvedValue({
+    filename: 'ТЗ-r1.md',
+    mime_type: 'text/markdown;charset=utf-8',
+    content: '## 1. Назначение и цель\n\nТекст',
+    revision: 1,
+  });
+  await openChat();
+  fireEvent.click(screen.getByRole('button', { name: 'Выгрузить .md' }));
+  await waitFor(() =>
+    expect(downloadFileFromBlob).toHaveBeenCalledWith(
+      expect.any(Blob),
+      'ТЗ-r1.md',
+    ),
+  );
+  expect(exportSpecification).toHaveBeenCalledWith('project', 'doc', 1);
+  fireEvent.click(screen.getByRole('button', { name: 'Документ' }));
+  fireEvent.change(screen.getByLabelText('Раздел 1'), {
+    target: { value: 'Несохранённый текст' },
+  });
+  expect(screen.getByRole('button', { name: 'Выгрузить .md' })).toBeDisabled();
+});
+
+test('a failed export creates no file and preserves the chat draft', async () => {
+  jest.mocked(exportSpecification).mockRejectedValue(new Error('conflict'));
+  await openChat();
+  fireEvent.click(screen.getByRole('button', { name: 'Выгрузить .md' }));
+  await screen.findByText(
+    'Не удалось выгрузить ТЗ. Проверьте доступ и актуальность редакции',
+  );
+  expect(downloadFileFromBlob).not.toHaveBeenCalled();
+  expect(
+    screen.getByRole('textbox', { name: 'Сообщение помощнику' }),
+  ).toHaveValue(local.draft.text);
 });
 
 test('global links and browser Back cannot discard manual edits after a storage failure', async () => {

@@ -67,7 +67,8 @@ def test_source_dataset_choices_include_later_pages_after_empty_sources(monkeypa
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("factory", ["Ollama", "OpenAI-API-Compatible"])
-async def test_ollama_processor_uses_discovered_context_for_planning_and_generation(monkeypatch, factory):
+@pytest.mark.parametrize("json_response", [False, True])
+async def test_ollama_processor_uses_discovered_context_for_planning_and_generation(monkeypatch, factory, json_response):
     import aiohttp
     from api.db.services import llm_service
 
@@ -127,12 +128,13 @@ async def test_ollama_processor_uses_discovered_context_for_planning_and_generat
     model = RAGFlowProcessModel("owner", config)
     await model.resolve_context()
     assert model.context_tokens == 131072
-    assert [part async for part in model.stream("system", {"task": "create"}, 32768)] == ["answer"]
+    assert [part async for part in model.stream("system", {"task": "create"}, 32768, json_response=json_response)] == ["answer"]
     assert config["max_tokens"] == 4096
     assert calls[0][0] == f"http://ollama:11434/api/{'show' if factory == 'Ollama' else 'ps'}"
     if factory == "Ollama":
         assert calls[1]["extra_body"] == {"num_ctx": 131072}
     assert calls[1]["max_tokens" if factory == "OpenAI-API-Compatible" else "max_completion_tokens"] == 32768
+    assert calls[1].get("response_format") == ({"type": "json_object"} if json_response else None)
 
 
 def test_saved_draft_persists_provenance_and_rejects_stale_or_foreign_edit(monkeypatch, tmp_path):

@@ -466,6 +466,9 @@ def init_database_tables(alter_fields=[]):
     from api.source_workbench.linked_migrations import migrate_linked_documents
 
     migrate_linked_documents()
+    from api.document_exchange.migrations import migrate_bindings
+
+    migrate_bindings()
 
 
 def fill_db_model_object(model_object, human_model_dict):
@@ -911,6 +914,42 @@ class Conversation(DataBaseModel):
 
     class Meta:
         db_table = "conversation"
+
+
+class DocumentExchangeBinding(DataBaseModel):
+    """One active document owner for an Eva page within an organization."""
+
+    scope = CharField(max_length=32)
+    owner_kind = CharField(max_length=32)
+    document_id = CharField(max_length=32)
+    page_url_key = CharField(max_length=64)
+    eva_identity_key = CharField(max_length=64, null=True)
+
+    class Meta:
+        db_table = "document_exchange_binding"
+        primary_key = CompositeKey("scope", "owner_kind", "document_id")
+        indexes = ((("scope", "page_url_key"), True), (("scope", "eva_identity_key"), True))
+
+
+class DocumentExchangeOperation(DataBaseModel):
+    """Durable request identity and receipt; document writes share its transaction."""
+
+    scope = CharField(max_length=32)
+    consumer = CharField(max_length=32)
+    actor_id = CharField(max_length=32)
+    request_id = CharField(max_length=32)
+    context_id = CharField(max_length=32)
+    request_hash = CharField(max_length=64)
+    request = JSONField()
+    state = CharField(max_length=16)
+    attempt = CharField(max_length=32, null=True)
+    lease_until = DateTimeField(null=True)
+    result = JSONField(default=dict)
+    error = JSONField(default=dict)
+
+    class Meta:
+        db_table = "document_exchange_operation"
+        primary_key = CompositeKey("scope", "consumer", "actor_id", "request_id")
 
 
 class TechnicalSpecification(DataBaseModel):
@@ -2407,17 +2446,15 @@ def migrate_business_document_eva_bindings():
                     "last_pull_review_cycle": latest_pull.payload.get("review_cycle"),
                 }
             )
-        page_url = str(binding["page_url"]).strip().rstrip("/").casefold()
-        origin = str(binding.get("eva_origin") or "").strip().rstrip("/").casefold()
-        project_id = str(binding.get("project_id") or "").strip()
-        document_id = str(binding.get("document_id") or "").strip()
-        identity = "\x1f".join((origin, project_id, document_id))
+        from api.document_exchange.identity import binding_keys
+
+        page_key, identity = binding_keys(binding)
         try:
             BusinessDocumentEvaBinding.create(
                 document_id=created.document_id,
                 status=str(binding.get("status") or "LINK_ONLY"),
-                page_url_key=hashlib.sha256(page_url.encode("utf-8")).hexdigest(),
-                eva_identity_key=hashlib.sha256(identity.encode("utf-8")).hexdigest() if origin and project_id and document_id else None,
+                page_url_key=page_key,
+                eva_identity_key=identity,
                 binding=dict(binding),
             )
         except IntegrityError as ex:

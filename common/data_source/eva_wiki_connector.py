@@ -1120,6 +1120,9 @@ class EvaWikiMutationClient:
     def load_credentials(self, credentials: dict[str, Any]) -> None:
         self.__transport.load_credentials(credentials)
 
+    def close(self) -> None:
+        self.__transport.close()
+
     def update_document_draft(self, document_id: str, html: str, name: str | None = None) -> Any:
         """Replace EVA's unpublished draft and, when supplied, its page name."""
 

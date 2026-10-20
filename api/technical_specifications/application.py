@@ -1,10 +1,12 @@
 """Working TЗ scenarios, composed with value-only repository and AI ports."""
 
 import asyncio
+import re
 from copy import deepcopy
 from datetime import UTC, datetime
+from urllib.parse import urlsplit
 
-from .domain import SpecificationError, assert_context, context, draft, empty_sections, eva_identity, fail, identifier, merge_sections, parse_markdown, sections, text, version
+from .domain import SpecificationError, assert_context, context, draft, empty_sections, eva_identity, fail, identifier, markdown, merge_sections, parse_markdown, sections, text, version
 
 
 class Specifications:
@@ -20,6 +22,19 @@ class Specifications:
     async def get(self, actor, workspace, document_id):
         return await self.run(self.repository.get, actor, workspace, document_id)
 
+    async def export_markdown(self, actor, workspace, document_id, data):
+        snapshot = await self.get(actor, workspace, document_id)
+        if snapshot["revision"] != version(data.get("revision")):
+            fail("VERSION_CONFLICT", "ТЗ изменилось. Обновите документ перед выгрузкой", 409)
+        title = " ".join(snapshot["title"].splitlines())
+        filename = re.sub(r'[\x00-\x1f<>:"/\\|?*]', "_", title).strip(" .")[:100] or "Документ"
+        return {
+            "filename": f"ТЗ-{filename}-r{snapshot['revision']}.md",
+            "mime_type": "text/markdown;charset=utf-8",
+            "content": markdown(snapshot["sections"]),
+            "revision": snapshot["revision"],
+        }
+
     async def eva_pages(self, actor, workspace, query):
         await self.run(self.repository.access, actor, workspace, "edit")
         maximum = 2000 if isinstance(query, str) and query.strip().casefold().startswith(("http://", "https://")) else 500
@@ -29,33 +44,124 @@ class Specifications:
         items = [{**page, **occupied.get(identity, {"linked_document": None, "binding_available": True})} for page, identity in zip(result["items"], identities, strict=True)]
         return {**result, "items": items}
 
-    async def import_eva(self, actor, workspace, data):
-        await self.run(self.repository.access, actor, workspace, "edit")
+    @staticmethod
+    def _import_request(data):
         selected = data.get("selection")
-        if selected is not None and (not isinstance(selected, dict) or set(selected) != {"id", "project_id", "version"} or any(not isinstance(value, str) or not value for value in selected.values())):
+        if selected is not None and (
+            not isinstance(selected, dict) or set(selected) != {"id", "project_id", "version"} or any(not isinstance(value, str) or not value or len(value) > 255 for value in selected.values())
+        ):
             fail("INVALID_INPUT", "Выберите страницу Eva заново")
-        binding = await self.run(self.eva.resolve_page_url, actor, text(data.get("url"), "Адрес страницы", 2000))
-        if selected and (selected["id"], selected["project_id"]) != (binding.get("document_id"), binding.get("project_id")):
-            fail("EVA_CHANGED", "По ссылке открывается другая страница. Найдите и выберите её заново", 409)
-        origin = eva_identity(binding)
         copy = data.get("copy", False)
         if type(copy) is not bool:
             fail("INVALID_INPUT", "Укажите, нужна ли независимая копия")
-        if not copy:
-            existing = await self.run(self.repository.find_origin, actor, workspace, origin)
-            if existing:
-                return existing
+        url = text(data.get("url"), "Адрес страницы", 2000).strip()
+        try:
+            parsed = urlsplit(url)
+            if parsed.scheme.casefold() not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+                raise ValueError("Invalid page address")
+            _ = parsed.port
+        except ValueError:
+            fail("INVALID_INPUT", "Укажите HTTP(S) адрес страницы Eva без учётных данных")
+        return {"action": "import_eva", "url": parsed._replace(query="", fragment="").geturl().rstrip("/"), "copy": copy, **({"selection": selected} if selected is not None else {})}
+
+    async def import_operation(self, actor, workspace, request_id):
+        return await self.run(self.repository.import_operation, actor, workspace, text(request_id, "Идентификатор импорта", 32))
+
+    async def cancel_import(self, actor, workspace, data):
+        return await self.run(self.repository.cancel_import, actor, workspace, text(data.get("operation_id"), "Идентификатор импорта", 32), self._import_request(data))
+
+    async def import_eva(self, actor, workspace, data):
+        await self.run(self.repository.access, actor, workspace, "edit")
+        request = self._import_request(data)
+        request_id = identifier() if data.get("operation_id") is None else text(data["operation_id"], "Идентификатор импорта", 32)
+        started = await self.run(self.repository.begin_import, actor, workspace, request_id, request)
+        if started["operation"]["state"] == "completed":
+            if started["operation"].get("document_unavailable"):
+                fail("IMPORT_RESULT_UNAVAILABLE", "Импорт завершён, но результат сейчас недоступен", 409)
+            return started["operation"]["document"]
+        attempt = started["attempt"]
+        try:
+            selected, copy = request.get("selection"), request["copy"]
+            binding = await self.run(self.eva.resolve_page_url, actor, request["url"])
+            if selected and (selected["id"], selected["project_id"]) != (binding.get("document_id"), binding.get("project_id")):
+                fail("EVA_CHANGED", "По ссылке открывается другая страница. Найдите и выберите её заново", 409)
+            origin = eva_identity(binding)
+            if not copy:
+                existing = await self.run(self.repository.find_origin, actor, workspace, origin)
+                if existing:
+                    return await self.run(self.repository.save_import, actor, workspace, request_id, attempt, {"id": existing["id"], "workspace_id": existing["workspace_id"]})
+            binding, remote = await self.run(self.eva.read_connected_page, actor, binding)
+            if selected is not None and (selected["id"], selected["project_id"], selected["version"]) != (binding.get("document_id"), binding.get("project_id"), binding.get("remote_version")):
+                fail("EVA_CHANGED", "Страница Eva изменилась. Найдите и выберите её заново", 409)
+            content = parse_markdown(remote) if remote.strip() else empty_sections()
+            title = text(binding.get("document_name"), "Название страницы", 255)
+            if copy:
+                title = title[:245] + " (копия)"
+            else:
+                binding = {**binding, "base": content}
+            values = {
+                "title": title,
+                "sections": content,
+                "binding": None if copy else binding,
+                "origin_key": None if copy else origin,
+                "provenance": {key: binding.get(key) for key in ("connector_id", "eva_origin", "project_id", "document_id", "page_url", "remote_version")},
+            }
+            return await self.run(self.repository.save_import, actor, workspace, request_id, attempt, values)
+        except (Exception, asyncio.CancelledError) as error:
+            failure = {"code": error.code if isinstance(error, SpecificationError) else "IMPORT_FAILED", "message": "Не удалось завершить импорт. Можно повторить запрос"}
+            try:
+                await asyncio.shield(self.run(self.repository.fail_import, actor, workspace, request_id, attempt, failure))
+            except Exception:  # noqa: BLE001 - preserve the initial failure if receipt storage is unavailable
+                # A storage outage leaves the expiring claim recoverable.
+                raise error from None
+            raise
+
+    async def connect_eva(self, actor, workspace, document_id, data):
+        await self.run(self.repository.access, actor, workspace, "edit")
+        request = self._import_request({"url": data.get("url")})
+        binding = await self.run(self.eva.resolve_page_url, actor, request["url"])
         binding, remote = await self.run(self.eva.read_connected_page, actor, binding)
-        if selected is not None and (selected["id"], selected["project_id"], selected["version"]) != (binding.get("document_id"), binding.get("project_id"), binding.get("remote_version")):
-            fail("EVA_CHANGED", "Страница Eva изменилась. Найдите и выберите её заново", 409)
-        content = parse_markdown(remote) if remote.strip() else empty_sections()
-        title = text(binding.get("document_name"), "Название страницы", 255)
-        if copy:
-            title = title[:245] + " (копия)"
-        else:
-            binding = {**binding, "base": content}
-        provenance = {key: binding.get(key) for key in ("connector_id", "eva_origin", "project_id", "document_id", "page_url", "remote_version")}
-        return await self.run(self.repository.create, actor, workspace, title, content, binding=None if copy else binding, origin_key=None if copy else origin, provenance=provenance)
+        baseline = parse_markdown(remote) if remote.strip() else empty_sections()
+        return await self.run(self.repository.bind_eva, actor, workspace, document_id, data.get("version"), {**binding, "base": baseline})
+
+    async def publish_eva(self, actor, workspace, document_id, data):
+        snapshot = await self.get(actor, workspace, document_id)
+        await self.run(self.repository.access, actor, workspace, "edit")
+        if not snapshot["eva"]:
+            fail("EVA_NOT_BOUND", "Сначала свяжите ТЗ со страницей Eva", 409)
+        active = snapshot.get("eva_export") or {}
+        if active.get("status") == "publishing" and (datetime.now(UTC) - datetime.fromisoformat(active["started_at"])).total_seconds() < 360:
+            fail("EVA_EXPORT_BUSY", "Обновление Eva ещё выполняется. Дождитесь результата", 409)
+        attempt = identifier()
+
+        def reserve(doc):
+            doc["eva_export"] = {"id": attempt, "status": "publishing", "revision": snapshot["revision"], "started_at": datetime.now(UTC).isoformat()}
+
+        await self.run(self.repository.change, actor, workspace, document_id, data.get("version"), reserve, "eva_export")
+        try:
+            binding = await self.run(self.eva.publish_connected_page, actor, snapshot["eva"], markdown(snapshot["sections"]), snapshot["title"])
+        except asyncio.CancelledError:
+            # A synchronous network call can still finish after HTTP cancellation.
+            raise
+        except Exception as error:
+
+            def failed(doc):
+                if (doc.get("eva_export") or {}).get("id") == attempt:
+                    doc["eva_export"]["status"] = "failed"
+
+            try:
+                await asyncio.shield(self.run(self.repository.change, actor, workspace, document_id, None, failed, "eva_export", latest=True))
+            except Exception:  # noqa: BLE001 - preserve the external error if local storage is unavailable
+                raise error from None
+            raise
+
+        def complete(doc):
+            if (doc.get("eva_export") or {}).get("id") != attempt:
+                fail("EVA_EXPORT_BUSY", "Состояние выгрузки изменилось. Проверьте страницу Eva", 409)
+            doc["eva"] = {**binding, "base": snapshot["sections"]}
+            doc["eva_export"].update(status="published", published_at=datetime.now(UTC).isoformat())
+
+        return await self.run(self.repository.change, actor, workspace, document_id, None, complete, "eva_export", latest=True)
 
     async def pull(self, actor, workspace, document_id, data):
         snapshot = await self.get(actor, workspace, document_id)

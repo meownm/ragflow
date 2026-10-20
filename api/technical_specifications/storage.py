@@ -12,10 +12,12 @@ from api.db.db_models import TechnicalSpecification as Document
 from api.db.db_models import TechnicalSpecificationDraft as Draft
 from api.db.db_models import TechnicalSpecificationRevision as Revision
 from api.db.db_models import User
+from api.document_exchange import operations
+from api.document_exchange.bindings import BindingConflict, occupancy, reserve
 from api.source_workbench.errors import SourceWorkspaceError
 from api.source_workbench.linked_storage import LinkedDocumentRepository
 
-from .domain import SpecificationError, fail, identifier, version
+from .domain import SpecificationError, eva_identity, fail, identifier, version
 
 MAX_PROJECTION_BYTES = 2_000_000
 # JSON can use six bytes per content character: 100k candidate + 30k answer,
@@ -28,7 +30,7 @@ def _proposal_bases(document_id, numbers):
 
 
 def _stored_payload(value):
-    payload = {key: deepcopy(value[key]) for key in ("sections", "messages", "comments", "proposals", "eva", "origin")}
+    payload = {key: deepcopy(value[key]) for key in ("sections", "messages", "comments", "proposals", "eva", "origin", "eva_export")}
     proposals = [item for item in payload["proposals"] if item.get("source") == "chat"]
     bases = _proposal_bases(value["id"], {item["base_revision"] for item in proposals})
     for item in proposals:
@@ -44,6 +46,7 @@ def _payload_budget(payload):
 
 def record(row):
     payload = deepcopy(row.payload)
+    payload.setdefault("eva_export", None)
     compact = [item for item in payload["proposals"] if "patches" in item]
     bases = _proposal_bases(row.id, {item["base_revision"] for item in compact})
     for item in compact:
@@ -64,8 +67,11 @@ def projection(row):
 def connected(method):
     @wraps(method)
     def invoke(self, *args, **kwargs):
-        with self.database.connection_context() if self.database.is_closed() else nullcontext():
-            return method(self, *args, **kwargs)
+        try:
+            with self.database.connection_context() if self.database.is_closed() else nullcontext():
+                return method(self, *args, **kwargs)
+        except operations.OperationError as error:
+            fail(error.code, error.message, 409)
 
     return invoke
 
@@ -122,9 +128,15 @@ class SpecificationRepository:
                 "binding_available": False,
                 "linked_document": {"id": row.id, "workspace_id": row.workspace_id} if access[row.workspace_id] else None,
             }
+        for key, owner in occupancy(tenant, origin_keys).items():
+            if owner["kind"] != "technical_specification":
+                result[key] = {"binding_available": False, "linked_document": None}
         return result
 
     def _origin(self, actor, tenant_id, origin_key):
+        occupied = occupancy(tenant_id, {origin_key}).get(origin_key)
+        if occupied and occupied["kind"] != "technical_specification":
+            fail("EVA_BINDING_EXISTS", "Страница уже связана с другим документом в организации. Для независимого ТЗ выберите копию", 409)
         row = Document.get_or_none((Document.tenant_id == tenant_id) & (Document.origin_key == origin_key))
         if row is None:
             return None
@@ -133,6 +145,51 @@ class SpecificationRepository:
         except SourceWorkspaceError:
             fail("EVA_BINDING_EXISTS", "Страница уже связана с ТЗ в организации. Для независимого документа выберите копию", 409)
         return projection(row)
+
+    def _scope(self, actor, workspace):
+        project = self.access(actor, workspace, "edit")
+        return project["tenant_id"] or project["owner_id"]
+
+    def _import_view(self, actor, value):
+        if value and value["state"] == "completed":
+            try:
+                value = {**value, "document": self.get(actor, value["result"]["workspace_id"], value["result"]["id"])}
+            except (SourceWorkspaceError, SpecificationError) as error:
+                if error.status not in {403, 404}:
+                    raise
+                value = {**value, "result": {}, "document_unavailable": True}
+        return value
+
+    @connected
+    def begin_import(self, actor, workspace, request_id, request):
+        with self.database.atomic():
+            value, attempt = operations.claim(self._scope(actor, workspace), "technical_specification", actor, request_id, workspace, request)
+            return {"operation": self._import_view(actor, value), "attempt": attempt}
+
+    @connected
+    def import_operation(self, actor, workspace, request_id):
+        with self.database.atomic():
+            value = operations.status(self._scope(actor, workspace), "technical_specification", actor, request_id, workspace)
+            return self._import_view(actor, value)
+
+    @connected
+    def cancel_import(self, actor, workspace, request_id, request):
+        with self.database.atomic():
+            value = operations.cancel(self._scope(actor, workspace), "technical_specification", actor, request_id, workspace, request)
+            return self._import_view(actor, value)
+
+    @connected
+    def save_import(self, actor, workspace, request_id, attempt, values):
+        with self.database.atomic():
+            row = operations.guard(self._scope(actor, workspace), "technical_specification", actor, request_id, attempt)
+            document = self.get(actor, values["workspace_id"], values["id"]) if "id" in values else self.create(actor, workspace, **values)
+            operations.complete(row, {"workspace_id": document["workspace_id"], "id": document["id"]})
+            return document
+
+    @connected
+    def fail_import(self, actor, workspace, request_id, attempt, error):
+        with self.database.atomic():
+            operations.failed(self._scope(actor, workspace), "technical_specification", actor, request_id, attempt, error)
 
     @connected
     def create(self, actor, workspace, title, sections, *, binding=None, origin_key=None, provenance=None):
@@ -150,7 +207,14 @@ class SpecificationRepository:
             try:
                 with self.database.atomic():
                     row = Document.create(id=identifier(), workspace_id=workspace, tenant_id=tenant, title=title, payload=payload, origin_key=origin_key)
+                    if binding:
+                        reserve(tenant, "technical_specification", row.id, binding)
                     Revision.create(document_id=row.id, number=1, title=title, sections=sections, author_id=actor, reason="import" if binding else "create")
+            except BindingConflict:
+                existing = self._origin(actor, tenant, origin_key)
+                if existing is None:
+                    fail("EVA_BINDING_EXISTS", "Страница уже связана с другим документом в организации. Для независимого ТЗ выберите копию", 409)
+                return existing
             except IntegrityError:
                 if not origin_key:
                     raise
@@ -159,6 +223,25 @@ class SpecificationRepository:
                     raise
                 return existing
             return projection(row)
+
+    @connected
+    def bind_eva(self, actor, workspace, document_id, expected, binding):
+        try:
+            with self.database.atomic():
+                scope = self._scope(actor, workspace)
+
+                def update(doc):
+                    if doc["eva"]:
+                        fail("EVA_ALREADY_BOUND", "ТЗ уже связано со страницей Eva", 409)
+                    doc["eva"] = binding
+                    doc["eva_export"] = None
+
+                reserve(scope, "technical_specification", document_id, binding)
+                result = self._change(actor, workspace, document_id, expected, update, "eva_bind", False)
+                Document.update(origin_key=eva_identity(binding)).where(Document.id == document_id).execute()
+                return result
+        except (BindingConflict, IntegrityError):
+            fail("EVA_BINDING_EXISTS", "Страница Eva уже связана с другим документом", 409)
 
     @connected
     def change(self, actor, workspace, document_id, expected_version, mutate, reason, *, latest=False):

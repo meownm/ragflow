@@ -50,6 +50,27 @@ BASE = "/source-workspaces/workspace/technical-specifications"
 
 
 @pytest.mark.asyncio
+async def test_http_import_cancellation_persists_before_a_delayed_request_and_is_personal(http):
+    client, actor = http
+    body = {"operation_id": "pending", "url": "https://eva.test/page?ignored=secret", "copy": True}
+    response = await client.post(BASE + "/import-eva/cancel", json=body)
+    assert response.status_code == 200
+    value = (await response.get_json())["data"]
+    assert value["state"] == "canceled" and value["request"]["url"] == "https://eva.test/page"
+    status = await client.get(BASE + "/import-eva/pending")
+    assert (await status.get_json())["data"] == value
+    response = await client.post(BASE + "/import-eva", json=body)
+    assert response.status_code == 409 and (await response.get_json())["data"]["error_code"] == "IMPORT_CANCELED"
+    response = await client.post(BASE + "/import-eva/cancel", json={**body, "copy": False})
+    assert response.status_code == 409
+    response = await client.post(BASE + "/import-eva/cancel", json={**body, "url": "https://user:password@eva.test/page"})
+    assert response.status_code == 422
+    actor.id = "reader"
+    assert (await client.get(BASE + "/import-eva/pending")).status_code == 403
+    assert (await client.post(BASE + "/import-eva/cancel", json=body)).status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_http_eva_picker_checks_project_permissions_and_search_limits(http):
     client, actor = http
     response = await client.get(BASE + "/eva-pages", query_string={"query": "Загрузка"})
@@ -66,6 +87,37 @@ async def create(client):
     response = await client.post(BASE, json={"title": "ТЗ загрузки"})
     assert response.status_code == 200
     return (await response.get_json())["data"]
+
+
+@pytest.mark.asyncio
+async def test_export_checks_access_and_revision_and_preserves_nine_sections(http):
+    from api.technical_specifications.domain import HEADINGS, parse_markdown
+
+    client, actor = http
+    document = await create(client)
+    url = BASE + "/" + document["id"]
+    content = {**document["sections"], "1": "Назначение: **загрузка**.", "5": "- Выбрать файл\n- Отправить", "8": '```json\n{"ok": true}\n```'}
+    response = await client.put(url, json={"version": document["version"], "title": "CON:/ТЗ?*", "sections": content})
+    saved = (await response.get_json())["data"]
+    context = {"document_id": document["id"], "scope": "all", "revision": saved["revision"], "anchor": None}
+    comment = await client.post(url + "/comments", json={"version": saved["version"], "message_id": "comment", "text": "Закрытый комментарий", "context": context})
+    assert comment.status_code == 200
+    draft = await client.put(url + "/draft", json={"version": 0, "draft": {"message_id": "private", "text": "Личный черновик", "context": context}})
+    assert draft.status_code == 200
+    actor.id = "reader"
+    response = await client.post(url + "/export", json={"revision": saved["revision"]})
+    assert response.status_code == 200
+    file = (await response.get_json())["data"]
+    assert file["filename"] == "ТЗ-CON__ТЗ__-r2.md"
+    assert file["mime_type"].startswith("text/markdown")
+    assert parse_markdown(file["content"]) == content
+    assert "Закрытый комментарий" not in file["content"] and "Личный черновик" not in file["content"]
+    assert all(f"## {number}. {heading}" in file["content"] for number, heading in enumerate(HEADINGS, 1))
+    assert (await client.post(url + "/export", json={"revision": 1})).status_code == 409
+    actor.id = "stranger"
+    assert (await client.post(url + "/export", json={"revision": saved["revision"]})).status_code == 404
+    actor.id = "reader"
+    assert (await client.post(url + "/export", json={"revision": True})).status_code == 409
 
 
 @pytest.mark.asyncio

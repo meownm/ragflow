@@ -4,11 +4,33 @@ from peewee import SqliteDatabase
 
 @pytest.fixture
 def store(tmp_path):
-    from api.db.db_models import SourceWorkspace, SourceWorkspaceDraft, SourceWorkspaceMember, TechnicalSpecification, TechnicalSpecificationDraft, TechnicalSpecificationRevision, User, UserTenant
+    from api.db.db_models import (
+        DocumentExchangeBinding,
+        DocumentExchangeOperation,
+        SourceWorkspace,
+        SourceWorkspaceDraft,
+        SourceWorkspaceMember,
+        TechnicalSpecification,
+        TechnicalSpecificationDraft,
+        TechnicalSpecificationRevision,
+        User,
+        UserTenant,
+    )
     from api.technical_specifications.storage import SpecificationRepository
 
     database = SqliteDatabase(tmp_path / "specifications.sqlite", pragmas={"journal_mode": "wal", "busy_timeout": 10000})
-    models = [SourceWorkspace, SourceWorkspaceDraft, SourceWorkspaceMember, User, UserTenant, TechnicalSpecification, TechnicalSpecificationDraft, TechnicalSpecificationRevision]
+    models = [
+        DocumentExchangeBinding,
+        DocumentExchangeOperation,
+        SourceWorkspace,
+        SourceWorkspaceDraft,
+        SourceWorkspaceMember,
+        User,
+        UserTenant,
+        TechnicalSpecification,
+        TechnicalSpecificationDraft,
+        TechnicalSpecificationRevision,
+    ]
     with database.bind_ctx(models):
         database.create_tables(models)
         SourceWorkspace.create(id="workspace", owner_id="author", title="Проект")

@@ -59,6 +59,28 @@ async def imported(store):
 
 
 @pytest.mark.asyncio
+async def test_business_document_reservation_blocks_binding_but_allows_independent_copy(store):
+    from api.db.db_models import DocumentExchangeBinding, TechnicalSpecification
+    from api.document_exchange.bindings import reserve
+
+    eva = Eva()
+    with store.database.atomic():
+        reserve("author", "business_requirements", "hidden-business-document", eva.resolve_page_url("author", "https://eva.test/page"))
+    service = Specifications(store, AI(), run, eva)
+    found = await service.eva_pages("author", "workspace", "Загрузка")
+    assert found["items"][0]["binding_available"] is False
+    assert found["items"][0]["linked_document"] is None
+    with pytest.raises(SpecificationError) as caught:
+        await service.import_eva("author", "workspace", {"url": "https://eva.test/page"})
+    assert caught.value.code == "EVA_BINDING_EXISTS"
+    assert "hidden-business-document" not in str(caught.value)
+    assert TechnicalSpecification.select().count() == 0
+    copy = await service.import_eva("author", "workspace", {"url": "https://eva.test/page", "copy": True})
+    assert copy["eva"] is None and copy["origin"]["document_id"] == "page"
+    assert DocumentExchangeBinding.select().count() == 1
+
+
+@pytest.mark.asyncio
 async def test_reimport_opens_existing_without_replacing_local_revision(store):
     service, eva, _ai, doc = await imported(store)
     edited = deepcopy(doc["sections"])

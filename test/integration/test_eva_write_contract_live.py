@@ -1,5 +1,6 @@
 """Opt-in Eva CAS probe using only new disposable local QA pages."""
 
+import json
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -9,7 +10,7 @@ from uuid import uuid4
 import pytest
 
 
-def test_eva_create_draft_cas_and_publication_version_guards():
+def test_eva_create_draft_cas_and_publication_version_guards(record_property):
     if os.environ.get("RAGFLOW_LOCAL_DOCKER_CONNECTOR_TEST") != "1":
         pytest.skip("Requires the local Docker QA connector contour")
     from api.db.db_models import Connector
@@ -95,10 +96,55 @@ def test_eva_create_draft_cas_and_publication_version_guards():
             assert conditional(client, before["cmf_version"], candidate)
             assert read()["cmf_version"] != before["cmf_version"]
             stale = before["cmf_version"]
-            filters = {"filter": [*identity, ["cmf_version", "==", stale]]} if mode == "filter" else {}
-            arguments = {"notify_persons": False, **({"cmf_version": stale} if mode == "keyword" else {})}
-            client._rpc("CmfDocument.do_publish", filters, args=[page_id], call_kwargs=arguments, timeout=15)
+            arguments = {"notify_persons": False, **({"filter": [*identity, ["cmf_version", "==", stale]]} if mode == "filter" else {"cmf_version": stale})}
+            client._rpc("CmfDocument.do_publish", {}, args=[page_id], call_kwargs=arguments, timeout=15)
             assert read()["text"] == candidate, "Eva publication contract changed; requalify the guarded product scenario"
+
+        def filtered_publish(connection, expected):
+            payload = {
+                "jsonrpc": "2.0",
+                "method": "CmfDocument.do_publish",
+                "callid": str(uuid4()),
+                "filter": [*identity, ["cmf_version", "==", expected]],
+                "kwargs": {"notify_persons": False},
+            }
+            response = connection._session.post(connection._resolve_same_origin_api_url("api/?m=CmfDocument.do_publish"), json=payload, timeout=20, verify=connection.verify_ssl, allow_redirects=False)
+            assert response.status_code == 200
+            value = response.json()
+            assert isinstance(value, dict) and ("result" in value or value.get("abort") or value.get("error"))
+            if value.get("error"):
+                pytest.fail("Unexpected Eva error in filtered publication; inspect the QA contour")
+            return not value.get("abort")
+
+        before = read()
+        assert conditional(client, before["cmf_version"], "<p>filtered publication</p>")
+        assert not filtered_publish(client, before["cmf_version"])
+        assert read()["text"] == before["text"]
+        assert filtered_publish(client, read()["cmf_version"])
+        assert read()["text"] == "<p>filtered publication</p>"
+        successes = []
+        for number in range(3):
+            before = read()
+            candidate = f"<p>filtered publication race {number}</p>"
+            assert conditional(client, before["cmf_version"], candidate)
+            expected = read()["cmf_version"]
+            barrier = threading.Barrier(2)
+
+            def publish_race(_index, expected=expected, barrier=barrier):
+                connection = connect()
+                try:
+                    barrier.wait(timeout=5)
+                    return filtered_publish(connection, expected)
+                finally:
+                    connection.close()
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                count = sum(pool.map(publish_race, (1, 2)))
+            assert count >= 1 and read()["text"] == candidate
+            successes.append(count)
+        # Two successes disprove CAS. One observed success does not prove it;
+        # this probe never enables product publication from a serial check.
+        record_property("eva_filtered_publication_race_successes", json.dumps(successes))
     finally:
         try:
             # Reconcile a lost create response by the marker, never create again.

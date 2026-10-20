@@ -48,7 +48,23 @@ async def collection(service, actor, data, workspace):
 @manager.route("/source-workspaces/<workspace>/technical-specifications/import-eva", methods=["POST"])  # noqa: F821
 @scenario
 async def import_eva(service, actor, data, workspace):
-    return await service.import_eva(actor, workspace, data)
+    try:
+        async with asyncio.timeout(300):
+            return await service.import_eva(actor, workspace, data)
+    except TimeoutError as error:
+        raise SpecificationError("IMPORT_TIMEOUT", "Импорт не успел завершиться. Проверьте результат или повторите тот же запрос", 504) from error
+
+
+@manager.route("/source-workspaces/<workspace>/technical-specifications/import-eva/<operation_id>", methods=["GET"])  # noqa: F821
+@scenario
+async def import_operation(service, actor, data, workspace, operation_id):
+    return await service.import_operation(actor, workspace, operation_id)
+
+
+@manager.route("/source-workspaces/<workspace>/technical-specifications/import-eva/cancel", methods=["POST"])  # noqa: F821
+@scenario
+async def cancel_import(service, actor, data, workspace):
+    return await service.cancel_import(actor, workspace, data)
 
 
 @manager.route("/source-workspaces/<workspace>/technical-specifications/eva-pages", methods=["GET"])  # noqa: F821
@@ -79,9 +95,25 @@ async def history(service, actor, data, workspace, document_id, number=None):
 @manager.route("/source-workspaces/<workspace>/technical-specifications/<document_id>/<action>", methods=["POST"])  # noqa: F821
 @scenario
 async def action(service, actor, data, workspace, document_id, action):
-    operations = {"chat": service.chat, "comments": service.comment, "apply": service.apply, "restore": service.restore, "pull": service.pull, "resolve-eva": service.resolve_eva}
+    operations = {
+        "chat": service.chat,
+        "comments": service.comment,
+        "apply": service.apply,
+        "restore": service.restore,
+        "pull": service.pull,
+        "resolve-eva": service.resolve_eva,
+        "export": service.export_markdown,
+        "publish-eva": service.publish_eva,
+        "connect-eva": service.connect_eva,
+    }
     if action not in operations:
         raise SpecificationError("NOT_FOUND", "Неизвестное действие", 404)
+    if action == "publish-eva":
+        try:
+            async with asyncio.timeout(300):
+                return await operations[action](actor, workspace, document_id, data)
+        except TimeoutError as error:
+            raise SpecificationError("EVA_EXPORT_TIMEOUT", "Ответ Eva не получен. Проверьте страницу перед повтором", 504) from error
     # Cancellation before a completed model request cannot save a partial result.
     async with asyncio.timeout(330):
         return await operations[action](actor, workspace, document_id, data)

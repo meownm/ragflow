@@ -68,6 +68,10 @@ export interface Specification {
   }[];
   comments: Comment[];
   people: Record<string, string>;
+  eva_export?: null | {
+    status: 'publishing' | 'published' | 'failed';
+    revision: number;
+  };
   proposals: Proposal[];
   eva: null | {
     page_url: string;

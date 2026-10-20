@@ -11,9 +11,9 @@ import {
 } from '@/services/source-workbench-service';
 import {
   createSpecification,
+  exportSpecification,
   getSpecification,
   getSpecificationDraft,
-  importEvaSpecification,
   listSpecifications,
   saveSpecification,
   saveSpecificationDraft,
@@ -21,6 +21,7 @@ import {
   specificationHistory,
   specificationRevision,
 } from '@/services/technical-specification-service';
+import { downloadFileFromBlob } from '@/utils/file-util';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   useCallback,
@@ -217,36 +218,18 @@ export default function TechnicalSpecifications() {
           </form>
           {workspace && canEdit && (
             <EvaImport
-              key={workspace}
+              key={`${user.id}:${workspace}`}
               workspace={workspace}
+              actor={user.id}
               busy={busy}
-              onImport={async (page, copy) => {
-                setBusy(true);
-                setError('');
-                try {
-                  const value = await importEvaSpecification(
-                    workspace,
-                    page.web_url,
-                    copy,
-                    page,
-                  );
-                  await client.invalidateQueries({
-                    queryKey: SpecificationKeys.list(user.id, workspace),
-                  });
-                  navigate({
-                    workspace: value.workspace_id,
-                    document: value.id,
-                  });
-                } catch (cause) {
-                  setError(
-                    sourceRequestError(
-                      cause,
-                      'Не удалось импортировать из Eva',
-                    ),
-                  );
-                } finally {
-                  setBusy(false);
-                }
+              onImported={(value) => {
+                void client.invalidateQueries({
+                  queryKey: SpecificationKeys.list(user.id, workspace),
+                });
+                navigate({
+                  workspace: value.workspace_id,
+                  document: value.id,
+                });
               }}
             />
           )}
@@ -329,6 +312,7 @@ function Editor({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
+  const [evaUrl, setEvaUrl] = useState('');
   const [draftStatus, setDraftStatus] = useState('');
   const [draftConflict, setDraftConflict] = useState<SavedDraft | null>(null);
   const [draftSyncFailed, setDraftSyncFailed] = useState(false);
@@ -712,7 +696,9 @@ function Editor({
     return result;
   }
 
-  const pendingChat = doc.messages.some((item) => item.status === 'processing');
+  const pendingChat =
+    doc.messages.some((item) => item.status === 'processing') ||
+    doc.eva_export?.status === 'publishing';
   useEffect(() => {
     if (!busy && !pendingChat) return;
     let active = true;
@@ -752,6 +738,34 @@ function Editor({
       setHistory(await specificationHistory(doc.workspace_id, doc.id));
     } catch (cause) {
       setError(sourceRequestError(cause, 'Не удалось загрузить историю'));
+    }
+  }
+
+  async function downloadDocument() {
+    setBusy(true);
+    setError('');
+    try {
+      const file = await exportSpecification(
+        doc.workspace_id,
+        doc.id,
+        doc.revision,
+      );
+      if (mounted.current) {
+        downloadFileFromBlob(
+          new Blob([file.content], { type: file.mime_type }),
+          file.filename,
+        );
+      }
+    } catch (cause) {
+      if (mounted.current)
+        setError(
+          sourceRequestError(
+            cause,
+            'Не удалось выгрузить ТЗ. Проверьте доступ и актуальность редакции',
+          ),
+        );
+    } finally {
+      if (mounted.current) setBusy(false);
     }
   }
 
@@ -809,6 +823,14 @@ function Editor({
             onClick={() => setPanel(panel === 'eva' ? null : 'eva')}
           >
             Eva
+          </Button>
+          <Button
+            variant="outline"
+            disabled={busy || dirty}
+            title={dirty ? 'Сначала сохраните правки документа' : undefined}
+            onClick={() => void downloadDocument()}
+          >
+            Выгрузить .md
           </Button>
         </nav>
       </header>
@@ -1590,11 +1612,68 @@ function Editor({
                 >
                   Получить изменения
                 </Button>
+                <Button
+                  disabled={busy || dirty || !canEdit}
+                  onClick={async () => {
+                    const result = await action('publish-eva', {});
+                    if (result) setStatus('Страница Eva обновлена');
+                  }}
+                >
+                  Обновить в Eva
+                </Button>
+                {doc.eva_export?.status === 'publishing' && (
+                  <p className="text-sm text-text-secondary">
+                    Обновление Eva выполняется…
+                  </p>
+                )}
+                {doc.eva_export?.status === 'published' && (
+                  <p className="text-sm text-text-secondary">
+                    В Eva выгружена редакция {doc.eva_export.revision}
+                    {doc.eva_export.revision < doc.revision
+                      ? '; в ТЗ есть новые изменения'
+                      : ''}
+                    .
+                  </p>
+                )}
+                {doc.eva_export?.status === 'failed' && (
+                  <p className="text-sm text-text-secondary">
+                    Обновление не подтверждено. Проверьте страницу Eva перед
+                    повтором.
+                  </p>
+                )}
               </>
             ) : (
-              <p className="text-sm text-text-secondary">
-                ТЗ не связано со страницей Eva.
-              </p>
+              <div className="space-y-3">
+                <p className="text-sm text-text-secondary">
+                  ТЗ не связано со страницей Eva.
+                </p>
+                {canEdit && (
+                  <>
+                    <Input
+                      aria-label="Ссылка на страницу Eva"
+                      placeholder="Ссылка на страницу Eva"
+                      value={evaUrl}
+                      disabled={busy}
+                      onChange={(event) => setEvaUrl(event.target.value)}
+                    />
+                    <Button
+                      variant="outline"
+                      disabled={busy || dirty || !evaUrl.trim()}
+                      onClick={async () => {
+                        const result = await action('connect-eva', {
+                          url: evaUrl,
+                        });
+                        if (result) {
+                          setEvaUrl('');
+                          setStatus('Страница Eva связана. Текст ТЗ сохранён');
+                        }
+                      }}
+                    >
+                      Связать страницу
+                    </Button>
+                  </>
+                )}
+              </div>
             )}
           </aside>
         )}

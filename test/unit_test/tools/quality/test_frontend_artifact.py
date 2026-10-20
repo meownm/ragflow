@@ -116,6 +116,37 @@ def test_cache_expires_and_rejects_concurrent_users(tmp_path):
         assert stamp.stat().st_mtime > old
 
 
+@pytest.mark.parametrize("overlap", ["candidate", "artifact"])
+def test_cache_cannot_mutate_candidate_or_remove_artifact(setup, monkeypatch, overlap):
+    snapshot, work, archive, _ = setup
+    before = candidate.verify(snapshot)
+    cache = snapshot / "source/.local/cache" if overlap == "candidate" else archive.parent / "store"
+    monkeypatch.setattr(frontend, "CACHE_ROOT", cache)
+    if overlap == "artifact":
+        archive = cache / "frontend.tar.gz"
+    with pytest.raises(ValueError, match="separate"):
+        frontend.build(snapshot, work, archive)
+    assert candidate.verify(snapshot) == before
+    assert not cache.exists()
+    assert not work.exists()
+
+
+def test_workspace_creation_failure_does_not_leave_a_tree(setup, monkeypatch):
+    snapshot, work, archive, _ = setup
+    original = Path.write_text
+
+    def fail_pin(path, *args, **kwargs):
+        if path.name == ".keep":
+            raise OSError("synthetic write failure")
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", fail_pin)
+    with pytest.raises(OSError, match="synthetic"):
+        frontend.build(snapshot, work, archive)
+    assert not work.exists()
+    candidate.verify(snapshot)
+
+
 @pytest.mark.parametrize("change", ["inputs", "new-input", "version", "empty-output", "failure"])
 def test_failed_or_mutating_build_has_no_completion_receipt(setup, change):
     snapshot, work, archive, helper = setup

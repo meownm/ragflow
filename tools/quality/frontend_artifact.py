@@ -181,13 +181,13 @@ def build(candidate: Path, work: Path, output: Path, pnpm_cli: Path | None = Non
     node, pnpm = _tools(pnpm_cli)
     _unlinked(CACHE_ROOT)
     cache = CACHE_ROOT.resolve()
-    if cache.is_relative_to(work) or work.is_relative_to(cache):
-        raise ValueError("build cache and workspace must have separate paths")
+    if any(cache.is_relative_to(path) or path.is_relative_to(cache) for path in (candidate, work, output)):
+        raise ValueError("build cache, candidate, workspace and artifact must have separate paths")
     cache.mkdir(parents=True, exist_ok=True)
     with _cache_lease(cache):
         work.mkdir(parents=True, exist_ok=False)
-        (work / ".keep").write_text("Active frontend build; removed with this workspace.\n", encoding="utf-8")
         try:
+            (work / ".keep").write_text("Active frontend build; removed with this workspace.\n", encoding="utf-8")
             source = work / "source"
             shutil.copytree(candidate / "source", source)
             _check_inputs(source, manifest)

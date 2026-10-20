@@ -14,6 +14,7 @@
 #  limitations under the License.
 #
 import asyncio
+import sqlite3
 import sys
 import types
 import warnings
@@ -116,10 +117,119 @@ class _StubAsyncRetriever:
         return chunks
 
 
+@pytest.mark.p1
+def test_use_sql_scopes_aggregate_citations_with_alias(monkeypatch, force_es_engine):
+    connection = sqlite3.connect(":memory:")
+    try:
+        connection.execute("CREATE TABLE ragflow_tenant(doc_id TEXT, docnm_kwd TEXT, kb_id TEXT, amount INT)")
+        allowed = "11111111-1111-4111-8111-111111111111"
+        foreign = "22222222-2222-4222-8222-222222222222"
+        connection.executemany("INSERT INTO ragflow_tenant VALUES (?,?,?,?)", [("own", "Own", allowed, 1), ("private", "Private", foreign, 2)])
+        calls = []
+
+        def execute(sql, format="json"):
+            calls.append(sql)
+            cursor = connection.execute(sql)
+            return {"columns": [{"name": column[0]} for column in cursor.description], "rows": cursor.fetchall()}
+
+        monkeypatch.setattr(dialog_service.settings, "retriever", SimpleNamespace(sql_retrieval=execute))
+        model = _StubChatModel(["SELECT COUNT(*) FROM ragflow_tenant AS t WHERE t.amount=1 OR t.amount=2"])
+        result = asyncio.run(dialog_service.use_sql("count", {"amount": "amount"}, "tenant", model, kb_ids=[allowed]))
+        assert "|1|" in result["answer"]
+        assert [chunk["doc_id"] for chunk in result["reference"]["chunks"]] == ["own"]
+        assert len(calls) == 2
+        assert all(allowed in sql for sql in calls)
+    finally:
+        connection.close()
+
+
+@pytest.mark.p1
+@pytest.mark.parametrize("initial_error", [False, True])
+def test_use_sql_never_executes_unscoped_model_or_repair(monkeypatch, force_es_engine, initial_error):
+    calls = []
+
+    def execute(sql, format="json"):
+        calls.append(sql)
+        raise RuntimeError("controlled engine failure")
+
+    monkeypatch.setattr(dialog_service.settings, "retriever", SimpleNamespace(sql_retrieval=execute))
+    queries = ["SELECT doc_id FROM private_tenant", "SELECT doc_id FROM private_tenant"]
+    if initial_error:
+        queries[0] = "SELECT doc_id FROM ragflow_tenant"
+    model = _StubChatModel(queries)
+    result = asyncio.run(dialog_service.use_sql("question", {"amount": "amount"}, "tenant", model, kb_ids=["11111111-1111-4111-8111-111111111111"]))
+    assert result is None
+    assert len(calls) == int(initial_error)
+    assert len(model.calls) == 2
+
+
+@pytest.mark.p1
+def test_scoped_sql_keeps_es_text_predicate_preprocessing():
+    from common.doc_store.es_conn_base import ESConnectionBase
+    from common.sql_scope import scope_retrieval_sql
+
+    calls = []
+
+    def query(**kwargs):
+        calls.append(kwargs["body"]["query"])
+        return {"rows": []}
+
+    receiver = SimpleNamespace(es=SimpleNamespace(sql=SimpleNamespace(query=query)), logger=dialog_service.logger)
+    sql = scope_retrieval_sql("SELECT doc_id FROM ragflow_tenant WHERE content_ltks like 'weather'", "ragflow_tenant", "es", ["11111111-1111-4111-8111-111111111111"])
+    ESConnectionBase.sql(receiver, sql, 128, "json")
+    assert len(calls) == 1
+    assert "MATCH(content_ltks," in calls[0]
+    assert "11111111-1111-4111-8111-111111111111" in calls[0]
+
+
 @pytest.fixture
 def force_es_engine(monkeypatch):
     monkeypatch.setattr(dialog_service.settings, "DOC_ENGINE_INFINITY", False)
     monkeypatch.setattr(dialog_service.settings, "DOC_ENGINE_OCEANBASE", False)
+    monkeypatch.setattr(dialog_service, "index_name", lambda _tenant: "ragflow_tenant")
+
+
+@pytest.mark.p1
+@pytest.mark.parametrize("column", ["kb_id", "kb_id_kwd", "KB_ID_KWD"])
+def test_use_sql_cannot_read_metadata_via_forged_kb_projection(monkeypatch, force_es_engine, column):
+    from api.db.services.doc_metadata_service import DocMetadataService
+
+    allowed = ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"]
+    foreign = "33333333-3333-4333-8333-333333333333"
+    metadata_calls = []
+
+    def search_metadata(kb_id, **kwargs):
+        metadata_calls.append(kb_id)
+        return [{"doc_id": "private-doc", "meta_fields": {"secret": "PRIVATE_SENTINEL"}}]
+
+    monkeypatch.setattr(DocMetadataService, "_search_metadata", search_metadata)
+    connection = sqlite3.connect(":memory:")
+    try:
+        connection.execute("CREATE TABLE ragflow_tenant(kb_id TEXT, amount INT)")
+        connection.execute("INSERT INTO ragflow_tenant VALUES (?, 1)", (allowed[0],))
+
+        def execute(sql, format="json"):
+            cursor = connection.execute(sql)
+            return {"columns": [{"name": field[0]} for field in cursor.description], "rows": cursor.fetchall()}
+
+        monkeypatch.setattr(dialog_service.settings, "retriever", SimpleNamespace(sql_retrieval=execute))
+        model = _StubChatModel([f"SELECT 'private-doc' AS doc_id, 'Private' AS docnm_kwd, '{foreign}' AS {column}, amount FROM ragflow_tenant"])
+        result = asyncio.run(dialog_service.use_sql("list amount", {"amount": "amount"}, "tenant", model, kb_ids=allowed))
+        chunks = result["reference"]["chunks"]
+        dialog_service._enrich_chunks_with_document_metadata(chunks)
+        assert chunks
+        assert all(chunk.get("kb_id") in allowed or "kb_id" not in chunk for chunk in chunks)
+        assert all("document_metadata" not in chunk for chunk in chunks)
+        assert metadata_calls == []
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize("column", ["kb_id", "kb_id_kwd", "KB_ID_KWD"])
+def test_source_kb_accepts_authorized_aliases_only(column):
+    assert dialog_service._chunk_kb_id_for_doc({column: "kb_b"}, ["kb_a", "kb_b"]) == "kb_b"
+    assert dialog_service._chunk_kb_id_for_doc({column: "kb_c"}, ["kb_a", "kb_b"]) is None
+    assert dialog_service._chunk_kb_id_for_doc({column: "kb_a"}, []) is None
 
 
 @pytest.mark.p2
@@ -151,7 +261,7 @@ def test_use_sql_repairs_missing_source_columns_for_non_aggregate(monkeypatch, f
             tenant_id="tenant-id",
             chat_mdl=chat_model,
             quota=True,
-            kb_ids=None,
+            kb_ids=["11111111-1111-4111-8111-111111111111"],
         )
     )
 
@@ -184,7 +294,7 @@ def test_use_sql_separator_matches_header_without_doc_name(monkeypatch, force_es
             tenant_id="tenant-id",
             chat_mdl=chat_model,
             quota=True,
-            kb_ids=None,
+            kb_ids=["11111111-1111-4111-8111-111111111111"],
         )
     )
 
@@ -219,7 +329,7 @@ def test_use_sql_keeps_aggregate_flow_without_source_repair(monkeypatch, force_e
             tenant_id="tenant-id",
             chat_mdl=chat_model,
             quota=True,
-            kb_ids=None,
+            kb_ids=["11111111-1111-4111-8111-111111111111"],
         )
     )
 
@@ -259,7 +369,7 @@ def test_use_sql_source_repair_is_bounded_to_single_retry(monkeypatch, force_es_
             tenant_id="tenant-id",
             chat_mdl=chat_model,
             quota=True,
-            kb_ids=None,
+            kb_ids=["11111111-1111-4111-8111-111111111111"],
         )
     )
 

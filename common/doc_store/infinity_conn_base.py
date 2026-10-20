@@ -822,7 +822,7 @@ class InfinityConnectionBase(DocStoreConnection):
 
                 # Apply field transformations
                 for alias, actual in field_mapping.items():
-                    select_clause = re.sub(rf"(^|[, ]){alias}([, ]|$)", rf"\1{actual}\2", select_clause)
+                    select_clause = re.sub(rf'(^|[, ])"?{re.escape(alias)}"?([, ]|$)', rf"\1{actual}\2", select_clause)
 
                 sql = select_clause + from_clause + sql[select_match.end() :]
 

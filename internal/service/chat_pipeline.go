@@ -3168,14 +3168,12 @@ func (s *ChatPipelineService) useSQL(
 		}
 	}
 
-	// Step 1.5: inject the kb_id WHERE filter for ES / OS / OceanBase.
-	// No-op for Infinity (the table name already encodes the KB scope).
-	// Mirrors add_kb_filter at dialog_service.py:992-1021, called from
-	// get_table right after normalize_sql.
-	if filtered, ok := addKBFilter(sqlText, engineName, kbs); ok {
+	// Validate the model's table and apply trusted KB scope before any query.
+	if filtered, err := scopeRetrievalSQL(sqlText, tableName, engineName, kbIDStrings(kbs)); err == nil {
 		sqlText = filtered
 	} else {
-		common.Warn("SQL retrieval: invalid kb_id UUID; SQL will run unfiltered")
+		common.Warn("SQL retrieval rejected", zap.Error(err))
+		return nil, nil
 	}
 
 	// Step 2: try to execute. On failure, repair once with the
@@ -3193,10 +3191,14 @@ func (s *ChatPipelineService) useSQL(
 			return nil, nil
 		}
 		// Re-apply the kb filter after the LLM-driven repair.
-		if filtered, ok := addKBFilter(repaired, engineName, kbs); ok {
+		if filtered, err := scopeRetrievalSQL(repaired, tableName, engineName, kbIDStrings(kbs)); err == nil {
 			repaired = filtered
+		} else {
+			common.Warn("SQL retrieval repair rejected", zap.Error(err))
+			return nil, nil
 		}
 		rows, execErr = docEngine.RunSQL(ctx, tableName, repaired, kbIDStrings(kbs), "json")
+		sqlText = repaired
 		if execErr != nil {
 			common.Warn("SQL retrieval: repaired SQL also failed", zap.Error(execErr))
 			return nil, nil
@@ -3224,10 +3226,17 @@ func (s *ChatPipelineService) useSQL(
 		)
 		if repairErr == nil && repaired != "" {
 			// Re-apply the kb filter after the LLM-driven repair.
-			if filtered, ok := addKBFilter(repaired, engineName, kbs); ok {
+			if filtered, err := scopeRetrievalSQL(repaired, tableName, engineName, kbIDStrings(kbs)); err == nil {
 				repaired = filtered
+			} else {
+				common.Warn("SQL retrieval source-column repair rejected", zap.Error(err))
+				repaired = ""
 			}
-			repairedRows, repairedErr := docEngine.RunSQL(ctx, tableName, repaired, kbIDStrings(kbs), "json")
+			var repairedRows []map[string]interface{}
+			var repairedErr error
+			if repaired != "" {
+				repairedRows, repairedErr = docEngine.RunSQL(ctx, tableName, repaired, kbIDStrings(kbs), "json")
+			}
 			if repairedErr == nil && len(repairedRows) > 0 && hasSourceColumns(repairedRows) {
 				common.Debug("SQL retrieval: missing-columns repair succeeded",
 					zap.String("sql", repaired))
@@ -3292,60 +3301,6 @@ func isValidUUID(s string) bool {
 		return false
 	}
 	return uuidRe.MatchString(s)
-}
-
-// addKBFilter injects a validated kb_id WHERE filter into sqlText for
-// ES / OS / OceanBase engines. Infinity is a no-op because the table
-// name already encodes the KB scope. Mirrors dialog_service.py:992-1021.
-//
-// Returns the (possibly modified) SQL and a boolean indicating whether
-// all kb_ids passed UUID validation. When validation fails, the SQL is
-// returned unchanged — the engine will likely reject the un-filtered
-// query, triggering the repair path (Python's `_assert_valid_uuid` raises
-// ValueError, which `get_table`'s try/except catches and routes to the
-// repair flow).
-//
-// If the SQL already has a WHERE clause with `kb_id =`, the filter is
-// not duplicated. Otherwise a fresh WHERE is appended, or `kb_id = '...'
-// AND` is prepended to an existing WHERE.
-func addKBFilter(sqlText, engineName string, kbs []*entity.Knowledgebase) (string, bool) {
-	if engineName == "infinity" || len(kbs) == 0 {
-		return sqlText, true
-	}
-
-	// Validate all kb_ids as UUIDs.
-	for _, kb := range kbs {
-		if kb == nil || !isValidUUID(kb.ID) {
-			return sqlText, false
-		}
-	}
-
-	kbIDs := kbIDStrings(kbs)
-	var kbFilter string
-	if len(kbIDs) == 1 {
-		kbFilter = fmt.Sprintf("kb_id = '%s'", kbIDs[0])
-	} else {
-		parts := make([]string, len(kbIDs))
-		for i, kid := range kbIDs {
-			parts[i] = fmt.Sprintf("kb_id = '%s'", kid)
-		}
-		kbFilter = "(" + strings.Join(parts, " OR ") + ")"
-	}
-
-	lower := strings.ToLower(sqlText)
-	if !strings.Contains(lower, "where ") {
-		// No WHERE clause: append one. Honor ORDER BY if present.
-		if oIdx := strings.Index(lower, "order by"); oIdx >= 0 {
-			sqlText = sqlText[:oIdx] + " WHERE " + kbFilter + "  order by " + sqlText[oIdx+len("order by"):]
-		} else {
-			sqlText += " WHERE " + kbFilter
-		}
-	} else if !strings.Contains(lower, "kb_id =") && !strings.Contains(lower, "kb_id=") {
-		// Has WHERE but no kb_id: insert "kb_id = '...' AND" after WHERE.
-		whereRe := regexp.MustCompile(`(?i)\bwhere\b `)
-		sqlText = whereRe.ReplaceAllString(sqlText, "where "+kbFilter+" and ")
-	}
-	return sqlText, true
 }
 
 // generateSQL calls the chat model to produce a SQL SELECT.
@@ -3746,16 +3701,24 @@ func mapColumnName(colName string, fieldMap map[string]interface{}) string {
 
 // chunkKBIDForDoc resolves the kb_id for a citation chunk. Mirrors
 // dialog_service.py:56-59. Single-kb queries use the chat's known
-// kb_id; multi-kb queries read it from the row.
-func chunkKBIDForDoc(rowDict map[string]interface{}, kbIDs []string, docID interface{}) string {
+// kb_id; multi-kb queries accept only row IDs in the authorized set.
+func chunkKBIDForDoc(rowDict map[string]interface{}, kbIDs []string) string {
 	if len(kbIDs) == 1 {
 		return kbIDs[0]
 	}
-	if v, ok := rowDict["kb_id"]; ok && v != nil && v != "" {
-		return fmt.Sprintf("%v", v)
-	}
-	if v, ok := rowDict["kb_id_kwd"]; ok && v != nil && v != "" {
-		return fmt.Sprintf("%v", v)
+	for name, value := range rowDict {
+		if !strings.EqualFold(name, "kb_id") && !strings.EqualFold(name, "kb_id_kwd") {
+			continue
+		}
+		id, ok := value.(string)
+		if !ok {
+			continue
+		}
+		for _, allowed := range kbIDs {
+			if id == allowed {
+				return id
+			}
+		}
 	}
 	return ""
 }
@@ -3796,37 +3759,6 @@ func extractSourceColumnIndexes(rows []map[string]interface{}) (docIDIdx, docNam
 	return
 }
 
-// WHERE-clause extraction for the aggregate secondary fetch.
-// Mirrors dialog_service.py:1321.
-var whereClauseRe = regexp.MustCompile(`(?i)\bwhere\b(.+?)(?:\bgroup by\b|\border by\b|\blimit\b|$)`)
-
-// limitClauseRe detects whether a SQL already has a LIMIT clause.
-var limitClauseRe = regexp.MustCompile(`(?i)\blimit\b`)
-
-// buildChunkFetchSQL extracts the WHERE clause from the original SQL
-// and constructs a secondary SQL to fetch source chunks. Mirrors
-// dialog_service.py:1327-1331. Returns ("", false) when no WHERE is
-// present. The `multiKB` flag controls whether `kb_id` is included
-// in the SELECT list (single-kb queries don't need it because the
-// caller already knows the kb_id).
-func buildChunkFetchSQL(originalSQL, tableName, expectedCol string, multiKB bool) (string, bool) {
-	m := whereClauseRe.FindStringSubmatch(originalSQL)
-	if len(m) < 2 {
-		return "", false
-	}
-	where := strings.TrimSpace(m[1])
-	kbCol := ""
-	if multiKB {
-		kbCol = ", kb_id"
-	}
-	sql := fmt.Sprintf("select doc_id, %s%s from %s where %s",
-		expectedCol, kbCol, tableName, where)
-	if !limitClauseRe.MatchString(sql) {
-		sql += " limit 20"
-	}
-	return sql, true
-}
-
 // toIfaceSlice converts a []map[string]interface{} to []interface{} for
 // the call-site contract at async_chat.go:334, which type-asserts
 // `reference["chunks"].([]map[string]interface{})`.
@@ -3842,37 +3774,26 @@ func toIfaceSlice(maps []map[string]interface{}) []interface{} {
 // Aggregate secondary fetch (dialog_service.py:1311-1367)
 // -----------------------------------------------------------------------
 
-// fetchAggregateChunks runs the secondary "select doc_id, docnm[, kb_id]
-// from <table> where <extracted_where> [limit 20]" query and uses the
-// result to build chunks and doc_aggs. Mirrors the aggregate path in
-// dialog_service.py:1311-1365.
-//
-// Returns (nil, nil) when the secondary fetch should be skipped or
-// fails. Skips on Infinity multi-KB (RunSQL rejects), on missing WHERE
-// clause, and on engine errors — all matching Python's try/except
-// semantics at dialog_service.py:1333-1364.
+// fetchAggregateChunks projects up to twenty citations from the same scoped
+// source and predicate as the aggregate query. Invalid scope fails closed.
 func (s *ChatPipelineService) fetchAggregateChunks(
 	ctx context.Context,
 	docEngine engine.DocEngine,
-	tableName, originalSQL, expectedCol string,
+	tableName, originalSQL, engineName string,
 	kbIDs []string,
 ) (chunks []map[string]interface{}, docAggs []map[string]interface{}) {
 	multiKB := len(kbIDs) > 1
 
-	// Infinity's RunSQL rejects multi-KB (see infinity/sql.go:63-65).
-	// Python's add_kb_filter is a no-op for Infinity, so this branch is
-	// never exercised in Python either. Skip explicitly to avoid a
-	// hard error.
-	if multiKB && docEngine != nil && docEngine.GetType() == "infinity" {
+	// Infinity indexes one KB per table.
+	if docEngine == nil || (multiKB && engineName == "infinity") {
 		common.Debug("SQL retrieval: skipping aggregate secondary fetch on Infinity multi-KB",
 			zap.Strings("kb_ids", kbIDs))
 		return nil, nil
 	}
 
-	chunksSQL, ok := buildChunkFetchSQL(originalSQL, tableName, expectedCol, multiKB)
-	if !ok {
-		common.Debug("SQL retrieval: aggregate secondary fetch skipped (no WHERE clause)",
-			zap.String("sql", originalSQL))
+	chunksSQL, scopeErr := retrievalSourceSQL(originalSQL, tableName, engineName, kbIDs)
+	if scopeErr != nil {
+		common.Warn("SQL retrieval aggregate source fetch rejected", zap.Error(scopeErr))
 		return nil, nil
 	}
 
@@ -3886,7 +3807,7 @@ func (s *ChatPipelineService) fetchAggregateChunks(
 		return nil, nil
 	}
 
-	docIDIdx, docNameIdx, kbIDIdx, columns := extractSourceColumnIndexes(rows)
+	docIDIdx, docNameIdx, _, columns := extractSourceColumnIndexes(rows)
 	if len(docIDIdx) == 0 || len(docNameIdx) == 0 {
 		common.Warn("SQL retrieval: aggregate secondary fetch missing source columns",
 			zap.Any("columns", columns))
@@ -3899,12 +3820,7 @@ func (s *ChatPipelineService) fetchAggregateChunks(
 		docID := r[columns[docIDIdx[0]]]
 		docName := r[columns[docNameIdx[0]]]
 		chunk := map[string]interface{}{"doc_id": docID, "docnm_kwd": docName}
-		kid := chunkKBIDForDoc(r, kbIDs, docID)
-		if kid == "" && len(kbIDIdx) > 0 {
-			if v := r[columns[kbIDIdx[0]]]; v != nil && v != "" {
-				kid = fmt.Sprintf("%v", v)
-			}
-		}
+		kid := chunkKBIDForDoc(r, kbIDs)
 		if kid != "" {
 			chunk["kb_id"] = kid
 		}
@@ -3987,7 +3903,6 @@ func (s *ChatPipelineService) buildSQLReference(
 
 	kbIDs := kbIDStrings(kbs)
 	docIDIdx, docNameIdx, kbIDIdx, columns := extractSourceColumnIndexes(rows)
-	expectedCol := expectedDocNameColumn(engineName)
 	hasSrc := len(docIDIdx) > 0 && len(docNameIdx) > 0
 
 	// Build the set of "display column" indices (everything except
@@ -4065,12 +3980,8 @@ func (s *ChatPipelineService) buildSQLReference(
 			did := r[columns[docIDIdx[0]]]
 			dn := r[columns[docNameIdx[0]]]
 			entry := map[string]interface{}{"doc_id": did, "docnm_kwd": dn}
-			if kid := chunkKBIDForDoc(r, kbIDs, did); kid != "" {
+			if kid := chunkKBIDForDoc(r, kbIDs); kid != "" {
 				entry["kb_id"] = kid
-			} else if len(kbIDIdx) > 0 {
-				if v := r[columns[kbIDIdx[0]]]; v != nil && v != "" {
-					entry["kb_id"] = fmt.Sprintf("%v", v)
-				}
 			}
 			chunks = append(chunks, entry)
 
@@ -4099,7 +4010,7 @@ func (s *ChatPipelineService) buildSQLReference(
 
 	// Source columns missing — try the aggregate secondary fetch.
 	if isAggregateSQL(originalSQL) {
-		chunks, docAggs := s.fetchAggregateChunks(ctx, docEngine, tableName, originalSQL, expectedCol, kbIDs)
+		chunks, docAggs := s.fetchAggregateChunks(ctx, docEngine, tableName, originalSQL, engineName, kbIDs)
 		if len(chunks) > 0 {
 			ref["chunks"] = chunksFormat(chunks)
 			ref["doc_aggs"] = docAggs

@@ -93,7 +93,7 @@ const sampleESResponse = `{
 
 // TestRunSQL_NoFilterAdded verifies the request body is exactly
 // {"query": <sql>} — the redundant `filter` field that the previous
-// implementation added is gone. (service.addKBFilter is the source of
+// implementation added is gone. (service.scopeRetrievalSQL is the source of
 // truth for kb_id scoping upstream of RunSQL.)
 func TestRunSQL_NoFilterAdded(t *testing.T) {
 	srv, cap := newCapturingServer(t, http.StatusOK, sampleESResponse)
@@ -115,7 +115,7 @@ func TestRunSQL_NoFilterAdded(t *testing.T) {
 		t.Fatalf("body is not JSON: %v\nbody=%q", err, got)
 	}
 	if _, has := body["filter"]; has {
-		t.Errorf("RunSQL request must NOT include top-level filter (addKBFilter is the source of truth upstream). body=%v", body)
+		t.Errorf("RunSQL request must NOT include top-level filter (scopeRetrievalSQL applies scope upstream). body=%v", body)
 	}
 	if _, has := body["query"]; !has {
 		t.Errorf("RunSQL request must include query. body=%v", body)
@@ -417,6 +417,12 @@ func TestPreprocess_LktksRewrite(t *testing.T) {
 		field  string
 		expect string
 	}{
+		{
+			"scoped AST emits quoted field and uppercase LIKE",
+			`SELECT * FROM "t" WHERE "content_ltks" LIKE 'weather'`,
+			`"content_ltks"`,
+			`MATCH("content_ltks",`,
+		},
 		{
 			"like with single-token value (ltks suffix)",
 			"select content_ltks like 'weather'",

@@ -717,6 +717,8 @@ def test_logout_setting_profile_matrix_unit(monkeypatch):
             "email": "blocked@example.com",
             "status": "disabled",
             "theme": "dark",
+            "access_token": "attacker-supplied-token",
+            "id": "other-user",
         },
     )
     monkeypatch.setattr(module, "check_password_hash", lambda _hashed, _plain: True)
@@ -735,6 +737,8 @@ def test_logout_setting_profile_matrix_unit(monkeypatch):
     assert res["data"] is True
     assert update_calls["user_id"] == "current-user"
     assert update_calls["payload"]["password"] == "hash:dec:new-password"
+    assert update_calls["payload"]["access_token"] == "INVALID_abcdef"
+    assert "id" not in update_calls["payload"]
     assert update_calls["payload"]["nickname"] == "neo"
     assert update_calls["payload"]["theme"] == "dark"
     assert "email" not in update_calls["payload"]
@@ -1045,6 +1049,8 @@ def test_forget_reset_password_matrix_unit(monkeypatch):
     email = "reset@example.com"
     v_key = module._verified_key(email)
     user = _DummyUser("u-reset", email, nickname="reset-user")
+    login_calls = []
+    monkeypatch.setattr(module, "login_user", lambda value: login_calls.append(value.access_token))
     pwd_a = base64.b64encode(b"new-password").decode()
     pwd_b = base64.b64encode(b"confirm-password").decode()
     pwd_same = base64.b64encode(b"same-password").decode()
@@ -1086,7 +1092,7 @@ def test_forget_reset_password_matrix_unit(monkeypatch):
     assert res["code"] == module.RetCode.EXCEPTION_ERROR, res
 
     module.REDIS_CONN.store[v_key] = "1"
-    monkeypatch.setattr(module.UserService, "update_user_password", lambda _user_id, _new_pwd: True)
+    monkeypatch.setattr(module.UserService, "update_user_password", lambda _user_id, _new_pwd: "fresh-reset-token-" + "x" * 32)
     monkeypatch.setattr(module.REDIS_CONN, "delete", lambda _key: (_ for _ in ()).throw(RuntimeError("delete boom")))
     _set_request_json(monkeypatch, module, {"email": email, "new_password": pwd_same, "confirm_new_password": pwd_same})
     res = _run(module.forget_reset_password())
@@ -1100,3 +1106,5 @@ def test_forget_reset_password_matrix_unit(monkeypatch):
     assert res["code"] == module.RetCode.SUCCESS, res
     assert res["auth"] == user.get_id(), res
     assert module.REDIS_CONN.get(v_key) is None, module.REDIS_CONN.store
+    assert user.access_token == "fresh-reset-token-" + "x" * 32
+    assert login_calls == [user.access_token, user.access_token]

@@ -119,7 +119,7 @@ func rewriteFieldAliases(sql string, aliasToActual map[string]string) string {
 		parts := selectRe.FindStringSubmatch(m)
 		prefix, cols, suffix := parts[1], parts[2], parts[3]
 		for alias, actual := range aliasToActual {
-			pat := regexp.MustCompile(`(^|[,\s])` + regexp.QuoteMeta(alias) + `($|[,\s])`)
+			pat := regexp.MustCompile(`(^|[,\s])"?` + regexp.QuoteMeta(alias) + `"?($|[,\s])`)
 			cols = pat.ReplaceAllString(cols, "${1}"+actual+"${2}")
 		}
 		return prefix + cols + suffix

@@ -13,6 +13,8 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
+import hashlib
+import hmac
 import logging
 import os
 import sys
@@ -118,10 +120,8 @@ def _load_user_from_session():
     requests can arrive with no header at all — we still want to honour the
     server-side session in that window.
 
-    The same access-token validity rules used by the JWT path are applied
-    here so that tokens revoked by ``logout`` (which rewrites the column to
-    ``INVALID_<hex>``) or shortened by data corruption can't keep a stale
-    session authenticated.
+    A session is bound to the token present at login. Rotation permanently
+    revokes old cookies, including cookies issued before token binding.
     """
     user_id = session.get("_user_id")
     if not user_id:
@@ -136,6 +136,9 @@ def _load_user_from_session():
     user = users[0]
     access_token = str(user.access_token or "").strip()
     if not access_token or len(access_token) < 32 or access_token.startswith("INVALID_"):
+        return None
+    fingerprint = session.get("_token_fingerprint")
+    if not isinstance(fingerprint, str) or not hmac.compare_digest(fingerprint.encode(), hashlib.sha256(access_token.encode()).hexdigest().encode()):
         return None
     logging.debug("Authenticated request via session fallback for user_id=%s", user_id)
     g.auth_type = AUTH_JWT
@@ -332,6 +335,7 @@ def login_user(user, remember=False, duration=None, force=False, fresh=True):
     session["_user_id"] = user.id
     session["_fresh"] = fresh
     session["_id"] = get_uuid()
+    session["_token_fingerprint"] = hashlib.sha256(str(user.access_token).encode()).hexdigest()
     return True
 
 
@@ -348,6 +352,7 @@ def logout_user():
 
     if "_id" in session:
         session.pop("_id")
+    session.pop("_token_fingerprint", None)
 
     COOKIE_NAME = "remember_token"
     cookie_name = current_app.config.get("REMEMBER_COOKIE_NAME", COOKIE_NAME)

@@ -890,62 +890,54 @@ func TestChunkKBIDForDoc(t *testing.T) {
 		name    string
 		rowDict map[string]interface{}
 		kbIDs   []string
-		docID   interface{}
 		want    string
 	}{
 		{
 			name:    "single kb returns kbIDs[0]",
 			rowDict: map[string]interface{}{},
 			kbIDs:   []string{"kb_a"},
-			docID:   "doc1",
 			want:    "kb_a",
 		},
 		{
 			name:    "multi kb with kb_id in row",
 			rowDict: map[string]interface{}{"kb_id": "kb_b"},
 			kbIDs:   []string{"kb_a", "kb_b"},
-			docID:   "doc1",
 			want:    "kb_b",
 		},
 		{
-			name:    "multi kb with kb_id_kwd in row (no kb_id)",
+			name:    "multi kb rejects foreign kb_id_kwd",
 			rowDict: map[string]interface{}{"kb_id_kwd": "kb_c"},
 			kbIDs:   []string{"kb_a", "kb_b"},
-			docID:   "doc1",
-			want:    "kb_c",
+			want:    "",
 		},
 		{
 			name:    "multi kb with neither returns empty",
 			rowDict: map[string]interface{}{},
 			kbIDs:   []string{"kb_a", "kb_b"},
-			docID:   "doc1",
 			want:    "",
 		},
 		{
 			name:    "multi kb with empty kb_id falls through to kb_id_kwd",
-			rowDict: map[string]interface{}{"kb_id": "", "kb_id_kwd": "kb_d"},
+			rowDict: map[string]interface{}{"kb_id": "", "kb_id_kwd": "kb_b"},
 			kbIDs:   []string{"kb_a", "kb_b"},
-			docID:   "doc1",
-			want:    "kb_d",
+			want:    "kb_b",
 		},
 		{
-			name:    "no kbIDs falls through to row lookup",
+			name:    "no authorized kbIDs rejects row kb_id",
 			rowDict: map[string]interface{}{"kb_id": "kb_a"},
 			kbIDs:   nil,
-			docID:   "doc1",
-			want:    "kb_a",
+			want:    "",
 		},
 		{
 			name:    "no kbIDs and no row kb_id returns empty",
 			rowDict: map[string]interface{}{},
 			kbIDs:   nil,
-			docID:   "doc1",
 			want:    "",
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := chunkKBIDForDoc(tc.rowDict, tc.kbIDs, tc.docID); got != tc.want {
+			if got := chunkKBIDForDoc(tc.rowDict, tc.kbIDs); got != tc.want {
 				t.Errorf("chunkKBIDForDoc = %q, want %q", got, tc.want)
 			}
 		})
@@ -1001,90 +993,6 @@ func TestExtractSourceColumnIndexes(t *testing.T) {
 	emptyDocID, _, _, _ := extractSourceColumnIndexes(nil)
 	if len(emptyDocID) != 0 {
 		t.Errorf("empty rows docIDIdx = %v, want empty", emptyDocID)
-	}
-}
-
-// TestBuildChunkFetchSQL verifies the WHERE-clause extraction and SQL
-// construction at dialog_service.py:1321-1331.
-func TestBuildChunkFetchSQL(t *testing.T) {
-	cases := []struct {
-		name      string
-		sql       string
-		multiKB   bool
-		wantSQL   string
-		wantFound bool
-	}{
-		{
-			name:      "WHERE + GROUP BY (extracts up to GROUP BY)",
-			sql:       "select count(*) from t where x = 1 group by y",
-			multiKB:   false,
-			wantSQL:   "select doc_id, docnm_kwd from t where x = 1 limit 20",
-			wantFound: true,
-		},
-		{
-			name:      "WHERE only, single KB, no limit",
-			sql:       "select * from t where x = 1",
-			multiKB:   false,
-			wantSQL:   "select doc_id, docnm_kwd from t where x = 1 limit 20",
-			wantFound: true,
-		},
-		{
-			name:      "WHERE only, multi KB adds kb_id column",
-			sql:       "select * from t where x = 1",
-			multiKB:   true,
-			wantSQL:   "select doc_id, docnm_kwd, kb_id from t where x = 1 limit 20",
-			wantFound: true,
-		},
-		{
-			// Python's regex is non-greedy, so WHERE-clause extraction
-			// stops at the first occurrence of ORDER BY / LIMIT / GROUP BY.
-			// Python's subsequent SQL string is then
-			// "select doc_id, ... from t where {where}", which DROPS
-			// the order by / limit suffixes. Go matches this behavior.
-			name:      "WHERE + ORDER BY + LIMIT 5 (suffixes dropped, no extra limit)",
-			sql:       "select * from t where x = 1 order by y limit 5",
-			multiKB:   false,
-			wantSQL:   "select doc_id, docnm_kwd from t where x = 1 limit 20",
-			wantFound: true,
-		},
-		{
-			name:      "no WHERE returns not-found",
-			sql:       "select * from t",
-			multiKB:   false,
-			wantSQL:   "",
-			wantFound: false,
-		},
-		{
-			// Python's f-string emits a literal lowercase "where";
-			// the original case from the input is NOT preserved.
-			name:      "case-insensitive where (output uses lowercase where)",
-			sql:       "select * from t WHERE x = 1",
-			multiKB:   false,
-			wantSQL:   "select doc_id, docnm_kwd from t where x = 1 limit 20",
-			wantFound: true,
-		},
-		{
-			name:      "Infinity expectedCol is docnm (not _kwd)",
-			sql:       "select * from t where x = 1",
-			multiKB:   false,
-			wantSQL:   "select doc_id, docnm from t where x = 1 limit 20",
-			wantFound: true,
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			expectedCol := "docnm_kwd"
-			if tc.name == "Infinity expectedCol is docnm (not _kwd)" {
-				expectedCol = "docnm"
-			}
-			gotSQL, gotFound := buildChunkFetchSQL(tc.sql, "t", expectedCol, tc.multiKB)
-			if gotFound != tc.wantFound {
-				t.Errorf("found = %v, want %v", gotFound, tc.wantFound)
-			}
-			if gotSQL != tc.wantSQL {
-				t.Errorf("sql = %q, want %q", gotSQL, tc.wantSQL)
-			}
-		})
 	}
 }
 
@@ -1182,16 +1090,14 @@ func (f *sqlFakeEngine) RunSQL(ctx context.Context, table, sqlText string, kbIDs
 	return nil, nil
 }
 
-// TestFetchAggregateChunks_SkipsInfinityMultiKB verifies the
-// Infinity multi-KB short-circuit (mirrors Python's add_kb_filter
-// no-op for Infinity).
+// TestFetchAggregateChunks_SkipsInfinityMultiKB verifies the single-KB Infinity contract.
 func TestFetchAggregateChunks_SkipsInfinityMultiKB(t *testing.T) {
 	engine := &sqlFakeEngine{engineType: "infinity"}
 	s := &ChatPipelineService{}
 	chunks, docAggs := s.fetchAggregateChunks(
 		context.Background(), engine, "t",
 		"select count(*) from t where x = 1",
-		"docnm", []string{"kb_a", "kb_b"},
+		"infinity", []string{"kb_a", "kb_b"},
 	)
 	if chunks != nil || docAggs != nil {
 		t.Errorf("expected nil chunks/docAggs on Infinity multi-KB, got %v / %v", chunks, docAggs)
@@ -1201,7 +1107,10 @@ func TestFetchAggregateChunks_SkipsInfinityMultiKB(t *testing.T) {
 // TestFetchAggregateChunks_SingleKBSuccess verifies the secondary fetch
 // path populates chunks and doc_aggs correctly.
 func TestFetchAggregateChunks_SingleKBSuccess(t *testing.T) {
-	chunksSQL := "select doc_id, docnm_kwd from t where x = 1 limit 20"
+	chunksSQL, err := retrievalSourceSQL("select count(*) from t where x = 1", "t", "elasticsearch", []string{"11111111-1111-4111-8111-111111111111"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	engine := &sqlFakeEngine{
 		engineType: "elasticsearch",
 		rowsBySQL: map[string][]map[string]interface{}{
@@ -1216,7 +1125,7 @@ func TestFetchAggregateChunks_SingleKBSuccess(t *testing.T) {
 	chunks, docAggs := s.fetchAggregateChunks(
 		context.Background(), engine, "t",
 		"select count(*) from t where x = 1",
-		"docnm_kwd", []string{"kb_a"},
+		"elasticsearch", []string{"11111111-1111-4111-8111-111111111111"},
 	)
 	if len(chunks) != 3 {
 		t.Fatalf("chunks len = %d, want 3", len(chunks))
@@ -1234,24 +1143,19 @@ func TestFetchAggregateChunks_SingleKBSuccess(t *testing.T) {
 	}
 	// Single-kb: each chunk gets kb_id from the dialog's kb list.
 	for i, c := range chunks {
-		if c["kb_id"] != "kb_a" {
+		if c["kb_id"] != "11111111-1111-4111-8111-111111111111" {
 			t.Errorf("chunks[%d].kb_id = %v, want kb_a", i, c["kb_id"])
 		}
 	}
 }
 
-// TestFetchAggregateChunks_NoWhereClause verifies the no-WHERE early
-// return (matches Python's aggregate fallback at L1365).
+// TestFetchAggregateChunks_NoWhereClause verifies scope on citation queries without predicates.
 func TestFetchAggregateChunks_NoWhereClause(t *testing.T) {
-	engine := &sqlFakeEngine{engineType: "elasticsearch"}
-	s := &ChatPipelineService{}
-	chunks, docAggs := s.fetchAggregateChunks(
-		context.Background(), engine, "t",
-		"select count(*) from t",
-		"docnm_kwd", []string{"kb_a"},
-	)
-	if chunks != nil || docAggs != nil {
-		t.Errorf("expected nil on no-WHERE, got %v / %v", chunks, docAggs)
+	calls := []string{}
+	engine := &sqlFakeEngine{engineType: "elasticsearch", sqlCalls: &calls}
+	(&ChatPipelineService{}).fetchAggregateChunks(context.Background(), engine, "t", "select count(*) from t", "elasticsearch", []string{"11111111-1111-4111-8111-111111111111"})
+	if len(calls) != 1 || !strings.Contains(calls[0], "kb_id") {
+		t.Fatalf("unscoped citations: %v", calls)
 	}
 }
 
@@ -1267,7 +1171,7 @@ func TestFetchAggregateChunks_RunSQLError(t *testing.T) {
 	chunks, docAggs := s.fetchAggregateChunks(
 		context.Background(), engine, "t",
 		"select count(*) from t where x = 1",
-		"docnm_kwd", []string{"kb_a"},
+		"elasticsearch", []string{"11111111-1111-4111-8111-111111111111"},
 	)
 	if chunks != nil || docAggs != nil {
 		t.Errorf("expected nil on RunSQL error, got %v / %v", chunks, docAggs)
@@ -1335,7 +1239,10 @@ func TestBuildSQLReference_AggregateMissingSourceColumnsSecondaryFetch(t *testin
 	rows := []map[string]interface{}{
 		{"count": 42.0, "label": "total"},
 	}
-	chunksSQL := "select doc_id, docnm_kwd from t where x = 1 limit 20"
+	chunksSQL, err := retrievalSourceSQL("select count(*) from t where x = 1", "t", "elasticsearch", []string{"11111111-1111-4111-8111-111111111111"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	engine := &sqlFakeEngine{
 		engineType: "elasticsearch",
 		rowsBySQL: map[string][]map[string]interface{}{
@@ -1344,7 +1251,7 @@ func TestBuildSQLReference_AggregateMissingSourceColumnsSecondaryFetch(t *testin
 			},
 		},
 	}
-	kbs := []*entity.Knowledgebase{{ID: "kb_a"}}
+	kbs := []*entity.Knowledgebase{{ID: "11111111-1111-4111-8111-111111111111"}}
 	s := &ChatPipelineService{}
 	ans, ref := s.buildSQLReference(
 		context.Background(), engine, "t",

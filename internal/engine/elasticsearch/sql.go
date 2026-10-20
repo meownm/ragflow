@@ -44,7 +44,7 @@ const esSQLRetryAttempts = 2
 const esSQLRetryDelay = 3 * time.Second
 
 var whitespaceRe = regexp.MustCompile("[ `]+")
-var lktksMatchRe = regexp.MustCompile(` ([a-z_]+_l?tks)( like | ?= ?)'([^']+)'`)
+var lktksMatchRe = regexp.MustCompile(`(?i) ("?[a-z_]+_l?tks"?)( like | ?= ?)'([^']+)'`)
 
 // Preprocess normalizes SQL for ES: collapses whitespace/backticks,
 // strips '%', and rewrites `<field>_l?tks like/= 'value'` into a

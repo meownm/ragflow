@@ -64,6 +64,12 @@ user_info = client.fetch_user_info(access_token)
 
 ## User Information Structure
 
+Browser sessions are bound to the access token active at login. Token rotation
+permanently revokes older cookies; cookies issued without token binding require
+a new login. Logout and password changes invalidate existing login credentials.
+Password reset rotates the password and login token atomically, then creates a
+fresh browser session. Separately issued API keys keep their existing lifecycle.
+
 All authentication methods return user information following this structure:
 
 ```python

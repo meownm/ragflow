@@ -75,6 +75,14 @@ func TestPreprocessSQL_Combined(t *testing.T) {
 // rewriteFieldAliases — mirrors infinity_conn_base.py:809-830.
 // -----------------------------------------------------------------------------
 
+func TestRewriteFieldAliases_QuotedSelectClause(t *testing.T) {
+	in := `SELECT "docnm_kwd", "title_tks" FROM "t"`
+	got := rewriteFieldAliases(in, map[string]string{"docnm_kwd": "docnm", "title_tks": "title"})
+	if got != `SELECT docnm, title FROM "t"` {
+		t.Fatalf("quoted SQL aliases: %s", got)
+	}
+}
+
 func TestRewriteFieldAliases_SelectClause(t *testing.T) {
 	aliases := map[string]string{
 		"docnm_kwd":    "docnm",

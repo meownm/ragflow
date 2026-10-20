@@ -144,8 +144,16 @@ class UserService(CommonService):
     @DB.connection_context()
     def update_user_password(cls, user_id, new_password):
         with DB.atomic():
-            update_dict = {"password": generate_password_hash(str(new_password)), "update_time": current_timestamp(), "update_date": datetime_format(datetime.now())}
-            cls.model.update(update_dict).where(cls.model.id == user_id).execute()
+            access_token = get_uuid()
+            update_dict = {
+                "password": generate_password_hash(str(new_password)),
+                "access_token": access_token,
+                "update_time": current_timestamp(),
+                "update_date": datetime_format(datetime.now()),
+            }
+            if cls.model.update(update_dict).where(cls.model.id == user_id).execute() != 1:
+                raise ValueError("User not found while changing password")
+            return access_token
 
     @classmethod
     @DB.connection_context()

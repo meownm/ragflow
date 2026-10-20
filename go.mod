@@ -41,6 +41,7 @@ require (
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/client_model v0.6.2
 	github.com/redis/go-redis/v9 v9.18.0
+	github.com/rqlite/sql v0.0.0-20261016220845-5c0832fea6e1
 	github.com/signintech/gopdf v0.36.1
 	github.com/siongui/gojianfan v0.0.0-20210926212422-2f175ac615de
 	github.com/spf13/viper v1.18.2

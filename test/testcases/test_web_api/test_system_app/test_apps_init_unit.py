@@ -242,14 +242,14 @@ def test_load_user_uses_session_only_without_authorization(monkeypatch):
     quart_app, apps_module = _load_apps_module(monkeypatch)
 
     valid_token = "a" * 32
-    valid_user = SimpleNamespace(id="user-1", email="oidc@example.com", access_token=valid_token)
+    valid_user = SimpleNamespace(id="user-1", email="oidc@example.com", access_token=valid_token, is_active=True)
 
     async def _case():
         # Without an Authorization header, the OIDC browser session is accepted.
         async with quart_app.test_request_context("/"):
             from quart import session
 
-            session["_user_id"] = "user-1"
+            apps_module.login_user(valid_user)
             monkeypatch.setattr(apps_module.UserService, "query", lambda **_kw: [valid_user])
             assert apps_module._load_user() is valid_user
 
@@ -292,6 +292,88 @@ def test_load_user_rejects_request_after_token_paths_fail(monkeypatch):
             assert apps_module._load_user() is None
 
     _run(_case())
+
+
+@pytest.mark.p1
+def test_cookie_and_bearer_revocation_survive_new_login_http(monkeypatch):
+    from http.cookies import SimpleCookie
+
+    app, module = _load_apps_module(monkeypatch)
+    user = SimpleNamespace(id="user-1", access_token="a" * 32, is_active=True)
+
+    def query(**kwargs):
+        if kwargs.get("id") == user.id or kwargs.get("access_token") == user.access_token:
+            return [user]
+        return []
+
+    monkeypatch.setattr(module.UserService, "query", query)
+
+    @app.post("/test-login")
+    async def login():
+        module.login_user(user)
+        return {"ok": True}
+
+    @app.get("/test-protected")
+    @module.login_required
+    async def protected():
+        return {"id": module.current_user.id}
+
+    async def scenario():
+        client = app.test_client(use_cookies=False)
+        old_bearer = module.Serializer(secret_key="test-secret-key").dumps(user.access_token)
+        response = await client.post("/test-login")
+        cookies = SimpleCookie()
+        for header in response.headers.getlist("Set-Cookie"):
+            cookies.load(header)
+        name = app.config["SESSION_COOKIE_NAME"]
+        old_cookie = f"{name}={cookies[name].value}"
+
+        async def authorized(cookie=None, bearer=None):
+            headers = {}
+            if cookie:
+                headers["Cookie"] = cookie
+            if bearer:
+                headers["Authorization"] = bearer
+            return (await client.get("/test-protected", headers=headers)).status_code == 200
+
+        assert await authorized(cookie=old_cookie)
+        assert await authorized(bearer=old_bearer)
+        user.access_token = "INVALID_" + "b" * 32
+        assert not await authorized(cookie=old_cookie)
+        assert not await authorized(bearer=old_bearer)
+        user.access_token = "c" * 32
+        assert not await authorized(cookie=old_cookie)
+        assert not await authorized(bearer=old_bearer)
+        assert not await authorized(cookie=old_cookie, bearer="invalid")
+
+        response = await client.post("/test-login")
+        cookies.load(response.headers["Set-Cookie"])
+        new_cookie = f"{name}={cookies[name].value}"
+        assert await authorized(cookie=new_cookie)
+        new_bearer = module.Serializer(secret_key="test-secret-key").dumps(user.access_token)
+        assert await authorized(bearer=new_bearer)
+        # A password/token rotation revokes the fresh login as well.
+        user.access_token = "d" * 32
+        assert not await authorized(cookie=new_cookie)
+        assert not await authorized(bearer=new_bearer)
+
+    _run(scenario())
+
+
+@pytest.mark.p1
+@pytest.mark.parametrize("fingerprint", [None, "wrong", "неверный", 42])
+def test_unbound_or_invalid_cookie_is_rejected(monkeypatch, fingerprint):
+    app, module = _load_apps_module(monkeypatch)
+    monkeypatch.setattr(module.UserService, "query", lambda **_kw: [SimpleNamespace(access_token="a" * 32)])
+
+    async def scenario():
+        async with app.test_request_context("/"):
+            module.session["_user_id"] = "user-1"
+            if fingerprint is not None:
+                module.session["_token_fingerprint"] = fingerprint
+            assert module._load_user() is None
+
+    _run(scenario())
 
 
 @pytest.mark.p2

@@ -845,7 +845,7 @@ class OSConnection(DocStoreConnection):
         sql = re.sub(r"[ `]+", " ", sql)
         sql = sql.replace("%", "")
         replaces = []
-        for r in re.finditer(r" ([a-z_]+_l?tks)( like | ?= ?)'([^']+)'", sql):
+        for r in re.finditer(r" ([a-z_]+_l?tks)( like | ?= ?)'([^']+)'", sql, re.IGNORECASE):
             fld, v = r.group(1), r.group(3)
             match = " MATCH({}, '{}', 'operator=OR;minimum_should_match=30%') ".format(fld, rag_tokenizer.fine_grained_tokenize(rag_tokenizer.tokenize(v)))
             replaces.append(("{}{}'{}'".format(r.group(1), r.group(2), r.group(3)), match))

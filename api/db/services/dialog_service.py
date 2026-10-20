@@ -55,12 +55,16 @@ from rag.utils.tts_cache import synthesize_with_cache
 from common.string_utils import remove_redundant_spaces
 from common.misc_utils import thread_pool_exec
 from common import settings
+from common.sql_scope import retrieval_source_sql, scope_retrieval_sql
 
 
-def _chunk_kb_id_for_doc(row_dict, kb_ids, doc_id):
+def _chunk_kb_id_for_doc(row_dict, kb_ids):
     if len(kb_ids or []) == 1:
         return kb_ids[0]
-    return row_dict.get("kb_id") or row_dict.get("kb_id_kwd")
+    for name, value in row_dict.items():
+        if name.lower() in {"kb_id", "kb_id_kwd"} and value in (kb_ids or []):
+            return value
+    return None
 
 
 async def _hydrate_chunk_vectors(retriever, chunks, tenant_ids, kb_ids):
@@ -1044,35 +1048,7 @@ async def use_sql(question, field_map, tenant_id, chat_mdl, quota=True, kb_ids=N
         return sql.rstrip().rstrip(";").strip()
 
     def add_kb_filter(sql):
-        """Inject a validated kb_id WHERE filter into *sql* for ES/OceanBase engines.
-
-        Infinity encodes the knowledge-base scope in the table name, so this
-        function is a no-op for that engine.  All kb_id values are validated as
-        canonical UUIDs before interpolation to prevent SQL injection.
-        """
-        # Add kb_id filter for ES/OS only (Infinity already has it in table name)
-        if doc_engine == "infinity" or not kb_ids:
-            return sql
-
-        # Validate all kb_ids are UUIDs before interpolating into SQL
-        for kid in kb_ids:
-            _assert_valid_uuid(kid, "kb_id")
-
-        # Build kb_filter: single KB or multiple KBs with OR
-        if len(kb_ids) == 1:
-            kb_filter = f"kb_id = '{kb_ids[0]}'"
-        else:
-            kb_filter = "(" + " OR ".join([f"kb_id = '{kid}'" for kid in kb_ids]) + ")"
-
-        if "where " not in sql.lower():
-            o = sql.lower().split("order by")
-            if len(o) > 1:
-                sql = o[0] + f" WHERE {kb_filter}  order by " + o[1]
-            else:
-                sql += f" WHERE {kb_filter}"
-        elif "kb_id =" not in sql.lower() and "kb_id=" not in sql.lower():
-            sql = re.sub(r"\bwhere\b ", f"where {kb_filter} and ", sql, flags=re.IGNORECASE)
-        return sql
+        return scope_retrieval_sql(sql, table_name, doc_engine, kb_ids)
 
     def is_row_count_question(q: str) -> bool:
         """Return True if *q* is asking for a total row count of a dataset or table."""
@@ -1376,51 +1352,36 @@ Please correct the error and write SQL again using json_extract_string(chunk_dat
             # Keep original table format as answer
             answer = "\n".join([columns, line, rows])
 
-            # Now fetch doc_id, docnm_kwd to provide source chunks
-            # Extract WHERE clause from the original SQL
-            where_match = re.search(r"\bwhere\b(.+?)(?:\bgroup by\b|\border by\b|\blimit\b|$)", sql, re.IGNORECASE)
-            if where_match:
-                where_clause = where_match.group(1).strip()
-                # Build a query to get source fields with the same WHERE clause.
-                # Single-KB queries can derive kb_id from the dialog, while multi-KB
-                # ES/OS queries need the row value for metadata enrichment.
-                chunks_kb_column = ", kb_id" if not (kb_ids and len(kb_ids) == 1) else ""
-                chunks_sql = f"select doc_id, {expected_doc_name_column}{chunks_kb_column} from {table_name} where {where_clause}"
-                # Add LIMIT to avoid fetching too many chunks
-                if "limit" not in chunks_sql.lower():
-                    chunks_sql += " limit 20"
-                logging.debug(f"use_sql: Fetching chunks with SQL: {chunks_sql}")
-                try:
-                    chunks_tbl = settings.retriever.sql_retrieval(chunks_sql, format="json")
-                    if chunks_tbl.get("rows") and len(chunks_tbl["rows"]) > 0:
-                        # Build chunks reference - use case-insensitive matching
-                        chunks_did_idx = next((i for i, c in enumerate(chunks_tbl["columns"]) if c["name"].lower() == "doc_id"), None)
-                        chunks_dn_idx = next((i for i, c in enumerate(chunks_tbl["columns"]) if c["name"].lower() in ["docnm_kwd", "docnm"]), None)
-                        chunks_kb_idx = next((i for i, c in enumerate(chunks_tbl["columns"]) if c["name"].lower() in ["kb_id", "kb_id_kwd"]), None)
-                        if chunks_did_idx is not None and chunks_dn_idx is not None:
-                            chunks = []
-                            for r in chunks_tbl["rows"]:
-                                chunk = {"doc_id": r[chunks_did_idx], "docnm_kwd": r[chunks_dn_idx]}
-                                row_dict = {chunks_tbl["columns"][i]["name"]: r[i] for i in range(len(chunks_tbl["columns"])) if i < len(r)}
-                                kb_id = _chunk_kb_id_for_doc(row_dict, kb_ids, chunk["doc_id"])
-                                if kb_id:
-                                    chunk["kb_id"] = kb_id
-                                elif chunks_kb_idx is not None:
-                                    chunk["kb_id"] = r[chunks_kb_idx]
-                                chunks.append(chunk)
-                            # Build doc_aggs
-                            doc_aggs = {}
-                            for r in chunks_tbl["rows"]:
-                                doc_id = r[chunks_did_idx]
-                                doc_name = r[chunks_dn_idx]
-                                if doc_id not in doc_aggs:
-                                    doc_aggs[doc_id] = {"doc_name": doc_name, "count": 0}
-                                doc_aggs[doc_id]["count"] += 1
-                            doc_aggs_list = [{"doc_id": did, "doc_name": d["doc_name"], "count": d["count"]} for did, d in doc_aggs.items()]
-                            logging.debug(f"use_sql: Returning aggregate answer with {len(chunks)} chunks from {len(doc_aggs)} documents")
-                            return {"answer": answer, "reference": {"chunks": chunks, "doc_aggs": doc_aggs_list}, "prompt": sys_prompt}
-                except Exception as e:
-                    logging.warning(f"use_sql: Failed to fetch chunks: {e}")
+            # The citation query preserves the parsed predicate and source alias.
+            try:
+                chunks_sql = retrieval_source_sql(sql, table_name, doc_engine, kb_ids)
+                chunks_tbl = settings.retriever.sql_retrieval(chunks_sql, format="json")
+                if chunks_tbl.get("rows") and len(chunks_tbl["rows"]) > 0:
+                    # Build chunks reference - use case-insensitive matching
+                    chunks_did_idx = next((i for i, c in enumerate(chunks_tbl["columns"]) if c["name"].lower() == "doc_id"), None)
+                    chunks_dn_idx = next((i for i, c in enumerate(chunks_tbl["columns"]) if c["name"].lower() in ["docnm_kwd", "docnm"]), None)
+                    if chunks_did_idx is not None and chunks_dn_idx is not None:
+                        chunks = []
+                        for r in chunks_tbl["rows"]:
+                            chunk = {"doc_id": r[chunks_did_idx], "docnm_kwd": r[chunks_dn_idx]}
+                            row_dict = {chunks_tbl["columns"][i]["name"]: r[i] for i in range(len(chunks_tbl["columns"])) if i < len(r)}
+                            kb_id = _chunk_kb_id_for_doc(row_dict, kb_ids)
+                            if kb_id:
+                                chunk["kb_id"] = kb_id
+                            chunks.append(chunk)
+                        # Build doc_aggs
+                        doc_aggs = {}
+                        for r in chunks_tbl["rows"]:
+                            doc_id = r[chunks_did_idx]
+                            doc_name = r[chunks_dn_idx]
+                            if doc_id not in doc_aggs:
+                                doc_aggs[doc_id] = {"doc_name": doc_name, "count": 0}
+                            doc_aggs[doc_id]["count"] += 1
+                        doc_aggs_list = [{"doc_id": did, "doc_name": d["doc_name"], "count": d["count"]} for did, d in doc_aggs.items()]
+                        logging.debug(f"use_sql: Returning aggregate answer with {len(chunks)} chunks from {len(doc_aggs)} documents")
+                        return {"answer": answer, "reference": {"chunks": chunks, "doc_aggs": doc_aggs_list}, "prompt": sys_prompt}
+            except Exception as e:
+                logging.warning(f"use_sql: Failed to fetch chunks: {e}")
             # Fallback: return answer without chunks
             return {"answer": answer, "reference": {"chunks": [], "doc_aggs": []}, "prompt": sys_prompt}
         # Fallback to table format for other cases
@@ -1446,7 +1407,6 @@ Please correct the error and write SQL again using json_extract_string(chunk_dat
                         "kb_id": _chunk_kb_id_for_doc(
                             {tbl["columns"][i]["name"]: r[i] for i in range(len(tbl["columns"])) if i < len(r)},
                             kb_ids,
-                            r[docid_idx],
                         ),
                     }.items()
                     if value

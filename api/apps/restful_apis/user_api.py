@@ -359,6 +359,8 @@ async def setting_user():
         if k in [
             "password",
             "new_password",
+            "access_token",
+            "id",
             "email",
             "status",
             "is_superuser",
@@ -984,7 +986,7 @@ async def forget_reset_password():
 
     user = users[0]
     try:
-        UserService.update_user_password(user.id, new_pwd_base64)
+        user.access_token = UserService.update_user_password(user.id, new_pwd_base64)
     except Exception as e:
         logging.exception(e)
         return get_json_result(data=False, code=RetCode.EXCEPTION_ERROR, message="failed to reset password")
@@ -995,5 +997,6 @@ async def forget_reset_password():
     except Exception:
         pass
 
+    login_user(user)
     msg = "Password reset successful. Logged in."
     return await construct_response(data=user.to_safe_dict(for_self=True), auth=user.get_id(), message=msg)

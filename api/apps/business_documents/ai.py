@@ -678,6 +678,12 @@ class BusinessDocumentAI:
             payload.pop("format_repair")
         if "format_repair" in payload:
             system += _FORMAT_REPAIR_INSTRUCTION
+            if stage == "generation" and payload.get("job_input", {}).get("task_type") == "PLAN_CHANGES":
+                system += (
+                    "\nДля INSERT_BLOCK поле after_block_id — только id блока из исходной current_revision.document_ast или null. "
+                    "operation_id и новые вставки не являются якорями. В пустом исходном разделе у ВСЕХ вставок "
+                    "after_block_id должен быть null; сервер сохранит их порядок из operations."
+                )
         consumer = getattr(self._adapter, "consume_execution_audit", None)
         try:
             if on_chunk is not None:
@@ -693,7 +699,7 @@ class BusinessDocumentAI:
             if error.code != "INVALID_AI_JSON" or not isinstance(raw, str) or not raw.strip():
                 raise
             if job.job_type == "PLAN_CHANGES":
-                return self._unapplied_changes(raw)
+                raise
             if job.job_type in {"ASSESS_INTAKE", "ASSESS_REVIEW"}:
                 parsed = {"questions": [{"text": raw}]}
             elif job.job_type == "GENERATE_DRAFT":

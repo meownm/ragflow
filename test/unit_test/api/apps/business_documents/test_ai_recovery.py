@@ -127,6 +127,52 @@ def test_second_invalid_format_is_preserved_without_verification_or_revision(dat
     assert BusinessDocumentRevision.select().count() == 1
 
 
+@pytest.mark.parametrize("response", ["Now let me write the final JSON plan.", '["planning", "notes"]'])
+def test_direct_apply_repairs_non_object_response_before_verification_and_save(database, response):
+    requested, plan = request_plan()
+    adapter = PlanAdapter(plan, None)
+    generate = adapter.generate
+
+    def first_invalid(tenant, system, payload, *, timeout_seconds=None):
+        result = generate(tenant, system, payload, timeout_seconds=timeout_seconds)
+        if payload["job_input"]["task_type"] == "PLAN_CHANGES" and "format_repair" not in payload:
+            return response
+        return result
+
+    adapter.generate = first_invalid
+    assert BusinessDocumentWorker(ai=BusinessDocumentAI(adapter)).run_once()
+    job = BusinessDocumentJob.get_by_id(requested["job_id"])
+    assert job.status == "COMPLETED", job.error
+    assert [call["job_input"]["task_type"] for call in adapter.calls] == ["PLAN_CHANGES", "PLAN_CHANGES", "VERIFY_REQUIREMENT_COVERAGE"]
+    assert adapter.calls[0]["job_input"] == adapter.calls[1]["job_input"]
+    assert adapter.calls[1]["format_repair"]["previous_response"] == response
+    assert adapter.calls[1]["format_repair"]["error"]["code"] == "INVALID_AI_JSON"
+    assert job.result["output"]["change_plan"] == plan
+    assert job.result["output"]["requirement_coverage"]["status"] == "PASS"
+    assert BusinessDocumentRevision.select().count() == 2
+
+
+def test_direct_apply_preserves_second_non_object_response_without_saving(database):
+    requested, plan = request_plan()
+    adapter = PlanAdapter(plan, None)
+    generate = adapter.generate
+
+    def always_invalid(tenant, system, payload, *, timeout_seconds=None):
+        generate(tenant, system, payload, timeout_seconds=timeout_seconds)
+        return "Still planning the final JSON."
+
+    adapter.generate = always_invalid
+    worker = BusinessDocumentWorker(ai=BusinessDocumentAI(adapter))
+    assert worker.run_once()
+    job = BusinessDocumentJob.get_by_id(requested["job_id"])
+    assert job.status == "COMPLETED", job.error
+    assert job.result["output"]["unapplied_changes"] == "Still planning the final JSON."
+    assert job.result["output"]["warnings"][0]["code"] == "CHANGE_FORMAT_NOT_APPLIED"
+    assert [call["job_input"]["task_type"] for call in adapter.calls] == ["PLAN_CHANGES", "PLAN_CHANGES"]
+    assert BusinessDocumentRevision.select().count() == 1
+    assert not worker.run_once()
+
+
 def test_second_invalid_verdict_saves_advice_without_claiming_a_pass(database):
     requested, plan = request_plan()
     adapter = PlanAdapter(plan, None)

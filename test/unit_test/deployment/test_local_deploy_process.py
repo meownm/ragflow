@@ -39,6 +39,33 @@ def test_preflight_and_backup_precede_runtime_mutation():
     assert '"--no-build", "--pull", "never"' in SOURCE
 
 
+def test_candidate_compose_retains_quality_evidence_while_replacing_checkout_binds(tmp_path):
+    docker = shutil.which("docker")
+    if not docker:
+        pytest.skip("Docker Compose is required to verify merged deployment volumes")
+    evidence = "business_document_quality_evidence"
+    base = tmp_path / "base.json"
+    base.write_text(
+        json.dumps({"services": {"ragflow-cpu": {"image": "synthetic", "volumes": [f"{evidence}:/ragflow/quality-evidence", "./api:/ragflow/api"]}}, "volumes": {evidence: {}}}),
+        encoding="utf-8",
+    )
+    config = tmp_path / "service_conf.yaml.template"
+    config.write_text("{}", encoding="utf-8")
+    result = subprocess.run(
+        [docker, "compose", "--project-name", "qa-evidence-compose-test", "-f", str(base), "-f", str(ROOT / "docker/docker-compose.candidate.yml"), "config", "--format", "json"],
+        env={**os.environ, "RAGFLOW_IMAGE": "synthetic", "RAGFLOW_LOCAL_RUNTIME_LOGS": str(tmp_path / "logs"), "RAGFLOW_LOCAL_RUNTIME_CONFIG": str(config)},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    volumes = {item["target"]: item for item in json.loads(result.stdout)["services"]["ragflow-cpu"]["volumes"]}
+    assert volumes["/ragflow/quality-evidence"]["type"] == "volume"
+    assert volumes["/ragflow/quality-evidence"]["source"] == evidence
+    assert "/ragflow/api" not in volumes
+    assert volumes["/ragflow/conf/service_conf.yaml.template"]["read_only"] is True
+
+
 def test_candidate_binds_survive_checkout_removal_and_reject_tampering(tmp_path):
     pwsh = shutil.which("pwsh") or shutil.which("powershell")
     if not pwsh:

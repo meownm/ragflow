@@ -324,6 +324,12 @@ export const getDocumentQuality = (days: 1 | 7 | 30) =>
     { params: { days } },
   );
 
+export const getSpecificationOperations = (days: 1 | 7 | 30) =>
+  request.get<ResponseData<AdminService.SpecificationOperations>>(
+    adminDocumentQuality,
+    { params: { days, document_type: 'technical_specification' } },
+  );
+
 export const getDocumentQualityJobs = (params: {
   days: 1 | 7 | 30;
   category?: string;
@@ -336,32 +342,59 @@ export const getDocumentQualityJobs = (params: {
     { params },
   );
 
-export const listDocumentQualityRuns = () =>
+export type DocumentQualityProduct =
+  | 'business_requirements'
+  | 'technical_specification';
+
+export const getDocumentQualityHealth = (product?: DocumentQualityProduct) =>
+  request.get<{
+    code: number;
+    data: { status: 'OK' | 'ALERT'; reason_code: string | null; slot: string };
+  }>(`${adminDocumentQuality}/health`, qualityProductParams(product));
+
+const qualityProductParams = (product?: DocumentQualityProduct) =>
+  product ? { params: { document_type: product } } : undefined;
+
+export const listDocumentQualityRuns = (product?: DocumentQualityProduct) =>
   request.get<ResponseData<AdminService.DocumentQualityRuns>>(
     adminDocumentQualityRuns,
+    qualityProductParams(product),
   );
 
-export const getDocumentQualityRun = (runId: string) =>
+export const getDocumentQualityRun = (
+  runId: string,
+  product?: DocumentQualityProduct,
+) =>
   request.get<ResponseData<AdminService.DocumentQualityRun>>(
     adminDocumentQualityRun(runId),
+    qualityProductParams(product),
   );
 
-export const listDocumentQualityCampaigns = () =>
+export const listDocumentQualityCampaigns = (
+  product?: DocumentQualityProduct,
+) =>
   request.get<ResponseData<AdminService.DocumentQualityCampaigns>>(
     adminDocumentQualityCampaigns,
+    qualityProductParams(product),
   );
 
-export const getDocumentQualityCampaign = (campaignId: string) =>
+export const getDocumentQualityCampaign = (
+  campaignId: string,
+  product?: DocumentQualityProduct,
+) =>
   request.get<ResponseData<AdminService.DocumentQualityCampaign>>(
     adminDocumentQualityCampaign(campaignId),
+    qualityProductParams(product),
   );
 
-export const listDocumentQualityModels = () =>
+export const listDocumentQualityModels = (product?: DocumentQualityProduct) =>
   request.get<ResponseData<AdminService.DocumentQualityModels>>(
     adminDocumentQualityModels,
+    qualityProductParams(product),
   );
 
 export const startDocumentQualityRun = (input?: {
+  document_type?: DocumentQualityProduct;
   model?: string;
   scope?: 'FULL' | 'CASE';
   case_id?: string;

@@ -42,6 +42,8 @@ def client(monkeypatch):
     [
         ("get", "/maintenance"),
         ("get", "/document-quality"),
+        ("get", "/document-quality?document_type=technical_specification"),
+        ("get", "/document-quality/health"),
         ("get", "/document-quality/runs"),
         ("get", "/document-quality/jobs"),
         ("post", "/document-quality/runs"),
@@ -131,6 +133,32 @@ def test_invalid_operational_window_and_offset_are_rejected(client):
     headers = {"Authorization": "test"}
     for path in ("/document-quality?days=bad", "/document-quality/jobs?days=bad", "/document-quality/jobs?days=2", "/document-quality/jobs?offset=-1"):
         assert client.get("/api/v1/admin" + path, headers=headers).status_code == 400
+
+
+def test_technical_operations_dispatch_does_not_read_business_jobs(client, monkeypatch):
+    technical = Mock(return_value={"document_type": "technical_specification", "scope": "RECORDED_ALIGNMENT_ATTEMPTS"})
+    monkeypatch.setattr(routes, "alignment_operations_dashboard", technical)
+    business = Mock(side_effect=AssertionError("Unrelated business jobs must not be read"))
+    monkeypatch.setattr(routes, "document_quality_dashboard", business)
+    headers = {"Authorization": "test"}
+    result = client.get("/api/v1/admin/document-quality?document_type=technical_specification&days=30", headers=headers)
+    assert result.status_code == 200 and result.json["data"]["document_type"] == "technical_specification"
+    technical.assert_called_once_with(days=30)
+    assert not business.called
+    rejected = client.get("/api/v1/admin/document-quality?document_type=unknown", headers=headers)
+    assert rejected.status_code == rejected.json["code"] == 400
+    assert rejected.json["message"] == "Unknown document quality product"
+
+
+def test_watchdog_is_product_scoped_and_rejects_unknown_product(client, monkeypatch):
+    inspect = Mock(return_value={"status": "ALERT", "reason_code": "NIGHTLY_MISSING"})
+    monkeypatch.setattr(routes, "schedule_health", inspect)
+    headers = {"Authorization": "test"}
+    url = "/api/v1/admin/document-quality/health"
+    response = client.get(url + "?document_type=technical_specification", headers=headers)
+    assert response.status_code == 200 and response.json["data"]["reason_code"] == "NIGHTLY_MISSING"
+    inspect.assert_called_once_with(document_type="technical_specification")
+    assert client.get(url + "?document_type=unknown", headers=headers).status_code == 400
 
 
 def test_maintenance_reports_unconfigured_and_corrupt_state(client, monkeypatch, tmp_path):

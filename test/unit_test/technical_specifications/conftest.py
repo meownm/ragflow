@@ -11,6 +11,7 @@ def store(tmp_path):
         SourceWorkspaceDraft,
         SourceWorkspaceMember,
         TechnicalSpecification,
+        TechnicalSpecificationAlignmentObservation,
         TechnicalSpecificationDraft,
         TechnicalSpecificationRevision,
         User,
@@ -28,6 +29,7 @@ def store(tmp_path):
         User,
         UserTenant,
         TechnicalSpecification,
+        TechnicalSpecificationAlignmentObservation,
         TechnicalSpecificationDraft,
         TechnicalSpecificationRevision,
     ]

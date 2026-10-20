@@ -35,7 +35,8 @@ def test_schedule_is_idempotent_and_manual_run_is_persisted(monkeypatch):
             when = datetime(2026, 10, 1, 3, 15, tzinfo=ZoneInfo("Europe/Moscow"))
             runs.schedule_due(when)
             runs.schedule_due(when)
-            assert BusinessDocumentQualityRun.select().count() == 2
+            assert BusinessDocumentQualityRun.select().count() == 4
+            assert {row.document_type for row in BusinessDocumentQualityRun.select()} == {"business_requirements", "technical_specification"}
             assert {row.trigger for row in BusinessDocumentQualityRun.select()} == {"NIGHTLY", "MONTHLY"}
 
             monkeypatch.setattr(runs, "_execute", lambda _row: ("PASS", {"weighted_score": 3.5}, None))

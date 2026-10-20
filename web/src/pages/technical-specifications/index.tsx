@@ -31,6 +31,7 @@ import {
   useState,
 } from 'react';
 import { useBlocker, useSearchParams } from 'react-router';
+import { AlignmentPanel } from './alignment-panel';
 import {
   clearCommentDraft,
   editCommentDraft,
@@ -304,9 +305,9 @@ function Editor({
   const liveEditing = useRef(editing);
   const manualSaved = useRef(true);
   const [mode, setMode] = useState<'document' | 'chat'>('document');
-  const [panel, setPanel] = useState<'comments' | 'history' | 'eva' | null>(
-    null,
-  );
+  const [panel, setPanel] = useState<
+    'comments' | 'history' | 'eva' | 'alignment' | null
+  >(null);
   const panelRef = useRef<HTMLElement | null>(null);
   const openedPanel = useRef<typeof panel>(null);
   const [busy, setBusy] = useState(false);
@@ -798,6 +799,12 @@ function Editor({
         </div>
         <nav className="flex flex-wrap gap-2" aria-label="Режим ТЗ">
           <Button
+            variant="outline"
+            onClick={() => setPanel(panel === 'alignment' ? null : 'alignment')}
+          >
+            Соответствие БТ
+          </Button>
+          <Button
             variant={mode === 'document' ? 'default' : 'outline'}
             onClick={() => setMode('document')}
           >
@@ -834,6 +841,20 @@ function Editor({
           </Button>
         </nav>
       </header>
+      {panel === 'alignment' && (
+        <AlignmentPanel
+          key={doc.id}
+          document={doc}
+          disabled={busy || dirty}
+          canEdit={canEdit}
+          onDocument={(value) => {
+            setDoc((current) =>
+              value.version >= current.version ? value : current,
+            );
+            onSaved(value);
+          }}
+        />
+      )}
       {error && (
         <p role="alert" className="whitespace-pre-wrap text-state-error">
           {error}

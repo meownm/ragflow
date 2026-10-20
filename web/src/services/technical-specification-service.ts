@@ -27,6 +27,78 @@ function url(workspace: string, id?: string) {
   return `${restAPIv1}/source-workspaces/${encodeURIComponent(workspace)}/technical-specifications${id ? `/${encodeURIComponent(id)}` : ''}`;
 }
 
+export interface AlignmentCheck {
+  id: string;
+  current: boolean;
+  qualifies: boolean;
+  status?: string;
+  reason_code?: string;
+  result?: {
+    quality_status: string;
+    evidence_status?: string;
+    reason_code?: string;
+    report?: {
+      requirements: {
+        id: string;
+        coverage: string;
+        consistency: string;
+        reason: string;
+        references: { section: string; quote: string }[];
+      }[];
+      additional_rules: { kind: string; reason: string }[];
+      joint: { consistency: string; reason: string };
+    };
+  };
+}
+
+export interface AlignmentView {
+  document: Specification;
+  checks: AlignmentCheck[];
+}
+
+export async function listAlignmentSources(
+  workspace: string,
+  query = '',
+  page = 1,
+) {
+  const response = await request.get<
+    Envelope<{
+      items: { document_id: string; title: string; revision_number: number }[];
+      has_more?: boolean;
+      page?: number;
+    }>
+  >(`${url(workspace)}/business-sources`, {
+    ...handledErrors,
+    params: { query, page },
+  });
+  return unwrap(response.data);
+}
+
+export async function getAlignment(workspace: string, id: string) {
+  const response = await request.get<Envelope<AlignmentView>>(
+    `${url(workspace, id)}/alignment`,
+    handledErrors,
+  );
+  return unwrap(response.data);
+}
+
+export async function checkAlignment(
+  workspace: string,
+  id: string,
+  data: {
+    version: number;
+    request_id: string;
+    business_document_ids: string[];
+  },
+) {
+  const response = await request.post<Envelope<AlignmentView>>(
+    `${url(workspace, id)}/alignment`,
+    data,
+    handledErrors,
+  );
+  return unwrap(response.data);
+}
+
 export async function listSpecifications(workspace: string) {
   const response = await request.get<Envelope<Specification[]>>(url(workspace));
   return unwrap(response.data);

@@ -9,6 +9,7 @@ from functools import wraps
 from peewee import IntegrityError
 
 from api.db.db_models import TechnicalSpecification as Document
+from api.db.db_models import TechnicalSpecificationAlignmentObservation as Observation
 from api.db.db_models import TechnicalSpecificationDraft as Draft
 from api.db.db_models import TechnicalSpecificationRevision as Revision
 from api.db.db_models import User
@@ -17,12 +18,28 @@ from api.document_exchange.bindings import BindingConflict, occupancy, reserve
 from api.source_workbench.errors import SourceWorkspaceError
 from api.source_workbench.linked_storage import LinkedDocumentRepository
 
+from .alignment import MAX_REPORT_BYTES, expire_checks
 from .domain import SpecificationError, eva_identity, fail, identifier, version
+from .telemetry import observation
 
 MAX_PROJECTION_BYTES = 2_000_000
 # JSON can use six bytes per content character: 100k candidate + 30k answer,
 # plus result metadata. Every accepted request reserves its own completion.
 CHAT_RESULT_BYTES = 800_000
+ALIGNMENT_RESULT_BYTES = MAX_REPORT_BYTES + 16 * 1024
+
+
+def _record_alignment_observations(before, after):
+    prior = {item.get("attempt"): item for item in before}
+    for item in after:
+        if prior.get(item.get("attempt")) == item:
+            continue
+        values = observation(item)
+        if values is None:
+            continue
+        attempt = values.pop("id")
+        if not Observation.update(**values).where(Observation.id == attempt).execute():
+            Observation.create(id=attempt, **values)
 
 
 def _proposal_bases(document_id, numbers):
@@ -31,6 +48,8 @@ def _proposal_bases(document_id, numbers):
 
 def _stored_payload(value):
     payload = {key: deepcopy(value[key]) for key in ("sections", "messages", "comments", "proposals", "eva", "origin", "eva_export")}
+    if "alignment" in value:
+        payload["alignment"] = deepcopy(value["alignment"])
     proposals = [item for item in payload["proposals"] if item.get("source") == "chat"]
     bases = _proposal_bases(value["id"], {item["base_revision"] for item in proposals})
     for item in proposals:
@@ -41,7 +60,8 @@ def _stored_payload(value):
 
 def _payload_budget(payload):
     pending = sum(item.get("status") == "processing" for item in payload["messages"])
-    return len(json.dumps(payload, ensure_ascii=False).encode()) + pending * CHAT_RESULT_BYTES
+    pending_alignment = sum(item.get("status") == "PROCESSING" for item in payload.get("alignment", []))
+    return len(json.dumps(payload, ensure_ascii=False).encode()) + pending * CHAT_RESULT_BYTES + pending_alignment * ALIGNMENT_RESULT_BYTES
 
 
 def record(row):
@@ -56,6 +76,7 @@ def record(row):
 
 def projection(row):
     value = record(row)
+    value.pop("alignment", None)
     authors = {item["author_id"] for item in value["messages"] if item.get("author_id")}
     for item in value["comments"]:
         authors.add(item["author_id"])
@@ -105,6 +126,25 @@ class SpecificationRepository:
     def get(self, actor, workspace, document_id):
         self.access(actor, workspace)
         return projection(self._row(workspace, document_id))
+
+    @connected
+    def alignment_document(self, actor, workspace, document_id):
+        self.access(actor, workspace)
+        for _attempt in range(5):
+            row = self._row(workspace, document_id)
+            payload = deepcopy(row.payload)
+            now = datetime.now(UTC)
+            if not expire_checks(payload.get("alignment", []), now):
+                return {**projection(row), "alignment": deepcopy(payload.get("alignment", []))}
+            # Recovery changes only expired operational state. A reader cannot
+            # use this path to alter content, sources, verdicts or source access.
+            with self.database.atomic():
+                changed = Document.update(payload=payload, version=row.version + 1, updated_at=now).where((Document.id == row.id) & (Document.version == row.version)).execute()
+                if changed:
+                    _record_alignment_observations(row.payload.get("alignment", []), payload.get("alignment", []))
+                    row = self._row(workspace, document_id)
+                    return {**projection(row), "alignment": deepcopy(row.payload.get("alignment", []))}
+        fail("VERSION_CONFLICT", "ТЗ изменилось во время восстановления проверки", 409)
 
     @connected
     def find_origin(self, actor, workspace, origin_key):
@@ -279,6 +319,8 @@ class SpecificationRepository:
             )
             if not changed:
                 fail("VERSION_CONFLICT", "Параллельная запись: обновите ТЗ", 409)
+            if payload.get("alignment") != old.get("alignment"):
+                _record_alignment_observations(old.get("alignment", []), payload.get("alignment", []))
             if content_changed:
                 Revision.create(document_id=row.id, number=number, title=value["title"], sections=payload["sections"], author_id=actor, reason=reason)
             return projection(self._row(workspace, document_id))

@@ -73,6 +73,25 @@ async def eva_pages(service, actor, data, workspace):
     return await service.eva_pages(actor, workspace, request.args.get("query", ""))
 
 
+@manager.route("/source-workspaces/<workspace>/technical-specifications/business-sources", methods=["GET"])  # noqa: F821
+@scenario
+async def alignment_sources(service, actor, data, workspace):
+    try:
+        page = int(request.args.get("page", "1"))
+    except ValueError as error:
+        raise SpecificationError("INVALID_PAGINATION", "Некорректная страница оснований") from error
+    return await service.alignment_sources(actor, workspace, request.args.get("query", ""), page)
+
+
+@manager.route("/source-workspaces/<workspace>/technical-specifications/<document_id>/alignment", methods=["GET", "POST"])  # noqa: F821
+@scenario
+async def alignment(service, actor, data, workspace, document_id):
+    async with asyncio.timeout(330):
+        if request.method == "POST":
+            return await service.check_alignment(actor, workspace, document_id, data)
+        return await service.alignment_report(actor, workspace, document_id)
+
+
 @manager.route("/source-workspaces/<workspace>/technical-specifications/<document_id>", methods=["GET", "PUT"])  # noqa: F821
 @scenario
 async def document(service, actor, data, workspace, document_id):

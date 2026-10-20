@@ -10,8 +10,18 @@ from .domain import SpecificationError, assert_context, context, draft, empty_se
 
 
 class Specifications:
-    def __init__(self, repository, ai, run_sync, eva=None):
+    def __init__(self, repository, ai, run_sync, eva=None, alignment=None):
         self.repository, self.ai, self.run, self.eva = repository, ai, run_sync, eva
+        self.alignment = alignment
+
+    async def alignment_sources(self, actor, workspace, query="", page=1):
+        return await self.alignment.catalogue(actor, workspace, query, page)
+
+    async def alignment_report(self, actor, workspace, document_id):
+        return await self.alignment.get(actor, workspace, document_id)
+
+    async def check_alignment(self, actor, workspace, document_id, data):
+        return await self.alignment.check(actor, workspace, document_id, data)
 
     async def list(self, actor, workspace):
         return await self.run(self.repository.list, actor, workspace)

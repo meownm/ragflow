@@ -8,8 +8,10 @@ import { Button } from '@/components/ui/button';
 import {
   getDocumentQuality,
   getDocumentQualityCampaign,
+  getDocumentQualityHealth,
   getDocumentQualityJobs,
   getDocumentQualityRun,
+  getSpecificationOperations,
   listDocumentQualityCampaigns,
   listDocumentQualityModels,
   listDocumentQualityRuns,
@@ -20,6 +22,111 @@ type Tab = 'overview' | 'comparisons' | 'history' | 'operations';
 const tabs: Tab[] = ['overview', 'comparisons', 'history', 'operations'];
 type WindowDays = 1 | 7 | 30;
 
+function AlignmentOperations({
+  data,
+  label,
+  number,
+  date,
+}: {
+  data: AdminService.SpecificationOperations;
+  label: (key: string) => string;
+  number: (value: number) => string;
+  date: (value?: number | null) => string;
+}) {
+  return (
+    <section
+      aria-label={label('technicalOperations.title')}
+      className="space-y-4"
+    >
+      <p className="text-sm text-text-secondary">
+        {label('technicalOperations.cohortNote')}
+      </p>
+      <p>
+        {label('technicalOperations.firstObservation')}:{' '}
+        {date(data.earliest_observation_at)}
+      </p>
+      <p>
+        {label('technicalOperations.executionRate')}:{' '}
+        {data.execution_completion_rate == null
+          ? '—'
+          : `${(data.execution_completion_rate * 100).toFixed(1)}%`}{' '}
+        · {data.counts.execution_complete}/{data.terminal_attempts}
+      </p>
+      <p>
+        {label('technicalOperations.reportRate')}:{' '}
+        {data.report_completion_rate == null
+          ? '—'
+          : `${(data.report_completion_rate * 100).toFixed(1)}%`}{' '}
+        · {data.counts.reports_complete}/{data.terminal_attempts}
+      </p>
+      {!data.counts.total && (
+        <p role="status">{label('noTechnicalObservations')}</p>
+      )}
+      <dl className="flex flex-wrap gap-4">
+        {Object.entries(data.counts).map(([key, value]) => (
+          <div key={key}>
+            <dt>{label(`technicalOperations.counts.${key}`)}</dt>
+            <dd>{number(value)}</dd>
+          </div>
+        ))}
+      </dl>
+      <dl className="flex flex-wrap gap-4">
+        {(
+          [
+            'total_tokens',
+            'known_spent_tokens',
+            'reserved_tokens',
+            'known_reserved_tokens',
+          ] as const
+        ).map((key) => (
+          <div key={key}>
+            <dt>{label(`technicalOperations.${key}`)}</dt>
+            <dd>{data[key] == null ? '—' : number(data[key])}</dd>
+          </div>
+        ))}
+      </dl>
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead>
+            <tr>
+              <th>{label('duration')}</th>
+              <th>{label('measured')}</th>
+              <th>{label('technicalOperations.meanMs')}</th>
+              <th>{label('technicalOperations.p95Ms')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(['check', 'model'] as const).map((key) => (
+              <tr key={key}>
+                <td>{label(`technicalOperations.durations.${key}`)}</td>
+                <td>{number(data.durations[key].measured)}</td>
+                <td>
+                  {data.durations[key].mean_ms == null
+                    ? '—'
+                    : number(data.durations[key].mean_ms)}
+                </td>
+                <td>
+                  {data.durations[key].p95_ms == null
+                    ? '—'
+                    : number(data.durations[key].p95_ms)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <h3 className="font-medium">{label('technicalOperations.reasons')}</h3>
+      <ul>
+        {data.reasons.map((item) => (
+          <li key={item.code}>
+            {item.code}: {number(item.count)}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function unwrap<T>(response: {
   data: { code: number; data: T; message?: string };
 }): T {
@@ -29,17 +136,144 @@ function unwrap<T>(response: {
 }
 
 function statusColor(status: string) {
-  if (status === 'PASS' || status === 'COMPLETE') return 'text-state-success';
+  if (status === 'PASS') return 'text-state-success';
   if (status === 'FAIL' || status === 'DEAD') return 'text-state-error';
   if (status === 'INCOMPLETE' || status === 'PARTIAL')
     return 'text-state-warning';
   return 'text-text-secondary';
 }
 
+function comparisonFingerprint(run: AdminService.DocumentQualityRun) {
+  return [
+    run.source_revision,
+    run.report?.source_fingerprint,
+    run.report?.source_dirty,
+    run.report?.suite_sha256 || run.report?.suite_version,
+    run.report?.rubric_version,
+    run.report?.template_version,
+    JSON.stringify(run.report?.prompt_hashes || {}),
+    JSON.stringify(run.report?.parameter_profiles || []),
+  ].join('|');
+}
+
+function NightlyExperiments({
+  experiments,
+  label,
+}: {
+  experiments: NonNullable<
+    AdminService.DocumentQualityReport['nightly_experiments']
+  >;
+  label: (key: string) => string;
+}) {
+  return (
+    <section
+      aria-label={label('nightlyExperiments')}
+      className="mt-4 space-y-2"
+    >
+      <h3 className="font-medium">{label('nightlyExperiments')}</h3>
+      <table className="w-full text-left text-sm">
+        <thead>
+          <tr>
+            <th>{label('experiment')}</th>
+            <th>{label('qualityStatus')}</th>
+            <th>{label('executionEvidence')}</th>
+            <th>{label('experimentCases')}</th>
+            <th>{label('tokens')}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {experiments.map((item) => (
+            <tr key={item.experiment}>
+              <td>{label(`experiments.${item.experiment}`)}</td>
+              <td>{item.quality_status}</td>
+              <td>{item.evidence_status}</td>
+              <td>
+                {item.executed_cases ?? '—'}/{item.expected_cases ?? '—'}
+              </td>
+              <td>{item.total_tokens ?? '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
+function SemanticQuality({
+  quality,
+  label,
+  number,
+}: {
+  quality: NonNullable<AdminService.DocumentQualityReport['alignment_quality']>;
+  label: (key: string) => string;
+  number: (value: number) => string;
+}) {
+  return (
+    <section aria-label={label('semanticQuality')} className="mt-4 space-y-2">
+      <h3 className="font-medium">{label('semanticQuality')}</h3>
+      <p>
+        {label('scoredFragments')}: {quality.scored_fragments}/
+        {quality.expected_fragments} · {label('unscoredFragments')}:{' '}
+        {quality.unscored_fragments}
+      </p>
+      <p className="text-sm text-text-secondary">
+        {label('semanticQualityNote')}
+      </p>
+      <dl className="flex flex-wrap gap-4">
+        {(
+          [
+            'contradiction_tp',
+            'contradiction_fp',
+            'contradiction_fn',
+            'contradiction_tn',
+            'undetermined_fragments',
+          ] as const
+        ).map((key) => (
+          <div key={key}>
+            <dt>{label(`semanticCounters.${key}`)}</dt>
+            <dd>{number(quality[key])}</dd>
+          </div>
+        ))}
+      </dl>
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead>
+            <tr>
+              <th>{label('semanticMeasure')}</th>
+              <th>{label('semanticValue')}</th>
+              <th>{label('semanticFraction')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {Object.entries(quality.measures).map(([key, measure]) => (
+              <tr key={key}>
+                <th scope="row">{label(`semanticMeasures.${key}`)}</th>
+                <td>
+                  {measure.value == null
+                    ? '—'
+                    : `${(measure.value * 100).toFixed(1)}%`}
+                </td>
+                <td>
+                  {number(measure.numerator)}/{number(measure.denominator)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 export default function AdminBusinessDocumentsQuality() {
   const { t, i18n } = useTranslation();
   const label = (key: string) => t(`admin.businessDocumentsQualityPage.${key}`);
   const [params, setParams] = useSearchParams();
+  const product =
+    params.get('product') === 'technical_specification'
+      ? ('technical_specification' as const)
+      : ('business_requirements' as const);
+  const technical = product === 'technical_specification';
   const [selectedRun, setSelectedRun] = useState<string | null>(null);
   const detailRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -87,27 +321,41 @@ export default function AdminBusinessDocumentsQuality() {
         }).format(value);
 
   const runs = useQuery({
-    queryKey: ['admin', 'business-documents-quality-runs'],
-    queryFn: async () => unwrap(await listDocumentQualityRuns()),
+    queryKey: ['admin', 'business-documents-quality-runs', product],
+    queryFn: async () => unwrap(await listDocumentQualityRuns(product)),
     refetchInterval: 10000,
     retry: false,
   });
   const campaigns = useQuery({
-    queryKey: ['admin', 'business-documents-quality-campaigns'],
-    queryFn: async () => unwrap(await listDocumentQualityCampaigns()),
+    queryKey: ['admin', 'business-documents-quality-campaigns', product],
+    queryFn: async () => unwrap(await listDocumentQualityCampaigns(product)),
     refetchInterval: 10000,
     retry: false,
   });
   const models = useQuery({
-    queryKey: ['admin', 'business-documents-quality-models'],
-    queryFn: async () => unwrap(await listDocumentQualityModels()),
+    queryKey: ['admin', 'business-documents-quality-models', product],
+    queryFn: async () => unwrap(await listDocumentQualityModels(product)),
+    retry: false,
+  });
+  const health = useQuery({
+    queryKey: ['admin', 'document-quality-health', product],
+    queryFn: async () => unwrap(await getDocumentQualityHealth(product)),
+    refetchInterval: 60000,
     retry: false,
   });
   const operations = useQuery({
     queryKey: ['admin', 'business-documents-quality', days],
     queryFn: async () => unwrap(await getDocumentQuality(days)),
+    enabled: !technical,
     retry: false,
     refetchInterval: tab === 'operations' ? 30000 : false,
+  });
+  const technicalOperations = useQuery({
+    queryKey: ['admin', 'technical-specification-operations', days],
+    queryFn: async () => unwrap(await getSpecificationOperations(days)),
+    enabled: technical && tab === 'operations',
+    retry: false,
+    refetchInterval: technical && tab === 'operations' ? 30000 : false,
   });
   const category = params.get('category') || '';
   const taskType = params.get('task') || '';
@@ -137,13 +385,18 @@ export default function AdminBusinessDocumentsQuality() {
           offset,
         }),
       ),
-    enabled: tab === 'operations',
+    enabled: tab === 'operations' && !technical,
     retry: false,
     refetchInterval: tab === 'operations' ? 30000 : false,
   });
   const detail = useQuery({
-    queryKey: ['admin', 'business-documents-quality-run', selectedRun],
-    queryFn: async () => unwrap(await getDocumentQualityRun(selectedRun!)),
+    queryKey: ['admin', 'business-documents-quality-run', product, selectedRun],
+    queryFn: async () =>
+      unwrap(
+        await (technical
+          ? getDocumentQualityRun(selectedRun!, product)
+          : getDocumentQualityRun(selectedRun!)),
+      ),
     enabled: Boolean(selectedRun),
     retry: false,
     refetchInterval: (query) =>
@@ -155,13 +408,19 @@ export default function AdminBusinessDocumentsQuality() {
     queryKey: [
       'admin',
       'business-documents-quality-campaign',
+      product,
       params.get('campaign') || campaigns.data?.campaigns[0]?.id,
     ],
     queryFn: async () =>
       unwrap(
-        await getDocumentQualityCampaign(
-          (params.get('campaign') || campaigns.data?.campaigns[0]?.id)!,
-        ),
+        await (technical
+          ? getDocumentQualityCampaign(
+              (params.get('campaign') || campaigns.data?.campaigns[0]?.id)!,
+              product,
+            )
+          : getDocumentQualityCampaign(
+              (params.get('campaign') || campaigns.data?.campaigns[0]?.id)!,
+            )),
       ),
     enabled:
       tab === 'comparisons' &&
@@ -177,6 +436,7 @@ export default function AdminBusinessDocumentsQuality() {
     mutationFn: async () =>
       unwrap(
         await startDocumentQualityRun({
+          ...(technical ? { document_type: product } : {}),
           ...(manualModel ? { model: manualModel } : {}),
           scope: manualScope,
           ...(manualScope === 'CASE' ? { case_id: manualCase } : {}),
@@ -208,25 +468,51 @@ export default function AdminBusinessDocumentsQuality() {
     campaignDetail.data ??
     allCampaigns.find((item) => item.id === params.get('campaign')) ??
     allCampaigns[0];
-  const rankedRuns = (chosenCampaign?.runs || [])
+  const eligibleRuns = (chosenCampaign?.runs || [])
     .filter(
       (run) =>
         run.scope === 'FULL' &&
         ['PASS', 'FAIL'].includes(run.status) &&
         run.report?.expected_cases != null &&
         run.report.expected_cases === run.report.executed_cases &&
-        run.report.weighted_score != null,
+        (technical
+          ? run.report.p0_case_pass_rate != null
+          : run.report.weighted_score != null),
     )
     .sort(
       (left, right) =>
-        (right.report?.weighted_score || 0) -
-        (left.report?.weighted_score || 0),
+        (technical
+          ? right.report?.p0_case_pass_rate || 0
+          : right.report?.weighted_score || 0) -
+        (technical
+          ? left.report?.p0_case_pass_rate || 0
+          : left.report?.weighted_score || 0),
     );
+  const technicalComparable =
+    !technical ||
+    (eligibleRuns.length > 0 &&
+      eligibleRuns.length === chosenCampaign?.runs.length &&
+      chosenCampaign.status === 'COMPLETE' &&
+      !chosenCampaign.reason_code &&
+      chosenCampaign.baseline_status === 'PASS' &&
+      eligibleRuns.every(
+        (run) =>
+          run.report?.evidence_status === 'VERIFIED' &&
+          typeof run.report.source_dirty === 'boolean' &&
+          (run.report.source_dirty
+            ? /^[0-9a-f]{64}$/.test(run.report.source_fingerprint || '')
+            : /^[0-9a-f]{40}$/.test(run.source_revision || '')) &&
+          /^[0-9a-f]{64}$/.test(run.report.suite_sha256 || '') &&
+          /^[0-9a-f]{64}$/.test(run.report.prompt_hashes?.alignment || '') &&
+          Boolean(run.report.parameter_profiles?.length),
+      ) &&
+      new Set(eligibleRuns.map(comparisonFingerprint)).size === 1);
+  const rankedRuns = technicalComparable ? eligibleRuns : [];
   const rankByRun = new Map(
     rankedRuns.map((run, index) => [run.id, index + 1]),
   );
   const selectedDetail = detail.data;
-  const op = operations.data;
+  const op = technical ? undefined : operations.data;
   const modelFilter = params.get('model') || '';
   const visibleJobs = jobsPage.data?.jobs ?? [];
   const historicalModels = [
@@ -242,15 +528,6 @@ export default function AdminBusinessDocumentsQuality() {
       (!params.get('status') || run.status === params.get('status')) &&
       (!modelFilter || run.model_digest === modelFilter),
   );
-  const fingerprint = (run: AdminService.DocumentQualityRun) =>
-    [
-      run.source_revision,
-      run.report?.suite_sha256 || run.report?.suite_version,
-      run.report?.rubric_version,
-      run.report?.template_version,
-      JSON.stringify(run.report?.prompt_hashes || {}),
-      JSON.stringify(run.report?.parameter_profiles || []),
-    ].join('|');
 
   const runButton = (
     run: AdminService.DocumentQualityRun,
@@ -309,11 +586,37 @@ export default function AdminBusinessDocumentsQuality() {
       <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border-button px-6 py-5">
         <div>
           <h1 className="text-xl font-semibold text-text-primary">
-            {label('title')}
+            {technical ? label('technicalTitle') : label('title')}
           </h1>
+          <label className="mt-2 block text-sm">
+            {label('product')}
+            <select
+              aria-label={label('product')}
+              value={product}
+              onChange={(event) => {
+                setSelectedRun(null);
+                setManualModel('');
+                setManualCase('');
+                setParams({ product: event.target.value, tab: 'overview' });
+              }}
+            >
+              <option value="business_requirements">
+                {label('businessProduct')}
+              </option>
+              <option value="technical_specification">
+                {label('technicalProduct')}
+              </option>
+            </select>
+          </label>
           <p className="mt-1 text-sm text-text-secondary">
-            {label('description')}
+            {label(technical ? 'technicalDescription' : 'description')}
           </p>
+          {(health.isError || health.data?.status === 'ALERT') && (
+            <p role="alert" className="text-state-warning">
+              {label('nightlyAlert')}:{' '}
+              {health.data?.reason_code || label('healthUnavailable')}
+            </p>
+          )}
           <p className="mt-2 text-xs text-text-secondary">
             {label('source')}: {runs.data?.source_revision || '—'} ·{' '}
             {label('updated')}: {date(op?.updated_at)}
@@ -330,9 +633,14 @@ export default function AdminBusinessDocumentsQuality() {
           onClick={() => {
             runs.refetch();
             campaigns.refetch();
-            operations.refetch();
-            jobsPage.refetch();
+            if (!technical) {
+              operations.refetch();
+              jobsPage.refetch();
+            } else if (tab === 'operations') {
+              technicalOperations.refetch();
+            }
             models.refetch();
+            health.refetch();
           }}
         >
           <RefreshCw className="mr-2 size-4" />
@@ -355,7 +663,7 @@ export default function AdminBusinessDocumentsQuality() {
       <nav
         className="flex gap-1 overflow-x-auto border-b border-border-button px-6"
         role="tablist"
-        aria-label={label('title')}
+        aria-label={label(technical ? 'technicalTitle' : 'title')}
       >
         {tabs.map((value) => (
           <button
@@ -366,12 +674,92 @@ export default function AdminBusinessDocumentsQuality() {
             className={`shrink-0 border-b-2 px-4 py-3 text-sm ${tab === value ? 'border-accent-primary text-text-primary' : 'border-transparent text-text-secondary'}`}
             onClick={() => change('tab', value)}
           >
-            {label(`tabs.${value}`)}
+            {label(
+              technical && value === 'operations'
+                ? 'technicalOperationsTab'
+                : `tabs.${value}`,
+            )}
           </button>
         ))}
       </nav>
 
       <div className="min-h-0 flex-1 overflow-auto p-6" role="tabpanel">
+        {technical && tab === 'overview' && latestRun?.report && (
+          <div role="status" className="mb-4 space-y-1 text-sm">
+            <p>
+              {label('qualityStatus')}:{' '}
+              <span
+                className={statusColor(
+                  latestRun.report.quality_status || 'UNKNOWN',
+                )}
+              >
+                {latestRun.report.quality_status || 'UNKNOWN'}
+              </span>
+            </p>
+            <p>
+              {label('executionEvidence')}:{' '}
+              {latestRun.report.evidence_status || 'INCOMPLETE'} ·{' '}
+              {latestRun.report.executed_cases ?? 0}/
+              {latestRun.report.expected_cases ?? '—'}
+            </p>
+            {latestRun.report.alignment_metrics && (
+              <dl>
+                {Object.entries(latestRun.report.alignment_metrics).map(
+                  ([key, value]) => (
+                    <div key={key}>
+                      <dt>{label(`alignmentMetrics.${key}`)}</dt>
+                      <dd>{value == null ? '—' : number(value)}</dd>
+                    </div>
+                  ),
+                )}
+              </dl>
+            )}
+            {latestRun.report.alignment_quality && (
+              <SemanticQuality
+                quality={latestRun.report.alignment_quality}
+                label={label}
+                number={number}
+              />
+            )}
+            {latestRun.report.nightly_experiments && (
+              <NightlyExperiments
+                experiments={latestRun.report.nightly_experiments}
+                label={label}
+              />
+            )}
+          </div>
+        )}
+        {technical && tab === 'operations' && (
+          <div className="space-y-4">
+            <div className="flex flex-wrap gap-3">
+              {([1, 7, 30] as const).map((value) => (
+                <Button
+                  key={value}
+                  size="sm"
+                  variant={days === value ? 'secondary' : 'ghost'}
+                  aria-pressed={days === value}
+                  onClick={() => change('days', String(value))}
+                >
+                  {label(`days.${value}`)}
+                </Button>
+              ))}
+            </div>
+            {technicalOperations.isLoading && (
+              <p role="status">{label('loading')}</p>
+            )}
+            {technicalOperations.error && (
+              <p role="alert">{label('loadError')}</p>
+            )}
+            {technicalOperations.data && !technicalOperations.error && (
+              <AlignmentOperations
+                data={technicalOperations.data}
+                label={label}
+                number={number}
+                date={date}
+              />
+            )}
+          </div>
+        )}
         {(runs.error || campaigns.error) && (
           <p role="alert" className="text-state-error">
             {label('runsLoadError')}
@@ -579,6 +967,11 @@ export default function AdminBusinessDocumentsQuality() {
             )}
             {chosenCampaign && (
               <div className="rounded-lg border border-border-button bg-bg-card p-5">
+                {technical && !technicalComparable && (
+                  <p role="status" className="mb-3 text-state-warning">
+                    {label('comparisonNotQualified')}
+                  </p>
+                )}
                 <p className="mb-3 text-sm text-text-secondary">
                   {label('source')}: {chosenCampaign.source_revision} ·{' '}
                   {label('baseline')}: {chosenCampaign.baseline_status || '—'} ·{' '}
@@ -622,9 +1015,10 @@ export default function AdminBusinessDocumentsQuality() {
                         <th className="py-2">{label('rank')}</th>
                         <th>{label('models')}</th>
                         <th>{label('status')}</th>
+                        {technical && <th>{label('executionEvidence')}</th>}
                         <th>{label('cases')}</th>
                         <th>{label('p0Pass')}</th>
-                        <th>{label('score')}</th>
+                        {!technical && <th>{label('score')}</th>}
                         <th>{label('duration')}</th>
                         <th>{label('tokens')}</th>
                       </tr>
@@ -670,20 +1064,27 @@ export default function AdminBusinessDocumentsQuality() {
                             <td className={statusColor(run.status)}>
                               {label(`statuses.${run.status}`)}
                             </td>
+                            {technical && (
+                              <td>
+                                {run.report?.evidence_status || 'INCOMPLETE'}
+                              </td>
+                            )}
                             <td>
                               {run.report?.executed_cases ?? 0}/
-                              {run.report?.expected_cases ?? 5}
+                              {run.report?.expected_cases ?? '—'}
                             </td>
                             <td>
                               {complete && run.report?.p0_case_pass_rate != null
                                 ? `${(run.report.p0_case_pass_rate * 100).toFixed(0)}%`
                                 : '—'}
                             </td>
-                            <td>
-                              {complete && run.report?.weighted_score != null
-                                ? `${run.report.weighted_score.toFixed(2)}/4`
-                                : '—'}
-                            </td>
+                            {!technical && (
+                              <td>
+                                {complete && run.report?.weighted_score != null
+                                  ? `${run.report.weighted_score.toFixed(2)}/4`
+                                  : '—'}
+                              </td>
+                            )}
                             <td>
                               {run.report?.duration_ms != null
                                 ? `${number(Math.round(run.report.duration_ms / 1000))} s`
@@ -782,8 +1183,8 @@ export default function AdminBusinessDocumentsQuality() {
                       Boolean(
                         modelFilter &&
                         visibleHistory[index + 1] &&
-                        fingerprint(run) !==
-                          fingerprint(visibleHistory[index + 1]),
+                        comparisonFingerprint(run) !==
+                          comparisonFingerprint(visibleHistory[index + 1]),
                       ),
                     ),
                   )
@@ -796,7 +1197,7 @@ export default function AdminBusinessDocumentsQuality() {
           </div>
         )}
 
-        {tab === 'operations' && (
+        {tab === 'operations' && !technical && (
           <div className="space-y-6">
             <div className="flex flex-wrap items-center gap-3">
               <h2 className="font-medium text-text-primary">
@@ -1077,6 +1478,27 @@ export default function AdminBusinessDocumentsQuality() {
                   {selectedDetail.source_revision} ·{' '}
                   {date(selectedDetail.finished_at)}
                 </p>
+                {technical && (
+                  <p>
+                    {label('qualityStatus')}:{' '}
+                    {selectedDetail.report?.quality_status || 'UNKNOWN'} ·{' '}
+                    {label('executionEvidence')}:{' '}
+                    {selectedDetail.report?.evidence_status || 'INCOMPLETE'}
+                  </p>
+                )}
+                {technical && selectedDetail.report?.alignment_quality && (
+                  <SemanticQuality
+                    quality={selectedDetail.report.alignment_quality}
+                    label={label}
+                    number={number}
+                  />
+                )}
+                {technical && selectedDetail.report?.nightly_experiments && (
+                  <NightlyExperiments
+                    experiments={selectedDetail.report.nightly_experiments}
+                    label={label}
+                  />
+                )}
                 {(selectedDetail.source_revision !==
                   runs.data?.source_revision ||
                   selectedDetail.source_revision === 'unverified' ||

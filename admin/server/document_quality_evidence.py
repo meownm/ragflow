@@ -79,8 +79,17 @@ def _prune() -> None:
         except (ValueError, OSError):
             continue
     finished.sort()
-    # Preserve the latest completed execution and running executions within retention.
-    for stamp, directory, size in finished[:-1]:
+    latest = {}
+    for _stamp, directory, _size in finished:
+        try:
+            product = json.loads((directory / "manifest.json").read_text(encoding="utf-8")).get("document_type", "business_requirements")
+            latest[product] = directory
+        except (OSError, ValueError):
+            continue
+    # Each product keeps its last completed execution independently.
+    for stamp, directory, size in finished:
+        if directory in latest.values():
+            continue
         if now - stamp > days * 86400 or total > maximum:
             shutil.rmtree(directory)
             total -= size

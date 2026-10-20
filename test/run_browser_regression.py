@@ -1,15 +1,14 @@
 """Run mocked browser journeys against the built SPA without a live backend."""
 
 import argparse
-from functools import partial
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import os
-from pathlib import Path
 import subprocess
 import sys
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from threading import Thread
 from urllib.parse import urlsplit
-
 
 ROOT = Path(__file__).resolve().parents[1]
 SUITES = [
@@ -18,6 +17,8 @@ SUITES = [
     "test/playwright/e2e/test_business_documents_access_ui.py",
     "test/playwright/e2e/test_business_documents_ui.py",
     "test/playwright/e2e/test_linked_documents_ui.py",
+    "test/playwright/e2e/test_alignment_ui.py",
+    "test/playwright/e2e/test_document_quality_ui.py",
     "test/playwright/e2e/test_navigation_visibility_admin.py",
     "test/playwright/e2e/test_auth_boundaries_ui.py",
     "test/playwright/e2e/test_managed_datasets_access_ui.py",
@@ -55,9 +56,11 @@ class SPAHandler(SimpleHTTPRequestHandler):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--browser", choices=("chromium", "firefox", "webkit"), default="chromium")
+    parser.add_argument("--dist-root", type=Path, default=ROOT / "web" / "dist")
+    parser.add_argument("--suite", action="append", choices=SUITES)
     parser.add_argument("pytest_args", nargs="*")
     args = parser.parse_args()
-    dist = ROOT / "web" / "dist"
+    dist = args.dist_root.resolve()
     if not (dist / "index.html").is_file():
         parser.error("Build the frontend first: cd web && pnpm build")
     server = SPAServer(("127.0.0.1", 0), partial(SPAHandler, directory=str(dist)))
@@ -65,7 +68,7 @@ def main():
     thread.start()
     env = {**os.environ, "RAGFLOW_BASE_URL": f"http://127.0.0.1:{server.server_port}", "PW_BROWSER": args.browser}
     try:
-        return subprocess.call([sys.executable, "-m", "pytest", *SUITES, *args.pytest_args], cwd=ROOT, env=env)
+        return subprocess.call([sys.executable, "-m", "pytest", *(args.suite or SUITES), *args.pytest_args], cwd=ROOT, env=env)
     finally:
         server.shutdown()
         server.server_close()

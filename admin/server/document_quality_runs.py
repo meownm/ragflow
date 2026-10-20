@@ -1,33 +1,42 @@
 """Durable scheduling and execution of Business Documents quality checks."""
 
-import json
 import hashlib
 import importlib.util
+import json
 import logging
 import os
-from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
 import time
 from datetime import datetime
 from math import isfinite
-import re
-from zoneinfo import ZoneInfo
+from pathlib import Path
+
+from document_quality_evidence import evidence_available, record_quality_evidence
+from document_quality_models import quality_model_catalog, quality_model_configuration, quality_model_digest
 
 from api.db.db_models import BusinessDocumentQualityCampaign, BusinessDocumentQualityRun
+from business_documents.domain.job_recovery import REPAIRABLE_OUTPUT_CODES, TRANSIENT_FAILURE_CODES
+from common.document_quality_schedule import MONTHLY_HOUR, MOSCOW, NIGHTLY_HOUR
 from common.misc_utils import get_uuid
 from common.time_utils import current_timestamp
 from tools.quality.verify_business_document_quality_report import QualityGateFailed, verify_report
-from document_quality_models import quality_model_catalog, quality_model_configuration, quality_model_digest
-from document_quality_evidence import evidence_available, record_quality_evidence
-from business_documents.domain.job_recovery import REPAIRABLE_OUTPUT_CODES, TRANSIENT_FAILURE_CODES
 
+_logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parents[2]
-NIGHTLY_HOUR = 2
-MONTHLY_HOUR = 3
-MOSCOW = ZoneInfo("Europe/Moscow")
+BUSINESS_REQUIREMENTS = "business_requirements"
+TECHNICAL_SPECIFICATION = "technical_specification"
+
+
+def _document_type(value):
+    if value not in (BUSINESS_REQUIREMENTS, TECHNICAL_SPECIFICATION):
+        raise ValueError("Unknown document quality product")
+    return value
+
+
 RUN_TIMEOUT_SECONDS = 20 * 60
 _SAFE_ID = re.compile(r"^[A-Za-z0-9_:-]{1,80}$")
 _SAFE_LABEL = re.compile(r"^[A-Za-z0-9._:/-]{1,256}$")
@@ -148,7 +157,7 @@ def _source_fingerprint() -> str | None:
     if _source_revision() != "unverified" and os.environ.get("RAGFLOW_QA_SOURCE_DIRTY") != "1":
         return None
     digest = hashlib.sha256()
-    for directory in ("admin/server", "api", "agent", "business_documents", "common", "rag", "test/evals/business_documents", "tools/quality"):
+    for directory in ("admin/server", "api", "agent", "business_documents", "common", "rag", "test/evals/business_documents", "test/evals/technical_specifications", "tools/quality"):
         for path in sorted((ROOT / directory).rglob("*")):
             if not path.is_file() or path.suffix not in {".py", ".json", ".md"}:
                 continue
@@ -241,9 +250,15 @@ def _public_report(value, *, detail: bool) -> dict | None:
 
 
 def _public_run(row: BusinessDocumentQualityRun, *, detail: bool = False) -> dict:
-    report = _public_report(row.report, detail=detail)
+    if getattr(row, "document_type", BUSINESS_REQUIREMENTS) == TECHNICAL_SPECIFICATION:
+        from technical_specification_quality import public_report
+
+        report = public_report(row.report)
+    else:
+        report = _public_report(row.report, detail=detail)
     return {
         "id": row.id,
+        "document_type": getattr(row, "document_type", BUSINESS_REQUIREMENTS),
         "trigger": row.trigger,
         "status": row.status,
         "requested_at": row.create_time,
@@ -262,17 +277,19 @@ def _public_run(row: BusinessDocumentQualityRun, *, detail: bool = False) -> dic
     }
 
 
-def list_quality_runs() -> dict:
-    recent = list(BusinessDocumentQualityRun.select().order_by(BusinessDocumentQualityRun.create_time.desc()).limit(500))
-    monthly = BusinessDocumentQualityRun.select().where(BusinessDocumentQualityRun.trigger == "MONTHLY").order_by(BusinessDocumentQualityRun.create_time.desc()).limit(12)
+def list_quality_runs(document_type=BUSINESS_REQUIREMENTS) -> dict:
+    product = _document_type(document_type)
+    query = BusinessDocumentQualityRun.select().where(BusinessDocumentQualityRun.document_type == product)
+    recent = list(query.order_by(BusinessDocumentQualityRun.create_time.desc()).limit(500))
+    monthly = query.where(BusinessDocumentQualityRun.trigger == "MONTHLY").order_by(BusinessDocumentQualityRun.create_time.desc()).limit(12)
     rows = {row.id: row for row in (*recent, *monthly)}
     ordered = sorted(rows.values(), key=lambda row: (row.create_time, row.id), reverse=True)
-    total = BusinessDocumentQualityRun.select().count()
+    total = query.count()
     return {"configured": bool(_configured_tenant()), "source_revision": _source_revision(), "total": total, "truncated": total > len(ordered), "runs": [_public_run(row) for row in ordered]}
 
 
-def get_quality_run(run_id: str) -> dict | None:
-    row = BusinessDocumentQualityRun.get_or_none(BusinessDocumentQualityRun.id == run_id)
+def get_quality_run(run_id: str, document_type=BUSINESS_REQUIREMENTS) -> dict | None:
+    row = BusinessDocumentQualityRun.get_or_none((BusinessDocumentQualityRun.id == run_id) & (BusinessDocumentQualityRun.document_type == _document_type(document_type)))
     return _public_run(row, detail=True) if row else None
 
 
@@ -281,6 +298,8 @@ def _public_campaign(row: BusinessDocumentQualityCampaign, *, detail: bool = Fal
     return {
         "id": row.id,
         "status": row.status,
+        "document_type": getattr(row, "document_type", BUSINESS_REQUIREMENTS),
+        "quality_status": "FAIL" if any(item.status == "FAIL" for item in runs) else "PASS" if runs and all(item.status == "PASS" for item in runs) else "UNKNOWN",
         "source_revision": row.source_revision,
         "requested_at": row.create_time,
         "started_at": row.started_at,
@@ -294,31 +313,40 @@ def _public_campaign(row: BusinessDocumentQualityCampaign, *, detail: bool = Fal
     }
 
 
-def list_quality_campaigns() -> dict:
-    rows = BusinessDocumentQualityCampaign.select().order_by(BusinessDocumentQualityCampaign.create_time.desc()).limit(30)
+def list_quality_campaigns(document_type=BUSINESS_REQUIREMENTS) -> dict:
+    rows = (
+        BusinessDocumentQualityCampaign.select()
+        .where(BusinessDocumentQualityCampaign.document_type == _document_type(document_type))
+        .order_by(BusinessDocumentQualityCampaign.create_time.desc())
+        .limit(30)
+    )
     return {"campaigns": [_public_campaign(row) for row in rows]}
 
 
-def get_quality_campaign(campaign_id: str) -> dict | None:
-    row = BusinessDocumentQualityCampaign.get_or_none(BusinessDocumentQualityCampaign.id == campaign_id)
+def get_quality_campaign(campaign_id: str, document_type=BUSINESS_REQUIREMENTS) -> dict | None:
+    row = BusinessDocumentQualityCampaign.get_or_none((BusinessDocumentQualityCampaign.id == campaign_id) & (BusinessDocumentQualityCampaign.document_type == _document_type(document_type)))
     return _public_campaign(row, detail=True) if row else None
 
 
-def list_quality_models() -> dict:
+def list_quality_models(document_type=BUSINESS_REQUIREMENTS) -> dict:
+    product = _document_type(document_type)
     tenant = _configured_tenant()
     if not tenant:
         return {"configured": False, "models": [], "errors": [], "case_ids": []}
-    return {"configured": True, "case_ids": sorted(_known_case_ids()), **quality_model_catalog(tenant)}
+    return {"configured": True, "case_ids": sorted(_known_case_ids() if product == BUSINESS_REQUIREMENTS else _known_case_ids(product)), **quality_model_catalog(tenant)}
 
 
-def enqueue_quality_run(trigger: str, *, requested_by: str | None = None, schedule_key: str | None = None, model: str | None = None, scope: str = "FULL", case_id: str | None = None) -> dict:
+def enqueue_quality_run(
+    trigger: str, *, requested_by: str | None = None, schedule_key: str | None = None, model: str | None = None, scope: str = "FULL", case_id: str | None = None, document_type=BUSINESS_REQUIREMENTS
+) -> dict:
+    product = _document_type(document_type)
     if not _configured_tenant():
         raise ValueError("Dedicated Business Documents quality tenant is not configured")
     if trigger not in {"MANUAL", "NIGHTLY", "MONTHLY"}:
         raise ValueError("Unknown quality run trigger")
     if scope not in {"FULL", "CASE"} or (scope == "CASE") != bool(case_id):
         raise ValueError("Choose a full run or one case")
-    if case_id and (not isinstance(case_id, str) or not _SAFE_ID.fullmatch(case_id) or case_id not in _known_case_ids()):
+    if case_id and (not isinstance(case_id, str) or not _SAFE_ID.fullmatch(case_id) or case_id not in (_known_case_ids() if product == BUSINESS_REQUIREMENTS else _known_case_ids(product))):
         raise ValueError("Unknown quality case")
     if model is not None and (not isinstance(model, str) or not model or len(model) > 256):
         raise ValueError("Unknown quality model")
@@ -332,6 +360,7 @@ def enqueue_quality_run(trigger: str, *, requested_by: str | None = None, schedu
             BusinessDocumentQualityRun.select()
             .where(
                 (BusinessDocumentQualityRun.trigger == "MANUAL")
+                & (BusinessDocumentQualityRun.document_type == product)
                 & (BusinessDocumentQualityRun.status.in_(("PENDING", "RUNNING")))
                 & (BusinessDocumentQualityRun.model_name == (selected["name"] if selected else None))
                 & (BusinessDocumentQualityRun.scope == scope)
@@ -342,11 +371,12 @@ def enqueue_quality_run(trigger: str, *, requested_by: str | None = None, schedu
         )
         if active is not None:
             return _public_run(active)
-        identity = json.dumps([selected["digest"] if selected else "default", scope, case_id], separators=(",", ":"))
+        identity = json.dumps([product, selected["digest"] if selected else "default", scope, case_id], separators=(",", ":"))
         schedule_key = "manual:" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:56]
     now = current_timestamp()
     values = {
         "id": get_uuid(),
+        "document_type": product,
         "schedule_key": schedule_key,
         "trigger": trigger,
         "status": "PENDING",
@@ -366,14 +396,19 @@ def enqueue_quality_run(trigger: str, *, requested_by: str | None = None, schedu
     return _public_run(row)
 
 
-def _known_case_ids() -> set[str]:
+def _known_case_ids(document_type=BUSINESS_REQUIREMENTS) -> set[str]:
+    if document_type == TECHNICAL_SPECIFICATION:
+        from test.evals.technical_specifications.alignment.corpus import CASES
+
+        return {case[0] for case in CASES}
     suite = ROOT / "agent/business_requirements/golden_model_quality/v2.json"
     value = json.loads(suite.read_text(encoding="utf-8"))
     return {item["id"] for item in value.get("cases", []) if isinstance(item, dict) and isinstance(item.get("id"), str)}
 
 
-def enqueue_nightly_campaign(day: str) -> dict:
-    key = f"nightly:{day}"
+def enqueue_nightly_campaign(day: str, document_type=BUSINESS_REQUIREMENTS) -> dict:
+    product = _document_type(document_type)
+    key = f"nightly:{day}" if product == BUSINESS_REQUIREMENTS else f"tz-nightly:{day}"
     existing = BusinessDocumentQualityCampaign.get_or_none(BusinessDocumentQualityCampaign.schedule_key == key)
     retry_catalog = (
         existing is not None
@@ -391,7 +426,7 @@ def enqueue_nightly_campaign(day: str) -> dict:
         reason_code = "CATALOG_PARTIAL" if catalog["errors"] else "NO_COMPLETION_MODELS" if not catalog["models"] else None
     except (OSError, ValueError, TimeoutError, LookupError) as error:
         if existing is None:
-            logging.exception("Business Documents quality model catalog is unavailable")
+            _logger.exception("Business Documents quality model catalog is unavailable")
         catalog = {"models": [], "errors": ["CATALOG_UNAVAILABLE"]}
         reason_code = "QA_TENANT_MISSING" if isinstance(error, LookupError) else "CATALOG_UNAVAILABLE"
     if retry_catalog and not catalog["models"] and reason_code == existing.reason_code:
@@ -405,6 +440,7 @@ def enqueue_nightly_campaign(day: str) -> dict:
             schedule_key=key,
             defaults={
                 "id": get_uuid(),
+                "document_type": product,
                 "source_revision": _source_revision(),
                 "models": catalog,
                 "reason_code": reason_code,
@@ -426,6 +462,7 @@ def enqueue_nightly_campaign(day: str) -> dict:
             for item in catalog["models"]:
                 BusinessDocumentQualityRun.create(
                     id=get_uuid(),
+                    document_type=product,
                     trigger="NIGHTLY",
                     status="PENDING",
                     campaign_id=campaign.id,
@@ -445,8 +482,10 @@ def schedule_due(now: datetime | None = None) -> None:
     local = (now or datetime.now(MOSCOW)).astimezone(MOSCOW)
     if local.hour >= NIGHTLY_HOUR:
         enqueue_nightly_campaign(local.date().isoformat())
+        enqueue_nightly_campaign(local.date().isoformat(), TECHNICAL_SPECIFICATION)
     if local.day > 1 or local.hour >= MONTHLY_HOUR:
         enqueue_quality_run("MONTHLY", schedule_key=f"monthly:{local.year:04d}-{local.month:02d}")
+        enqueue_quality_run("MONTHLY", schedule_key=f"tz-monthly:{local.year:04d}-{local.month:02d}", document_type=TECHNICAL_SPECIFICATION)
 
 
 def process_quality_cycle() -> bool:
@@ -454,7 +493,7 @@ def process_quality_cycle() -> bool:
     try:
         schedule_due()
     except Exception:
-        logging.exception("Business Documents quality scheduling failed")
+        _logger.exception("Business Documents quality scheduling failed")
     return process_next_run()
 
 
@@ -479,7 +518,7 @@ def _run_suite(test_path: str, env: dict[str, str], temp: Path, *, deadline: flo
             log.write(f"\nQuality suite exceeded {timeout:.1f} seconds\n")
             raise
     if completed.returncode:
-        logging.warning("Business Documents quality suite failed: %s (pytest exit %d)", test_path, completed.returncode)
+        _logger.warning("Business Documents quality suite failed: %s (pytest exit %d)", test_path, completed.returncode)
     return completed.returncode
 
 
@@ -668,6 +707,10 @@ def _comparison_signature(summary: dict) -> tuple:
 
 
 def _execute(row: BusinessDocumentQualityRun) -> tuple[str, dict | None, str | None]:
+    if getattr(row, "document_type", BUSINESS_REQUIREMENTS) == TECHNICAL_SPECIFICATION:
+        from technical_specification_quality import execute
+
+        return execute(row, ROOT, _configured_tenant(), _source_revision(), _source_fingerprint())
     current_revision = _source_revision()
     initial_fingerprint = _source_fingerprint()
     if not row.source_revision or current_revision == "unknown" or row.source_revision != current_revision:
@@ -793,10 +836,14 @@ def _execute(row: BusinessDocumentQualityRun) -> tuple[str, dict | None, str | N
 def _run_campaign_baseline(campaign: BusinessDocumentQualityCampaign) -> tuple[str, str | None]:
     if not _campaign_source_matches(campaign):
         return "INCOMPLETE", "SOURCE_CHANGED"
-    golden_test = ROOT / "test/evals/business_documents/test_golden_dialogue_harness.py"
-    if not golden_test.is_file() or importlib.util.find_spec("pytest") is None:
+    golden_test = ROOT / (
+        "test/unit_test/technical_specifications"
+        if getattr(campaign, "document_type", BUSINESS_REQUIREMENTS) == TECHNICAL_SPECIFICATION
+        else "test/evals/business_documents/test_golden_dialogue_harness.py"
+    )
+    if not golden_test.exists() or importlib.util.find_spec("pytest") is None:
         return "INCOMPLETE", "TEST_ASSETS_MISSING"
-    with record_quality_evidence("campaign", campaign.id, {"source_revision": campaign.source_revision}) as temp:
+    with record_quality_evidence("campaign", campaign.id, {"source_revision": campaign.source_revision, "document_type": getattr(campaign, "document_type", BUSINESS_REQUIREMENTS)}) as temp:
         env = {**os.environ, "BUSINESS_DOCUMENT_RELATED_FILE_SEARCH_ENABLED": "true", "BUSINESS_DOCUMENT_GOLDEN_REPORT": str(temp / "golden.json"), "PYTHONDONTWRITEBYTECODE": "1"}
         try:
             exit_code = _run_suite(str(golden_test), env, temp)
@@ -855,30 +902,64 @@ def _reason_code(status: str, reason: str | None) -> str | None:
 
 def process_next_run() -> bool:
     stale_before = current_timestamp() - (2 * RUN_TIMEOUT_SECONDS + 5 * 60) * 1000
+    from technical_specification_quality import execution_timeout
+
+    tz_stale_before = current_timestamp() - (execution_timeout() + 5 * 60) * 1000
+    tz_nightly_stale_before = current_timestamp() - (execution_timeout(nightly=True) + 5 * 60) * 1000
+    scheduled = BusinessDocumentQualityRun.trigger.in_(("NIGHTLY", "MONTHLY"))
     stale = list(
-        BusinessDocumentQualityRun.select(BusinessDocumentQualityRun.id, BusinessDocumentQualityRun.campaign_id).where(
-            (BusinessDocumentQualityRun.status == "RUNNING") & (BusinessDocumentQualityRun.started_at < stale_before)
+        BusinessDocumentQualityRun.select(BusinessDocumentQualityRun.id, BusinessDocumentQualityRun.campaign_id, BusinessDocumentQualityRun.started_at).where(
+            (BusinessDocumentQualityRun.status == "RUNNING")
+            & (
+                ((BusinessDocumentQualityRun.document_type == BUSINESS_REQUIREMENTS) & (BusinessDocumentQualityRun.started_at < stale_before))
+                | (
+                    (BusinessDocumentQualityRun.document_type == TECHNICAL_SPECIFICATION)
+                    & ((scheduled & (BusinessDocumentQualityRun.started_at < tz_nightly_stale_before)) | (~scheduled & (BusinessDocumentQualityRun.started_at < tz_stale_before)))
+                )
+            )
         )
     )
-    if stale:
-        BusinessDocumentQualityRun.update(
-            status="INCOMPLETE", schedule_key=None, finished_at=current_timestamp(), reason="Quality worker stopped before completion", reason_code="WORKER_STOPPED"
-        ).where(BusinessDocumentQualityRun.id.in_([item.id for item in stale])).execute()
-        for campaign_id in {item.campaign_id for item in stale if item.campaign_id}:
-            _refresh_campaign(campaign_id)
+    expired_campaigns = set()
+    for item in stale:
+        changed = (
+            BusinessDocumentQualityRun.update(status="INCOMPLETE", schedule_key=None, finished_at=current_timestamp(), reason="Quality worker stopped before completion", reason_code="WORKER_STOPPED")
+            .where((BusinessDocumentQualityRun.id == item.id) & (BusinessDocumentQualityRun.status == "RUNNING") & (BusinessDocumentQualityRun.started_at == item.started_at))
+            .execute()
+        )
+        if changed and item.campaign_id:
+            expired_campaigns.add(item.campaign_id)
+    for campaign_id in expired_campaigns:
+        _refresh_campaign(campaign_id)
     stale_campaigns = list(
         BusinessDocumentQualityCampaign.select().where(
             (BusinessDocumentQualityCampaign.status == "RUNNING") & (BusinessDocumentQualityCampaign.baseline_status.is_null(True)) & (BusinessDocumentQualityCampaign.started_at < stale_before)
         )
     )
     for campaign in stale_campaigns:
-        BusinessDocumentQualityCampaign.update(baseline_status="INCOMPLETE", reason_code="WORKER_STOPPED").where(BusinessDocumentQualityCampaign.id == campaign.id).execute()
+        changed = (
+            BusinessDocumentQualityCampaign.update(baseline_status="INCOMPLETE", reason_code="WORKER_STOPPED")
+            .where(
+                (BusinessDocumentQualityCampaign.id == campaign.id)
+                & (BusinessDocumentQualityCampaign.status == "RUNNING")
+                & (BusinessDocumentQualityCampaign.started_at == campaign.started_at)
+                & BusinessDocumentQualityCampaign.baseline_status.is_null(True)
+            )
+            .execute()
+        )
+        if not changed:
+            continue
         BusinessDocumentQualityRun.update(status="INCOMPLETE", reason_code="BASELINE_FAILED", reason="Nightly baseline did not pass", finished_at=current_timestamp()).where(
             (BusinessDocumentQualityRun.campaign_id == campaign.id) & (BusinessDocumentQualityRun.status == "PENDING")
         ).execute()
         _refresh_campaign(campaign.id)
     campaign = BusinessDocumentQualityCampaign.select().where(BusinessDocumentQualityCampaign.status == "PENDING").order_by(BusinessDocumentQualityCampaign.create_time).first()
-    row = BusinessDocumentQualityRun.select().where(BusinessDocumentQualityRun.status == "PENDING").order_by(BusinessDocumentQualityRun.create_time, BusinessDocumentQualityRun.id).first()
+    ready_campaigns = BusinessDocumentQualityCampaign.select(BusinessDocumentQualityCampaign.id).where(BusinessDocumentQualityCampaign.baseline_status == "PASS")
+    row = (
+        BusinessDocumentQualityRun.select()
+        .where((BusinessDocumentQualityRun.status == "PENDING") & (BusinessDocumentQualityRun.campaign_id.is_null(True) | BusinessDocumentQualityRun.campaign_id.in_(ready_campaigns)))
+        .order_by(BusinessDocumentQualityRun.create_time, BusinessDocumentQualityRun.id)
+        .first()
+    )
     if campaign is not None and (row is None or campaign.create_time <= row.create_time):
         started = current_timestamp()
         claimed = (
@@ -891,9 +972,20 @@ def process_next_run() -> bool:
         try:
             baseline_status, code = _run_campaign_baseline(campaign)
         except Exception:
-            logging.exception("Business Documents nightly baseline failed to run")
+            _logger.exception("Business Documents nightly baseline failed to run")
             baseline_status, code = "INCOMPLETE", "BASELINE_ERROR"
-        BusinessDocumentQualityCampaign.update(baseline_status=baseline_status, reason_code=code or campaign.reason_code).where(BusinessDocumentQualityCampaign.id == campaign.id).execute()
+        finalized = (
+            BusinessDocumentQualityCampaign.update(baseline_status=baseline_status, reason_code=code or campaign.reason_code)
+            .where(
+                (BusinessDocumentQualityCampaign.id == campaign.id)
+                & (BusinessDocumentQualityCampaign.status == "RUNNING")
+                & (BusinessDocumentQualityCampaign.started_at == started)
+                & BusinessDocumentQualityCampaign.baseline_status.is_null(True)
+            )
+            .execute()
+        )
+        if finalized != 1:
+            return True
         if baseline_status != "PASS":
             BusinessDocumentQualityRun.update(status="INCOMPLETE", reason_code="BASELINE_FAILED", reason="Nightly baseline did not pass", finished_at=current_timestamp()).where(
                 (BusinessDocumentQualityRun.campaign_id == campaign.id) & (BusinessDocumentQualityRun.status == "PENDING")
@@ -913,11 +1005,11 @@ def process_next_run() -> bool:
     try:
         status, report, reason = _execute(row)
     except Exception:
-        logging.exception("Business Documents quality run could not complete")
+        _logger.exception("Business Documents quality run could not complete")
         status, report, reason = "INCOMPLETE", None, "Quality runner failed or timed out"
     BusinessDocumentQualityRun.update(
         status=status, schedule_key=None if row.trigger == "MANUAL" else row.schedule_key, report=report, reason=reason, reason_code=_reason_code(status, reason), finished_at=current_timestamp()
-    ).where(BusinessDocumentQualityRun.id == row.id).execute()
+    ).where((BusinessDocumentQualityRun.id == row.id) & (BusinessDocumentQualityRun.status == "RUNNING") & (BusinessDocumentQualityRun.started_at == started)).execute()
     if row.campaign_id:
         _refresh_campaign(row.campaign_id)
     return True

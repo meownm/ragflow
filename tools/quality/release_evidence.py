@@ -27,6 +27,52 @@ HEX_DIGEST = re.compile(r"^[0-9a-f]{64}$")
 CLI_PLATFORMS = {f"{os}-{arch}" for os in ("linux", "darwin", "windows") for arch in ("amd64", "arm64")}
 REQUIRED_MODELS = {"qwen3.8:latest", "qwen3.6:27b", "bge-m3:latest"}
 BOOTSTRAP_BASELINE = Path(__file__).with_name("release-bootstrap-baseline.json")
+ALIGNMENT_ROOT = Path(__file__).resolve().parents[2]
+ALIGNMENT_IMPLEMENTATION = (
+    "api/technical_specifications/alignment.py",
+    "api/technical_specifications/alignment_ai.py",
+    "api/technical_specifications/alignment_budget.py",
+    "api/technical_specifications/domain.py",
+    "test/evals/technical_specifications/alignment/evaluate.py",
+    "test/evals/technical_specifications/alignment/metrics.py",
+    "test/evals/technical_specifications/alignment/evidence.py",
+    "test/evals/technical_specifications/alignment/real_limits.py",
+    "test/evals/technical_specifications/alignment/experiments.py",
+    "test/evals/technical_specifications/alignment/holdout.py",
+    "test/evals/technical_specifications/alignment/nightly.py",
+    "test/evals/technical_specifications/alignment/proxy_evidence.py",
+    "test/evals/technical_specifications/alignment/run_live.py",
+)
+
+
+class AlignmentEvidenceIncomplete(ValueError):
+    """A report cannot establish qualification of the candidate bytes."""
+
+
+def alignment_evidence_identity(root: Path = ALIGNMENT_ROOT) -> dict[str, str]:
+    """Hash the actual corpus and bounded evaluator implementation, not case counts."""
+    files = {name: _sha256(root / name) for name in ALIGNMENT_IMPLEMENTATION}
+    return {
+        "corpus_sha256": _sha256(root / "test/evals/technical_specifications/alignment/corpus.py"),
+        "implementation_sha256": hashlib.sha256(json.dumps(files, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
+    }
+
+
+def verify_alignment_evidence(report: dict, revision: str, image_digest: str) -> str:
+    """Recompute the full live corpus; summaries and diagnostic runs cannot qualify."""
+    if (
+        report.get("source_revision") != revision
+        or report.get("source_dirty") is not False
+        or report.get("image_digest") != image_digest
+        or any(report.get(key) != value for key, value in alignment_evidence_identity().items())
+    ):
+        raise AlignmentEvidenceIncomplete("Technical Specifications evidence does not identify the clean candidate bytes")
+    from test.evals.technical_specifications.alignment.evidence import EvidenceIncomplete, verify_execution
+
+    try:
+        return verify_execution(report)
+    except EvidenceIncomplete as error:
+        raise AlignmentEvidenceIncomplete(str(error)) from error
 
 
 def verify_branch_coverage(report: Path, minimum: int = 79) -> dict:
@@ -336,6 +382,8 @@ def verify_release(
     source_workbench_path: Path,
     business_documents_path: Path,
     source_candidate: Path | None = None,
+    *,
+    technical_specifications_path: Path | None = None,
 ) -> dict:
     """Return pass/fail/incomplete; quality thresholds remain baseline observations."""
     report: dict = {"schema": 1, "status": "incomplete", "checks": {}, "artifacts": {}, "quality_baseline": {}}
@@ -344,7 +392,20 @@ def verify_release(
 
     def read(name: str, path: Path) -> dict | None:
         try:
-            data = json.loads(path.read_text(encoding="utf-8-sig"))
+
+            def unique_pairs(items):
+                value = {}
+                for key, item in items:
+                    if key in value:
+                        raise ValueError("duplicate quality evidence key")
+                    value[key] = item
+                return value
+
+            def invalid_constant(_value):
+                raise ValueError("non-finite quality evidence value")
+
+            options = {"object_pairs_hook": unique_pairs, "parse_constant": invalid_constant} if name == "technical_specifications" else {}
+            data = json.loads(path.read_text(encoding="utf-8-sig"), **options)
             if not isinstance(data, dict):
                 raise ValueError("expected JSON object")
             report["artifacts"][name] = _artifact(path)
@@ -357,6 +418,9 @@ def verify_release(
     deployment = read("deployment", deployment_path)
     workbench = read("source_workbench", source_workbench_path)
     business = read("business_documents", business_documents_path)
+    technical = read("technical_specifications", technical_specifications_path) if technical_specifications_path is not None else None
+    if technical_specifications_path is None:
+        missing.append("Technical Specifications quality report is required")
     if receipt is not None:
         try:
             validate_receipt(receipt)
@@ -442,6 +506,17 @@ def verify_release(
                 missing.append("Business Documents baseline is not from the candidate revision")
             else:
                 report["quality_baseline"]["business_documents"] = business["status"].lower()
+        if technical is not None:
+            try:
+                quality = verify_alignment_evidence(technical, revision, receipt["image"]["digest"])
+            except AlignmentEvidenceIncomplete as error:
+                missing.append(str(error))
+            except (ValueError, KeyError, TypeError, OSError):
+                failures.append("Technical Specifications quality report is invalid")
+            else:
+                report["quality_baseline"]["technical_specifications"] = quality
+                if quality != "pass":
+                    failures.append("Technical Specifications quality gate failed")
 
     if source_candidate is not None:
         try:
@@ -461,7 +536,9 @@ def verify_release(
     report["status"] = "fail" if failures else "incomplete" if missing else "pass"
     report["evidence_status"] = report["status"]
     observed_quality = report["quality_baseline"]
-    report["quality_status"] = "incomplete" if set(observed_quality) != {"source_workbench", "business_documents"} else "fail" if "fail" in observed_quality.values() else "pass"
+    report["quality_status"] = (
+        "incomplete" if set(observed_quality) != {"source_workbench", "business_documents", "technical_specifications"} else "fail" if "fail" in observed_quality.values() else "pass"
+    )
     return report
 
 
@@ -474,7 +551,7 @@ def main() -> int:
     receipt.add_argument("--engine-tests-required", choices=("true", "false"), default="true")
     receipt.add_argument("--engine-test-reason", default="engine-boundary-changed")
     verify = sub.add_parser("verify")
-    for name in ("receipt", "deployment", "source-workbench-report", "business-documents-report", "output"):
+    for name in ("receipt", "deployment", "source-workbench-report", "business-documents-report", "technical-specifications-report", "output"):
         verify.add_argument(f"--{name}", type=Path, required=True)
     verify.add_argument("--source-candidate", type=Path)
     args = parser.parse_args()
@@ -499,7 +576,9 @@ def main() -> int:
         destination = Path(args.output)
         status = 0
     else:
-        data = verify_release(args.receipt, args.deployment, args.source_workbench_report, args.business_documents_report, args.source_candidate)
+        data = verify_release(
+            args.receipt, args.deployment, args.source_workbench_report, args.business_documents_report, args.source_candidate, technical_specifications_path=args.technical_specifications_report
+        )
         destination = args.output
         status = {"pass": 0, "fail": 1, "incomplete": 2}[data["status"]]
     destination.parent.mkdir(parents=True, exist_ok=True)

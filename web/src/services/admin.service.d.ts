@@ -292,6 +292,27 @@ declare namespace AdminService {
     | 'ingestion'
     | 'connectors';
 
+  export type SpecificationOperations = {
+    document_type: 'technical_specification';
+    scope: 'RECORDED_ALIGNMENT_ATTEMPTS';
+    updated_at: number;
+    days: 1 | 7 | 30;
+    earliest_observation_at: number | null;
+    counts: Record<string, number>;
+    terminal_attempts: number;
+    execution_completion_rate: number | null;
+    report_completion_rate: number | null;
+    total_tokens: number | null;
+    known_spent_tokens: number;
+    reserved_tokens: number | null;
+    known_reserved_tokens: number;
+    durations: Record<
+      'check' | 'model',
+      { measured: number; mean_ms: number | null; p95_ms: number | null }
+    >;
+    reasons: { code: string; count: number }[];
+  };
+
   export type DocumentQualityDashboard = {
     updated_at: number;
     days: 1 | 7 | 30;
@@ -365,7 +386,11 @@ declare namespace AdminService {
   };
   export type DocumentQualityReport = {
     status: string;
+    document_type?: 'business_requirements' | 'technical_specification';
+    quality_status?: 'PASS' | 'FAIL' | 'UNKNOWN';
+    evidence_status?: 'VERIFIED' | 'INCOMPLETE';
     source_dirty?: boolean | null;
+    source_fingerprint?: string | null;
     suite_id?: string;
     suite_version?: string;
     suite_sha256?: string;
@@ -384,6 +409,33 @@ declare namespace AdminService {
     grounded_reference_precision?: number | null;
     p0_case_pass_rate?: number | null;
     all_case_pass_rate?: number | null;
+    alignment_metrics?: Record<string, number | null>;
+    nightly_experiments?: {
+      experiment: 'REPEATS' | 'ADMISSION' | 'REASONING';
+      quality_status: 'PASS' | 'FAIL' | 'UNKNOWN';
+      evidence_status: 'INCOMPLETE';
+      expected_cases: number | null;
+      executed_cases: number | null;
+      total_tokens: number | null;
+    }[];
+    alignment_quality?: {
+      expected_fragments: number;
+      scored_fragments: number;
+      unscored_fragments: number;
+      undetermined_fragments: number;
+      contradiction_tp: number;
+      contradiction_fp: number;
+      contradiction_fn: number;
+      contradiction_tn: number;
+      measures: Record<
+        string,
+        {
+          numerator: number;
+          denominator: number;
+          value: number | null;
+        }
+      >;
+    } | null;
     criterion_scores?: Record<string, number>;
     metrics?: Record<string, number>;
     gate_checks?: DocumentQualityGateCheck[];
@@ -433,6 +485,7 @@ declare namespace AdminService {
   export type DocumentQualityCampaign = {
     id: string;
     status: 'PENDING' | 'RUNNING' | 'COMPLETE' | 'PARTIAL' | 'INCOMPLETE';
+    quality_status?: 'PASS' | 'FAIL' | 'UNKNOWN';
     source_revision: string | null;
     requested_at: number;
     started_at: number | null;

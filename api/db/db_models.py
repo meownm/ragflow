@@ -970,6 +970,28 @@ class TechnicalSpecification(DataBaseModel):
         indexes = ((("tenant_id", "origin_key"), True),)
 
 
+class TechnicalSpecificationAlignmentObservation(DataBaseModel):
+    """Anonymous operational facts, atomically projected from owned attempts."""
+
+    id = CharField(max_length=32, primary_key=True)
+    accepted_at_ms = BigIntegerField(index=True)
+    observed_at_ms = BigIntegerField(default=current_timestamp, index=True)
+    finished_at_ms = BigIntegerField(null=True)
+    state = CharField(max_length=16)
+    execution_status = CharField(max_length=16)
+    report_complete = BooleanField(null=True)
+    error_code = CharField(max_length=64, null=True)
+    duration_ms = BigIntegerField(null=True)
+    model_duration_ms = BigIntegerField(null=True)
+    calls = IntegerField(null=True)
+    spent_tokens = BigIntegerField(null=True)
+    reserved_tokens = BigIntegerField(null=True)
+    usage_known = BooleanField(default=False)
+
+    class Meta:
+        db_table = "technical_specification_alignment_observation"
+
+
 class TechnicalSpecificationRevision(DataBaseModel):
     document_id = CharField(max_length=32)
     number = IntegerField()
@@ -2024,6 +2046,7 @@ class BusinessDocumentQualityCampaign(DataBaseModel):
     """One durable snapshot of the nightly Ollama model inventory."""
 
     id = CharField(max_length=32, primary_key=True)
+    document_type = CharField(max_length=32, default="business_requirements", index=True)
     schedule_key = CharField(max_length=64, unique=True)
     status = CharField(max_length=16, null=False, default="PENDING", index=True)
     source_revision = CharField(max_length=64, null=True)
@@ -2042,6 +2065,7 @@ class BusinessDocumentQualityRun(DataBaseModel):
     """Durable administrative evaluation request and its bounded result."""
 
     id = CharField(max_length=32, primary_key=True)
+    document_type = CharField(max_length=32, default="business_requirements", index=True)
     schedule_key = CharField(max_length=64, null=True, unique=True)
     trigger = CharField(max_length=16, null=False)
     status = CharField(max_length=16, null=False, default="PENDING", index=True)
@@ -2542,10 +2566,28 @@ def _migrate_user_external_credential_expiry(migrator):
     alter_db_add_column(migrator, "user_external_credential", "expiry_checked_at", BigIntegerField(null=True))
 
 
+def _migrate_document_quality_types(migrator):
+    """Repair legacy or interrupted product backfills in the owned quality tables.
+
+    Model defaults supply the value for current ORM writers. No server default
+    or change to unrelated migrations is introduced by this product boundary.
+    """
+    database = migrator.database
+    with database.atomic():
+        for table in ("business_document_quality_campaign", "business_document_quality_run"):
+            # Closed identifiers; IF NOT EXISTS also repairs a previously added,
+            # nullable column rather than skipping the rest of its migration.
+            database.execute_sql(f'ALTER TABLE "{table}" ADD COLUMN IF NOT EXISTS "document_type" VARCHAR(32)')
+            database.execute_sql(f'UPDATE "{table}" SET "document_type" = %s WHERE "document_type" IS NULL', ("business_requirements",))
+            database.execute_sql(f'ALTER TABLE "{table}" ALTER COLUMN "document_type" SET NOT NULL')
+            database.execute_sql(f'CREATE INDEX IF NOT EXISTS "{table}_document_type" ON "{table}" ("document_type")')
+
+
 def migrate_db():
     logging.disable(logging.ERROR)
     migrator = PostgresqlMigrator(DB)
     _migrate_user_external_credential_expiry(migrator)
+    _migrate_document_quality_types(migrator)
     alter_db_add_column(migrator, "business_document_sql_query_run", "kind", CharField(max_length=16, null=False, default="SQL", index=True))
     alter_db_add_column(migrator, "business_document_sql_query_run", "source_run_id", CharField(max_length=32, null=True, index=True))
     alter_db_add_column(migrator, "business_document_sql_query_run", "job_id", CharField(max_length=32, null=True, unique=True))

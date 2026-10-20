@@ -79,3 +79,17 @@ def test_retention_preserves_latest_and_active_but_removes_expired_interrupted(m
     with evidence.record_quality_evidence("run", "newest", {}):
         pass
     assert {path.name for path in root.iterdir()} == {"run-newest", "run-active"}
+
+
+def test_retention_keeps_last_completed_evidence_for_each_product(monkeypatch, tmp_path):
+    root = tmp_path / "evidence"
+    root.mkdir()
+    monkeypatch.setenv("BUSINESS_DOCUMENT_QUALITY_EVIDENCE_MAX_BYTES", "1")
+    now = time.time()
+    for index, product in enumerate(("business_requirements", "technical_specification")):
+        for suffix, age in (("old", 21), ("latest", 20)):
+            directory = root / f"run-{product}-{suffix}"
+            directory.mkdir()
+            (directory / "manifest.json").write_text(json.dumps({"state": "FINISHED", "document_type": product, "finished_at": now - age * 86400 + index}), encoding="utf-8")
+    evidence._prune()
+    assert {item.name for item in root.iterdir()} == {"run-business_requirements-latest", "run-technical_specification-latest"}

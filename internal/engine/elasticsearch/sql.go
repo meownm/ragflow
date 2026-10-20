@@ -44,7 +44,7 @@ const esSQLRetryAttempts = 2
 const esSQLRetryDelay = 3 * time.Second
 
 var whitespaceRe = regexp.MustCompile("[ `]+")
-var lktksMatchRe = regexp.MustCompile(`(?i) ("?[a-z_]+_l?tks"?)( like | ?= ?)'([^']+)'`)
+var lktksMatchRe = regexp.MustCompile(`(?i)([\s(])("?[a-z_]+_l?tks"?)( like | ?= ?)'([^']+)'`)
 
 // Preprocess normalizes SQL for ES: collapses whitespace/backticks,
 // strips '%', and rewrites `<field>_l?tks like/= 'value'` into a
@@ -60,8 +60,9 @@ func Preprocess(sql string) string {
 	var replaces []replacement
 	for _, m := range lktksMatchRe.FindAllStringSubmatchIndex(sql, -1) {
 		match := sql[m[0]:m[1]]
-		fld := sql[m[2]:m[3]]
-		val := sql[m[6]:m[7]]
+		boundary := sql[m[2]:m[3]]
+		fld := sql[m[4]:m[5]]
+		val := sql[m[8]:m[9]]
 		tokenized, err := tokenizer.Tokenize(val)
 		if err != nil {
 			continue
@@ -75,7 +76,7 @@ func Preprocess(sql string) string {
 			// fine comes from tokenizer.FineGrainedTokenize, which strips
 			// non-alphanumerics; defense-in-depth escape just in case a
 			// future tokenizer change reintroduces a quote.
-			new: fmt.Sprintf(" MATCH(%s, '%s', 'operator=OR;minimum_should_match=30%%') ", fld, strings.ReplaceAll(fine, "'", "''")),
+			new: boundary + fmt.Sprintf("MATCH(%s, '%s', 'operator=OR;minimum_should_match=30%%') ", fld, strings.ReplaceAll(fine, "'", "''")),
 		})
 	}
 	for _, r := range replaces {

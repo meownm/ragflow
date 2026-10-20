@@ -164,19 +164,36 @@ def test_use_sql_never_executes_unscoped_model_or_repair(monkeypatch, force_es_e
 
 
 @pytest.mark.p1
-def test_scoped_sql_keeps_es_text_predicate_preprocessing():
+@pytest.mark.parametrize("engine", ["es", "os"])
+@pytest.mark.parametrize("predicate", ["content_ltks like 'weather'", "content_ltks like 'weather' OR amount=2"])
+def test_scoped_sql_keeps_es_text_predicate_preprocessing(engine, predicate):
+    from inspect import getclosurevars
+
     from common.doc_store.es_conn_base import ESConnectionBase
     from common.sql_scope import scope_retrieval_sql
+    from rag.utils.opensearch_conn import OSConnection
 
     calls = []
+    connection = sqlite3.connect(":memory:")
+    try:
+        connection.create_function("MATCH", 3, lambda *_args: 1)
+        connection.execute("CREATE TABLE ragflow_tenant(doc_id TEXT, kb_id TEXT, content_ltks TEXT, amount INT)")
+        connection.executemany("INSERT INTO ragflow_tenant VALUES (?,?,?,?)", [("own", "11111111-1111-4111-8111-111111111111", "weather", 1), ("private", "22222222-2222-4222-8222-222222222222", "weather", 2)])
 
-    def query(**kwargs):
-        calls.append(kwargs["body"]["query"])
-        return {"rows": []}
+        def query(**kwargs):
+            sql = kwargs["body"]["query"]
+            calls.append(sql)
+            return {"rows": connection.execute(sql).fetchall()}
 
-    receiver = SimpleNamespace(es=SimpleNamespace(sql=SimpleNamespace(query=query)), logger=dialog_service.logger)
-    sql = scope_retrieval_sql("SELECT doc_id FROM ragflow_tenant WHERE content_ltks like 'weather'", "ragflow_tenant", "es", ["11111111-1111-4111-8111-111111111111"])
-    ESConnectionBase.sql(receiver, sql, 128, "json")
+        client = SimpleNamespace(sql=SimpleNamespace(query=query))
+        receiver = SimpleNamespace(es=client, os=client, logger=dialog_service.logger)
+        sql = scope_retrieval_sql("SELECT doc_id FROM ragflow_tenant WHERE " + predicate, "ragflow_tenant", engine, ["11111111-1111-4111-8111-111111111111"])
+        # Inspect the singleton's class without opening an OpenSearch connection.
+        adapter = ESConnectionBase if engine == "es" else getclosurevars(OSConnection).nonlocals["cls"]
+        result = adapter.sql(receiver, sql, 128, "json")
+        assert result["rows"] == [("own",)]
+    finally:
+        connection.close()
     assert len(calls) == 1
     assert "MATCH(content_ltks," in calls[0]
     assert "11111111-1111-4111-8111-111111111111" in calls[0]

@@ -418,6 +418,18 @@ func TestPreprocess_LktksRewrite(t *testing.T) {
 		expect string
 	}{
 		{
+			"mandatory scope keeps parenthesized OR after rewrite",
+			`SELECT * FROM "t" WHERE kb_id = 'allowed' AND ("content_ltks" LIKE 'weather' OR amount = 2)`,
+			`"content_ltks"`,
+			`AND (MATCH("content_ltks",`,
+		},
+		{
+			"predicate after newline",
+			"SELECT * FROM t WHERE\ncontent_ltks LIKE 'weather'",
+			"content_ltks",
+			"\nMATCH(content_ltks,",
+		},
+		{
 			"scoped AST emits quoted field and uppercase LIKE",
 			`SELECT * FROM "t" WHERE "content_ltks" LIKE 'weather'`,
 			`"content_ltks"`,
@@ -442,7 +454,7 @@ func TestPreprocess_LktksRewrite(t *testing.T) {
 			"MATCH(title_tks,",
 		},
 		{
-			"leading-space anchor: no leading space means no match (mirrors Python regex)",
+			"boundary anchor: a field at the start is not matched",
 			"content_ltks like 'weather'",
 			"content_ltks",
 			"content_ltks like 'weather'",

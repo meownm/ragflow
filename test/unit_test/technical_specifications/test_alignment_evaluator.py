@@ -88,6 +88,28 @@ def test_unknown_usage_is_not_reported_as_zero():
     assert summary["alignment_metrics"]["model_cases_unknown"] == 1
 
 
+@pytest.mark.parametrize("changed_model", [False, True])
+def test_interrupted_night_keeps_observed_identity_without_promoting_experiment_scores(changed_model):
+    audit = {"model": "observed", "model_digest": "a" * 64, "generation_parameters": {"num_ctx": 262144, "num_predict": 8192}}
+    second = {**audit, "model_digest": "b" * 64} if changed_model else audit
+    report = {
+        "status": "FAIL",
+        "expected_case_ids": ["unexecuted-full"],
+        "cases": [],
+        "nightly_experiments": {
+            "REPEATS": {"cases": [{"result": {"audit": audit}}, {"result": {"audit": {"backend_completion_known": False}}}]},
+            "ADMISSION": {"cases": [{"result": {"audit": second}}]},
+        },
+    }
+    summary = evaluate.public_summary(report)
+    assert summary["model"] == (None if changed_model else "observed")
+    assert summary["model_digest"] == (None if changed_model else "a" * 64)
+    assert summary["parameter_profiles"] == [audit["generation_parameters"]]
+    assert summary["executed_cases"] == 0 and summary["alignment_metrics"]["model_cases_unexecuted"] == 1
+    assert summary["total_tokens"] is None and summary["all_case_pass_rate"] is None
+    assert summary["evidence_status"] == "INCOMPLETE"
+
+
 @pytest.mark.parametrize("reserved,total", [(0, 120), (20, None)])
 def test_public_totals_cover_real_probes_and_retain_unknown_usage(reserved, total):
     report = {

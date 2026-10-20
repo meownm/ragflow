@@ -1,4 +1,4 @@
-import { useContext, useMemo } from 'react';
+import { useContext, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { NavLink, Outlet, useNavigate } from 'react-router';
 
@@ -33,6 +33,7 @@ const AdminNavigationLayout = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const [, setCurrentUserInfo] = useContext(CurrentUserInfoContext);
+  const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
 
   const { data: version } = useQuery({
     queryKey: ['admin/version'],
@@ -119,9 +120,25 @@ const AdminNavigationLayout = () => {
   });
 
   return (
-    <main className="w-screen h-screen flex flex-row px-6 pt-12 pb-6 dark:*:focus-visible:ring-white">
-      <aside className="w-72 mr-6 flex flex-col gap-6">
-        <div className="flex items-center mb-6">
+    <main className="flex h-screen w-screen min-w-0 flex-col gap-3 p-3 md:flex-row md:gap-0 md:px-6 md:pb-6 md:pt-12 dark:*:focus-visible:ring-white">
+      <Button
+        variant="ghost"
+        className="shrink-0 self-start md:hidden"
+        aria-controls="admin-navigation"
+        aria-expanded={mobileNavigationOpen}
+        onClick={() => setMobileNavigationOpen((open) => !open)}
+      >
+        <LucideMenu aria-hidden="true" />
+        {t('admin.title')}
+      </Button>
+      <aside
+        id="admin-navigation"
+        className={cn(
+          'hidden max-h-[50vh] w-full shrink-0 flex-col gap-6 overflow-y-auto md:mr-6 md:flex md:max-h-none md:w-72 md:overflow-visible',
+          mobileNavigationOpen && 'flex',
+        )}
+      >
+        <div className="mb-6 hidden items-center md:flex">
           <img
             className="size-8 mr-5"
             src="/app-icon.png"
@@ -136,6 +153,7 @@ const AdminNavigationLayout = () => {
               <li key={it.path}>
                 <NavLink
                   to={it.path}
+                  onClick={() => setMobileNavigationOpen(false)}
                   className={({ isActive }) =>
                     cn(
                       'px-4 py-3 rounded-lg',
@@ -178,7 +196,7 @@ const AdminNavigationLayout = () => {
         </div>
       </aside>
 
-      <section className="flex-1 h-full">
+      <section className="min-h-0 min-w-0 flex-1">
         <Outlet />
       </section>
     </main>

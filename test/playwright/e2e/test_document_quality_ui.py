@@ -107,6 +107,19 @@ def test_alignment_quality_dashboard_keeps_semantic_denominators_and_unknown_evi
     expect(old_experiment).to_contain_text("7/112")
     expect(old_experiment.get_by_role("cell").last).to_have_text("—")
     assert "/api/v1/admin/document-quality/runs/older" in requests
+    bounds = page.get_by_test_id("business-documents-quality-admin").bounding_box()
+    assert bounds and bounds["x"] >= 0 and bounds["x"] + bounds["width"] <= width
+    assert page.locator("main").evaluate("node => node.scrollWidth <= node.clientWidth")
+    if width == 390:
+        menu = page.locator('[aria-controls="admin-navigation"]')
+        expect(menu).to_be_visible()
+        expect(menu).to_have_attribute("aria-expanded", "false")
+        menu.click()
+        navigation = page.locator("#admin-navigation")
+        expect(navigation).to_be_visible()
+        navigation.locator("a").first.click()
+        expect(menu).to_have_attribute("aria-expanded", "false")
+        expect(navigation).to_be_hidden()
 
 
 @pytest.mark.p1

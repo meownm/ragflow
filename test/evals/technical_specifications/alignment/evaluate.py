@@ -146,14 +146,20 @@ async def run_evaluation(ai, actor, *, case_id=None, checkpoint=None, limits_onl
 def public_summary(report):
     """No source text, generated content or exception messages in admin projections."""
     audits = [item.get("result", {}).get("audit", {}) for item in report.get("cases", [])]
-    signatures = {(audit.get("model"), audit.get("model_digest")) for audit in audits if audit.get("model")}
+    identity_audits = list(audits)
+    experiments = report.get("nightly_experiments", {})
+    if isinstance(experiments, dict):
+        for stage in experiments.values():
+            if isinstance(stage, dict):
+                identity_audits.extend(item.get("result", {}).get("audit", {}) for item in stage.get("cases", []))
+    signatures = {(audit.get("model"), audit.get("model_digest")) for audit in identity_audits if audit.get("model")}
     complete = (
         bool(report.get("expected_case_ids")) and len(report.get("cases", [])) == len(report["expected_case_ids"]) and all(item["status"] in ("PASS", "FAIL") for item in report.get("cases", []))
     )
     passed = sum(item["status"] == "PASS" for item in report.get("cases", []))
     durations = [audit.get("duration_ms") for audit in audits]
     tokens = [audit.get(key) for audit in audits for key in ("prompt_tokens", "completion_tokens")]
-    metadata = [audit.get("generation_parameters") for audit in audits]
+    metadata = [audit.get("generation_parameters") for audit in identity_audits]
     profiles = list({json.dumps(item, sort_keys=True) for item in metadata if isinstance(item, dict)})
     ledger = report.get("budget")
     total_tokens = sum(tokens) if tokens and all(type(value) is int and value >= 0 for value in tokens) else None

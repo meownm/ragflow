@@ -171,30 +171,32 @@ function NightlyExperiments({
       className="mt-4 space-y-2"
     >
       <h3 className="font-medium">{label('nightlyExperiments')}</h3>
-      <table className="w-full text-left text-sm">
-        <thead>
-          <tr>
-            <th>{label('experiment')}</th>
-            <th>{label('qualityStatus')}</th>
-            <th>{label('executionEvidence')}</th>
-            <th>{label('experimentCases')}</th>
-            <th>{label('tokens')}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {experiments.map((item) => (
-            <tr key={item.experiment}>
-              <td>{label(`experiments.${item.experiment}`)}</td>
-              <td>{item.quality_status}</td>
-              <td>{item.evidence_status}</td>
-              <td>
-                {item.executed_cases ?? '—'}/{item.expected_cases ?? '—'}
-              </td>
-              <td>{item.total_tokens ?? '—'}</td>
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead>
+            <tr>
+              <th>{label('experiment')}</th>
+              <th>{label('qualityStatus')}</th>
+              <th>{label('executionEvidence')}</th>
+              <th>{label('experimentCases')}</th>
+              <th>{label('tokens')}</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {experiments.map((item) => (
+              <tr key={item.experiment}>
+                <td>{label(`experiments.${item.experiment}`)}</td>
+                <td>{item.quality_status}</td>
+                <td>{item.evidence_status}</td>
+                <td>
+                  {item.executed_cases ?? '—'}/{item.expected_cases ?? '—'}
+                </td>
+                <td>{item.total_tokens ?? '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }
@@ -580,7 +582,7 @@ export default function AdminBusinessDocumentsQuality() {
 
   return (
     <section
-      className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-border-button bg-bg-base"
+      className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border-button bg-bg-base"
       data-testid="business-documents-quality-admin"
     >
       <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border-button px-6 py-5">
@@ -1448,13 +1450,14 @@ export default function AdminBusinessDocumentsQuality() {
             className="mt-6 rounded-lg border border-border-button bg-bg-card p-5"
             aria-label={label('caseDetails')}
           >
-            <div className="flex items-center justify-between">
-              <h2 className="font-medium text-text-primary">
+            <div className="flex items-start justify-between gap-3">
+              <h2 className="min-w-0 break-words font-medium text-text-primary">
                 {label('caseDetails')} · {selectedRun}
               </h2>
               <Button
                 size="sm"
                 variant="ghost"
+                className="shrink-0"
                 onClick={() => setSelectedRun(null)}
               >
                 {label('close')}
@@ -1470,7 +1473,7 @@ export default function AdminBusinessDocumentsQuality() {
             )}
             {selectedDetail && (
               <div className="mt-3 space-y-3 text-sm">
-                <p className="text-text-secondary">
+                <p className="break-all text-text-secondary">
                   {selectedDetail.model_name ||
                     selectedDetail.report?.model ||
                     '—'}{' '}

@@ -54,6 +54,22 @@ def test_manual_dedup_and_details_never_cross_products(queue):
     assert runs.get_quality_run(tz["id"], "technical_specification")["document_type"] == "technical_specification"
 
 
+def test_default_model_history_exposes_observed_identity_without_qualifying_the_run(queue):
+    row = BusinessDocumentQualityRun.create(
+        id="observed-model-history",
+        document_type="technical_specification",
+        trigger="MONTHLY",
+        status="FAIL",
+        report={"model": "observed", "model_digest": "a" * 64, "evidence_status": "INCOMPLETE", "executed_cases": 0, "expected_cases": 56},
+    )
+    public = runs.get_quality_run(row.id, "technical_specification")
+    assert public["model_name"] == "observed" and public["model_digest"] == "a" * 64
+    assert public["status"] == "FAIL" and public["report"]["evidence_status"] == "INCOMPLETE"
+    assert public["report"]["executed_cases"] == 0
+    unchanged = BusinessDocumentQualityRun.get_by_id(row.id)
+    assert unchanged.model_name is None and unchanged.model_digest is None
+
+
 def test_completed_campaign_can_have_failed_quality(queue):
     campaign = runs.enqueue_nightly_campaign("2026-10-20", "technical_specification")
     BusinessDocumentQualityRun.update(status="FAIL").where(BusinessDocumentQualityRun.campaign_id == campaign["id"]).execute()

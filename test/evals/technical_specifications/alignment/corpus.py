@@ -51,7 +51,7 @@ CASES = (
     ("BTZ-20", "Поддерживать до 50 файлов, каждый размером до 40 МБ.", "Поддерживать до 50 файлов, каждый размером до 40 МБ.", "IMPLEMENTED", "CONSISTENT"),
     ("BTZ-21", "Разрешить клиенту отмену ещё не исполненной заявки.", "Пока заявка не исполнена, клиенту доступно действие отмены.", "IMPLEMENTED", "CONSISTENT"),
     ("BTZ-22", "Клиент может создать заявку.", "Клиент может создать заявку. Данные заявки сохраняются в таблице requests.", "IMPLEMENTED", "CONSISTENT"),
-    ("BTZ-23", "Оператор может отменить заявку.", "Оператор может отменить заявку. При отмене взимается комиссия 10 рублей.", "IMPLEMENTED", "CONSISTENT"),
+    ("BTZ-23", "Оператор может отменить заявку.", "Оператор может отменить заявку. При отмене взимается комиссия 10 рублей.", "IMPLEMENTED", "CONSISTENT", {"unsupported_business_rule": True}),
     ("BTZ-24", "Отмена разрешена только до исполнения.", "Отмена разрешена только до исполнения.\n```mermaid\nstateDiagram-v2\nИсполнена --> Отменена: отмена\n```", "PARTIAL", "CONTRADICTED"),
     (
         "BTZ-25a",
@@ -100,6 +100,7 @@ CASES = (
         "Клиент может подать до 10 заявок за всё время обслуживания; после десятой заявки подача навсегда закрыта.",
         "PARTIAL",
         "CONTRADICTED",
+        {"unsupported_business_rule": False},
     ),
     ("BTZ-41", "Уведомить клиента не позднее 10 минут после исполнения.", "Уведомить клиента не позднее 5 минут после исполнения.", "IMPLEMENTED", "CONSISTENT"),
     (
@@ -158,7 +159,7 @@ def inputs(case):
 def is_conformant(case):
     options = case[5] if len(case) > 5 else {}
     rows = options.get("rows", [(case[3], case[4])])
-    return all(labels == ("IMPLEMENTED", "CONSISTENT") for labels in rows) and options.get("joint", "CONSISTENT") == "CONSISTENT" and case[0] != "BTZ-23"
+    return all(labels == ("IMPLEMENTED", "CONSISTENT") for labels in rows) and options.get("joint", "CONSISTENT") == "CONSISTENT" and not options.get("unsupported_business_rule", False)
 
 
 def evidence_matches(case, index, row):
@@ -185,8 +186,12 @@ def score(case, result):
             errors.append(f"row:{index + 1}:EVIDENCE_CLAUSE_MISSING")
     if "joint" in options and report["joint"]["consistency"] != options["joint"]:
         errors.append("JOINT_CONSTRAINT_CONTRADICTION_MISSED")
-    if case[0] == "BTZ-23" and not any(rule["kind"] == "UNSUPPORTED_BUSINESS_RULE" for rule in report["additional_rules"]):
-        errors.append("UNSUPPORTED_BUSINESS_RULE_MISSED")
+    if "unsupported_business_rule" in options:
+        unsupported = any(rule["kind"] == "UNSUPPORTED_BUSINESS_RULE" for rule in report["additional_rules"])
+        if options["unsupported_business_rule"] and not unsupported:
+            errors.append("UNSUPPORTED_BUSINESS_RULE_MISSED")
+        elif not options["unsupported_business_rule"] and unsupported:
+            errors.append("UNEXPECTED_UNSUPPORTED_BUSINESS_RULE")
     if is_conformant(case) and result["quality_status"] != "PASS":
         errors.append("FALSE_BLOCK")
     return errors

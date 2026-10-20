@@ -37,10 +37,16 @@ async def transport():
         if state["mode"] == "wait":
             await state["release"].wait()
         incoming = json.loads(payload["messages"][1]["content"])
-        refs = [{"section": "4", "quote": "Оператор отменяет заявку."}]
+        refs = [{"citation_id": next(item["id"] for item in incoming["citations"] if item["quote"] == "Оператор отменяет заявку.")}]
         rows = [{"id": row["id"], "coverage": "IMPLEMENTED", "consistency": "CONSISTENT", "references": refs, "reason": ""} for row in incoming["basis"]["inventory"]]
         if state["mode"] == "missing":
             rows = []
+        if state["mode"] == "unknown_citation":
+            rows[0]["references"] = [{"citation_id": "C999999"}]
+        if state["mode"] == "literal_citation":
+            rows[0]["references"] = [{"section": "4", "quote": "Оператор отменяет заявку."}]
+        if state["mode"] == "oversized_reason":
+            rows[0]["reason"] = "я" * 257
         report = {
             "candidate_sha256": incoming["candidate_sha256"],
             "basis_sha256": incoming["basis_sha256"],
@@ -48,6 +54,10 @@ async def transport():
             "additional_rules": [],
             "joint": {"checked_ids": [row["id"] for row in incoming["basis"]["inventory"]], "consistency": "CONSISTENT", "reason": ""},
         }
+        if state["mode"] == "wrong_basis_digest":
+            report["basis_sha256"] += report["basis_sha256"][20:34]
+        if state["mode"] == "missing_basis_digest":
+            del report["basis_sha256"]
         content = json.dumps(report, ensure_ascii=False)
         if state["mode"] == "duplicate":
             content = '{"requirements":[],"requirements":[]}'
@@ -97,7 +107,9 @@ async def test_wire_limits_full_payload_and_completion_metadata(transport):
     audit = result["audit"]
     request, headers = state["requests"][0]
     assert request["options"]["num_ctx"] == 32000 and request["options"]["num_predict"] == audit["output_limit"]
-    assert request["format"] == "json" and request["stream"] is False
+    incoming = json.loads(request["messages"][1]["content"])
+    assert request["format"] == incoming["response_schema"] and request["stream"] is False
+    assert all(request["format"]["properties"][key]["enum"] == [incoming[key]] for key in ("candidate_sha256", "basis_sha256"))
     assert request["truncate"] is False and request["shift"] is False
     assert headers["x-ollama-proxy-bypass-dedup"] == "1"
     assert json.loads(request["messages"][1]["content"])["candidate_sha256"] == candidate_identity(document)
@@ -167,13 +179,42 @@ async def test_async_reservation_must_commit_before_inference(transport, rejecte
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mode", ["missing", "duplicate"])
+@pytest.mark.parametrize("mode", ["missing", "duplicate", "unknown_citation", "literal_citation", "oversized_reason", "wrong_basis_digest", "missing_basis_digest"])
 async def test_complete_transport_but_bad_report_is_model_contract_failure(transport, mode):
     ai, state, document, basis, _ = transport
     state["mode"] = mode
     result = await ai.check("qa", document, basis)
     assert result["execution_status"] == "COMPLETE" and result["quality_status"] == "FAIL"
     assert not result["qualifies"] and result["reason_code"] == "ALIGNMENT_REPORT_INVALID"
+    assert len(state["requests"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_schema_rejection_never_retries_with_free_json(transport):
+    ai, state, document, basis, _ = transport
+    state.update(http_endpoint="chat", http_status=400, error_body='{"error":"unsupported schema"}')
+    budget = AlignmentBudget()
+    result = await ai.check("qa", document, basis, budget=budget)
+    assert not result["qualifies"] and result["reason_code"] == "MODEL_TRANSPORT_ERROR"
+    assert len(state["requests"]) == 1 and isinstance(state["requests"][0][0]["format"], dict)
+    assert budget.reserved_tokens > 0
+
+
+@pytest.mark.parametrize("index", [2, 3, 5])
+def test_generic_real_limit_probes_keep_their_exact_protocol(index):
+    from test.evals.technical_specifications.alignment.real_limits import probe_spec
+
+    spec = probe_spec(index)
+    wire = ollama_request("qa", spec["system"], spec["payload"], spec["plan"])
+    assert wire == {
+        "model": "qa",
+        "stream": False,
+        "format": "json",
+        "truncate": False,
+        "shift": False,
+        "messages": [{"role": "system", "content": spec["system"]}, {"role": "user", "content": json.dumps(spec["payload"], ensure_ascii=False)}],
+        "options": {"temperature": 0, "num_ctx": spec["plan"]["context_limit"], "num_predict": spec["plan"]["output_limit"]},
+    }
 
 
 @pytest.mark.asyncio

@@ -7,6 +7,83 @@ import pytest
 from test.evals.technical_specifications.alignment import evaluate
 
 
+@pytest.mark.parametrize(
+    "identifier,coverage,consistency,expected_error",
+    [
+        ("BTZ-02", "PARTIAL", "CONTRADICTED", "row:1:coverage:PARTIAL expected:MISSING"),
+        ("BTZ-03", "PARTIAL", "CONTRADICTED", "row:1:coverage:PARTIAL expected:MISSING"),
+        ("BTZ-07", "MISSING", "CONTRADICTED", "row:1:coverage:MISSING expected:PARTIAL"),
+        ("BTZ-08", "PARTIAL", "CONTRADICTED", "row:1:coverage:PARTIAL expected:MISSING"),
+        ("BTZ-09", "PARTIAL", "CONTRADICTED", "row:1:coverage:PARTIAL expected:MISSING"),
+        ("BTZ-11", "MISSING", "CONTRADICTED", "row:1:coverage:MISSING expected:PARTIAL"),
+        ("BTZ-15", "MISSING", "CONSISTENT", "row:1:coverage:MISSING expected:PARTIAL"),
+        ("BTZ-16", "PARTIAL", "CONTRADICTED", "row:1:consistency:CONTRADICTED expected:CONSISTENT"),
+        ("BTZ-17", "PARTIAL", "CONTRADICTED", "row:1:coverage:PARTIAL expected:MISSING"),
+        ("BTZ-28", "IMPLEMENTED", "CONSISTENT", "row:1:consistency:CONSISTENT expected:CONTRADICTED"),
+        ("BTZ-31", "IMPLEMENTED", "CONTRADICTED", "row:1:coverage:IMPLEMENTED expected:PARTIAL"),
+        ("BTZ-32", "PARTIAL", "CONTRADICTED", "row:1:coverage:PARTIAL expected:MISSING"),
+        ("BTZ-33", "IMPLEMENTED", "CONTRADICTED", "row:1:coverage:IMPLEMENTED expected:PARTIAL"),
+        ("BTZ-38", "MISSING", "CONTRADICTED", "row:1:coverage:MISSING expected:PARTIAL"),
+        ("BTZ-40", "MISSING", "CONTRADICTED", "row:1:coverage:MISSING expected:PARTIAL"),
+        ("BTZ-47", "PARTIAL", "CONSISTENT", "row:1:coverage:PARTIAL expected:IMPLEMENTED"),
+    ],
+)
+def test_semantic_regressions_remain_failures(identifier, coverage, consistency, expected_error):
+    """Real errors and boundary counterexamples; scorer, not model evidence."""
+    from api.technical_specifications.alignment import report_input, validate_report
+    from test.evals.technical_specifications.alignment.corpus import CASES, inputs
+
+    case = next(case for case in CASES if case[0] == identifier)
+    document, basis = inputs(case)
+    options = case[5] if len(case) > 5 else {}
+    labels = options.get("rows", [(case[3], case[4])])
+    report = {
+        "candidate_sha256": report_input(document, basis)["candidate_sha256"],
+        "basis_sha256": basis["sha256"],
+        "requirements": [
+            {
+                "id": item["id"],
+                "coverage": coverage if index == 0 else expected[0],
+                "consistency": consistency if index == 0 else expected[1],
+                "references": [{"section": "5", "quote": document["sections"]["5"]}],
+                "reason": "Observed wrong semantic label",
+            }
+            for index, (item, expected) in enumerate(zip(basis["inventory"], labels, strict=True))
+        ],
+        "additional_rules": [],
+        "joint": {"checked_ids": [item["id"] for item in basis["inventory"]], "consistency": options.get("joint", "CONSISTENT"), "reason": "Isolate the row labels"},
+    }
+    observed = evaluate.case_observation(case, validate_report(report, document, basis))
+    assert observed["status"] == "FAIL" and expected_error in observed["errors"]
+    if identifier == "BTZ-16":
+        assert "row:1:coverage:PARTIAL expected:IMPLEMENTED" in observed["errors"] and "FALSE_BLOCK" in observed["errors"]
+
+
+@pytest.mark.parametrize(
+    "identifier,unsupported,errors,conformant",
+    [
+        ("BTZ-23", False, ["UNSUPPORTED_BUSINESS_RULE_MISSED"], False),
+        ("BTZ-23", True, [], False),
+        ("BTZ-40", False, [], False),
+        ("BTZ-40", True, ["UNEXPECTED_UNSUPPORTED_BUSINESS_RULE"], False),
+        ("BTZ-34", True, [], False),
+        ("BTZ-22", False, [], True),
+    ],
+)
+def test_explicit_additional_rule_oracle_preserves_unlabelled_axis(identifier, unsupported, errors, conformant):
+    from test.evals.technical_specifications.alignment.corpus import CASES, is_conformant, score
+
+    case = next(case for case in CASES if case[0] == identifier)
+    report = {
+        "requirements": [{"coverage": case[3], "consistency": case[4]}],
+        "joint": {"consistency": "CONSISTENT"},
+        "additional_rules": [{"kind": "UNSUPPORTED_BUSINESS_RULE"}] if unsupported else [],
+    }
+    result = {"report_status": "COMPLETE", "quality_status": "PASS" if conformant else "FAIL", "report": report}
+    assert score(case, result) == errors
+    assert is_conformant(case) is conformant
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "result,status,quality",

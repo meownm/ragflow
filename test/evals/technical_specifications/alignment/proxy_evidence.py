@@ -4,7 +4,7 @@ import re
 import time
 from urllib.request import urlopen
 
-from api.technical_specifications.alignment import fingerprint, strict_json
+from api.technical_specifications.alignment import fingerprint, materialize_report, report_format, strict_json
 from api.technical_specifications.domain import SpecificationError
 
 MAX_WIRE_BYTES = 4_000_000
@@ -71,7 +71,11 @@ def collect(report, base_url, fetch=None):
                 and response.get("eval_count") == audit.get("completion_tokens")
             )
             if result.get("report_status") == "COMPLETE":
-                matches = matches and strict_json(response["message"]["content"]) == result.get("report")
+                model_report = strict_json(response["message"]["content"])
+                payload = strict_json(request["messages"][1]["content"])
+                matches = (
+                    matches and request.get("format") == report_format(payload) and model_report == result.get("model_report") and materialize_report(model_report, payload) == result.get("report")
+                )
             checks.append(
                 {
                     "case_id": case["case_id"],

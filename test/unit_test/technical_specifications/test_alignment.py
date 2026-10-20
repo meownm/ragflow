@@ -93,6 +93,28 @@ def test_unbased_rule_has_no_fake_bt_id_and_joint_limits_are_checked(inputs):
     assert not validate_report(report, document, basis)["qualifies"]
 
 
+def test_unknown_additional_rule_alone_blocks_an_otherwise_complete_report(inputs):
+    document, basis, report = inputs
+    assert validate_report(report, document, basis)["qualifies"]
+    report["additional_rules"] = [{"kind": "UNDETERMINED", "references": [{"section": "4", "quote": document["sections"]["4"]}], "reason": "Independent condition depends on an unavailable source"}]
+    result = validate_report(report, document, basis)
+    assert result["execution_status"] == result["report_status"] == "COMPLETE"
+    assert result["metrics"]["implemented"] == len(basis["inventory"]) and result["metrics"]["joint_consistency"] == "CONSISTENT"
+    assert result["quality_status"] == "FAIL" and not result["qualifies"]
+    assert result["report"]["additional_rules"][0]["kind"] == "UNDETERMINED"
+
+
+def test_reason_byte_limit_is_not_repaired_or_truncated(inputs):
+    document, basis, report = inputs
+    report["requirements"][0]["reason"] = "я" * 256
+    assert validate_report(report, document, basis)["report_status"] == "COMPLETE"
+    report["requirements"][0]["reason"] += "a"
+    with pytest.raises(SpecificationError) as error:
+        validate_report(report, document, basis)
+    assert error.value.code == "ALIGNMENT_REPORT_INVALID"
+    assert len(report["requirements"][0]["reason"].encode()) == 513
+
+
 @pytest.mark.parametrize("raw", ['{"x":1,"x":2}', '{"x":{"a":1,"a":2}}', '{"x":NaN}', '{"x":Infinity}', "{}{}", "[]", "```json\n{}\n```", "\ud800"])
 def test_ambiguous_or_nonfinite_json_is_rejected_before_normalization(raw):
     with pytest.raises(SpecificationError):

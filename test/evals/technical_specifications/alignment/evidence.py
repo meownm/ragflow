@@ -10,7 +10,7 @@ class EvidenceIncomplete(ValueError):
 
 
 def verify_execution(report):
-    from api.technical_specifications.alignment import fingerprint, report_input, validate_report
+    from api.technical_specifications.alignment import fingerprint, materialize_report, report_input, validate_report
     from api.technical_specifications.alignment_ai import SYSTEM, ollama_request
     from api.technical_specifications.domain import SpecificationError
     from test.evals.technical_specifications.alignment.corpus import CASES, inputs, score
@@ -37,7 +37,11 @@ def verify_execution(report):
         if not isinstance(result, dict) or result.get("execution_status") != "COMPLETE" or result.get("report_status") != "COMPLETE":
             raise EvidenceIncomplete("Technical Specifications execution or report is incomplete")
         document, basis = inputs(case)
+        if not isinstance(result.get("model_report"), dict):
+            raise EvidenceIncomplete("Technical Specifications raw source selections are unavailable")
         try:
+            if materialize_report(result.get("model_report"), report_input(document, basis)) != result.get("report"):
+                raise ValueError("Technical Specifications source selections differ from the materialized report")
             checked = validate_report(result.get("report"), document, basis)
         except SpecificationError as error:
             raise ValueError("Technical Specifications report contains invalid requirement evidence") from error

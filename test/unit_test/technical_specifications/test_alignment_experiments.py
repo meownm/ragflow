@@ -98,6 +98,8 @@ async def test_admission_runs_complete_natural_input_at_exact_and_above_boundary
     async def inference(config, system, payload, plan, budget, *, request_id):
         calls.append((payload, plan))
         result = case_result("BTZ-02")["result"]["report"]
+        for row in result["requirements"]:
+            row["references"] = [{"citation_id": payload["citations"][0]["id"]}]
         return json.dumps(result), _audit(config, system, payload, plan, request_id)
 
     monkeypatch.setattr("api.technical_specifications.alignment_ai._ollama", inference)
@@ -162,7 +164,10 @@ async def test_thinking_experiment_checks_small_and_sufficient_outputs_without_i
             audit["input_integrity"] = "TRUNCATED"
         if mode == "digest" and len(calls) == 2:
             audit["model_digest_after"] = "c" * 64
-        return json.dumps(case_result("BTZ-28")["result"]["report"]), audit
+        result = case_result("BTZ-28")["result"]["report"]
+        for row in result["requirements"]:
+            row["references"] = [{"citation_id": payload["citations"][0]["id"]}]
+        return json.dumps(result), audit
 
     monkeypatch.setattr(experiments, "_ollama", inference)
     report = await experiments.run_experiment(ai, "synthetic", "REASONING")

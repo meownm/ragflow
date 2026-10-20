@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import pytest
 
-from api.technical_specifications.alignment import report_input, validate_report
+from api.technical_specifications.alignment import fingerprint, report_input, validate_report
 from test.evals.technical_specifications.alignment import holdout
 
 
@@ -68,6 +68,104 @@ def test_input_loader_never_opens_oracle_before_inference(tmp_path):
     (tmp_path / "inputs.json").write_text("{}", encoding="utf-8")
     with pytest.raises(ValueError, match="snapshot"):
         holdout.load_bundle(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "damage,expected_error",
+    [
+        ("clipped_clause", "row:1:EVIDENCE_CLAUSE_MISSING"),
+        ("double_count", "UNSUPPORTED_BUSINESS_RULE"),
+        ("omitted_obligation", "UNSUPPORTED_BUSINESS_RULE"),
+        ("invented_external_fact", "row:1:consistency"),
+    ],
+)
+def test_holdout_does_not_forgive_observed_evidence_and_semantic_errors(tmp_path, damage, expected_error):
+    """Synthetic analogues; the disclosed live oracle remains unchanged."""
+    value, manifest = bundle(tmp_path)
+    if damage == "omitted_obligation":
+        value["cases"][0]["sections"]["5"] += " После чтения рецензент обязан отправить клиенту платное письмо."
+        path = tmp_path / "oracle.json"
+        oracle = json.loads(path.read_text(encoding="utf-8"))
+        oracle["cases"][0]["unsupported_business_rule"] = True
+        raw = json.dumps(oracle, ensure_ascii=False).encode()
+        path.write_bytes(raw)
+        manifest["files"]["oracle.json"]["sha256"] = hashlib.sha256(raw).hexdigest()
+    results = []
+    for case in value["cases"]:
+        document, basis = holdout.model_inputs(case)
+        results.append({"case_id": case["case_id"], "status": "INCOMPLETE", "result": answer(document, basis)})
+    first = results[0]["result"]["report"]
+    row = first["requirements"][0]
+    if damage == "clipped_clause":
+        row["references"][0]["quote"] = "читает отчёт"
+    elif damage == "double_count":
+        first["additional_rules"] = [{"kind": "UNSUPPORTED_BUSINESS_RULE", "references": deepcopy(row["references"]), "reason": "Duplicated existing rule"}]
+    elif damage == "invented_external_fact":
+        # The oracle requires uncertainty; a definite answer must still fail.
+        path = tmp_path / "oracle.json"
+        oracle = json.loads(path.read_text(encoding="utf-8"))
+        oracle["cases"][0]["rows"][0].update(coverage="UNDETERMINED", consistency="UNDETERMINED")
+        oracle["cases"][0]["joint"] = "UNDETERMINED"
+        raw = json.dumps(oracle, ensure_ascii=False).encode()
+        path.write_bytes(raw)
+        manifest["files"]["oracle.json"]["sha256"] = hashlib.sha256(raw).hexdigest()
+    report = {"expected_case_ids": [case["case_id"] for case in value["cases"]], "input_sha256": fingerprint(value), "cases": results}
+    scored = holdout.score_holdout(report, value, tmp_path, manifest)
+    assert scored["quality_status"] == "FAIL" and not scored["qualifies"]
+    assert scored["cases"][0]["status"] == "FAIL" and expected_error in scored["cases"][0]["errors"]
+
+
+@pytest.mark.parametrize("damage", [None, "joint_only", "own_quotes_only"])
+def test_shared_conflict_requires_affected_rows_and_conflicting_source_quotes(tmp_path, damage):
+    value, manifest = bundle(tmp_path)
+    first = value["cases"][0]
+    first["business_requirements"] = ["У акта ровно один подписант.", "Два разных сотрудника одновременно подписывают один акт."]
+    first["sections"]["4"], first["sections"]["5"] = first["business_requirements"]
+    path = tmp_path / "oracle.json"
+    oracle = json.loads(path.read_text(encoding="utf-8"))
+    oracle["cases"][0].update(
+        rows=[{"coverage": "PARTIAL", "consistency": "CONTRADICTED", "required_quote": first["business_requirements"][1 - index]} for index in range(2)],
+        joint="CONTRADICTED",
+    )
+    raw = json.dumps(oracle, ensure_ascii=False).encode()
+    path.write_bytes(raw)
+    manifest["files"]["oracle.json"]["sha256"] = hashlib.sha256(raw).hexdigest()
+    results = []
+    for case in value["cases"]:
+        document, basis = holdout.model_inputs(case)
+        if case is first:
+            payload = report_input(document, basis)
+            report = {
+                "candidate_sha256": payload["candidate_sha256"],
+                "basis_sha256": basis["sha256"],
+                "requirements": [
+                    {
+                        "id": row["id"],
+                        "coverage": "IMPLEMENTED" if damage == "joint_only" else "PARTIAL",
+                        "consistency": "CONSISTENT" if damage == "joint_only" else "CONTRADICTED",
+                        "references": [
+                            {"section": str(4 + (index if damage == "own_quotes_only" else 1 - index)), "quote": first["business_requirements"][index if damage == "own_quotes_only" else 1 - index]}
+                        ],
+                        "reason": "Synthetic shared conflict",
+                    }
+                    for index, row in enumerate(basis["inventory"])
+                ],
+                "additional_rules": [],
+                "joint": {"checked_ids": [row["id"] for row in basis["inventory"]], "consistency": "CONTRADICTED", "reason": "Incompatible cardinalities"},
+            }
+            result = validate_report(report, document, basis)
+        else:
+            result = answer(document, basis)
+        results.append({"case_id": case["case_id"], "status": "INCOMPLETE", "result": result})
+    scored = holdout.score_holdout({"expected_case_ids": [case["case_id"] for case in value["cases"]], "input_sha256": fingerprint(value), "cases": results}, value, tmp_path, manifest)
+    assert not scored["qualifies"]
+    errors = scored["cases"][0]["errors"]
+    if damage == "joint_only":
+        assert all(f"row:{index}:{key}" in errors for index in (1, 2) for key in ("coverage", "consistency"))
+    elif damage == "own_quotes_only":
+        assert all(f"row:{index}:EVIDENCE_CLAUSE_MISSING" in errors for index in (1, 2))
+    else:
+        assert not errors and scored["quality_status"] == "PASS"
 
 
 @pytest.mark.parametrize("defect", ["missing", "rejected", "stale", "owner", "count"])

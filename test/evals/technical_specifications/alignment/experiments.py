@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import aiohttp
 
-from api.technical_specifications.alignment import failure_result, fingerprint, report_input, strict_json, validate_report
+from api.technical_specifications.alignment import failure_result, fingerprint, materialize_report, report_input, strict_json, validate_report
 from api.technical_specifications.alignment_ai import SYSTEM, AlignmentAI, _ollama, ollama_request
 from api.technical_specifications.alignment_budget import AlignmentBudget, plan_request
 from api.technical_specifications.domain import SpecificationError
@@ -337,7 +337,14 @@ async def _reasoning(ai, actor, checkpoint):
             result = {**failure_result("MODEL_EVIDENCE_INCOMPLETE"), "audit": audit}
             if valid and output == 8192 and audit.get("finish_reason") == "stop":
                 try:
-                    result = {**validate_report(strict_json(raw), document, basis), "audit": audit, "qualifies": False, "evidence_status": "INCOMPLETE"}
+                    model_report = strict_json(raw)
+                    result = {
+                        **validate_report(materialize_report(model_report, payload), document, basis),
+                        "model_report": model_report,
+                        "audit": audit,
+                        "qualifies": False,
+                        "evidence_status": "INCOMPLETE",
+                    }
                 except SpecificationError:
                     result = {**failure_result("ALIGNMENT_REPORT_INVALID", completed=True), "audit": audit}
             item = case_observation(case, result)

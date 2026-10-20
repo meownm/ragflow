@@ -1,6 +1,7 @@
 """Independent proxy archive evidence cannot be replaced by client assertions."""
 
 from copy import deepcopy
+import json
 
 import pytest
 
@@ -85,3 +86,42 @@ def test_admission_guard_is_not_fabricated_as_inference_or_a_standalone_proxy_pa
     proof = collect(report, "unused", fetch)
     assert proof["status"] == "VERIFIED" and proof["cases"][0]["status"] == "NOT_APPLICABLE"
     assert collect({"cases": [guard]}, "unused", lambda _: pytest.fail("No inference"))["status"] == "INCOMPLETE"
+
+
+@pytest.mark.parametrize("damage", [None, "missing_model_report", "changed_resolved_quote", "unknown_selection", "forged_catalog", "legacy_format", "changed_format_hash"])
+def test_complete_source_selection_is_recomputed_from_the_archived_input(packet, damage):
+    from api.technical_specifications.alignment import materialize_report, report_input
+    from test.evals.technical_specifications.alignment.corpus import CASES, inputs
+
+    report, archive, fetch, _ = packet
+    document, basis = inputs(CASES[0])
+    payload = report_input(document, basis)
+    raw = {
+        "candidate_sha256": payload["candidate_sha256"],
+        "basis_sha256": payload["basis_sha256"],
+        "requirements": [{"id": "R001", "coverage": "IMPLEMENTED", "consistency": "CONSISTENT", "references": [{"citation_id": payload["citations"][0]["id"]}], "reason": "Synthetic"}],
+        "additional_rules": [],
+        "joint": {"checked_ids": ["R001"], "consistency": "CONSISTENT", "reason": ""},
+    }
+    result = report["cases"][0]["result"]
+    result.update(report_status="COMPLETE", model_report=deepcopy(raw), report=materialize_report(raw, payload))
+    if damage == "missing_model_report":
+        del result["model_report"]
+    elif damage == "changed_resolved_quote":
+        result["report"]["requirements"][0]["references"][0]["quote"] = "Fabricated"
+    elif damage == "unknown_selection":
+        raw["requirements"][0]["references"][0]["citation_id"] = "C999999"
+        result["model_report"] = deepcopy(raw)
+    elif damage == "forged_catalog":
+        payload["citations"][0]["quote"] = "Fabricated"
+    archive["/request-body"]["messages"] = [{"role": "system", "content": "Synthetic"}, {"role": "user", "content": json.dumps(payload)}]
+    archive["/request-body"]["format"] = deepcopy(payload["response_schema"])
+    if damage == "legacy_format":
+        archive["/request-body"]["format"] = "json"
+    elif damage == "changed_format_hash":
+        archive["/request-body"]["format"]["properties"]["basis_sha256"]["enum"] = ["0" * 64]
+    result["audit"]["wire_sha256"] = fingerprint(archive["/request-body"])
+    archive["/response-body"]["message"] = {"content": json.dumps(raw)}
+    proof = collect(report, "unused", fetch)
+    assert proof["status"] == ("VERIFIED" if damage is None else "INCOMPLETE")
+    assert proof["boundary"] == "PROXY_WIRE_ONLY_NOT_BACKEND_CONTEXT_OR_CANCELLATION"

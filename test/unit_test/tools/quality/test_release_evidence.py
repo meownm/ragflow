@@ -22,7 +22,7 @@ def _write(path, data):
 
 
 def _alignment_report():
-    from api.technical_specifications.alignment import fingerprint, report_input, validate_report
+    from api.technical_specifications.alignment import fingerprint, materialize_report, report_input, validate_report
     from api.technical_specifications.alignment_ai import SYSTEM
     from test.evals.technical_specifications.alignment.corpus import CASES, inputs, score
 
@@ -65,10 +65,19 @@ def _alignment_report():
             result = validate_report(value, document, basis)
         options = {"temperature": 0, "num_ctx": 32768, "num_predict": 8192}
         payload = report_input(document, basis)
+        model_report = deepcopy(value)
+        for group in ("requirements", "additional_rules"):
+            for index, row in enumerate(model_report[group]):
+                if group == "requirements" and oracle.get("row_quotes"):
+                    row["references"] = [{"citation_id": next(item["id"] for item in payload["citations"] if oracle["row_quotes"][index] in item["quote"])}]
+                else:
+                    row["references"] = [{"citation_id": next(item["id"] for item in payload["citations"] if item["section"] == ref["section"])} for ref in row["references"]]
+        result = validate_report(materialize_report(model_report, payload), document, basis)
+        result["model_report"] = model_report
         wire = {
             "model": "fixture-model",
             "stream": False,
-            "format": "json",
+            "format": payload["response_schema"],
             "truncate": False,
             "shift": False,
             "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
@@ -422,6 +431,7 @@ def test_alignment_failure_is_a_mandatory_quality_gate(packet):
     item = data["cases"][0]
     value = item["result"]["report"]
     value["requirements"][0].update(coverage="MISSING", references=[], reason="Injected model omission")
+    item["result"]["model_report"]["requirements"][0].update(coverage="MISSING", references=[], reason="Injected model omission")
     document, basis = inputs(CASES[0])
     item["result"].update(validate_report(value, document, basis))
     item.update(status="FAIL", errors=score(CASES[0], item["result"]))
@@ -442,6 +452,49 @@ def test_duplicate_alignment_json_keys_do_not_silently_replace_evidence(packet):
 
 def test_valid_full_alignment_proof_recomputes_all_current_cases():
     assert verify_alignment_evidence(_alignment_report(), REVISION, DIGEST) == "pass"
+
+
+@pytest.mark.parametrize(
+    "damage,message",
+    [("missing_raw", "raw source selections"), ("unknown_id", "invalid requirement evidence"), ("changed_quote", "source selections differ")],
+)
+def test_full_gate_binds_original_model_selections_to_exact_current_source(damage, message):
+    from test.evals.technical_specifications.alignment.evidence import verify_execution
+
+    report = _alignment_report()
+    assert verify_execution(report) == "pass"
+    result = report["cases"][0]["result"]
+    if damage == "missing_raw":
+        del result["model_report"]
+    elif damage == "unknown_id":
+        result["model_report"]["requirements"][0]["references"][0]["citation_id"] = "C999999"
+    else:
+        # Still an exact source substring, but it was not the model's selection.
+        result["report"]["requirements"][0]["references"][0]["quote"] = "Оператор"
+    with pytest.raises(ValueError, match=message):
+        verify_execution(report)
+
+
+@pytest.mark.parametrize("damage", ["legacy_json", "wrong_schema_hash"])
+def test_full_gate_recomputes_the_exact_native_generation_schema(damage):
+    from api.technical_specifications.alignment import fingerprint, report_input
+    from api.technical_specifications.alignment_ai import SYSTEM, ollama_request
+    from test.evals.technical_specifications.alignment.corpus import CASES, inputs
+    from test.evals.technical_specifications.alignment.evidence import verify_execution
+
+    report = _alignment_report()
+    assert verify_execution(report) == "pass"
+    document, basis = inputs(CASES[0])
+    audit = report["cases"][0]["result"]["audit"]
+    options = audit["generation_parameters"]
+    wire = ollama_request("fixture-model", SYSTEM, report_input(document, basis), {"context_limit": options["num_ctx"], "output_limit": options["num_predict"]})
+    if damage == "legacy_json":
+        wire["format"] = "json"
+    else:
+        wire["format"]["properties"]["basis_sha256"]["enum"] = ["0" * 64]
+    audit["wire_sha256"] = fingerprint(wire)
+    with pytest.raises(ValueError, match="input audit is inconsistent"):
+        verify_execution(report)
 
 
 @pytest.mark.parametrize(

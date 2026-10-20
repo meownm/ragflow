@@ -88,7 +88,99 @@ def candidate_identity(document):
 
 
 def report_input(document, basis):
-    return {"candidate_sha256": candidate_identity(document), "basis_sha256": basis["sha256"], "sections": sections(document["sections"]), "basis": basis}
+    content = sections(document["sections"])
+    payload = {"candidate_sha256": candidate_identity(document), "basis_sha256": basis["sha256"], "sections": content, "citations": _citation_catalog(content), "basis": basis}
+    # Also send the grammar as data: admission counts its complete representation.
+    payload["response_schema"] = _report_schema(payload["candidate_sha256"], payload["basis_sha256"])
+    return payload
+
+
+def _report_schema(candidate, basis):
+    def obj(properties):
+        return {"type": "object", "properties": properties, "required": list(properties), "additionalProperties": False}
+
+    def array(items):
+        return {"type": "array", "items": items}
+
+    text = {"type": "string"}
+    refs = array(obj({"citation_id": text}))
+    return obj(
+        {
+            "candidate_sha256": {"type": "string", "enum": [candidate]},
+            "basis_sha256": {"type": "string", "enum": [basis]},
+            "requirements": array(
+                obj({"id": text, "coverage": {"type": "string", "enum": sorted(COVERAGE)}, "consistency": {"type": "string", "enum": sorted(CONSISTENCY)}, "references": refs, "reason": text})
+            ),
+            "additional_rules": array(obj({"kind": {"type": "string", "enum": ["TECHNICAL_DETAIL", "UNSUPPORTED_BUSINESS_RULE", "UNDETERMINED"]}, "references": refs, "reason": text})),
+            "joint": obj({"checked_ids": array(text), "consistency": {"type": "string", "enum": sorted(CONSISTENCY)}, "reason": text}),
+        }
+    )
+
+
+def report_format(payload):
+    """Exact generation grammar; it supplies no semantic verdict or expected row IDs."""
+    hashes = [payload.get(key) for key in ("candidate_sha256", "basis_sha256")]
+    if any(not isinstance(value, str) or re.fullmatch(r"[a-f0-9]{64}", value) is None for value in hashes):
+        _invalid("Неверные идентификаторы снимка")
+    expected = _report_schema(*hashes)
+    if payload.get("response_schema") != expected:
+        _invalid("Неверная схема генерации отчёта")
+    return expected
+
+
+def _citation_catalog(content):
+    """Cover complete source, retaining cross-line sentences within citation bounds."""
+    catalog = []
+    for section in sorted(content, key=int):
+        chunk, size = [], 0
+
+        def emit():
+            quote = "".join(chunk).strip()
+            if quote:
+                catalog.append({"id": f"C{len(catalog) + 1:06}", "section": section, "quote": quote})
+
+        # Do not split on line/paragraph layout: one condition may span many lines.
+        for part in re.split(r"(?<=[.!?])(?=\s)", content[section]):
+            width = len(part.encode())
+            if width <= 512 and size + width > 512:
+                emit()
+                chunk, size = [], 0
+            for char in part:
+                width = len(char.encode())
+                if size + width > 512:
+                    emit()
+                    chunk, size = [], 0
+                chunk.append(char)
+                size += width
+        emit()
+    return catalog
+
+
+def materialize_report(value, payload):
+    """Resolve explicit source selections; reject free-form or unknown citations."""
+    if not isinstance(value, dict) or payload.get("citations") != _citation_catalog(payload["sections"]):
+        _invalid("Неверный снимок каталога цитат")
+    report_format(payload)
+    catalog = {item["id"]: {"section": item["section"], "quote": item["quote"]} for item in payload["citations"]}
+    result = dict(value)
+    for group in ("requirements", "additional_rules"):
+        rows = result.get(group)
+        if not isinstance(rows, list):
+            _invalid()
+        result[group] = []
+        for row in rows:
+            if not isinstance(row, dict) or not isinstance(row.get("references"), list) or len(row["references"]) > 9:
+                _invalid()
+            refs = []
+            for ref in row["references"]:
+                if not isinstance(ref, dict) or set(ref) != {"citation_id"} or not isinstance(ref["citation_id"], str) or ref["citation_id"] not in catalog:
+                    _invalid("Цитата не выбрана из полного снимка ТЗ")
+                refs.append(dict(catalog[ref["citation_id"]]))
+            result[group].append({**row, "references": refs})
+    joint = value.get("joint")
+    if isinstance(joint, dict):
+        result["joint"] = {**joint, "checked_ids": list(joint["checked_ids"]) if isinstance(joint.get("checked_ids"), list) else joint.get("checked_ids")}
+    return result
 
 
 def _invalid(message="Неполный или недоказанный отчёт соответствия"):

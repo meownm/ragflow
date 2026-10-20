@@ -594,6 +594,7 @@ export default function AdminBusinessDocumentsQuality() {
             {label('product')}
             <select
               aria-label={label('product')}
+              className="mt-1 block max-w-full rounded-md border border-border-button bg-bg-card p-2 text-text-primary"
               value={product}
               onChange={(event) => {
                 setSelectedRun(null);

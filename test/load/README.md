@@ -73,7 +73,7 @@ API и worker. Один поток держит общий lock восстано
 ```powershell
 .venv/Scripts/python.exe -B test/load/run_disposable.py `
   --app-image 'совместимый-локальный-образ-ragflow' `
-  --evidence-dir S:/ragflow-load-new-run --users 50 `
+  --evidence-dir S:/tmp/ragflow/load-new-run --users 50 `
   --worker-concurrency 4 --compare-single-worker
 ```
 

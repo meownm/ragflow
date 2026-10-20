@@ -6,11 +6,10 @@ import argparse
 import hashlib
 import json
 import os
-from pathlib import Path, PurePosixPath
 import stat
 import subprocess
 import tomllib
-
+from pathlib import Path, PurePosixPath
 
 MANIFEST = "candidate.json"
 OMITTED = {"docker/.env"}
@@ -97,7 +96,7 @@ def _git(root: Path, *args: str) -> bytes:
 def _private(name: str) -> bool:
     path = PurePosixPath(name)
     return (
-        any(p in {".git", ".venv", "node_modules", "__pycache__", "output"} for p in path.parts)
+        any(p in {".git", ".venv", ".local", "node_modules", "__pycache__", "output"} for p in path.parts)
         or path.name.endswith((".pem", ".key", ".p12", ".pfx"))
         or (path.name.startswith(".env") and name not in {"web/.env", "web/.env.development", "web/.env.production"} and not path.name.endswith((".example", "-example")))
         or path.name.startswith("registry-images-")

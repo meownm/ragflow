@@ -1,22 +1,25 @@
 """Fake package executables exercise real child processes without network/builds."""
 
-import json
 import io
-from pathlib import Path
+import json
+import os
 import subprocess
 import sys
 import tarfile
+import time
+from pathlib import Path
 
 import pytest
 
-from tools.quality import candidate, frontend_artifact as frontend
-
+from tools.quality import candidate
+from tools.quality import frontend_artifact as frontend
 
 PROFILE = {"platform": "linux/amd64", "node": "22.20.0", "package_manager": "pnpm@10.33.0", "minify": "esbuild", "sourcemap": False, "mode": "production"}
 
 
 @pytest.fixture
 def setup(tmp_path, monkeypatch):
+    monkeypatch.setattr(frontend, "CACHE_ROOT", tmp_path / "cache")
     source = tmp_path / "source-repo"
     (source / "web/src").mkdir(parents=True)
     (source / "pyproject.toml").write_text('[project]\nversion="1.0.0"\n', encoding="utf-8")
@@ -48,6 +51,8 @@ elif args[0] == "install":
     assert os.environ["VITE_BUILD_SOURCEMAP"] == "false"
     pathlib.Path("node_modules").mkdir()
     pathlib.Path("node_modules/install-proof").write_text("installed")
+    store = pathlib.Path(args[args.index("--store-dir") + 1])
+    (store / "synthetic-package").write_bytes(b"package bytes")
 elif args == ["exec", "vite", "build", "--mode", "production"]:
     assert pathlib.Path("node_modules/install-proof").exists()
     pathlib.Path("dist/assets").mkdir(parents=True)
@@ -68,6 +73,8 @@ def test_build_isolated_artifact_and_cli_verification(setup):
     before = candidate.verify(snapshot)
     receipt = frontend.build(snapshot, work, archive)
     assert receipt["source_id"] == before["source_id"]
+    assert not work.exists()
+    assert Path(str(archive) + ".logs.zip").is_file()
     assert receipt["validation"] == "NOT_ASSERTED"
     assert set(receipt["files"]) == {"index.html", "assets/app.js"}
     assert receipt["toolchain"] == {"node": "22.20.0", "pnpm": "10.33.0"}
@@ -78,9 +85,35 @@ def test_build_isolated_artifact_and_cli_verification(setup):
         capture_output=True,
         text=True,
         timeout=20,
+        check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert json.loads(result.stdout)["validation"] == "NOT_ASSERTED"
+
+
+def test_shared_cache_is_bounded_and_workspaces_are_removed(setup, monkeypatch):
+    snapshot, work, archive, _ = setup
+    monkeypatch.setattr(frontend, "MAX_CACHE_BYTES", 1)
+    frontend.build(snapshot, work, archive)
+    assert not work.exists()
+    assert not list(frontend.CACHE_ROOT.iterdir())
+    assert frontend.verify(snapshot, archive, Path(str(archive) + ".json"))["source_id"]
+
+
+def test_cache_expires_and_rejects_concurrent_users(tmp_path):
+    cache = tmp_path / "pnpm"
+    cache.mkdir()
+    (cache / "old-package").write_bytes(b"old")
+    stamp = tmp_path / "pnpm.last-used"
+    stamp.touch()
+    old = time.time() - 8 * 86400
+    os.utime(stamp, (old, old))
+    with frontend._cache_lease(cache):
+        assert not list(cache.iterdir())
+        with pytest.raises(OSError), frontend._cache_lease(cache):
+            pytest.fail("concurrent cache lease succeeded")
+    with frontend._cache_lease(cache):
+        assert stamp.stat().st_mtime > old
 
 
 @pytest.mark.parametrize("change", ["inputs", "new-input", "version", "empty-output", "failure"])
@@ -100,6 +133,8 @@ def test_failed_or_mutating_build_has_no_completion_receipt(setup, change):
     helper.write_text(text, encoding="utf-8")
     with pytest.raises(ValueError):
         frontend.build(snapshot, work, archive)
+    assert not work.exists()
+    assert Path(str(archive) + ".logs.zip").is_file()
     assert not Path(str(archive) + ".json").exists()
     candidate.verify(snapshot)
 
@@ -148,7 +183,7 @@ def test_profile_is_explicit_and_supported(field, value):
 
 def test_timeout_stops_owned_child(tmp_path):
     with pytest.raises(subprocess.TimeoutExpired):
-        frontend._run([sys.executable, "-c", "import time;time.sleep(60)"], tmp_path, dict(), tmp_path / "timeout.log", 1)
+        frontend._run([sys.executable, "-c", "import time;time.sleep(60)"], tmp_path, {}, tmp_path / "timeout.log", 1)
 
 
 def test_explicit_pnpm_cli_uses_selected_node_without_wrapper(tmp_path, monkeypatch):

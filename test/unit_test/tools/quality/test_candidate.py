@@ -3,13 +3,12 @@
 import importlib.util
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
-
 
 ROOT = Path(__file__).resolve().parents[4]
 TOOL = ROOT / "tools/quality/candidate.py"
@@ -43,7 +42,7 @@ def snapshot(root, destination, **kwargs):
 
 
 def cli(*args):
-    return subprocess.run([sys.executable, str(TOOL), *map(str, args)], capture_output=True, text=True, timeout=30)
+    return subprocess.run([sys.executable, str(TOOL), *map(str, args)], capture_output=True, text=True, timeout=30, check=False)
 
 
 def rewrite_manifest(destination, mutate):
@@ -166,7 +165,7 @@ def test_unsafe_manifest_paths_rejected(repository, tmp_path, name):
         candidate.verify(destination)
 
 
-@pytest.mark.parametrize("name", [".env", "credentials.key", "web/.env.local", "web/.env.production.local"])
+@pytest.mark.parametrize("name", [".env", "credentials.key", "web/.env.local", "web/.env.production.local", ".local/backups/database.dump"])
 def test_secret_paths_rejected(repository, tmp_path, name):
     path = repository / name
     path.parent.mkdir(parents=True, exist_ok=True)

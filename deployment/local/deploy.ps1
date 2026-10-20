@@ -498,7 +498,7 @@ if ($resolvedMode -in @("Candidate", "Release")) {
 }
 if ($deploymentImage) {
     $env:RAGFLOW_IMAGE = $deploymentImage
-    $runtimeRoot = Join-Path (Split-Path -Path $repoRoot -Parent) "$ProjectName-runtime"
+    $runtimeRoot = Join-Path $repoRoot ".local\runtime\$ProjectName"
     $runtimeBinds = Initialize-PersistentRuntimeBinds -RuntimeRoot $runtimeRoot `
         -TemplatePath (Join-Path $dockerDirectory "service_conf.yaml.template")
     $env:RAGFLOW_LOCAL_RUNTIME_CONFIG = $runtimeBinds.config_path

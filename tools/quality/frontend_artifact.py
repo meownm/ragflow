@@ -10,13 +10,58 @@ import argparse
 import hashlib
 import json
 import os
-from pathlib import Path
 import platform
 import re
 import shutil
 import signal
 import subprocess
 import tarfile
+import time
+import zipfile
+from contextlib import contextmanager
+from pathlib import Path
+
+CACHE_ROOT = Path(__file__).resolve().parents[2] / ".local/cache/pnpm"
+MAX_CACHE_BYTES = 5 * 1024**3
+
+
+@contextmanager
+def _cache_lease(cache: Path):
+    """Serialize shared-store users and cap the disposable package cache."""
+    lock_path = cache.parent / "frontend.lock"
+    stamp = cache.parent / "pnpm.last-used"
+    with lock_path.open("a+b") as lock:
+        lock.seek(0, 2)
+        if not lock.tell():
+            lock.write(b"0")
+            lock.flush()
+        lock.seek(0)
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            if stamp.exists() and time.time() - stamp.stat().st_mtime > 7 * 86400:
+                shutil.rmtree(cache)
+                cache.mkdir()
+            yield
+        finally:
+            size = 0
+            for parent, directories, names in os.walk(cache, followlinks=False):
+                if any((Path(parent) / name).is_symlink() or (Path(parent) / name).is_junction() for name in directories):
+                    raise ValueError("linked package cache entry")
+                for name in names:
+                    size += (Path(parent) / name).lstat().st_size
+                if size > MAX_CACHE_BYTES:
+                    shutil.rmtree(cache)
+                    cache.mkdir()
+                    break
+            stamp.touch()
+
 
 try:
     from . import candidate as identity
@@ -73,7 +118,7 @@ def _run(command: list[str], cwd: Path, env: dict, log: Path, timeout: int) -> s
             process.wait(timeout=10)
             raise
     if code:
-        raise ValueError(f"frontend command failed ({code}); inspect {log.name}")
+        raise ValueError(f"frontend command failed ({code}); inspect the artifact .logs.zip ({log.name})")
     # Only version calls need captured text; callers do not print build logs.
     return log.read_text(encoding="utf-8", errors="replace").strip() if log.name.endswith("version.log") else ""
 
@@ -124,7 +169,7 @@ def build(candidate: Path, work: Path, output: Path, pnpm_cli: Path | None = Non
     if work.is_relative_to(candidate) or candidate.is_relative_to(work) or output.is_relative_to(candidate) or output.is_relative_to(work):
         raise ValueError("candidate, work and artifact must have separate paths")
     receipt_path = Path(str(output) + ".json")
-    if work.exists() or output.exists() or receipt_path.exists():
+    if work.exists() or output.exists() or receipt_path.exists() or Path(str(output) + ".logs.zip").exists():
         raise ValueError("fresh work directory and artifact paths required; no overwrite")
     manifest = identity.verify(candidate)
     profile = _profile(manifest["identity"]["build"])
@@ -134,51 +179,72 @@ def build(candidate: Path, work: Path, output: Path, pnpm_cli: Path | None = Non
         if required not in manifest["identity"]["files"]:
             raise ValueError(f"frontend source missing {required}")
     node, pnpm = _tools(pnpm_cli)
-    work.mkdir(parents=True, exist_ok=False)
-    source = work / "source"
-    shutil.copytree(candidate / "source", source)
-    _check_inputs(source, manifest)
-    env = _environment(work, profile)
-    versions = {
-        "node": _run([*node, "--version"], source / "web", env, work / "node-version.log", 30).removeprefix("v"),
-        "pnpm": _run([*pnpm, "--version"], source / "web", env, work / "pnpm-version.log", 30),
-    }
-    if versions["node"] != profile["node"].removeprefix("v") or versions["pnpm"] != profile["package_manager"].removeprefix("pnpm@"):
-        raise ValueError("installed frontend toolchain does not match candidate profile")
-    _run([*pnpm, "install", "--frozen-lockfile", "--ignore-scripts", "--prod=false", "--store-dir", str(work / "pnpm-store")], source / "web", env, work / "install.log", 1200)
-    _check_inputs(source, manifest)
-    _run([*pnpm, "exec", "vite", "build", "--mode", profile["mode"]], source / "web", env, work / "build.log", 1200)
-    _check_inputs(source, manifest)
-    current = identity.verify(candidate)
-    if current["source_id"] != manifest["source_id"]:
-        raise ValueError("candidate changed during frontend build")
-    dist = source / "web/dist"
-    files = _file_map(dist)
-    if "index.html" not in files or not files["index.html"]["size"]:
-        raise ValueError("frontend build did not produce a nonempty dist/index.html")
-    output.parent.mkdir(parents=True, exist_ok=True)
-    # Exclusive creation prevents concurrent writers from replacing published bytes.
-    with output.open("xb") as stream:
-        with tarfile.open(fileobj=stream, mode="w:gz") as archive:
-            for name in sorted(files):
-                archive.add(identity.safe_path(dist, name), arcname=name, recursive=False)
-    receipt = {
-        "schema": 1,
-        "kind": "frontend-build",
-        "source_id": manifest["source_id"],
-        "profile": profile,
-        "toolchain": versions,
-        "build_host": {"system": platform.system(), "machine": platform.machine()},
-        "archive": {"sha256": identity.file_digest(output), "size": output.stat().st_size},
-        "files": files,
-        "validation": "NOT_ASSERTED",
-    }
-    receipt["receipt_id"] = identity.digest(identity.canonical(receipt))
-    # Verify the archive before publishing its completion receipt.
-    _verify_archive(output, receipt)
-    with receipt_path.open("xb") as stream:
-        stream.write(identity.canonical(receipt) + b"\n")
-    return verify(candidate, output, receipt_path)
+    _unlinked(CACHE_ROOT)
+    cache = CACHE_ROOT.resolve()
+    if cache.is_relative_to(work) or work.is_relative_to(cache):
+        raise ValueError("build cache and workspace must have separate paths")
+    cache.mkdir(parents=True, exist_ok=True)
+    with _cache_lease(cache):
+        work.mkdir(parents=True, exist_ok=False)
+        (work / ".keep").write_text("Active frontend build; removed with this workspace.\n", encoding="utf-8")
+        try:
+            source = work / "source"
+            shutil.copytree(candidate / "source", source)
+            _check_inputs(source, manifest)
+            env = _environment(work, profile)
+            versions = {
+                "node": _run([*node, "--version"], source / "web", env, work / "node-version.log", 30).removeprefix("v"),
+                "pnpm": _run([*pnpm, "--version"], source / "web", env, work / "pnpm-version.log", 30),
+            }
+            if versions["node"] != profile["node"].removeprefix("v") or versions["pnpm"] != profile["package_manager"].removeprefix("pnpm@"):
+                raise ValueError("installed frontend toolchain does not match candidate profile")
+            _run([*pnpm, "install", "--frozen-lockfile", "--ignore-scripts", "--prod=false", "--store-dir", str(cache)], source / "web", env, work / "install.log", 1200)
+            _check_inputs(source, manifest)
+            _run([*pnpm, "exec", "vite", "build", "--mode", profile["mode"]], source / "web", env, work / "build.log", 1200)
+            _check_inputs(source, manifest)
+            current = identity.verify(candidate)
+            if current["source_id"] != manifest["source_id"]:
+                raise ValueError("candidate changed during frontend build")
+            dist = source / "web/dist"
+            files = _file_map(dist)
+            if "index.html" not in files or not files["index.html"]["size"]:
+                raise ValueError("frontend build did not produce a nonempty dist/index.html")
+            output.parent.mkdir(parents=True, exist_ok=True)
+            # Exclusive creation prevents concurrent writers from replacing published bytes.
+            with output.open("xb") as stream, tarfile.open(fileobj=stream, mode="w:gz") as archive:
+                for name in sorted(files):
+                    archive.add(identity.safe_path(dist, name), arcname=name, recursive=False)
+            receipt = {
+                "schema": 1,
+                "kind": "frontend-build",
+                "source_id": manifest["source_id"],
+                "profile": profile,
+                "toolchain": versions,
+                "build_host": {"system": platform.system(), "machine": platform.machine()},
+                "archive": {"sha256": identity.file_digest(output), "size": output.stat().st_size},
+                "files": files,
+                "validation": "NOT_ASSERTED",
+            }
+            receipt["receipt_id"] = identity.digest(identity.canonical(receipt))
+            # Verify the archive before publishing its completion receipt.
+            _verify_archive(output, receipt)
+            with receipt_path.open("xb") as stream:
+                stream.write(identity.canonical(receipt) + b"\n")
+            return verify(candidate, output, receipt_path)
+        finally:
+            # Keep bounded diagnostic files, never a second source/dependency tree.
+            logs = sorted(work.glob("*.log"))
+            if logs:
+                log_archive = Path(str(output) + ".logs.zip")
+                log_archive.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    with zipfile.ZipFile(log_archive, "x", compression=zipfile.ZIP_DEFLATED) as bundle:
+                        for log in logs:
+                            bundle.write(log, log.name)
+                finally:
+                    shutil.rmtree(work)
+            else:
+                shutil.rmtree(work)
 
 
 def _verify_archive(archive: Path, receipt: dict) -> None:

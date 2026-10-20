@@ -29,8 +29,11 @@ def main() -> int:
     if omitted:
         raise ValueError("Untracked files need explicit --include or removal: " + ", ".join(omitted))
     profile = {"platform": "linux/amd64", "mode": "feature"}
-    with tempfile.TemporaryDirectory(prefix="ragflow-feature-") as directory:
+    task_root = Path(root.anchor) / "tmp/ragflow"
+    task_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="feature-", dir=task_root) as directory:
         temporary = Path(directory)
+        (temporary / ".keep").write_text("Active feature build; removed with this workspace.\n", encoding="utf-8")
         candidate = temporary / "snapshot"
         profile_file = temporary / "profile.json"
         profile_file.write_text(json.dumps(profile), encoding="utf-8")

@@ -65,3 +65,6 @@ test/playwright/artifacts/
 
 # ── Docker env (contains secrets) ───────────────────────────────────────────
 docker/.env
+
+# Machine-local runtime, protected results and shared build cache
+.local/

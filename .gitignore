@@ -282,3 +282,6 @@ internal/deepdoc/parser/docx/tool/
 /deployment/qa/setup.json
 /tmp
 .playwright-cli/
+
+# Machine-local runtime, protected results and shared build cache
+/.local/

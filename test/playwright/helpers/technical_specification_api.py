@@ -76,7 +76,14 @@ class SpecificationApi:
         self.document["messages"].append({"id": "answer-" + message["id"], "reply_to": message["id"], "role": "assistant", "text": answer, "source_revision": message["source_revision"]})
         if message["text"] != "Какой лимит?":
             self.document["proposals"] = [
-                {"id": "proposal", "source": "chat", "status": "ready", "base_revision": message["source_revision"], "sections": {**self.document["sections"], "5": "Кнопка Записать"}}
+                {
+                    "id": "proposal",
+                    "source": "chat",
+                    "message_id": message["id"],
+                    "status": "ready",
+                    "base_revision": message["source_revision"],
+                    "sections": {**self.document["sections"], "5": "Кнопка Записать"},
+                }
             ]
         self.document["version"] += 1
 

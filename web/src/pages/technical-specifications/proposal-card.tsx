@@ -8,6 +8,9 @@ export function ProposalCard({
   local,
   section,
   disabled,
+  compact = false,
+  request,
+  number,
   onAction,
   onDiscuss,
   onDismiss,
@@ -16,6 +19,9 @@ export function ProposalCard({
   local: Sections;
   section?: string;
   disabled: boolean;
+  compact?: boolean;
+  request?: { number: number; text: string };
+  number: number;
   onAction: (name: string, data: object) => void;
   onDiscuss: () => void;
   onDismiss: () => void;
@@ -28,9 +34,25 @@ export function ProposalCard({
   return (
     <section className="tz-proposal" aria-label="Предложенные изменения">
       <div className="tz-proposal-heading">
-        <h3>Правки к редакции {proposal.base_revision}</h3>
+        <h3>
+          Предложение {number} · редакция {proposal.base_revision}
+        </h3>
         <span>Разделы {changed.join(', ') || 'без изменений'}</span>
       </div>
+      {request ? (
+        <div className="tz-proposal-request">
+          <p className="font-medium">Запрос {request.number}</p>
+          <p className="line-clamp-2 text-text-secondary" title={request.text}>
+            {request.text}
+          </p>
+        </div>
+      ) : (
+        <p className="text-text-secondary">
+          {proposal.source === 'eva'
+            ? 'Изменения из Eva'
+            : 'Предложение без сохранённой связи с запросом'}
+        </p>
+      )}
       {footer && !!proposal.issues?.length && (
         <ul role="alert" className="list-disc space-y-1 pl-5 text-state-error">
           {proposal.issues.map((issue, index) => (
@@ -49,6 +71,7 @@ export function ProposalCard({
         local={local}
         candidate={proposal.sections}
         section={section}
+        expanded={!compact}
       />
       {proposal.conflicts
         ?.filter((conflict) => !section || conflict.section === section)

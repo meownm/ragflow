@@ -2,7 +2,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { useFetchUserInfo } from '@/hooks/use-user-setting-request';
-import { DocumentMarkdown } from '@/pages/business-documents/components/document-markdown';
 import {
   createSourceWorkspace,
   getSourceWorkspace,
@@ -32,6 +31,7 @@ import {
 } from 'react';
 import { useBlocker, useSearchParams } from 'react-router';
 import { AlignmentPanel } from './alignment-panel';
+import { ChatHistory } from './chat-history';
 import {
   clearCommentDraft,
   editCommentDraft,
@@ -469,6 +469,11 @@ function Editor({
       item.base_revision === doc.revision &&
       !dismissed.includes(item.id),
   );
+  const proposalRequests = new Map(
+    doc.messages
+      .filter((item) => item.role === 'user')
+      .map((item, index) => [item.id, { number: index + 1, text: item.text }]),
+  );
 
   const persistEditing = useCallback(
     (next: DocumentDraft) => {
@@ -605,6 +610,13 @@ function Editor({
         proposal={proposal}
         local={doc.sections}
         section={section}
+        compact={!section}
+        number={doc.proposals.findIndex((item) => item.id === proposal.id) + 1}
+        request={
+          proposal.message_id
+            ? proposalRequests.get(proposal.message_id)
+            : undefined
+        }
         disabled={!canEdit || busy || saving || dirty}
         onAction={(name, data) => void action(name, data)}
         onDiscuss={() => {
@@ -1005,7 +1017,10 @@ function Editor({
   }
 
   return (
-    <section className="min-w-0 space-y-4" aria-label="Рабочее пространство ТЗ">
+    <section
+      className={`tz-editor min-w-0 ${mode === 'chat' && panel !== 'history' ? 'tz-editor-chat' : 'space-y-4'}`}
+      aria-label="Рабочее пространство ТЗ"
+    >
       <header className="tz-editor-head">
         <div className="tz-title-row">
           <div className="min-w-0">
@@ -1227,7 +1242,15 @@ function Editor({
             ))}
           </nav>
         )}
-        <div className={panel === 'history' ? 'hidden' : 'min-w-0'}>
+        <div
+          className={
+            panel === 'history'
+              ? 'hidden'
+              : mode === 'chat'
+                ? 'tz-chat-column'
+                : 'min-w-0'
+          }
+        >
           {mode === 'document' ? (
             <article
               className="tz-document"
@@ -1347,241 +1370,185 @@ function Editor({
               })}
             </article>
           ) : (
-            <div className="tz-chat space-y-5">
-              <div className="mb-6">
-                <h2 className="text-lg font-medium">Чат с помощником</h2>
-                <p className="text-sm text-text-secondary">
-                  Обсуждайте и меняйте это ТЗ.
-                </p>
-              </div>
-              {doc.messages.length === 0 && (
-                <p className="text-text-secondary">
-                  Задайте вопрос или попросите подготовить правки ТЗ.
-                </p>
-              )}
-              {doc.messages.map((item, index) => (
-                <article
-                  key={index}
-                  className="space-y-2 border-b border-border-button pb-4"
-                >
-                  <p className="text-sm font-medium">
-                    {item.role === 'user'
-                      ? item.author_id === actor
-                        ? 'Вы'
-                        : (doc.people[item.author_id ?? ''] ?? 'Участник')
-                      : 'Помощник'}
-                    {item.context && ` · ${contextLabel(item.context)}`}
-                  </p>
-                  {item.context?.anchor && (
-                    <blockquote className="border-l-2 border-border-button pl-3 text-sm text-text-secondary">
-                      {item.context.anchor.quote}
-                    </blockquote>
-                  )}
-                  <DocumentMarkdown>{item.text}</DocumentMarkdown>
-                  {item.source_revision &&
-                    item.source_revision !== doc.revision && (
-                      <p className="text-sm text-text-secondary">
-                        Относится к редакции {item.source_revision}. Предложения
-                        к прежней редакции не применяются.
-                      </p>
-                    )}
-                  {item.status === 'processing' && (
-                    <p role="status" className="text-sm text-text-secondary">
-                      Запрос сохранён · помощник готовит ответ
-                    </p>
-                  )}
-                  {item.status === 'failed' && (
-                    <p role="alert" className="text-sm text-state-error">
-                      {item.error?.message ?? 'Не удалось получить ответ'}
-                    </p>
-                  )}
-                  {item.author_id === actor &&
-                    item.context &&
-                    (item.status === 'failed' ||
-                      item.status === 'processing') && (
-                      <Button
-                        variant="outline"
-                        disabled={busy || saving || dirty || !canEdit}
-                        onClick={() =>
-                          void action('chat', {
-                            draft: {
-                              message_id: item.id,
-                              text: item.text,
-                              context: item.context,
-                            },
-                          })
-                        }
-                      >
-                        {item.status === 'failed'
-                          ? 'Повторить сообщение'
-                          : 'Проверить запрос'}
-                      </Button>
-                    )}
-                </article>
-              ))}
-              {ready.map((proposal) => proposalCard(proposal))}
-              <label className="flex flex-wrap items-center gap-2 text-sm">
-                Контекст
-                <select
-                  aria-label="Контекст чата"
-                  value={chatDraft.context.scope}
-                  className={selectClass}
-                  onChange={(event) =>
-                    changeDraft({
-                      ...chatDraft,
-                      context: wholeContext(doc, event.target.value),
-                    })
-                  }
-                >
-                  <option value="all">Всё ТЗ</option>
-                  {headings.map((_, index) => (
-                    <option key={index} value={String(index + 1)}>
-                      Раздел {index + 1}
-                    </option>
-                  ))}
-                  {chatDraft.context.scope === 'selection' && (
-                    <option value="selection">Выделенный фрагмент</option>
-                  )}
-                </select>
-              </label>
-              {chatDraft.context.anchor && (
-                <blockquote className="whitespace-pre-wrap border-l-2 border-border-button pl-3 text-sm">
-                  {chatDraft.context.anchor.quote}
-                  <p className="mt-2 text-text-secondary">
-                    Исходная редакция {chatDraft.context.revision}
-                  </p>
-                </blockquote>
-              )}
-              {stale && (
-                <div role="alert" className="space-y-2 text-sm">
-                  <p>
-                    Исходный фрагмент изменён или удалён. Выберите контекст
-                    явно.
-                  </p>
-                  <Button variant="outline" onClick={() => setMode('document')}>
-                    Открыть документ
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() =>
+            <div className="tz-chat">
+              <ChatHistory
+                document={doc}
+                actor={actor}
+                proposals={ready}
+                disabled={busy || saving || dirty || !canEdit}
+                onRetry={(draft) => void action('chat', { draft })}
+                renderProposal={(proposal) => proposalCard(proposal)}
+              />
+              <div className="tz-chat-composer space-y-3">
+                <label className="flex flex-wrap items-center gap-2 text-sm">
+                  Контекст
+                  <select
+                    aria-label="Контекст чата"
+                    value={chatDraft.context.scope}
+                    className={selectClass}
+                    onChange={(event) =>
                       changeDraft({
                         ...chatDraft,
-                        context: wholeContext(
-                          doc,
-                          chatDraft.context.anchor?.section ?? 'all',
-                        ),
+                        context: wholeContext(doc, event.target.value),
                       })
                     }
                   >
-                    Использовать весь раздел
-                  </Button>
-                </div>
-              )}
-              {draftConflict && (
-                <div
-                  role="alert"
-                  className="space-y-3 rounded-lg border border-border-button p-3 text-sm"
-                >
-                  <p>
-                    На сервере другой черновик. Выберите вариант для
-                    продолжения.
-                  </p>
-                  <details>
-                    <summary className="cursor-pointer">
-                      Серверный: {contextLabel(draftConflict.draft.context)},
-                      редакция {draftConflict.draft.context.revision}
-                    </summary>
-                    {draftConflict.draft.context.anchor && (
-                      <blockquote className="my-2 whitespace-pre-wrap border-l-2 pl-3">
-                        {draftConflict.draft.context.anchor.quote}
-                      </blockquote>
+                    <option value="all">Всё ТЗ</option>
+                    {headings.map((_, index) => (
+                      <option key={index} value={String(index + 1)}>
+                        Раздел {index + 1}
+                      </option>
+                    ))}
+                    {chatDraft.context.scope === 'selection' && (
+                      <option value="selection">Выделенный фрагмент</option>
                     )}
-                    <p className="mt-2 whitespace-pre-wrap">
-                      {draftConflict.draft.text || 'Пустой черновик'}
+                  </select>
+                </label>
+                {chatDraft.context.anchor && (
+                  <blockquote className="whitespace-pre-wrap border-l-2 border-border-button pl-3 text-sm">
+                    {chatDraft.context.anchor.quote}
+                    <p className="mt-2 text-text-secondary">
+                      Исходная редакция {chatDraft.context.revision}
                     </p>
-                  </details>
-                  <p className="text-text-secondary">
-                    Второй вариант сохранится на этом устройстве.
-                  </p>
-                  <div className="flex flex-wrap gap-2">
+                  </blockquote>
+                )}
+                {stale && (
+                  <div role="alert" className="space-y-2 text-sm">
+                    <p>
+                      Исходный фрагмент изменён или удалён. Выберите контекст
+                      явно.
+                    </p>
                     <Button
                       variant="outline"
-                      onClick={() => chooseDraft(false)}
+                      onClick={() => setMode('document')}
                     >
-                      Продолжить с моим
+                      Открыть документ
                     </Button>
-                    <Button variant="outline" onClick={() => chooseDraft(true)}>
-                      Продолжить с серверным
+                    <Button
+                      variant="outline"
+                      onClick={() =>
+                        changeDraft({
+                          ...chatDraft,
+                          context: wholeContext(
+                            doc,
+                            chatDraft.context.anchor?.section ?? 'all',
+                          ),
+                        })
+                      }
+                    >
+                      Использовать весь раздел
                     </Button>
                   </div>
-                </div>
-              )}
-              <Textarea
-                aria-label="Сообщение помощнику"
-                value={chatDraft.text}
-                onChange={(event) =>
-                  changeDraft({ ...chatDraft, text: event.target.value })
-                }
-                maxLength={10000}
-                className="min-h-28"
-              />
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <p role="status" className="text-sm text-text-secondary">
-                  {draftStatus}
-                </p>
-                <Button
-                  disabled={
-                    !canEdit ||
-                    busy ||
-                    stale ||
-                    dirty ||
-                    !!draftConflict ||
-                    !chatDraft.text.trim()
+                )}
+                {draftConflict && (
+                  <div
+                    role="alert"
+                    className="space-y-3 rounded-lg border border-border-button p-3 text-sm"
+                  >
+                    <p>
+                      На сервере другой черновик. Выберите вариант для
+                      продолжения.
+                    </p>
+                    <details>
+                      <summary className="cursor-pointer">
+                        Серверный: {contextLabel(draftConflict.draft.context)},
+                        редакция {draftConflict.draft.context.revision}
+                      </summary>
+                      {draftConflict.draft.context.anchor && (
+                        <blockquote className="my-2 whitespace-pre-wrap border-l-2 pl-3">
+                          {draftConflict.draft.context.anchor.quote}
+                        </blockquote>
+                      )}
+                      <p className="mt-2 whitespace-pre-wrap">
+                        {draftConflict.draft.text || 'Пустой черновик'}
+                      </p>
+                    </details>
+                    <p className="text-text-secondary">
+                      Второй вариант сохранится на этом устройстве.
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant="outline"
+                        onClick={() => chooseDraft(false)}
+                      >
+                        Продолжить с моим
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => chooseDraft(true)}
+                      >
+                        Продолжить с серверным
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                <Textarea
+                  aria-label="Сообщение помощнику"
+                  value={chatDraft.text}
+                  onChange={(event) =>
+                    changeDraft({ ...chatDraft, text: event.target.value })
                   }
-                  onClick={() => void send()}
-                >
-                  {busy ? 'Обработка…' : 'Отправить'}
-                </Button>
-              </div>
-              {draftSyncFailed && (
-                <Button
-                  variant="outline"
-                  onClick={() => setDraftSyncAttempt((value) => value + 1)}
-                >
-                  Повторить синхронизацию черновика
-                </Button>
-              )}
-              {draftBackup && (
-                <details className="text-sm">
-                  <summary className="cursor-pointer">
-                    Предыдущий вариант черновика
-                  </summary>
-                  <p className="my-2 text-text-secondary">
-                    {contextLabel(draftBackup.draft.context)}, редакция{' '}
-                    {draftBackup.draft.context.revision}
-                  </p>
-                  {draftBackup.draft.context.anchor && (
-                    <blockquote className="my-2 whitespace-pre-wrap border-l-2 pl-3">
-                      {draftBackup.draft.context.anchor.quote}
-                    </blockquote>
-                  )}
-                  <p className="mb-2 whitespace-pre-wrap">
-                    {draftBackup.draft.text || 'Пустой черновик'}
+                  maxLength={10000}
+                  className="min-h-28"
+                />
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p role="status" className="text-sm text-text-secondary">
+                    {draftStatus}
                   </p>
                   <Button
-                    variant="outline"
-                    disabled={!!draftConflict}
-                    onClick={() => changeDraft(draftBackup.draft)}
+                    disabled={
+                      !canEdit ||
+                      busy ||
+                      stale ||
+                      dirty ||
+                      !!draftConflict ||
+                      !chatDraft.text.trim()
+                    }
+                    onClick={() => void send()}
                   >
-                    Использовать этот вариант
+                    {busy ? 'Обработка…' : 'Отправить'}
                   </Button>
-                </details>
-              )}
-              {dirty && (
-                <p className="text-sm text-text-secondary">
-                  Сохраните правки документа перед отправкой или применением.
-                </p>
-              )}
+                </div>
+                {draftSyncFailed && (
+                  <Button
+                    variant="outline"
+                    onClick={() => setDraftSyncAttempt((value) => value + 1)}
+                  >
+                    Повторить синхронизацию черновика
+                  </Button>
+                )}
+                {draftBackup && (
+                  <details className="text-sm">
+                    <summary className="cursor-pointer">
+                      Предыдущий вариант черновика
+                    </summary>
+                    <p className="my-2 text-text-secondary">
+                      {contextLabel(draftBackup.draft.context)}, редакция{' '}
+                      {draftBackup.draft.context.revision}
+                    </p>
+                    {draftBackup.draft.context.anchor && (
+                      <blockquote className="my-2 whitespace-pre-wrap border-l-2 pl-3">
+                        {draftBackup.draft.context.anchor.quote}
+                      </blockquote>
+                    )}
+                    <p className="mb-2 whitespace-pre-wrap">
+                      {draftBackup.draft.text || 'Пустой черновик'}
+                    </p>
+                    <Button
+                      variant="outline"
+                      disabled={!!draftConflict}
+                      onClick={() => changeDraft(draftBackup.draft)}
+                    >
+                      Использовать этот вариант
+                    </Button>
+                  </details>
+                )}
+                {dirty && (
+                  <p className="text-sm text-text-secondary">
+                    Сохраните правки документа перед отправкой или применением.
+                  </p>
+                )}
+              </div>
             </div>
           )}
         </div>

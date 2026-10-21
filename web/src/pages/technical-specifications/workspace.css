@@ -242,7 +242,70 @@
 .tz-chat {
   max-width: 760px;
   width: 100%;
-  margin: auto;
+  margin: 0 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.tz-workspace > header,
+.tz-editor-chat > .tz-editor-head {
+  flex-shrink: 0;
+}
+.tz-editor-chat {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.tz-editor-chat .tz-document-layout {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  align-items: stretch;
+  padding-top: 0;
+  padding-bottom: 0;
+  position: relative;
+}
+.tz-chat-column {
+  display: flex;
+  min-height: 0;
+}
+.tz-chat-history {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  overflow-wrap: anywhere;
+  padding: 20px 3px 12px;
+}
+.tz-chat-heading {
+  margin-bottom: 24px;
+}
+.tz-chat-composer {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border-button);
+  background: var(--bg-base);
+  padding: 12px 3px 16px;
+  max-height: 60%;
+  overflow: auto;
+}
+.tz-chat-composer > blockquote {
+  max-height: 80px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+.tz-chat-composer textarea {
+  min-height: 80px;
+  max-height: 180px;
+}
+.tz-chat-latest {
+  flex-shrink: 0;
+  align-self: center;
+  font-size: 12px;
+}
+.tz-editor-chat .tz-panel {
+  overflow: auto;
+  min-height: 0;
 }
 .tz-chat article {
   padding: 17px 0;
@@ -258,8 +321,23 @@
   font-size: 13px;
   line-height: 1.6;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
   min-width: 0;
+}
+.tz-proposal > details {
+  min-width: 0;
+}
+.tz-proposal-comparison {
+  grid-template-columns: minmax(0, 1fr);
+}
+.tz-proposal-request {
+  overflow-wrap: anywhere;
+}
+@media (min-width: 768px) {
+  .tz-proposal-comparison {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 .tz-proposal-heading {
   display: flex;
@@ -348,6 +426,38 @@
   }
 }
 @media (max-width: 760px) {
+  .tz-editor-chat .tz-editor-head {
+    padding-top: 12px;
+  }
+  .tz-editor-chat .tz-title {
+    font-size: 17px;
+  }
+  .tz-editor-chat .tz-toolbar {
+    margin-top: 10px;
+    padding-bottom: 8px;
+    gap: 4px;
+  }
+  .tz-editor-chat .tz-document-layout {
+    padding: 0 16px;
+    gap: 0;
+  }
+  .tz-editor-chat .tz-chat-column {
+    flex: 1;
+  }
+  .tz-editor-chat .tz-panel {
+    position: absolute;
+    inset: 0;
+    z-index: 10;
+    padding: 16px;
+    background: var(--bg-base);
+  }
+  .tz-chat-composer {
+    padding-bottom: 8px;
+  }
+  .tz-chat-composer textarea {
+    min-height: 64px;
+    max-height: 120px;
+  }
   .tz-document-layout,
   .tz-document-layout.tz-with-panel,
   .tz-document-layout.tz-chat-layout.tz-with-panel {

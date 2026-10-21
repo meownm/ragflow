@@ -37,6 +37,7 @@ export interface Comment {
 }
 export interface Proposal {
   id: string;
+  message_id?: string;
   base_revision: number;
   sections: Sections;
   status: 'ready' | 'applied' | 'needs_resolution';
@@ -58,6 +59,7 @@ export interface Specification {
   sections: Sections;
   messages: {
     id: string;
+    reply_to?: string;
     role: string;
     text: string;
     context?: Context;

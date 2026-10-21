@@ -6,11 +6,13 @@ export function ProposalPreview({
   local,
   candidate,
   includeUnchanged = false,
+  expanded = true,
   section,
 }: {
   local: Sections;
   candidate: Sections;
   includeUnchanged?: boolean;
+  expanded?: boolean;
   section?: string;
 }) {
   return (
@@ -21,18 +23,18 @@ export function ProposalPreview({
         return (
           (!section || key === section) &&
           (changed || includeUnchanged) && (
-            <details key={key} open={changed}>
+            <details key={key} open={changed && expanded}>
               <summary>
                 {key}. {heading}
               </summary>
-              <div className="mt-3 grid min-w-0 gap-4 md:grid-cols-2">
-                <div>
+              <div className="tz-proposal-comparison mt-3 grid min-w-0 gap-4 md:grid-cols-2">
+                <div className="min-w-0">
                   <p className="mb-2 text-sm text-text-secondary">Сейчас</p>
                   <DocumentMarkdown>
                     {local[key] || 'Раздел пуст'}
                   </DocumentMarkdown>
                 </div>
-                <div>
+                <div className="min-w-0">
                   <p className="mb-2 text-sm text-text-secondary">
                     После применения
                   </p>

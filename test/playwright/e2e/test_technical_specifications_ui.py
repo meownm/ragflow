@@ -21,6 +21,65 @@ from test.playwright.helpers.technical_specification_eva import CodecSpecificati
 
 @pytest.mark.p1
 @pytest.mark.parametrize("width", [1440, 390])
+def test_specification_long_chat_keeps_composer_visible_and_links_proposals(page, base_url, tmp_path, width):
+    page.set_viewport_size({"width": width, "height": 844 if width == 390 else 900})
+    api = SpecificationApi()
+    api.document["title"] = "ТЗ загрузки заявок CSV — проверка длинной переписки"
+    context = {"document_id": "doc", "revision": 1, "scope": "all", "anchor": None}
+    for number in range(1, 8):
+        request = f"request-{number}"
+        api.document["messages"].extend(
+            [
+                {"id": request, "role": "user", "author_id": "business-documents-ui-user", "text": f"Запрос номер {number}", "context": context},
+                {"id": f"answer-{number}", "role": "assistant", "reply_to": request, "text": f"Ответ номер {number}. " + "Подробное объяснение. " * 40},
+            ]
+        )
+    api.document["sections"]["8"] = "```json\n" + '"' + "x" * 300 + '"\n```'
+    for number in (1, 7):
+        api.document["proposals"].append(
+            {
+                "id": f"proposal-{number}",
+                "source": "chat",
+                "message_id": f"request-{number}",
+                "status": "ready",
+                "base_revision": 1,
+                "sections": {**api.document["sections"], "8": api.document["sections"]["8"] + f"\n\nВариант {number}"},
+            }
+        )
+    api.document["proposals"].append(
+        {"id": "saved-without-link", "source": "chat", "status": "ready", "base_revision": 1, "sections": {**api.document["sections"], "9": "Сохранённое предложение без ссылки на запрос"}}
+    )
+    _install_session(page)
+    _install_common_routes(page)
+    page.route("**/api/v1/source-workspaces**", api.route)
+    page.goto(base_url + LOCATION)
+    page.get_by_role("button", name="Чат", exact=True).click()
+    composer = page.get_by_role("textbox", name="Сообщение помощнику")
+    expect(composer).to_be_in_viewport()
+    expect(page.get_by_role("button", name="Отправить", exact=True)).to_be_in_viewport()
+    history = page.get_by_role("region", name="История чата")
+    expect(history.get_by_role("heading", name="Предложение 3 · редакция 1", exact=True)).to_be_visible()
+    assert history.evaluate("e => e.scrollHeight > e.clientHeight && e.scrollTop > 0")
+    page.set_viewport_size({"width": 390 if width == 1440 else 1440, "height": 900})
+    page.wait_for_function("() => { const e = document.querySelector('.tz-chat-history'); return Math.abs(e.scrollHeight - e.scrollTop - e.clientHeight) < 2; }")
+    page.set_viewport_size({"width": width, "height": 844 if width == 390 else 900})
+    page.wait_for_function("() => { const e = document.querySelector('.tz-chat-history'); return Math.abs(e.scrollHeight - e.scrollTop - e.clientHeight) < 2; }")
+    for number in (1, 7):
+        answer = history.locator("article").filter(has_text=f"Ответ номер {number}.")
+        preview = answer.get_by_role("region", name="Предложенные изменения")
+        expect(preview).to_have_count(1)
+        expect(preview.get_by_text(f"Запрос {number}", exact=True)).to_be_visible()
+        preview.locator("summary").click()
+        assert page.locator("main.tz-workspace").evaluate("e => e.scrollWidth <= e.clientWidth + 1")
+        assert preview.evaluate("e => e.scrollWidth <= e.clientWidth + 1")
+        expect(composer).to_be_in_viewport()
+        expect(page.get_by_role("button", name="Отправить", exact=True)).to_be_in_viewport()
+    assert page.locator("main.tz-workspace").evaluate("e => e.scrollHeight <= e.clientHeight + 1")
+    page.screenshot(path=str(tmp_path / f"tz-chat-long-{width}.png"), full_page=True)
+
+
+@pytest.mark.p1
+@pytest.mark.parametrize("width", [1440, 390])
 def test_specification_undo_after_blur_preserves_text_and_autosaves(page, base_url, tmp_path, width):
     page.set_viewport_size({"width": width, "height": 960})
     api = open_specification(page, base_url)

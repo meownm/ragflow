@@ -363,7 +363,15 @@ class Specifications:
             candidate = self._chat_candidate(snapshot, message, result)
             proposal = None
             if candidate != snapshot["sections"]:
-                proposal = {"id": identifier(), "base_revision": snapshot["revision"], "sections": candidate, "source": "chat", "author_id": actor, "status": "ready"}
+                proposal = {
+                    "id": identifier(),
+                    "base_revision": snapshot["revision"],
+                    "sections": candidate,
+                    "source": "chat",
+                    "message_id": message["message_id"],
+                    "author_id": actor,
+                    "status": "ready",
+                }
 
             def complete(doc):
                 item = next(item for item in doc["messages"] if item.get("id") == message["message_id"])

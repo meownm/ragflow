@@ -28,3 +28,15 @@ def test_result_gate_marks_limit_and_does_not_publish_the_probe_row():
 def test_result_gate_rejects_schema_and_bound_mismatches(source):
     with pytest.raises(ResultValidationError):
         validate_result(source, expected_columns=["value"], row_limit=2, max_result_bytes=100)
+
+
+@pytest.mark.parametrize("types", [[], [{"postgres_oid": True}], [{"postgres_oid": 0}], [{"postgres_oid": "1700"}], [{"postgres_oid": 1700, "extra": 1}]])
+def test_result_gate_rejects_invalid_type_metadata(types):
+    with pytest.raises(ResultValidationError):
+        validate_result({"columns": ["value"], "rows": [["0.00100"]], "column_types": types}, expected_columns=["value"], row_limit=2, max_result_bytes=100)
+
+
+def test_result_gate_persists_driver_types_without_changing_stored_values():
+    checked = validate_result({"columns": ["value"], "rows": [["0.00100"]], "column_types": [{"postgres_oid": 1700}]}, expected_columns=["value"], row_limit=2, max_result_bytes=100)
+    assert checked["checks"]["column_types"] == [{"postgres_oid": 1700}]
+    assert checked["rows"] == [["0.00100"]]

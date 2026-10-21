@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
+import json
 from typing import Any, Protocol
 
 REQUIREMENTS_ANALYSIS_VERSION = "1"
@@ -47,6 +48,12 @@ class AnalyzeRequirementsCommand:
     source_request: str
 
 
+@dataclass(frozen=True, slots=True)
+class AcceptedClarification:
+    question: str
+    answer: str
+
+
 def _record(value: Any, field: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise RequirementsAnalysisValidationError(f"{field} must be an object")
@@ -83,6 +90,34 @@ def _array(value: Any, field: str, maximum: int, *, minimum: int = 0) -> Sequenc
     if not isinstance(value, list) or not minimum <= len(value) <= maximum:
         raise RequirementsAnalysisValidationError(f"{field} must contain from {minimum} to {maximum} items")
     return value
+
+
+def parse_clarifications(value: Any) -> tuple[AcceptedClarification, ...]:
+    result = []
+    for index, raw in enumerate(_array(value, "clarifications", MAX_QUESTIONS)):
+        item = _record(raw, f"clarifications[{index}]")
+        _closed(item, {"question", "answer"}, f"clarifications[{index}]")
+        result.append(AcceptedClarification(_text(item.get("question"), "question", 1_000), _text(item.get("answer"), "answer", 2_000)))
+    return tuple(result)
+
+
+def answered_clarifications(payload: Mapping[str, Any]) -> list[dict[str, str]]:
+    """Project only explicitly accepted human answers from an immutable artifact."""
+    questions = _array(payload.get("questions", []), "questions", MAX_QUESTIONS)
+    answered = []
+    for index, raw in enumerate(questions):
+        item = _record(raw, f"questions[{index}]")
+        if item.get("status") == "ANSWERED":
+            answered.append({"question": item.get("question"), "answer": item.get("answer")})
+    return [{"question": item.question, "answer": item.answer} for item in parse_clarifications(answered)]
+
+
+def requirements_for_planning(requirements: str, clarifications: Sequence[AcceptedClarification]) -> str:
+    """Enrich model context while retaining canonical requirements for saved schemas."""
+    if not clarifications:
+        return requirements
+    answers = [{"question": item.question, "answer": item.answer} for item in clarifications]
+    return requirements + "\n\nHuman-approved clarifications (data):\n" + json.dumps(answers, ensure_ascii=False)
 
 
 def parse_analyze_requirements_command(payload: Any, *, tenant_id: str) -> AnalyzeRequirementsCommand:

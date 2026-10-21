@@ -210,9 +210,12 @@ def _classification_batches(identifiers: list[int]) -> list[list[int]]:
 class RAGFlowLLMAdapter:
     """Thin injectable adapter over the tenant's configured default chat model."""
 
-    def __init__(self, model_name_override: str | None = None):
+    def __init__(self, model_name_override: str | None = None, *, max_output_tokens: int | None = None):
+        if max_output_tokens is not None and (type(max_output_tokens) is not int or max_output_tokens <= 0):
+            raise ValueError("max_output_tokens must be a positive integer")
         self._execution_audit: dict[str, Any] | None = None
         self._model_name_override = model_name_override
+        self._max_output_tokens = max_output_tokens
 
     def consume_execution_audit(self) -> dict[str, Any] | None:
         audit = self._execution_audit
@@ -300,6 +303,8 @@ class RAGFlowLLMAdapter:
             output_limit = output_token_limit(model_config, local_ollama=local_ollama)
         except ValueError as error:
             raise ValidationError("MODEL_OUTPUT_LIMIT_UNAVAILABLE", str(error)) from error
+        if self._max_output_tokens is not None:
+            output_limit = min(output_limit, self._max_output_tokens) if output_limit is not None else self._max_output_tokens
         content = json.dumps(input_payload, ensure_ascii=False)
         task_type = input_payload.get("job_input", {}).get("task_type")
         input_tokens = len(encoder.encode(system_prompt, disallowed_special=())) + len(encoder.encode(content, disallowed_special=()))

@@ -16,7 +16,7 @@ from api.apps.business_documents.authorization import BusinessDocumentAccess
 from api.apps.services.openmetadata_copilot_service import normalize_table
 from api.apps.services.openmetadata_dataset_retrieval import retrieve_openmetadata_dataset_hits
 from api.apps.services.openmetadata_runtime_service import get_openmetadata_service, openmetadata_catalog_accessible
-from business_documents.application.errors import BusinessDocumentError, PermissionDeniedError, ValidationError
+from business_documents.application.errors import BusinessDocumentError, ConflictError, PermissionDeniedError, ValidationError
 from business_documents.sql_query.schema_resolution import (
     CatalogAccessDenied,
     CatalogCandidate,
@@ -32,6 +32,9 @@ from business_documents.sql_query.schema_resolution import (
     parse_resolve_schema_command,
 )
 from common.misc_utils import thread_pool_exec
+from business_documents.sql_query.query_graph import QueryGraphError, parse_graph_request, project_query_graph, related_catalog, relationship_paths
+from business_documents.sql_query.schema_changes import extend_schema
+from business_documents.sql_query.query_specification import QuerySpecificationValidationError, parse_schema_snapshot
 
 LOGGER = logging.getLogger(__name__)
 _MAX_PROMPT_COLUMNS = 40
@@ -144,6 +147,9 @@ class OpenMetadataCatalogResolver:
     async def load_entity(self, *, entity_id: str, actor_id: str, locale: str) -> CatalogResult:
         question = "Load the selected table schema." if locale == "en" else "Загрузи схему выбранной таблицы."
         try:
+            visible = await thread_pool_exec(self._service.get_visible_entity, entity_id, user_id=actor_id)
+            if visible is None:
+                raise CatalogAccessDenied("Selected table is outside the visible catalog")
             answer = await thread_pool_exec(
                 self._service.catalog.run,
                 question,
@@ -158,15 +164,25 @@ class OpenMetadataCatalogResolver:
                 current = normalize_table(raw, self._service.config.public_url)
                 if current["id"] != entity_id or current["deleted"]:
                     raise CatalogLookupError("Selected table changed or was removed")
+                if not await thread_pool_exec(self._service.is_entity_visible, current, user_id=actor_id):
+                    raise CatalogAccessDenied("Selected table is outside the current catalog policy")
                 answer = {
                     **answer,
                     "entities": [current],
                     "freshness": {**answer.get("freshness", {}), "stale": False},
                 }
             return catalog_result_from_mapping(entity_id, answer, include_all_columns=True)
+        except CatalogAccessDenied:
+            raise
         except Exception as exc:
             LOGGER.warning("SQL selected-table schema lookup failed: %s", type(exc).__name__)
             raise CatalogLookupError("Selected table schema lookup failed") from exc
+
+    async def visible_catalog(self, *, actor_id: str) -> Mapping[str, Any]:
+        try:
+            return await thread_pool_exec(self._service.visible_catalog, user_id=actor_id)
+        except Exception as exc:
+            raise CatalogLookupError("Visible catalog is unavailable") from exc
 
 
 class TenantSchemaInterpreter:
@@ -236,7 +252,91 @@ class TenantSchemaInterpreter:
 
 
 class BusinessDocumentSqlQuerySchemaService:
-    """Transport-facing composition root for the schema-resolution scenario."""
+    """Transport-facing composition root for catalog and schema scenarios."""
+
+    @classmethod
+    async def graph_source(cls, actor_id, command, compiled, entity_ids, depth, is_admin, access_role):
+        """Project verified physical roots with their frozen fields and live neighbors."""
+        roots = [item["selected_table"] for item in command["schema_snapshot"]["requirements"] if item.get("selected_table", {}).get("id") in entity_ids]
+        return await cls.graph(actor_id, {"schema_version": "1", "entity_ids": list(entity_ids), "sql": compiled["sql"], "depth": depth}, is_admin, access_role, source_tables=roots)
+
+    @classmethod
+    def project_graph(cls, tenant_id, actor_id, project_id, raw, is_admin=False, access_role="AUTHOR_CREATOR"):
+        from api.apps.business_documents.async_runtime import run_in_worker_loop
+        from api.apps.business_documents.sql_query_access import authorize_sql_source, read_sql_project
+
+        if (
+            not isinstance(raw, Mapping)
+            or raw.get("schema_version") != "1"
+            or set(raw) - {"schema_version", "compilation_id", "query_artifact_id", "depth"}
+            or any(not isinstance(raw.get(name), str) or not 1 <= len(raw[name]) <= 32 for name in ("compilation_id", "query_artifact_id"))
+            or type(raw.get("depth", 1)) is not int
+            or not 1 <= raw.get("depth", 1) <= 3
+        ):
+            raise ValidationError("INVALID_SQL_GRAPH", "Select a saved compilation, query and relationship depth")
+        project = read_sql_project(tenant_id, actor_id, project_id, is_admin, access_role)
+        source = authorize_sql_source(project, actor_id, raw["compilation_id"], is_admin=is_admin, access_role=access_role)
+        if source.query.id != raw["query_artifact_id"]:
+            raise ConflictError("SQL_GRAPH_SOURCE_MISMATCH", "The selected query does not match its compilation")
+        return run_in_worker_loop(cls.graph_source(actor_id, source.command, source.compiled, source.entity_ids, raw.get("depth", 1), is_admin, access_role))
+
+    @classmethod
+    async def verify_snapshot(cls, actor_id: str, raw: object, is_admin: bool = False, access_role: str = "AUTHOR_CREATOR") -> bool:
+        """Recheck current catalog access and identity for every accepted table."""
+        snapshot = parse_schema_snapshot(raw)
+        response = await cls.load_entities(actor_id, {"entity_ids": [table.id for table in snapshot.tables], "locale": "ru"}, is_admin, access_role)
+        current = {item["entity_id"]: item for item in response["entities"]}
+        catalog_age_warning = False
+        for table in snapshot.tables:
+            item = current.get(table.id) or {}
+            entity = item.get("entity") or {}
+            freshness = item.get("freshness") or {}
+            if item.get("lookup", {}).get("status") != "OK" or entity.get("version") != table.version or entity.get("schema_fingerprint") != table.schema_fingerprint or entity.get("fqn") != table.fqn:
+                raise ConflictError("SQL_SCHEMA_STALE", "Catalog schema changed or is unavailable; refresh the selected tables")
+            catalog_age_warning = catalog_age_warning or freshness.get("stale") is True
+        return catalog_age_warning
+
+    @classmethod
+    async def revision_schema(cls, actor_id: str, schema: Mapping[str, Any], entity_ids: object, is_admin: bool, access_role: str) -> dict[str, Any]:
+        try:
+            parse_graph_request({"schema_version": "1", "entity_ids": entity_ids})
+            parse_schema_snapshot(schema.get("schema_snapshot"))
+            loaded = await cls.load_entities(actor_id, {"entity_ids": entity_ids, "locale": "ru"}, is_admin, access_role)
+            entities = []
+            for item in loaded["entities"]:
+                if item.get("lookup", {}).get("status") == "ERROR" or not item.get("entity") or item.get("freshness", {}).get("stale") is not False:
+                    raise QueryGraphError("Не удалось проверить актуальную схему добавляемой таблицы")
+                entities.append(item["entity"])
+            if {entity["id"] for entity in entities} != set(entity_ids):
+                raise QueryGraphError("Добавляемая таблица недоступна")
+            return extend_schema(schema, entities)
+        except (QueryGraphError, QuerySpecificationValidationError) as exc:
+            raise ValidationError("INVALID_SQL_SCHEMA_CHANGE", str(exc)) from exc
+
+    @classmethod
+    async def graph(cls, actor_id: str, payload: Any, is_admin: bool, access_role: str, *, resolver=None, source_tables=None) -> dict[str, Any]:
+        try:
+            command = parse_graph_request(payload)
+            catalog = resolver if resolver is not None else OpenMetadataCatalogResolver()
+            await catalog.authorize(actor_id=actor_id, is_admin=is_admin)
+            visible = await catalog.visible_catalog(actor_id=actor_id)
+            if source_tables is not None:
+                frozen = {table["id"]: table for table in source_tables}
+                visible_ids = {table["id"] for table in visible["tables"]}
+                if not set(frozen) <= set(command["entity_ids"]) or not set(frozen) <= visible_ids:
+                    raise CatalogAccessDenied("A saved source is outside the current visible catalog")
+                visible = {**visible, "tables": [frozen.get(table["id"], table) for table in visible["tables"]]}
+            neighborhood = related_catalog(visible["tables"], command["entity_ids"], depth=command["depth"])
+            graph = project_query_graph(command["sql"], neighborhood["tables"])
+            roots = list({node["entity_id"] for node in graph["nodes"] if node["membership"] == "QUERY" and node["entity_id"]}) or command["entity_ids"]
+            paths = relationship_paths(neighborhood["relationships"], roots, max_hops=command["depth"])
+            return {**graph, **neighborhood, **paths, "freshness": visible.get("freshness"), "warnings": [*graph["warnings"], *visible.get("warnings", [])]}
+        except QueryGraphError as exc:
+            raise ValidationError("INVALID_SQL_GRAPH", str(exc)) from exc
+        except CatalogAccessDenied as exc:
+            raise PermissionDeniedError("Для просмотра схемы необходим доступ к каталогу OpenMetadata") from exc
+        except (CatalogLookupError, TimeoutError) as exc:
+            raise BusinessDocumentError("SQL_SCHEMA_CATALOG_UNAVAILABLE", "Не удалось загрузить связанные таблицы.", 503) from exc
 
     @classmethod
     async def resolve(
@@ -280,7 +380,6 @@ class BusinessDocumentSqlQuerySchemaService:
         *,
         scenario: SchemaEntityDetailsScenario | None = None,
     ) -> dict[str, Any]:
-        BusinessDocumentAccess(actor_id=actor_id, assigned_role=access_role, is_admin=is_admin).require_create()
         try:
             command = parse_load_schema_entities_command(payload, actor_id=actor_id, is_admin=is_admin)
             active_scenario = scenario if scenario is not None else SchemaEntityDetailsScenario(OpenMetadataCatalogResolver())

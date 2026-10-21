@@ -101,14 +101,15 @@ def test_agent_proposal_rolls_back_when_job_finish_cannot_be_persisted(database,
     assert BusinessDocumentJob.get_by_id(job.id).status == "RUNNING"
 
 
-def test_revising_question_with_active_result_preserves_accepted_artifacts(database):
+@pytest.mark.parametrize("status", ["QUEUED", "RUNNING", "CANCEL_REQUESTED"])
+def test_revising_question_with_active_result_preserves_accepted_artifacts(database, status):
     project = _create_project()
     BusinessDocumentSqlQueryRun.create(
         id="active-result",
         project_id=project["id"],
         tenant_id=TENANT,
         kind="SQL",
-        status="READY",
+        status=status,
         compilation_id="compilation",
         profile_id="profile",
         profile_version=1,

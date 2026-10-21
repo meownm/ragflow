@@ -1,0 +1,30 @@
+.sql-er-canvas .react-flow__controls-button {
+  background: var(--bg-base);
+  color: rgb(var(--text-primary));
+  border-color: var(--border-button);
+}
+
+.sql-er-canvas .react-flow__controls-button:hover {
+  background: var(--bg-accent);
+}
+
+.sql-er-canvas .react-flow__controls-button svg {
+  fill: currentColor;
+}
+
+.sql-er-canvas .react-flow__node:focus-visible {
+  outline: 2px solid rgb(var(--accent-primary));
+  outline-offset: 4px;
+}
+.sql-er-related,
+.sql-er-related .text-text-secondary {
+  color: color-mix(
+    in srgb,
+    rgb(var(--text-primary)) 76%,
+    rgb(var(--bg-canvas))
+  );
+}
+
+.sql-er-canvas .react-flow__edge-labels button {
+  color: color-mix(in srgb, rgb(var(--text-primary)) 85%, var(--bg-base));
+}

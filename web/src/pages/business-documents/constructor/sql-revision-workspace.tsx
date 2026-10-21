@@ -13,6 +13,7 @@ import {
   reopenBusinessDocumentSqlSchema,
   replyBusinessDocumentSqlRevisionThread,
   requestBusinessDocumentSqlRevision,
+  restoreBusinessDocumentSqlQuery,
 } from '@/services/business-document-service';
 import {
   type ComponentProps,
@@ -21,6 +22,10 @@ import {
   useRef,
   useState,
 } from 'react';
+import { SqlExportButton } from './sql-export-button';
+import { SqlHistoryContext } from './sql-history-context';
+import { SqlQueryComparison } from './sql-query-comparison';
+import type { SqlGraphChangeRequest } from './sql-schema-graph';
 
 const labels: Record<string, string> = {
   FIELD: 'Поле результата',
@@ -43,6 +48,48 @@ function errorText(value: unknown) {
     : 'Не удалось выполнить действие. Обновите проект и повторите попытку.';
 }
 
+function HistoryIdentity({
+  item,
+  compilationId,
+}: {
+  item: {
+    accepted_by?: string;
+    source_proposal_id?: string;
+    created_at?: number;
+    source_artifact_ids?: string[];
+    restored_from?: {
+      query_artifact_id: string;
+      compilation_id: string;
+    } | null;
+  };
+  compilationId?: string;
+}) {
+  const date = item.created_at == null ? null : new Date(item.created_at);
+  return (
+    <div className="mt-2 space-y-1 break-all text-xs text-text-secondary">
+      <p>
+        Автор: {item.accepted_by || 'не записан'} ·{' '}
+        {date && Number.isFinite(date.getTime()) ? (
+          <time dateTime={date.toISOString()}>{date.toLocaleString()}</time>
+        ) : (
+          'время не записано'
+        )}
+      </p>
+      {item.source_artifact_ids?.length ? (
+        <p>Источник: {item.source_artifact_ids.join(' · ')}</p>
+      ) : null}
+      {item.source_proposal_id && <p>Основание: {item.source_proposal_id}</p>}
+      {compilationId && <p>Проверка: {compilationId}</p>}
+      {item.restored_from && (
+        <p>
+          Восстановлено из запроса {item.restored_from.query_artifact_id} ·
+          проверка {item.restored_from.compilation_id}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function SqlRevisionWorkspacePanel(
   props: ComponentProps<typeof SqlRevisionWorkspace>,
 ) {
@@ -53,10 +100,21 @@ function SqlRevisionWorkspace({
   project,
   onRefresh,
   onSchemaRequested,
+  changeRequest,
+  onQueryViewChange,
 }: {
   project: SqlAgentProject;
   onRefresh: () => Promise<void>;
   onSchemaRequested?: (terms: string[]) => void;
+  changeRequest?: SqlGraphChangeRequest | null;
+  onQueryViewChange?: (
+    view: {
+      id: string;
+      revision: number;
+      sql: string;
+      compilation_id?: string;
+    } | null,
+  ) => void;
 }) {
   const [workspace, setWorkspace] = useState<SqlRevisionWorkspace | null>(null);
   const [target, setTarget] = useState<'QUERY' | 'DOCUMENT'>('QUERY');
@@ -64,27 +122,123 @@ function SqlRevisionWorkspace({
     kind: 'WHOLE',
   });
   const [comment, setComment] = useState('');
-  const [reply, setReply] = useState<Record<string, string>>({});
+  const [additionalEntityIds, setAdditionalEntityIds] = useState<string[]>([]);
   const [selectedQueryId, setSelectedQueryId] = useState<string | null>(null);
+  const restoreAttempt = useRef<{
+    source: string;
+    version: number;
+    key: string;
+  } | null>(null);
+  const activeComponent = useRef(true);
+  const restoreScope = useRef('');
+  restoreScope.current = JSON.stringify([project.id, selectedQueryId]);
+  useEffect(() => {
+    activeComponent.current = true;
+    return () => {
+      activeComponent.current = false;
+    };
+  }, []);
+  useEffect(() => {
+    restoreAttempt.current = null;
+  }, [project.id, selectedQueryId]);
+  const historicalQuery = workspace?.query_revisions?.find(
+    (item) =>
+      item.id === selectedQueryId && item.id !== workspace.query_artifact_id,
+  );
+  useEffect(() => {
+    if (
+      workspace &&
+      !workspace.query_artifact_id &&
+      !selectedQueryId &&
+      workspace.query_revisions?.length
+    ) {
+      setSelectedQueryId(workspace.query_revisions[0].id);
+    }
+  }, [workspace, selectedQueryId]);
+  useEffect(() => {
+    onQueryViewChange?.(
+      historicalQuery
+        ? {
+            id: historicalQuery.id,
+            revision: historicalQuery.revision,
+            sql: historicalQuery.sql,
+            compilation_id: historicalQuery.compilation_id,
+          }
+        : null,
+    );
+  }, [historicalQuery, onQueryViewChange]);
+  useEffect(() => {
+    if (!changeRequest) return;
+    setTarget('QUERY');
+    setAnchor({ kind: 'WHOLE' });
+    setSelectedQueryId(null);
+    setComment(changeRequest.text);
+    setAdditionalEntityIds(changeRequest.entityIds);
+    document
+      .getElementById('sql-revision-workspace')
+      ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [changeRequest]);
+  const [reply, setReply] = useState<Record<string, string>>({});
   const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(
     null,
   );
   const [factsConfirmed, setFactsConfirmed] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [working, setBusy] = useState(false);
+  const canEdit = project.capabilities?.edit !== false;
+  const busy = working || !canEdit;
   const [error, setError] = useState<string | null>(null);
   const requestVersion = useRef(0);
+  const workspaceRequest = useRef<AbortController | null>(null);
   const refresh = useCallback(async () => {
+    workspaceRequest.current?.abort();
+    const controller = new AbortController();
+    workspaceRequest.current = controller;
     const version = ++requestVersion.current;
-    const next = await fetchBusinessDocumentSqlRevisionWorkspace(project.id);
-    if (version === requestVersion.current) setWorkspace(next);
+    try {
+      const next = await fetchBusinessDocumentSqlRevisionWorkspace(
+        project.id,
+        controller.signal,
+      );
+      if (version === requestVersion.current && !controller.signal.aborted)
+        setWorkspace(next);
+    } catch (failure) {
+      if (!controller.signal.aborted) throw failure;
+    }
   }, [project.id]);
 
   useEffect(() => {
-    void refresh().catch((nextError) => setError(errorText(nextError)));
-    return () => {
+    let active = true;
+    activeComponent.current = true;
+    const abort = () => {
+      activeComponent.current = false;
+      workspaceRequest.current?.abort();
       requestVersion.current += 1;
     };
-  }, [refresh, project.state_version]);
+    const load = () =>
+      void refresh().catch((nextError) => {
+        if (active) setError(errorText(nextError));
+      });
+    const restored = (event: PageTransitionEvent) => {
+      if (!event.persisted) return;
+      activeComponent.current = true;
+      setWorkspace(null);
+      load();
+    };
+    window.addEventListener('pagehide', abort);
+    window.addEventListener('pageshow', restored);
+    load();
+    return () => {
+      active = false;
+      abort();
+      window.removeEventListener('pagehide', abort);
+      window.removeEventListener('pageshow', restored);
+    };
+  }, [
+    refresh,
+    project.state_version,
+    project.operation_state,
+    project.pending_proposal?.id,
+  ]);
   useEffect(() => {
     if (
       workspace &&
@@ -109,7 +263,8 @@ function SqlRevisionWorkspace({
     !workspace ||
     (!workspace.query_artifact_id &&
       !workspace.document_artifact_id &&
-      !workspace.history?.length)
+      !workspace.history?.length &&
+      !workspace.query_revisions?.length)
   )
     return null;
 
@@ -145,15 +300,16 @@ function SqlRevisionWorkspace({
     | undefined;
 
   const perform = async (action: () => Promise<unknown>) => {
+    if (!canEdit || working) return;
     setBusy(true);
     setError(null);
     try {
       await action();
-      await refresh();
+      if (activeComponent.current) await refresh();
     } catch (nextError) {
-      setError(errorText(nextError));
+      if (activeComponent.current) setError(errorText(nextError));
     } finally {
-      setBusy(false);
+      if (activeComponent.current) setBusy(false);
     }
   };
 
@@ -174,19 +330,41 @@ function SqlRevisionWorkspace({
           : {}),
         anchor: target === 'DOCUMENT' ? { kind: 'WHOLE' } : anchor,
         text: comment,
+        ...(additionalEntityIds.length
+          ? { additional_entity_ids: additionalEntityIds }
+          : {}),
       });
       setComment('');
+      setAdditionalEntityIds([]);
       setAnchor({ kind: 'WHOLE' });
     });
 
   const askAgent = (threadId: string) =>
     perform(async () => {
-      await requestBusinessDocumentSqlRevision(
-        project.id,
-        threadId,
-        project.state_version,
-        key(),
-      );
+      const entities = [
+        ...new Set(
+          workspace.threads
+            .find((thread) => thread.id === threadId)
+            ?.messages.flatMap(
+              (message) => message.additional_entity_ids || [],
+            ) || [],
+        ),
+      ];
+      const commandKey = key();
+      await (entities.length
+        ? requestBusinessDocumentSqlRevision(
+            project.id,
+            threadId,
+            project.state_version,
+            commandKey,
+            entities,
+          )
+        : requestBusinessDocumentSqlRevision(
+            project.id,
+            threadId,
+            project.state_version,
+            commandKey,
+          ));
       await onRefresh();
     });
 
@@ -266,6 +444,58 @@ function SqlRevisionWorkspace({
   const selectedQuery = workspace.query_revisions?.find(
     (item) => item.id === selectedQueryId,
   );
+  const exportQuery =
+    selectedQuery ||
+    workspace.query_revisions?.find(
+      (item) => item.id === workspace.query_artifact_id,
+    );
+  const currentQuery = workspace.query_revisions?.find(
+    (item) => item.id === workspace.query_artifact_id,
+  );
+  const canRestore = Boolean(
+    historicalQuery?.compilation_id &&
+    !busy &&
+    !project.archived_at &&
+    project.operation_state !== 'RUNNING' &&
+    project.artifact_ids.requirements &&
+    project.artifact_ids.schema &&
+    !project.runs?.some((item) =>
+      ['QUEUED', 'RUNNING', 'CANCEL_REQUESTED'].includes(item.status),
+    ),
+  );
+  const restoreSelected = () =>
+    perform(async () => {
+      if (!canRestore || !historicalQuery?.compilation_id) return;
+      const source = historicalQuery.compilation_id;
+      if (restoreAttempt.current?.source !== source) {
+        restoreAttempt.current = {
+          source,
+          version: project.state_version,
+          key: key(),
+        };
+      }
+      const scope = restoreScope.current;
+      try {
+        await restoreBusinessDocumentSqlQuery(
+          project.id,
+          source,
+          restoreAttempt.current.version,
+          restoreAttempt.current.key,
+        );
+      } catch (failure) {
+        if (
+          failure instanceof Error &&
+          'code' in failure &&
+          failure.code === 'SQL_PROJECT_VERSION_CONFLICT'
+        )
+          restoreAttempt.current = null;
+        throw failure;
+      }
+      if (!activeComponent.current || restoreScope.current !== scope) return;
+      await onRefresh();
+      if (activeComponent.current && restoreScope.current === scope)
+        setSelectedQueryId(null);
+    });
   const selectedSql = selectedQuery?.sql || workspace.sql;
   const selectedBlocks = selectedQuery?.blocks || workspace.blocks;
   const proposalBaseSql =
@@ -314,7 +544,9 @@ function SqlRevisionWorkspace({
             setTarget('QUERY');
             setAnchor({ kind: 'WHOLE' });
           }}
-          disabled={!workspace.query_artifact_id}
+          disabled={
+            !workspace.query_artifact_id && !workspace.query_revisions?.length
+          }
         >
           Запрос
         </Button>
@@ -340,100 +572,171 @@ function SqlRevisionWorkspace({
           </Button>
         )}
       </div>
-      {target === 'QUERY' && workspace.sql && (
-        <div className="mt-5 grid gap-5 xl:grid-cols-2">
-          <div>
-            <h4 className="text-sm font-medium">Части запроса</h4>
-            {workspace.query_revisions?.length > 1 && (
-              <div
-                className="mt-2 flex flex-wrap gap-2"
-                aria-label="История запросов"
-              >
-                {workspace.query_revisions.map((item) => (
-                  <Button
-                    key={item.id}
-                    size="sm"
-                    variant={
-                      (selectedQuery?.id || workspace.query_artifact_id) ===
-                      item.id
-                        ? 'secondary'
-                        : 'outline'
+      {target === 'QUERY' &&
+        (workspace.sql || workspace.query_revisions?.length > 0) && (
+          <div className="mt-5 grid grid-cols-1 gap-5 xl:grid-cols-2">
+            <div className="min-w-0">
+              <h4 className="text-sm font-medium">Части запроса</h4>
+              {exportQuery?.compilation_id && (
+                <SqlExportButton
+                  projectId={project.id}
+                  stateVersion={project.state_version}
+                  command={{
+                    schema_version: '1',
+                    kind: 'QUERY',
+                    format: 'json',
+                    compilation_id: exportQuery.compilation_id,
+                    query_artifact_id: exportQuery.id,
+                  }}
+                  label={`Скачать запрос · версия ${exportQuery.revision}`}
+                />
+              )}
+              {exportQuery && (
+                <HistoryIdentity
+                  item={exportQuery}
+                  compilationId={exportQuery.compilation_id}
+                />
+              )}
+              {exportQuery?.compilation_id && (
+                <SqlHistoryContext
+                  key={JSON.stringify([
+                    project.id,
+                    project.state_version,
+                    exportQuery.compilation_id,
+                    exportQuery.id,
+                  ])}
+                  projectId={project.id}
+                  source={{
+                    compilation_id: exportQuery.compilation_id,
+                    query_artifact_id: exportQuery.id,
+                  }}
+                />
+              )}
+              {workspace.query_revisions?.length > 1 && (
+                <div
+                  className="mt-2 flex flex-wrap gap-2"
+                  aria-label="История запросов"
+                >
+                  {workspace.query_revisions.map((item) => (
+                    <Button
+                      key={item.id}
+                      size="sm"
+                      variant={
+                        (selectedQuery?.id || workspace.query_artifact_id) ===
+                        item.id
+                          ? 'secondary'
+                          : 'outline'
+                      }
+                      onClick={() => {
+                        setSelectedQueryId(item.id);
+                        setAnchor({ kind: 'WHOLE' });
+                      }}
+                    >
+                      Запрос · версия {item.revision}
+                    </Button>
+                  ))}
+                </div>
+              )}
+              {(workspace.history?.filter((item) => item.kind === 'QUERY')
+                .length || 0) > (workspace.query_revisions?.length || 0) && (
+                <p className="mt-2 text-xs text-text-secondary">
+                  Версии с другой подтверждённой схемой доступны в истории для
+                  просмотра; для доработки требуется вновь подтвердить данные.
+                </p>
+              )}
+              {historicalQuery?.matches_current_context === false && (
+                <p className="mt-3 text-xs text-state-warning">
+                  У этой версии прежние уточнения или схема. Перед
+                  восстановлением проверим SQL по текущим подтверждённым данным.
+                </p>
+              )}
+              <div className="mt-2 max-h-80 space-y-2 overflow-y-auto">
+                <Button
+                  size="sm"
+                  variant={anchor.kind === 'WHOLE' ? 'secondary' : 'outline'}
+                  onClick={() => setAnchor({ kind: 'WHOLE' })}
+                >
+                  Весь запрос
+                </Button>
+                {selectedBlocks.map((block) => (
+                  <button
+                    type="button"
+                    key={block.id}
+                    className={`block w-full rounded-md border p-3 text-start text-xs ${anchor.block_id === block.id ? 'border-accent-primary' : 'border-border-button'}`}
+                    onClick={() =>
+                      setAnchor({ kind: 'BLOCK', block_id: block.id })
                     }
-                    onClick={() => {
-                      setSelectedQueryId(item.id);
-                      setAnchor({ kind: 'WHOLE' });
-                    }}
                   >
-                    Запрос · версия {item.revision}
-                  </Button>
+                    <span className="font-semibold">
+                      {block.title || labels[block.kind] || block.kind}
+                    </span>
+                    <code className="mt-1 block truncate font-mono">
+                      {block.sql}
+                    </code>
+                  </button>
                 ))}
               </div>
-            )}
-            {(workspace.history?.filter((item) => item.kind === 'QUERY')
-              .length || 0) > (workspace.query_revisions?.length || 0) && (
-              <p className="mt-2 text-xs text-text-secondary">
-                Версии с другой подтверждённой схемой доступны в истории для
-                просмотра; для доработки требуется вновь подтвердить данные.
-              </p>
-            )}
-            <div className="mt-2 max-h-80 space-y-2 overflow-y-auto">
-              <Button
-                size="sm"
-                variant={anchor.kind === 'WHOLE' ? 'secondary' : 'outline'}
-                onClick={() => setAnchor({ kind: 'WHOLE' })}
+            </div>
+            <div className="min-w-0">
+              <label
+                htmlFor="sql-revision-source"
+                className="text-sm font-medium"
               >
-                Весь запрос
-              </Button>
-              {selectedBlocks.map((block) => (
-                <button
-                  type="button"
-                  key={block.id}
-                  className={`block w-full rounded-md border p-3 text-start text-xs ${anchor.block_id === block.id ? 'border-accent-primary' : 'border-border-button'}`}
-                  onClick={() =>
-                    setAnchor({ kind: 'BLOCK', block_id: block.id })
+                Проверенный SQL
+              </label>
+              <Textarea
+                id="sql-revision-source"
+                className="mt-2 min-h-72 font-mono text-xs"
+                readOnly
+                value={selectedSql}
+                onSelect={(event) => {
+                  const element = event.currentTarget;
+                  if (element.selectionEnd > element.selectionStart) {
+                    setAnchor({
+                      kind: 'TEXT',
+                      start: element.selectionStart,
+                      end: element.selectionEnd,
+                    });
                   }
-                >
-                  <span className="font-semibold">
-                    {block.title || labels[block.kind] || block.kind}
-                  </span>
-                  <code className="mt-1 block truncate font-mono">
-                    {block.sql}
-                  </code>
-                </button>
-              ))}
+                }}
+              />
+              {anchor.kind === 'TEXT' && (
+                <p className="mt-1 text-xs text-accent-primary">
+                  Комментарий к выделенному фрагменту
+                </p>
+              )}
+              {historicalQuery && (
+                <>
+                  <SqlQueryComparison
+                    current={currentQuery}
+                    selected={historicalQuery}
+                  />
+                  <div className="mt-4 space-y-2">
+                    {canEdit && !project.archived_at && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={!canRestore}
+                        onClick={() => void restoreSelected()}
+                      >
+                        Восстановить как новую версию
+                      </Button>
+                    )}
+                    <p className="text-xs text-text-secondary">
+                      Текущие уточнения и подтверждённые данные сохранятся.
+                      Новый запуск выполняется отдельно.
+                    </p>
+                    {project.operation_state === 'REVIEW' && (
+                      <p className="text-xs text-state-warning">
+                        Непринятое предложение будет отклонено.
+                      </p>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
           </div>
-          <div>
-            <label
-              htmlFor="sql-revision-source"
-              className="text-sm font-medium"
-            >
-              Проверенный SQL
-            </label>
-            <Textarea
-              id="sql-revision-source"
-              className="mt-2 min-h-72 font-mono text-xs"
-              readOnly
-              value={selectedSql}
-              onSelect={(event) => {
-                const element = event.currentTarget;
-                if (element.selectionEnd > element.selectionStart) {
-                  setAnchor({
-                    kind: 'TEXT',
-                    start: element.selectionStart,
-                    end: element.selectionEnd,
-                  });
-                }
-              }}
-            />
-            {anchor.kind === 'TEXT' && (
-              <p className="mt-1 text-xs text-accent-primary">
-                Комментарий к выделенному фрагменту
-              </p>
-            )}
-          </div>
-        </div>
-      )}
+        )}
       {target === 'DOCUMENT' && (
         <div className="mt-5">
           {project.documents && project.documents.length > 1 && (
@@ -473,6 +776,7 @@ function SqlRevisionWorkspace({
           </label>
           <Textarea
             id="sql-revision-comment"
+            readOnly={!canEdit}
             className="mt-2 min-h-24"
             value={comment}
             onChange={(event) => setComment(event.target.value)}
@@ -486,6 +790,8 @@ function SqlRevisionWorkspace({
               !comment.trim() ||
               project.operation_state === 'RUNNING' ||
               (target === 'QUERY' && !workspace.query_artifact_id) ||
+              (target === 'QUERY' &&
+                historicalQuery?.matches_current_context === false) ||
               (target === 'DOCUMENT' && !workspace.document_artifact_id)
             }
             onClick={() => void addComment()}
@@ -709,9 +1015,44 @@ function SqlRevisionWorkspace({
               </p>
             ) : null}
             {thread.messages.map((message) => (
-              <p key={message.id} className="mt-2 text-sm">
-                {message.text}
-              </p>
+              <div
+                key={message.id}
+                className={`mt-2 text-sm ${message.role === 'assistant' ? 'border-l-2 border-accent-primary pl-3' : ''}`}
+                data-testid="sql-dialogue-message"
+              >
+                {message.role === 'assistant' && (
+                  <p className="text-xs font-medium text-accent-primary">
+                    ИИ ·{' '}
+                    {message.response_kind === 'CLARIFICATION'
+                      ? 'Нужно уточнение'
+                      : 'Объяснение'}
+                  </p>
+                )}
+                <p className="whitespace-pre-wrap">{message.text}</p>
+                {message.questions?.map((question) => (
+                  <div key={question.id} className="mt-2">
+                    <p className="font-medium">{question.text}</p>
+                    <div className="mt-1 flex flex-wrap gap-2">
+                      {question.options.map((option) => (
+                        <Button
+                          key={option}
+                          size="sm"
+                          variant="outline"
+                          disabled={busy}
+                          onClick={() =>
+                            setReply((current) => ({
+                              ...current,
+                              [thread.id]: `${current[thread.id] ? current[thread.id] + '\n' : ''}${question.text}: ${option}`,
+                            }))
+                          }
+                        >
+                          {option}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
             ))}
             {thread.proposals?.map((item) => (
               <details key={item.id} className="mt-3 text-xs">
@@ -824,6 +1165,23 @@ function SqlRevisionWorkspace({
                   }{' '}
                   · версия {item.revision}
                 </summary>
+                <HistoryIdentity item={item} />
+                {(item.kind === 'REQUIREMENTS' || item.kind === 'SCHEMA') && (
+                  <SqlHistoryContext
+                    key={JSON.stringify([
+                      project.id,
+                      project.state_version,
+                      item.id,
+                    ])}
+                    projectId={project.id}
+                    source={{ artifact_id: item.id }}
+                    label={
+                      item.kind === 'REQUIREMENTS'
+                        ? 'Полные требования'
+                        : 'Полная схема'
+                    }
+                  />
+                )}
                 <pre className="mt-2 max-h-60 overflow-auto whitespace-pre-wrap text-text-secondary">
                   {item.preview}
                 </pre>

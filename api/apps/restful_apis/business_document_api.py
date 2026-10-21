@@ -31,16 +31,25 @@ from api.apps.business_documents.exports import BusinessDocumentExportService
 from api.apps.business_documents.runtime import change_user_role, document_commands, document_creation, document_deletion, document_queries, eva_synchronization
 from api.apps.business_documents.sql_execution_registry import BusinessDocumentSqlExecutionRegistryService
 from api.apps.business_documents.sql_query_agents import BusinessDocumentSqlAgentService
+from api.apps.business_documents.sql_query_exports import BusinessDocumentSqlExportService
 from api.apps.business_documents.sql_query_lifecycle import BusinessDocumentSqlQueryService
 from api.apps.business_documents.sql_query_runs import BusinessDocumentSqlRunService
 from api.apps.business_documents.sql_query_planner import BusinessDocumentSqlQueryPlanningService
 from api.apps.business_documents.sql_query_schema import BusinessDocumentSqlQuerySchemaService
 from api.apps.business_documents.sql_query_revisions import BusinessDocumentSqlRevisionService
+from api.apps.business_documents.sql_query_workspace import BusinessDocumentSqlWorkspaceService
 from api.apps.business_documents.worker import wake_business_document_worker
 from api.db.db_models import DB
 from api.utils.api_utils import get_request_json
 from business_documents.application.errors import BusinessDocumentError
 from common.misc_utils import thread_pool_exec as _thread_pool_exec
+
+
+@manager.after_request  # noqa: F821
+async def prevent_sql_response_caching(response):
+    if "/business-documents/sql-query/" in request.path:
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 async def thread_pool_exec(func, *args, **kwargs):
@@ -101,12 +110,17 @@ async def create_business_document_sql_query_project():
 async def list_business_document_sql_query_projects():
     try:
         actor_id = str(current_user.id)
+        archived = request.args.get("archived", "false")
+        if archived not in {"true", "false"}:
+            raise BusinessDocumentError("INVALID_SQL_PROJECT_SEARCH", "archived must be true or false", 422)
         result = await thread_pool_exec(
             BusinessDocumentSqlAgentService.list_projects,
             actor_id,
             actor_id,
             _is_admin(),
             _access_role(),
+            request.args.get("search", ""),
+            archived == "true",
         )
         return _success(result)
     except BusinessDocumentError as error:
@@ -127,6 +141,66 @@ async def get_business_document_sql_query_project(project_id: str):
             _access_role(),
         )
         return _success(result)
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/projects/<project_id>/export", methods=["POST"])  # noqa: F821
+@login_required
+async def export_business_document_sql_project(project_id: str):
+    try:
+        data = await get_request_json()
+        actor_id = str(current_user.id)
+        artifact = await thread_pool_exec(BusinessDocumentSqlExportService.export, actor_id, actor_id, project_id, data, _is_admin(), _access_role())
+        return Response(artifact.chunks, content_type=f"{artifact.content_type}; charset=utf-8", headers={
+            "Content-Disposition": f'attachment; filename="{artifact.filename}"',
+            "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "sandbox; default-src 'none'; style-src 'unsafe-inline'",
+        })
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_SQL_EXPORT", "Request body must be a valid export command", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/projects/<project_id>", methods=["PATCH"])  # noqa: F821
+@login_required
+async def update_business_document_sql_query_project(project_id: str):
+    try:
+        data = await get_request_json()
+        actor_id = str(current_user.id)
+        result = await thread_pool_exec(BusinessDocumentSqlAgentService.update_project, actor_id, actor_id, project_id, data, _is_admin(), _access_role())
+        return _success(result)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_SQL_AGENT_PROJECT", "Request body must be valid JSON", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/projects/<project_id>/copy", methods=["POST"])  # noqa: F821
+@login_required
+async def copy_business_document_sql_query_project(project_id: str):
+    try:
+        data = await get_request_json()
+        actor_id = str(current_user.id)
+        result = await thread_pool_exec(BusinessDocumentSqlAgentService.copy_project, actor_id, actor_id, project_id, data, _is_admin(), _access_role())
+        return _success(result, 201)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_SQL_AGENT_PROJECT", "Request body must be valid JSON", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/projects/<project_id>/connection", methods=["PUT"])  # noqa: F821
+@login_required
+async def configure_business_document_sql_query_connection(project_id: str):
+    try:
+        data = await get_request_json()
+        actor_id = str(current_user.id)
+        result = await thread_pool_exec(BusinessDocumentSqlRunService.configure_connection, actor_id, actor_id, project_id, data, _is_admin(), _access_role())
+        return _success(result)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_SQL_CONNECTION", "Request body must be a valid JSON object", 422))
     except BusinessDocumentError as error:
         return _error(error)
 
@@ -213,6 +287,23 @@ async def get_business_document_sql_revision_workspace(project_id: str):
         return _error(error)
 
 
+@manager.route("/business-documents/sql-query/projects/<project_id>/view", methods=["GET", "PUT"])  # noqa: F821
+@login_required
+async def business_document_sql_view(project_id: str):
+    try:
+        actor = str(current_user.id)
+        if request.method == "GET":
+            result = await thread_pool_exec(BusinessDocumentSqlWorkspaceService.view, actor, actor, project_id, _is_admin(), _access_role())
+        else:
+            data = await get_request_json()
+            result = await thread_pool_exec(BusinessDocumentSqlWorkspaceService.save_view, actor, actor, project_id, data, _is_admin(), _access_role())
+        return _success(result)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_SQL_VIEW", "Request body must be a valid JSON object", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
 @manager.route("/business-documents/sql-query/projects/<project_id>/draft", methods=["PUT"])  # noqa: F821
 @login_required
 async def save_business_document_sql_revision_draft(project_id: str):
@@ -261,7 +352,11 @@ async def request_business_document_sql_revision(project_id: str, thread_id: str
     try:
         data = await get_request_json()
         actor_id = str(current_user.id)
-        result = await thread_pool_exec(BusinessDocumentSqlRevisionService.request_change, actor_id, actor_id, project_id, thread_id, data, _is_admin(), _access_role())
+        proposed_schema = None
+        if isinstance(data, dict) and data.get("additional_entity_ids"):
+            project = await thread_pool_exec(BusinessDocumentSqlAgentService.get_project, actor_id, actor_id, project_id, _is_admin(), _access_role())
+            proposed_schema = await BusinessDocumentSqlQuerySchemaService.revision_schema(actor_id, (project.get("artifacts") or {}).get("schema") or {}, data["additional_entity_ids"], _is_admin(), _access_role())
+        result = await thread_pool_exec(BusinessDocumentSqlRevisionService.request_change, actor_id, actor_id, project_id, thread_id, data, _is_admin(), _access_role(), **({"proposed_schema": proposed_schema} if proposed_schema is not None else {}))
         wake_business_document_worker()
         return _success(result, 202)
     except (AttributeError, TypeError, BadRequest):
@@ -585,6 +680,19 @@ async def load_business_document_sql_schema_entities():
         return _error(error)
 
 
+@manager.route("/business-documents/sql-query/schema/graph", methods=["POST"])  # noqa: F821
+@login_required
+async def project_business_document_sql_graph():
+    try:
+        data = await get_request_json()
+        result = await BusinessDocumentSqlQuerySchemaService.graph(str(current_user.id), data, _is_admin(), _access_role())
+        return _success(result)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_SQL_GRAPH", "Request body must be a valid JSON object", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
 @manager.route("/business-documents/sql-query/compile", methods=["POST"])  # noqa: F821
 @login_required
 async def compile_business_document_sql_query():
@@ -677,6 +785,48 @@ async def validate_business_document_sql_manual_query(project_id: str):
         return _error(error)
 
 
+@manager.route("/business-documents/sql-query/projects/<project_id>/query-history/context", methods=["POST"])  # noqa: F821
+@login_required
+async def get_business_document_sql_history_context(project_id: str):
+    try:
+        data = await get_request_json()
+        actor_id = str(current_user.id)
+        result = await thread_pool_exec(BusinessDocumentSqlRevisionService.history_context, actor_id, actor_id, project_id, data, _is_admin(), _access_role())
+        return _success(result)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_SQL_REVISION", "Request body must select a saved SQL version", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/projects/<project_id>/query-history/restore", methods=["POST"])  # noqa: F821
+@login_required
+async def restore_business_document_sql_query(project_id: str):
+    try:
+        data = await get_request_json()
+        actor_id = str(current_user.id)
+        result = await thread_pool_exec(BusinessDocumentSqlAgentService.restore_query, actor_id, actor_id, project_id, data, _is_admin(), _access_role())
+        return _success(result)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_SQL_RESTORE", "Request body must be a valid restore command", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/projects/<project_id>/graph", methods=["POST"])  # noqa: F821
+@login_required
+async def get_business_document_sql_project_graph(project_id: str):
+    try:
+        data = await get_request_json()
+        actor_id = str(current_user.id)
+        result = await thread_pool_exec(BusinessDocumentSqlQuerySchemaService.project_graph, actor_id, actor_id, project_id, data, _is_admin(), _access_role())
+        return _success(result)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_SQL_GRAPH", "Request body must select a saved SQL version", 422))
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
 @manager.route("/business-documents/sql-query/projects/<project_id>/preflight", methods=["GET"])  # noqa: F821
 @login_required
 async def preflight_business_document_sql_project(project_id: str):
@@ -693,6 +843,22 @@ async def preflight_business_document_sql_project(project_id: str):
             _access_role(),
         )
         return _success(result)
+    except BusinessDocumentError as error:
+        return _error(error)
+
+
+@manager.route("/business-documents/sql-query/projects/<project_id>/connection/check", methods=["POST"])  # noqa: F821
+@login_required
+async def check_business_document_sql_query_connection(project_id: str):
+    try:
+        actor_id = str(current_user.id)
+        result = await thread_pool_exec(
+            BusinessDocumentSqlRunService.check_connection, actor_id, actor_id, project_id,
+            await request.get_json(), _is_admin(), _access_role(),
+        )
+        return _success(result)
+    except (AttributeError, TypeError, BadRequest):
+        return _error(BusinessDocumentError("INVALID_SQL_CONNECTION", "Request body must be a valid JSON object", 422))
     except BusinessDocumentError as error:
         return _error(error)
 

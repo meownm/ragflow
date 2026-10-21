@@ -23,6 +23,10 @@ __all__ = ["BusinessDocumentAccess"]
 
 
 class BusinessDocumentAccess(DocumentAccess):
+    def require_view_sql(self, owner_id: str) -> None:
+        if owner_id != self.actor_id and not self.capabilities()["edit_all"]:
+            raise PermissionDeniedError("This SQL project is not available to the current user")
+
     def can_execute_sql(self) -> bool:
         return self.capabilities()["create"]
 

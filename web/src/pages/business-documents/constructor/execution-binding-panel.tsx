@@ -29,6 +29,8 @@ const REASON_TEXT: Record<
     'Выбранные таблицы относятся к разным профилям выполнения. В первой версии запрос должен выполняться в одной PostgreSQL-базе.',
   MULTIPLE_EXECUTION_PROFILES:
     'Найдено несколько совместимых профилей — выберите один явно.',
+  SAVED_PROFILE_UNAVAILABLE:
+    'Сохранённый профиль недоступен. Выберите разрешённый источник.',
 };
 
 export function ExecutionBindingPanel({

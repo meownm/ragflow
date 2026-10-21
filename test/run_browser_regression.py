@@ -14,6 +14,16 @@ ROOT = Path(__file__).resolve().parents[1]
 SUITES = [
     "test/playwright/e2e/test_document_constructor_ui.py",
     "test/playwright/e2e/test_sql_revision_ui.py",
+    "test/playwright/e2e/test_sql_workspace_ui.py",
+    "test/playwright/e2e/test_sql_candidate_graph_ui.py",
+    "test/playwright/e2e/test_sql_view_continuity_ui.py",
+    "test/playwright/e2e/test_sql_graph_races_ui.py",
+    "test/playwright/e2e/test_sql_dialogue_ui.py",
+    "test/playwright/e2e/test_sql_exit_cancellation_ui.py",
+    "test/playwright/e2e/test_sql_connection_ui.py",
+    "test/playwright/e2e/test_sql_prequery_connection_ui.py",
+    "test/playwright/e2e/test_sql_project_registry_ui.py",
+    "test/playwright/e2e/test_sql_history_ui.py",
     "test/playwright/e2e/test_business_documents_access_ui.py",
     "test/playwright/e2e/test_business_documents_ui.py",
     "test/playwright/e2e/test_linked_documents_ui.py",
@@ -66,9 +76,13 @@ def main():
     server = SPAServer(("127.0.0.1", 0), partial(SPAHandler, directory=str(dist)))
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    env = {**os.environ, "RAGFLOW_BASE_URL": f"http://127.0.0.1:{server.server_port}", "PW_BROWSER": args.browser}
+    env = {**os.environ, "RAGFLOW_BASE_URL": f"http://127.0.0.1:{server.server_port}", "PW_BROWSER": args.browser, "SQL_BROWSER_BUILD_ROOT": str(dist),
+           "PW_ARTIFACTS_DIR": os.getenv("PW_ARTIFACTS_DIR", str(ROOT / "test/playwright/artifacts" / args.browser))}
+    pytest_args = list(args.pytest_args)
+    if not any(value == "--output" or value.startswith("--output=") for value in pytest_args):
+        pytest_args = ["--output", str(Path(env["PW_ARTIFACTS_DIR"]) / "playwright"), *pytest_args]
     try:
-        return subprocess.call([sys.executable, "-m", "pytest", *(args.suite or SUITES), *args.pytest_args], cwd=ROOT, env=env)
+        return subprocess.call([sys.executable, "-m", "pytest", *(args.suite or SUITES), *pytest_args], cwd=ROOT, env=env)
     finally:
         server.shutdown()
         server.server_close()

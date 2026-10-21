@@ -14,6 +14,8 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, TypeVar
 
+from business_documents.sql_query.requirements_analysis import AcceptedClarification, RequirementsAnalysisValidationError, parse_clarifications, requirements_for_planning
+
 MAX_SCHEMA_TERMS = 8
 MAX_SCHEMA_TERM_LENGTH = 200
 MAX_REQUIREMENTS_LENGTH = 20_000
@@ -22,7 +24,7 @@ MAX_CATALOG_COLUMNS = 500
 MAX_SEARCH_COLUMNS_PER_CANDIDATE = 12
 SCHEMA_RESOLUTION_VERSION = "1"
 
-_REQUEST_FIELDS = {"terms", "requirements", "locale"}
+_REQUEST_FIELDS = {"terms", "requirements", "locale", "clarifications"}
 _ENTITY_REQUEST_FIELDS = {"entity_ids", "locale"}
 _INTERPRETATION_FIELDS = {
     "term",
@@ -254,6 +256,7 @@ class ResolveSchemaCommand:
     requirements: str
     locale: str
     is_admin: bool = False
+    clarifications: tuple[AcceptedClarification, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -557,6 +560,10 @@ def parse_resolve_schema_command(
     requirements = requirements.strip()
     if len(requirements) > MAX_REQUIREMENTS_LENGTH:
         raise SchemaResolutionValidationError(f"requirements exceeds {MAX_REQUIREMENTS_LENGTH} characters")
+    try:
+        clarifications = parse_clarifications(payload.get("clarifications", []))
+    except RequirementsAnalysisValidationError as error:
+        raise SchemaResolutionValidationError(str(error)) from error
     return ResolveSchemaCommand(
         tenant_id=_required_text(tenant_id, "tenant_id", maximum=200),
         actor_id=_required_text(actor_id, "actor_id", maximum=200),
@@ -564,6 +571,7 @@ def parse_resolve_schema_command(
         requirements=requirements,
         locale=_locale(payload.get("locale", "ru")),
         is_admin=bool(is_admin),
+        clarifications=clarifications,
     )
 
 
@@ -920,7 +928,7 @@ class SchemaResolutionScenario:
                 raw = await asyncio.wait_for(
                     self._interpreter.interpret(
                         tenant_id=command.tenant_id,
-                        requirements=command.requirements,
+                        requirements=requirements_for_planning(command.requirements, command.clarifications),
                         locale=command.locale,
                         catalog_answers=llm_candidates,
                     ),

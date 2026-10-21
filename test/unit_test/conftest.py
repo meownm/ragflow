@@ -27,36 +27,11 @@ before any test imports a tokenizer: reuse a provisioned ``nltk_data`` directory
 when present, and download only what is still missing.
 """
 
-import asyncio
 import os
 
-_STANDARD_GET_EVENT_LOOP = asyncio.DefaultEventLoopPolicy.get_event_loop
+from test.asyncio_policy import event_loop_policy as event_loop_policy
 
 import nltk
-import pytest
-
-
-@pytest.fixture(scope="session")
-def event_loop_policy():
-    """Own the test policy without implicitly creating a previous policy loop.
-
-    On Python 3.13, pytest-asyncio's previous-loop probe otherwise creates a
-    default loop that no runner owns or closes. Install an explicitly empty
-    policy before that probe, and restore the caller's policy at session end.
-    """
-    previous = asyncio.get_event_loop_policy()
-
-    class TestEventLoopPolicy(asyncio.DefaultEventLoopPolicy):
-        # Runtime imports can patch the base policy to create unowned loops.
-        get_event_loop = _STANDARD_GET_EVENT_LOOP
-
-    policy = TestEventLoopPolicy()
-    policy.set_event_loop(None)
-    asyncio.set_event_loop_policy(policy)
-    try:
-        yield policy
-    finally:
-        asyncio.set_event_loop_policy(previous)
 
 
 # Reuse data already fetched by download_deps.py (the directory the app exports

@@ -33,6 +33,7 @@ from api.apps.business_documents.recovery import AIRecovery, is_transient_failur
 from api.apps.business_documents.sql_query_agent_worker import BusinessDocumentSqlAgentRunner
 from api.apps.business_documents.sql_query_agents import BusinessDocumentSqlAgentService
 from api.apps.business_documents.sql_query_runs import BusinessDocumentSqlRunService
+from api.apps.business_documents.sql_query_retention import expire_due_results
 from api.apps.business_documents.stream_events import BusinessDocumentStreamEvents
 from api.db.db_models import BusinessDocument, BusinessDocumentJob
 from business_documents.application.errors import BusinessDocumentError, ConflictError
@@ -532,7 +533,12 @@ class BusinessDocumentWorker:
             reconciled = self.reconcile_exports()
         except Exception:
             logging.exception("Business document export-stage reconciliation failed")
-        return bool(recovered or dead or reconciled["cleaned"])
+        expired = 0
+        try:
+            expired = expire_due_results()
+        except Exception:
+            logging.exception("SQL result retention cleanup failed")
+        return bool(recovered or dead or reconciled["cleaned"] or expired)
 
     def run_forever(self, stop_event: threading.Event, *, poll_seconds: float = 2.0, maintenance_lock: threading.Lock | None = None) -> None:
         database = BusinessDocumentJob._meta.database

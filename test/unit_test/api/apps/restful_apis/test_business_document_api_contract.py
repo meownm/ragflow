@@ -15,6 +15,12 @@ API_PATH = Path(__file__).parents[5] / "api" / "apps" / "restful_apis" / "busine
 
 
 EXPECTED_ROUTES = {
+    "get_business_document_sql_history_context": ("/business-documents/sql-query/projects/<project_id>/query-history/context", ("POST",)),
+    "restore_business_document_sql_query": ("/business-documents/sql-query/projects/<project_id>/query-history/restore", ("POST",)),
+    "get_business_document_sql_project_graph": ("/business-documents/sql-query/projects/<project_id>/graph", ("POST",)),
+    "export_business_document_sql_project": ("/business-documents/sql-query/projects/<project_id>/export", ("POST",)),
+    "update_business_document_sql_query_project": ("/business-documents/sql-query/projects/<project_id>", ("PATCH",)),
+    "copy_business_document_sql_query_project": ("/business-documents/sql-query/projects/<project_id>/copy", ("POST",)),
     "search_eva_business_document_sources": ("/business-documents/eva/sources", ("GET",)),
     "check_business_document_eva_access": ("/business-documents/eva/access", ("GET",)),
     "create_eva_business_document_change": ("/business-documents/eva/changes", ("POST",)),
@@ -33,7 +39,11 @@ EXPECTED_ROUTES = {
     "create_business_document_sql_query_project": ("/business-documents/sql-query/projects", ("POST",)),
     "list_business_document_sql_query_projects": ("/business-documents/sql-query/projects", ("GET",)),
     "get_business_document_sql_query_project": ("/business-documents/sql-query/projects/<project_id>", ("GET",)),
+    "configure_business_document_sql_query_connection": ("/business-documents/sql-query/projects/<project_id>/connection", ("PUT",)),
+    "check_business_document_sql_query_connection": ("/business-documents/sql-query/projects/<project_id>/connection/check", ("POST",)),
     "get_business_document_sql_revision_workspace": ("/business-documents/sql-query/projects/<project_id>/workspace", ("GET",)),
+    "business_document_sql_view": ("/business-documents/sql-query/projects/<project_id>/view", ("GET", "PUT")),
+    "project_business_document_sql_graph": ("/business-documents/sql-query/schema/graph", ("POST",)),
     "save_business_document_sql_revision_draft": ("/business-documents/sql-query/projects/<project_id>/draft", ("PUT",)),
     "create_business_document_sql_revision_thread": ("/business-documents/sql-query/projects/<project_id>/threads", ("POST",)),
     "reply_business_document_sql_revision_thread": ("/business-documents/sql-query/projects/<project_id>/threads/<thread_id>/messages", ("POST",)),
@@ -140,6 +150,7 @@ def test_mutating_routes_read_json_and_all_routes_map_domain_errors():
         elif name in {
             "resolve_business_document_sql_schema",
             "load_business_document_sql_schema_entities",
+            "project_business_document_sql_graph",
             "plan_business_document_sql_query",
         }:
             assert any(isinstance(node, ast.Await) for node in ast.walk(function))
@@ -156,6 +167,8 @@ def test_mutating_routes_read_json_and_all_routes_map_domain_errors():
             "assign_business_document_owner",
             "create_business_document_sql_query_project",
             "save_business_document_sql_revision_draft",
+            "business_document_sql_view",
+            "project_business_document_sql_graph",
             "create_business_document_sql_revision_thread",
             "reply_business_document_sql_revision_thread",
             "request_business_document_sql_revision",

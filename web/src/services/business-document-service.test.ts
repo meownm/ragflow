@@ -1,13 +1,22 @@
 import {
   assignBusinessDocumentOwner,
   checkBusinessDocumentEvaUpdate,
+  checkBusinessDocumentSqlProjectConnection,
   compileBusinessDocumentSqlQuery,
+  configureBusinessDocumentSqlProjectConnection,
+  copyBusinessDocumentSqlAgentProject,
   createBusinessDocumentSqlAgentProject,
   createBusinessDocumentSqlCatalogBinding,
   createBusinessDocumentSqlExecutionProfile,
   createEvaDocumentChange,
   decideBusinessDocumentSqlAgentProposal,
+  exportBusinessDocumentSqlProject,
   fetchBusinessDocumentSqlAgentProject,
+  fetchBusinessDocumentSqlGraph,
+  fetchBusinessDocumentSqlHistoryContext,
+  fetchBusinessDocumentSqlProjectGraph,
+  fetchBusinessDocumentSqlRevisionWorkspace,
+  fetchBusinessDocumentSqlView,
   generateEvaDocumentChangeDraft,
   getBusinessDocumentCapabilities,
   listBusinessDocumentAccessUsers,
@@ -19,13 +28,17 @@ import {
   listBusinessDocumentSqlExecutionProfiles,
   loadBusinessDocumentSqlSchemaEntities,
   planBusinessDocumentSqlQuery,
+  preflightBusinessDocumentSqlProject,
   prepareEvaDocumentChange,
   publishEvaDocumentChange,
   requestBusinessDocumentSqlAgent,
   resolveBusinessDocumentSqlExecutionBinding,
   resolveBusinessDocumentSqlSchema,
+  restoreBusinessDocumentSqlQuery,
+  saveBusinessDocumentSqlView,
   searchEvaDocumentSources,
   submitBusinessDocumentCommand,
+  updateBusinessDocumentSqlAgentProject,
   updateBusinessDocumentSqlCatalogBinding,
   updateBusinessDocumentSqlExecutionProfile,
   updateBusinessDocumentUserRole,
@@ -50,6 +63,226 @@ const mockedPatch = jest.mocked(request.patch);
 const mockedPut = jest.mocked(request.put);
 
 beforeEach(() => jest.clearAllMocks());
+
+test('restores a saved compilation with CAS and idempotency without browser SQL', async () => {
+  mockedPost.mockResolvedValueOnce({
+    data: { code: 0, data: { compilation_id: 'new-compilation' } },
+  });
+  await restoreBusinessDocumentSqlQuery(
+    'project',
+    'old-compilation',
+    7,
+    'restore-attempt',
+  );
+  expect(mockedPost).toHaveBeenCalledWith(
+    api.businessDocumentSqlQueryRestore('project'),
+    {
+      schema_version: '1',
+      compilation_id: 'old-compilation',
+      expected_state_version: 7,
+      idempotency_key: 'restore-attempt',
+    },
+    expect.any(Object),
+  );
+});
+
+test('loads a historical graph with the exact saved source and cancellation', async () => {
+  mockedPost.mockResolvedValueOnce({ data: { code: 0, data: { nodes: [] } } });
+  const controller = new AbortController();
+  await fetchBusinessDocumentSqlProjectGraph(
+    'project',
+    { compilation_id: 'old-compilation', query_artifact_id: 'old-query' },
+    2,
+    controller.signal,
+  );
+  expect(mockedPost).toHaveBeenCalledWith(
+    api.businessDocumentSqlProjectGraph('project'),
+    {
+      schema_version: '1',
+      compilation_id: 'old-compilation',
+      query_artifact_id: 'old-query',
+      depth: 2,
+    },
+    expect.objectContaining({ signal: controller.signal }),
+  );
+});
+
+test('forwards workspace cancellation to the HTTP client', async () => {
+  mockedGet.mockResolvedValueOnce({
+    data: { code: 0, data: { project_id: 'project' } },
+  });
+  const controller = new AbortController();
+  await fetchBusinessDocumentSqlRevisionWorkspace('project', controller.signal);
+  expect(mockedGet).toHaveBeenCalledWith(
+    api.businessDocumentSqlRevisionWorkspace('project'),
+    expect.objectContaining({ signal: controller.signal }),
+  );
+});
+
+test('exports the original result blob with cancellation and no JSON number conversion', async () => {
+  const blob = new Blob(['{"value":9223372036854775807}'], {
+    type: 'application/json',
+  });
+  mockedPost.mockResolvedValueOnce({ data: blob });
+  const controller = new AbortController();
+  const command = {
+    schema_version: '1',
+    kind: 'RESULT',
+    format: 'json',
+    run_id: 'old-run',
+  } as const;
+  const result = await exportBusinessDocumentSqlProject(
+    'project',
+    command,
+    controller.signal,
+  );
+  expect(result).toEqual({ blob, filename: 'sql-result-old-run.json' });
+  expect(result.blob).toBe(blob);
+  expect(mockedPost).toHaveBeenCalledWith(
+    api.businessDocumentSqlProjectExport('project'),
+    command,
+    expect.objectContaining({
+      responseType: 'blob',
+      signal: controller.signal,
+    }),
+  );
+});
+
+test('rejects an unexpected download content type', async () => {
+  mockedPost.mockResolvedValueOnce({
+    data: new Blob(['<html>error</html>'], { type: 'text/html' }),
+  });
+  await expect(
+    exportBusinessDocumentSqlProject('project', {
+      schema_version: '1',
+      kind: 'RESULT',
+      format: 'json',
+      run_id: 'run',
+    }),
+  ).rejects.toThrow('неподдерживаемый формат');
+});
+
+test('sends closed versioned project metadata and copy commands', async () => {
+  const result = { id: 'p', state_version: 2 };
+  mockedPatch.mockResolvedValueOnce({ data: { code: 0, data: result } });
+  await expect(
+    updateBusinessDocumentSqlAgentProject('p', 1, 'rename', { title: 'Отчёт' }),
+  ).resolves.toEqual(result);
+  expect(mockedPatch).toHaveBeenCalledWith(
+    api.businessDocumentSqlQueryProject('p'),
+    {
+      schema_version: '1',
+      expected_state_version: 1,
+      idempotency_key: 'rename',
+      title: 'Отчёт',
+    },
+    expect.any(Object),
+  );
+  mockedPost.mockResolvedValueOnce({ data: { code: 0, data: result } });
+  await expect(
+    copyBusinessDocumentSqlAgentProject('p', 2, 'copy'),
+  ).resolves.toEqual(result);
+  expect(mockedPost).toHaveBeenCalledWith(
+    `${api.businessDocumentSqlQueryProject('p')}/copy`,
+    { schema_version: '1', expected_state_version: 2, idempotency_key: 'copy' },
+    expect.any(Object),
+  );
+});
+
+test('passes search and archived filter without changing the list response', async () => {
+  mockedGet.mockResolvedValueOnce({ data: { code: 0, data: [] } });
+  await expect(
+    listBusinessDocumentSqlAgentProjects({ search: '50%_', archived: true }),
+  ).resolves.toEqual([]);
+  expect(mockedGet).toHaveBeenCalledWith(
+    api.businessDocumentSqlQueryProjects,
+    expect.objectContaining({ params: { search: '50%_', archived: true } }),
+  );
+});
+
+test('persists versioned project connection without changing the query', async () => {
+  const result = {
+    id: 'project-1',
+    execution_profile_id: 'profile-2',
+    state_version: 8,
+  };
+  mockedPut.mockResolvedValueOnce({ data: { code: 0, data: result } });
+  await expect(
+    configureBusinessDocumentSqlProjectConnection(
+      'project-1',
+      7,
+      'choose-connection',
+      'profile-2',
+    ),
+  ).resolves.toEqual(result);
+  expect(mockedPut).toHaveBeenCalledWith(
+    `${api.businessDocumentSqlQueryProject('project-1')}/connection`,
+    {
+      schema_version: '1',
+      expected_state_version: 7,
+      idempotency_key: 'choose-connection',
+      selected_profile_id: 'profile-2',
+    },
+    { skipErrorNotification: true },
+  );
+});
+
+test('forwards preflight cancellation and explicit profile override', async () => {
+  const signal = new AbortController().signal;
+  mockedGet.mockResolvedValueOnce({
+    data: { code: 0, data: { binding: { status: 'UNAVAILABLE' } } },
+  });
+  await preflightBusinessDocumentSqlProject('project-1', 'profile-2', signal);
+  expect(mockedGet).toHaveBeenCalledWith(
+    api.businessDocumentSqlProjectPreflight('project-1'),
+    {
+      skipErrorNotification: true,
+      signal,
+      params: { selected_profile_id: 'profile-2' },
+    },
+  );
+});
+
+test('forwards cancellation to graph reads and personal view reads and saves', async () => {
+  const signal = new AbortController().signal;
+  mockedGet.mockResolvedValue({
+    data: { code: 0, data: { version: 0, view: null } },
+  });
+  mockedPut.mockResolvedValue({
+    data: { code: 0, data: { version: 1, view: null } },
+  });
+  mockedPost.mockResolvedValue({ data: { code: 0, data: {} } });
+  const input = {
+    schema_version: '1' as const,
+    entity_ids: ['orders'],
+    sql: 'SELECT o.id FROM public.orders o',
+    depth: 1,
+  };
+  const view = {
+    positions: {},
+    viewport: { x: 0, y: 0, zoom: 1 },
+    depth: 1,
+    mode: 'all' as const,
+    list_view: false,
+  };
+  await fetchBusinessDocumentSqlGraph(input, signal);
+  await fetchBusinessDocumentSqlView('project-1', signal);
+  await saveBusinessDocumentSqlView('project-1', 0, view, signal);
+  expect(mockedPost).toHaveBeenCalledWith(
+    api.businessDocumentSqlSchemaGraph,
+    input,
+    expect.objectContaining({ signal }),
+  );
+  expect(mockedGet).toHaveBeenCalledWith(
+    api.businessDocumentSqlProjectView('project-1'),
+    expect.objectContaining({ signal }),
+  );
+  expect(mockedPut).toHaveBeenCalledWith(
+    api.businessDocumentSqlProjectView('project-1'),
+    { schema_version: '1', expected_version: 0, view },
+    expect.objectContaining({ signal }),
+  );
+});
 
 test('replays missing job events after the stream disconnects', async () => {
   const originalFetch = global.fetch;
@@ -682,6 +915,81 @@ test('explains a server failure when the backend returned no message', async () 
   await expect(listBusinessDocuments()).rejects.toThrow(
     'Сервер не смог выполнить запрос. Повторите попытку позже; если ошибка сохранится, обратитесь к администратору.',
   );
+});
+
+test('checks the explicit connection without sending SQL or a mutation command', async () => {
+  const controller = new AbortController();
+  const result = { status: 'AVAILABLE', query_checked: false };
+  mockedPost.mockResolvedValueOnce({ data: { code: 0, data: result } });
+  await expect(
+    checkBusinessDocumentSqlProjectConnection(
+      'project-1',
+      null,
+      controller.signal,
+    ),
+  ).resolves.toEqual(result);
+  expect(mockedPost).toHaveBeenCalledWith(
+    `${api.businessDocumentSqlQueryProject('project-1')}/connection/check`,
+    { schema_version: '1', selected_profile_id: null },
+    { signal: controller.signal, skipErrorNotification: true },
+  );
+});
+
+test('retains the connection error family for inline recovery', async () => {
+  mockedPost.mockRejectedValueOnce({
+    isAxiosError: true,
+    response: {
+      status: 504,
+      data: {
+        message: 'Источник не ответил',
+        data: { error_code: 'SQL_CONNECTION_TIMEOUT' },
+      },
+    },
+  });
+  await expect(
+    checkBusinessDocumentSqlProjectConnection('project-1', 'profile-1'),
+  ).rejects.toMatchObject({
+    code: 'SQL_CONNECTION_TIMEOUT',
+    message: 'Источник не ответил',
+  });
+});
+
+test('loads historical context from saved identities only and preserves cancellation and access errors', async () => {
+  const controller = new AbortController();
+  const source = {
+    compilation_id: 'compilation-old',
+    query_artifact_id: 'query-old',
+  };
+  const result = { source };
+  mockedPost.mockResolvedValueOnce({ data: { code: 0, data: result } });
+  await expect(
+    fetchBusinessDocumentSqlHistoryContext(
+      'project-1',
+      source,
+      controller.signal,
+    ),
+  ).resolves.toEqual(result);
+  expect(mockedPost).toHaveBeenLastCalledWith(
+    api.businessDocumentSqlHistoryContext('project-1'),
+    { schema_version: '1', ...source },
+    { skipErrorNotification: true, signal: controller.signal },
+  );
+  mockedPost.mockRejectedValueOnce({
+    isAxiosError: true,
+    response: {
+      status: 403,
+      data: {
+        message: 'Доступ отозван',
+        data: { error_code: 'PERMISSION_DENIED' },
+      },
+    },
+  });
+  await expect(
+    fetchBusinessDocumentSqlHistoryContext('project-1', source),
+  ).rejects.toMatchObject({
+    message: 'Доступ отозван',
+    code: 'PERMISSION_DENIED',
+  });
 });
 
 test('uses explicit EVA source, agent-generation and publish endpoints', async () => {

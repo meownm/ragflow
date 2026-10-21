@@ -30,10 +30,26 @@ class RevisionBrowserStub(DocumentConstructorStub):
         self.proposals = []
         self.query_number = 1
 
+    def _catalog_answer(self):
+        answer = super()._catalog_answer()
+        orders = self._catalog_table("orders", "dwh.order_fact", [
+            ("order_id", "BIGINT"), ("status_id", "BIGINT"),
+            ("paid_amount_rub", "NUMERIC(18,2)"), ("customer_id", "BIGINT"),
+        ])
+        orders["table_constraints"].append({"constraint_type": "FOREIGN_KEY", "columns": ["customer_id"], "referred_columns": ["dwh.customer_dim.customer_id"]})
+        customers = self._catalog_table("customers", "dwh.customer_dim", [("customer_id", "BIGINT")])
+        answer["entities"] = [orders, customers, *(entity for entity in answer["entities"] if entity["id"] != "orders")]
+        return answer
+
     def _compile_sql_project(self, payload):
         response = super()._compile_sql_project(payload)
         response["compilation"]["sql"] = self.sql
         response["project"]["compilation"]["result"]["sql"] = self.sql
+        return response
+
+    def _run_sql_project(self, payload):
+        response = super()._run_sql_project(payload)
+        self.sql_agent_project["latest_run"]["compilation_id"] = self.sql_agent_project["compilation"]["id"]
         return response
 
     def _complete_sql_project(self, payload):
@@ -156,6 +172,11 @@ class RevisionBrowserStub(DocumentConstructorStub):
     def __call__(self, route):
         request = route.request
         path = urlparse(request.url).path.rstrip("/")
+        if path.endswith("/preflight"):
+            _fulfill_json(route, _envelope({"compilation_id": self.sql_agent_project["compilation"]["id"],
+                "state_version": self.sql_agent_project["state_version"],
+                "binding": {"status": "BOUND", "selection": {"profile": {"id": "profile-1", "name": "QA warehouse", "max_rows": 1000, "statement_timeout_ms": 5000}}, "candidates": []}}))
+            return
         if re.fullmatch(r"/api/v1/business-documents/sql-query/projects/[^/]+/workspace", path) and request.method == "GET":
             _fulfill_json(route, _envelope(self._workspace()))
             return
@@ -189,28 +210,7 @@ class RevisionBrowserStub(DocumentConstructorStub):
 @pytest.mark.auth
 def test_sql_revision_comments_survive_saved_document_and_reload(page, base_url):
     stub = RevisionBrowserStub()
-    _install_session(page)
-    page.route("**/api/v1/**", stub)
-    page.set_viewport_size({"width": 1920, "height": 1080})
-    page.goto(f"{base_url.rstrip('/')}/sql-projects", wait_until="commit")
-    workbench = page.get_by_test_id("sql-agent-workbench")
-    workbench.get_by_role("button", name="Новый запрос").first.click()
-    workbench.get_by_label("Название (необязательно)").fill("Заказы с клиентами")
-    workbench.get_by_label("Какой вопрос нужно решить?").fill("Покажи заказы и клиентов, включая вложенную проверку статуса")
-    workbench.get_by_role("button", name="Создать и продолжить").click()
-    requirements = workbench.get_by_test_id("sql-agent-requirements-review")
-    requirements.get_by_role("button", name="Календарный месяц").click()
-    requirements.get_by_role("button", name="Подтвердить требования").click()
-    workbench.get_by_label("Что искать в данных?").fill("Заказ")
-    workbench.get_by_test_id("sql-agent-run-schema").click()
-    schema = workbench.get_by_test_id("sql-agent-schema-review")
-    schema.get_by_role("button", name=re.compile("order_fact")).first.click()
-    for column in ("order_id", "status_id", "paid_amount_rub"):
-        schema.get_by_role("checkbox", name=column).check()
-    schema.get_by_role("button", name="Подтвердить схему").click()
-    query = workbench.get_by_test_id("sql-agent-query-review")
-    query.get_by_role("checkbox", name="Подтверждаю исключение строк этим условием.").check()
-    query.get_by_role("button", name="Подтвердить и собрать SQL").click()
+    workbench = _create_reviewed_query(page, base_url, stub)
 
     revision = workbench.get_by_test_id("sql-revision-workspace")
     expect(revision.get_by_role("button", name="Соединение с клиентами")).to_be_visible()
@@ -277,4 +277,99 @@ def _comment_thread(workspace, text):
     # A textarea may already contain the draft while its POST is still pending.
     message = workspace.locator("p").filter(has_text=re.compile(r"^" + re.escape(text) + r"$"))
     expect(message).to_be_visible()
-    return message.locator("..")
+    return message.locator("xpath=ancestor::div[contains(@class,'rounded-md') and contains(@class,'border')][1]")
+
+
+class RetainedRevisionBrowserStub(RevisionBrowserStub):
+    def _run_sql_project(self, payload):
+        project = self.sql_agent_project
+        history = project.setdefault("runs", [])
+        response = super()._run_sql_project(payload)
+        run = project["latest_run"]
+        run.update(id=f"run-{len(history) + 1}",
+                   profile_id="profile-1", profile_version=3, profile_name="Original warehouse")
+        history.insert(0, run)
+        response["run_id"] = run["id"]
+        return response
+
+    def __call__(self, route):
+        path = urlparse(route.request.url).path.rstrip("/")
+        match = re.search(r"/runs/([^/]+)/preview$", path)
+        if match:
+            run = next(item for item in self.sql_agent_project["runs"] if item["id"] == match.group(1))
+            _fulfill_json(route, _envelope({"run_id": run["id"], "columns": run["columns"],
+                "rows": [[42, "1250.00"]], "offset": 0, "row_count": 1, "checks": run["checks"]}))
+            return
+        return super().__call__(route)
+
+
+@pytest.mark.p1
+@pytest.mark.auth
+def test_sql_revision_retains_ready_result_and_runs_new_version(page, base_url):
+    stub = RetainedRevisionBrowserStub()
+    workbench = _create_reviewed_query(page, base_url, stub)
+    completed = workbench.get_by_test_id("sql-agent-complete")
+    completed.get_by_role("button", name="Выполнить запрос").click()
+    expect(completed.get_by_test_id("sql-result-table")).to_contain_text("1250.00")
+    old = deepcopy(stub.sql_agent_project["latest_run"])
+    expect(completed.get_by_test_id("guided-sql-form")).to_be_visible()
+    expect(completed.get_by_test_id("sql-historical-result")).to_have_count(0)
+
+    revision = workbench.get_by_test_id("sql-revision-workspace")
+    revision.get_by_role("button", name="Соединение с клиентами").click()
+    revision.get_by_label("Что изменить?").fill("Оставь заказы без клиента")
+    revision.get_by_role("button", name="Добавить комментарий").click()
+    _comment_thread(revision, "Оставь заказы без клиента").get_by_role("button", name="Предложить изменение через ИИ").click()
+    proposal = revision.get_by_test_id("sql-revision-proposal")
+    expect(proposal).to_contain_text("Сохранить заказы без клиента")
+    proposal.get_by_role("button", name="Принять версию").click()
+    expect(revision.get_by_label("Проверенный SQL")).to_have_value(re.compile("LEFT JOIN"))
+    expect(completed.get_by_test_id("sql-historical-result")).to_contain_text("предыдущей проверенной версии")
+    expect(completed.get_by_role("button", name="Завершить", exact=True)).to_be_disabled()
+    expect(completed.get_by_test_id("sql-result-table")).to_contain_text("1250.00")
+    expect(completed).to_contain_text("Источник выбранного запуска: Original warehouse · версия 3")
+    assert stub.sql_agent_project["latest_run"] == old
+    assert len([item for item in stub.sql_project_commands if item[0] == "run"]) == 1
+
+    page.reload()
+    completed = page.get_by_test_id("sql-agent-complete")
+    expect(completed.get_by_test_id("sql-historical-result")).to_be_visible()
+    expect(completed.get_by_test_id("sql-result-table")).to_contain_text("1250.00")
+    completed.get_by_role("button", name="Выполнить запрос").click()
+    expect(completed.get_by_test_id("sql-historical-result")).to_have_count(0)
+    assert stub.sql_agent_project["latest_run"]["compilation_id"] == "compilation-2"
+    assert stub.sql_agent_project["runs"][1] == old
+    completed.get_by_role("button", name="Запуск 1 · данные доступны", exact=True).click()
+    expect(completed.get_by_test_id("sql-historical-result")).to_be_visible()
+    expect(completed.get_by_role("button", name="Завершить", exact=True)).to_be_disabled()
+    expect(completed.get_by_test_id("sql-result-table")).to_contain_text("1250.00")
+    assert len([item for item in stub.sql_project_commands if item[0] == "run"]) == 2
+    assert page._diag["page_errors"] == []
+    assert page._diag["console_errors"] == []
+
+
+def _create_reviewed_query(page, base_url, stub):
+    _install_session(page)
+    page.route("**/api/v1/**", stub)
+    page.set_viewport_size({"width": 1920, "height": 1080})
+    page.goto(f"{base_url.rstrip('/')}/sql-projects", wait_until="commit")
+    workbench = page.get_by_test_id("sql-agent-workbench")
+    workbench.get_by_role("button", name="Новый запрос").first.click()
+    workbench.get_by_label("Название (необязательно)").fill("Заказы с клиентами")
+    workbench.get_by_label("Какой вопрос нужно решить?").fill("Покажи заказы и клиентов, включая вложенную проверку статуса")
+    workbench.get_by_role("button", name="Создать и продолжить").click()
+    requirements = workbench.get_by_test_id("sql-agent-requirements-review")
+    requirements.get_by_role("button", name="Календарный месяц").click()
+    requirements.get_by_role("button", name="Подтвердить требования").click()
+    workbench.get_by_label("Что искать в данных?").fill("Заказ")
+    workbench.get_by_test_id("sql-agent-run-schema").click()
+    schema = workbench.get_by_test_id("sql-agent-schema-review")
+    schema.get_by_role("button", name=re.compile("order_fact")).first.click()
+    for column in ("order_id", "status_id", "paid_amount_rub"):
+        schema.get_by_role("checkbox", name=column).check()
+    schema.get_by_role("button", name="Подтвердить схему").click()
+    query = workbench.get_by_test_id("sql-agent-query-review")
+    query.get_by_role("checkbox", name="Подтверждаю исключение строк этим условием.").check()
+    query.get_by_role("button", name="Подтвердить и собрать SQL").click()
+
+    return workbench

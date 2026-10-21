@@ -11,6 +11,8 @@ from dataclasses import dataclass
 import re
 from typing import Any, Mapping, Protocol, Sequence
 
+from business_documents.sql_query.requirements_analysis import AcceptedClarification, RequirementsAnalysisValidationError, parse_clarifications, requirements_for_planning
+
 from business_documents.sql_query.query_specification import (
     AcceptedSchemaEntry,
     SchemaSnapshot,
@@ -59,6 +61,7 @@ class PlanQueryCommand:
     snapshot: SchemaSnapshot
     accepted_requirements: str
     accepted_schema: tuple[AcceptedSchemaEntry, ...]
+    clarifications: tuple[AcceptedClarification, ...] = ()
 
 
 def _record(value: Any, field: str) -> Mapping[str, Any]:
@@ -111,7 +114,7 @@ def _identifier(value: Any, field: str) -> str:
 
 def parse_plan_query_command(payload: Any, *, tenant_id: str) -> PlanQueryCommand:
     request = _record(payload, "request")
-    _closed(request, {"schema_version", "schema_snapshot", "accepted_requirements", "accepted_schema", "locale"}, "request")
+    _closed(request, {"schema_version", "schema_snapshot", "accepted_requirements", "accepted_schema", "locale", "clarifications"}, "request")
     if request.get("schema_version") != QUERY_PLAN_VERSION:
         raise QueryPlanValidationError("schema_version is unsupported")
     locale = _text(request.get("locale"), "locale", 8)
@@ -121,7 +124,8 @@ def parse_plan_query_command(payload: Any, *, tenant_id: str) -> PlanQueryComman
     try:
         snapshot = parse_schema_snapshot(request.get("schema_snapshot"))
         accepted_schema = parse_accepted_schema(request.get("accepted_schema"))
-    except QuerySpecificationValidationError as exc:
+        clarifications = parse_clarifications(request.get("clarifications", []))
+    except (QuerySpecificationValidationError, RequirementsAnalysisValidationError) as exc:
         raise QueryPlanValidationError(str(exc)) from exc
     issues = schema_acceptance_issues(snapshot, accepted_requirements, accepted_schema)
     if issues:
@@ -132,6 +136,7 @@ def parse_plan_query_command(payload: Any, *, tenant_id: str) -> PlanQueryComman
         snapshot=snapshot,
         accepted_requirements=accepted_requirements,
         accepted_schema=accepted_schema,
+        clarifications=clarifications,
     )
 
 
@@ -144,7 +149,7 @@ def planner_context(command: PlanQueryCommand) -> dict[str, Any]:
     return {
         "schema_version": QUERY_PLAN_VERSION,
         "locale": command.locale,
-        "requirements": command.accepted_requirements,
+        "requirements": requirements_for_planning(command.accepted_requirements, command.clarifications),
         "tables": [
             {
                 "entity_id": table.id,

@@ -526,6 +526,9 @@ def _manual_payload(sql: str) -> dict:
         "SELECT o.status_id AS status_id, COUNT(*) AS total FROM dwh.order_fact AS o GROUP BY o.status_id LIMIT :row_limit",
         "SELECT o.order_id AS order_id FROM dwh.order_fact AS o UNION SELECT c.customer_id AS order_id FROM dwh.customer_dim AS c LIMIT :row_limit",
         "SELECT o.order_id AS order_id, ROW_NUMBER() OVER (ORDER BY o.created_at) AS position FROM dwh.order_fact AS o LIMIT :row_limit",
+        "SELECT o.order_id AS order_id FROM dwh.order_fact AS o ORDER BY 1 DESC LIMIT :row_limit",
+        "WITH sales AS (SELECT o.order_id AS order_id FROM dwh.order_fact AS o ORDER BY 1) SELECT sales.order_id AS order_id FROM sales ORDER BY 1 LIMIT :row_limit",
+        "SELECT o.order_id AS order_id FROM dwh.order_fact AS o UNION SELECT c.customer_id AS order_id FROM dwh.customer_dim AS c ORDER BY 1 LIMIT :row_limit",
     ],
 )
 def test_manual_advanced_sql_is_catalog_bound(sql):
@@ -546,6 +549,13 @@ def test_manual_advanced_sql_is_catalog_bound(sql):
         "SELECT dangerous(o.order_id) AS value FROM dwh.order_fact AS o LIMIT :row_limit",
         "SELECT o.order_id AS order_id FROM dwh.order_fact AS o LIMIT 25",
         "WITH RECURSIVE sales AS (SELECT o.order_id AS order_id FROM dwh.order_fact AS o) SELECT sales.order_id AS order_id FROM sales LIMIT :row_limit",
+        "SELECT o.order_id AS order_id FROM dwh.order_fact AS o ORDER BY 0 LIMIT :row_limit",
+        "SELECT o.order_id AS order_id FROM dwh.order_fact AS o ORDER BY 2 LIMIT :row_limit",
+        "SELECT o.order_id AS order_id FROM dwh.order_fact AS o ORDER BY -1 LIMIT :row_limit",
+        "SELECT o.order_id AS order_id FROM dwh.order_fact AS o ORDER BY 1.0 LIMIT :row_limit",
+        "SELECT o.order_id AS order_id FROM dwh.order_fact AS o ORDER BY 1+1 LIMIT :row_limit",
+        "SELECT o.order_id AS order_id FROM dwh.order_fact AS o WHERE o.order_id=1 ORDER BY 1 LIMIT :row_limit",
+        "SELECT o.order_id AS order_id, ROW_NUMBER() OVER (ORDER BY 1) AS position FROM dwh.order_fact AS o LIMIT :row_limit",
     ],
 )
 def test_manual_advanced_sql_rejects_unbound_or_unknown_access(sql):
@@ -570,3 +580,33 @@ def test_manual_complex_selects_remain_catalog_bound(sql):
         payload["parameters"].append({"name": "customer_type", "type": "text", "value": "corporate"})
     result = compile_query_payload(payload)
     assert result["guard"]["status"] == "PASS"
+
+
+@pytest.mark.parametrize("negation", ["", "NOT "])
+def test_exists_constant_projection_does_not_require_a_value_binding(negation):
+    sql = f"SELECT o.order_id AS order_id FROM dwh.order_fact o WHERE {negation}EXISTS (SELECT 1 FROM dwh.customer_dim c WHERE c.customer_id=o.customer_id) LIMIT :row_limit"
+    result = compile_query_payload(_manual_payload(sql))
+    assert result["guard"]["status"] == "PASS"
+    assert result["output_columns"] == ["order_id"]
+    assert result["guard"]["parameters"] == ["row_limit"]
+    assert result["guard"]["tables"] == ["dwh.customer_dim", "dwh.order_fact"]
+
+
+@pytest.mark.parametrize("fragment", [
+    "EXISTS (SELECT 2 FROM dwh.customer_dim c)",
+    "EXISTS (SELECT 1+o.order_id FROM dwh.customer_dim c)",
+    "EXISTS (SELECT 1 FROM dwh.customer_dim c WHERE c.customer_id=1)",
+    "EXISTS (SELECT 1 FROM pg_catalog.pg_user c)",
+    "EXISTS (SELECT pg_sleep(1) FROM dwh.customer_dim c)",
+    "o.order_id IN (SELECT 1 FROM dwh.customer_dim c)",
+    "o.order_id=(SELECT 1 FROM dwh.customer_dim c)",
+])
+def test_exists_projection_exception_does_not_allow_other_literals_or_access(fragment):
+    sql = f"SELECT o.order_id AS order_id FROM dwh.order_fact o WHERE {fragment} LIMIT :row_limit"
+    with pytest.raises(SqlGuardError):
+        compile_query_payload(_manual_payload(sql))
+
+
+def test_constant_outer_projection_still_requires_a_bound_value():
+    with pytest.raises(SqlGuardError):
+        compile_query_payload(_manual_payload("SELECT 1 AS constant FROM dwh.order_fact o LIMIT :row_limit"))

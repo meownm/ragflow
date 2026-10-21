@@ -16,10 +16,15 @@ if "api.apps" not in sys.modules:
 
 from api.apps.business_documents import sql_query_runs
 from api.apps.business_documents.sql_query_agents import BusinessDocumentSqlAgentService
+from api.apps.business_documents.sql_query_agents import _stable_hash
+from api.apps.business_documents.sql_query_schema import BusinessDocumentSqlQuerySchemaService
 from api.apps.business_documents.sql_query_postgres import _dbapi_sql
 from api.apps.business_documents.worker import BusinessDocumentJobQueue
 from api.db.db_models import User
 from business_documents.application.errors import ConflictError, PermissionDeniedError
+from business_documents.sql_query.project_compilation import build_project_compile_command
+from business_documents.sql_query.query_specification import compile_query_payload
+from test.unit_test.api.apps.business_documents.test_sql_query_specification import _snapshot, _table
 
 actual_current_actor_access = sql_query_runs._current_actor_access
 
@@ -37,13 +42,37 @@ def database(monkeypatch):
             {"schema_version": "1", "title": "Продажи", "source_request": "Покажи продажи", "locale": "ru"},
         )
         sql_query_runs.BusinessDocumentSqlQueryProject.update(stage="COMPLETE").where(sql_query_runs.BusinessDocumentSqlQueryProject.id == project["id"]).execute()
-        compiled = {
-            "sql": "SELECT value FROM public.sales LIMIT :row_limit",
-            "parameters": {"row_limit": 2},
-            "snapshot_fingerprint": "sha256:sample",
-            "guard": {"status": "PASS"},
-            "output_columns": ["value"],
-        }
+        source_table = _table("sales", "public.sales", ("value",))
+        snapshot = _snapshot()
+        snapshot.update(original_requirements="- Покажи продажи", requirements=[{"selected_table": source_table}])
+        requirements = {"requirements": [{"statement": "Покажи продажи"}]}
+        schema = {"schema_snapshot": snapshot, "accepted_schema": [{"entity_id": "sales", "version": source_table["version"], "schema_fingerprint": source_table["schema_fingerprint"]}]}
+        query = {"mode": "manual", "sql": "SELECT value AS value FROM public.sales LIMIT :row_limit", "parameters": [{"name": "row_limit", "type": "integer", "value": 2}], "confirmed_alignment": True}
+        compiled = compile_query_payload(build_project_compile_command(requirements, schema, query))
+        assert compiled["status"] == "READY"
+        for identity, kind, payload in [
+            ("requirements-1", "REQUIREMENTS", requirements),
+            ("schema-1", "SCHEMA", schema),
+            ("query-1", "QUERY", query),
+            ("compilation-1", "COMPILATION", {"source_artifact_ids": ["requirements-1", "schema-1", "query-1"], "result": compiled}),
+        ]:
+            sql_query_runs.BusinessDocumentSqlQueryArtifact.create(
+                id=identity,
+                project_id=project["id"],
+                tenant_id="tenant-1",
+                kind=kind,
+                revision=1,
+                payload=payload,
+                content_hash=_stable_hash(payload),
+                source_proposal_id="proposal-1",
+                accepted_by="author-1",
+            )
+
+        async def visible(_actor, request, _is_admin, _role):
+            assert request["entity_ids"] == ["sales"]
+            return {"entities": [{"entity_id": "sales", "lookup": {"status": "OK"}, "entity": source_table}]}
+
+        monkeypatch.setattr(BusinessDocumentSqlQuerySchemaService, "load_entities", visible)
         compilation = SimpleNamespace(id="compilation-1", payload={"result": compiled}, source_proposal_id="proposal-1")
         monkeypatch.setattr(
             sql_query_runs,
@@ -87,7 +116,7 @@ def test_preflight_checks_live_postgres_shape(database, monkeypatch):
     monkeypatch.setattr(sql_query_runs, "explain_postgres", lambda config, sql, parameters, **options: checked.append((sql, parameters, options)))
     result = sql_query_runs.BusinessDocumentSqlRunService.preflight("tenant-1", "author-1", database, None)
     assert result["binding"]["status"] == "BOUND"
-    assert checked == [("SELECT value FROM public.sales LIMIT :row_limit", {"row_limit": 2}, {"timeout_ms": 1000})]
+    assert checked == [("SELECT value AS value FROM public.sales LIMIT :row_limit", {"row_limit": 2}, {"timeout_ms": 1000})]
 
 
 def test_editor_can_keep_compiled_sql_without_execution_right(database):
@@ -165,14 +194,17 @@ def test_failed_latest_run_keeps_older_ready_run_available(database):
         )
     project = BusinessDocumentSqlAgentService.get_project("tenant-1", "author-1", database)
     assert {run["id"] for run in project["runs"]} == {"ready-run", "failed-run"}
-    assert project["next_action"] == "VIEW_RESULT"
+    assert project["next_action"] == "COMPILE"
+    assert project["compilation"] is None
     assert sql_query_runs.BusinessDocumentSqlRunService.preview("tenant-1", "author-1", database, "ready-run")["rows"] == [[42]]
 
 
 def test_catalog_version_change_blocks_execution(monkeypatch):
+    from api.apps.business_documents import sql_query_schema
+
     loops = []
     table = SimpleNamespace(id="table-1", version=2, schema_fingerprint="sha256:old", fqn="svc.db.public.sales")
-    monkeypatch.setattr(sql_query_runs, "parse_schema_snapshot", lambda _: SimpleNamespace(tables=[table]))
+    monkeypatch.setattr(sql_query_schema, "parse_schema_snapshot", lambda _: SimpleNamespace(tables=[table]))
 
     async def load_entities(*args):
         loops.append(asyncio.get_running_loop())
@@ -275,6 +307,9 @@ def test_python_creates_derived_result_without_changing_sql_rows(database, monke
         {"schema_version": "1", "expected_state_version": 2, "idempotency_key": "python-1", "code": "def main(columns, rows):\n    return {'columns': ['doubled'], 'rows': [[rows[0][0] * 2]]}"},
     )
     assert sql_query_runs.BusinessDocumentSqlRunService.preview("tenant-1", "author-1", project_id, derived["run_id"])["rows"] == [[84]]
+    original = sql_query_runs.BusinessDocumentSqlQueryRun.get_by_id(source["run_id"])
+    result = sql_query_runs.BusinessDocumentSqlQueryRun.get_by_id(derived["run_id"])
+    assert (result.profile_id, result.profile_version, result.profile_name) == (original.profile_id, original.profile_version, original.profile_name)
     assert sql_query_runs.BusinessDocumentSqlRunService.preview("tenant-1", "author-1", project_id, source["run_id"])["rows"] == [[42]]
     with pytest.raises(ConflictError):
         sql_query_runs.BusinessDocumentSqlRunService.complete(
@@ -397,3 +432,83 @@ def test_conclusion_requires_human_confirmation_and_survives_only_in_document(da
         .where((sql_query_runs.BusinessDocumentSqlQueryArtifact.project_id == project_id) & (sql_query_runs.BusinessDocumentSqlQueryArtifact.kind == "CONCLUSION"))
         .exists()
     )
+
+
+@pytest.mark.parametrize("phase", ["before-db", "before-save"])
+def test_expired_run_never_publishes_rows(database, monkeypatch, phase):
+    from common.time_utils import current_timestamp
+    from business_documents.sql_query.result_retention import RESULT_RETENTION_MS
+    queued = sql_query_runs.BusinessDocumentSqlRunService.run("tenant-1", "author-1", database,
+        {"schema_version":"1", "expected_state_version":1, "idempotency_key":"expired-job", "selected_profile_id":None})
+    job = BusinessDocumentJobQueue.claim("retention-test")
+    if phase == "before-save":
+        output = sql_query_runs.BusinessDocumentSqlRunService.execute_job(job, "retention-test", job.lease_token)
+    sql_query_runs.BusinessDocumentSqlQueryRun.update(create_time=current_timestamp()-RESULT_RETENTION_MS).where(
+        sql_query_runs.BusinessDocumentSqlQueryRun.id==queued["run_id"]).execute()
+    monkeypatch.setattr(sql_query_runs, "explain_postgres", lambda *_args, **_kwargs: pytest.fail("Expired job must stop before DB port"))
+    with pytest.raises(sql_query_runs.BusinessDocumentError) as raised:
+        if phase == "before-db":
+            sql_query_runs.BusinessDocumentSqlRunService.execute_job(job, "retention-test", job.lease_token)
+        else:
+            sql_query_runs.BusinessDocumentSqlRunService.complete_job(job, "retention-test", job.lease_token, output)
+    assert raised.value.code=="SQL_RESULT_EXPIRED"
+    sql_query_runs.BusinessDocumentSqlRunService.fail_job(job, "retention-test", job.lease_token,
+        {"code":raised.value.code, "message":raised.value.message})
+    stored=sql_query_runs.BusinessDocumentSqlQueryRun.get_by_id(queued["run_id"])
+    assert stored.status=="EXPIRED" and stored.rows==[] and stored.columns==[] and stored.checks=={}
+
+
+def test_python_finishing_after_source_deadline_cannot_store_a_derived_result(database, monkeypatch):
+    from business_documents.sql_query.result_retention import RESULT_RETENTION_MS
+    queued=sql_query_runs.BusinessDocumentSqlRunService.run("tenant-1", "author-1", database,
+        {"schema_version":"1", "expected_state_version":1, "idempotency_key":"source-job", "selected_profile_id":None})
+    job=BusinessDocumentJobQueue.claim("retention-test")
+    output=sql_query_runs.BusinessDocumentSqlRunService.execute_job(job,"retention-test",job.lease_token)
+    sql_query_runs.BusinessDocumentSqlRunService.complete_job(job,"retention-test",job.lease_token,output)
+    from api.apps.business_documents import sql_query_retention
+    stored = sql_query_runs.BusinessDocumentSqlQueryRun.get_by_id(queued["run_id"])
+    deadline = stored.create_time + RESULT_RETENTION_MS
+    clock = [deadline - 1]
+    monkeypatch.setattr(sql_query_retention, "current_timestamp", lambda: clock[0])
+    monkeypatch.setattr(sql_query_runs, "current_timestamp", lambda: clock[0])
+    def delayed(_code, columns, rows):
+        clock[0] = deadline
+        return {"columns":columns,"rows":rows}
+    monkeypatch.setattr(sql_query_runs,"execute_result_python",delayed)
+    with pytest.raises(sql_query_runs.BusinessDocumentError) as raised:
+        sql_query_runs.BusinessDocumentSqlRunService.run_python("tenant-1","author-1",database,queued["run_id"],
+            {"schema_version":"1","expected_state_version":2,"idempotency_key":"late-python","code":"def main(columns, rows): return {}"})
+    assert raised.value.code=="SQL_RESULT_EXPIRED"
+    assert sql_query_runs.BusinessDocumentSqlQueryRun.select().where(sql_query_runs.BusinessDocumentSqlQueryRun.kind=="PYTHON").count()==0
+
+
+def test_expired_results_in_another_project_do_not_consume_owner_quota(database, monkeypatch):
+    from common.time_utils import current_timestamp
+    from business_documents.sql_query.result_retention import RESULT_RETENTION_MS
+    old = sql_query_runs.BusinessDocumentSqlQueryRun.create(id="old-other-project", project_id="other-project", tenant_id="tenant-1",
+        compilation_id="compiled", profile_id="profile-1", profile_version=1, status="READY", rows=[[42]], columns=["value"], checks={"status":"PASS"})
+    sql_query_runs.BusinessDocumentSqlQueryRun.update(create_time=current_timestamp()-RESULT_RETENTION_MS).where(
+        sql_query_runs.BusinessDocumentSqlQueryRun.id==old.id).execute()
+    monkeypatch.setattr(sql_query_runs, "_MAX_OWNER_ACTIVE_RESULTS", 1)
+    queued=sql_query_runs.BusinessDocumentSqlRunService.run("tenant-1","author-1",database,
+        {"schema_version":"1","expected_state_version":1,"idempotency_key":"new-after-retention","selected_profile_id":None})
+    assert sql_query_runs.BusinessDocumentSqlQueryRun.get_by_id(queued["run_id"]).status=="QUEUED"
+    assert sql_query_runs.BusinessDocumentSqlQueryRun.get_by_id(old.id).status=="EXPIRED"
+
+
+def test_retry_of_an_expired_run_command_cannot_return_old_success_or_start_a_second_job(database):
+    from common.time_utils import current_timestamp
+    from business_documents.sql_query.result_retention import RESULT_RETENTION_MS
+    request={"schema_version":"1","expected_state_version":1,"idempotency_key":"same-expired-run","selected_profile_id":None}
+    queued=sql_query_runs.BusinessDocumentSqlRunService.run("tenant-1","author-1",database,request)
+    job=BusinessDocumentJobQueue.claim("retention-test")
+    output=sql_query_runs.BusinessDocumentSqlRunService.execute_job(job,"retention-test",job.lease_token)
+    sql_query_runs.BusinessDocumentSqlRunService.complete_job(job,"retention-test",job.lease_token,output)
+    sql_query_runs.BusinessDocumentSqlQueryRun.update(create_time=current_timestamp()-RESULT_RETENTION_MS).where(
+        sql_query_runs.BusinessDocumentSqlQueryRun.id==queued["run_id"]).execute()
+    before=sql_query_runs.BusinessDocumentJob.select().count()
+    with pytest.raises(sql_query_runs.BusinessDocumentError) as raised:
+        sql_query_runs.BusinessDocumentSqlRunService.run("tenant-1","author-1",database,request)
+    assert raised.value.code=="SQL_RESULT_EXPIRED"
+    assert sql_query_runs.BusinessDocumentJob.select().count()==before
+    assert sql_query_runs.BusinessDocumentSqlQueryRun.select().count()==1

@@ -133,6 +133,7 @@ export function GuidedSqlForm(
   props: ComponentProps<typeof GuidedSqlFormEditor>,
 ) {
   const { project } = props;
+  if (project.capabilities?.edit === false) return null;
   return (
     <GuidedSqlFormEditor
       key={`${project.id}:${project.artifact_ids.schema}:${project.artifact_ids.query}`}
@@ -208,8 +209,13 @@ function GuidedSqlFormEditor({
                   parameters: startingParameters,
                 },
               ];
-        lastSavedDraft.current =
-          compatible && saved?.steps.length ? JSON.stringify(saved.steps) : '';
+        lastSavedDraft.current = JSON.stringify(
+          loaded.map(({ title, sql, parameters }) => ({
+            title,
+            sql,
+            parameters,
+          })),
+        );
         draftVersion.current = compatible && saved ? saved.version : null;
         try {
           const pending = JSON.parse(
@@ -247,9 +253,7 @@ function GuidedSqlFormEditor({
             parameters,
           })),
         );
-        setDraftSaveState(
-          compatible && saved?.steps.length ? 'saved' : 'pending',
-        );
+        setDraftSaveState(mustSaveRecoveredDraft.current ? 'pending' : 'saved');
         setSteps(loaded);
         setCurrent(0);
         setDraftLoaded(true);
@@ -626,7 +630,9 @@ function GuidedSqlFormEditor({
           <div className="flex items-center gap-2 text-xs" role="status">
             <span>
               {draftSaveState === 'saved'
-                ? 'Черновик сохранён на сервере'
+                ? draftVersion.current === null
+                  ? 'Нет несохранённых изменений'
+                  : 'Черновик сохранён на сервере'
                 : draftSaveState === 'saving'
                   ? 'Сохраняем черновик…'
                   : draftSaveState === 'error'

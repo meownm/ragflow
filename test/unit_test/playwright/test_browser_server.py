@@ -4,6 +4,7 @@ from functools import partial
 from http.client import HTTPConnection
 from pathlib import Path
 import runpy
+import sys
 from threading import Thread
 
 import pytest
@@ -55,3 +56,37 @@ def test_unmocked_api_never_returns_spa_content(spa_server, path):
     response = client.getresponse()
     assert response.status == 503
     assert b"SPA fixture" not in response.read()
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+@pytest.mark.parametrize("explicit_output", [False, True])
+def test_runner_supplies_artifact_directory_and_build_identity_without_replacing_explicit_paths(tmp_path, monkeypatch, explicit, explicit_output):
+    import subprocess
+
+    runner = runpy.run_path(str(Path(__file__).resolve().parents[3] / "test/run_browser_regression.py"))
+    (tmp_path / "index.html").write_text("<title>SPA fixture</title>", encoding="utf-8")
+    extra = ["--", "--output", str(tmp_path / "explicit-output")] if explicit_output else []
+    monkeypatch.setattr(sys, "argv", ["run_browser_regression.py", "--browser", "firefox", "--dist-root", str(tmp_path), "--suite", "test/playwright/e2e/test_sql_workspace_ui.py", *extra])
+    if explicit:
+        monkeypatch.setenv("PW_ARTIFACTS_DIR", str(tmp_path / "evidence"))
+    else:
+        monkeypatch.delenv("PW_ARTIFACTS_DIR", raising=False)
+    captured = []
+
+    def execute(command, *, cwd, env):
+        captured.append({**env, "pytest_command": command})
+        target = env["RAGFLOW_BASE_URL"]
+        from urllib.request import urlopen
+        with urlopen(target + "/sql-projects", timeout=3) as response:
+            assert response.read() == b"<title>SPA fixture</title>"
+        return 7
+
+    monkeypatch.setattr(subprocess, "call", execute)
+    assert runner["main"]() == 7
+    assert captured[0]["PW_BROWSER"] == "firefox"
+    assert captured[0]["SQL_BROWSER_BUILD_ROOT"] == str(tmp_path.resolve())
+    expected = tmp_path / "evidence" if explicit else runner["ROOT"] / "test/playwright/artifacts/firefox"
+    assert Path(captured[0]["PW_ARTIFACTS_DIR"]) == expected
+    command = captured[0]["pytest_command"]
+    assert command.count("--output") == 1
+    assert Path(command[command.index("--output") + 1]) == (tmp_path / "explicit-output" if explicit_output else expected / "playwright")

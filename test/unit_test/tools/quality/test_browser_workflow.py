@@ -84,6 +84,7 @@ class BrowserWorkflowTests(unittest.TestCase):
         assert "verify-spa" in scripts and "verify-browsers" in scripts
         assert "sha256sum browser-tools/axe.min.js" in scripts
         assert "--require-hashes" in scripts
+        assert "uv pip install --no-config --require-hashes" in scripts
 
     def test_expected_inventory_matches_configured_suites(self):
         parsed = ast.parse((ROOT / "test/run_browser_regression.py").read_text())

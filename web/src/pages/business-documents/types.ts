@@ -338,6 +338,7 @@ export interface SqlExecutionBindingResponse {
     | 'CATALOG_BINDING_MISSING'
     | 'CROSS_PROFILE_QUERY_UNSUPPORTED'
     | 'MULTIPLE_EXECUTION_PROFILES'
+    | 'SAVED_PROFILE_UNAVAILABLE'
     | null;
   snapshot_fingerprint: string;
   catalog_scopes: SqlExecutionCatalogScope[];
@@ -699,6 +700,64 @@ export interface SqlAgentProposal {
   payload: Record<string, unknown>;
 }
 
+export interface SqlQueryGraph {
+  schema_version: '1';
+  query_hash: string;
+  paths: Record<
+    string,
+    Array<{ entity_ids: string[]; relationship_ids: string[] }>
+  >;
+  paths_truncated: boolean;
+  relationships: Array<{
+    id: string;
+    from_entity_id: string;
+    to_entity_id: string;
+    column_pairs: Array<{ from: string; to: string }>;
+  }>;
+  nodes: Array<{
+    id: string;
+    entity_id: string | null;
+    scope: string | null;
+    alias: string;
+    kind: 'TABLE' | 'CTE' | 'SUBQUERY';
+    membership: 'QUERY' | 'RELATED';
+    label: string;
+    technical_name: string;
+    schema: string;
+    columns: Array<{
+      id: string;
+      name: string;
+      data_type: string;
+      constraint: string;
+      roles: string[];
+    }>;
+  }>;
+  edges: Array<{
+    id: string;
+    from: string;
+    to: string;
+    kind: 'JOIN' | 'FOREIGN_KEY' | 'LINEAGE';
+    join_type: string;
+    condition: string;
+    cardinality: string;
+    source: string;
+    column_pairs: Array<{ from: string; to: string }>;
+  }>;
+  tables: import('@/pages/openmetadata/types').CatalogEntity[];
+  depth: number;
+  truncated: boolean;
+  freshness: import('@/pages/openmetadata/types').Freshness | null;
+  warnings: string[];
+}
+
+export interface SqlGraphView {
+  positions: Record<string, { x: number; y: number }>;
+  viewport: { x: number; y: number; zoom: number };
+  mode: 'all' | 'query';
+  depth: number;
+  list_view: boolean;
+}
+
 export interface SqlRevisionWorkspace {
   project_id: string;
   state_version: number;
@@ -714,8 +773,26 @@ export interface SqlRevisionWorkspace {
   }>;
   query_revisions: Array<{
     id: string;
+    compilation_id?: string;
     revision: number;
     sql: string;
+    parameters?: Array<{
+      name: string;
+      type: string;
+      value: unknown;
+      value_text?: string;
+    }> | null;
+    accepted_by?: string;
+    source_proposal_id?: string;
+    created_at?: number;
+    source_artifact_ids?: string[];
+    matches_current_context?: boolean;
+    restored_from?: {
+      query_artifact_id: string;
+      compilation_id: string;
+      requirements_artifact_id: string;
+      schema_artifact_id: string;
+    } | null;
     blocks: SqlRevisionWorkspace['blocks'];
   }>;
   draft: {
@@ -734,6 +811,10 @@ export interface SqlRevisionWorkspace {
       author_id: string;
       text: string;
       created_at: number;
+      additional_entity_ids?: string[];
+      role?: 'assistant';
+      response_kind?: 'EXPLANATION' | 'CLARIFICATION';
+      questions?: Array<{ id: string; text: string; options: string[] }>;
     }>;
     rebindings: Array<{
       base_artifact_id: string;
@@ -763,13 +844,100 @@ export interface SqlRevisionWorkspace {
     accepted_by: string;
     created_at: number;
     preview: string;
+    source_proposal_id?: string;
+    source_artifact_ids?: string[];
+    restored_from?: {
+      query_artifact_id: string;
+      compilation_id: string;
+    } | null;
   }>;
+}
+
+interface SqlHistoryArtifact {
+  id: string;
+  revision: number;
+  accepted_by: string | null;
+  created_at: number | null;
+  content_hash: string;
+  source_proposal_id?: string | null;
+}
+
+export type SqlHistorySelection =
+  | { compilation_id: string; query_artifact_id: string }
+  | { artifact_id: string };
+
+export interface SqlHistoryContext {
+  schema_version: '1';
+  project_id: string;
+  source: {
+    artifact_id?: string;
+    compilation_id?: string;
+    query_artifact_id?: string;
+    requirements_artifact_id?: string;
+    schema_artifact_id?: string;
+  };
+  catalog_changed: boolean;
+  requirements:
+    | (SqlHistoryArtifact & {
+        text: string;
+        requirements: unknown[];
+        questions: unknown[];
+      })
+    | null;
+  schema:
+    | (SqlHistoryArtifact & {
+        accepted_schema: Array<{
+          entity_id: string;
+          version: number;
+          schema_fingerprint: string;
+        }>;
+        snapshot: {
+          status: string;
+          original_requirements: string;
+          stale: boolean;
+          fingerprint: string;
+          tables: Array<{
+            id: string;
+            fqn: string;
+            technical_name: string;
+            service: string;
+            database: string;
+            schema: string;
+            schema_fingerprint: string;
+            description: string;
+            version: number;
+            columns: Array<{
+              id: string;
+              name: string;
+              data_type: string;
+              description: string;
+              constraint: string;
+              selected: boolean;
+              glossary_terms: string[];
+            }>;
+            table_constraints: Array<{
+              constraint_type: string;
+              columns: string[];
+              referred_columns: string[];
+              relationship_type: string | null;
+            }>;
+          }>;
+        };
+      })
+    | null;
 }
 
 export interface SqlAgentProject {
   schema_version: '1';
   id: string;
   title: string;
+  execution_profile_id?: string | null;
+  archived_at?: number | null;
+  copy_origin?: {
+    project_id: string;
+    state_version: number;
+    artifact_ids: string[];
+  } | null;
   source_request: string | null;
   locale: 'ru' | 'en';
   stage: SqlAgentKind | 'COMPLETE';
@@ -791,13 +959,18 @@ export interface SqlAgentProject {
   compilation?: { id: string; result: SqlQueryCompileResponse } | null;
   latest_run?: {
     id: string;
+    profile_id?: string;
+    profile_version?: number;
+    profile_name?: string | null;
     status:
       | 'QUEUED'
       | 'RUNNING'
       | 'CANCEL_REQUESTED'
       | 'READY'
       | 'FAILED'
+      | 'EXPIRED'
       | 'PURGED';
+    expires_at?: number;
     row_count: number;
     duration_ms: number;
     result_bytes?: number;
@@ -814,6 +987,7 @@ export interface SqlAgentProject {
     status: string;
     row_count: number;
     checks: SqlResultChecks;
+    expires_at?: number;
   }>;
   document?: {
     id: string;
@@ -843,6 +1017,10 @@ export interface SqlAgentProject {
   last_error: { code?: string; message?: string } | null;
   capabilities: {
     requirements_agent: true;
+    edit?: boolean;
+    execute?: boolean;
+    manage?: boolean;
+    copy?: boolean;
     schema_agent: true;
     query_agent: true;
     result_agent: boolean;
@@ -864,6 +1042,17 @@ export interface SqlProjectPreflight {
   warning?: string;
 }
 
+export interface SqlProjectConnectionCheck {
+  schema_version: '1';
+  project_id: string;
+  state_version: number;
+  status: 'AVAILABLE' | 'UNAVAILABLE' | 'NEEDS_SELECTION';
+  binding: SqlExecutionBindingResponse;
+  query_checked: false;
+  checked_at: number | null;
+  duration_ms: number | null;
+}
+
 export interface SqlResultChecks {
   status: 'PASS';
   schema: 'PASS';
@@ -881,6 +1070,7 @@ export interface SqlProjectRun {
 
 export interface SqlProjectPreview {
   run_id: string;
+  expires_at?: number;
   columns: string[];
   rows: unknown[][];
   offset: number;

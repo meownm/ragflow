@@ -7890,7 +7890,7 @@ wheels = [
 
 [[package]]
 name = "ragflow"
-version = "1.49.7"
+version = "1.50.0"
 source = { virtual = "." }
 dependencies = [
     { name = "agentrun-sdk" },
@@ -8033,6 +8033,7 @@ dependencies = [
 test = [
     { name = "codecov" },
     { name = "hypothesis" },
+    { name = "jsonschema" },
     { name = "openpyxl" },
     { name = "pillow" },
     { name = "pycryptodomex" },
@@ -8042,10 +8043,12 @@ test = [
     { name = "pytest-playwright" },
     { name = "pytest-xdist" },
     { name = "python-docx" },
+    { name = "python-dotenv" },
     { name = "python-pptx" },
     { name = "reportlab" },
     { name = "requests" },
     { name = "requests-toolbelt" },
+    { name = "sqlglot" },
 ]
 
 [package.metadata]
@@ -8191,6 +8194,7 @@ requires-dist = [
 test = [
     { name = "codecov", specifier = ">=2.1.13" },
     { name = "hypothesis", specifier = ">=6.132.0" },
+    { name = "jsonschema", specifier = "==4.26.0" },
     { name = "openpyxl", specifier = ">=3.1.5" },
     { name = "pillow", specifier = ">=12.3.0,<13.0.0" },
     { name = "pycryptodomex", specifier = "==3.20.0" },
@@ -8200,10 +8204,12 @@ test = [
     { name = "pytest-playwright", specifier = ">=0.7.2" },
     { name = "pytest-xdist", specifier = ">=3.8.0" },
     { name = "python-docx", specifier = ">=1.1.2" },
+    { name = "python-dotenv", specifier = ">=1.2.2,<2" },
     { name = "python-pptx", specifier = ">=1.0.2" },
     { name = "reportlab", specifier = ">=4.4.1" },
     { name = "requests", specifier = ">=2.33.0,<3" },
     { name = "requests-toolbelt", specifier = ">=1.0.0" },
+    { name = "sqlglot", specifier = "==28.4.0" },
 ]
 
 [[package]]

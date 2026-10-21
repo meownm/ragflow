@@ -58,6 +58,42 @@ describe('GuidedSqlForm', () => {
     saveDraft.mockResolvedValue({ version: 1 });
   });
 
+  it('does not create a server draft merely by opening an unchanged project', async () => {
+    jest.useFakeTimers();
+    try {
+      render(
+        <GuidedSqlForm
+          project={project as never}
+          initialSql={baseSql}
+          onSaved={jest.fn()}
+        />,
+      );
+      await act(async () => {});
+      await act(async () => {
+        jest.advanceTimersByTime(2000);
+      });
+      expect(saveDraft).not.toHaveBeenCalled();
+      expect(window.sessionStorage.length).toBe(0);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('does not load or expose an editing surface for a reader', () => {
+    render(
+      <GuidedSqlForm
+        project={{ ...project, capabilities: { edit: false } } as never}
+        initialSql={baseSql}
+        onSaved={jest.fn()}
+      />,
+    );
+    expect(
+      screen.queryByRole('button', { name: 'Собрать SQL по шагам' }),
+    ).not.toBeInTheDocument();
+    expect(fetchWorkspace).not.toHaveBeenCalled();
+    expect(saveDraft).not.toHaveBeenCalled();
+  });
+
   it('starts from a physical table and column in the accepted schema', async () => {
     render(
       <GuidedSqlForm

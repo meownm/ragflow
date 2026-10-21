@@ -33,12 +33,17 @@ import type {
   SqlExecutionProfileUpdateInput,
   SqlExecutionRegistryDisableInput,
   SqlExecutionRegistryList,
+  SqlGraphView,
+  SqlHistoryContext,
+  SqlHistorySelection,
   SqlProjectCompilation,
+  SqlProjectConnectionCheck,
   SqlProjectPreflight,
   SqlProjectPreview,
   SqlProjectRun,
   SqlQueryCompileRequest,
   SqlQueryCompileResponse,
+  SqlQueryGraph,
   SqlQueryPlanRequest,
   SqlQueryPlanResponse,
   SqlRevisionWorkspace,
@@ -273,6 +278,62 @@ export async function compileBusinessDocumentSqlQuery(
   }
 }
 
+export async function fetchBusinessDocumentSqlGraph(
+  input: {
+    schema_version: '1';
+    entity_ids: string[];
+    sql: string;
+    depth: number;
+  },
+  signal?: AbortSignal,
+) {
+  try {
+    const response = await request.post(
+      api.businessDocumentSqlSchemaGraph,
+      input,
+      requestConfig({ signal }),
+    );
+    return unwrap<SqlQueryGraph>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function fetchBusinessDocumentSqlView(
+  projectId: string,
+  signal?: AbortSignal,
+) {
+  try {
+    const response = await request.get(
+      api.businessDocumentSqlProjectView(projectId),
+      requestConfig({ signal }),
+    );
+    return unwrap<{ version: number; view: SqlGraphView | null }>(
+      response.data,
+    );
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function saveBusinessDocumentSqlView(
+  projectId: string,
+  version: number,
+  view: SqlGraphView,
+  signal?: AbortSignal,
+) {
+  try {
+    const response = await request.put(
+      api.businessDocumentSqlProjectView(projectId),
+      { schema_version: '1', expected_version: version, view },
+      requestConfig({ signal }),
+    );
+    return unwrap<{ version: number; view: SqlGraphView }>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
 export async function planBusinessDocumentSqlQuery(input: SqlQueryPlanRequest) {
   try {
     const response = await request.post(
@@ -301,11 +362,14 @@ export async function createBusinessDocumentSqlAgentProject(
   }
 }
 
-export async function listBusinessDocumentSqlAgentProjects() {
+export async function listBusinessDocumentSqlAgentProjects(options?: {
+  search?: string;
+  archived?: boolean;
+}) {
   try {
     const response = await request.get(
       api.businessDocumentSqlQueryProjects,
-      requestConfig(),
+      options ? { ...requestConfig(), params: options } : requestConfig(),
     );
     return unwrap<SqlAgentProject[]>(response.data);
   } catch (error) {
@@ -325,15 +389,118 @@ export async function fetchBusinessDocumentSqlAgentProject(projectId: string) {
   }
 }
 
+export async function updateBusinessDocumentSqlAgentProject(
+  projectId: string,
+  stateVersion: number,
+  idempotencyKey: string,
+  changes: { title?: string; archived?: boolean },
+) {
+  try {
+    const response = await request.patch(
+      api.businessDocumentSqlQueryProject(projectId),
+      {
+        schema_version: '1',
+        expected_state_version: stateVersion,
+        idempotency_key: idempotencyKey,
+        ...changes,
+      },
+      requestConfig(),
+    );
+    return unwrap<SqlAgentProject>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function copyBusinessDocumentSqlAgentProject(
+  projectId: string,
+  stateVersion: number,
+  idempotencyKey: string,
+) {
+  try {
+    const response = await request.post(
+      `${api.businessDocumentSqlQueryProject(projectId)}/copy`,
+      {
+        schema_version: '1',
+        expected_state_version: stateVersion,
+        idempotency_key: idempotencyKey,
+      },
+      requestConfig(),
+    );
+    return unwrap<SqlAgentProject>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
 export async function fetchBusinessDocumentSqlRevisionWorkspace(
   projectId: string,
+  signal?: AbortSignal,
 ) {
   try {
     const response = await request.get(
       api.businessDocumentSqlRevisionWorkspace(projectId),
-      requestConfig(),
+      requestConfig({ signal }),
     );
     return unwrap<SqlRevisionWorkspace>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function fetchBusinessDocumentSqlHistoryContext(
+  projectId: string,
+  source: SqlHistorySelection,
+  signal?: AbortSignal,
+) {
+  try {
+    const response = await request.post(
+      api.businessDocumentSqlHistoryContext(projectId),
+      { schema_version: '1', ...source },
+      requestConfig({ signal }),
+    );
+    return unwrap<SqlHistoryContext>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function restoreBusinessDocumentSqlQuery(
+  projectId: string,
+  compilationId: string,
+  expectedStateVersion: number,
+  idempotencyKey: string,
+) {
+  try {
+    const response = await request.post(
+      api.businessDocumentSqlQueryRestore(projectId),
+      {
+        schema_version: '1',
+        compilation_id: compilationId,
+        expected_state_version: expectedStateVersion,
+        idempotency_key: idempotencyKey,
+      },
+      requestConfig(),
+    );
+    return unwrap<SqlProjectCompilation>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function fetchBusinessDocumentSqlProjectGraph(
+  projectId: string,
+  source: { compilation_id: string; query_artifact_id: string },
+  depth: number,
+  signal?: AbortSignal,
+) {
+  try {
+    const response = await request.post(
+      api.businessDocumentSqlProjectGraph(projectId),
+      { schema_version: '1', ...source, depth },
+      requestConfig({ signal }),
+    );
+    return unwrap<SqlQueryGraph>(response.data);
   } catch (error) {
     return rethrowBusinessDocumentError(error);
   }
@@ -368,6 +535,7 @@ export async function createBusinessDocumentSqlRevisionThread(
     idempotency_key: string;
     target: 'QUERY' | 'DOCUMENT';
     base_artifact_id?: string;
+    additional_entity_ids?: string[];
     anchor: Record<string, unknown>;
     text: string;
   },
@@ -413,6 +581,7 @@ export async function requestBusinessDocumentSqlRevision(
   threadId: string,
   version: number,
   key: string,
+  additionalEntityIds: string[] = [],
 ) {
   try {
     const response = await request.post(
@@ -421,6 +590,9 @@ export async function requestBusinessDocumentSqlRevision(
         schema_version: '1',
         expected_state_version: version,
         idempotency_key: key,
+        ...(additionalEntityIds.length
+          ? { additional_entity_ids: additionalEntityIds }
+          : {}),
       },
       requestConfig(),
     );
@@ -617,21 +789,63 @@ export async function validateBusinessDocumentSqlManualQuery(
   }
 }
 
+export async function configureBusinessDocumentSqlProjectConnection(
+  projectId: string,
+  expectedStateVersion: number,
+  idempotencyKey: string,
+  selectedProfileId: string | null,
+) {
+  try {
+    const response = await request.put(
+      `${api.businessDocumentSqlQueryProject(projectId)}/connection`,
+      {
+        schema_version: '1',
+        expected_state_version: expectedStateVersion,
+        idempotency_key: idempotencyKey,
+        selected_profile_id: selectedProfileId,
+      },
+      requestConfig(),
+    );
+    return unwrap<SqlAgentProject>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
 export async function preflightBusinessDocumentSqlProject(
   projectId: string,
   selectedProfileId: string | null = null,
+  signal?: AbortSignal,
 ) {
   try {
     const response = await request.get(
       api.businessDocumentSqlProjectPreflight(projectId),
       {
         ...requestConfig(),
+        signal,
         params: selectedProfileId
           ? { selected_profile_id: selectedProfileId }
           : {},
       },
     );
     return unwrap<SqlProjectPreflight>(response.data);
+  } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export async function checkBusinessDocumentSqlProjectConnection(
+  projectId: string,
+  selectedProfileId: string | null,
+  signal?: AbortSignal,
+) {
+  try {
+    const response = await request.post(
+      `${api.businessDocumentSqlQueryProject(projectId)}/connection/check`,
+      { schema_version: '1', selected_profile_id: selectedProfileId },
+      requestConfig({ signal }),
+    );
+    return unwrap<SqlProjectConnectionCheck>(response.data);
   } catch (error) {
     return rethrowBusinessDocumentError(error);
   }
@@ -664,17 +878,76 @@ export async function previewBusinessDocumentSqlRun(
   projectId: string,
   runId: string,
   offset = 0,
+  signal?: AbortSignal,
 ) {
   try {
     const response = await request.get(
       api.businessDocumentSqlProjectRunPreview(projectId, runId),
-      {
-        ...requestConfig(),
-        params: { offset },
-      },
+      requestConfig({ params: { offset }, signal }),
     );
     return unwrap<SqlProjectPreview>(response.data);
   } catch (error) {
+    return rethrowBusinessDocumentError(error);
+  }
+}
+
+export type SqlExportRequest =
+  | {
+      schema_version: '1';
+      kind: 'QUERY';
+      format: 'json';
+      compilation_id: string;
+      query_artifact_id: string;
+    }
+  | { schema_version: '1'; kind: 'RESULT'; format: 'json'; run_id: string }
+  | {
+      schema_version: '1';
+      kind: 'GRAPH';
+      format: 'json' | 'svg';
+      compilation_id: string;
+      query_artifact_id: string;
+      proposal_id?: string;
+      view: SqlGraphView;
+    };
+
+export async function exportBusinessDocumentSqlProject(
+  projectId: string,
+  command: SqlExportRequest,
+  signal?: AbortSignal,
+): Promise<{ blob: Blob; filename: string }> {
+  try {
+    const response = await request.post(
+      api.businessDocumentSqlProjectExport(projectId),
+      command,
+      requestConfig({ responseType: 'blob', signal }),
+    );
+    const expectedType =
+      command.format === 'svg' ? 'image/svg+xml' : 'application/json';
+    if (
+      !(response.data instanceof Blob) ||
+      !response.data.type.startsWith(expectedType)
+    ) {
+      throw new Error('Сервер вернул неподдерживаемый формат экспорта.');
+    }
+    const identity =
+      command.kind === 'RESULT' ? command.run_id : command.query_artifact_id;
+    const prefix = command.kind === 'GRAPH' ? 'er' : command.kind.toLowerCase();
+    return {
+      blob: response.data,
+      filename: `sql-${prefix}-${identity.replace(/[^A-Za-z0-9_-]/g, '')}.${command.format}`,
+    };
+  } catch (error) {
+    if (
+      axios.isAxiosError(error) &&
+      error.response?.data instanceof Blob &&
+      error.response.data.size < 65536
+    ) {
+      try {
+        error.response.data = JSON.parse(await error.response.data.text());
+      } catch {
+        // Use the normal HTTP error when the server body is not a JSON error.
+      }
+    }
     return rethrowBusinessDocumentError(error);
   }
 }

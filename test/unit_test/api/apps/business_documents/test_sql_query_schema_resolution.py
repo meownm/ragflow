@@ -335,6 +335,28 @@ async def test_tenant_interpreter_uses_one_bounded_json_call():
 
 
 @pytest.mark.asyncio
+async def test_approved_answers_reach_the_real_schema_adapter_without_rewriting_canonical_requirements():
+    calls = []
+
+    class CapturingLlm:
+        async def async_generate(self, tenant_id, system_prompt, payload):
+            calls.append(payload)
+            return {"schema_version": "1", "resolutions": [_interpretation("Заказ", "orders")]}
+
+    command = parse_resolve_schema_command(
+        {"requirements": "Нужны заказы", "terms": ["Заказ"], "locale": "ru", "clarifications": [{"question": "Какой год и часовой пояс?", "answer": "2026, Pacific/Apia"}]},
+        tenant_id="tenant-1", actor_id="actor-1",
+    )
+    catalog = FakeCatalog({"Заказ": _answer(_entity("orders", "dwh.order_fact"))})
+    result = await SchemaResolutionScenario(catalog, TenantSchemaInterpreter(CapturingLlm(), timeout_seconds=1)).run(command)
+    assert result["llm"]["status"] == "APPLIED"
+    assert len(calls) == 1
+    assert "2026, Pacific/Apia" in calls[0]["job_input"]["requirements"]
+    assert calls[0]["job_input"]["requirements"].startswith(command.requirements)
+    assert command.requirements == "Нужны заказы"
+
+
+@pytest.mark.asyncio
 async def test_openmetadata_adapter_reuses_shared_service_and_enforces_dataset_acl(monkeypatch):
     calls = []
 
@@ -359,6 +381,13 @@ async def test_openmetadata_adapter_reuses_shared_service_and_enforces_dataset_a
         config = type("Config", (), {"dataset_id": "dataset-1", "public_url": "https://catalog.example"})()
         catalog = Catalog()
         client = Client()
+
+        def get_visible_entity(self, entity_id, *, user_id):
+            return _entity(entity_id, "dwh.order_fact") if entity_id == "orders" else None
+
+        def is_entity_visible(self, entity, *, user_id):
+            calls.append(("live_acl", entity["id"], user_id))
+            return True
 
     class KnowledgebaseService:
         @staticmethod
@@ -401,6 +430,30 @@ async def test_openmetadata_adapter_reuses_shared_service_and_enforces_dataset_a
     assert calls[3][2]["selected_entity_id"] == "orders"
     assert calls[3][2]["forced_intent"] == "discovery"
     assert calls[4] == ("live_table", "orders")
+    assert calls[5] == ("live_acl", "orders", "actor-1")
+
+
+@pytest.mark.asyncio
+async def test_live_table_domain_revocation_is_checked_after_cached_visibility(monkeypatch):
+    class Service:
+        config = type("Config", (), {"public_url": "https://catalog.example"})()
+        catalog = type("Catalog", (), {"run": lambda *args, **kwargs: _answer(_entity("orders", "dwh.orders"))})()
+        client = type("Client", (), {"get_table": lambda *args: {"id": "orders", "name": "orders", "fullyQualifiedName": "dwh.orders", "domains": [{"name": "Restricted"}], "columns": []}})()
+
+        def get_visible_entity(self, entity_id, *, user_id):
+            return _entity(entity_id, "dwh.orders")
+
+        def is_entity_visible(self, entity, *, user_id):
+            assert entity["domains"] == ["Restricted"]
+            assert user_id == "actor-1"
+            return False
+
+    async def run_sync(function, *args, **kwargs):
+        return function(*args, **kwargs)
+
+    monkeypatch.setattr(schema_adapter_module, "thread_pool_exec", run_sync)
+    with pytest.raises(CatalogAccessDenied, match="current catalog policy"):
+        await OpenMetadataCatalogResolver(Service()).load_entity(entity_id="orders", actor_id="actor-1", locale="ru")
 
 
 @pytest.mark.asyncio

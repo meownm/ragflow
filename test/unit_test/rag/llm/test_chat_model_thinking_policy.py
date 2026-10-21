@@ -177,7 +177,7 @@ def test_litellm_provider_body_fields_preserve_existing_extra_body():
     assert "enable_thinking" not in completion_args
 
 
-def test_ollama_completion_payload_disables_thinking_by_default():
+def test_ollama_completion_payload_preserves_model_default_without_explicit_policy():
     completion_args = {
         "model": "llama3.3:latest",
         "messages": [],
@@ -185,7 +185,8 @@ def test_ollama_completion_payload_disables_thinking_by_default():
 
     _move_litellm_provider_body_fields("Ollama", completion_args)
 
-    assert completion_args["extra_body"] == {"think": False}
+    assert "think" not in completion_args
+    assert "extra_body" not in completion_args
 
 
 @pytest.mark.parametrize("window", [65536, 131072, 262144])
@@ -205,3 +206,39 @@ def test_ollama_context_reaches_native_options(window):
     request = OllamaChatConfig().transform_request(model="test", messages=completion_args["messages"], optional_params=optional, litellm_params={}, headers={})
     assert request["options"]["num_ctx"] == window
     assert request["options"]["num_predict"] == 32768
+
+
+@pytest.mark.parametrize("thinking", [False, True, "low"])
+def test_ollama_explicit_think_reaches_native_request(thinking):
+    import litellm
+    from litellm.llms.ollama.chat.transformation import OllamaChatConfig
+
+    completion_args = {"model": "ollama_chat/test", "extra_body": {"think": thinking, "num_ctx": 65536}}
+    _move_litellm_provider_body_fields("Ollama", completion_args)
+    optional = litellm.get_optional_params(model="ollama_chat/test", custom_llm_provider="ollama_chat", **{k: v for k, v in completion_args.items() if k != "model"})
+    request = OllamaChatConfig().transform_request(model="test", messages=[{"role": "user", "content": "synthetic control"}], optional_params=optional, litellm_params={}, headers={})
+    assert "think" in request and request["think"] == thinking
+    assert type(request["think"]) is type(thinking)
+    assert "think" not in request["options"].get("extra_body", {})
+    assert request["options"]["num_ctx"] == 65536
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_qwen3_ollama_family_policy_reaches_native_request(enabled):
+    import litellm
+    from litellm.llms.ollama.chat.transformation import OllamaChatConfig
+
+    config, kwargs = _apply_model_family_policies("qwen3.8:latest", backend="litellm", provider="Ollama", gen_conf={"enable_thinking": enabled})
+    completion_args = {"model": "ollama_chat/qwen3.8:latest", **config, **kwargs}
+    _move_litellm_provider_body_fields("Ollama", completion_args)
+    optional = litellm.get_optional_params(model=completion_args.pop("model"), custom_llm_provider="ollama_chat", **completion_args)
+    request = OllamaChatConfig().transform_request(model="qwen3.8:latest", messages=[{"role": "user", "content": "synthetic control"}], optional_params=optional, litellm_params={}, headers={})
+    assert request["think"] is enabled
+    assert "enable_thinking" not in request["options"]
+    assert "think" not in request["options"].get("extra_body", {})
+
+
+def test_ollama_direct_think_wins_over_nested_control_without_dropping_other_fields():
+    completion_args = {"think": True, "extra_body": {"think": False, "seed": 3}}
+    _move_litellm_provider_body_fields("Ollama", completion_args)
+    assert completion_args == {"think": True, "extra_body": {"seed": 3}}

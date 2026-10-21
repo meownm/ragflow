@@ -54,6 +54,7 @@ import { QuerySpecificationDialog } from './query-specification-dialog';
 import { SchemaWorkspaceDialog } from './schema-workspace-dialog';
 import { SectionInspector } from './section-inspector';
 import { SqlAgentWorkbench } from './sql-agent-workbench';
+import { SqlSessionBoundary } from './sql-session-boundary';
 import { createSqlQueryTemplate } from './sql-query-template';
 import { StructureEditor } from './structure-editor';
 import { exportTemplate, importTemplate } from './template-codec';
@@ -88,8 +89,12 @@ function descendantsFor(sections: ConstructorSection[], uid: string) {
 
 export default function DocumentConstructorPage({
   surface = 'template',
+  sqlProjectId,
+  onSqlProjectSelected,
 }: {
   surface?: 'template' | 'sql';
+  sqlProjectId?: string | null;
+  onSqlProjectSelected?: (id: string) => void;
 }) {
   const importInputRef = useRef<HTMLInputElement>(null);
   const { data: userInfo, loading: userInfoLoading } = useFetchUserInfo();
@@ -531,7 +536,12 @@ export default function DocumentConstructorPage({
 
       {surface === 'sql' ? (
         <div className="min-h-0 flex-1 overflow-hidden">
-          <SqlAgentWorkbench />
+          <SqlSessionBoundary>
+            <SqlAgentWorkbench
+              projectId={sqlProjectId}
+              onProjectSelected={onSqlProjectSelected}
+            />
+          </SqlSessionBoundary>
         </div>
       ) : (
         <>

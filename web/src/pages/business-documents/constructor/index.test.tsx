@@ -40,6 +40,7 @@ function renderPage() {
 describe('DocumentConstructorPage', () => {
   beforeEach(() => {
     window.localStorage.clear();
+    window.localStorage.setItem('Authorization', 'Bearer constructor-test');
     mockedGetBusinessDocumentCapabilities.mockReset();
     mockedGetBusinessDocumentCapabilities.mockResolvedValue({
       access_role: 'AUTHOR_CREATOR',

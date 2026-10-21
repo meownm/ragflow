@@ -280,6 +280,9 @@ export default {
   businessDocumentCatalog: `${restAPIv1}/business-documents/catalog`,
   businessDocumentSqlSchemaResolve: `${restAPIv1}/business-documents/sql-query/schema/resolve`,
   businessDocumentSqlSchemaEntities: `${restAPIv1}/business-documents/sql-query/schema/entities`,
+  businessDocumentSqlSchemaGraph: `${restAPIv1}/business-documents/sql-query/schema/graph`,
+  businessDocumentSqlProjectView: (id: string) =>
+    `${restAPIv1}/business-documents/sql-query/projects/${id}/view`,
   businessDocumentSqlQueryPlan: `${restAPIv1}/business-documents/sql-query/plan`,
   businessDocumentSqlQueryCompile: `${restAPIv1}/business-documents/sql-query/compile`,
   businessDocumentSqlQueryProjects: `${restAPIv1}/business-documents/sql-query/projects`,
@@ -315,6 +318,14 @@ export default {
     `${restAPIv1}/business-documents/sql-query/projects/${id}/runs`,
   businessDocumentSqlProjectRunPreview: (id: string, runId: string) =>
     `${restAPIv1}/business-documents/sql-query/projects/${id}/runs/${runId}/preview`,
+  businessDocumentSqlProjectExport: (id: string) =>
+    `${restAPIv1}/business-documents/sql-query/projects/${id}/export`,
+  businessDocumentSqlQueryRestore: (id: string) =>
+    `${restAPIv1}/business-documents/sql-query/projects/${id}/query-history/restore`,
+  businessDocumentSqlHistoryContext: (id: string) =>
+    `${restAPIv1}/business-documents/sql-query/projects/${id}/query-history/context`,
+  businessDocumentSqlProjectGraph: (id: string) =>
+    `${restAPIv1}/business-documents/sql-query/projects/${id}/graph`,
   businessDocumentSqlProjectRunPython: (id: string, runId: string) =>
     `${restAPIv1}/business-documents/sql-query/projects/${id}/runs/${runId}/python`,
   businessDocumentSqlProjectRunLookup: (id: string, runId: string) =>

@@ -170,8 +170,6 @@ request.interceptors.response.use(async (response: Response, options) => {
       authorizationUtil.removeAll();
       redirectToLogin();
     }
-    authorizationUtil.removeAll();
-    redirectToLogin();
   } else if (data?.code !== 0) {
     notification.error({
       message: `${i18n.t('message.hint')} : ${data?.code}`,

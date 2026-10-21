@@ -189,20 +189,21 @@ async def test_typed_provider_failure(model_factory, provider, status, error_cla
 
 
 @pytest.mark.parametrize("streaming", [False, True])
-async def test_ollama_native_thinking_and_context(model_factory, provider, streaming):
+@pytest.mark.parametrize("enabled", [False, True])
+async def test_ollama_native_thinking_and_context(model_factory, provider, streaming, enabled):
     model = model_factory("Ollama", "qwen3:8b")
-    config = {"extra_body": {"num_ctx": 8192}, "max_completion_tokens": 64}
+    config = {"extra_body": {"num_ctx": 8192}, "max_completion_tokens": 64, "enable_thinking": enabled}
     if streaming:
         chunks = [chunk async for chunk in model.async_chat_streamly("", [{"role": "user", "content": "hello"}], config)]
         assert "".join(chunk for chunk in chunks if isinstance(chunk, str)) == "OK"
         assert chunks[-1] == 5
     else:
         assert await model.async_chat("", [{"role": "user", "content": "hello"}], config) == ("OK", 5)
-    assert config == {"extra_body": {"num_ctx": 8192}, "max_completion_tokens": 64}
+    assert config == {"extra_body": {"num_ctx": 8192}, "max_completion_tokens": 64, "enable_thinking": enabled}
     path, headers, body = provider.requests[0]
     assert path == "/api/chat"
     assert headers["authorization"] == "Bearer test-key"
-    assert body["think"] is False
+    assert body["think"] is enabled
     assert body["options"]["num_ctx"] == 8192
     assert "enable_thinking" not in body
     assert "extra_body" not in body
@@ -262,3 +263,14 @@ async def test_cancellation_reaches_sdk_transport(model_factory, provider):
             task.cancel()
         await asyncio.gather(task, return_exceptions=True)
     assert len(provider.requests) == 1
+
+
+def test_completion_preserves_borrowed_transport_resource(model_factory):
+    class BorrowedClient:
+        def __deepcopy__(self, _memo):
+            raise TypeError("A borrowed transport cannot be copied")
+
+    client = BorrowedClient()
+    model = model_factory()
+    arguments = model._construct_completion_args([{"role": "user", "content": "synthetic control"}], stream=False, tools=False, http_client=client)
+    assert arguments["http_client"] is client

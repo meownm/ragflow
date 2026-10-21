@@ -130,9 +130,10 @@ def test_reply_does_not_change_missing_closed_or_stale_thread(project, damage, c
     assert BusinessDocumentSqlAgentCommand.select().count() == 1
 
 
-def test_active_result_blocks_revision_before_mutating_thread_version(project):
+@pytest.mark.parametrize("status", ["QUEUED", "RUNNING", "CANCEL_REQUESTED"])
+def test_active_result_blocks_revision_before_mutating_thread_version(project, status):
     thread = Service.create_thread(TENANT, ACTOR, project, thread_command())
-    BusinessDocumentSqlQueryRun.create(id="active-result", project_id=project, tenant_id=TENANT, kind="SQL", status="READY", compilation_id="c" * 32, profile_id="profile", profile_version=1)
+    BusinessDocumentSqlQueryRun.create(id="active-result", project_id=project, tenant_id=TENANT, kind="SQL", status=status, compilation_id="c" * 32, profile_id="profile", profile_version=1)
     with pytest.raises(BusinessDocumentError) as caught:
         Service.request_change(TENANT, ACTOR, project, thread["id"], {"schema_version": "1", "expected_state_version": 1, "idempotency_key": "active-revision"})
     assert caught.value.code == "SQL_RESULT_ACTIVE"
@@ -221,7 +222,8 @@ def test_revision_request_preserves_types_of_compiled_parameters(project):
     assert BusinessDocumentSqlQueryArtifact.get_by_id(compiled.id).payload == compiled.payload
 
 
-def test_schema_reopen_with_active_rows_rolls_back_pending_proposal_decision(project):
+@pytest.mark.parametrize("status", ["QUEUED", "RUNNING", "CANCEL_REQUESTED"])
+def test_schema_reopen_with_active_rows_rolls_back_pending_proposal_decision(project, status):
     BusinessDocumentSqlQueryProject.update(operation_state="REVIEW").where(BusinessDocumentSqlQueryProject.id == project).execute()
     proposal = BusinessDocumentSqlAgentProposal.create(
         id="blocked-proposal",
@@ -234,7 +236,7 @@ def test_schema_reopen_with_active_rows_rolls_back_pending_proposal_decision(pro
         content_hash="sha256:blocked",
     )
     BusinessDocumentSqlQueryRun.create(
-        id="active-result", project_id=project, tenant_id=TENANT, kind="SQL", status="READY", compilation_id="c" * 32, profile_id="profile", profile_version=1, rows=[[10]]
+        id="active-result", project_id=project, tenant_id=TENANT, kind="SQL", status=status, compilation_id="c" * 32, profile_id="profile", profile_version=1, rows=[[10]]
     )
     before = BusinessDocumentSqlQueryProject.get_by_id(project).__data__.copy()
     with pytest.raises(BusinessDocumentError) as caught:

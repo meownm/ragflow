@@ -33,32 +33,42 @@ def _parameter_value(kind: str, value: Any) -> Any:
     return source
 
 
+def build_project_schema_command(
+    requirements: Mapping[str, Any],
+    schema: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Describe accepted catalog scope independently of query compilation."""
+    statements = [str(item.get("statement", "")).strip() for item in requirements.get("requirements", []) if isinstance(item, Mapping)]
+    statements = [statement for statement in statements if statement]
+    snapshot = _object(schema.get("schema_snapshot"), "schema snapshot")
+    accepted_schema = schema.get("accepted_schema")
+    if not statements or not isinstance(accepted_schema, list):
+        raise ProjectCompilationError("Project does not contain accepted requirements and schema")
+    return {
+        "schema_version": "1",
+        "schema_snapshot": dict(snapshot),
+        "accepted_requirements": "\n".join(f"- {statement}" for statement in statements),
+        "accepted_schema": accepted_schema,
+    }
+
+
 def build_project_compile_command(
     requirements: Mapping[str, Any],
     schema: Mapping[str, Any],
     query: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Translate accepted artifacts without trusting a browser-supplied snapshot."""
-
-    statements = [str(item.get("statement", "")).strip() for item in requirements.get("requirements", []) if isinstance(item, Mapping)]
-    statements = [statement for statement in statements if statement]
-    snapshot = _object(schema.get("schema_snapshot"), "schema snapshot")
-    accepted_schema = schema.get("accepted_schema")
+    context = build_project_schema_command(requirements, schema)
     if query.get("mode") == "manual":
-        if not statements or not isinstance(accepted_schema, list):
-            raise ProjectCompilationError("Project does not contain accepted requirements and schema")
         return {
-            "schema_version": "1",
-            "schema_snapshot": dict(snapshot),
-            "accepted_requirements": "\n".join(f"- {statement}" for statement in statements),
-            "accepted_schema": accepted_schema,
+            **context,
             "manual_sql": query.get("sql"),
             "parameters": query.get("parameters"),
         }
     aliases = _object(query.get("aliases"), "aliases")
     filters = query.get("filters")
     joins = query.get("joins")
-    if not statements or not isinstance(accepted_schema, list) or not isinstance(filters, list) or not isinstance(joins, list):
+    if not isinstance(filters, list) or not isinstance(joins, list):
         raise ProjectCompilationError("Project does not contain complete accepted artifacts")
     base = query.get("base_entity_id")
     if not isinstance(base, str) or not isinstance(aliases.get(base), str):
@@ -105,10 +115,7 @@ def build_project_compile_command(
             raise ProjectCompilationError("A JOIN has not been confirmed by the user")
         compiled_joins.append(dict(item))
     return {
-        "schema_version": "1",
-        "schema_snapshot": dict(snapshot),
-        "accepted_requirements": "\n".join(f"- {statement}" for statement in statements),
-        "accepted_schema": accepted_schema,
+        **context,
         "specification": {
             "dialect": "postgres",
             "from": {"entity_id": base, "alias": aliases[base]},

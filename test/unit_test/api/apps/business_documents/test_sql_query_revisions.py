@@ -27,6 +27,11 @@ from api.db.db_models import (
 )
 from business_documents.application.errors import BusinessDocumentError, ConflictError, ValidationError
 from business_documents.sql_query.revisions import locate_anchor, preserves_document_facts, query_blocks, validate_anchor
+from business_documents.sql_query.project_compilation import build_project_compile_command
+from business_documents.sql_query.query_specification import compile_query_payload
+from test.unit_test.api.apps.business_documents.test_sql_query_specification import _snapshot
+from api.apps.business_documents.sql_query_schema import BusinessDocumentSqlQuerySchemaService
+from api.apps.business_documents.sql_query_agents import _stable_hash
 
 TENANT = "tenant-revision"
 ACTOR = "author-revision"
@@ -44,17 +49,35 @@ def project():
 
         def artifact(kind, artifact_id, payload):
             return BusinessDocumentSqlQueryArtifact.create(
-                id=artifact_id, project_id=created["id"], tenant_id=TENANT, kind=kind, revision=1, payload=payload, content_hash="sha256:test", source_proposal_id="p" * 32, accepted_by=ACTOR
+                id=artifact_id, project_id=created["id"], tenant_id=TENANT, kind=kind, revision=1, payload=payload, content_hash=_stable_hash(payload), source_proposal_id="p" * 32, accepted_by=ACTOR
             )
 
         requirements = artifact("REQUIREMENTS", "r" * 32, {"requirements": [{"statement": "Show orders"}]})
-        schema = artifact("SCHEMA", "s" * 32, {"schema_snapshot": {}, "accepted_schema": []})
+        snapshot = _snapshot()
+        snapshot["original_requirements"] = "- Show orders"
+        source_tables = {item["selected_table"]["id"]: item["selected_table"] for item in snapshot["requirements"]}
+        schema = artifact(
+            "SCHEMA",
+            "s" * 32,
+            {
+                "schema_snapshot": snapshot,
+                "accepted_schema": [{"entity_id": table["id"], "version": table["version"], "schema_fingerprint": table["schema_fingerprint"]} for table in source_tables.values()],
+            },
+        )
         query = artifact("QUERY", "q" * 32, {"mode": "manual", "sql": SQL, "parameters": [{"name": "row_limit", "type": "integer", "value": 10}], "confirmed_alignment": True})
-        artifact("COMPILATION", "c" * 32, {"source_artifact_ids": [requirements.id, schema.id, query.id], "result": {"sql": SQL, "parameters": {"row_limit": 10}, "guard": {"status": "PASS"}}})
+        compiled = compile_query_payload(build_project_compile_command(requirements.payload, schema.payload, query.payload))
+        assert compiled["status"] == "READY"
+        artifact("COMPILATION", "c" * 32, {"source_artifact_ids": [requirements.id, schema.id, query.id], "result": compiled})
         BusinessDocumentSqlQueryProject.update(stage="COMPLETE", requirements_artifact_id=requirements.id, schema_artifact_id=schema.id, query_artifact_id=query.id).where(
             BusinessDocumentSqlQueryProject.id == created["id"]
         ).execute()
-        yield created["id"]
+
+        async def visible(_actor, request, _is_admin, _role):
+            return {"entities": [{"entity_id": identity, "lookup": {"status": "OK"}, "entity": source_tables[identity]} for identity in request["entity_ids"]]}
+
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(BusinessDocumentSqlQuerySchemaService, "load_entities", visible)
+            yield created["id"]
         database.drop_tables(tables)
         database.close()
 
@@ -629,9 +652,12 @@ def test_historical_query_revision_can_be_selected_with_current_schema(project, 
     assert BusinessDocumentSqlRevisionService.workspace(TENANT, ACTOR, project)["threads"][0]["anchor_status"] == "CURRENT"
 
 
-def test_historical_query_needs_its_confirmed_schema(project):
+def test_historical_query_remains_readable_but_needs_its_confirmed_schema_for_revision(project):
     BusinessDocumentSqlQueryProject.update(schema_artifact_id="n" * 32, state_version=2).where(BusinessDocumentSqlQueryProject.id == project).execute()
-    assert BusinessDocumentSqlRevisionService.workspace(TENANT, ACTOR, project)["query_revisions"] == []
+    history = BusinessDocumentSqlRevisionService.workspace(TENANT, ACTOR, project)["query_revisions"]
+    assert len(history) == 1 and history[0]["id"] == "q" * 32
+    assert history[0]["matches_current_context"] is False
+    assert history[0]["source_artifact_ids"] == ["r" * 32, "s" * 32]
     with pytest.raises(ConflictError, match="confirmed schema"):
         BusinessDocumentSqlRevisionService.create_thread(
             TENANT,

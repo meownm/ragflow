@@ -524,7 +524,11 @@ def parse_accepted_schema(value: Any) -> tuple[AcceptedSchemaEntry, ...]:
 
 def parse_parameter_value(value_type: str, value: Any, field: str) -> Any:
     if value_type == "text":
-        return _text(value, field, 5_000)
+        if not isinstance(value, str):
+            raise QuerySpecificationValidationError(f"{field} must be a string")
+        if len(value) > 5_000:
+            raise QuerySpecificationValidationError(f"{field} exceeds 5000 characters")
+        return value
     if value_type == "boolean":
         if not isinstance(value, bool):
             raise QuerySpecificationValidationError(f"{field} must be a boolean")

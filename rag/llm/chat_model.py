@@ -210,11 +210,14 @@ def _move_litellm_provider_body_fields(provider: SupportedLiteLLMProvider | str 
     if not isinstance(body, dict):
         body = {}
     if str(provider) == "Ollama":
-        # LiteLLM places provider-specific parameters directly in Ollama's
-        # options; leaving num_ctx in extra_body nests it under options.extra_body.
+        # LiteLLM expects native Ollama controls as direct completion arguments;
+        # extra_body would remain nested inside options in the native request.
         if "num_ctx" in body:
             completion_args["num_ctx"] = body.pop("num_ctx")
-        body.setdefault("think", False)
+        if "think" in body:
+            completion_args.setdefault("think", body.pop("think"))
+            if not body:
+                completion_args.pop("extra_body", None)
     moved = False
     for key in provider_body_fields:
         if key in completion_args:
@@ -1677,16 +1680,7 @@ class LiteLLMBase(ABC):
         return LLMErrorCode.ERROR_GENERIC
 
     def _clean_conf(self, gen_conf):
-        gen_conf, _ = _apply_model_family_policies(
-            self.model_name,
-            backend="litellm",
-            provider=self.provider,
-            gen_conf=gen_conf,
-        )
-
-        gen_conf.pop("max_tokens", None)
-        gen_conf = {k: v for k, v in gen_conf.items() if k in LITELLM_ALLOWED_GEN_CONF_KEYS}
-        return gen_conf
+        return {key: value for key, value in (gen_conf or {}).items() if key in LITELLM_ALLOWED_GEN_CONF_KEYS}
 
     def _need_reasoning_content_back(self) -> bool:
         return self.provider == SupportedLiteLLMProvider.DeepSeek
@@ -1699,13 +1693,6 @@ class LiteLLMBase(ABC):
 
         logging.info("[HISTORY]" + json.dumps(hist, ensure_ascii=False, indent=2))
         gen_conf = self._clean_conf(gen_conf)
-        _, kwargs = _apply_model_family_policies(
-            self.model_name,
-            backend="litellm",
-            provider=self.provider,
-            gen_conf=gen_conf,
-            request_kwargs=kwargs,
-        )
 
         completion_args = self._construct_completion_args(history=hist, stream=False, tools=False, **{**gen_conf, **kwargs})
 
@@ -2209,12 +2196,16 @@ class LiteLLMBase(ABC):
         assert False, "Shouldn't be here."
 
     def _construct_completion_args(self, history, stream: bool, tools: bool, **kwargs):
+        gen_conf = {key: value for key, value in kwargs.items() if key in LITELLM_ALLOWED_GEN_CONF_KEYS}
+        request_kwargs = {key: value for key, value in kwargs.items() if key not in LITELLM_ALLOWED_GEN_CONF_KEYS}
+        gen_conf, provider_kwargs = _apply_model_family_policies(self.model_name, backend="litellm", provider=self.provider, gen_conf=gen_conf, request_kwargs=request_kwargs)
         completion_args = {
             "model": self.model_name,
             "messages": history,
             "api_key": self.api_key,
             "num_retries": self.max_retries,
-            **kwargs,
+            **gen_conf,
+            **provider_kwargs,
         }
         # Forward the originating session/user as the OpenAI-standard `user` field so
         # providers (OpenAI, OpenRouter, ...) receive it in the request body and

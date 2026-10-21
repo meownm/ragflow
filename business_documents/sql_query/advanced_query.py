@@ -93,6 +93,29 @@ def _manual_parameters(value: Any) -> dict[str, Any]:
     return parsed
 
 
+def _is_structural_literal(node: exp.Literal) -> bool:
+    projection = node.parent
+    if (
+        node.is_int
+        and node.this == "1"
+        and isinstance(projection, exp.Select)
+        and projection.expressions == [node]
+        and isinstance(projection.parent, exp.Exists)
+        and projection.parent.this is projection
+    ):
+        return True
+    ordered = node.parent
+    order = ordered.parent if isinstance(ordered, exp.Ordered) else None
+    query = order.parent if isinstance(order, exp.Order) else None
+    return (
+        node.is_int
+        and isinstance(ordered, exp.Ordered)
+        and ordered.this is node
+        and isinstance(query, (exp.Select, exp.Union))
+        and 1 <= int(node.this) <= len(query.selects)
+    )
+
+
 def guard_advanced_sql(sql: str, snapshot, parameter_names: list[str]) -> dict[str, Any]:
     """Check the full AST and qualify every referenced column against catalog tables."""
     if not isinstance(sql, str) or not sql.strip() or len(sql) > 20_000 or any(marker in sql for marker in (";", "--", "/*")):
@@ -117,7 +140,7 @@ def guard_advanced_sql(sql: str, snapshot, parameter_names: list[str]) -> dict[s
             raise SqlGuardError("SELECT INTO and row locks are prohibited")
         if isinstance(node, exp.Func) and not isinstance(node, exp.Exists) and node.sql_name().casefold() not in _ALLOWED_FUNCTIONS:
             raise SqlGuardError(f"Function {node.sql_name()} is not allowed")
-        if isinstance(node, exp.Literal) and (not node.is_string or str(node.this).casefold() not in {"day", "week", "month", "quarter", "year"}):
+        if isinstance(node, exp.Literal) and not _is_structural_literal(node) and (not node.is_string or str(node.this).casefold() not in {"day", "week", "month", "quarter", "year"}):
             raise SqlGuardError("Values must use bound parameters")
     placeholders = {str(node.this) for node in statement.find_all(exp.Placeholder)}
     if placeholders != set(parameter_names):

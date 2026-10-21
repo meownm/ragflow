@@ -76,7 +76,7 @@ jobs:
 
         uv venv --python 3.13
 
-        uv pip install --require-hashes -r "$RUNNER_TEMP/browser-requirements.txt"
+        uv pip install --no-config --require-hashes -r "$RUNNER_TEMP/browser-requirements.txt"
 
         .venv/bin/python -m playwright install --with-deps ${{ matrix.browser }}'
     - name: Run isolated browser journeys

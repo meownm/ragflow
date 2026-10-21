@@ -227,6 +227,14 @@ jobs:
         test/evals/source_workbench/test_evaluate.py test/evals/source_workbench/test_live_provisioning.py
 
         '
+    - name: SQL project golden requirements
+      env:
+        SQL_PROJECT_TEST_DISPOSABLE: '1'
+        SQL_PROJECT_TEST_POSTGRES_DSN: postgresql://regression:regression-only@127.0.0.1:${{ job.services.regression-postgres.ports['5432'] }}/regression
+      run: |
+        set -euo pipefail
+        source .venv/bin/activate
+        python -B -m pytest -q test/evals/sql_projects test/integration/test_sql_projects_postgres.py test/integration/test_sql_result_retention_postgres.py --junitxml=sql-project-goldens.xml
     - name: PostgreSQL transaction races
       env:
         BUSINESS_DOCUMENT_TEST_POSTGRES_DSN: postgresql://regression:regression-only@host.docker.internal:${{ job.services.regression-postgres.ports['5432']
@@ -244,7 +252,9 @@ jobs:
       if: always()
       with:
         name: preflight-${{ github.run_id }}-${{ github.run_attempt }}
-        path: coverage-business-documents.xml
+        path: |
+          coverage-business-documents.xml
+          sql-project-goldens.xml
         if-no-files-found: error
         include-hidden-files: true
         retention-days: 30

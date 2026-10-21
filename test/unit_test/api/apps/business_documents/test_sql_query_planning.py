@@ -252,7 +252,8 @@ async def test_confirmed_planner_draft_is_compatible_with_the_independent_compil
 
 
 @pytest.mark.asyncio
-async def test_tenant_planner_uses_one_bounded_contract_call():
+@pytest.mark.parametrize("clarifications", [[], [{"question": "Какой год и часовой пояс?", "answer": "2026, Pacific/Apia"}]])
+async def test_tenant_planner_uses_one_bounded_contract_call(clarifications):
     calls = []
 
     class FakeLlm:
@@ -260,7 +261,9 @@ async def test_tenant_planner_uses_one_bounded_contract_call():
             calls.append((tenant_id, system_prompt, payload))
             return json.dumps(_raw_plan(), ensure_ascii=False)
 
-    command = parse_plan_query_command(_request(), tenant_id="tenant-1")
+    request = _request()
+    request["clarifications"] = clarifications
+    command = parse_plan_query_command(request, tenant_id="tenant-1")
     result = await TenantQueryPlanner(FakeLlm(), timeout_seconds=1).propose(command)
 
     assert result == _raw_plan()
@@ -269,7 +272,13 @@ async def test_tenant_planner_uses_one_bounded_contract_call():
     assert calls[0][2]["job_input"]["task_type"] == "PLAN_SQL_QUERY"
     assert calls[0][2]["prompt"]["name"] == "sql_query_planner"
     assert calls[0][2]["prompt"]["content_hash"].startswith("sha256:")
-    assert calls[0][2]["catalog_context"]["requirements"] == REQUIREMENTS
+    context_requirements = calls[0][2]["catalog_context"]["requirements"]
+    assert context_requirements.startswith(REQUIREMENTS)
+    if clarifications:
+        assert clarifications[0]["answer"] in context_requirements
+    else:
+        assert context_requirements == REQUIREMENTS
+    assert command.accepted_requirements == command.snapshot.original_requirements == REQUIREMENTS
     assert calls[0][2]["catalog_context"]["tables"][0]["columns"][0]["description"] == "Описание order_id"
     assert calls[0][2]["catalog_context"]["tables"][0]["table_constraints"][0] == {
         "constraint_type": "FOREIGN_KEY",

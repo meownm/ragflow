@@ -1655,6 +1655,9 @@ class BusinessDocumentSqlQueryProject(DataBaseModel):
     title = CharField(max_length=255, null=False)
     source_request = LongTextField(null=False)
     locale = CharField(max_length=8, null=False, default="ru")
+    execution_profile_id = CharField(max_length=32, null=True)
+    archived_at = BigIntegerField(null=True)
+    copy_origin = JSONField(null=True)
     stage = CharField(max_length=32, null=False, default="REQUIREMENTS", index=True)
     operation_state = CharField(max_length=16, null=False, default="IDLE", index=True)
     state_version = IntegerField(null=False, default=1)
@@ -1689,7 +1692,7 @@ class BusinessDocumentSqlQueryArtifact(DataBaseModel):
 
 
 class BusinessDocumentSqlQueryRun(DataBaseModel):
-    """Project result kept until explicit completion or cancellation."""
+    """Raw result retained for 30 days, or until completion/cancellation."""
 
     id = CharField(max_length=32, primary_key=True)
     project_id = CharField(max_length=32, null=False, index=True)
@@ -1697,6 +1700,7 @@ class BusinessDocumentSqlQueryRun(DataBaseModel):
     compilation_id = CharField(max_length=32, null=False)
     profile_id = CharField(max_length=32, null=False)
     profile_version = IntegerField(null=False)
+    profile_name = CharField(max_length=255, null=True)
     kind = CharField(max_length=16, null=False, default="SQL", index=True)
     source_run_id = CharField(max_length=32, null=True, index=True)
     job_id = CharField(max_length=32, null=True, unique=True)
@@ -1761,6 +1765,21 @@ class BusinessDocumentSqlQueryDraft(DataBaseModel):
 
     class Meta:
         db_table = "business_document_sql_query_draft"
+
+
+class BusinessDocumentSqlQueryView(DataBaseModel):
+    """Per-actor graph layout; cosmetic changes never create SQL revisions."""
+
+    id = CharField(max_length=32, primary_key=True)
+    project_id = CharField(max_length=32, null=False, index=True)
+    tenant_id = CharField(max_length=32, null=False, index=True)
+    actor_id = CharField(max_length=32, null=False)
+    version = IntegerField(null=False, default=1)
+    view = JSONField(null=False)
+
+    class Meta:
+        db_table = "business_document_sql_query_view"
+        indexes = ((("tenant_id", "project_id", "actor_id"), True),)
 
 
 class BusinessDocumentSqlQueryThread(DataBaseModel):
@@ -2583,11 +2602,27 @@ def _migrate_document_quality_types(migrator):
             database.execute_sql(f'CREATE INDEX IF NOT EXISTS "{table}_document_type" ON "{table}" ("document_type")')
 
 
+def _migrate_sql_project_connection(migrator):
+    """Preserve legacy projects and run provenance when adding source selection."""
+    with migrator.database.atomic():
+        migrator.database.execute_sql('ALTER TABLE "business_document_sql_query_project" ADD COLUMN IF NOT EXISTS "execution_profile_id" VARCHAR(32)')
+        migrator.database.execute_sql('ALTER TABLE "business_document_sql_query_run" ADD COLUMN IF NOT EXISTS "profile_name" VARCHAR(255)')
+
+
+def _migrate_sql_project_registry(migrator):
+    """Add reversible archive and immutable copy provenance to existing projects."""
+    with migrator.database.atomic():
+        migrator.database.execute_sql('ALTER TABLE "business_document_sql_query_project" ADD COLUMN IF NOT EXISTS "archived_at" BIGINT')
+        migrator.database.execute_sql('ALTER TABLE "business_document_sql_query_project" ADD COLUMN IF NOT EXISTS "copy_origin" JSON')
+
+
 def migrate_db():
     logging.disable(logging.ERROR)
     migrator = PostgresqlMigrator(DB)
     _migrate_user_external_credential_expiry(migrator)
     _migrate_document_quality_types(migrator)
+    _migrate_sql_project_connection(migrator)
+    _migrate_sql_project_registry(migrator)
     alter_db_add_column(migrator, "business_document_sql_query_run", "kind", CharField(max_length=16, null=False, default="SQL", index=True))
     alter_db_add_column(migrator, "business_document_sql_query_run", "source_run_id", CharField(max_length=32, null=True, index=True))
     alter_db_add_column(migrator, "business_document_sql_query_run", "job_id", CharField(max_length=32, null=True, unique=True))

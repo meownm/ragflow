@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[4]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 FILES = {
-    "api.document_exchange.identity": "api/document_exchange/identity.py",
+    "document_exchange.identity": "document_exchange/identity.py",
     "api.document_exchange.merge": "api/document_exchange/merge.py",
     "api.source_workbench.processing": "api/source_workbench/processing.py",
     "api.technical_specifications.domain": "api/technical_specifications/domain.py",

@@ -3,11 +3,63 @@ from copy import deepcopy
 import pytest
 
 from api.document_exchange.merge import merge_text
-from api.technical_specifications.domain import SpecificationError, assert_context, context, draft, empty_sections, markdown, merge_sections, parse_markdown, sections
+from api.technical_specifications.domain import SpecificationError, apply_merge_edits, assert_context, context, draft, empty_sections, markdown, merge_sections, parse_markdown, sections
 
 
 def selected(quote="результат", prefix="", suffix=""):
     return {"document_id": "doc", "scope": "selection", "revision": 2, "anchor": {"section": "5", "quote": quote, "prefix": prefix, "suffix": suffix}}
+
+
+def test_literal_merge_edits_use_one_snapshot_and_preserve_unrelated_text():
+    source = {**empty_sections(), "8": 'X-Event-Id, X-Sequence, X-Signature; {"status":"created"}; alpha beta'}
+    original = deepcopy(source)
+    edits = [
+        {"section": "8", "before": '"status":"created"', "after": '"status":"accepted"'},
+        {"section": "8", "before": "alpha", "after": "beta"},
+        {"section": "8", "before": "beta", "after": "alpha"},
+    ]
+    result = apply_merge_edits(source, edits)
+    assert result == {**source, "8": 'X-Event-Id, X-Sequence, X-Signature; {"status":"accepted"}; beta alpha'}
+    assert source == original
+
+
+def test_literal_merge_edits_allow_insertion_into_empty_section_and_deletion():
+    source = {**empty_sections(), "9": "keep\nremove\n"}
+    assert apply_merge_edits(source, [{"section": "8", "before": "", "after": "New API"}, {"section": "9", "before": "remove\n", "after": ""}]) == {**source, "8": "New API", "9": "keep\n"}
+
+
+@pytest.mark.parametrize(
+    "body,edits",
+    [
+        ("abc", None),
+        ("abc", {}),
+        ("abc", [None]),
+        ("abc", [{"section": "8", "before": "abc"}]),
+        ("abc", [{"section": "4.2", "before": "abc", "after": "x"}]),
+        ("abc", [{"section": "8", "before": 1, "after": "x"}]),
+        ("abc", [{"section": "8", "before": "abc", "after": None}]),
+        ("abc", [{"section": "8", "before": "missing", "after": "x"}]),
+        ("abc", [{"section": "8", "before": "", "after": "x"}]),
+        ("aaaa", [{"section": "8", "before": "aaa", "after": "x"}]),
+        ("abc", [{"section": "8", "before": "ab", "after": "x"}, {"section": "8", "before": "bc", "after": "y"}]),
+        ("", [{"section": "8", "before": "", "after": "x"}, {"section": "8", "before": "", "after": "y"}]),
+    ],
+)
+def test_literal_merge_edits_reject_missing_ambiguous_overlapping_or_malformed_quotes(body, edits):
+    source = {**empty_sections(), "8": body}
+    original = deepcopy(source)
+    with pytest.raises(SpecificationError) as error:
+        apply_merge_edits(source, edits)
+    assert error.value.code == "MODEL_INVALID_OUTPUT"
+    assert source == original
+
+
+def test_invalid_later_merge_edit_never_mutates_the_source_snapshot():
+    source = {**empty_sections(), "8": "existing", "9": "audit"}
+    original = deepcopy(source)
+    with pytest.raises(SpecificationError):
+        apply_merge_edits(source, [{"section": "8", "before": "existing", "after": "updated"}, {"section": "9", "before": "missing", "after": "bad"}])
+    assert source == original
 
 
 def test_format_roundtrip_preserves_all_nine_sections_and_code():

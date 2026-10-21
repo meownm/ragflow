@@ -11,7 +11,7 @@ from business_documents.application.errors import ConflictError, NotFoundError, 
 from business_documents.application.persistence import DocumentWriter
 from business_documents.application.queries import DocumentQueries
 from business_documents.domain.access import BusinessDocumentRole, DocumentAccess
-from api.document_exchange.identity import binding_keys
+from document_exchange.identity import binding_keys
 from business_documents.domain.names import normalize_title, title_key
 from business_documents.domain.workflow import is_operation_quiescent
 

@@ -31,7 +31,7 @@ from api.document_exchange.bindings import BindingConflict, occupancy, release, 
 from business_documents.application.errors import BusinessDocumentError, ConflictError, NotFoundError
 from business_documents.application.job_completion import AssessmentRecords
 from business_documents.domain.hashing import text_hash
-from api.document_exchange.identity import binding_keys
+from document_exchange.identity import binding_keys
 from business_documents.domain.workflow import ACTIVE_JOB_STATUSES
 from common.misc_utils import get_uuid
 from common.time_utils import current_timestamp

@@ -5,7 +5,7 @@ from peewee import SqliteDatabase
 
 from api.db.db_models import BusinessDocument, BusinessDocumentEvaBinding, DocumentExchangeBinding, TechnicalSpecification
 from api.document_exchange.bindings import BindingConflict, occupancy, release, reserve
-from api.document_exchange.identity import binding_keys
+from document_exchange.identity import binding_keys
 from api.document_exchange.migrations import migrate_bindings
 from api.technical_specifications.domain import eva_identity
 

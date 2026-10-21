@@ -33,6 +33,9 @@ import threading
 import uuid
 import faulthandler
 
+# Direct script execution puts api/ first; keep root packages authoritative.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from api.apps import app
 from api.db.runtime_config import RuntimeConfig
 from api.db.services.document_service import DocumentService

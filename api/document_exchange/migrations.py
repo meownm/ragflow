@@ -3,7 +3,7 @@
 from api.db.db_models import BusinessDocument, BusinessDocumentEvaBinding, DocumentExchangeBinding, TechnicalSpecification
 
 from .bindings import BindingConflict, reserve
-from .identity import binding_keys
+from document_exchange.identity import binding_keys
 
 
 def migrate_bindings():

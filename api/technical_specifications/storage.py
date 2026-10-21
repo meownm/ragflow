@@ -301,9 +301,12 @@ class SpecificationRepository:
             row = self._row(workspace, document_id)
             if not latest and row.version != version(expected_version):
                 fail("VERSION_CONFLICT", "ТЗ изменилось. Обновите его; ваши правки сохранены в редакторе", 409)
-            old = deepcopy(row.payload)
+            old = row.payload
             value = record(row)
+            before = deepcopy(value)
             mutate(value)
+            if value == before:
+                return projection(row)
             payload = _stored_payload(value)
             budget = _payload_budget(payload)
             if budget > MAX_PROJECTION_BYTES and budget > _payload_budget(old):

@@ -2470,7 +2470,7 @@ def migrate_business_document_eva_bindings():
                     "last_pull_review_cycle": latest_pull.payload.get("review_cycle"),
                 }
             )
-        from api.document_exchange.identity import binding_keys
+        from document_exchange.identity import binding_keys
 
         page_key, identity = binding_keys(binding)
         try:

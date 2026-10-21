@@ -13,7 +13,7 @@ from playhouse.db_url import connect
 from api.db.db_models import BusinessDocument, BusinessDocumentEvaBinding, DocumentExchangeBinding, DocumentExchangeOperation, RetryingPooledPostgresqlDatabase, TechnicalSpecification
 from api.document_exchange import operations
 from api.document_exchange.bindings import BindingConflict, reserve
-from api.document_exchange.identity import binding_keys
+from document_exchange.identity import binding_keys
 from api.document_exchange.migrations import migrate_bindings
 
 

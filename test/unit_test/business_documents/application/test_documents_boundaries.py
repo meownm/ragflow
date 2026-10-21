@@ -9,7 +9,7 @@ from test.unit_test.api.apps.business_documents.test_business_document_worker_ex
 from api.apps.business_documents.runtime import document_creation
 from business_documents.application.documents import CreateDocument, DeleteDocument, MAX_EVA_MARKDOWN_SIZE
 from business_documents.application.errors import BusinessDocumentError, PermissionDeniedError, ValidationError
-from api.document_exchange.identity import binding_keys
+from document_exchange.identity import binding_keys
 
 
 @pytest.fixture()

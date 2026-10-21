@@ -848,7 +848,7 @@ def test_one_eva_page_cannot_be_linked_to_different_documents(database, monkeypa
 
 def test_specification_binding_blocks_business_creation_without_leaking_owner(database, monkeypatch):
     from api.document_exchange.bindings import reserve
-    from api.document_exchange.identity import binding_keys
+    from document_exchange.identity import binding_keys
     from api.db.db_models import DocumentExchangeBinding
     from api.apps.business_documents.runtime import document_writer
 
@@ -871,7 +871,7 @@ def test_specification_binding_blocks_business_creation_without_leaking_owner(da
 def test_business_rebind_and_delete_update_the_shared_registry_atomically(database, monkeypatch):
     from api.apps.business_documents.runtime import document_writer
     from api.document_exchange.bindings import occupancy, reserve
-    from api.document_exchange.identity import binding_keys
+    from document_exchange.identity import binding_keys
 
     original = {"page_url": "https://eva.test/first", "eva_origin": ["https", "eva.test", 443], "project_id": "project", "document_id": "first", "status": "CONNECTED"}
     occupied = {**original, "page_url": "https://eva.test/second", "document_id": "second"}

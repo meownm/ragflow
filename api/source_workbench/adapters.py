@@ -451,6 +451,8 @@ class RAGFlowProcessModel:
         self.context_tokens = model_config.get("max_tokens")
         self.output_tokens: int | None = None
         self._local_ollama = False
+        self.supports_thinking = False
+        self._capabilities_resolved = False
 
     async def resolve_context(self) -> None:
         """Use Ollama's model context when the saved catalog limit is stale."""
@@ -481,6 +483,9 @@ class RAGFlowProcessModel:
                     info = details.get("model_info", {})
                     family = details.get("details", {}).get("family", "")
                     limit = info.get(f"{family}.context_length") or info.get("general.context_length")
+                    capabilities = details.get("capabilities")
+                    self.supports_thinking = isinstance(capabilities, list) and "thinking" in capabilities
+                    self._capabilities_resolved = True
             if type(limit) is int and limit >= 2048:
                 self.context_tokens = limit
                 self._local_ollama = True
@@ -502,9 +507,11 @@ class RAGFlowProcessModel:
 
         return num_tokens_from_string(text)
 
-    async def stream(self, system: str, payload: dict[str, Any], output_tokens: int, *, json_response: bool = False):
+    async def stream(self, system: str, payload: dict[str, Any], output_tokens: int, *, json_response: bool = False, thinking: bool = False):
         from api.db.services.llm_service import LLMBundle
 
+        if thinking and self.model_config.get("llm_factory") == "Ollama" and not self._capabilities_resolved:
+            raise SourceWorkspaceError("MODEL_CAPABILITIES_UNAVAILABLE", "Не удалось проверить возможности модели; повторите запрос после восстановления соединения", 503)
         self.resolve_output_limit()
         if self.output_tokens is not None:
             output_tokens = min(output_tokens, self.output_tokens)
@@ -515,11 +522,14 @@ class RAGFlowProcessModel:
             generation["response_format"] = {"type": "json_object"}
         if self.model_config.get("llm_factory") == "Ollama" and type(self.context_tokens) is int:
             generation["extra_body"] = {"num_ctx": self.context_tokens}
+            if thinking and self.supports_thinking:
+                generation["extra_body"]["think"] = True
+        visibility = {"with_reasoning": False} if json_response else {}
         with LLMBundle(self.owner_id, self.model_config, lang="Russian", max_retries=0, timeout=1800) as model:
             if not hasattr(model.mdl, "async_chat_streamly"):
-                yield await model.async_chat(system, history, generation)
+                yield await model.async_chat(system, history, generation, **visibility)
                 return
-            async for delta in model.async_chat_streamly_delta(system, history, generation):
+            async for delta in model.async_chat_streamly_delta(system, history, generation, **visibility):
                 yield delta
 
 

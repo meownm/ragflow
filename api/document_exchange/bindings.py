@@ -4,7 +4,7 @@ from peewee import IntegrityError
 
 from api.db.db_models import DocumentExchangeBinding
 
-from .identity import binding_keys
+from document_exchange.identity import binding_keys
 
 
 class BindingConflict(Exception):

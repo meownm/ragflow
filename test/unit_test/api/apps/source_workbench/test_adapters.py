@@ -68,7 +68,9 @@ def test_source_dataset_choices_include_later_pages_after_empty_sources(monkeypa
 @pytest.mark.asyncio
 @pytest.mark.parametrize("factory", ["Ollama", "OpenAI-API-Compatible"])
 @pytest.mark.parametrize("json_response", [False, True])
-async def test_ollama_processor_uses_discovered_context_for_planning_and_generation(monkeypatch, factory, json_response):
+@pytest.mark.parametrize("thinking_supported", [False, True])
+@pytest.mark.parametrize("thinking_requested", [False, True])
+async def test_ollama_processor_uses_discovered_context_for_planning_and_generation(monkeypatch, factory, json_response, thinking_supported, thinking_requested):
     import aiohttp
     from api.db.services import llm_service
 
@@ -87,7 +89,7 @@ async def test_ollama_processor_uses_discovered_context_for_planning_and_generat
         async def json(self):
             if factory == "OpenAI-API-Compatible":
                 return {"models": [{"name": "other", "context_length": 8192}, {"model": "test:latest", "context_length": 131072}]}
-            return {"details": {"family": "test"}, "model_info": {"test.context_length": 131072}}
+            return {"details": {"family": "test"}, "model_info": {"test.context_length": 131072}, "capabilities": ["completion", "thinking"] if thinking_supported else ["completion"]}
 
     class Session:
         def __init__(self, **_kwargs):
@@ -118,9 +120,16 @@ async def test_ollama_processor_uses_discovered_context_for_planning_and_generat
         def __exit__(self, *_args):
             pass
 
-        async def async_chat_streamly_delta(self, _system, _history, generation):
+        async def async_chat_streamly_delta(self, _system, _history, generation, **options):
             calls.append(generation)
-            yield "answer"
+            assert options == ({"with_reasoning": False} if json_response else {})
+            if json_response:
+                if options.get("with_reasoning", True):
+                    yield "<think>first</think>"
+                    yield "second</think>"
+                yield '{"valid":true,"issues":[]}'
+            else:
+                yield "answer"
 
     monkeypatch.setattr(aiohttp, "ClientSession", Session)
     monkeypatch.setattr(llm_service, "LLMBundle", Bundle)
@@ -128,11 +137,14 @@ async def test_ollama_processor_uses_discovered_context_for_planning_and_generat
     model = RAGFlowProcessModel("owner", config)
     await model.resolve_context()
     assert model.context_tokens == 131072
-    assert [part async for part in model.stream("system", {"task": "create"}, 32768, json_response=json_response)] == ["answer"]
+    assert model.supports_thinking is (factory == "Ollama" and thinking_supported)
+    assert [part async for part in model.stream("system", {"task": "create"}, 32768, json_response=json_response, thinking=thinking_requested)] == (
+        ['{"valid":true,"issues":[]}'] if json_response else ["answer"]
+    )
     assert config["max_tokens"] == 4096
     assert calls[0][0] == f"http://ollama:11434/api/{'show' if factory == 'Ollama' else 'ps'}"
     if factory == "Ollama":
-        assert calls[1]["extra_body"] == {"num_ctx": 131072}
+        assert calls[1]["extra_body"] == {"num_ctx": 131072, **({"think": True} if thinking_requested and thinking_supported else {})}
     assert calls[1]["max_tokens" if factory == "OpenAI-API-Compatible" else "max_completion_tokens"] == 32768
     assert calls[1].get("response_format") == ({"type": "json_object"} if json_response else None)
 
@@ -373,3 +385,30 @@ async def test_unknown_processor_output_ceiling_fails_before_bundle(monkeypatch)
     with pytest.raises(SourceWorkspaceError) as error:
         _ = [part async for part in model.stream("system", {}, 1000000)]
     assert error.value.code == "MODEL_OUTPUT_LIMIT_UNAVAILABLE"
+
+
+@pytest.mark.asyncio
+async def test_context_discovery_timeout_never_downgrades_requested_thinking(monkeypatch):
+    import aiohttp
+    from api.db.services import llm_service
+
+    class Session:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            raise TimeoutError()
+
+        async def __aexit__(self, *_args):
+            pass
+
+    def unexpected(*_args, **_kwargs):
+        pytest.fail("Provider must not run with an unconfirmed thinking capability")
+
+    monkeypatch.setattr(aiohttp, "ClientSession", Session)
+    monkeypatch.setattr(llm_service, "LLMBundle", unexpected)
+    model = RAGFlowProcessModel("owner", {"llm_factory": "Ollama", "llm_name": "test", "api_base": "http://unused", "max_tokens": 4096})
+    await model.resolve_context()
+    with pytest.raises(SourceWorkspaceError) as error:
+        _ = [part async for part in model.stream("system", {}, 1000, json_response=True, thinking=True)]
+    assert error.value.code == "MODEL_CAPABILITIES_UNAVAILABLE"

@@ -6,7 +6,7 @@ from copy import deepcopy
 from hashlib import sha256
 from uuid import uuid4
 
-from api.document_exchange.identity import binding_keys
+from document_exchange.identity import binding_keys
 from api.document_exchange.merge import merge_text
 
 HEADINGS = (
@@ -132,8 +132,11 @@ def parse_markdown(value):
                 fail("INVALID_FORMAT", "В Eva повторяется номер раздела ТЗ")
             if key != str(len(result) + 1):
                 fail("INVALID_FORMAT", "Нарушен порядок разделов ТЗ")
+
             # Headings may differ in punctuation, but not in their meaning.
-            normalize = lambda s: re.sub(r"\W+", "", s.casefold())
+            def normalize(s):
+                return re.sub(r"\W+", "", s.casefold())
+
             if normalize(heading.group(2)) != normalize(HEADINGS[int(key) - 1]):
                 fail("INVALID_FORMAT", f"Проверьте название раздела {key}")
             result[key], current = "", key
@@ -162,6 +165,35 @@ def merge_sections(base, local, remote):
         else:
             candidate[key] = result["text"]
     return {"sections": candidate, "conflicts": conflicts}
+
+
+def apply_merge_edits(current, edits):
+    """Apply unique, non-overlapping literal edits against one complete snapshot."""
+    result, pending = sections(current), {}
+    if not isinstance(edits, list):
+        fail("MODEL_INVALID_OUTPUT", "Помощник не вернул список точечных правок", 502)
+    for edit in edits:
+        if (
+            not isinstance(edit, dict)
+            or set(edit) != {"section", "before", "after"}
+            or not isinstance(edit["section"], str)
+            or edit["section"] not in result
+            or not all(isinstance(edit[key], str) for key in ("before", "after"))
+        ):
+            fail("MODEL_INVALID_OUTPUT", "Некорректная точечная правка ТЗ", 502)
+        body, quote = result[edit["section"]], edit["before"]
+        start = body.find(quote)
+        if (not quote and body) or start < 0 or (quote and body.find(quote, start + 1) >= 0):
+            fail("MODEL_INVALID_OUTPUT", "Цитата правки отсутствует или неоднозначна", 502)
+        pending.setdefault(edit["section"], []).append((start, start + len(quote), edit["after"]))
+    for key, replacements in pending.items():
+        replacements.sort(key=lambda item: item[:2])
+        if any(right[0] == left[0] or right[0] < left[1] for left, right in zip(replacements, replacements[1:])):
+            fail("MODEL_INVALID_OUTPUT", "Точечные правки пересекаются", 502)
+    for key, replacements in pending.items():
+        for start, end, replacement in reversed(replacements):
+            result[key] = result[key][:start] + replacement + result[key][end:]
+    return sections(result)
 
 
 def context(value, document_id):

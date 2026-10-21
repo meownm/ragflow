@@ -6,7 +6,14 @@ from copy import deepcopy
 from datetime import UTC, datetime
 from urllib.parse import urlsplit
 
+from api.document_exchange.content import content_hash
+
 from .domain import SpecificationError, assert_context, context, draft, empty_sections, eva_identity, fail, identifier, markdown, merge_sections, parse_markdown, sections, text, version
+
+
+def _eva_baseline(base, remote, hashes):
+    """Keep the local spelling of sections unchanged in Eva's representation."""
+    return {key: base[key] if content_hash(value) == hashes.get(key, content_hash(base[key])) else value for key, value in remote.items()}
 
 
 class Specifications:
@@ -149,7 +156,8 @@ class Specifications:
 
         await self.run(self.repository.change, actor, workspace, document_id, data.get("version"), reserve, "eva_export")
         try:
-            binding = await self.run(self.eva.publish_connected_page, actor, snapshot["eva"], markdown(snapshot["sections"]), snapshot["title"])
+            binding, published = await self.run(self.eva.publish_connected_page, actor, snapshot["eva"], markdown(snapshot["sections"]), snapshot["title"])
+            published_sections = parse_markdown(published) if published.strip() else empty_sections()
         except asyncio.CancelledError:
             # A synchronous network call can still finish after HTTP cancellation.
             raise
@@ -168,7 +176,7 @@ class Specifications:
         def complete(doc):
             if (doc.get("eva_export") or {}).get("id") != attempt:
                 fail("EVA_EXPORT_BUSY", "Состояние выгрузки изменилось. Проверьте страницу Eva", 409)
-            doc["eva"] = {**binding, "base": snapshot["sections"]}
+            doc["eva"] = {**binding, "base": snapshot["sections"], "section_hashes": {key: content_hash(value) for key, value in published_sections.items()}}
             doc["eva_export"].update(status="published", published_at=datetime.now(UTC).isoformat())
 
         return await self.run(self.repository.change, actor, workspace, document_id, None, complete, "eva_export", latest=True)
@@ -182,9 +190,21 @@ class Specifications:
             fail("EVA_NOT_BOUND", "ТЗ не связано со страницей Eva", 409)
         binding, remote = await self.run(self.eva.read_connected_page, actor, snapshot["eva"])
         content = parse_markdown(remote) if remote.strip() else empty_sections()
-        if content == snapshot["eva"]["base"] and binding.get("remote_version") == snapshot["eva"].get("remote_version"):
-            return snapshot
-        merged = merge_sections(snapshot["eva"]["base"], snapshot["sections"], content)
+        # Eva's verified hash uses its decoded representation. The local source
+        # may be equivalent HTML, so comparing it to decoded Markdown is not a
+        # reliable test for whether the published remote content changed.
+        remote_hash = binding.get("remote_content_hash")
+        unchanged = (bool(remote_hash) and remote_hash == snapshot["eva"].get("remote_content_hash")) or content == snapshot["eva"]["base"]
+        if unchanged:
+            if binding.get("remote_version") == snapshot["eva"].get("remote_version") and (snapshot["eva"].get("section_hashes") or content == snapshot["eva"]["base"]):
+                return snapshot
+
+            def refresh(doc):
+                doc["eva"] = {**doc["eva"], **binding, "base": doc["eva"]["base"], "section_hashes": {key: content_hash(value) for key, value in content.items()}}
+
+            return await self.run(self.repository.change, actor, workspace, document_id, snapshot["version"], refresh, "pull")
+        base_hashes = snapshot["eva"].get("section_hashes", {})
+        merged = merge_sections(snapshot["eva"]["base"], snapshot["sections"], _eva_baseline(snapshot["eva"]["base"], content, base_hashes))
         proposal = {
             "id": identifier(),
             "source": "eva",
@@ -193,6 +213,7 @@ class Specifications:
             "sections": merged["sections"],
             "conflicts": merged["conflicts"],
             "base": snapshot["eva"]["base"],
+            "base_hashes": base_hashes,
             "remote": content,
             "binding": binding,
             "status": "needs_resolution" if merged["conflicts"] else "ready",
@@ -442,6 +463,10 @@ class Specifications:
             doc["sections"] = deepcopy(candidate)
             item.update(status="applied", applied_revision=doc["revision"] + int(changed))
             if item.get("source") == "eva":
-                doc["eva"] = {**item["binding"], "base": item["remote"]}
+                doc["eva"] = {
+                    **item["binding"],
+                    "base": _eva_baseline(item["base"], item["remote"], item.get("base_hashes", {})),
+                    "section_hashes": {key: content_hash(value) for key, value in item["remote"].items()},
+                }
 
         return await self.run(self.repository.change, actor, workspace, document_id, None, update, "apply", latest=True)

@@ -18,7 +18,7 @@ export function RevisionPreview({
   return (
     <div className="space-y-4">
       <p className="text-sm text-text-secondary">
-        Редакция {previous.number} → текущая {current.revision}. Удалённое
+        Редакция {previous.number} → редакция {current.revision}. Удалённое
         зачёркнуто, добавленное подчёркнуто.
       </p>
       {previous.title !== current.title && (

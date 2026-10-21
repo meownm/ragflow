@@ -51,10 +51,11 @@ def exchange():
 
 def test_same_page_update_and_repeat_do_not_create_another_publication(exchange):
     pages, client, binding = exchange
-    result = pages.publish_connected_page("actor", binding, "After", "After")
+    result, source = pages.publish_connected_page("actor", binding, "After", "After")
     assert result["document_id"] == "page" and result["remote_version"] == "v3"
     assert result["remote_content_hash"] == content_hash("After")
-    assert pages.publish_connected_page("actor", binding, "After", "After") == result
+    assert source == "After"
+    assert pages.publish_connected_page("actor", binding, "After", "After") == (result, source)
     assert (client.saves, client.publishes, client.closed) == (1, 1, 2)
 
 
@@ -96,6 +97,6 @@ def test_lost_publication_response_is_checked_before_manual_retry(exchange):
     client.after_publish = lost
     with pytest.raises(TimeoutError):
         pages.publish_connected_page("actor", binding, "After", "After")
-    result = pages.publish_connected_page("actor", binding, "After", "After")
+    result, source = pages.publish_connected_page("actor", binding, "After", "After")
     assert result["remote_version"] == "v3"
     assert client.saves == client.publishes == 1

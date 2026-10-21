@@ -24,11 +24,13 @@ export function EvaImport({
   actor,
   busy,
   onImported,
+  onPending,
 }: {
   workspace: string;
   actor: string;
   busy: boolean;
   onImported: (document: Specification) => void;
+  onPending?: (pending: boolean) => void;
 }) {
   const [query, setQuery] = useState('');
   const [items, setItems] = useState<EvaPage[] | null>(null);
@@ -45,6 +47,9 @@ export function EvaImport({
     }
   }
   const [saved, setSaved] = useState(load);
+  useEffect(() => {
+    onPending?.(!!saved.pending);
+  }, [saved.pending, onPending]);
   const [activity, setActivity] = useState<'import' | 'cancel' | null>(null);
   const working = activity !== null;
   const running = useRef<'import' | 'cancel' | null>(null);

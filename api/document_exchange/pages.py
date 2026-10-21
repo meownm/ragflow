@@ -115,7 +115,8 @@ class EvaPages:
             expected_hash = content_hash(self.decode_html(html))
             actual_hash = content_hash(self.decode_html(str(remote.get("html") or "")))
             if actual_hash == expected_hash and str(remote.get("name") or "").strip() == name:
-                return self._binding(binding["connector_id"], reader, binding, remote, self.decode_html(str(remote.get("html") or "")))
+                source = self.decode_html(str(remote.get("html") or ""))
+                return self._binding(binding["connector_id"], reader, binding, remote, source), source
             if str(remote.get("version") or "") != binding["remote_version"] or actual_hash != binding["remote_content_hash"]:
                 raise EvaPageError("EVA_CHANGED", "Страница Eva изменилась. Сначала получите и объедините изменения", 409)
             draft_hash = content_hash(self.decode_html(str(remote.get("draft_html") or "")))
@@ -130,7 +131,8 @@ class EvaPages:
             if content_hash(self.decode_html(str(saved.get("draft_html") or ""))) != expected_hash or str(saved.get("name") or "").strip() != name:
                 raise EvaPageError("EVA_DRAFT_CONFLICT", "Черновик Eva изменился во время выгрузки. Проверьте страницу", 409)
             published = publish_draft(reader, writer, document_id, expected_hash, name, self.decode_html)
-            return self._binding(binding["connector_id"], reader, binding, published, self.decode_html(str(published.get("html") or "")))
+            source = self.decode_html(str(published.get("html") or ""))
+            return self._binding(binding["connector_id"], reader, binding, published, source), source
 
     def _binding(self, connector_id, client, binding, remote, markdown):
         return {

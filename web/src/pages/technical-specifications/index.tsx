@@ -42,6 +42,7 @@ import {
 } from './comment-drafts';
 import {
   documentDirty,
+  matchesDocumentSave,
   readDocumentDraft,
   reconcileDocument,
   writeDocumentDraft,
@@ -55,18 +56,20 @@ import {
   headings,
   messageId,
   readDraft,
-  selectionContext,
   staleContext,
   wholeContext,
   writeDraft,
   type Context,
   type Draft,
+  type Proposal,
   type Revision,
   type SavedDraft,
   type Specification,
 } from './model';
-import { EvaChoices, ProposalPreview } from './proposal-preview';
+import { ProposalCard } from './proposal-card';
 import { RevisionPreview } from './revision-preview';
+import { SectionEditor } from './section-editor';
+import './workspace.css';
 
 const selectClass =
   'max-w-full rounded-md border border-border-button bg-bg-base px-3 py-2 text-sm';
@@ -87,6 +90,12 @@ export default function TechnicalSpecifications() {
   const workspace = params.get('workspace') ?? '';
   const documentId = params.get('document') ?? '';
   const [name, setName] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [pendingImport, setPendingImport] = useState(false);
+  const [goal, setGoal] = useState('');
+  const [seedGoal, setSeedGoal] = useState<{ id: string; text: string } | null>(
+    null,
+  );
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   function navigate(next: Record<string, string>) {
@@ -131,12 +140,15 @@ export default function TechnicalSpecifications() {
         navigate({ workspace: value.id });
       } else {
         const value = await createSpecification(workspace, name);
+        setSeedGoal({ id: value.id, text: goal.trim() });
         await client.invalidateQueries({
           queryKey: SpecificationKeys.list(user.id, workspace),
         });
         navigate({ workspace, document: value.id });
       }
       setName('');
+      setGoal('');
+      setCreating(false);
     } catch (cause) {
       setError(sourceRequestError(cause, 'Не удалось создать'));
     } finally {
@@ -145,8 +157,8 @@ export default function TechnicalSpecifications() {
   }
 
   return (
-    <main className="flex h-full min-h-0 min-w-0 flex-1 flex-col gap-5 overflow-auto p-5 text-text-primary">
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border-button pb-4">
+    <main className="tz-workspace flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-auto text-text-primary">
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border-button px-6 py-4">
         <button
           type="button"
           className="text-xl font-medium"
@@ -192,63 +204,112 @@ export default function TechnicalSpecifications() {
         </p>
       )}
       {!documentId && (
-        <section className="mx-auto w-full max-w-4xl space-y-5">
-          <h1 className="text-lg font-medium">
-            {workspace ? project.data?.title : 'Выберите или создайте проект'}
-          </h1>
-          <form
-            className="flex flex-wrap gap-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void create(!workspace);
-            }}
-          >
-            <Input
-              aria-label={workspace ? 'Название ТЗ' : 'Название проекта'}
-              placeholder={workspace ? 'Название ТЗ' : 'Название проекта'}
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              className="min-w-48 flex-1"
-              maxLength={255}
-            />
-            <Button
-              disabled={busy || !name.trim() || Boolean(workspace && !canEdit)}
-            >
-              {workspace ? 'Создать ТЗ' : 'Создать проект'}
+        <section className="tz-list space-y-5">
+          {creating && (
+            <Button variant="ghost" onClick={() => setCreating(false)}>
+              ← Технические задания
             </Button>
-          </form>
-          {workspace && canEdit && (
-            <EvaImport
-              key={`${user.id}:${workspace}`}
-              workspace={workspace}
-              actor={user.id}
-              busy={busy}
-              onImported={(value) => {
-                void client.invalidateQueries({
-                  queryKey: SpecificationKeys.list(user.id, workspace),
-                });
-                navigate({
-                  workspace: value.workspace_id,
-                  document: value.id,
-                });
+          )}
+          <h1 className="text-lg font-medium">
+            {creating
+              ? 'Создать ТЗ'
+              : workspace
+                ? project.data?.title
+                : 'Выберите или создайте проект'}
+          </h1>
+          {workspace && !creating && (
+            <Button disabled={!canEdit} onClick={() => setCreating(true)}>
+              Создать ТЗ
+            </Button>
+          )}
+          {(!workspace || creating) && (
+            <form
+              className="max-w-xl space-y-4"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void create(!workspace);
               }}
-            />
+            >
+              <Input
+                aria-label={workspace ? 'Название ТЗ' : 'Название проекта'}
+                placeholder={workspace ? 'Название ТЗ' : 'Название проекта'}
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                className="min-w-48 flex-1"
+                maxLength={255}
+              />
+              {workspace && (
+                <details>
+                  <summary className="mb-3 cursor-pointer text-sm">
+                    Добавить цель и источники
+                  </summary>
+                  <label className="block space-y-2 text-sm">
+                    Цель и границы
+                    <Textarea
+                      aria-label="Цель и границы"
+                      value={goal}
+                      maxLength={10000}
+                      onChange={(event) => setGoal(event.target.value)}
+                    />
+                  </label>
+                  <p className="mt-3 text-sm text-text-secondary">
+                    Основания БТ и связанную страницу Eva можно выбрать в
+                    документе.
+                  </p>
+                </details>
+              )}
+              <Button
+                disabled={
+                  busy || !name.trim() || Boolean(workspace && !canEdit)
+                }
+              >
+                {workspace ? 'Создать ТЗ' : 'Создать проект'}
+              </Button>
+            </form>
+          )}
+          {!creating && workspace && canEdit && (
+            <details className="text-sm" open={pendingImport || undefined}>
+              <summary className="cursor-pointer py-2 text-accent-primary">
+                Создать ТЗ из Eva
+              </summary>
+              <EvaImport
+                key={`${user.id}:${workspace}`}
+                workspace={workspace}
+                actor={user.id}
+                busy={busy}
+                onPending={setPendingImport}
+                onImported={(value) => {
+                  void client.invalidateQueries({
+                    queryKey: SpecificationKeys.list(user.id, workspace),
+                  });
+                  navigate({
+                    workspace: value.workspace_id,
+                    document: value.id,
+                  });
+                }}
+              />
+            </details>
           )}
           {documents.isFetching && <p role="status">Загрузка…</p>}
-          {documents.data?.map((item) => (
-            <button
-              type="button"
-              key={item.id}
-              className="flex w-full items-center justify-between gap-4 border-b border-border-button py-4 text-left hover:text-accent-primary"
-              onClick={() => navigate({ workspace, document: item.id })}
-            >
-              <span>{item.title}</span>
-              <span className="text-sm text-text-secondary">
-                Редакция {item.revision}
-              </span>
-            </button>
-          ))}
-          {workspace && documents.data?.length === 0 && (
+          {!creating &&
+            documents.data?.map((item) => (
+              <button
+                type="button"
+                key={item.id}
+                className="tz-list-row hover:text-accent-primary"
+                onClick={() => navigate({ workspace, document: item.id })}
+              >
+                <span>
+                  {item.title}
+                  <small>Техническое задание</small>
+                </span>
+                <span className="text-sm text-text-secondary">
+                  Редакция {item.revision}
+                </span>
+                <span className="text-sm text-text-secondary">Открыть</span>
+              </button>
+            ))}
+          {!creating && workspace && documents.data?.length === 0 && (
             <p className="text-text-secondary">В проекте пока нет ТЗ.</p>
           )}
         </section>
@@ -260,6 +321,7 @@ export default function TechnicalSpecifications() {
         <Editor
           key={`${user.id}:${workspace}:${documentId}`}
           initial={current.data}
+          initialGoal={seedGoal?.id === documentId ? seedGoal.text : ''}
           actor={user.id}
           canEdit={canEdit}
           onSaved={(value) => {
@@ -283,11 +345,13 @@ export default function TechnicalSpecifications() {
 
 function Editor({
   initial,
+  initialGoal = '',
   actor,
   canEdit,
   onSaved,
 }: {
   initial: Specification;
+  initialGoal?: string;
   actor: string;
   canEdit: boolean;
   onSaved: (value: Specification) => void;
@@ -297,16 +361,34 @@ function Editor({
   projectionSaved.current = onSaved;
   const manualKey =
     draftKey(actor, initial.workspace_id, initial.id) + ':document';
-  const [editing, setEditing] = useState(() =>
-    readDocumentDraft(manualKey, initial),
-  );
+  const [editing, setEditing] = useState(() => {
+    const local = readDocumentDraft(manualKey, initial);
+    return initialGoal && !initial.sections['1'] && !documentDirty(local)
+      ? { ...local, sections: { ...local.sections, '1': initialGoal } }
+      : local;
+  });
   const { title, sections: edited } = editing;
   const [documentSaveError, setDocumentSaveError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const submittedSave = useRef<DocumentDraft | null>(null);
+  const [autoSaveError, setAutoSaveError] = useState('');
+  const currentDocument = useRef(doc);
+  currentDocument.current = doc;
+  const [focusSection, setFocusSection] = useState('1');
+  const [dismissed, setDismissed] = useState<string[]>([]);
+  const [compareTo, setCompareTo] = useState<Revision | null>(null);
+  const compareRequest = useRef(0);
   const liveEditing = useRef(editing);
-  const manualSaved = useRef(true);
+  const manualSaved = useRef(!initialGoal || !documentDirty(editing));
   const [mode, setMode] = useState<'document' | 'chat'>('document');
   const [panel, setPanel] = useState<
-    'comments' | 'history' | 'eva' | 'alignment' | null
+    | 'comments'
+    | 'history'
+    | 'eva'
+    | 'alignment'
+    | 'attention'
+    | 'sources'
+    | null
   >(null);
   const panelRef = useRef<HTMLElement | null>(null);
   const openedPanel = useRef<typeof panel>(null);
@@ -342,6 +424,7 @@ function Editor({
   const [candidateContext, setCandidateContext] = useState<Context | null>(
     null,
   );
+  const [invalidSelection, setInvalidSelection] = useState(false);
   const [commentDrafts, setCommentDrafts] = useState(() =>
     readCommentDrafts(key + ':comments', initial),
   );
@@ -381,13 +464,17 @@ function Editor({
     editing.base.revision !== doc.revision;
   const stale = staleContext(chatDraft.context, doc.sections);
   const ready = doc.proposals.filter(
-    (item) => item.status !== 'applied' && item.base_revision === doc.revision,
+    (item) =>
+      item.status !== 'applied' &&
+      item.base_revision === doc.revision &&
+      !dismissed.includes(item.id),
   );
 
   const persistEditing = useCallback(
     (next: DocumentDraft) => {
       liveEditing.current = next;
       setEditing(next);
+      if (documentDirty(next)) setStatus('');
       manualSaved.current = writeDocumentDraft(manualKey, next);
       setDocumentSaveError(
         manualSaved.current
@@ -399,15 +486,135 @@ function Editor({
   );
 
   useEffect(() => {
+    if (!manualSaved.current) persistEditing(liveEditing.current);
+  }, [persistEditing]);
+
+  useEffect(() => {
     setDoc((current) =>
       initial.version > current.version ? initial : current,
     );
   }, [initial]);
 
   useEffect(() => {
-    const next = reconcileDocument(liveEditing.current, doc);
+    const next = reconcileDocument(
+      liveEditing.current,
+      doc,
+      submittedSave.current,
+    );
     if (next !== liveEditing.current) persistEditing(next);
   }, [doc, persistEditing]);
+
+  const saveDocument = useCallback(async () => {
+    const submitted = liveEditing.current;
+    const base = currentDocument.current;
+    if (
+      !canEdit ||
+      submittedSave.current ||
+      !documentDirty(submitted) ||
+      submitted.conflicts.length ||
+      submitted.base.revision !== base.revision
+    )
+      return;
+    submittedSave.current = submitted;
+    setSaving(true);
+    setAutoSaveError('');
+    try {
+      const result = await saveSpecification(base.workspace_id, {
+        ...base,
+        title: submitted.title,
+        sections: submitted.sections,
+      });
+      if (!mounted.current) return;
+      // A newer server snapshot may already have arrived through polling.
+      const latest =
+        currentDocument.current.version > result.version
+          ? currentDocument.current
+          : result;
+      persistEditing(reconcileDocument(liveEditing.current, result, submitted));
+      if (latest.version > result.version)
+        persistEditing(reconcileDocument(liveEditing.current, latest));
+      setDoc(latest);
+      projectionSaved.current(latest);
+    } catch (cause) {
+      if (!mounted.current) return;
+      setAutoSaveError(
+        sourceRequestError(
+          cause,
+          'Не удалось сохранить ТЗ. Повторите сохранение',
+        ),
+      );
+      // Read the outcome once; never blindly repeat a possibly completed write.
+      try {
+        const latest = await getSpecification(base.workspace_id, base.id);
+        if (mounted.current) {
+          if (matchesDocumentSave(submitted, latest)) {
+            persistEditing(
+              reconcileDocument(liveEditing.current, latest, submitted),
+            );
+            setAutoSaveError('');
+          }
+          setDoc((current) =>
+            latest.version > current.version ? latest : current,
+          );
+          projectionSaved.current(latest);
+        }
+      } catch {
+        /* Every local draft remains available for an explicit retry. */
+      }
+    } finally {
+      submittedSave.current = null;
+      if (mounted.current) setSaving(false);
+    }
+  }, [canEdit, persistEditing]);
+
+  useEffect(() => {
+    if (
+      !dirty ||
+      !canEdit ||
+      busy ||
+      saving ||
+      autoSaveError ||
+      editing.conflicts.length ||
+      editing.base.revision !== doc.revision
+    )
+      return;
+    const timer = setTimeout(() => void saveDocument(), 700);
+    return () => clearTimeout(timer);
+  }, [
+    editing,
+    dirty,
+    canEdit,
+    busy,
+    saving,
+    autoSaveError,
+    doc.revision,
+    saveDocument,
+  ]);
+
+  function jump(section: string) {
+    setFocusSection(section);
+    window.document
+      .getElementById(`tz-section-${section}`)
+      ?.scrollIntoView?.({ block: 'start', behavior: 'instant' });
+  }
+
+  function proposalCard(proposal: Proposal, section?: string) {
+    return (
+      <ProposalCard
+        key={proposal.id}
+        proposal={proposal}
+        local={doc.sections}
+        section={section}
+        disabled={!canEdit || busy || saving || dirty}
+        onAction={(name, data) => void action(name, data)}
+        onDiscuss={() => {
+          changeDraft({ ...chatDraft, context: wholeContext(doc) });
+          setMode('chat');
+        }}
+        onDismiss={() => setDismissed((value) => [...value, proposal.id])}
+      />
+    );
+  }
 
   const canLeave = useCallback(() => {
     let manualSafe = manualSaved.current || !documentDirty(liveEditing.current);
@@ -694,6 +901,11 @@ function Editor({
           : 'Изменения применены',
       );
     }
+    if (name === 'restore' && result) {
+      setPanel(null);
+      setMode('document');
+      setCompareTo(null);
+    }
     return result;
   }
 
@@ -733,6 +945,8 @@ function Editor({
   }
 
   async function showHistory() {
+    compareRequest.current++;
+    setCompareTo(null);
     setPanel(panel === 'history' ? null : 'history');
     setError('');
     try {
@@ -792,68 +1006,116 @@ function Editor({
 
   return (
     <section className="min-w-0 space-y-4" aria-label="Рабочее пространство ТЗ">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0">
-          <h1 className="break-words text-xl font-medium">{doc.title}</h1>
-          <p className="text-sm text-text-secondary">Редакция {doc.revision}</p>
+      <header className="tz-editor-head">
+        <div className="tz-title-row">
+          <div className="min-w-0">
+            <h1 className="tz-title">{title || doc.title}</h1>
+            <div className="tz-save-state">
+              <span role="status">
+                {!canEdit
+                  ? 'Только чтение'
+                  : autoSaveError
+                    ? 'Не удалось сохранить'
+                    : editing.conflicts.length
+                      ? 'Нужен выбор текста'
+                      : dirty || saving
+                        ? 'Сохраняется…'
+                        : 'Сохранено'}
+              </span>
+              <span>Редакция {doc.revision}</span>
+            </div>
+          </div>
+          <div className="tz-head-actions">
+            <Button
+              variant="ghost"
+              onClick={() => setPanel(panel === 'eva' ? null : 'eva')}
+            >
+              Eva
+            </Button>
+            <Button
+              variant="ghost"
+              disabled={busy || saving || dirty}
+              onClick={() => void downloadDocument()}
+            >
+              Выгрузить .md
+            </Button>
+          </div>
         </div>
-        <nav className="flex flex-wrap gap-2" aria-label="Режим ТЗ">
-          <Button
-            variant="outline"
-            onClick={() => setPanel(panel === 'alignment' ? null : 'alignment')}
-          >
-            Соответствие БТ
-          </Button>
-          <Button
-            variant={mode === 'document' ? 'default' : 'outline'}
-            onClick={() => setMode('document')}
-          >
-            Документ
-          </Button>
-          <Button
-            variant={mode === 'chat' ? 'default' : 'outline'}
-            onClick={() => setMode('chat')}
-          >
-            Чат
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => setPanel(panel === 'comments' ? null : 'comments')}
-          >
-            Комментарии · {doc.comments.filter((item) => !item.resolved).length}
-          </Button>
-          <Button variant="outline" onClick={() => void showHistory()}>
-            История
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => setPanel(panel === 'eva' ? null : 'eva')}
-          >
-            Eva
-          </Button>
-          <Button
-            variant="outline"
-            disabled={busy || dirty}
-            title={dirty ? 'Сначала сохраните правки документа' : undefined}
-            onClick={() => void downloadDocument()}
-          >
-            Выгрузить .md
-          </Button>
+        <nav className="tz-toolbar" aria-label="Режим ТЗ">
+          <div className="tz-toolbar-group">
+            <div className="tz-mode-group">
+              <Button
+                variant={mode === 'document' ? 'default' : 'ghost'}
+                aria-pressed={mode === 'document'}
+                onClick={() => {
+                  setMode('document');
+                  if (panel === 'history') setPanel(null);
+                }}
+              >
+                Документ
+              </Button>
+              <Button
+                variant={mode === 'chat' ? 'default' : 'ghost'}
+                aria-pressed={mode === 'chat'}
+                onClick={() => {
+                  setMode('chat');
+                  if (panel === 'history') setPanel(null);
+                }}
+              >
+                Чат
+              </Button>
+            </div>
+            <Button
+              variant="ghost"
+              onClick={() => setPanel(panel === 'comments' ? null : 'comments')}
+            >
+              Комментарии ·{' '}
+              {doc.comments.filter((item) => !item.resolved).length}
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() =>
+                setPanel(panel === 'attention' ? null : 'attention')
+              }
+            >
+              Требует внимания{ready.length ? ` · ${ready.length}` : ''}
+            </Button>
+          </div>
+          <div className="tz-toolbar-group">
+            <Button
+              variant="ghost"
+              onClick={() => setPanel(panel === 'sources' ? null : 'sources')}
+            >
+              Источники
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() =>
+                setPanel(panel === 'alignment' ? null : 'alignment')
+              }
+            >
+              Соответствие БТ
+            </Button>
+            <Button variant="ghost" onClick={() => void showHistory()}>
+              История
+            </Button>
+          </div>
         </nav>
       </header>
-      {panel === 'alignment' && (
-        <AlignmentPanel
-          key={doc.id}
-          document={doc}
-          disabled={busy || dirty}
-          canEdit={canEdit}
-          onDocument={(value) => {
-            setDoc((current) =>
-              value.version >= current.version ? value : current,
-            );
-            onSaved(value);
-          }}
-        />
+      {autoSaveError && (
+        <div role="alert" className="mx-6 space-y-2 py-3">
+          <p>{autoSaveError}</p>
+          <Button
+            variant="outline"
+            disabled={saving || busy || !!editing.conflicts.length}
+            onClick={() => {
+              setAutoSaveError('');
+              void saveDocument();
+            }}
+          >
+            Повторить сохранение
+          </Button>
+        </div>
       )}
       {error && (
         <p role="alert" className="whitespace-pre-wrap text-state-error">
@@ -944,31 +1206,76 @@ function Editor({
         </section>
       )}
       <div
-        className={`grid min-w-0 gap-8 ${panel ? 'xl:grid-cols-[minmax(0,1fr)_minmax(280px,360px)]' : ''}`}
+        className={`tz-document-layout ${mode === 'chat' ? 'tz-chat-layout' : ''} ${panel && panel !== 'history' ? 'tz-with-panel' : ''} ${panel === 'history' ? 'tz-history-layout' : ''}`}
       >
-        <div className="min-w-0">
+        {mode === 'document' && panel !== 'history' && (
+          <nav className="tz-toc" aria-label="Оглавление ТЗ">
+            <p>Содержание</p>
+            {headings.map((heading, index) => (
+              <a
+                key={heading}
+                href={`#tz-section-${index + 1}`}
+                aria-current={focusSection === String(index + 1)}
+                onClick={(event) => {
+                  event.preventDefault();
+                  jump(String(index + 1));
+                }}
+              >
+                <span>{index + 1}.</span>
+                <span>{heading}</span>
+              </a>
+            ))}
+          </nav>
+        )}
+        <div className={panel === 'history' ? 'hidden' : 'min-w-0'}>
           {mode === 'document' ? (
-            <div className="mx-auto max-w-4xl space-y-7">
-              <label className="block space-y-2">
-                Название ТЗ
-                <Input
-                  value={title}
-                  aria-label="Название документа"
-                  onChange={(event) =>
-                    persistEditing({ ...editing, title: event.target.value })
-                  }
-                  disabled={!canEdit || busy}
-                  maxLength={255}
-                />
+            <article
+              className="tz-document"
+              aria-label="Полный текст технического задания"
+            >
+              <p className="tz-document-note">
+                {canEdit
+                  ? 'Текст можно редактировать прямо в документе. Изменения сохраняются автоматически.'
+                  : 'Документ доступен для чтения.'}
+              </p>
+              <label className="tz-mobile-toc">
+                Перейти к разделу
+                <select
+                  aria-label="Перейти к разделу"
+                  value={focusSection}
+                  onChange={(event) => jump(event.target.value)}
+                >
+                  {headings.map((heading, index) => (
+                    <option key={heading} value={String(index + 1)}>
+                      {index + 1}. {heading}
+                    </option>
+                  ))}
+                </select>
               </label>
+              <details className="mb-6 text-sm">
+                <summary>Название документа</summary>
+                <label className="block space-y-2">
+                  Название ТЗ
+                  <Input
+                    value={title}
+                    aria-label="Название документа"
+                    onChange={(event) =>
+                      persistEditing({ ...editing, title: event.target.value })
+                    }
+                    disabled={!canEdit || busy}
+                    maxLength={255}
+                  />
+                </label>
+              </details>
               {headings.map((heading, index) => {
                 const section = String(index + 1);
                 return (
                   <section
                     key={section}
-                    className="space-y-3 border-t border-border-button pt-5"
+                    id={`tz-section-${section}`}
+                    className="tz-document-section"
                   >
-                    <header className="flex flex-wrap items-center justify-between gap-2">
+                    <header className="tz-section-heading">
                       <h2 className="font-medium">
                         {section}. {heading}
                       </h2>
@@ -976,6 +1283,7 @@ function Editor({
                         <Button
                           size="sm"
                           variant="ghost"
+                          disabled={invalidSelection}
                           onClick={() => {
                             changeDraft({
                               ...chatDraft,
@@ -992,6 +1300,7 @@ function Editor({
                         <Button
                           size="sm"
                           variant="ghost"
+                          disabled={invalidSelection}
                           onClick={() => {
                             beginComment(
                               candidateContext?.anchor?.section === section
@@ -1006,66 +1315,45 @@ function Editor({
                         </Button>
                       </div>
                     </header>
-                    <Textarea
-                      aria-label={`Раздел ${section}`}
+                    <SectionEditor
+                      section={section}
+                      document={doc}
                       value={edited[section]}
                       disabled={!canEdit || busy}
-                      className="min-h-36 font-mono"
-                      onChange={(event) =>
+                      onChange={(value) =>
                         persistEditing({
-                          ...editing,
+                          ...liveEditing.current,
                           sections: {
-                            ...edited,
-                            [section]: event.target.value,
+                            ...liveEditing.current.sections,
+                            [section]: value,
                           },
                         })
                       }
-                      onSelect={(event) => {
-                        const target = event.currentTarget;
-                        setCandidateContext(
-                          selectionContext(
-                            doc,
-                            section,
-                            target.value,
-                            target.selectionStart,
-                            target.selectionEnd,
-                          ),
-                        );
+                      onSelection={(context) => {
+                        setCandidateContext(context);
+                        setFocusSection(section);
                       }}
+                      onInvalidSelection={setInvalidSelection}
                     />
+                    {invalidSelection && focusSection === section && (
+                      <p role="alert" className="text-sm text-state-error">
+                        Не удалось связать выделение с сохранённым текстом.
+                        Выделите фрагмент заново; область чата не изменена.
+                      </p>
+                    )}
+                    {ready.map((proposal) => proposalCard(proposal, section))}
                   </section>
                 );
               })}
-              <div className="flex flex-wrap items-center gap-3">
-                <Button
-                  disabled={
-                    !canEdit ||
-                    !dirty ||
-                    busy ||
-                    editing.conflicts.length > 0 ||
-                    editing.base.revision !== doc.revision
-                  }
-                  onClick={() =>
-                    void perform(() =>
-                      saveSpecification(doc.workspace_id, {
-                        ...doc,
-                        title,
-                        sections: edited,
-                      }),
-                    )
-                  }
-                >
-                  Сохранить ТЗ
-                </Button>
-                {dirty && (
-                  <span className="text-sm text-text-secondary">
-                    Есть несохранённые правки
-                  </span>
-                )}
-              </div>
-            </div>
+            </article>
           ) : (
-            <div className="mx-auto max-w-4xl space-y-5">
+            <div className="tz-chat space-y-5">
+              <div className="mb-6">
+                <h2 className="text-lg font-medium">Чат с помощником</h2>
+                <p className="text-sm text-text-secondary">
+                  Обсуждайте и меняйте это ТЗ.
+                </p>
+              </div>
               {doc.messages.length === 0 && (
                 <p className="text-text-secondary">
                   Задайте вопрос или попросите подготовить правки ТЗ.
@@ -1113,7 +1401,7 @@ function Editor({
                       item.status === 'processing') && (
                       <Button
                         variant="outline"
-                        disabled={busy || dirty || !canEdit}
+                        disabled={busy || saving || dirty || !canEdit}
                         onClick={() =>
                           void action('chat', {
                             draft: {
@@ -1131,120 +1419,7 @@ function Editor({
                     )}
                 </article>
               ))}
-              {ready.map((proposal) => (
-                <section
-                  key={proposal.id}
-                  className="space-y-4 border-y border-border-button py-5"
-                  aria-label="Предложенные изменения"
-                >
-                  <h2 className="font-medium">
-                    Правки к редакции {proposal.base_revision}
-                  </h2>
-                  {!!proposal.issues?.length && (
-                    <ul
-                      role="alert"
-                      className="list-disc space-y-1 pl-5 text-state-error"
-                    >
-                      {proposal.issues.map((issue, index) => (
-                        <li key={index}>{issue}</li>
-                      ))}
-                    </ul>
-                  )}
-                  {proposal.status === 'needs_resolution' ? (
-                    <div className="space-y-4">
-                      <p>
-                        {proposal.source === 'eva' ? (
-                          <>
-                            Изменены одни и те же требования. Выберите значения
-                            для связанных разделов; независимые правки обеих
-                            сторон сохраняются.
-                          </>
-                        ) : (
-                          <>
-                            Опишите исправление в чате. Помощнику доступны
-                            предложение и найденные противоречия.
-                          </>
-                        )}
-                      </p>
-                      {!proposal.conflicts?.length && (
-                        <ProposalPreview
-                          local={doc.sections}
-                          candidate={proposal.sections}
-                          includeUnchanged
-                        />
-                      )}
-                      {proposal.conflicts?.map((conflict) => (
-                        <details key={conflict.section}>
-                          <summary>Раздел {conflict.section}</summary>
-                          <div className="grid gap-4 md:grid-cols-2">
-                            <div>
-                              <p>Ваш текст</p>
-                              <DocumentMarkdown>
-                                {conflict.local}
-                              </DocumentMarkdown>
-                            </div>
-                            <div>
-                              <p>Из Eva</p>
-                              <DocumentMarkdown>
-                                {conflict.remote}
-                              </DocumentMarkdown>
-                            </div>
-                          </div>
-                        </details>
-                      ))}
-                      {proposal.source === 'eva' ? (
-                        <EvaChoices
-                          disabled={busy || dirty || !canEdit}
-                          onChoose={(choice) =>
-                            void action('resolve-eva', {
-                              proposal_id: proposal.id,
-                              choice,
-                            })
-                          }
-                        />
-                      ) : (
-                        <Button
-                          variant="outline"
-                          onClick={() =>
-                            changeDraft({
-                              ...chatDraft,
-                              context: wholeContext(doc),
-                            })
-                          }
-                        >
-                          Обсудить всё ТЗ
-                        </Button>
-                      )}
-                    </div>
-                  ) : (
-                    <>
-                      <ProposalPreview
-                        local={doc.sections}
-                        candidate={proposal.sections}
-                      />
-                      <Button
-                        disabled={!canEdit || busy || dirty}
-                        onClick={() =>
-                          void action('apply', { proposal_id: proposal.id })
-                        }
-                      >
-                        Применить изменения
-                      </Button>
-                      {proposal.source === 'eva' && (
-                        <EvaChoices
-                          disabled={busy || dirty || !canEdit}
-                          onChoose={(choice) =>
-                            void action('resolve-eva', {
-                              proposal_id: proposal.id,
-                              choice,
-                            })
-                          }
-                        />
-                      )}
-                    </>
-                  )}
-                </section>
-              ))}
+              {ready.map((proposal) => proposalCard(proposal))}
               <label className="flex flex-wrap items-center gap-2 text-sm">
                 Контекст
                 <select
@@ -1410,14 +1585,155 @@ function Editor({
             </div>
           )}
         </div>
+        {(panel === 'attention' ||
+          panel === 'sources' ||
+          panel === 'alignment') && (
+          <aside
+            className="tz-panel"
+            aria-label={
+              panel === 'attention'
+                ? 'Требует внимания'
+                : panel === 'sources'
+                  ? 'Источники'
+                  : 'Проверка соответствия'
+            }
+            ref={panelRef}
+            tabIndex={-1}
+          >
+            <div className="tz-panel-title">
+              <h2>
+                {panel === 'attention'
+                  ? 'Требует внимания'
+                  : panel === 'sources'
+                    ? 'Источники'
+                    : 'Соответствие БТ'}
+              </h2>
+              <Button
+                variant="ghost"
+                aria-label="Закрыть панель"
+                onClick={() => setPanel(null)}
+              >
+                ×
+              </Button>
+            </div>
+            {panel === 'attention' && (
+              <div className="space-y-4 mb-6">
+                {ready.length === 0 && <p>Неприменённых предложений нет.</p>}
+                {ready.map((proposal) => (
+                  <div key={proposal.id}>
+                    <p>
+                      {proposal.status === 'needs_resolution'
+                        ? 'Нужно устранить противоречия'
+                        : 'Подготовлены правки'}{' '}
+                      · разделы{' '}
+                      {headings
+                        .map((_, index) => String(index + 1))
+                        .filter(
+                          (key) => proposal.sections[key] !== doc.sections[key],
+                        )
+                        .join(', ')}
+                    </p>
+                    {proposal.issues?.map((issue, index) => (
+                      <p key={index}>{issue}</p>
+                    ))}
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setMode('document');
+                        setPanel(null);
+                        setTimeout(
+                          () =>
+                            jump(
+                              headings
+                                .map((_, index) => String(index + 1))
+                                .find(
+                                  (key) =>
+                                    proposal.sections[key] !==
+                                    doc.sections[key],
+                                ) || '1',
+                            ),
+                          0,
+                        );
+                      }}
+                    >
+                      Посмотреть в документе
+                    </Button>
+                  </div>
+                ))}
+                {dismissed.length > 0 && (
+                  <Button variant="ghost" onClick={() => setDismissed([])}>
+                    Показать убранные предложения · {dismissed.length}
+                  </Button>
+                )}
+                {doc.comments.filter((item) => !item.resolved).length > 0 && (
+                  <Button variant="ghost" onClick={() => setPanel('comments')}>
+                    Открытые комментарии ·{' '}
+                    {doc.comments.filter((item) => !item.resolved).length}
+                  </Button>
+                )}
+              </div>
+            )}
+            {panel === 'sources' && (
+              <div className="space-y-3 mb-6">
+                <h3 className="font-medium">Связанная страница Eva</h3>
+                {doc.eva ? (
+                  <>
+                    <a
+                      className="break-all text-accent-primary"
+                      href={doc.eva.page_url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {doc.eva.document_name || doc.eva.page_url}
+                    </a>
+                    <p className="text-sm">
+                      Версия Eva {doc.eva.remote_version}
+                    </p>
+                    <Button variant="outline" onClick={() => setPanel('eva')}>
+                      Обмен с Eva
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <p>ТЗ не связано со страницей Eva.</p>
+                    <Button variant="outline" onClick={() => setPanel('eva')}>
+                      Связать страницу
+                    </Button>
+                  </>
+                )}
+              </div>
+            )}
+            <AlignmentPanel
+              key={doc.id}
+              document={doc}
+              disabled={busy || saving || dirty}
+              canEdit={canEdit}
+              onDocument={(value) => {
+                setDoc((current) =>
+                  value.version >= current.version ? value : current,
+                );
+                onSaved(value);
+              }}
+            />
+          </aside>
+        )}
         {panel === 'comments' && (
           <aside
-            className="min-w-0 space-y-4 border-t border-border-button pt-4 xl:border-l xl:border-t-0 xl:pl-5"
+            className="tz-panel space-y-4"
             aria-label="Комментарии"
             ref={panelRef}
             tabIndex={-1}
           >
-            <h2 className="font-medium">Комментарии</h2>
+            <div className="tz-panel-title">
+              <h2>Комментарии</h2>
+              <Button
+                variant="ghost"
+                aria-label="Закрыть панель"
+                onClick={() => setPanel(null)}
+              >
+                ×
+              </Button>
+            </div>
             <label className="block space-y-2 text-sm">
               Комментарии к
               <select
@@ -1502,7 +1818,7 @@ function Editor({
                     <Button
                       size="sm"
                       variant="ghost"
-                      disabled={!canEdit || busy || dirty}
+                      disabled={!canEdit || busy || saving || dirty}
                       onClick={() =>
                         void action('comments', {
                           action: 'resolve',
@@ -1558,7 +1874,7 @@ function Editor({
               maxLength={10000}
             />
             <Button
-              disabled={!canEdit || busy || dirty || !comment.trim()}
+              disabled={!canEdit || busy || saving || dirty || !comment.trim()}
               onClick={async () => {
                 const submitted = liveComments.current;
                 const draft = submitted.entries[submitted.active];
@@ -1594,12 +1910,21 @@ function Editor({
         )}
         {panel === 'eva' && (
           <aside
-            className="min-w-0 space-y-4 border-t border-border-button pt-4 xl:border-l xl:border-t-0 xl:pl-5"
+            className="tz-panel space-y-4"
             aria-label="Обмен с Eva"
             ref={panelRef}
             tabIndex={-1}
           >
-            <h2 className="font-medium">Eva</h2>
+            <div className="tz-panel-title">
+              <h2>Eva</h2>
+              <Button
+                variant="ghost"
+                aria-label="Закрыть панель"
+                onClick={() => setPanel(null)}
+              >
+                ×
+              </Button>
+            </div>
             {doc.eva ? (
               <>
                 <p className="break-words">
@@ -1618,13 +1943,19 @@ function Editor({
                 </p>
                 <Button
                   variant="outline"
-                  disabled={busy || dirty || !canEdit}
+                  disabled={busy || saving || dirty || !canEdit}
                   onClick={async () => {
                     const result = await action('pull', {});
                     if (result) {
                       setMode('chat');
                       setStatus(
-                        result.version === doc.version
+                        !result.proposals.some(
+                          (item) =>
+                            item.source === 'eva' &&
+                            !doc.proposals.some(
+                              (previous) => previous.id === item.id,
+                            ),
+                        )
                           ? 'Новых изменений в Eva нет'
                           : 'Изменения готовы к просмотру',
                       );
@@ -1634,7 +1965,7 @@ function Editor({
                   Получить изменения
                 </Button>
                 <Button
-                  disabled={busy || dirty || !canEdit}
+                  disabled={busy || saving || dirty || !canEdit}
                   onClick={async () => {
                     const result = await action('publish-eva', {});
                     if (result) setStatus('Страница Eva обновлена');
@@ -1679,7 +2010,7 @@ function Editor({
                     />
                     <Button
                       variant="outline"
-                      disabled={busy || dirty || !evaUrl.trim()}
+                      disabled={busy || saving || dirty || !evaUrl.trim()}
                       onClick={async () => {
                         const result = await action('connect-eva', {
                           url: evaUrl,
@@ -1700,12 +2031,82 @@ function Editor({
         )}
         {panel === 'history' && (
           <aside
-            className="min-w-0 space-y-4 border-t border-border-button pt-4 xl:border-l xl:border-t-0 xl:pl-5"
+            className="tz-history space-y-4"
             aria-label="История редакций"
             ref={panelRef}
             tabIndex={-1}
           >
-            <h2 className="font-medium">История редакций</h2>
+            <div className="tz-panel-title">
+              <h2>История редакций</h2>
+              <Button
+                variant="ghost"
+                aria-label="Закрыть историю"
+                onClick={() => setPanel(null)}
+              >
+                Вернуться к документу
+              </Button>
+            </div>
+            <div className="flex flex-wrap gap-4">
+              <label>
+                Прежняя редакция
+                <select
+                  className={selectClass}
+                  aria-label="Прежняя редакция"
+                  value={oldRevision?.number ?? ''}
+                  onChange={(event) =>
+                    void openRevision(Number(event.target.value))
+                  }
+                >
+                  <option value="" disabled>
+                    Выберите редакцию
+                  </option>
+                  {history.map((item) => (
+                    <option key={item.number} value={item.number}>
+                      Редакция {item.number}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Следующая редакция
+                <select
+                  className={selectClass}
+                  aria-label="Следующая редакция"
+                  value={compareTo?.number ?? doc.revision}
+                  onChange={async (event) => {
+                    const number = Number(event.target.value);
+                    const request = ++compareRequest.current;
+                    if (number === doc.revision) {
+                      setCompareTo(null);
+                      return;
+                    }
+                    try {
+                      const value = await specificationRevision(
+                        doc.workspace_id,
+                        doc.id,
+                        number,
+                      );
+                      if (compareRequest.current === request && mounted.current)
+                        setCompareTo(value);
+                    } catch (cause) {
+                      if (compareRequest.current === request && mounted.current)
+                        setError(
+                          sourceRequestError(
+                            cause,
+                            'Не удалось открыть редакцию',
+                          ),
+                        );
+                    }
+                  }}
+                >
+                  {history.map((item) => (
+                    <option key={item.number} value={item.number}>
+                      Редакция {item.number}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
             {history.map((item) => (
               <Button
                 key={item.number}
@@ -1720,7 +2121,19 @@ function Editor({
             {oldRevision?.sections && (
               <section className="space-y-4">
                 <h3>Редакция {oldRevision.number}</h3>
-                <RevisionPreview current={doc} previous={oldRevision} />
+                <RevisionPreview
+                  current={
+                    compareTo?.sections
+                      ? {
+                          ...doc,
+                          title: compareTo.title,
+                          sections: compareTo.sections,
+                          revision: compareTo.number,
+                        }
+                      : doc
+                  }
+                  previous={oldRevision}
+                />
                 <Button
                   disabled={
                     !canEdit ||

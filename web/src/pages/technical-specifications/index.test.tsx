@@ -147,6 +147,12 @@ beforeEach(() => {
     }));
 });
 
+function editSection(label: string, value: string) {
+  const editor = screen.getByLabelText(label);
+  editor.textContent = value;
+  fireEvent.input(editor);
+}
+
 test('Eva updates the linked page with one action and reports the exported revision', async () => {
   const client = await openChat();
   const linked: Specification = {
@@ -236,9 +242,7 @@ test('export downloads only the server-authorized saved revision', async () => {
   );
   expect(exportSpecification).toHaveBeenCalledWith('project', 'doc', 1);
   fireEvent.click(screen.getByRole('button', { name: 'Документ' }));
-  fireEvent.change(screen.getByLabelText('Раздел 1'), {
-    target: { value: 'Несохранённый текст' },
-  });
+  editSection('Раздел 1', 'Несохранённый текст');
   expect(screen.getByRole('button', { name: 'Выгрузить .md' })).toBeDisabled();
 });
 
@@ -261,15 +265,13 @@ test('global links and browser Back cannot discard manual edits after a storage 
   jest.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
     throw new Error('quota');
   });
-  fireEvent.change(screen.getByLabelText('Раздел 1'), {
-    target: { value: 'Важная правка' },
-  });
+  editSection('Раздел 1', 'Важная правка');
   fireEvent.click(screen.getByRole('link', { name: 'Общая навигация' }));
-  expect(screen.getByLabelText('Раздел 1')).toHaveValue('Важная правка');
+  expect(screen.getByLabelText('Раздел 1')).toHaveTextContent('Важная правка');
   await act(async () => {
     await router.navigate(-1);
   });
-  expect(screen.getByLabelText('Раздел 1')).toHaveValue('Важная правка');
+  expect(screen.getByLabelText('Раздел 1')).toHaveTextContent('Важная правка');
   expect(router.state.location.pathname).toBe('/technical-specifications');
 });
 
@@ -535,24 +537,22 @@ test('server refresh on return updates the editor after a cached document', asyn
     ).toEqual(latest),
   );
   await waitFor(() =>
-    expect(
-      (screen.getByLabelText('Раздел 1') as HTMLTextAreaElement).value,
-    ).toBe('Вторая редакция'),
+    expect(screen.getByLabelText('Раздел 1').textContent).toBe(
+      'Вторая редакция',
+    ),
   );
 });
 
 test('manual edits survive list navigation and reopening', async () => {
   await openChat();
   fireEvent.click(screen.getByRole('button', { name: 'Документ' }));
-  fireEvent.change(screen.getByLabelText('Раздел 1'), {
-    target: { value: 'Важная несохранённая правка' },
-  });
+  editSection('Раздел 1', 'Важная несохранённая правка');
   fireEvent.click(screen.getByRole('button', { name: 'Технические задания' }));
   fireEvent.click(await screen.findByRole('button', { name: /Тестовое ТЗ/ }));
   await waitFor(() =>
-    expect(
-      (screen.getByLabelText('Раздел 1') as HTMLTextAreaElement).value,
-    ).toBe('Важная несохранённая правка'),
+    expect(screen.getByLabelText('Раздел 1').textContent).toBe(
+      'Важная несохранённая правка',
+    ),
   );
 });
 
@@ -562,11 +562,9 @@ test('navigation is stopped when manual edits cannot be stored', async () => {
   jest.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
     throw new Error('quota');
   });
-  fireEvent.change(screen.getByLabelText('Раздел 1'), {
-    target: { value: 'Несохранённый текст' },
-  });
+  editSection('Раздел 1', 'Несохранённый текст');
   fireEvent.click(screen.getByRole('button', { name: 'Технические задания' }));
-  expect((screen.getByLabelText('Раздел 1') as HTMLTextAreaElement).value).toBe(
+  expect(screen.getByLabelText('Раздел 1').textContent).toBe(
     'Несохранённый текст',
   );
   expect(
@@ -577,9 +575,7 @@ test('navigation is stopped when manual edits cannot be stored', async () => {
 test('manual overlaps require a choice while independent remote changes survive', async () => {
   const client = await openChat();
   fireEvent.click(screen.getByRole('button', { name: 'Документ' }));
-  fireEvent.change(screen.getByLabelText('Раздел 1'), {
-    target: { value: 'Моя правка' },
-  });
+  editSection('Раздел 1', 'Моя правка');
   const latest = {
     ...specification,
     version: 2,
@@ -597,13 +593,9 @@ test('manual overlaps require a choice while independent remote changes survive'
     );
   });
   await screen.findByRole('region', { name: 'Конфликт ручных правок' });
-  expect((screen.getByLabelText('Раздел 1') as HTMLTextAreaElement).value).toBe(
-    'Моя правка',
-  );
-  expect((screen.getByLabelText('Раздел 9') as HTMLTextAreaElement).value).toBe(
-    'Внешний журнал',
-  );
-  expect(screen.getByRole('button', { name: 'Сохранить ТЗ' })).toBeDisabled();
+  expect(screen.getByLabelText('Раздел 1').textContent).toBe('Моя правка');
+  expect(screen.getByLabelText('Раздел 9').textContent).toBe('Внешний журнал');
+  expect(saveSpecification).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole('button', { name: 'Оставить мой текст' }));
   jest
     .mocked(saveSpecification)
@@ -612,7 +604,9 @@ test('manual overlaps require a choice while independent remote changes survive'
       version: 3,
       revision: 3,
     }));
-  fireEvent.click(screen.getByRole('button', { name: 'Сохранить ТЗ' }));
+  await act(async () => {
+    jest.advanceTimersByTime(800);
+  });
   await waitFor(() =>
     expect(saveSpecification).toHaveBeenCalledWith(
       'project',
@@ -671,4 +665,202 @@ test('semantic contradictions show details and offer Eva resolution', async () =
     screen.queryByRole('button', { name: 'Применить изменения' }),
   ).not.toBeInTheDocument();
   expect(consoleError).not.toHaveBeenCalled();
+});
+
+test('autosave serializes requests and preserves typing during an in-flight save', async () => {
+  await openChat();
+  fireEvent.click(screen.getByRole('button', { name: 'Документ' }));
+  let finish!: (value: Specification) => void;
+  jest.mocked(saveSpecification).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  editSection('Раздел 1', 'Первый ввод');
+  await act(async () => {
+    jest.advanceTimersByTime(800);
+  });
+  expect(saveSpecification).toHaveBeenCalledTimes(1);
+  editSection('Раздел 1', 'Более новый ввод');
+  await act(async () => {
+    jest.advanceTimersByTime(1000);
+  });
+  expect(saveSpecification).toHaveBeenCalledTimes(1);
+  const first = {
+    ...specification,
+    revision: 2,
+    version: 2,
+    sections: { ...specification.sections, '1': 'Первый ввод' },
+  };
+  await act(async () => {
+    finish(first);
+  });
+  expect(screen.getByLabelText('Раздел 1')).toHaveTextContent(
+    'Более новый ввод',
+  );
+  expect(
+    screen.queryByRole('region', { name: 'Конфликт ручных правок' }),
+  ).not.toBeInTheDocument();
+  jest
+    .mocked(saveSpecification)
+    .mockImplementationOnce(async (_workspace, value) => ({
+      ...value,
+      revision: 3,
+      version: 3,
+    }));
+  await act(async () => {
+    jest.advanceTimersByTime(800);
+  });
+  expect(saveSpecification).toHaveBeenLastCalledWith(
+    'project',
+    expect.objectContaining({
+      version: 2,
+      sections: expect.objectContaining({ '1': 'Более новый ввод' }),
+    }),
+  );
+  expect(screen.getByText('Редакция 3')).toBeInTheDocument();
+  expect(screen.getByText('Сохранено', { exact: true })).toBeInTheDocument();
+});
+
+test('autosave error retains input and requires an explicit retry without background writes', async () => {
+  await openChat();
+  fireEvent.click(screen.getByRole('button', { name: 'Документ' }));
+  jest.mocked(saveSpecification).mockRejectedValueOnce(new Error('network'));
+  editSection('Раздел 1', 'Ввод до ошибки');
+  await act(async () => {
+    jest.advanceTimersByTime(800);
+  });
+  await screen.findByText('Не удалось сохранить', { exact: true });
+  editSection('Раздел 1', 'Дополненный ввод');
+  await act(async () => {
+    jest.advanceTimersByTime(5000);
+  });
+  expect(saveSpecification).toHaveBeenCalledTimes(1);
+  jest
+    .mocked(saveSpecification)
+    .mockImplementationOnce(async (_workspace, value) => ({
+      ...value,
+      version: 2,
+      revision: 2,
+    }));
+  await act(async () => {
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Повторить сохранение' }),
+    );
+  });
+  expect(saveSpecification).toHaveBeenCalledTimes(2);
+  expect(screen.getByLabelText('Раздел 1')).toHaveTextContent(
+    'Дополненный ввод',
+  );
+  expect(screen.getByText('Сохранено', { exact: true })).toBeInTheDocument();
+});
+
+test('readback of a completed autosave acknowledges its snapshot without conflicting with later typing', async () => {
+  await openChat();
+  fireEvent.click(screen.getByRole('button', { name: 'Документ' }));
+  let fail!: (cause: Error) => void;
+  jest.mocked(saveSpecification).mockImplementationOnce(
+    () =>
+      new Promise((_resolve, reject) => {
+        fail = reject;
+      }),
+  );
+  editSection('Раздел 1', 'Первый ввод');
+  await act(async () => {
+    jest.advanceTimersByTime(800);
+  });
+  editSection('Раздел 1', 'Более новый ввод');
+  jest.mocked(getSpecification).mockResolvedValue({
+    ...specification,
+    version: 2,
+    revision: 2,
+    sections: { ...specification.sections, '1': 'Первый ввод' },
+  });
+  await act(async () => {
+    fail(new Error('response lost'));
+  });
+  expect(
+    screen.queryByRole('region', { name: 'Конфликт ручных правок' }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByLabelText('Раздел 1')).toHaveTextContent(
+    'Более новый ввод',
+  );
+  jest
+    .mocked(saveSpecification)
+    .mockImplementationOnce(async (_workspace, value) => ({
+      ...value,
+      version: 3,
+      revision: 3,
+    }));
+  await act(async () => {
+    jest.advanceTimersByTime(800);
+  });
+  expect(saveSpecification).toHaveBeenLastCalledWith(
+    'project',
+    expect.objectContaining({
+      version: 2,
+      sections: expect.objectContaining({ '1': 'Более новый ввод' }),
+    }),
+  );
+});
+
+test('autosave recognizes a polled echo before its response and keeps later typing', async () => {
+  const client = await openChat();
+  fireEvent.click(screen.getByRole('button', { name: 'Документ' }));
+  let finish!: (value: Specification) => void;
+  jest.mocked(saveSpecification).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  editSection('Раздел 1', 'Первый ввод');
+  await act(async () => {
+    jest.advanceTimersByTime(800);
+  });
+  editSection('Раздел 1', 'Более новый ввод');
+  const committed = {
+    ...specification,
+    revision: 2,
+    version: 2,
+    sections: { ...specification.sections, '1': 'Первый ввод' },
+  };
+  await act(async () => {
+    client.setQueryData(
+      SpecificationKeys.document('actor', 'project', 'doc'),
+      committed,
+    );
+  });
+  await screen.findByText('Редакция 2');
+  expect(
+    screen.queryByRole('region', { name: 'Конфликт ручных правок' }),
+  ).not.toBeInTheDocument();
+  await act(async () => {
+    finish(committed);
+  });
+  expect(screen.getByLabelText('Раздел 1')).toHaveTextContent(
+    'Более новый ввод',
+  );
+  expect(
+    screen.queryByRole('region', { name: 'Конфликт ручных правок' }),
+  ).not.toBeInTheDocument();
+  jest
+    .mocked(saveSpecification)
+    .mockImplementationOnce(async (_workspace, value) => ({
+      ...value,
+      version: 3,
+      revision: 3,
+    }));
+  await act(async () => {
+    jest.advanceTimersByTime(800);
+  });
+  expect(saveSpecification).toHaveBeenLastCalledWith(
+    'project',
+    expect.objectContaining({
+      version: 2,
+      sections: expect.objectContaining({ '1': 'Более новый ввод' }),
+    }),
+  );
+  expect(screen.getByText('Редакция 3')).toBeInTheDocument();
 });

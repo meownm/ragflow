@@ -6,10 +6,12 @@ export function ProposalPreview({
   local,
   candidate,
   includeUnchanged = false,
+  section,
 }: {
   local: Sections;
   candidate: Sections;
   includeUnchanged?: boolean;
+  section?: string;
 }) {
   return (
     <>
@@ -17,6 +19,7 @@ export function ProposalPreview({
         const key = String(index + 1);
         const changed = candidate[key] !== local[key];
         return (
+          (!section || key === section) &&
           (changed || includeUnchanged) && (
             <details key={key} open={changed}>
               <summary>

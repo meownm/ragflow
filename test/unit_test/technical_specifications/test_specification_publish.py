@@ -7,6 +7,7 @@ from api.source_workbench.errors import SourceWorkspaceError
 from api.technical_specifications.application import Specifications
 from api.technical_specifications.domain import SpecificationError, markdown, parse_markdown
 from test.unit_test.technical_specifications.test_eva import AI, Eva, run
+from test.fixtures.technical_specifications.eva_codec import eva_roundtrip
 
 
 class PublishingEva(Eva):
@@ -27,7 +28,79 @@ class PublishingEva(Eva):
             if self.lose_response:
                 self.lose_response = False
                 raise TimeoutError("Publication response lost")
-        return self.read_connected_page(actor, binding)[0]
+        return self.read_connected_page(actor, binding)
+
+
+class FormattingEva(PublishingEva):
+    def publish_connected_page(self, actor, binding, source, name):
+        return super().publish_connected_page(actor, binding, eva_roundtrip(source), name)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("local_edit", [False, True])
+@pytest.mark.parametrize("metadata_version", [False, True])
+async def test_html_publication_and_unchanged_markdown_pull_preserve_local_source(store, local_edit, metadata_version):
+    eva = FormattingEva()
+    service = Specifications(store, AI(), run, eva)
+    doc = await service.import_eva("author", "workspace", {"url": "https://eva.test/page"})
+    doc = await service.edit(
+        "author", "workspace", doc["id"], {"version": doc["version"], "title": doc["title"], "sections": {**doc["sections"], "1": "<p><strong>Обязательно</strong>: исходный текст</p>"}}
+    )
+    doc = await service.publish_eva("author", "workspace", doc["id"], {"version": doc["version"]})
+    assert eva.content["1"] == "**Обязательно**: исходный текст"
+    if local_edit:
+        doc = await service.edit(
+            "author", "workspace", doc["id"], {"version": doc["version"], "title": doc["title"], "sections": {**doc["sections"], "1": "<p><strong>Обязательно</strong>: новый локальный текст</p>"}}
+        )
+    if metadata_version:
+        eva.version = "metadata-update"
+    result = await service.pull("author", "workspace", doc["id"], {"version": doc["version"]})
+    assert result["sections"] == doc["sections"] and result["revision"] == doc["revision"]
+    assert result["proposals"] == []
+    assert result["eva"]["remote_version"] == eva.version
+    if not metadata_version:
+        assert result == doc
+
+
+@pytest.mark.asyncio
+async def test_real_eva_changes_merge_without_turning_unchanged_html_sections_into_conflicts(store):
+    eva = FormattingEva()
+    service = Specifications(store, AI(), run, eva)
+    doc = await service.import_eva("author", "workspace", {"url": "https://eva.test/page"})
+    html = "<p><strong>Обязательно</strong>: исходный текст</p>"
+    doc = await service.edit("author", "workspace", doc["id"], {"version": doc["version"], "title": doc["title"], "sections": {**doc["sections"], "1": html}})
+    doc = await service.publish_eva("author", "workspace", doc["id"], {"version": doc["version"]})
+    local = html.replace("исходный", "локальный")
+    doc = await service.edit("author", "workspace", doc["id"], {"version": doc["version"], "title": doc["title"], "sections": {**doc["sections"], "1": local}})
+    for journal in ("Правка Eva 1", "Правка Eva 2"):
+        eva.content["9"] = journal
+        eva.version = journal
+        doc = await service.pull("author", "workspace", doc["id"], {"version": doc["version"]})
+        proposal = doc["proposals"][-1]
+        assert proposal["status"] == "ready" and proposal["conflicts"] == []
+        assert proposal["sections"]["1"] == local and proposal["sections"]["9"] == journal
+        doc = await service.apply("author", "workspace", doc["id"], {"version": doc["version"], "proposal_id": proposal["id"]})
+        assert doc["sections"]["1"] == local
+    eva.content["1"] = "**Обязательно**: удалённый текст"
+    eva.version = "Real overlap"
+    doc = await service.pull("author", "workspace", doc["id"], {"version": doc["version"]})
+    assert doc["proposals"][-1]["status"] == "needs_resolution"
+    assert [item["section"] for item in doc["proposals"][-1]["conflicts"]] == ["1"]
+
+
+@pytest.mark.asyncio
+async def test_persisted_html_binding_without_section_hashes_is_repaired_without_a_content_revision(store):
+    eva = FormattingEva()
+    service = Specifications(store, AI(), run, eva)
+    doc = await service.import_eva("author", "workspace", {"url": "https://eva.test/page"})
+    html = "<p><strong>Обязательно</strong>: исходный текст</p>"
+    doc = await service.edit("author", "workspace", doc["id"], {"version": doc["version"], "title": doc["title"], "sections": {**doc["sections"], "1": html}})
+    doc = await service.publish_eva("author", "workspace", doc["id"], {"version": doc["version"]})
+    doc = store.change("author", "workspace", doc["id"], doc["version"], lambda value: value["eva"].pop("section_hashes"), "legacy-fixture")
+    repaired = await service.pull("author", "workspace", doc["id"], {"version": doc["version"]})
+    assert repaired["sections"] == doc["sections"] and repaired["revision"] == doc["revision"]
+    assert repaired["proposals"] == [] and len(repaired["eva"]["section_hashes"]) == 9
+    assert await service.pull("author", "workspace", doc["id"], {"version": repaired["version"]}) == repaired
 
 
 async def imported(store):

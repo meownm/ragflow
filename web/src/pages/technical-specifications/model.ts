@@ -79,6 +79,10 @@ export interface Specification {
     document_name?: string;
   };
 }
+export type SpecificationSummary = Pick<
+  Specification,
+  'id' | 'title' | 'version' | 'revision'
+>;
 export interface Revision {
   number: number;
   title: string;

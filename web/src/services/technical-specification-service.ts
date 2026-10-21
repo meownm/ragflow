@@ -4,6 +4,7 @@ import type {
   Revision,
   SavedDraft,
   Specification,
+  SpecificationSummary,
 } from '@/pages/technical-specifications/model';
 import { restAPIv1 } from '@/utils/api';
 import request from '@/utils/next-request';
@@ -100,7 +101,9 @@ export async function checkAlignment(
 }
 
 export async function listSpecifications(workspace: string) {
-  const response = await request.get<Envelope<Specification[]>>(url(workspace));
+  const response = await request.get<Envelope<SpecificationSummary[]>>(
+    url(workspace),
+  );
   return unwrap(response.data);
 }
 

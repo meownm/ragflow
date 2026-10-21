@@ -39,6 +39,7 @@ from business_documents.sql_query.query_specification import QuerySpecificationV
 LOGGER = logging.getLogger(__name__)
 _MAX_PROMPT_COLUMNS = 40
 _MAX_PROMPT_TEXT = 2_000
+_DATASET_LOOKUP_TIMEOUT_SECONDS = 5.0
 
 
 def _prompt_text(value: Any, maximum: int = _MAX_PROMPT_TEXT) -> str:
@@ -122,13 +123,17 @@ class OpenMetadataCatalogResolver:
         raise CatalogAccessDenied("OpenMetadata Dataset access is required")
 
     async def resolve(self, *, term: str, actor_id: str, locale: str) -> CatalogResult:
-        question = (
-            f"Find database tables for the business entity '{term}'. Return candidates, fields, and sources."
-            if locale == "en"
-            else f"Найди таблицы для бизнес-сущности «{term}». Покажи кандидатов, поля и источники."
-        )
+        # Discovery scores the query tokens; instruction words would pollute retrieval.
+        question = term
         try:
-            dataset_hits, dataset_warning = await retrieve_openmetadata_dataset_hits(self._service, question, actor_id)
+            try:
+                dataset_hits, dataset_warning = await asyncio.wait_for(
+                    retrieve_openmetadata_dataset_hits(self._service, question, actor_id),
+                    timeout=_DATASET_LOOKUP_TIMEOUT_SECONDS,
+                )
+            except TimeoutError:
+                dataset_hits = None
+                dataset_warning = "Dataset search timed out; live OpenMetadata search was used." if locale == "en" else "Поиск в Dataset не ответил вовремя; использован живой каталог OpenMetadata."
             kwargs: dict[str, Any] = {
                 "user_id": actor_id,
                 "locale": locale,
@@ -186,11 +191,38 @@ class OpenMetadataCatalogResolver:
 
 
 class TenantSchemaInterpreter:
-    """One bounded tenant-LLM call over catalog-backed candidates."""
+    """Bounded semantic query planning and interpretation of catalog-backed candidates."""
 
     def __init__(self, llm=None, *, timeout_seconds: float = MODEL_TIMEOUT_SECONDS):
         self._llm = llm if llm is not None else RAGFlowLLMAdapter()
         self._timeout_seconds = timeout_seconds
+
+    async def plan_search(self, *, tenant_id: str, requirements: str, locale: str) -> Mapping[str, Any]:
+        descriptor = prompt_descriptor("PLAN_SQL_SCHEMA_SEARCH")
+        if descriptor is None:
+            raise SchemaInterpretationError("SQL schema search prompt is unavailable")
+        system_prompt = prompt_text(descriptor["name"]).replace(
+            "{{output_schema_json}}",
+            json.dumps(contract_schema("sql_schema_search"), ensure_ascii=False),
+        )
+        try:
+            raw = await asyncio.wait_for(
+                self._llm.async_generate(
+                    tenant_id,
+                    system_prompt,
+                    {
+                        "prompt": descriptor,
+                        "job_input": {"task_type": "PLAN_SQL_SCHEMA_SEARCH", "requirements": requirements, "locale": locale},
+                    },
+                ),
+                timeout=self._timeout_seconds,
+            )
+            parsed = raw if isinstance(raw, dict) else repair_json(raw, return_objects=True)
+            validate_contract("sql_schema_search", parsed)
+            return parsed
+        except Exception as exc:
+            LOGGER.warning("SQL semantic search planning failed: %s", type(exc).__name__)
+            raise SchemaInterpretationError("Tenant LLM search planning failed") from exc
 
     def prompt_provenance(self) -> PromptProvenance | None:
         try:
@@ -367,6 +399,12 @@ class BusinessDocumentSqlQuerySchemaService:
             raise BusinessDocumentError(
                 "SQL_SCHEMA_CATALOG_UNAVAILABLE",
                 "Не удалось проверить доступность каталога данных.",
+                503,
+            ) from exc
+        except SchemaInterpretationError as exc:
+            raise BusinessDocumentError(
+                "SQL_SCHEMA_SEARCH_UNAVAILABLE",
+                "Не удалось подобрать поисковые темы по требованиям. Повторите поиск данных.",
                 503,
             ) from exc
 

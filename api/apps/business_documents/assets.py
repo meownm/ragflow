@@ -41,6 +41,7 @@ _CONTRACT_FILES = {
     "review_plan": "review_plan.v1.schema.json",
     "eva_change_draft": "eva_change_draft.v1.schema.json",
     "sql_schema_interpretation": "sql_schema_interpretation.v1.schema.json",
+    "sql_schema_search": "sql_schema_search.v1.schema.json",
     "sql_query_plan": "sql_query_plan.v1.schema.json",
     "sql_requirements_proposal": "sql_requirements_proposal.v1.schema.json",
 }
@@ -53,6 +54,7 @@ _PROMPT_FILES = {
     "requirement_coverage": ("requirement_coverage.v1.md", "1"),
     "eva_change": ("eva_change.v1.md", "1"),
     "sql_schema_interpreter": ("sql_schema_interpreter.v1.md", "1"),
+    "sql_schema_search": ("sql_schema_search.v1.md", "1"),
     "sql_query_planner": ("sql_query_planner.v1.md", "1"),
     "sql_requirements_analyst": ("sql_requirements_analyst.v1.md", "1"),
     "sql_conclusion": ("sql_conclusion.v1.md", "1"),
@@ -64,6 +66,7 @@ _JOB_PROMPTS = {
     "PLAN_CHANGES": "change_planner",
     "GENERATE_EVA_CHANGE": "eva_change",
     "RESOLVE_SQL_SCHEMA": "sql_schema_interpreter",
+    "PLAN_SQL_SCHEMA_SEARCH": "sql_schema_search",
     "PLAN_SQL_QUERY": "sql_query_planner",
     "ANALYZE_SQL_REQUIREMENTS": "sql_requirements_analyst",
     "PROPOSE_SQL_CONCLUSION": "sql_conclusion",

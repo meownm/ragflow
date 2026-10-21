@@ -54,7 +54,7 @@ class CatalogLookupError(RuntimeError):
 
 
 class SchemaInterpretationError(RuntimeError):
-    """The optional LLM interpretation could not be produced safely."""
+    """The LLM search plan or grounded interpretation could not be produced safely."""
 
 
 @dataclass(frozen=True)
@@ -277,6 +277,8 @@ class CatalogResolver(Protocol):
 
 class SchemaInterpreter(Protocol):
     def prompt_provenance(self) -> PromptProvenance | None: ...
+
+    async def plan_search(self, *, tenant_id: str, requirements: str, locale: str) -> Mapping[str, Any]: ...
 
     async def interpret(
         self,
@@ -567,7 +569,7 @@ def parse_resolve_schema_command(
     return ResolveSchemaCommand(
         tenant_id=_required_text(tenant_id, "tenant_id", maximum=200),
         actor_id=_required_text(actor_id, "actor_id", maximum=200),
-        terms=_parse_identifiers(payload.get("terms"), field="terms", maximum_length=MAX_SCHEMA_TERM_LENGTH),
+        terms=() if requirements and payload.get("terms", []) == [] else _parse_identifiers(payload.get("terms"), field="terms", maximum_length=MAX_SCHEMA_TERM_LENGTH),
         requirements=requirements,
         locale=_locale(payload.get("locale", "ru")),
         is_admin=bool(is_admin),
@@ -868,8 +870,28 @@ def _resolution_payload(
     return resolutions, needs_clarification, degraded
 
 
+def _search_queries(raw: Any) -> dict[str, str]:
+    if not isinstance(raw, Mapping) or set(raw) != {"schema_version", "searches"} or raw["schema_version"] != "1":
+        raise SchemaResolutionValidationError("Invalid semantic search plan")
+    searches = raw["searches"]
+    if not isinstance(searches, list) or not 1 <= len(searches) <= MAX_SCHEMA_TERMS:
+        raise SchemaResolutionValidationError("Search plan must contain from 1 to 8 entities")
+    queries: dict[str, str] = {}
+    labels: set[str] = set()
+    for search in searches:
+        if not isinstance(search, Mapping) or set(search) != {"term", "query"}:
+            raise SchemaResolutionValidationError("Invalid semantic search entry")
+        term = _required_text(search["term"], "term", maximum=MAX_SCHEMA_TERM_LENGTH)
+        query = _required_text(search["query"], "query", maximum=MAX_SCHEMA_TERM_LENGTH)
+        if term.casefold() in labels:
+            raise SchemaResolutionValidationError("Search entities must be unique")
+        labels.add(term.casefold())
+        queries[term] = query
+    return queries
+
+
 class SchemaResolutionScenario:
-    """Resolve compact candidates concurrently, then interpret them once."""
+    """Plan semantic searches when needed, retrieve candidates, then ground recommendations."""
 
     def __init__(
         self,
@@ -899,18 +921,35 @@ class SchemaResolutionScenario:
         except TimeoutError as exc:
             raise CatalogLookupError("Catalog authorization timed out") from exc
 
+        terms = command.terms
+        queries = {term: term for term in terms}
+        if not terms:
+            try:
+                raw = await asyncio.wait_for(
+                    self._interpreter.plan_search(
+                        tenant_id=command.tenant_id,
+                        requirements=requirements_for_planning(command.requirements, command.clarifications),
+                        locale=command.locale,
+                    ),
+                    timeout=max(0.001, deadline - loop.time()),
+                )
+                queries = _search_queries(raw)
+                terms = tuple(queries)
+            except (TimeoutError, SchemaInterpretationError, SchemaResolutionValidationError) as exc:
+                raise SchemaInterpretationError("Could not derive catalog searches from requirements") from exc
+
         async def resolve_term(term: str) -> CatalogResult:
-            return await self._catalog.resolve(term=term, actor_id=command.actor_id, locale=command.locale)
+            return await self._catalog.resolve(term=queries[term], actor_id=command.actor_id, locale=command.locale)
 
         outcomes = await _bounded_batch(
-            command.terms,
+            terms,
             resolve_term,
             concurrency=self._max_concurrency,
             item_timeout_seconds=self._lookup_timeout_seconds,
             batch_timeout_seconds=max(0.001, min(self._batch_timeout_seconds, deadline - loop.time())),
         )
         catalog_answers, lookup_states, successful_answers = _collate_catalog_outcomes(
-            command.terms,
+            terms,
             outcomes,
             command.locale,
         )

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "searches"],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "searches": {
+      "type": "array", "minItems": 1, "maxItems": 8,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["term", "query"],
+        "properties": {
+          "term": {"type": "string", "minLength": 1, "maxLength": 200},
+          "query": {"type": "string", "minLength": 1, "maxLength": 200}
+        }
+      }
+    }
+  }
+}

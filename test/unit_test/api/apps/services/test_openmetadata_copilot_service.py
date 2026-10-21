@@ -96,6 +96,14 @@ def test_normalized_table_keeps_physical_names_beside_display_names(om_module):
     assert normalized["column_details"][0]["technical_name"] == "order_id"
 
 
+def test_business_keywords_match_compound_physical_identifiers_without_exact_names(om_module):
+    target = om_module.normalize_table(_raw_table("refund", "payment_refund_event", columns=["payment_id", "refund_amount"]), "https://catalog.example")
+    unrelated = om_module.normalize_table(_raw_table("doc", "documents", columns=["source", "payload"]), "https://catalog.example")
+    assert om_module._local_score(target, "payment refund") > om_module._local_score(unrelated, "payment refund")
+    assert om_module._local_score(target, "payment refund") >= 64
+    assert om_module._local_score(target, "payment_refund_event") >= 250
+
+
 class FakeClient:
     def __init__(self, tables):
         self.tables = {table["id"]: deepcopy(table) for table in tables}

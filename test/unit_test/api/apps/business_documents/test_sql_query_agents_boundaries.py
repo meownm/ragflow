@@ -163,8 +163,8 @@ def schema_project(requirements=None):
     return project
 
 
-@pytest.mark.parametrize("terms", [[], ["Orders", " orders "], [""], ["x" * 201]])
-def test_schema_agent_requires_bounded_distinct_search_terms_before_job_creation(database, terms):
+@pytest.mark.parametrize("terms", [None, ["Orders", " orders "], [""], ["x" * 201]])
+def test_schema_agent_rejects_invalid_optional_search_terms_before_job_creation(database, terms):
     project = schema_project()
     before = BusinessDocumentSqlQueryProject.get_by_id(project["id"]).__data__.copy()
     with pytest.raises(BusinessDocumentError) as caught:
@@ -173,6 +173,27 @@ def test_schema_agent_requires_bounded_distinct_search_terms_before_job_creation
     assert BusinessDocumentSqlQueryProject.get_by_id(project["id"]).__data__ == before
     assert BusinessDocumentJob.select().count() == 0
     assert BusinessDocumentSqlAgentCommand.select().count() == 0
+
+
+@pytest.mark.parametrize("payload", [{}, {"terms": []}])
+def test_schema_agent_uses_accepted_requirements_without_retyping_search_terms(database, payload):
+    project = schema_project()
+    Service.request_agent(
+        TENANT,
+        ACTOR,
+        project["id"],
+        {
+            "schema_version": "1",
+            "expected_state_version": 1,
+            "idempotency_key": "semantic-schema",
+            "kind": "SCHEMA",
+            "payload": payload,
+        },
+    )
+    job = BusinessDocumentJob.get()
+    assert job.job_type == "SQL_AGENT_SCHEMA"
+    assert job.payload["request"]["terms"] == []
+    assert "Show orders" in job.payload["request"]["requirements"]
 
 
 @pytest.mark.parametrize("requirements", [{"requirements": None}, {"requirements": [{"statement": " "}]}])

@@ -975,9 +975,9 @@ class BusinessDocumentSqlAgentService:
         except RequirementsAnalysisValidationError as error:
             raise ConflictError("SQL_REQUIREMENTS_ARTIFACT_INVALID", "Accepted clarifications are invalid") from error
         if kind == "SCHEMA":
-            terms = payload.get("terms")
-            if not isinstance(terms, list) or not 1 <= len(terms) <= 8:
-                raise ValidationError("INVALID_SQL_AGENT_REQUEST", "terms must contain from 1 to 8 items")
+            terms = payload.get("terms", [])
+            if not isinstance(terms, list) or len(terms) > 8:
+                raise ValidationError("INVALID_SQL_AGENT_REQUEST", "terms must contain at most 8 items")
             normalized_terms = [_text(term, "term", 200) for term in terms]
             if len({term.casefold() for term in normalized_terms}) != len(normalized_terms):
                 raise ValidationError("INVALID_SQL_AGENT_REQUEST", "terms must be unique")
@@ -1173,8 +1173,15 @@ class BusinessDocumentSqlAgentService:
         deadlines = {run.id: result_expires_at(run.create_time) for run in runs}
         derived_runs = (
             [
-                {"id": item.id, "kind": item.kind, "source_run_id": item.source_run_id, "status": item.status, "row_count": item.row_count, "checks": item.checks,
-                 "expires_at": result_expires_at(item.create_time, source_deadline=deadlines[item.source_run_id])}
+                {
+                    "id": item.id,
+                    "kind": item.kind,
+                    "source_run_id": item.source_run_id,
+                    "status": item.status,
+                    "row_count": item.row_count,
+                    "checks": item.checks,
+                    "expires_at": result_expires_at(item.create_time, source_deadline=deadlines[item.source_run_id]),
+                }
                 for item in BusinessDocumentSqlQueryRun.select(
                     BusinessDocumentSqlQueryRun.id,
                     BusinessDocumentSqlQueryRun.kind,

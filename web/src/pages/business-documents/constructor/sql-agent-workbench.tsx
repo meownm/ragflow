@@ -2554,10 +2554,6 @@ export function SqlAgentWorkbench({
       .split(/\r?\n/)
       .map((item) => item.replace(/^\s*[-*•]\s+/, '').trim())
       .filter(Boolean);
-    if (kind === 'SCHEMA' && !parsedTerms.length) {
-      setError('Опишите, какие данные нужно найти в каталоге.');
-      return;
-    }
     setBusy(true);
     try {
       const updated = await requestBusinessDocumentSqlAgent(project.id, {
@@ -3096,23 +3092,28 @@ export function SqlAgentWorkbench({
                       {currentAgent === 'REQUIREMENTS'
                         ? 'Агент выделит требования к выводу, соединениям, фильтрации, сортировке и лимитам.'
                         : currentAgent === 'SCHEMA'
-                          ? 'Опишите, какие данные нужны для ответа. Каталог предложит подходящие источники и поля.'
+                          ? 'Агент выделит нужные данные из подтверждённых требований и найдёт источники в доступном каталоге. Имена таблиц вводить не нужно.'
                           : 'Агент использует только подтверждённые требования и снимок схемы.'}
                     </p>
                     {currentAgent === 'SCHEMA' && (
-                      <label className="mt-5 block text-sm font-medium">
-                        Что искать в данных?
-                        <Textarea
-                          className="mt-2 min-h-36"
-                          value={terms}
-                          placeholder={'запуски импорта глоссария'}
-                          onChange={(event) => setTerms(event.target.value)}
-                        />
-                        <span className="mt-2 block text-xs text-text-disabled">
-                          До 8 тем для поиска за один шаг. Имя таблицы не
-                          требуется.
-                        </span>
-                      </label>
+                      <details className="mt-5 text-sm">
+                        <summary className="cursor-pointer">
+                          Уточнить поиск (необязательно)
+                        </summary>
+                        <label className="mt-3 block font-medium">
+                          Темы для уточнения поиска
+                          <Textarea
+                            className="mt-2 min-h-36"
+                            value={terms}
+                            placeholder={'запуски импорта глоссария'}
+                            onChange={(event) => setTerms(event.target.value)}
+                          />
+                          <span className="mt-2 block text-xs text-text-disabled">
+                            До 8 тем для поиска за один шаг. Имя таблицы не
+                            требуется.
+                          </span>
+                        </label>
+                      </details>
                     )}
                     {currentAgent === 'QUERY' && (
                       <div className="mt-5 border-y border-border-button py-4 text-sm">

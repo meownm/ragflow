@@ -775,6 +775,9 @@ def _local_score(table: dict[str, Any], query: str) -> float:
     weights = {"name": 20, "fqn": 12, "description": 3, "columns": 12, "facets": 6}
     for field, text in fields.items():
         text_tokens = set(_tokens(text))
+        if field in {"name", "fqn", "columns"}:
+            # Match business words inside identifiers, while preserving exact tokens.
+            text_tokens.update(_tokens(re.sub(r"[_\-.]+", " ", text)))
         score += weights[field] * len(query_tokens.intersection(text_tokens))
     return score
 

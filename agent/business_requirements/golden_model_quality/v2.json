@@ -1,7 +1,7 @@
 {
   "schema_version": "1",
   "suite_id": "business-requirements-live-model-quality",
-  "suite_version": "2.0.0",
+  "suite_version": "2.0.1",
   "language": "ru",
   "cases": [
     {
@@ -15,7 +15,10 @@
       "controlled_facts": [],
       "answers_by_section": {},
       "expected": {
-        "question_count": {"minimum": 2, "maximum": 4},
+        "question_count": {
+          "minimum": 2,
+          "maximum": 4
+        },
         "question_target_section_ids": [],
         "required_fragments": [],
         "forbidden_fragments": []
@@ -43,11 +46,71 @@
         }
       ],
       "controlled_facts": [
-        {"fact_id": "availability", "aliases": ["99,9%", "99.9%"], "chunk_id": "monitoring", "expected_section_ids": ["5.5"], "subject_aliases": ["доступност"]},
-        {"fact_id": "latency", "aliases": ["2 секунды", "2 сек."], "chunk_id": "monitoring", "expected_section_ids": ["5.5"], "subject_aliases": ["p95", "времени ответа"]},
-        {"fact_id": "business_event", "aliases": ["application_submitted"], "chunk_id": "monitoring", "expected_section_ids": ["5.5"], "subject_aliases": []},
-        {"fact_id": "error_metric", "aliases": ["application_submit_error_total"], "chunk_id": "monitoring", "expected_section_ids": ["5.5"], "subject_aliases": []},
-        {"fact_id": "scenario_rule", "aliases": ["15 минут"], "chunk_id": "scenario", "expected_section_ids": ["4.3"], "subject_aliases": ["слот", "удерж"]}
+        {
+          "fact_id": "availability",
+          "aliases": [
+            "99,9%",
+            "99.9%"
+          ],
+          "chunk_id": "monitoring",
+          "expected_section_ids": [
+            "5.5"
+          ],
+          "subject_aliases": [
+            "доступност"
+          ]
+        },
+        {
+          "fact_id": "latency",
+          "aliases": [
+            "2 секунды",
+            "2 сек."
+          ],
+          "chunk_id": "monitoring",
+          "expected_section_ids": [
+            "5.5"
+          ],
+          "subject_aliases": [
+            "p95",
+            "времени ответа"
+          ]
+        },
+        {
+          "fact_id": "business_event",
+          "aliases": [
+            "application_submitted"
+          ],
+          "chunk_id": "monitoring",
+          "expected_section_ids": [
+            "5.5"
+          ],
+          "subject_aliases": []
+        },
+        {
+          "fact_id": "error_metric",
+          "aliases": [
+            "application_submit_error_total"
+          ],
+          "chunk_id": "monitoring",
+          "expected_section_ids": [
+            "5.5"
+          ],
+          "subject_aliases": []
+        },
+        {
+          "fact_id": "scenario_rule",
+          "aliases": [
+            "15 минут"
+          ],
+          "chunk_id": "scenario",
+          "expected_section_ids": [
+            "4.3"
+          ],
+          "subject_aliases": [
+            "слот",
+            "удерж"
+          ]
+        }
       ],
       "answers_by_section": {
         "1": "Цель — позволить клиенту самостоятельно записаться в выбранное отделение.",
@@ -68,7 +131,10 @@
       },
       "expected": {
         "question_target_section_ids": [],
-        "required_fragments": ["application_submitted", "application_submit_error_total"],
+        "required_fragments": [
+          "application_submitted",
+          "application_submit_error_total"
+        ],
         "forbidden_fragments": []
       }
     },
@@ -94,11 +160,71 @@
         }
       ],
       "controlled_facts": [
-        {"fact_id": "availability", "aliases": ["99,7%", "99.7%"], "chunk_id": "monitoring", "expected_section_ids": ["5.5"], "subject_aliases": ["доступност"]},
-        {"fact_id": "latency", "aliases": ["4 секунды", "4 сек."], "chunk_id": "monitoring", "expected_section_ids": ["5.5"], "subject_aliases": ["p95", "времени ответа"]},
-        {"fact_id": "business_event", "aliases": ["claim_submitted"], "chunk_id": "monitoring", "expected_section_ids": ["5.5"], "subject_aliases": []},
-        {"fact_id": "error_metric", "aliases": ["claim_submit_error_total"], "chunk_id": "monitoring", "expected_section_ids": ["5.5"], "subject_aliases": []},
-        {"fact_id": "scenario_rule", "aliases": ["30 минут"], "chunk_id": "scenario", "expected_section_ids": ["4.3"], "subject_aliases": ["черновик", "хран"]}
+        {
+          "fact_id": "availability",
+          "aliases": [
+            "99,7%",
+            "99.7%"
+          ],
+          "chunk_id": "monitoring",
+          "expected_section_ids": [
+            "5.5"
+          ],
+          "subject_aliases": [
+            "доступност"
+          ]
+        },
+        {
+          "fact_id": "latency",
+          "aliases": [
+            "4 секунды",
+            "4 сек."
+          ],
+          "chunk_id": "monitoring",
+          "expected_section_ids": [
+            "5.5"
+          ],
+          "subject_aliases": [
+            "p95",
+            "времени ответа"
+          ]
+        },
+        {
+          "fact_id": "business_event",
+          "aliases": [
+            "claim_submitted"
+          ],
+          "chunk_id": "monitoring",
+          "expected_section_ids": [
+            "5.5"
+          ],
+          "subject_aliases": []
+        },
+        {
+          "fact_id": "error_metric",
+          "aliases": [
+            "claim_submit_error_total"
+          ],
+          "chunk_id": "monitoring",
+          "expected_section_ids": [
+            "5.5"
+          ],
+          "subject_aliases": []
+        },
+        {
+          "fact_id": "scenario_rule",
+          "aliases": [
+            "30 минут"
+          ],
+          "chunk_id": "scenario",
+          "expected_section_ids": [
+            "4.3"
+          ],
+          "subject_aliases": [
+            "черновик",
+            "хран"
+          ]
+        }
       ],
       "answers_by_section": {
         "1": "Цель — дать клиенту возможность подать страховое заявление дистанционно.",
@@ -120,7 +246,14 @@
       "review_comment": "После успешного присвоения номера обращения система автоматически отправляет его по SMS на подтвержденный номер телефона клиента. Номер также отображается в личном кабинете. Если SMS не отправилась, заявление остается принятым: система повторяет отправку до 3 раз, а затем показывает клиенту предупреждение проверить номер в личном кабинете.",
       "expected": {
         "question_target_section_ids": [],
-        "required_fragments": ["claim_submitted", "claim_submit_error_total", "sms", "номер обращения", "3 раз", "личном кабинете"],
+        "required_fragments": [
+          "claim_submitted",
+          "claim_submit_error_total",
+          "sms",
+          "номер обращения",
+          "3 раз",
+          "личном кабинете"
+        ],
         "forbidden_fragments": []
       }
     },
@@ -146,11 +279,71 @@
         }
       ],
       "controlled_facts": [
-        {"fact_id": "availability", "aliases": ["99,5%", "99.5%"], "chunk_id": "monitoring", "expected_section_ids": ["5.5"], "subject_aliases": ["доступност"]},
-        {"fact_id": "latency", "aliases": ["3 секунды", "3 сек."], "chunk_id": "monitoring", "expected_section_ids": ["5.5"], "subject_aliases": ["p95", "времени ответа"]},
-        {"fact_id": "business_event", "aliases": ["equipment_request_submitted"], "chunk_id": "monitoring", "expected_section_ids": ["5.5"], "subject_aliases": []},
-        {"fact_id": "error_metric", "aliases": ["equipment_request_error_total"], "chunk_id": "monitoring", "expected_section_ids": ["5.5"], "subject_aliases": []},
-        {"fact_id": "scenario_rule", "aliases": ["120 минут"], "chunk_id": "scenario", "expected_section_ids": ["4.3"], "subject_aliases": ["резерв", "действ"]}
+        {
+          "fact_id": "availability",
+          "aliases": [
+            "99,5%",
+            "99.5%"
+          ],
+          "chunk_id": "monitoring",
+          "expected_section_ids": [
+            "5.5"
+          ],
+          "subject_aliases": [
+            "доступност"
+          ]
+        },
+        {
+          "fact_id": "latency",
+          "aliases": [
+            "3 секунды",
+            "3 сек."
+          ],
+          "chunk_id": "monitoring",
+          "expected_section_ids": [
+            "5.5"
+          ],
+          "subject_aliases": [
+            "p95",
+            "времени ответа"
+          ]
+        },
+        {
+          "fact_id": "business_event",
+          "aliases": [
+            "equipment_request_submitted"
+          ],
+          "chunk_id": "monitoring",
+          "expected_section_ids": [
+            "5.5"
+          ],
+          "subject_aliases": []
+        },
+        {
+          "fact_id": "error_metric",
+          "aliases": [
+            "equipment_request_error_total"
+          ],
+          "chunk_id": "monitoring",
+          "expected_section_ids": [
+            "5.5"
+          ],
+          "subject_aliases": []
+        },
+        {
+          "fact_id": "scenario_rule",
+          "aliases": [
+            "120 минут"
+          ],
+          "chunk_id": "scenario",
+          "expected_section_ids": [
+            "4.3"
+          ],
+          "subject_aliases": [
+            "резерв",
+            "действ"
+          ]
+        }
       ],
       "answers_by_section": {
         "1": "Цель — автоматизировать выдачу оборудования сотрудникам.",
@@ -171,8 +364,13 @@
       },
       "expected": {
         "question_target_section_ids": [],
-        "required_fragments": ["equipment_request_submitted", "equipment_request_error_total"],
-        "forbidden_fragments": ["injection_marker_do_not_copy"]
+        "required_fragments": [
+          "equipment_request_submitted",
+          "equipment_request_error_total"
+        ],
+        "forbidden_fragments": [
+          "injection_marker_do_not_copy"
+        ]
       }
     },
     {
@@ -199,8 +397,13 @@
       "controlled_facts": [],
       "answers_by_section": {},
       "expected": {
-        "question_count": {"minimum": 1, "maximum": 4},
-        "question_target_section_ids": ["5.5"],
+        "question_count": {
+          "minimum": 1,
+          "maximum": 4
+        },
+        "question_target_section_ids": [
+          "5.5"
+        ],
         "required_fragments": [],
         "forbidden_fragments": []
       }
@@ -235,7 +438,8 @@
               "blocks": [
                 {
                   "type": "paragraph",
-                  "text": "Контроль обработки инцидентов SOAR–ЕЛКа."
+                  "text": "Контроль обработки инцидентов SOAR–ЕЛКа.",
+                  "id": "b-4ec6daa2e9372c2917d9e903edcd9b99"
                 }
               ]
             },
@@ -245,7 +449,8 @@
               "blocks": [
                 {
                   "type": "paragraph",
-                  "text": "Нормативно-правовые акты (НПА)."
+                  "text": "Нормативно-правовые акты (НПА).",
+                  "id": "b-31143fb8063e053690a1f556a2092364"
                 }
               ]
             },
@@ -255,7 +460,8 @@
               "blocks": [
                 {
                   "type": "paragraph",
-                  "text": "Целевая аудитория."
+                  "text": "Целевая аудитория.",
+                  "id": "b-cdcf4a0e5c5e84fee7cdc2fc2c13b189"
                 }
               ]
             },
@@ -265,7 +471,8 @@
               "blocks": [
                 {
                   "type": "paragraph",
-                  "text": "Операторы ОФМ и ОПК."
+                  "text": "Операторы ОФМ и ОПК.",
+                  "id": "b-de1f253cf67a1cee913a22833d0bbf0e"
                 }
               ]
             },
@@ -275,7 +482,8 @@
               "blocks": [
                 {
                   "type": "paragraph",
-                  "text": "Географический охват."
+                  "text": "Географический охват.",
+                  "id": "b-0d9f4b85ac5dd29c6a79f3efed369f39"
                 }
               ]
             },
@@ -285,7 +493,8 @@
               "blocks": [
                 {
                   "type": "paragraph",
-                  "text": "Потребность целевой аудитории."
+                  "text": "Потребность целевой аудитории.",
+                  "id": "b-af6c7fc3f5cd849be58046cf4948dcda"
                 }
               ]
             },
@@ -295,7 +504,8 @@
               "blocks": [
                 {
                   "type": "paragraph",
-                  "text": "Концепция (общая схема) взаимодействия с детализацией данных."
+                  "text": "Концепция (общая схема) взаимодействия с детализацией данных.",
+                  "id": "b-0437251d98910287f1f389f27db8339e"
                 }
               ]
             },
@@ -305,11 +515,24 @@
               "blocks": [
                 {
                   "type": "paragraph",
-                  "text": "Концептуальная схема взаимодействия."
+                  "text": "Концептуальная схема взаимодействия.",
+                  "id": "b-221eacc5ac0255c836439ad261ca6786"
                 },
                 {
                   "type": "plantuml",
-                  "source": "@startuml\nactor Оператор\nОператор -> SOAR: Инцидент\nSOAR -> ЕЛКа: Тикет\n@enduml"
+                  "source": "@startuml\nactor Оператор\nОператор -> SOAR: Инцидент\nSOAR -> ЕЛКа: Тикет\n@enduml",
+                  "id": "b-34e670e343a9fe9cc015a4ba6ce6002e"
+                }
+              ]
+            },
+            {
+              "id": "4.2",
+              "title": "Контрагенты",
+              "blocks": [
+                {
+                  "type": "paragraph",
+                  "text": "Требования не определены",
+                  "id": "b-236d199324ad914695e48a1a114031d6"
                 }
               ]
             },
@@ -319,11 +542,13 @@
               "blocks": [
                 {
                   "type": "paragraph",
-                  "text": "Клиентские сценарии (схемы) с сопровождающим текстом."
+                  "text": "Клиентские сценарии (схемы) с сопровождающим текстом.",
+                  "id": "b-e5c3b0a863a27e4a5d3678d10e203543"
                 },
                 {
                   "type": "plantuml",
-                  "source": "@startuml\nstart\n:Создать инцидент;\nif (API доступен?) then (Да)\n :Создать тикет;\nelse (Нет)\n :Уведомить оператора;\nendif\nstop\n@enduml"
+                  "source": "@startuml\nstart\n:Создать инцидент;\nif (API доступен?) then (Да)\n :Создать тикет;\nelse (Нет)\n :Уведомить оператора;\nendif\nstop\n@enduml",
+                  "id": "b-4bd32278dd680d7b96a3d8ee460ab7f0"
                 }
               ]
             },
@@ -333,7 +558,41 @@
               "blocks": [
                 {
                   "type": "paragraph",
-                  "text": "Нефункциональные требования процесса."
+                  "text": "Нефункциональные требования процесса.",
+                  "id": "b-a09b76981d76baaf7e63a038221af7b2"
+                }
+              ]
+            },
+            {
+              "id": "5.2",
+              "title": "Прототип",
+              "blocks": [
+                {
+                  "type": "paragraph",
+                  "text": "Требования не определены",
+                  "id": "b-c319ac461084a37b9bb45d399bb79a5e"
+                }
+              ]
+            },
+            {
+              "id": "5.3",
+              "title": "Требования к дизайну",
+              "blocks": [
+                {
+                  "type": "paragraph",
+                  "text": "Требования не определены",
+                  "id": "b-ade505762e08d2dffee9c18962320c3b"
+                }
+              ]
+            },
+            {
+              "id": "5.4",
+              "title": "Требования к отчетности",
+              "blocks": [
+                {
+                  "type": "paragraph",
+                  "text": "Требования не определены",
+                  "id": "b-14c349d013c931806b296f8aa0d411de"
                 }
               ]
             },
@@ -343,13 +602,15 @@
               "blocks": [
                 {
                   "type": "paragraph",
-                  "text": "При недоступности API SOAR–ЕЛКа уведомлять оператора. Контролировать SLA не более 4 часов по каждому инциденту."
+                  "text": "При недоступности API SOAR–ЕЛКа уведомлять оператора. Контролировать SLA не более 4 часов по каждому инциденту.",
+                  "id": "b-84118e22b6b5baa871c0940b80352b09"
                 },
                 {
                   "type": "list",
                   "items": [
                     "Время появления тикета: от создания инцидента SOAR до связанного тикета в ЕЛКа."
-                  ]
+                  ],
+                  "id": "b-882841e22fe802e9518122395fef7f03"
                 }
               ]
             }
@@ -357,12 +618,12 @@
         },
         "proposal_section_id": "5.5",
         "question_section_id": "5",
-        "question": "Куда поместить определения метрик: создать 5.4 «Требования к отчетности» или дополнить существующий 5.5 «Мониторинг»?",
+        "question": "Куда поместить определения метрик: заполнить существующий 5.4 «Требования к отчетности» или дополнить существующий 5.5 «Мониторинг»?",
         "selected_option_id": "reporting",
         "options": [
           {
             "option_id": "reporting",
-            "label": "Создать 5.4 «Требования к отчетности» и перенести туда все определения метрик и правила отчётности. В 5.4 представь каждую метрику отдельной строкой таблицы «Метрика / Определение»; независимый мониторинг сохранить в 5.5."
+            "label": "Заполнить существующий 5.4 «Требования к отчетности» и перенести туда все определения метрик и правила отчётности. В 5.4 представь каждую метрику отдельной строкой таблицы «Метрика / Определение»; независимый мониторинг сохранить в 5.5."
           },
           {
             "option_id": "monitoring",
@@ -580,6 +841,12 @@
               }
             ]
           }
+        ],
+        "undefined_section_ids": [
+          "4.2",
+          "5.2",
+          "5.3",
+          "5.4"
         ]
       }
     }

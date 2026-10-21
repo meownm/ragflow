@@ -9,8 +9,7 @@ import pytest
 
 from test.unit_test.api.apps.business_documents import test_business_document_service  # noqa: F401
 from api.apps.business_documents.ai import BusinessDocumentAI
-from api.apps.business_documents.assets import apply_change_plan, prompt_descriptor, published_template
-from business_documents.application.errors import ValidationError
+from api.apps.business_documents.assets import apply_change_plan, prompt_descriptor
 from business_documents.domain.content import section_hash
 from business_documents.domain.requirement_coverage import changed_section_repetitions
 
@@ -38,17 +37,14 @@ def relocation_scenario(source_id, target_id, variant="move", block_format="list
         blocks = [{"type": "paragraph", "text": text} for text in requirements]
     by_id = {s["id"]: s for s in base["sections"]}
     by_id[source_id]["blocks"] = [{"type": "paragraph", "text": independent}, *deepcopy(blocks)]
-    title = next(s["title"] for s in published_template()["sections"] if s["id"] == target_id)
-    parent_id = target_id.rsplit(".", 1)[0]
-    target = {"id": target_id, "title": title, "blocks": deepcopy(blocks)}
     operations = [
         {
             "operation_id": "destination",
             "type": "REPLACE_SECTION_CONTENT",
-            "section_id": parent_id,
-            "expected_section_hash": section_hash(by_id[parent_id]),
+            "section_id": target_id,
+            "expected_section_hash": section_hash(by_id[target_id]),
             "source_event_ids": ["placement", "requirements"],
-            "content": {"blocks": [*deepcopy(by_id[parent_id]["blocks"]), target]},
+            "content": {"blocks": deepcopy(blocks)},
         }
     ]
     move = f"Перенести все перечисленные определения из раздела {source_id} в раздел {target_id}, убрав полные определения из {source_id}. Самостоятельные требования обоих разделов сохранить."
@@ -79,7 +75,10 @@ def relocation_scenario(source_id, target_id, variant="move", block_format="list
             "state_version": 1,
             "current_revision": {"revision_id": "base", "document_ast": base},
             "active_change_input_event_ids": ["placement", "requirements"],
-            "source_events": [{"event_id": "placement", "event_type": "QuestionAnswered"}, {"event_id": "requirements", "event_type": "ProposalDecided"}],
+            "source_events": [
+                {"event_id": "placement", "event_type": "QuestionAnswered", "payload": {"question_id": "question", "answer_id": "answer"}},
+                {"event_id": "requirements", "event_type": "ProposalDecided", "payload": {"proposal_id": "proposal", "decision": "ACCEPTED"}},
+            ],
             "protocol": {
                 "questions": [
                     {
@@ -87,7 +86,7 @@ def relocation_scenario(source_id, target_id, variant="move", block_format="list
                         "target_section_id": source_id,
                         "text": f"Перенести определения из {source_id} в {target_id} или оставить их также в {source_id}?",
                         "options": [{"option_id": "move", "label": move}, {"option_id": "copy", "label": copy}],
-                        "answer": {"source_event_id": "placement", "selected_option_id": "copy" if variant == "copy" else "move"},
+                        "answer": {"answer_id": "answer", "source_event_id": "placement", "selected_option_id": "copy" if variant == "copy" else "move"},
                     }
                 ],
                 "proposals": [{"proposal_id": "proposal", "target_section_id": source_id, "text": "\n".join(requirements), "decision": "ACCEPTED", "decision_event_id": "requirements"}],
@@ -123,8 +122,8 @@ def test_unchanged_existing_repetition_does_not_trigger_an_unrelated_edit(source
 @pytest.mark.parametrize("source_id,target_id", PAIRS)
 def test_scalar_cells_preserve_comparison_and_document(source_id, target_id):
     job, plan, _, _ = relocation_scenario(source_id, target_id, "duplicate", "table")
-    target = next(b for b in plan["operations"][0]["content"]["blocks"] if b.get("id") == target_id)
-    target["blocks"][0]["rows"][0].extend([5, True, None])
+    target = plan["operations"][0]["content"]["blocks"][0]
+    target["rows"][0].extend([5, True, None])
     base = job.payload["current_revision"]["document_ast"]
     final = apply_change_plan(base, plan)
     original = deepcopy(final)
@@ -167,10 +166,8 @@ def test_failure_identifies_the_confirmed_decision_and_remaining_source_copy(sou
     job, plan, _, _ = relocation_scenario(source_id, target_id, "duplicate")
     issue = {"source_id": "placement", "section_id": source_id, "reason": f"Подтверждён перенос в {target_id}, но полное определение осталось в исходном разделе."}
     adapter = Verifier({"status": "FAIL", "issues": [issue]})
-    with pytest.raises(ValidationError) as failure:
-        BusinessDocumentAI(adapter)._verify_requirements(job, plan)
-    assert failure.value.code == "REQUIREMENT_COVERAGE_FAILED"
-    assert failure.value.details["requirements"][0] == {**issue, "text": job.payload["protocol"]["questions"][0]["options"][0]["label"]}
+    assert BusinessDocumentAI(adapter)._verify_requirements(job, plan) == {"status": "FAIL", "issues": [issue]}
+    assert adapter.calls[0]["sources"]["placement"]["text"] == job.payload["protocol"]["questions"][0]["options"][0]["label"]
     assert source_id in adapter.calls[0]["context_sections"]
     assert frozenset((source_id, target_id)) in {frozenset(p) for p in adapter.calls[0]["cross_section_repetitions"]}
 
@@ -202,9 +199,8 @@ def test_semantic_relocation_failure_does_not_rewrite_the_author_decision():
             return deepcopy(plan if payload["job_input"]["task_type"] == "PLAN_CHANGES" else self.verdict)
 
     adapter = PlanAndVerifier({"status": "FAIL", "issues": [issue]})
-    with pytest.raises(ValidationError) as failure:
-        BusinessDocumentAI(adapter).process(job)
-    assert failure.value.code == "REQUIREMENT_COVERAGE_FAILED"
-    assert failure.value.details["requirements"][0]["source_id"] == "placement"
+    result = BusinessDocumentAI(adapter).process(job)
+    assert result["requirement_coverage"] == {"status": "FAIL", "issues": [issue]}
+    assert {"code": "REQUIREMENT_COVERAGE_FAILED", "section_id": issue["section_id"], "message": issue["reason"]} in result["warnings"]
     assert [call["task_type"] for call in adapter.calls] == ["PLAN_CHANGES", "VERIFY_REQUIREMENT_COVERAGE"]
     assert job.payload == snapshot

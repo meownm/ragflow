@@ -480,6 +480,7 @@ class DocumentCommands:
             "active_review_cycle": document["active_review_cycle"],
             "current_revision": revision,
             "protocol": project_protocol(review, document["current_revision_id"]),
+            "answered_section_ids": sorted(review.answered_section_ids),
             "command_payload": command_payload,
         }
 

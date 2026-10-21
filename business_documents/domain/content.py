@@ -38,6 +38,10 @@ _FENCED_CODE_BLOCK = re.compile(
 )
 _FENCE_LINE = re.compile(r"^[ \t]{0,3}(?P<marker>`{3,}|~{3,})")
 _MAX_PARAGRAPH_SIZE = 20_000
+UNDEFINED_REQUIREMENTS_TEXT = "Требования не определены"
+SECTION_CONTENT_WARNING_CODES = frozenset({"REQUIRED_SECTION_EMPTY", "CONCEPTUAL_DIAGRAM_REQUIRED", "ACTIVITY_SCENARIO_REQUIRED"})
+# Numbered outline accepted by the persisted EVA v2 required-scope contract.
+_EVA_V2_REQUIRED_SECTION_IDS = ("1", "3", "3.1", "3.2", "3.3", "4", "4.1", "4.3", "5", "5.5")
 
 
 def validate_contract(name: str, value: object, schema: dict[str, Any]) -> None:
@@ -95,8 +99,7 @@ def validate_document_ast(document: object, template: dict[str, Any], schema: di
     assert isinstance(document, dict)
     if document["template_version"] != template["template_version"]:
         raise RuleViolation("TEMPLATE_VERSION_CONFLICT", "Draft does not use the document template version")
-    actual_ids = {section["id"] for section in document["sections"]}
-    expected = [(section["id"], section["title"]) for section in template["sections"] if document.get("section_scope") != "required" or section["required"] or section["id"] in actual_ids]
+    expected = [(section["id"], section["title"]) for section in template["sections"]]
     expected_ids = {item[0] for item in expected}
     actual = [(section["id"], section["title"]) for section in document["sections"]]
     actual_template_outline = [item for item in actual if item[0] in expected_ids]
@@ -118,10 +121,21 @@ def validate_document_ast(document: object, template: dict[str, Any], schema: di
                 {"section_id": section_id, "parent_section_id": parent_id or None},
             )
     required_ids = {section["id"] for section in template["sections"] if section["required"]}
-    warnings = [item for item in document.get("warnings", []) if item["code"] not in {"REQUIRED_SECTION_EMPTY", "CONCEPTUAL_DIAGRAM_REQUIRED", "ACTIVITY_SCENARIO_REQUIRED"}]
-    empty_required = [section["id"] for section in document["sections"] if section["id"] in required_ids and not any(_block_has_content(block) for block in section["blocks"])]
-    for section_id in empty_required:
-        warnings.append({"code": "REQUIRED_SECTION_EMPTY", "section_id": section_id, "message": "Обязательный раздел пока не заполнен; требуется уточнение."})
+    warnings = [item for item in document.get("warnings", []) if item["code"] not in SECTION_CONTENT_WARNING_CODES]
+    for section in document["sections"]:
+        if section["id"] not in required_ids:
+            continue
+        defined_blocks = [block for block in section["blocks"] if not (block.get("type") == "paragraph" and block["text"].strip() == UNDEFINED_REQUIREMENTS_TEXT)]
+        if any(_block_has_content(block) for block in defined_blocks):
+            section["blocks"] = defined_blocks
+        else:
+            placeholder = next(
+                (block for block in section["blocks"] if block.get("type") == "paragraph" and block["text"].strip() == UNDEFINED_REQUIREMENTS_TEXT),
+                {"type": "paragraph"},
+            )
+            section["blocks"] = [{**placeholder, "text": UNDEFINED_REQUIREMENTS_TEXT}]
+        if render_section_text(section).strip() == UNDEFINED_REQUIREMENTS_TEXT:
+            warnings.append({"code": "REQUIRED_SECTION_EMPTY", "section_id": section["id"], "message": "Обязательный раздел пока не заполнен; требуется уточнение."})
     sections = {section["id"]: section for section in document["sections"]}
     if "4.1" in sections and "4.1" not in preserved_diagrams and not any(block.get("type") == "plantuml" for block in sections["4.1"]["blocks"]):
         warnings.append({"code": "CONCEPTUAL_DIAGRAM_REQUIRED", "section_id": "4.1", "message": "Концептуальную схему рекомендуется дополнить диаграммой PlantUML."})
@@ -314,10 +328,8 @@ def import_document_markdown(markdown: object, template: dict[str, Any], schema:
     actual_ids = [item[0] for item in found if item[0] in expected]
     expected_ids = [section["id"] for section in template_sections]
     required_ids = [section["id"] for section in template_sections if section["required"]]
-    required_only = required_schema is not None and actual_ids == required_ids
-    if required_only:
-        expected_ids = required_ids
-    if actual_ids != expected_ids:
+    required_only = required_schema is not None and (actual_ids == required_ids or tuple(actual_ids) == _EVA_V2_REQUIRED_SECTION_IDS)
+    if actual_ids != expected_ids and not required_only:
         raise RuleViolation(
             "EVA_DOCUMENT_TEMPLATE_MISMATCH",
             "Страница EVA не соответствует текущему шаблону бизнес-документа",
@@ -389,7 +401,7 @@ def _paragraph_blocks(text: str) -> list[dict[str, str]]:
 
 
 def normalize_document_ast(document: object, template: dict[str, Any]) -> object:
-    """Restore the pinned outline, retaining the scope of title-only documents."""
+    """Restore the complete pinned outline without copying child content."""
 
     if not isinstance(document, dict) or not isinstance(document.get("sections"), list):
         return document
@@ -425,8 +437,6 @@ def normalize_document_ast(document: object, template: dict[str, Any]) -> object
     by_id = {section["id"]: section for section in flattened_sections}
     normalized_sections = []
     for template_section in template_sections:
-        if document.get("section_scope") == "required" and not template_section["required"] and template_section["id"] not in by_id:
-            continue
         section = by_id.get(
             template_section["id"],
             {"id": template_section["id"], "title": template_section["title"], "blocks": []},

@@ -20,7 +20,7 @@
     {
       "id": "2",
       "title": "Нормативно-правовые акты (НПА)",
-      "required": false,
+      "required": true,
       "allowed_blocks": ["paragraph", "list", "reference"]
     },
     {
@@ -68,7 +68,7 @@
       "id": "4.2",
       "parent_id": "4",
       "title": "Контрагенты",
-      "required": false,
+      "required": true,
       "allowed_blocks": ["paragraph", "table", "list"]
     },
     {
@@ -93,21 +93,21 @@
       "id": "5.2",
       "parent_id": "5",
       "title": "Прототип",
-      "required": false,
+      "required": true,
       "allowed_blocks": ["paragraph", "image", "reference"]
     },
     {
       "id": "5.3",
       "parent_id": "5",
       "title": "Требования к дизайну",
-      "required": false,
+      "required": true,
       "allowed_blocks": ["paragraph", "list", "image"]
     },
     {
       "id": "5.4",
       "parent_id": "5",
       "title": "Требования к отчетности",
-      "required": false,
+      "required": true,
       "allowed_blocks": ["paragraph", "table", "list"]
     },
     {

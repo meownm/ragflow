@@ -71,6 +71,8 @@ async def test_json_routes_reject_non_object_and_malformed_json(route_app):
         ("post", "/business-documents", "INVALID_DOCUMENT"),
         ("post", "/business-documents/sql-query/schema/resolve", "INVALID_SQL_SCHEMA_REQUEST"),
         ("post", "/business-documents/sql-query/schema/entities", "INVALID_SQL_SCHEMA_ENTITY_REQUEST"),
+        ("post", "/business-documents/sql-query/schema/graph", "INVALID_SQL_GRAPH"),
+        ("put", "/business-documents/sql-query/projects/project-1/view", "INVALID_SQL_VIEW"),
         ("post", "/business-documents/sql-query/plan", "INVALID_SQL_QUERY_PLAN_REQUEST"),
         ("post", "/business-documents/sql-query/compile", "INVALID_SQL_QUERY_SPECIFICATION"),
         ("post", "/business-documents/sql-query/projects", "INVALID_SQL_AGENT_PROJECT"),
@@ -411,8 +413,8 @@ async def test_sql_agent_project_routes_are_thin_and_wake_worker_after_enqueue(r
         calls.append(("create", tenant_id, actor_id, payload, is_admin, access_role))
         return {"id": "project-1"}
 
-    def list_projects(tenant_id, actor_id, is_admin, access_role):
-        calls.append(("list", tenant_id, actor_id, is_admin, access_role))
+    def list_projects(tenant_id, actor_id, is_admin, access_role, search, archived):
+        calls.append(("list", tenant_id, actor_id, is_admin, access_role, search, archived))
         return [{"id": "project-1"}]
 
     def get_project(tenant_id, actor_id, project_id, is_admin, access_role):
@@ -463,7 +465,7 @@ async def test_sql_agent_project_routes_are_thin_and_wake_worker_after_enqueue(r
     ).status_code == 200
     assert calls == [
         ("create", ACTOR, ACTOR, project_payload, False, "MODERATOR_CREATOR"),
-        ("list", ACTOR, ACTOR, False, "MODERATOR_CREATOR"),
+        ("list", ACTOR, ACTOR, False, "MODERATOR_CREATOR", "", False),
         ("get", ACTOR, ACTOR, "project-1", False, "MODERATOR_CREATOR"),
         ("request", ACTOR, ACTOR, "project-1", agent_payload, False, "MODERATOR_CREATOR"),
         ("wake",),

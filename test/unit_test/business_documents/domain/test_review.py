@@ -65,6 +65,28 @@ def test_current_inputs_exclude_old_cycle_superseded_eva_and_already_applied_sou
     assert review.review_complete
 
 
+def test_answered_sections_include_intake_and_previous_cycles_without_changing_current_questions():
+    questions = [
+        {"id": "intake", "review_cycle": 0, "stage": "INTAKE", "target_section_id": "2"},
+        {"id": "old", "review_cycle": 1, "stage": "REVIEW", "target_section_id": "4.2"},
+        {"id": "current", "review_cycle": 2, "stage": "REVIEW", "target_section_id": "5.5"},
+    ]
+    state = build_review_state(
+        "document",
+        2,
+        questions=questions,
+        answers=[{"id": "a1", "question_id": "intake"}, {"id": "a2", "question_id": "old"}, {"id": "orphan", "question_id": "missing"}],
+        proposals=[],
+        decisions=[],
+        comments=[],
+        events=[],
+    )
+
+    assert state.answered_section_ids == {"2", "4.2"}
+    assert state.questions == (questions[2],)
+    assert state.open_question_ids("REVIEW") == ["current"]
+
+
 def test_new_eva_input_invalidates_assessment_and_available_commands():
     review = _review(_event(8, "EvaDocumentPulled", review_cycle=2))
     assert not review.review_complete

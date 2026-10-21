@@ -13,7 +13,7 @@ from business_documents.application.errors import ConflictError, ValidationError
 from business_documents.application.export import ExportCommitter
 from business_documents.application.persistence import DocumentWriter
 from business_documents.application.queries import DocumentQueries
-from business_documents.domain.assessment import canonical_tag, empty_section_questions, normalize_proposal, normalize_question, validate_comment_dispositions
+from business_documents.domain.assessment import canonical_tag, empty_section_questions, normalize_proposal, normalize_question, validate_comment_dispositions, without_answered_gap_warnings
 from business_documents.domain.change_plan import validate_evidence_sources, validate_snapshot_sources
 from business_documents.domain.errors import RuleViolation
 from business_documents.domain.execution_audit import validate_audit_envelope, validate_ai_audit, validate_retrieval_audit, verify_pinned_evidence
@@ -30,6 +30,7 @@ class AssessmentRecords:
     proposals: tuple[Record, ...]
     answered_ids: frozenset[str]
     comment_event_ids: frozenset[str]
+    answered_section_ids: frozenset[str] = frozenset()
 
 
 class AssessmentWriter(DocumentWriter, Protocol):
@@ -284,7 +285,9 @@ class JobCompletion:
                 question_sources.setdefault(canonical_tag(item["question_semantic_tag"]), []).append(item["comment_event_id"])
         question_ids, question_count = {}, 0
         revision = job["payload"].get("current_revision") or {}
-        gap_questions = empty_section_questions(revision.get("document_ast") or {}, self._content.published_template(), output["questions"], batch.records.questions)
+        gap_questions = empty_section_questions(
+            revision.get("document_ast") or {}, self._content.published_template(), output["questions"], batch.records.questions, answered_section_ids=batch.records.answered_section_ids
+        )
         for raw in [*output["questions"], *gap_questions]:
             tag = canonical_tag(raw["semantic_tag"])
             question_id, inserted = batch.add_question({**raw, "stage": "REVIEW"}, "REVIEW", event_id, question_sources.get(tag, []))
@@ -324,9 +327,11 @@ class JobCompletion:
             raise ConflictError("JOB_STATE_CONFLICT", "Draft generation is not active")
         if document["current_revision_id"] is not None or self._writer.open_questions(document["id"], "INTAKE", 0):
             raise ConflictError("DRAFT_PRECONDITION_FAILED", "Draft preconditions changed while the worker was running")
+        snapshot = SnapshotIndex.build(job, execution)
+        batch = _AssessmentBatch(self._writer, self._content, self._new_id, document["id"], 1, snapshot)
         draft = self._content.validate_document_ast(output.get("draft"))
         draft = with_document_warnings(draft, job["payload"].get("protocol", {}).get("warnings", []))
-        snapshot = SnapshotIndex.build(job, execution)
+        draft = without_answered_gap_warnings(draft, batch.records.answered_section_ids)
         try:
             for section in draft["sections"]:
                 validate_evidence_sources(snapshot.evidence_refs, section.get("evidence_refs", []))
@@ -348,9 +353,8 @@ class JobCompletion:
             if isinstance(event, dict) and event.get("event_type") == "QuestionAnswered" and isinstance(event.get("event_id"), str)
         ]
         revision_id = self._writer.insert_revision(document["id"], 1, draft, body, [event_id, *answer_events], requested_by(job, document["owner_id"]), revision_id=self._new_id())
-        batch = _AssessmentBatch(self._writer, self._content, self._new_id, document["id"], 1, snapshot)
         questions = review_questions["questions"]
-        gap_questions = empty_section_questions(draft, self._content.published_template(), questions, batch.records.questions)
+        gap_questions = empty_section_questions(draft, self._content.published_template(), questions, batch.records.questions, answered_section_ids=batch.records.answered_section_ids)
         question_count = sum(int(batch.add_question(question, "REVIEW", event_id)[1]) for question in [*questions, *gap_questions])
         proposal_count = sum(int(batch.add_proposal(proposal, event_id)) for proposal in proposals)
         return self._finish(

@@ -10,10 +10,12 @@ from uuid import uuid4
 from json_repair import repair_json
 
 from business_documents.domain.block_diff import BLOCK_OPERATIONS, with_block_ids
+from business_documents.domain.assessment import without_answered_gap_warnings
 from business_documents.domain.content import apply_change_plan, bind_change_plan_snapshot, render_section_text, validate_contract
 from business_documents.domain.errors import RuleViolation
 from business_documents.domain.job_recovery import MAX_AI_CALLS
-from business_documents.domain.requirement_coverage import changed_section_repetitions, validate_requirement_coverage
+from business_documents.domain.requirement_coverage import agreement_decisions, changed_section_repetitions, validate_requirement_coverage
+from test.evals.business_documents.live_jobs import wait_for_job
 
 
 def _json(value):
@@ -136,6 +138,29 @@ def prepare_metric_placement(case, tenant):
             "idea": case["idea"],
         },
     )
+    document = _seed_completion(
+        tenant,
+        document,
+        "REQUEST_INTAKE_ASSESSMENT",
+        {
+            "schema_version": "1",
+            "outcome": "NEEDS_INPUT",
+            "questions": [
+                {
+                    "semantic_tag": f"undefined-{section_id}",
+                    "stage": "INTAKE",
+                    "target_section_id": section_id,
+                    "text": f"Определены ли требования к разделу {section_id}?",
+                    "options": [{"option_id": "undefined", "label": "Требования не определены"}, {"option_id": "defined", "label": "Требования определены"}],
+                    "allow_custom_answer": True,
+                }
+                for section_id in seed["undefined_section_ids"]
+            ],
+        },
+    )
+    for question in document["protocol"]["questions"]:
+        _execute(tenant, document, "ANSWER_QUESTION", {"question_id": question["question_id"], "selected_option_id": "undefined", "custom_answer": None})
+        document = document_queries.get_document(document["document_id"], tenant)
     document = _seed_completion(tenant, document, "REQUEST_INTAKE_ASSESSMENT", {"schema_version": "1", "outcome": "COMPLETE", "questions": []})
     created = BusinessDocumentEvent.get((BusinessDocumentEvent.document_id == document["document_id"]) & (BusinessDocumentEvent.event_type == "DocumentCreated"))
     document = _seed_completion(
@@ -192,7 +217,6 @@ def run_metric_placement(case, tenant, adapter):
     from api.apps.business_documents.assets import contract_schema, published_template
     from api.apps.business_documents.runtime import document_commands, document_queries
     from api.apps.business_documents.worker import BusinessDocumentWorker
-    from api.db.db_models import BusinessDocumentJob
 
     document = prepare_metric_placement(case, tenant)
     base = deepcopy(document["current_revision"])
@@ -201,12 +225,7 @@ def run_metric_placement(case, tenant, adapter):
     requested = _execute(tenant, document, "PREPARE_CHANGES", {"base_revision_id": base["revision_id"]})
     recorded = RecordedModel(adapter)
     worker = BusinessDocumentWorker(worker_id="metric-placement-model", ai=BusinessDocumentAI(recorded), retry_base_ms=0)
-    job = BusinessDocumentJob.get_by_id(requested["job_id"])
-    for _ in range(job.max_attempts):
-        assert worker.run_once()
-        job = BusinessDocumentJob.get_by_id(job.id)
-        if job.status in {"COMPLETED", "DEAD"}:
-            break
+    job = wait_for_job(worker, requested["job_id"])
     result = {
         "case_id": case["id"],
         "priority": case["priority"],
@@ -288,7 +307,8 @@ def _verification_evidence_failures(calls, job_input, sources, titles):
                 raise RuleViolation("INVALID_AI_JSON", "AI response is not valid JSON") from error
             if not isinstance(verdict, dict):
                 raise RuleViolation("INVALID_AI_JSON", "AI response must be a JSON object")
-            verdict = validate_requirement_coverage(verdict, sources, titles)
+            history_event_ids = frozenset(event["event_id"] for event in job_input["source_events"] if isinstance(event.get("event_id"), str))
+            verdict = validate_requirement_coverage(verdict, sources, titles, history_event_ids=history_event_ids)
             if verdict["status"] != "PASS":
                 raise RuleViolation("REQUIREMENT_COVERAGE_FAILED", "The recorded semantic verdict rejected the changes")
         except RuleViolation as error:
@@ -336,6 +356,7 @@ def evidence_failures(case, evidence, prompts, template, schema, change_schema):
     try:
         validate_contract("change_plan", plan, change_schema)
         replayed = apply_change_plan(case["seed"]["base_document"], plan, template, schema)
+        replayed = without_answered_gap_warnings(replayed, frozenset(case["seed"]["undefined_section_ids"]))
     except RuleViolation:
         failures.append("invalid_saved_plan")
     else:
@@ -345,10 +366,10 @@ def evidence_failures(case, evidence, prompts, template, schema, change_schema):
     identified_base = with_block_ids(case["seed"]["base_document"])
     base = identified_base["sections"]
     base_ids = {section["id"] for section in base}
-    if set(final) != base_ids | {"5.4"}:
+    if [section["id"] for section in evidence["final_ast"]["sections"]] != [section["id"] for section in template["sections"]]:
         failures.append("section_inventory")
     for section in base:
-        if section["id"] != "5.5" and final.get(section["id"]) != section:
+        if section["id"] not in {"5.4", "5.5"} and final.get(section["id"]) != section:
             failures.append(f"unrelated_section_changed:{section['id']}")
     last_plan, verification_calls = None, []
     for call in evidence["model_calls"]:
@@ -378,6 +399,8 @@ def evidence_failures(case, evidence, prompts, template, schema, change_schema):
         failures.append("missing_real_model_exchanges")
     else:
         inputs = last_plan["input_payload"]["job_input"]
+        if set(inputs.get("answered_section_ids", [])) != set(case["seed"]["undefined_section_ids"]) | {"5"}:
+            failures.append("source_input_mismatch")
         protocol = inputs.get("protocol") or {}
         answers = [
             q["answer"]["source_event_id"]
@@ -438,6 +461,11 @@ def evidence_failures(case, evidence, prompts, template, schema, change_schema):
             "after_sections": after,
             "context_sections": context,
             "section_titles": titles,
+            "source_events": deepcopy(inputs.get("source_events", [])),
+            "agreement_history": deepcopy(inputs.get("agreement_history", {})),
+            "agreement_decisions": agreement_decisions(inputs),
+            "protocol": deepcopy(inputs.get("protocol", {})),
+            "active_review_cycle": inputs.get("active_review_cycle"),
         }
         verification_input["cross_section_repetitions"] = [list(pair) for pair in changed_section_repetitions(case["seed"]["base_document"], evidence["final_ast"])]
         failures.extend(_verification_evidence_failures(verification_calls, verification_input, {**expected_sources, **{f"section:{key}": {"text": value} for key, value in before.items()}}, titles))

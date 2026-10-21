@@ -6,7 +6,7 @@ from typing import Any
 
 from peewee import JOIN, IntegrityError, fn
 
-from api.apps.business_documents.adapters.review import load_review_state
+from api.apps.business_documents.adapters.review import load_answered_section_ids, load_review_state
 from api.apps.business_documents.adapters.queries import find_change_preview_row
 from api.db.db_models import (
     BusinessDocument,
@@ -339,7 +339,7 @@ class PeeweeDocumentWriter:
                 )
                 if row.payload.get("comment_id") in comment_ids
             )
-        return AssessmentRecords(questions, proposals, answered, comment_events)
+        return AssessmentRecords(questions, proposals, answered, comment_events, load_answered_section_ids(document_id))
 
     def open_questions(self, document_id, stage, review_cycle):
         answered = BusinessDocumentAnswer.select(BusinessDocumentAnswer.id).where(

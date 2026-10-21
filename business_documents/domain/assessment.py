@@ -8,7 +8,7 @@ import unicodedata
 
 from business_documents.domain.errors import RuleViolation
 from business_documents.domain.hashing import stable_hash
-from business_documents.domain.content import render_section_text, with_document_warnings
+from business_documents.domain.content import SECTION_CONTENT_WARNING_CODES, UNDEFINED_REQUIREMENTS_TEXT, render_section_text, with_document_warnings
 
 
 def canonical_tag(value: str) -> str:
@@ -16,7 +16,12 @@ def canonical_tag(value: str) -> str:
 
 
 def empty_section_questions(
-    document: Mapping[str, Any], template: Mapping[str, Any], questions: Sequence[Mapping[str, Any]], known_questions: Sequence[Mapping[str, Any]] = ()
+    document: Mapping[str, Any],
+    template: Mapping[str, Any],
+    questions: Sequence[Mapping[str, Any]],
+    known_questions: Sequence[Mapping[str, Any]] = (),
+    *,
+    answered_section_ids: frozenset[str] = frozenset(),
 ) -> list[dict[str, Any]]:
     """Ask for missing information without declaring its absence on the author's behalf."""
     sections = {section["id"]: section for section in document.get("sections", [])}
@@ -26,7 +31,8 @@ def empty_section_questions(
     for section in template["sections"]:
         section_id = section["id"]
         tag = f"empty_section:{section_id}"
-        if section_id in covered or tag in known_tags or render_section_text(sections.get(section_id, {"blocks": []})).strip():
+        text = render_section_text(sections.get(section_id, {"blocks": []})).strip()
+        if section_id in covered or tag in known_tags or text not in {"", UNDEFINED_REQUIREMENTS_TEXT} or (text == UNDEFINED_REQUIREMENTS_TEXT and section_id in answered_section_ids):
             continue
         result.append(
             {
@@ -38,6 +44,22 @@ def empty_section_questions(
                 "allow_custom_answer": True,
             }
         )
+    return result
+
+
+def without_answered_gap_warnings(document: dict[str, Any], answered_section_ids: frozenset[str]) -> dict[str, Any]:
+    """Keep substantive warnings; an answered placeholder needs no structural reminder.
+
+    The model still owns follow-up questions. Open questions independently prevent
+    agreement even if an earlier answer exists for the same section.
+    """
+    sections = {section["id"] for section in document.get("sections", []) if section["id"] in answered_section_ids and render_section_text(section).strip() == UNDEFINED_REQUIREMENTS_TEXT}
+    warnings = [item for item in document.get("warnings", []) if item["code"] not in SECTION_CONTENT_WARNING_CODES or item.get("section_id") not in sections]
+    if len(warnings) == len(document.get("warnings", [])):
+        return document
+    result = deepcopy({**document, "warnings": warnings})
+    if not warnings:
+        result.pop("warnings", None)
     return result
 
 

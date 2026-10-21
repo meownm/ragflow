@@ -147,15 +147,34 @@ def _draft_with_parent_child_duplicate():
 
 
 @pytest.mark.p0
-def test_document_ast_restores_missing_optional_sections_from_published_template(database):
+@pytest.mark.parametrize("required_scope", [False, True])
+@pytest.mark.parametrize("empty_blocks", [None, [], [{"type": "paragraph", "text": " \n "}]])
+def test_document_ast_restores_required_sections_with_undefined_requirements(database, required_scope, empty_blocks):
     draft = _draft()
-    optional_ids = {section["id"] for section in published_template()["sections"] if not section["required"]}
-    draft["sections"] = [section for section in draft["sections"] if section["id"] not in optional_ids]
+    if required_scope:
+        draft.update(schema_version="2", section_scope="required")
+    missing_ids = {"2", "4.2", "5.2", "5.3", "5.4"}
+    if empty_blocks is None:
+        draft["sections"] = [section for section in draft["sections"] if section["id"] not in missing_ids]
+    else:
+        for section in draft["sections"]:
+            if section["id"] in missing_ids:
+                section["blocks"] = deepcopy(empty_blocks)
+    original = deepcopy(draft)
 
     normalized = validate_document_ast(draft)
 
     assert [section["id"] for section in normalized["sections"]] == [section["id"] for section in published_template()["sections"]]
-    assert all(section["blocks"] == [] for section in normalized["sections"] if section["id"] in optional_ids)
+    original_sections = {section["id"]: section for section in with_block_ids(original)["sections"]}
+    for section in normalized["sections"]:
+        if section["id"] in missing_ids:
+            assert len(section["blocks"]) == 1
+            assert section["blocks"][0]["text"] == "Требования не определены"
+        else:
+            assert section["blocks"] == original_sections[section["id"]]["blocks"]
+    assert draft == original
+    assert validate_document_ast(normalized) == normalized
+    assert render_document_ast(normalized).count("Требования не определены") == len(missing_ids)
 
 
 @pytest.mark.p0
@@ -296,13 +315,12 @@ def test_change_plan_can_add_a_numbered_subsection_to_an_existing_parent(databas
     assert next(item for item in changed["sections"] if item["id"] == "4")["blocks"] == with_block_ids({"sections": [parent]})["sections"][0]["blocks"]
 
 
-def test_change_plan_adds_optional_reporting_and_preserves_real_monitoring(database):
+def test_change_plan_adds_missing_reporting_and_preserves_real_monitoring(database):
     from copy import deepcopy
 
     base = _draft()
     base.update(schema_version="2", section_scope="required")
-    required = {section["id"] for section in published_template()["sections"] if section["required"]}
-    base["sections"] = [section for section in base["sections"] if section["id"] in required]
+    base["sections"] = [section for section in base["sections"] if section["id"] not in {"2", "4.2", "5.2", "5.3", "5.4"}]
     parent = next(section for section in base["sections"] if section["id"] == "5")
     monitoring = next(section for section in base["sections"] if section["id"] == "5.5")
     report_blocks = [{"type": "paragraph", "text": "Отчёт содержит сотрудника, новость и время первого подтверждения."}]
@@ -348,8 +366,8 @@ def test_change_plan_adds_optional_reporting_and_preserves_real_monitoring(datab
     )["sections"]
     for expected in expected_sections:
         assert sections[expected["id"]]["blocks"] == expected["blocks"]
-    assert [section["id"] for section in result["sections"]][-3:] == ["5", "5.4", "5.5"]
-    assert "5.2" not in sections and "5.3" not in sections
+    assert [section["id"] for section in result["sections"]][-5:] == ["5", "5.2", "5.3", "5.4", "5.5"]
+    assert render_section_text(sections["5.2"]) == render_section_text(sections["5.3"]) == "Требования не определены"
     assert base == before
 
 
@@ -361,7 +379,7 @@ def test_document_ast_restores_empty_structural_parents_without_copying_child_co
     normalized = validate_document_ast(draft)
 
     sections = {section["id"]: section for section in normalized["sections"]}
-    assert sections["3"]["blocks"] == sections["4"]["blocks"] == sections["5"]["blocks"] == []
+    assert all(render_section_text(sections[section_id]) == "Требования не определены" for section_id in ("3", "4", "5"))
     assert {item["section_id"] for item in normalized["warnings"] if item["code"] == "REQUIRED_SECTION_EMPTY"} == {"3", "4", "5"}
 
 
@@ -726,8 +744,7 @@ def test_coverage_receives_absent_template_sections_and_actual_custom_titles():
     job = _coverage_job()
     base = job.payload["current_revision"]["document_ast"]
     base.update(schema_version="2", section_scope="required")
-    required = {section["id"] for section in published_template()["sections"] if section["required"]}
-    base["sections"] = [section for section in base["sections"] if section["id"] in required]
+    base["sections"] = [section for section in base["sections"] if section["id"] not in {"2", "4.2", "5.2", "5.3", "5.4"}]
     base["sections"].append({"id": "5.6", "title": "Проверка источников", "blocks": [{"type": "paragraph", "text": "Проверять источник ежедневно."}]})
     adapter = CoverageAdapter()
 
@@ -737,7 +754,7 @@ def test_coverage_receives_absent_template_sections_and_actual_custom_titles():
     assert verification["section_titles"]["5.4"] == "Требования к отчетности"
     assert verification["section_titles"]["5.5"] == "Мониторинг"
     assert verification["section_titles"]["5.6"] == "Проверка источников"
-    assert "5.4" not in verification["after_sections"]
+    assert verification["after_sections"]["5.4"] == "Требования не определены"
     assert not any(section["id"] == "5.4" for section in base["sections"])
 
 

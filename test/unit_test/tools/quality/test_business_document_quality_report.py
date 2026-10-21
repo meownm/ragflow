@@ -35,8 +35,9 @@ def test_quality_report_cli_runs_as_module_without_pythonpath(tmp_path):
 def _placement_evidence(case, *, insert_monitor=False):
     """Synthetic verifier input only; the live gate never imports this factory."""
     from business_documents.domain.block_diff import with_block_ids
+    from business_documents.domain.assessment import without_answered_gap_warnings
     from business_documents.domain.content import apply_change_plan, bind_change_plan_snapshot, render_section_text
-    from business_documents.domain.requirement_coverage import changed_section_repetitions
+    from business_documents.domain.requirement_coverage import agreement_decisions, changed_section_repetitions
 
     def digest(value):
         return hashlib.sha256(value.encode("utf-8")).hexdigest()
@@ -47,14 +48,9 @@ def _placement_evidence(case, *, insert_monitor=False):
     ast = json.loads(json.dumps(case["seed"]["base_document"]))
     monitoring = next(s for s in ast["sections"] if s["id"] == "5.5")
     monitoring["blocks"] = [{"type": "paragraph", "text": " ".join(r["text"] for r in case["seed"]["requirements"] if r["section_id"] == "5.5")}]
-    ast["sections"].insert(
-        -1,
-        {
-            "id": "5.4",
-            "title": "Требования к отчетности",
-            "blocks": [{"type": "table", "headers": ["Метрика", "Определение"], "rows": [[r["label"], r["text"].split(": ", 1)[1]] for r in case["seed"]["requirements"] if r["section_id"] == "5.4"]}],
-        },
-    )
+    next(s for s in ast["sections"] if s["id"] == "5.4")["blocks"] = [
+        {"type": "table", "headers": ["Метрика", "Определение"], "rows": [[r["label"], r["text"].split(": ", 1)[1]] for r in case["seed"]["requirements"] if r["section_id"] == "5.4"]}
+    ]
     identified_base = with_block_ids(case["seed"]["base_document"])
     base = {s["id"]: s for s in identified_base["sections"]}
     report_section = next(s for s in ast["sections"] if s["id"] == "5.4")
@@ -64,7 +60,7 @@ def _placement_evidence(case, *, insert_monitor=False):
         "source_state_version": 1,
         "acknowledged_no_change_event_ids": [],
         "operations": [
-            {"operation_id": "report", "type": "ADD_SECTION", "section_id": "5.4", "title": report_section["title"], "source_event_ids": ["answer"], "content": {"blocks": report_section["blocks"]}},
+            {"operation_id": "report", "type": "REPLACE_BLOCK", "section_id": "5.4", "block_id": base["5.4"]["blocks"][0]["id"], "source_event_ids": ["answer"], "block": report_section["blocks"][0]},
             {"operation_id": "monitor", "type": "REPLACE_BLOCK", "section_id": "5.5", "block_id": base["5.5"]["blocks"][0]["id"], "source_event_ids": ["proposal"], "block": monitoring["blocks"][0]},
             {"operation_id": "remove-metrics", "type": "DELETE_BLOCK", "section_id": "5.5", "block_id": base["5.5"]["blocks"][1]["id"], "source_event_ids": ["answer"]},
         ],
@@ -83,6 +79,7 @@ def _placement_evidence(case, *, insert_monitor=False):
     plan = bind_change_plan_snapshot(identified_base, plan, base_revision_id="fixture", source_state_version=1)
     schema = json.loads((ROOT / "agent/business_requirements/contracts/document_draft.v2.schema.json").read_text(encoding="utf-8"))
     ast = apply_change_plan(identified_base, plan, template, schema)
+    ast = without_answered_gap_warnings(ast, frozenset(case["seed"]["undefined_section_ids"]))
     titles = {section["id"]: section["title"] for section in template["sections"]} | {section["id"]: section["title"] for section in ast["sections"]}
     changed = {"5.4", "5.5"}
     calls = []
@@ -93,6 +90,7 @@ def _placement_evidence(case, *, insert_monitor=False):
             payload["job_input"].update(
                 current_revision={"revision_id": "fixture", "document_ast": identified_base},
                 state_version=1,
+                answered_section_ids=[*case["seed"]["undefined_section_ids"], "5"],
                 confirmed_requirement_fragments={
                     f"{source_id}:{index}": {"source_id": source_id, "text": text.strip(), **({"context": source["context"]} if "context" in source else {})}
                     for source_id, source in sources.items()
@@ -109,11 +107,16 @@ def _placement_evidence(case, *, insert_monitor=False):
         else:
             payload["job_input"].update(
                 sources=sources,
-                before_sections={"5.5": render_section_text(base["5.5"])},
+                before_sections={key: render_section_text(base[key]) for key in ("5.4", "5.5")},
                 after_sections={s["id"]: render_section_text(s) for s in ast["sections"] if s["id"] in changed},
                 context_sections={s["id"]: render_section_text(s) for s in ast["sections"] if s["id"] not in changed},
                 section_titles=titles,
                 cross_section_repetitions=[list(pair) for pair in changed_section_repetitions(case["seed"]["base_document"], ast)],
+                source_events=[],
+                agreement_history={},
+                agreement_decisions=agreement_decisions(calls[0]["input_payload"]["job_input"]),
+                protocol=json.loads(json.dumps(calls[0]["input_payload"]["job_input"]["protocol"])),
+                active_review_cycle=None,
             )
         response = json.loads(json.dumps(plan)) if task == "PLAN_CHANGES" else {"status": "PASS", "issues": []}
         calls.append(

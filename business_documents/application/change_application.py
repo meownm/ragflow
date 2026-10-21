@@ -9,10 +9,11 @@ from enum import Enum
 from business_documents.application.content import DocumentContent
 from business_documents.application.errors import ConflictError, ValidationError
 from business_documents.application.persistence import DocumentWriter
+from business_documents.domain.assessment import without_answered_gap_warnings
 from business_documents.domain.change_plan import validate_change_inputs
 from business_documents.domain.block_diff import with_block_ids
 from business_documents.domain.errors import RuleViolation
-from business_documents.domain.content import with_document_warnings
+from business_documents.domain.content import SECTION_CONTENT_WARNING_CODES, with_document_warnings
 from business_documents.domain.job import SnapshotIndex, prompt_audit, requested_by
 from business_documents.domain.review import ReviewState
 
@@ -62,6 +63,8 @@ class ApplyChanges:
             raise ValidationError(error.code, error.message, error.details) from error
 
         warnings = [*job["payload"].get("protocol", {}).get("warnings", []), *output.get("warnings", [])]
+        # Structural reminders belong to the current AST, not the job's older protocol.
+        warnings = [item for item in warnings if item["code"] not in SECTION_CONTENT_WARNING_CODES]
         draft = None
         if plan["operations"]:
             base = self._writer.revision(document["id"], document["current_revision_id"])
@@ -69,15 +72,22 @@ class ApplyChanges:
             if draft["template_version"] != document["template_version"]:
                 raise ValidationError("TEMPLATE_VERSION_CONFLICT", "Updated document does not use the pinned template")
             draft = with_document_warnings(draft, warnings)
-        elif warnings:
+        elif warnings or review.answered_section_ids:
             base = self._writer.revision(document["id"], document["current_revision_id"])
             draft = with_document_warnings(base["document_ast"], warnings)
+        if draft is not None:
+            draft = without_answered_gap_warnings(draft, review.answered_section_ids)
 
         next_lifecycle = "REVIEW" if proposal_id is not None else inputs.next_lifecycle
         if next_lifecycle == "AGREED" and mode is not ChangeMode.CONFIRM:
-            current = draft if draft is not None else self._writer.revision(document["id"], document["current_revision_id"])["document_ast"]
-            checked = self._content.validate_document_ast(current, previous_document=current) if current.get("section_scope") == "required" else current
-            if checked.get("warnings") or output.get("warnings"):
+            if draft is None:
+                base = self._writer.revision(document["id"], document["current_revision_id"])
+            current = draft if draft is not None else base["document_ast"]
+            checked = self._content.validate_document_ast(current, previous_document=current) if current.get("section_scope") == "required" and not plan["operations"] else current
+            checked = without_answered_gap_warnings(checked, review.answered_section_ids)
+            if not _same_json_value(checked, current):
+                draft = checked
+            if checked.get("warnings"):
                 next_lifecycle = "REVIEW"
 
         version = document["state_version"] + 1

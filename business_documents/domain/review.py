@@ -15,6 +15,12 @@ _REVIEW_BOUNDARIES = frozenset({"DraftCreated", "ReviewCycleStarted", "RevisionR
 _RESOLUTION_EVENTS = frozenset({"ChangesApplied", "ReviewAgreedWithoutChanges", "ReviewContinuedWithoutChanges"})
 
 
+def _answered_section_ids(questions: Iterable[Record], answered_ids: Iterable[str]) -> frozenset[str]:
+    """Project persisted answers without interpreting their natural-language content."""
+    answered = frozenset(answered_ids)
+    return frozenset(row["target_section_id"] for row in questions if row["id"] in answered and isinstance(row.get("target_section_id"), str))
+
+
 def _latest_by(rows: Iterable[Record], key: str) -> dict[str, Record]:
     result: dict[str, Record] = {}
     for row in rows:
@@ -45,6 +51,7 @@ class ReviewState:
     assessments: Mapping[tuple[str, int], Record]
     latest_sequences: Mapping[str, int]
     has_unassessed_feedback: bool
+    answered_section_ids: frozenset[str] = frozenset()
 
     def open_question_ids(self, stage: str) -> list[str]:
         return [row["id"] for row in self.questions if row["stage"] == stage and row["id"] not in self.answers]
@@ -92,6 +99,7 @@ def build_review_state(
     decisions: Iterable[Record],
     comments: Iterable[Record],
     events: Iterable[Record],
+    answered_sections: frozenset[str] | None = None,
 ) -> ReviewState:
     """Index ordered document records once, preserving published protocol order."""
 
@@ -189,4 +197,5 @@ def build_review_state(
         assessments=assessments,
         latest_sequences=latest_sequences,
         has_unassessed_feedback=latest_review_event_type in REVIEW_FEEDBACK,
+        answered_section_ids=_answered_section_ids(questions_by_id.values(), answer_index) if answered_sections is None else answered_sections,
     )

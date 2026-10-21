@@ -10,6 +10,7 @@ from peewee import SqliteDatabase
 
 from test.evals.business_documents import test_live_model_quality as live
 from test.evals.business_documents.metric_placement import placement_failures
+from test.evals.business_documents.metric_placement import _verification_evidence_failures
 from api.apps.business_documents.adapters.persistence import DOCUMENT_TABLES
 from api.db.db_models import User
 from tools.quality.verify_business_document_quality_report import QualityGateFailed, verify_report
@@ -19,33 +20,87 @@ from test.unit_test.tools.quality.test_business_document_quality_report import _
 CASE = next(case for case in json.loads(live.MODEL_GOLDEN_PATH.read_text(encoding="utf-8"))["cases"] if case["workflow"] == "metric_placement")
 
 
+@pytest.mark.parametrize(
+    "field,damage",
+    [
+        (None, "unchanged"),
+        ("unexpected", "extra"),
+        *[(field, damage) for field in ("source_events", "agreement_history", "agreement_decisions", "protocol", "active_review_cycle") for damage in ("missing", "changed")],
+    ],
+)
+def test_verification_replay_requires_complete_pinned_agreement_context(field, damage):
+    expected = {
+        "task_type": "VERIFY_REQUIREMENT_COVERAGE",
+        "source_events": [{"event_id": "answer-1", "event_type": "QuestionAnswered"}],
+        "agreement_history": {"questions": [{"id": "question-1", "text": "Полный вопрос"}]},
+        "agreement_decisions": {"answers": [{"event_id": "answer-1", "text": "Полный ответ"}], "proposals": []},
+        "protocol": {"questions": [{"question_id": "question-1", "answer": {"source_event_id": "answer-1"}}]},
+        "active_review_cycle": 7,
+    }
+    recorded = deepcopy(expected)
+    if damage == "missing":
+        recorded.pop(field)
+    elif damage == "extra":
+        recorded[field] = "unsupported"
+    elif damage == "changed":
+        paths = {
+            "source_events": (0, "event_id"),
+            "agreement_history": ("questions", 0, "text"),
+            "agreement_decisions": ("answers", 0, "text"),
+            "protocol": ("questions", 0, "answer", "source_event_id"),
+        }
+        if field == "active_review_cycle":
+            recorded[field] += 1
+        else:
+            value = recorded[field]
+            for key in paths[field][:-1]:
+                value = value[key]
+            value[paths[field][-1]] = "changed"
+    failures = _verification_evidence_failures([{"input_payload": {"job_input": recorded}, "response": {"status": "PASS", "issues": []}}], expected, {}, {})
+    assert ("verification_input_mismatch" in failures) is (damage != "unchanged")
+    if damage == "unchanged":
+        assert failures == []
+
+
 def _ideal_ast():
     ast = deepcopy(CASE["seed"]["base_document"])
     next(s for s in ast["sections"] if s["id"] == "5.5")["blocks"] = [
         {"type": "paragraph", "text": " ".join(r["text"] for r in CASE["seed"]["requirements"] if r["section_id"] == "5.5")},
         {"type": "paragraph", "text": "Состав метрик и правила расчёта определены в 5.4."},
     ]
-    ast["sections"].insert(
-        -1,
-        {
-            "id": "5.4",
-            "title": "Требования к отчетности",
-            "blocks": [{"type": "table", "headers": ["Метрика", "Определение"], "rows": [[r["label"], r["text"].split(": ", 1)[1]] for r in CASE["seed"]["requirements"] if r["section_id"] == "5.4"]}],
-        },
-    )
+    next(s for s in ast["sections"] if s["id"] == "5.4")["blocks"] = [
+        {"type": "table", "headers": ["Метрика", "Определение"], "rows": [[r["label"], r["text"].split(": ", 1)[1]] for r in CASE["seed"]["requirements"] if r["section_id"] == "5.4"]}
+    ]
     return ast
 
 
 def test_fixture_has_complete_clause_inventory_and_valid_template():
-    from api.apps.business_documents.assets import validate_document_ast
+    from api.apps.business_documents.assets import published_template, validate_document_ast
 
     base = validate_document_ast(CASE["seed"]["base_document"])
-    assert "5.4" not in {s["id"] for s in base["sections"]}
+    assert [s["id"] for s in base["sections"]] == [s["id"] for s in published_template()["sections"]]
+    assert [(b["type"], b["text"]) for b in next(s for s in base["sections"] if s["id"] == "5.4")["blocks"]] == [("paragraph", "Требования не определены")]
     assert CASE["seed"]["question_section_id"] == "5"
     assert CASE["seed"]["proposal_section_id"] == "5.5"
     assert len(CASE["seed"]["requirements"]) == 10
     assert len({r["id"] for r in CASE["seed"]["requirements"]}) == 10
     assert not placement_failures(CASE, validate_document_ast(_ideal_ast()))
+
+
+@pytest.mark.parametrize("section_id", [s["id"] for s in CASE["seed"]["base_document"]["sections"]])
+def test_m06_cannot_start_with_any_template_section_missing(section_id):
+    from api.apps.business_documents.assets import contract_schema, published_template, prompt_text
+    from test.evals.business_documents.metric_placement import evidence_failures
+
+    evidence = _placement_evidence(CASE)
+    call = evidence["model_calls"][0]
+    document = call["input_payload"]["job_input"]["current_revision"]["document_ast"]
+    document["sections"] = [s for s in document["sections"] if s["id"] != section_id]
+    call["input_sha256"] = hashlib.sha256(json.dumps(call["input_payload"], ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    failures = evidence_failures(
+        CASE, evidence, {name: prompt_text(name) for name in ("change_planner", "requirement_coverage")}, published_template(), contract_schema("document_draft_v2"), contract_schema("change_plan")
+    )
+    assert "source_input_mismatch" in failures
 
 
 def test_active_suite_preserves_original_cases_and_registers_admin_diagnostic(monkeypatch):
@@ -82,7 +137,7 @@ def test_unapplied_model_reply_reports_format_failure_before_confirmation(monkey
         assert execution.result["status"] == "FAIL"
         assert execution.result["failures"] == ["job:CHANGE_FORMAT_NOT_APPLIED"]
         assert "final_ast" not in execution.result["evidence"]
-        assert len(execution.result["evidence"]["model_calls"]) == 1
+    assert len(execution.result["evidence"]["model_calls"]) == 2
 
 
 @pytest.mark.parametrize("requirement", CASE["seed"]["requirements"], ids=lambda r: r["id"])
@@ -161,11 +216,11 @@ class FixedTransport:
             "operations": [
                 {
                     "operation_id": "report",
-                    "type": "ADD_SECTION",
+                    "type": "REPLACE_BLOCK",
                     "section_id": "5.4",
-                    "title": ideal["5.4"]["title"],
+                    "block_id": sections["5.4"]["blocks"][0]["id"],
                     "source_event_ids": [answer],
-                    "content": {"blocks": deepcopy(ideal["5.4"]["blocks"])},
+                    "block": deepcopy(ideal["5.4"]["blocks"][0]),
                 },
                 *[
                     {"operation_id": f"monitor-{index}", "type": "REPLACE_BLOCK", "section_id": "5.5", "block_id": original["id"], "source_event_ids": [proposal], "block": deepcopy(block)}
@@ -194,6 +249,10 @@ def case_execution(monkeypatch, request):
 
 def test_registered_workflow_records_actual_prompt_and_model_exchanges(case_execution, tmp_path):
     evidence = case_execution.result["evidence"]
+    inputs = evidence["model_calls"][0]["input_payload"]["job_input"]
+    assert not any(question["status"] == "OPEN" for question in inputs["protocol"]["questions"])
+    assert set(inputs["active_change_input_event_ids"]) == set(evidence["expected_sources"]["5"] + evidence["expected_sources"]["5.5"])
+    assert set(inputs["answered_section_ids"]) == {*CASE["seed"]["undefined_section_ids"], "5"}
     assert [c["task_type"] for c in evidence["model_calls"]] == ["PLAN_CHANGES", "VERIFY_REQUIREMENT_COVERAGE"]
     assert "Согласование размещения и оснований" in evidence["model_calls"][0]["system_prompt"]
     assert evidence["model_calls"][1]["system_prompt"] == (live.ASSET_ROOT / "prompts/requirement_coverage.v1.md").read_text(encoding="utf-8")
@@ -310,7 +369,7 @@ def test_saved_pass_requires_the_actual_plan_and_successful_matching_review(tmp_
     elif damage == "generator_empty":
         plan["response"] = {}
     elif damage == "generator_unrelated":
-        plan["response"]["operations"][0]["content"]["blocks"] = [{"type": "paragraph", "text": "Unrelated result"}]
+        plan["response"]["operations"][0]["block"] = {"type": "paragraph", "text": "Unrelated result"}
     elif damage == "generator_sources":
         plan["input_payload"]["job_input"]["confirmed_requirement_fragments"]["proposal:0"]["text"] = "Another requirement"
     elif damage == "generator_base":

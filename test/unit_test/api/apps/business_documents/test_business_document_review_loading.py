@@ -105,10 +105,11 @@ def test_current_cycle_load_preserves_published_results_and_historical_source_er
     baseline = full_history(document_id, 2)
     with count_queries(only_select=True) as queries:
         actual = load_review_state(document_id, 2)
-    assert queries.count == 6
+    assert queries.count == 7  # Six current-cycle record types plus cross-cycle section identities.
     assert len(actual.answers) == len(actual.decisions) == len(actual.questions) == len(actual.proposals) == len(actual.comments) == 2
     assert len(baseline.answers) == len(baseline.decisions) == 32
     assert actual.events == baseline.events
+    assert actual.answered_section_ids == baseline.answered_section_ids
     assert actual.active_inputs == baseline.active_inputs == set(current)
     assert project_protocol(actual, "revision") == project_protocol(baseline, "revision")
     document = {"lifecycle_state": "REVIEW", "operation_state": "IDLE", "current_revision_id": "revision"}

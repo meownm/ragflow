@@ -39,6 +39,8 @@ from api.apps.business_documents.worker import BusinessDocumentWorker
 from api.db.db_models import BusinessDocumentEvidenceSnapshot, BusinessDocumentJob, BusinessDocumentQuestion
 from test.evals.business_documents.live_quality import ControlledFact, QualityScore, resolve_live_quality_config, score_document_quality
 from test.evals.business_documents.metric_placement import run_metric_placement
+from test.evals.business_documents import live_jobs
+from business_documents.domain.job_recovery import MAX_AI_SECONDS
 
 
 ASSET_ROOT = REPO_ROOT / "agent" / "business_requirements"
@@ -173,12 +175,7 @@ def _complete_requested_job(worker, tenant_id, projection, command_type, payload
         projection["document_id"],
         _command(projection, command_type, payload),
     )
-    job = BusinessDocumentJob.get_by_id(requested["job_id"])
-    for _attempt in range(job.max_attempts):
-        assert worker.run_once() is True
-        job = BusinessDocumentJob.get_by_id(job.id)
-        if job.status in {"COMPLETED", "DEAD"}:
-            break
+    job = live_jobs.wait_for_job(worker, requested["job_id"])
     if job.status != "COMPLETED":
         raise AssertionError(
             {
@@ -670,6 +667,122 @@ def test_failed_live_job_preserves_diagnostic_through_pytest_assertion_rewriting
     with pytest.raises(AssertionError) as caught:
         _complete_requested_job(SimpleNamespace(run_once=lambda: True), "tenant", document, "APPLY_CHANGES")
     assert _execution_error(caught.value) == {"error_type": "AssertionError", "job_code": "REQUIREMENT_COVERAGE_FAILED", "check_id": "job_completed"}
+
+
+def _stub_waiting_job(monkeypatch):
+    job = SimpleNamespace(id="job", job_type="ASSESS_INTAKE", max_attempts=3, status="PENDING", attempt=0, available_at=100_000, result=None, error=None)
+    clock = {"seconds": 100.0, "sleeps": []}
+    monkeypatch.setattr(document_commands, "execute", lambda *_: {"job_id": job.id})
+    monkeypatch.setattr(BusinessDocumentJob, "get_by_id", lambda *_: job)
+    monkeypatch.setattr(document_queries, "get_document", lambda *_: {"document_id": "document"})
+    monkeypatch.setattr(time, "monotonic", lambda: clock["seconds"])
+    monkeypatch.setattr(live_jobs, "current_timestamp", lambda: int(clock["seconds"] * 1000))
+
+    def sleep(seconds):
+        clock["sleeps"].append(seconds)
+        clock["seconds"] += seconds
+
+    monkeypatch.setattr(time, "sleep", sleep)
+    return job, clock
+
+
+def test_live_job_waits_for_retry_after_without_consuming_an_attempt(monkeypatch):
+    job, clock = _stub_waiting_job(monkeypatch)
+    calls = []
+
+    def run_once():
+        calls.append(clock["seconds"])
+        job.attempt += 1
+        if job.attempt == 1:
+            job.status = "RETRY"
+            job.available_at += 2000
+            job.result = {"recovery": {"started_at": 100.0, "calls": 1}}
+        else:
+            job.status = "COMPLETED"
+        return True
+
+    projection = {"document_id": "document", "state_version": 1}
+    _, completed = _complete_requested_job(SimpleNamespace(run_once=run_once), "tenant", projection, "REQUEST_INTAKE_ASSESSMENT")
+    assert completed.status == "COMPLETED" and completed.attempt == 2
+    assert calls == [100.0, 102.0] and sum(clock["sleeps"]) == 2
+    assert completed.result["recovery"] == {"started_at": 100.0, "calls": 1}
+
+
+def test_live_queue_recovers_from_throttling_with_original_call_and_time_budget(database, monkeypatch):
+    import httpx
+
+    from api.apps.business_documents.worker import BusinessDocumentJobQueue
+
+    checkpoints = []
+    checkpoint = BusinessDocumentJobQueue.checkpoint_ai
+
+    def record_checkpoint(job, worker_id, state):
+        checkpoint(job, worker_id, state)
+        checkpoints.append(deepcopy(state))
+
+    monkeypatch.setattr(BusinessDocumentJobQueue, "checkpoint_ai", staticmethod(record_checkpoint))
+
+    class ThrottledAdapter:
+        def __init__(self):
+            self.timeouts = []
+
+        def generate(self, tenant_id, system_prompt, input_payload, *, timeout_seconds=None):
+            self.timeouts.append(timeout_seconds)
+            if len(self.timeouts) == 1:
+                response = httpx.Response(429, headers={"retry-after": "1"}, request=httpx.Request("POST", "https://fixture.invalid"))
+                raise httpx.HTTPStatusError("Synthetic throttling", request=response.request, response=response)
+            return {
+                "schema_version": "1",
+                "outcome": "NEEDS_INPUT",
+                "questions": [
+                    {
+                        "semantic_tag": "audience",
+                        "stage": "INTAKE",
+                        "target_section_id": "3.1",
+                        "text": "Кто использует сервис?",
+                        "options": [{"option_id": "person", "label": "Физические лица"}, {"option_id": "company", "label": "Юридические лица"}],
+                        "allow_custom_answer": True,
+                    }
+                ],
+            }
+
+    document = document_creation.execute("retry-qa", "retry-qa", {"schema_version": "1", "document_type": "business_requirements", "title": "Synthetic retry", "idea": "Сервис записи на прием"})
+    adapter = ThrottledAdapter()
+    worker = BusinessDocumentWorker(ai=BusinessDocumentAI(adapter), retry_base_ms=0)
+    document, job = _complete_requested_job(worker, "retry-qa", document, "REQUEST_INTAKE_ASSESSMENT")
+    assert job.status == "COMPLETED" and job.attempt == 2
+    assert checkpoints[-1]["calls"] == 2
+    assert len({state["started_at"] for state in checkpoints}) == 1
+    assert 0 < adapter.timeouts[1] < adapter.timeouts[0] <= MAX_AI_SECONDS
+    assert document["current_revision"] is None and len(document["protocol"]["questions"]) == 1
+
+
+@pytest.mark.parametrize("expired_recovery", [False, True])
+def test_live_job_does_not_restart_recovery_budget_or_dispatch_an_oversize_delay(monkeypatch, expired_recovery):
+    job, clock = _stub_waiting_job(monkeypatch)
+    job.status, job.attempt = "RETRY", 1
+    job.available_at += (MAX_AI_SECONDS + 1) * 1000 if not expired_recovery else 0
+    job.result = {"recovery": {"started_at": 100.0 - MAX_AI_SECONDS if expired_recovery else 100.0, "calls": 1}}
+    calls = []
+    with pytest.raises(TimeoutError):
+        _complete_requested_job(SimpleNamespace(run_once=lambda: calls.append(True)), "tenant", {"document_id": "document", "state_version": 1}, "REQUEST_INTAKE_ASSESSMENT")
+    assert calls == [] and clock["sleeps"] == [] and job.attempt == 1
+
+
+@pytest.mark.parametrize("mode", ["not_claimed", "other_job", "attempts_exhausted"])
+def test_live_job_cannot_complete_by_processing_another_job_or_resetting_attempts(monkeypatch, mode):
+    job, _ = _stub_waiting_job(monkeypatch)
+    if mode == "attempts_exhausted":
+        job.attempt = job.max_attempts
+    calls = []
+
+    def run_once():
+        calls.append(True)
+        return mode != "not_claimed"
+
+    with pytest.raises(AssertionError):
+        _complete_requested_job(SimpleNamespace(run_once=run_once), "tenant", {"document_id": "document", "state_version": 1}, "REQUEST_INTAKE_ASSESSMENT")
+    assert len(calls) == (0 if mode == "attempts_exhausted" else 1)
 
 
 @pytest.mark.asyncio

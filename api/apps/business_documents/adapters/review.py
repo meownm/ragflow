@@ -11,6 +11,18 @@ from api.db.db_models import (
 from business_documents.domain.review import ReviewState, build_review_state
 
 
+def load_answered_section_ids(document_id: str) -> frozenset[str]:
+    """Load section identities across cycles without historical answer bodies."""
+    return frozenset(
+        section_id
+        for (section_id,) in BusinessDocumentAnswer.select(BusinessDocumentQuestion.target_section_id)
+        .join(BusinessDocumentQuestion, on=BusinessDocumentAnswer.question_id == BusinessDocumentQuestion.id)
+        .where((BusinessDocumentAnswer.document_id == document_id) & (BusinessDocumentQuestion.document_id == document_id))
+        .distinct()
+        .tuples()
+    )
+
+
 def load_review_state(document_id: str, review_cycle: int) -> ReviewState:
     def current(model):
         return model.select().where((model.document_id == document_id) & (model.review_cycle == review_cycle))
@@ -36,4 +48,5 @@ def load_review_state(document_id: str, review_cycle: int) -> ReviewState:
         decisions=records(decisions),
         comments=records(current(BusinessDocumentComment)),
         events=BusinessDocumentEvent.select().where(BusinessDocumentEvent.document_id == document_id).order_by(BusinessDocumentEvent.sequence.asc()).dicts(),
+        answered_sections=load_answered_section_ids(document_id),
     )

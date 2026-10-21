@@ -72,7 +72,7 @@ def test_review_completion_reads_once_per_record_type_and_keeps_first_duplicates
     original = deepcopy(output)
     with database.atomic(), count_queries(only_select=True) as queries:
         result = job_completion._review(document.__data__, job.__data__, "worker", output, {})
-    assert queries.count <= 5
+    assert queries.count <= 6  # Includes one bounded cross-cycle section-identity projection.
     assert output == original
     assert result["state_version"] == document.state_version + 1
     question = BusinessDocumentQuestion.get(BusinessDocumentQuestion.document_id == document.id)

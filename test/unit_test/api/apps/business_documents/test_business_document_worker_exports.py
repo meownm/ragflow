@@ -61,17 +61,21 @@ with temporary_common_settings(contract_settings):
         BusinessDocumentJob,
         BusinessDocumentProposal,
         BusinessDocumentRevision,
+        BusinessDocumentSqlQueryRun,
+        BusinessDocumentSqlQueryArtifact,
+        BusinessDocumentSqlAgentCommand,
     )
     from common.time_utils import current_timestamp
 
 TENANT = "tenant-worker"
 AUTHOR = "author-worker"
+WORKER_TABLES = (*DOCUMENT_TABLES, BusinessDocumentSqlQueryRun, BusinessDocumentSqlQueryArtifact, BusinessDocumentSqlAgentCommand)
 
 
 @pytest.fixture()
 def database():
     database = SqliteDatabase(":memory:")
-    tables = DOCUMENT_TABLES
+    tables = WORKER_TABLES
     with database.bind_ctx(tables, bind_refs=False, bind_backrefs=False):
         database.connect()
         database.create_tables(tables)
@@ -664,9 +668,9 @@ def test_cancelled_worker_keeps_pool_and_hands_lease_recovery_to_survivor(tmp_pa
     monkeypatch.setenv("BUSINESS_DOCUMENT_WORKER_ENABLED", "true")
     monkeypatch.setenv("BUSINESS_DOCUMENT_WORKER_CONCURRENCY", "4")
     monkeypatch.setenv("BUSINESS_DOCUMENT_WORKER_POLL_SECONDS", "0.01")
-    with database.bind_ctx(DOCUMENT_TABLES, bind_refs=False, bind_backrefs=False):
+    with database.bind_ctx(WORKER_TABLES, bind_refs=False, bind_backrefs=False):
         database.connect()
-        database.create_tables(DOCUMENT_TABLES)
+        database.create_tables(WORKER_TABLES)
         document = _create()
         requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_INTAKE_ASSESSMENT"))
         threads = ()
@@ -1538,3 +1542,39 @@ def test_eva_wiki_exact_shape_escapes_content_and_excludes_protocol(database, mo
         with pytest.raises(BusinessDocumentError) as unsafe_error:
             BusinessDocumentExportService._render_eva_wiki(unsafe, 1)
         assert unsafe_error.value.code == "UNSAFE_EXPORT_URL"
+
+
+def test_worker_maintenance_expires_raw_sql_without_a_preview_request(database, monkeypatch):
+    worker = BusinessDocumentWorker()
+    monkeypatch.setattr(worker, "recover_stale", lambda: (0, 0))
+    monkeypatch.setattr(worker, "reconcile_exports", lambda: {"cleaned": 0})
+    run = BusinessDocumentSqlQueryRun.create(
+        id="due-result",
+        project_id="sql-project",
+        tenant_id=TENANT,
+        compilation_id="compiled",
+        profile_id="profile",
+        profile_version=1,
+        status="READY",
+        rows=[[42]],
+        columns=["value"],
+        checks={"status": "PASS"},
+    )
+    BusinessDocumentSqlQueryRun.update(create_time=current_timestamp() - 31 * 24 * 60 * 60 * 1000).where(BusinessDocumentSqlQueryRun.id == run.id).execute()
+    assert worker._maintain() is True
+    stored = BusinessDocumentSqlQueryRun.get_by_id(run.id)
+    assert stored.status == "EXPIRED" and stored.rows == [] and stored.columns == [] and stored.checks == {}
+    assert worker._maintain() is False
+
+
+def test_retention_failure_does_not_stop_other_worker_maintenance(database, monkeypatch, caplog):
+    worker = BusinessDocumentWorker()
+    monkeypatch.setattr(worker, "recover_stale", lambda: (0, 0))
+    monkeypatch.setattr(worker, "reconcile_exports", lambda: {"cleaned": 1})
+
+    def unavailable():
+        raise RuntimeError("synthetic cleanup fault")
+
+    monkeypatch.setattr(worker_module, "expire_due_results", unavailable)
+    assert worker._maintain() is True
+    assert "SQL result retention cleanup failed" in caplog.text

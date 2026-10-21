@@ -102,14 +102,14 @@ def test_duplicate_section_ids_remain_visible_to_validation():
     assert normalize_document_ast(document, _template(("1", False, []))) == document
 
 
-def test_required_scope_preserves_empty_parents_without_adding_optional_sections():
+def test_required_scope_restores_the_complete_outline_without_copying_child_content():
     template = _template(("1", True, ["paragraph"]), ("1.1", True, ["paragraph"]), ("2", False, ["paragraph"]))
     document = {"section_scope": "required", "sections": [_section("1"), _section("1.1", {"type": "paragraph", "text": "Child content"})]}
     original = deepcopy(document)
 
     normalized = normalize_document_ast(document, template)
 
-    assert normalized == original
+    assert normalized == {**original, "sections": [*original["sections"], _section("2")]}
     normalized["sections"][1]["blocks"][0]["text"] = "Changed"
     assert document == original
 

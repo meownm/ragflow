@@ -149,7 +149,7 @@ def test_draft_revalidates_pinned_preconditions_before_creating_revision(databas
     assert BusinessDocumentJob.get_by_id(job.id).status == "RUNNING"
 
 
-def test_draft_restores_optional_sections_and_requests_explicit_absence_confirmation(database):
+def test_draft_restores_required_sections_and_requests_explicit_absence_confirmation(database):
     _, intake = intake_attempt()
     document = job_completion.complete(TENANT, intake.lease_owner, intake.id, {"schema_version": "1", "outcome": "COMPLETE", "questions": []}, intake.lease_token)
     document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_DRAFT"))
@@ -162,7 +162,7 @@ def test_draft_restores_optional_sections_and_requests_explicit_absence_confirma
     assert {section["id"] for section in result["current_revision"]["document_ast"]["sections"]} >= {"2", "5.4"}
     assert {question["target_section_id"] for question in result["protocol"]["questions"]} == {"2", "5.4"}
     assert result["lifecycle_state"] == "REVIEW"
-    assert all(not section["blocks"] for section in result["current_revision"]["document_ast"]["sections"] if section["id"] in {"2", "5.4"})
+    assert all(section["blocks"][0]["text"] == "Требования не определены" for section in result["current_revision"]["document_ast"]["sections"] if section["id"] in {"2", "5.4"})
 
 
 def test_dataset_job_requires_pinned_evidence_audit_before_accepting_output(database, monkeypatch):

@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from business_documents.domain.block_diff import block_changes, with_block_ids
-from business_documents.domain.content import apply_change_plan, bind_change_plan_snapshot, validate_contract
+from business_documents.domain.content import apply_change_plan, bind_change_plan_snapshot, validate_contract, validate_document_ast
 from business_documents.domain.content import render_section_text
 from business_documents.domain.content_quality import meaningful_text_block_count, semantic_duplicate_section_pairs
 from business_documents.domain.errors import RuleViolation
@@ -53,6 +53,57 @@ def plan(base, *operations):
 
 def apply(base, *operations):
     return apply_change_plan(base, plan(base, *operations), TEMPLATE, SCHEMA)
+
+
+def test_deleting_last_requirement_and_adding_a_new_one_updates_the_placeholder():
+    base = document()
+    emptied = apply(base, *({"type": "DELETE_BLOCK", "block_id": block["id"]} for block in base["sections"][0]["blocks"]))
+    placeholder = emptied["sections"][0]["blocks"]
+    assert len(placeholder) == 1
+    assert placeholder[0]["text"] == "Требования не определены"
+
+    filled = apply(emptied, {"type": "INSERT_BLOCK", "after_block_id": placeholder[0]["id"], "block": {"type": "paragraph", "text": "Store records for 90 days."}})
+
+    assert render_section_text(filled["sections"][0]) == "Store records for 90 days."
+    assert not filled.get("warnings")
+    assert emptied["sections"][0]["blocks"] == placeholder
+
+
+@pytest.mark.parametrize("marker_count", [1, 2, 3])
+@pytest.mark.parametrize("saved", [False, True])
+def test_undefined_marker_normalization_preserves_identity_and_is_idempotent(marker_count, saved):
+    base = document()
+    section = base["sections"][0]
+    section["evidence_refs"] = ["ragflow://dataset/d/document/doc/chunk/c"]
+    section["blocks"] = [
+        {"id": "blank", "type": "paragraph", "text": " "},
+        *({"id": f"marker-{index}", "type": "paragraph", "text": " \nТребования не определены\n "} for index in range(marker_count)),
+        {"id": "empty-list", "type": "list", "items": [" "]},
+    ]
+    original = deepcopy(base)
+
+    result = validate_document_ast(base, TEMPLATE, SCHEMA, previous_document=base if saved else None)
+
+    assert result["sections"][0]["blocks"] == [{"id": "marker-0", "type": "paragraph", "text": "Требования не определены"}]
+    assert result["sections"][0]["evidence_refs"] == ["ragflow://dataset/d/document/doc/chunk/c"]
+    assert [warning["code"] for warning in result["warnings"]] == ["REQUIRED_SECTION_EMPTY"]
+    assert validate_document_ast(result, TEMPLATE, SCHEMA, previous_document=result) == result
+    assert base == original
+
+
+def test_repeated_undefined_markers_do_not_remove_real_requirements_or_their_identity():
+    base = document()
+    requirements = deepcopy(base["sections"][0]["blocks"])
+    base["sections"][0]["blocks"] = [
+        {"id": "marker-first", "type": "paragraph", "text": "Требования не определены"},
+        *requirements,
+        {"id": "marker-last", "type": "paragraph", "text": "Требования не определены"},
+    ]
+
+    result = validate_document_ast(base, TEMPLATE, SCHEMA)
+
+    assert result["sections"][0]["blocks"] == requirements
+    assert not result.get("warnings")
 
 
 def test_legacy_ids_are_deterministic_distinct_and_do_not_mutate_saved_document():

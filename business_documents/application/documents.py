@@ -171,7 +171,7 @@ class CreateDocument:
             "section_scope": "required",
             "sections": [{"id": section["id"], "title": section["title"], "blocks": []} for section in template["sections"]],
         }
-        self._content.validate_contract("document_draft_v2", draft)
+        draft = self._content.validate_document_ast(draft)
         event_id, revision_id = self._new_id(), self._new_id()
         self._writer.append_event(
             document["id"],

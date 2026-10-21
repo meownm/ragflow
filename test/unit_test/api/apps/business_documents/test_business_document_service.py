@@ -33,6 +33,7 @@ if "api.apps" not in sys.modules:
     sys.modules["api.apps"] = api_apps
 
 from api.apps.business_documents.assets import import_document_markdown, published_template, render_document_ast, validate_document_ast
+from business_documents.domain.block_diff import with_block_ids
 from business_documents.domain.content import render_section_text, section_hash
 from api.apps.business_documents.adapters.assignment import assign_business_document
 from business_documents.application.errors import BusinessDocumentError
@@ -116,16 +117,25 @@ def test_exported_business_document_markdown_can_be_imported_without_an_llm_rewr
     assert any(block["type"] == "plantuml" for block in conceptual["blocks"])
 
 
-def test_required_only_document_round_trips_through_eva_markdown():
+@pytest.mark.parametrize("legacy_outline", [False, True])
+def test_required_only_document_round_trips_through_eva_markdown(legacy_outline):
     draft = _draft()
     required_ids = {section["id"] for section in published_template()["sections"] if section["required"]}
     draft.update(schema_version="2", section_scope="required", sections=[section for section in draft["sections"] if section["id"] in required_ids])
+    if legacy_outline:
+        draft["sections"] = [section for section in draft["sections"] if section["id"] not in {"2", "4.2", "5.2", "5.3", "5.4"}]
 
     imported = import_document_markdown(render_document_ast(draft))
 
     assert imported["schema_version"] == "2"
     assert imported["section_scope"] == "required"
-    assert render_document_ast(imported) == render_document_ast(draft)
+    if legacy_outline:
+        sections = {section["id"]: section for section in imported["sections"]}
+        for section in draft["sections"]:
+            assert render_section_text(sections[section["id"]]) == render_section_text(section)
+        assert all(render_section_text(sections[section_id]) == "Требования не определены" for section_id in {"2", "4.2", "5.2", "5.3", "5.4"})
+    else:
+        assert render_document_ast(imported) == render_document_ast(draft)
     assert {section["id"] for section in imported["sections"]} == required_ids
 
 
@@ -251,14 +261,16 @@ def test_v4_creates_empty_structure_with_all_root_sections_by_title(database, id
     revision = document["current_revision"]
     assert revision["revision_number"] == 1
     expected_ids = [section["id"] for section in published_template()["sections"]]
-    expected = [{"id": section["id"], "title": section["title"], "blocks": []} for section in published_template()["sections"] if section["id"] in expected_ids]
+    expected = with_block_ids(
+        {"sections": [{"id": section["id"], "title": section["title"], "blocks": [{"type": "paragraph", "text": "Требования не определены"}]} for section in published_template()["sections"]]}
+    )["sections"]
     assert [section["id"] for section in revision["document_ast"]["sections"]] == expected_ids
     assert revision["document_ast"]["sections"] == expected
     assert revision["document_ast"]["section_scope"] == "required"
-    assert revision["document_ast"]["sections"][1] == {"id": "2", "title": "Нормативно-правовые акты (НПА)", "blocks": []}
+    assert revision["document_ast"]["sections"][1]["title"] == "Нормативно-правовые акты (НПА)"
     assert "## 2. Нормативно-правовые акты (НПА)" in revision["body_markdown"]
     assert document_queries.get_document(document["document_id"], AUTHOR)["current_revision"] == revision
-    assert all(text == "" for text in revision["section_texts"].values())
+    assert all(text == "Требования не определены" for text in revision["section_texts"].values())
     assert revision["change_basis"][0]["title"] == "Структура документа"
     assert BusinessDocumentJob.select().count() == 0
     assert [event.event_type for event in BusinessDocumentEvent.select().order_by(BusinessDocumentEvent.sequence)] == ["DocumentCreated", "DocumentStructureCreated"]
@@ -534,7 +546,7 @@ def test_v3_binds_an_empty_eva_page_without_importing_it(database, monkeypatch, 
     if with_idea:
         assert created["current_revision"] is None
     else:
-        assert all(section["blocks"] == [] for section in created["current_revision"]["document_ast"]["sections"])
+        assert all(render_section_text(section) == "Требования не определены" for section in created["current_revision"]["document_ast"]["sections"])
     assert created["eva_binding"]["document_id"] == binding["document_id"]
     assert created["eva_binding"]["remote_content_hash"] is None
     assert BusinessDocumentEvaBinding.select().count() == 1
@@ -3215,8 +3227,7 @@ def test_reporting_subsection_is_previewed_and_confirmed_with_scoped_sources(dat
     monitor_text = "Мониторинг проверяет работоспособность каждые пять минут."
     draft = _draft()
     draft.update(schema_version="2", section_scope="required")
-    required = {section["id"] for section in published_template()["sections"] if section["required"]}
-    draft["sections"] = [section for section in draft["sections"] if section["id"] in required]
+    next(section for section in draft["sections"] if section["id"] == "5.4")["blocks"] = []
     monitoring = next(section for section in draft["sections"] if section["id"] == "5.5")
     monitoring["blocks"] = [{"type": "paragraph", "text": monitor_text}]
     if source_kind == "anchored_comment":
@@ -3244,7 +3255,8 @@ def test_reporting_subsection_is_previewed_and_confirmed_with_scoped_sources(dat
     document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, command, payload))
     document = _complete_review_assessment(document_queries.get_document(document["document_id"], AUTHOR))
     revision = document["current_revision"]
-    parent = next(section for section in revision["document_ast"]["sections"] if section["id"] == "5")
+    reporting = next(section for section in revision["document_ast"]["sections"] if section["id"] == "5.4")
+    monitoring = next(section for section in revision["document_ast"]["sections"] if section["id"] == "5.5")
     source = next(
         event.id
         for event in BusinessDocumentEvent.select().where(BusinessDocumentEvent.document_id == document["document_id"])
@@ -3259,11 +3271,12 @@ def test_reporting_subsection_is_previewed_and_confirmed_with_scoped_sources(dat
         "operations": [
             {
                 "operation_id": "reporting",
-                "type": "REPLACE_SECTION_CONTENT",
-                "section_id": "5",
-                "expected_section_hash": section_hash(parent),
+                "type": "REPLACE_BLOCK",
+                "section_id": "5.4",
+                "block_id": reporting["blocks"][0]["id"],
+                "expected_block_hash": section_hash(reporting["blocks"][0]),
                 "source_event_ids": [source],
-                "content": {"blocks": [*parent["blocks"], {"id": "5.4", "title": "Требования к отчетности", "blocks": [{"type": "paragraph", "text": report_text}]}]},
+                "block": {"type": "paragraph", "text": report_text},
             }
         ],
     }
@@ -3271,11 +3284,11 @@ def test_reporting_subsection_is_previewed_and_confirmed_with_scoped_sources(dat
         plan["operations"].append(
             {
                 "operation_id": "monitoring",
-                "type": "REPLACE_SECTION_CONTENT",
+                "type": "DELETE_BLOCK",
                 "section_id": "5.5",
-                "expected_section_hash": section_hash(monitoring),
+                "block_id": monitoring["blocks"][1]["id"],
+                "expected_block_hash": section_hash(monitoring["blocks"][1]),
                 "source_event_ids": [source],
-                "content": {"blocks": [{"type": "paragraph", "text": monitor_text}]},
             }
         )
 
@@ -3294,7 +3307,7 @@ def test_reporting_subsection_is_previewed_and_confirmed_with_scoped_sources(dat
     assert current["current_revision"]["revision_id"] == revision["revision_id"]
     preview = document_queries.get_change_preview(document["document_id"], job.id)
     added = next(section for section in preview["sections"] if section["section_id"] == "5.4")
-    assert added["before"] == "" and added["after"] == report_text
+    assert added["before"] == "Требования не определены" and added["after"] == report_text
     assert added["source_event_ids"] == [source]
     document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(current, "CONFIRM_PREPARED_CHANGES", {"job_id": job.id}))
     changed = document_queries.get_document(document["document_id"], AUTHOR)
@@ -4204,7 +4217,7 @@ def test_job_snapshot_batches_review_reads_and_plan_validation_performs_no_queri
     assert BusinessDocumentAI._prompt(new_job).input_payload == BusinessDocumentAI._prompt(old_job).input_payload
     with count_queries(only_select=True) as review_queries:
         review = load_review_state(row.id, row.active_review_cycle)
-    assert review_queries.count <= 6
+    assert review_queries.count <= 7  # Includes the bounded cross-cycle answered-section projection.
     plan = {
         "operations": [{"section_id": "3.1", "source_event_ids": [comment["source_event_id"]]} for comment in snapshot["protocol"]["comments"]],
         "acknowledged_no_change_event_ids": [],

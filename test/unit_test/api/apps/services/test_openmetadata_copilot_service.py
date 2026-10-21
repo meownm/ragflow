@@ -657,6 +657,55 @@ def test_discovery_fails_closed_for_unmapped_user_domains(om_module, monkeypatch
     assert denied["total_visible_candidates"] == 0
 
 
+def test_visible_catalog_projection_excludes_other_domains_before_relationship_projection(om_module, monkeypatch):
+    service, _client = _service(
+        om_module,
+        [
+            _raw_table("finance", "orders", domain="Finance"),
+            _raw_table("secret-hr", "salary", domain="HR"),
+        ],
+    )
+    monkeypatch.setenv("OPENMETADATA_USER_DOMAIN_MAP", '{"reader":["Finance"]}')
+    assert [table["id"] for table in service.visible_catalog(user_id="reader")["tables"]] == ["finance"]
+    assert service.visible_catalog(user_id="unmapped")["tables"] == []
+
+
+def test_live_entity_visibility_rechecks_domain_and_deletion_after_cached_selection(om_module, monkeypatch):
+    raw = _raw_table("orders", "orders", domain="Finance")
+    service, _client = _service(om_module, [raw])
+    monkeypatch.setenv("OPENMETADATA_USER_DOMAIN_MAP", '{"reader":["Finance"]}')
+    assert service.get_visible_entity("orders", user_id="reader") is not None
+    assert service.is_entity_visible(om_module.normalize_table(raw, service.config.public_url), user_id="reader")
+
+    moved = deepcopy(raw)
+    moved["domains"] = [{"name": "HR"}]
+    assert not service.is_entity_visible(om_module.normalize_table(moved, service.config.public_url), user_id="reader")
+    assert not service.is_entity_visible(om_module.normalize_table(raw, service.config.public_url), user_id="unmapped")
+
+    deleted = {**raw, "deleted": True}
+    assert not service.is_entity_visible(om_module.normalize_table(deleted, service.config.public_url), user_id="reader")
+
+
+def test_visible_catalog_rechecks_actor_policy_without_mutating_cached_projection(om_module, monkeypatch):
+    service, _client = _service(
+        om_module,
+        [
+            _raw_table("finance", "orders", domain="Finance"),
+            _raw_table("hr", "salary", domain="HR"),
+        ],
+    )
+    projection = service.projection.get()
+    before = deepcopy(projection)
+    monkeypatch.setenv("OPENMETADATA_USER_DOMAIN_MAP", '{"reader":["Finance"]}')
+    visible = service.visible_catalog(user_id="reader")
+    assert [table["id"] for table in visible["tables"]] == ["finance"]
+    assert visible["freshness"] == projection["freshness"]
+    assert visible["warnings"] == projection["warnings"]
+    monkeypatch.setenv("OPENMETADATA_USER_DOMAIN_MAP", '{"reader":["HR"]}')
+    assert [table["id"] for table in service.visible_catalog(user_id="reader")["tables"]] == ["hr"]
+    assert projection == before
+
+
 def test_impact_requires_clarification_for_duplicate_short_name(om_module):
     first = _raw_table("55555555-5555-4555-8555-555555555555", "orders", service="erp")
     second = _raw_table("66666666-6666-4666-8666-666666666666", "orders", service="warehouse")

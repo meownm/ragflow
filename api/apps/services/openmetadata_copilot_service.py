@@ -2324,6 +2324,20 @@ class OpenMetadataCopilotService:
             None,
         )
 
+    def is_entity_visible(self, entity: dict[str, Any], *, user_id: str) -> bool:
+        """Recheck live entity metadata against the current actor domain policy."""
+        return _matches_filters(entity, {}, self.allowed_domains(user_id))
+
+    def visible_catalog(self, *, user_id: str) -> dict[str, Any]:
+        """Expose the authorized projection to bounded metadata consumers."""
+        projection = self.projection.get()
+        allowed_domains = self.allowed_domains(user_id)
+        return {
+            "tables": [table for table in projection["tables"] if _matches_filters(table, {}, allowed_domains)],
+            "freshness": projection["freshness"],
+            "warnings": list(projection.get("warnings") or []),
+        }
+
     def capabilities_for_user(self, user_id: str) -> dict[str, int | None]:
         projection = self.projection.get()
         allowed_domains = self.allowed_domains(user_id)

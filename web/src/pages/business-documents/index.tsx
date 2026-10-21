@@ -144,16 +144,15 @@ const protocolPaneWidthStorageKey =
   'ragflow.business-documents.protocol-pane-width';
 const defaultProtocolPaneWidth = 460;
 const minProtocolPaneWidth = 360;
-const maxProtocolPaneWidth = 760;
+function getMaxProtocolPaneWidth() {
+  return typeof window === 'undefined'
+    ? defaultProtocolPaneWidth
+    : Math.max(minProtocolPaneWidth, Math.floor(window.innerWidth * 0.8));
+}
 
 function clampProtocolPaneWidth(width: number) {
-  const viewportMaximum =
-    typeof window === 'undefined'
-      ? maxProtocolPaneWidth
-      : Math.max(minProtocolPaneWidth, window.innerWidth - 480);
   return Math.min(
-    maxProtocolPaneWidth,
-    viewportMaximum,
+    getMaxProtocolPaneWidth(),
     Math.max(minProtocolPaneWidth, width),
   );
 }
@@ -853,6 +852,9 @@ export default function BusinessDocumentsPage() {
   const [protocolPaneWidth, setProtocolPaneWidth] = useState(
     readProtocolPaneWidth,
   );
+  const [maxProtocolPaneWidth, setMaxProtocolPaneWidth] = useState(
+    getMaxProtocolPaneWidth,
+  );
   const clearSelection = useCallback(() => setSelection(null), []);
   const promptStorageIdentity = useMemo(() => {
     const userId = userInfo?.id?.trim();
@@ -875,6 +877,7 @@ export default function BusinessDocumentsPage() {
 
   useEffect(() => {
     const reflowProtocolPane = () => {
+      setMaxProtocolPaneWidth(getMaxProtocolPaneWidth());
       setProtocolPaneWidth((width) => clampProtocolPaneWidth(width));
     };
     window.addEventListener('resize', reflowProtocolPane);
@@ -2082,7 +2085,7 @@ export default function BusinessDocumentsPage() {
           testId="business-document-protocol-resizer"
           value={protocolPaneWidth}
           min={minProtocolPaneWidth}
-          max={clampProtocolPaneWidth(maxProtocolPaneWidth)}
+          max={maxProtocolPaneWidth}
           onChange={resizeProtocolPane}
           onReset={() => resizeProtocolPane(defaultProtocolPaneWidth)}
         />

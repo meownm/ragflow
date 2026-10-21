@@ -421,6 +421,10 @@ beforeAll(() => {
 });
 
 beforeEach(() => {
+  Object.defineProperty(window, 'innerWidth', {
+    configurable: true,
+    value: 1024,
+  });
   mockUseSystemConfig.mockReturnValue({
     config: { visibleSections: ['business_documents', 'document_constructor'] },
     loading: false,
@@ -1763,8 +1767,55 @@ test('resizes the discussion rail with the keyboard and remembers the width', as
     value: 800,
   });
   fireEvent(window, new Event('resize'));
-  expect(resizer).toHaveAttribute('aria-valuenow', '360');
+  expect(resizer).toHaveAttribute('aria-valuemax', '640');
+  expect(resizer).toHaveAttribute('aria-valuenow', '484');
 });
+
+test.each([1280, 1920])(
+  'expands the discussion to 80%% of a %ipx window and clamps on resize',
+  async (viewportWidth) => {
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: viewportWidth,
+    });
+    const maximum = Math.floor(viewportWidth * 0.8);
+    const page = renderPage();
+    let resizer = await screen.findByRole('separator', {
+      name: 'Изменить ширину обсуждения',
+    });
+    expect(resizer).toHaveAttribute('aria-valuemax', String(maximum));
+    window.PointerEvent = MouseEvent as typeof PointerEvent;
+    resizer.setPointerCapture = jest.fn();
+    resizer.releasePointerCapture = jest.fn();
+    fireEvent.pointerDown(resizer, { clientX: viewportWidth, button: 0 });
+    fireEvent.pointerMove(resizer, { clientX: 0 });
+    fireEvent.pointerUp(resizer);
+    fireEvent.keyDown(resizer, { key: 'ArrowLeft' });
+    expect(resizer).toHaveAttribute('aria-valuenow', String(maximum));
+    expect(
+      screen
+        .getByTestId('business-document-panes')
+        .style.getPropertyValue('--business-document-protocol-width'),
+    ).toBe(`${maximum}px`);
+
+    page.unmount();
+    renderPage();
+    resizer = await screen.findByRole('separator', {
+      name: 'Изменить ширину обсуждения',
+    });
+    expect(resizer).toHaveAttribute('aria-valuenow', String(maximum));
+
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 1200,
+    });
+    fireEvent(window, new Event('resize'));
+    expect(resizer).toHaveAttribute('aria-valuemax', '960');
+    expect(resizer).toHaveAttribute('aria-valuenow', '960');
+    fireEvent.doubleClick(resizer);
+    expect(resizer).toHaveAttribute('aria-valuenow', '460');
+  },
+);
 
 test('labels a general protocol comment as applying to the whole document', async () => {
   mockedFetch.mockResolvedValueOnce({

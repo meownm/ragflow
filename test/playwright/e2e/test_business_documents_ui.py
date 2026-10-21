@@ -65,6 +65,23 @@ def test_compact_eva_resizing_and_review_history(page, base_url, width):
         page.mouse.move(box["x"] - 140, box["y"] + box["height"] / 2, steps=10)
         page.mouse.up()
         assert page.get_by_test_id("business-document-protocol").bounding_box()["width"] > before + 100
+        box = handle.bounding_box()
+        page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        page.mouse.down()
+        page.mouse.move(0, box["y"] + box["height"] / 2, steps=10)
+        page.mouse.up()
+        expect(handle).to_have_attribute("aria-valuenow", str(int(width * 0.8)))
+        assert abs(page.get_by_test_id("business-document-protocol").bounding_box()["width"] - width * 0.8) <= 1
+        assert page.get_by_test_id("business-document-pane").bounding_box()["width"] > 0
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
+        page.set_viewport_size({"width": 1280, "height": 1000})
+        expect(handle).to_have_attribute("aria-valuenow", "1024")
+        expect(handle).to_have_attribute("aria-valuemax", "1024")
+        page.set_viewport_size({"width": width, "height": 1000})
+        expect(handle).to_have_attribute("aria-valuemax", str(int(width * 0.8)))
+        handle.dblclick()
+        expect(handle).to_have_attribute("aria-valuenow", "460")
+        expect(input_field).to_have_value("Замечание сохранится при изменении размеров")
         composer = page.get_by_test_id("business-document-comment-composer")
         old_height = composer.bounding_box()["height"]
         resize = page.get_by_test_id("business-document-composer-resizer").bounding_box()

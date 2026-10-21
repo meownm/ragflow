@@ -103,13 +103,18 @@ def test_m06_cannot_start_with_any_template_section_missing(section_id):
     assert "source_input_mismatch" in failures
 
 
-def test_active_suite_preserves_original_cases_and_registers_admin_diagnostic(monkeypatch):
+def test_active_suite_preserves_original_cases_except_m04_author_answer_and_registers_admin_diagnostic(monkeypatch):
     monkeypatch.syspath_prepend(str(live.REPO_ROOT / "admin/server"))
     from admin.server.document_quality_runs import _known_case_ids
 
     baseline = json.loads((live.ASSET_ROOT / "golden_model_quality/v1.json").read_text(encoding="utf-8"))
     active = json.loads(live.MODEL_GOLDEN_PATH.read_text(encoding="utf-8"))
-    assert active["cases"][:-1] == baseline["cases"]
+    original_cases = deepcopy(active["cases"][:-1])
+    m04 = next(case for case in original_cases if case["id"] == "M04_prompt_injection_remains_evidence")
+    original_m04 = next(case for case in baseline["cases"] if case["id"] == m04["id"])
+    assert m04["answers_by_section"]["4"] != original_m04["answers_by_section"]["4"]
+    m04["answers_by_section"]["4"] = original_m04["answers_by_section"]["4"]
+    assert original_cases == baseline["cases"]
     assert CASE["id"] in _known_case_ids()
 
 

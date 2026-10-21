@@ -81,6 +81,7 @@ def queries():
     reader.revisions.return_value = history([revision()])
     reader.revision.return_value = revision()
     reader.review.return_value = empty_review()
+    reader.review_history.return_value = ()
     reader.users.return_value = {"owner": {"nickname": "Owner"}}
     reader.latest_job.return_value = None
     reader.preview.return_value = None

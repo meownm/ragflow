@@ -4,7 +4,7 @@ import pytest
 from playhouse.test_utils import count_queries
 
 from test.unit_test.api.apps.business_documents.test_business_document_service import AUTHOR, _create, database as service_database
-from api.apps.business_documents.adapters.review import load_review_state
+from api.apps.business_documents.adapters.review import load_review_history, load_review_state
 from api.db.db_models import (
     BusinessDocumentAnswer,
     BusinessDocumentComment,
@@ -131,3 +131,35 @@ def test_current_cycle_load_preserves_published_results_and_historical_source_er
     assert validate(actual, [old[0]])[0] == "CHANGE_SOURCE_REVIEW_CYCLE_CONFLICT"
     assert validate(actual, [old[1]])[0] == "CHANGE_SOURCE_REVIEW_CYCLE_CONFLICT"
     assert validate(actual, [old[2]])[0] == "COMMENT_CHANGE_NOT_CONFIRMED"
+
+
+def test_history_reads_previous_cycles_without_changing_current_state_or_query_count(database):
+    document_id = _create()["document_id"]
+    populate_cycle(document_id, 0, 2)
+    previous_sources = populate_cycle(document_id, 1, 3, sequence=100)
+    populate_cycle(document_id, 2, 1, sequence=200)
+    foreign_id = _create(title="Другой документ")["document_id"]
+    BusinessDocumentQuestion.create(
+        id="foreign-question", document_id=foreign_id, review_cycle=1, stage="REVIEW", semantic_tag="foreign", target_section_id="1", text="Private question", options=[], source_event_ids=[]
+    )
+    BusinessDocumentEvent.create(
+        id="previous-applied",
+        document_id=document_id,
+        sequence=250,
+        event_type="ChangesApplied",
+        actor_type="USER",
+        actor_id=AUTHOR,
+        correlation_id="history",
+        payload={"source_event_ids": previous_sources},
+    )
+    with count_queries(only_select=True) as queries:
+        history = load_review_history(document_id, 2)
+    assert queries.count == 6
+    assert [review.review_cycle for review in history] == [1, 0]
+    assert [len(review.questions) for review in history] == [3, 2]
+    assert all(row["document_id"] == document_id for review in history for row in (*review.questions, *review.proposals, *review.comments))
+    assert all(project_protocol(review, "revision")["questions"][0]["answer"]["custom_answer"] for review in history)
+    for review in history:
+        assert project_protocol(review, "revision") == project_protocol(full_history(document_id, review.review_cycle), "revision")
+    assert all(proposal["applied"] for proposal in project_protocol(history[0], "revision")["proposals"])
+    assert len(load_review_state(document_id, 2).questions) == 1

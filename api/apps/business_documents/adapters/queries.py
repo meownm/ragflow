@@ -9,7 +9,7 @@ from typing import Any
 
 from peewee import JOIN, fn, SqliteDatabase
 
-from api.apps.business_documents.adapters.review import load_review_state
+from api.apps.business_documents.adapters.review import load_review_history, load_review_state
 from api.db.db_models import (
     BusinessDocument,
     BusinessDocumentAnswer,
@@ -267,6 +267,9 @@ class PeeweeDocumentReader:
 
     def review(self, document_id: str, review_cycle: int):
         return load_review_state(document_id, review_cycle)
+
+    def review_history(self, document_id: str, active_cycle: int):
+        return load_review_history(document_id, active_cycle)
 
     def job(self, document_id: str, job_id: str):
         return BusinessDocumentJob.select().where((BusinessDocumentJob.id == job_id) & (BusinessDocumentJob.document_id == document_id)).dicts().first()

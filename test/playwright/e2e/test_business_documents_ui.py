@@ -19,6 +19,81 @@ def _envelope(data):
     return {"code": 0, "data": data}
 
 
+@pytest.mark.p1
+@pytest.mark.parametrize("width", [1440, 390])
+def test_compact_eva_resizing_and_review_history(page, base_url, width):
+    from copy import deepcopy
+
+    page.set_viewport_size({"width": width, "height": 1000 if width > 1000 else 844})
+    _install_session(page)
+    page.route("**/api/v1/**", lambda route: route.fulfill(json=_envelope({})))
+    _install_common_routes(page)
+    projection = _projection()
+    projection["protocol"]["proposals"][0].update(decision="ACCEPTED", applied=False)
+    revision = deepcopy(projection["current_revision"])
+    revision.update(revision_id="revision-2", revision_number=2, source_event_ids=["old-decision"], section_texts={"1": "Запись удерживается 15 минут"})
+    previous = deepcopy(revision)
+    previous.update(revision_id="revision-1", revision_number=1, source_event_ids=[], section_texts={"1": "Запись сразу подтверждается"})
+    projection["protocol_history"] = [
+        {
+            "review_cycle": 1,
+            "questions": [
+                {"question_id": "old-question", "text": "Как долго удерживать запись?", "status": "ANSWERED", "options": [], "allow_custom_answer": True, "answer": {"custom_answer": "15 минут"}}
+            ],
+            "proposals": [
+                {"proposal_id": "old-proposal", "text": "Удерживать выбранную запись", "target_section_id": "1", "decision": "ACCEPTED", "applied": True, "decision_event_id": "old-decision"},
+                {"proposal_id": "old-undecided", "text": "Добавить отчётность", "decision": "PENDING"},
+            ],
+            "comments": [],
+        }
+    ]
+    page.route("**/api/v1/business-documents/doc-ui-1", lambda route: route.fulfill(json=_envelope(projection)))
+    page.route("**/api/v1/business-documents/doc-ui-1/revisions", lambda route: route.fulfill(json=_envelope([previous, revision, projection["current_revision"]])))
+    page.goto(f"{base_url.rstrip('/')}/business-documents/doc-ui-1")
+    expect(page.get_by_test_id("business-document-protocol")).to_be_visible(timeout=RESULT_TIMEOUT_MS)
+    expect(page.get_by_test_id("business-document-eva-binding")).to_have_count(0)
+    expect(page.get_by_test_id("proposal-status-proposal-1")).to_have_text("Принято к применению")
+    input_field = page.get_by_role("textbox", name="Комментарий", exact=True)
+    input_field.scroll_into_view_if_needed()
+    input_field.fill("Замечание сохранится при изменении размеров")
+    if width > 1000:
+        handle = page.get_by_test_id("business-document-protocol-resizer")
+        before = page.get_by_test_id("business-document-protocol").bounding_box()["width"]
+        box = handle.bounding_box()
+        page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        page.mouse.down()
+        page.mouse.move(box["x"] - 140, box["y"] + box["height"] / 2, steps=10)
+        page.mouse.up()
+        assert page.get_by_test_id("business-document-protocol").bounding_box()["width"] > before + 100
+        composer = page.get_by_test_id("business-document-comment-composer")
+        old_height = composer.bounding_box()["height"]
+        resize = page.get_by_test_id("business-document-composer-resizer").bounding_box()
+        page.mouse.move(resize["x"] + 30, resize["y"] + 6)
+        page.mouse.down()
+        page.mouse.move(resize["x"] + 30, resize["y"] - 100, steps=10)
+        page.mouse.up()
+        assert composer.bounding_box()["height"] > old_height + 80
+    page.get_by_role("tab", name=re.compile("История")).click()
+    expect(page.get_by_text("Ответ: 15 минут", exact=True)).to_be_visible()
+    expect(page.get_by_text("Не принято", exact=True)).to_be_visible()
+    old_proposal = page.locator('[data-protocol-id="old-proposal"]')
+    old_proposal.locator("summary").click()
+    expect(old_proposal.get_by_test_id("revision-text-diff")).to_contain_text("Запись удерживается 15 минут")
+    expect(old_proposal.get_by_test_id("revision-text-diff")).to_contain_text("Запись сразу подтверждается")
+    expect(page.get_by_role("button", name="Принять", exact=True)).to_have_count(0)
+    expect(input_field).to_have_value("Замечание сохранится при изменении размеров")
+    history_path = Path(os.environ.get("PW_ARTIFACTS_DIR", "test/playwright/artifacts")) / f"compact-bt-history-{width}.png"
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    page.screenshot(path=str(history_path), full_page=True)
+    page.get_by_role("tab", name=re.compile("В работе")).click()
+    expect(page.get_by_test_id("answer-question-question-1")).to_be_visible()
+    if width > 1000:
+        path = Path(os.environ.get("PW_ARTIFACTS_DIR", "test/playwright/artifacts")) / "compact-bt-desktop.png"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        page.screenshot(path=str(path), full_page=True)
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
+
+
 def _projection(*, allowed_commands=None):
     return {
         "document_id": "doc-ui-1",

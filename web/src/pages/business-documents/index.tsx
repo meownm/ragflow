@@ -76,7 +76,6 @@ import {
   FormEvent,
   MouseEvent,
   ReactNode,
-  PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -100,6 +99,7 @@ import {
 import { EvaChangeWorkbench } from './components/eva-change-workbench';
 import { evidenceRefsChanged } from './components/evidence-refs-diff';
 import { ProtocolPane } from './components/protocol-pane';
+import { ResizeHandle } from './components/resize-handle';
 import { ReviewActivity } from './components/review-activity';
 import { RevisionHistoryPanel } from './components/revision-history-panel';
 import { appendVoiceTranscript, VoiceInput } from './components/voice-input';
@@ -142,7 +142,7 @@ const staleConflictCodes = new Set([
 
 const protocolPaneWidthStorageKey =
   'ragflow.business-documents.protocol-pane-width';
-const defaultProtocolPaneWidth = 430;
+const defaultProtocolPaneWidth = 460;
 const minProtocolPaneWidth = 360;
 const maxProtocolPaneWidth = 760;
 
@@ -873,30 +873,6 @@ export default function BusinessDocumentsPage() {
     }
   }, []);
 
-  const startProtocolPaneResize = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      event.preventDefault();
-      const onPointerMove = (moveEvent: PointerEvent) => {
-        resizeProtocolPane(window.innerWidth - moveEvent.clientX);
-      };
-      const stop = () => {
-        window.removeEventListener('pointermove', onPointerMove);
-        window.removeEventListener('pointerup', stop);
-        window.removeEventListener('pointercancel', stop);
-        window.removeEventListener('blur', stop);
-        window.document.body.style.removeProperty('cursor');
-        window.document.body.style.removeProperty('user-select');
-      };
-      window.document.body.style.cursor = 'col-resize';
-      window.document.body.style.userSelect = 'none';
-      window.addEventListener('pointermove', onPointerMove);
-      window.addEventListener('pointerup', stop, { once: true });
-      window.addEventListener('pointercancel', stop, { once: true });
-      window.addEventListener('blur', stop, { once: true });
-    },
-    [resizeProtocolPane],
-  );
-
   useEffect(() => {
     const reflowProtocolPane = () => {
       setProtocolPaneWidth((width) => clampProtocolPaneWidth(width));
@@ -1503,13 +1479,19 @@ export default function BusinessDocumentsPage() {
                 variant="ghost"
                 data-testid="business-document-details-toggle"
               >
-                Сведения
+                <Link2 className="size-3.5 text-accent-primary" />
+                EVA
+                {evaUpdateQuery.data?.changed
+                  ? ' · обновление'
+                  : document.eva_binding
+                    ? ' · связана'
+                    : ' · не связана'}
                 <ChevronDown className="size-3.5" />
               </Button>
             </PopoverTrigger>
             <PopoverContent
               align="end"
-              className="max-h-[min(70vh,560px)] w-[min(440px,calc(100vw-24px))] overflow-y-auto p-4"
+              className="max-h-[min(80vh,680px)] w-[min(480px,calc(100vw-24px))] overflow-y-auto p-4"
               data-testid="business-document-details"
             >
               <div className="space-y-3 text-xs">
@@ -1563,6 +1545,211 @@ export default function BusinessDocumentsPage() {
                   </p>
                 )}
               </div>
+              {!document.eva_binding &&
+                document.permissions?.edit !== false &&
+                document.lifecycle_state !== 'ARCHIVED' && (
+                  <div className="space-y-2 border-b border-border-button px-5 py-3">
+                    <EvaAccessNotice
+                      access={evaAccess}
+                      error={rebindEvaMutation.error}
+                      returnTo={`${Routes.BusinessDocuments}/${documentId}`}
+                      onRetry={() => rebindEvaMutation.reset()}
+                    />
+                    <form
+                      className="flex flex-wrap items-center gap-2"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        if (
+                          !isBusy &&
+                          hasPersonalEvaToken &&
+                          initialEvaPageUrl.trim()
+                        ) {
+                          rebindEvaMutation.mutate(initialEvaPageUrl.trim());
+                        }
+                      }}
+                    >
+                      <Input
+                        aria-label="Ссылка на страницу EVA"
+                        placeholder="Ссылка на учебную или рабочую страницу EVA"
+                        value={initialEvaPageUrl}
+                        onChange={(event) =>
+                          setInitialEvaPageUrl(event.target.value)
+                        }
+                        maxLength={2048}
+                        disabled={isBusy || rebindEvaMutation.isPending}
+                      />
+                      <Button
+                        type="submit"
+                        disabled={
+                          isBusy ||
+                          !hasPersonalEvaToken ||
+                          !initialEvaPageUrl.trim() ||
+                          rebindEvaMutation.isPending
+                        }
+                      >
+                        Связать с EVA
+                      </Button>
+                    </form>
+                    <p className="text-xs text-text-secondary">
+                      Привязка сохраняет текущую ревизию. Чтение обновления и
+                      публикация выполняются отдельно.
+                    </p>
+                    {rebindEvaMutation.error && (
+                      <p className="text-xs text-state-error" role="alert">
+                        {rebindEvaMutation.error.message}
+                      </p>
+                    )}
+                  </div>
+                )}
+              {document.eva_binding && (
+                <div
+                  className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border-button px-5 py-3 text-xs"
+                  data-testid="business-document-eva-binding"
+                >
+                  <div className="flex min-w-0 flex-1 items-center gap-2">
+                    <Link2 className="size-3.5 shrink-0 text-accent-primary" />
+                    <span className="text-text-secondary">Связано с EVA:</span>
+                    <a
+                      href={document.eva_binding.page_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex min-w-0 items-center gap-1 font-medium text-text-primary hover:text-accent-primary"
+                    >
+                      <span className="truncate">
+                        {document.eva_binding.document_name ||
+                          document.eva_binding.document_code ||
+                          document.eva_binding.page_url}
+                      </span>
+                      <ExternalLink className="size-3 shrink-0" />
+                    </a>
+                    {document.eva_binding.status === 'LINK_ONLY' && (
+                      <>
+                        <span className="text-text-disabled">
+                          Только ссылка — доступный коннектор не найден
+                        </span>
+                        {document.permissions?.edit !== false && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={
+                              isBusy ||
+                              !hasPersonalEvaToken ||
+                              rebindEvaMutation.isPending
+                            }
+                            loading={rebindEvaMutation.isPending}
+                            onClick={() => rebindEvaMutation.mutate(undefined)}
+                            data-testid="rebind-business-document-to-eva"
+                          >
+                            <RefreshCw className="size-3.5" />
+                            Подключить заново
+                          </Button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                  {document.permissions?.edit !== false &&
+                    evaUpdateQuery.data?.changed &&
+                    evaUpdateQuery.data.can_pull && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={
+                          isBusy ||
+                          !hasPersonalEvaToken ||
+                          !document.current_revision ||
+                          !['REVIEW', 'AGREED'].includes(
+                            document.lifecycle_state,
+                          ) ||
+                          pullEvaMutation.isPending
+                        }
+                        loading={pullEvaMutation.isPending}
+                        onClick={() => pullEvaMutation.mutate()}
+                        data-testid="pull-business-document-from-eva"
+                      >
+                        <ArrowDownToLine className="size-3.5" />
+                        Загрузить обновление из EVA
+                      </Button>
+                    )}
+                  {document.permissions?.edit !== false && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={
+                        isBusy ||
+                        !hasPersonalEvaToken ||
+                        !document.current_revision ||
+                        !['REVIEW', 'AGREED'].includes(
+                          document.lifecycle_state,
+                        ) ||
+                        createEvaChangeMutation.isPending
+                      }
+                      loading={createEvaChangeMutation.isPending}
+                      onClick={() => createEvaChangeMutation.mutate()}
+                      data-testid="push-business-document-to-eva"
+                    >
+                      <ArrowUpFromLine className="size-3.5" />
+                      Сохранить текущий вариант в EVA
+                    </Button>
+                  )}
+                  {(rebindEvaMutation.error ||
+                    pullEvaMutation.error ||
+                    createEvaChangeMutation.error) &&
+                    !isEvaAccessError(
+                      rebindEvaMutation.error ||
+                        pullEvaMutation.error ||
+                        createEvaChangeMutation.error,
+                    ) && (
+                      <span className="w-full text-state-error" role="alert">
+                        {
+                          (
+                            rebindEvaMutation.error ||
+                            pullEvaMutation.error ||
+                            createEvaChangeMutation.error
+                          )?.message
+                        }
+                      </span>
+                    )}
+                  {evaSyncNotice && (
+                    <span className="w-full text-text-secondary">
+                      {evaSyncNotice}
+                    </span>
+                  )}
+                  {evaUpdateQuery.data?.changed && (
+                    <span
+                      className="w-full text-state-warning"
+                      data-testid="eva-update-available"
+                    >
+                      В EVA есть более новая версия документа. Загрузите её,
+                      чтобы добавить изменения в текущий цикл ревью.
+                    </span>
+                  )}
+                  {evaUpdateQuery.error &&
+                    !isEvaAccessError(evaUpdateQuery.error) && (
+                      <span className="w-full text-text-disabled" role="status">
+                        Не удалось проверить обновления EVA:{' '}
+                        {evaUpdateQuery.error.message}
+                      </span>
+                    )}
+                  <div className="w-full">
+                    <EvaAccessNotice
+                      access={evaAccess}
+                      error={
+                        rebindEvaMutation.error ||
+                        pullEvaMutation.error ||
+                        createEvaChangeMutation.error ||
+                        evaUpdateQuery.error
+                      }
+                      returnTo={`${Routes.BusinessDocuments}/${documentId}`}
+                      onRetry={() => {
+                        rebindEvaMutation.reset();
+                        pullEvaMutation.reset();
+                        createEvaChangeMutation.reset();
+                        if (hasPersonalEvaToken) void evaUpdateQuery.refetch();
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
             </PopoverContent>
           </Popover>
           {!!document.current_revision && (
@@ -1612,17 +1799,7 @@ export default function BusinessDocumentsPage() {
               Начать вносить изменения
             </Button>
           )}
-          {allowed.has('REQUEST_REVIEW_ASSESSMENT') && (
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={isBusy}
-              onClick={() => runDocumentCommand('REQUEST_REVIEW_ASSESSMENT')}
-            >
-              <Sparkles className="size-4" />
-              Проанализировать замечания
-            </Button>
-          )}
+
           {allowed.has('REQUEST_EXPORT') && (
             <>
               <Button
@@ -1714,205 +1891,6 @@ export default function BusinessDocumentsPage() {
       </header>
 
       <div aria-live="polite">
-        {!document.eva_binding &&
-          document.permissions?.edit !== false &&
-          document.lifecycle_state !== 'ARCHIVED' && (
-            <div className="space-y-2 border-b border-border-button px-5 py-3">
-              <EvaAccessNotice
-                access={evaAccess}
-                error={rebindEvaMutation.error}
-                returnTo={`${Routes.BusinessDocuments}/${documentId}`}
-                onRetry={() => rebindEvaMutation.reset()}
-              />
-              <form
-                className="flex max-w-3xl items-center gap-2"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  if (
-                    !isBusy &&
-                    hasPersonalEvaToken &&
-                    initialEvaPageUrl.trim()
-                  ) {
-                    rebindEvaMutation.mutate(initialEvaPageUrl.trim());
-                  }
-                }}
-              >
-                <Input
-                  aria-label="Ссылка на страницу EVA"
-                  placeholder="Ссылка на учебную или рабочую страницу EVA"
-                  value={initialEvaPageUrl}
-                  onChange={(event) => setInitialEvaPageUrl(event.target.value)}
-                  maxLength={2048}
-                  disabled={isBusy || rebindEvaMutation.isPending}
-                />
-                <Button
-                  type="submit"
-                  disabled={
-                    isBusy ||
-                    !hasPersonalEvaToken ||
-                    !initialEvaPageUrl.trim() ||
-                    rebindEvaMutation.isPending
-                  }
-                >
-                  Связать с EVA
-                </Button>
-              </form>
-              <p className="text-xs text-text-secondary">
-                Привязка сохраняет текущую ревизию. Чтение обновления и
-                публикация выполняются отдельно.
-              </p>
-              {rebindEvaMutation.error && (
-                <p className="text-xs text-state-error" role="alert">
-                  {rebindEvaMutation.error.message}
-                </p>
-              )}
-            </div>
-          )}
-        {document.eva_binding && (
-          <div
-            className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border-button px-5 py-3 text-xs"
-            data-testid="business-document-eva-binding"
-          >
-            <div className="flex min-w-0 flex-1 items-center gap-2">
-              <Link2 className="size-3.5 shrink-0 text-accent-primary" />
-              <span className="text-text-secondary">Связано с EVA:</span>
-              <a
-                href={document.eva_binding.page_url}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex min-w-0 items-center gap-1 font-medium text-text-primary hover:text-accent-primary"
-              >
-                <span className="truncate">
-                  {document.eva_binding.document_name ||
-                    document.eva_binding.document_code ||
-                    document.eva_binding.page_url}
-                </span>
-                <ExternalLink className="size-3 shrink-0" />
-              </a>
-              {document.eva_binding.status === 'LINK_ONLY' && (
-                <>
-                  <span className="text-text-disabled">
-                    Только ссылка — доступный коннектор не найден
-                  </span>
-                  {document.permissions?.edit !== false && (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={
-                        isBusy ||
-                        !hasPersonalEvaToken ||
-                        rebindEvaMutation.isPending
-                      }
-                      loading={rebindEvaMutation.isPending}
-                      onClick={() => rebindEvaMutation.mutate(undefined)}
-                      data-testid="rebind-business-document-to-eva"
-                    >
-                      <RefreshCw className="size-3.5" />
-                      Подключить заново
-                    </Button>
-                  )}
-                </>
-              )}
-            </div>
-            {document.permissions?.edit !== false &&
-              evaUpdateQuery.data?.changed &&
-              evaUpdateQuery.data.can_pull && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={
-                    isBusy ||
-                    !hasPersonalEvaToken ||
-                    !document.current_revision ||
-                    !['REVIEW', 'AGREED'].includes(document.lifecycle_state) ||
-                    pullEvaMutation.isPending
-                  }
-                  loading={pullEvaMutation.isPending}
-                  onClick={() => pullEvaMutation.mutate()}
-                  data-testid="pull-business-document-from-eva"
-                >
-                  <ArrowDownToLine className="size-3.5" />
-                  Загрузить обновление из EVA
-                </Button>
-              )}
-            {document.permissions?.edit !== false && (
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={
-                  isBusy ||
-                  !hasPersonalEvaToken ||
-                  !document.current_revision ||
-                  !['REVIEW', 'AGREED'].includes(document.lifecycle_state) ||
-                  createEvaChangeMutation.isPending
-                }
-                loading={createEvaChangeMutation.isPending}
-                onClick={() => createEvaChangeMutation.mutate()}
-                data-testid="push-business-document-to-eva"
-              >
-                <ArrowUpFromLine className="size-3.5" />
-                Сохранить текущий вариант в EVA
-              </Button>
-            )}
-            {(rebindEvaMutation.error ||
-              pullEvaMutation.error ||
-              createEvaChangeMutation.error) &&
-              !isEvaAccessError(
-                rebindEvaMutation.error ||
-                  pullEvaMutation.error ||
-                  createEvaChangeMutation.error,
-              ) && (
-                <span className="w-full text-state-error" role="alert">
-                  {
-                    (
-                      rebindEvaMutation.error ||
-                      pullEvaMutation.error ||
-                      createEvaChangeMutation.error
-                    )?.message
-                  }
-                </span>
-              )}
-            {evaSyncNotice && (
-              <span className="w-full text-text-secondary">
-                {evaSyncNotice}
-              </span>
-            )}
-            {evaUpdateQuery.data?.changed && (
-              <span
-                className="w-full text-state-warning"
-                data-testid="eva-update-available"
-              >
-                В EVA есть более новая версия документа. Загрузите её, чтобы
-                добавить изменения в текущий цикл ревью.
-              </span>
-            )}
-            {evaUpdateQuery.error &&
-              !isEvaAccessError(evaUpdateQuery.error) && (
-                <span className="w-full text-text-disabled" role="status">
-                  Не удалось проверить обновления EVA:{' '}
-                  {evaUpdateQuery.error.message}
-                </span>
-              )}
-            <div className="w-full">
-              <EvaAccessNotice
-                access={evaAccess}
-                error={
-                  rebindEvaMutation.error ||
-                  pullEvaMutation.error ||
-                  createEvaChangeMutation.error ||
-                  evaUpdateQuery.error
-                }
-                returnTo={`${Routes.BusinessDocuments}/${documentId}`}
-                onRetry={() => {
-                  rebindEvaMutation.reset();
-                  pullEvaMutation.reset();
-                  createEvaChangeMutation.reset();
-                  if (hasPersonalEvaToken) void evaUpdateQuery.refetch();
-                }}
-              />
-            </div>
-          </div>
-        )}
         {deleteMutation.error && (
           <div className="border-b border-state-error/40 bg-state-error/10 px-5 py-2 text-sm text-state-error">
             {deleteMutation.error.message}
@@ -2038,7 +2016,7 @@ export default function BusinessDocumentsPage() {
       </div>
 
       <div
-        className="grid min-h-0 grid-cols-[minmax(0,1fr)_4px_var(--business-document-protocol-width)] grid-rows-[auto_minmax(0,1fr)] max-lg:grid-cols-1 max-lg:grid-rows-[auto_minmax(360px,1fr)_minmax(320px,0.8fr)] max-lg:overflow-y-auto scrollbar-auto"
+        className="grid min-h-0 grid-cols-[minmax(0,1fr)_8px_var(--business-document-protocol-width)] grid-rows-[auto_minmax(0,1fr)] max-lg:grid-cols-1 max-lg:grid-rows-[auto_minmax(360px,1fr)_minmax(520px,0.8fr)] max-lg:overflow-y-auto scrollbar-auto"
         data-testid="business-document-panes"
         style={
           {
@@ -2098,28 +2076,16 @@ export default function BusinessDocumentsPage() {
             }}
           />
         </div>
-        <div
-          role="separator"
-          aria-label="Изменить ширину обсуждения"
-          aria-orientation="vertical"
-          aria-valuemin={minProtocolPaneWidth}
-          aria-valuemax={maxProtocolPaneWidth}
-          aria-valuenow={protocolPaneWidth}
-          tabIndex={0}
-          className="group relative z-10 row-span-2 cursor-col-resize bg-border-button outline-none hover:bg-accent-primary focus-visible:bg-accent-primary max-lg:hidden"
-          data-testid="business-document-protocol-resizer"
-          onPointerDown={startProtocolPaneResize}
-          onDoubleClick={() => resizeProtocolPane(defaultProtocolPaneWidth)}
-          onKeyDown={(event) => {
-            if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-            event.preventDefault();
-            resizeProtocolPane(
-              protocolPaneWidth + (event.key === 'ArrowLeft' ? 24 : -24),
-            );
-          }}
-        >
-          <span className="absolute inset-y-0 -start-1 -end-1" />
-        </div>
+        <ResizeHandle
+          direction="width"
+          label="Изменить ширину обсуждения"
+          testId="business-document-protocol-resizer"
+          value={protocolPaneWidth}
+          min={minProtocolPaneWidth}
+          max={clampProtocolPaneWidth(maxProtocolPaneWidth)}
+          onChange={resizeProtocolPane}
+          onReset={() => resizeProtocolPane(defaultProtocolPaneWidth)}
+        />
         <div
           className="col-start-3 row-start-1 min-w-0 lg:max-h-64 lg:overflow-y-auto max-lg:col-start-1 scrollbar-auto"
           data-testid="business-document-activity"
@@ -2171,6 +2137,12 @@ export default function BusinessDocumentsPage() {
               documentId={document.document_id}
               storageIdentity={promptStorageIdentity}
               reviewCycle={document.protocol}
+              previousCycles={document.protocol_history}
+              onAnalyze={
+                allowed.has('REQUEST_REVIEW_ASSESSMENT')
+                  ? () => runDocumentCommand('REQUEST_REVIEW_ASSESSMENT')
+                  : undefined
+              }
               proposalDecisionsOpen={document.lifecycle_state === 'REVIEW'}
               revision={document.current_revision}
               selection={selection}

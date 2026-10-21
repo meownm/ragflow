@@ -8,7 +8,7 @@ import {
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
-import { CheckCircle2, ChevronDown, CircleHelp, CircleOff } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
 import { type Ref, useEffect, useState } from 'react';
 import type { BusinessDocumentQuestion } from '../types';
 import { DocumentMarkdown } from './document-markdown';
@@ -17,38 +17,26 @@ import { appendVoiceTranscript, VoiceInput } from './voice-input';
 const questionStatusPresentation = {
   OPEN: {
     label: 'Требует ответа',
-    icon: CircleHelp,
-    frameClass: 'bg-accent-primary/5',
-    railClass: 'bg-accent-primary',
-    iconClass: 'bg-accent-primary/10 text-accent-primary',
+
     badgeClass:
       'border-accent-primary/20 bg-accent-primary/10 text-accent-primary',
   },
   ANSWERED: {
     label: 'Ответ зафиксирован',
-    icon: CheckCircle2,
-    frameClass: 'bg-state-success/5',
-    railClass: 'bg-state-success',
-    iconClass: 'bg-state-success/10 text-state-success',
+
     badgeClass:
       'border-state-success/20 bg-state-success/10 text-state-success',
   },
   CANCELLED: {
     label: 'Закрыт',
-    icon: CircleOff,
-    frameClass: 'bg-bg-card/40',
-    railClass: 'bg-text-disabled',
-    iconClass: 'bg-bg-card text-text-disabled',
+
     badgeClass: 'border-border-button bg-bg-card text-text-disabled',
   },
 } satisfies Record<
   BusinessDocumentQuestion['status'],
   {
     label: string;
-    icon: typeof CircleHelp;
-    frameClass: string;
-    railClass: string;
-    iconClass: string;
+
     badgeClass: string;
   }
 >;
@@ -75,7 +63,6 @@ export function QuestionItem({
   const [selectedOptionId, setSelectedOptionId] = useState('');
   const [customAnswer, setCustomAnswer] = useState('');
   const status = questionStatusPresentation[question.status];
-  const StatusIcon = status.icon;
   const isOpen = question.status === 'OPEN';
   const canSubmit =
     canAnswer &&
@@ -99,30 +86,17 @@ export function QuestionItem({
         data-protocol-kind="question"
         data-protocol-id={question.question_id}
         className={cn(
-          'relative overflow-hidden border-b border-border-button px-5 py-5 transition-colors duration-200 last:border-b-0',
-          status.frameClass,
+          'relative mx-4 my-3 overflow-hidden rounded-lg border border-accent-primary bg-bg-base p-3.5 transition-colors duration-200',
         )}
         data-testid="business-document-question"
         data-status={question.status}
       >
-        <span
-          aria-hidden="true"
-          className={cn('absolute inset-y-0 start-0 w-0.5', status.railClass)}
-        />
         <div className="flex items-start gap-3">
-          <span
-            className={cn(
-              'mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md transition-colors duration-200',
-              status.iconClass,
-            )}
-          >
-            <StatusIcon className="size-4" />
-          </span>
           <div className="min-w-0 flex-1">
             <div className="flex items-start gap-2">
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                  <h3 className="text-xs font-medium uppercase tracking-wide text-text-secondary">
+                  <h3 className="text-[10px] font-medium uppercase tracking-wide text-text-secondary">
                     Вопрос
                     {question.sequence_number
                       ? ` ${question.sequence_number}`
@@ -136,7 +110,7 @@ export function QuestionItem({
                   <Badge
                     variant="outline"
                     className={cn(
-                      'h-5 px-2 py-0 text-[10px] font-medium leading-none',
+                      'ms-auto h-5 px-2 py-0 text-[10px] font-medium leading-none',
                       status.badgeClass,
                     )}
                     data-testid={`question-status-${question.question_id}`}
@@ -146,7 +120,7 @@ export function QuestionItem({
                 </div>
                 <DocumentMarkdown
                   className={cn(
-                    'mt-2 text-sm font-medium leading-6 text-text-primary',
+                    'mt-2 text-[13px] font-medium leading-5 text-text-primary',
                     !expanded && 'line-clamp-2',
                   )}
                 >
@@ -176,7 +150,7 @@ export function QuestionItem({
 
             <CollapsibleContent className="overflow-hidden data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
               <RadioGroup
-                className="mt-4 gap-2"
+                className="mt-3 gap-2"
                 value={selectedOptionId}
                 disabled={!canAnswer || !isOpen || pending}
                 onValueChange={selectOption}
@@ -184,7 +158,7 @@ export function QuestionItem({
                 {question.options.map((option) => (
                   <div
                     key={option.option_id}
-                    className="flex cursor-pointer items-start gap-2.5 rounded-md px-2 py-2 text-sm transition-colors hover:bg-bg-card has-[:disabled]:cursor-default"
+                    className="flex cursor-pointer items-start gap-2.5 rounded-md px-2 py-1.5 text-[13px] transition-colors hover:bg-bg-card has-[:disabled]:cursor-default"
                     role="presentation"
                     onClick={(event) => {
                       if (
@@ -227,7 +201,8 @@ export function QuestionItem({
                     value={customAnswer}
                     aria-label="Свой ответ"
                     placeholder="Свой ответ"
-                    className="min-h-20 pe-11"
+                    rows={1}
+                    className="h-11 min-h-11 pe-11"
                     disabled={!canAnswer || pending}
                     onChange={(event) => {
                       setCustomAnswer(event.target.value);

@@ -630,41 +630,20 @@ test('uses semantic status colors for questions and proposals', async () => {
   expect(
     screen.getByRole('progressbar', { name: 'Решения по предложениям' }),
   ).toHaveAttribute('aria-valuenow', '2');
-  expect(questions.find((item) => item.dataset.status === 'OPEN')).toHaveClass(
-    'bg-accent-primary/5',
-  );
-  expect(
-    questions.find((item) => item.dataset.status === 'ANSWERED'),
-  ).toHaveClass('bg-state-success/5');
-  expect(
-    questions.find((item) => item.dataset.status === 'CANCELLED'),
-  ).toHaveClass('bg-bg-card/40');
+  expect(questions).toHaveLength(1);
+  expect(questions[0]).toHaveClass('border-accent-primary');
   expect(screen.getByTestId('question-status-question-9')).toHaveTextContent(
     'Требует ответа',
   );
-  expect(screen.getByTestId('question-status-question-answered')).toHaveClass(
+  fireEvent.click(screen.getByRole('tab', { name: /История/ }));
+  expect(screen.getByText('Ответ зафиксирован')).toHaveClass(
     'text-state-success',
   );
+  expect(screen.getByText('Закрыт')).toBeVisible();
+  expect(screen.getByText('Отклонено')).toHaveClass('text-text-secondary');
   expect(
-    screen.getByTestId('question-status-question-cancelled'),
-  ).toHaveTextContent('Закрыт');
-
-  const proposals = screen.getAllByTestId('business-document-proposal');
-  expect(
-    proposals.find((item) => item.dataset.status === 'PENDING'),
-  ).toHaveClass('bg-state-warning/5');
-  expect(
-    proposals.find((item) => item.dataset.status === 'ACCEPTED'),
-  ).toHaveClass('bg-state-success/5');
-  expect(
-    proposals.find((item) => item.dataset.status === 'REJECTED'),
-  ).toHaveClass('bg-state-error/5');
-  expect(
-    screen.getByTestId('proposal-status-proposal-accepted'),
-  ).toHaveTextContent('Принято');
-  expect(screen.getByTestId('proposal-status-proposal-rejected')).toHaveClass(
-    'text-state-error',
-  );
+    screen.queryByRole('button', { name: 'Принять' }),
+  ).not.toBeInTheDocument();
 });
 
 test('renders an undecided proposal as closed history after review completion', async () => {
@@ -675,18 +654,13 @@ test('renders an undecided proposal as closed history after review completion', 
   });
   renderPage();
 
-  const status = await screen.findByTestId('proposal-status-proposal-12');
+  await screen.findByTestId('business-document-workbench');
   expect(
     screen.getByTestId('business-document-review-progress'),
   ).toHaveTextContent('Без решения: 1');
-  expect(
-    screen.getByRole('progressbar', { name: 'Решения по предложениям' }),
-  ).toHaveAttribute('aria-valuenow', '0');
-  expect(status).toHaveTextContent('Не принято');
-  expect(status).toHaveClass('text-text-disabled');
-  expect(screen.getByTestId('closed-proposal-proposal-12')).toHaveTextContent(
-    'Решение не было принято до завершения этапа внесения изменений.',
-  );
+  fireEvent.click(screen.getByRole('tab', { name: /История/ }));
+  expect(screen.getByText('Не принято')).toBeVisible();
+  expect(screen.getByText('§ 3.1 · Разбор завершён без решения')).toBeVisible();
   expect(
     screen.queryByTestId('accept-proposal-proposal-12'),
   ).not.toBeInTheDocument();
@@ -1042,8 +1016,14 @@ test('attaches an existing assigned document without creating a new revision', a
       document_name: 'Корпоративные новости',
     },
   };
-  mockedRebindEvaDocument.mockResolvedValueOnce(connected);
+  mockedRebindEvaDocument.mockImplementationOnce(async () => {
+    mockedFetch.mockResolvedValue(connected);
+    return connected;
+  });
   renderPage();
+  fireEvent.click(
+    await screen.findByTestId('business-document-details-toggle'),
+  );
   const input = await screen.findByRole('textbox', {
     name: 'Ссылка на страницу EVA',
   });
@@ -1107,7 +1087,10 @@ test('reconnects a link-only EVA page after a connector becomes available', asyn
     },
   };
   mockedFetch.mockResolvedValueOnce(linkOnly);
-  mockedRebindEvaDocument.mockResolvedValueOnce(connected);
+  mockedRebindEvaDocument.mockImplementationOnce(async () => {
+    mockedFetch.mockResolvedValue(connected);
+    return connected;
+  });
   renderPage();
 
   fireEvent.click(
@@ -1765,15 +1748,15 @@ test('resizes the discussion rail with the keyboard and remembers the width', as
     name: 'Изменить ширину обсуждения',
   });
 
-  expect(resizer).toHaveAttribute('aria-valuenow', '430');
+  expect(resizer).toHaveAttribute('aria-valuenow', '460');
   fireEvent.keyDown(resizer, { key: 'ArrowLeft' });
 
-  expect(resizer).toHaveAttribute('aria-valuenow', '454');
+  expect(resizer).toHaveAttribute('aria-valuenow', '484');
   expect(
     window.localStorage.getItem(
       'ragflow.business-documents.protocol-pane-width',
     ),
-  ).toBe('454');
+  ).toBe('484');
 
   Object.defineProperty(window, 'innerWidth', {
     configurable: true,
@@ -4370,4 +4353,51 @@ test('shows removed sections in the historical diff', async () => {
   const diff = await screen.findByTestId('business-document-revision-diff');
   expect(diff).toHaveTextContent('Удалённый раздел · удалён');
   expect(diff).toHaveTextContent('Прежнее содержание.');
+});
+
+test('keeps previous cycles read-only and the comment draft while changing tabs and input height', async () => {
+  mockedFetch.mockResolvedValue({
+    ...projection,
+    protocol_history: [
+      {
+        review_cycle: 1,
+        questions: [
+          {
+            question_id: 'old-question',
+            text: 'Сколько хранить?',
+            options: [],
+            allow_custom_answer: true,
+            status: 'ANSWERED',
+            answer: { custom_answer: '30 дней' },
+          },
+        ],
+        proposals: [
+          {
+            proposal_id: 'old-proposal',
+            text: 'Прошлое предложение',
+            decision: 'REJECTED',
+          },
+        ],
+        comments: [],
+      },
+    ],
+  });
+  renderPage();
+  const input = await screen.findByRole('textbox', { name: 'Комментарий' });
+  fireEvent.change(input, { target: { value: 'Незавершённое замечание' } });
+  const resize = screen.getByRole('separator', {
+    name: 'Изменить высоту ввода',
+  });
+  fireEvent.keyDown(resize, { key: 'ArrowUp' });
+  expect(resize).toHaveAttribute('aria-valuenow', '212');
+  fireEvent.click(screen.getByRole('button', { name: 'Свернуть' }));
+  expect(resize).toHaveAttribute('aria-valuenow', '188');
+  fireEvent.click(screen.getByRole('tab', { name: /История/ }));
+  expect(screen.getByText('Ответ: 30 дней')).toBeVisible();
+  expect(screen.queryByRole('button', { name: 'Ответить' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Принять' })).toBeNull();
+  expect(input).toHaveValue('Незавершённое замечание');
+  fireEvent.click(screen.getByRole('tab', { name: /В работе/ }));
+  expect(input).toHaveValue('Незавершённое замечание');
+  expect(screen.queryByTestId('business-document-eva-binding')).toBeNull();
 });

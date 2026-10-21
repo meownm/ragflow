@@ -504,6 +504,7 @@ export interface BusinessDocumentQuestionOption {
 
 export interface BusinessDocumentQuestion {
   question_id: string;
+  review_cycle?: number;
   sequence_number?: number;
   target_section_id?: string;
   text: string;
@@ -520,6 +521,8 @@ export interface BusinessDocumentQuestion {
 
 export interface BusinessDocumentProposal {
   proposal_id: string;
+  review_cycle?: number;
+  decision_event_id?: string | null;
   sequence_number?: number;
   target_section_id?: string;
   text: string;
@@ -670,6 +673,9 @@ export interface BusinessDocumentProjection {
   current_revision: BusinessDocumentRevision | null;
   active_review_cycle: number;
   protocol: BusinessDocumentReviewCycle;
+  protocol_history?: Array<
+    BusinessDocumentReviewCycle & { review_cycle: number }
+  >;
   allowed_commands: BusinessDocumentCommandType[];
   last_error?: BusinessDocumentOperationError | string | null;
   latest_job?: BusinessDocumentJobSummary | null;

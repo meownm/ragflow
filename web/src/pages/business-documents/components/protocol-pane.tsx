@@ -1,10 +1,16 @@
 import { Button } from '@/components/ui/button';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
 import { Textarea } from '@/components/ui/textarea';
 import {
   BookmarkPlus,
   MessageSquareText,
   Quote,
   Send,
+  Sparkles,
   Trash2,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -17,6 +23,8 @@ import type {
 import { DocumentMarkdown } from './document-markdown';
 import { ProposalItem } from './proposal-item';
 import { QuestionItem } from './question-item';
+import { ResizeHandle } from './resize-handle';
+import { ReviewHistory } from './review-history';
 import { appendVoiceTranscript, VoiceInput } from './voice-input';
 
 const dispositionLabels = {
@@ -29,6 +37,10 @@ interface ProtocolPaneProps {
   documentId: string;
   storageIdentity: string | null;
   reviewCycle: BusinessDocumentReviewCycle | null;
+  previousCycles?: Array<
+    BusinessDocumentReviewCycle & { review_cycle: number }
+  >;
+  onAnalyze?: () => void;
   proposalDecisionsOpen: boolean;
   revision: BusinessDocumentRevision | null;
   selection: BusinessDocumentSelection | null;
@@ -52,6 +64,8 @@ export function ProtocolPane({
   documentId,
   storageIdentity,
   reviewCycle,
+  previousCycles = [],
+  onAnalyze,
   proposalDecisionsOpen,
   revision,
   selection,
@@ -63,7 +77,33 @@ export function ProtocolPane({
   focusRequest,
 }: ProtocolPaneProps) {
   const [comment, setComment] = useState('');
+  const [tab, setTab] = useState<'work' | 'history'>('work');
+  const minimumComposerHeight = selection ? 260 : 188;
+  const [composerHeight, setComposerHeight] = useState(188);
+  const paneRef = useRef<HTMLElement>(null);
+  const [composerMaxHeight, setComposerMaxHeight] = useState(520);
+  useEffect(() => {
+    const pane = paneRef.current;
+    if (!pane) return;
+    const observer = new ResizeObserver(() => {
+      const maximum = Math.max(
+        minimumComposerHeight,
+        Math.min(520, pane.clientHeight - 180),
+      );
+      setComposerMaxHeight(maximum);
+      setComposerHeight((height) => Math.min(height, maximum));
+    });
+    observer.observe(pane);
+    return () => observer.disconnect();
+  }, [minimumComposerHeight]);
+  useEffect(() => {
+    setComposerHeight((height) => Math.max(height, minimumComposerHeight));
+  }, [minimumComposerHeight]);
+  useEffect(() => {
+    setTab('work');
+  }, [documentId]);
   const [savedPrompts, setSavedPrompts] = useState<string[]>([]);
+  const [savedPromptsOpen, setSavedPromptsOpen] = useState(false);
   const [loadedDraftStorageKey, setLoadedDraftStorageKey] = useState<
     string | null
   >(null);
@@ -73,6 +113,7 @@ export function ProtocolPane({
   const [questionToFocus, setQuestionToFocus] = useState<string | null>(null);
   const questionTriggerRefs = useRef(new Map<string, HTMLButtonElement>());
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const focusedSequence = useRef<number | null>(null);
   const allowed = useMemo(() => new Set(allowedCommands), [allowedCommands]);
   const canComment = allowed.has('ADD_COMMENT');
   const draftStorageKey = storageIdentity
@@ -90,8 +131,65 @@ export function ProtocolPane({
   const questionCount = questions.length - cancelledCount;
   const decidedCount = proposals.filter((p) => p.decision !== 'PENDING').length;
 
+  const activeQuestions = useMemo(
+    () =>
+      (reviewCycle?.questions ?? []).filter(
+        (question) => question.status === 'OPEN',
+      ),
+    [reviewCycle],
+  );
+  const activeProposals = useMemo(
+    () =>
+      (reviewCycle?.proposals ?? []).filter(
+        (proposal) =>
+          (proposal.decision === 'PENDING' && proposalDecisionsOpen) ||
+          (proposal.decision === 'ACCEPTED' && proposal.applied === false),
+      ),
+    [reviewCycle, proposalDecisionsOpen],
+  );
+  const activeProposalIds = new Set(
+    activeProposals.map((proposal) => proposal.proposal_id),
+  );
+  const currentHistory = {
+    questions: questions.filter((question) => question.status !== 'OPEN'),
+    proposals: proposals.filter(
+      (proposal) => !activeProposalIds.has(proposal.proposal_id),
+    ),
+    comments: [],
+  };
+  const historyCycles = [currentHistory, ...previousCycles];
+  const historyCount = historyCycles.reduce(
+    (count, cycle) =>
+      count +
+      cycle.questions.length +
+      cycle.proposals.length +
+      cycle.comments.length,
+    0,
+  );
+  const workCount =
+    activeQuestions.length +
+    activeProposals.length +
+    (reviewCycle?.comments.length ?? 0);
   useEffect(() => {
-    if (!focusRequest) return;
+    if (!focusRequest || focusedSequence.current === focusRequest.sequence)
+      return;
+    const inWork =
+      (focusRequest.kind === 'question' &&
+        activeQuestions.some((item) => item.question_id === focusRequest.id)) ||
+      (focusRequest.kind === 'proposal' &&
+        activeProposals.some((item) => item.proposal_id === focusRequest.id)) ||
+      (focusRequest.kind === 'comment' &&
+        reviewCycle?.comments.some(
+          (item) => item.comment_id === focusRequest.id,
+        ));
+    const nextTab = inWork ? 'work' : 'history';
+    if (tab !== nextTab) {
+      setTab(nextTab);
+      return;
+    }
+    if (focusRequest.kind === 'question' && inWork)
+      setExpandedQuestionId(focusRequest.id);
+
     const entry = Array.from(
       scrollContainerRef.current?.querySelectorAll<HTMLElement>(
         '[data-protocol-kind]',
@@ -102,6 +200,7 @@ export function ProtocolPane({
         candidate.dataset.protocolId === focusRequest.id,
     );
     if (!entry) return;
+    focusedSequence.current = focusRequest.sequence;
     entry.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
     entry.classList.add('ring-2', 'ring-inset', 'ring-accent-primary');
     const timeout = window.setTimeout(
@@ -110,7 +209,7 @@ export function ProtocolPane({
       3000,
     );
     return () => window.clearTimeout(timeout);
-  }, [focusRequest]);
+  }, [focusRequest, tab, reviewCycle, activeQuestions, activeProposals]);
 
   useEffect(() => {
     if (!revision) onClearSelection();
@@ -178,6 +277,7 @@ export function ProtocolPane({
     persistSavedPrompts(
       [text, ...savedPrompts.filter((item) => item !== text)].slice(0, 20),
     );
+    setSavedPromptsOpen(true);
   };
 
   useEffect(() => {
@@ -268,13 +368,58 @@ export function ProtocolPane({
 
   return (
     <aside
-      className="flex min-h-0 flex-col border-s border-border-button bg-bg-component"
+      ref={paneRef}
+      className="flex min-h-0 min-w-0 flex-col bg-bg-card"
       aria-label="Обсуждение"
       data-testid="business-document-protocol"
     >
-      {(questions.length > 0 || proposals.length > 0) && (
+      <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-b border-border-button px-4">
+        <h2 className="text-[13px] font-medium">Обсуждение</h2>
+        {onAnalyze && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 bg-accent-primary/10 px-2 text-accent-primary"
+            aria-label="Проанализировать замечания"
+            disabled={pending}
+            onClick={onAnalyze}
+          >
+            <Sparkles className="size-3.5" />
+            Анализировать
+          </Button>
+        )}
+      </div>
+      <div
+        className="flex h-9 shrink-0 items-center gap-1 px-4"
+        role="tablist"
+        aria-label="Обсуждение и история"
+      >
+        <Button
+          role="tab"
+          id="review-work-tab"
+          aria-controls="review-work-panel"
+          aria-selected={tab === 'work'}
+          size="sm"
+          variant={tab === 'work' ? 'secondary' : 'ghost'}
+          onClick={() => setTab('work')}
+        >
+          В работе · {workCount}
+        </Button>
+        <Button
+          role="tab"
+          id="review-history-tab"
+          aria-controls="review-history-panel"
+          aria-selected={tab === 'history'}
+          size="sm"
+          variant={tab === 'history' ? 'secondary' : 'ghost'}
+          onClick={() => setTab('history')}
+        >
+          История · {historyCount}
+        </Button>
+      </div>
+      {tab === 'work' && (questions.length > 0 || proposals.length > 0) && (
         <div
-          className="grid shrink-0 grid-cols-2 gap-4 border-b border-border-button px-5 py-2"
+          className="grid shrink-0 grid-cols-2 gap-4 border-b border-border-button px-4 py-1.5"
           role="status"
           aria-live="polite"
           aria-atomic="true"
@@ -333,133 +478,228 @@ export function ProtocolPane({
         ref={scrollContainerRef}
         className="min-h-0 flex-1 overflow-y-auto scrollbar-auto"
         data-testid="business-document-protocol-scroll"
+        role="tabpanel"
+        id={tab === 'work' ? 'review-work-panel' : 'review-history-panel'}
+        aria-labelledby={
+          tab === 'work' ? 'review-work-tab' : 'review-history-tab'
+        }
       >
-        {!hasProtocolEntries && (
-          <div
-            className="px-5 py-10 text-center"
-            data-testid="business-document-protocol-empty"
-          >
-            <MessageSquareText className="mx-auto size-7 stroke-[1.25] text-text-disabled" />
-            <p className="mt-3 text-sm font-medium text-text-primary">
-              Обсуждение пока пусто
-            </p>
-            <p className="mt-1 text-xs leading-5 text-text-secondary">
-              Вопросы, предложения и комментарии появятся здесь.
-            </p>
-          </div>
-        )}
-
-        {reviewCycle?.questions.map((question) => (
-          <QuestionItem
-            key={question.question_id}
-            question={question}
-            canAnswer={allowed.has('ANSWER_QUESTION')}
-            pending={pending}
-            expanded={expandedQuestionId === question.question_id}
-            triggerRef={(trigger) => {
-              if (trigger) {
-                questionTriggerRefs.current.set(question.question_id, trigger);
-              } else {
-                questionTriggerRefs.current.delete(question.question_id);
-              }
-            }}
-            onExpandedChange={(expanded) =>
-              setExpandedQuestionId(expanded ? question.question_id : null)
-            }
-            onAnswer={(payload) =>
-              onCommand('ANSWER_QUESTION', payload, () =>
-                advanceToNextQuestion(question.question_id),
-              )
-            }
+        {tab === 'history' ? (
+          <ReviewHistory
+            documentId={documentId}
+            cycles={historyCycles}
+            focusId={focusRequest?.id}
           />
-        ))}
-
-        {reviewCycle?.proposals.map((proposal) => (
-          <ProposalItem
-            key={proposal.proposal_id}
-            proposal={proposal}
-            proposalDecisionsOpen={proposalDecisionsOpen}
-            canDecide={allowed.has('DECIDE_PROPOSAL')}
-            canCancelAcceptance={allowed.has('CANCEL_PROPOSAL_ACCEPTANCE')}
-            pending={pending}
-            onDecide={(payload) => onCommand('DECIDE_PROPOSAL', payload)}
-            onCancelAcceptance={() =>
-              onCommand('CANCEL_PROPOSAL_ACCEPTANCE', {
-                proposal_id: proposal.proposal_id,
-              })
-            }
-          />
-        ))}
-
-        {reviewCycle?.comments.map((item) => (
-          <article
-            key={item.comment_id}
-            data-protocol-kind="comment"
-            data-protocol-id={item.comment_id}
-            className="border-b border-border-button px-5 py-4 last:border-b-0"
-            data-testid="business-document-comment"
-          >
-            <div className="flex items-center justify-between gap-2 text-xs text-text-secondary">
-              <span>Комментарий автора</span>
-              <span
-                className={item.section_id ? 'font-mono' : undefined}
-                data-testid="business-document-comment-scope"
+        ) : (
+          <>
+            {!hasProtocolEntries && (
+              <div
+                className="px-5 py-10 text-center"
+                data-testid="business-document-protocol-empty"
               >
-                {item.section_id ? `§ ${item.section_id}` : 'Весь документ'}
-              </span>
-            </div>
-            {item.anchor?.selected_text && (
-              <div className="mt-2">
-                {item.anchor_status === 'ORPHANED' && (
-                  <p
-                    className="mb-1 text-[11px] font-medium text-state-error"
-                    data-testid="business-document-orphaned-anchor"
-                  >
-                    Фрагмент относится к предыдущей ревизии
-                  </p>
-                )}
-                <blockquote
-                  className={`line-clamp-3 border-s-2 ps-3 text-xs italic leading-5 text-text-secondary ${
-                    item.anchor_status === 'ORPHANED'
-                      ? 'border-state-error/60'
-                      : 'border-accent-primary/60'
-                  }`}
-                >
-                  <DocumentMarkdown>
-                    {item.anchor.selected_text}
-                  </DocumentMarkdown>
-                </blockquote>
+                <MessageSquareText className="mx-auto size-7 stroke-[1.25] text-text-disabled" />
+                <p className="mt-3 text-sm font-medium text-text-primary">
+                  Обсуждение пока пусто
+                </p>
+                <p className="mt-1 text-xs leading-5 text-text-secondary">
+                  Вопросы, предложения и комментарии появятся здесь.
+                </p>
               </div>
             )}
-            <DocumentMarkdown className="mt-2 text-sm leading-6 text-text-primary">
-              {item.text}
-            </DocumentMarkdown>
-            {item.disposition && (
-              <p
-                className="mt-2 text-[11px] font-medium text-text-secondary"
-                data-testid="business-document-comment-disposition"
+
+            {activeQuestions.map((question) => (
+              <QuestionItem
+                key={question.question_id}
+                question={question}
+                canAnswer={allowed.has('ANSWER_QUESTION')}
+                pending={pending}
+                expanded={expandedQuestionId === question.question_id}
+                triggerRef={(trigger) => {
+                  if (trigger) {
+                    questionTriggerRefs.current.set(
+                      question.question_id,
+                      trigger,
+                    );
+                  } else {
+                    questionTriggerRefs.current.delete(question.question_id);
+                  }
+                }}
+                onExpandedChange={(expanded) =>
+                  setExpandedQuestionId(expanded ? question.question_id : null)
+                }
+                onAnswer={(payload) =>
+                  onCommand('ANSWER_QUESTION', payload, () =>
+                    advanceToNextQuestion(question.question_id),
+                  )
+                }
+              />
+            ))}
+
+            {activeProposals.map((proposal) => (
+              <ProposalItem
+                key={proposal.proposal_id}
+                proposal={proposal}
+                proposalDecisionsOpen={proposalDecisionsOpen}
+                canDecide={allowed.has('DECIDE_PROPOSAL')}
+                canCancelAcceptance={allowed.has('CANCEL_PROPOSAL_ACCEPTANCE')}
+                pending={pending}
+                onDecide={(payload) => onCommand('DECIDE_PROPOSAL', payload)}
+                onCancelAcceptance={() =>
+                  onCommand('CANCEL_PROPOSAL_ACCEPTANCE', {
+                    proposal_id: proposal.proposal_id,
+                  })
+                }
+              />
+            ))}
+
+            {reviewCycle?.comments.map((item) => (
+              <article
+                key={item.comment_id}
+                data-protocol-kind="comment"
+                data-protocol-id={item.comment_id}
+                className="border-b border-border-button px-5 py-4 last:border-b-0"
+                data-testid="business-document-comment"
               >
-                {dispositionLabels[item.disposition.disposition]}
+                <div className="flex items-center justify-between gap-2 text-xs text-text-secondary">
+                  <span>Комментарий автора</span>
+                  <span
+                    className={item.section_id ? 'font-mono' : undefined}
+                    data-testid="business-document-comment-scope"
+                  >
+                    {item.section_id ? `§ ${item.section_id}` : 'Весь документ'}
+                  </span>
+                </div>
+                {item.anchor?.selected_text && (
+                  <div className="mt-2">
+                    {item.anchor_status === 'ORPHANED' && (
+                      <p
+                        className="mb-1 text-[11px] font-medium text-state-error"
+                        data-testid="business-document-orphaned-anchor"
+                      >
+                        Фрагмент относится к предыдущей ревизии
+                      </p>
+                    )}
+                    <blockquote
+                      className={`line-clamp-3 border-s-2 ps-3 text-xs italic leading-5 text-text-secondary ${
+                        item.anchor_status === 'ORPHANED'
+                          ? 'border-state-error/60'
+                          : 'border-accent-primary/60'
+                      }`}
+                    >
+                      <DocumentMarkdown>
+                        {item.anchor.selected_text}
+                      </DocumentMarkdown>
+                    </blockquote>
+                  </div>
+                )}
+                <DocumentMarkdown className="mt-2 text-sm leading-6 text-text-primary">
+                  {item.text}
+                </DocumentMarkdown>
+                {item.disposition && (
+                  <p
+                    className="mt-2 text-[11px] font-medium text-text-secondary"
+                    data-testid="business-document-comment-disposition"
+                  >
+                    {dispositionLabels[item.disposition.disposition]}
+                  </p>
+                )}
+              </article>
+            ))}
+            {!workCount && hasProtocolEntries && (
+              <p className="px-4 py-8 text-center text-xs text-text-secondary">
+                Всё разобрано. Ответы и решения сохранены в истории.
               </p>
             )}
-          </article>
-        ))}
+          </>
+        )}
       </div>
 
       <div
-        className="shrink-0 border-t border-border-button bg-bg-component p-4"
+        className="flex min-h-[188px] shrink-0 flex-col border-t border-border-button bg-bg-card px-4 pb-3"
+        style={{ height: Math.max(minimumComposerHeight, composerHeight) }}
         data-testid="business-document-comment-composer"
       >
+        <ResizeHandle
+          direction="height"
+          label="Изменить высоту ввода"
+          testId="business-document-composer-resizer"
+          value={composerHeight}
+          min={minimumComposerHeight}
+          max={composerMaxHeight}
+          onChange={setComposerHeight}
+          onReset={() => setComposerHeight(minimumComposerHeight)}
+        />
         <div
-          className="mb-2 flex items-center gap-2 text-xs text-text-secondary"
+          className="mb-2 flex shrink-0 items-center gap-2 text-xs text-text-secondary"
           data-testid="business-document-comment-scope-selector"
         >
-          <span>Область:</span>
+          <span>К документу</span>
           <span className="rounded-full bg-bg-card px-2 py-0.5 font-medium text-text-primary">
             {selection
               ? `выделенный фрагмент · § ${selection.section_id}`
               : 'весь документ'}
           </span>
+          {savedPrompts.length > 0 && (
+            <Popover open={savedPromptsOpen} onOpenChange={setSavedPromptsOpen}>
+              <PopoverTrigger asChild>
+                <Button size="sm" variant="ghost" className="h-6 px-1 text-xs">
+                  Заметки · {savedPrompts.length}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-80 p-0">
+                <div
+                  className="max-h-64 overflow-y-auto rounded-md border border-border-button bg-bg-base scrollbar-auto"
+                  data-testid="business-document-saved-prompts"
+                >
+                  <div className="border-b border-border-button px-3 py-2 text-[11px] font-medium text-text-secondary">
+                    Промпты на будущее
+                  </div>
+                  {savedPrompts.map((prompt, index) => (
+                    <div
+                      key={`${prompt}-${index}`}
+                      className="flex items-start gap-2 border-b border-border-button px-3 py-2 last:border-b-0"
+                    >
+                      <button
+                        type="button"
+                        className="line-clamp-2 min-w-0 flex-1 text-start text-xs leading-5 text-text-primary hover:text-accent-primary"
+                        onClick={() => setComment(prompt)}
+                      >
+                        {prompt}
+                      </button>
+                      <button
+                        type="button"
+                        className="mt-0.5 shrink-0 text-text-disabled hover:text-state-error"
+                        aria-label={`Удалить сохранённый промпт ${index + 1}`}
+                        onClick={() =>
+                          persistSavedPrompts(
+                            savedPrompts.filter(
+                              (_, itemIndex) => itemIndex !== index,
+                            ),
+                          )
+                        }
+                      >
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </PopoverContent>
+            </Popover>
+          )}
+          <Button
+            size="sm"
+            variant="ghost"
+            className="ms-auto h-6 px-1 text-xs"
+            onClick={() =>
+              setComposerHeight((height) =>
+                height > minimumComposerHeight
+                  ? minimumComposerHeight
+                  : Math.min(320, composerMaxHeight),
+              )
+            }
+          >
+            {composerHeight > minimumComposerHeight ? 'Свернуть' : 'Развернуть'}
+          </Button>
         </div>
         {selection && (
           <div className="mb-3 flex items-start gap-2 rounded-md bg-accent-primary/5 px-3 py-2 text-xs text-text-secondary">
@@ -477,19 +717,18 @@ export function ProtocolPane({
             </button>
           </div>
         )}
-        <div className="flex items-end gap-2">
-          <div className="relative flex-1">
+        <div className="flex min-h-0 flex-1 flex-col rounded-lg border border-border-button bg-bg-input">
+          <div className="relative min-h-0 flex-1">
             <Textarea
               value={comment}
-              autoSize={{ minRows: 2, maxRows: 6 }}
-              resize="vertical"
+              rows={2}
               aria-label="Комментарий"
               placeholder={
                 selection
                   ? 'Комментарий к выделенному фрагменту'
                   : 'Комментарий ко всему документу'
               }
-              className="pe-11"
+              className="h-full min-h-0 rounded-b-none border-0 bg-transparent pe-3 text-[13px] focus-visible:ring-inset"
               disabled={!editable}
               onChange={(event) => setComment(event.target.value)}
               onKeyDown={(event) => {
@@ -499,80 +738,41 @@ export function ProtocolPane({
                 }
               }}
             />
-            <div className="absolute end-2 top-2">
-              <VoiceInput
-                label="Замечание к документу"
-                disabled={!editable || pending}
-                onTranscript={(transcript) =>
-                  setComment((value) =>
-                    appendVoiceTranscript(value, transcript),
-                  )
-                }
-                testId="voice-input-comment"
-              />
-            </div>
           </div>
-          <Button
-            size="icon-lg"
-            variant="ghost"
-            aria-label="Сохранить промпт на будущее"
-            title="Сохранить промпт на будущее"
-            disabled={!comment.trim() || !editable}
-            onClick={savePromptForLater}
-            data-testid="business-document-save-prompt"
-          >
-            <BookmarkPlus className="size-4" />
-          </Button>
-          <Button
-            size="icon-lg"
-            variant="accent"
-            aria-label="Добавить комментарий"
-            disabled={!comment.trim() || !canComment || pending}
-            loading={pending}
-            onClick={submitComment}
-          >
-            <Send className="size-4" />
-          </Button>
+          <div className="flex shrink-0 items-center gap-1 px-2 pb-2">
+            <VoiceInput
+              label="Замечание к документу"
+              disabled={!editable || pending}
+              onTranscript={(transcript) =>
+                setComment((value) => appendVoiceTranscript(value, transcript))
+              }
+              testId="voice-input-comment"
+            />
+            <Button
+              size="icon"
+              variant="ghost"
+              aria-label="Сохранить промпт на будущее"
+              title="Сохранить промпт на будущее"
+              disabled={!comment.trim() || !editable}
+              onClick={savePromptForLater}
+              data-testid="business-document-save-prompt"
+            >
+              <BookmarkPlus className="size-4" />
+            </Button>
+            <Button
+              size="icon"
+              className="ms-auto"
+              variant="accent"
+              aria-label="Добавить комментарий"
+              disabled={!comment.trim() || !canComment || pending}
+              loading={pending}
+              onClick={submitComment}
+            >
+              <Send className="size-4" />
+            </Button>
+          </div>
         </div>
-        {savedPrompts.length > 0 && (
-          <div
-            className="mt-3 max-h-40 overflow-y-auto rounded-md border border-border-button bg-bg-base scrollbar-auto"
-            data-testid="business-document-saved-prompts"
-          >
-            <div className="border-b border-border-button px-3 py-2 text-[11px] font-medium text-text-secondary">
-              Промпты на будущее
-            </div>
-            {savedPrompts.map((prompt, index) => (
-              <div
-                key={`${prompt}-${index}`}
-                className="flex items-start gap-2 border-b border-border-button px-3 py-2 last:border-b-0"
-              >
-                <button
-                  type="button"
-                  className="line-clamp-2 min-w-0 flex-1 text-start text-xs leading-5 text-text-primary hover:text-accent-primary"
-                  onClick={() => setComment(prompt)}
-                >
-                  {prompt}
-                </button>
-                <button
-                  type="button"
-                  className="mt-0.5 shrink-0 text-text-disabled hover:text-state-error"
-                  aria-label={`Удалить сохранённый промпт ${index + 1}`}
-                  onClick={() =>
-                    persistSavedPrompts(
-                      savedPrompts.filter(
-                        (_, itemIndex) => itemIndex !== index,
-                      ),
-                    )
-                  }
-                >
-                  <Trash2 className="size-3.5" />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-        <p className="mt-2 text-[11px] text-text-secondary">
+        <p className="mt-2 line-clamp-2 shrink-0 text-[11px] leading-4 text-text-secondary">
           {canComment
             ? pending
               ? 'Можно подготовить и сохранить следующий промпт, пока обрабатывается текущий запрос'

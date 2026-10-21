@@ -163,3 +163,32 @@ def test_history_reads_previous_cycles_without_changing_current_state_or_query_c
         assert project_protocol(review, "revision") == project_protocol(full_history(document_id, review.review_cycle), "revision")
     assert all(proposal["applied"] for proposal in project_protocol(history[0], "revision")["proposals"])
     assert len(load_review_state(document_id, 2).questions) == 1
+
+
+def test_later_cycle_assessment_preserves_complete_historical_protocol(database):
+    document_id = _create()["document_id"]
+    populate_cycle(document_id, 1, 1)
+
+    def assess(cycle, sequence, disposition):
+        BusinessDocumentEvent.create(
+            id=f"assessment-{sequence}",
+            document_id=document_id,
+            sequence=sequence,
+            event_type="ReviewAssessed",
+            actor_type="AI",
+            actor_id="worker",
+            correlation_id="history",
+            payload={"review_cycle": cycle, "outcome": "COMPLETE", "comment_dispositions": [{"comment_event_id": f"e-{cycle}-0-2", "disposition": disposition}]},
+        )
+
+    assess(1, 20, "CONFIRMED_CHANGE")
+    before = project_protocol(load_review_state(document_id, 1), "revision")
+    populate_cycle(document_id, 2, 1, sequence=30)
+    assess(2, 40, "NO_CHANGE")
+
+    history = load_review_history(document_id, 2)
+    assert len(history) == 1
+    assert project_protocol(history[0], "revision") == before
+    assert before["comments"][0]["disposition"]["disposition"] == "CONFIRMED_CHANGE"
+    current = project_protocol(load_review_state(document_id, 2), "revision")
+    assert current["comments"][0]["disposition"]["disposition"] == "NO_CHANGE"

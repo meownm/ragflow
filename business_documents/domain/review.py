@@ -121,7 +121,6 @@ def build_review_state(
     accepted: set[str] = set()
     related: set[str] = set()
     resolved: set[str] = set()
-    latest_review_assessment = None
     latest_eva_pull = None
     latest_review_event_type = None
     for event in ordered_events:
@@ -133,8 +132,6 @@ def build_review_state(
             latest_review_event_type = kind
         if kind in {"IntakeAssessed", "ReviewAssessed"} and isinstance(payload.get("review_cycle"), int):
             assessments[kind, payload["review_cycle"]] = event
-        if kind == "ReviewAssessed":
-            latest_review_assessment = payload
         if kind in _RESOLUTION_EVENTS:
             for key in ("source_event_ids", "acknowledged_no_change_event_ids"):
                 values = payload.get(key, [])
@@ -175,8 +172,11 @@ def build_review_state(
     if latest_eva_pull is not None and latest_eva_pull["payload"].get("review_cycle") == review_cycle:
         related.add(latest_eva_pull["id"])
     dispositions = {}
-    if latest_review_assessment is not None and latest_review_assessment.get("review_cycle") == review_cycle:
-        dispositions = {item["comment_event_id"]: item for item in latest_review_assessment.get("comment_dispositions", []) if isinstance(item, dict) and isinstance(item.get("comment_event_id"), str)}
+    review_assessment = assessments.get(("ReviewAssessed", review_cycle))
+    if review_assessment is not None:
+        dispositions = {
+            item["comment_event_id"]: item for item in review_assessment["payload"].get("comment_dispositions", []) if isinstance(item, dict) and isinstance(item.get("comment_event_id"), str)
+        }
     return ReviewState(
         document_id=document_id,
         review_cycle=review_cycle,

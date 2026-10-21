@@ -110,6 +110,22 @@ def test_latest_incomplete_assessment_cannot_fall_back_to_an_earlier_complete_on
     assert not review.has_unassessed_feedback
 
 
+@pytest.mark.parametrize("cycle, expected", [(1, "CONFIRMED_CHANGE"), (2, "NO_CHANGE"), (3, None)])
+def test_comment_disposition_uses_latest_assessment_of_requested_cycle(cycle, expected):
+    events = [
+        _event(1, "ReviewAssessed", review_cycle=1, comment_dispositions=[{"comment_event_id": "old", "disposition": "NEEDS_QUESTION"}]),
+        _event(2, "ReviewAssessed", review_cycle=1, comment_dispositions=[{"comment_event_id": "old", "disposition": "CONFIRMED_CHANGE"}]),
+        _event(3, "ReviewAssessed", review_cycle=2, comment_dispositions=[{"comment_event_id": "new", "disposition": "CONFIRMED_CHANGE"}]),
+        _event(4, "ReviewAssessed", review_cycle=2, comment_dispositions=[{"comment_event_id": "new", "disposition": "NO_CHANGE"}]),
+    ]
+    state = build_review_state("document", cycle, questions=[], answers=[], proposals=[], decisions=[], comments=[], events=events)
+    expected_dispositions = {}
+    if expected:
+        event_id = "old" if cycle == 1 else "new"
+        expected_dispositions[event_id] = {"comment_event_id": event_id, "disposition": expected}
+    assert state.comment_dispositions == expected_dispositions
+
+
 def test_open_questions_keep_applied_changes_in_the_same_review():
     review = replace(_review(), questions=(*_review().questions, {"id": "unanswered", "stage": "REVIEW"}), pending_proposal_ids=())
     inputs = _validate(review, [_operation("e2", "e3", "e4")], ["e6"])

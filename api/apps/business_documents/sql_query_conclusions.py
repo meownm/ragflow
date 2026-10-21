@@ -36,25 +36,26 @@ def propose_conclusion(
     }
     if len(json.dumps(context, ensure_ascii=False, default=str).encode("utf-8")) > 16_000:
         raise BusinessDocumentError("SQL_CONCLUSION_INPUT_TOO_LARGE", "Result preview is too large for the model", 422)
-    try:
-        raw = run_in_worker_loop(
-            asyncio.wait_for(
-                RAGFlowLLMAdapter().async_generate(
-                    tenant_id,
-                    prompt_text("sql_conclusion"),
-                    {"prompt": prompt_descriptor("PROPOSE_SQL_CONCLUSION"), "job_input": {"task_type": "PROPOSE_SQL_CONCLUSION"}, "context": context},
-                ),
-                timeout=MODEL_TIMEOUT_SECONDS,
+    payload = {"prompt": prompt_descriptor("PROPOSE_SQL_CONCLUSION"), "job_input": {"task_type": "PROPOSE_SQL_CONCLUSION"}, "context": context}
+    for attempt in range(2):
+        try:
+            raw = run_in_worker_loop(
+                asyncio.wait_for(
+                    RAGFlowLLMAdapter().async_generate(tenant_id, prompt_text("sql_conclusion"), payload),
+                    timeout=MODEL_TIMEOUT_SECONDS,
+                )
             )
-        )
-        proposal = raw if isinstance(raw, dict) else repair_json(raw, return_objects=True)
-        if not isinstance(proposal, dict) or set(proposal) != {"text", "citations"}:
-            raise ConclusionValidationError("Model response has an invalid structure")
-        checked = validate_conclusion(proposal["text"], proposal["citations"], limited_columns, limited_rows, row_count)
-    except ConclusionValidationError as exc:
-        raise BusinessDocumentError("SQL_CONCLUSION_CHECK_FAILED", str(exc), 422) from exc
-    except Exception as exc:
-        raise BusinessDocumentError("SQL_CONCLUSION_UNAVAILABLE", "Conclusion model is unavailable", 503) from exc
-    if completeness == "LIMITED" and not any(word in checked["text"].casefold() for word in ("непол", "огранич", "част")):
-        raise BusinessDocumentError("SQL_CONCLUSION_CHECK_FAILED", "Conclusion must disclose that the result is limited", 422)
-    return checked
+            proposal = raw if isinstance(raw, dict) else repair_json(raw, return_objects=True)
+            if not isinstance(proposal, dict) or set(proposal) != {"text", "citations"}:
+                raise ConclusionValidationError("Model response has an invalid structure")
+            checked = validate_conclusion(proposal["text"], proposal["citations"], limited_columns, limited_rows, row_count)
+            if completeness == "LIMITED" and not any(word in checked["text"].casefold() for word in ("непол", "огранич", "част")):
+                raise ConclusionValidationError("Conclusion must disclose that the result is limited")
+            return checked
+        except ConclusionValidationError as exc:
+            if attempt:
+                raise BusinessDocumentError("SQL_CONCLUSION_CHECK_FAILED", str(exc), 422) from exc
+            # Keep the rejected draft request-local; never accept or save it.
+            payload = {**payload, "format_repair": {"error": str(exc), "previous_response": str(raw)[:8000]}}
+        except Exception as exc:
+            raise BusinessDocumentError("SQL_CONCLUSION_UNAVAILABLE", "Conclusion model is unavailable", 503) from exc

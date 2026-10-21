@@ -22,8 +22,10 @@ def validate_conclusion(
 ) -> dict[str, Any]:
     if not isinstance(text, str) or not 1 <= len(text.strip()) <= 2000:
         raise ConclusionValidationError("Conclusion must contain 1 to 2000 characters")
-    if not isinstance(citations, list) or len(citations) > 20 or (rows and not citations):
+    if not isinstance(citations, list) or (rows and not citations):
         raise ConclusionValidationError("Conclusion must cite result cells")
+    if len(citations) > 20:
+        raise ConclusionValidationError("Conclusion must contain at most 20 cell citations")
     normalized: list[dict[str, Any]] = []
     permitted_numbers = set(_NUMBER.findall(str(row_count)))
     for item in citations:

@@ -12,7 +12,7 @@ import re
 from typing import Any
 from urllib.parse import urlparse
 
-from api.db.db_models import DB, Document, SourceWorkspace, SourceWorkspaceDraft, SourceWorkspaceMember, UserTenant
+from api.db.db_models import DB, Document, SourceWorkspace, SourceWorkspaceDraft, SourceWorkspaceMember, User, UserTenant
 from api.db.services.doc_metadata_service import DocMetadataService
 from api.db.services.knowledgebase_service import KnowledgebaseService
 from common.misc_utils import get_uuid, thread_pool_exec
@@ -126,14 +126,12 @@ class SourceWorkspaceRepository:
     @staticmethod
     @DB.connection_context()
     def list(owner_id: str) -> list[dict[str, Any]]:
-        member_ids = SourceWorkspaceMember.select(SourceWorkspaceMember.workspace_id).where(SourceWorkspaceMember.user_id == owner_id)
-        tenants = UserTenant.select(UserTenant.tenant_id).where((UserTenant.user_id == owner_id) & (UserTenant.status == "1"))
-        rows = (
-            SourceWorkspace.select()
-            .where(((SourceWorkspace.owner_id == owner_id) | SourceWorkspace.id.in_(member_ids)) & (SourceWorkspace.tenant_id.is_null() | SourceWorkspace.tenant_id.in_(tenants)))
-            .order_by(SourceWorkspace.updated_at.desc())
-            .limit(100)
-        )
+        rows = SourceWorkspace.select().order_by(SourceWorkspace.updated_at.desc())
+        administrator = User.select().where((User.id == owner_id) & User.is_superuser & (User.is_active == "1") & (User.status == "1")).exists()
+        if not administrator:
+            member_ids = SourceWorkspaceMember.select(SourceWorkspaceMember.workspace_id).where(SourceWorkspaceMember.user_id == owner_id)
+            tenants = UserTenant.select(UserTenant.tenant_id).where((UserTenant.user_id == owner_id) & (UserTenant.status == "1"))
+            rows = rows.where(((SourceWorkspace.owner_id == owner_id) | SourceWorkspace.id.in_(member_ids)) & (SourceWorkspace.tenant_id.is_null() | SourceWorkspace.tenant_id.in_(tenants))).limit(100)
         return [_projection(row) for row in rows]
 
     @staticmethod

@@ -188,9 +188,14 @@ class LinkedDocumentRepository:
                 members = members.for_update()
             member = members.first()
             role = member.role if member else None
+        tenant_access = not row.tenant_id or UserTenant.select().where((UserTenant.user_id == actor) & (UserTenant.tenant_id == row.tenant_id) & (UserTenant.status == "1")).exists()
+        if capability == "read" and (role not in WORKSPACE_CAPABILITIES["read"] or not tenant_access):
+            administrator = User.select().where((User.id == actor) & User.is_superuser & (User.is_active == "1") & (User.status == "1")).exists()
+            if administrator:
+                return {**record(row), "role": "reader"}
         if role not in WORKSPACE_CAPABILITIES[capability]:
             fail("NOT_FOUND" if role is None else "PERMISSION_DENIED", "Недостаточно прав для работы с документами", 404 if role is None else 403)
-        if row.tenant_id and not UserTenant.select().where((UserTenant.user_id == actor) & (UserTenant.tenant_id == row.tenant_id) & (UserTenant.status == "1")).exists():
+        if not tenant_access:
             fail("PERMISSION_DENIED", "Доступ к организации рабочего пространства отозван", 403)
         return {**record(row), "role": role}
 

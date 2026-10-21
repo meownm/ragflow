@@ -4,6 +4,13 @@ A source workspace is a user-owned, reusable set of RAGFlow documents. The
 module keeps article discovery, selection, and scoped retrieval together so a
 chat or a future document workflow can consume the same source set.
 
+Active system administrators can list all workspaces and read their documents
+across owners and organizations. Without an existing project role and active
+organization membership, their effective role is `reader`. Editing, approval
+and project management still require the corresponding project role. Personal
+TZ drafts remain scoped to their author; dataset and section access checks
+continue to apply to source operations.
+
 ## Contract
 
 - Create a workspace with a title and one or more dataset IDs.

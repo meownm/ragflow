@@ -436,7 +436,9 @@ def test_mixed_diff_and_already_satisfied_answer_keep_full_context(database, pre
         def generate(self, tenant, system, payload, *, timeout_seconds=None):
             if payload["job_input"]["task_type"] == "VERIFY_REQUIREMENT_COVERAGE":
                 verification = payload["job_input"]
-                assert verification["sources"][answer]["text"] == selected["label"]
+                source = verification["sources"][answer + ":0"]
+                assert source["source_id"] == answer
+                assert source["text"] == selected["label"]
                 assert verification["context_sections"]["3.1"] == selected["label"]
                 assert "3.1" not in verification["after_sections"]
                 assert comment_text in verification["after_sections"]["5.5"]
@@ -521,7 +523,7 @@ def test_one_confirmed_source_changes_other_sections_and_parent_with_new_child(d
     job = BusinessDocumentJob.get_by_id(job.id)
     assert job.status == "COMPLETED", job.error
     verification = adapter.calls[1]["job_input"]
-    assert set(verification["sources"]) == set(source_ids)
+    assert {source["source_id"] for source in verification["sources"].values()} == set(source_ids)
     assert set(verification["after_sections"]) == {"3.1", "3.1.1", "3.3"}
     current = document_queries.get_document(document["document_id"], AUTHOR)
     if preview_only:

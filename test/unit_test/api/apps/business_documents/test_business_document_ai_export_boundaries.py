@@ -810,8 +810,9 @@ def test_one_semantic_call_receives_all_sources_and_the_complete_result_document
     assert len(adapter.calls) == 2
     assert len(adapter.calls[0]["job_input"]["confirmed_requirement_fragments"]) == 60
     verification = adapter.calls[1]["job_input"]
-    assert verification["sources"]["comment-event"]["text"] == text
-    assert set(verification["sources"]) == {"comment-event"}
+    assert verification["sources"] == adapter.calls[0]["job_input"]["confirmed_requirement_fragments"]
+    assert " ".join(source["text"] for source in verification["sources"].values()) == text
+    assert {source["source_id"] for source in verification["sources"].values()} == {"comment-event"}
     assert set(verification["before_sections"]) == set(verification["after_sections"]) == {"1"}
     base = job.payload["current_revision"]["document_ast"]
     expected_context = {section["id"]: render_section_text(section) for section in base["sections"] if section["id"] != "1"}
@@ -849,7 +850,10 @@ def test_verification_sends_complete_requirements_without_guessing_a_context_lim
     adapter = CoverageAdapter()
     BusinessDocumentAI(adapter)._verify_requirements(job, _coverage_plan())
     assert len(adapter.calls) == 1
-    assert adapter.calls[0]["job_input"]["sources"]["comment-event"]["text"] == "Long requirement. " * 1400
+    sources = adapter.calls[0]["job_input"]["sources"]
+    assert len(sources) == 1400
+    assert all(source == {"source_id": "comment-event", "text": "Long requirement."} for source in sources.values())
+    assert adapter.calls[0]["job_input"]["protocol"]["comments"][0]["text"] == "Long requirement. " * 1400
 
 
 def test_acknowledged_answer_without_replacements_is_checked_against_existing_text(monkeypatch):
@@ -1005,7 +1009,7 @@ def test_partial_or_fully_rejected_eva_update_does_not_impose_remote_requirement
         job.payload["protocol"]["proposals"] = [{"decision_event_id": "accepted-eva-change", "decision": "ACCEPTED", "text": "Добавить колонку отчёта."}]
     adapter = CoverageAdapter()
     BusinessDocumentAI(adapter)._verify_requirements(job, plan)
-    assert "eva-pull" not in adapter.calls[0]["job_input"]["sources"]
+    assert "eva-pull" not in {source["source_id"] for source in adapter.calls[0]["job_input"]["sources"].values()}
     if not acknowledge_pull:
         assert any(value["text"] == "Добавить колонку отчёта." for value in adapter.calls[0]["job_input"]["sources"].values())
 

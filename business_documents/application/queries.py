@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from business_documents.application.content import DocumentContent
-from business_documents.domain.content import render_block_changes, render_section_text, section_hash, with_document_warnings
+from business_documents.domain.content import SECTION_CONTENT_WARNING_CODES, render_block_changes, render_section_text, section_hash, with_document_warnings
 from business_documents.domain.block_diff import with_block_ids
 from business_documents.application.errors import BusinessDocumentError, ConflictError, NotFoundError, PermissionDeniedError, ValidationError
 from business_documents.domain.access import BusinessDocumentRole, DocumentAccess, normalize_role
@@ -470,7 +470,9 @@ class DocumentQueries:
 
 
 def project_protocol(review: ReviewState, current_revision_id: str | None, proposal_jobs: Iterable[Record] = (), *, preview_id: str | None = None) -> dict[str, Any]:
-    warnings = with_document_warnings({}, [warning for event in review.events for warning in event["payload"].get("warnings", [])]).get("warnings", [])
+    warnings = with_document_warnings({}, [warning for event in review.events for warning in event["payload"].get("warnings", []) if warning["code"] not in SECTION_CONTENT_WARNING_CODES]).get(
+        "warnings", []
+    )
     applied_proposal_events = review.accepted_inputs - review.active_inputs
     applications = {}
     awaiting = review.accepted_inputs & review.active_inputs

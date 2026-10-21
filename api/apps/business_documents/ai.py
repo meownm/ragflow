@@ -124,14 +124,23 @@ def _confirmed_change_sources(payload: dict[str, Any]) -> dict[str, dict[str, st
     protocol = payload.get("protocol") or {}
     sources: dict[str, str] = {}
     contexts: dict[str, str] = {}
+    section_titles = {section["id"]: section["title"] for section in payload.get("current_revision", {}).get("document_ast", {}).get("sections", [])}
     for comment in protocol.get("comments", []):
         event_id = comment.get("source_event_id")
         if event_id in active and (comment.get("disposition") or {}).get("disposition") == "CONFIRMED_CHANGE":
             sources[event_id] = comment["text"]
+            if comment.get("section_id"):
+                section_id = comment["section_id"]
+                contexts[event_id] = f"Комментарий к разделу {section_id} «{section_titles.get(section_id, '')}»."
+                if quote := (comment.get("anchor") or {}).get("selected_text"):
+                    contexts[event_id] += f" Выделенный фрагмент: {quote}"
     for proposal in protocol.get("proposals", []):
         event_id = proposal.get("decision_event_id")
         if event_id in active and proposal.get("decision") == "ACCEPTED":
             sources[event_id] = proposal["text"]
+            if proposal.get("target_section_id"):
+                section_id = proposal["target_section_id"]
+                contexts[event_id] = f"Предложение к разделу {section_id} «{section_titles.get(section_id, '')}»."
     for question in protocol.get("questions", []):
         answer = question.get("answer") or {}
         event_id = answer.get("source_event_id")
@@ -140,6 +149,24 @@ def _confirmed_change_sources(payload: dict[str, Any]) -> dict[str, dict[str, st
             sources[event_id] = answer.get("custom_answer") or selected.get("label") or ""
             contexts[event_id] = question["text"]
     return {event_id: {"text": text, **({"context": contexts[event_id]} if event_id in contexts else {})} for event_id, text in sources.items()}
+
+
+def _active_eva_update_event_ids(payload: dict[str, Any]) -> list[str]:
+    active = set(_active_change_input_event_ids(payload))
+    return [
+        event["event_id"]
+        for event in payload.get("source_events", [])
+        if event.get("event_id") in active and event.get("event_type") == "EvaDocumentPulled" and isinstance(event.get("payload", {}).get("remote_markdown"), str)
+    ]
+
+
+def _requirement_fragments(sources: dict[str, dict[str, str]]) -> dict[str, dict[str, str]]:
+    return {
+        f"{source_id}:{index}": {"source_id": source_id, "text": text.strip(), **({"context": source["context"]} if "context" in source else {})}
+        for source_id, source in sources.items()
+        for index, text in enumerate(re.split(r"(?<=[.!?;])\s+|\n+", source["text"]))
+        if text.strip()
+    }
 
 
 def _closed_review_question_context(job_payload: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -537,7 +564,7 @@ class BusinessDocumentAI:
             warnings = [*validated.get("warnings", []), *(final or {}).get("warnings", [])]
             warnings.extend({"code": "REQUIREMENT_COVERAGE_FAILED", "section_id": issue["section_id"], "message": issue["reason"]} for issue in coverage["issues"])
             if coverage["status"] == "UNAVAILABLE":
-                warnings.append({"code": "REQUIREMENT_VERIFICATION_UNAVAILABLE", "message": "Смысловую проверку завершить не удалось. Проверьте подготовленные изменения перед подтверждением."})
+                warnings.append({"code": "REQUIREMENT_VERIFICATION_UNAVAILABLE", "message": "Смысловую проверку завершить не удалось. Проверьте изменения и замечания."})
             if warnings:
                 validated["warnings"] = warnings
         recovery.checkpoint()
@@ -804,7 +831,9 @@ class BusinessDocumentAI:
     def _verify_requirements(self, job: BusinessDocumentJob, plan: dict[str, Any], *, recovery: AIRecovery | None = None, final: dict[str, Any] | None = None) -> dict[str, Any]:
         base = job.payload["current_revision"]["document_ast"]
         sources = _confirmed_change_sources(job.payload)
-        if not plan["operations"] and not sources:
+        fragments = _requirement_fragments(sources)
+        eva_update_ids = _active_eva_update_event_ids(job.payload)
+        if not plan["operations"] and not sources and not eva_update_ids:
             return {"status": "PASS", "issues": []}
         if final is None:
             final = apply_change_plan(base, plan) if plan["operations"] else base
@@ -814,7 +843,7 @@ class BusinessDocumentAI:
             base_ids.add(section["id"])
             if section["id"] in changed:
                 before[section["id"]] = render_section_text(section)
-        if not sources and not any(before.values()):
+        if not sources and not any(before.values()) and not eva_update_ids:
             return {"status": "PASS", "issues": []}
         after, context = {}, {}
         titles = {section["id"]: section["title"] for section in published_template()["sections"]}
@@ -825,7 +854,9 @@ class BusinessDocumentAI:
         payload = {
             "job_input": {
                 "task_type": "VERIFY_REQUIREMENT_COVERAGE",
-                "sources": sources,
+                "sources": fragments,
+                "active_eva_update_event_ids": eva_update_ids,
+                "acknowledged_no_change_event_ids": deepcopy(plan.get("acknowledged_no_change_event_ids", [])),
                 "before_sections": before,
                 "after_sections": after,
                 "context_sections": context,
@@ -842,12 +873,16 @@ class BusinessDocumentAI:
         # The provider adapter budgets the complete review against the window
         # it resolves or sets; semantic review never truncates or batches it.
         recovery = recovery or AIRecovery()
-        review_sources = {**sources, **{f"section:{section_id}": {"text": text} for section_id, text in before.items()}}
+        review_sources = {**sources, **fragments, **{f"section:{section_id}": {"text": text} for section_id, text in before.items()}}
         history_event_ids = frozenset(event["event_id"] for event in payload["job_input"]["source_events"] if isinstance(event.get("event_id"), str))
         while True:
             try:
                 raw = self._generate(job.tenant_id, system, payload, "verification", recovery)
-                return validate_requirement_coverage(self._parse(raw), review_sources, titles, history_event_ids=history_event_ids)
+                report = validate_requirement_coverage(self._parse(raw), review_sources, titles, history_event_ids=history_event_ids)
+                for issue in report["issues"]:
+                    if issue["source_id"] in fragments:
+                        issue["source_id"] = fragments[issue["source_id"]]["source_id"]
+                return report
             except Exception as error:
                 code = getattr(error, "code", None)
                 if code in {"EMPTY_AI_RESPONSE", "INVALID_AI_JSON", "INVALID_REQUIREMENT_COVERAGE"}:
@@ -1012,14 +1047,20 @@ class BusinessDocumentAI:
                 "proposals соответствует массиву proposals из review_plan."
             )
         job_input = deepcopy(job.payload)
+        if job.job_type in {"PLAN_CHANGES", "ASSESS_REVIEW"}:
+            job_input["active_eva_update_event_ids"] = _active_eva_update_event_ids(job_input)
         if job.job_type == "PLAN_CHANGES":
-            job_input["confirmed_requirement_fragments"] = {
-                f"{source_id}:{index}": {"source_id": source_id, "text": text.strip(), **({"context": source["context"]} if "context" in source else {})}
-                for source_id, source in _confirmed_change_sources(job_input).items()
-                for index, text in enumerate(re.split(r"(?<=[.!?;])\s+|\n+", source["text"]))
-                if text.strip()
-            }
+            job_input["confirmed_requirement_fragments"] = _requirement_fragments(_confirmed_change_sources(job_input))
         if job.job_type == "ASSESS_REVIEW":
+            if eva_update_ids := job_input["active_eva_update_event_ids"]:
+                system += (
+                    "\n\n# Активное сравнение EVA\n"
+                    f"job_input.active_eva_update_event_ids: {json.dumps(eva_update_ids, ensure_ascii=False)}. "
+                    "Сравни payload.remote_markdown этих событий из source_events с current_revision.document_ast. "
+                    "При новом содержательном отличии создай конкретное предложение со ссылкой на событие; "
+                    "при конфликте с решением автора задай вопрос. Пустой список комментариев не отменяет "
+                    "эту задачу сравнения. Не повторяй уже рассмотренные предложения и не переноси отклонённые требования."
+                )
             active_cycle = job_input.get("active_review_cycle")
             comment_event_ids = list(
                 dict.fromkeys(

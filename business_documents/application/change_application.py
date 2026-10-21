@@ -78,6 +78,8 @@ class ApplyChanges:
         if draft is not None:
             draft = without_answered_gap_warnings(draft, review.answered_section_ids)
 
+        # APPLY is the author's application decision. Keep advisory warnings in
+        # the revision; unresolved questions and proposals govern closure.
         next_lifecycle = "REVIEW" if proposal_id is not None else inputs.next_lifecycle
         if next_lifecycle == "AGREED" and mode is not ChangeMode.CONFIRM:
             if draft is None:
@@ -87,8 +89,6 @@ class ApplyChanges:
             checked = without_answered_gap_warnings(checked, review.answered_section_ids)
             if not _same_json_value(checked, current):
                 draft = checked
-            if checked.get("warnings"):
-                next_lifecycle = "REVIEW"
 
         version = document["state_version"] + 1
         event_id = self._new_id()

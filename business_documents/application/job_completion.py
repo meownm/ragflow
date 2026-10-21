@@ -18,7 +18,7 @@ from business_documents.domain.change_plan import validate_evidence_sources, val
 from business_documents.domain.errors import RuleViolation
 from business_documents.domain.execution_audit import validate_audit_envelope, validate_ai_audit, validate_retrieval_audit, verify_pinned_evidence
 from business_documents.domain.job import SnapshotIndex, has_current_lease, prompt_audit, requested_by
-from business_documents.domain.content import with_document_warnings
+from business_documents.domain.content import SECTION_CONTENT_WARNING_CODES, with_document_warnings
 
 
 Record = Mapping[str, Any]
@@ -330,7 +330,7 @@ class JobCompletion:
         snapshot = SnapshotIndex.build(job, execution)
         batch = _AssessmentBatch(self._writer, self._content, self._new_id, document["id"], 1, snapshot)
         draft = self._content.validate_document_ast(output.get("draft"))
-        draft = with_document_warnings(draft, job["payload"].get("protocol", {}).get("warnings", []))
+        draft = with_document_warnings(draft, [warning for warning in job["payload"].get("protocol", {}).get("warnings", []) if warning["code"] not in SECTION_CONTENT_WARNING_CODES])
         draft = without_answered_gap_warnings(draft, batch.records.answered_section_ids)
         try:
             for section in draft["sections"]:

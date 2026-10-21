@@ -152,10 +152,19 @@ The generator receives a copy of the complete immutable snapshot: the current
 AST, protocol with question options and answers, event history and pinned evidence.
 Duplicate revision markdown and flattened section texts are omitted. Active events
 are also listed in `active_change_inputs`; `confirmed_requirement_fragments`
-summarizes active confirmed text and selected/custom answers with question context.
+summarizes active confirmed text and selected/custom answers with question,
+section-purpose and author-selection context.
 Historical context does not authorize operations: only active input event IDs do.
-The semantic check receives each active confirmed source in full, without splitting
-it into separate model calls.
+The semantic check receives the same complete fragments as individual `sources`,
+with the full protocol retained, in one model call. Fragment diagnostics map back
+to their original author event before persistence. Active EVA update IDs point to
+the complete remote text in the event journal; even a no-op plan is checked against
+that comparison input. Imported text does not confirm rejected proposals or
+authorize the wholesale replacement of local requirements.
+Both the reviewer and planner explicitly identify active EVA imports; an empty
+comment list does not cancel the comparison task. Protocol projection excludes
+historical structural warnings because the current AST owns those facts;
+immutable events and source advisories are retained.
 Transport normalization resolves entity aliases and server-owned section hashes;
 it never relocates sources, invents an omitted source or declares a no-change
 disposition on the model's behalf. Domain validation rejects these omissions.

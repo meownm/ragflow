@@ -105,7 +105,7 @@ def test_queued_semantic_review_uses_pinned_intake_answer_and_complete_history(d
     assert verification["agreement_history"]["answers"][0]["custom_answer"] == "Только сотрудники банка."
     assert verification["agreement_decisions"]["answers"][0]["text"] == "Только сотрудники банка."
     assert verification["agreement_decisions"]["answers"][0]["event_id"] == old_event
-    assert set(verification["sources"]) == set(snapshot["active_change_input_event_ids"])
+    assert {source["source_id"] for source in verification["sources"].values()} == set(snapshot["active_change_input_event_ids"])
     assert result["requirement_coverage"] == failure
     assert result["warnings"][0]["code"] == "REQUIREMENT_COVERAGE_FAILED"
     assert job.payload == BusinessDocumentJob.get_by_id(job.id).payload == snapshot
@@ -130,7 +130,8 @@ def test_semantic_history_preserves_cancellation_reacceptance_and_applied_events
     assert verification["agreement_decisions"]["proposals"] == [
         {"proposal_id": "p", "event_id": "reaccepted", "sequence": 3, "review_cycle": 0, "status": "ACCEPTED", "text": "Не разрешать гостевой доступ."}
     ]
-    assert set(verification["sources"]) == {"comment-event"}
+    assert set(verification["sources"]) == {"comment-event:0", "comment-event:1"}
+    assert {source["source_id"] for source in verification["sources"].values()} == {"comment-event"}
     verification["source_events"][0]["payload"]["decision"] = "REJECTED"
     verification["agreement_history"]["proposals"][0]["text"] = "Changed by adapter"
     assert job.payload == snapshot

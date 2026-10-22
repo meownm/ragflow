@@ -353,7 +353,9 @@ test('separates model quality and exact operational denominators', async () => {
   expect(await screen.findByText(/3\/3/)).toBeInTheDocument();
   expect(screen.getAllByText(/1\/1/).length).toBeGreaterThanOrEqual(2);
   expect(screen.getByRole('tab', { name: 'comparisons' })).toBeInTheDocument();
-  expect(screen.getByText(/rev/)).toBeInTheDocument();
+  expect(
+    screen.getByText('sourceVersion: identityUnknown · sourceBuild: rev'),
+  ).toBeInTheDocument();
 });
 
 test('shows the model that is currently being checked', async () => {
@@ -414,6 +416,92 @@ test('does not score incomplete model runs', async () => {
   mount('/admin/document-quality?tab=comparisons');
   await screen.findByText('1/5');
   expect(screen.queryByText('3.90/4')).not.toBeInTheDocument();
+});
+
+test.each(['business_requirements', 'technical_specification'])(
+  'an incomplete %s series shows execution and reasons without empty ranking columns',
+  async (product) => {
+    await useLocale('ru');
+    const partial = {
+      ...run,
+      id: 'partial-model',
+      status: 'INCOMPLETE',
+      model_name: 'partial-model',
+      reason_code: 'MODEL_TIMEOUT',
+      report: {
+        ...report,
+        executed_cases: 2,
+        expected_cases: 6,
+        duration_ms: 352000,
+        total_tokens: 72554,
+      },
+    };
+    const missing = {
+      ...run,
+      id: 'missing-report',
+      status: 'INCOMPLETE',
+      model_name: 'missing-report',
+      reason_code: 'WORKER_STOPPED',
+      report: null,
+    };
+    const series = { ...campaign, status: 'PARTIAL', runs: [partial, missing] };
+    jest
+      .mocked(listDocumentQualityCampaigns)
+      .mockResolvedValue(response({ campaigns: [series] }));
+    jest.mocked(getDocumentQualityCampaign).mockResolvedValue(response(series));
+    mount(`/admin/document-quality?product=${product}&tab=comparisons`);
+    const table = await screen.findByRole('table', {
+      name: 'Сравнение моделей',
+    });
+    expect(
+      within(table).queryByRole('columnheader', { name: 'Место' }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(table).queryByRole('columnheader', { name: 'Балл' }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(table).queryByRole('columnheader', {
+        name: 'Критические сценарии',
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(table).getByRole('columnheader', { name: 'Выполнено' }),
+    ).toBeInTheDocument();
+    const row = within(table)
+      .getByRole('button', { name: 'partial-model' })
+      .closest('tr')!;
+    expect(row).toHaveTextContent('2/6');
+    expect(row).toHaveTextContent(/5 мин.*52 с/);
+    expect(row).toHaveTextContent(/72\s554/);
+    const reasonCell = within(row)
+      .getByText('Модель не ответила за отведённое время.')
+      .closest('td')!;
+    expect(reasonCell).toHaveTextContent('Не завершена');
+    expect(reasonCell).not.toHaveTextContent('partial-model');
+    const unknown = within(table)
+      .getByRole('button', { name: 'missing-report' })
+      .closest('tr')!;
+    expect(unknown).toHaveTextContent('Нет отчёта');
+    expect(unknown).not.toHaveTextContent('0/—');
+    expect(screen.getByText('Рейтинг недоступен')).toBeInTheDocument();
+    fireEvent.click(within(row).getByRole('button', { name: 'partial-model' }));
+    await waitFor(() => expect(getDocumentQualityRun).toHaveBeenCalled());
+  },
+);
+
+test('an unknown planned case count preserves a recorded execution count', async () => {
+  await useLocale('ru');
+  const series = {
+    ...campaign,
+    status: 'PARTIAL',
+    runs: [{ ...run, status: 'INCOMPLETE', report: { executed_cases: 2 } }],
+  };
+  jest
+    .mocked(listDocumentQualityCampaigns)
+    .mockResolvedValue(response({ campaigns: [series] }));
+  jest.mocked(getDocumentQualityCampaign).mockResolvedValue(response(series));
+  mount('/admin/document-quality?tab=comparisons');
+  expect(await screen.findByText('2 · план неизвестен')).toBeInTheDocument();
 });
 
 async function useLocale(language: 'ru' | 'en') {
@@ -478,8 +566,8 @@ test('Russian comparison separates processed runs from complete reports and expl
   ).toHaveTextContent('1');
   expect(row).toHaveTextContent('6/6');
   expect(row).toHaveTextContent('один или несколько сценариев не завершились');
-  expect(within(row).getAllByRole('cell')[0]).toHaveTextContent('—');
-  expect(within(row).getAllByRole('cell')[5]).toHaveTextContent('—');
+  expect(within(row).getAllByRole('cell')[0]).toHaveTextContent('Нет оценки');
+  expect(within(row).getAllByRole('cell')[5]).toHaveTextContent('нет данных');
   expect(within(row).getByText(/2 мин.*0 с/)).toBeInTheDocument();
   expect(
     screen.getByRole('combobox', { name: 'Ночная серия' }),
@@ -525,13 +613,20 @@ test.each(['ru', 'en'] as const)(
     );
     expect(row).not.toHaveTextContent('NEW_REASON_CODE');
     expect(within(row).getByTitle('NEW_REASON_CODE')).toBeInTheDocument();
-    expect(row).toHaveTextContent('0/—');
-    expect(within(row).getAllByRole('cell')[5]).toHaveTextContent('—');
+    expect(row).toHaveTextContent(
+      language === 'ru' ? 'Нет отчёта' : 'No execution report',
+    );
+    expect(row).not.toHaveTextContent('0/—');
     expect(
-      screen.getByRole('columnheader', {
+      screen.queryByRole('columnheader', {
+        name: language === 'ru' ? 'Балл' : 'Score',
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('columnheader', {
         name: language === 'ru' ? 'Место' : 'Rank',
       }),
-    ).toBeInTheDocument();
+    ).not.toBeInTheDocument();
   },
 );
 
@@ -620,24 +715,38 @@ test('shows sample limitations for operations', async () => {
   expect(getDocumentQuality).toHaveBeenCalledWith(30);
 });
 
-test('marks a source boundary when following one model through history', async () => {
-  const older = {
-    ...run,
-    id: 'run-old',
-    source_revision: 'old-revision',
-    requested_at: run.requested_at - 1000,
-  };
-  jest.mocked(listDocumentQualityRuns).mockResolvedValue(
-    response({
-      configured: true,
-      source_revision: 'rev',
-      runs: [run, older],
-    }),
-  );
-  mount(`/admin/document-quality?tab=history&model=${run.model_digest}`);
-  expect(await screen.findByText('comparisonBoundary')).toBeInTheDocument();
-  expect(screen.getByText('historyBoundaryNote')).toBeInTheDocument();
-});
+test.each(['source', 'prompt'])(
+  'history comparison boundary depends on evaluation assets, not code: %s',
+  async (change) => {
+    const older = {
+      ...run,
+      id: 'run-old',
+      source_revision: 'old-revision',
+      report:
+        change === 'prompt'
+          ? { ...run.report!, prompt_hashes: { alignment: 'different' } }
+          : run.report,
+      requested_at: run.requested_at - 1000,
+    };
+    jest.mocked(listDocumentQualityRuns).mockResolvedValue(
+      response({
+        configured: true,
+        source_revision: 'rev',
+        runs: [run, older],
+      }),
+    );
+    mount(`/admin/document-quality?tab=history&model=${run.model_digest}`);
+    await waitFor(() =>
+      expect(screen.getAllByRole('button', { name: /qwen/ })).toHaveLength(2),
+    );
+    if (change === 'prompt') {
+      expect(screen.getByText('comparisonBoundary')).toBeInTheDocument();
+      expect(screen.getByText('historyBoundaryNote')).toBeInTheDocument();
+    } else {
+      expect(screen.queryByText('comparisonBoundary')).not.toBeInTheDocument();
+    }
+  },
+);
 
 test('loads failed jobs with server-side type and code filters', async () => {
   mount('/admin/document-quality?tab=operations&days=7');
@@ -716,10 +825,10 @@ test.each([true, false])(
       name: /contradiction_recall/,
     });
     expect(recall).toHaveTextContent('1/2');
-    expect(recall).toHaveTextContent(complete ? '50.0%' : '—');
+    expect(recall).toHaveTextContent(complete ? '50.0%' : 'metricIncomplete');
     expect(
       within(region).getByRole('row', { name: /unsupported_rule_recall/ }),
-    ).toHaveTextContent('—0/0');
+    ).toHaveTextContent('metricNotApplicable0/0');
     expect(region).toHaveTextContent('semanticQualityNote');
   },
 );
@@ -832,8 +941,431 @@ test('historical semantic metrics belong to the selected run', async () => {
     'old-run',
     'technical_specification',
   );
-  expect(region.parentElement).toHaveTextContent('historicalSource');
+  expect(region.parentElement).toHaveTextContent('sourceVersion');
 });
+
+test('history details stay beside their selected row, expose context and return focus on close', async () => {
+  await useLocale('ru');
+  const second = { ...run, id: 'second-run', model_name: 'second-model' };
+  jest.mocked(listDocumentQualityRuns).mockResolvedValue(
+    response({
+      configured: true,
+      source_revision: 'rev',
+      runs: [run, second],
+    }),
+  );
+  mount('/admin/document-quality?product=technical_specification&tab=history');
+  const firstButton = await screen.findByRole('button', { name: /qwen/ });
+  expect(firstButton).toHaveTextContent('Выполнено: 5/5');
+  expect(screen.getByText('Выполнение / сценарий')).toBeInTheDocument();
+  expect(firstButton).toHaveAttribute('aria-expanded', 'false');
+  fireEvent.click(firstButton);
+  const panel = await screen.findByRole('region', {
+    name: 'Результаты сценариев',
+  });
+  expect(firstButton.parentElement).toContainElement(panel);
+  expect(panel).toHaveTextContent('qwen');
+  expect(panel).toHaveTextContent('20.09.2026');
+  expect(firstButton).toHaveAttribute('aria-controls', panel.id);
+  expect(firstButton).toHaveAttribute('data-selected', 'true');
+  await waitFor(() =>
+    expect(
+      within(panel).getByRole('heading', { name: 'Результаты сценариев' }),
+    ).toHaveFocus(),
+  );
+  expect(
+    within(panel).queryByRole('button', { name: /second-model/ }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(within(panel).getByRole('button', { name: 'Закрыть' }));
+  expect(
+    screen.queryByRole('region', { name: 'Результаты сценариев' }),
+  ).not.toBeInTheDocument();
+  expect(firstButton).toHaveFocus();
+  expect(firstButton).toHaveAttribute('aria-expanded', 'false');
+});
+
+test.each([null, 'other-campaign'])(
+  'only repeated reasons from the same series are summarized; third campaign=%s',
+  async (otherCampaign) => {
+    await useLocale('ru');
+    const repeated = {
+      ...run,
+      status: 'INCOMPLETE',
+      reason_code: 'BASELINE_FAILED',
+      report: null,
+    };
+    jest.mocked(getDocumentQualityRun).mockResolvedValue(response(repeated));
+    const rows = [
+      repeated,
+      { ...repeated, id: 'same-series', model_name: 'same-series' },
+      {
+        ...repeated,
+        id: 'other-series',
+        model_name: 'other-series',
+        campaign_id: otherCampaign,
+      },
+    ];
+    jest
+      .mocked(listDocumentQualityRuns)
+      .mockResolvedValue(
+        response({ configured: true, source_revision: 'rev', runs: rows }),
+      );
+    mount(
+      '/admin/document-quality?product=technical_specification&tab=history',
+    );
+    const first = await screen.findByRole('button', { name: /qwen/ });
+    expect(first).not.toHaveTextContent('Базовая проверка не пройдена');
+    expect(
+      screen.getByRole('button', { name: /same-series/ }),
+    ).not.toHaveTextContent('Базовая проверка не пройдена');
+    expect(
+      screen.getByRole('button', { name: /other-series/ }),
+    ).toHaveTextContent('Базовая проверка не пройдена');
+    expect(screen.getByText(/запусков: 2/)).toHaveTextContent(
+      'Базовая проверка не пройдена',
+    );
+    fireEvent.click(first);
+    const panel = await screen.findByRole('region', {
+      name: 'Результаты сценариев',
+    });
+    await waitFor(() =>
+      expect(panel).toHaveTextContent('Базовая проверка не пройдена'),
+    );
+  },
+);
+
+test('history pages contain 25 runs, close old details and reset on filter changes', async () => {
+  await useLocale('ru');
+  const rows = Array.from({ length: 52 }, (_, index) => ({
+    ...run,
+    id: `history-${index}`,
+    model_name: `history-model-${index}`,
+    status: index % 2 ? 'FAIL' : 'PASS',
+  }));
+  jest
+    .mocked(listDocumentQualityRuns)
+    .mockResolvedValue(
+      response({ configured: true, source_revision: 'rev', runs: rows }),
+    );
+  mount('/admin/document-quality?product=technical_specification&tab=history');
+  const history = await screen.findByRole('region', {
+    name: 'История проверок',
+  });
+  await within(history).findByRole('button', { name: /^history-model-0 / });
+  const pageRows = () =>
+    within(history).getAllByRole('button', { name: /^history-model-/ });
+  expect(pageRows()).toHaveLength(25);
+  expect(screen.getByText('1–25/52')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Назад' })).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Далее' }));
+  expect(pageRows()).toHaveLength(25);
+  expect(screen.getByText('26–50/52')).toBeInTheDocument();
+  jest.mocked(getDocumentQualityRun).mockResolvedValue(response(rows[25]));
+  fireEvent.click(
+    within(history).getByRole('button', { name: /^history-model-25 / }),
+  );
+  expect(
+    await screen.findByRole('region', { name: 'Результаты сценариев' }),
+  ).toHaveTextContent('history-model-25');
+  fireEvent.click(screen.getByRole('button', { name: 'Далее' }));
+  expect(pageRows()).toHaveLength(2);
+  expect(screen.getByText('51–52/52')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Далее' })).toBeDisabled();
+  expect(
+    screen.queryByRole('region', { name: 'Результаты сценариев' }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Назад' }));
+  expect(screen.getByText('26–50/52')).toBeInTheDocument();
+  fireEvent.change(screen.getByRole('combobox', { name: 'Статус запуска' }), {
+    target: { value: 'PASS' },
+  });
+  expect(screen.getByText('1–25/26')).toBeInTheDocument();
+  expect(pageRows()).toHaveLength(25);
+});
+
+test('a page beyond the history end shows the last available page', async () => {
+  await useLocale('ru');
+  const rows = Array.from({ length: 26 }, (_, index) => ({
+    ...run,
+    id: `history-${index}`,
+    model_name: `history-model-${index}`,
+  }));
+  jest
+    .mocked(listDocumentQualityRuns)
+    .mockResolvedValue(
+      response({ configured: true, source_revision: 'rev', runs: rows }),
+    );
+  mount('/admin/document-quality?tab=history&historyPage=999');
+  expect(await screen.findByText('26–26/26')).toBeInTheDocument();
+  expect(
+    screen.getAllByRole('button', { name: /^history-model-/ }),
+  ).toHaveLength(1);
+  expect(screen.getByRole('button', { name: 'Далее' })).toBeDisabled();
+});
+
+test('details selected in comparisons remain inside the bounded history when its page excludes the run', async () => {
+  await useLocale('ru');
+  const rows = Array.from({ length: 30 }, (_, index) => ({
+    ...run,
+    id: `history-${index}`,
+    model_name: `history-model-${index}`,
+  }));
+  jest
+    .mocked(listDocumentQualityRuns)
+    .mockResolvedValue(
+      response({ configured: true, source_revision: 'rev', runs: rows }),
+    );
+  jest
+    .mocked(getDocumentQualityCampaign)
+    .mockResolvedValue(response({ ...campaign, runs: [rows[0]] }));
+  jest.mocked(getDocumentQualityRun).mockResolvedValue(response(rows[0]));
+  mount('/admin/document-quality?tab=comparisons&historyPage=2');
+  fireEvent.click(
+    await screen.findByRole('button', { name: 'history-model-0' }),
+  );
+  await screen.findByRole('region', { name: 'Результаты сценариев' });
+  fireEvent.click(screen.getByRole('tab', { name: 'История проверок' }));
+  const history = await screen.findByRole('region', {
+    name: 'История проверок',
+  });
+  expect(
+    within(history).getByRole('region', { name: 'Результаты сценариев' }),
+  ).toHaveTextContent('history-model-0');
+  expect(
+    within(history).getAllByRole('button', { name: /^history-model-/ }),
+  ).toHaveLength(5);
+  expect(screen.getByText('26–30/30')).toBeInTheDocument();
+});
+
+test('a repeated series reason is visible again when the series spans history pages', async () => {
+  await useLocale('ru');
+  const rows = Array.from({ length: 30 }, (_, index) => ({
+    ...run,
+    id: `history-${index}`,
+    model_name: `history-model-${index}`,
+    status: 'INCOMPLETE',
+    reason_code: 'BASELINE_FAILED',
+    report: null,
+  }));
+  jest
+    .mocked(listDocumentQualityRuns)
+    .mockResolvedValue(
+      response({ configured: true, source_revision: 'rev', runs: rows }),
+    );
+  mount('/admin/document-quality?tab=history');
+  expect(await screen.findByText(/запусков: 25/)).toHaveTextContent(
+    'Базовая проверка не пройдена',
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Далее' }));
+  expect(screen.getByText(/запусков: 5/)).toHaveTextContent(
+    'Базовая проверка не пройдена',
+  );
+});
+
+test('TZ model comparisons page 52 models without changing campaign totals', async () => {
+  await useLocale('ru');
+  const rows = Array.from({ length: 52 }, (_, index) => ({
+    ...run,
+    id: `model-${index}`,
+    model_name: `model-${index}`,
+  }));
+  jest
+    .mocked(getDocumentQualityCampaign)
+    .mockResolvedValue(response({ ...campaign, runs: rows }));
+  mount(
+    '/admin/document-quality?product=technical_specification&tab=comparisons',
+  );
+  const table = await screen.findByRole('table', { name: 'Сравнение моделей' });
+  const pager = await screen.findByRole('navigation', {
+    name: 'Сравнение моделей',
+  });
+  expect(within(table).getAllByRole('row')).toHaveLength(26);
+  expect(pager).toHaveTextContent('1–25/52');
+  expect(
+    screen.getByText('Обработано запусков').nextElementSibling,
+  ).toHaveTextContent('52/52');
+  fireEvent.click(within(pager).getByRole('button', { name: 'Далее' }));
+  expect(
+    within(table).getByRole('button', { name: 'model-25' }),
+  ).toBeInTheDocument();
+  expect(pager).toHaveTextContent('26–50/52');
+  fireEvent.click(within(pager).getByRole('button', { name: 'Далее' }));
+  expect(within(table).getAllByRole('row')).toHaveLength(3);
+  expect(within(pager).getByRole('button', { name: 'Далее' })).toBeDisabled();
+});
+
+test('TZ scenario details page by 25 and reset when a different run is selected', async () => {
+  await useLocale('ru');
+  const cases = Array.from({ length: 56 }, (_, index) => ({
+    ...report.cases[0],
+    case_id: `BTZ-${String(index + 1).padStart(2, '0')}`,
+  }));
+  const first = {
+    ...run,
+    report: { ...report, expected_cases: 56, executed_cases: 56, cases },
+  };
+  const second = {
+    ...run,
+    id: 'second',
+    model_name: 'second-model',
+    report: { ...report, cases: cases.slice(0, 3) },
+  };
+  jest.mocked(listDocumentQualityRuns).mockResolvedValue(
+    response({
+      configured: true,
+      source_revision: 'rev',
+      runs: [first, second],
+    }),
+  );
+  jest
+    .mocked(getDocumentQualityRun)
+    .mockImplementation(async (id) =>
+      response(id === first.id ? first : second),
+    );
+  mount('/admin/document-quality?product=technical_specification&tab=history');
+  fireEvent.click(await screen.findByRole('button', { name: /^qwen / }));
+  const block = await screen.findByRole('region', { name: 'сценариев' });
+  const pager = screen.getByRole('navigation', { name: 'сценариев' });
+  expect(within(block).getAllByTitle(/^BTZ-/)).toHaveLength(25);
+  fireEvent.click(within(pager).getByRole('button', { name: 'Далее' }));
+  expect(within(block).getByTitle('BTZ-26')).toBeInTheDocument();
+  expect(block).toHaveFocus();
+  fireEvent.click(within(pager).getByRole('button', { name: 'Далее' }));
+  expect(within(block).getAllByTitle(/^BTZ-/)).toHaveLength(6);
+  expect(pager).toHaveTextContent('51–56/56');
+  fireEvent.click(screen.getByRole('button', { name: /^second-model / }));
+  await waitFor(() =>
+    expect(
+      screen.queryByRole('navigation', { name: 'сценариев' }),
+    ).not.toBeInTheDocument(),
+  );
+  const nextBlock = await screen.findByRole('region', { name: 'сценариев' });
+  expect(within(nextBlock).getByTitle('BTZ-01')).toBeInTheDocument();
+  expect(within(nextBlock).getAllByTitle(/^BTZ-/)).toHaveLength(3);
+});
+
+test('TZ operational reasons page independently and reset when the time window changes', async () => {
+  await useLocale('ru');
+  jest.mocked(getSpecificationOperations).mockResolvedValue(
+    response({
+      ...specificationOperations,
+      counts: { total: 32, execution_complete: 0, reports_complete: 0 },
+      reasons: Array.from({ length: 32 }, (_, index) => ({
+        code: `REASON_${index}`,
+        count: index + 1,
+      })),
+    }),
+  );
+  mount(
+    '/admin/document-quality?product=technical_specification&tab=operations',
+  );
+  const block = await screen.findByRole('region', {
+    name: 'Причины ограничения результата',
+  });
+  const pager = screen.getByRole('navigation', {
+    name: 'Причины ограничения результата',
+  });
+  expect(within(block).getAllByRole('listitem')).toHaveLength(25);
+  fireEvent.click(within(pager).getByRole('button', { name: 'Далее' }));
+  expect(within(block).getAllByRole('listitem')).toHaveLength(7);
+  expect(within(block).getByTitle('REASON_25')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: '24 часа' }));
+  await waitFor(() =>
+    expect(getSpecificationOperations).toHaveBeenLastCalledWith(1),
+  );
+  expect(
+    within(
+      await screen.findByRole('region', {
+        name: 'Причины ограничения результата',
+      }),
+    ).getByTitle('REASON_0'),
+  ).toBeInTheDocument();
+});
+
+test('history does not turn missing execution counts into zero or successful cases', async () => {
+  await useLocale('ru');
+  const partial = {
+    ...run,
+    report: { ...report, expected_cases: 56, executed_cases: 55 },
+  };
+  const unknown = {
+    ...run,
+    id: 'missing-count',
+    model_name: 'missing-count',
+    report: { ...report, executed_cases: undefined, expected_cases: 56 },
+  };
+  jest.mocked(listDocumentQualityRuns).mockResolvedValue(
+    response({
+      configured: true,
+      source_revision: 'rev',
+      runs: [partial, unknown],
+    }),
+  );
+  mount('/admin/document-quality?product=technical_specification&tab=history');
+  expect(await screen.findByRole('button', { name: /qwen/ })).toHaveTextContent(
+    'Выполнено: 55/56',
+  );
+  const unknownRow = screen.getByRole('button', { name: /missing-count/ });
+  expect(unknownRow).toHaveTextContent('Выполнено: Нет отчёта');
+  expect(unknownRow).not.toHaveTextContent('0/56');
+});
+
+test.each(['business_requirements', 'technical_specification'])(
+  'history and details show the selected run version and build for %s',
+  async (product) => {
+    await useLocale('ru');
+    const historical = {
+      ...run,
+      source_revision: 'a'.repeat(40),
+      source_version: '1.52.0',
+      source_build: 'a'.repeat(40),
+    };
+    jest.mocked(listDocumentQualityRuns).mockResolvedValue(
+      response({
+        configured: true,
+        source_revision: 'b'.repeat(40),
+        runs: [historical],
+      }),
+    );
+    jest.mocked(getDocumentQualityRun).mockResolvedValue(response(historical));
+    mount(`/admin/document-quality?product=${product}&tab=history`);
+    const row = await screen.findByRole('button', { name: /qwen/ });
+    expect(row).toHaveTextContent('Версия: 1.52.0 · Билд: aaaaaaaaaaaa');
+    expect(within(row).getByTitle('a'.repeat(40)).tagName).toBe('SPAN');
+    expect(row).not.toHaveTextContent('Другой или неподтверждённый билд');
+    fireEvent.click(row);
+    await waitFor(() =>
+      expect(
+        screen.getAllByText('Версия: 1.52.0 · Билд: aaaaaaaaaaaa'),
+      ).toHaveLength(2),
+    );
+  },
+);
+
+test.each([
+  { revision: 'unverified', build: null, expected: 'нет данных' },
+  { revision: null, build: null, expected: 'нет данных' },
+  { revision: 'c'.repeat(40), build: null, expected: 'cccccccccccc' },
+  { revision: 'unverified', build: 'd'.repeat(64), expected: 'dddddddddddd' },
+])(
+  'legacy identity has no inferred current version: $revision / $build',
+  async ({ revision, build, expected }) => {
+    await useLocale('ru');
+    jest.mocked(listDocumentQualityRuns).mockResolvedValue(
+      response({
+        configured: true,
+        source_revision: 'current-build',
+        runs: [{ ...run, source_revision: revision, source_build: build }],
+      }),
+    );
+    mount(
+      '/admin/document-quality?product=technical_specification&tab=history',
+    );
+    const row = await screen.findByRole('button', { name: /qwen/ });
+    expect(row).toHaveTextContent(`Версия: нет данных · Билд: ${expected}`);
+    expect(row).not.toHaveTextContent('current-build');
+  },
+);
 
 test.each([
   null,
@@ -844,6 +1376,8 @@ test.each([
   'partial',
   'baseline',
   'unknown-source',
+  'different-revision',
+  'missing-source',
   'partial-catalog',
 ])(
   'ranks technical models only within a complete verified experiment: %s',
@@ -852,7 +1386,7 @@ test.each([
       ...run,
       id: 'first',
       model_name: 'rank-a',
-      source_revision: 'a'.repeat(40),
+      source_revision: 'a'.repeat(40) as string | null,
       report: {
         ...report,
         quality_status: 'FAIL',
@@ -885,6 +1419,12 @@ test.each([
     if (defect === 'evidence') second.report.evidence_status = 'INCOMPLETE';
     if (defect === 'partial') second.report.executed_cases = 1;
     if (defect === 'unknown-source') second.source_revision = 'unverified';
+    if (defect === 'different-revision')
+      second.source_revision = 'f'.repeat(40);
+    if (defect === 'missing-source') {
+      second.source_revision = null;
+      delete (second.report as Partial<typeof second.report>).source_dirty;
+    }
     const experiment = {
       ...campaign,
       status: defect === 'partial-catalog' ? 'PARTIAL' : 'COMPLETE',
@@ -908,17 +1448,34 @@ test.each([
     const secondRow = screen
       .getByRole('button', { name: 'rank-b' })
       .closest('tr')!;
-    expect(within(firstRow).getAllByRole('cell')[0]).toHaveTextContent(
-      defect ? '—' : '1',
-    );
-    expect(within(secondRow).getAllByRole('cell')[0]).toHaveTextContent(
-      defect ? '—' : '2',
-    );
-    if (defect)
-      expect(screen.getByText('comparisonNotQualified')).toBeInTheDocument();
+    const blocked = ![
+      null,
+      'source',
+      'unknown-source',
+      'different-revision',
+      'missing-source',
+    ].includes(defect);
+    if (blocked) {
+      expect(
+        screen.queryByRole('columnheader', { name: 'rank' }),
+      ).not.toBeInTheDocument();
+      expect(within(firstRow).getAllByRole('cell')[0]).toHaveTextContent(
+        'rank-a',
+      );
+      expect(within(secondRow).getAllByRole('cell')[0]).toHaveTextContent(
+        'rank-b',
+      );
+    } else {
+      expect(within(firstRow).getAllByRole('cell')[0]).toHaveTextContent('1');
+      expect(within(secondRow).getAllByRole('cell')[0]).toHaveTextContent('2');
+    }
+    if (blocked)
+      expect(
+        screen.getByText('comparisonNotQualifiedShort'),
+      ).toBeInTheDocument();
     else
       expect(
-        screen.queryByText('comparisonNotQualified'),
+        screen.queryByText('comparisonNotQualifiedShort'),
       ).not.toBeInTheDocument();
   },
 );

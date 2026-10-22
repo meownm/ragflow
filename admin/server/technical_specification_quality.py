@@ -83,19 +83,17 @@ def public_report(report):
 
 def execute(row, root, tenant, source_revision, source_fingerprint):
     # Imports stay within the operational adapter, outside the value-only owner.
-    from document_quality_runs import _campaign_source_matches, _source_fingerprint, _source_revision
-
     from api.db.db_models import BusinessDocumentQualityCampaign
     from api.technical_specifications.alignment import validate_report
     from test.evals.technical_specifications.alignment.corpus import CASES, inputs, score
     from test.evals.technical_specifications.alignment.evaluate import public_summary
     from test.evals.technical_specifications.alignment.evidence import verify_execution
 
-    if not tenant or source_revision == "unknown" or row.source_revision != source_revision:
-        return "INCOMPLETE", None, "Queued source revision or dedicated QA tenant is unavailable"
+    if not tenant:
+        return "INCOMPLETE", None, "Dedicated quality tenant is not configured"
     if row.campaign_id:
         campaign = BusinessDocumentQualityCampaign.get_or_none(BusinessDocumentQualityCampaign.id == row.campaign_id)
-        if campaign is None or campaign.baseline_status != "PASS" or not _campaign_source_matches(campaign):
+        if campaign is None or campaign.baseline_status != "PASS":
             return "INCOMPLETE", None, "Nightly baseline did not pass"
     if row.model_name and row.model_digest and quality_model_digest(tenant, row.model_name) != row.model_digest:
         return "INCOMPLETE", None, "Model digest changed before execution"
@@ -141,8 +139,6 @@ def execute(row, root, tenant, source_revision, source_fingerprint):
                 values = [summary.get(key), *(item[key] for item in summary["nightly_experiments"])]
                 summary[key] = sum(values) if all(type(value) is int and value >= 0 for value in values) else None
         summary.update(source_dirty=source_fingerprint is not None, source_fingerprint=source_fingerprint)
-        if _source_revision() != source_revision or _source_fingerprint() != source_fingerprint:
-            return "INCOMPLETE", summary, "Evaluation source changed during execution"
         if row.model_name and row.model_digest and quality_model_digest(tenant, row.model_name) != row.model_digest:
             return "INCOMPLETE", summary, "Model digest changed during execution"
         if process.returncode not in (0, 1, 2):

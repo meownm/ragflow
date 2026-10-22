@@ -3907,12 +3907,10 @@ Important structured information may include: names, dates, locations, events, k
         rank: 'Rank',
         model: 'Model',
         modelComparison: 'Model comparison',
-        caseProgress: 'Scenarios',
         seriesSummary: 'Series summary',
         periodDays_one: 'Last {{count}} day',
         periodDays_other: 'Last {{count}} days',
         comparisonNotQualifiedShort: 'Ranking unavailable',
-        comparisonConditions: 'Comparison conditions',
         p95Note: 'p95: 95% of measured durations do not exceed this value.',
         processedRuns: 'Runs processed',
         completeRuns: 'Complete results',
@@ -4074,8 +4072,6 @@ Important structured information may include: names, dates, locations, events, k
         semanticMeasure: 'Measure',
         semanticValue: 'Value',
         semanticFraction: 'Numerator / denominator',
-        comparisonNotQualified:
-          'Ranking is unavailable: all full model runs, verified evidence, and matching source, corpus, prompt and parameters are required. Individual results remain visible.',
         semanticCounters: {
           contradiction_tp: 'Correctly detected contradictions',
           contradiction_fp: 'False contradictions',
@@ -4153,7 +4149,6 @@ Important structured information may include: names, dates, locations, events, k
         unverified: 'Revision unverified',
         latestRun: 'Latest run',
         latestComparable: 'Latest full run',
-        historicalSource: 'Different or unverified image',
         noComparable: 'None yet',
         nightlyCampaign: 'Nightly series',
         noCampaigns: 'No nightly series yet.',
@@ -4173,7 +4168,7 @@ Important structured information may include: names, dates, locations, events, k
           'Compare full runs within one series. Partial runs have no overall score.',
         comparisonBoundary: 'Evaluation conditions changed',
         historyBoundaryNote:
-          'Scores are not directly comparable after changes to code, suite, rubric, template, prompts, or generation parameters.',
+          'Scores are not directly comparable after changes to the scenario suite, rubric, template, prompts, or generation parameters.',
         historyLimited: 'History is limited; showing',
         aliases: 'Aliases',
         modelFilter: 'Model',

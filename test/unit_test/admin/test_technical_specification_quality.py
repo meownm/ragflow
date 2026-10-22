@@ -173,7 +173,7 @@ def test_unknown_products_are_rejected(product):
         runs.list_quality_runs(product)
 
 
-@pytest.mark.parametrize("defect", [None, "missing-audit", "missing-probes", "exit-2", "unknown-tokens", "forged-aggregate"])
+@pytest.mark.parametrize("defect", [None, "missing-audit", "missing-probes", "exit-2", "unknown-tokens", "forged-aggregate", "different-source", "unknown-source", "changed-source"])
 def test_nightly_pass_requires_recomputed_full_execution_evidence(queue, monkeypatch, defect):
     import json
     from types import SimpleNamespace
@@ -194,14 +194,37 @@ def test_nightly_pass_requires_recomputed_full_execution_evidence(queue, monkeyp
     row = SimpleNamespace(id="synthetic-nightly", source_revision="a" * 40, campaign_id=None, model_name=None, model_digest=None, case_id=None, scope="FULL")
 
     def subprocess_run(command, **_options):
+        if defect == "changed-source":
+            monkeypatch.setattr(runs, "_source_revision", lambda: "another-image")
+            monkeypatch.setattr(runs, "_source_fingerprint", lambda: "changed-files")
         Path(command[command.index("--report") + 1]).write_text(json.dumps(report), encoding="utf-8")
         return SimpleNamespace(returncode=2 if defect == "exit-2" else 0)
 
     monkeypatch.setattr(quality.subprocess, "run", subprocess_run)
     monkeypatch.setattr(runs, "_source_revision", lambda: row.source_revision)
-    status, summary, _reason = quality.execute(row, Path.cwd(), "qa", row.source_revision, "source-hash")
-    assert status == ("PASS" if defect is None else "INCOMPLETE")
+    if defect == "different-source":
+        campaign = BusinessDocumentQualityCampaign.create(
+            id="previous-image",
+            document_type="technical_specification",
+            schedule_key="tz-nightly:day",
+            source_revision="previous-image",
+            models={"source_fingerprint": "previous-files"},
+            baseline_status="PASS",
+        )
+        row.campaign_id = campaign.id
+    current_revision = "unknown" if defect == "unknown-source" else "current-image"
+    status, summary, _reason = quality.execute(row, Path.cwd(), "qa", current_revision, "source-hash")
+    assert status == ("PASS" if defect in (None, "different-source", "unknown-source", "changed-source") else "INCOMPLETE")
     assert summary["status"] == status
+
+
+def test_unknown_build_does_not_bypass_dedicated_tenant_requirement():
+    from types import SimpleNamespace
+
+    import technical_specification_quality as quality
+
+    status, summary, reason = quality.execute(SimpleNamespace(source_revision="old-image"), Path.cwd(), None, "unknown", None)
+    assert (status, summary, reason) == ("INCOMPLETE", None, "Dedicated quality tenant is not configured")
 
 
 @pytest.mark.parametrize("mode", ["missing", "complete", "failure", "partial"])

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronRight, RefreshCw } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router';
 
@@ -18,6 +18,11 @@ import {
   startDocumentQualityRun,
 } from '@/services/admin-service';
 import './business-documents-quality.css';
+import {
+  QualityPagedBlock,
+  QualityPageSize,
+  QualityPagination,
+} from './document-quality-pagination';
 
 type Tab = 'overview' | 'comparisons' | 'history' | 'operations';
 const tabs: Tab[] = ['overview', 'comparisons', 'history', 'operations'];
@@ -146,8 +151,13 @@ function AlignmentOperations({
           </dl>
         </section>
       ))}
-      <div className="overflow-x-auto">
-        <table className="w-full text-left text-sm">
+      <div
+        className="quality-block-scroll"
+        role="region"
+        aria-label={label('duration')}
+        tabIndex={0}
+      >
+        <table className="quality-metrics-table w-full text-left text-sm">
           <thead>
             <tr>
               <th>{label('duration')}</th>
@@ -178,17 +188,27 @@ function AlignmentOperations({
       </div>
       <p className="text-sm text-text-secondary">{label('p95Note')}</p>
       <h3 className="font-medium">{label('technicalOperations.reasons')}</h3>
-      <ul>
-        {data.reasons.map((item) => (
-          <li key={item.code} title={item.code}>
-            {codeLabel('reasons', item.code, 'unknownReason').replace(
-              /\.$/,
-              '',
-            )}
-            : {number(item.count)}
-          </li>
-        ))}
-      </ul>
+      {data.reasons.length > 0 && (
+        <QualityPagedBlock
+          items={data.reasons}
+          name={label('technicalOperations.reasons')}
+          label={label}
+        >
+          {(reasons) => (
+            <ul>
+              {reasons.map((item) => (
+                <li key={item.code} title={item.code}>
+                  {codeLabel('reasons', item.code, 'unknownReason').replace(
+                    /\.$/,
+                    '',
+                  )}
+                  : {number(item.count)}
+                </li>
+              ))}
+            </ul>
+          )}
+        </QualityPagedBlock>
+      )}
     </section>
   );
 }
@@ -259,9 +279,6 @@ function CampaignSummary({
 
 function comparisonFingerprint(run: AdminService.DocumentQualityRun) {
   return [
-    run.source_revision,
-    run.report?.source_fingerprint,
-    run.report?.source_dirty,
     run.report?.suite_sha256 || run.report?.suite_version,
     run.report?.rubric_version,
     run.report?.template_version,
@@ -287,8 +304,13 @@ function NightlyExperiments({
       className="mt-4 space-y-2"
     >
       <h3 className="font-medium">{label('nightlyExperiments')}</h3>
-      <div className="overflow-x-auto">
-        <table className="w-full text-left text-sm">
+      <div
+        className="quality-block-scroll"
+        role="region"
+        aria-label={label('experiment')}
+        tabIndex={0}
+      >
+        <table className="quality-metrics-table w-full text-left text-sm">
           <thead>
             <tr>
               <th>{label('experiment')}</th>
@@ -323,7 +345,7 @@ function SemanticQuality({
   number,
 }: {
   quality: NonNullable<AdminService.DocumentQualityReport['alignment_quality']>;
-  label: (key: string) => string;
+  label: (key: string, defaultValue?: string) => string;
   number: (value: number) => string;
 }) {
   return (
@@ -353,8 +375,13 @@ function SemanticQuality({
           </div>
         ))}
       </dl>
-      <div className="overflow-x-auto">
-        <table className="w-full text-left text-sm">
+      <div
+        className="quality-block-scroll"
+        role="region"
+        aria-label={label('semanticMeasure')}
+        tabIndex={0}
+      >
+        <table className="quality-metrics-table w-full text-left text-sm">
           <thead>
             <tr>
               <th>{label('semanticMeasure')}</th>
@@ -368,7 +395,15 @@ function SemanticQuality({
                 <th scope="row">{label(`semanticMeasures.${key}`)}</th>
                 <td>
                   {measure.value == null
-                    ? '—'
+                    ? measure.denominator === 0
+                      ? label(
+                          'metricNotApplicable',
+                          'Not calculated: zero denominator',
+                        )
+                      : label(
+                          'metricIncomplete',
+                          'Not calculated: incomplete data',
+                        )
                     : `${(measure.value * 100).toFixed(1)}%`}
                 </td>
                 <td>
@@ -385,7 +420,24 @@ function SemanticQuality({
 
 export default function AdminBusinessDocumentsQuality() {
   const { t, i18n } = useTranslation();
-  const label = (key: string) => t(`admin.businessDocumentsQualityPage.${key}`);
+  const label = (key: string, defaultValue?: string) =>
+    t(`admin.businessDocumentsQualityPage.${key}`, { defaultValue });
+  const sourceIdentity = (source: {
+    source_revision: string | null;
+    source_version?: string | null;
+    source_build?: string | null;
+  }) => {
+    const build =
+      source.source_build ||
+      (!['unknown', 'unverified'].includes(source.source_revision || '')
+        ? source.source_revision
+        : null);
+    const shortBuild = build?.match(/^[a-f0-9]{40,64}$/i)
+      ? build.slice(0, 12)
+      : build;
+    const unknown = label('identityUnknown', 'unavailable');
+    return `${label('sourceVersion', 'Version')}: ${source.source_version || unknown} · ${label('sourceBuild', 'Build')}: ${shortBuild || unknown}`;
+  };
   const codeLabel = (
     group: string,
     code: string | null | undefined,
@@ -408,14 +460,9 @@ export default function AdminBusinessDocumentsQuality() {
       : ('business_requirements' as const);
   const technical = product === 'technical_specification';
   const [selectedRun, setSelectedRun] = useState<string | null>(null);
-  const detailRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (selectedRun)
-      detailRef.current?.scrollIntoView?.({
-        behavior: 'smooth',
-        block: 'nearest',
-      });
-  }, [selectedRun]);
+  const detailRef = useRef<HTMLHeadingElement>(null);
+  const detailTrigger = useRef<HTMLButtonElement | null>(null);
+  const historyViewport = useRef<HTMLDivElement>(null);
   const [manualModel, setManualModel] = useState('');
   const [manualScope, setManualScope] = useState<'FULL' | 'CASE'>('FULL');
   const [manualCase, setManualCase] = useState('');
@@ -428,13 +475,20 @@ export default function AdminBusinessDocumentsQuality() {
       ? Number(params.get('days'))
       : 7
   ) as WindowDays;
-  const change = (key: string, value: string) =>
+  const change = (key: string, value: string) => {
+    const historyFilter = ['trigger', 'status', 'model'].includes(key);
+    if (historyFilter || key === 'historyPage') {
+      setSelectedRun(null);
+      detailTrigger.current = null;
+    }
     setParams((previous) => {
       const next = new URLSearchParams(previous);
       if (value) next.set(key, value);
       else next.delete(key);
+      if (historyFilter) next.delete('historyPage');
       return next;
     });
+  };
   const changeJobFilter = (key: string, value: string) =>
     setParams((previous) => {
       const next = new URLSearchParams(previous);
@@ -559,6 +613,15 @@ export default function AdminBusinessDocumentsQuality() {
         ? 10000
         : false,
   });
+  useLayoutEffect(() => {
+    if (selectedRun && !detail.isLoading) {
+      detailRef.current?.focus({ preventScroll: true });
+      detailRef.current?.scrollIntoView?.({
+        behavior: 'auto',
+        block: 'start',
+      });
+    }
+  }, [selectedRun, detail.isLoading]);
   const campaignDetail = useQuery({
     queryKey: [
       'admin',
@@ -598,6 +661,7 @@ export default function AdminBusinessDocumentsQuality() {
         }),
       ),
     onSuccess: (result) => {
+      detailTrigger.current = null;
       setSelectedRun(result.id);
       client.invalidateQueries({
         queryKey: ['admin', 'business-documents-quality-runs'],
@@ -644,10 +708,6 @@ export default function AdminBusinessDocumentsQuality() {
       eligibleRuns.every(
         (run) =>
           run.report?.evidence_status === 'VERIFIED' &&
-          typeof run.report.source_dirty === 'boolean' &&
-          (run.report.source_dirty
-            ? /^[0-9a-f]{64}$/.test(run.report.source_fingerprint || '')
-            : /^[0-9a-f]{40}$/.test(run.source_revision || '')) &&
           /^[0-9a-f]{64}$/.test(run.report.suite_sha256 || '') &&
           /^[0-9a-f]{64}$/.test(run.report.prompt_hashes?.alignment || '') &&
           Boolean(run.report.parameter_profiles?.length),
@@ -657,7 +717,32 @@ export default function AdminBusinessDocumentsQuality() {
   const rankByRun = new Map(
     rankedRuns.map((run, index) => [run.id, index + 1]),
   );
+  const showRanking = rankedRuns.length > 0;
+  const comparisonHasReasons = chosenCampaign?.runs.some((run) =>
+    Boolean(runExplanation(run)),
+  );
+  const showCriticalScore = chosenCampaign?.runs.some(
+    (run) => isCompleteRun(run) && run.report?.p0_case_pass_rate != null,
+  );
+  const showWeightedScore =
+    !technical &&
+    chosenCampaign?.runs.some(
+      (run) => isCompleteRun(run) && run.report?.weighted_score != null,
+    );
+  const caseProgress = (run: AdminService.DocumentQualityRun) => {
+    if (run.report?.executed_cases == null)
+      return label('executionReportMissing', 'No execution report');
+    const executed = number(run.report.executed_cases);
+    return run.report.expected_cases == null
+      ? `${executed} · ${label('expectedCasesUnknown', 'total unknown')}`
+      : `${executed}/${number(run.report.expected_cases)}`;
+  };
   const selectedDetail = detail.data;
+  const selectedRunInfo =
+    (selectedDetail?.id === selectedRun ? selectedDetail : undefined) ||
+    allRuns.find((run) => run.id === selectedRun) ||
+    chosenCampaign?.runs.find((run) => run.id === selectedRun) ||
+    (start.data?.id === selectedRun ? start.data : undefined);
   const op = technical ? undefined : operations.data;
   const updatedAt = technical
     ? tab === 'operations'
@@ -676,6 +761,8 @@ export default function AdminBusinessDocumentsQuality() {
     params.get('trigger') || params.get('status') || params.get('model'),
   );
   const modelFilter = params.get('model') || '';
+  const triggerFilter = params.get('trigger') || '';
+  const statusFilter = params.get('status') || '';
   const visibleJobs = jobsPage.data?.jobs ?? [];
   const historicalModels = [
     ...new Map(
@@ -686,10 +773,45 @@ export default function AdminBusinessDocumentsQuality() {
   ];
   const visibleHistory = allRuns.filter(
     (run) =>
-      (!params.get('trigger') || run.trigger === params.get('trigger')) &&
-      (!params.get('status') || run.status === params.get('status')) &&
+      (!triggerFilter || run.trigger === triggerFilter) &&
+      (!statusFilter || run.status === statusFilter) &&
       (!modelFilter || run.model_digest === modelFilter),
   );
+  const historyPageCount = Math.max(
+    1,
+    Math.ceil(visibleHistory.length / QualityPageSize),
+  );
+  const requestedHistoryPage = Number(params.get('historyPage'));
+  const historyPage = Math.min(
+    historyPageCount,
+    Number.isSafeInteger(requestedHistoryPage) && requestedHistoryPage > 0
+      ? requestedHistoryPage
+      : 1,
+  );
+  const historyOffset = (historyPage - 1) * QualityPageSize;
+  const historyRows = visibleHistory.slice(
+    historyOffset,
+    historyOffset + QualityPageSize,
+  );
+  useLayoutEffect(() => {
+    if (historyViewport.current) historyViewport.current.scrollTop = 0;
+  }, [historyPage, product, modelFilter, triggerFilter, statusFilter]);
+  const historyReasonKey = (run: AdminService.DocumentQualityRun) =>
+    run.campaign_id && run.reason_code && run.scope === 'FULL'
+      ? `${run.campaign_id}:${run.reason_code}`
+      : null;
+  const historyReasons = new Map<string, { count: number; firstRun: string }>();
+  for (const run of historyRows) {
+    const key = historyReasonKey(run);
+    if (!key) continue;
+    const group = historyReasons.get(key);
+    if (group) group.count += 1;
+    else historyReasons.set(key, { count: 1, firstRun: run.id });
+  }
+  const closeRunDetails = () => {
+    setSelectedRun(null);
+    detailTrigger.current?.focus({ preventScroll: true });
+  };
 
   const runButton = (
     run: AdminService.DocumentQualityRun,
@@ -698,53 +820,254 @@ export default function AdminBusinessDocumentsQuality() {
     <button
       key={run.id}
       type="button"
-      onClick={() => setSelectedRun(run.id)}
+      onClick={(event) => {
+        detailTrigger.current = event.currentTarget;
+        setSelectedRun(selectedRun === run.id ? null : run.id);
+      }}
+      aria-expanded={selectedRun === run.id}
+      aria-controls={selectedRun === run.id ? 'quality-run-details' : undefined}
+      data-selected={selectedRun === run.id}
       className="document-quality-run grid w-full gap-2 border-b border-border-button py-3 text-left text-sm hover:bg-bg-base"
     >
-      <span className="min-w-0 break-words text-text-primary">
+      <span
+        className="quality-history-model min-w-0 break-words text-text-primary"
+        data-label={label('model')}
+      >
         {run.model_name ||
           run.report?.model ||
           label(`triggers.${run.trigger}`)}
+        <span
+          className="block break-words text-xs text-text-secondary"
+          title={run.source_build || run.source_revision || undefined}
+        >
+          {sourceIdentity(run)}
+        </span>
       </span>
-      <span className={statusColor(run.status)}>
+      <span className={statusColor(run.status)} data-label={label('status')}>
         {run.scope === 'CASE'
           ? label('diagnostic')
-          : label(`statuses.${run.status}`)}
+          : run.status === 'INCOMPLETE'
+            ? label('checkIncomplete', 'Not completed')
+            : label(`statuses.${run.status}`)}
+        {technical && (
+          <span className="mt-1 block text-xs text-text-secondary">
+            {label('executionEvidence')}:{' '}
+            {codeLabel('statuses', run.report?.evidence_status || 'INCOMPLETE')}
+          </span>
+        )}
       </span>
-      <span className="min-w-0 break-words text-text-secondary">
+      <span
+        className="min-w-0 break-words text-text-secondary"
+        data-label={label('historyExecution', 'Execution / scenario')}
+      >
         {run.scope === 'CASE'
           ? caseName(run.case_id)
-          : run.report?.expected_cases != null
-            ? `${run.report.executed_cases}/${run.report.expected_cases} ${label('cases')}`
-            : run.reason_code
-              ? codeLabel('reasons', run.reason_code, 'unknownReason')
-              : run.reason || '—'}
+          : `${label('executedCases', 'Executed')}: ${caseProgress(run)}`}
         {run.report?.weighted_score != null &&
           run.report.expected_cases != null &&
           run.scope === 'FULL' &&
           ['PASS', 'FAIL'].includes(run.status) &&
           run.report.expected_cases === run.report.executed_cases &&
           ` · ${run.report.weighted_score.toFixed(2)}/4`}
+        {run.reason_code &&
+          (historyReasons.get(historyReasonKey(run) || '')?.count || 0) < 2 && (
+            <span className="mt-1 block text-xs">
+              {codeLabel('reasons', run.reason_code, 'unknownReason')}
+            </span>
+          )}
         {boundary && (
           <strong className="ml-2 text-state-warning">
             {label('comparisonBoundary')}
           </strong>
         )}
       </span>
-      <span className="text-text-secondary">
+      <span
+        className="text-text-secondary"
+        data-label={label('runDate', 'Run date')}
+      >
         {date(run.started_at || run.requested_at)}
-        {(run.source_revision !== runs.data?.source_revision ||
-          run.source_revision === 'unverified' ||
-          run.report?.source_dirty) && (
-          <strong className="block text-xs">{label('historicalSource')}</strong>
-        )}
       </span>
     </button>
   );
 
+  const renderRunDetails = () => (
+    <div
+      id="quality-run-details"
+      role="region"
+      className="quality-run-details my-3 rounded-lg border border-border-button bg-bg-base p-5"
+      aria-label={label('caseDetails')}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <h2
+          ref={detailRef}
+          tabIndex={-1}
+          className="min-w-0 break-words font-medium text-text-primary"
+        >
+          {label('caseDetails')}
+        </h2>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="shrink-0"
+          onClick={closeRunDetails}
+        >
+          {label('close')}
+        </Button>
+      </div>
+      <p className="mt-2 break-words text-sm text-text-primary">
+        <strong>
+          {selectedRunInfo?.model_name ||
+            selectedRunInfo?.report?.model ||
+            label('identityUnknown', 'unavailable')}
+        </strong>
+        {' · '}
+        {date(selectedRunInfo?.started_at || selectedRunInfo?.requested_at)}
+      </p>
+      {detail.isLoading && (
+        <p className="mt-3 text-text-secondary">{label('loading')}</p>
+      )}
+      {detail.error && (
+        <p role="alert" className="mt-3 text-state-error">
+          {label('runsLoadError')}
+        </p>
+      )}
+      {selectedDetail && (
+        <div className="mt-3 space-y-3 text-sm">
+          <details className="break-all text-text-secondary">
+            <summary className="cursor-pointer">
+              {label('technicalDetails')}
+            </summary>
+            <p>
+              {selectedRun} ·{' '}
+              {selectedDetail.model_name || selectedDetail.report?.model || '—'}{' '}
+              · {selectedDetail.model_digest || '—'} ·{' '}
+              {selectedDetail.source_revision} ·{' '}
+              {date(selectedDetail.finished_at)}
+            </p>
+          </details>
+          {technical && (
+            <p>
+              {label('qualityStatus')}:{' '}
+              {codeLabel('statuses', selectedDetail.report?.quality_status)} ·{' '}
+              {label('executionEvidence')}:{' '}
+              {codeLabel(
+                'statuses',
+                selectedDetail.report?.evidence_status || 'INCOMPLETE',
+              )}
+            </p>
+          )}
+          {technical && selectedDetail.report?.alignment_quality && (
+            <SemanticQuality
+              quality={selectedDetail.report.alignment_quality}
+              label={label}
+              number={number}
+            />
+          )}
+          {technical && selectedDetail.report?.nightly_experiments && (
+            <NightlyExperiments
+              experiments={selectedDetail.report.nightly_experiments}
+              label={label}
+              codeLabel={codeLabel}
+            />
+          )}
+          <p className="break-words">{sourceIdentity(selectedDetail)}</p>
+          {selectedDetail.reason_code && (
+            <p
+              className="text-state-warning"
+              title={selectedDetail.reason_code}
+            >
+              {codeLabel(
+                'reasons',
+                selectedDetail.reason_code,
+                'incompleteReason',
+              )}
+            </p>
+          )}
+          {!selectedDetail.report?.cases?.length && (
+            <p className="text-text-secondary">{label('detailsUnavailable')}</p>
+          )}
+          {selectedDetail.report?.gate_checks
+            ?.filter((check) => !check.passed)
+            .map((check) => (
+              <p key={check.metric} className="text-state-error">
+                {check.metric}: {check.actual} · {label('threshold')}:{' '}
+                {check.threshold}
+              </p>
+            ))}
+          {!!selectedDetail.report?.cases?.length && (
+            <QualityPagedBlock
+              key={selectedRun}
+              items={selectedDetail.report.cases}
+              name={label('cases')}
+              label={label}
+            >
+              {(cases) =>
+                cases.map((item) => (
+                  <div
+                    key={item.case_id}
+                    className="border-t border-border-button pt-3"
+                  >
+                    <p
+                      className={statusColor(item.status)}
+                      title={item.case_id}
+                    >
+                      {caseName(item.case_id)} · {item.priority || '—'} ·{' '}
+                      {codeLabel('statuses', item.status)}
+                    </p>
+                    {item.diagnostics?.map((diagnostic, index) => (
+                      <p
+                        key={`${diagnostic.code}-${index}`}
+                        className="mt-1 text-text-secondary"
+                      >
+                        {t(
+                          `admin.businessDocumentsQualityPage.diagnostics.${diagnostic.code}`,
+                          { defaultValue: diagnostic.code },
+                        )}
+                        {[
+                          diagnostic.fact_id,
+                          diagnostic.job_code,
+                          diagnostic.error_type,
+                          diagnostic.requirement_id,
+                          diagnostic.check_id,
+                          diagnostic.section_id,
+                        ]
+                          .filter(Boolean)
+                          .map((value) => `: ${value}`)
+                          .join('')}
+                      </p>
+                    ))}
+                    {item.metrics &&
+                      Object.entries(item.metrics).map(([metric, actual]) => (
+                        <p key={metric} className="mt-1 text-text-secondary">
+                          {metric}: {actual}
+                        </p>
+                      ))}
+                    {item.failure_count > 0 && !item.diagnostics?.length && (
+                      <p className="text-text-secondary">
+                        {label('detailsUnavailable')}
+                      </p>
+                    )}
+                    {item.gate_checks
+                      ?.filter((check) => !check.passed)
+                      .map((check) => (
+                        <p key={check.metric} className="text-text-secondary">
+                          {check.metric}: {check.actual} · {label('threshold')}:{' '}
+                          {check.threshold}
+                        </p>
+                      ))}
+                  </div>
+                ))
+              }
+            </QualityPagedBlock>
+          )}
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <section
-      className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border-button bg-bg-base"
+      className="document-quality-admin flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border-button bg-bg-base"
       data-testid="business-documents-quality-admin"
     >
       <header className="quality-header flex flex-wrap items-start justify-between gap-3 border-b border-border-button px-6 py-5">
@@ -943,6 +1266,7 @@ export default function AdminBusinessDocumentsQuality() {
             )}
             {technicalOperations.data && !technicalOperations.error && (
               <AlignmentOperations
+                key={days}
                 data={technicalOperations.data}
                 label={label}
                 number={number}
@@ -1002,14 +1326,11 @@ export default function AdminBusinessDocumentsQuality() {
                       {latestFull
                         ? `${latestFull.report?.model || latestFull.model_name} · ${latestFull.report?.executed_cases}/${latestFull.report?.expected_cases} · ${date(latestFull.finished_at)}`
                         : label('noComparable')}
-                      {latestFull &&
-                        (latestFull.source_revision !==
-                          runs.data?.source_revision ||
-                          latestFull.source_revision === 'unverified') && (
-                          <strong className="ml-2">
-                            {label('historicalSource')}
-                          </strong>
-                        )}
+                      {latestFull && (
+                        <span className="ml-2 break-words">
+                          {sourceIdentity(latestFull)}
+                        </span>
+                      )}
                     </p>
                   </div>
                 ) : (
@@ -1151,7 +1472,7 @@ export default function AdminBusinessDocumentsQuality() {
         )}
 
         {tab === 'comparisons' && (
-          <div className="space-y-5">
+          <div className="quality-comparisons flex h-full min-h-0 flex-col gap-5">
             <div className="flex flex-wrap items-center gap-3">
               <h2 className="font-medium text-text-primary">
                 {label('nightlyCampaign')}
@@ -1174,199 +1495,192 @@ export default function AdminBusinessDocumentsQuality() {
               <p className="text-text-secondary">{label('noCampaigns')}</p>
             )}
             {chosenCampaign && (
-              <div className="rounded-lg border border-border-button bg-bg-card p-5">
-                {technical && !technicalComparable && (
-                  <p role="status" className="mb-3 text-state-warning">
-                    {label('comparisonNotQualifiedShort')}
-                  </p>
+              <div className="quality-comparison-card flex min-h-0 flex-1 flex-col rounded-lg border border-border-button bg-bg-card p-5">
+                {((!showRanking && chosenCampaign.runs.length > 0) ||
+                  chosenCampaign.reason_code) && (
+                  <div role="status" className="quality-comparison-notice mb-4">
+                    {!showRanking && (
+                      <p className="font-medium text-text-primary">
+                        {label('comparisonNotQualifiedShort')}
+                      </p>
+                    )}
+                    <p
+                      className="mt-1 text-sm text-text-secondary"
+                      title={chosenCampaign.reason_code || undefined}
+                    >
+                      {chosenCampaign.reason_code
+                        ? codeLabel(
+                            'reasons',
+                            chosenCampaign.reason_code,
+                            'incompleteReason',
+                          )
+                        : label(
+                            'comparisonExecutionOnly',
+                            'No comparable complete results. Execution progress and stop reasons are shown below.',
+                          )}
+                    </p>
+                  </div>
                 )}
                 <CampaignSummary runs={chosenCampaign.runs} label={label} />
-                <details className="quality-disclosure mb-4 text-sm">
-                  <summary className="flex cursor-pointer items-center gap-1 text-text-secondary">
-                    <ChevronRight
-                      aria-hidden="true"
-                      className="quality-disclosure-icon size-3"
-                    />
-                    {label('comparisonConditions')}
-                  </summary>
-                  <div className="mt-3">
-                    {technical && !technicalComparable && (
-                      <p className="mb-3 text-state-warning">
-                        {label('comparisonNotQualified')}
-                      </p>
-                    )}
-                    <p className="mb-3 break-words text-sm text-text-secondary">
-                      {label('source')}: {chosenCampaign.source_revision} ·{' '}
-                      {label('baseline')}:{' '}
-                      {chosenCampaign.baseline_status
-                        ? codeLabel('statuses', chosenCampaign.baseline_status)
-                        : '—'}
-                      {(chosenCampaign.source_revision !==
-                        runs.data?.source_revision ||
-                        chosenCampaign.source_revision === 'unverified') && (
-                        <strong className="ml-2">
-                          {label('historicalSource')}
-                        </strong>
-                      )}
-                    </p>
-                    {chosenCampaign.reason_code && (
-                      <p
-                        className="mb-3 text-state-warning"
-                        title={chosenCampaign.reason_code}
-                      >
-                        {codeLabel(
-                          'reasons',
-                          chosenCampaign.reason_code,
-                          'incompleteReason',
-                        )}
-                      </p>
-                    )}
-                    {chosenCampaign.baseline_report?.cases
-                      ?.filter((item) => item.status === 'FAIL')
-                      .map((item) => (
-                        <p
-                          key={item.case_id}
-                          className="mb-2 text-sm text-state-error"
-                          title={[
-                            item.case_id,
-                            ...(item.diagnostics?.map(
-                              (diagnostic) => diagnostic.code,
-                            ) || []),
-                          ].join(' · ')}
-                        >
-                          {label('baseline')} ·{' '}
-                          {item.diagnostics
-                            ?.map((diagnostic) =>
-                              codeLabel(
-                                'diagnostics',
-                                diagnostic.code,
-                                'failedReason',
-                              ),
-                            )
-                            .join(', ')}
-                        </p>
-                      ))}
-                  </div>
-                </details>
                 <div className="document-quality-comparison">
-                  <table
-                    aria-label={label('modelComparison')}
-                    className="document-quality-comparison-table w-full text-left text-sm"
+                  <QualityPagedBlock
+                    key={chosenCampaign.id}
+                    items={chosenCampaign.runs}
+                    name={label('modelComparison')}
+                    label={label}
                   >
-                    <colgroup>
-                      <col className="quality-col-rank" />
-                      <col />
-                      <col className="quality-col-status" />
-                      {technical && <col className="quality-col-evidence" />}
-                      <col className="quality-col-cases" />
-                      <col className="quality-col-critical" />
-                      {!technical && <col className="quality-col-score" />}
-                      <col className="quality-col-duration" />
-                      <col className="quality-col-tokens" />
-                    </colgroup>
-                    <thead>
-                      <tr className="border-b border-border-button text-text-secondary">
-                        <th className="py-2">{label('rank')}</th>
-                        <th>{label('model')}</th>
-                        <th>{label('status')}</th>
-                        {technical && <th>{label('executionEvidence')}</th>}
-                        <th>{label('caseProgress')}</th>
-                        <th>{label('p0Pass')}</th>
-                        {!technical && <th>{label('score')}</th>}
-                        <th>{label('duration')}</th>
-                        <th>{label('tokens')}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {chosenCampaign.runs.map((run) => {
-                        const complete = isCompleteRun(run);
-                        const explanation = runExplanation(run);
-                        return (
-                          <tr
-                            key={run.id}
-                            className="border-b border-border-button text-text-primary"
-                          >
-                            <td data-label={label('rank')}>
-                              {rankByRun.get(run.id) ?? '—'}
-                            </td>
-                            <td
-                              data-label={label('model')}
-                              className="comparison-model py-3"
+                    {(comparisonRuns) => (
+                      <table
+                        aria-label={label('modelComparison')}
+                        className="document-quality-comparison-table w-full text-left text-sm"
+                      >
+                        <thead>
+                          <tr className="border-b border-border-button text-text-secondary">
+                            {showRanking && <th>{label('rank')}</th>}
+                            <th className="comparison-model">
+                              {label('model')}
+                            </th>
+                            <th
+                              className={`comparison-result ${comparisonHasReasons ? 'comparison-reason' : ''}`}
                             >
-                              <button
-                                className="break-words text-left text-accent-primary underline-offset-4 hover:underline focus-visible:underline"
-                                onClick={() => setSelectedRun(run.id)}
-                              >
-                                {run.model_name || '—'}
-                              </button>
-                              <div className="text-xs text-text-secondary">
-                                {run.model_digest?.slice(0, 12)}
-                              </div>
-                              {explanation && (
-                                <p
-                                  className="mt-2 text-xs text-state-warning"
-                                  title={run.reason_code || undefined}
-                                >
-                                  {explanation}
-                                </p>
-                              )}
-                              {(chosenCampaign.models?.models.find(
-                                (item) => item.digest === run.model_digest,
-                              )?.aliases.length || 0) > 1 && (
-                                <div className="text-xs text-text-secondary">
-                                  {label('aliases')}:{' '}
-                                  {chosenCampaign.models?.models
-                                    .find(
-                                      (item) =>
-                                        item.digest === run.model_digest,
-                                    )
-                                    ?.aliases.join(', ')}
-                                </div>
-                              )}
-                            </td>
-                            <td
-                              data-label={label('status')}
-                              className={`comparison-status ${statusColor(run.status)}`}
-                            >
-                              {codeLabel('statuses', run.status)}
-                            </td>
-                            {technical && (
-                              <td data-label={label('executionEvidence')}>
-                                {codeLabel(
-                                  'statuses',
-                                  run.report?.evidence_status || 'INCOMPLETE',
-                                )}
-                              </td>
-                            )}
-                            <td data-label={label('caseProgress')}>
-                              {run.report?.executed_cases ?? 0}/
-                              {run.report?.expected_cases ?? '—'}
-                            </td>
-                            <td data-label={label('p0Pass')}>
-                              {complete && run.report?.p0_case_pass_rate != null
-                                ? `${(run.report.p0_case_pass_rate * 100).toFixed(0)}%`
-                                : '—'}
-                            </td>
-                            {!technical && (
-                              <td data-label={label('score')}>
-                                {complete && run.report?.weighted_score != null
-                                  ? `${run.report.weighted_score.toFixed(2)}/4`
-                                  : '—'}
-                              </td>
-                            )}
-                            <td data-label={label('duration')}>
-                              {duration(run.report?.duration_ms)}
-                            </td>
-                            <td data-label={label('tokens')}>
-                              {run.report?.total_tokens != null
-                                ? number(run.report.total_tokens)
-                                : '—'}
-                            </td>
+                              {label('checkAndReason', 'Check and reason')}
+                            </th>
+                            {technical && <th>{label('executionEvidence')}</th>}
+                            <th>{label('executedCases', 'Executed')}</th>
+                            {showCriticalScore && <th>{label('p0Pass')}</th>}
+                            {showWeightedScore && <th>{label('score')}</th>}
+                            <th>{label('duration')}</th>
+                            <th>{label('tokens')}</th>
                           </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                        </thead>
+                        <tbody>
+                          {comparisonRuns.map((run) => {
+                            const complete = isCompleteRun(run);
+                            const explanation = runExplanation(run);
+                            return (
+                              <tr
+                                key={run.id}
+                                className="border-b border-border-button text-text-primary"
+                              >
+                                {showRanking && (
+                                  <td data-label={label('rank')}>
+                                    {rankByRun.get(run.id) ??
+                                      label('notRanked', 'Not ranked')}
+                                  </td>
+                                )}
+                                <td
+                                  data-label={label('model')}
+                                  className="comparison-model py-3"
+                                >
+                                  <button
+                                    className="break-words text-left text-accent-primary underline-offset-4 hover:underline focus-visible:underline"
+                                    onClick={(event) => {
+                                      detailTrigger.current =
+                                        event.currentTarget;
+                                      setSelectedRun(run.id);
+                                    }}
+                                  >
+                                    {run.model_name || '—'}
+                                  </button>
+                                  <div className="text-xs text-text-secondary">
+                                    {run.model_digest?.slice(0, 12)}
+                                  </div>
+                                  {(chosenCampaign.models?.models.find(
+                                    (item) => item.digest === run.model_digest,
+                                  )?.aliases.length || 0) > 1 && (
+                                    <div className="text-xs text-text-secondary">
+                                      {label('aliases')}:{' '}
+                                      {chosenCampaign.models?.models
+                                        .find(
+                                          (item) =>
+                                            item.digest === run.model_digest,
+                                        )
+                                        ?.aliases.join(', ')}
+                                    </div>
+                                  )}
+                                </td>
+                                <td
+                                  data-label={label(
+                                    'checkAndReason',
+                                    'Check and reason',
+                                  )}
+                                  className={`comparison-result ${comparisonHasReasons ? 'comparison-reason' : ''}`}
+                                >
+                                  <span
+                                    className={`font-medium ${statusColor(run.status)}`}
+                                  >
+                                    {run.status === 'INCOMPLETE'
+                                      ? label(
+                                          'checkIncomplete',
+                                          'Not completed',
+                                        )
+                                      : codeLabel('statuses', run.status)}
+                                  </span>
+                                  {explanation && (
+                                    <p
+                                      className="mt-1 text-sm text-text-secondary"
+                                      title={run.reason_code || undefined}
+                                    >
+                                      {explanation}
+                                    </p>
+                                  )}
+                                </td>
+                                {technical && (
+                                  <td data-label={label('executionEvidence')}>
+                                    {codeLabel(
+                                      'statuses',
+                                      run.report?.evidence_status ||
+                                        'INCOMPLETE',
+                                    )}
+                                  </td>
+                                )}
+                                <td
+                                  data-label={label(
+                                    'executedCases',
+                                    'Executed',
+                                  )}
+                                >
+                                  {caseProgress(run)}
+                                </td>
+                                {showCriticalScore && (
+                                  <td data-label={label('p0Pass')}>
+                                    {complete &&
+                                    run.report?.p0_case_pass_rate != null
+                                      ? `${(run.report.p0_case_pass_rate * 100).toFixed(0)}%`
+                                      : label('identityUnknown', 'unavailable')}
+                                  </td>
+                                )}
+                                {showWeightedScore && (
+                                  <td data-label={label('score')}>
+                                    {complete &&
+                                    run.report?.weighted_score != null
+                                      ? `${run.report.weighted_score.toFixed(2)}/4`
+                                      : label('identityUnknown', 'unavailable')}
+                                  </td>
+                                )}
+                                <td
+                                  data-label={label('duration')}
+                                  className="comparison-measurement"
+                                >
+                                  {run.report?.duration_ms != null
+                                    ? duration(run.report.duration_ms)
+                                    : label('identityUnknown', 'unavailable')}
+                                </td>
+                                <td
+                                  data-label={label('tokens')}
+                                  className="comparison-measurement"
+                                >
+                                  {run.report?.total_tokens != null
+                                    ? number(run.report.total_tokens)
+                                    : label('identityUnknown', 'unavailable')}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    )}
+                  </QualityPagedBlock>
                 </div>
               </div>
             )}
@@ -1377,7 +1691,7 @@ export default function AdminBusinessDocumentsQuality() {
         )}
 
         {tab === 'history' && (
-          <div className="space-y-4">
+          <div className="quality-history flex h-full min-h-0 flex-col gap-4">
             <h2 className="font-medium text-text-primary">
               {label('history')}
             </h2>
@@ -1442,19 +1756,71 @@ export default function AdminBusinessDocumentsQuality() {
                 {runs.data.total}
               </p>
             )}
-            <div className="rounded-lg border border-border-button bg-bg-card px-5">
+            <div
+              ref={historyViewport}
+              className="quality-history-table min-h-0 flex-1 overflow-auto rounded-lg border border-border-button bg-bg-card px-5"
+              role="region"
+              aria-label={label('history')}
+              tabIndex={0}
+            >
+              {visibleHistory.length > 0 && (
+                <div
+                  className="quality-history-header text-xs text-text-secondary"
+                  aria-hidden="true"
+                >
+                  <span>{label('model')}</span>
+                  <span>{label('status')}</span>
+                  <span>
+                    {label('historyExecution', 'Execution / scenario')}
+                  </span>
+                  <span>{label('runDate', 'Run date')}</span>
+                </div>
+              )}
+              {selectedRun &&
+                !historyRows.some((run) => run.id === selectedRun) &&
+                renderRunDetails()}
               {visibleHistory.length
-                ? visibleHistory.map((run, index) =>
-                    runButton(
-                      run,
-                      Boolean(
-                        modelFilter &&
-                        visibleHistory[index + 1] &&
-                        comparisonFingerprint(run) !==
-                          comparisonFingerprint(visibleHistory[index + 1]),
-                      ),
-                    ),
-                  )
+                ? historyRows.map((run, index) => {
+                    const group = historyReasons.get(
+                      historyReasonKey(run) || '',
+                    );
+                    return (
+                      <div key={run.id} className="quality-history-entry">
+                        {group &&
+                          group.count > 1 &&
+                          group.firstRun === run.id && (
+                            <p className="quality-history-notice my-3 border-l-2 border-accent-primary px-3 text-sm text-text-secondary">
+                              {t(
+                                'admin.businessDocumentsQualityPage.sharedHistoryReason',
+                                {
+                                  count: group.count,
+                                  date: date(run.requested_at),
+                                  reason: codeLabel(
+                                    'reasons',
+                                    run.reason_code,
+                                    'unknownReason',
+                                  ),
+                                  defaultValue:
+                                    'Series {{date}} · runs: {{count}}. {{reason}}',
+                                },
+                              )}
+                            </p>
+                          )}
+                        {runButton(
+                          run,
+                          Boolean(
+                            modelFilter &&
+                            visibleHistory[historyOffset + index + 1] &&
+                            comparisonFingerprint(run) !==
+                              comparisonFingerprint(
+                                visibleHistory[historyOffset + index + 1],
+                              ),
+                          ),
+                        )}
+                        {selectedRun === run.id && renderRunDetails()}
+                      </div>
+                    );
+                  })
                 : runs.data && (
                     <p className="py-5 text-text-secondary">
                       {label(hasHistoryFilters ? 'noMatchingRuns' : 'noRuns')}
@@ -1465,9 +1831,12 @@ export default function AdminBusinessDocumentsQuality() {
                           onClick={() =>
                             setParams((previous) => {
                               const next = new URLSearchParams(previous);
-                              ['trigger', 'status', 'model'].forEach((key) =>
-                                next.delete(key),
-                              );
+                              [
+                                'trigger',
+                                'status',
+                                'model',
+                                'historyPage',
+                              ].forEach((key) => next.delete(key));
                               return next;
                             })
                           }
@@ -1478,6 +1847,17 @@ export default function AdminBusinessDocumentsQuality() {
                     </p>
                   )}
             </div>
+            {runs.data && (
+              <QualityPagination
+                name={t('common.pagination', {
+                  defaultValue: 'Pagination',
+                })}
+                page={historyPage}
+                total={visibleHistory.length}
+                onPage={(page) => change('historyPage', String(page))}
+                label={label}
+              />
+            )}
           </div>
         )}
 
@@ -1734,167 +2114,7 @@ export default function AdminBusinessDocumentsQuality() {
           </div>
         )}
 
-        {selectedRun && (
-          <div
-            ref={detailRef}
-            className="mt-6 rounded-lg border border-border-button bg-bg-card p-5"
-            aria-label={label('caseDetails')}
-          >
-            <div className="flex items-start justify-between gap-3">
-              <h2 className="min-w-0 break-words font-medium text-text-primary">
-                {label('caseDetails')}
-              </h2>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="shrink-0"
-                onClick={() => setSelectedRun(null)}
-              >
-                {label('close')}
-              </Button>
-            </div>
-            {detail.isLoading && (
-              <p className="mt-3 text-text-secondary">{label('loading')}</p>
-            )}
-            {detail.error && (
-              <p role="alert" className="mt-3 text-state-error">
-                {label('runsLoadError')}
-              </p>
-            )}
-            {selectedDetail && (
-              <div className="mt-3 space-y-3 text-sm">
-                <details className="break-all text-text-secondary">
-                  <summary className="cursor-pointer">
-                    {label('technicalDetails')}
-                  </summary>
-                  <p>
-                    {selectedRun} ·{' '}
-                    {selectedDetail.model_name ||
-                      selectedDetail.report?.model ||
-                      '—'}{' '}
-                    · {selectedDetail.model_digest || '—'} ·{' '}
-                    {selectedDetail.source_revision} ·{' '}
-                    {date(selectedDetail.finished_at)}
-                  </p>
-                </details>
-                {technical && (
-                  <p>
-                    {label('qualityStatus')}:{' '}
-                    {codeLabel(
-                      'statuses',
-                      selectedDetail.report?.quality_status,
-                    )}{' '}
-                    · {label('executionEvidence')}:{' '}
-                    {codeLabel(
-                      'statuses',
-                      selectedDetail.report?.evidence_status || 'INCOMPLETE',
-                    )}
-                  </p>
-                )}
-                {technical && selectedDetail.report?.alignment_quality && (
-                  <SemanticQuality
-                    quality={selectedDetail.report.alignment_quality}
-                    label={label}
-                    number={number}
-                  />
-                )}
-                {technical && selectedDetail.report?.nightly_experiments && (
-                  <NightlyExperiments
-                    experiments={selectedDetail.report.nightly_experiments}
-                    label={label}
-                    codeLabel={codeLabel}
-                  />
-                )}
-                {(selectedDetail.source_revision !==
-                  runs.data?.source_revision ||
-                  selectedDetail.source_revision === 'unverified' ||
-                  selectedDetail.report?.source_dirty) && (
-                  <p>{label('historicalSource')}</p>
-                )}
-                {selectedDetail.reason_code && (
-                  <p
-                    className="text-state-warning"
-                    title={selectedDetail.reason_code}
-                  >
-                    {codeLabel(
-                      'reasons',
-                      selectedDetail.reason_code,
-                      'incompleteReason',
-                    )}
-                  </p>
-                )}
-                {!selectedDetail.report?.cases?.length && (
-                  <p className="text-text-secondary">
-                    {label('detailsUnavailable')}
-                  </p>
-                )}
-                {selectedDetail.report?.gate_checks
-                  ?.filter((check) => !check.passed)
-                  .map((check) => (
-                    <p key={check.metric} className="text-state-error">
-                      {check.metric}: {check.actual} · {label('threshold')}:{' '}
-                      {check.threshold}
-                    </p>
-                  ))}
-                {selectedDetail.report?.cases?.map((item) => (
-                  <div
-                    key={item.case_id}
-                    className="border-t border-border-button pt-3"
-                  >
-                    <p
-                      className={statusColor(item.status)}
-                      title={item.case_id}
-                    >
-                      {caseName(item.case_id)} · {item.priority || '—'} ·{' '}
-                      {codeLabel('statuses', item.status)}
-                    </p>
-                    {item.diagnostics?.map((diagnostic, index) => (
-                      <p
-                        key={`${diagnostic.code}-${index}`}
-                        className="mt-1 text-text-secondary"
-                      >
-                        {t(
-                          `admin.businessDocumentsQualityPage.diagnostics.${diagnostic.code}`,
-                          { defaultValue: diagnostic.code },
-                        )}
-                        {[
-                          diagnostic.fact_id,
-                          diagnostic.job_code,
-                          diagnostic.error_type,
-                          diagnostic.requirement_id,
-                          diagnostic.check_id,
-                          diagnostic.section_id,
-                        ]
-                          .filter(Boolean)
-                          .map((value) => `: ${value}`)
-                          .join('')}
-                      </p>
-                    ))}
-                    {item.metrics &&
-                      Object.entries(item.metrics).map(([metric, actual]) => (
-                        <p key={metric} className="mt-1 text-text-secondary">
-                          {metric}: {actual}
-                        </p>
-                      ))}
-                    {item.failure_count > 0 && !item.diagnostics?.length && (
-                      <p className="text-text-secondary">
-                        {label('detailsUnavailable')}
-                      </p>
-                    )}
-                    {item.gate_checks
-                      ?.filter((check) => !check.passed)
-                      .map((check) => (
-                        <p key={check.metric} className="text-text-secondary">
-                          {check.metric}: {check.actual} · {label('threshold')}:{' '}
-                          {check.threshold}
-                        </p>
-                      ))}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+        {tab !== 'history' && selectedRun && renderRunDetails()}
       </div>
     </section>
   );

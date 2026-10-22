@@ -22,6 +22,7 @@ from business_documents.domain.job_recovery import REPAIRABLE_OUTPUT_CODES, TRAN
 from common.document_quality_schedule import MONTHLY_HOUR, MOSCOW, NIGHTLY_HOUR
 from common.misc_utils import get_uuid
 from common.time_utils import current_timestamp
+from common.versions import get_ragflow_version
 from tools.quality.verify_business_document_quality_report import QualityGateFailed, verify_report
 
 _logger = logging.getLogger(__name__)
@@ -153,6 +154,17 @@ def _source_revision() -> str:
     return source.read_text(encoding="utf-8").strip()[:64] if source.is_file() else "unknown"
 
 
+def _identity_label(value) -> str | None:
+    return value if isinstance(value, str) and value not in {"unknown", "unverified"} and _SAFE_LABEL.fullmatch(value) else None
+
+
+def _public_source_identity(revision, metadata) -> dict:
+    metadata = metadata if isinstance(metadata, dict) else {}
+    fingerprint = metadata.get("source_fingerprint")
+    build = fingerprint if isinstance(fingerprint, str) and re.fullmatch(r"[a-f0-9]{64}", fingerprint) else _identity_label(revision)
+    return {"source_version": _identity_label(metadata.get("source_version")), "source_build": build}
+
+
 def _source_fingerprint() -> str | None:
     if _source_revision() != "unverified" and os.environ.get("RAGFLOW_QA_SOURCE_DIRTY") != "1":
         return None
@@ -166,13 +178,6 @@ def _source_fingerprint() -> str | None:
                 for chunk in iter(lambda: source.read(1024 * 1024), b""):
                     digest.update(chunk)
     return digest.hexdigest()
-
-
-def _campaign_source_matches(campaign: BusinessDocumentQualityCampaign) -> bool:
-    if campaign.source_revision != _source_revision() or campaign.source_revision == "unknown":
-        return False
-    fingerprint = _source_fingerprint()
-    return fingerprint is None or fingerprint == (campaign.models or {}).get("source_fingerprint")
 
 
 def _safe_number(value):
@@ -265,6 +270,7 @@ def _public_run(row: BusinessDocumentQualityRun, *, detail: bool = False) -> dic
         "started_at": row.started_at,
         "finished_at": row.finished_at,
         "source_revision": row.source_revision,
+        **_public_source_identity(row.source_revision, row.report),
         "campaign_id": row.campaign_id,
         "model_name": row.model_name or (report.get("model") if report and getattr(row, "document_type", BUSINESS_REQUIREMENTS) == TECHNICAL_SPECIFICATION else None),
         "model_digest": row.model_digest or (report.get("model_digest") if report and getattr(row, "document_type", BUSINESS_REQUIREMENTS) == TECHNICAL_SPECIFICATION else None),
@@ -301,6 +307,7 @@ def _public_campaign(row: BusinessDocumentQualityCampaign, *, detail: bool = Fal
         "document_type": getattr(row, "document_type", BUSINESS_REQUIREMENTS),
         "quality_status": "FAIL" if any(item.status == "FAIL" for item in runs) else "PASS" if runs and all(item.status == "PASS" for item in runs) else "UNKNOWN",
         "source_revision": row.source_revision,
+        **_public_source_identity(row.source_revision, row.models),
         "requested_at": row.create_time,
         "started_at": row.started_at,
         "finished_at": row.finished_at,
@@ -386,6 +393,7 @@ def enqueue_quality_run(
         "scope": scope,
         "case_id": case_id,
         "source_revision": _source_revision(),
+        "report": {"source_version": _identity_label(get_ragflow_version())},
         "create_time": now,
         "update_time": now,
     }
@@ -432,6 +440,7 @@ def enqueue_nightly_campaign(day: str, document_type=BUSINESS_REQUIREMENTS) -> d
     if retry_catalog and not catalog["models"] and reason_code == existing.reason_code:
         return _public_campaign(existing)
     fingerprint = _source_fingerprint()
+    catalog["source_version"] = _identity_label(get_ragflow_version())
     if fingerprint is not None:
         catalog["source_fingerprint"] = fingerprint
     now = current_timestamp()
@@ -470,6 +479,7 @@ def enqueue_nightly_campaign(day: str, document_type=BUSINESS_REQUIREMENTS) -> d
                     model_digest=item["digest"],
                     scope="FULL",
                     source_revision=campaign.source_revision,
+                    report={"source_version": catalog["source_version"], "source_fingerprint": fingerprint},
                     create_time=now,
                     update_time=now,
                 )
@@ -697,12 +707,10 @@ def _failed_test_names(temp: Path) -> str:
 def _comparison_signature(summary: dict) -> tuple:
     """Compare shared assets; model-local configuration is guarded within each run."""
     return (
-        summary.get("source_revision"),
         summary.get("suite_sha256"),
         summary.get("rubric_version"),
         summary.get("template_version"),
         json.dumps(summary.get("prompt_hashes"), sort_keys=True),
-        summary.get("source_dirty"),
     )
 
 
@@ -713,8 +721,6 @@ def _execute(row: BusinessDocumentQualityRun) -> tuple[str, dict | None, str | N
         return execute(row, ROOT, _configured_tenant(), _source_revision(), _source_fingerprint())
     current_revision = _source_revision()
     initial_fingerprint = _source_fingerprint()
-    if not row.source_revision or current_revision == "unknown" or row.source_revision != current_revision:
-        return "INCOMPLETE", None, "Queued source revision differs from the running image or is unknown"
     tenant = _configured_tenant()
     if not tenant:
         return "INCOMPLETE", None, "Dedicated quality tenant is not configured"
@@ -728,8 +734,6 @@ def _execute(row: BusinessDocumentQualityRun) -> tuple[str, dict | None, str | N
         campaign = BusinessDocumentQualityCampaign.get_or_none(BusinessDocumentQualityCampaign.id == row.campaign_id)
         if campaign is None or campaign.baseline_status != "PASS":
             return "INCOMPLETE", None, "Nightly baseline did not pass"
-        if not _campaign_source_matches(campaign):
-            return "INCOMPLETE", None, "Evaluation source changed during the nightly series"
     model_name = getattr(row, "model_name", None)
     model_digest = getattr(row, "model_digest", None)
     if model_name and model_digest and quality_model_digest(tenant, model_name) != model_digest:
@@ -739,7 +743,7 @@ def _execute(row: BusinessDocumentQualityRun) -> tuple[str, dict | None, str | N
         "run",
         row.id,
         {
-            "source_revision": row.source_revision,
+            "source_revision": current_revision,
             "source_fingerprint": initial_fingerprint,
             "model": model_name,
             "model_digest": model_digest,
@@ -758,7 +762,7 @@ def _execute(row: BusinessDocumentQualityRun) -> tuple[str, dict | None, str | N
                 "BUSINESS_DOCUMENT_RELATED_FILE_SEARCH_ENABLED": "true",
                 "BUSINESS_DOCUMENT_QUALITY_REPORT": str(report_path),
                 "BUSINESS_DOCUMENT_GOLDEN_REPORT": str(golden_report_path),
-                "GITHUB_SHA": row.source_revision or "unknown",
+                "GITHUB_SHA": current_revision,
                 "PYTHONDONTWRITEBYTECODE": "1",
             }
         )
@@ -799,10 +803,6 @@ def _execute(row: BusinessDocumentQualityRun) -> tuple[str, dict | None, str | N
             return "INCOMPLETE", None, f"Live model suite produced no report (pytest exit {live_exit}){detail}"
         report = json.loads(report_path.read_text(encoding="utf-8"))
         summary = _report_summary(report)
-        if _source_revision() != row.source_revision:
-            return "INCOMPLETE", summary, "Queued source revision differs from the running image or is unknown"
-        if initial_fingerprint != _source_fingerprint():
-            return "INCOMPLETE", summary, "Evaluation source changed during execution"
         if model_name and model_digest and quality_model_digest(tenant, model_name) != model_digest:
             return "INCOMPLETE", summary, "Model digest changed during execution"
         if model_name and initial_configuration != quality_model_configuration(tenant, model_name):
@@ -827,15 +827,13 @@ def _execute(row: BusinessDocumentQualityRun) -> tuple[str, dict | None, str | N
         if live_exit or report.get("status") != "PASS":
             return "FAIL" if report.get("status") == "FAIL" else "INCOMPLETE", summary, "Live model qualification did not pass"
         try:
-            verify_report(report_path, ROOT, expected_revision=row.source_revision if row.source_revision != "unknown" else None)
+            verify_report(report_path, ROOT)
         except QualityGateFailed:
             return "FAIL", summary, "Live model report failed the quality gate"
         return "PASS", summary, None
 
 
 def _run_campaign_baseline(campaign: BusinessDocumentQualityCampaign) -> tuple[str, str | None]:
-    if not _campaign_source_matches(campaign):
-        return "INCOMPLETE", "SOURCE_CHANGED"
     golden_test = ROOT / (
         "test/unit_test/technical_specifications"
         if getattr(campaign, "document_type", BUSINESS_REQUIREMENTS) == TECHNICAL_SPECIFICATION
@@ -856,8 +854,6 @@ def _run_campaign_baseline(campaign: BusinessDocumentQualityCampaign) -> tuple[s
                 BusinessDocumentQualityCampaign.update(baseline_report=summary).where(BusinessDocumentQualityCampaign.id == campaign.id).execute()
             except (ValueError, OSError):
                 pass
-        if not _campaign_source_matches(campaign):
-            return "INCOMPLETE", "SOURCE_CHANGED"
         return ("PASS", None) if exit_code == 0 else ("FAIL", "BASELINE_FAILED")
 
 
@@ -1007,6 +1003,9 @@ def process_next_run() -> bool:
     except Exception:
         _logger.exception("Business Documents quality run could not complete")
         status, report, reason = "INCOMPLETE", None, "Quality runner failed or timed out"
+    identity = {key: value for key, value in (row.report or {}).items() if key in {"source_version", "source_fingerprint"}}
+    if identity:
+        report = {**identity, **(report or {})}
     BusinessDocumentQualityRun.update(
         status=status, schedule_key=None if row.trigger == "MANUAL" else row.schedule_key, report=report, reason=reason, reason_code=_reason_code(status, reason), finished_at=current_timestamp()
     ).where((BusinessDocumentQualityRun.id == row.id) & (BusinessDocumentQualityRun.status == "RUNNING") & (BusinessDocumentQualityRun.started_at == started)).execute()

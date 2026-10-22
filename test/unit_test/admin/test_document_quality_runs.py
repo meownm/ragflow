@@ -59,6 +59,71 @@ def test_manual_run_requires_dedicated_tenant(monkeypatch):
         raise AssertionError("Manual quality run was accepted without a QA tenant")
 
 
+@pytest.mark.parametrize("product", ["business_requirements", "technical_specification"])
+@pytest.mark.parametrize("runner_error", [False, True])
+def test_run_source_version_is_persisted_and_survives_execution(monkeypatch, product, runner_error):
+    database = SqliteDatabase(":memory:")
+    monkeypatch.setattr(runs, "_configured_tenant", lambda: "qa")
+    monkeypatch.setattr(runs, "_source_revision", lambda: "a" * 40)
+    monkeypatch.setattr(runs, "get_ragflow_version", lambda: "1.54.0")
+
+    def execute(_row):
+        if runner_error:
+            raise TimeoutError("runner stopped")
+        return "PASS", {"status": "PASS", "executed_cases": 1}, None
+
+    monkeypatch.setattr(runs, "_execute", execute)
+    with database.bind_ctx([BusinessDocumentQualityCampaign, BusinessDocumentQualityRun], bind_refs=False, bind_backrefs=False):
+        database.create_tables([BusinessDocumentQualityCampaign, BusinessDocumentQualityRun])
+        try:
+            queued = runs.enqueue_quality_run("MONTHLY", document_type=product)
+            assert queued["source_version"] == "1.54.0"
+            assert queued["source_build"] == "a" * 40
+            monkeypatch.setattr(runs, "get_ragflow_version", lambda: "9.99.0")
+            assert runs.process_next_run() is True
+            stored = runs.get_quality_run(queued["id"], product)
+            assert stored["status"] == ("INCOMPLETE" if runner_error else "PASS")
+            assert stored["source_version"] == "1.54.0"
+            assert stored["source_build"] == "a" * 40
+            assert BusinessDocumentQualityRun.get_by_id(queued["id"]).report["source_version"] == "1.54.0"
+        finally:
+            database.drop_tables([BusinessDocumentQualityCampaign, BusinessDocumentQualityRun])
+            database.close()
+
+
+@pytest.mark.parametrize("product", ["business_requirements", "technical_specification"])
+def test_nightly_build_identity_survives_failed_baseline(monkeypatch, product):
+    database = SqliteDatabase(":memory:")
+    monkeypatch.setattr(runs, "_configured_tenant", lambda: "qa")
+    monkeypatch.setattr(runs, "_source_revision", lambda: "unverified")
+    monkeypatch.setattr(runs, "_source_fingerprint", lambda: "b" * 64)
+    monkeypatch.setattr(runs, "get_ragflow_version", lambda: "1.54.0-dev.123456789abc")
+    monkeypatch.setattr(runs, "quality_model_catalog", lambda _: {"models": [{"name": "qwen", "digest": "a" * 64}], "errors": []})
+    monkeypatch.setattr(runs, "_run_campaign_baseline", lambda _: ("INCOMPLETE", "BASELINE_FAILED"))
+    with database.bind_ctx([BusinessDocumentQualityCampaign, BusinessDocumentQualityRun], bind_refs=False, bind_backrefs=False):
+        database.create_tables([BusinessDocumentQualityCampaign, BusinessDocumentQualityRun])
+        try:
+            queued = runs.enqueue_nightly_campaign("2026-10-22", product)
+            monkeypatch.setattr(runs, "get_ragflow_version", lambda: "9.99.0")
+            assert runs.process_next_run() is True
+            series = runs.get_quality_campaign(queued["id"], product)
+            for identity in (series, *series["runs"]):
+                assert identity["source_version"] == "1.54.0-dev.123456789abc"
+                assert identity["source_build"] == "b" * 64
+            assert series["runs"][0]["status"] == "INCOMPLETE"
+        finally:
+            database.drop_tables([BusinessDocumentQualityCampaign, BusinessDocumentQualityRun])
+            database.close()
+
+
+def test_legacy_source_identity_does_not_use_current_runtime_version():
+    assert runs._public_source_identity("unverified", None) == {"source_version": None, "source_build": None}
+    assert runs._public_source_identity("a" * 40, {"source_version": "private text", "source_fingerprint": "invalid"}) == {
+        "source_version": None,
+        "source_build": "a" * 40,
+    }
+
+
 def test_persisted_report_omits_generated_content_and_failure_text():
     summary = runs._report_summary(
         {
@@ -170,18 +235,19 @@ def test_unverified_source_fingerprint_detects_mounted_code_change(monkeypatch, 
     monkeypatch.setattr(runs, "ROOT", tmp_path)
     monkeypatch.setattr(runs, "_source_revision", lambda: "unverified")
     snapshot = runs._source_fingerprint()
-    campaign = SimpleNamespace(source_revision="unverified", models={"source_fingerprint": snapshot})
-    assert runs._campaign_source_matches(campaign)
+    assert snapshot
     path.write_text("second", encoding="utf-8")
-    assert not runs._campaign_source_matches(campaign)
+    assert runs._source_fingerprint() != snapshot
 
 
-def test_pending_run_from_previous_image_is_not_executed(monkeypatch):
-    monkeypatch.setattr(runs, "_source_revision", lambda: "new-revision")
+@pytest.mark.parametrize("revision", ["new-revision", "unknown", "unverified"])
+def test_pending_run_from_previous_image_still_requires_qa_tenant(monkeypatch, revision):
+    monkeypatch.setattr(runs, "_source_revision", lambda: revision)
+    monkeypatch.setattr(runs, "_configured_tenant", lambda: None)
     status, report, reason = runs._execute(type("QueuedRun", (), {"source_revision": "old-revision"})())
     assert status == "INCOMPLETE"
     assert report is None
-    assert "revision" in reason
+    assert reason == "Dedicated quality tenant is not configured"
 
 
 def test_monthly_history_survives_thirty_daily_runs():
@@ -421,17 +487,21 @@ def test_changed_digest_after_execution_cannot_pass(monkeypatch):
     assert "private answer" not in str(report)
 
 
-def test_changed_source_after_execution_cannot_pass(monkeypatch):
-    revisions = iter(["revision", "new-image"])
-    monkeypatch.setattr(runs, "_source_revision", lambda: next(revisions))
-    monkeypatch.setattr(runs, "_source_fingerprint", lambda: None)
+@pytest.mark.parametrize("revision", ["new-image", "unknown", "unverified"])
+def test_changed_source_does_not_discard_completed_daily_result(monkeypatch, revision):
+    monkeypatch.setattr(runs, "_source_revision", lambda: revision)
+    monkeypatch.setattr(runs, "_source_fingerprint", lambda: "before")
     monkeypatch.setattr(runs, "_configured_tenant", lambda: "qa")
 
     def write_report(_path, env, _temp, **_kwargs):
+        assert env["GITHUB_SHA"] == revision
+        monkeypatch.setattr(runs, "_source_revision", lambda: "another-image")
+        monkeypatch.setattr(runs, "_source_fingerprint", lambda: "after")
         Path(env["BUSINESS_DOCUMENT_QUALITY_REPORT"]).write_text(
             json.dumps(
                 {
                     "status": "PASS",
+                    "diagnostic_case_id": "M04",
                     "golden_suite": {"expected_case_ids": ["M04"], "executed_case_ids": ["M04"]},
                     "case_results": [{"case_id": "M04", "status": "PASS", "failures": []}],
                 }
@@ -452,7 +522,7 @@ def test_changed_source_after_execution_cannot_pass(monkeypatch):
             case_id="M04",
         )
     )
-    assert status == "INCOMPLETE" and "source revision" in reason
+    assert status == "DIAGNOSTIC" and reason is None
 
 
 def test_nightly_comparison_keeps_shared_conditions_and_allows_model_parameters():
@@ -469,10 +539,58 @@ def test_nightly_comparison_keeps_shared_conditions_and_allows_model_parameters(
         {"rubric_version": "1.2.0"},
         {"prompt_hashes": {"draft.txt": "sha256:" + "c" * 64}},
         {"suite_sha256": "sha256:" + "d" * 64},
-        {"source_dirty": True},
     ):
         assert runs._comparison_signature({**reference, **changed}) != signature
     assert runs._comparison_signature({**reference, "parameter_profiles": [{"extra_body": {"num_ctx": 262144}, "max_completion_tokens": 8192}]}) == signature
+    assert runs._comparison_signature({**reference, "source_revision": "another-image", "source_dirty": True, "source_fingerprint": "changed"}) == signature
+
+
+@pytest.mark.parametrize("product", ["business_requirements", "technical_specification"])
+def test_daily_baseline_runs_across_application_changes(monkeypatch, product):
+    monkeypatch.setattr(runs, "_source_revision", lambda: "new-image")
+    monkeypatch.setattr(runs, "_source_fingerprint", lambda: "new-files")
+    calls = []
+
+    def baseline(path, _env, _temp):
+        calls.append(path)
+        monkeypatch.setattr(runs, "_source_revision", lambda: "another-image")
+        monkeypatch.setattr(runs, "_source_fingerprint", lambda: "another-files")
+        return 0
+
+    monkeypatch.setattr(runs, "_run_suite", baseline)
+    campaign = SimpleNamespace(id="daily-baseline", document_type=product, source_revision="old-image", models={"source_fingerprint": "old-files"})
+    assert runs._run_campaign_baseline(campaign) == ("PASS", None)
+    assert len(calls) == 1
+
+
+def test_daily_full_result_survives_different_campaign_and_runtime_builds(monkeypatch):
+    database = SqliteDatabase(":memory:")
+    monkeypatch.setattr(runs, "_configured_tenant", lambda: "qa")
+    monkeypatch.setattr(runs, "_source_revision", lambda: "current-image")
+    monkeypatch.setattr(runs, "_source_fingerprint", lambda: "current-files")
+    raw = {"status": "PASS", "golden_suite": {"expected_case_ids": ["M04"], "executed_case_ids": ["M04"]}, "case_results": [{"case_id": "M04", "status": "PASS", "failures": []}]}
+
+    def execute(_path, env, _temp, **_kwargs):
+        Path(env["BUSINESS_DOCUMENT_QUALITY_REPORT"]).write_text(json.dumps(raw), encoding="utf-8")
+        monkeypatch.setattr(runs, "_source_revision", lambda: "changed-image")
+        monkeypatch.setattr(runs, "_source_fingerprint", lambda: "changed-files")
+        return 0
+
+    verified = []
+    monkeypatch.setattr(runs, "_run_suite", execute)
+    monkeypatch.setattr(runs, "verify_report", lambda path, root: verified.append(json.loads(path.read_text(encoding="utf-8"))))
+    with database.bind_ctx([BusinessDocumentQualityCampaign, BusinessDocumentQualityRun], bind_refs=False, bind_backrefs=False):
+        database.create_tables([BusinessDocumentQualityCampaign, BusinessDocumentQualityRun])
+        BusinessDocumentQualityCampaign.create(id="daily", schedule_key="nightly:day", source_revision="old-image", models={"source_fingerprint": "old-files"}, baseline_status="PASS")
+        BusinessDocumentQualityRun.create(
+            id="previous", campaign_id="daily", trigger="NIGHTLY", status="PASS", report={**runs._report_summary(raw), "source_revision": "previous-image", "source_dirty": True}
+        )
+        row = SimpleNamespace(id="daily-model", source_revision="queued-image", campaign_id="daily", model_name=None, model_digest=None, scope="FULL")
+        status, summary, reason = runs._execute(row)
+        assert status == "PASS" and reason is None
+        assert summary["executed_cases"] == 1
+        assert verified == [raw]
+        database.close()
 
 
 def test_missing_qa_tenant_is_recorded_and_same_day_recovers(monkeypatch):

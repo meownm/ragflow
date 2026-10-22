@@ -464,6 +464,8 @@ declare namespace AdminService {
     started_at: number | null;
     finished_at: number | null;
     source_revision: string | null;
+    source_version?: string | null;
+    source_build?: string | null;
     campaign_id: string | null;
     model_name: string | null;
     model_digest: string | null;
@@ -487,6 +489,8 @@ declare namespace AdminService {
     status: 'PENDING' | 'RUNNING' | 'COMPLETE' | 'PARTIAL' | 'INCOMPLETE';
     quality_status?: 'PASS' | 'FAIL' | 'UNKNOWN';
     source_revision: string | null;
+    source_version?: string | null;
+    source_build?: string | null;
     requested_at: number;
     started_at: number | null;
     finished_at: number | null;

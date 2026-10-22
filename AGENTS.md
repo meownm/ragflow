@@ -1,130 +1,67 @@
 # RAGFlow Instructions
 
-Use this file as the local operating guide for the current codebase. Prefer the code and the current CLAUDE.md over any older convention or remembered project shape.
+This is the shared operating guide for agents working in this repository. Follow the user's current scope and authorization; use current code and these instructions rather than older conventions or memory.
+
+## Read the applicable guide
+
+- Before working in `web/`, including a task started at the repository root, read [web/AGENTS.md](web/AGENTS.md).
+- Select checks and read their prerequisites in [test/REGRESSION.md](test/REGRESSION.md). Run only lanes justified by affected behavior and consumers; full matrices belong to releases, upstream updates or explicitly broad work.
+- Before deployment or creating disposable workspaces, read [deployment/local/README.md](deployment/local/README.md). Deployment authorization is defined below; the README owns commands, modes and workspace mechanics.
+- For article processing and linked documents, apply the architecture and technical specification standards described in [the document standards guide](docs/develop/article-document-standards-ru.md). Keep their requirements in `api/source_workbench/document_standards.py`; apply them to the requested output type, preserve source evidence and approval boundaries, and do not impose these outlines on ordinary articles.
+- For Go naming, use [the naming skill](.agents/skills/go-naming/SKILL.md).
 
 ## Upstream and extension policy
+
 - Preserve the ability to merge upstream RAGFlow while retaining local features and data. Keep the standard directory layout and runtime paths; do not reorganize upstream code to enforce a local layering preference.
 - Before editing, identify whether the affected code is a local extension, a necessary change to upstream code, or unchanged upstream. Use Git history and the actual diff when that distinction matters; do not maintain a separate generated provenance registry.
 - Apply strict architecture and dead-code rules to owned modules and local integration changes. Unused-in-this-deployment upstream backends and runtimes are not automatically dead code.
 - Keep local business logic in its owning module. Put calls to upstream behind narrow adapters and keep core registration/wiring changes small, justified, and tested. Do not create a plugin framework or duplicate the upstream implementation for isolation.
 - Do not add mass moves, unrelated formatting, or a package-manager switch to a feature or cleanup task. A necessary core fix is allowed and must have a reason and focused verification.
-- Use [the regression lane guide](test/REGRESSION.md) to select checks. Run only the checks justified by the affected behavior and consumers; reserve full matrices for releases, upstream updates, or explicitly broad changes.
-
-## Core stance
-- Treat obsolete owned code as liability; verify current consumers, dynamic registrations, persisted DSL and external contracts before removal.
-- Prefer deletion of obsolete owned paths over shims, deprecated branches, wrapper APIs, and dual-track migration notes. A narrow adapter to a real upstream boundary is not an obsolete wrapper.
-- If old and new owned implementations coexist, converge to one path unless an external contract requires both. Do not collapse supported upstream alternatives merely because this deployment selects one.
-- Remove dead tests, commented-out code, stale docs, and "move later" notes instead of preserving them.
-- Reduce public surface area when a helper can be made private or internal.
-- Keep refactors centered on the owning abstraction, not on adjacent compatibility layers.
 
 ## Current stack
+
 - Backend: Python 3.13+, Quart-based API server, Peewee ORM, async workers.
 - Frontend: React + TypeScript + Vite in `web/`.
 - Go: the repository also has a substantial Go module for servers, ingestion, parser/runtime, CLI, and supporting services.
 - Runtime services commonly include MySQL/PostgreSQL, Redis, MinIO, and Elasticsearch/Infinity/OpenSearch depending on configuration.
 
-## Code layout to expect
-- `api/`: Python API server entrypoints, blueprints, services, and database code.
-- `rag/`: ingestion, retrieval, LLM integration, and graph RAG logic.
-- `deepdoc/`: parsing and OCR.
-- `agent/`: workflow canvas, components, tools, and templates.
-- `cmd/`: Go entrypoints. `ragflow_main` is the main server/admin/ingestor binary surface; `ragflow-cli` is the CLI entrypoint.
-- `internal/`: main Go application code. Important subtrees:
-- `internal/agent/`: Go agent runtime, canvas execution, components, tool bindings, workflow helpers.
-- `internal/cli/`: CLI parsing, HTTP transport, command execution, response formatting.
-- `internal/dao/`: Go data-access layer and persistence-facing helpers.
-- `internal/deepdoc/`: Go DeepDOC integrations, especially native-backed PDF/DOCX parsing.
-- `internal/engine/`: search/index backends such as Elasticsearch and Infinity.
-- `internal/entity/`: shared Go entities and model definitions.
-- `internal/handler/`: HTTP handlers and route-facing request logic.
-- `internal/ingestion/`: Go ingestion pipeline, canvas adapter, components, wiring, service orchestration.
-- `internal/ingestion/component/`: stage implementations such as file/parser/chunker/tokenizer/extractor.
-- `internal/ingestion/pipeline/`: DSL translation, canvas-driven execution, checkpoints, resume/run logic.
-- `internal/parser/`: parser and chunk libraries used by ingestion and other Go paths.
-- `internal/parser/parser/`: typed parse-result parsers for markdown/html/pdf/docx/xlsx/text and related families.
-- `internal/parser/chunk/`: chunk operator library and DSL/typed execution helpers.
-- `internal/service/`: higher-level business services used by handlers and server flows.
-- `internal/storage/`: storage backends and in-memory test doubles.
-- `internal/router/`: HTTP route registration.
-- `internal/server/`: server bootstrap/config wiring.
-- `internal/cpp/`: C++ sources used by native-backed Go features.
-- `web/`: frontend application.
-- `docker/`: local and production compose files.
-- `sdk/` and `test/`: SDK and automated tests.
+Backend entrypoints/services live in `api/`, retrieval and parsing in `rag/` and `deepdoc/`, workflow components in `agent/`. Go entrypoints live in `cmd/` and application/runtime/parser code in `internal/`. Frontend, Compose configurations, SDKs and tests live in `web/`, `docker/`, `sdk/` and `test/`. Inspect the actual owning module rather than assuming a generic layout.
 
-## Go-specific rules
-- In `internal/ingestion`, `internal/parser`, and `internal/deepdoc`, keep local changes centered on their owner. Collapse confirmed local duplicate paths; preserve the upstream layout and supported profiles.
-- Do not add or preserve deprecated Go APIs just to ease migration inside the repo.
-- Remove commented-out Go code instead of leaving recovery notes in place.
-- Keep package comments and doc comments aligned with the current runtime path, not with migration history.
 
-## Working rules
-- Keep disposable task files under `S:\tmp\ragflow`, never in new disk-root directories or persistent runtime folders. Reserve a task with `deployment/local/temp.ps1 -Name <task>` and finish with `-Complete`, which removes its workspace immediately. Save only unique results and verified backups under ignored `.local/archives` and `.local/backups` before completion; do not pin completed work trees. Manual `.keep` pins never expire; preserve unmarked directories. Build trees use `tools/quality/workspace.py` with a marker and an open lease; launch their commands through `start_process` so Windows tracks descendants after an owner crash. Only abandoned managed builds expire after 2 days or exceed the 10 GiB inactive quota. Failed deletion retains an external, directory-identity-bound retry receipt until cleanup succeeds. Install weekly cleanup with `deployment/local/install-temp-cleanup.ps1`; it preserves active leases and process jobs and uses one bounded report. Persistent runtime, watchdog and quality data belong under ignored `.local/runtime` and `.local/quality`; never store source snapshots, dependency trees or build caches there. Frontend workspaces are disposable; use the shared, bounded `.local/cache/pnpm` store. Runtime mounts and backups must be preserved during cleanup.
-- For article processing and linked documents, apply the architecture and technical specification standards described in [the document standards guide](docs/develop/article-document-standards-ru.md). Keep their requirements in `api/source_workbench/document_standards.py`; apply them to the requested output type, preserve source evidence and approval boundaries, and do not impose these outlines on ordinary articles.
+## Task scope and ownership
+
 - Before a substantive change, record the user scenario, observable acceptance result, error and authorization cases, affected consumers, and intended checks in the task. Keep the brief proportional to the change; do not create a separate architecture document for routine work.
 - One agent owns the integrated diff and its verification report. Give delegated agents bounded, independent questions or file ownership and a required result; the owner checks their findings and runs the relevant checks on the combined source.
 - In a shared checkout, parallel agents may inspect independently but must not edit overlapping files or mutate shared test/runtime state. Parallel editing needs an independently justified isolated checkout and an explicit integration owner. Do not run concurrent deployments against the same environment.
 - Use parallel agents for a measured pilot before treating them as a default: compare elapsed time, integration rework, conflicts, verification outcomes, and available usage against similar single-agent work.
-- Report the source identity, changed behavior and consumers, exact checks and outcomes, missing prerequisites, and remaining acceptance gaps. A focused pass is evidence only for its stated boundary.
 - Before editing, inspect the nearest code path that actually owns the behavior.
 - Keep changes small and local unless the task is explicitly a broader refactor.
-- Prefer one implementation path instead of preserving old and new versions side by side.
-- Preserve behavior with focused tests when the behavior is still valid; do not keep tests that protect obsolete behavior.
-- Remove owned compatibility-only surfaces after checking supported consumers and saved data. Preserve supported external contracts and upstream integration boundaries.
-- Comments describe the current path and invariants, not superseded migration history.
 - Domain/application code in owned modules must not depend on concrete ORM, network clients, request/session objects or application bootstrap. Check parent-package import side effects before claiming a module is isolated.
 - Preserve tenant authorization, transaction boundaries, idempotency and cancellation when extracting a scenario. API and worker must use the same business implementation.
-- Select checks by affected behavior and consumers. Missing tools or prerequisites mean incomplete verification, not a pass. Do not run live suites against shared production data.
-- During review, describe affected boundaries, consumers, behavior and verification directly. Do not widen coverage or exclusions to hide a regression.
+
+## Deployment and publication
+
 - Ordinary local deployment runs from the current checkout through `deployment/local/deploy.ps1`; do not create or switch a branch/worktree merely to deploy. The script records dirty state and source identity, validates Compose, backs up PostgreSQL, recreates only selected services, and captures health evidence. A branch/worktree is reserved for upstream integration, conflicting candidate assembly, or another independently justified isolation boundary.
-- A deployment request authorizes committing and pushing the reviewed deployed increment without a separate confirmation. After every successful deployment, commit it in the current branch and push that branch and any version tag created for the deployment to its configured remote. This applies equally to Fast, Feature, Candidate and Release; image qualification does not exempt a deployment from commit and push. Include the reviewed source, tests and documentation, preserve unrelated work, and report the commit SHA, deployed source identity and push result. A failed deployment or `-CheckOnly` run must not trigger a commit or push. If the increment is already committed, reuse that SHA and push any unpublished deployment refs rather than creating an empty commit. Verify the remote branch and deployment tag point to the intended commit before reporting the deployment complete. If push fails, report the concrete blocker and the unfinished publication; do not ask again for permission already granted by the deployment request. Honor an explicit task-level instruction not to commit or push.
+- The default target is local Docker Desktop; remote deployment requires an explicit remote request. A clean checkout can still need deployment of a committed revision: compare the intended source with runtime rather than stopping solely because there is no diff.
+- A deployment request authorizes commit and push without another confirmation. After every successful Fast, Feature, Candidate or Release deployment, commit the reviewed deployed source, tests and documentation in the current branch and push that branch and any deployment version tag to its configured remote. Preserve unrelated work; image qualification does not exempt publication.
+- If already committed, reuse its SHA and push unpublished deployment refs; do not create an empty commit. Verify remote branch/tag targets against the intended commit before reporting completion. Report commit SHA, deployed source identity and push result. If push fails, report the concrete blocker and unfinished publication without asking for authorization again.
+- Failed deployment and `-CheckOnly` must not trigger commit/push. Explicit task-level no-commit/no-push instructions still apply.
 - For an upstream update, use a separate integration branch/worktree from a complete committed local snapshot. Merge a verified upstream commit; do not rewrite published fork history or use blanket ours/theirs conflict resolution. Test migrations and recovery before release. A new worktree does not include uncommitted work automatically.
 
-## Commands
-### Backend
-```bash
-uv sync --python 3.13 --all-extras
-uv run python3 ragflow_deps/download_deps.py
-docker compose -f docker/docker-compose-base.yml up -d
-source .venv/bin/activate
-export PYTHONPATH=$(pwd)
-bash docker/launch_backend_service.sh
-uv run pytest
-ruff check
-ruff format
-```
+## Checks and evidence
 
-### Frontend
-```bash
-cd web
-npm install
-npm run dev
-npm run build
-npm run lint
-npm run test
-npm run test:focused -- path/to/test.tsx
-npm run type-check
-```
-
-### Go
-```bash
-uv run ragflow_deps/download_deps.py
-bash build.sh --test ./path/to/package/...
-bash build.sh --go
-# or build specific binaries:
-bash build.sh --all
-```
-
-## Validation preference
+- Reserve disposable tasks with `deployment/local/temp.ps1 -Name <task>` under `S:\tmp\ragflow` and finish with `-Complete`. Save unique results and verified backups under ignored `.local/archives` and `.local/backups`; do not pin completed workspaces. Preserve unmarked directories, active leases/process jobs, runtime mounts and backups. Build workspace/cache protection, expiry/quota rules, cleanup recovery and weekly installation are maintained in [the local guide](deployment/local/README.md). Persistent runtime/watchdog/quality data belong under `.local/runtime` and `.local/quality`; source snapshots, dependency trees and build caches do not.
 - Run the narrowest relevant test, lint, or build command after a change.
-- For backend changes, prefer targeted pytest or ruff checks over full-suite runs.
-- For frontend changes, prefer the touched-package lint, type-check, or test command.
-- For Go changes, prefer package-scoped `bash build.sh --test ...` first.
+- Use prepared environments; on Windows use `.venv/Scripts/python.exe` for Python. Backend validation uses `python -B -m pytest <paths>`, `ruff check <paths>` and `ruff format --check <paths>`. Formatting is an edit, not a read-only check.
+- For frontend checks and dependency preparation, follow `web/AGENTS.md` and `web/package.json`.
+- For Go changes, start with package-scoped `bash build.sh --test ./path/to/package/...`. Use `--go` or `--all` only when necessary; provision dependencies with `ragflow_deps/download_deps.py` when required.
 - Do not default to raw `go test`, `go build`, or IDE Run/Debug for Go in this repo. They often miss the required CGO flags and native static libraries (`office_oxide`, `pdfium-static`, `pdf_oxide`) that `build.sh` wires correctly.
 - If Go native builds fail, inspect `build.sh` and `internal/development.md` before changing code. Common environment issues are missing downloaded native deps and missing `lld` on Linux.
+- Missing tools or prerequisites mean incomplete verification, not a pass. Do not run live suites against shared production data. Keep generated test artifacts in the disposable workspace configured according to the regression guide.
+- Report the source identity, changed behavior and consumers, exact checks and outcomes, missing prerequisites, and remaining acceptance gaps. A focused pass is evidence only for its stated boundary.
 
 ## Review mode
+
 - Requests such as `ревью`, `проведи ревью` or `review` include correctness, architecture, module boundaries and simplicity unless the user explicitly narrows the scope. Passing tests do not replace these checks.
 - Honor an explicit PR, commit, base branch or path. Otherwise review the current task's increment when identifiable; if not, use tracked changes against `HEAD` plus relevant untracked files. State the scope, comparison base and source identity before reviewing. If the tree is clean and the target cannot be inferred from the task, ask for the target rather than choosing an arbitrary commit. Review the whole repository only when requested.
 - A review-only request authorizes analysis and relevant checks, not source edits, cleanup, staging, commits or deployment. Report proposed removals and simplifications as findings. Use checks without auto-fixes; Lefthook requires `LEFTHOOK_CHECK_ONLY=1`. Keep generated test artifacts outside the reviewed source and use disposable state for checks that write data. When fixes are already authorized, separate review and repair stages within that scope.
@@ -133,6 +70,7 @@ bash build.sh --all
 - Report correctness findings, architecture/boundary/simplicity findings, and verification gaps separately but concisely. Include actual checks and results; a report of "no findings" does not imply complete verification. After authorized fixes, recheck the findings and affected consumers against the updated source; do not reuse stale test evidence.
 
 ## Default review checklist
+
 - Correctness: trace the user scenario, expected outputs, errors, ordering and side effects through the actual implementation and its consumers.
 - Architecture: verify that business decisions live in their owning module, API and worker paths share the same business implementation, and dependency direction follows the existing ownership rules. Check concrete infrastructure leaks, import side effects, cycles and access to another module's internals.
 - Boundaries: check external contracts and saved data/DSL, tenant authorization, transaction ownership, resource lifetime, idempotency, retries and cancellation wherever the scenario crosses a module or runtime boundary.
@@ -143,8 +81,12 @@ bash build.sh --all
 - Verification: check applicable behavior and data boundaries, report the limits of evidence, and never reduce coverage scope, disable required checks or extend exceptions to hide a regression.
 
 ## Continuous cleanup and algorithm simplification
-- After a coherent change, inspect the changed symbols and their direct callers for newly obsolete owned code. Use repository search and focused tests; no generated architecture report is required.
-- Inspect changed symbols, their module, callers and dynamic entrypoints for newly dead owned code. Apply a proven, scoped cleanup autonomously within the authorized task; uncertain usage is a finding to investigate, not permission to delete.
+
+- After a coherent change, inspect changed symbols, their module, direct callers, consumers and dynamic entrypoints for newly obsolete owned code. Use repository search and focused tests; no generated architecture report is required. Apply proven cleanup within the authorized task; uncertain usage is a finding to investigate, not permission to delete.
+- Converge duplicate owned implementations to one path unless a supported external contract requires both. Prefer deletion over obsolete shims, deprecated APIs (including Go), compatibility-only wrappers and dual-track migration notes. A narrow adapter to an actual upstream boundary remains valid. Verify supported consumers and saved data before removal.
+- In `internal/ingestion`, `internal/parser` and `internal/deepdoc`, keep changes centered on their owner; collapse confirmed local duplicate paths while preserving upstream layout and supported profiles.
+- Remove dead tests, commented-out code, stale docs and "move later" notes; keep focused tests for behavior that remains valid. Reduce public surface when helpers can be private/internal. Refactor the owning abstraction rather than adjacent compatibility layers.
+- Comments, including Go package/doc comments, describe current behavior, runtime paths and invariants rather than migration history.
 - Do not equate an unused binding with a removable computation. Check registration imports, decorators, namespace reflection, resource lifetime, persisted DSL and external contracts before removing code.
 - Before applying an automated patch, verify that its source snapshot is still current. On regression, undo only that patch without overwriting other edits; do not reset the shared tree.
 - Treat complexity, nesting, repeated scans and I/O amplification as investigation signals. For a significant new signal, simplify the owning scenario or document why the complexity expresses required behavior. Do not split code merely to lower a metric.

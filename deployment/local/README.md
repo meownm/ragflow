@@ -149,15 +149,10 @@ SHA-256 и хранит его вместе с логами в `.local/runtime/<
 .\deployment\local\deploy.ps1
 ```
 
-Скрипт отвечает за применение и проверку runtime; после его успешного завершения
-исполнитель деплоя обязательно создаёт коммит проверенных изменений поставки в
-текущей ветке. Это правило одинаково для Fast, Feature, Candidate и Release:
-режим сборки и квалификация образа не являются причиной оставлять изменения без
-коммита. В коммит входят проверенные исходники, тесты и документация этой поставки;
-посторонние изменения сохраняются отдельно. Если поставка уже закоммичена,
-исполнитель сообщает существующий SHA, не создавая пустой коммит. При ошибке
-деплоя или `-CheckOnly` коммит не создаётся. Push выполняется только по отдельному
-указанию. Скрипт не создаёт и не переключает ветки, worktree или tag. Для Fast-режима
+Скрипт отвечает за применение и проверку runtime; исполнитель завершает успешную
+поставку коммитом и обязательным push по [единой политике публикации](../../AGENTS.md#deployment-and-publication).
+Дополнительное разрешение на push после успешного деплоя не требуется.
+Скрипт сам не выполняет commit/push и не создаёт и не переключает ветки, worktree или tag. Для Fast-режима
 источником служит текущий checkout. Candidate/Release получает готовый образ из
 `192.168.1.175:5443` по полному Git SHA и отключает development bind mounts.
 
@@ -168,7 +163,10 @@ ASR пересобирается отдельно, а несмонтирован
 
 ## Стандартный цикл
 
-1. Просмотреть текущий diff и выполнить узкие тесты изменённого поведения.
+1. Определить поставляемый исходный код и выполнить узкие проверки его поведения.
+   При чистом checkout сравнить выбранный commit/image с работающим runtime:
+   отсутствие diff само по себе не означает, что деплой не нужен. Для уже
+   закоммиченной поставки используется существующий SHA без пустого коммита.
 2. Проверить конфигурацию без изменения runtime:
 
    ```powershell
@@ -198,12 +196,19 @@ ASR пересобирается отдельно, а несмонтирован
    самодекларации receipt недостаточно. Нужны `gh` и Python.
 
    ```powershell
+   $releaseTask = .\deployment\local\temp.ps1 -Name release-install
    gh release download <immutable-release-tag> --repo meownm/ragflow `
      --pattern candidate-receipt.json --pattern publication-receipt.json `
-     --pattern release-manifest.json --dir C:\ragflow-release
+     --pattern release-manifest.json --dir $releaseTask
    .\deployment\local\deploy.ps1 -Mode Release -CandidateRevision <full-40-char-sha> `
-     -CandidateReceipt C:\ragflow-release\candidate-receipt.json
+     -CandidateReceipt (Join-Path $releaseTask 'candidate-receipt.json')
    ```
+
+   После проверки результата и завершения публикации сохраните уникальные
+   свидетельства в `.local/archives`, затем освободите задачу:
+   `.\deployment\local\temp.ps1 -Name release-install -Complete`.
+   При ошибке сначала сохраните нужную диагностику; незавершённую задачу
+   не объявляйте завершённой автоматически.
 
    Runtime загружается по digest. Nightly разрешается через annotated `nightly`
    Git tag с JSON message, который указывает конкретный immutable release tag.

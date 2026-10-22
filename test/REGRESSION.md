@@ -46,14 +46,33 @@ must not change the selection of unit tests or P0 document requirements.
 | Web/admin API | `python -m pytest test/testcases/test_web_api` and separately `python -m pytest test/testcases/test_admin_api` | Disposable stack; SDK installed, provider configuration and mapped admin endpoint |
 | Go | `bash test/run_go_regression.sh` | Linux CI after native build; all packages, disposable MinIO and tokenizer dictionaries |
 
-On Windows, use `.venv/Scripts/python.exe` for `python`. Build the SPA with
-`pnpm build` in `web` before the isolated browser lane, and install the selected
-browser with `python -m playwright install chromium` (or Firefox/WebKit).
+On Windows, use `.venv/Scripts/python.exe` for `python`. Before running local
+lanes, reserve a disposable task and redirect generated evidence/cache outside
+the reviewed source (the examples below run from the repository root):
+
+```powershell
+$regressionTask = .\deployment\local\temp.ps1 -Name local-regression
+$env:PYTHONDONTWRITEBYTECODE = '1'
+$env:PYTEST_ADDOPTS = "$env:PYTEST_ADDOPTS -o cache_dir=$regressionTask/pytest-cache".Trim()
+$env:PW_ARTIFACTS_DIR = Join-Path $regressionTask 'browser-evidence'
+```
+
+Use a dedicated PowerShell session so these environment overrides end with the
+session. Store each browser's evidence in its own child of `$regressionTask`.
+Build the SPA in a managed disposable workspace using the frontend artifact
+process in [the local guide](../deployment/local/README.md), then pass its
+extracted build directory to `test/run_browser_regression.py --dist-root <built-SPA>`.
+An existing verified matching build may be reused. Install the selected browser
+with `python -m playwright install chromium` (or Firefox/WebKit) when needed.
 
 Browser journeys execute all their steps in one test and use independent page
 and state fixtures. Missing prerequisites fail rather than count as skipped
 steps. Unhandled page exceptions fail the test. Failure evidence is written
-under `test/playwright/artifacts/<browser>`.
+under `PW_ARTIFACTS_DIR` (CI configures its own temporary evidence directory).
+Before completing the task, preserve unique results under `.local/archives` and
+verified backups under `.local/backups`, then run
+`deployment/local/temp.ps1 -Name local-regression -Complete`. Preserve incomplete
+diagnostics until they have been reviewed; do not pin completed workspaces.
 
 The isolated browser lane covers document role controls and conflict handling,
 navigation permissions, wrong password, HTTP/envelope session expiry, logout,
@@ -109,7 +128,8 @@ prerequisites are skips, never evidence that this lane passed.
 Generate the local audio and MRZ fixtures from PowerShell with:
 
 ```powershell
-pwsh -File test/integration/fixtures/New-LocalRegressionFixtures.ps1 -OutputDirectory .codex_tmp/local-regression-fixtures
+pwsh -File test/integration/fixtures/New-LocalRegressionFixtures.ps1 `
+  -OutputDirectory (Join-Path $regressionTask 'fixtures')
 ```
 
 The generator requires a local Russian SAPI voice and FFmpeg. Fixtures are

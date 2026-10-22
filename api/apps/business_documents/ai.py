@@ -282,15 +282,12 @@ class RAGFlowLLMAdapter:
                     metadata = response.json()
                 except ValueError as error:
                     raise ValidationError("MODEL_CONTEXT_UNAVAILABLE", "The selected Ollama model does not publish its context window") from error
-            info = metadata.get("model_info", {}) if isinstance(metadata, dict) else {}
-            details = metadata.get("details") if isinstance(metadata, dict) else None
-            family = details.get("family", "") if isinstance(details, dict) else ""
-            context = (info.get(f"{family}.context_length") or info.get("general.context_length")) if isinstance(info, dict) else None
-            if context is None and isinstance(info, dict):
-                context = next((value for key, value in info.items() if key.endswith(".context_length") and type(value) is int and value > 0), None)
-            if type(context) is not int or context <= 0:
+            from common.ollama import native_ollama_config
+
+            resolved = native_ollama_config({**model_config, "llm_name": name}, metadata)
+            if resolved is None:
                 raise ValidationError("MODEL_CONTEXT_UNAVAILABLE", "The selected Ollama model does not publish its context window")
-            model_config = {**model_config, "llm_name": name, "max_tokens": context}
+            model_config = resolved
         from common.token_utils import encoder
 
         context_window = model_config.get("max_tokens")
@@ -316,12 +313,25 @@ class RAGFlowLLMAdapter:
                     # Optional discovery must not require unrelated compatible
                     # providers to expose an Ollama administration endpoint.
                     pass
-            if isinstance(metadata, dict) and isinstance(metadata.get("models"), list):
-                name = str(model_config.get("llm_name") or model_config.get("model_name") or "").split("___")[0]
-                loaded = next((item for item in metadata["models"] if isinstance(item, dict) and name in {item.get("name"), item.get("model")}), None)
-                if loaded is not None:
-                    context_window = loaded.get("context_length")
-                    local_ollama = type(context_window) is int and context_window > 0
+                if isinstance(metadata, dict) and isinstance(metadata.get("models"), list):
+                    name = str(model_config.get("llm_name") or model_config.get("model_name") or "").split("___")[0]
+                    loaded = next((item for item in metadata["models"] if isinstance(item, dict) and name in {item.get("name"), item.get("model")}), None)
+                    if loaded is not None:
+                        context_window = loaded.get("context_length")
+                        local_ollama = type(context_window) is int and context_window > 0
+                    else:
+                        from common.ollama import native_ollama_config
+
+                        try:
+                            response = await client.post(f"{base}/api/show", headers={"Authorization": f"Bearer {api_key}"} if api_key else {}, json={"model": name})
+                            response.raise_for_status()
+                            resolved = native_ollama_config(model_config, response.json())
+                        except (httpx.HTTPError, ValueError):
+                            resolved = None
+                        if resolved is not None:
+                            model_config = resolved
+                            context_window = resolved["max_tokens"]
+                            local_ollama = True
         if type(context_window) is not int or context_window <= 0:
             raise ValidationError("MODEL_CONTEXT_UNAVAILABLE", "Configure the selected model's context window")
         from common.model_limits import output_token_limit

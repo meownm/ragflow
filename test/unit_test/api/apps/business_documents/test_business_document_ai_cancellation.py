@@ -351,7 +351,7 @@ async def test_compatible_ollama_cannot_invent_a_loaded_model_window(model_bound
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status,metadata", [(401, None), (404, None), (405, None), (503, None), (200, {"models": []}), (200, {"models": [{"name": "another-model", "context_length": 4096}]})])
-async def test_non_ollama_or_cold_compatible_keeps_its_configured_window(model_boundary, monkeypatch, status, metadata):
+async def test_non_ollama_compatible_keeps_its_configured_window(model_boundary, monkeypatch, status, metadata):
     import httpx
     from common.token_utils import encoder
 
@@ -361,11 +361,74 @@ async def test_non_ollama_or_cold_compatible_keeps_its_configured_window(model_b
     async def ps(_client, url, **kwargs):
         return httpx.Response(status, json=metadata, request=httpx.Request("GET", url))
 
+    async def show(_client, url, **kwargs):
+        return httpx.Response(404, request=httpx.Request("POST", url))
+
     monkeypatch.setattr(httpx.AsyncClient, "get", ps)
+    monkeypatch.setattr(httpx.AsyncClient, "post", show)
     payload = {"job_input": {"task_type": "PLAN_CHANGES"}}
     await RAGFlowLLMAdapter().async_generate("tenant", "system", payload)
     available = config["max_tokens"] - len(encoder.encode("system")) - len(encoder.encode(json.dumps(payload))) - 256
     assert calls["parameters"] == [{"temperature": 0, "top_p": 0.1, "max_tokens": available}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("loaded", [[], [{"name": "other-model", "context_length": 4096}]])
+@pytest.mark.parametrize("stream", [False, True])
+async def test_unloaded_compatible_ollama_uses_native_explicit_context(model_boundary, monkeypatch, loaded, stream):
+    import httpx
+    from common.token_utils import encoder
+
+    config, _, _, calls = model_boundary
+    config.update(llm_factory="OpenAI-API-Compatible", llm_name="qwen3.8:latest", api_base="http://provider/v1/", api_key="tenant-secret", max_tokens=8192)
+    original = dict(config)
+    requests = []
+
+    async def ps(_client, url, **kwargs):
+        requests.append((url, kwargs))
+        return httpx.Response(200, json={"models": loaded}, request=httpx.Request("GET", url))
+
+    async def show(_client, url, **kwargs):
+        requests.append((url, kwargs))
+        return httpx.Response(200, json={"details": {"family": "qwen35"}, "model_info": {"qwen35.context_length": 262144}}, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", ps)
+    monkeypatch.setattr(httpx.AsyncClient, "post", show)
+    payload = {"job_input": {"task_type": "PLAN_CHANGES", "text": " full requirement" * 12000}}
+    adapter = RAGFlowLLMAdapter()
+    await adapter.async_generate("tenant", "system", payload, (lambda _: None) if stream else None)
+    available = 262144 - len(encoder.encode("system")) - len(encoder.encode(json.dumps(payload))) - 256
+    assert calls["parameters"] == [{"temperature": 0, "top_p": 0.1, "max_completion_tokens": available, "extra_body": {"num_ctx": 262144}}]
+    resolved = calls["bundle"][0][0][1]
+    assert resolved == {**original, "llm_factory": "Ollama", "api_base": "http://provider", "max_tokens": 262144}
+    assert requests == [
+        ("http://provider/api/ps", {"headers": {"Authorization": "Bearer tenant-secret"}}),
+        ("http://provider/api/show", {"headers": {"Authorization": "Bearer tenant-secret"}, "json": {"model": "qwen3.8:latest"}}),
+    ]
+    assert config == original
+    assert adapter.consume_execution_audit()["provider"] == "Ollama"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("metadata", [{}, {"model_info": None}, {"model_info": {"qwen.context_length": True}}, {"model_info": {"qwen.context_length": -1}}])
+async def test_unloaded_compatible_unknown_metadata_never_guesses_output(model_boundary, monkeypatch, metadata):
+    import httpx
+
+    config, _, _, calls = model_boundary
+    config.update(llm_factory="OpenAI-API-Compatible", llm_name="unknown", api_base="http://provider/v1")
+
+    async def ps(_client, url, **kwargs):
+        return httpx.Response(200, json={"models": []}, request=httpx.Request("GET", url))
+
+    async def show(_client, url, **kwargs):
+        return httpx.Response(200, json=metadata, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", ps)
+    monkeypatch.setattr(httpx.AsyncClient, "post", show)
+    with pytest.raises(BusinessDocumentError) as caught:
+        await RAGFlowLLMAdapter().async_generate("tenant", "system", {})
+    assert caught.value.code == "MODEL_OUTPUT_LIMIT_UNAVAILABLE"
+    assert calls["bundle"] == []
 
 
 @pytest.mark.parametrize("response, code", [(None, "EMPTY_AI_RESPONSE")])

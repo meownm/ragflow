@@ -472,21 +472,29 @@ class RAGFlowProcessModel:
                     async with session.get(f"{base_url}/api/ps", headers=headers) as response:
                         response.raise_for_status()
                         details = await response.json()
-                    loaded = next((item for item in details.get("models", []) if isinstance(item, dict) and name in {item.get("name"), item.get("model")}), {})
-                    limit = loaded.get("context_length")
-                else:
-                    async with session.post(f"{base_url}/api/show", json={"model": name}, headers=headers) as response:
-                        response.raise_for_status()
-                        details = await response.json()
-                    info = details.get("model_info", {})
-                    family = details.get("details", {}).get("family", "")
-                    limit = info.get(f"{family}.context_length") or info.get("general.context_length")
-                    capabilities = details.get("capabilities")
-                    self.supports_thinking = isinstance(capabilities, list) and "thinking" in capabilities
-                    self._capabilities_resolved = True
-            if type(limit) is int and limit >= 2048:
-                self.context_tokens = limit
+                    if not isinstance(details, dict) or not isinstance(details.get("models"), list):
+                        return
+                    loaded = next((item for item in details["models"] if isinstance(item, dict) and name in {item.get("name"), item.get("model")}), None)
+                    if loaded is not None:
+                        limit = loaded.get("context_length")
+                        if type(limit) is int and limit >= 2048:
+                            self.context_tokens = limit
+                            self._local_ollama = True
+                        return
+                async with session.post(f"{base_url}/api/show", json={"model": name}, headers=headers) as response:
+                    response.raise_for_status()
+                    details = await response.json()
+                from common.ollama import native_ollama_config
+
+                resolved = native_ollama_config(self.model_config, details)
+                if resolved is None or resolved["max_tokens"] < 2048:
+                    return
+                self.model_config = resolved
+                self.context_tokens = resolved["max_tokens"]
                 self._local_ollama = True
+                capabilities = details.get("capabilities")
+                self.supports_thinking = isinstance(capabilities, list) and "thinking" in capabilities
+                self._capabilities_resolved = True
         except (aiohttp.ClientError, TimeoutError, ValueError, TypeError, KeyError, AttributeError):
             # Keep the saved limit when the model metadata endpoint is unavailable.
             pass

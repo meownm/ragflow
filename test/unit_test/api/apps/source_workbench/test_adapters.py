@@ -435,6 +435,83 @@ async def test_unknown_processor_output_ceiling_fails_before_bundle(monkeypatch)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("loaded", [[], [{"name": "another-model", "context_length": 4096}]])
+async def test_unloaded_compatible_processor_sets_native_context_and_thinking(monkeypatch, loaded):
+    import aiohttp
+    from api.db.services import llm_service
+
+    requests = []
+    generations = []
+
+    class Response:
+        def __init__(self, data):
+            self.data = data
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            pass
+
+        def raise_for_status(self):
+            pass
+
+        async def json(self):
+            return self.data
+
+    class Session:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            pass
+
+        def get(self, url, **kwargs):
+            requests.append((url, kwargs))
+            return Response({"models": loaded})
+
+        def post(self, url, **kwargs):
+            requests.append((url, kwargs))
+            return Response({"details": {"family": "qwen35"}, "model_info": {"qwen35.context_length": 262144}, "capabilities": ["completion", "thinking"]})
+
+    class Bundle:
+        def __init__(self, owner, config, **_kwargs):
+            assert owner == "owner" and config["llm_factory"] == "Ollama"
+            assert config["api_key"] == "tenant-secret" and config["api_base"] == "http://provider"
+            self.mdl = SimpleNamespace(async_chat_streamly=True)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        async def async_chat_streamly_delta(self, _system, _history, generation):
+            generations.append(generation)
+            yield "answer"
+
+    monkeypatch.setattr(aiohttp, "ClientSession", Session)
+    monkeypatch.setattr(llm_service, "LLMBundle", Bundle)
+    config = {"llm_factory": "OpenAI-API-Compatible", "llm_name": "qwen3.8:latest", "api_base": "http://provider/v1/", "api_key": "tenant-secret", "max_tokens": 8192}
+    original = dict(config)
+    model = RAGFlowProcessModel("owner", config)
+    await model.resolve_context()
+    model.resolve_output_limit()
+    assert model.context_tokens == 262144 and model.output_tokens is None
+    assert model.supports_thinking
+    assert requests == [
+        ("http://provider/api/ps", {"headers": {"Authorization": "Bearer tenant-secret"}}),
+        ("http://provider/api/show", {"headers": {"Authorization": "Bearer tenant-secret"}, "json": {"model": "qwen3.8:latest"}}),
+    ]
+    assert [part async for part in model.stream("system", {}, 20000, thinking=True)] == ["answer"]
+    assert generations == [{"temperature": 0, "max_completion_tokens": 20000, "extra_body": {"num_ctx": 262144, "think": True}, "enable_thinking": True}]
+    assert config == original
+
+
+@pytest.mark.asyncio
 async def test_context_discovery_timeout_never_downgrades_requested_thinking(monkeypatch):
     import aiohttp
     from api.db.services import llm_service

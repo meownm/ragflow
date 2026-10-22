@@ -20,7 +20,7 @@ from api.db.services.system_settings_service import SystemSettingsService
 
 
 NAVIGATION_VISIBILITY_SETTING = "navigation.visible_sections"
-NAVIGATION_VISIBILITY_VERSION = 5
+NAVIGATION_VISIBILITY_VERSION = 6
 NAVIGATION_SECTIONS = (
     "home",
     "dataset",
@@ -30,6 +30,7 @@ NAVIGATION_SECTIONS = (
     "memory",
     "catalog",
     "business_documents",
+    "technical_specifications",
     "document_constructor",
     "sql_projects",
     "asr",
@@ -56,14 +57,16 @@ def validate_visible_sections(value: object) -> list[str]:
 
 def get_visible_sections() -> list[str]:
     settings = SystemSettingsService.get_by_name(NAVIGATION_VISIBILITY_SETTING)
-    if len(settings) != 1:
+    if not settings:
         return list(NAVIGATION_SECTIONS)
+    if len(settings) != 1:
+        return []
 
     try:
         stored = json.loads(settings[0].value)
         if isinstance(stored, dict):
             version = stored.get("version")
-            if version not in (2, 3, 4, NAVIGATION_VISIBILITY_VERSION):
+            if version not in (2, 3, 4, 5, NAVIGATION_VISIBILITY_VERSION):
                 raise ValueError("Unknown navigation visibility version")
             sections = stored.get("visible_sections")
             if version == 2 and isinstance(sections, list) and "business_documents" in sections:
@@ -72,18 +75,21 @@ def get_visible_sections() -> list[str]:
                 sections = [*sections, "sql_projects"]
             if version in (2, 3, 4) and isinstance(sections, list) and sections:
                 sections = [*sections, "asr", "translator"]
+            if version in (2, 3, 4, 5) and isinstance(sections, list) and "business_documents" in sections:
+                sections = [*sections, "technical_specifications"]
             return validate_visible_sections(sections)
 
         # Settings written before the home toggle existed implicitly kept Home
-        # visible. Preserve that behavior until the administrator saves v3.
+        # visible. Preserve that behavior until the administrator saves a versioned setting.
         sections = ["home", *stored]
         if "business_documents" in sections:
+            sections.append("technical_specifications")
             sections.append("document_constructor")
             sections.append("sql_projects")
         sections.extend(("asr", "translator"))
         return validate_visible_sections(sections)
     except (TypeError, ValueError, json.JSONDecodeError):
-        return list(NAVIGATION_SECTIONS)
+        return []
 
 
 def serialize_visible_sections(value: object) -> str:

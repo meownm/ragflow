@@ -3,6 +3,8 @@ import { EmptyCardType } from '@/components/empty/constant';
 import { EmptyAppCard } from '@/components/empty/empty';
 import { HomeIcon } from '@/components/svg-icon';
 import { Segmented, SegmentedValue } from '@/components/ui/segmented';
+import { getNavigationSectionForPath } from '@/constants/navigation';
+import { useSystemConfig } from '@/hooks/use-system-request';
 import { Routes } from '@/routes';
 import { useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -28,31 +30,32 @@ const EmptyTypeMap = {
 };
 
 export function Applications() {
-  const [val, setVal] = useState(Routes.Chats);
+  const [selected, setVal] = useState(Routes.Chats);
+  const { config } = useSystemConfig();
   const { t } = useTranslation();
   const navigate = useNavigate();
   const [listLength, setListLength] = useState(0);
   const [loading, setLoading] = useState(false);
 
-  const handleNavigate = useCallback(
-    ({ isCreate }: { isCreate?: boolean }) => {
-      if (isCreate) {
-        navigate(val + '?isCreate=true');
-      } else {
-        navigate(val);
-      }
-    },
-    [navigate, val],
-  );
-
-  const options = useMemo(
-    () => [
+  const options = useMemo(() => {
+    const allowed = config?.accessibleSections ?? config?.visibleSections ?? [];
+    return [
       { value: Routes.Chats, label: t('header.chat') },
       { value: Routes.Searches, label: t('header.search') },
       { value: Routes.Agents, label: t('header.flow') },
       { value: Routes.Memories, label: t('header.memories') },
-    ],
-    [t],
+    ].filter(({ value }) =>
+      allowed.includes(getNavigationSectionForPath(value)!),
+    );
+  }, [t, config]);
+  const val = options.some(({ value }) => value === selected)
+    ? selected
+    : options[0]?.value;
+  const handleNavigate = useCallback(
+    ({ isCreate }: { isCreate?: boolean }) => {
+      if (val) navigate(val + (isCreate ? '?isCreate=true' : ''));
+    },
+    [navigate, val],
   );
 
   const handleChange = (path: SegmentedValue) => {
@@ -61,6 +64,7 @@ export function Applications() {
     setLoading(true);
   };
 
+  if (!val) return null;
   return (
     <section className="mt-12">
       <header className="flex justify-between items-center mb-2.5">

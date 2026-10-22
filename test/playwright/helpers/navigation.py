@@ -10,7 +10,7 @@ def navigation_root(page):
     page.wait_for_load_state("networkidle")
     banner = page.get_by_role("banner")
     expect(banner).to_be_visible()
-    menu = banner.get_by_role("button", name="Menu", exact=True)
+    menu = banner.get_by_role("button", name=re.compile(r"^(?:Menu|Меню)$"))
     if menu.is_visible():
         menu.click()
         dialog = page.get_by_role("dialog")

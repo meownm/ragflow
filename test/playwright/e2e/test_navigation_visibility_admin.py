@@ -16,6 +16,7 @@ ALL_SECTIONS = [
     "memory",
     "catalog",
     "business_documents",
+    "technical_specifications",
     "document_constructor",
     "sql_projects",
     "asr",
@@ -176,6 +177,10 @@ class NavigationApiStub:
             _fulfill_json(route, _envelope([]))
             return
 
+        if path == "/api/v1/source-workspaces":
+            _fulfill_json(route, _envelope([]))
+            return
+
         _fulfill_json(route, _envelope({}))
 
 
@@ -253,6 +258,44 @@ def test_admin_hide_all_and_show_all_use_canonical_payloads(page, base_url):
 
 @pytest.mark.p1
 @pytest.mark.auth
+@pytest.mark.parametrize(
+    "visible,hidden,allowed_path,denied_path",
+    [
+        ("technical_specifications", "business_documents", "/technical-specifications", "/business-documents"),
+        ("business_documents", "technical_specifications", "/business-documents", "/technical-specifications"),
+    ],
+    ids=["specifications-only", "business-documents-only"],
+)
+def test_admin_document_sections_save_and_guard_independently(page, base_url, visible, hidden, allowed_path, denied_path):
+    stub = NavigationApiStub(visible_sections=["business_documents", "technical_specifications"])
+    _open_admin_visibility(page, base_url, stub)
+    page.get_by_test_id(f"navigation-section-{hidden}").click()
+    page.get_by_test_id("navigation-visibility-save").click()
+    expect(page.get_by_test_id("navigation-visibility-save")).to_be_disabled()
+    assert stub.put_payloads == [{"visible_sections": [visible]}]
+    page.reload()
+    expect(page.get_by_test_id(f"navigation-section-{visible}")).to_be_checked()
+    expect(page.get_by_test_id(f"navigation-section-{hidden}")).not_to_be_checked()
+
+    requests = []
+    page.on("request", lambda request: requests.append(urlparse(request.url).path))
+    page.goto(base_url.rstrip("/") + denied_path)
+    expect(page.get_by_test_id("section-access-denied")).to_be_visible()
+    assert "/api/v1/business-documents" not in requests
+    assert "/api/v1/source-workspaces" not in requests
+    nav = navigation_root(page)
+    visible_id = "nav-technical-specifications" if visible == "technical_specifications" else "nav-business-documents"
+    hidden_id = "nav-business-documents" if hidden == "business_documents" else "nav-technical-specifications"
+    expect(nav.get_by_test_id(visible_id)).to_be_visible()
+    expect(nav.get_by_test_id(hidden_id)).to_have_count(0)
+    nav.get_by_test_id(visible_id).click()
+    expect(page).to_have_url(re.compile(re.escape(allowed_path) + r"(?:[/?#].*)?$"))
+    if visible == "technical_specifications":
+        expect(page.get_by_role("combobox", name="Проект")).to_be_visible()
+
+
+@pytest.mark.p1
+@pytest.mark.auth
 def test_mobile_navigation_shows_only_configured_sections(page, base_url):
     stub = NavigationApiStub(visible_sections=["chat", "memory"])
     _install_admin_session(page)
@@ -260,7 +303,7 @@ def test_mobile_navigation_shows_only_configured_sections(page, base_url):
     page.set_viewport_size({"width": 390, "height": 844})
     page.goto(f"{base_url.rstrip('/')}/business-documents")
 
-    page.get_by_role("button", name="Menu").click()
+    page.get_by_role("button", name=re.compile(r"^(?:Menu|Меню)$")).click()
     expect(page.get_by_role("link", name="Чат", exact=True)).to_be_visible()
     expect(page.get_by_role("link", name="Память", exact=True)).to_be_visible()
     expect(page.get_by_role("link", name="Главная", exact=True)).to_have_count(0)

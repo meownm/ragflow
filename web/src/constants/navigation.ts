@@ -7,6 +7,7 @@ export const NavigationSections = [
   'memory',
   'catalog',
   'business_documents',
+  'technical_specifications',
   'document_constructor',
   'sql_projects',
   'asr',
@@ -25,11 +26,43 @@ export const NavigationSectionPaths: Record<NavigationSection, string> = {
   memory: '/memories',
   catalog: '/openmetadata',
   business_documents: '/business-documents',
+  technical_specifications: '/technical-specifications',
   document_constructor: '/document-constructor',
   sql_projects: '/sql-projects',
   asr: '/transcription',
   translator: '/translator',
   file_manager: '/files',
+};
+
+// Match path segments so that e.g. /agents-other is not treated as /agents.
+export const getNavigationSectionForPath = (
+  pathname: string,
+): NavigationSection | undefined => {
+  const path = pathname.replace(/\/+$/, '') || '/';
+  if (path === '/') return 'home';
+  const aliases: [string, NavigationSection][] = [
+    ['/business-documents/constructor', 'document_constructor'],
+    ['/sql-sources', 'sql_projects'],
+    ['/source-workspaces', 'search'],
+    ['/dataset', 'dataset'],
+    ['/chunk', 'dataset'],
+    ['/dataflow-result', 'dataset'],
+    ['/chat', 'chat'],
+    ['/search', 'search'],
+    ['/agent', 'agent'],
+    ['/agent-list', 'agent'],
+    ['/agent-templates', 'agent'],
+    ['/agent-log-page', 'agent'],
+    ['/memory', 'memory'],
+  ];
+  for (const section of NavigationSections) {
+    if (section !== 'home') {
+      aliases.push([NavigationSectionPaths[section], section]);
+    }
+  }
+  return aliases.find(
+    ([prefix]) => path === prefix || path.startsWith(`${prefix}/`),
+  )?.[1];
 };
 
 export const isNavigationSection = (

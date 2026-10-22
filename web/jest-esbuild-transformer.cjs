@@ -57,8 +57,21 @@ module.exports = {
           .replace(/\bimport\.meta\.glob\b/g, 'jestImportMetaGlob');
 
         if (normalizedContent.includes('ock(')) {
+          // Babel hoists mocks, but its module transform cannot consume TS-only
+          // imported bindings. Strip types first while retaining module imports.
+          const prepared = /\.tsx?$/.test(filename)
+            ? esbuild.transformSync(normalizedContent, {
+                loader: 'tsx',
+                format: 'esm',
+                target: 'es2018',
+                supported: { 'dynamic-import': false },
+                jsx: 'preserve',
+                sourcemap: 'inline',
+                sourcefile: filename,
+              })
+            : { code: normalizedContent };
           return esbuildJestTransformer.process(
-            normalizedContent,
+            prepared.code,
             filename,
             config,
             opts,
@@ -76,6 +89,7 @@ module.exports = {
           loader,
           format: 'cjs',
           target: 'es2018',
+          supported: { 'dynamic-import': false },
           sourcemap: true,
           sourcesContent: false,
           sourcefile: filename,

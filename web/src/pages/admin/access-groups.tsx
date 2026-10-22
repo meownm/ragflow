@@ -36,6 +36,7 @@ const sectionLabels: Record<NavigationSection, string> = {
   memory: 'header.memories',
   catalog: 'header.openMetadata',
   business_documents: 'header.businessDocuments',
+  technical_specifications: 'header.technicalSpecifications',
   document_constructor: 'header.documentConstructor',
   sql_projects: 'header.sqlProjects',
   asr: 'header.transcription',

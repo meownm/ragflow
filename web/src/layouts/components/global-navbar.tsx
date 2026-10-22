@@ -130,7 +130,7 @@ const menuItems: Array<{
     name: 'header.technicalSpecifications',
     fallbackName: 'Технические задания',
     icon: FilePenLine,
-    section: 'business_documents',
+    section: 'technical_specifications',
     'data-testid': 'nav-technical-specifications',
   },
   {

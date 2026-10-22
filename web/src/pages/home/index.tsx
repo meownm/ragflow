@@ -29,7 +29,9 @@ const Home = () => {
           <NextBanner />
         </header>
 
-        <Datasets />
+        {(config?.accessibleSections ?? config?.visibleSections)?.includes(
+          'dataset',
+        ) && <Datasets />}
         <Applications />
       </article>
     </PageContainer>

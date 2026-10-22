@@ -30,6 +30,7 @@ SUITES = [
     "test/playwright/e2e/test_alignment_ui.py",
     "test/playwright/e2e/test_document_quality_ui.py",
     "test/playwright/e2e/test_navigation_visibility_admin.py",
+    "test/playwright/e2e/test_section_access_ui.py",
     "test/playwright/e2e/test_auth_boundaries_ui.py",
     "test/playwright/e2e/test_managed_datasets_access_ui.py",
     "test/playwright/e2e/test_managed_settings_access_ui.py",
@@ -76,8 +77,13 @@ def main():
     server = SPAServer(("127.0.0.1", 0), partial(SPAHandler, directory=str(dist)))
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    env = {**os.environ, "RAGFLOW_BASE_URL": f"http://127.0.0.1:{server.server_port}", "PW_BROWSER": args.browser, "SQL_BROWSER_BUILD_ROOT": str(dist),
-           "PW_ARTIFACTS_DIR": os.getenv("PW_ARTIFACTS_DIR", str(ROOT / "test/playwright/artifacts" / args.browser))}
+    env = {
+        **os.environ,
+        "RAGFLOW_BASE_URL": f"http://127.0.0.1:{server.server_port}",
+        "PW_BROWSER": args.browser,
+        "SQL_BROWSER_BUILD_ROOT": str(dist),
+        "PW_ARTIFACTS_DIR": os.getenv("PW_ARTIFACTS_DIR", str(ROOT / "test/playwright/artifacts" / args.browser)),
+    }
     pytest_args = list(args.pytest_args)
     if not any(value == "--output" or value.startswith("--output=") for value in pytest_args):
         pytest_args = ["--output", str(Path(env["PW_ARTIFACTS_DIR"]) / "playwright"), *pytest_args]

@@ -57,6 +57,32 @@ describe('DesktopNavbar', () => {
     });
   });
 
+  it.each(['technical_specifications', 'business_documents'])(
+    'shows %s independently of the other document section',
+    (section) => {
+      mockUseSystemConfig.mockReturnValue({
+        config: { visibleSections: [section] },
+        loading: false,
+      });
+      mockedGetBusinessDocumentCapabilities.mockResolvedValue({
+        capabilities: { create: false },
+      } as never);
+      renderNavbar('/technical-specifications');
+      expect(
+        Boolean(screen.queryByTestId('nav-technical-specifications')),
+      ).toBe(section === 'technical_specifications');
+      expect(Boolean(screen.queryByTestId('nav-business-documents'))).toBe(
+        section === 'business_documents',
+      );
+      if (section === 'technical_specifications') {
+        expect(
+          screen.getByTestId('nav-technical-specifications'),
+        ).toHaveAttribute('aria-current', 'page');
+        expect(mockedGetBusinessDocumentCapabilities).not.toHaveBeenCalled();
+      }
+    },
+  );
+
   it('shows only globally visible sections, including home', () => {
     mockUseSystemConfig.mockReturnValue({
       config: {

@@ -34,6 +34,9 @@ BLUEPRINT_SECTIONS = {
     "memory_api": "memory",
     "openmetadata_api": "catalog",
     "business_document_api": "business_documents",
+    "technical_specifications_api": "technical_specifications",
+    "openai_api": "chat",
+    "dify_retrieval_api": "search",
     "file_api": "file_manager",
     "file_commit_api": "file_manager",
     "file2document_api": "file_manager",
@@ -41,7 +44,35 @@ BLUEPRINT_SECTIONS = {
 
 
 def sections_for_request(blueprint, route):
-    path = route.removeprefix("/api/v1")
+    path = route.removeprefix("/api/v1").removeprefix("/v1")
+    if blueprint == "document_api" and path == "/documents/upload":
+        return ("dataset", "chat")
+    if blueprint in {"backward_compat", "backward_compat_legacy_v1"} and path in {
+        "/file/upload_info",
+        "/document/upload_info",
+    }:
+        return ("dataset", "chat")
+    if blueprint in {"backward_compat", "backward_compat_legacy_v1"}:
+        if path == "/document/get/<doc_id>":
+            return ("dataset", "chat", "search", "agent")
+        prefix = path.strip("/").split("/", 1)[0]
+        if prefix in {"chats", "chats_openai"}:
+            return ("chat",)
+        if prefix == "sessions":
+            return ("chat", "search")
+        if prefix in {"agents", "agents_openai"} or path.startswith("/document/download/"):
+            return ("agent",)
+        if prefix in {"datasets", "document"}:
+            return ("dataset",)
+        if prefix == "file":
+            return ("file_manager",)
+    # Technical Specifications and Source Workbench share project identity and
+    # membership. Search, source selection and processing stay search-only.
+    if blueprint == "source_workbench_api" and path in {
+        "/source-workspaces",
+        "/source-workspaces/<workspace_id>",
+    }:
+        return ("search", "business_documents", "technical_specifications")
     if blueprint == "dataset_api" and path in {
         "/datasets/choices",
         "/datasets/metadata/flattened",
@@ -50,10 +81,18 @@ def sections_for_request(blueprint, route):
         return ("dataset", "chat", "search", "agent")
     if blueprint == "chat_api" and path in {"/chat/mindmap", "/chat/recommendation"}:
         return ("chat", "search")
-    if blueprint == "document_api" and path == "/thumbnails":
+    # Source-file readers are shared; dataset management remains dataset-only.
+    if blueprint == "document_api" and path in {
+        "/thumbnails",
+        "/documents/<doc_id>/preview",
+        "/documents/images/<image_id>",
+        "/documents/<document_id>",
+    }:
         return ("dataset", "chat", "search", "agent")
     if blueprint == "bot_api" and path.startswith("/searchbots/"):
         return ("search",)
+    if blueprint == "bot_api" and path.startswith("/chatbots/"):
+        return ("chat",)
     if blueprint == "business_document_api":
         if path == "/business-documents/capabilities":
             return ("business_documents", "document_constructor", "sql_projects")
@@ -239,10 +278,15 @@ class AccessGroupService:
 
     @classmethod
     def has_section_access(cls, user, sections):
+        return bool(set(cls.accessible_sections(user)).intersection(sections))
+
+    @classmethod
+    def accessible_sections(cls, user):
+        if not user:
+            return []
         if getattr(user, "is_superuser", False):
-            return True
-        policy = cls.effective_policy(user.id)
-        return policy is None or bool(policy["sections"].intersection(sections))
+            return list(NAVIGATION_SECTIONS)
+        return cls.visible_sections(user)
 
     @classmethod
     def visible_sections(cls, user):

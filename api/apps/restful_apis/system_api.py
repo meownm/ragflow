@@ -226,6 +226,7 @@ def get_config():
             "registerEnabled": settings.REGISTER_ENABLED,
             "disablePasswordLogin": settings.DISABLE_PASSWORD_LOGIN,
             "visibleSections": AccessGroupService.visible_sections(current_user),
+            "accessibleSections": AccessGroupService.accessible_sections(current_user),
         }
     )
 

@@ -6,6 +6,8 @@ import {
   type RouteObject,
 } from 'react-router';
 import FallbackComponent from './components/fallback-component';
+import { getNavigationSectionForPath } from './constants/navigation';
+import SectionAccess from './layouts/section-access';
 import { IS_ENTERPRISE } from './pages/admin/utils';
 import authorizationUtil from './utils/authorization-util';
 
@@ -511,7 +513,26 @@ const wrapRoutes = (routes: LazyRouteConfig[]): RouteObject[] =>
     const { Component, children, ...rest } = item;
     const next: RouteObject = { ...rest, errorElement: <FallbackComponent /> };
     if (Component) {
-      next.Component = withLazyRoute(Component);
+      const Page = withLazyRoute(Component);
+      // Public share pages keep their token-based contract. Root layouts are
+      // shared by several sections; their leaf pages carry the access check.
+      const publicPage = [
+        Routes.ChatShare,
+        Routes.ChatWidget,
+        Routes.AgentShare,
+        Routes.SearchShare,
+      ].includes(item.path as Routes);
+      const section =
+        item.path && !publicPage && !(item.path === Routes.Root && children)
+          ? getNavigationSectionForPath(item.path)
+          : undefined;
+      next.Component = section
+        ? () => (
+            <SectionAccess section={section}>
+              <Page />
+            </SectionAccess>
+          )
+        : Page;
     }
     if (children) {
       next.children = wrapRoutes(children);

@@ -227,6 +227,7 @@ def _install_common_routes(page):
                             "memory",
                             "catalog",
                             "business_documents",
+                            "technical_specifications",
                             "file_manager",
                         ],
                     }

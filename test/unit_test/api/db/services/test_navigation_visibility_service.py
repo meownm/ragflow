@@ -105,17 +105,54 @@ def test_get_visible_sections_can_hide_sql_projects_independently(monkeypatch):
 
 def test_serialize_visible_sections_records_current_version():
     assert json.loads(service.serialize_visible_sections(["chat"])) == {
-        "version": 5,
+        "version": 6,
         "visible_sections": ["chat"],
     }
 
 
-@pytest.mark.parametrize("records", [[], [SimpleNamespace(value="not-json")]])
-def test_get_visible_sections_falls_back_to_all_sections(monkeypatch, records):
+@pytest.mark.parametrize("version", [None, 2, 3, 4, 5])
+@pytest.mark.parametrize("visible", [False, True])
+def test_existing_settings_preserve_specifications_visibility(monkeypatch, version, visible):
+    sections = ["business_documents"] if visible else []
+    stored = sections if version is None else {"version": version, "visible_sections": sections}
     monkeypatch.setattr(
         service.SystemSettingsService,
         "get_by_name",
-        lambda _name: records,
+        lambda _name: [SimpleNamespace(value=json.dumps(stored))],
+    )
+    assert ("technical_specifications" in service.get_visible_sections()) is visible
+
+
+@pytest.mark.parametrize("sections", [["technical_specifications"], ["business_documents"], []])
+def test_saved_specifications_visibility_is_independent(monkeypatch, sections):
+    stored = service.serialize_visible_sections(sections)
+    monkeypatch.setattr(
+        service.SystemSettingsService,
+        "get_by_name",
+        lambda _name: [SimpleNamespace(value=stored)],
+    )
+    assert service.get_visible_sections() == sections
+
+
+def test_unconfigured_installation_allows_all_sections(monkeypatch):
+    monkeypatch.setattr(
+        service.SystemSettingsService,
+        "get_by_name",
+        lambda _name: [],
     )
 
     assert service.get_visible_sections() == list(service.NAVIGATION_SECTIONS)
+
+
+@pytest.mark.parametrize(
+    "records",
+    [
+        [SimpleNamespace(value="not-json")],
+        [SimpleNamespace(value='{"version":999,"visible_sections":["chat"]}')],
+        [SimpleNamespace(value='{"version":5,"visible_sections":["unknown"]}')],
+        [SimpleNamespace(value="[]"), SimpleNamespace(value="[]")],
+    ],
+)
+def test_invalid_configured_policy_denies_sections(monkeypatch, records):
+    monkeypatch.setattr(service.SystemSettingsService, "get_by_name", lambda _name: records)
+    assert service.get_visible_sections() == []

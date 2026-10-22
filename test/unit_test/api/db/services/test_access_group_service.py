@@ -30,14 +30,14 @@ def test_group_payload_rejects_invalid_contract(payload):
         validate_group_payload(payload)
 
 
-@pytest.mark.parametrize("section", ["home", "document_constructor", "sql_projects"])
+@pytest.mark.parametrize("section", ["home", "technical_specifications", "document_constructor", "sql_projects"])
 def test_group_payload_accepts_independent_sections(section):
     assert validate_group_payload({"name": "x", "sections": [section]})["sections"] == [section]
 
 
 def test_section_mapping_covers_protected_application_entrypoints():
     assert sections_for_request("dataset_api", "/api/v1/datasets") == ("dataset",)
-    assert sections_for_request("source_workbench_api", "/api/v1/source-workspaces") == ("search",)
+    assert sections_for_request("source_workbench_api", "/api/v1/source-workspaces") == ("search", "business_documents", "technical_specifications")
     assert sections_for_request("business_document_api", "/api/v1/business-documents") == ("business_documents",)
     assert sections_for_request("system_api", "/api/v1/system/config") == ()
     assert sections_for_request("chat_api", "/api/v1/chat/mindmap") == ("chat", "search")
@@ -46,7 +46,67 @@ def test_section_mapping_covers_protected_application_entrypoints():
     assert sections_for_request("bot_api", "/api/v1/searchbots/mindmap") == ("search",)
     assert sections_for_request("bot_api", "/api/v1/agentbots/completions") == ("agent",)
     assert sections_for_request("document_api", "/api/v1/thumbnails") == ("dataset", "chat", "search", "agent")
-    assert sections_for_request("document_api", "/api/v1/documents/upload") == ("dataset",)
+    assert sections_for_request("document_api", "/api/v1/documents/upload") == ("dataset", "chat")
+    assert sections_for_request("technical_specifications_api", "/api/v1/source-workspaces/<workspace>/technical-specifications") == ("technical_specifications",)
+    assert sections_for_request("openai_api", "/api/v1/openai/<chat_id>/chat/completions") == ("chat",)
+    assert sections_for_request("bot_api", "/api/v1/chatbots/<dialog_id>/info") == ("chat",)
+
+
+@pytest.mark.parametrize("blueprint", ["backward_compat", "backward_compat_legacy_v1"])
+@pytest.mark.parametrize("prefix", ["/api/v1", "/v1"])
+@pytest.mark.parametrize(
+    "path,expected",
+    [
+        ("/chats/<chat_id>/completions", ("chat",)),
+        ("/chats_openai/<chat_id>/chat/completions", ("chat",)),
+        ("/agents/<agent_id>/completions", ("agent",)),
+        ("/agents_openai/<agent_id>/chat/completions", ("agent",)),
+        ("/datasets/<dataset_id>/run_raptor", ("dataset",)),
+        ("/document/upload_info", ("dataset", "chat")),
+        ("/file/upload_info", ("dataset", "chat")),
+        ("/document/get/<doc_id>", ("dataset", "chat", "search", "agent")),
+        ("/file/list", ("file_manager",)),
+        ("/document/download/<doc_id>", ("agent",)),
+        ("/sessions/related_questions", ("chat", "search")),
+        ("/system/healthz", ()),
+    ],
+)
+def test_compatibility_routes_keep_section_restrictions(blueprint, prefix, path, expected):
+    assert sections_for_request(blueprint, prefix + path) == expected
+
+
+@pytest.mark.parametrize(
+    "global_sections,group_sections",
+    [
+        ([], None),
+        (["chat"], None),
+        ([], {"search"}),
+        (["chat"], set()),
+        (["chat"], {"search"}),
+    ],
+)
+def test_api_access_matches_effective_sections_for_every_section(monkeypatch, global_sections, group_sections):
+    from api.db.services import access_group_service as service
+
+    monkeypatch.setattr(service, "get_visible_sections", lambda: global_sections)
+    policy = None if group_sections is None else {"sections": group_sections, "dataset_ids": set()}
+    monkeypatch.setattr(AccessGroupService, "effective_policy", staticmethod(lambda _id: policy))
+    user = SimpleNamespace(id="reader", is_superuser=False)
+    expected = set(global_sections) if group_sections is None else group_sections
+    for section in service.NAVIGATION_SECTIONS:
+        assert AccessGroupService.has_section_access(user, (section,)) == (section in expected)
+    assert set(AccessGroupService.accessible_sections(user)) == expected
+    assert AccessGroupService.accessible_sections(None) == []
+
+
+def test_superuser_access_is_reported_even_when_navigation_is_hidden(monkeypatch):
+    from api.db.services import access_group_service as service
+
+    monkeypatch.setattr(service, "get_visible_sections", lambda: [])
+    monkeypatch.setattr(AccessGroupService, "effective_policy", staticmethod(lambda _id: None))
+    admin = SimpleNamespace(id="admin", is_superuser=True)
+    assert AccessGroupService.visible_sections(admin) == []
+    assert AccessGroupService.accessible_sections(admin) == list(service.NAVIGATION_SECTIONS)
 
 
 def test_group_sections_are_unioned_and_superuser_bypasses(monkeypatch):
@@ -69,8 +129,28 @@ def test_article_dataset_choices_need_search_but_not_dataset_section(monkeypatch
     assert AccessGroupService.allowed_dataset_ids(user.id) == {"kb-1"}
 
 
+def test_specifications_can_use_shared_projects_without_opening_source_search(monkeypatch):
+    user = SimpleNamespace(id="author", is_superuser=False)
+    monkeypatch.setattr(AccessGroupService, "effective_policy", staticmethod(lambda _id: {"sections": {"technical_specifications"}, "dataset_ids": set()}))
+    for route in ("/source-workspaces", "/source-workspaces/<workspace_id>"):
+        assert AccessGroupService.has_section_access(user, sections_for_request("source_workbench_api", "/api/v1" + route))
+    for suffix in ("search", "selection", "preview", "process", "chat", "drafts", "documents"):
+        route = "/api/v1/source-workspaces/<workspace_id>/" + suffix
+        assert not AccessGroupService.has_section_access(user, sections_for_request("source_workbench_api", route))
+
+
+@pytest.mark.parametrize("section", ["chat", "search", "agent"])
+def test_shared_document_readers_do_not_gain_dataset_management(monkeypatch, section):
+    user = SimpleNamespace(id="reader", is_superuser=False)
+    monkeypatch.setattr(AccessGroupService, "effective_policy", staticmethod(lambda _id: {"sections": {section}, "dataset_ids": set()}))
+    for route in ("/thumbnails", "/documents/<doc_id>/preview", "/documents/<document_id>", "/documents/images/<image_id>"):
+        assert AccessGroupService.has_section_access(user, sections_for_request("document_api", "/api/v1" + route))
+    assert AccessGroupService.has_section_access(user, sections_for_request("document_api", "/api/v1/documents/upload")) == (section == "chat")
+    assert not AccessGroupService.has_section_access(user, sections_for_request("document_api", "/api/v1/datasets/<dataset_id>/documents"))
+
+
 @pytest.mark.parametrize("is_admin", [False, True])
-@pytest.mark.parametrize("sections", [set(), {"home"}, {"search"}, {"business_documents"}, {"document_constructor"}, {"sql_projects"}])
+@pytest.mark.parametrize("sections", [set(), {"home"}, {"search"}, {"business_documents"}, {"technical_specifications"}, {"document_constructor"}, {"sql_projects"}])
 def test_group_visibility_replaces_global_list_without_inheritance(monkeypatch, sections, is_admin):
     from api.db.services import access_group_service as service
     from api.db.services.navigation_visibility_service import NAVIGATION_SECTIONS
@@ -99,6 +179,8 @@ def test_ungrouped_visibility_uses_global_settings(monkeypatch, user):
         ("/business-documents/<document_id>", {"business_documents"}),
         ("/business-documents/sql-query/projects", {"sql_projects"}),
         ("/business-documents/sql-query/projects/<project_id>/runs", {"sql_projects"}),
+        ("/business-documents/sql-query/projects/<project_id>/view", {"sql_projects"}),
+        ("/business-documents/sql-query/schema/graph", {"sql_projects"}),
         ("/business-documents/sql-query/schema/resolve", {"document_constructor", "sql_projects"}),
         ("/business-documents/sql-query/schema/entities", {"document_constructor", "sql_projects"}),
         ("/business-documents/sql-query/compile", {"document_constructor", "sql_projects"}),
@@ -109,3 +191,14 @@ def test_independent_document_surfaces_keep_only_their_api_access(monkeypatch, s
     user = SimpleNamespace(id="member", is_superuser=False)
     monkeypatch.setattr(AccessGroupService, "effective_policy", staticmethod(lambda _id: {"sections": {section}, "dataset_ids": set()}))
     assert AccessGroupService.has_section_access(user, sections_for_request("business_document_api", "/api/v1" + route)) is (section in allowed)
+
+
+@pytest.mark.parametrize("section", ["business_documents", "technical_specifications", "search"])
+def test_specifications_and_business_documents_require_their_own_section(monkeypatch, section):
+    user = SimpleNamespace(id="member", is_superuser=False)
+    monkeypatch.setattr(AccessGroupService, "effective_policy", staticmethod(lambda _id: {"sections": {section}, "dataset_ids": set()}))
+    for blueprint, route, required in (
+        ("technical_specifications_api", "/api/v1/source-workspaces/<workspace>/technical-specifications", "technical_specifications"),
+        ("business_document_api", "/api/v1/business-documents", "business_documents"),
+    ):
+        assert AccessGroupService.has_section_access(user, sections_for_request(blueprint, route)) is (section == required)

@@ -14,7 +14,18 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 
 _ID = re.compile(r"[A-Za-z0-9_-]{1,80}")
-_FILES = ("manifest.json", "report.json", "report.exchanges.json", "report.calls.jsonl", "report.errors.jsonl", "golden.json", "pytest.log", "runner-error.txt")
+_FILES = (
+    "manifest.json",
+    "report.json",
+    "report.original.json",
+    "manifest.original.json",
+    "report.exchanges.json",
+    "report.calls.jsonl",
+    "report.errors.jsonl",
+    "golden.json",
+    "pytest.log",
+    "runner-error.txt",
+)
 
 
 def _root() -> Path:

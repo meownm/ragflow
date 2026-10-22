@@ -25,7 +25,11 @@ CASE = next(case for case in json.loads(live.MODEL_GOLDEN_PATH.read_text(encodin
     [
         (None, "unchanged"),
         ("unexpected", "extra"),
-        *[(field, damage) for field in ("source_events", "agreement_history", "agreement_decisions", "protocol", "active_review_cycle") for damage in ("missing", "changed")],
+        *[
+            (field, damage)
+            for field in ("source_events", "agreement_history", "agreement_decisions", "protocol", "active_review_cycle", "active_eva_update_event_ids", "acknowledged_no_change_event_ids")
+            for damage in ("missing", "changed")
+        ],
     ],
 )
 def test_verification_replay_requires_complete_pinned_agreement_context(field, damage):
@@ -36,6 +40,8 @@ def test_verification_replay_requires_complete_pinned_agreement_context(field, d
         "agreement_decisions": {"answers": [{"event_id": "answer-1", "text": "Полный ответ"}], "proposals": []},
         "protocol": {"questions": [{"question_id": "question-1", "answer": {"source_event_id": "answer-1"}}]},
         "active_review_cycle": 7,
+        "active_eva_update_event_ids": [],
+        "acknowledged_no_change_event_ids": [],
     }
     recorded = deepcopy(expected)
     if damage == "missing":
@@ -49,7 +55,9 @@ def test_verification_replay_requires_complete_pinned_agreement_context(field, d
             "agreement_decisions": ("answers", 0, "text"),
             "protocol": ("questions", 0, "answer", "source_event_id"),
         }
-        if field == "active_review_cycle":
+        if field in {"active_eva_update_event_ids", "acknowledged_no_change_event_ids"}:
+            recorded[field].append("invented-event")
+        elif field == "active_review_cycle":
             recorded[field] += 1
         else:
             value = recorded[field]
@@ -349,6 +357,10 @@ def test_release_report_accepts_confirmed_sources_across_sections(case_execution
         "section_titles",
         "cross_section_repetitions",
         "generator_sources",
+        "generator_context",
+        "verification_context",
+        "verification_acknowledgements",
+        "verification_eva_updates",
         "generator_base",
         "saved_hash",
         "saved_revision",
@@ -377,6 +389,14 @@ def test_saved_pass_requires_the_actual_plan_and_successful_matching_review(tmp_
         plan["response"]["operations"][0]["block"] = {"type": "paragraph", "text": "Unrelated result"}
     elif damage == "generator_sources":
         plan["input_payload"]["job_input"]["confirmed_requirement_fragments"]["proposal:0"]["text"] = "Another requirement"
+    elif damage == "generator_context":
+        plan["input_payload"]["job_input"]["confirmed_requirement_fragments"]["proposal:0"]["context"] = "Another section"
+    elif damage == "verification_context":
+        review["input_payload"]["job_input"]["sources"]["proposal:0"]["context"] = "Another section"
+    elif damage == "verification_acknowledgements":
+        review["input_payload"]["job_input"]["acknowledged_no_change_event_ids"] = ["proposal"]
+    elif damage == "verification_eva_updates":
+        review["input_payload"]["job_input"]["active_eva_update_event_ids"] = ["invented-eva-update"]
     elif damage == "generator_base":
         plan["input_payload"]["job_input"]["current_revision"]["document_ast"]["sections"][0]["title"] = "Another base"
     elif damage == "saved_hash":
@@ -500,7 +520,7 @@ def test_saved_proof_rejects_unsupported_recovery(tmp_path, damage):
         if damage == "second_format_repair":
             evidence["model_calls"].insert(2, deepcopy(failed))
         elif damage == "changed_input":
-            review["input_payload"]["job_input"]["sources"]["proposal"]["text"] = "Different author decision"
+            review["input_payload"]["job_input"]["sources"]["proposal:0"]["text"] = "Different author decision"
         elif damage == "invented_repair":
             review["input_payload"]["format_repair"]["previous_response"] = {}
         else:

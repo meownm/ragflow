@@ -27,6 +27,29 @@ def test_known_contract_failure_counts_as_failure_without_claiming_answer_variab
 
 
 @pytest.mark.asyncio
+async def test_two_full_corpus_replays_share_one_bounded_ledger():
+    ledgers = []
+
+    async def check(_actor, _document, _basis, *, budget, on_reserved):
+        case = CASES[len(ledgers) % len(CASES)]
+        ledgers.append(budget)
+        claim = budget.claim(30)
+        audit = {"model": "synthetic", "model_digest": "f" * 64, "profile_sha256": "e" * 64, "request_id": uuid4().hex, "backend_completion_known": True}
+        on_reserved(audit)
+        budget.settle(10, 10, claim_id=claim)
+        return {**case_result(case[0])["result"], "audit": audit}
+
+    report = await experiments.run_experiment(SimpleNamespace(check=check), "synthetic", "REPEATS")
+    assert report["comparison_status"] == "COMPLETE"
+    assert [item["case_id"] for item in report["cases"]] == experiments.experiment_case_ids("REPEATS")
+    assert len(ledgers) == 2 * len(CASES)
+    assert len({id(ledger) for ledger in ledgers}) == 1
+    assert report["budget"]["calls"] == 2 * len(CASES)
+    assert report["budget"]["spent_tokens"] == 40 * len(CASES)
+    assert report["budget"]["reserved_tokens"] == 0
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["vary", "unknown", "profile", "duplicate"])
 async def test_replay_keeps_every_attempt_and_stops_on_unknown_or_changed_identity(monkeypatch, mode):
     selected = [case for case in CASES if case[0] == "BTZ-01"]

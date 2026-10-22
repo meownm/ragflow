@@ -28,7 +28,7 @@ class AlignmentBudget:
             or not math.isfinite(self.seconds)
             or self.seconds <= 0
             or type(self.calls) is not int
-            or not 1 <= self.calls <= 128
+            or not 1 <= self.calls <= 130
             or type(self.spent_calls) is not int
             or not 0 <= self.spent_calls <= self.calls
         ):

@@ -234,11 +234,24 @@ def test_completed_bad_report_is_model_failure_not_infrastructure_unknown():
     assert failure_result("MODEL_TRANSPORT_ERROR")["quality_status"] == "UNKNOWN"
 
 
-@pytest.mark.parametrize("options", [{"seconds": True}, {"seconds": float("nan")}, {"seconds": float("inf")}, {"calls": True}, {"calls": 0}, {"token_limit": False}, {"token_limit": -1}])
+@pytest.mark.parametrize(
+    "options", [{"seconds": True}, {"seconds": float("nan")}, {"seconds": float("inf")}, {"calls": True}, {"calls": 0}, {"calls": 131}, {"token_limit": False}, {"token_limit": -1}]
+)
 def test_invalid_budget_cannot_disable_guards(options):
     with pytest.raises(SpecificationError) as error:
         AlignmentBudget(**options)
     assert error.value.code == "INVALID_ALIGNMENT_BUDGET"
+
+
+def test_full_replay_call_budget_stops_at_130_even_when_usage_is_known():
+    budget = AlignmentBudget(calls=130)
+    for _ in range(130):
+        claim = budget.claim(2)
+        budget.settle(1, 1, claim_id=claim)
+    with pytest.raises(SpecificationError) as error:
+        budget.claim(2)
+    assert error.value.code == "ALIGNMENT_CALL_LIMIT"
+    assert budget.spent_calls == 130 and budget.spent_tokens == 260 and budget.reserved_tokens == 0
 
 
 def test_unknown_usage_retains_reservation_and_retry_cannot_spend_it_again():

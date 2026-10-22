@@ -412,7 +412,10 @@ def evidence_failures(case, evidence, prompts, template, schema, change_schema):
             failures.append("source_input_mismatch")
         expected_sources = {
             sources["5"][0]: {"text": next(option["label"] for option in case["seed"]["options"] if option["option_id"] == case["seed"]["selected_option_id"]), "context": case["seed"]["question"]},
-            sources["5.5"][0]: {"text": "Мониторинг включает:\n" + "\n".join(requirement["text"] for requirement in case["seed"]["requirements"])},
+            sources["5.5"][0]: {
+                "text": "Мониторинг включает:\n" + "\n".join(requirement["text"] for requirement in case["seed"]["requirements"]),
+                "context": f"Предложение к разделу 5.5 «{next(section['title'] for section in base if section['id'] == '5.5')}».",
+            },
         }
         expected_fragments = {
             f"{source_id}:{index}": {"source_id": source_id, "text": text.strip(), **({"context": source["context"]} if "context" in source else {})}
@@ -456,7 +459,9 @@ def evidence_failures(case, evidence, prompts, template, schema, change_schema):
         titles = {section["id"]: section["title"] for section in template["sections"]} | {section["id"]: section["title"] for section in evidence["final_ast"]["sections"]}
         verification_input = {
             "task_type": "VERIFY_REQUIREMENT_COVERAGE",
-            "sources": expected_sources,
+            "sources": expected_fragments,
+            "active_eva_update_event_ids": [],
+            "acknowledged_no_change_event_ids": [],
             "before_sections": before,
             "after_sections": after,
             "context_sections": context,
@@ -468,5 +473,9 @@ def evidence_failures(case, evidence, prompts, template, schema, change_schema):
             "active_review_cycle": inputs.get("active_review_cycle"),
         }
         verification_input["cross_section_repetitions"] = [list(pair) for pair in changed_section_repetitions(case["seed"]["base_document"], evidence["final_ast"])]
-        failures.extend(_verification_evidence_failures(verification_calls, verification_input, {**expected_sources, **{f"section:{key}": {"text": value} for key, value in before.items()}}, titles))
+        failures.extend(
+            _verification_evidence_failures(
+                verification_calls, verification_input, {**expected_sources, **expected_fragments, **{f"section:{key}": {"text": value} for key, value in before.items()}}, titles
+            )
+        )
     return list(dict.fromkeys(failures))

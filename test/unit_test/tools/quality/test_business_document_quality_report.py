@@ -67,7 +67,10 @@ def _placement_evidence(case, *, insert_monitor=False):
     }
     sources = {
         "answer": {"text": next(option["label"] for option in case["seed"]["options"] if option["option_id"] == case["seed"]["selected_option_id"]), "context": case["seed"]["question"]},
-        "proposal": {"text": "Мониторинг включает:\n" + "\n".join(requirement["text"] for requirement in case["seed"]["requirements"])},
+        "proposal": {
+            "text": "Мониторинг включает:\n" + "\n".join(requirement["text"] for requirement in case["seed"]["requirements"]),
+            "context": f"Предложение к разделу 5.5 «{base['5.5']['title']}».",
+        },
     }
     if insert_monitor:
         operation = plan["operations"][1]
@@ -106,7 +109,14 @@ def _placement_evidence(case, *, insert_monitor=False):
             )
         else:
             payload["job_input"].update(
-                sources=sources,
+                sources={
+                    f"{source_id}:{index}": {"source_id": source_id, "text": text.strip(), **({"context": source["context"]} if "context" in source else {})}
+                    for source_id, source in sources.items()
+                    for index, text in enumerate(re.split(r"(?<=[.!?;])\s+|\n+", source["text"]))
+                    if text.strip()
+                },
+                active_eva_update_event_ids=[],
+                acknowledged_no_change_event_ids=[],
                 before_sections={key: render_section_text(base[key]) for key in ("5.4", "5.5")},
                 after_sections={s["id"]: render_section_text(s) for s in ast["sections"] if s["id"] in changed},
                 context_sections={s["id"]: render_section_text(s) for s in ast["sections"] if s["id"] not in changed},

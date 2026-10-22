@@ -47,6 +47,23 @@ def test_interrupted_execution_can_be_downloaded_before_finalization():
             assert archive.read("report.calls.jsonl").decode().splitlines() == ['{"event":"request"}']
 
 
+def test_reviewed_report_archive_retains_original_evidence():
+    original_report = b'{"status":"FAIL"}'
+    original_manifest = b'{"state":"FINISHED","files":{}}'
+    with evidence.record_quality_evidence("run", "reviewed", {}) as directory:
+        (directory / "report.original.json").write_bytes(original_report)
+        (directory / "manifest.original.json").write_bytes(original_manifest)
+        (directory / "report.json").write_text('{"status":"PASS"}', encoding="utf-8")
+        (directory / "private.sqlite").write_bytes(b"excluded")
+    with evidence.evidence_archive("run", "reviewed") as stream, ZipFile(stream) as archive:
+        assert archive.read("report.original.json") == original_report
+        assert archive.read("manifest.original.json") == original_manifest
+        assert "private.sqlite" not in archive.namelist()
+        manifest = json.loads(archive.read("manifest.json"))
+        assert manifest["files"]["report.original.json"]["sha256"] == hashlib.sha256(original_report).hexdigest()
+        assert manifest["files"]["manifest.original.json"]["sha256"] == hashlib.sha256(original_manifest).hexdigest()
+
+
 @pytest.mark.parametrize("kind,identifier", [("other", "valid"), ("run", "../outside"), ("run", ""), ("run", "x/../../y")])
 def test_archive_rejects_untrusted_identity(kind, identifier):
     with pytest.raises(ValueError):

@@ -156,7 +156,7 @@ def _report(kind, expected):
 
 
 async def _repeats(ai, actor, checkpoint):
-    # Two full replays fit the production ledger's 128-call ceiling. Never reset it.
+    # Both full replays share one ledger; unknown usage is never erased.
     count = 2
     budget = AlignmentBudget(seconds=len(CASES) * count * 300, calls=len(CASES) * count, token_limit=4_000_000)
     report = _report("REPEATS", experiment_case_ids("REPEATS"))

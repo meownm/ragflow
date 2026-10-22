@@ -108,6 +108,69 @@ def test_repeated_diagrams_render_once_and_retain_unique_macro_ids():
     assert EVA_CHANGES_MODULE._html_to_markdown(result) == EVA_CHANGES_MODULE._html_to_markdown(original)
 
 
+def _prepared_same_text_diagram_change():
+    client = FakeEvaClient()
+    markdown = "## 4.3. Сценарий\n\n```plantuml\n@startuml\nA -> B\n@enduml\n```"
+    created = _create(client)
+    draft = _generate(created, markdown)
+    with patch.object(EvaDocumentChangeService, "_connector", return_value=(CONNECTOR, client)):
+        approved = EvaDocumentChangeService.approve(TENANT, AUTHOR, created["change_id"], {"expected_state_version": draft["state_version"]})
+        prepared = EvaDocumentChangeService.prepare_eva_draft(TENANT, AUTHOR, created["change_id"], {"expected_state_version": approved["state_version"]})
+    client.document["html"] = EVA_CHANGES_MODULE._markdown_to_html(markdown)
+    assert EVA_CHANGES_MODULE._html_to_markdown(client.document["html"]) == EVA_CHANGES_MODULE._html_to_markdown(client.document["draft_html"])
+    return client, prepared
+
+
+@pytest.mark.parametrize("response_lost", [False, True])
+def test_publish_replaces_source_fallback_even_when_markdown_is_unchanged(database, response_lost):
+    client, prepared = _prepared_same_text_diagram_change()
+    publish = client.publish_document
+
+    def commit(document_id):
+        publish(document_id)
+        if response_lost:
+            raise RuntimeError("response lost after committing SVG")
+
+    with patch.object(EvaDocumentChangeService, "_connector", return_value=(CONNECTOR, client)), patch.object(client, "publish_document", side_effect=commit):
+        result = EvaDocumentChangeService.publish(TENANT, AUTHOR, prepared["change_id"], {"expected_state_version": prepared["state_version"]})
+    assert result["workflow_state"] == "PUBLISHED"
+    assert client.publish_calls == 1
+    assert "<svg" in client.document["html"]
+
+
+@pytest.mark.parametrize("raises", [False, True])
+def test_publish_failure_does_not_recover_against_unchanged_source_fallback(database, raises):
+    client, prepared = _prepared_same_text_diagram_change()
+    with (
+        patch.object(EvaDocumentChangeService, "_connector", return_value=(CONNECTOR, client)),
+        patch.object(client, "publish_document", side_effect=RuntimeError("not committed") if raises else None, return_value=True) as publish,
+        pytest.raises(BusinessDocumentError),
+    ):
+        EvaDocumentChangeService.publish(TENANT, AUTHOR, prepared["change_id"], {"expected_state_version": prepared["state_version"]})
+    publish.assert_called_once()
+    assert EvaDocumentChangeService.get_change(TENANT, AUTHOR, prepared["change_id"])["workflow_state"] == "EVA_DRAFT_READY"
+
+
+def test_already_published_svg_does_not_repeat_the_external_write(database):
+    client, prepared = _prepared_same_text_diagram_change()
+    client.document["html"] = client.document["draft_html"]
+    with patch.object(EvaDocumentChangeService, "_connector", return_value=(CONNECTOR, client)):
+        result = EvaDocumentChangeService.publish(TENANT, AUTHOR, prepared["change_id"], {"expected_state_version": prepared["state_version"]})
+    assert result["workflow_state"] == "PUBLISHED"
+    assert client.publish_calls == 0
+
+
+def test_publish_preserves_same_text_draft_when_its_previews_were_removed(database):
+    client, prepared = _prepared_same_text_diagram_change()
+    client.document["draft_html"] = client.document["html"]
+    original = dict(client.document)
+    with patch.object(EvaDocumentChangeService, "_connector", return_value=(CONNECTOR, client)), pytest.raises(BusinessDocumentError) as caught:
+        EvaDocumentChangeService.publish(TENANT, AUTHOR, prepared["change_id"], {"expected_state_version": prepared["state_version"]})
+    assert caught.value.code == "EVA_DRAFT_CONFLICT"
+    assert client.document == original
+    assert client.publish_calls == 0
+
+
 class FakeEvaClient:
     def close(self):
         self.closed = True
@@ -882,7 +945,7 @@ def test_agreed_business_document_can_initialize_and_publish_empty_eva_page(data
     assert json.loads(macro["data-macros-parameters"])["uml"] == "@startuml\nПользователь -> Система: Войти\n@enduml"
 
 
-def test_empty_eva_initial_publish_recovers_after_prior_verification_failure(database):
+def test_empty_eva_initial_publish_replaces_prior_source_fallback(database):
     client = FakeEvaClient()
     client.document["html"] = ""
     client.document["draft_html"] = ""
@@ -929,7 +992,8 @@ def test_empty_eva_initial_publish_recovers_after_prior_verification_failure(dat
 
     assert prepared["workflow_state"] == "EVA_DRAFT_READY"
     assert published["workflow_state"] == "PUBLISHED"
-    assert client.publish_calls == 0
+    assert client.publish_calls == 1
+    assert "<svg" in client.document["html"]
 
 
 def test_empty_eva_page_still_requires_an_initial_draft(database):

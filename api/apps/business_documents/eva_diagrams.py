@@ -3,6 +3,7 @@
 import hashlib
 import json
 import logging
+from collections import Counter
 from collections.abc import Callable
 
 from bs4 import BeautifulSoup
@@ -98,6 +99,30 @@ def restore_diagram_sources(soup: BeautifulSoup) -> None:
         pre = soup.new_tag("pre")
         pre.append(code)
         macro.replace_with(pre)
+
+
+def rendered_diagrams_match(expected_html: str, actual_html: str) -> bool:
+    """Keep editable SVG macros when deciding whether publication already happened.
+
+    Markdown equality intentionally ignores diagram previews. It cannot establish
+    that a prepared SVG replaced the published source-code fallback.
+    """
+
+    def sources(value: str) -> Counter[str]:
+        rendered = Counter()
+        for macro in BeautifulSoup(value, "html.parser").select('[data-macros="plantuml"]'):
+            if macro.find("svg") is None:
+                continue
+            try:
+                source = json.loads(macro.get("data-macros-parameters", ""))["uml"]
+            except (ValueError, KeyError, TypeError):
+                continue
+            if isinstance(source, str) and source.strip():
+                rendered[source.replace("\r\n", "\n").strip()] += 1
+        return rendered
+
+    expected = sources(expected_html)
+    return not expected or expected <= sources(actual_html)
 
 
 def render_eva_diagrams(value: str, render: Callable[[str], str]) -> str:

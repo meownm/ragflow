@@ -49,7 +49,7 @@ from common.data_source.eva_wiki_connector import EvaAuthenticationError, EvaPro
 from common.data_source.exceptions import ConnectorMissingCredentialError, ConnectorValidationError, InsufficientPermissionsError
 from common.misc_utils import get_uuid
 from common.time_utils import current_timestamp
-from api.apps.business_documents.eva_diagrams import render_eva_diagrams, restore_diagram_sources
+from api.apps.business_documents.eva_diagrams import render_eva_diagrams, rendered_diagrams_match, restore_diagram_sources
 
 
 class EvaChangeState(StrEnum):
@@ -704,6 +704,8 @@ class EvaDocumentChangeService:
             user_token_operation = False
             verified = reader.get_document_for_edit(change.eva_document_id)
             cls._ensure_saved_draft(change, verified)
+            if not rendered_diagrams_match(draft_html, str(verified.get("draft_html") or "")):
+                raise ConflictError("EVA_DRAFT_VERIFICATION_FAILED", "EVA did not retain the prepared PlantUML previews after saving")
         except Exception as error:
             mapped = cls._map_user_token_error(error) if user_token_operation else cls._map_external_error(error)
             cls._restore_after_external_failure(change.id, reservation_version, EvaChangeState.PREPARING_EVA_DRAFT, EvaChangeState.APPROVED, mapped)
@@ -737,7 +739,7 @@ class EvaDocumentChangeService:
             serialized_draft_hash = cls._serialized_draft_hash(change)
             published_hash = cls._remote_published_hash(remote)
             name_matches = cls._remote_name_matches(remote, change)
-            if published_hash == serialized_draft_hash and name_matches:
+            if published_hash == serialized_draft_hash and name_matches and rendered_diagrams_match(change.draft_html, str(remote.get("html") or "")):
                 published = remote
             else:
                 if force_overwrite:
@@ -748,11 +750,13 @@ class EvaDocumentChangeService:
                     cls._ensure_saved_draft(change, reader.get_document_for_edit(change.eva_document_id))
                     user_token_operation = True
                 else:
-                    if published_hash == serialized_draft_hash and not name_matches:
-                        cls._raise_source_conflict(change, remote, published_hash)
-                    cls._ensure_source_unchanged(change, remote)
+                    if published_hash == serialized_draft_hash:
+                        if not name_matches:
+                            cls._raise_source_conflict(change, remote, published_hash)
+                    else:
+                        cls._ensure_source_unchanged(change, remote)
                     remote_draft_hash = _content_hash(_html_to_markdown(str(remote.get("draft_html") or "")))
-                    if remote_draft_hash != serialized_draft_hash:
+                    if remote_draft_hash != serialized_draft_hash or not rendered_diagrams_match(change.draft_html, str(remote.get("draft_html") or "")):
                         raise ConflictError(
                             "EVA_DRAFT_CONFLICT",
                             "The EVA draft changed after it was prepared",
@@ -761,6 +765,8 @@ class EvaDocumentChangeService:
                     user_token_operation = True
                     mutation_client, credential_version = cls._mutation_client(connector, actor_id)
                 published = publish_draft(reader, mutation_client, change.eva_document_id, serialized_draft_hash, change.eva_document_name, _html_to_markdown)
+                if not rendered_diagrams_match(change.draft_html, str(published.get("html") or "")):
+                    raise ConflictError("EVA_PUBLISH_VERIFICATION_FAILED", "После публикации не удалось подтвердить отображение подготовленных схем PlantUML. Проверьте страницу EVA.")
                 user_token_operation = False
         except Exception as error:
             recovered = cls._published_remote_if_matching(reader, change)
@@ -890,7 +896,7 @@ class EvaDocumentChangeService:
 
     @classmethod
     def _ensure_saved_draft(cls, change: BusinessDocumentEvaChange, remote: dict[str, Any]) -> None:
-        if cls._remote_draft_hash(remote) != cls._serialized_draft_hash(change):
+        if cls._remote_draft_hash(remote) != cls._serialized_draft_hash(change) or not rendered_diagrams_match(change.draft_html, str(remote.get("draft_html") or "")):
             raise ConflictError("EVA_DRAFT_VERIFICATION_FAILED", "EVA did not retain the approved draft after saving")
         if str(remote.get("name") or "").strip() != change.eva_document_name:
             raise ConflictError(
@@ -928,7 +934,13 @@ class EvaDocumentChangeService:
             remote = client.get_document_for_edit(change.eva_document_id)
         except Exception:
             return None
-        return remote if cls._remote_published_hash(remote) == cls._serialized_draft_hash(change) and cls._remote_name_matches(remote, change) else None
+        return (
+            remote
+            if cls._remote_published_hash(remote) == cls._serialized_draft_hash(change)
+            and cls._remote_name_matches(remote, change)
+            and rendered_diagrams_match(change.draft_html, str(remote.get("html") or ""))
+            else None
+        )
 
     @staticmethod
     def _remote_name_matches(remote: dict[str, Any], change: BusinessDocumentEvaChange) -> bool:

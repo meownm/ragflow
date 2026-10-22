@@ -717,7 +717,7 @@ export function ProtocolPane({
             </button>
           </div>
         )}
-        <div className="flex min-h-0 flex-1 flex-col rounded-lg border border-border-button bg-bg-input">
+        <div className="flex min-h-0 flex-1 flex-col rounded-lg border border-border-button bg-bg-base">
           <div className="relative min-h-0 flex-1">
             <Textarea
               value={comment}

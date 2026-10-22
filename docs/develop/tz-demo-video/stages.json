@@ -1,0 +1,12 @@
+{
+  "initial": "inputs/02-technical-specification-initial.md",
+  "selection": "expected/03-after-selection.md",
+  "complete": "expected/04-technical-specification-complete.md",
+  "negative-candidate": "expected/05-negative-candidate-do-not-save.md",
+  "negative-recovered": "expected/06-negative-recovered.md",
+  "merge-base": "expected/07-merge-base.md",
+  "merge-local": "expected/08-merge-local.md",
+  "merge-eva": "expected/09-merge-eva.md",
+  "merge-choose-local": "expected/10-merge-choose-local.md",
+  "merge-choose-eva": "expected/11-merge-choose-eva.md"
+}

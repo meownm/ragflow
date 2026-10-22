@@ -40,6 +40,12 @@ def load_bundle(directory):
         review = strict_json((directory / "approval.json").read_text(encoding="utf-8"))
     except OSError as error:
         raise ValueError("Independent holdout label review is required") from error
+    try:
+        contract_sha256 = hashlib.sha256((directory / "annotation-contract.md").read_bytes()).hexdigest()
+    except OSError as error:
+        raise ValueError("Frozen public annotation contract is required") from error
+    if manifest.get("files", {}).get("annotation-contract.md", {}).get("sha256") != contract_sha256 or review.get("annotation_contract_sha256") != contract_sha256:
+        raise ValueError("Independent review must bind the frozen public annotation contract")
     if (
         review.get("status") != "PASS"
         or review.get("manifest_sha256") != hashlib.sha256(manifest_bytes).hexdigest()
@@ -192,6 +198,7 @@ def score_holdout(report, value, directory, manifest):
         annotation_method=oracle.get("annotation_method"),
         annotation_owner=oracle.get("annotation_owner"),
         oracle_sha256=manifest["files"]["oracle.json"]["sha256"],
+        annotation_contract_sha256=manifest["files"]["annotation-contract.md"]["sha256"],
         status="FAIL" if quality == "FAIL" else "INCOMPLETE",
     )
     return report

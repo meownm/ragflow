@@ -15,7 +15,16 @@ def case_result(key, *, consistency=None, unsupported=False, joint=None):
     document, basis = inputs(case)
     options = case[5] if len(case) > 5 else {}
     expected = options.get("rows", [(case[3], case[4])])
-    refs = [{"section": "5", "quote": document["sections"]["5"][:80]}]
+    refs = [{"section": section, "quote": text[:80]} for section, text in document["sections"].items() if text][:1]
+
+    def references(index):
+        if not options.get("row_quotes"):
+            return refs
+        quote = options["row_quotes"][index]
+        return [{"section": next(section for section, text in document["sections"].items() if quote in text), "quote": quote}] if quote else []
+
+    rule_quote = options.get("unsupported_quote")
+    rule_refs = [{"section": next(section for section, text in document["sections"].items() if rule_quote in text), "quote": rule_quote}] if rule_quote else refs
     report = {
         "candidate_sha256": report_input(document, basis)["candidate_sha256"],
         "basis_sha256": basis["sha256"],
@@ -24,12 +33,12 @@ def case_result(key, *, consistency=None, unsupported=False, joint=None):
                 "id": row["id"],
                 "coverage": labels[0],
                 "consistency": consistency or labels[1],
-                "references": [{"section": "5", "quote": options["row_quotes"][index]}] if options.get("row_quotes") else refs,
+                "references": references(index),
                 "reason": "Synthetic semantic answer",
             }
             for index, (row, labels) in enumerate(zip(basis["inventory"], expected, strict=True))
         ],
-        "additional_rules": [{"kind": "UNSUPPORTED_BUSINESS_RULE", "references": refs, "reason": "Commission has no basis"}] if unsupported else [],
+        "additional_rules": [{"kind": "UNSUPPORTED_BUSINESS_RULE", "references": rule_refs, "reason": "Business action has no basis"}] if unsupported else [],
         "joint": {"checked_ids": [row["id"] for row in basis["inventory"]], "consistency": joint or options.get("joint", "CONSISTENT"), "reason": "Synthetic joint answer"},
     }
     return {"case_id": key, "status": "PASS", "errors": [], "result": validate_report(report, document, basis)}
@@ -107,6 +116,34 @@ def test_unsupported_and_joint_recall_use_explicit_golden_cases(found):
 @pytest.mark.parametrize("keys,items", [([], []), (["foreign"], []), (["BTZ-01", "BTZ-01"], []), (["BTZ-01"], [{"case_id": "foreign"}])])
 def test_foreign_empty_or_duplicate_inventory_has_no_quality_estimate(keys, items):
     assert semantic_metrics(suite(keys, items)) is None
+
+
+@pytest.mark.parametrize("complete", [False, True])
+def test_optional_missing_row_citations_do_not_inflate_evidence_denominator(complete):
+    value = semantic_metrics(suite(["BTZ-58"], [case_result("BTZ-58")] if complete else []))
+    assert value["evidence_expected"] == 1
+    assert value["evidence_scored"] == int(complete)
+    assert value["measures"]["evidence_clause_accuracy"] == {"numerator": int(complete), "denominator": 1, "value": 1 if complete else None}
+
+
+@pytest.mark.parametrize("mode,numerator", [("missing", 1), ("unrelated", 1), ("correct", 2)])
+def test_new_action_recall_includes_explicit_oracle_and_its_relevant_citation(mode, numerator):
+    item = case_result("BTZ-61", unsupported=mode != "missing")
+    if mode == "unrelated":
+        document, _ = inputs(next(case for case in CASES if case[0] == "BTZ-61"))
+        item["result"]["report"]["additional_rules"][0]["references"] = [{"section": "3", "quote": document["sections"]["3"]}]
+    value = semantic_metrics(suite(["BTZ-23", "BTZ-61"], [case_result("BTZ-23", unsupported=True), item]))
+    assert value["measures"]["unsupported_rule_recall"] == {"numerator": numerator, "denominator": 2, "value": numerator / 2}
+
+
+def test_complete_golden_oracle_answers_produce_complete_semantic_rates():
+    keys = [case[0] for case in CASES]
+    items = [case_result(case[0], unsupported=(case[5] if len(case) > 5 else {}).get("unsupported_business_rule", case[0] == "BTZ-23")) for case in CASES]
+    value = semantic_metrics(suite(keys, items))
+    assert value["unscored_fragments"] == 0
+    for measure in ("coverage_accuracy", "consistency_accuracy", "unsupported_rule_recall", "evidence_clause_accuracy"):
+        assert value["measures"][measure]["value"] == 1
+    assert public_metrics(value) == value
 
 
 def test_public_projection_contains_only_counts_and_verified_fractions():

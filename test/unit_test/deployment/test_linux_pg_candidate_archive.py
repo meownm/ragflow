@@ -31,6 +31,7 @@ REQUIRED = (
 @pytest.fixture
 def package(tmp_path, monkeypatch):
     assert shutil.which("pwsh"), "PowerShell prerequisite missing; archive validation is incomplete"
+    monkeypatch.setattr(frontend_artifact, "CACHE_ROOT", tmp_path / "pnpm-cache")
     source = tmp_path / "repo"
     source.mkdir()
     for relative in REQUIRED:

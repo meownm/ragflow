@@ -14,6 +14,7 @@ MODULES = {
     "api.source_workbench.document_standards": "api/source_workbench/document_standards.py",
     "api.technical_specifications.domain": "api/technical_specifications/domain.py",
     "api.technical_specifications.application": "api/technical_specifications/application.py",
+    "api.technical_specifications.formatting": "api/technical_specifications/formatting.py",
     "api.technical_specifications.ai": "api/technical_specifications/ai.py",
     "quality_runner": "test/evals/technical_specifications/live_quality.py",
 }
@@ -137,9 +138,21 @@ def verify_upstream(events, final):
             if pending is not None or type(event["call"]) is not int or event["call"] in calls:
                 raise ValueError("Missing transport or duplicate model call")
             calls.add(event["call"])
-            if type(event["output_budget"]) is not int or event["output_budget"] <= 0 or event["options"].get("json_response") is not True or type(event["options"].get("thinking", False)) is not bool:
+            schema = event["options"].get("json_response")
+            if (
+                type(event["output_budget"]) is not int
+                or event["output_budget"] <= 0
+                or (schema is not True and not isinstance(schema, dict))
+                or type(event["options"].get("thinking", False)) is not bool
+            ):
                 raise ValueError("Invalid expected generation controls")
-            pending = {"thinking": event["options"].get("thinking", False) and final["model"]["supports_thinking"], "output_budget": event["output_budget"]}
+            response_format = {"type": "json_schema", "json_schema": {"name": "response", "strict": True, "schema": schema}} if isinstance(schema, dict) else {"type": "json_object"}
+            pending = {
+                "thinking": event["options"].get("thinking", False) and final["model"]["supports_thinking"],
+                "output_budget": event["output_budget"],
+                "format": schema if isinstance(schema, dict) else "json",
+                "response_format": response_format,
+            }
         elif event["event"] == "transport":
             identity = event["request_id"]
             if pending is None or not isinstance(identity, str) or not identity or identity in expected:
@@ -148,7 +161,7 @@ def verify_upstream(events, final):
                 event.get("cache_bypass") is not True
                 or event.get("with_reasoning") is not False
                 or event.get("thinking") is not pending["thinking"]
-                or event.get("response_format") != {"type": "json_object"}
+                or event.get("response_format") != pending["response_format"]
             ):
                 raise ValueError("Transport controls differ from the requested mode")
             expected[identity], pending = pending, None
@@ -188,7 +201,7 @@ asyncio.run(main())
         control = expected[row["request_id"]]
         if (
             row["thinking"] is not control["thinking"]
-            or row["format"] != "json"
+            or row["format"] != control["format"]
             or type(row["temperature"]) not in (int, float)
             or row["temperature"] != 0
             or type(row["context"]) is not int

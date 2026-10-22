@@ -129,6 +129,71 @@ def test_heading_clauses_and_exact_spans_cannot_disappear():
     assert basis["inventory"][0]["quote"] == "# Отмена запрещена"
 
 
+@pytest.mark.parametrize(
+    "body",
+    ["Требования не определены.", "## 2. Нормативно-правовые акты (НПА)\nТребования не определены.", "## 5. Нефункциональные требования\nПараметры производительности и доступности не определены."],
+)
+def test_explicit_absence_is_retained_but_never_counted_as_implemented(inputs, body):
+    document, _, report = inputs
+    raw = body + "\n\nПринимать любой пакет от 1 до 50 файлов."
+    basis = source_snapshot(
+        [
+            {
+                "document_id": "bt",
+                "revision_id": "r",
+                "agreement_event_id": "a",
+                "content_hash": "h",
+                "body_markdown": raw,
+                "section_headings": ["## 2. Нормативно-правовые акты (НПА)", "## 5. Нефункциональные требования"],
+            }
+        ]
+    )
+    report["basis_sha256"] = basis["sha256"]
+    report["requirements"][0].update(coverage="NO_REQUIREMENT", references=[], reason="В этом полном фрагменте требование явно не задано.")
+    result = validate_report(report, document, basis)
+    assert result["qualifies"] and result["metrics"]["implemented"] == result["metrics"]["no_requirement"] == 1
+    assert result["metrics"]["returned_fragments"] == result["metrics"]["expected_fragments"] == 2
+    assert raw[basis["inventory"][0]["start"] : basis["inventory"][0]["end"]] == body
+    report["requirements"][0].update(coverage="IMPLEMENTED")
+    with pytest.raises(SpecificationError):
+        validate_report(report, document, basis)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "## Отмена запрещена\nТребования не определены.",
+        "## 99. Отмена запрещена\nТребования не определены.",
+        "## 2. Нормативно-правовые акты (НПА)\nТребования не определены. Отмена запрещена.",
+        "Требования не определены.\nОтмена запрещена.",
+        "Требования не определены, но отмена запрещена.",
+        "```\nТребования не определены.\n```",
+        "Отмена запрещена.",
+    ],
+)
+def test_no_requirement_cannot_hide_a_heading_clause_or_mixed_source(inputs, body):
+    document, _, report = inputs
+    basis = source_snapshot(
+        [{"document_id": "bt", "revision_id": "r", "agreement_event_id": "a", "content_hash": "h", "body_markdown": body, "section_headings": ["## 2. Нормативно-правовые акты (НПА)"]}]
+    )
+    report["basis_sha256"] = basis["sha256"]
+    report["requirements"] = [{"id": "R001", "coverage": "NO_REQUIREMENT", "consistency": "CONSISTENT", "references": [], "reason": "Нет требований"}]
+    report["joint"]["checked_ids"] = ["R001"]
+    with pytest.raises(SpecificationError) as error:
+        validate_report(report, document, basis)
+    assert error.value.code == "ALIGNMENT_REPORT_INVALID"
+
+
+def test_only_absence_markers_cannot_qualify_an_empty_business_basis(inputs):
+    document, _, report = inputs
+    basis = source_snapshot([{"document_id": "bt", "revision_id": "r", "agreement_event_id": "a", "content_hash": "h", "body_markdown": "Требования не определены."}])
+    report["basis_sha256"] = basis["sha256"]
+    report["requirements"] = [{"id": "R001", "coverage": "NO_REQUIREMENT", "consistency": "CONSISTENT", "references": [], "reason": "Требование отсутствует"}]
+    report["joint"]["checked_ids"] = ["R001"]
+    result = validate_report(report, document, basis)
+    assert not result["qualifies"] and result["quality_status"] == "FAIL" and result["metrics"]["implemented"] == 0
+
+
 @pytest.mark.parametrize("body", ["", " " * 20, "a" * 100_001, "\n\n".join(str(i) for i in range(129))], ids=["empty", "whitespace", "oversized", "too_many_fragments"])
 def test_empty_or_oversized_inventory_is_never_a_vacuous_pass(body):
     with pytest.raises(SpecificationError):

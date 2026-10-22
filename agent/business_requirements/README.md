@@ -29,9 +29,11 @@ subsections are added when needed. Review
 changes may fill this structure incrementally. Missing content, diagrams,
 format repairs and semantic review issues are saved as advisory `warnings`
 with the revision or prepared changes and shown in the Workbench. A usable
-document is retained when its semantic reviewer is unavailable. Documents with
-warnings remain in review until the author explicitly confirms the prepared
-changes. Access, source provenance, revision freshness,
+document is retained when its semantic reviewer is unavailable. The author's
+APPLY_CHANGES action applies the validated plan and completes review when no
+questions or proposal decisions remain open, including documents with advisory
+warnings. Those warnings remain in the revision and exports; no separate
+confirmation is required. Access, source provenance, revision freshness,
 transaction and worker-lease checks still reject unsafe writes. Optional
 `warnings` metadata is supported by document AST v1 and v2.
 

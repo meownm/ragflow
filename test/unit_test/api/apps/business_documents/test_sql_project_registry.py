@@ -15,6 +15,7 @@ from business_documents.application.errors import BusinessDocumentError, Conflic
 def database(monkeypatch):
     async def verified(*args):
         return False
+
     monkeypatch.setattr(Schema, "verify_snapshot", verified)
     yield from shared_database.__wrapped__(monkeypatch)
 
@@ -28,13 +29,17 @@ def update(project, **changes):
 
 
 def seed_artifacts(project, count):
-    for kind, payload in list((
-        ("REQUIREMENTS", {"requirements": [{"statement": "Продажи"}]}),
-        ("SCHEMA", {"schema_snapshot": {}, "accepted_schema": [{"entity_id": "sales"}]}),
-        ("QUERY", {"sql": "SELECT value FROM sales", "parameters": []}),
-    ))[:count]:
+    for kind, payload in list(
+        (
+            ("REQUIREMENTS", {"requirements": [{"statement": "Продажи"}]}),
+            ("SCHEMA", {"schema_snapshot": {}, "accepted_schema": [{"entity_id": "sales"}]}),
+            ("QUERY", {"sql": "SELECT value FROM sales", "parameters": []}),
+        )
+    )[:count]:
         artifact_id = f"accepted-{kind.lower()}"
-        runs.BusinessDocumentSqlQueryArtifact.create(id=artifact_id, project_id=project, tenant_id="tenant-1", kind=kind, revision=4, payload=payload, content_hash=_stable_hash(payload), source_proposal_id="accepted", accepted_by="author-1")
+        runs.BusinessDocumentSqlQueryArtifact.create(
+            id=artifact_id, project_id=project, tenant_id="tenant-1", kind=kind, revision=4, payload=payload, content_hash=_stable_hash(payload), source_proposal_id="accepted", accepted_by="author-1"
+        )
         runs.BusinessDocumentSqlQueryProject.update(**{f"{kind.lower()}_artifact_id": artifact_id}).where(runs.BusinessDocumentSqlQueryProject.id == project).execute()
 
 
@@ -57,7 +62,19 @@ def test_noop_does_not_invalidate_compilation_or_jobs(database):
 
 
 def test_archive_restore_and_read_only_history(database, monkeypatch):
-    runs.BusinessDocumentSqlQueryRun.create(id="old-result", project_id=database, tenant_id="tenant-1", compilation_id="old", profile_id="old", profile_version=1, status="READY", rows=[[42]], columns=["value"], row_count=1)
+    runs.BusinessDocumentSqlQueryRun.create(
+        id="old-result",
+        project_id=database,
+        tenant_id="tenant-1",
+        compilation_id="compilation-1",
+        profile_id="old",
+        profile_version=1,
+        status="READY",
+        checks={"status": "PASS"},
+        rows=[[42]],
+        columns=["value"],
+        row_count=1,
+    )
     archived = update(database, archived=True)
     assert archived["archived_at"] > 0
     assert archived["capabilities"]["manage"] and not archived["capabilities"]["edit"] and not archived["capabilities"]["execute"]
@@ -137,8 +154,10 @@ def test_copy_only_current_accepted_artifacts_with_independent_ids(database, cou
 
 def test_copy_rechecks_catalog_and_rolls_back_on_denial(database, monkeypatch):
     seed_artifacts(database, 2)
+
     async def denied(*args):
         raise PermissionDeniedError("Catalog access revoked")
+
     monkeypatch.setattr(Schema, "verify_snapshot", denied)
     with pytest.raises(PermissionDeniedError):
         Projects.copy_project("tenant-1", "author-1", database, command())
@@ -146,7 +165,10 @@ def test_copy_rechecks_catalog_and_rolls_back_on_denial(database, monkeypatch):
     assert BusinessDocumentSqlAgentCommand.select().count() == 0
 
 
-@pytest.mark.parametrize("patch", [{}, {"title": " "}, {"title": "x" * 256}, {"archived": 1}, {"archived": None}, {"owner_id": "another"}, {"title": "OK", "expected_state_version": True}, {"title": "OK", "idempotency_key": ""}])
+@pytest.mark.parametrize(
+    "patch",
+    [{}, {"title": " "}, {"title": "x" * 256}, {"archived": 1}, {"archived": None}, {"owner_id": "another"}, {"title": "OK", "expected_state_version": True}, {"title": "OK", "idempotency_key": ""}],
+)
 def test_registry_closed_payloads(database, patch):
     with pytest.raises(ValidationError):
         update(database, **patch)

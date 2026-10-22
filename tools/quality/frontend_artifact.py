@@ -14,6 +14,7 @@ import platform
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import tarfile
 import time
@@ -25,11 +26,44 @@ CACHE_ROOT = Path(__file__).resolve().parents[2] / ".local/cache/pnpm"
 MAX_CACHE_BYTES = 5 * 1024**3
 
 
+def _cache_size(cache: Path) -> int:
+    """Count cache entries without traversing pnpm's project registrations."""
+    _unlinked(cache)
+
+    def scan(directory: Path) -> int:
+        size = 0
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                child = Path(entry.path)
+                status = child.lstat()
+                linked = stat.S_ISLNK(status.st_mode) or bool(getattr(status, "st_file_attributes", 0) & 0x400)
+                if linked:
+                    # pnpm stores references to projects, not their contents.
+                    relative = child.relative_to(cache).as_posix()
+                    if not re.fullmatch(r"v[0-9]+/projects/[0-9a-f]{32}", relative) or not (stat.S_ISLNK(status.st_mode) or child.is_junction()):
+                        raise ValueError(f"linked package cache entry: {child}")
+                    size += status.st_size
+                elif stat.S_ISDIR(status.st_mode):
+                    size += scan(child)
+                else:
+                    size += status.st_size
+        return size
+
+    return scan(cache)
+
+
 @contextmanager
-def _cache_lease(cache: Path):
+def _cache_lease(cache: Path, *, used: bool = True):
     """Serialize shared-store users and cap the disposable package cache."""
+    _unlinked(cache)
     lock_path = cache.parent / "frontend.lock"
     stamp = cache.parent / "pnpm.last-used"
+    job_path = cache.parent / "frontend.job"
+    job_temporary = cache.parent / "frontend.job.tmp"
+    _unlinked(lock_path)
+    _unlinked(stamp)
+    _unlinked(job_path)
+    _unlinked(job_temporary)
     with lock_path.open("a+b") as lock:
         lock.seek(0, 2)
         if not lock.tell():
@@ -44,29 +78,49 @@ def _cache_lease(cache: Path):
             import fcntl
 
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        # The OS lock ends with the parent. The job also covers orphaned pnpm
+        # descendants, which may still read or write this shared store.
+        if job_path.exists() and job_active(job_path.read_text(encoding="utf-8")):
+            raise OSError("frontend cache still has active build processes")
+        job = process_job() if used else ""
+        if used:
+            with job_temporary.open("w", encoding="utf-8") as stream:
+                stream.write(job)
+                stream.flush()
+                os.fsync(stream.fileno())
+            job_temporary.replace(job_path)
         try:
-            if stamp.exists() and time.time() - stamp.stat().st_mtime > 7 * 86400:
+            last_used = stamp.stat().st_mtime if stamp.exists() else cache.stat().st_mtime
+            if time.time() - last_used > 7 * 86400:
+                _cache_size(cache)
                 shutil.rmtree(cache)
                 cache.mkdir()
+            if used:
+                stamp.touch()
             yield
         finally:
-            size = 0
-            for parent, directories, names in os.walk(cache, followlinks=False):
-                if any((Path(parent) / name).is_symlink() or (Path(parent) / name).is_junction() for name in directories):
-                    raise ValueError("linked package cache entry")
-                for name in names:
-                    size += (Path(parent) / name).lstat().st_size
-                if size > MAX_CACHE_BYTES:
-                    shutil.rmtree(cache)
-                    cache.mkdir()
-                    break
-            stamp.touch()
+            if used and job_active(job):
+                raise OSError("frontend cache still has active build descendants")
+            if _cache_size(cache) > MAX_CACHE_BYTES:
+                shutil.rmtree(cache)
+                cache.mkdir()
+            if used:
+                stamp.touch()
 
 
 try:
     from . import candidate as identity
+    from .workspace import disposable_workspace, job_active, process_job, start_process
 except ImportError:
     import candidate as identity
+    from workspace import disposable_workspace, job_active, process_job, start_process
+
+
+def clean_cache() -> None:
+    _unlinked(CACHE_ROOT)
+    if CACHE_ROOT.exists():
+        with _cache_lease(CACHE_ROOT, used=False):
+            pass
 
 
 def _unlinked(path: Path) -> None:
@@ -104,7 +158,7 @@ def _tools(pnpm_cli: Path | None = None) -> tuple[list[str], list[str]]:
 
 def _run(command: list[str], cwd: Path, env: dict, log: Path, timeout: int) -> str:
     with log.open("wb") as stream:
-        process = subprocess.Popen(command, cwd=cwd, env=env, stdout=stream, stderr=subprocess.STDOUT, start_new_session=os.name != "nt")
+        process = start_process(command, cwd=cwd, env=env, stdout=stream, stderr=subprocess.STDOUT, start_new_session=os.name != "nt")
         try:
             code = process.wait(timeout=timeout)
         except BaseException:
@@ -184,10 +238,8 @@ def build(candidate: Path, work: Path, output: Path, pnpm_cli: Path | None = Non
     if any(cache.is_relative_to(path) or path.is_relative_to(cache) for path in (candidate, work, output)):
         raise ValueError("build cache, candidate, workspace and artifact must have separate paths")
     cache.mkdir(parents=True, exist_ok=True)
-    with _cache_lease(cache):
-        work.mkdir(parents=True, exist_ok=False)
+    with _cache_lease(cache), disposable_workspace(work):
         try:
-            (work / ".keep").write_text("Active frontend build; removed with this workspace.\n", encoding="utf-8")
             source = work / "source"
             shutil.copytree(candidate / "source", source)
             _check_inputs(source, manifest)
@@ -237,14 +289,9 @@ def build(candidate: Path, work: Path, output: Path, pnpm_cli: Path | None = Non
             if logs:
                 log_archive = Path(str(output) + ".logs.zip")
                 log_archive.parent.mkdir(parents=True, exist_ok=True)
-                try:
-                    with zipfile.ZipFile(log_archive, "x", compression=zipfile.ZIP_DEFLATED) as bundle:
-                        for log in logs:
-                            bundle.write(log, log.name)
-                finally:
-                    shutil.rmtree(work)
-            else:
-                shutil.rmtree(work)
+                with zipfile.ZipFile(log_archive, "x", compression=zipfile.ZIP_DEFLATED) as bundle:
+                    for log in logs:
+                        bundle.write(log, log.name)
 
 
 def _verify_archive(archive: Path, receipt: dict) -> None:
@@ -284,14 +331,20 @@ def verify(candidate: Path, archive: Path, receipt: Path) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["build", "verify"])
-    parser.add_argument("--candidate", type=Path, required=True)
+    parser.add_argument("action", choices=["build", "verify", "clean-cache"])
+    parser.add_argument("--candidate", type=Path)
     parser.add_argument("--work", type=Path)
-    parser.add_argument("--archive", type=Path, required=True)
+    parser.add_argument("--archive", type=Path)
     parser.add_argument("--receipt", type=Path)
     parser.add_argument("--pnpm-cli", type=Path, help="Explicit pnpm .cjs/.js entrypoint, executed by the selected node; avoids wrappers depending on the caller's HOME/APPDATA")
     args = parser.parse_args()
     try:
+        if args.action == "clean-cache":
+            clean_cache()
+            print(json.dumps({"cache": "checked"}))
+            return 0
+        if args.candidate is None or args.archive is None:
+            raise ValueError("--candidate and --archive are required")
         if args.action == "build":
             if args.work is None:
                 raise ValueError("--work is required")

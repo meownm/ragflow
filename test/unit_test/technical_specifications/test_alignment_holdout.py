@@ -33,14 +33,47 @@ def bundle(tmp_path):
         ],
     }
     manifest = {"case_ids": [case["case_id"] for case in value["cases"]], "case_count": len(value["cases"]), "files": {}}
+    contract = b"Public semantic contract for the synthetic unit fixture."
+    (tmp_path / "annotation-contract.md").write_bytes(contract)
+    manifest["files"]["annotation-contract.md"] = {"sha256": hashlib.sha256(contract).hexdigest(), "bytes": len(contract)}
     for name, content in (("inputs.json", value), ("oracle.json", oracle)):
         raw = json.dumps(content, ensure_ascii=False).encode()
         (tmp_path / name).write_bytes(raw)
         manifest["files"][name] = {"sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw)}
     (tmp_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    review = {"status": "PASS", "case_count": len(value["cases"]), "reviewer": "unit-reviewer", "manifest_sha256": hashlib.sha256((tmp_path / "manifest.json").read_bytes()).hexdigest()}
+    review = {
+        "status": "PASS",
+        "case_count": len(value["cases"]),
+        "reviewer": "unit-reviewer",
+        "manifest_sha256": hashlib.sha256((tmp_path / "manifest.json").read_bytes()).hexdigest(),
+        "annotation_contract_sha256": hashlib.sha256(contract).hexdigest(),
+    }
     (tmp_path / "approval.json").write_text(json.dumps(review), encoding="utf-8")
     return value, manifest
+
+
+@pytest.mark.parametrize("defect", ["missing", "changed", "unbound_review"])
+def test_annotation_contract_is_required_and_bound_before_inference(tmp_path, monkeypatch, defect):
+    bundle(tmp_path)
+    contract = tmp_path / "annotation-contract.md"
+    if defect == "missing":
+        contract.unlink()
+    elif defect == "changed":
+        contract.write_text("A different meaning of the labels", encoding="utf-8")
+    else:
+        review_path = tmp_path / "approval.json"
+        review = json.loads(review_path.read_text(encoding="utf-8"))
+        review.pop("annotation_contract_sha256")
+        review_path.write_text(json.dumps(review), encoding="utf-8")
+    original = type(contract).read_bytes
+
+    def never_read_oracle(path, *args, **kwargs):
+        assert path.name != "oracle.json", "Preflight must not expose sealed labels"
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(type(contract), "read_bytes", never_read_oracle)
+    with pytest.raises(ValueError, match="annotation contract"):
+        holdout.load_bundle(tmp_path)
 
 
 def answer(document, basis):
@@ -187,6 +220,63 @@ def test_unreviewed_or_rejected_holdout_is_blocked_before_inference(tmp_path, de
         path.write_text(json.dumps(review), encoding="utf-8")
     with pytest.raises(ValueError, match="review"):
         holdout.load_bundle(tmp_path)
+
+
+@pytest.mark.parametrize("mode", ["complete", "timeout", "nonzero", "partial", "reserved", "unstable", "missing_final", "wrong_inventory"])
+def test_live_cli_keeps_oracle_sealed_until_terminal_inference(tmp_path, monkeypatch, mode):
+    import subprocess
+    import sys
+
+    from test.evals.technical_specifications.alignment import proxy_evidence, run_live
+
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    value, manifest = bundle(dataset)
+    observed = [{"case_id": case["case_id"], "status": "INCOMPLETE", "result": {}} for case in value["cases"]]
+    result = {"expected_case_ids": [case["case_id"] for case in value["cases"]], "cases": observed, "quality_status": "UNKNOWN", "budget": {"reserved_tokens": 10 if mode == "reserved" else 0}}
+    if mode == "partial":
+        observed.pop()
+    if mode == "wrong_inventory":
+        observed[-1]["case_id"] = observed[0]["case_id"]
+    output = tmp_path / "evidence"
+    monkeypatch.setattr(sys, "argv", ["run_live", "--holdout-dir", str(dataset), "--evidence-dir", str(output)])
+    monkeypatch.setattr(
+        run_live.subprocess, "check_output", lambda *_args, **_kwargs: json.dumps([{"Image": "synthetic", "Config": {"Labels": {"com.docker.compose.project": "ragflow-local"}}}]).encode()
+    )
+
+    def execute(*_args, stdout, **_kwargs):
+        if mode != "missing_final":
+            stdout.write(("ALIGNMENT_FINAL=" + json.dumps(result) + "\n").encode())
+        if mode == "timeout":
+            raise subprocess.TimeoutExpired("synthetic", 1)
+        return SimpleNamespace(returncode=1 if mode == "nonzero" else 0)
+
+    monkeypatch.setattr(run_live.subprocess, "run", execute)
+    native_load = holdout.load_bundle
+    loads = []
+
+    def load(directory):
+        actual = native_load(directory)
+        loads.append(directory)
+        return (actual[0], {**actual[1], "changed": True}) if mode == "unstable" and len(loads) > 1 else actual
+
+    monkeypatch.setattr(holdout, "load_bundle", load)
+    scored = []
+
+    def score(report, *_args):
+        assert mode == "complete", "Unfinished inference must not expose the sealed oracle"
+        scored.append(True)
+        return {**report, "quality_status": "PASS", "evidence_status": "INCOMPLETE"}
+
+    monkeypatch.setattr(holdout, "score_holdout", score)
+    monkeypatch.setattr(proxy_evidence, "collect", lambda *_args: {"status": "INCOMPLETE"})
+    assert run_live.main() == 2
+    saved = json.loads((output / "report.json").read_text(encoding="utf-8"))
+    assert saved["terminal_inference_verified"] == (mode == "complete")
+    assert scored == ([True] if mode == "complete" else [])
+    assert saved["qualifies"] is False
+    if mode != "complete":
+        assert saved["oracle_unread"] and saved["quality_status"] == "UNKNOWN"
 
 
 @pytest.mark.asyncio

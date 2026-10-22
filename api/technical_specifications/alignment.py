@@ -10,8 +10,9 @@ from .domain import fail, sections
 MAX_REQUIREMENTS = 128
 MAX_REPORT_BYTES = 1_000_000
 CHECK_LEASE_SECONDS = 360
-COVERAGE = {"IMPLEMENTED", "PARTIAL", "MISSING", "UNDETERMINED"}
+COVERAGE = {"IMPLEMENTED", "PARTIAL", "MISSING", "UNDETERMINED", "NO_REQUIREMENT"}
 CONSISTENCY = {"CONSISTENT", "CONTRADICTED", "UNDETERMINED"}
+_ABSENCE_MARKERS = {"Требования не определены.", "Параметры производительности и доступности не определены."}
 
 
 def fingerprint(value):
@@ -68,6 +69,14 @@ def source_snapshot(rows):
         if len(body) > 100_000 or sum(len(item["body_markdown"]) for item in sources) + len(body) > 200_000:
             fail("ALIGNMENT_SOURCE_TOO_LARGE", "Основания превышают лимит; усечение запрещено", 413)
         source = {key: row[key] for key in required}
+        headings = row.get("section_headings", [])
+        if (
+            not isinstance(headings, list)
+            or len(headings) > MAX_REQUIREMENTS
+            or any(not isinstance(heading, str) or len(heading) > 512 or re.fullmatch(r"#{1,6} [0-9]+(?:\.[0-9]+)*\. [^\n]+", heading) is None for heading in headings)
+        ):
+            fail("ALIGNMENT_SOURCE_INVALID", "Некорректные заголовки шаблона основания", 409)
+        source["section_headings"] = list(headings)
         source["body_sha256"] = sha256(body.encode()).hexdigest()
         sources.append(source)
         # Even headings can contain normative clauses; preserve them. Fragments
@@ -81,6 +90,16 @@ def source_snapshot(rows):
         fail("ALIGNMENT_INVENTORY_INVALID", "Пустой или слишком большой перечень оснований; усечение запрещено", 413)
     value = {"sources": sources, "inventory": inventory}
     return {**value, "sha256": fingerprint(value)}
+
+
+def _declares_no_requirement(fragment, source):
+    # Match the complete paragraph, never remove a heading or a normative suffix.
+    # Only canonical template labels may surround an explicit absence marker.
+    quote = fragment["quote"]
+    if quote in _ABSENCE_MARKERS:
+        return True
+    heading, separator, body = quote.partition("\n")
+    return bool(separator and heading in source.get("section_headings", []) and body in _ABSENCE_MARKERS)
 
 
 def candidate_identity(document):
@@ -226,12 +245,19 @@ def validate_report(value, document, basis):
     identifiers = [item["id"] for item in basis["inventory"]]
     if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows) or [row.get("id") for row in rows] != identifiers:
         _invalid("Перечень результатов не совпадает с полным перечнем оснований")
+    sources = {source["document_id"]: source for source in basis["sources"]}
+    nonrequirements = {item["id"] for item in basis["inventory"] if _declares_no_requirement(item, sources[item["source_id"]])}
     for row in rows:
         if set(row) != {"id", "coverage", "consistency", "references", "reason"}:
             _invalid()
         if not isinstance(row["coverage"], str) or row["coverage"] not in COVERAGE or not isinstance(row["consistency"], str) or row["consistency"] not in CONSISTENCY:
             _invalid()
         _reason(row["reason"])
+        if row["coverage"] == "NO_REQUIREMENT":
+            if row["id"] not in nonrequirements or row["consistency"] != "CONSISTENT" or row["references"] or not row["reason"].strip():
+                _invalid("Отсутствие требования не подтверждено полным фрагментом БТ")
+        elif row["id"] in nonrequirements:
+            _invalid("Явное отсутствие требования нельзя выдавать за реализацию")
         _references(row["references"], document, required=row["coverage"] == "IMPLEMENTED" or row["consistency"] == "CONTRADICTED")
         if (row["coverage"] != "IMPLEMENTED" or row["consistency"] != "CONSISTENT") and not row["reason"].strip():
             _invalid()
@@ -262,8 +288,9 @@ def validate_report(value, document, basis):
     _reason(joint["reason"])
     if joint["consistency"] != "CONSISTENT" and not joint["reason"].strip():
         _invalid()
-    failures = sum(row["coverage"] != "IMPLEMENTED" or row["consistency"] != "CONSISTENT" for row in rows)
+    failures = sum(row["coverage"] not in {"IMPLEMENTED", "NO_REQUIREMENT"} or row["consistency"] != "CONSISTENT" for row in rows)
     failures += sum(row["kind"] != "TECHNICAL_DETAIL" for row in additions) + int(joint["consistency"] != "CONSISTENT")
+    failures += int(len(nonrequirements) == len(rows))
     return {
         "execution_status": "COMPLETE",
         "report_status": "COMPLETE",
@@ -273,6 +300,7 @@ def validate_report(value, document, basis):
             "expected_fragments": len(identifiers),
             "returned_fragments": len(rows),
             "implemented": sum(row["coverage"] == "IMPLEMENTED" for row in rows),
+            "no_requirement": len(nonrequirements),
             "contradictions": sum(row["consistency"] == "CONTRADICTED" for row in rows),
             "unsupported_rules": sum(row["kind"] == "UNSUPPORTED_BUSINESS_RULE" for row in additions),
             "joint_consistency": joint["consistency"],

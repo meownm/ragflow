@@ -141,13 +141,16 @@ def test_new_substantive_model_question_stays_open_after_an_answer_to_the_same_s
     question["text"] = "Есть ли отдельные требования по персональным данным?"
     document = service._complete(requested["job_id"], {"schema_version": "1", "questions": [question], "proposals": [], "comment_dispositions": []})
 
-    final = _apply(document)
+    warning = {"code": "SOURCE_NOTE", "section_id": "2", "message": "Примечание источника сохраняется."}
+    final = _apply(document, [warning])
 
     assert final["lifecycle_state"] == "REVIEW"
     assert [(q["semantic_tag"], q["status"]) for q in final["protocol"]["questions"]] == [("npa.applicability", "ANSWERED"), ("npa.followup", "OPEN")]
+    assert warning in final["current_revision"]["document_ast"]["warnings"]
+    assert "REQUEST_EXPORT" not in final["allowed_commands"]
 
 
-def test_independent_warning_in_the_same_section_still_prevents_ordinary_agreement(database):
+def test_independent_warning_survives_ordinary_agreement_after_section_answer(database):
     document = service._request_and_complete_draft(service._create(), draft=_draft())
     document = _answer(document, document["protocol"]["questions"][0])
     document = service._complete_review_assessment(document)
@@ -155,8 +158,10 @@ def test_independent_warning_in_the_same_section_still_prevents_ordinary_agreeme
 
     final = _apply(document, [warning])
 
-    assert final["lifecycle_state"] == "REVIEW"
+    assert final["lifecycle_state"] == "AGREED"
     assert final["current_revision"]["document_ast"]["warnings"] == [warning]
+    assert "REQUEST_EXPORT" in final["allowed_commands"]
+    assert "CONFIRM_PREPARED_CHANGES" not in final["allowed_commands"]
 
 
 @pytest.mark.parametrize("schema_version", ["1", "2"])

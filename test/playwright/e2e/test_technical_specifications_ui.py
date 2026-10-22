@@ -21,6 +21,66 @@ from test.playwright.helpers.technical_specification_eva import CodecSpecificati
 
 @pytest.mark.p1
 @pytest.mark.parametrize("width", [1440, 390])
+@pytest.mark.parametrize("line_ending", ["\n", "\r\n"])
+def test_specification_breaks_diagrams_and_source_survive_save(page, base_url, tmp_path, width, line_ending):
+    page.set_viewport_size({"width": width, "height": 960})
+    api = SpecificationApi()
+    api.document["sections"].update(
+        {
+            "1": f"Первый  {line_ending}Второй",
+            "4": '<ol type="I" start="3"><li>Третий</li><li>Четвёртый</li></ol>',
+            "6": "```mermaid\ngraph LR\nA[Автор]-->B[Сервис]\n```\n\n**Конец**".replace("\n", line_ending),
+            "7": "```plantuml\n@startuml\nAlice -> Bob: hello\n@enduml\n```",
+        }
+    )
+    _install_session(page)
+    _install_common_routes(page)
+    page.route("**/plantuml/svg/", lambda route: route.fulfill(status=200, content_type="image/svg+xml", body='<svg xmlns="http://www.w3.org/2000/svg"><text>PlantUML QA</text></svg>'))
+    page.route("**/api/v1/source-workspaces**", api.route)
+    page.goto(base_url + LOCATION)
+    first = page.get_by_role("textbox", name="Раздел 1", exact=True)
+    expect(first.locator("br")).to_have_count(1)
+    first.locator("span", has_text="Второй").select_text()
+    first.dispatch_event("mouseup")
+    page.locator("#tz-section-1").get_by_role("button", name="В чат", exact=True).click()
+    expect(page.get_by_label("Контекст чата")).to_have_value("selection")
+    page.get_by_role("textbox", name="Сообщение помощнику").fill("Проверь выделение")
+    expect(page.get_by_text("Черновик сохранён", exact=True)).to_be_visible()
+    assert api.draft["context"]["anchor"]["quote"] == "Второй"
+    assert api.draft["context"]["anchor"]["prefix"] == "Первый  " + line_ending
+    page.get_by_role("button", name="Документ", exact=True).click()
+    diagram = page.get_by_role("textbox", name="Раздел 6", exact=True)
+    expect(diagram.locator("figure svg")).to_have_count(1)
+    expect(diagram.locator("figure svg")).to_contain_text("Автор")
+    expect(diagram.locator("figure svg")).to_contain_text("Сервис")
+    expect(page.get_by_role("textbox", name="Раздел 7", exact=True).locator("figure svg")).to_have_count(1)
+    expect(diagram.locator("details pre")).not_to_be_visible()
+    assert page.get_by_role("textbox", name="Раздел 4", exact=True).locator("ol").evaluate("e=>getComputedStyle(e).listStyleType") == "upper-roman"
+    diagram.locator("summary").click()
+    diagram.locator("details code span").select_text()
+    diagram.dispatch_event("mouseup")
+    page.locator("#tz-section-6").get_by_role("button", name="В чат", exact=True).click()
+    page.get_by_role("textbox", name="Сообщение помощнику").fill("Проверь код диаграммы")
+    expect(page.get_by_text("Черновик сохранён", exact=True)).to_be_visible()
+    assert api.draft["context"]["anchor"]["quote"] == "graph LR" + line_ending + "A[Автор]-->B[Сервис]"
+    page.get_by_role("button", name="Документ", exact=True).click()
+    diagram.locator("strong").select_text()
+    page.keyboard.type("Итог")
+    expect(page.get_by_text("Редакция 2", exact=True)).to_be_visible()
+    saved = api.document["sections"]["6"]
+    assert 'class="language-mermaid"' in saved and "A[Автор]--&gt;B[Сервис]" in saved
+    assert not any(token in saved for token in ["<svg", "<figure", "data-tz-diagram", "Код диаграммы", "<details"])
+    page.reload()
+    expect(diagram.locator("figure svg")).to_have_count(1)
+    expect(diagram.locator("strong")).to_have_text("Итог")
+    expect(first.locator("br")).to_have_count(1)
+    assert page.locator("html").evaluate("e=>e.scrollWidth<=innerWidth")
+    diagram.screenshot(path=str(tmp_path / f"tz-diagram-{width}.png"))
+    page.screenshot(path=str(tmp_path / f"tz-format-diagrams-{width}.png"), full_page=True)
+
+
+@pytest.mark.p1
+@pytest.mark.parametrize("width", [1440, 390])
 def test_specification_long_chat_keeps_composer_visible_and_links_proposals(page, base_url, tmp_path, width):
     page.set_viewport_size({"width": width, "height": 844 if width == 390 else 900})
     api = SpecificationApi()

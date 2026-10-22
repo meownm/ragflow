@@ -50,6 +50,11 @@ The target scenario modules are `commands`, `job_completion`, `change_applicatio
 batch reads. No generic handler registry, mixin hierarchy or pass-through
 replacement for `BusinessDocumentService` is part of the target design.
 
+The infrastructure-free `document_exchange.identity` module owns canonical EVA
+page keys shared by BT, TZ and persistence adapters. Its algorithm and saved-key
+format are common; reservations, transactions and migrations remain in
+`api/document_exchange`. Application imports never load that API package.
+
 ## Review facts and algorithms
 
 A review context belongs to one document state version and transaction/read
@@ -236,14 +241,32 @@ Job snapshot assembly uses a revision projection without UI section rendering;
 AST, Markdown, hashes and provenance remain compatible with AI/evidence consumers.
 Single-document latest-job reads use ordered LIMIT 1; page reads retain ranked batching.
 
-Content normalization owns one AST copy, restores the pinned outline and retains
-empty sections without copying requirements from their children. New title-only
-documents include every template section, including optional sections. Historical
-required-scope documents retain their saved contract. Draft and review completion
-add questions for empty or missing template sections when the model omitted a
-question; the author supplies information or confirms absence/applicability.
+Content normalization owns one AST copy and restores the pinned outline without
+copying requirements from children. All published template sections are required,
+including in title-only and required-scope documents. Validation fills empty
+required sections with `Требования не определены`. Saved revisions are not rewritten.
+EVA import accepts the persisted v2 required-scope outline and restores all
+sections with the same placeholder, preserving imported requirements.
+Draft and review completion treat this placeholder as missing information and
+add questions when the model omitted a question; the author supplies information
+or confirms absence/applicability.
 An existing question with the same gap tag is not repeated. Prompts require the
 whole outline and explicit authorization for additional subsections.
+Persisted answers retain their section association across intake and review
+cycles. For the exact undefined-requirements placeholder, a prior answer prevents
+another structural fallback question and removes its structural reminders; the
+server does not classify answer text or discard substantive model follow-ups.
+Open questions and pending proposals still prevent agreement. Advisory warnings
+remain in the saved revision and exports; APPLY_CHANGES is the author's decision
+to apply the result and does not require a separate warning confirmation.
+Both assessment and review loading use one document-scoped DISTINCT projection
+of answered section IDs; historical question/answer bodies remain excluded from
+the current-cycle view. This adds one bounded query to each loader. Structural
+reminders are derived from the current AST and never replayed from a job's older
+protocol when applying changes.
+The same section identities are pinned in job snapshots for model context;
+they prevent repeated generic completeness questions without claiming that
+every answer establishes absence or authorizes a new change.
 Template membership uses a set; section hashes retain canonical JSON.
 
 EVA draft preparation converts PlantUML code blocks to native editable macros

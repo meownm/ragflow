@@ -179,6 +179,20 @@ async def test_async_reservation_must_commit_before_inference(transport, rejecte
 
 
 @pytest.mark.asyncio
+async def test_unexpected_attestation_usage_keeps_the_full_reservation(transport, monkeypatch):
+    ai, _state, document, basis, _model = transport
+    budget = AlignmentBudget()
+
+    async def unproved(*args, **kwargs):
+        return "{}", {"finish_reason": "stop", "prompt_tokens": 5000, "completion_tokens": 90, "input_attestation": {"usage_unknown": True}}
+
+    monkeypatch.setattr("api.technical_specifications.alignment_ai._ollama", unproved)
+    result = await ai.check("qa", document, basis, budget=budget)
+    assert result["reason_code"] == "MODEL_ATTESTATION_USAGE_UNKNOWN" and not result["qualifies"]
+    assert budget.spent_calls == 1 and budget.spent_tokens == 0 and budget.reserved_tokens == 32000
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["missing", "duplicate", "unknown_citation", "literal_citation", "oversized_reason", "wrong_basis_digest", "missing_basis_digest"])
 async def test_complete_transport_but_bad_report_is_model_contract_failure(transport, mode):
     ai, state, document, basis, _ = transport

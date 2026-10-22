@@ -1,9 +1,13 @@
+import {
+  DiagramCodeBlock,
+  getDiagramKind,
+} from '@/components/diagram-code-block';
 import { cn } from '@/lib/utils';
 import { type ComponentProps, useId } from 'react';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
-import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
+import { rehypeDocumentBreaks } from './document-breaks';
 import { rehypeDocumentHtml } from './document-html';
 
 type MarkdownProps = ComponentProps<typeof ReactMarkdown>;
@@ -29,8 +33,12 @@ export function DocumentMarkdown({
   return (
     <div className={cn('min-w-0 break-words', className)} {...props}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkBreaks]}
-        rehypePlugins={[rehypeRaw, [rehypeDocumentHtml, { anchorPrefix }]]}
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[
+          rehypeRaw,
+          [rehypeDocumentHtml, { anchorPrefix }],
+          rehypeDocumentBreaks,
+        ]}
         components={{
           p: (props) => (
             <p {...documentAttributes(props)} className="mb-2 last:mb-0" />
@@ -83,12 +91,27 @@ export function DocumentMarkdown({
               className="border-b border-border-button px-3 py-2 align-top"
             />
           ),
-          pre: (props) => (
-            <pre
-              {...documentAttributes(props)}
-              className="mb-2 overflow-x-auto rounded bg-bg-card p-3 last:mb-0"
-            />
-          ),
+          pre: ({ node, ...props }) => {
+            const code = node?.children[0];
+            if (code?.type === 'element' && code.tagName === 'code') {
+              const language = String(code.properties.className ?? '').match(
+                /language-([\w+-]+)/,
+              )?.[1];
+              if (language && getDiagramKind(language)) {
+                const source = code.children
+                  .map((child) => (child.type === 'text' ? child.value : ''))
+                  .join('')
+                  .replace(/\n$/, '');
+                return <DiagramCodeBlock language={language} source={source} />;
+              }
+            }
+            return (
+              <pre
+                {...props}
+                className="mb-2 overflow-x-auto rounded bg-bg-card p-3 last:mb-0"
+              />
+            );
+          },
           code: ({ className, ...props }) => (
             <code
               {...documentAttributes(props)}

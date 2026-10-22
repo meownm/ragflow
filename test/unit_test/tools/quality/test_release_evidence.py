@@ -55,20 +55,24 @@ def _alignment_report():
                 {"id": row["id"], "coverage": expected[0], "consistency": expected[1], "references": refs, "reason": "Expected fixture decision"}
                 for row, expected in zip(basis["inventory"], expected_rows, strict=True)
             ],
-            "additional_rules": [{"kind": "UNSUPPORTED_BUSINESS_RULE", "references": refs, "reason": "Fixture commission"}] if case[0] == "BTZ-23" else [],
+            "additional_rules": [{"kind": "UNSUPPORTED_BUSINESS_RULE", "references": refs, "reason": "Fixture business action"}]
+            if oracle.get("unsupported_business_rule", case[0] == "BTZ-23")
+            else [],
             "joint": {"checked_ids": [row["id"] for row in basis["inventory"]], "consistency": oracle.get("joint", "CONSISTENT"), "reason": "Expected fixture decision"},
         }
         result = validate_report(value, document, basis)
         if oracle.get("row_quotes"):
             for row, quote in zip(value["requirements"], oracle["row_quotes"], strict=True):
-                row["references"] = [{"section": "5", "quote": quote}]
+                row["references"] = [{"section": next(section for section, text in document["sections"].items() if quote in text), "quote": quote}] if quote else []
             result = validate_report(value, document, basis)
+        if quote := oracle.get("unsupported_quote"):
+            value["additional_rules"][0]["references"] = [{"section": next(section for section, text in document["sections"].items() if quote in text), "quote": quote}]
         options = {"temperature": 0, "num_ctx": 32768, "num_predict": 8192}
         payload = report_input(document, basis)
         model_report = deepcopy(value)
         for group in ("requirements", "additional_rules"):
             for index, row in enumerate(model_report[group]):
-                if group == "requirements" and oracle.get("row_quotes"):
+                if group == "requirements" and oracle.get("row_quotes") and oracle["row_quotes"][index]:
                     row["references"] = [{"citation_id": next(item["id"] for item in payload["citations"] if oracle["row_quotes"][index] in item["quote"])}]
                 else:
                     row["references"] = [{"citation_id": next(item["id"] for item in payload["citations"] if item["section"] == ref["section"])} for ref in row["references"]]

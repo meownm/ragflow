@@ -7,6 +7,12 @@ import {
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { SourcePicker } from './source-picker';
 
+jest.mock('react-i18next', () => ({
+  useTranslation: () => ({
+    t: (key: string) => (key === 'common.close' ? 'Close' : key),
+  }),
+}));
+
 jest.mock('react-markdown', () => ({
   __esModule: true,
   default: ({ children }: { children?: string }) => <>{children}</>,

@@ -98,13 +98,14 @@ def test_full_snapshot_proposals_are_compacted_without_losing_their_original_rev
     candidate = {**content, "5": "Предложение"}
     row = TechnicalSpecification.get_by_id(doc["id"])
     payload = deepcopy(row.payload)
-    payload["proposals"] = [{"id": "proposal", "source": "chat", "base_revision": 1, "sections": candidate, "status": "ready"}]
+    payload["proposals"] = [{"id": "proposal", "source": "chat", "message_id": "original-request", "base_revision": 1, "sections": candidate, "status": "ready"}]
     TechnicalSpecification.update(payload=payload).where(TechnicalSpecification.id == doc["id"]).execute()
     assert store.get("author", "workspace", doc["id"])["proposals"][0]["sections"] == candidate
     saved = store.change("author", "workspace", doc["id"], 1, lambda value: value["sections"].update({"1": "Текущий текст"}), "edit")
     assert saved["revision"] == 2 and saved["proposals"][0]["sections"] == candidate
     stored = TechnicalSpecification.get_by_id(doc["id"]).payload["proposals"][0]
     assert stored["patches"] == {"5": "Предложение"} and "sections" not in stored
+    assert stored["message_id"] == "original-request"
     assert store.get("author", "workspace", doc["id"]) == saved
     assert store.history("author", "workspace", doc["id"], 1)["sections"] == content
 

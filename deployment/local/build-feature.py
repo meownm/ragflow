@@ -7,12 +7,18 @@ import json
 import subprocess
 import sys
 import tarfile
-import tempfile
+import uuid
 from pathlib import Path
 
 
-def run(*args: str) -> None:
-    subprocess.run(args, check=True)
+def run(*args: str, capture: bool = False) -> str:
+    from tools.quality.workspace import start_process
+
+    with start_process(args, stdout=subprocess.PIPE if capture else None, text=True) as process:
+        output, _ = process.communicate()
+        if process.returncode:
+            raise subprocess.CalledProcessError(process.returncode, args, output)
+        return output or ""
 
 
 def main() -> int:
@@ -22,6 +28,9 @@ def main() -> int:
     parser.add_argument("--ssh-key", type=Path, default=Path.home() / ".ssh" / "ragflow_nuc8_ed25519")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
+    sys.path.insert(0, str(root))
+    from tools.quality.workspace import disposable_workspace
+
     if not args.ssh_key.is_file():
         parser.error(f"SSH key does not exist: {args.ssh_key}")
     untracked = subprocess.check_output(["git", "-C", str(root), "ls-files", "--others", "--exclude-standard", "-z"]).decode().strip("\0").split("\0")
@@ -31,9 +40,7 @@ def main() -> int:
     profile = {"platform": "linux/amd64", "mode": "feature"}
     task_root = Path(root.anchor) / "tmp/ragflow"
     task_root.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="feature-", dir=task_root) as directory:
-        temporary = Path(directory)
-        (temporary / ".keep").write_text("Active feature build; removed with this workspace.\n", encoding="utf-8")
+    with disposable_workspace(task_root / f"feature-{uuid.uuid4().hex}") as temporary:
         candidate = temporary / "snapshot"
         profile_file = temporary / "profile.json"
         profile_file.write_text(json.dumps(profile), encoding="utf-8")
@@ -46,7 +53,7 @@ def main() -> int:
             stream.add(candidate, arcname="snapshot")
         ssh = ["ssh", "-i", str(args.ssh_key), "-o", "BatchMode=yes", args.host]
         scp = ["scp", "-i", str(args.ssh_key), "-o", "BatchMode=yes"]
-        remote = subprocess.check_output([*ssh, "mktemp -d /tmp/ragflow-feature-XXXXXXXX"], text=True).strip()
+        remote = run(*ssh, "mktemp -d /tmp/ragflow-feature-XXXXXXXX", capture=True).strip()
         if not remote.startswith("/tmp/ragflow-feature-") or not remote.rsplit("-", 1)[-1].isalnum():
             raise ValueError("Unexpected remote temporary directory")
         try:

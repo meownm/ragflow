@@ -113,7 +113,10 @@ def test_ci_postgres_overlay_disables_mysql_and_gates_ragflow_on_postgres():
     overlay = (ROOT / "docker/docker-compose.ci-postgres.yml").read_text()
     assert "postgres:16-alpine" in overlay
     assert "pg_isready" in overlay
-    assert "mysql-disabled" in overlay
+    services = yaml.load(overlay, Loader=yaml.BaseLoader)["services"]
+    assert "mysql" not in yaml.safe_load((ROOT / "docker/docker-compose-base.yml").read_text())["services"]
+    assert "mysql" not in services["ragflow-cpu"]["depends_on"]
+    assert services["ragflow-cpu"]["depends_on"]["postgres"]["condition"] == "service_healthy"
     assert "condition: service_healthy" in overlay
     assert 'REGISTER_ENABLED: "1"' in overlay
 

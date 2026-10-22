@@ -3,6 +3,10 @@ import { MemoryRouter, Route, Routes } from 'react-router';
 
 import ServiceWorkspace from './index';
 
+jest.mock('@/routes', () => ({
+  Routes: { Transcription: '/transcription', Translator: '/translator' },
+}));
+
 jest.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }));

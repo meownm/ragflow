@@ -279,7 +279,7 @@ function Get-ChangePlan {
     $composeConfig = @($ChangedPaths | Where-Object {
         $_ -like "docker/*.yml" -or $_ -like "docker/*.yaml" -or $_ -like "docker/*.env*"
     })
-    $runtimeRoots = @("api/", "rag/", "agent/", "common/", "admin/", "conf/", "business_documents/", "mcp/", "memory/")
+    $runtimeRoots = @("api/", "rag/", "agent/", "common/", "admin/", "conf/", "business_documents/", "document_exchange/", "mcp/", "memory/")
     $runtime = @($ChangedPaths | Where-Object {
         $candidate = $_
         @($runtimeRoots | Where-Object { $candidate.StartsWith($_, [System.StringComparison]::OrdinalIgnoreCase) }).Count -gt 0

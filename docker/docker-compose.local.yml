@@ -108,6 +108,7 @@ services:
       - ../test/unit_test/api/apps/business_documents/helpers.py:/ragflow/test/unit_test/api/apps/business_documents/helpers.py:ro
       - ../tools/quality/verify_business_document_quality_report.py:/ragflow/tools/quality/verify_business_document_quality_report.py:ro
       - ../business_documents:/ragflow/business_documents:ro
+      - ../document_exchange:/ragflow/document_exchange:ro
       - ../agent/canvas.py:/ragflow/agent/canvas.py:ro
       - ../agent/templates/mrz_document_reader.json:/ragflow/agent/templates/mrz_document_reader.json:ro
       - ../agent/component/openmetadata.py:/ragflow/agent/component/openmetadata.py:ro

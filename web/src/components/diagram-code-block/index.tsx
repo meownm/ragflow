@@ -1,5 +1,4 @@
 import DOMPurify from 'dompurify';
-import mermaid from 'mermaid';
 import { useEffect, useState } from 'react';
 import { useTranslation as useUiTranslation } from 'react-i18next';
 
@@ -18,14 +17,15 @@ const maxDiagramSourceLength = 50_000;
 let mermaidInitialized = false;
 let mermaidRenderSequence = 0;
 
-const getMermaidApi = () => {
+const getMermaidApi = async () => {
+  const { default: mermaid } = await import('mermaid');
   if (!mermaidInitialized) {
     mermaid.initialize({
       startOnLoad: false,
       securityLevel: 'strict',
       suppressErrorRendering: true,
       theme: 'neutral',
-      flowchart: { htmlLabels: false },
+      htmlLabels: false,
     });
     mermaidInitialized = true;
   }
@@ -44,7 +44,7 @@ export const getDiagramKind = (language?: string): DiagramKind | undefined =>
   language ? diagramLanguageAliases[language.toLowerCase()] : undefined;
 
 async function renderMermaid(source: string) {
-  const mermaidApi = getMermaidApi();
+  const mermaidApi = await getMermaidApi();
   mermaidRenderSequence += 1;
   const result = await mermaidApi.render(
     `ragflow-mermaid-${mermaidRenderSequence}`,

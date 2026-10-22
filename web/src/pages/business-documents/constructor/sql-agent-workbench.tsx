@@ -32,7 +32,6 @@ import {
   decideBusinessDocumentSqlAgentProposal,
   fetchBusinessDocumentSqlAgentProject,
   listBusinessDocumentSqlAgentProjects,
-  loadBusinessDocumentSqlSchemaEntities,
   preflightBusinessDocumentSqlProject,
   previewBusinessDocumentSqlRun,
   proposeBusinessDocumentSqlConclusion,
@@ -46,10 +45,7 @@ import {
 import {
   AlertCircle,
   ArrowRight,
-  Bot,
   Check,
-  CheckCircle2,
-  ChevronRight,
   Code2,
   Database,
   FileText,
@@ -60,22 +56,15 @@ import {
   Table2,
   X,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation as useUiTranslation } from 'react-i18next';
 import { GuidedSqlForm } from './guided-sql-form';
 import {
-  applySchemaCandidateDetails,
-  buildSchemaSnapshot,
-  chooseSchemaCandidate,
-  toggleSchemaColumn,
-  type SchemaWorkspaceState,
-} from './schema-workspace';
-import {
+  acceptedRequirementsText,
   queryProposalFromPending,
   requirementsProposal,
-  schemaArtifactFromWorkspace,
-  schemaWorkspaceFromProposal,
 } from './sql-agent-document';
+import './sql-agent-workbench.css';
 import { SqlExportButton } from './sql-export-button';
 import {
   PreQueryConnection,
@@ -90,6 +79,7 @@ import {
 } from './sql-result-deadline';
 import { SqlRevisionWorkspacePanel } from './sql-revision-workspace';
 import { SqlSchemaGraph, type SqlGraphChangeRequest } from './sql-schema-graph';
+import { SqlSchemaReview } from './sql-schema-review';
 
 const STAGES: Array<{
   kind: SqlAgentKind;
@@ -105,7 +95,7 @@ const STAGES: Array<{
   },
   {
     kind: 'QUERY',
-    label: 'Проверка запроса',
+    label: 'Проверка SQL',
   },
 ];
 
@@ -126,6 +116,13 @@ function commandKey(prefix: string) {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Операция не выполнена.';
+}
+
+function schemaSearchTerms(input: string) {
+  return input
+    .split(/\r?\n/)
+    .map((item) => item.replace(/^\s*[-*•]\s+/, '').trim())
+    .filter(Boolean);
 }
 
 function requirementsKindLabel(kind: unknown) {
@@ -373,277 +370,6 @@ function RequirementsReview({
         acceptDisabled={!requirements.length || !blockingAnswered}
         acceptLabel="Подтвердить требования"
         onAccept={() => onDecision('ACCEPT', { answers })}
-        onReject={() => onDecision('REJECT', null)}
-      />
-    </div>
-  );
-}
-
-function SchemaReview({
-  project,
-  busy,
-  onDecision,
-  onPreview,
-}: {
-  project: SqlAgentProject;
-  busy: boolean;
-  onPreview?: (schema: Record<string, unknown>) => void;
-  onDecision: (
-    decision: 'ACCEPT' | 'REJECT',
-    payload: Record<string, unknown> | null,
-  ) => Promise<void>;
-}) {
-  const [workspace, setWorkspace] = useState<SchemaWorkspaceState>(() =>
-    schemaWorkspaceFromProposal(project),
-  );
-  const [loadingEntity, setLoadingEntity] = useState<string | null>(null);
-  const [localError, setLocalError] = useState<string | null>(null);
-  useEffect(() => {
-    setWorkspace(schemaWorkspaceFromProposal(project));
-    setLocalError(null);
-  }, [project]);
-  const snapshot = useMemo(
-    () => buildSchemaSnapshot(workspace.resolutions, workspace.requirements),
-    [workspace],
-  );
-  useEffect(() => {
-    onPreview?.({
-      schema_snapshot: snapshot,
-      accepted_schema: workspace.resolutions
-        .filter((item) => item.selectedEntityId)
-        .map((item) => ({ entity_id: item.selectedEntityId })),
-    });
-  }, [snapshot, workspace.resolutions, onPreview]);
-
-  const selectCandidate = async (resolutionIndex: number, entityId: string) => {
-    setLocalError(null);
-    setWorkspace((current) => ({
-      ...current,
-      resolutions: current.resolutions.map((resolution, index) =>
-        index === resolutionIndex
-          ? chooseSchemaCandidate(resolution, entityId)
-          : resolution,
-      ),
-    }));
-    setLoadingEntity(entityId);
-    try {
-      const response = await loadBusinessDocumentSqlSchemaEntities({
-        entity_ids: [entityId],
-        locale: project.locale,
-      });
-      const details = response.entities.find(
-        (item) => item.entity_id === entityId,
-      );
-      if (!details?.entity || details.lookup.status === 'ERROR') {
-        throw new Error(
-          details?.lookup.message || 'Схема выбранной таблицы недоступна.',
-        );
-      }
-      setWorkspace((current) => ({
-        ...current,
-        resolutions: current.resolutions.map((resolution, index) => {
-          if (index !== resolutionIndex) return resolution;
-          const applied = applySchemaCandidateDetails(
-            chooseSchemaCandidate(resolution, entityId),
-            details.entity!,
-            {
-              freshness: details.freshness,
-              retrieval: details.retrieval,
-              sources: details.sources,
-              warnings: details.warnings,
-            },
-          );
-          const recommended = new Set(
-            applied.interpretation?.recommendedColumnIds ?? [],
-          );
-          return {
-            ...applied,
-            selectedColumnIds:
-              applied.candidates
-                .find((candidate) => candidate.id === entityId)
-                ?.columns.filter((column) => recommended.has(column.id))
-                .map((column) => column.id) ?? [],
-          };
-        }),
-      }));
-    } catch (error) {
-      setLocalError(errorMessage(error));
-    } finally {
-      setLoadingEntity(null);
-    }
-  };
-
-  const toggleColumn = (resolutionIndex: number, columnId: string) => {
-    setWorkspace((current) => ({
-      ...current,
-      resolutions: current.resolutions.map((resolution, index) =>
-        index === resolutionIndex
-          ? toggleSchemaColumn(resolution, columnId)
-          : resolution,
-      ),
-    }));
-  };
-
-  return (
-    <div className="space-y-7" data-testid="sql-agent-schema-review">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-[0.14em] text-accent-primary">
-            Поиск источника данных
-          </p>
-          <h3 className="mt-1 text-xl font-semibold">
-            Проверьте найденные данные
-          </h3>
-          <p className="mt-1 text-sm text-text-secondary">
-            По описанию вопроса каталог предложил источники. Выберите подходящий
-            по смыслу, затем отметьте поля для расчёта и условий.
-          </p>
-        </div>
-        <Badge
-          variant="outline"
-          className={
-            snapshot.status === 'READY'
-              ? 'border-state-success text-state-success'
-              : ''
-          }
-        >
-          {snapshot.status === 'READY' ? 'Снимок готов' : 'Нужно уточнение'}
-        </Badge>
-      </div>
-
-      {localError && (
-        <p className="border-s-2 border-state-error ps-3 text-sm text-state-error">
-          {localError}
-        </p>
-      )}
-
-      <div className="divide-y divide-border-button border-y border-border-button">
-        {workspace.resolutions.map((resolution, resolutionIndex) => {
-          const selected = resolution.candidates.find(
-            (candidate) => candidate.id === resolution.selectedEntityId,
-          );
-          return (
-            <section
-              key={`${resolution.term}-${resolutionIndex}`}
-              className="py-5"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <p className="text-xs text-text-disabled">Что ищем</p>
-                  <h4 className="text-base font-semibold">{resolution.term}</h4>
-                </div>
-                {resolution.interpretation?.reason && (
-                  <p className="max-w-xl text-xs leading-5 text-text-secondary">
-                    {resolution.interpretation.reason}
-                  </p>
-                )}
-              </div>
-              <div className="mt-3 grid gap-2 lg:grid-cols-2">
-                {resolution.candidates.map((candidate) => (
-                  <button
-                    key={candidate.id}
-                    type="button"
-                    className={`flex min-w-0 items-center justify-between gap-3 rounded-md border px-3 py-3 text-left transition-colors ${
-                      resolution.selectedEntityId === candidate.id
-                        ? 'border-accent-primary bg-accent-primary/5'
-                        : 'border-border-button hover:border-border-default'
-                    }`}
-                    onClick={() =>
-                      void selectCandidate(resolutionIndex, candidate.id)
-                    }
-                  >
-                    <span className="min-w-0">
-                      <span className="block truncate text-sm font-medium">
-                        {candidate.displayName || candidate.name}
-                      </span>
-                      <span className="block text-xs text-text-disabled">
-                        {candidate.description ||
-                          'Описание источника не указано'}
-                      </span>
-                      <span className="block truncate text-xs text-text-disabled">
-                        Источник: {candidate.database} · {candidate.schema}
-                      </span>
-                    </span>
-                    {loadingEntity === candidate.id ? (
-                      <LoaderCircle className="size-4 shrink-0 animate-spin" />
-                    ) : resolution.selectedEntityId === candidate.id ? (
-                      <CheckCircle2 className="size-4 shrink-0 text-accent-primary" />
-                    ) : (
-                      <ChevronRight className="size-4 shrink-0 text-text-disabled" />
-                    )}
-                  </button>
-                ))}
-              </div>
-              {selected?.schemaStatus === 'summary' && (
-                <Button
-                  className="mt-3"
-                  size="sm"
-                  variant="outline"
-                  disabled={loadingEntity !== null}
-                  onClick={() =>
-                    void selectCandidate(resolutionIndex, selected.id)
-                  }
-                >
-                  <Database className="size-4" />
-                  Загрузить поля
-                </Button>
-              )}
-              {selected?.schemaStatus === 'loaded' && (
-                <div className="mt-4 border-s-2 border-border-button ps-4">
-                  <p className="text-xs font-medium">
-                    Поля для ответа и расчёта · выбрано{' '}
-                    {resolution.selectedColumnIds.length}
-                  </p>
-                  <p className="mt-1 text-xs text-text-secondary">
-                    Отметьте поля, по которым нужно группировать, считать или
-                    отбирать строки. Это ещё не столбцы готового ответа: их
-                    можно проверить на следующем шаге.
-                  </p>
-                  <div className="mt-3 grid max-h-56 gap-x-5 gap-y-2 overflow-y-auto pe-2 sm:grid-cols-2">
-                    {selected.columns.map((column) => (
-                      <label
-                        key={column.id}
-                        className="flex cursor-pointer items-start gap-2 text-xs"
-                      >
-                        <Checkbox
-                          className="mt-0.5"
-                          checked={resolution.selectedColumnIds.includes(
-                            column.id,
-                          )}
-                          onCheckedChange={() =>
-                            toggleColumn(resolutionIndex, column.id)
-                          }
-                        />
-                        <span className="min-w-0">
-                          <span className="block truncate font-medium">
-                            {column.displayName || column.name}
-                          </span>
-                          <span className="block truncate text-text-disabled">
-                            {column.description ||
-                              column.dataType ||
-                              'Описание не указано'}
-                          </span>
-                        </span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </section>
-          );
-        })}
-      </div>
-
-      <DecisionBar
-        busy={busy || loadingEntity !== null}
-        acceptDisabled={snapshot.status !== 'READY'}
-        acceptLabel="Подтвердить схему"
-        onAccept={() =>
-          onDecision(
-            'ACCEPT',
-            schemaArtifactFromWorkspace(workspace) as Record<string, unknown>,
-          )
-        }
         onReject={() => onDecision('REJECT', null)}
       />
     </div>
@@ -2175,6 +1901,21 @@ export function SqlAgentWorkbench({
   };
   const projectLoad = useRef(0);
   const registryLoad = useRef(0);
+  const [registryOpen, setRegistryOpen] = useState(false);
+  const registryTrigger = useRef<HTMLButtonElement>(null);
+  const registrySearch = useRef<HTMLInputElement>(null);
+  const registryPanel = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (registryOpen) {
+      registrySearch.current?.focus();
+    } else if (registryPanel.current?.contains(document.activeElement)) {
+      registryTrigger.current?.focus();
+    }
+  }, [registryOpen]);
+  const closeRegistry = () => {
+    setRegistryOpen(false);
+    registryTrigger.current?.focus();
+  };
   const [search, setSearch] = useState('');
   const [showArchived, setShowArchived] = useState(false);
   const archivedFilter = useRef(false);
@@ -2197,6 +1938,7 @@ export function SqlAgentWorkbench({
     selectedProjectId.current = null;
     setLoading(false);
     setCreating(true);
+    setRegistryOpen(false);
     setError(null);
   };
   const cancelCreate = () => {
@@ -2205,6 +1947,13 @@ export function SqlAgentWorkbench({
   };
   const [terms, setTerms] = useState('');
   const [editingQuestion, setEditingQuestion] = useState(false);
+  useEffect(() => {
+    if (editingQuestion) {
+      document
+        .getElementById('sql-question-revision')
+        ?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+    }
+  }, [editingQuestion]);
   const [questionDraft, setQuestionDraft] = useState('');
   const [compiled, setCompiled] = useState<SqlQueryCompileResponse | null>(
     null,
@@ -2224,11 +1973,13 @@ export function SqlAgentWorkbench({
     sql: string;
   } | null>(null);
   useEffect(() => {
+    setTerms('');
     setSchemaPreview(null);
     setGraphRevision(null);
     setGraphChange(null);
     setEditingTitle(false);
     setEditingQuestion(false);
+    setRegistryOpen(false);
   }, [project?.id]);
   useEffect(() => {
     registryAttempt.current = null;
@@ -2403,7 +2154,6 @@ export function SqlAgentWorkbench({
       if (generation !== projectLoad.current) return;
       setProject(loaded);
       announceSelection(loaded.id);
-      setTerms('');
       setEditingQuestion(false);
       setCreating(false);
       setError(null);
@@ -2550,10 +2300,7 @@ export function SqlAgentWorkbench({
 
   const runAgent = async (kind: SqlAgentKind) => {
     if (!project || !canEditProject) return;
-    const parsedTerms = terms
-      .split(/\r?\n/)
-      .map((item) => item.replace(/^\s*[-*•]\s+/, '').trim())
-      .filter(Boolean);
+    const parsedTerms = schemaSearchTerms(terms);
     setBusy(true);
     try {
       const updated = await requestBusinessDocumentSqlAgent(project.id, {
@@ -2578,6 +2325,7 @@ export function SqlAgentWorkbench({
   const decide = async (
     decision: 'ACCEPT' | 'REJECT',
     artifactPayload: Record<string, unknown> | null,
+    repeatSchema = false,
   ) => {
     if (!project?.pending_proposal || !canEditProject) return;
     setBusy(true);
@@ -2601,7 +2349,12 @@ export function SqlAgentWorkbench({
       if (decision === 'ACCEPT' && updated.next_agent === 'SCHEMA') {
         setTerms('');
       }
-      if (decision === 'ACCEPT' && updated.next_agent === 'QUERY') {
+      if (
+        (decision === 'ACCEPT' && updated.next_agent === 'QUERY') ||
+        (repeatSchema &&
+          decision === 'REJECT' &&
+          updated.next_agent === 'SCHEMA')
+      ) {
         const started = await requestBusinessDocumentSqlAgent(updated.id, {
           schema_version: '1',
           expected_state_version: updated.state_version,
@@ -2609,7 +2362,10 @@ export function SqlAgentWorkbench({
             `run-${updated.next_agent.toLowerCase()}`,
           ),
           kind: updated.next_agent,
-          payload: { locale: updated.locale },
+          payload:
+            updated.next_agent === 'SCHEMA'
+              ? { locale: updated.locale, terms: schemaSearchTerms(terms) }
+              : { locale: updated.locale },
         });
         setProject(started);
         setProjects((current) =>
@@ -2623,6 +2379,14 @@ export function SqlAgentWorkbench({
     }
   };
 
+  const preparing = Boolean(
+    project && KIND_ORDER[project.stage] < KIND_ORDER.QUERY,
+  );
+  const editQuestion = () => {
+    if (!project || !canEditProject) return;
+    setQuestionDraft(project.source_request || '');
+    setEditingQuestion(true);
+  };
   const currentAgent = project?.next_agent;
   const proposalKind = project?.pending_proposal?.kind;
   const visibleProjects = projects.filter((item) =>
@@ -2638,26 +2402,157 @@ export function SqlAgentWorkbench({
       ['QUEUED', 'RUNNING', 'CANCEL_REQUESTED'].includes(run.status),
     );
 
+  const projectContext = project && (
+    <details
+      key="project-context"
+      className="sql-project-context text-text-secondary"
+      data-preparing={preparing}
+      open={!preparing}
+    >
+      <summary className="text-sm">
+        Требования, история и обсуждения · ER-схема
+      </summary>
+      <div className="text-text-primary">
+        {preparing && project.artifact_ids.requirements && (
+          <section className="mb-5 space-y-2 text-sm">
+            <h3 className="font-semibold">Подтверждённые требования</h3>
+            <p className="whitespace-pre-wrap break-words leading-6 text-text-secondary">
+              {acceptedRequirementsText(project)}
+            </p>
+          </section>
+        )}
+        <SqlSchemaGraph
+          key={`graph:${project.id}`}
+          project={project}
+          sql={
+            graphRevision?.sql ||
+            compiled?.sql ||
+            project.compilation?.result.sql ||
+            ''
+          }
+          viewLabel={
+            graphRevision
+              ? `Версия запроса ${graphRevision.revision}`
+              : undefined
+          }
+          readOnlyView={Boolean(graphRevision)}
+          exportSource={
+            graphRevision
+              ? graphRevision.compilation_id
+                ? {
+                    compilation_id: graphRevision.compilation_id,
+                    query_artifact_id: graphRevision.id,
+                  }
+                : undefined
+              : project.compilation?.id && project.artifact_ids.query
+                ? {
+                    compilation_id: project.compilation.id,
+                    query_artifact_id: project.artifact_ids.query,
+                  }
+                : undefined
+          }
+          schema={
+            project.pending_proposal?.kind === 'SCHEMA'
+              ? schemaPreview
+              : (
+                  project.pending_proposal?.payload.agent_result as
+                    | {
+                        source?: {
+                          proposed_schema?: Record<string, unknown>;
+                        };
+                      }
+                    | undefined
+                )?.source?.proposed_schema ||
+                project.artifacts?.schema ||
+                null
+          }
+          candidateSql={
+            !graphRevision
+              ? (
+                  project.pending_proposal?.payload.agent_result as
+                    | { proposal?: { sql?: string } }
+                    | undefined
+                )?.proposal?.sql
+              : undefined
+          }
+          onRequestChange={setGraphChange}
+        />
+        {project.artifact_ids.schema && project.stage !== 'COMPLETE' && (
+          <PreQueryConnection
+            key={project.id}
+            project={project}
+            onRefresh={() => loadProjects(project.id)}
+            busy={busy}
+          />
+        )}
+        <SqlRevisionWorkspacePanel
+          project={project}
+          onRefresh={() => loadProjects(project.id)}
+          changeRequest={graphChange}
+          onQueryViewChange={setGraphRevision}
+          onSchemaRequested={(suggested) => setTerms(suggested.join('\n'))}
+        />
+      </div>
+    </details>
+  );
+
   return (
     <div
-      className="grid h-full min-h-0 lg:grid-cols-[260px_minmax(0,1fr)]"
+      className="sql-agent-workbench"
       data-testid="sql-agent-workbench"
+      onKeyDown={(event) => {
+        if (event.key === 'Escape' && registryOpen) {
+          event.preventDefault();
+          closeRegistry();
+        }
+      }}
     >
-      <aside className="min-h-0 border-e border-border-button bg-bg-base lg:overflow-y-auto">
-        <div className="flex items-center justify-between gap-2 border-b border-border-button px-4 py-4">
+      <Button
+        ref={registryTrigger}
+        variant="ghost"
+        className="sql-project-switcher"
+        aria-expanded={registryOpen}
+        aria-controls="sql-project-registry"
+        onClick={() => setRegistryOpen(!registryOpen)}
+      >
+        {registryOpen ? 'Закрыть список запросов' : 'Запросы · выбрать проект'}
+      </Button>
+      <aside
+        ref={registryPanel}
+        id="sql-project-registry"
+        aria-label="SQL-проекты"
+        data-open={registryOpen}
+        className="sql-project-registry border-e border-border-button bg-bg-base"
+        onBlur={(event) => {
+          if (
+            registryOpen &&
+            !event.currentTarget.contains(event.relatedTarget) &&
+            event.relatedTarget !== registryTrigger.current
+          ) {
+            setRegistryOpen(false);
+          }
+        }}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border-button px-4 py-4">
           <div>
             <p className="text-sm font-semibold">Запросы</p>
             <p className="text-xs text-text-disabled">
               {visibleProjects.length} {showArchived ? 'в архиве' : 'в списке'}
             </p>
           </div>
-          <Button size="sm" variant="ghost" onClick={beginCreate}>
+          <Button
+            className="w-full"
+            size="sm"
+            variant="outline"
+            onClick={beginCreate}
+          >
             <Plus className="size-4" />
             Новый запрос
           </Button>
         </div>
         <div className="space-y-3 border-b border-border-button px-4 py-3">
           <Input
+            ref={registrySearch}
             aria-label="Поиск проектов"
             placeholder="Найти по названию"
             value={search}
@@ -2684,9 +2579,12 @@ export function SqlAgentWorkbench({
                   ? 'bg-bg-accent'
                   : 'hover:bg-bg-accent/60'
               }`}
-              onClick={() => void selectProject(item.id)}
+              onClick={() => {
+                if (registryOpen) closeRegistry();
+                void selectProject(item.id);
+              }}
             >
-              <span className="block truncate text-sm font-medium">
+              <span className="block break-words text-sm font-medium leading-5">
                 {item.title}
               </span>
               <span className="mt-1 flex items-center gap-1.5 text-xs text-text-disabled">
@@ -2708,7 +2606,7 @@ export function SqlAgentWorkbench({
         </div>
       </aside>
 
-      <div className="min-h-0 overflow-y-auto">
+      <div className="sql-project-content">
         {error && !project && (
           <p
             role="alert"
@@ -2731,16 +2629,15 @@ export function SqlAgentWorkbench({
           <EmptyProjects onCreate={beginCreate} />
         ) : (
           <div className="min-h-full">
-            <header className="px-5 py-5 lg:px-7">
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div className="min-w-0">
+            <header className="sql-project-header">
+              <div className="relative flex items-start justify-between gap-4">
+                <div className="min-w-0 flex-1 pe-16">
                   <div className="flex items-center gap-2">
-                    <Bot className="size-4 text-accent-primary" />
                     <span className="text-xs font-medium text-text-secondary">
-                      Запрос к данным
+                      SQL-проекты / запрос к данным
                     </span>
                   </div>
-                  <h2 className="mt-1 truncate text-2xl font-semibold tracking-tight">
+                  <h2 className="mt-1 break-words text-[22px] font-semibold leading-8 tracking-tight xl:text-2xl">
                     {project.title}
                   </h2>
                   {project.archived_at && (
@@ -2778,53 +2675,82 @@ export function SqlAgentWorkbench({
                       </Button>
                     </div>
                   ) : (
-                    <div className="mt-2 flex flex-wrap items-center gap-2">
-                      {canManage && !project.archived_at && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={registryBusy}
-                          onClick={() => {
-                            setTitleDraft(project.title);
-                            setEditingTitle(true);
-                          }}
-                        >
-                          Переименовать
-                        </Button>
-                      )}
-                      {(project.capabilities.copy ??
-                        project.capabilities.execute) !== false && (
+                    <details
+                      className={
+                        preparing ? 'absolute end-0 top-0 z-10' : 'mt-2'
+                      }
+                      open={!preparing}
+                    >
+                      <summary
+                        className={
+                          preparing
+                            ? 'cursor-pointer list-none rounded px-3 py-2 text-sm'
+                            : 'hidden'
+                        }
+                      >
+                        Ещё
+                      </summary>
+                      <div
+                        className={
+                          preparing
+                            ? 'absolute end-0 flex w-52 flex-col items-stretch gap-1 rounded-md border border-border-button bg-bg-base p-2 shadow-lg'
+                            : 'flex flex-wrap items-center gap-2'
+                        }
+                      >
+                        {canManage && !project.archived_at && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={registryBusy}
+                            onClick={() => {
+                              setTitleDraft(project.title);
+                              setEditingTitle(true);
+                            }}
+                          >
+                            Переименовать
+                          </Button>
+                        )}
+                        {(project.capabilities.copy ??
+                          project.capabilities.execute) !== false && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={busy}
+                            onClick={() => void manageProject('copy')}
+                          >
+                            Создать копию
+                          </Button>
+                        )}
+                        {canManage && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={registryBusy}
+                            onClick={() =>
+                              void manageProject({
+                                archived: !project.archived_at,
+                              })
+                            }
+                          >
+                            {project.archived_at
+                              ? 'Восстановить из архива'
+                              : 'В архив'}
+                          </Button>
+                        )}
                         <Button
                           size="sm"
                           variant="ghost"
                           disabled={busy}
-                          onClick={() => void manageProject('copy')}
+                          onClick={() => void loadProjects(project.id)}
                         >
-                          Создать копию
+                          <RefreshCw className="size-4" />
+                          Обновить
                         </Button>
-                      )}
-                      {canManage && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={registryBusy}
-                          onClick={() =>
-                            void manageProject({
-                              archived: !project.archived_at,
-                            })
-                          }
-                        >
-                          {project.archived_at
-                            ? 'Восстановить из архива'
-                            : 'В архив'}
-                        </Button>
-                      )}
-                    </div>
+                      </div>
+                    </details>
                   )}
-                  <p className="mt-1 line-clamp-2 max-w-3xl text-sm leading-6 text-text-secondary">
-                    {project.source_request}
-                  </p>
-                  {project.operation_state !== 'RUNNING' &&
+                  {!preparing &&
+                    project.operation_state !== 'RUNNING' &&
                     project.capabilities.edit !== false && (
                       <Button
                         size="sm"
@@ -2839,92 +2765,54 @@ export function SqlAgentWorkbench({
                       </Button>
                     )}
                 </div>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={busy}
-                  onClick={() => void loadProjects(project.id)}
-                >
-                  <RefreshCw className="size-4" />
-                  Обновить
-                </Button>
               </div>
+              <ol
+                className="sql-preparation-steps text-sm text-text-secondary"
+                aria-label="Этапы подготовки"
+              >
+                {STAGES.map((step, index) => (
+                  <li
+                    key={step.kind}
+                    aria-current={
+                      project.stage === step.kind ? 'step' : undefined
+                    }
+                    className={
+                      project.stage === step.kind
+                        ? 'bg-accent-primary/15 font-semibold text-accent-primary'
+                        : ''
+                    }
+                  >
+                    {index + 1} {step.label}
+                    {KIND_ORDER[project.stage] > index ? ' · готовы' : ''}
+                  </li>
+                ))}
+              </ol>
+              <details className="sql-question-summary bg-bg-card text-sm">
+                <summary>
+                  <span>{project.source_request}</span>
+                  <span>Вопрос целиком</span>
+                </summary>
+                <p className="mt-3 whitespace-pre-wrap break-words leading-6 text-text-secondary">
+                  {project.source_request}
+                </p>
+                {preparing &&
+                  canEditProject &&
+                  proposalKind !== 'SCHEMA' &&
+                  project.operation_state !== 'RUNNING' && (
+                    <Button
+                      className="mt-3"
+                      variant="outline"
+                      disabled={busy}
+                      onClick={editQuestion}
+                    >
+                      Изменить задачу
+                    </Button>
+                  )}
+              </details>
             </header>
 
-            <main className="px-5 py-7 lg:px-7" aria-live="polite">
-              <SqlSchemaGraph
-                key={`graph:${project.id}`}
-                project={project}
-                sql={
-                  graphRevision?.sql ||
-                  compiled?.sql ||
-                  project.compilation?.result.sql ||
-                  ''
-                }
-                viewLabel={
-                  graphRevision
-                    ? `Версия запроса ${graphRevision.revision}`
-                    : undefined
-                }
-                readOnlyView={Boolean(graphRevision)}
-                exportSource={
-                  graphRevision
-                    ? graphRevision.compilation_id
-                      ? {
-                          compilation_id: graphRevision.compilation_id,
-                          query_artifact_id: graphRevision.id,
-                        }
-                      : undefined
-                    : project.compilation?.id && project.artifact_ids.query
-                      ? {
-                          compilation_id: project.compilation.id,
-                          query_artifact_id: project.artifact_ids.query,
-                        }
-                      : undefined
-                }
-                schema={
-                  project.pending_proposal?.kind === 'SCHEMA'
-                    ? schemaPreview
-                    : (
-                        project.pending_proposal?.payload.agent_result as
-                          | {
-                              source?: {
-                                proposed_schema?: Record<string, unknown>;
-                              };
-                            }
-                          | undefined
-                      )?.source?.proposed_schema ||
-                      project.artifacts?.schema ||
-                      null
-                }
-                candidateSql={
-                  !graphRevision
-                    ? (
-                        project.pending_proposal?.payload.agent_result as
-                          | { proposal?: { sql?: string } }
-                          | undefined
-                      )?.proposal?.sql
-                    : undefined
-                }
-                onRequestChange={setGraphChange}
-              />
-              {project.artifact_ids.schema && project.stage !== 'COMPLETE' && (
-                <PreQueryConnection
-                  key={project.id}
-                  project={project}
-                  onRefresh={() => loadProjects(project.id)}
-                  busy={busy}
-                />
-              )}
-              <SqlRevisionWorkspacePanel
-                project={project}
-                onRefresh={() => loadProjects(project.id)}
-                changeRequest={graphChange}
-                onQueryViewChange={setGraphRevision}
-                onSchemaRequested={(suggested) =>
-                  setTerms(suggested.join('\n'))
-                }
-              />
+            <main className="sql-project-main" aria-live="polite">
+              {!preparing && projectContext}
               {editingQuestion && (
                 <section className="mb-6 max-w-2xl space-y-3 border-y border-border-button py-4">
                   <label
@@ -3030,7 +2918,7 @@ export function SqlAgentWorkbench({
                   <fieldset
                     className="min-w-0"
                     aria-label="Подтверждение предложения агента"
-                    disabled={!canEditProject}
+                    disabled={!canEditProject && proposalKind !== 'SCHEMA'}
                   >
                     {proposalKind === 'REQUIREMENTS' && (
                       <RequirementsReview
@@ -3040,11 +2928,18 @@ export function SqlAgentWorkbench({
                       />
                     )}
                     {proposalKind === 'SCHEMA' && (
-                      <SchemaReview
+                      <SqlSchemaReview
+                        key={`${project.id}:${project.pending_proposal?.id}`}
+                        readOnly={!canEditProject}
+                        onEditQuestion={
+                          canEditProject ? editQuestion : undefined
+                        }
                         onPreview={setSchemaPreview}
                         project={project}
                         busy={busy}
-                        onDecision={decide}
+                        onDecision={(decision, payload) =>
+                          decide(decision, payload, decision === 'REJECT')
+                        }
                       />
                     )}
                     {proposalKind === 'QUERY' && (
@@ -3159,6 +3054,7 @@ export function SqlAgentWorkbench({
                     onExpiryRefresh={() => loadProjects(project.id, true)}
                   />
                 )}
+              {preparing && projectContext}
             </main>
           </div>
         )}

@@ -7,6 +7,7 @@ import pytest
 from quart import Blueprint, Quart, request
 
 from api.technical_specifications.application import Specifications
+from test.unit_test.technical_specifications.test_auth_boundary import _install_application_error_handlers
 
 
 async def run(method, *args, **kwargs):
@@ -17,7 +18,7 @@ class AI:
     async def chat(self, actor, document, message):
         return {"answer": "Уточнён сценарий", "patches": {"5": "Оператор загружает документ."}}
 
-    async def verify(self, actor, before, after):
+    async def verify(self, actor, before, after, *, change_request=None):
         return {"valid": True, "issues": []}
 
 
@@ -43,6 +44,7 @@ def http(store, monkeypatch):
     spec.loader.exec_module(module)
     app = Quart(__name__)
     app.register_blueprint(module.manager)
+    _install_application_error_handlers(app)
     return app.test_client(), apps.current_user
 
 
@@ -214,3 +216,127 @@ async def test_http_rejects_non_object_body(http, payload):
     client, _actor = http
     response = await client.post(BASE, json=payload)
     assert response.status_code == 422
+
+
+# Use valid input for each action: validation errors must not accidentally pass
+# an authorization check without exercising the protected scenario.
+MUTATIONS = [
+    ("POST", "", {"title": "Чужая правка"}),
+    ("PUT", "/{id}", "edit"),
+    ("POST", "/{id}/chat", "chat"),
+    ("POST", "/{id}/comments", "comment"),
+    ("POST", "/{id}/comments", {"version": 1, "action": "reply", "comment_id": "comment", "message_id": "reply", "text": "Ответ"}),
+    ("POST", "/{id}/comments", {"version": 1, "action": "resolve", "comment_id": "comment", "resolved": True}),
+    ("POST", "/{id}/apply", {"version": 1, "proposal_id": "proposal"}),
+    ("POST", "/{id}/restore", {"version": 1, "revision": 1}),
+    ("POST", "/{id}/pull", {"version": 1}),
+    ("POST", "/{id}/resolve-eva", {"version": 1, "proposal_id": "proposal", "choice": "local"}),
+    ("POST", "/{id}/connect-eva", {"version": 1, "url": "https://eva.test/page"}),
+    ("POST", "/{id}/publish-eva", {"version": 1}),
+    ("POST", "/import-eva", {"operation_id": "import", "url": "https://eva.test/page"}),
+    ("POST", "/import-eva/cancel", {"operation_id": "import", "url": "https://eva.test/page"}),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("actor_id", ["reader", "stranger"])
+@pytest.mark.parametrize("method,suffix,payload", MUTATIONS)
+async def test_http_every_mutation_rejects_reader_and_outsider_without_side_effects(http, store, monkeypatch, actor_id, method, suffix, payload):
+    from api.db.db_models import DocumentExchangeBinding, DocumentExchangeOperation, TechnicalSpecificationRevision
+
+    client, actor = http
+    document = await create(client)
+    context = {"document_id": document["id"], "scope": "all", "revision": 1, "anchor": None}
+    payload = (
+        {
+            "edit": {"version": 1, "title": "Чужая правка", "sections": document["sections"]},
+            "chat": {"version": 1, "draft": {"message_id": "chat", "text": "Измени ТЗ", "context": context}},
+            "comment": {"version": 1, "message_id": "comment", "text": "Комментарий", "context": context},
+        }.get(payload, payload)
+        if isinstance(payload, str)
+        else payload
+    )
+
+    async def forbidden_model(*args, **kwargs):
+        pytest.fail("Unauthorized request reached the model")
+
+    monkeypatch.setattr(AI, "chat", forbidden_model)
+    monkeypatch.setattr(AI, "verify", forbidden_model)
+    actor.id = actor_id
+    response = await client.open(BASE + suffix.format(id=document["id"]), method=method, json=payload)
+    assert response.status_code in {403, 404}
+    error = await response.get_json()
+    assert error["code"] == response.status_code and error["data"]["error_code"]
+    assert document["title"] not in str(error) and document["id"] not in str(error)
+    assert store.get("author", "workspace", document["id"]) == document
+    assert TechnicalSpecificationRevision.select().count() == 1
+    assert DocumentExchangeBinding.select().count() == DocumentExchangeOperation.select().count() == 0
+
+
+@pytest.mark.asyncio
+async def test_http_reader_can_read_history_and_export_but_drafts_remain_personal(http):
+    client, actor = http
+    document = await create(client)
+    url = BASE + "/" + document["id"]
+    context = {"document_id": document["id"], "scope": "all", "revision": 1, "anchor": None}
+    private = {"message_id": "author-draft", "text": "Личный текст автора", "context": context}
+    assert (await client.put(url + "/draft", json={"version": 0, "draft": private})).status_code == 200
+    actor.id = "reader"
+    for suffix in ("", "/revisions", "/revisions/1"):
+        assert (await client.get(url + suffix)).status_code == 200
+    assert (await (await client.get(url + "/draft")).get_json())["data"] is None
+    reader_draft = {**private, "message_id": "reader-draft", "text": "Личный текст читателя"}
+    assert (await client.put(url + "/draft", json={"version": 0, "draft": reader_draft})).status_code == 200
+    assert (await client.post(url + "/export", json={"revision": 1})).status_code == 200
+    actor.id = "author"
+    assert (await (await client.get(url + "/draft")).get_json())["data"] == {"version": 1, **private}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("suffix", ["", "/draft", "/comments", "/chat", "/apply", "/restore", "/pull", "/resolve-eva", "/export", "/connect-eva", "/publish-eva"])
+async def test_http_malformed_mutations_have_a_structured_error_and_preserve_document(http, suffix):
+    client, _actor = http
+    document = await create(client)
+    url = BASE + "/" + document["id"]
+    response = await client.open(url + suffix, method="PUT" if suffix in {"", "/draft"} else "POST", data="{broken", headers={"Content-Type": "application/json"})
+    assert response.status_code == 422
+    error = await response.get_json()
+    assert error["code"] == 422 and error["data"]["error_code"] == "INVALID_INPUT"
+    assert (await (await client.get(url)).get_json())["data"] == document
+
+
+@pytest.mark.asyncio
+async def test_http_unknown_action_cannot_dispatch_or_change_document(http):
+    client, _actor = http
+    document = await create(client)
+    url = BASE + "/" + document["id"]
+    response = await client.post(url + "/approve", json={"version": 1})
+    assert response.status_code == 404
+    assert (await response.get_json())["data"]["error_code"] == "NOT_FOUND"
+    assert (await (await client.get(url)).get_json())["data"] == document
+
+
+@pytest.mark.asyncio
+async def test_http_unexpected_storage_failure_uses_safe_global_error_envelope_and_rolls_back(http, store, monkeypatch):
+    from api.db.db_models import TechnicalSpecificationRevision
+    from common.observability import bind_context
+
+    client, _actor = http
+    document = await create(client)
+    url = BASE + "/" + document["id"]
+
+    def interrupted(**kwargs):
+        raise RuntimeError("private storage failure details")
+
+    monkeypatch.setattr(TechnicalSpecificationRevision, "create", interrupted)
+    with bind_context(request_id="synthetic-storage-request"):
+        response = await client.put(url, json={"version": document["version"], "title": document["title"], "sections": {**document["sections"], "5": "Новая редакция"}})
+    assert response.status_code == 500
+    error = await response.get_json()
+    assert error["code"] == 100 and error["message"] == "Internal server error"
+    assert error["data"]["request_id"] == "synthetic-storage-request"
+    assert error["data"]["error_id"] == response.headers["X-Error-ID"]
+    assert len(error["data"]["error_id"]) == 32 and "error_code" not in error["data"]
+    assert "private storage failure details" not in str(error)
+    assert (await (await client.get(url)).get_json())["data"] == document
+    assert TechnicalSpecificationRevision.select().count() == 1

@@ -446,7 +446,19 @@ class Specifications:
         if proposal.get("source") == "eva":
             verification = await self.ai.verify(actor, snapshot["sections"], candidate, merge={"base": proposal["base"], "remote": proposal["remote"], "choice": proposal.get("resolution")})
         else:
-            verification = await self.ai.verify(actor, snapshot["sections"], candidate)
+            change_request = None
+            if proposal.get("message_id"):
+                history = []
+                for message in snapshot["messages"]:
+                    if message.get("role") != "user" or message.get("status", "completed") != "completed":
+                        continue
+                    if message["id"] == proposal["message_id"] and message.get("author_id") == proposal["author_id"] and message["source_revision"] == proposal["base_revision"]:
+                        change_request = {"text": message["text"], "context": message["context"], "history": history}
+                        break
+                    history.append({"text": message["text"], "context": message["context"]})
+                if change_request is None:
+                    fail("INVALID_PROPOSAL", "Исходный запрос предложения недоступен", 409)
+            verification = await self.ai.verify(actor, snapshot["sections"], candidate, change_request=change_request)
         if not isinstance(verification.get("issues"), list) or any(not isinstance(issue, str) for issue in verification["issues"]):
             fail("MODEL_INVALID_OUTPUT", "Помощник вернул некорректную проверку", 502)
         if proposal.get("source") == "eva":

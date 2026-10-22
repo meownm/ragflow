@@ -42,12 +42,14 @@ class AI:
         self.result = {"answer": "Предложение", "patches": {"5": "Новый сценарий"}}
         self.verification = {"valid": True, "issues": []}
         self.calls = []
+        self.change_request = None
 
     async def chat(self, actor, document, message):
         self.calls.append((document, message))
         return deepcopy(self.result)
 
-    async def verify(self, actor, before, after):
+    async def verify(self, actor, before, after, *, change_request=None):
+        self.change_request = deepcopy(change_request)
         self.calls.append((deepcopy(before), deepcopy(after)))
         return deepcopy(self.verification)
 
@@ -110,7 +112,7 @@ async def test_parallel_edit_while_verification_runs_cannot_be_overwritten(env):
     service, repo, ai = env
     state = await service.chat("editor", "workspace", "doc", message())
 
-    async def racing_verify(actor, before, after):
+    async def racing_verify(actor, before, after, **kwargs):
         repo.change(actor, "workspace", "doc", repo.value["version"], lambda value: value["sections"].update({"9": "Параллельная правка"}), "edit")
         return {"valid": True, "issues": []}
 
@@ -120,6 +122,66 @@ async def test_parallel_edit_while_verification_runs_cannot_be_overwritten(env):
     assert error.value.code == "STALE_PROPOSAL"
     assert repo.value["sections"]["9"] == "Параллельная правка"
     assert repo.value["sections"]["5"] == ""
+
+
+@pytest.mark.asyncio
+async def test_apply_uses_linked_saved_request_not_latest_message_or_client_override(env):
+    service, repo, ai = env
+    first = message()
+    state = await service.chat("editor", "workspace", "doc", first)
+    proposal = state["proposals"][0]
+    assert proposal["message_id"] == first["draft"]["message_id"]
+    later = message()
+    later["version"] = state["version"]
+    later["draft"].update(message_id="later", text="Совсем другая правка")
+    state = await service.chat("editor", "workspace", "doc", later)
+    await service.apply("editor", "workspace", "doc", {"version": state["version"], "proposal_id": proposal["id"], "change_request": "Подмена клиента"})
+    assert ai.change_request == {"text": first["draft"]["text"], "context": first["draft"]["context"], "history": []}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("corruption", ["missing", "author", "revision"])
+async def test_broken_request_link_cannot_apply_or_consume_verifier(env, corruption):
+    service, repo, ai = env
+    state = await service.chat("editor", "workspace", "doc", message())
+    if corruption == "missing":
+        repo.value["messages"].clear()
+    elif corruption == "author":
+        repo.value["messages"][0]["author_id"] = "stranger"
+    else:
+        repo.value["messages"][0]["source_revision"] = 0
+    with pytest.raises(SpecificationError) as error:
+        await service.apply("editor", "workspace", "doc", {"version": state["version"], "proposal_id": state["proposals"][0]["id"]})
+    assert error.value.code == "INVALID_PROPOSAL"
+    assert len(ai.calls) == 1 and len(repo.revisions) == 1
+
+
+@pytest.mark.asyncio
+async def test_existing_proposal_without_request_link_remains_applicable(env):
+    service, repo, ai = env
+    state = await service.chat("editor", "workspace", "doc", message())
+    repo.value["proposals"][0].pop("message_id")
+    result = await service.apply("editor", "workspace", "doc", {"version": state["version"], "proposal_id": state["proposals"][0]["id"]})
+    assert result["revision"] == 2 and ai.change_request is None
+
+
+@pytest.mark.asyncio
+async def test_corrective_request_keeps_prior_request_as_history(env):
+    service, repo, ai = env
+    first = message()
+    first["draft"]["text"] = "Измени только API, оставив старую настройку"
+    state = await service.chat("editor", "workspace", "doc", first)
+    ai.verification = {"valid": False, "issues": ["Разные ограничения"]}
+    state = await service.apply("editor", "workspace", "doc", {"version": state["version"], "proposal_id": state["proposals"][0]["id"]})
+    corrective = message()
+    corrective["version"] = state["version"]
+    corrective["draft"].update(message_id="correction", text="Верни согласованное ограничение и замени сообщение ошибки")
+    state = await service.chat("editor", "workspace", "doc", corrective)
+    ai.verification = {"valid": True, "issues": []}
+    result = await service.apply("editor", "workspace", "doc", {"version": state["version"], "proposal_id": state["proposals"][-1]["id"]})
+    assert result["revision"] == 2 and len(repo.revisions) == 2
+    assert result["proposals"][0]["status"] == "needs_resolution"
+    assert ai.change_request == {"text": corrective["draft"]["text"], "context": corrective["draft"]["context"], "history": [{"text": first["draft"]["text"], "context": first["draft"]["context"]}]}
 
 
 @pytest.mark.asyncio

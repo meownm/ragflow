@@ -218,7 +218,12 @@ def main():
         result.update(scope="HOLDOUT", suite_id="bt-tz-independent-holdout-v1")
         stable = stable and load_bundle(args.holdout_dir) == (holdout_value, holdout_manifest)
         stable = stable and hashlib.sha256((args.holdout_dir / "approval.json").read_bytes()).hexdigest() == holdout_review_sha256
-        result = score_holdout(result, holdout_value, args.holdout_dir, holdout_manifest)
+        finished = exit_code == 0 and bool(events) and stable and [case["case_id"] for case in result.get("cases", [])] == identifiers and result.get("budget", {}).get("reserved_tokens") == 0
+        if finished:
+            result = score_holdout(result, holdout_value, args.holdout_dir, holdout_manifest)
+        else:
+            result.update(quality_status="UNKNOWN", evidence_status="INCOMPLETE", qualifies=False, oracle_unread=True, reason_code="HOLDOUT_INFERENCE_NOT_COMPLETE")
+        result["terminal_inference_verified"] = finished
         result["annotation_review_sha256"] = holdout_review_sha256
     snapshot = {name: item["source_bytes_sha256"] for name, item in modules.items()}
     result.update(

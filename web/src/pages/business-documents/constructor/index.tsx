@@ -54,8 +54,8 @@ import { QuerySpecificationDialog } from './query-specification-dialog';
 import { SchemaWorkspaceDialog } from './schema-workspace-dialog';
 import { SectionInspector } from './section-inspector';
 import { SqlAgentWorkbench } from './sql-agent-workbench';
-import { SqlSessionBoundary } from './sql-session-boundary';
 import { createSqlQueryTemplate } from './sql-query-template';
+import { SqlSessionBoundary } from './sql-session-boundary';
 import { StructureEditor } from './structure-editor';
 import { exportTemplate, importTemplate } from './template-codec';
 import { TemplatePreview } from './template-preview';
@@ -398,12 +398,20 @@ export default function DocumentConstructorPage({
       className="flex h-full min-h-0 flex-col bg-bg-base text-text-primary"
       data-testid="document-constructor-page"
     >
-      <header className="shrink-0 border-b border-border-button bg-bg-base px-4 py-4 sm:px-6 lg:px-8">
+      <header
+        className={`shrink-0 border-b border-border-button bg-bg-base px-4 sm:px-6 lg:px-8 ${surface === 'sql' ? 'py-2' : 'py-4'}`}
+      >
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex min-w-0 items-center gap-3">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <h1 className="truncate text-xl font-semibold tracking-tight sm:text-2xl">
+                <h1
+                  className={
+                    surface === 'sql'
+                      ? 'text-sm font-semibold'
+                      : 'truncate text-xl font-semibold tracking-tight sm:text-2xl'
+                  }
+                >
                   {surface === 'sql' ? 'SQL-проекты' : 'Конструктор документов'}
                 </h1>
                 <Badge className="gap-1 border-accent-primary/30 bg-accent-primary/10 text-accent-primary">
@@ -411,11 +419,11 @@ export default function DocumentConstructorPage({
                   Эксперимент
                 </Badge>
               </div>
-              <p className="mt-1 text-xs text-text-secondary sm:text-sm">
-                {surface === 'sql'
-                  ? 'Агентский мастер: требования, схема данных и SQL'
-                  : 'Шаблоны структуры и требований документов'}
-              </p>
+              {surface !== 'sql' && (
+                <p className="mt-1 text-xs text-text-secondary sm:text-sm">
+                  Шаблоны структуры и требований документов
+                </p>
+              )}
             </div>
           </div>
 

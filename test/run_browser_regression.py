@@ -27,6 +27,7 @@ SUITES = [
     "test/playwright/e2e/test_business_documents_access_ui.py",
     "test/playwright/e2e/test_business_documents_ui.py",
     "test/playwright/e2e/test_linked_documents_ui.py",
+    "test/playwright/e2e/test_technical_specifications_ui.py",
     "test/playwright/e2e/test_alignment_ui.py",
     "test/playwright/e2e/test_document_quality_ui.py",
     "test/playwright/e2e/test_navigation_visibility_admin.py",

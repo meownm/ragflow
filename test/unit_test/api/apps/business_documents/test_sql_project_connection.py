@@ -14,11 +14,23 @@ from business_documents.application.errors import BusinessDocumentError, Conflic
 @pytest.fixture
 def database(monkeypatch):
     for project_id in shared_database.__wrapped__(monkeypatch):
+        # This fixture represents the stage before SQL or compilation exists.
+        owner.BusinessDocumentSqlQueryArtifact.delete().where(owner.BusinessDocumentSqlQueryArtifact.project_id == project_id).execute()
         for kind, artifact_id, payload in (
             ("REQUIREMENTS", "health-req", {"requirements": [{"statement": "Покажи продажи"}]}),
             ("SCHEMA", "health-schema", {"schema_snapshot": {}, "accepted_schema": []}),
         ):
-            owner.BusinessDocumentSqlQueryArtifact.create(id=artifact_id, tenant_id="tenant-1", project_id=project_id, kind=kind, revision=1, payload=payload, content_hash=owner._stable_hash(payload), source_proposal_id=f"accepted-{kind}", accepted_by="author-1")
+            owner.BusinessDocumentSqlQueryArtifact.create(
+                id=artifact_id,
+                tenant_id="tenant-1",
+                project_id=project_id,
+                kind=kind,
+                revision=1,
+                payload=payload,
+                content_hash=owner._stable_hash(payload),
+                source_proposal_id=f"accepted-{kind}",
+                accepted_by="author-1",
+            )
         owner.BusinessDocumentSqlQueryProject.update(requirements_artifact_id="health-req", schema_artifact_id="health-schema").where(owner.BusinessDocumentSqlQueryProject.id == project_id).execute()
         yield project_id
 
@@ -113,7 +125,19 @@ def test_active_execution_blocks_connection_changes(database, status):
 
 
 def test_ready_result_keeps_original_source_when_project_chooses_a_new_one(database):
-    owner.BusinessDocumentSqlQueryRun.create(id="ready", tenant_id="tenant-1", project_id=database, compilation_id="compiled", profile_id="old", profile_name="Original", profile_version=4, status="READY", rows=[[42]], columns=["value"], row_count=1)
+    owner.BusinessDocumentSqlQueryRun.create(
+        id="ready",
+        tenant_id="tenant-1",
+        project_id=database,
+        compilation_id="compiled",
+        profile_id="old",
+        profile_name="Original",
+        profile_version=4,
+        status="READY",
+        rows=[[42]],
+        columns=["value"],
+        row_count=1,
+    )
     saved = save(database)
     assert saved["latest_run"]["profile_name"] == "Original"
     assert owner.BusinessDocumentSqlQueryRun.get_by_id("ready").rows == [[42]]
@@ -147,6 +171,7 @@ def test_change_during_catalog_check_fails_cas_without_overwriting_the_new_state
     def resolve(*args):
         owner.BusinessDocumentSqlQueryProject.update(state_version=2, execution_profile_id="newer").where(owner.BusinessDocumentSqlQueryProject.id == database).execute()
         return {"status": "BOUND"}, SimpleNamespace(id="profile-1"), SimpleNamespace(config={})
+
     monkeypatch.setattr(owner, "_binding", resolve)
     with pytest.raises(ConflictError):
         save(database)

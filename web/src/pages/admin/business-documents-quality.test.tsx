@@ -1,3 +1,5 @@
+import en from '@/locales/en';
+import ru from '@/locales/ru';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   fireEvent,
@@ -6,6 +8,10 @@ import {
   waitFor,
   within,
 } from '@testing-library/react';
+import { createInstance } from 'i18next';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { useTranslation } from 'react-i18next';
 import { MemoryRouter } from 'react-router';
 
 import {
@@ -23,10 +29,10 @@ import {
 import AdminBusinessDocumentsQuality from './business-documents-quality';
 
 jest.mock('react-i18next', () => ({
-  useTranslation: () => ({
+  useTranslation: jest.fn(() => ({
     t: (key: string) => key.split('.').pop(),
     i18n: { language: 'en' },
-  }),
+  })),
 }));
 jest.mock('@/services/admin-service', () => ({
   getDocumentQuality: jest.fn(),
@@ -186,6 +192,10 @@ function mount(path = '/admin/document-quality') {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  jest.mocked(useTranslation).mockReturnValue({
+    t: (key: string) => key.split('.').pop(),
+    i18n: { language: 'en' },
+  } as never);
   jest
     .mocked(getDocumentQualityHealth)
     .mockResolvedValue(
@@ -353,7 +363,8 @@ test('shows the model that is currently being checked', async () => {
 test('shows complete nightly comparison and safe failed-case diagnosis', async () => {
   mount('/admin/document-quality?tab=comparisons');
   expect(await screen.findByText('3.90/4')).toBeInTheDocument();
-  expect(screen.getByText('1')).toBeInTheDocument();
+  const row = screen.getByRole('button', { name: 'qwen' }).closest('tr')!;
+  expect(within(row).getAllByRole('cell')[0]).toHaveTextContent('1');
   fireEvent.click(screen.getByRole('button', { name: 'qwen' }));
   expect(await screen.findByText(/scenario_rule/)).toBeInTheDocument();
   expect(getDocumentQualityRun).toHaveBeenCalledWith('run-1');
@@ -393,6 +404,138 @@ test('does not score incomplete model runs', async () => {
   mount('/admin/document-quality?tab=comparisons');
   await screen.findByText('1/5');
   expect(screen.queryByText('3.90/4')).not.toBeInTheDocument();
+});
+
+async function useLocale(language: 'ru' | 'en') {
+  const i18n = createInstance();
+  await i18n.init({
+    lng: language,
+    resources: { ru, en },
+    interpolation: { escapeValue: false },
+  });
+  jest
+    .mocked(useTranslation)
+    .mockReturnValue({ t: i18n.t.bind(i18n), i18n } as never);
+}
+
+test('Russian comparison separates processed runs from complete reports and explains a 6/6 incomplete run', async () => {
+  await useLocale('ru');
+  const incomplete = {
+    ...run,
+    id: 'incomplete',
+    model_name: 'incomplete-model',
+    status: 'INCOMPLETE',
+    reason_code: 'RUN_INCOMPLETE',
+    report: { ...report, executed_cases: 6, expected_cases: 6 },
+  };
+  const running = {
+    ...run,
+    id: 'running',
+    model_name: 'running-model',
+    status: 'RUNNING',
+    report: null,
+  };
+  const series = {
+    ...campaign,
+    status: 'PARTIAL',
+    runs: [run, incomplete, running],
+  };
+  jest
+    .mocked(listDocumentQualityCampaigns)
+    .mockResolvedValue(response({ campaigns: [series] }));
+  jest.mocked(getDocumentQualityCampaign).mockResolvedValue(response(series));
+  jest
+    .mocked(getDocumentQualityHealth)
+    .mockResolvedValue(
+      response({ status: 'ALERT', reason_code: 'NIGHTLY_INCOMPLETE' }),
+    );
+  mount('/admin/document-quality?tab=comparisons');
+  const row = (
+    await screen.findByRole('button', { name: 'incomplete-model' })
+  ).closest('tr')!;
+  expect(
+    screen.getByRole('columnheader', { name: 'Место' }),
+  ).toBeInTheDocument();
+  const totals = screen.getByLabelText('Итоги серии');
+  expect(
+    within(totals).getByText('Обработано запусков').nextElementSibling,
+  ).toHaveTextContent('2/3');
+  expect(
+    within(totals).getByText('Полных результатов').nextElementSibling,
+  ).toHaveTextContent('1');
+  expect(
+    within(totals).getByText('Неполных отчётов').nextElementSibling,
+  ).toHaveTextContent('1');
+  expect(row).toHaveTextContent('6/6');
+  expect(row).toHaveTextContent('один или несколько сценариев не завершились');
+  expect(within(row).getAllByRole('cell')[0]).toHaveTextContent('—');
+  expect(within(row).getAllByRole('cell')[5]).toHaveTextContent('—');
+  expect(within(row).getByText(/2 мин.*0 с/)).toBeInTheDocument();
+  expect(
+    screen.getByRole('combobox', { name: 'Ночная серия' }),
+  ).toHaveTextContent('Серия завершена частично');
+  expect(screen.getByRole('alert')).toHaveTextContent(
+    'Ночная серия не дала полного результата.',
+  );
+  expect(document.body.textContent).not.toMatch(
+    /admin\.businessDocumentsQualityPage|PARTIAL|NIGHTLY_INCOMPLETE/,
+  );
+  expect(getDocumentQualityRun).not.toHaveBeenCalled();
+  fireEvent.click(
+    within(row).getByRole('button', { name: 'incomplete-model' }),
+  );
+  expect(
+    await screen.findByRole('heading', { name: 'Результаты сценариев' }),
+  ).toBeInTheDocument();
+});
+
+test.each(['ru', 'en'] as const)(
+  'unknown reason and missing report have a readable %s fallback without a score',
+  async (language) => {
+    await useLocale(language);
+    const unknown = {
+      ...run,
+      status: 'INCOMPLETE',
+      report: null,
+      reason_code: 'NEW_REASON_CODE',
+    };
+    const series = { ...campaign, runs: [unknown] };
+    jest
+      .mocked(listDocumentQualityCampaigns)
+      .mockResolvedValue(response({ campaigns: [series] }));
+    jest.mocked(getDocumentQualityCampaign).mockResolvedValue(response(series));
+    mount('/admin/document-quality?tab=comparisons');
+    const row = (await screen.findByRole('button', { name: 'qwen' })).closest(
+      'tr',
+    )!;
+    expect(row).toHaveTextContent(
+      language === 'ru'
+        ? 'отчёт не завершён или не подтверждён'
+        : 'report is incomplete or unverified',
+    );
+    expect(row).not.toHaveTextContent('NEW_REASON_CODE');
+    expect(within(row).getByTitle('NEW_REASON_CODE')).toBeInTheDocument();
+    expect(row).toHaveTextContent('0/—');
+    expect(within(row).getAllByRole('cell')[5]).toHaveTextContent('—');
+    expect(
+      screen.getByRole('columnheader', {
+        name: language === 'ru' ? 'Место' : 'Rank',
+      }),
+    ).toBeInTheDocument();
+  },
+);
+
+test('an empty comparison does not invent completed or incomplete results', async () => {
+  await useLocale('ru');
+  const series = { ...campaign, runs: [] };
+  jest
+    .mocked(listDocumentQualityCampaigns)
+    .mockResolvedValue(response({ campaigns: [series] }));
+  jest.mocked(getDocumentQualityCampaign).mockResolvedValue(response(series));
+  mount('/admin/document-quality?tab=comparisons');
+  expect(await screen.findByLabelText('Итоги серии')).toHaveTextContent(
+    'Обработано запусков0/0Полных результатов0Неполных отчётов0',
+  );
 });
 
 test('shows the safe M06 job error and failed requirement check', async () => {
@@ -767,5 +910,327 @@ test.each([
       expect(
         screen.queryByText('comparisonNotQualified'),
       ).not.toBeInTheDocument();
+  },
+);
+
+test.each(['ru', 'en'] as const)(
+  'overview and job codes use %s translations',
+  async (language) => {
+    await useLocale(language);
+    jest
+      .mocked(listDocumentQualityCampaigns)
+      .mockResolvedValue(
+        response({ campaigns: [{ ...campaign, status: 'PARTIAL' }] }),
+      );
+    mount();
+    await screen.findAllByText(/qwen/);
+    expect(document.body.textContent).not.toMatch(/QUALITY_GATE|PARTIAL/);
+    fireEvent.click(
+      screen.getByRole('tab', {
+        name: language === 'ru' ? 'Задания БТ' : 'Document jobs',
+      }),
+    );
+    await screen.findByText(/doc-1/);
+    expect(document.body.textContent).not.toMatch(/ASSESS_REVIEW|DEAD/);
+    expect(
+      within(
+        screen.getByRole('combobox', {
+          name: language === 'ru' ? 'Код ошибки' : 'Error code',
+        }),
+      ).getByRole('option', { name: /INVALID_AI_JSON/ }),
+    ).toHaveTextContent(
+      language === 'ru'
+        ? 'Модель вернула некорректный JSON.'
+        : 'The model returned invalid JSON.',
+    );
+  },
+);
+
+test('TZ overview has no BT operations card and shows successful fetch time', async () => {
+  await useLocale('ru');
+  jest.mocked(listDocumentQualityRuns).mockResolvedValue(
+    response({
+      configured: true,
+      source_revision: 'rev',
+      runs: [
+        {
+          ...run,
+          report: {
+            ...report,
+            quality_status: 'UNKNOWN',
+            evidence_status: 'INCOMPLETE',
+            nightly_experiments: [
+              {
+                experiment: 'REPEATS',
+                quality_status: 'UNKNOWN',
+                evidence_status: 'INCOMPLETE',
+                expected_cases: 6,
+                executed_cases: 2,
+                total_tokens: null,
+              },
+            ],
+          },
+        },
+      ],
+    }),
+  );
+  mount('/admin/document-quality?product=technical_specification');
+  await screen.findByRole('heading', { name: 'Ручная проверка' });
+  await waitFor(() =>
+    expect(screen.getByTestId('quality-updated-at')).not.toHaveTextContent('—'),
+  );
+  expect(
+    screen.queryByRole('heading', { name: 'Операционные показатели' }),
+  ).not.toBeInTheDocument();
+  expect(document.body.textContent).not.toMatch(/UNKNOWN|INCOMPLETE/);
+  expect(getDocumentQuality).not.toHaveBeenCalled();
+});
+
+test('filtered-empty history resets only history filters and keeps the product', async () => {
+  await useLocale('ru');
+  mount(
+    '/admin/document-quality?product=technical_specification&tab=history&status=PENDING&model=missing&trigger=MONTHLY',
+  );
+  expect(
+    await screen.findByText('Проверок с выбранными фильтрами нет.'),
+  ).toBeInTheDocument();
+  expect(screen.queryByText('Проверок пока не было.')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Сбросить фильтры' }));
+  expect(
+    await screen.findByRole('button', { name: /qwen/ }),
+  ).toBeInTheDocument();
+  expect(screen.getByRole('combobox', { name: 'Тип документа' })).toHaveValue(
+    'technical_specification',
+  );
+});
+
+test('genuinely empty history keeps the no-runs message', async () => {
+  await useLocale('ru');
+  jest
+    .mocked(listDocumentQualityRuns)
+    .mockResolvedValue(
+      response({ configured: true, source_revision: 'rev', runs: [] }),
+    );
+  mount('/admin/document-quality?tab=history');
+  expect(await screen.findByText('Проверок пока не было.')).toBeInTheDocument();
+  expect(
+    screen.queryByRole('button', { name: 'Сбросить фильтры' }),
+  ).not.toBeInTheDocument();
+});
+
+test('manual case names and operation reasons are localized and raw reasons remain inspectable', async () => {
+  await useLocale('ru');
+  jest.mocked(listDocumentQualityModels).mockResolvedValue(
+    response({
+      configured: true,
+      case_ids: ['M03_confirmed_review_change'],
+      models: [],
+      errors: [],
+    }),
+  );
+  jest.mocked(getSpecificationOperations).mockResolvedValue(
+    response({
+      ...specificationOperations,
+      reasons: [{ code: 'MODEL_TIMEOUT', count: 2 }],
+    }),
+  );
+  mount();
+  fireEvent.change(screen.getByRole('combobox', { name: 'Объём проверки' }), {
+    target: { value: 'CASE' },
+  });
+  expect(
+    await screen.findByRole('option', {
+      name: 'Внесение согласованной правки',
+    }),
+  ).toHaveValue('M03_confirmed_review_change');
+  fireEvent.change(screen.getByRole('combobox', { name: 'Тип документа' }), {
+    target: { value: 'technical_specification' },
+  });
+  fireEvent.click(screen.getByRole('tab', { name: 'Рабочие проверки ТЗ' }));
+  expect(await screen.findByTitle('MODEL_TIMEOUT')).toHaveTextContent(
+    'Модель не ответила за отведённое время: 2',
+  );
+});
+
+test.each(['ru', 'en'] as const)(
+  'error filter keeps distinct codes and submits the selected code in %s',
+  async (language) => {
+    await useLocale(language);
+    const codes = ['EMPTY_AI_RESPONSE', 'JOB_LEASE_EXPIRED', 'INVALID_AI_JSON'];
+    jest.mocked(getDocumentQualityJobs).mockResolvedValue(
+      response({
+        days: 7,
+        updated_at: operations.updated_at,
+        total: 1,
+        offset: 50,
+        limit: 50,
+        error_codes: codes,
+        jobs: [failedJob],
+      }),
+    );
+    mount(
+      '/admin/document-quality?tab=operations&category=DOCUMENT_AI&error=RETIRED_ERROR&offset=50',
+    );
+    const select = await screen.findByRole('combobox', {
+      name: language === 'ru' ? 'Код ошибки' : 'Error code',
+    });
+    await waitFor(() =>
+      expect(within(select).getAllByRole('option')).toHaveLength(5),
+    );
+    const options = within(select).getAllByRole('option').slice(1);
+    expect(new Set(options.map((o) => o.textContent)).size).toBe(4);
+    for (const code of [...codes, 'RETIRED_ERROR']) {
+      expect(
+        within(select).getByRole('option', { name: new RegExp(code) }),
+      ).toHaveValue(code);
+    }
+    expect(select).toHaveValue('RETIRED_ERROR');
+    fireEvent.change(select, { target: { value: 'JOB_LEASE_EXPIRED' } });
+    await waitFor(() =>
+      expect(getDocumentQualityJobs).toHaveBeenLastCalledWith({
+        days: 7,
+        category: 'DOCUMENT_AI',
+        task_type: '',
+        error_code: 'JOB_LEASE_EXPIRED',
+        offset: 0,
+      }),
+    );
+    fireEvent.change(select, { target: { value: '' } });
+    await waitFor(() =>
+      expect(getDocumentQualityJobs).toHaveBeenLastCalledWith(
+        expect.objectContaining({ error_code: '', offset: 0 }),
+      ),
+    );
+  },
+);
+
+test.each(['ru', 'en'] as const)(
+  'real TZ cases have names and retain their request identifiers in %s',
+  async (language) => {
+    await useLocale(language);
+    jest.mocked(listDocumentQualityModels).mockResolvedValue(
+      response({
+        configured: true,
+        case_ids: ['BTZ-01', 'BTZ-02', 'BTZ-53', 'BTZ-FUTURE'],
+        models: [],
+        errors: [],
+      }),
+    );
+    mount('/admin/document-quality?product=technical_specification');
+    fireEvent.change(
+      screen.getByRole('combobox', {
+        name: language === 'ru' ? 'Объём проверки' : 'Run scope',
+      }),
+      { target: { value: 'CASE' } },
+    );
+    expect(
+      await screen.findByRole('option', {
+        name:
+          language === 'ru'
+            ? 'Запрет разрешённого действия'
+            : 'Prohibiting an allowed action',
+      }),
+    ).toHaveValue('BTZ-02');
+    expect(
+      screen.getByRole('option', {
+        name:
+          language === 'ru'
+            ? 'Противоречие в начале длинного контекста'
+            : 'Contradiction at the start of a long context',
+      }),
+    ).toHaveValue('BTZ-53');
+    expect(
+      screen.getByRole('option', {
+        name: language === 'ru' ? 'Сценарий BTZ-FUTURE' : 'Scenario BTZ-FUTURE',
+      }),
+    ).toHaveValue('BTZ-FUTURE');
+    fireEvent.change(
+      screen.getByRole('combobox', {
+        name: language === 'ru' ? 'сценариев' : 'cases',
+      }),
+      { target: { value: 'BTZ-02' } },
+    );
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: language === 'ru' ? 'Запустить проверку' : 'Run evaluation',
+      }),
+    );
+    await waitFor(() =>
+      expect(startDocumentQualityRun).toHaveBeenCalledWith({
+        document_type: 'technical_specification',
+        scope: 'CASE',
+        case_id: 'BTZ-02',
+      }),
+    );
+    expect(listDocumentQualityModels).toHaveBeenCalledWith(
+      'technical_specification',
+    );
+  },
+);
+
+test('TZ history and details use the same case titles and retain unknown IDs', async () => {
+  await useLocale('ru');
+  const diagnostic = {
+    ...run,
+    scope: 'CASE',
+    case_id: 'BTZ-02',
+    status: 'DIAGNOSTIC',
+    report: {
+      ...report,
+      cases: [
+        { ...report.cases[0], case_id: 'BTZ-02' },
+        { ...report.cases[0], case_id: 'BTZ-RETIRED' },
+      ],
+    },
+  };
+  jest.mocked(listDocumentQualityRuns).mockResolvedValue(
+    response({
+      configured: true,
+      source_revision: 'rev',
+      runs: [diagnostic],
+    }),
+  );
+  jest.mocked(getDocumentQualityRun).mockResolvedValue(response(diagnostic));
+  mount('/admin/document-quality?product=technical_specification&tab=history');
+  fireEvent.click(
+    await screen.findByRole('button', { name: /Запрет разрешённого действия/ }),
+  );
+  expect(await screen.findByTitle('BTZ-02')).toHaveTextContent(
+    'Запрет разрешённого действия',
+  );
+  expect(screen.getByTitle('BTZ-RETIRED')).toHaveTextContent(
+    'Сценарий BTZ-RETIRED',
+  );
+});
+
+test.each(['ru', 'en'] as const)(
+  'every current TZ corpus case has a unique human title in %s',
+  (language) => {
+    const corpus = readFileSync(
+      resolve(
+        __dirname,
+        '../../../../test/evals/technical_specifications/alignment/corpus.py',
+      ),
+      'utf8',
+    );
+    // The three long-context cases are constructed by _long_case.
+    const ids = new Set([
+      ...Array.from(
+        corpus.matchAll(/["'](BTZ-[0-9]{2}[a-z]?)["']/g),
+        (match) => match[1],
+      ),
+      'BTZ-53',
+      'BTZ-54',
+      'BTZ-55',
+    ]);
+    const names: Record<string, string> = (language === 'ru' ? ru : en)
+      .translation.admin.businessDocumentsQualityPage.caseNames;
+    expect(
+      Object.keys(names)
+        .filter((id) => id.startsWith('BTZ-'))
+        .sort(),
+    ).toEqual([...ids].sort());
+    expect(new Set([...ids].map((id) => names[id])).size).toBe(ids.size);
+    for (const id of ids) expect(names[id]).toMatch(/.{10,}/);
   },
 );

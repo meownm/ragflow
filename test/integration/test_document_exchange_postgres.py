@@ -1,6 +1,7 @@
 """Binding and import invariants on the runtime driver and disposable PostgreSQL."""
 
 import os
+from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from urllib.parse import urlsplit
@@ -15,6 +16,9 @@ from api.document_exchange import operations
 from api.document_exchange.bindings import BindingConflict, reserve
 from document_exchange.identity import binding_keys
 from api.document_exchange.migrations import migrate_bindings
+from api.db.db_models import TechnicalSpecificationRevision
+from api.technical_specifications.domain import empty_sections
+from api.technical_specifications.storage import SpecificationRepository
 
 
 @pytest.fixture
@@ -39,7 +43,7 @@ def database():
     db.connect()
     db.execute_sql(f'CREATE SCHEMA "{schema}"')
     try:
-        models = [BusinessDocument, BusinessDocumentEvaBinding, DocumentExchangeBinding, DocumentExchangeOperation, TechnicalSpecification]
+        models = [BusinessDocument, BusinessDocumentEvaBinding, DocumentExchangeBinding, DocumentExchangeOperation, TechnicalSpecification, TechnicalSpecificationRevision]
         with db.bind_ctx(models):
             db.create_tables(models)
             yield db
@@ -181,3 +185,39 @@ def test_connection_loss_does_not_replay_part_of_import_transaction(database):
 def test_runtime_driver_reconnects_outside_transaction(database):
     terminate_connection(database)
     assert database.execute_sql("SELECT 1").fetchone() == (1,)
+
+
+@pytest.mark.parametrize("proposal_format", [None, "full", "compact"])
+def test_specification_noop_preserves_storage_and_real_edit_compacts_proposals(database, proposal_format):
+    # Authentication has a separate HTTP/SQLite lane; this exercises the actual
+    # repository, JSON persistence and transaction on the runtime PostgreSQL driver.
+    store = SpecificationRepository(workspace_access=lambda *args: {"tenant_id": "tenant", "owner_id": "author"})
+    content = {**empty_sections(), "1": "Исходный текст"}
+    doc = store.create("author", "workspace", "ТЗ", content)
+    candidate = {**content, "5": "Неприменённое предложение"}
+    if proposal_format:
+        doc = store.change(
+            "author",
+            "workspace",
+            doc["id"],
+            doc["version"],
+            lambda value: value["proposals"].append({"id": "proposal", "source": "chat", "base_revision": 1, "sections": candidate, "status": "ready"}),
+            "seed-proposal",
+        )
+        if proposal_format == "full":
+            payload = deepcopy(TechnicalSpecification.get_by_id(doc["id"]).payload)
+            payload["proposals"][0].pop("patches")
+            payload["proposals"][0]["sections"] = candidate
+            TechnicalSpecification.update(payload=payload).where(TechnicalSpecification.id == doc["id"]).execute()
+    before = deepcopy(TechnicalSpecification.get_by_id(doc["id"]).__data__)
+    assert store.change("author", "workspace", doc["id"], doc["version"], lambda value: value.update(title=doc["title"], sections=deepcopy(content)), "edit") == doc
+    assert TechnicalSpecification.get_by_id(doc["id"]).__data__ == before
+    assert TechnicalSpecificationRevision.select().count() == 1
+    saved = store.change("author", "workspace", doc["id"], doc["version"], lambda value: value["sections"].update({"1": "Новый текст"}), "edit")
+    assert saved["version"] == doc["version"] + 1 and saved["revision"] == 2
+    assert store.history("author", "workspace", doc["id"], 1)["sections"] == content
+    assert TechnicalSpecificationRevision.select().count() == 2
+    if proposal_format:
+        assert saved["proposals"][0]["sections"] == candidate
+        stored = TechnicalSpecification.get_by_id(doc["id"]).payload["proposals"][0]
+        assert stored["patches"] == {"5": candidate["5"]} and "sections" not in stored

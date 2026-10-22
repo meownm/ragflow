@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "run_id": null,
+  "status": "NOT_RUN",
+  "recording_authorized": false,
+  "source": {
+    "git_head_at_preparation": "a0695c41ed5d8af527aa97bef17d787d67862ab5",
+    "runtime_source_id": null,
+    "runtime_image": null,
+    "browser": null,
+    "viewport": [
+      1920,
+      1080
+    ],
+    "model_profile_without_secrets": null
+  },
+  "workspace_id": null,
+  "actors": {
+    "editor_id": null,
+    "reader_id": null,
+    "outsider_id": null
+  },
+  "basis": {
+    "document_id": null,
+    "revision_id": null,
+    "agreement_event_id": null,
+    "content_hash": null,
+    "body_sha256": null
+  },
+  "documents": {},
+  "eva_pages": {},
+  "events": [],
+  "event_fields": [
+    "episode",
+    "timestamp_utc",
+    "document_id",
+    "request_id",
+    "attempt_id",
+    "proposal_id",
+    "http_method",
+    "path",
+    "http_status",
+    "before_revision",
+    "after_revision",
+    "before_version",
+    "after_version",
+    "outcome",
+    "semantic_status",
+    "evidence_status",
+    "snapshot_paths",
+    "raw_video_timecode",
+    "edited_video_timecode"
+  ],
+  "acceptance": {
+    "A00": "NOT_RUN",
+    "A01": "NOT_RUN",
+    "A02": "NOT_RUN",
+    "A03": "NOT_RUN",
+    "A04": "NOT_RUN",
+    "A05": "NOT_RUN",
+    "A06": "NOT_RUN",
+    "A07": "NOT_RUN",
+    "A08": "NOT_RUN",
+    "A09": "NOT_RUN",
+    "A10": "NOT_RUN",
+    "A11": "NOT_RUN"
+  },
+  "gaps": [
+    "Живая репетиция не выполнена",
+    "БТ на стенде не создано и не согласовано",
+    "Состояние runtime и модели не проверено",
+    "Eva не читалась и не изменялась",
+    "PlantUML/Mermaid в целевом UI не отрисованы",
+    "Видео не записывалось"
+  ]
+}

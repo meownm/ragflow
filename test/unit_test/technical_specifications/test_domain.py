@@ -3,7 +3,7 @@ from copy import deepcopy
 import pytest
 
 from api.document_exchange.merge import merge_text
-from api.technical_specifications.domain import SpecificationError, apply_merge_edits, assert_context, context, draft, empty_sections, markdown, merge_sections, parse_markdown, sections
+from api.technical_specifications.domain import SpecificationError, apply_edits, assert_context, context, draft, empty_sections, markdown, merge_sections, parse_markdown, sections
 
 
 def selected(quote="результат", prefix="", suffix=""):
@@ -18,14 +18,14 @@ def test_literal_merge_edits_use_one_snapshot_and_preserve_unrelated_text():
         {"section": "8", "before": "alpha", "after": "beta"},
         {"section": "8", "before": "beta", "after": "alpha"},
     ]
-    result = apply_merge_edits(source, edits)
+    result = apply_edits(source, edits)
     assert result == {**source, "8": 'X-Event-Id, X-Sequence, X-Signature; {"status":"accepted"}; beta alpha'}
     assert source == original
 
 
 def test_literal_merge_edits_allow_insertion_into_empty_section_and_deletion():
     source = {**empty_sections(), "9": "keep\nremove\n"}
-    assert apply_merge_edits(source, [{"section": "8", "before": "", "after": "New API"}, {"section": "9", "before": "remove\n", "after": ""}]) == {**source, "8": "New API", "9": "keep\n"}
+    assert apply_edits(source, [{"section": "8", "before": "", "after": "New API"}, {"section": "9", "before": "remove\n", "after": ""}]) == {**source, "8": "New API", "9": "keep\n"}
 
 
 @pytest.mark.parametrize(
@@ -49,7 +49,7 @@ def test_literal_merge_edits_reject_missing_ambiguous_overlapping_or_malformed_q
     source = {**empty_sections(), "8": body}
     original = deepcopy(source)
     with pytest.raises(SpecificationError) as error:
-        apply_merge_edits(source, edits)
+        apply_edits(source, edits)
     assert error.value.code == "MODEL_INVALID_OUTPUT"
     assert source == original
 
@@ -58,7 +58,7 @@ def test_invalid_later_merge_edit_never_mutates_the_source_snapshot():
     source = {**empty_sections(), "8": "existing", "9": "audit"}
     original = deepcopy(source)
     with pytest.raises(SpecificationError):
-        apply_merge_edits(source, [{"section": "8", "before": "existing", "after": "updated"}, {"section": "9", "before": "missing", "after": "bad"}])
+        apply_edits(source, [{"section": "8", "before": "existing", "after": "updated"}, {"section": "9", "before": "missing", "after": "bad"}])
     assert source == original
 
 

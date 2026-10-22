@@ -3,6 +3,7 @@ param(
     [ValidatePattern('^[a-zA-Z0-9][a-zA-Z0-9._-]*$')]
     [string]$Name,
     [switch]$Complete,
+    [switch]$CleanCache,
     [ValidateRange(1, 365)]
     [int]$KeepDays = 2,
     [ValidateRange(1, 1024)]
@@ -34,20 +35,33 @@ if (-not (Test-Path -LiteralPath $Root)) {
     New-Item -ItemType Directory -Path $Root -Force | Out-Null
 }
 
-function Get-TemporaryTree {
-    param([System.IO.DirectoryInfo]$Directory)
-    # Do not traverse junctions, symlinks, repositories or protected data.
-    foreach ($item in Get-ChildItem -LiteralPath $Directory.FullName -Force) {
-        $item
-        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
-            ($item.Name -eq '.keep' -and $item.LastWriteTimeUtc -ge [DateTime]::UtcNow.AddDays(-$KeepDays)) -or
-            $item.Name -in @('.git', 'backup', 'backups') -or
-            $item.Name -match '\.(dump|bak)(\.(gz|zip|zst))?$|\.sql\.(gz|zip|zst)$' -or
-            $item.Name -match '(backup|database|postgres|mysql).*\.sql$') {
-            throw "Protected entry: $($item.FullName)"
-        }
-        if ($item.PSIsContainer) { Get-TemporaryTree -Directory $item }
+$repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$python = Join-Path $repo '.venv\Scripts\python.exe'
+$workspace = Join-Path $repo 'tools\quality\workspace.py'
+function Invoke-Workspace {
+    param([string]$Action, [string]$Path, [string[]]$Options = @())
+    $messages = @(& $python -B $workspace $Action --root $Root --path $Path @Options 2>&1)
+    if ($LASTEXITCODE -ne 0) { throw "Workspace ${Action} failed: $($messages -join [Environment]::NewLine)" }
+    if ($messages.Count) { ($messages -join [Environment]::NewLine) | ConvertFrom-Json }
+}
+
+# Reservations never sweep other tasks or wait for Docker.
+if ($Name -and -not $Complete) {
+    $taskPath = [IO.Path]::GetFullPath((Join-Path $Root $Name))
+    if ((Split-Path -Parent $taskPath) -ne $Root) { throw 'Task must be a direct child of the temporary root.' }
+    if ($PSCmdlet.ShouldProcess($taskPath, 'Reserve temporary task')) {
+        Invoke-Workspace reserve $taskPath
     }
+    Write-Output $taskPath
+    return
+}
+
+function Test-ManagedBuild {
+    param([string]$Path)
+    $marker = Join-Path $Path '.ragflow-temp'
+    if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) { return $false }
+    if ((Get-Item -LiteralPath $marker -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { return $false }
+    return (Get-Content -LiteralPath $marker -Raw).Trim() -eq 'ragflow-disposable-v2'
 }
 
 $activePaths = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
@@ -79,36 +93,54 @@ function Test-TaskInUse {
     return $false
 }
 
+$failures = @()
+$pendingPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+$completedPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+$replacedPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+# Receipts live outside the tree being removed, including after partial rmtree.
+# A receipt authorizes retry only for the same filesystem directory identity.
+foreach ($receipt in Get-ChildItem -LiteralPath $Root -Filter '.ragflow-cleanup-*.json' -File -Force) {
+    try {
+        $pending = Invoke-Workspace inspect $receipt.FullName
+        if ($pending.matches) { $null = $pendingPaths.Add($pending.path) }
+        if ($pending.active -or (Test-TaskInUse $pending.path)) { continue }
+        if ($PSCmdlet.ShouldProcess($pending.path, 'Retry incomplete temporary cleanup')) {
+            $options = if ($Complete -and $Name -and $pending.path -eq (Join-Path $Root $Name) -and $pending.matches) { @('--manual') } else { @() }
+            $recovered = Invoke-Workspace recover $receipt.FullName -Options $options
+            if ($recovered.completed) { $null = $completedPaths.Add($pending.path) }
+            if ($recovered.replaced) { $null = $replacedPaths.Add($pending.path) }
+            if ($recovered.removed) { Write-Output "Removed: $($pending.path)" }
+        }
+    } catch {
+        $failures += "Retry $($receipt.FullName): $($_.Exception.Message)"
+        Write-Warning $failures[-1]
+    }
+}
+
 if ($Name) {
     $taskPath = [System.IO.Path]::GetFullPath((Join-Path $Root $Name))
     if ((Split-Path -Parent $taskPath) -ne $Root) { throw 'Task must be a direct child of the temporary root.' }
-    if (Test-Path -LiteralPath $taskPath) {
+    if ($replacedPaths.Contains($taskPath)) { throw 'Task directory was replaced; preserve the new generation.' }
+    if ($pendingPaths.Contains($taskPath) -and -not $completedPaths.Contains($taskPath)) {
+        throw "Pending cleanup is active or failed; resolve the blocker and retry its existing receipt: $taskPath"
+    }
+    if ($completedPaths.Contains($taskPath)) {
+        # Recovery already completed this exact directory generation.
+    } elseif (Test-Path -LiteralPath $taskPath) {
         $task = Get-Item -LiteralPath $taskPath -Force
         if (-not $task.PSIsContainer -or ($task.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
             throw "Task is not a regular directory: $taskPath"
         }
-    } elseif ($Complete) {
+    } else {
         throw "Task does not exist: $taskPath"
     }
-    if ($PSCmdlet.ShouldProcess($taskPath, $(if ($Complete) { 'Complete temporary task' } else { 'Reserve temporary task' }))) {
-        if (-not (Test-Path -LiteralPath $taskPath)) { New-Item -ItemType Directory -Path $taskPath | Out-Null }
-        $pin = Join-Path $taskPath '.keep'
-        if (Test-Path -LiteralPath $pin) {
-            $pinItem = Get-Item -LiteralPath $pin -Force
-            if ($pinItem.PSIsContainer -or ($pinItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-                throw "Task pin is not a regular file: $pin"
-            }
+    if (-not $completedPaths.Contains($taskPath) -and $PSCmdlet.ShouldProcess($taskPath, 'Complete temporary task')) {
+        if (Test-TaskInUse -Path $taskPath) { throw "Task still has an active process or Docker consumer: $taskPath" }
+        # Results and backups belong outside the disposable workspace.
+        try {
+            Invoke-Workspace retire $taskPath -Options @('--manual')
         }
-        if ($Complete) {
-            if (Test-TaskInUse -Path $taskPath) { throw "Task still has an active process or Docker consumer: $taskPath" }
-            if (Test-Path -LiteralPath $pin) { Remove-Item -LiteralPath $pin -Force }
-            # Results and backups belong outside the disposable workspace.
-            try { @(Get-TemporaryTree -Directory (Get-Item -LiteralPath $taskPath)) | Out-Null }
-            catch { throw "Cannot complete task until protected data is saved outside it: $($_.Exception.Message)" }
-            Remove-Item -LiteralPath $taskPath -Recurse -Force
-        } else {
-            Set-Content -LiteralPath $pin -Value 'Active task. Save results outside this workspace, then complete it for immediate removal.' -Encoding utf8
-        }
+        catch { throw "Cannot complete task until protected data is saved outside it: $($_.Exception.Message)" }
     }
 }
 
@@ -117,19 +149,18 @@ $candidates = @()
 foreach ($directory in Get-ChildItem -LiteralPath $Root -Directory -Force) {
     if ($Name -and $directory.Name -eq $Name) { continue }
     $target = [System.IO.Path]::GetFullPath($directory.FullName)
+    if ($pendingPaths.Contains($target)) { continue }
     if ((Split-Path -Parent $target) -ne $Root) { throw "Target escaped temporary root: $target" }
     if ($directory.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
     if (Test-TaskInUse -Path $target) { continue }
     $pinPath = Join-Path $target '.keep'
-    if ((Test-Path -LiteralPath $pinPath) -and (Get-Item -LiteralPath $pinPath -Force).LastWriteTimeUtc -ge $cutoff) { continue }
+    if (Test-Path -LiteralPath $pinPath) { continue }
+    if (-not (Test-ManagedBuild $target)) { continue }
     try {
-        $entries = @(Get-TemporaryTree -Directory $directory)
-        $latest = $directory.LastWriteTimeUtc
-        $size = 0L
-        foreach ($entry in $entries) {
-            if ($entry.LastWriteTimeUtc -gt $latest) { $latest = $entry.LastWriteTimeUtc }
-            if (-not $entry.PSIsContainer) { $size += $entry.Length }
-        }
+        $scan = Invoke-Workspace scan $target
+        if ($scan.active) { continue }
+        $latest = [DateTimeOffset]::FromUnixTimeMilliseconds([long]($scan.latest * 1000)).UtcDateTime
+        $size = $scan.size
     } catch {
         Write-Warning "Keeping ${target}: $($_.Exception.Message)"
         continue
@@ -142,11 +173,20 @@ foreach ($candidate in ($candidates | Sort-Object Latest)) {
     if ($candidate.Latest -ge $cutoff -and $total -le ($MaxGiB * 1GB)) { continue }
     # A task may have been reserved while its contents were inspected.
     $candidatePin = Join-Path $candidate.Path '.keep'
-    if ((Test-Path -LiteralPath $candidatePin) -and (Get-Item -LiteralPath $candidatePin -Force).LastWriteTimeUtc -ge $cutoff) { continue }
-    if ($PSCmdlet.ShouldProcess($candidate.Path, 'Remove expired task or enforce temporary workspace quota')) {
-        Remove-Item -LiteralPath $candidate.Path -Recurse -Force
-        $total -= $candidate.Size
-        Write-Host "Removed: $($candidate.Path)"
+    if (Test-Path -LiteralPath $candidatePin) { continue }
+    try {
+        if ($PSCmdlet.ShouldProcess($candidate.Path, 'Remove abandoned build or enforce temporary workspace quota')) {
+            Invoke-Workspace retire $candidate.Path
+            $total -= $candidate.Size
+            Write-Output "Removed: $($candidate.Path)"
+        }
+    } catch {
+        $failures += "Cleanup $($candidate.Path): $($_.Exception.Message)"
+        Write-Warning $failures[-1]
     }
 }
-if ($Name -and -not $Complete) { Write-Output $taskPath }
+if ($CleanCache -and $PSCmdlet.ShouldProcess('Shared frontend package cache', 'Expire idle cache and enforce quota under its lock')) {
+    & (Join-Path $repo '.venv\Scripts\python.exe') -B (Join-Path $repo 'tools\quality\frontend_artifact.py') clean-cache
+    if ($LASTEXITCODE -ne 0) { throw 'Shared cache is busy or could not be safely cleaned.' }
+}
+if ($failures.Count) { throw ($failures -join [Environment]::NewLine) }

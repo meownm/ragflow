@@ -1,6 +1,6 @@
 [project]
 name = "ragflow"
-version = "1.52.1"
+version = "1.53.0"
 description = "[RAGFlow](https://ragflow.io/) is an open-source RAG (Retrieval-Augmented Generation) engine based on deep document understanding. It offers a streamlined RAG workflow for businesses of any scale, combining LLM (Large Language Models) to provide truthful question-answering capabilities, backed by well-founded citations from various complex formatted data."
 authors = [{ name = "Zhichang Yu", email = "yuzhichang@gmail.com" }]
 license-files = ["LICENSE"]
@@ -197,8 +197,9 @@ test = [
     "pycryptodomex==3.20.0",
     "pytest-playwright>=0.7.2",
     "codecov>=2.1.13",
-    "jsonschema==4.26.0",
     "sqlglot==28.4.0",
+    "python-dotenv>=1.2.2,<2",
+    "jsonschema==4.26.0",
 ]
 
 [tool.uv]
@@ -281,6 +282,7 @@ packages = [
     'agent.business_requirements.prompts',
     'agent.business_requirements.templates',
     'api',
+    'document_exchange',
     'business_documents',
     'business_documents.domain',
     'business_documents.application',
@@ -363,7 +365,7 @@ addopts = [
 [tool.coverage.run]
 # Source paths - adjust according to your project structure
 source = [
-    "api/", "rag/", "common/", "deepdoc/", "agent/", "business_documents/",
+    "api/", "rag/", "common/", "deepdoc/", "agent/", "business_documents/", "document_exchange/",
 ]
 branch = true
 

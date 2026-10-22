@@ -202,6 +202,9 @@ class DocumentQueries:
         if include_body:
             bodies = self._reader.source_revisions({event["payload"]["revision_id"] for event in latest.values()}, include_body=True)
             by_revision = {revision["id"]: revision for revision in bodies}
+            template = self._content.published_template()
+            heading_level = int(template.get("rendering", {}).get("body_heading_base_level", 2))
+            section_headings = [f"{'#' * (heading_level + section['id'].count('.'))} {section['id']}. {section['title']}" for section in template["sections"]]
         for document in documents:
             event = latest.get(document["id"])
             if event and access.permissions(document["owner_id"])["read"]:
@@ -218,7 +221,14 @@ class DocumentQueries:
                         "content_hash": revision["content_hash"],
                         "agreement_event_id": event["id"],
                         "agreed_at": event["create_time"],
-                        **({"body_markdown": revision["body_markdown"]} if include_body else {}),
+                        **(
+                            {
+                                "body_markdown": revision["body_markdown"],
+                                "section_headings": section_headings,
+                            }
+                            if include_body
+                            else {}
+                        ),
                     }
                 )
         return result

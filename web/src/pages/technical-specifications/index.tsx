@@ -1394,9 +1394,9 @@ function Editor({
                     }
                   >
                     <option value="all">Всё ТЗ</option>
-                    {headings.map((_, index) => (
+                    {headings.map((heading, index) => (
                       <option key={index} value={String(index + 1)}>
-                        Раздел {index + 1}
+                        {index + 1}. {heading}
                       </option>
                     ))}
                     {chatDraft.context.scope === 'selection' && (
@@ -1712,9 +1712,9 @@ function Editor({
                 }
               >
                 <option value="all">Всё ТЗ</option>
-                {headings.map((_, index) => (
+                {headings.map((heading, index) => (
                   <option key={index} value={String(index + 1)}>
-                    Раздел {index + 1}
+                    {index + 1}. {heading}
                   </option>
                 ))}
                 {commentContext.scope === 'selection' && (

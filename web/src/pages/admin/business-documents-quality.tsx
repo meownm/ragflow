@@ -17,21 +17,29 @@ import {
   listDocumentQualityRuns,
   startDocumentQualityRun,
 } from '@/services/admin-service';
+import './business-documents-quality.css';
 
 type Tab = 'overview' | 'comparisons' | 'history' | 'operations';
 const tabs: Tab[] = ['overview', 'comparisons', 'history', 'operations'];
 type WindowDays = 1 | 7 | 30;
+type CodeLabel = (
+  group: string,
+  code: string | null | undefined,
+  fallback?: string,
+) => string;
 
 function AlignmentOperations({
   data,
   label,
   number,
   date,
+  codeLabel,
 }: {
   data: AdminService.SpecificationOperations;
   label: (key: string) => string;
   number: (value: number) => string;
   date: (value?: number | null) => string;
+  codeLabel: CodeLabel;
 }) {
   return (
     <section
@@ -118,8 +126,12 @@ function AlignmentOperations({
       <h3 className="font-medium">{label('technicalOperations.reasons')}</h3>
       <ul>
         {data.reasons.map((item) => (
-          <li key={item.code}>
-            {item.code}: {number(item.count)}
+          <li key={item.code} title={item.code}>
+            {codeLabel('reasons', item.code, 'unknownReason').replace(
+              /\.$/,
+              '',
+            )}
+            : {number(item.count)}
           </li>
         ))}
       </ul>
@@ -143,6 +155,15 @@ function statusColor(status: string) {
   return 'text-text-secondary';
 }
 
+function isCompleteRun(run: AdminService.DocumentQualityRun) {
+  return (
+    run.scope === 'FULL' &&
+    run.report?.expected_cases != null &&
+    run.report.executed_cases === run.report.expected_cases &&
+    ['PASS', 'FAIL'].includes(run.status)
+  );
+}
+
 function comparisonFingerprint(run: AdminService.DocumentQualityRun) {
   return [
     run.source_revision,
@@ -159,11 +180,13 @@ function comparisonFingerprint(run: AdminService.DocumentQualityRun) {
 function NightlyExperiments({
   experiments,
   label,
+  codeLabel,
 }: {
   experiments: NonNullable<
     AdminService.DocumentQualityReport['nightly_experiments']
   >;
   label: (key: string) => string;
+  codeLabel: CodeLabel;
 }) {
   return (
     <section
@@ -186,8 +209,8 @@ function NightlyExperiments({
             {experiments.map((item) => (
               <tr key={item.experiment}>
                 <td>{label(`experiments.${item.experiment}`)}</td>
-                <td>{item.quality_status}</td>
-                <td>{item.evidence_status}</td>
+                <td>{codeLabel('statuses', item.quality_status)}</td>
+                <td>{codeLabel('statuses', item.evidence_status)}</td>
                 <td>
                   {item.executed_cases ?? '—'}/{item.expected_cases ?? '—'}
                 </td>
@@ -270,6 +293,21 @@ function SemanticQuality({
 export default function AdminBusinessDocumentsQuality() {
   const { t, i18n } = useTranslation();
   const label = (key: string) => t(`admin.businessDocumentsQualityPage.${key}`);
+  const codeLabel = (
+    group: string,
+    code: string | null | undefined,
+    fallback = 'unknownStatus',
+  ) =>
+    t(`admin.businessDocumentsQualityPage.${group}.${code || 'UNKNOWN'}`, {
+      defaultValue: label(fallback),
+    });
+  const runExplanation = (run: AdminService.DocumentQualityRun) =>
+    run.status === 'INCOMPLETE' ||
+    (['PASS', 'FAIL'].includes(run.status) && !isCompleteRun(run))
+      ? codeLabel('reasons', run.reason_code, 'incompleteReason')
+      : run.status === 'FAIL'
+        ? codeLabel('reasons', run.reason_code, 'failedReason')
+        : null;
   const [params, setParams] = useSearchParams();
   const product =
     params.get('product') === 'technical_specification'
@@ -314,6 +352,19 @@ export default function AdminBusinessDocumentsQuality() {
     });
   const number = (value: number) =>
     new Intl.NumberFormat(i18n.language).format(value);
+  const duration = (value?: number | null) => {
+    if (value == null) return '—';
+    const seconds = Math.round(value / 1000);
+    const unit = (amount: number, name: 'second' | 'minute') =>
+      new Intl.NumberFormat(i18n.language, {
+        style: 'unit',
+        unit: name,
+        unitDisplay: 'short',
+      }).format(amount);
+    return seconds < 60
+      ? unit(seconds, 'second')
+      : `${unit(Math.floor(seconds / 60), 'minute')} ${unit(seconds % 60, 'second')}`;
+  };
   const date = (value?: number | null) =>
     value == null
       ? '—'
@@ -459,13 +510,7 @@ export default function AdminBusinessDocumentsQuality() {
     (item) => item.status === 'RUNNING' && item.baseline_status == null,
   );
   const latestRun = allRuns[0];
-  const latestFull = allRuns.find(
-    (run) =>
-      run.scope === 'FULL' &&
-      ['PASS', 'FAIL'].includes(run.status) &&
-      run.report?.expected_cases != null &&
-      run.report.expected_cases === run.report.executed_cases,
-  );
+  const latestFull = allRuns.find(isCompleteRun);
   const chosenCampaign =
     campaignDetail.data ??
     allCampaigns.find((item) => item.id === params.get('campaign')) ??
@@ -473,13 +518,10 @@ export default function AdminBusinessDocumentsQuality() {
   const eligibleRuns = (chosenCampaign?.runs || [])
     .filter(
       (run) =>
-        run.scope === 'FULL' &&
-        ['PASS', 'FAIL'].includes(run.status) &&
-        run.report?.expected_cases != null &&
-        run.report.expected_cases === run.report.executed_cases &&
+        isCompleteRun(run) &&
         (technical
-          ? run.report.p0_case_pass_rate != null
-          : run.report.weighted_score != null),
+          ? run.report?.p0_case_pass_rate != null
+          : run.report?.weighted_score != null),
     )
     .sort(
       (left, right) =>
@@ -510,11 +552,38 @@ export default function AdminBusinessDocumentsQuality() {
       ) &&
       new Set(eligibleRuns.map(comparisonFingerprint)).size === 1);
   const rankedRuns = technicalComparable ? eligibleRuns : [];
+  const campaignCounts = (chosenCampaign?.runs || []).reduce(
+    (counts, run) => {
+      if (!['PENDING', 'RUNNING'].includes(run.status)) {
+        counts.processed += 1;
+        if (isCompleteRun(run)) counts.complete += 1;
+        else counts.incomplete += 1;
+      }
+      return counts;
+    },
+    { processed: 0, complete: 0, incomplete: 0 },
+  );
   const rankByRun = new Map(
     rankedRuns.map((run, index) => [run.id, index + 1]),
   );
   const selectedDetail = detail.data;
   const op = technical ? undefined : operations.data;
+  const updatedAt = technical
+    ? tab === 'operations'
+      ? technicalOperations.data?.updated_at
+      : runs.dataUpdatedAt || undefined
+    : op?.updated_at;
+  const caseName = (id: string | null) =>
+    id
+      ? t(`admin.businessDocumentsQualityPage.caseNames.${id}`, {
+          defaultValue: t('admin.businessDocumentsQualityPage.scenarioId', {
+            id,
+          }),
+        })
+      : '—';
+  const hasHistoryFilters = Boolean(
+    params.get('trigger') || params.get('status') || params.get('model'),
+  );
   const modelFilter = params.get('model') || '';
   const visibleJobs = jobsPage.data?.jobs ?? [];
   const historicalModels = [
@@ -539,9 +608,9 @@ export default function AdminBusinessDocumentsQuality() {
       key={run.id}
       type="button"
       onClick={() => setSelectedRun(run.id)}
-      className="grid w-full gap-2 border-b border-border-button py-3 text-left text-sm hover:bg-bg-base sm:grid-cols-[9rem_9rem_minmax(0,1fr)_9rem]"
+      className="document-quality-run grid w-full gap-2 border-b border-border-button py-3 text-left text-sm hover:bg-bg-base"
     >
-      <span className="text-text-primary">
+      <span className="min-w-0 break-words text-text-primary">
         {run.model_name ||
           run.report?.model ||
           label(`triggers.${run.trigger}`)}
@@ -551,12 +620,14 @@ export default function AdminBusinessDocumentsQuality() {
           ? label('diagnostic')
           : label(`statuses.${run.status}`)}
       </span>
-      <span className="min-w-0 truncate text-text-secondary">
+      <span className="min-w-0 break-words text-text-secondary">
         {run.scope === 'CASE'
-          ? run.case_id
+          ? caseName(run.case_id)
           : run.report?.expected_cases != null
             ? `${run.report.executed_cases}/${run.report.expected_cases} ${label('cases')}`
-            : run.reason_code || run.reason || '—'}
+            : run.reason_code
+              ? codeLabel('reasons', run.reason_code, 'unknownReason')
+              : run.reason || '—'}
         {run.report?.weighted_score != null &&
           run.report.expected_cases != null &&
           run.scope === 'FULL' &&
@@ -586,7 +657,7 @@ export default function AdminBusinessDocumentsQuality() {
       data-testid="business-documents-quality-admin"
     >
       <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border-button px-6 py-5">
-        <div>
+        <div className="min-w-0">
           <h1 className="text-xl font-semibold text-text-primary">
             {technical ? label('technicalTitle') : label('title')}
           </h1>
@@ -617,12 +688,22 @@ export default function AdminBusinessDocumentsQuality() {
           {(health.isError || health.data?.status === 'ALERT') && (
             <p role="alert" className="text-state-warning">
               {label('nightlyAlert')}:{' '}
-              {health.data?.reason_code || label('healthUnavailable')}
+              <span title={health.data?.reason_code || undefined}>
+                {health.data?.reason_code
+                  ? codeLabel(
+                      'reasons',
+                      health.data.reason_code,
+                      'healthUnavailable',
+                    )
+                  : label('healthUnavailable')}
+              </span>
             </p>
           )}
           <p className="mt-2 text-xs text-text-secondary">
             {label('source')}: {runs.data?.source_revision || '—'} ·{' '}
-            {label('updated')}: {date(op?.updated_at)}
+            <span data-testid="quality-updated-at">
+              {label('updated')}: {date(updatedAt)}
+            </span>
             {runs.data?.source_revision === 'unverified' && (
               <span className="ml-2 text-state-warning">
                 {label('unverified')}
@@ -686,7 +767,10 @@ export default function AdminBusinessDocumentsQuality() {
         ))}
       </nav>
 
-      <div className="min-h-0 flex-1 overflow-auto p-6" role="tabpanel">
+      <div
+        className="document-quality-content min-h-0 flex-1 overflow-auto p-6"
+        role="tabpanel"
+      >
         {technical && tab === 'overview' && latestRun?.report && (
           <div role="status" className="mb-4 space-y-1 text-sm">
             <p>
@@ -696,13 +780,16 @@ export default function AdminBusinessDocumentsQuality() {
                   latestRun.report.quality_status || 'UNKNOWN',
                 )}
               >
-                {latestRun.report.quality_status || 'UNKNOWN'}
+                {codeLabel('statuses', latestRun.report.quality_status)}
               </span>
             </p>
             <p>
               {label('executionEvidence')}:{' '}
-              {latestRun.report.evidence_status || 'INCOMPLETE'} ·{' '}
-              {latestRun.report.executed_cases ?? 0}/
+              {codeLabel(
+                'statuses',
+                latestRun.report.evidence_status || 'INCOMPLETE',
+              )}{' '}
+              · {latestRun.report.executed_cases ?? 0}/
               {latestRun.report.expected_cases ?? '—'}
             </p>
             {latestRun.report.alignment_metrics && (
@@ -728,6 +815,7 @@ export default function AdminBusinessDocumentsQuality() {
               <NightlyExperiments
                 experiments={latestRun.report.nightly_experiments}
                 label={label}
+                codeLabel={codeLabel}
               />
             )}
           </div>
@@ -759,6 +847,7 @@ export default function AdminBusinessDocumentsQuality() {
                 label={label}
                 number={number}
                 date={date}
+                codeLabel={codeLabel}
               />
             )}
           </div>
@@ -773,7 +862,7 @@ export default function AdminBusinessDocumentsQuality() {
         )}
         {tab === 'overview' && (
           <div className="space-y-6">
-            <div className="grid gap-4 lg:grid-cols-2">
+            <div className={`grid gap-4 ${technical ? '' : 'lg:grid-cols-2'}`}>
               <div className="rounded-lg border border-border-button bg-bg-card p-5">
                 <h2 className="font-medium text-text-primary">
                   {label('evaluationTitle')}
@@ -799,7 +888,14 @@ export default function AdminBusinessDocumentsQuality() {
                       {latestRun.model_name ||
                         latestRun.report?.model ||
                         label(`triggers.${latestRun.trigger}`)}{' '}
-                      · {latestRun.reason_code || latestRun.reason || '—'}
+                      ·{' '}
+                      {latestRun.reason_code
+                        ? codeLabel(
+                            'reasons',
+                            latestRun.reason_code,
+                            'unknownReason',
+                          )
+                        : latestRun.reason || '—'}
                     </p>
                     <p>
                       {label('latestComparable')}:{' '}
@@ -825,7 +921,8 @@ export default function AdminBusinessDocumentsQuality() {
                 )}
                 {allCampaigns[0] && (
                   <p className="mt-3 text-sm text-text-secondary">
-                    {label('nightlyCampaign')}: {allCampaigns[0].status} ·{' '}
+                    {label('nightlyCampaign')}:{' '}
+                    {codeLabel('statuses', allCampaigns[0].status)} ·{' '}
                     {
                       allCampaigns[0].runs.filter(
                         (run) => !['PENDING', 'RUNNING'].includes(run.status),
@@ -835,35 +932,37 @@ export default function AdminBusinessDocumentsQuality() {
                   </p>
                 )}
               </div>
-              <div className="rounded-lg border border-border-button bg-bg-card p-5">
-                <h2 className="font-medium text-text-primary">
-                  {label('operationsTitle')}
-                </h2>
-                {operations.error && (
-                  <p role="alert" className="mt-3 text-state-error">
-                    {label('loadError')}
-                  </p>
-                )}
-                {op && (
-                  <div className="mt-4 space-y-2 text-sm">
-                    <p>
-                      {label('failureRate')}:{' '}
-                      {op.terminal_jobs
-                        ? `${op.failed}/${op.terminal_jobs} (${(op.failure_rate! * 100).toFixed(1)}%)`
-                        : '—'}
+              {!technical && (
+                <div className="rounded-lg border border-border-button bg-bg-card p-5">
+                  <h2 className="font-medium text-text-primary">
+                    {label('operationsTitle')}
+                  </h2>
+                  {operations.error && (
+                    <p role="alert" className="mt-3 text-state-error">
+                      {label('loadError')}
                     </p>
-                    <p>
-                      {label('affectedDocuments')}: {op.failed_documents}/
-                      {op.terminal_documents} · {label('affectedTenants')}:{' '}
-                      {op.affected_tenants}
-                    </p>
-                    <p>
-                      {label('pending')}: {op.pending + op.retrying} ·{' '}
-                      {label('running')}: {op.running}
-                    </p>
-                  </div>
-                )}
-              </div>
+                  )}
+                  {op && (
+                    <div className="mt-4 space-y-2 text-sm">
+                      <p>
+                        {label('failureRate')}:{' '}
+                        {op.terminal_jobs
+                          ? `${op.failed}/${op.terminal_jobs} (${(op.failure_rate! * 100).toFixed(1)}%)`
+                          : '—'}
+                      </p>
+                      <p>
+                        {label('affectedDocuments')}: {op.failed_documents}/
+                        {op.terminal_documents} · {label('affectedTenants')}:{' '}
+                        {op.affected_tenants}
+                      </p>
+                      <p>
+                        {label('pending')}: {op.pending + op.retrying} ·{' '}
+                        {label('running')}: {op.running}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
             <div className="rounded-lg border border-border-button bg-bg-card p-5">
               <h2 className="font-medium text-text-primary">
@@ -912,7 +1011,7 @@ export default function AdminBusinessDocumentsQuality() {
                       <option value="">{label('selectCase')}</option>
                       {models.data?.case_ids.map((id) => (
                         <option key={id} value={id}>
-                          {id}
+                          {caseName(id)}
                         </option>
                       ))}
                     </select>
@@ -956,11 +1055,12 @@ export default function AdminBusinessDocumentsQuality() {
                 aria-label={label('nightlyCampaign')}
                 value={chosenCampaign?.id || ''}
                 onChange={(event) => change('campaign', event.target.value)}
-                className="rounded-md border border-border-button bg-bg-card p-2 text-text-primary"
+                className="min-w-0 max-w-full rounded-md border border-border-button bg-bg-card p-2 text-text-primary"
               >
                 {allCampaigns.map((item) => (
                   <option key={item.id} value={item.id}>
-                    {date(item.requested_at)} · {item.status}
+                    {date(item.requested_at)} ·{' '}
+                    {codeLabel('statuses', item.status)}
                   </option>
                 ))}
               </select>
@@ -975,16 +1075,32 @@ export default function AdminBusinessDocumentsQuality() {
                     {label('comparisonNotQualified')}
                   </p>
                 )}
-                <p className="mb-3 text-sm text-text-secondary">
+                <dl
+                  aria-label={label('seriesSummary')}
+                  className="mb-4 flex flex-wrap gap-x-6 gap-y-3 text-sm"
+                >
+                  {(
+                    [
+                      [
+                        'processedRuns',
+                        `${campaignCounts.processed}/${chosenCampaign.runs.length}`,
+                      ],
+                      ['completeRuns', campaignCounts.complete],
+                      ['incompleteRuns', campaignCounts.incomplete],
+                    ] as const
+                  ).map(([key, value]) => (
+                    <div key={key}>
+                      <dt className="text-text-secondary">{label(key)}</dt>
+                      <dd className="font-medium text-text-primary">{value}</dd>
+                    </div>
+                  ))}
+                </dl>
+                <p className="mb-3 break-words text-sm text-text-secondary">
                   {label('source')}: {chosenCampaign.source_revision} ·{' '}
-                  {label('baseline')}: {chosenCampaign.baseline_status || '—'} ·{' '}
-                  {label('completed')}:{' '}
-                  {
-                    chosenCampaign.runs.filter(
-                      (run) => !['PENDING', 'RUNNING'].includes(run.status),
-                    ).length
-                  }
-                  /{chosenCampaign.runs.length}
+                  {label('baseline')}:{' '}
+                  {chosenCampaign.baseline_status
+                    ? codeLabel('statuses', chosenCampaign.baseline_status)
+                    : '—'}
                   {(chosenCampaign.source_revision !==
                     runs.data?.source_revision ||
                     chosenCampaign.source_revision === 'unverified') && (
@@ -994,8 +1110,15 @@ export default function AdminBusinessDocumentsQuality() {
                   )}
                 </p>
                 {chosenCampaign.reason_code && (
-                  <p className="mb-3 text-state-warning">
-                    {chosenCampaign.reason_code}
+                  <p
+                    className="mb-3 text-state-warning"
+                    title={chosenCampaign.reason_code}
+                  >
+                    {codeLabel(
+                      'reasons',
+                      chosenCampaign.reason_code,
+                      'incompleteReason',
+                    )}
                   </p>
                 )}
                 {chosenCampaign.baseline_report?.cases
@@ -1004,22 +1127,37 @@ export default function AdminBusinessDocumentsQuality() {
                     <p
                       key={item.case_id}
                       className="mb-2 text-sm text-state-error"
+                      title={[
+                        item.case_id,
+                        ...(item.diagnostics?.map(
+                          (diagnostic) => diagnostic.code,
+                        ) || []),
+                      ].join(' · ')}
                     >
-                      {item.case_id} · {label('baseline')} ·{' '}
+                      {label('baseline')} ·{' '}
                       {item.diagnostics
-                        ?.map((diagnostic) => diagnostic.code)
+                        ?.map((diagnostic) =>
+                          codeLabel(
+                            'diagnostics',
+                            diagnostic.code,
+                            'failedReason',
+                          ),
+                        )
                         .join(', ')}
                     </p>
                   ))}
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-sm">
+                <div className="document-quality-comparison">
+                  <table
+                    aria-label={label('modelComparison')}
+                    className="document-quality-comparison-table w-full text-left text-sm"
+                  >
                     <thead>
                       <tr className="border-b border-border-button text-text-secondary">
                         <th className="py-2">{label('rank')}</th>
-                        <th>{label('models')}</th>
+                        <th>{label('model')}</th>
                         <th>{label('status')}</th>
                         {technical && <th>{label('executionEvidence')}</th>}
-                        <th>{label('cases')}</th>
+                        <th>{label('caseProgress')}</th>
                         <th>{label('p0Pass')}</th>
                         {!technical && <th>{label('score')}</th>}
                         <th>{label('duration')}</th>
@@ -1028,21 +1166,22 @@ export default function AdminBusinessDocumentsQuality() {
                     </thead>
                     <tbody>
                       {chosenCampaign.runs.map((run) => {
-                        const complete =
-                          run.scope === 'FULL' &&
-                          run.report?.expected_cases != null &&
-                          run.report.executed_cases ===
-                            run.report.expected_cases &&
-                          ['PASS', 'FAIL'].includes(run.status);
+                        const complete = isCompleteRun(run);
+                        const explanation = runExplanation(run);
                         return (
                           <tr
                             key={run.id}
                             className="border-b border-border-button text-text-primary"
                           >
-                            <td>{rankByRun.get(run.id) ?? '—'}</td>
-                            <td className="py-3">
+                            <td data-label={label('rank')}>
+                              {rankByRun.get(run.id) ?? '—'}
+                            </td>
+                            <td
+                              data-label={label('model')}
+                              className="comparison-model py-3"
+                            >
                               <button
-                                className="text-left text-accent-primary"
+                                className="break-words text-left text-accent-primary underline-offset-4 hover:underline focus-visible:underline"
                                 onClick={() => setSelectedRun(run.id)}
                               >
                                 {run.model_name || '—'}
@@ -1050,6 +1189,14 @@ export default function AdminBusinessDocumentsQuality() {
                               <div className="text-xs text-text-secondary">
                                 {run.model_digest?.slice(0, 12)}
                               </div>
+                              {explanation && (
+                                <p
+                                  className="mt-2 text-xs text-state-warning"
+                                  title={run.reason_code || undefined}
+                                >
+                                  {explanation}
+                                </p>
+                              )}
                               {(chosenCampaign.models?.models.find(
                                 (item) => item.digest === run.model_digest,
                               )?.aliases.length || 0) > 1 && (
@@ -1064,36 +1211,40 @@ export default function AdminBusinessDocumentsQuality() {
                                 </div>
                               )}
                             </td>
-                            <td className={statusColor(run.status)}>
-                              {label(`statuses.${run.status}`)}
+                            <td
+                              data-label={label('status')}
+                              className={`comparison-status ${statusColor(run.status)}`}
+                            >
+                              {codeLabel('statuses', run.status)}
                             </td>
                             {technical && (
-                              <td>
-                                {run.report?.evidence_status || 'INCOMPLETE'}
+                              <td data-label={label('executionEvidence')}>
+                                {codeLabel(
+                                  'statuses',
+                                  run.report?.evidence_status || 'INCOMPLETE',
+                                )}
                               </td>
                             )}
-                            <td>
+                            <td data-label={label('caseProgress')}>
                               {run.report?.executed_cases ?? 0}/
                               {run.report?.expected_cases ?? '—'}
                             </td>
-                            <td>
+                            <td data-label={label('p0Pass')}>
                               {complete && run.report?.p0_case_pass_rate != null
                                 ? `${(run.report.p0_case_pass_rate * 100).toFixed(0)}%`
                                 : '—'}
                             </td>
                             {!technical && (
-                              <td>
+                              <td data-label={label('score')}>
                                 {complete && run.report?.weighted_score != null
                                   ? `${run.report.weighted_score.toFixed(2)}/4`
                                   : '—'}
                               </td>
                             )}
-                            <td>
-                              {run.report?.duration_ms != null
-                                ? `${number(Math.round(run.report.duration_ms / 1000))} s`
-                                : '—'}
+                            <td data-label={label('duration')}>
+                              {duration(run.report?.duration_ms)}
                             </td>
-                            <td>
+                            <td data-label={label('tokens')}>
                               {run.report?.total_tokens != null
                                 ? number(run.report.total_tokens)
                                 : '—'}
@@ -1193,7 +1344,24 @@ export default function AdminBusinessDocumentsQuality() {
                   )
                 : runs.data && (
                     <p className="py-5 text-text-secondary">
-                      {label('noRuns')}
+                      {label(hasHistoryFilters ? 'noMatchingRuns' : 'noRuns')}
+                      {hasHistoryFilters && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() =>
+                            setParams((previous) => {
+                              const next = new URLSearchParams(previous);
+                              ['trigger', 'status', 'model'].forEach((key) =>
+                                next.delete(key),
+                              );
+                              return next;
+                            })
+                          }
+                        >
+                          {label('resetFilters')}
+                        </Button>
+                      )}
                     </p>
                   )}
             </div>
@@ -1369,6 +1537,7 @@ export default function AdminBusinessDocumentsQuality() {
                         ]),
                       ].map((value) => (
                         <option key={value} value={value}>
+                          {codeLabel('reasons', value, 'unknownReason')} ·{' '}
                           {value}
                         </option>
                       ))}
@@ -1393,11 +1562,20 @@ export default function AdminBusinessDocumentsQuality() {
                         className="min-w-0 truncate text-text-primary"
                         title={job.id}
                       >
-                        {job.task_type} · {job.document_id} · {job.id}
+                        {t(
+                          `admin.businessDocumentsQualityPage.taskTypes.${job.task_type}`,
+                          { defaultValue: job.task_type },
+                        )}{' '}
+                        · {job.document_id} · {job.id}
                       </span>
-                      <span className={statusColor(job.status)}>
-                        {job.status} {job.error_code && `· ${job.error_code}`} ·{' '}
-                        {job.attempt}/{job.max_attempts}
+                      <span
+                        className={statusColor(job.status)}
+                        title={job.error_code || undefined}
+                      >
+                        {codeLabel('statuses', job.status)}{' '}
+                        {job.error_code &&
+                          `· ${codeLabel('reasons', job.error_code, 'unknownReason')}`}{' '}
+                        · {job.attempt}/{job.max_attempts}
                       </span>
                       <span className="text-text-secondary">
                         {date(job.finished_at)}
@@ -1453,7 +1631,7 @@ export default function AdminBusinessDocumentsQuality() {
           >
             <div className="flex items-start justify-between gap-3">
               <h2 className="min-w-0 break-words font-medium text-text-primary">
-                {label('caseDetails')} · {selectedRun}
+                {label('caseDetails')}
               </h2>
               <Button
                 size="sm"
@@ -1474,20 +1652,32 @@ export default function AdminBusinessDocumentsQuality() {
             )}
             {selectedDetail && (
               <div className="mt-3 space-y-3 text-sm">
-                <p className="break-all text-text-secondary">
-                  {selectedDetail.model_name ||
-                    selectedDetail.report?.model ||
-                    '—'}{' '}
-                  · {selectedDetail.model_digest || '—'} ·{' '}
-                  {selectedDetail.source_revision} ·{' '}
-                  {date(selectedDetail.finished_at)}
-                </p>
+                <details className="break-all text-text-secondary">
+                  <summary className="cursor-pointer">
+                    {label('technicalDetails')}
+                  </summary>
+                  <p>
+                    {selectedRun} ·{' '}
+                    {selectedDetail.model_name ||
+                      selectedDetail.report?.model ||
+                      '—'}{' '}
+                    · {selectedDetail.model_digest || '—'} ·{' '}
+                    {selectedDetail.source_revision} ·{' '}
+                    {date(selectedDetail.finished_at)}
+                  </p>
+                </details>
                 {technical && (
                   <p>
                     {label('qualityStatus')}:{' '}
-                    {selectedDetail.report?.quality_status || 'UNKNOWN'} ·{' '}
-                    {label('executionEvidence')}:{' '}
-                    {selectedDetail.report?.evidence_status || 'INCOMPLETE'}
+                    {codeLabel(
+                      'statuses',
+                      selectedDetail.report?.quality_status,
+                    )}{' '}
+                    · {label('executionEvidence')}:{' '}
+                    {codeLabel(
+                      'statuses',
+                      selectedDetail.report?.evidence_status || 'INCOMPLETE',
+                    )}
                   </p>
                 )}
                 {technical && selectedDetail.report?.alignment_quality && (
@@ -1501,6 +1691,7 @@ export default function AdminBusinessDocumentsQuality() {
                   <NightlyExperiments
                     experiments={selectedDetail.report.nightly_experiments}
                     label={label}
+                    codeLabel={codeLabel}
                   />
                 )}
                 {(selectedDetail.source_revision !==
@@ -1510,8 +1701,15 @@ export default function AdminBusinessDocumentsQuality() {
                   <p>{label('historicalSource')}</p>
                 )}
                 {selectedDetail.reason_code && (
-                  <p className="text-state-warning">
-                    {selectedDetail.reason_code}
+                  <p
+                    className="text-state-warning"
+                    title={selectedDetail.reason_code}
+                  >
+                    {codeLabel(
+                      'reasons',
+                      selectedDetail.reason_code,
+                      'incompleteReason',
+                    )}
                   </p>
                 )}
                 {!selectedDetail.report?.cases?.length && (
@@ -1532,8 +1730,12 @@ export default function AdminBusinessDocumentsQuality() {
                     key={item.case_id}
                     className="border-t border-border-button pt-3"
                   >
-                    <p className={statusColor(item.status)}>
-                      {item.case_id} · {item.priority || '—'} · {item.status}
+                    <p
+                      className={statusColor(item.status)}
+                      title={item.case_id}
+                    >
+                      {caseName(item.case_id)} · {item.priority || '—'} ·{' '}
+                      {codeLabel('statuses', item.status)}
                     </p>
                     {item.diagnostics?.map((diagnostic, index) => (
                       <p

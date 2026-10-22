@@ -1,5 +1,4 @@
 import type { BusinessDocumentOperationError } from '../types';
-import { DocumentMarkdown } from './document-markdown';
 
 type OperationError =
   | BusinessDocumentOperationError
@@ -80,7 +79,7 @@ export function BusinessDocumentError({ error }: { error: OperationError }) {
   const { message, issues, duplicatePairs } = errorContent(error);
   return (
     <div className="min-w-0 break-words">
-      <DocumentMarkdown>{message}</DocumentMarkdown>
+      <p className="whitespace-pre-wrap">{message}</p>
       {duplicatePairs.map((pair, index) => (
         <p key={index}>
           Повторяющиеся определения: разделы {pair.join(' и ')}.
@@ -101,9 +100,11 @@ export function BusinessDocumentError({ error }: { error: OperationError }) {
                     .join(' · ')}
                 </p>
               )}
-              {issue.text && <DocumentMarkdown>{issue.text}</DocumentMarkdown>}
+              {issue.text && (
+                <p className="whitespace-pre-wrap">{issue.text}</p>
+              )}
               {issue.reason && (
-                <DocumentMarkdown>{`Причина: ${issue.reason}`}</DocumentMarkdown>
+                <p className="whitespace-pre-wrap">Причина: {issue.reason}</p>
               )}
             </li>
           ))}

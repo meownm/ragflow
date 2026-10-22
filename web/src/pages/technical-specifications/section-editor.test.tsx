@@ -1,6 +1,18 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import type { Specification } from './model';
-import { SectionEditor, renderedSelection } from './section-editor';
+import { SectionEditor, editorHtml, renderedSelection } from './section-editor';
+
+jest.mock('@/components/diagram-code-block', () => ({
+  getDiagramKind: (language: string) =>
+    ['mermaid', 'plantuml', 'puml'].includes(language),
+  DiagramCodeBlock: ({ source }: { source: string }) => (
+    <figure>
+      <svg>
+        <text>{source}</text>
+      </svg>
+    </figure>
+  ),
+}));
 
 const document = {
   id: 'doc',
@@ -194,4 +206,70 @@ test('a code block quote retains the code source rather than selecting the secti
   const result = renderedSelection(area, document, '1', value, range);
   expect(result?.anchor?.quote).toBe('{"timeout": 30}');
   expect(result?.anchor?.prefix).toBe('```json\n');
+});
+
+test.each(['One\nTwo', 'One  \nTwo', 'One\\\nTwo', 'One\r\nTwo'])(
+  'line breaks render and retain exact quote positions: %j',
+  (value) => {
+    const { area, onChange } = editor(value);
+    expect(area.querySelectorAll('br')).toHaveLength(1);
+    const walker = window.document.createTreeWalker(area, NodeFilter.SHOW_TEXT);
+    let text: Node | null = null;
+    while (walker.nextNode())
+      if (walker.currentNode.textContent?.includes('Two'))
+        text = walker.currentNode;
+    expect(text).not.toBeNull();
+    const at = text!.textContent!.indexOf('Two');
+    const range = window.document.createRange();
+    range.setStart(text!, at);
+    range.setEnd(text!, at + 3);
+    const selected = renderedSelection(area, document, '1', value, range);
+    expect(selected?.anchor?.quote).toBe('Two');
+    expect(selected?.anchor?.prefix).toBe(value.slice(0, value.indexOf('Two')));
+    expect(onChange).not.toHaveBeenCalled();
+  },
+);
+
+test('diagrams show images and save only editable code, including later text selection', () => {
+  const value = '```mermaid\ngraph LR\nA-->B\n```\n\n**End**';
+  const { area, onChange, onSelection, props, rerender } = editor(value);
+  expect(area.querySelector('svg')).not.toBeNull();
+  expect(area.querySelector('details pre code')).toHaveTextContent('graph LR');
+  const saved = editorHtml(area);
+  expect(saved).toContain('class="language-mermaid"');
+  expect(saved).not.toMatch(/svg|figure|details|Код диаграммы|data-tz-diagram/);
+  const text = area.querySelector('strong span')!.firstChild!;
+  text.textContent = 'Ending';
+  fireEvent.input(area);
+  rerender(<SectionEditor {...props} value={onChange.mock.calls[0][0]} />);
+  const range = window.document.createRange();
+  range.setStart(text, 0);
+  range.setEnd(text, 3);
+  const selection = window.getSelection()!;
+  selection.removeAllRanges();
+  selection.addRange(range);
+  fireEvent.mouseUp(area);
+  expect(onSelection.mock.calls.at(-1)?.[0]?.anchor?.quote).toBe('End');
+  selection.removeAllRanges();
+});
+
+test('a real edit and reopening retain one visible line break, without source drift', () => {
+  const { area, props, rerender, onChange } = editor('First\nSecond');
+  area.append('!');
+  fireEvent.input(area);
+  const saved = onChange.mock.calls[0][0];
+  rerender(<SectionEditor {...props} value="External" />);
+  rerender(<SectionEditor {...props} value={saved} />);
+  expect(area.querySelectorAll('br')).toHaveLength(1);
+  expect(area.textContent).toBe('First\nSecond!');
+});
+
+test('CRLF code selections retain exact original newlines and fenced source', () => {
+  const value = '```json\r\n{"a":1}\r\n{"b":2}\r\n```';
+  const { area } = editor(value);
+  const range = window.document.createRange();
+  range.selectNodeContents(area.querySelector('code span')!);
+  const selected = renderedSelection(area, document, '1', value, range);
+  expect(selected?.anchor?.quote).toBe('{"a":1}\r\n{"b":2}');
+  expect(selected?.anchor?.prefix).toBe('```json\r\n');
 });

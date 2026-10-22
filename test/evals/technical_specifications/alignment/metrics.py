@@ -2,7 +2,7 @@
 
 from api.technical_specifications.alignment import validate_report
 from api.technical_specifications.domain import SpecificationError
-from test.evals.technical_specifications.alignment.corpus import CASES, evidence_matches, inputs, is_conformant
+from test.evals.technical_specifications.alignment.corpus import CASES, evidence_matches, inputs, is_conformant, unsupported_rule_matches
 
 BASE_COUNTERS = ("expected_fragments", "scored_fragments", "unscored_fragments", "undetermined_fragments", "contradiction_tp", "contradiction_fp", "contradiction_fn", "contradiction_tn")
 FACTS = (
@@ -74,12 +74,12 @@ def semantic_metrics(report):
         options = case[5] if len(case) > 5 else {}
         rows = options.get("rows", [(case[3], case[4])])
         counts["expected_fragments"] += len(rows)
-        evidence_expected += len(rows) if options.get("row_quotes") else 0
+        evidence_expected += sum(bool(quote) for quote in options.get("row_quotes", []))
         binary_expected += sum(label in ("CONSISTENT", "CONTRADICTED") for _, label in rows)
         expected_contradictions += sum(label == "CONTRADICTED" for _, label in rows)
         positive = is_conformant(case)
         positive_expected += positive
-        unsupported = key == "BTZ-23"
+        unsupported = options.get("unsupported_business_rule", key == "BTZ-23")
         unsupported_expected += unsupported
         joint = options.get("joint") == "CONTRADICTED"
         joint_expected += joint
@@ -96,7 +96,7 @@ def semantic_metrics(report):
         positive_scored += positive
         false_blocks += positive and checked["quality_status"] != "PASS"
         unsupported_scored += unsupported
-        unsupported_found += unsupported and any(row["kind"] == "UNSUPPORTED_BUSINESS_RULE" for row in actual["additional_rules"])
+        unsupported_found += unsupported and any(unsupported_rule_matches(case, row) for row in actual["additional_rules"])
         joint_scored += joint
         joint_found += joint and actual["joint"]["consistency"] == "CONTRADICTED"
         for index, (row, (coverage, consistency)) in enumerate(zip(actual["requirements"], rows, strict=True)):

@@ -8,6 +8,9 @@ from urllib.parse import urlparse
 
 import pytest
 from playwright.sync_api import expect
+from business_documents.sql_query.query_graph import QueryGraphError, project_query_graph, related_catalog, relationship_paths
+from business_documents.sql_query.revisions import query_blocks
+from business_documents.sql_query.view_state import validate_view
 
 from test.playwright.helpers._next_apps_helpers import RESULT_TIMEOUT_MS
 from test.playwright.helpers.navigation import click_navigation
@@ -80,6 +83,8 @@ class DocumentConstructorStub:
         self.execution_binding_requests = []
         self.sql_agent_project = None
         self.sql_project_commands = []
+        self.sql_graph_view = {"version": 0, "view": None}
+        self.sql_draft = None
 
     @staticmethod
     def _sql_agent_capabilities():
@@ -624,6 +629,59 @@ class DocumentConstructorStub:
     def __call__(self, route):
         request = route.request
         path = urlparse(request.url).path.rstrip("/")
+        if path == "/api/v1/business-documents/sql-query/schema/graph" and request.method == "POST":
+            payload = json.loads(request.post_data or "{}")
+            try:
+                neighborhood = related_catalog(self._catalog_answer()["entities"], payload["entity_ids"], depth=payload["depth"])
+                graph = project_query_graph(payload["sql"], neighborhood["tables"])
+                roots = list({node["entity_id"] for node in graph["nodes"] if node["membership"] == "QUERY" and node["entity_id"]})
+                _fulfill_json(route, _envelope({**neighborhood, **graph, **relationship_paths(neighborhood["relationships"], roots, max_hops=payload["depth"]), "freshness": {"stale": False}}))
+            except QueryGraphError:
+                # Older journeys have deliberately partial catalog fixtures.
+                # Show a real metadata error instead of inventing schema/JOINs.
+                route.fulfill(status=422, content_type="application/json", body=json.dumps({"code": 422, "message": "Fixture catalog does not describe this SQL", "data": {}}))
+            return
+        if re.fullmatch(r"/api/v1/business-documents/sql-query/projects/[^/]+/view", path):
+            if request.method == "PUT":
+                payload = json.loads(request.post_data or "{}")
+                assert payload["expected_version"] == self.sql_graph_view["version"]
+                self.sql_graph_view = {"version": self.sql_graph_view["version"] + 1, "view": validate_view(payload["view"])}
+            else:
+                assert request.method == "GET"
+            _fulfill_json(route, _envelope(self.sql_graph_view))
+            return
+        if re.fullmatch(r"/api/v1/business-documents/sql-query/projects/[^/]+/workspace", path) and request.method == "GET":
+            project = self.sql_agent_project
+            query_id = project["artifact_ids"].get("query") if project else None
+            sql = project.get("compilation", {}).get("result", {}).get("sql", "") if project else ""
+            blocks = query_blocks(sql) if sql else []
+            _fulfill_json(
+                route,
+                _envelope(
+                    {
+                        "project_id": project["id"] if project else "",
+                        "query_artifact_id": query_id,
+                        "document_artifact_id": None,
+                        "sql": sql,
+                        "blocks": blocks,
+                        "query_revisions": [{"id": query_id, "revision": 1, "sql": sql, "blocks": blocks}] if query_id else [],
+                        "threads": [],
+                        "history": [],
+                        "draft": self.sql_draft,
+                    }
+                ),
+            )
+            return
+        if re.fullmatch(r"/api/v1/business-documents/sql-query/projects/[^/]+/draft", path) and request.method == "PUT":
+            payload = json.loads(request.post_data or "{}")
+            assert payload["expected_draft_version"] == (self.sql_draft["version"] if self.sql_draft else None)
+            self.sql_draft = {
+                "version": (self.sql_draft["version"] if self.sql_draft else 0) + 1,
+                "steps": payload["steps"],
+                "base_query_artifact_id": self.sql_agent_project["artifact_ids"].get("query"),
+            }
+            _fulfill_json(route, _envelope(self.sql_draft))
+            return
         if path == "/api/v1/business-documents/sql-query/projects":
             if request.method == "POST":
                 payload = json.loads(request.post_data or "{}")
@@ -704,6 +762,8 @@ class DocumentConstructorStub:
             self.execution_binding_requests.append(json.loads(request.post_data or "{}"))
             _fulfill_json(route, _envelope(self._execution_binding_answer()))
             return
+        if path.startswith("/api/v1/business-documents/sql-query/"):
+            raise AssertionError(f"Unimplemented SQL browser fixture route: {request.method} {path}")
         if request.method != "GET":
             self.mutations.append((request.method, path, request.post_data))
 
@@ -1092,7 +1152,7 @@ def _open_constructor(page, base_url):
         re.compile(r"/document-constructor$"),
         timeout=RESULT_TIMEOUT_MS,
     )
-    expect(page.get_by_test_id("document-constructor-page")).to_be_visible()
+    expect(page.get_by_test_id("document-constructor-page")).to_be_visible(timeout=RESULT_TIMEOUT_MS)
     page.wait_for_load_state("load", timeout=NAVIGATION_TIMEOUT_MS)
 
 
@@ -1105,13 +1165,13 @@ def test_constructor_navigation_opens_document_and_sql_scenarios(page, base_url,
     page.route("**/api/v1/**", stub)
     _open_constructor(page, base_url)
     page.set_viewport_size(viewport)
-    menu = page.get_by_role("banner").get_by_role("button", name="Menu", exact=True)
+    menu = page.get_by_role("banner").get_by_role("button", name=re.compile(r"^(?:Menu|Меню)$"))
     if viewport["width"] > 3000:
         expect(menu).to_have_count(0)
     else:
         expect(menu).to_be_visible()
     click_navigation(page, "nav-sql-projects", "/sql-projects")
-    expect(page).to_have_url(re.compile(r"/sql-projects$"), timeout=RESULT_TIMEOUT_MS)
+    expect(page).to_have_url(re.compile(r"/sql-projects(?:\?[^#]*)?$"), timeout=RESULT_TIMEOUT_MS)
     expect(page.get_by_test_id("sql-agent-workbench")).to_be_visible()
     click_navigation(page, "nav-document-constructor", "/document-constructor")
     expect(page.get_by_test_id("document-constructor-page")).to_be_visible()
@@ -1126,7 +1186,7 @@ def test_legacy_sql_constructor_link_opens_sql_projects(page, base_url):
 
     page.goto(f"{base_url.rstrip('/')}/document-constructor?surface=sql", wait_until="commit")
 
-    expect(page).to_have_url(re.compile(r"/sql-projects$"), timeout=NAVIGATION_TIMEOUT_MS)
+    expect(page).to_have_url(re.compile(r"/sql-projects(?:\?[^#]*)?$"), timeout=NAVIGATION_TIMEOUT_MS)
     expect(page.get_by_test_id("sql-agent-workbench")).to_be_visible()
 
 
@@ -1240,9 +1300,9 @@ def test_sql_agent_mvp_golden_from_request_to_document(page, base_url):
 
     page.set_viewport_size({"width": 1920, "height": 1080})
     page.goto(f"{base_url.rstrip('/')}/sql-projects", wait_until="commit")
-    expect(page).to_have_url(re.compile(r"/sql-projects$"), timeout=RESULT_TIMEOUT_MS)
+    expect(page).to_have_url(re.compile(r"/sql-projects(?:\?[^#]*)?$"), timeout=RESULT_TIMEOUT_MS)
     workbench = page.get_by_test_id("sql-agent-workbench")
-    expect(workbench).to_be_visible()
+    expect(workbench).to_be_visible(timeout=RESULT_TIMEOUT_MS)
     expect(workbench).to_contain_text("Получите данные по вашему вопросу")
 
     workbench.get_by_role("button", name="Новый запрос").first.click()
@@ -1255,11 +1315,13 @@ def test_sql_agent_mvp_golden_from_request_to_document(page, base_url):
     requirements.get_by_role("button", name="Календарный месяц").click()
     requirements.get_by_role("button", name="Подтвердить требования").click()
 
-    workbench.get_by_label("Что искать в данных?").fill("Заказ")
+    workbench.locator("summary").filter(has_text="Уточнить поиск").click()
+    workbench.get_by_label("Темы для уточнения поиска").fill("Заказ")
     workbench.get_by_test_id("sql-agent-run-schema").click()
     schema = workbench.get_by_test_id("sql-agent-schema-review")
-    expect(schema).to_contain_text("Проверьте найденные данные")
-    schema.get_by_role("button", name=re.compile(r"order_fact")).first.click()
+    expect(schema).to_contain_text("Подберите данные для запроса")
+    expect(schema).to_contain_text("order_fact")
+    schema.get_by_role("button", name="Просмотреть таблицу", exact=True).click()
     expect(schema).to_contain_text("paid_amount_rub")
     for column in ("order_id", "status_id", "paid_amount_rub"):
         schema.get_by_role("checkbox", name=column).check()

@@ -167,7 +167,7 @@ def merge_sections(base, local, remote):
     return {"sections": candidate, "conflicts": conflicts}
 
 
-def apply_merge_edits(current, edits):
+def apply_edits(current, edits):
     """Apply unique, non-overlapping literal edits against one complete snapshot."""
     result, pending = sections(current), {}
     if not isinstance(edits, list):

@@ -489,3 +489,18 @@ def test_runner_rejects_an_unrelated_runtime_before_creating_evidence(monkeypatc
     with pytest.raises(ValueError, match="isolated QA runtime"):
         run_live.main()
     assert not evidence.exists()
+
+
+@pytest.mark.parametrize("wrong_schema", [False, True])
+def test_proxy_proof_requires_the_exact_structured_chat_schema(monkeypatch, wrong_schema):
+    row, events, final = proxy_inputs()
+    schema = {"type": "object", "properties": {"edits": {"type": "array"}}, "required": ["edits"]}
+    events[0]["options"]["json_response"] = schema
+    events[1]["response_format"] = {"type": "json_schema", "json_schema": {"name": "response", "strict": True, "schema": schema}}
+    row["format"] = {"type": "object"} if wrong_schema else schema
+    monkeypatch.setattr(run_live.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(stdout=json.dumps([row]).encode()))
+    if wrong_schema:
+        with pytest.raises(ValueError, match="controls"):
+            verify_upstream(events, final)
+    else:
+        assert verify_upstream(events, final)["status"] == "PASS"

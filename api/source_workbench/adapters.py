@@ -505,7 +505,7 @@ class RAGFlowProcessModel:
 
         return num_tokens_from_string(text)
 
-    async def stream(self, system: str, payload: dict[str, Any], output_tokens: int, *, json_response: bool = False, thinking: bool = False):
+    async def stream(self, system: str, payload: dict[str, Any], output_tokens: int, *, json_response: bool | dict[str, Any] = False, thinking: bool = False):
         from api.db.services.llm_service import LLMBundle
 
         if thinking and self.model_config.get("llm_factory") == "Ollama" and not self._capabilities_resolved:
@@ -518,10 +518,15 @@ class RAGFlowProcessModel:
         generation = {"temperature": 0, limit_parameter: output_tokens}
         if json_response and self.model_config.get("llm_factory") in {"Ollama", "OpenAI-API-Compatible"}:
             generation["response_format"] = {"type": "json_object"}
+            if isinstance(json_response, dict) and self.model_config.get("llm_factory") == "Ollama":
+                generation["response_format"] = {"type": "json_schema", "json_schema": {"name": "response", "strict": True, "schema": json_response}}
         if self.model_config.get("llm_factory") == "Ollama" and type(self.context_tokens) is int:
             generation["extra_body"] = {"num_ctx": self.context_tokens}
             if thinking and self.supports_thinking:
                 generation["extra_body"]["think"] = True
+                # The Qwen family policy consumes this control before building
+                # Ollama's native body; a nested think alone is overwritten.
+                generation["enable_thinking"] = True
         visibility = {"with_reasoning": False} if json_response else {}
         with LLMBundle(self.owner_id, self.model_config, lang="Russian", max_retries=0, timeout=1800) as model:
             if not hasattr(model.mdl, "async_chat_streamly"):

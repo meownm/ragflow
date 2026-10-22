@@ -7,6 +7,10 @@ import { MobileMenuFooter } from './mobile-menu-footer';
 
 const mockOnClose = jest.fn();
 
+jest.mock('@/routes', () => ({
+  Routes: { Root: '/', UserSetting: '/user-setting' },
+}));
+
 jest.mock('@/hooks/logic-hooks', () => ({
   useChangeLanguage: () => jest.fn(),
 }));

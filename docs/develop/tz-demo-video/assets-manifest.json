@@ -1,0 +1,30 @@
+{
+  "files": {
+    "acceptance.md": "42bbbacd95d700a25d8bce80d0c752b8e47406bc98ba04bad7d95adc28b06622",
+    "alignment-fix.md": "296ab001d28bab7354b326c455003223dfc07707298fd1b12da5c0f25190d9a6",
+    "check_assets.py": "94e77fc8bc9d9812fba84ba023dea61bcbdfb349a4d15630de5e9662558f17d6",
+    "evidence.md": "da5c0fd9df972f78199dfa3699c1560a4648e88880c18c8d3834822e6c907afe",
+    "expected/03-after-selection.md": "e959919b32ae47dd46b33cfa764243cf603df42caec024cedc2f7c05c53baeb4",
+    "expected/04-technical-specification-complete.md": "924ae27ce7424a9de3428d3f800ca89754a9c6abd0bd8012551ce52cc0c5e2ec",
+    "expected/05-negative-candidate-do-not-save.md": "b67971c9853fbd964f98b358bfd2174574fa8a83dec57a4afdde6e325200490a",
+    "expected/06-negative-recovered.md": "f8204cd9d2401386a767f52560b7913b0af9994e112c440552a3c6b5799b879c",
+    "expected/07-merge-base.md": "924ae27ce7424a9de3428d3f800ca89754a9c6abd0bd8012551ce52cc0c5e2ec",
+    "expected/08-merge-local.md": "32fc1f7d115eb5424b11204697a461d8cfcb07556754bfa0a1b783caef7a1fc1",
+    "expected/09-merge-eva.md": "ec66edcec92d6c537da7b92720cd076447a9b2e3261b921c1568dffedbf41ffe",
+    "expected/10-merge-choose-local.md": "f2bf5be698aebd03e398a6213b11ee51750cd0bd618529ec604cfc81fedb2f57",
+    "expected/11-merge-choose-eva.md": "1cb139e71011b8da073b6c617f1a9fa313810ba21671fd3f7147674bdb6fdf72",
+    "inputs/01-business-requirements.md": "6d3c4655e12a6fc0ee13f36e402779e5285c11ed34df7c1f5e9fe5dcc4b5527e",
+    "inputs/02-technical-specification-initial.md": "012455836276618f511af9843e64e377178effa4fcfb507b1ec770a8bd91b0e8",
+    "prompts.json": "1067f785ab2acaa0e5ed785c42670f33f530b4b587dc83afa82aabc7b18c317a",
+    "README.md": "a2d6ebbb8512e36aa2b5cd2504fc2bd190fa8b22de611d9b018778db25cbd485",
+    "recording.md": "ef4cf211e07c09d6f7720c56a6fc14bfaaddf1129ecb11da5b8ebe62dffe4036",
+    "rehearsal-report.md": "c841bf9e07089cc0ba7bcf41791f9dcf85a3eb5c22faa1fd23d83aa50a076b3f",
+    "requests.md": "5da60d0dd22c86f518ea6efd0866df024f3ff67211ab7524168bc94407215e5f",
+    "runbook.md": "d35bba6d900aa4d85a27cb849d0f95d0c6459b9a12350e167ae92c3719ddab72",
+    "scenario.md": "8fd9090bfa7bd182cebc4adb817a2b733da56c19bd6bab435269275bb5152e36",
+    "scenes.md": "d4829b067b944dff12029522b5d16b80ca482babf0abb60495aa8a5c7f1efb6b",
+    "session-template.json": "523a9d7bd319d71a98a46e1bcf717476afb9e89d9d053afb3a5662193e9740b9",
+    "source-manifest.json": "9bcba46f3cfbcdfeacb233715b01744dcb67ad5425caf1ec5e34b03aef579782",
+    "stages.json": "3e319f41cc565998f368af3570255ab2079bc58833165ce3535a81a26f8cea73"
+  }
+}

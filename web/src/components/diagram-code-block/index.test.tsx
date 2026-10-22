@@ -52,6 +52,9 @@ describe('DiagramCodeBlock', () => {
       expect.stringMatching(/^ragflow-mermaid-/),
       'flowchart LR; A --> B',
     );
+    expect(mermaid.initialize).toHaveBeenCalledWith(
+      expect.objectContaining({ htmlLabels: false }),
+    );
   });
 
   it('posts PlantUML source to the local renderer and sanitizes its SVG', async () => {

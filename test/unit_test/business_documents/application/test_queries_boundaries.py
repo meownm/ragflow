@@ -101,6 +101,24 @@ def test_shared_reader_projection_has_no_mutating_actions_but_owner_does(queries
     reader.review.assert_called_with("doc", 2)
 
 
+def test_agreed_source_body_carries_only_canonical_template_headings(queries):
+    scenario, reader, content = queries
+    reader.source_documents.return_value = (document(),)
+    reader.source_agreements.return_value = ({**event("agreed", "ReviewAgreedWithoutChanges", {"revision_id": "revision"}), "document_id": "doc", "sequence": 1},)
+    reader.source_revisions.return_value = (revision(document_id="doc"),)
+    content.published_template.return_value = {
+        "rendering": {"body_heading_base_level": 2},
+        "sections": [{"id": "2", "title": "Нормативно-правовые акты (НПА)"}, {"id": "3.2", "title": "Географический охват"}],
+    }
+    metadata = scenario.agreed_sources("owner", ["doc"])
+    content.published_template.assert_not_called()
+    assert "section_headings" not in metadata[0]
+    bodies = scenario.agreed_sources("owner", ["doc"], include_body=True)
+    assert bodies[0]["body_markdown"] == "Before"
+    assert bodies[0]["section_headings"] == ["## 2. Нормативно-правовые акты (НПА)", "### 3.2. Географический охват"]
+    content.published_template.assert_called_once()
+
+
 def test_intake_projection_has_no_revision_and_does_not_load_history(queries):
     scenario, reader, _ = queries
     reader.document.return_value = document(lifecycle_state="INTAKE", current_revision_id=None)

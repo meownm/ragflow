@@ -373,6 +373,62 @@ describe('SqlAgentWorkbench', () => {
     );
   });
 
+  it('restarts schema search at the version returned by rejection without accepting empty data', async () => {
+    const review = project({
+      stage: 'SCHEMA',
+      operation_state: 'REVIEW',
+      state_version: 7,
+      next_agent: null,
+      artifacts: {
+        requirements: { requirements: [{ statement: 'Посчитать источники' }] },
+        schema: null,
+        query: null,
+      },
+      pending_proposal: {
+        id: 'schema-proposal',
+        kind: 'SCHEMA',
+        payload: { agent_result: { resolutions: [] } },
+      },
+    });
+    mockedList.mockResolvedValue([review]);
+    mockedFetch.mockResolvedValue(review);
+    mockedDecide.mockResolvedValue(
+      project({ stage: 'SCHEMA', next_agent: 'SCHEMA', state_version: 8 }),
+    );
+    mockedRequest.mockRejectedValue(new Error('Поиск временно недоступен'));
+    render(<SqlAgentWorkbench />);
+    expect(await screen.findByText('Данные не найдены')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Подтвердить схему' }),
+    ).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Повторить поиск' }));
+    await waitFor(() =>
+      expect(mockedDecide).toHaveBeenCalledWith(
+        'project-1',
+        'schema-proposal',
+        expect.objectContaining({
+          expected_state_version: 7,
+          decision: 'REJECT',
+          artifact_payload: null,
+        }),
+      ),
+    );
+    await waitFor(() =>
+      expect(mockedRequest).toHaveBeenCalledWith(
+        'project-1',
+        expect.objectContaining({
+          kind: 'SCHEMA',
+          expected_state_version: 8,
+          payload: { locale: 'ru', terms: [] },
+        }),
+      ),
+    );
+    expect(
+      await screen.findByText('Поиск временно недоступен'),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId('sql-agent-run-schema')).toBeEnabled();
+  });
+
   it('requires separate acknowledgement of each JOIN and filter before accepting SQL', async () => {
     const review = project({
       stage: 'QUERY',
@@ -1742,7 +1798,9 @@ describe('SQL project registry', () => {
       expect.any(String),
       { title: 'Новый отчёт' },
     );
-    expect(screen.getByText(first.source_request)).toBeInTheDocument();
+    expect(
+      document.querySelector('.sql-question-summary summary'),
+    ).toHaveTextContent(first.source_request);
     expect(mockedRequest).not.toHaveBeenCalled();
   });
 

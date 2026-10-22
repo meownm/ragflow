@@ -88,11 +88,11 @@ def test_alignment_quality_dashboard_keeps_semantic_denominators_and_unknown_evi
     empty = panel.get_by_role("row", name=re.compile("Обнаружение необоснованных бизнес-правил"))
     expect(empty).to_contain_text("0/0")
     expect(empty).to_contain_text("—")
-    expect(page.get_by_text(re.compile("Полнота доказательств: INCOMPLETE"))).to_be_visible()
+    expect(page.get_by_text(re.compile("Полнота доказательств: Неполная"))).to_be_visible()
     experiments = page.get_by_role("region", name="Дополнительные модельные прогоны")
     experiment = experiments.get_by_role("row", name=re.compile("Повторяемость"))
     expect(experiment).to_contain_text("112/112" if complete else "6/112")
-    expect(experiment).to_contain_text("INCOMPLETE")
+    expect(experiment).to_contain_text("Неполная")
     expect(experiment.get_by_role("cell").last).to_have_text("100" if complete else "—")
     assert len(requests) >= 4
     page.get_by_role("button", name="Обновить", exact=True).click()
@@ -103,7 +103,7 @@ def test_alignment_quality_dashboard_keeps_semantic_denominators_and_unknown_evi
     expect(old_recall).to_contain_text("0.0%")
     expect(old_recall).to_contain_text("0/2")
     old_experiment = page.get_by_role("region", name="Дополнительные модельные прогоны").get_by_role("row", name=re.compile("Повторяемость"))
-    expect(old_experiment).to_contain_text("FAIL")
+    expect(old_experiment).to_contain_text("Не пройдена")
     expect(old_experiment).to_contain_text("7/112")
     expect(old_experiment.get_by_role("cell").last).to_have_text("—")
     assert "/api/v1/admin/document-quality/runs/older" in requests
@@ -177,7 +177,8 @@ def test_alignment_operational_cohort_preserves_unknown_cost_and_window_isolatio
     page.get_by_role("tab", name="Рабочие проверки ТЗ", exact=True).click()
     panel = page.get_by_role("region", name="Эксплуатационные показатели проверок ТЗ")
     expect(panel).to_be_visible()
-    expect(panel.get_by_text("EXECUTION_CANCELLED: 1")).to_be_visible()
+    reason = panel.locator('li[title="EXECUTION_CANCELLED"]')
+    expect(reason).to_have_text("Выполнение проверки отменено: 1")
     total = panel.locator("div").filter(has=page.get_by_text("Полный расход токенов", exact=True)).last
     expect(total.locator("dd")).to_have_text("—")
     expect(panel).to_contain_text("50.0% · 1/2")
@@ -185,7 +186,7 @@ def test_alignment_operational_cohort_preserves_unknown_cost_and_window_isolatio
         with page.expect_response(lambda response, days=days: urlsplit(response.url).path == "/api/v1/admin/document-quality" and parse_qs(urlsplit(response.url).query).get("days") == [str(days)]):
             page.get_by_role("button", name=title, exact=True).click()
         expect(page.get_by_role("button", name=title, exact=True)).to_have_attribute("aria-pressed", "true")
-        expect(panel.get_by_text("EXECUTION_CANCELLED: 1")).to_be_visible()
+        expect(reason).to_have_text("Выполнение проверки отменено: 1")
     assert windows == [7, 1, 30]
     failed = True
     page.get_by_role("button", name="Обновить", exact=True).click()

@@ -176,7 +176,10 @@
 }
 .tz-section-editor h1,
 .tz-section-editor h2,
-.tz-section-editor h3 {
+.tz-section-editor h3,
+.tz-section-editor h4,
+.tz-section-editor h5,
+.tz-section-editor h6 {
   font-weight: 500;
   margin: 18px 0 10px;
 }
@@ -187,6 +190,25 @@
 .tz-section-editor ol {
   list-style: decimal;
   padding-left: 24px;
+}
+.tz-section-editor ol[type='a'] {
+  list-style-type: lower-alpha;
+}
+.tz-section-editor ol[type='A'] {
+  list-style-type: upper-alpha;
+}
+.tz-section-editor ol[type='i'] {
+  list-style-type: lower-roman;
+}
+.tz-section-editor ol[type='I'] {
+  list-style-type: upper-roman;
+}
+.tz-section-editor [data-tz-diagram] {
+  margin: 12px 0;
+}
+.tz-section-editor [data-tz-diagram] summary {
+  cursor: pointer;
+  font-size: 12px;
 }
 .tz-section-editor li {
   margin: 5px 0;

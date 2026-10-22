@@ -18,6 +18,42 @@ pytestmark = pytest.mark.p1
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("factory", ["Ollama", "OpenAI-API-Compatible"])
+async def test_processor_schema_reaches_native_ollama_without_changing_compatible_json_mode(monkeypatch, factory):
+    from litellm.llms.ollama.chat.transformation import OllamaChatConfig
+
+    from api.db.services import llm_service
+
+    calls = []
+    schema = {"type": "object", "properties": {"edits": {"type": "array", "items": {"type": "string"}}}, "required": ["edits"], "additionalProperties": False}
+
+    class Bundle:
+        def __init__(self, *_args, **_kwargs):
+            self.mdl = SimpleNamespace(async_chat_streamly=True)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        async def async_chat_streamly_delta(self, _system, _history, generation, **options):
+            assert options == {"with_reasoning": False}
+            calls.append(generation)
+            yield '{"edits":[]}'
+
+    monkeypatch.setattr(llm_service, "LLMBundle", Bundle)
+    model = RAGFlowProcessModel("owner", {"llm_factory": factory, "llm_name": "qwen3.8:latest", "max_tokens": 32768, "max_output_tokens": 4096})
+    assert [part async for part in model.stream("system", {"response_schema": schema}, 1024, json_response=schema)] == ['{"edits":[]}']
+    response_format = calls[0]["response_format"]
+    if factory == "Ollama":
+        native = OllamaChatConfig().map_openai_params({"response_format": response_format}, {}, "qwen3.8:latest", False)
+        assert native["format"] == schema
+    else:
+        assert response_format == {"type": "json_object"}
+
+
+@pytest.mark.asyncio
 async def test_answer_uses_full_discovered_context_without_truncating_large_response(monkeypatch):
     from common.token_utils import num_tokens_from_string
 
@@ -145,6 +181,17 @@ async def test_ollama_processor_uses_discovered_context_for_planning_and_generat
     assert calls[0][0] == f"http://ollama:11434/api/{'show' if factory == 'Ollama' else 'ps'}"
     if factory == "Ollama":
         assert calls[1]["extra_body"] == {"num_ctx": 131072, **({"think": True} if thinking_requested and thinking_supported else {})}
+        import litellm
+        from litellm.llms.ollama.chat.transformation import OllamaChatConfig
+
+        from rag.llm.chat_model import _apply_model_family_policies, _move_litellm_provider_body_fields
+
+        configured, kwargs = _apply_model_family_policies("qwen3.8:latest", backend="litellm", provider="Ollama", gen_conf=calls[1])
+        completion = _move_litellm_provider_body_fields("Ollama", {**configured, **kwargs})
+        options = litellm.get_optional_params(model="ollama_chat/qwen3.8:latest", custom_llm_provider="ollama_chat", **completion)
+        native = OllamaChatConfig().transform_request(model="qwen3.8:latest", messages=[{"role": "user", "content": "control"}], optional_params=options, litellm_params={}, headers={})
+        assert native["think"] is (thinking_requested and thinking_supported)
+        assert native["options"]["num_ctx"] == 131072
     assert calls[1]["max_tokens" if factory == "OpenAI-API-Compatible" else "max_completion_tokens"] == 32768
     assert calls[1].get("response_format") == ({"type": "json_object"} if json_response else None)
 

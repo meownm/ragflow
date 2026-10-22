@@ -307,6 +307,7 @@ COPY deepdoc deepdoc
 COPY rag rag
 COPY agent agent
 COPY business_documents business_documents
+COPY document_exchange document_exchange
 COPY pyproject.toml uv.lock ./
 COPY mcp mcp
 COPY common common

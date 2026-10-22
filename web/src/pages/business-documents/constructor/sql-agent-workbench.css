@@ -1,0 +1,216 @@
+.sql-agent-workbench {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+}
+
+.sql-project-switcher {
+  justify-self: start;
+  margin: 12px 24px 0;
+}
+
+.sql-project-registry {
+  display: none;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.sql-project-registry .text-text-disabled {
+  color: rgb(var(--text-secondary));
+}
+
+.sql-project-registry[data-open='true'] {
+  position: absolute;
+  inset: 48px auto 0 0;
+  z-index: 20;
+  display: block;
+  width: min(360px, 100%);
+  box-shadow: 8px 0 24px #0004;
+}
+
+.sql-project-content {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+.sql-project-header {
+  padding: 24px 24px 0;
+}
+.sql-project-main {
+  display: flex;
+  flex-direction: column;
+  padding: 0 24px 24px;
+}
+.sql-project-context {
+  margin-top: 24px;
+}
+.sql-project-context > summary {
+  cursor: pointer;
+  padding: 12px 0;
+}
+.sql-project-context[data-preparing='false'] > summary {
+  display: none;
+}
+.sql-preparation-steps {
+  display: flex;
+  gap: 16px;
+  margin: 24px 0 18px;
+  padding: 0;
+  list-style: none;
+}
+.sql-preparation-steps li {
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 6px;
+}
+.sql-question-summary {
+  margin-bottom: 20px;
+  border-radius: 6px;
+  padding: 16px;
+}
+.sql-question-summary summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 24px;
+  cursor: pointer;
+}
+.sql-question-summary summary > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sql-question-summary summary > span:last-child {
+  flex-shrink: 0;
+}
+.sql-question-summary[open] summary > span:first-child {
+  display: none;
+}
+.sql-schema-review {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  min-height: min(690px, calc(100dvh - 360px));
+}
+.sql-schema-layout {
+  display: grid;
+  gap: 12px;
+}
+.sql-schema-needs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  align-content: start;
+}
+.sql-schema-need {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-height: 112px;
+  padding: 16px;
+  text-align: left;
+  border-width: 1px;
+  border-style: solid;
+  border-radius: 6px;
+}
+.sql-schema-need > span:last-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.sql-schema-candidate {
+  min-width: 0;
+  padding: 20px;
+  border-width: 1px;
+  border-style: solid;
+  border-radius: 8px;
+}
+.sql-schema-candidate p,
+.sql-schema-candidate h4 {
+  overflow-wrap: anywhere;
+}
+.sql-schema-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  background: var(--bg-base);
+  margin-top: auto;
+  padding-top: 10px;
+  padding-bottom: 4px;
+  border-top-width: 1px;
+  border-top-style: solid;
+}
+.sql-schema-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.sql-schema-actions > button {
+  min-height: 40px;
+  padding-inline: 24px;
+}
+.sql-schema-actions > button:last-child {
+  margin-inline-start: auto;
+}
+.sql-agent-workbench button:focus-visible,
+.sql-agent-workbench summary:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+}
+
+@media (min-width: 1200px) {
+  .sql-agent-workbench {
+    grid-template-columns: 232px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+  }
+  .sql-project-switcher {
+    display: none;
+  }
+  .sql-project-registry,
+  .sql-project-registry[data-open='true'] {
+    position: static;
+    display: block;
+    width: auto;
+    box-shadow: none;
+  }
+  .sql-project-header {
+    padding: 24px 28px 0;
+  }
+  .sql-project-main {
+    padding-inline: 28px;
+  }
+  .sql-schema-layout {
+    grid-template-columns: minmax(240px, 360px) minmax(0, 1fr);
+    gap: 24px;
+  }
+  .sql-schema-needs {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .sql-schema-need {
+    min-height: 104px;
+  }
+  .sql-schema-candidate {
+    min-height: 360px;
+  }
+}
+
+@media (max-width: 639px) {
+  .sql-schema-needs {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .sql-schema-need {
+    min-height: 72px;
+  }
+  .sql-preparation-steps {
+    gap: 4px;
+    font-size: 12px;
+  }
+  .sql-preparation-steps li {
+    padding-inline: 8px;
+  }
+  .sql-schema-actions > button:last-child {
+    margin-inline-start: 0;
+  }
+}

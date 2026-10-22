@@ -116,6 +116,109 @@ def test_cache_expires_and_rejects_concurrent_users(tmp_path):
         assert stamp.stat().st_mtime > old
 
 
+def _directory_link(link, target, request):
+    link.parent.mkdir(parents=True, exist_ok=True)
+    if os.name == "nt":
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], check=True, capture_output=True)
+    else:
+        link.symlink_to(target, target_is_directory=True)
+
+    def remove():
+        if link.is_junction():
+            link.rmdir()
+        else:
+            link.unlink(missing_ok=True)
+
+    request.addfinalizer(remove)
+
+
+@pytest.mark.parametrize("cleanup", ["fresh", "expired", "quota"])
+@pytest.mark.parametrize("missing", [False, True])
+def test_cache_project_registration_never_traverses_or_removes_target(tmp_path, monkeypatch, request, cleanup, missing):
+    cache, project = tmp_path / "pnpm", tmp_path / "project"
+    cache.mkdir()
+    project.mkdir()
+    link = cache / "v10/projects" / ("a" * 32)
+    _directory_link(link, project, request)
+    if missing:
+        project.rmdir()
+    else:
+        (project / "must-survive").write_bytes(b"x" * 4096)
+    (cache / "package").write_bytes(b"data")
+    stamp = tmp_path / "pnpm.last-used"
+    stamp.touch()
+    if cleanup == "expired":
+        old = time.time() - 8 * 86400
+        os.utime(stamp, (old, old))
+    monkeypatch.setattr(frontend, "MAX_CACHE_BYTES", 1 if cleanup == "quota" else 1024)
+    original = frontend.os.scandir
+
+    def scan(path):
+        assert not Path(path).is_relative_to(project)
+        assert Path(path) != link
+        return original(path)
+
+    monkeypatch.setattr(frontend.os, "scandir", scan)
+    with frontend._cache_lease(cache, used=False):
+        pass
+    if cleanup == "fresh":
+        assert (cache / "package").read_bytes() == b"data"
+        assert link.is_symlink() or link.is_junction()
+    else:
+        assert not list(cache.iterdir())
+    if missing:
+        assert not project.exists()
+    else:
+        assert (project / "must-survive").read_bytes() == b"x" * 4096
+
+
+@pytest.mark.parametrize("relative", ["v10/files/" + "a" * 32, "v10/projects/other", "projects/" + "a" * 32, "v10/projects"])
+@pytest.mark.parametrize("expired", [False, True])
+def test_cache_rejects_unexpected_links_before_eviction(tmp_path, monkeypatch, request, relative, expired):
+    cache, project = tmp_path / "pnpm", tmp_path / "project"
+    cache.mkdir()
+    project.mkdir()
+    (project / "must-survive").write_bytes(b"keep")
+    (cache / "package").write_bytes(b"data")
+    _directory_link(cache / relative, project, request)
+    stamp = tmp_path / "pnpm.last-used"
+    stamp.touch()
+    if expired:
+        old = time.time() - 8 * 86400
+        os.utime(stamp, (old, old))
+    monkeypatch.setattr(frontend, "MAX_CACHE_BYTES", 1)
+    with pytest.raises(ValueError, match="linked package cache entry"), frontend._cache_lease(cache, used=False):
+        pass
+    assert (project / "must-survive").read_bytes() == b"keep"
+    assert (cache / "package").read_bytes() == b"data"
+
+
+def test_cache_lease_rejects_linked_root(tmp_path, request):
+    project, cache = tmp_path / "project", tmp_path / "pnpm"
+    project.mkdir()
+    (project / "must-survive").write_bytes(b"keep")
+    _directory_link(cache, project, request)
+    with pytest.raises(ValueError, match="linked frontend"), frontend._cache_lease(cache, used=False):
+        pytest.fail("linked cache root accepted")
+    assert (project / "must-survive").read_bytes() == b"keep"
+
+
+def test_unreadable_expired_cache_is_not_evicted(tmp_path, monkeypatch):
+    cache = tmp_path / "pnpm"
+    cache.mkdir()
+    (cache / "package").write_bytes(b"data")
+    old = time.time() - 8 * 86400
+    os.utime(cache, (old, old))
+
+    def fail_scan(_):
+        raise PermissionError("cache inaccessible")
+
+    monkeypatch.setattr(frontend.os, "scandir", fail_scan)
+    with pytest.raises(PermissionError, match="cache inaccessible"), frontend._cache_lease(cache, used=False):
+        pytest.fail("unreadable cache accepted")
+    assert (cache / "package").read_bytes() == b"data"
+
+
 @pytest.mark.parametrize("overlap", ["candidate", "artifact"])
 def test_cache_cannot_mutate_candidate_or_remove_artifact(setup, monkeypatch, overlap):
     snapshot, work, archive, _ = setup
@@ -135,16 +238,59 @@ def test_workspace_creation_failure_does_not_leave_a_tree(setup, monkeypatch):
     snapshot, work, archive, _ = setup
     original = Path.write_text
 
-    def fail_pin(path, *args, **kwargs):
-        if path.name == ".keep":
+    def fail_marker(path, *args, **kwargs):
+        if path.name == ".ragflow-temp":
             raise OSError("synthetic write failure")
         return original(path, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "write_text", fail_pin)
+    monkeypatch.setattr(Path, "write_text", fail_marker)
     with pytest.raises(OSError, match="synthetic"):
         frontend.build(snapshot, work, archive)
     assert not work.exists()
     candidate.verify(snapshot)
+
+
+def test_unavailable_log_destination_still_removes_workspace(setup):
+    snapshot, work, archive, _ = setup
+    blocked = archive.parent / "blocked-output"
+    blocked.write_text("ordinary file", encoding="utf-8")
+    with pytest.raises(OSError):
+        frontend.build(snapshot, work, blocked / archive.name)
+    assert not work.exists()
+    candidate.verify(snapshot)
+
+
+def test_scheduled_cache_cleanup_does_not_renew_idle_timestamp(tmp_path, monkeypatch):
+    cache = tmp_path / "pnpm"
+    cache.mkdir()
+    (cache / "package").write_bytes(b"data")
+    stamp = tmp_path / "pnpm.last-used"
+    stamp.touch()
+    before = time.time() - 6 * 86400
+    os.utime(stamp, (before, before))
+    monkeypatch.setattr(frontend, "CACHE_ROOT", cache)
+    frontend.clean_cache()
+    assert stamp.stat().st_mtime == before
+    assert (cache / "package").exists()
+    old = time.time() - 8 * 86400
+    os.utime(stamp, (old, old))
+    frontend.clean_cache()
+    assert not list(cache.iterdir())
+    assert stamp.stat().st_mtime == old
+    with frontend._cache_lease(cache), pytest.raises(OSError):
+        frontend.clean_cache()
+
+
+def test_scheduled_cache_cleanup_handles_first_build_crash_without_timestamp(tmp_path, monkeypatch):
+    cache = tmp_path / "pnpm"
+    cache.mkdir()
+    (cache / "orphan-package").write_bytes(b"data")
+    old = time.time() - 8 * 86400
+    os.utime(cache, (old, old))
+    monkeypatch.setattr(frontend, "CACHE_ROOT", cache)
+    frontend.clean_cache()
+    assert not list(cache.iterdir())
+    assert not (tmp_path / "pnpm.last-used").exists()
 
 
 @pytest.mark.parametrize("change", ["inputs", "new-input", "version", "empty-output", "failure"])

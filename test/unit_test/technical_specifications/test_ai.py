@@ -10,6 +10,42 @@ from api.technical_specifications.ai import _changes
 
 
 @pytest.mark.asyncio
+async def test_chat_generation_requires_edits_and_preserves_literal_changes(monkeypatch):
+    from jsonschema import Draft202012Validator
+
+    calls, counted = [], []
+
+    class Model:
+        context_tokens = 32768
+
+        def count_tokens(self, value):
+            counted.append(value)
+            return max(1, len(value) // 3)
+
+        async def stream(self, _system, payload, _limit, *, json_response=False, thinking=False):
+            assert thinking is True
+            assert json_response == payload["response_schema"]
+            validator = Draft202012Validator(json_response)
+            observed_failure = {"base_proposal_id": None, "required_sections": ["5"], "answer": "Подготовлено предложение"}
+            assert not validator.is_valid(observed_failure)
+            response = {**observed_failure, "edits": [{"section": "5", "before": "Выберите CSV.", "after": "Выберите файл CSV с заявками."}]}
+            validator.validate(response)
+            calls.append(payload)
+            yield json.dumps(response, ensure_ascii=False)
+
+    async def open_processor(_actor):
+        return Model()
+
+    monkeypatch.setattr(RAGFlowAnswerGateway, "open_processor", open_processor)
+    content = {**empty_sections(), "5": "Выберите CSV."}
+    document = {"revision": 1, "sections": content, "messages": [], "proposals": []}
+    message = {"message_id": "message", "text": "Уточни пояснение", "context": {"scope": "all", "revision": 1}}
+    result = await SpecificationAI().chat("author", document, message)
+    assert result["patches"] == {"5": "Выберите файл CSV с заявками."}
+    assert len(calls) == 1 and any('"response_schema"' in value for value in counted)
+
+
+@pytest.mark.asyncio
 async def test_chat_preserves_full_context_and_proposal_issues_without_repeating_unchanged_sections(monkeypatch):
     content = empty_sections()
     content["1"] = "x" * 99_000
@@ -26,14 +62,15 @@ async def test_chat_preserves_full_context_and_proposal_issues_without_repeating
     message = {"message_id": "message", "text": "Исправь предложение", "context": {"scope": "all", "revision": 2}}
     ai = SpecificationAI()
 
-    async def ask(actor, system, payload):
+    async def ask(actor, system, payload, *, thinking=False):
+        assert thinking is True
         assert payload["sections"] == content and payload["message"] == message
         assert len(payload["proposals"]) == 1
         supplied = payload["proposals"][0]
         assert supplied["patches"] == {"5": "Исправить ограничение"} and "sections" not in supplied
         assert supplied["issues"] == proposal["issues"]
         assert supplied["base_revision"] == 2 and supplied["id"] == "proposal"
-        return {"required_sections": [], "answer": "Готово", "patches": {}}
+        return {"required_sections": [], "answer": "Готово", "edits": []}
 
     monkeypatch.setattr(ai, "_ask", ask)
     assert await ai.chat("author", document, message) == {"answer": "Готово", "patches": {}}
@@ -103,6 +140,7 @@ async def test_verification_separates_result_from_complete_source_versions(monke
             assert payload["conflict_resolution"] == {"only_when": "both_sides_changed_same_fact", "preferred_source": "local"}
         else:
             assert "conflict_resolution" not in payload
+            assert payload["change_request"] is None
         assert [item["section"] for item in payload["comparison"]] == list(candidate)
         for item in payload["comparison"]:
             key = item["section"]
@@ -117,6 +155,100 @@ async def test_verification_separates_result_from_complete_source_versions(monke
     merge = {"base": base, "remote": remote, "choice": "local"} if merging else None
     assert await ai.verify("author", local, candidate, merge) == {"valid": True, "issues": []}
     assert (base, local, remote, candidate) == original
+
+
+@pytest.mark.asyncio
+async def test_verification_receives_exact_author_request_without_mixing_it_with_document_sources(monkeypatch):
+    original = {**empty_sections(), "8": 'LIMIT_EXCEEDED: "Слишком большой файл."'}
+    candidate = {**original, "8": 'LIMIT_EXCEEDED: "Размер CSV превышает 20 МБ."'}
+    request = {"text": "Замени сообщение ошибки во всех упоминаниях", "context": {"scope": "8", "revision": 2}, "history": []}
+    snapshot = deepcopy((original, candidate, request))
+    ai = SpecificationAI()
+
+    async def ask(actor, system, payload, *, thinking=False):
+        assert thinking is True
+        assert payload["change_request"] == request
+        assert payload["comparison"][7]["sources"] == {"original": original["8"]}
+        assert payload["comparison"][7]["result"] == candidate["8"]
+        return {"valid": True, "issues": []}
+
+    monkeypatch.setattr(ai, "_ask", ask)
+    assert await ai.verify("author", original, candidate, change_request=request) == {"valid": True, "issues": []}
+    assert (original, candidate, request) == snapshot
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope", ["all", "5", "selection"])
+async def test_chat_literal_edits_preserve_the_other_occurrence_and_surrounding_text(monkeypatch, scope):
+    content = {**empty_sections(), "5": "Первый: кнопка.\nВторой: кнопка.\nХвост."}
+    document = {"revision": 1, "sections": content, "messages": [], "proposals": []}
+    context = {"scope": scope, "anchor": {"section": "5", "quote": "кнопка", "prefix": "Второй: ", "suffix": ".\nХвост."} if scope == "selection" else None}
+    message = {"message_id": "request", "text": "Замени второе вхождение", "context": context}
+    ai = SpecificationAI()
+
+    async def ask(actor, system, payload, *, thinking=False):
+        assert thinking is (scope == "all")
+        return {"required_sections": ["5"], "answer": "Предлагаю", "edits": [{"section": "5", "before": "Второй: кнопка.", "after": "Второй: новая кнопка."}]}
+
+    monkeypatch.setattr(ai, "_ask", ask)
+    result = await ai.chat("author", document, message)
+    from api.technical_specifications.application import Specifications
+
+    candidate = Specifications._chat_candidate(document, message, result)
+    assert candidate == {**content, "5": "Первый: кнопка.\nВторой: новая кнопка.\nХвост."}
+    assert document["sections"] == content
+
+
+@pytest.mark.asyncio
+async def test_chat_does_not_ignore_an_undeclared_noop_edit(monkeypatch):
+    document = {"revision": 1, "sections": {**empty_sections(), "8": "API"}, "messages": [], "proposals": []}
+    ai = SpecificationAI()
+
+    async def ask(*args, **kwargs):
+        return {"required_sections": [], "answer": "Ответ", "edits": [{"section": "8", "before": "API", "after": "API"}]}
+
+    monkeypatch.setattr(ai, "_ask", ask)
+    with pytest.raises(SpecificationError) as error:
+        await ai.chat("author", document, {"text": "Вопрос", "context": {"scope": "all"}})
+    assert error.value.code == "MODEL_INVALID_OUTPUT"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope", ["all", "6"])
+async def test_correcting_a_proposal_retains_all_earlier_edits_and_checks_their_scope(monkeypatch, scope):
+    saved = {**empty_sections(), "6": "Старая логика", "7": "Старая модель", "8": "Прежний API"}
+    proposed = {**saved, "6": "Новая логика с ошибкой", "7": "Новая модель", "8": "Новый API"}
+    document = {"revision": 2, "sections": saved, "messages": [], "proposals": [{"id": "prior", "source": "chat", "base_revision": 2, "status": "needs_resolution", "sections": proposed}]}
+    original = deepcopy(document)
+    ai = SpecificationAI()
+
+    async def ask(*args, **kwargs):
+        return {"base_proposal_id": "prior", "required_sections": ["6"], "answer": "Предлагаю исправить", "edits": [{"section": "6", "before": "с ошибкой", "after": "без ошибки"}]}
+
+    monkeypatch.setattr(ai, "_ask", ask)
+    result = await ai.chat("author", document, {"text": "Исправь предложение", "context": {"scope": scope}})
+    if scope == "all":
+        assert result["patches"] == {"6": "Новая логика без ошибки", "7": "Новая модель", "8": "Новый API"}
+    else:
+        assert result["patches"] == {} and "Всё ТЗ" in result["answer"]
+    assert document == original
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("changed", [{"base_revision": 1}, {"status": "applied"}, {"source": "eva"}, {"id": "other"}])
+async def test_chat_cannot_use_a_stale_applied_foreign_or_eva_proposal_as_its_base(monkeypatch, changed):
+    saved = {**empty_sections(), "6": "Логика"}
+    proposal = {"id": "prior", "base_revision": 2, "source": "chat", "status": "ready", "sections": saved, **changed}
+    document = {"revision": 2, "sections": saved, "messages": [], "proposals": [proposal]}
+    ai = SpecificationAI()
+
+    async def ask(*args, **kwargs):
+        return {"base_proposal_id": "prior", "required_sections": ["6"], "answer": "Предлагаю", "edits": [{"section": "6", "before": "Логика", "after": "Новая логика"}]}
+
+    monkeypatch.setattr(ai, "_ask", ask)
+    with pytest.raises(SpecificationError) as error:
+        await ai.chat("author", document, {"text": "Исправь", "context": {"scope": "all"}})
+    assert error.value.code == "MODEL_INVALID_OUTPUT"
 
 
 @pytest.mark.asyncio

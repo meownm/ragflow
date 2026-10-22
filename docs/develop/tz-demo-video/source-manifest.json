@@ -1,0 +1,217 @@
+{
+  "git_head": "206750b0b085db2871bb6e76be13a65c747b4d2b",
+  "worktree_dirty": true,
+  "files": {
+    "api/technical_specifications/domain.py": "09e4d9d17db4e12c2efb619916543d20318b51828d133c2a220fdaf5f791d39b",
+    "api/technical_specifications/application.py": "a0ffd3486e7ef4afc545b521d0624bc1454d95b75d23fdbb76095a9b12969989",
+    "api/technical_specifications/ai.py": "e404172d35331bab8606d98fb50c87be8ef2d9fdc9bfb1f81baed642e4995647",
+    "api/technical_specifications/alignment.py": "69bf050245b22f0b160e7ee397e4719b2ebedba88e0814401c41d763cdbb3195",
+    "api/technical_specifications/alignment_application.py": "cda772cf44f9f632c6b01ae88a7ed29bc92b4c033cb2f9aceb6974204baa3ec9",
+    "api/technical_specifications/alignment_ai.py": "a58bfdf8a3ef6e8997ca8f4eb3b8f538ba9c3fb40764361ddd45c2e33a2a763e",
+    "api/technical_specifications/REQUIREMENTS.md": "aba9f7fb86be3c2a9fd3cddee5e25c4afcb9f3294b39386018e78826170c28b2",
+    "api/apps/restful_apis/technical_specifications_api.py": "10bbbb94a07accd412c1b29fb00cff8076d1f359ac9ef6a31d42d086b6022990",
+    "web/src/pages/technical-specifications/index.tsx": "38f0237b6864c2b5d0cfa68f1738c3f947065c3ac91751a9f82b22eb0068e1dd",
+    "web/src/pages/technical-specifications/alignment-panel.tsx": "895a76b89a1bb5c95c506d503f6348d54bcc9a9b16899e20217eccf2db33a60e",
+    "web/src/pages/technical-specifications/eva-import.tsx": "7479252ddf2489c7022dc3106b7056236922e2d9e761b73e6b680697e6e74971",
+    "web/src/pages/technical-specifications/proposal-preview.tsx": "354f68d22903534c038d46ad0cd14c5fb59cfdef4cc9a4660da4100ceb607846",
+    "agent/business_requirements/templates/business_requirements.v1.json": "e7eef032bd301236c0d9e0496f99ada503c564b0ad0a6682111976c70e7c0f49",
+    "api/source_workbench/adapters.py": "395cb156afc916468a8e47226358b1c10727498523c950e4346c4b837b9b151d",
+    "rag/llm/chat_model.py": "11b34a415df5a83a711f6c428d3d1e50960fc3498752d4fba6ca0bb16a6e2218",
+    "api/technical_specifications/ollama_input_evidence.py": "0b8741ff406d41a98df1ba97747b4ccdd7214d4024ccf4785097dcab1912c061",
+    "business_documents/application/queries.py": "aeb96d0503effd2713e917ed8b697ef2d27dea9b9e56c21e5d7919eb40566618",
+    "test/unit_test/technical_specifications/test_alignment.py": "c46a1147b2a5106f87fd214dd07fab140cb95404231340e02d96744d6c45afeb",
+    "test/unit_test/technical_specifications/test_alignment_transport.py": "0a6bcecca9264ef7efbb85b159fe7e776d95d6d3f4a11c1ce4e87ef67db74ae5",
+    "test/unit_test/technical_specifications/test_ollama_input_evidence.py": "201d4c073868a155bcfebf897c1fdde54323d4452cc1e5f08bfb645b086b5760",
+    "test/unit_test/business_documents/application/test_queries_boundaries.py": "ef02ca57889c669339a887603c6df436900923389d1cf4f44b47613bf9748030"
+  },
+  "reference_video": {
+    "path": "C:/Users/meow/.codex/visualizations/2026/10/14/01a13ac3-829a-78f0-ab8e-367f6a78fb7f/bt-eva-training/bt-eva-reviewed.mp4",
+    "duration_seconds": 508,
+    "width": 1920,
+    "height": 1080,
+    "fps": 30,
+    "sha256": "7eb0b02cf474c9ccf27838cd1e8a73fb872afbae2063312d89111c43defa3b2c"
+  },
+  "authoring_origin_git_head": "a0695c41ed5d8af527aa97bef17d787d67862ab5",
+  "reviewed_increment": "Strict NO_REQUIREMENT markers and native input proof; 294 focused tests. Earlier main rehearsal PASS, recorded fresh authoring PASS, latest V2 live alignment INCOMPLETE at 300 seconds. Parallel application/Eva and frontend source changes are outside this QA snapshot.",
+  "rehearsal_runtime": {
+    "identity": ".local/archives/tz-demo-fix-20261021-01a15d38/qa-ui/identity.json",
+    "base_image": "sha256:c27f02c22002990c8a98710415cfee04094897757036359496a2b05563f6eb62",
+    "patched_files": {
+      "api/source_workbench/adapters.py": "a27d476f7d571b1250d47143f73b3c346558444fc87a0dd8d63ac7550032f7d0",
+      "api/technical_specifications/ai.py": "a1a66fb7a40c56c8b5239e29939674e3da5d1765f5c462d6609f3683c22b91cc",
+      "api/technical_specifications/application.py": "a0ffd3486e7ef4afc545b521d0624bc1454d95b75d23fdbb76095a9b12969989",
+      "api/technical_specifications/domain.py": "09e4d9d17db4e12c2efb619916543d20318b51828d133c2a220fdaf5f791d39b"
+    },
+    "frontend": "Immutable base-image SPA; no frontend code changed in this task",
+    "separate_storage": true,
+    "source_stability": "PASS for four tested modules; checkout HEAD moved externally since initial 48f9c5ea756a11a2d5cac3d6a4a6e40760077e8a"
+  },
+  "full_path_rehearsal_runtime": {
+    "project": "ragflow-tz-full-20261021-01a15d38",
+    "base": "http://127.0.0.1:19382",
+    "image": "sha256:c27f02c22002990c8a98710415cfee04094897757036359496a2b05563f6eb62",
+    "patched_files": {
+      "api/source_workbench/adapters.py": "395cb156afc916468a8e47226358b1c10727498523c950e4346c4b837b9b151d",
+      "api/technical_specifications/__init__.py": "470cacb1d98144c02d5c5a2ea653b6b83c6616cd6f153d0ef2bde3fb568f1e66",
+      "api/technical_specifications/ai.py": "e404172d35331bab8606d98fb50c87be8ef2d9fdc9bfb1f81baed642e4995647",
+      "api/technical_specifications/alignment.py": "2f697a72ed23c6dbbc8c54d39582bdb84bc6a9e08a494ac0ceea3e2b353db8c6",
+      "api/technical_specifications/alignment_ai.py": "3a7c0df2e6ecdb9458194b7c42a8c80048678a4bbdcb80d3bdd3a726b58e0a51",
+      "api/technical_specifications/alignment_application.py": "cda772cf44f9f632c6b01ae88a7ed29bc92b4c033cb2f9aceb6974204baa3ec9",
+      "api/technical_specifications/alignment_budget.py": "98db3feba75f36d953de50e807e5aa6bcedb59417bb9451f9113477297cff1ad",
+      "api/technical_specifications/application.py": "a0ffd3486e7ef4afc545b521d0624bc1454d95b75d23fdbb76095a9b12969989",
+      "api/technical_specifications/domain.py": "09e4d9d17db4e12c2efb619916543d20318b51828d133c2a220fdaf5f791d39b",
+      "api/technical_specifications/runtime.py": "cd45c938b21d842cdc4444b8d6ddc93e1d92dc7b0e1e870e8f466122b0c7170f",
+      "api/technical_specifications/storage.py": "f809f9c0ce82aa082740697820758f5916d0f7ef509aa8458564524bb57704d7",
+      "api/technical_specifications/telemetry.py": "5e567baa7cf5cd73df98f9a483b751167a8a5f39c9e3cc3b4e5cc59a81c28805"
+    },
+    "frontend": "Immutable base-image SPA; no frontend code changed in this task",
+    "isolated_storage": true,
+    "archive": ".local/archives/tz-full-path-20261021-01a15d38-r3"
+  },
+  "required_source_drift": [
+    {
+      "file": "api/technical_specifications/application.py",
+      "required_sha256": "a0ffd3486e7ef4afc545b521d0624bc1454d95b75d23fdbb76095a9b12969989",
+      "observed_sha256": "adea176c77a5b03c8b06bf7d65fc9d07ca428abb1a72b4a477b1d0af8b4afae3"
+    },
+    {
+      "file": "api/technical_specifications/REQUIREMENTS.md",
+      "required_sha256": "aba9f7fb86be3c2a9fd3cddee5e25c4afcb9f3294b39386018e78826170c28b2",
+      "observed_sha256": "072604adde41ca512410bfc49e4df21147fde46fb116ee4e7ae6d86f37edfd1c"
+    },
+    {
+      "file": "web/src/pages/technical-specifications/index.tsx",
+      "required_sha256": "38f0237b6864c2b5d0cfa68f1738c3f947065c3ac91751a9f82b22eb0068e1dd",
+      "observed_sha256": "e33c0b64e27434e70b621fdca7c07b557af43660e2569dbe0fd475959e41d8d0"
+    },
+    {
+      "file": "web/src/pages/technical-specifications/eva-import.tsx",
+      "required_sha256": "7479252ddf2489c7022dc3106b7056236922e2d9e761b73e6b680697e6e74971",
+      "observed_sha256": "9f1da464ff3ec7de9210392991e92604fcfa1ac7464b844e114efae75c758574"
+    },
+    {
+      "file": "web/src/pages/technical-specifications/proposal-preview.tsx",
+      "required_sha256": "354f68d22903534c038d46ad0cd14c5fb59cfdef4cc9a4660da4100ceb607846",
+      "observed_sha256": "bf56c17c6a75d613be64a8b781c41053fc19c41b6ce520be5518cecf44bb76c1"
+    }
+  ],
+  "alignment_fix_runtime": {
+    "project": "ragflow-tz-full-20261021-01a15d38",
+    "base": "http://127.0.0.1:19382",
+    "image": "sha256:c27f02c22002990c8a98710415cfee04094897757036359496a2b05563f6eb62",
+    "patched_files": {
+      "api/source_workbench/adapters.py": "395cb156afc916468a8e47226358b1c10727498523c950e4346c4b837b9b151d",
+      "api/technical_specifications/__init__.py": "470cacb1d98144c02d5c5a2ea653b6b83c6616cd6f153d0ef2bde3fb568f1e66",
+      "api/technical_specifications/ai.py": "e404172d35331bab8606d98fb50c87be8ef2d9fdc9bfb1f81baed642e4995647",
+      "api/technical_specifications/alignment.py": "69bf050245b22f0b160e7ee397e4719b2ebedba88e0814401c41d763cdbb3195",
+      "api/technical_specifications/alignment_ai.py": "a58bfdf8a3ef6e8997ca8f4eb3b8f538ba9c3fb40764361ddd45c2e33a2a763e",
+      "api/technical_specifications/alignment_application.py": "cda772cf44f9f632c6b01ae88a7ed29bc92b4c033cb2f9aceb6974204baa3ec9",
+      "api/technical_specifications/alignment_budget.py": "98db3feba75f36d953de50e807e5aa6bcedb59417bb9451f9113477297cff1ad",
+      "api/technical_specifications/application.py": "a0ffd3486e7ef4afc545b521d0624bc1454d95b75d23fdbb76095a9b12969989",
+      "api/technical_specifications/domain.py": "09e4d9d17db4e12c2efb619916543d20318b51828d133c2a220fdaf5f791d39b",
+      "api/technical_specifications/runtime.py": "cd45c938b21d842cdc4444b8d6ddc93e1d92dc7b0e1e870e8f466122b0c7170f",
+      "api/technical_specifications/storage.py": "f809f9c0ce82aa082740697820758f5916d0f7ef509aa8458564524bb57704d7",
+      "api/technical_specifications/telemetry.py": "5e567baa7cf5cd73df98f9a483b751167a8a5f39c9e3cc3b4e5cc59a81c28805",
+      "business_documents/application/queries.py": "aeb96d0503effd2713e917ed8b697ef2d27dea9b9e56c21e5d7919eb40566618",
+      "api/technical_specifications/ollama_input_evidence.py": "0b8741ff406d41a98df1ba97747b4ccdd7214d4024ccf4785097dcab1912c061"
+    },
+    "frontend": "Immutable base-image SPA; no frontend code changed in this task",
+    "isolated_storage": true
+  },
+  "accepted_rehearsal_runtime": {
+    "project": "ragflow-tz-full-20261021-01a15d38",
+    "base": "http://127.0.0.1:19382",
+    "image": "sha256:c27f02c22002990c8a98710415cfee04094897757036359496a2b05563f6eb62",
+    "patched_files": {
+      "api/source_workbench/adapters.py": "395cb156afc916468a8e47226358b1c10727498523c950e4346c4b837b9b151d",
+      "api/technical_specifications/__init__.py": "470cacb1d98144c02d5c5a2ea653b6b83c6616cd6f153d0ef2bde3fb568f1e66",
+      "api/technical_specifications/ai.py": "e404172d35331bab8606d98fb50c87be8ef2d9fdc9bfb1f81baed642e4995647",
+      "api/technical_specifications/alignment.py": "69bf050245b22f0b160e7ee397e4719b2ebedba88e0814401c41d763cdbb3195",
+      "api/technical_specifications/alignment_ai.py": "a58bfdf8a3ef6e8997ca8f4eb3b8f538ba9c3fb40764361ddd45c2e33a2a763e",
+      "api/technical_specifications/alignment_application.py": "cda772cf44f9f632c6b01ae88a7ed29bc92b4c033cb2f9aceb6974204baa3ec9",
+      "api/technical_specifications/alignment_budget.py": "98db3feba75f36d953de50e807e5aa6bcedb59417bb9451f9113477297cff1ad",
+      "api/technical_specifications/application.py": "a0ffd3486e7ef4afc545b521d0624bc1454d95b75d23fdbb76095a9b12969989",
+      "api/technical_specifications/domain.py": "09e4d9d17db4e12c2efb619916543d20318b51828d133c2a220fdaf5f791d39b",
+      "api/technical_specifications/runtime.py": "cd45c938b21d842cdc4444b8d6ddc93e1d92dc7b0e1e870e8f466122b0c7170f",
+      "api/technical_specifications/storage.py": "f809f9c0ce82aa082740697820758f5916d0f7ef509aa8458564524bb57704d7",
+      "api/technical_specifications/telemetry.py": "5e567baa7cf5cd73df98f9a483b751167a8a5f39c9e3cc3b4e5cc59a81c28805",
+      "business_documents/application/queries.py": "aeb96d0503effd2713e917ed8b697ef2d27dea9b9e56c21e5d7919eb40566618",
+      "api/technical_specifications/ollama_input_evidence.py": "fb0d2ccdc30e3d97218eaadac70219d742a92d10942c964f95f13dd15dc435b1"
+    },
+    "frontend": "Immutable base-image SPA; no frontend code changed in this task",
+    "isolated_storage": true
+  },
+  "recording_runtime_phases": [
+    {
+      "project": "ragflow-tz-full-20261021-01a15d38",
+      "base": "http://127.0.0.1:19382",
+      "image": "sha256:c27f02c22002990c8a98710415cfee04094897757036359496a2b05563f6eb62",
+      "patched_files": {
+        "api/source_workbench/adapters.py": "395cb156afc916468a8e47226358b1c10727498523c950e4346c4b837b9b151d",
+        "api/technical_specifications/__init__.py": "470cacb1d98144c02d5c5a2ea653b6b83c6616cd6f153d0ef2bde3fb568f1e66",
+        "api/technical_specifications/ai.py": "e404172d35331bab8606d98fb50c87be8ef2d9fdc9bfb1f81baed642e4995647",
+        "api/technical_specifications/alignment.py": "69bf050245b22f0b160e7ee397e4719b2ebedba88e0814401c41d763cdbb3195",
+        "api/technical_specifications/alignment_ai.py": "a58bfdf8a3ef6e8997ca8f4eb3b8f538ba9c3fb40764361ddd45c2e33a2a763e",
+        "api/technical_specifications/alignment_application.py": "cda772cf44f9f632c6b01ae88a7ed29bc92b4c033cb2f9aceb6974204baa3ec9",
+        "api/technical_specifications/alignment_budget.py": "98db3feba75f36d953de50e807e5aa6bcedb59417bb9451f9113477297cff1ad",
+        "api/technical_specifications/application.py": "a0ffd3486e7ef4afc545b521d0624bc1454d95b75d23fdbb76095a9b12969989",
+        "api/technical_specifications/domain.py": "09e4d9d17db4e12c2efb619916543d20318b51828d133c2a220fdaf5f791d39b",
+        "api/technical_specifications/runtime.py": "cd45c938b21d842cdc4444b8d6ddc93e1d92dc7b0e1e870e8f466122b0c7170f",
+        "api/technical_specifications/storage.py": "f809f9c0ce82aa082740697820758f5916d0f7ef509aa8458564524bb57704d7",
+        "api/technical_specifications/telemetry.py": "5e567baa7cf5cd73df98f9a483b751167a8a5f39c9e3cc3b4e5cc59a81c28805",
+        "business_documents/application/queries.py": "aeb96d0503effd2713e917ed8b697ef2d27dea9b9e56c21e5d7919eb40566618",
+        "api/technical_specifications/ollama_input_evidence.py": "fb0d2ccdc30e3d97218eaadac70219d742a92d10942c964f95f13dd15dc435b1"
+      },
+      "frontend": "Immutable base-image SPA; no frontend code changed in this task",
+      "isolated_storage": true
+    },
+    {
+      "project": "ragflow-tz-full-20261021-01a15d38",
+      "base": "http://127.0.0.1:19382",
+      "image": "sha256:c27f02c22002990c8a98710415cfee04094897757036359496a2b05563f6eb62",
+      "patched_files": {
+        "api/source_workbench/adapters.py": "395cb156afc916468a8e47226358b1c10727498523c950e4346c4b837b9b151d",
+        "api/technical_specifications/__init__.py": "470cacb1d98144c02d5c5a2ea653b6b83c6616cd6f153d0ef2bde3fb568f1e66",
+        "api/technical_specifications/ai.py": "e404172d35331bab8606d98fb50c87be8ef2d9fdc9bfb1f81baed642e4995647",
+        "api/technical_specifications/alignment.py": "69bf050245b22f0b160e7ee397e4719b2ebedba88e0814401c41d763cdbb3195",
+        "api/technical_specifications/alignment_ai.py": "a58bfdf8a3ef6e8997ca8f4eb3b8f538ba9c3fb40764361ddd45c2e33a2a763e",
+        "api/technical_specifications/alignment_application.py": "cda772cf44f9f632c6b01ae88a7ed29bc92b4c033cb2f9aceb6974204baa3ec9",
+        "api/technical_specifications/alignment_budget.py": "98db3feba75f36d953de50e807e5aa6bcedb59417bb9451f9113477297cff1ad",
+        "api/technical_specifications/application.py": "a0ffd3486e7ef4afc545b521d0624bc1454d95b75d23fdbb76095a9b12969989",
+        "api/technical_specifications/domain.py": "09e4d9d17db4e12c2efb619916543d20318b51828d133c2a220fdaf5f791d39b",
+        "api/technical_specifications/runtime.py": "cd45c938b21d842cdc4444b8d6ddc93e1d92dc7b0e1e870e8f466122b0c7170f",
+        "api/technical_specifications/storage.py": "f809f9c0ce82aa082740697820758f5916d0f7ef509aa8458564524bb57704d7",
+        "api/technical_specifications/telemetry.py": "5e567baa7cf5cd73df98f9a483b751167a8a5f39c9e3cc3b4e5cc59a81c28805",
+        "business_documents/application/queries.py": "aeb96d0503effd2713e917ed8b697ef2d27dea9b9e56c21e5d7919eb40566618",
+        "api/technical_specifications/ollama_input_evidence.py": "8b8ca3d9af0d9c7526b5c14ffaa58733a179d83fb53d25323c3501c973a3a0d0"
+      },
+      "frontend": "Immutable base-image SPA; no frontend code changed in this task",
+      "isolated_storage": true
+    },
+    {
+      "project": "ragflow-tz-full-20261021-01a15d38",
+      "base": "http://127.0.0.1:19382",
+      "image": "sha256:c27f02c22002990c8a98710415cfee04094897757036359496a2b05563f6eb62",
+      "patched_files": {
+        "api/source_workbench/adapters.py": "395cb156afc916468a8e47226358b1c10727498523c950e4346c4b837b9b151d",
+        "api/technical_specifications/__init__.py": "470cacb1d98144c02d5c5a2ea653b6b83c6616cd6f153d0ef2bde3fb568f1e66",
+        "api/technical_specifications/ai.py": "e404172d35331bab8606d98fb50c87be8ef2d9fdc9bfb1f81baed642e4995647",
+        "api/technical_specifications/alignment.py": "69bf050245b22f0b160e7ee397e4719b2ebedba88e0814401c41d763cdbb3195",
+        "api/technical_specifications/alignment_ai.py": "a58bfdf8a3ef6e8997ca8f4eb3b8f538ba9c3fb40764361ddd45c2e33a2a763e",
+        "api/technical_specifications/alignment_application.py": "cda772cf44f9f632c6b01ae88a7ed29bc92b4c033cb2f9aceb6974204baa3ec9",
+        "api/technical_specifications/alignment_budget.py": "98db3feba75f36d953de50e807e5aa6bcedb59417bb9451f9113477297cff1ad",
+        "api/technical_specifications/application.py": "a0ffd3486e7ef4afc545b521d0624bc1454d95b75d23fdbb76095a9b12969989",
+        "api/technical_specifications/domain.py": "09e4d9d17db4e12c2efb619916543d20318b51828d133c2a220fdaf5f791d39b",
+        "api/technical_specifications/runtime.py": "cd45c938b21d842cdc4444b8d6ddc93e1d92dc7b0e1e870e8f466122b0c7170f",
+        "api/technical_specifications/storage.py": "f809f9c0ce82aa082740697820758f5916d0f7ef509aa8458564524bb57704d7",
+        "api/technical_specifications/telemetry.py": "5e567baa7cf5cd73df98f9a483b751167a8a5f39c9e3cc3b4e5cc59a81c28805",
+        "business_documents/application/queries.py": "aeb96d0503effd2713e917ed8b697ef2d27dea9b9e56c21e5d7919eb40566618",
+        "api/technical_specifications/ollama_input_evidence.py": "0b8741ff406d41a98df1ba97747b4ccdd7214d4024ccf4785097dcab1912c061"
+      },
+      "frontend": "Immutable base-image SPA; no frontend code changed in this task",
+      "isolated_storage": true
+    }
+  ],
+  "archive": ".local/archives/tz-alignment-video-20261021-01a15d38"
+}

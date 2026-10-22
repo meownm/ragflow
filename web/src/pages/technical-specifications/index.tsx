@@ -28,8 +28,10 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type CSSProperties,
 } from 'react';
 import { useBlocker, useSearchParams } from 'react-router';
+import { ResizeHandle } from '../business-documents/components/resize-handle';
 import { AlignmentPanel } from './alignment-panel';
 import { ChatHistory } from './chat-history';
 import {
@@ -69,10 +71,23 @@ import {
 import { ProposalCard } from './proposal-card';
 import { RevisionPreview } from './revision-preview';
 import { SectionEditor } from './section-editor';
+import { useWorkspaceLayout } from './workspace-layout';
 import './workspace.css';
 
 const selectClass =
   'max-w-full rounded-md border border-border-button bg-bg-base px-3 py-2 text-sm';
+
+const sectionLabels = [
+  'Назначение и цель',
+  'Общие сведения',
+  'Компоненты и изменения',
+  'Настройки и права',
+  'Интерфейсы и сценарии',
+  'Логика работы',
+  'Модель данных',
+  'Взаимодействия и API',
+  'Журналирование',
+];
 
 export const SpecificationKeys = {
   projects: (actor: string) => ['spec-projects', actor] as const,
@@ -267,8 +282,11 @@ export default function TechnicalSpecifications() {
               </Button>
             </form>
           )}
-          {!creating && workspace && canEdit && (
-            <details className="text-sm" open={pendingImport || undefined}>
+          {workspace && canEdit && (
+            <details
+              className="tz-import-card text-sm"
+              open={pendingImport || creating || undefined}
+            >
               <summary className="cursor-pointer py-2 text-accent-primary">
                 Создать ТЗ из Eva
               </summary>
@@ -375,11 +393,17 @@ function Editor({
   const currentDocument = useRef(doc);
   currentDocument.current = doc;
   const [focusSection, setFocusSection] = useState('1');
+  const [previewProposal, setPreviewProposal] = useState<string | null>(null);
   const [dismissed, setDismissed] = useState<string[]>([]);
   const [compareTo, setCompareTo] = useState<Revision | null>(null);
   const compareRequest = useRef(0);
   const liveEditing = useRef(editing);
   const manualSaved = useRef(!initialGoal || !documentDirty(editing));
+  const [assistantOpen, setAssistantOpen] = useState(
+    () => window.innerWidth > 760,
+  );
+  const [highlightComment, setHighlightComment] = useState<string | null>(null);
+  const layout = useWorkspaceLayout(manualKey + ':layout');
   const [mode, setMode] = useState<'document' | 'chat'>('document');
   const [panel, setPanel] = useState<
     | 'comments'
@@ -469,6 +493,23 @@ function Editor({
       item.base_revision === doc.revision &&
       !dismissed.includes(item.id),
   );
+  const scopedComments = doc.comments.filter(
+    (item) =>
+      commentContext.scope === 'all' ||
+      (item.context.anchor?.section ?? item.context.scope) ===
+        (commentContext.anchor?.section ?? commentContext.scope),
+  );
+  const visibleComments = scopedComments.filter(
+    (item) => showResolved || !item.resolved,
+  );
+  const selectedComment = doc.comments.find(
+    (item) => item.id === highlightComment,
+  );
+  const showAssistant =
+    panel !== 'history' && (mode === 'chat' || (!panel && assistantOpen));
+  const hasSidePanel =
+    panel !== 'history' &&
+    (Boolean(panel) || (mode === 'document' && assistantOpen));
   const proposalRequests = new Map(
     doc.messages
       .filter((item) => item.role === 'user')
@@ -603,14 +644,18 @@ function Editor({
       ?.scrollIntoView?.({ block: 'start', behavior: 'instant' });
   }
 
-  function proposalCard(proposal: Proposal, section?: string) {
+  function proposalCard(
+    proposal: Proposal,
+    section?: string,
+    expanded = false,
+  ) {
     return (
       <ProposalCard
         key={proposal.id}
         proposal={proposal}
         local={doc.sections}
         section={section}
-        compact={!section}
+        compact={!section && !expanded}
         number={doc.proposals.findIndex((item) => item.id === proposal.id) + 1}
         request={
           proposal.message_id
@@ -620,6 +665,8 @@ function Editor({
         disabled={!canEdit || busy || saving || dirty}
         onAction={(name, data) => void action(name, data)}
         onDiscuss={() => {
+          setPreviewProposal(null);
+          setPanel(null);
           changeDraft({ ...chatDraft, context: wholeContext(doc) });
           setMode('chat');
         }}
@@ -819,6 +866,8 @@ function Editor({
 
   useEffect(() => {
     if (!draftLoaded || draftConflict) return;
+    if (!touched.current && !initialDraft.current && !serverChat.current)
+      return;
     let active = true;
     const timer = setTimeout(() => {
       const snapshot = chatDraft;
@@ -1018,7 +1067,13 @@ function Editor({
 
   return (
     <section
-      className={`tz-editor min-w-0 ${mode === 'chat' && panel !== 'history' ? 'tz-editor-chat' : 'space-y-4'}`}
+      className={`tz-editor min-w-0 ${mode === 'chat' ? 'tz-editor-chat' : 'tz-editor-document'}`}
+      style={
+        {
+          '--tz-panel-width': `${layout.width}px`,
+          '--tz-composer-height': `${layout.height}px`,
+        } as CSSProperties
+      }
       aria-label="Рабочее пространство ТЗ"
     >
       <header className="tz-editor-head">
@@ -1082,6 +1137,7 @@ function Editor({
             </div>
             <Button
               variant="ghost"
+              aria-pressed={panel === 'comments'}
               onClick={() => setPanel(panel === 'comments' ? null : 'comments')}
             >
               Комментарии ·{' '}
@@ -1098,7 +1154,19 @@ function Editor({
           </div>
           <div className="tz-toolbar-group">
             <Button
+              variant={showAssistant ? 'secondary' : 'ghost'}
+              aria-expanded={showAssistant}
+              onClick={() => {
+                setMode('document');
+                setPanel(null);
+                setAssistantOpen(!showAssistant);
+              }}
+            >
+              {showAssistant ? 'Свернуть помощника' : 'Открыть помощника'}
+            </Button>
+            <Button
               variant="ghost"
+              aria-pressed={panel === 'sources'}
               onClick={() => setPanel(panel === 'sources' ? null : 'sources')}
             >
               Источники
@@ -1220,8 +1288,36 @@ function Editor({
           ))}
         </section>
       )}
+      {previewProposal &&
+        (() => {
+          const proposal = ready.find((item) => item.id === previewProposal);
+          return proposal ? (
+            <section
+              className="tz-proposal-detail"
+              aria-label="Сравнение предложенных изменений"
+            >
+              <div className="tz-panel-title">
+                <h2>Сравнение изменений</h2>
+                <Button
+                  variant="ghost"
+                  onClick={() => setPreviewProposal(null)}
+                >
+                  Вернуться к документу
+                </Button>
+              </div>
+              <p>
+                Изменения ещё не внесены · исходная редакция{' '}
+                {proposal.base_revision}
+              </p>
+              {proposalCard(proposal, undefined, true)}
+            </section>
+          ) : null;
+        })()}
       <div
-        className={`tz-document-layout ${mode === 'chat' ? 'tz-chat-layout' : ''} ${panel && panel !== 'history' ? 'tz-with-panel' : ''} ${panel === 'history' ? 'tz-history-layout' : ''}`}
+        hidden={Boolean(
+          previewProposal && ready.some((item) => item.id === previewProposal),
+        )}
+        className={`tz-document-layout ${mode === 'chat' ? 'tz-chat-layout' : ''} ${hasSidePanel ? 'tz-with-panel' : ''} ${panel === 'history' ? 'tz-history-layout' : ''}`}
       >
         {mode === 'document' && panel !== 'history' && (
           <nav className="tz-toc" aria-label="Оглавление ТЗ">
@@ -1237,28 +1333,34 @@ function Editor({
                 }}
               >
                 <span>{index + 1}.</span>
-                <span>{heading}</span>
+                <span title={heading}>{sectionLabels[index]}</span>
               </a>
             ))}
           </nav>
         )}
         <div
+          hidden={panel === 'history' || mode === 'chat'}
           className={
-            panel === 'history'
+            panel === 'history' || mode === 'chat'
               ? 'hidden'
-              : mode === 'chat'
-                ? 'tz-chat-column'
-                : 'min-w-0'
+              : 'tz-document-column'
           }
         >
-          {mode === 'document' ? (
+          {mode === 'document' && panel !== 'history' && (
             <article
               className="tz-document"
               aria-label="Полный текст технического задания"
             >
-              <p className="tz-document-note">
+              <p
+                className="tz-document-note"
+                title={
+                  canEdit
+                    ? 'Текст можно редактировать прямо в документе. Изменения сохраняются автоматически.'
+                    : 'Документ доступен для чтения.'
+                }
+              >
                 {canEdit
-                  ? 'Текст можно редактировать прямо в документе. Изменения сохраняются автоматически.'
+                  ? 'Документ · 9 разделов · автоматическое сохранение'
                   : 'Документ доступен для чтения.'}
               </p>
               <label className="tz-mobile-toc">
@@ -1275,7 +1377,7 @@ function Editor({
                   ))}
                 </select>
               </label>
-              <details className="mb-6 text-sm">
+              <details className="mb-3 text-sm">
                 <summary>Название документа</summary>
                 <label className="block space-y-2">
                   Название ТЗ
@@ -1338,6 +1440,25 @@ function Editor({
                         </Button>
                       </div>
                     </header>
+                    {selectedComment?.context.anchor?.section === section && (
+                      <blockquote className="tz-discussion-quote">
+                        <p className="text-xs text-accent-primary">
+                          Цитата из обсуждения · редакция{' '}
+                          {selectedComment.context.revision}
+                        </p>
+                        <p>{selectedComment.context.anchor.quote}</p>
+                        {staleContext(
+                          selectedComment.context,
+                          doc.sections,
+                        ) && <p>Текст изменился после создания комментария.</p>}
+                        <Button
+                          variant="ghost"
+                          onClick={() => setHighlightComment(null)}
+                        >
+                          Скрыть цитату
+                        </Button>
+                      </blockquote>
+                    )}
                     <SectionEditor
                       section={section}
                       document={doc}
@@ -1369,189 +1490,241 @@ function Editor({
                 );
               })}
             </article>
-          ) : (
-            <div className="tz-chat">
-              <ChatHistory
-                document={doc}
-                actor={actor}
-                proposals={ready}
-                disabled={busy || saving || dirty || !canEdit}
-                onRetry={(draft) => void action('chat', { draft })}
-                renderProposal={(proposal) => proposalCard(proposal)}
-              />
-              <div className="tz-chat-composer space-y-3">
-                <label className="flex flex-wrap items-center gap-2 text-sm">
-                  Контекст
-                  <select
-                    aria-label="Контекст чата"
-                    value={chatDraft.context.scope}
-                    className={selectClass}
-                    onChange={(event) =>
+          )}
+        </div>
+        {hasSidePanel && (mode === 'document' || Boolean(panel)) && (
+          <div className="tz-pane-resize">
+            <ResizeHandle
+              direction="width"
+              value={layout.width}
+              min={280}
+              max={480}
+              onChange={layout.setWidth}
+              onReset={layout.resetWidth}
+              label="Ширина правой панели ТЗ"
+              testId="tz-panel-resize"
+            />
+          </div>
+        )}
+        <aside
+          hidden={!showAssistant}
+          className={`tz-assistant ${showAssistant ? '' : 'hidden'}`}
+          aria-label="Помощник по ТЗ"
+        >
+          <div className="tz-panel-title">
+            <h2>Помощник по ТЗ</h2>
+            <Button
+              variant="ghost"
+              aria-label="Свернуть помощника"
+              onClick={() => {
+                setAssistantOpen(false);
+                setMode('document');
+              }}
+            >
+              Свернуть
+            </Button>
+          </div>
+          <div className="tz-chat">
+            <ChatHistory
+              document={doc}
+              actor={actor}
+              proposals={ready}
+              disabled={busy || saving || dirty || !canEdit}
+              onRetry={(draft) => void action('chat', { draft })}
+              renderProposal={(proposal) =>
+                mode === 'document' ? (
+                  <Button
+                    key={proposal.id}
+                    variant="outline"
+                    onClick={() => setPreviewProposal(proposal.id)}
+                  >
+                    Посмотреть предложение{' '}
+                    {doc.proposals.findIndex(
+                      (item) => item.id === proposal.id,
+                    ) + 1}
+                  </Button>
+                ) : (
+                  proposalCard(proposal)
+                )
+              }
+            />
+            <ResizeHandle
+              direction="height"
+              value={layout.height}
+              min={80}
+              max={200}
+              onChange={layout.setHeight}
+              onReset={layout.resetHeight}
+              label="Высота поля ввода помощника"
+              testId="tz-composer-resize"
+            />
+            <div className="tz-chat-composer space-y-3">
+              <label className="flex flex-wrap items-center gap-2 text-sm">
+                Контекст
+                <select
+                  aria-label="Контекст чата"
+                  value={chatDraft.context.scope}
+                  className={selectClass}
+                  onChange={(event) =>
+                    changeDraft({
+                      ...chatDraft,
+                      context: wholeContext(doc, event.target.value),
+                    })
+                  }
+                >
+                  <option value="all">Всё ТЗ</option>
+                  {headings.map((heading, index) => (
+                    <option key={index} value={String(index + 1)}>
+                      {index + 1}. {heading}
+                    </option>
+                  ))}
+                  {chatDraft.context.scope === 'selection' && (
+                    <option value="selection">Выделенный фрагмент</option>
+                  )}
+                </select>
+              </label>
+              {chatDraft.context.anchor && (
+                <blockquote className="whitespace-pre-wrap border-l-2 border-border-button pl-3 text-sm">
+                  {chatDraft.context.anchor.quote}
+                  <p className="mt-2 text-text-secondary">
+                    Исходная редакция {chatDraft.context.revision}
+                  </p>
+                </blockquote>
+              )}
+              {stale && (
+                <div role="alert" className="space-y-2 text-sm">
+                  <p>
+                    Исходный фрагмент изменён или удалён. Выберите контекст
+                    явно.
+                  </p>
+                  <Button variant="outline" onClick={() => setMode('document')}>
+                    Открыть документ
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() =>
                       changeDraft({
                         ...chatDraft,
-                        context: wholeContext(doc, event.target.value),
+                        context: wholeContext(
+                          doc,
+                          chatDraft.context.anchor?.section ?? 'all',
+                        ),
                       })
                     }
                   >
-                    <option value="all">Всё ТЗ</option>
-                    {headings.map((heading, index) => (
-                      <option key={index} value={String(index + 1)}>
-                        {index + 1}. {heading}
-                      </option>
-                    ))}
-                    {chatDraft.context.scope === 'selection' && (
-                      <option value="selection">Выделенный фрагмент</option>
-                    )}
-                  </select>
-                </label>
-                {chatDraft.context.anchor && (
-                  <blockquote className="whitespace-pre-wrap border-l-2 border-border-button pl-3 text-sm">
-                    {chatDraft.context.anchor.quote}
-                    <p className="mt-2 text-text-secondary">
-                      Исходная редакция {chatDraft.context.revision}
-                    </p>
-                  </blockquote>
-                )}
-                {stale && (
-                  <div role="alert" className="space-y-2 text-sm">
-                    <p>
-                      Исходный фрагмент изменён или удалён. Выберите контекст
-                      явно.
-                    </p>
-                    <Button
-                      variant="outline"
-                      onClick={() => setMode('document')}
-                    >
-                      Открыть документ
-                    </Button>
-                    <Button
-                      variant="outline"
-                      onClick={() =>
-                        changeDraft({
-                          ...chatDraft,
-                          context: wholeContext(
-                            doc,
-                            chatDraft.context.anchor?.section ?? 'all',
-                          ),
-                        })
-                      }
-                    >
-                      Использовать весь раздел
-                    </Button>
-                  </div>
-                )}
-                {draftConflict && (
-                  <div
-                    role="alert"
-                    className="space-y-3 rounded-lg border border-border-button p-3 text-sm"
-                  >
-                    <p>
-                      На сервере другой черновик. Выберите вариант для
-                      продолжения.
-                    </p>
-                    <details>
-                      <summary className="cursor-pointer">
-                        Серверный: {contextLabel(draftConflict.draft.context)},
-                        редакция {draftConflict.draft.context.revision}
-                      </summary>
-                      {draftConflict.draft.context.anchor && (
-                        <blockquote className="my-2 whitespace-pre-wrap border-l-2 pl-3">
-                          {draftConflict.draft.context.anchor.quote}
-                        </blockquote>
-                      )}
-                      <p className="mt-2 whitespace-pre-wrap">
-                        {draftConflict.draft.text || 'Пустой черновик'}
-                      </p>
-                    </details>
-                    <p className="text-text-secondary">
-                      Второй вариант сохранится на этом устройстве.
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        variant="outline"
-                        onClick={() => chooseDraft(false)}
-                      >
-                        Продолжить с моим
-                      </Button>
-                      <Button
-                        variant="outline"
-                        onClick={() => chooseDraft(true)}
-                      >
-                        Продолжить с серверным
-                      </Button>
-                    </div>
-                  </div>
-                )}
-                <Textarea
-                  aria-label="Сообщение помощнику"
-                  value={chatDraft.text}
-                  onChange={(event) =>
-                    changeDraft({ ...chatDraft, text: event.target.value })
-                  }
-                  maxLength={10000}
-                  className="min-h-28"
-                />
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <p role="status" className="text-sm text-text-secondary">
-                    {draftStatus}
-                  </p>
-                  <Button
-                    disabled={
-                      !canEdit ||
-                      busy ||
-                      stale ||
-                      dirty ||
-                      !!draftConflict ||
-                      !chatDraft.text.trim()
-                    }
-                    onClick={() => void send()}
-                  >
-                    {busy ? 'Обработка…' : 'Отправить'}
+                    Использовать весь раздел
                   </Button>
                 </div>
-                {draftSyncFailed && (
-                  <Button
-                    variant="outline"
-                    onClick={() => setDraftSyncAttempt((value) => value + 1)}
-                  >
-                    Повторить синхронизацию черновика
-                  </Button>
-                )}
-                {draftBackup && (
-                  <details className="text-sm">
+              )}
+              {draftConflict && (
+                <div
+                  role="alert"
+                  className="space-y-3 rounded-lg border border-border-button p-3 text-sm"
+                >
+                  <p>
+                    На сервере другой черновик. Выберите вариант для
+                    продолжения.
+                  </p>
+                  <details>
                     <summary className="cursor-pointer">
-                      Предыдущий вариант черновика
+                      Серверный: {contextLabel(draftConflict.draft.context)},
+                      редакция {draftConflict.draft.context.revision}
                     </summary>
-                    <p className="my-2 text-text-secondary">
-                      {contextLabel(draftBackup.draft.context)}, редакция{' '}
-                      {draftBackup.draft.context.revision}
-                    </p>
-                    {draftBackup.draft.context.anchor && (
+                    {draftConflict.draft.context.anchor && (
                       <blockquote className="my-2 whitespace-pre-wrap border-l-2 pl-3">
-                        {draftBackup.draft.context.anchor.quote}
+                        {draftConflict.draft.context.anchor.quote}
                       </blockquote>
                     )}
-                    <p className="mb-2 whitespace-pre-wrap">
-                      {draftBackup.draft.text || 'Пустой черновик'}
+                    <p className="mt-2 whitespace-pre-wrap">
+                      {draftConflict.draft.text || 'Пустой черновик'}
                     </p>
+                  </details>
+                  <p className="text-text-secondary">
+                    Второй вариант сохранится на этом устройстве.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
                     <Button
                       variant="outline"
-                      disabled={!!draftConflict}
-                      onClick={() => changeDraft(draftBackup.draft)}
+                      onClick={() => chooseDraft(false)}
                     >
-                      Использовать этот вариант
+                      Продолжить с моим
                     </Button>
-                  </details>
-                )}
-                {dirty && (
-                  <p className="text-sm text-text-secondary">
-                    Сохраните правки документа перед отправкой или применением.
-                  </p>
-                )}
+                    <Button variant="outline" onClick={() => chooseDraft(true)}>
+                      Продолжить с серверным
+                    </Button>
+                  </div>
+                </div>
+              )}
+              <Textarea
+                aria-label="Сообщение помощнику"
+                value={chatDraft.text}
+                onChange={(event) =>
+                  changeDraft({ ...chatDraft, text: event.target.value })
+                }
+                maxLength={10000}
+                className="min-h-28"
+              />
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p role="status" className="text-sm text-text-secondary">
+                  {draftStatus}
+                </p>
+                <Button
+                  variant="accent"
+                  disabled={
+                    !canEdit ||
+                    busy ||
+                    stale ||
+                    dirty ||
+                    !!draftConflict ||
+                    !chatDraft.text.trim()
+                  }
+                  onClick={() => void send()}
+                >
+                  {busy ? 'Обработка…' : 'Отправить'}
+                </Button>
               </div>
+              {draftSyncFailed && (
+                <Button
+                  variant="outline"
+                  onClick={() => setDraftSyncAttempt((value) => value + 1)}
+                >
+                  Повторить синхронизацию черновика
+                </Button>
+              )}
+              {draftBackup && (
+                <details className="text-sm">
+                  <summary className="cursor-pointer">
+                    Предыдущий вариант черновика
+                  </summary>
+                  <p className="my-2 text-text-secondary">
+                    {contextLabel(draftBackup.draft.context)}, редакция{' '}
+                    {draftBackup.draft.context.revision}
+                  </p>
+                  {draftBackup.draft.context.anchor && (
+                    <blockquote className="my-2 whitespace-pre-wrap border-l-2 pl-3">
+                      {draftBackup.draft.context.anchor.quote}
+                    </blockquote>
+                  )}
+                  <p className="mb-2 whitespace-pre-wrap">
+                    {draftBackup.draft.text || 'Пустой черновик'}
+                  </p>
+                  <Button
+                    variant="outline"
+                    disabled={!!draftConflict}
+                    onClick={() => changeDraft(draftBackup.draft)}
+                  >
+                    Использовать этот вариант
+                  </Button>
+                </details>
+              )}
+              {dirty && (
+                <p className="text-sm text-text-secondary">
+                  Сохраните правки документа перед отправкой или применением.
+                </p>
+              )}
             </div>
-          )}
-        </div>
+          </div>
+        </aside>
         {(panel === 'attention' ||
           panel === 'sources' ||
           panel === 'alignment') && (
@@ -1587,7 +1760,7 @@ function Editor({
               <div className="space-y-4 mb-6">
                 {ready.length === 0 && <p>Неприменённых предложений нет.</p>}
                 {ready.map((proposal) => (
-                  <div key={proposal.id}>
+                  <div className="tz-attention-item" key={proposal.id}>
                     <p>
                       {proposal.status === 'needs_resolution'
                         ? 'Нужно устранить противоречия'
@@ -1608,22 +1781,25 @@ function Editor({
                       onClick={() => {
                         setMode('document');
                         setPanel(null);
-                        setTimeout(
-                          () =>
-                            jump(
-                              headings
-                                .map((_, index) => String(index + 1))
-                                .find(
-                                  (key) =>
-                                    proposal.sections[key] !==
-                                    doc.sections[key],
-                                ) || '1',
-                            ),
-                          0,
+                        requestAnimationFrame(() =>
+                          jump(
+                            headings
+                              .map((_, index) => String(index + 1))
+                              .find(
+                                (key) =>
+                                  proposal.sections[key] !== doc.sections[key],
+                              ) || '1',
+                          ),
                         );
                       }}
                     >
                       Посмотреть в документе
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => setPreviewProposal(proposal.id)}
+                    >
+                      Посмотреть изменения
                     </Button>
                   </div>
                 ))}
@@ -1670,23 +1846,27 @@ function Editor({
                 )}
               </div>
             )}
-            <AlignmentPanel
-              key={doc.id}
-              document={doc}
-              disabled={busy || saving || dirty}
-              canEdit={canEdit}
-              onDocument={(value) => {
-                setDoc((current) =>
-                  value.version >= current.version ? value : current,
-                );
-                onSaved(value);
-              }}
-            />
+            {(panel === 'sources' || panel === 'alignment') && (
+              <AlignmentPanel
+                mode={panel === 'sources' ? 'sources' : 'check'}
+                onConfigure={() => setPanel('alignment')}
+                key={doc.id}
+                document={doc}
+                disabled={busy || saving || dirty}
+                canEdit={canEdit}
+                onDocument={(value) => {
+                  setDoc((current) =>
+                    value.version >= current.version ? value : current,
+                  );
+                  onSaved(value);
+                }}
+              />
+            )}
           </aside>
         )}
         {panel === 'comments' && (
           <aside
-            className="tz-panel space-y-4"
+            className="tz-panel tz-comments"
             aria-label="Комментарии"
             ref={panelRef}
             tabIndex={-1}
@@ -1730,20 +1910,35 @@ function Editor({
               />
               Показывать решённые
             </label>
-            {doc.comments
-              .filter(
-                (item) =>
-                  (showResolved || !item.resolved) &&
-                  (commentContext.scope === 'all' ||
-                    (item.context.anchor?.section ?? item.context.scope) ===
-                      (commentContext.anchor?.section ?? commentContext.scope)),
-              )
-              .map((item) => (
+            <p className="text-sm text-text-secondary">
+              Открытые ·{' '}
+              {visibleComments.filter((item) => !item.resolved).length} ·
+              Решённые · {scopedComments.filter((item) => item.resolved).length}
+            </p>
+            {visibleComments.length === 0 && (
+              <p className="tz-empty-state">
+                В выбранной области обсуждений пока нет.
+              </p>
+            )}
+            <div
+              className="tz-comment-list"
+              role="region"
+              aria-label="Ветки комментариев"
+            >
+              {visibleComments.map((item) => (
                 <article
                   key={item.id}
                   className="space-y-3 border-b border-border-button pb-4"
                 >
                   <p className="text-sm font-medium">
+                    {item.created_at && (
+                      <time
+                        className="float-right text-xs text-text-secondary"
+                        dateTime={item.created_at}
+                      >
+                        {new Date(item.created_at).toLocaleString('ru')}
+                      </time>
+                    )}
                     {item.author_id === actor
                       ? 'Вы'
                       : (doc.people?.[item.author_id] ?? 'Удалённый участник')}
@@ -1753,9 +1948,30 @@ function Editor({
                     {item.resolved ? 'Решён' : 'Открыт'}
                   </p>
                   {item.context.anchor && (
-                    <blockquote className="border-l-2 border-border-button pl-2 text-sm">
+                    <button
+                      type="button"
+                      className="tz-comment-quote"
+                      onClick={() => {
+                        setHighlightComment(item.id);
+                        setMode('document');
+                        if (window.innerWidth <= 760) {
+                          setPanel(null);
+                          setAssistantOpen(false);
+                        }
+                        requestAnimationFrame(() =>
+                          jump(item.context.anchor!.section),
+                        );
+                      }}
+                    >
+                      <span className="block text-xs">
+                        Цитата · раздел {item.context.anchor.section} · редакция{' '}
+                        {item.context.revision}
+                      </span>
                       {item.context.anchor.quote}
-                    </blockquote>
+                      <span className="block text-xs">
+                        Показать в документе
+                      </span>
+                    </button>
                   )}
                   <p className="whitespace-pre-wrap break-words">{item.text}</p>
                   {item.replies.map((reply) => (
@@ -1768,9 +1984,28 @@ function Editor({
                           ? 'Вы'
                           : (doc.people[reply.author_id] ?? 'Участник')}
                       </span>
+                      {reply.created_at && (
+                        <time
+                          className="block text-xs text-text-secondary"
+                          dateTime={reply.created_at}
+                        >
+                          {new Date(reply.created_at).toLocaleString('ru')}
+                        </time>
+                      )}
                       {reply.text}
                     </p>
                   ))}
+                  {item.resolved && (
+                    <p className="tz-resolved-state">
+                      Обсуждение решено
+                      {item.resolved_by
+                        ? ` · ${doc.people[item.resolved_by] ?? 'Участник'}`
+                        : ''}
+                      {item.resolved_at
+                        ? ` · ${new Date(item.resolved_at).toLocaleString('ru')}`
+                        : ''}
+                    </p>
+                  )}
                   <div className="flex flex-wrap gap-2">
                     <Button
                       size="sm"
@@ -1799,80 +2034,85 @@ function Editor({
                   </div>
                 </article>
               ))}
-            <p className="text-sm">
-              {replyTo ? 'Ответ на комментарий' : 'Новый комментарий'} ·{' '}
-              {contextLabel(commentContext)}
-            </p>
-            {replyTo && (
-              <Button
-                variant="ghost"
-                onClick={() => beginComment(wholeContext(doc), null)}
-              >
-                Отменить ответ
-              </Button>
-            )}
-            {replyParent && (
-              <blockquote className="space-y-2 border-l-2 border-border-button pl-3 text-sm">
-                <p>
-                  {replyParent.author_id === actor
-                    ? 'Вы'
-                    : (doc.people?.[replyParent.author_id] ??
-                      'Удалённый участник')}{' '}
-                  · {contextLabel(replyParent.context)}
-                </p>
-                <p className="whitespace-pre-wrap break-words">
-                  {replyParent.text}
-                </p>
-              </blockquote>
-            )}
-            {commentSaveError && (
-              <p role="alert" className="text-sm text-state-error">
-                {commentSaveError}
+            </div>
+            <div className="tz-comment-composer">
+              <p className="text-sm">
+                {replyTo ? 'Ответ на комментарий' : 'Новый комментарий'} ·{' '}
+                {contextLabel(commentContext)}
               </p>
-            )}
-            <Textarea
-              aria-label="Текст комментария"
-              value={comment}
-              onChange={(event) =>
-                changeComments(
-                  editCommentDraft(liveComments.current, event.target.value),
-                )
-              }
-              maxLength={10000}
-            />
-            <Button
-              disabled={!canEdit || busy || saving || dirty || !comment.trim()}
-              onClick={async () => {
-                const submitted = liveComments.current;
-                const draft = submitted.entries[submitted.active];
-                const result = await action(
-                  'comments',
-                  replyTo
-                    ? {
-                        action: 'reply',
-                        comment_id: replyTo,
-                        text: draft.text,
-                        message_id: draft.message_id,
-                      }
-                    : {
-                        text: draft.text,
-                        context: draft.context,
-                        message_id: draft.message_id,
-                      },
-                );
-                if (result) {
+              {replyTo && (
+                <Button
+                  variant="ghost"
+                  onClick={() => beginComment(wholeContext(doc), null)}
+                >
+                  Отменить ответ
+                </Button>
+              )}
+              {replyParent && (
+                <blockquote className="space-y-2 border-l-2 border-border-button pl-3 text-sm">
+                  <p>
+                    {replyParent.author_id === actor
+                      ? 'Вы'
+                      : (doc.people?.[replyParent.author_id] ??
+                        'Удалённый участник')}{' '}
+                    · {contextLabel(replyParent.context)}
+                  </p>
+                  <p className="whitespace-pre-wrap break-words">
+                    {replyParent.text}
+                  </p>
+                </blockquote>
+              )}
+              {commentSaveError && (
+                <p role="alert" className="text-sm text-state-error">
+                  {commentSaveError}
+                </p>
+              )}
+              <Textarea
+                aria-label="Текст комментария"
+                value={comment}
+                onChange={(event) =>
                   changeComments(
-                    clearCommentDraft(
-                      liveComments.current,
-                      submitted.active,
-                      draft.message_id,
-                    ),
-                  );
+                    editCommentDraft(liveComments.current, event.target.value),
+                  )
                 }
-              }}
-            >
-              Добавить комментарий
-            </Button>
+                maxLength={10000}
+              />
+              <Button
+                disabled={
+                  !canEdit || busy || saving || dirty || !comment.trim()
+                }
+                onClick={async () => {
+                  const submitted = liveComments.current;
+                  const draft = submitted.entries[submitted.active];
+                  const result = await action(
+                    'comments',
+                    replyTo
+                      ? {
+                          action: 'reply',
+                          comment_id: replyTo,
+                          text: draft.text,
+                          message_id: draft.message_id,
+                        }
+                      : {
+                          text: draft.text,
+                          context: draft.context,
+                          message_id: draft.message_id,
+                        },
+                  );
+                  if (result) {
+                    changeComments(
+                      clearCommentDraft(
+                        liveComments.current,
+                        submitted.active,
+                        draft.message_id,
+                      ),
+                    );
+                  }
+                }}
+              >
+                Добавить комментарий
+              </Button>
+            </div>
           </aside>
         )}
         {panel === 'eva' && (
@@ -2074,16 +2314,20 @@ function Editor({
                 </select>
               </label>
             </div>
-            {history.map((item) => (
-              <Button
-                key={item.number}
-                variant="ghost"
-                onClick={() => void openRevision(item.number)}
-              >
-                Редакция {item.number} ·{' '}
-                {new Date(item.created_at).toLocaleString('ru')}
-              </Button>
-            ))}
+            <nav className="tz-revision-list" aria-label="Редакции ТЗ">
+              {history.map((item) => (
+                <Button
+                  key={item.number}
+                  variant="ghost"
+                  aria-pressed={oldRevision?.number === item.number}
+                  onClick={() => void openRevision(item.number)}
+                >
+                  Редакция {item.number} ·{' '}
+                  {new Date(item.created_at).toLocaleString('ru')} ·{' '}
+                  {doc.people[item.author_id] ?? 'Участник'}
+                </Button>
+              ))}
+            </nav>
             {revisionLoading && <p role="status">Открытие редакции…</p>}
             {oldRevision?.sections && (
               <section className="space-y-4">

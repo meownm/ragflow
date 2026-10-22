@@ -319,6 +319,7 @@ COPY test/__init__.py test/__init__.py
 COPY test/evals/business_documents test/evals/business_documents
 COPY test/evals/technical_specifications test/evals/technical_specifications
 COPY test/unit_test/technical_specifications test/unit_test/technical_specifications
+COPY test/fixtures/technical_specifications test/fixtures/technical_specifications
 COPY test/unit_test/api/apps/business_documents/helpers.py test/unit_test/api/apps/business_documents/helpers.py
 
 COPY docker/service_conf.yaml.template ./conf/service_conf.yaml.template

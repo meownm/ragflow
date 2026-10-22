@@ -33,7 +33,15 @@ export interface Comment {
   context: Context;
   text: string;
   resolved: boolean;
-  replies: { id: string; author_id: string; text: string }[];
+  created_at?: string;
+  resolved_at?: string | null;
+  resolved_by?: string | null;
+  replies: {
+    id: string;
+    author_id: string;
+    text: string;
+    created_at?: string;
+  }[];
 }
 export interface Proposal {
   id: string;

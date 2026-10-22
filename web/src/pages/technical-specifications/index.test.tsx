@@ -147,6 +147,52 @@ beforeEach(() => {
     }));
 });
 
+test('opening Eva from full chat keeps the existing composer and draft visible', async () => {
+  await openChat();
+  const message = screen.getByRole('textbox', { name: 'Сообщение помощнику' });
+  fireEvent.change(message, {
+    target: { value: 'Сохранить контекст разговора' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Eva' }));
+  expect(
+    screen.getByRole('complementary', { name: 'Обмен с Eva' }),
+  ).toBeInTheDocument();
+  expect(screen.getByRole('textbox', { name: 'Сообщение помощнику' })).toBe(
+    message,
+  );
+  expect(message).toHaveValue('Сохранить контекст разговора');
+  fireEvent.click(screen.getByRole('button', { name: 'Закрыть панель' }));
+  expect(screen.getByRole('textbox', { name: 'Сообщение помощнику' })).toBe(
+    message,
+  );
+});
+
+test('viewing a document does not create an untouched empty chat draft', async () => {
+  localStorage.removeItem(key);
+  jest.mocked(getSpecificationDraft).mockResolvedValue(null);
+  await openChat();
+  await act(async () => {
+    jest.advanceTimersByTime(1000);
+  });
+  expect(saveSpecificationDraft).not.toHaveBeenCalled();
+  fireEvent.change(
+    screen.getByRole('textbox', { name: 'Сообщение помощнику' }),
+    {
+      target: { value: 'Новый вопрос' },
+    },
+  );
+  await act(async () => {
+    jest.advanceTimersByTime(1000);
+  });
+  expect(saveSpecificationDraft).toHaveBeenCalledWith(
+    'project',
+    'doc',
+    expect.objectContaining({
+      draft: expect.objectContaining({ text: 'Новый вопрос' }),
+    }),
+  );
+});
+
 function editSection(label: string, value: string) {
   const editor = screen.getByLabelText(label);
   editor.textContent = value;

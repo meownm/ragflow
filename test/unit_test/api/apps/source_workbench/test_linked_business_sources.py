@@ -1,8 +1,8 @@
 """Real source owner query boundary with isolated relational fixtures."""
 
+import sys
 from contextlib import contextmanager
 from pathlib import Path
-import sys
 from types import ModuleType
 
 import pytest
@@ -28,11 +28,12 @@ def business(linked):
         package = ModuleType("api.apps")
         package.__path__ = [str(Path(__file__).resolve().parents[5] / "api" / "apps")]
         sys.modules["api.apps"] = package
+    from api.apps.business_documents import assets
     from api.apps.business_documents.adapters.queries import PeeweeDocumentReader
 
     with linked.database.bind_ctx([BusinessDocument, BusinessDocumentEvent, BusinessDocumentRevision]):
         linked.database.create_tables([BusinessDocument, BusinessDocumentEvent, BusinessDocumentRevision])
-        gateway = BusinessDocumentSources(DocumentQueries(PeeweeDocumentReader(), None, lambda: 0))
+        gateway = BusinessDocumentSources(DocumentQueries(PeeweeDocumentReader(), assets, lambda: 0))
         linked.service.business = linked.repo.business = gateway
         yield gateway
 
@@ -189,6 +190,7 @@ async def test_gateway_closes_owned_thread_connection_but_preserves_caller_trans
 
 async def test_legacy_draft_read_checks_native_source_and_active_actor(linked, monkeypatch):
     import inspect
+
     from api.db.db_models import SourceWorkspaceDraft, User
     from api.source_workbench.adapters import SourceWorkspaceRepository
 

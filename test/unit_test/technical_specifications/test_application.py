@@ -126,7 +126,7 @@ async def test_parallel_edit_while_verification_runs_cannot_be_overwritten(env):
 
 @pytest.mark.asyncio
 async def test_apply_uses_linked_saved_request_not_latest_message_or_client_override(env):
-    service, repo, ai = env
+    service, _repo, ai = env
     first = message()
     state = await service.chat("editor", "workspace", "doc", first)
     proposal = state["proposals"][0]
@@ -226,10 +226,18 @@ async def test_comments_replies_and_resolution_do_not_change_document(env):
     second = await service.comment("editor", "workspace", "doc", {"version": first["version"], "message_id": "reply", "action": "reply", "comment_id": item["id"], "text": "Ответ"})
     third = await service.comment("editor", "workspace", "doc", {"version": second["version"], "action": "resolve", "comment_id": item["id"], "resolved": True})
     assert third["comments"][0]["resolved"] is True
+    assert third["comments"][0]["resolved_by"] == "editor"
+    assert third["comments"][0]["resolved_at"]
     assert third["comments"][0]["replies"][0]["text"] == "Ответ"
     assert third["revision"] == 1
     assert len(repo.revisions) == 1
     assert not third["messages"]
+    repeated = await service.comment("editor", "workspace", "doc", {"version": third["version"], "action": "resolve", "comment_id": item["id"], "resolved": True})
+    assert repeated["comments"][0]["resolved_at"] == third["comments"][0]["resolved_at"]
+    reopened = await service.comment("editor", "workspace", "doc", {"version": repeated["version"], "action": "resolve", "comment_id": item["id"], "resolved": False})
+    assert reopened["comments"][0]["resolved_by"] is None
+    assert reopened["comments"][0]["resolved_at"] is None
+    assert reopened["comments"][0]["replies"] == third["comments"][0]["replies"]
 
 
 @pytest.mark.asyncio

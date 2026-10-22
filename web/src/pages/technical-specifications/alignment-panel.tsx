@@ -13,11 +13,15 @@ export function AlignmentPanel({
   disabled,
   canEdit,
   onDocument,
+  mode = 'check',
+  onConfigure,
 }: {
   document: Specification;
   disabled: boolean;
   canEdit: boolean;
   onDocument: (value: Specification) => void;
+  mode?: 'sources' | 'check';
+  onConfigure?: () => void;
 }) {
   const [sources, setSources] = useState<
     { document_id: string; title: string; revision_number: number }[]
@@ -42,11 +46,12 @@ export function AlignmentPanel({
     const current = { active: true };
     generation.current = current;
     setError('');
+    setView(null);
     setBusy(false);
     request.current = null;
     Promise.all([
       getAlignment(document.workspace_id, document.id),
-      canEdit
+      canEdit && mode === 'check'
         ? listAlignmentSources(document.workspace_id)
         : Promise.resolve({ items: [] }),
     ])
@@ -71,7 +76,7 @@ export function AlignmentPanel({
     return () => {
       current.active = false;
     };
-  }, [document.workspace_id, document.id, document.revision, canEdit]);
+  }, [document.workspace_id, document.id, document.revision, canEdit, mode]);
 
   async function search(nextPage = 1) {
     const current = ++catalogueGeneration.current;
@@ -120,6 +125,52 @@ export function AlignmentPanel({
     } finally {
       if (current.active) setBusy(false);
     }
+  }
+
+  if (mode === 'sources') {
+    const check = view?.checks.at(-1);
+    return (
+      <section className="tz-source-basis" aria-label="Основания БТ">
+        <h3 className="font-medium">Основания БТ</h3>
+        {error && <p role="alert">{error}</p>}
+        {!view && !error && <p role="status">Загрузка оснований…</p>}
+        {view && !check?.references?.length && (
+          <p>
+            Основания БТ пока не выбраны или недоступны. Для проверки выберите
+            согласованные документы.
+          </p>
+        )}
+        {check?.references?.map((source) => (
+          <article className="tz-source-item" key={source.document_id}>
+            <a
+              href={`/business-documents/${encodeURIComponent(source.document_id)}`}
+            >
+              {source.title || `БТ ${source.document_id}`}
+            </a>
+            <p>
+              {(source.revision_number ??
+              (typeof source.revision === 'number' ? source.revision : null))
+                ? `Согласованная редакция ${source.revision_number ?? source.revision}`
+                : `Согласованный снимок · ${String(source.revision).slice(0, 12)}`}
+            </p>
+          </article>
+        ))}
+        {check && (
+          <p role="status">
+            {check.current &&
+            check.qualifies &&
+            !disabled &&
+            view?.document.id === document.id &&
+            view.document.revision === document.revision
+              ? 'Соответствие подтверждено'
+              : 'Соответствие не подтверждено'}
+          </p>
+        )}
+        <Button variant="outline" onClick={onConfigure}>
+          Открыть соответствие БТ
+        </Button>
+      </section>
+    );
   }
 
   return (

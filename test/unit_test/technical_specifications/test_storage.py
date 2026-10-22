@@ -7,6 +7,31 @@ from api.source_workbench.errors import SourceWorkspaceError
 from api.technical_specifications.domain import SpecificationError, empty_sections
 
 
+def test_projection_includes_the_resolver_name_when_they_did_not_write_the_thread(store):
+    from api.db.db_models import User
+
+    doc = store.create("author", "workspace", "ТЗ", empty_sections())
+
+    def add_thread(value):
+        value["comments"].append(
+            {
+                "id": "comment",
+                "author_id": "author",
+                "text": "Уточнение",
+                "replies": [],
+                "context": {"document_id": doc["id"], "scope": "all", "revision": 1, "anchor": None},
+                "resolved": True,
+                "resolved_by": "reader",
+                "resolved_at": "2026-10-21T10:38:00Z",
+            }
+        )
+
+    store.change("author", "workspace", doc["id"], doc["version"], add_thread, "comment")
+    saved = store.get("reader", "workspace", doc["id"])
+    assert saved["people"]["reader"] == User.get_by_id("reader").nickname
+    assert saved["revision"] == 1
+
+
 def test_real_storage_appends_revisions_and_rejects_stale_write(store):
     doc = store.create("author", "workspace", "ТЗ", empty_sections())
 

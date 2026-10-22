@@ -80,6 +80,8 @@ def projection(row):
     authors = {item["author_id"] for item in value["messages"] if item.get("author_id")}
     for item in value["comments"]:
         authors.add(item["author_id"])
+        if item.get("resolved_by"):
+            authors.add(item["resolved_by"])
         authors.update(reply["author_id"] for reply in item["replies"])
     value["people"] = {user.id: user.nickname for user in User.select(User.id, User.nickname).where(User.id.in_(authors))} if authors else {}
     return value

@@ -74,6 +74,30 @@ async def test_report_persists_without_content_revision_and_replay_consumes_no_m
 
 
 @pytest.mark.asyncio
+async def test_source_labels_retain_the_checked_revision_and_disappear_after_access_revocation(aligned, monkeypatch):
+    service, sources, _ai, doc = aligned
+    read_many = sources.read_many
+
+    def labelled(actor, ids, **options):
+        rows = read_many(actor, ids, **options)
+        for row in rows.values():
+            row.update(title="БТ загрузки заявок", revision_number=4 if sources.revision == "proof-1" else 5)
+        return rows
+
+    monkeypatch.setattr(sources, "read_many", labelled)
+    checked = await service.check("author", "workspace", doc["id"], request(doc))
+    reference = checked["checks"][0]["references"][0]
+    assert reference["title"] == "БТ загрузки заявок" and reference["revision_number"] == 4
+    sources.revision = "proof-2"
+    historical = await service.get("author", "workspace", doc["id"])
+    assert historical["checks"][0]["references"][0]["revision_number"] == 4
+    assert not historical["checks"][0]["qualifies"]
+    sources.allowed = False
+    unavailable = await service.get("author", "workspace", doc["id"])
+    assert "references" not in unavailable["checks"][0]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("actor", ["reader", "stranger"])
 async def test_authorization_precedes_source_and_model_access(aligned, actor):
     service, sources, ai, doc = aligned

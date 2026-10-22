@@ -25,6 +25,7 @@ export function ChatHistory({
 }) {
   const history = useRef<HTMLDivElement>(null);
   const followLatest = useRef(true);
+  const viewport = useRef({ width: 0, height: 0 });
   const [showLatest, setShowLatest] = useState(false);
   const answers = new Map(
     document.messages
@@ -54,7 +55,15 @@ export function ChatHistory({
   useLayoutEffect(() => {
     const element = history.current;
     if (!element || typeof ResizeObserver === 'undefined') return;
+    viewport.current = {
+      width: element.clientWidth,
+      height: element.clientHeight,
+    };
     const observer = new ResizeObserver(() => {
+      viewport.current = {
+        width: element.clientWidth,
+        height: element.clientHeight,
+      };
       if (followLatest.current) element.scrollTop = element.scrollHeight;
     });
     observer.observe(element);
@@ -78,6 +87,18 @@ export function ChatHistory({
         tabIndex={0}
         onScroll={(event) => {
           const element = event.currentTarget;
+          const sizeChanged =
+            element.clientWidth !== viewport.current.width ||
+            element.clientHeight !== viewport.current.height;
+          viewport.current = {
+            width: element.clientWidth,
+            height: element.clientHeight,
+          };
+          if (sizeChanged) {
+            // Reflow can emit scroll before ResizeObserver. Preserve the reader's intent.
+            if (followLatest.current) element.scrollTop = element.scrollHeight;
+            return;
+          }
           const nearEnd =
             element.scrollHeight - element.scrollTop - element.clientHeight <
             64;

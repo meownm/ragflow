@@ -94,6 +94,7 @@ export function ProposalCard({
         <div className="tz-proposal-actions">
           {proposal.status === 'ready' && (
             <Button
+              variant="accent"
               disabled={disabled}
               onClick={() => onAction('apply', { proposal_id: proposal.id })}
             >

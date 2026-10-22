@@ -55,6 +55,54 @@ test('readers see history without fetching the editable source catalogue', async
   ).toBeDisabled();
 });
 
+test('sources show authorized saved references without fetching or running the checker', async () => {
+  jest.mocked(getAlignment).mockResolvedValue({
+    document,
+    checks: [
+      {
+        id: 'check',
+        current: true,
+        qualifies: true,
+        references: [
+          {
+            document_id: 'source / one',
+            title: 'Согласованные требования',
+            revision: 4,
+          },
+        ],
+      },
+    ],
+  });
+  const onConfigure = jest.fn();
+  render(
+    <AlignmentPanel {...props} mode="sources" onConfigure={onConfigure} />,
+  );
+  expect(
+    await screen.findByRole('link', { name: 'Согласованные требования' }),
+  ).toHaveAttribute('href', '/business-documents/source%20%2F%20one');
+  expect(screen.getByText('Согласованная редакция 4')).toBeInTheDocument();
+  expect(listAlignmentSources).not.toHaveBeenCalled();
+  expect(checkAlignment).not.toHaveBeenCalled();
+  expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Открыть соответствие БТ' }),
+  );
+  expect(onConfigure).toHaveBeenCalledTimes(1);
+});
+
+test('source summary does not claim confirmation for a different revision', async () => {
+  jest.mocked(getAlignment).mockResolvedValue({
+    document: { ...document, revision: 2 },
+    checks: [{ id: 'check', current: true, qualifies: true }],
+  });
+  render(<AlignmentPanel {...props} mode="sources" />);
+  await screen.findByText('Соответствие не подтверждено');
+  expect(
+    screen.queryByText('Соответствие подтверждено'),
+  ).not.toBeInTheDocument();
+  expect(props.onDocument).not.toHaveBeenCalled();
+});
+
 test('dirty document cannot start inference', async () => {
   render(<AlignmentPanel {...props} disabled />);
   await screen.findByLabelText('Согласованные БТ · редакция 4');

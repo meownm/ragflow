@@ -27,10 +27,15 @@ class AlignmentApplication:
         for stored in document.get("alignment", []):
             item = deepcopy(stored)
             try:
-                await self.run(self.sources.validate, actor, item["references"], fresh=False)
+                sources = await self.run(self.sources.validate, actor, item["references"], fresh=False)
             except (SpecificationError, SourceWorkspaceError):
                 history.append({"id": item["id"], "current": False, "qualifies": False, "reason_code": "SOURCE_UNAVAILABLE"})
                 continue
+            for reference in item["references"]:
+                source = (sources or {}).get(reference["document_id"], {})
+                reference.setdefault("title", source.get("title", ""))
+                if source.get("revision") == reference["revision"]:
+                    reference.setdefault("revision_number", source.get("revision_number"))
             current = candidate_identity(document) == item["candidate_sha256"]
             try:
                 await self.run(self.sources.validate, actor, item["references"], fresh=True)
@@ -61,7 +66,7 @@ class AlignmentApplication:
         if set(rows) != set(selected):
             fail("ALIGNMENT_SOURCE_MISSING", "Не все согласованные БТ доступны", 409)
         basis = source_snapshot(list(rows.values()))
-        references = [{"document_id": row["document_id"], "revision": row["revision"]} for row in rows.values()]
+        references = [{"document_id": row["document_id"], "revision": row["revision"], "title": row.get("title", ""), "revision_number": row.get("revision_number")} for row in rows.values()]
         candidate = candidate_identity(document)
         attempt = identifier()
         budget = AlignmentBudget()

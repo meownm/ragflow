@@ -313,7 +313,10 @@ class Specifications:
             if action == "reply":
                 item["replies"].append({"id": message_id, "author_id": actor, "created_at": datetime.now(UTC).isoformat(), "text": content})
             elif action == "resolve" and type(data.get("resolved")) is bool:
-                item["resolved"] = data["resolved"]
+                if item["resolved"] != data["resolved"]:
+                    item["resolved"] = data["resolved"]
+                    item["resolved_at"] = datetime.now(UTC).isoformat() if data["resolved"] else None
+                    item["resolved_by"] = actor if data["resolved"] else None
             else:
                 fail("INVALID_INPUT", "Неизвестное действие с комментарием")
 

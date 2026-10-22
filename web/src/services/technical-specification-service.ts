@@ -34,6 +34,12 @@ export interface AlignmentCheck {
   qualifies: boolean;
   status?: string;
   reason_code?: string;
+  references?: {
+    document_id: string;
+    revision: string | number;
+    revision_number?: number | null;
+    title?: string;
+  }[];
   result?: {
     quality_status: string;
     evidence_status?: string;

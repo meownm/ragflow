@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { RefreshCw } from 'lucide-react';
+import { ChevronRight, RefreshCw } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router';
@@ -41,6 +41,49 @@ function AlignmentOperations({
   date: (value?: number | null) => string;
   codeLabel: CodeLabel;
 }) {
+  if (data.counts.total === 0) {
+    return (
+      <section
+        aria-label={label('technicalOperations.title')}
+        className="space-y-3"
+      >
+        <p role="status" className="font-medium text-text-primary">
+          {label('noTechnicalObservations')}
+        </p>
+        <p className="text-sm text-text-secondary">
+          {label('technicalOperations.emptyNote')}
+        </p>
+        <dl className="flex flex-wrap gap-6">
+          {['total', 'execution_complete', 'reports_complete'].map((key) => (
+            <div key={key}>
+              <dt className="text-sm text-text-secondary">
+                {label(`technicalOperations.counts.${key}`)}
+              </dt>
+              <dd>{number(data.counts[key] ?? 0)}</dd>
+            </div>
+          ))}
+        </dl>
+      </section>
+    );
+  }
+  const reportCounts = ['reports_complete', 'reports_incomplete'];
+  const tokenCounts = ['usage_unknown', 'reservation_unknown'];
+  const groups = [
+    [
+      'execution',
+      Object.entries(data.counts).filter(
+        ([key]) => !reportCounts.includes(key) && !tokenCounts.includes(key),
+      ),
+    ],
+    [
+      'reports',
+      Object.entries(data.counts).filter(([key]) => reportCounts.includes(key)),
+    ],
+    [
+      'tokens',
+      Object.entries(data.counts).filter(([key]) => tokenCounts.includes(key)),
+    ],
+  ] as const;
   return (
     <section
       aria-label={label('technicalOperations.title')}
@@ -67,32 +110,42 @@ function AlignmentOperations({
           : `${(data.report_completion_rate * 100).toFixed(1)}%`}{' '}
         · {data.counts.reports_complete}/{data.terminal_attempts}
       </p>
-      {!data.counts.total && (
-        <p role="status">{label('noTechnicalObservations')}</p>
-      )}
-      <dl className="flex flex-wrap gap-4">
-        {Object.entries(data.counts).map(([key, value]) => (
-          <div key={key}>
-            <dt>{label(`technicalOperations.counts.${key}`)}</dt>
-            <dd>{number(value)}</dd>
-          </div>
-        ))}
-      </dl>
-      <dl className="flex flex-wrap gap-4">
-        {(
-          [
-            'total_tokens',
-            'known_spent_tokens',
-            'reserved_tokens',
-            'known_reserved_tokens',
-          ] as const
-        ).map((key) => (
-          <div key={key}>
-            <dt>{label(`technicalOperations.${key}`)}</dt>
-            <dd>{data[key] == null ? '—' : number(data[key])}</dd>
-          </div>
-        ))}
-      </dl>
+      {groups.map(([group, counts]) => (
+        <section
+          key={group}
+          className="space-y-3 rounded-lg border border-border-button p-4"
+        >
+          <h3 className="font-medium text-text-primary">
+            {label(`technicalOperations.groups.${group}`)}
+          </h3>
+          <dl className="flex flex-wrap gap-x-6 gap-y-3 text-sm">
+            {counts.map(([key, value]) => (
+              <div key={key}>
+                <dt className="text-text-secondary">
+                  {label(`technicalOperations.counts.${key}`)}
+                </dt>
+                <dd>{number(value)}</dd>
+              </div>
+            ))}
+            {group === 'tokens' &&
+              (
+                [
+                  'total_tokens',
+                  'known_spent_tokens',
+                  'reserved_tokens',
+                  'known_reserved_tokens',
+                ] as const
+              ).map((key) => (
+                <div key={key}>
+                  <dt className="text-text-secondary">
+                    {label(`technicalOperations.${key}`)}
+                  </dt>
+                  <dd>{data[key] == null ? '—' : number(data[key])}</dd>
+                </div>
+              ))}
+          </dl>
+        </section>
+      ))}
       <div className="overflow-x-auto">
         <table className="w-full text-left text-sm">
           <thead>
@@ -123,6 +176,7 @@ function AlignmentOperations({
           </tbody>
         </table>
       </div>
+      <p className="text-sm text-text-secondary">{label('p95Note')}</p>
       <h3 className="font-medium">{label('technicalOperations.reasons')}</h3>
       <ul>
         {data.reasons.map((item) => (
@@ -161,6 +215,45 @@ function isCompleteRun(run: AdminService.DocumentQualityRun) {
     run.report?.expected_cases != null &&
     run.report.executed_cases === run.report.expected_cases &&
     ['PASS', 'FAIL'].includes(run.status)
+  );
+}
+
+function CampaignSummary({
+  runs,
+  label,
+}: {
+  runs: AdminService.DocumentQualityRun[];
+  label: (key: string) => string;
+}) {
+  const counts = runs.reduce(
+    (result, run) => {
+      if (!['PENDING', 'RUNNING'].includes(run.status)) {
+        result.processed += 1;
+        if (isCompleteRun(run)) result.complete += 1;
+        else result.incomplete += 1;
+      }
+      return result;
+    },
+    { processed: 0, complete: 0, incomplete: 0 },
+  );
+  return (
+    <dl
+      aria-label={label('seriesSummary')}
+      className="quality-series-summary my-3 text-sm"
+    >
+      {(
+        [
+          ['processedRuns', `${counts.processed}/${runs.length}`],
+          ['completeRuns', counts.complete],
+          ['incompleteRuns', counts.incomplete],
+        ] as const
+      ).map(([key, value]) => (
+        <div key={key}>
+          <dt className="text-text-secondary">{label(key)}</dt>
+          <dd className="font-medium text-text-primary">{value}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 
@@ -365,6 +458,15 @@ export default function AdminBusinessDocumentsQuality() {
       ? unit(seconds, 'second')
       : `${unit(Math.floor(seconds / 60), 'minute')} ${unit(seconds % 60, 'second')}`;
   };
+  const milliseconds = (value: number | null) =>
+    value == null
+      ? '—'
+      : new Intl.NumberFormat(i18n.language, {
+          style: 'unit',
+          unit: 'millisecond',
+          unitDisplay: 'short',
+          maximumFractionDigits: 0,
+        }).format(value);
   const date = (value?: number | null) =>
     value == null
       ? '—'
@@ -552,17 +654,6 @@ export default function AdminBusinessDocumentsQuality() {
       ) &&
       new Set(eligibleRuns.map(comparisonFingerprint)).size === 1);
   const rankedRuns = technicalComparable ? eligibleRuns : [];
-  const campaignCounts = (chosenCampaign?.runs || []).reduce(
-    (counts, run) => {
-      if (!['PENDING', 'RUNNING'].includes(run.status)) {
-        counts.processed += 1;
-        if (isCompleteRun(run)) counts.complete += 1;
-        else counts.incomplete += 1;
-      }
-      return counts;
-    },
-    { processed: 0, complete: 0, incomplete: 0 },
-  );
   const rankByRun = new Map(
     rankedRuns.map((run, index) => [run.id, index + 1]),
   );
@@ -656,7 +747,7 @@ export default function AdminBusinessDocumentsQuality() {
       className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border-button bg-bg-base"
       data-testid="business-documents-quality-admin"
     >
-      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border-button px-6 py-5">
+      <header className="quality-header flex flex-wrap items-start justify-between gap-3 border-b border-border-button px-6 py-5">
         <div className="min-w-0">
           <h1 className="text-xl font-semibold text-text-primary">
             {technical ? label('technicalTitle') : label('title')}
@@ -682,9 +773,6 @@ export default function AdminBusinessDocumentsQuality() {
               </option>
             </select>
           </label>
-          <p className="mt-1 text-sm text-text-secondary">
-            {label(technical ? 'technicalDescription' : 'description')}
-          </p>
           {(health.isError || health.data?.status === 'ALERT') && (
             <p role="alert" className="text-state-warning">
               {label('nightlyAlert')}:{' '}
@@ -699,17 +787,29 @@ export default function AdminBusinessDocumentsQuality() {
               </span>
             </p>
           )}
-          <p className="mt-2 text-xs text-text-secondary">
-            {label('source')}: {runs.data?.source_revision || '—'} ·{' '}
-            <span data-testid="quality-updated-at">
-              {label('updated')}: {date(updatedAt)}
-            </span>
-            {runs.data?.source_revision === 'unverified' && (
-              <span className="ml-2 text-state-warning">
-                {label('unverified')}
+          <details className="quality-disclosure mt-2 text-xs text-text-secondary">
+            <summary className="flex cursor-pointer items-center gap-1">
+              <ChevronRight
+                aria-hidden="true"
+                className="quality-disclosure-icon size-3"
+              />
+              {label('technicalDetails')}
+            </summary>
+            <p className="mt-2 text-sm">
+              {label(technical ? 'technicalDescription' : 'description')}
+            </p>
+            <p className="mt-2">
+              {label('source')}: {runs.data?.source_revision || '—'} ·{' '}
+              <span data-testid="quality-updated-at">
+                {label('updated')}: {date(updatedAt)}
               </span>
-            )}
-          </p>
+              {runs.data?.source_revision === 'unverified' && (
+                <span className="ml-2 text-state-warning">
+                  {label('unverified')}
+                </span>
+              )}
+            </p>
+          </details>
         </div>
         <Button
           variant="outline"
@@ -870,7 +970,7 @@ export default function AdminBusinessDocumentsQuality() {
                 <p className="mt-2 text-xs text-text-secondary">
                   {label('evaluationDescription')}
                 </p>
-                {!runs.data?.configured && (
+                {runs.data?.configured === false && (
                   <p className="mt-3 text-state-warning">
                     {label('notConfigured')}
                   </p>
@@ -920,16 +1020,16 @@ export default function AdminBusinessDocumentsQuality() {
                   )
                 )}
                 {allCampaigns[0] && (
-                  <p className="mt-3 text-sm text-text-secondary">
-                    {label('nightlyCampaign')}:{' '}
-                    {codeLabel('statuses', allCampaigns[0].status)} ·{' '}
-                    {
-                      allCampaigns[0].runs.filter(
-                        (run) => !['PENDING', 'RUNNING'].includes(run.status),
-                      ).length
-                    }
-                    /{allCampaigns[0].runs.length} {label('models')}
-                  </p>
+                  <div className="mt-3 text-sm text-text-secondary">
+                    <p>
+                      {label('nightlyCampaign')}:{' '}
+                      {codeLabel('statuses', allCampaigns[0].status)}
+                    </p>
+                    <CampaignSummary
+                      runs={allCampaigns[0].runs}
+                      label={label}
+                    />
+                  </div>
                 )}
               </div>
               {!technical && (
@@ -937,6 +1037,11 @@ export default function AdminBusinessDocumentsQuality() {
                   <h2 className="font-medium text-text-primary">
                     {label('operationsTitle')}
                   </h2>
+                  <p className="mt-1 text-sm text-text-secondary">
+                    {t('admin.businessDocumentsQualityPage.periodDays', {
+                      count: op?.days ?? days,
+                    })}
+                  </p>
                   {operations.error && (
                     <p role="alert" className="mt-3 text-state-error">
                       {label('loadError')}
@@ -1072,85 +1177,93 @@ export default function AdminBusinessDocumentsQuality() {
               <div className="rounded-lg border border-border-button bg-bg-card p-5">
                 {technical && !technicalComparable && (
                   <p role="status" className="mb-3 text-state-warning">
-                    {label('comparisonNotQualified')}
+                    {label('comparisonNotQualifiedShort')}
                   </p>
                 )}
-                <dl
-                  aria-label={label('seriesSummary')}
-                  className="mb-4 flex flex-wrap gap-x-6 gap-y-3 text-sm"
-                >
-                  {(
-                    [
-                      [
-                        'processedRuns',
-                        `${campaignCounts.processed}/${chosenCampaign.runs.length}`,
-                      ],
-                      ['completeRuns', campaignCounts.complete],
-                      ['incompleteRuns', campaignCounts.incomplete],
-                    ] as const
-                  ).map(([key, value]) => (
-                    <div key={key}>
-                      <dt className="text-text-secondary">{label(key)}</dt>
-                      <dd className="font-medium text-text-primary">{value}</dd>
-                    </div>
-                  ))}
-                </dl>
-                <p className="mb-3 break-words text-sm text-text-secondary">
-                  {label('source')}: {chosenCampaign.source_revision} ·{' '}
-                  {label('baseline')}:{' '}
-                  {chosenCampaign.baseline_status
-                    ? codeLabel('statuses', chosenCampaign.baseline_status)
-                    : '—'}
-                  {(chosenCampaign.source_revision !==
-                    runs.data?.source_revision ||
-                    chosenCampaign.source_revision === 'unverified') && (
-                    <strong className="ml-2">
-                      {label('historicalSource')}
-                    </strong>
-                  )}
-                </p>
-                {chosenCampaign.reason_code && (
-                  <p
-                    className="mb-3 text-state-warning"
-                    title={chosenCampaign.reason_code}
-                  >
-                    {codeLabel(
-                      'reasons',
-                      chosenCampaign.reason_code,
-                      'incompleteReason',
+                <CampaignSummary runs={chosenCampaign.runs} label={label} />
+                <details className="quality-disclosure mb-4 text-sm">
+                  <summary className="flex cursor-pointer items-center gap-1 text-text-secondary">
+                    <ChevronRight
+                      aria-hidden="true"
+                      className="quality-disclosure-icon size-3"
+                    />
+                    {label('comparisonConditions')}
+                  </summary>
+                  <div className="mt-3">
+                    {technical && !technicalComparable && (
+                      <p className="mb-3 text-state-warning">
+                        {label('comparisonNotQualified')}
+                      </p>
                     )}
-                  </p>
-                )}
-                {chosenCampaign.baseline_report?.cases
-                  ?.filter((item) => item.status === 'FAIL')
-                  .map((item) => (
-                    <p
-                      key={item.case_id}
-                      className="mb-2 text-sm text-state-error"
-                      title={[
-                        item.case_id,
-                        ...(item.diagnostics?.map(
-                          (diagnostic) => diagnostic.code,
-                        ) || []),
-                      ].join(' · ')}
-                    >
-                      {label('baseline')} ·{' '}
-                      {item.diagnostics
-                        ?.map((diagnostic) =>
-                          codeLabel(
-                            'diagnostics',
-                            diagnostic.code,
-                            'failedReason',
-                          ),
-                        )
-                        .join(', ')}
+                    <p className="mb-3 break-words text-sm text-text-secondary">
+                      {label('source')}: {chosenCampaign.source_revision} ·{' '}
+                      {label('baseline')}:{' '}
+                      {chosenCampaign.baseline_status
+                        ? codeLabel('statuses', chosenCampaign.baseline_status)
+                        : '—'}
+                      {(chosenCampaign.source_revision !==
+                        runs.data?.source_revision ||
+                        chosenCampaign.source_revision === 'unverified') && (
+                        <strong className="ml-2">
+                          {label('historicalSource')}
+                        </strong>
+                      )}
                     </p>
-                  ))}
+                    {chosenCampaign.reason_code && (
+                      <p
+                        className="mb-3 text-state-warning"
+                        title={chosenCampaign.reason_code}
+                      >
+                        {codeLabel(
+                          'reasons',
+                          chosenCampaign.reason_code,
+                          'incompleteReason',
+                        )}
+                      </p>
+                    )}
+                    {chosenCampaign.baseline_report?.cases
+                      ?.filter((item) => item.status === 'FAIL')
+                      .map((item) => (
+                        <p
+                          key={item.case_id}
+                          className="mb-2 text-sm text-state-error"
+                          title={[
+                            item.case_id,
+                            ...(item.diagnostics?.map(
+                              (diagnostic) => diagnostic.code,
+                            ) || []),
+                          ].join(' · ')}
+                        >
+                          {label('baseline')} ·{' '}
+                          {item.diagnostics
+                            ?.map((diagnostic) =>
+                              codeLabel(
+                                'diagnostics',
+                                diagnostic.code,
+                                'failedReason',
+                              ),
+                            )
+                            .join(', ')}
+                        </p>
+                      ))}
+                  </div>
+                </details>
                 <div className="document-quality-comparison">
                   <table
                     aria-label={label('modelComparison')}
                     className="document-quality-comparison-table w-full text-left text-sm"
                   >
+                    <colgroup>
+                      <col className="quality-col-rank" />
+                      <col />
+                      <col className="quality-col-status" />
+                      {technical && <col className="quality-col-evidence" />}
+                      <col className="quality-col-cases" />
+                      <col className="quality-col-critical" />
+                      {!technical && <col className="quality-col-score" />}
+                      <col className="quality-col-duration" />
+                      <col className="quality-col-tokens" />
+                    </colgroup>
                     <thead>
                       <tr className="border-b border-border-button text-text-secondary">
                         <th className="py-2">{label('rank')}</th>
@@ -1426,19 +1539,14 @@ export default function AdminBusinessDocumentsQuality() {
                 </p>
                 <div className="rounded-lg border border-border-button bg-bg-card p-5 text-sm text-text-secondary">
                   <p>
-                    {label('latencyP95')}:{' '}
-                    {op.latency_p95_ms == null
-                      ? '—'
-                      : `${number(Math.round(op.latency_p95_ms))} ms`}{' '}
-                    · {label('measured')}: {op.measured_latency_jobs}/
+                    {label('latencyP95')}: {milliseconds(op.latency_p95_ms)} ·{' '}
+                    {label('measured')}: {op.measured_latency_jobs}/
                     {op.sampled_jobs}
                   </p>
                   <p className="mt-2">
                     {label('modelLatency')}:{' '}
-                    {op.model_latency_p95_ms == null
-                      ? '—'
-                      : `${number(Math.round(op.model_latency_p95_ms))} ms`}{' '}
-                    · {label('measured')}: {op.measured_model_latency_jobs}/
+                    {milliseconds(op.model_latency_p95_ms)} ·{' '}
+                    {label('measured')}: {op.measured_model_latency_jobs}/
                     {op.sampled_completed_jobs}
                   </p>
                   <p className="mt-2">
@@ -1446,6 +1554,9 @@ export default function AdminBusinessDocumentsQuality() {
                     {op.measured_token_jobs ? number(op.total_tokens) : '—'} ·{' '}
                     {label('measured')}: {op.measured_token_jobs}/
                     {op.sampled_completed_jobs}
+                  </p>
+                  <p className="mt-3 text-xs text-text-secondary">
+                    {label('p95Note')}
                   </p>
                   {op.truncated && (
                     <p role="note" className="mt-3 text-state-warning">
@@ -1556,7 +1667,7 @@ export default function AdminBusinessDocumentsQuality() {
                   {visibleJobs.map((job) => (
                     <div
                       key={job.id}
-                      className="grid gap-1 border-b border-border-button py-3 text-sm sm:grid-cols-[minmax(0,1fr)_8rem_10rem]"
+                      className="document-quality-job grid gap-2 border-b border-border-button py-3 text-sm"
                     >
                       <span
                         className="min-w-0 truncate text-text-primary"

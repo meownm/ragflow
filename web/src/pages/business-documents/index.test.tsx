@@ -646,7 +646,7 @@ test('uses semantic status colors for questions and proposals', async () => {
   expect(screen.getByText('Закрыт')).toBeVisible();
   expect(screen.getByText('Отклонено')).toHaveClass('text-text-secondary');
   expect(
-    screen.queryByRole('button', { name: 'Принять' }),
+    screen.queryByRole('button', { name: 'Применить' }),
   ).not.toBeInTheDocument();
 });
 
@@ -1526,8 +1526,8 @@ test('records proposal decisions and author comments as commands', async () => {
   expect(mockedSubmit).toHaveBeenLastCalledWith(
     'doc-1',
     expect.objectContaining({
-      type: 'DECIDE_PROPOSAL',
-      payload: { proposal_id: 'proposal-12', decision: 'ACCEPTED' },
+      type: 'ACCEPT_PROPOSAL',
+      payload: { proposal_id: 'proposal-12' },
     }),
   );
 
@@ -1733,7 +1733,7 @@ test('keeps the prompt editable while work is running and saves it for later', a
   ).toHaveTextContent('Добавить это в следующей версии');
   expect(
     screen.getByRole('button', { name: 'Добавить комментарий' }),
-  ).toBeDisabled();
+  ).toBeEnabled();
   expect(
     window.localStorage.getItem(
       'ragflow.business-documents.saved-prompts.tenant-1.user-1.doc-1',
@@ -2226,30 +2226,69 @@ test('requests review assessment before applying and exports EvaWiki explicitly'
   );
 });
 
-test('shows affected sections during review analysis and navigates to a section', async () => {
+test('collapses sections independently while keeping their headings available', async () => {
+  mockedFetch.mockResolvedValue(projection);
+  renderPage();
+  const toggle = await screen.findByRole('button', { name: '1. Цель' });
+  const section = screen.getAllByTestId('business-document-section')[0];
+  const body = section.querySelector('[data-section-body]')!;
+  const otherBody = screen
+    .getAllByTestId('business-document-section')[1]
+    .querySelector('[data-section-body]')!;
+  expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  fireEvent.click(toggle);
+  expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  expect(body).not.toBeVisible();
+  expect(otherBody).toBeVisible();
+  expect(screen.getByRole('heading', { name: '1. Цель' })).toBeVisible();
+  expect(
+    document.getElementById(toggle.getAttribute('aria-controls')!),
+  ).toContainElement(body as HTMLElement);
+  fireEvent.click(toggle);
+  expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  expect(body).toBeVisible();
+});
+
+test('shows queued target sections and navigates without claiming confirmed impact', async () => {
   mockedFetch.mockResolvedValue({
     ...projection,
     operation_state: 'ANALYZING_REVIEW',
+    protocol: {
+      ...projection.protocol,
+      proposals: projection.protocol.proposals.map((proposal) => ({
+        ...proposal,
+        target_section_id: '1',
+      })),
+    },
+    background_work: [
+      {
+        request_id: 'queued',
+        kind: 'PLAN_CHANGES',
+        status: 'QUEUED',
+        proposal_id: 'proposal-12',
+      },
+    ],
     allowed_commands: [],
   });
   renderPage();
   const activity = await screen.findByTestId(
-    'business-document-review-activity',
+    'business-document-background-work',
   );
   expect(screen.getByTestId('business-document-activity')).toContainElement(
     activity,
   );
-  expect(screen.getByTestId('business-document-activity')).toContainElement(
-    screen.getByTestId('business-document-operation'),
-  );
-  expect(activity).toHaveTextContent('Замечания анализируются');
-  expect(
-    within(activity).getByRole('button', { name: '§ 1 · 1' }),
-  ).toBeInTheDocument();
-  fireEvent.click(within(activity).getByRole('button', { name: '§ 1 · 1' }));
+  expect(activity).toHaveTextContent('В очереди: 1');
+  const toggle = screen.getByRole('button', { name: '1. Цель' });
+  fireEvent.click(toggle);
+  expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  fireEvent.click(within(activity).getByRole('button', { name: '§ 1' }));
+  expect(toggle).toHaveAttribute('aria-expanded', 'true');
   const section = screen.getAllByTestId('business-document-section')[0];
   expect(section).toHaveClass('ring-2');
-  expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+  expect(section).toHaveAttribute('data-background-state', 'possible');
+  await waitFor(() =>
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalled(),
+  );
 });
 
 test('shows streamed sections as preliminary and clears them on retry', async () => {
@@ -2293,18 +2332,14 @@ test('shows streamed sections as preliminary and clears them on retry', async ()
   expect(preview).toHaveTextContent('Предварительные изменения');
   const section = screen.getAllByTestId('business-document-section')[0];
   expect(section.querySelector('[data-section-body]')).toHaveTextContent(
-    'Новая цель.',
-  );
-  expect(section.querySelector('[data-section-body]')).not.toHaveTextContent(
     firstSectionText,
   );
-  expect(preview).not.toHaveTextContent('Новая цель.');
-  expect(section).toHaveAttribute('data-section-preview', 'true');
-  const selectionSpy = mockTextSelection('Новая цель.', section);
+  expect(section).toHaveAttribute('data-section-preview', 'false');
+  const selectionSpy = mockTextSelection('Сократить время перевода', section);
   fireEvent.mouseUp(screen.getByTestId('business-document-markdown'));
   expect(
-    screen.getByTestId('business-document-selection-error'),
-  ).toHaveTextContent('после применения изменений');
+    screen.queryByTestId('business-document-selection-error'),
+  ).not.toBeInTheDocument();
   selectionSpy.mockRestore();
   expect(
     within(preview).queryByRole('button', { name: 'Подтвердить применение' }),
@@ -2350,10 +2385,27 @@ test('shows streamed sections as preliminary and clears them on retry', async ()
   ).not.toBeInTheDocument();
 });
 
-test('accepts a proposal without changing text or starting a worker', async () => {
+test('accepts a proposal and starts its background application without changing saved text', async () => {
   const accepted: BusinessDocumentProjection = {
     ...projection,
-    state_version: projection.state_version + 1,
+    state_version: projection.state_version + 2,
+    operation_state: 'APPLYING_CHANGES',
+    background_work: [
+      {
+        request_id: 'apply',
+        kind: 'PLAN_CHANGES',
+        status: 'RUNNING',
+        proposal_id: 'proposal-12',
+        job_id: 'apply-job',
+      },
+    ],
+    latest_job: {
+      job_id: 'apply-job',
+      job_type: 'PLAN_CHANGES',
+      status: 'RUNNING',
+      attempt: 1,
+      max_attempts: 3,
+    },
     allowed_commands: [
       'DECIDE_PROPOSAL',
       'CANCEL_PROPOSAL_ACCEPTANCE',
@@ -2365,7 +2417,7 @@ test('accepts a proposal without changing text or starting a worker', async () =
         ...proposal,
         decision: 'ACCEPTED',
         applied: false,
-        application: { status: 'WAITING', error: null },
+        application: { status: 'RUNNING', error: null },
       })),
     },
   };
@@ -2382,21 +2434,21 @@ test('accepts a proposal without changing text or starting a worker', async () =
   );
   expect(
     screen.getByTestId('proposal-application-proposal-12'),
-  ).toHaveTextContent('Текст документа не изменён');
+  ).toHaveTextContent('Можно продолжать обсуждение');
   expect(
     screen.queryByTestId('accept-proposal-proposal-12'),
   ).not.toBeInTheDocument();
-  expect(screen.getByTestId('cancel-acceptance-proposal-12')).toBeEnabled();
+  expect(screen.getByTestId('cancel-acceptance-proposal-12')).toBeDisabled();
   expect(
     screen.queryByTestId('business-document-change-preview'),
   ).not.toBeInTheDocument();
-  expect(mockedWatch).not.toHaveBeenCalled();
+  expect(mockedWatch).toHaveBeenCalled();
   expect(mockedSubmit).toHaveBeenCalledTimes(1);
   expect(mockedSubmit).toHaveBeenCalledWith(
     'doc-1',
     expect.objectContaining({
-      type: 'DECIDE_PROPOSAL',
-      payload: { proposal_id: 'proposal-12', decision: 'ACCEPTED' },
+      type: 'ACCEPT_PROPOSAL',
+      payload: { proposal_id: 'proposal-12' },
     }),
   );
 });
@@ -2438,7 +2490,7 @@ test('cancels acceptance and returns the proposal to the decision controls', asy
     }),
   );
   expect(screen.getByTestId('accept-proposal-proposal-12')).toHaveTextContent(
-    'Принять',
+    'Применить',
   );
   expect(screen.getByTestId('reject-proposal-proposal-12')).toBeEnabled();
   expect(screen.getByTestId('business-document-markdown')).toHaveTextContent(
@@ -3372,7 +3424,7 @@ test('shows the active attempt and previous validation error while retrying', as
     await screen.findByTestId('business-document-operation'),
   ).toHaveTextContent('Попытка 2 из 3');
   expect(screen.getByTestId('business-document-operation')).toHaveTextContent(
-    '62%',
+    'Этап 2/4',
   );
   expect(screen.getByTestId('business-document-operation')).toHaveTextContent(
     'Предыдущая ошибка: Черновик не соответствует контракту',
@@ -3705,6 +3757,68 @@ test('keeps voice input for the idea while the title comes from the catalog', as
   expect(idea).toHaveValue('Исходная идея. текст из диктовки');
 });
 
+test('separates occupied topics and links every existing document independently of the list page', async () => {
+  mockedListCatalog.mockResolvedValue({
+    items: [
+      catalogEntry,
+      {
+        ...catalogEntry,
+        id: 'occupied-topic',
+        existing_documents: [
+          {
+            document_id: 'other-owner-doc',
+            title: 'БТ другой команды',
+            lifecycle_state: 'REVIEW',
+          },
+          {
+            document_id: 'archived-doc',
+            title: 'Предыдущие БТ',
+            lifecycle_state: 'ARCHIVED',
+          },
+        ],
+      },
+    ],
+    total: 2,
+  });
+  renderPage('/business-documents');
+  const occupiedGroup = await screen.findByRole('group', {
+    name: 'Документ уже есть',
+  });
+  expect(within(occupiedGroup).getByRole('option')).toHaveTextContent(
+    'документ уже есть',
+  );
+  expect(
+    screen.getByRole('group', { name: 'Без документов' }),
+  ).toHaveTextContent(catalogEntry.title);
+  expect(
+    screen.getByTestId('business-document-list-empty'),
+  ).toBeInTheDocument();
+  fireEvent.change(
+    screen.getByRole('combobox', { name: 'Название документа' }),
+    { target: { value: 'occupied-topic' } },
+  );
+  const notice = await screen.findByTestId('business-document-existing-topic');
+  expect(
+    within(notice).getByRole('link', {
+      name: 'БТ другой команды · Внесение изменений',
+    }),
+  ).toHaveAttribute('href', '/business-documents/other-owner-doc');
+  expect(
+    within(notice).getByRole('link', { name: /Предыдущие БТ/ }),
+  ).toHaveAttribute('href', '/business-documents/archived-doc');
+  expect(
+    screen.getByRole('button', { name: 'Создать ещё один документ' }),
+  ).toBeEnabled();
+  fireEvent.change(
+    screen.getByRole('combobox', { name: 'Название документа' }),
+    { target: { value: catalogEntry.id } },
+  );
+  expect(
+    screen.queryByTestId('business-document-existing-topic'),
+  ).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Начать работу' })).toBeEnabled();
+});
+
 test('lists saved documents so work can be resumed', async () => {
   mockedList.mockResolvedValueOnce({
     items: [
@@ -3765,9 +3879,9 @@ test('shows compact processing progress in the document list', async () => {
 
   const progress = await screen.findByTestId('business-document-list-progress');
   expect(progress).toHaveTextContent('Формируем структуру и разделы');
-  expect(progress).toHaveTextContent('62%');
+  expect(progress).toHaveTextContent('Этап 2/4');
   expect(
-    screen.getByRole('progressbar', { name: 'Прогресс обработки: 62%' }),
+    screen.getByRole('progressbar', { name: 'Этап 2 из 4' }),
   ).toBeInTheDocument();
 });
 
@@ -4446,7 +4560,7 @@ test('keeps previous cycles read-only and the comment draft while changing tabs 
   fireEvent.click(screen.getByRole('tab', { name: /История/ }));
   expect(screen.getByText('Ответ: 30 дней')).toBeVisible();
   expect(screen.queryByRole('button', { name: 'Ответить' })).toBeNull();
-  expect(screen.queryByRole('button', { name: 'Принять' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Применить' })).toBeNull();
   expect(input).toHaveValue('Незавершённое замечание');
   fireEvent.click(screen.getByRole('tab', { name: /В работе/ }));
   expect(input).toHaveValue('Незавершённое замечание');

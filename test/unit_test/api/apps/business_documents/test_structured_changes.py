@@ -107,9 +107,10 @@ def request_plan():
         document["document_id"],
         _command(
             document,
-            "ACCEPT_PROPOSAL",
+            "DECIDE_PROPOSAL",
             {
                 "proposal_id": document["protocol"]["proposals"][0]["proposal_id"],
+                "decision": "ACCEPTED",
             },
         ),
     )

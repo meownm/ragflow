@@ -19,6 +19,7 @@ from api.db.db_models import (
     BusinessDocumentEvaBinding,
     BusinessDocumentExportArtifact,
     BusinessDocumentJob,
+    BusinessDocumentWorkRequest,
     BusinessDocumentProposal,
     BusinessDocumentQuestion,
     BusinessDocumentRevision,
@@ -284,6 +285,14 @@ class PeeweeDocumentReader:
             BusinessDocumentJob.select(*_JOB_FIELDS).where(BusinessDocumentJob.document_id == document_id).order_by(BusinessDocumentJob.create_time.desc(), BusinessDocumentJob.id.desc()).dicts()
         )
 
+    def work_requests(self, document_id):
+        return tuple(
+            BusinessDocumentWorkRequest.select()
+            .where((BusinessDocumentWorkRequest.document_id == document_id) & BusinessDocumentWorkRequest.status.in_(("QUEUED", "RUNNING", "FAILED")))
+            .order_by(BusinessDocumentWorkRequest.sequence, BusinessDocumentWorkRequest.id)
+            .dicts()
+        )
+
     def latest_job(self, document_id: str):
         job = BusinessDocumentJob
         return job.select(*_JOB_FIELDS).where(job.document_id == document_id).order_by(job.create_time.desc(), job.id.desc()).dicts().first()
@@ -332,6 +341,16 @@ class PeeweeDocumentReader:
             catalog.select(catalog.id, catalog.title, catalog.title_en, catalog.description, catalog.capability_level, catalog.capability_type, catalog.hierarchy)
             .where(catalog.capability_level == "L5", catalog.is_active)
             .order_by(catalog.sort_order.asc(), catalog.id.asc())
+            .dicts()
+        )
+
+    def catalog_documents(self):
+        document, catalog = BusinessDocument, BusinessDocumentCatalog
+        return tuple(
+            document.select(document.id, document.catalog_entry_id, document.title, document.lifecycle_state)
+            .join(catalog, on=(document.catalog_entry_id == catalog.id))
+            .where(document.document_type == "business_requirements", catalog.capability_level == "L5", catalog.is_active)
+            .order_by(document.update_time.desc(), document.id.desc())
             .dicts()
         )
 

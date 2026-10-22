@@ -13,6 +13,10 @@
 }
 
 @container (min-width: 760px) {
+  .document-quality-job {
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) 10rem;
+  }
+
   .document-quality-run {
     grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1.5fr) 9rem;
   }
@@ -22,25 +26,70 @@
   container-type: inline-size;
 }
 
+.quality-series-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  max-width: 36rem;
+}
+
+.quality-disclosure > summary {
+  list-style: none;
+}
+
+.quality-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.quality-disclosure[open] > summary .quality-disclosure-icon {
+  transform: rotate(90deg);
+}
+
+.document-quality-comparison-table {
+  table-layout: fixed;
+}
+
+.quality-col-rank {
+  width: 3.5rem;
+}
+.quality-col-status {
+  width: 6rem;
+}
+.quality-col-evidence {
+  width: 9rem;
+}
+.quality-col-cases {
+  width: 5rem;
+}
+.quality-col-critical {
+  width: 8rem;
+}
+.quality-col-score {
+  width: 4.5rem;
+}
+.quality-col-duration {
+  width: 7rem;
+}
+.quality-col-tokens {
+  width: 6rem;
+}
+
 .document-quality-comparison-table th,
 .document-quality-comparison-table td {
   padding: 12px 8px;
   vertical-align: top;
-  overflow-wrap: anywhere;
+  overflow-wrap: normal;
 }
 
-.document-quality-comparison-table th:first-child,
-.document-quality-comparison-table td:first-child {
-  width: 4rem;
+.document-quality-comparison-table td:not(.comparison-model) {
   white-space: nowrap;
 }
 
 .document-quality-comparison-table .comparison-model {
-  min-width: 10rem;
-  max-width: 18rem;
+  overflow-wrap: anywhere;
 }
 
-@container (max-width: 760px) {
+@container (max-width: 880px) {
   .document-quality-comparison-table,
   .document-quality-comparison-table tbody {
     display: block;
@@ -52,6 +101,10 @@
     height: 1px;
     overflow: hidden;
     clip-path: inset(50%);
+  }
+
+  .document-quality-comparison-table colgroup {
+    display: none;
   }
 
   .document-quality-comparison-table tbody tr {
@@ -73,6 +126,7 @@
     margin-bottom: 4px;
     color: rgb(var(--text-secondary));
     font-size: 12px;
+    white-space: normal;
   }
 
   .document-quality-comparison-table .comparison-model {
@@ -85,5 +139,29 @@
   .document-quality-comparison-table .comparison-status {
     grid-column: 3;
     grid-row: 1;
+  }
+}
+
+@media (max-width: 767px) {
+  .quality-header {
+    padding: 12px 16px;
+    gap: 8px;
+  }
+
+  .quality-header h1 {
+    font-size: 18px;
+  }
+
+  .quality-series-summary {
+    font-size: 12px;
+    gap: 8px;
+  }
+
+  .quality-series-summary dd {
+    font-size: 14px;
+  }
+
+  .document-quality-content {
+    padding: 16px;
   }
 }

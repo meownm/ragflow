@@ -1821,6 +1821,7 @@ class BusinessDocument(DataBaseModel):
     state_version = IntegerField(null=False, default=1)
     current_revision_id = CharField(max_length=32, null=True, index=True)
     active_review_cycle = IntegerField(null=False, default=0)
+    active_job_id = CharField(max_length=32, null=True)
     last_error = JSONField(null=True)
 
     class Meta:
@@ -1924,6 +1925,37 @@ class BusinessDocumentProposalDecision(DataBaseModel):
     class Meta:
         db_table = "business_document_proposal_decision"
         indexes = ((("document_id", "proposal_id"), True),)
+
+
+class BusinessDocumentAcceptedChangesMigration(DataBaseModel):
+    """Frozen upgrade cohort; pending targets are removed atomically with enqueue."""
+
+    name = CharField(max_length=64, primary_key=True)
+    pending = JSONField(null=False, default=list)
+    finished = BooleanField(null=False, default=False)
+
+    class Meta:
+        db_table = "business_document_accepted_changes_migration"
+
+
+class BusinessDocumentWorkRequest(DataBaseModel):
+    """Durable review work; immutable job snapshots are built on admission."""
+
+    id = CharField(max_length=32, primary_key=True)
+    document_id = CharField(max_length=32, null=False, index=True)
+    tenant_id = CharField(max_length=32, null=False)
+    kind = CharField(max_length=32, null=False)
+    status = CharField(max_length=16, null=False, default="QUEUED", index=True)
+    sequence = IntegerField(null=False)
+    actor_id = CharField(max_length=32, null=False)
+    dedupe_key = CharField(max_length=71, null=False, unique=True)
+    payload = JSONField(null=False)
+    job_id = CharField(max_length=32, null=True, unique=True)
+    error = JSONField(null=True)
+
+    class Meta:
+        db_table = "business_document_work_request"
+        indexes = ((("document_id", "status", "sequence"), False),)
 
 
 class BusinessDocumentComment(DataBaseModel):
@@ -2646,6 +2678,7 @@ def migrate_db():
         CharField(max_length=32, null=False, default="AUTHOR_CREATOR", index=True),
     )
     alter_db_add_column(migrator, "business_document", "catalog_entry_id", CharField(max_length=64, null=True, index=True))
+    alter_db_add_column(migrator, "business_document", "active_job_id", CharField(max_length=32, null=True))
     migrate_business_document_title_key(migrator)
     migrate_business_document_catalog()
     migrate_business_document_eva_bindings()

@@ -109,7 +109,7 @@ def test_plan_failure_emits_failed_stream_event_once(database):
     "damage, code",
     [
         ("open_question", "DRAFT_PRECONDITION_FAILED"),
-        ("existing_revision", "DRAFT_PRECONDITION_FAILED"),
+        ("existing_revision", "STALE_AI_RESULT"),
         ("template_changed", "TEMPLATE_VERSION_CONFLICT"),
         ("non_array_proposals", "INVALID_DRAFT_PROTOCOL"),
     ],

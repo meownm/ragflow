@@ -78,18 +78,28 @@ remain unresolved and are excluded from applicable inputs and pinned change sour
 Applying ready inputs preserves the same review cycle and unanswered questions;
 only a review without open questions or pending proposals can become AGREED.
 
-DECIDE_PROPOSAL and the published ACCEPT_PROPOSAL command only record a decision;
-neither queues a job nor changes a revision. The UI uses a separate APPLY_CHANGES command
-after assessment; worker completion saves the verified result without another
-confirmation. Published preview commands retain their external contract. Existing
-persisted jobs with apply_proposal_id retain their scoped completion contract.
-Questions, answers,
-proposals, comments and decision/cancellation events are append-only. The unique
-decision row is a current projection: CANCEL_PROPOSAL_ACCEPTANCE may remove an
-unapplied acceptance only in quiescent REVIEW, invalidating prepared changes and
-the current assessment. The original decision event remains in history, and
-reacceptance creates a new authorizing event. Applied or cancelled events cannot
-authorize another change.
+ACCEPT_PROPOSAL records the acceptance and schedules a durable per-proposal work
+request atomically. The UI's Apply action uses this command; a repeat retries a
+failed request without creating a second decision. DECIDE_PROPOSAL retains its
+published decision-only contract for existing clients and explicit aggregate
+assessment/application. Published preview commands retain their contract.
+
+Requests are ordered per document. Admission locks the document and builds the
+immutable job snapshot against its latest saved revision. The worker and API
+use the same admission implementation. A background job owns active_job_id;
+feedback may advance state_version but cannot change that cursor, content,
+owner or cycle. Completion checks all these fences and the worker lease. An
+analysis superseded by newer feedback publishes no entities; coalesced follow-up
+analysis uses the newer snapshot. Only the exact accepted decision authorizes
+per-proposal application. Failures retain acceptance and do not block later work.
+
+Comments validate against their own immutable revision, including a prior saved
+revision. The original quote and revision remain explicit after autosave.
+Questions, answers, proposals, comments and decision/cancellation events remain
+append-only. CANCEL_PROPOSAL_ACCEPTANCE may remove a queued acceptance, but not
+one whose application is already running. Applied events cannot authorize
+another change. Assignment, deletion and structural commands wait for queued
+work as well as running jobs.
 
 For applicable inputs A, used inputs U, no-change acknowledgements N and active
 accepted proposals P, require U and N to be subsets of A, U intersect N to be

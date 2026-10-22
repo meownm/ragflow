@@ -84,6 +84,7 @@ def queries():
     reader.review_history.return_value = ()
     reader.users.return_value = {"owner": {"nickname": "Owner"}}
     reader.latest_job.return_value = None
+    reader.work_requests.return_value = ()
     reader.preview.return_value = None
     reader.exports.return_value = ()
     reader.bindings.return_value = {}
@@ -135,6 +136,23 @@ def test_invalid_pagination_never_calls_loader(queries, page, size):
     with pytest.raises(ValidationError, match="page must") as caught:
         scenario.list_documents("owner", page, size)
     assert caught.value.code == "INVALID_PAGINATION"
+    reader.page.assert_not_called()
+
+
+def test_catalog_groups_documents_by_identity_without_using_the_current_page(queries):
+    scenario, reader, _ = queries
+    reader.catalog.return_value = ({"id": "L5", "title": "Same title"}, {"id": "other", "title": "Same title"}, {"id": "empty", "title": "Empty"})
+    reader.catalog_documents.return_value = (
+        document(id="newer", title="First", lifecycle_state="REVIEW"),
+        document(id="older", title="Second", lifecycle_state="ARCHIVED"),
+        document(id="other-doc", catalog_entry_id="other"),
+    )
+    result = scenario.list_catalog()
+    assert result["total"] == 3
+    assert [item["document_id"] for item in result["items"][0]["existing_documents"]] == ["newer", "older"]
+    assert result["items"][0]["existing_documents"][1]["lifecycle_state"] == "ARCHIVED"
+    assert result["items"][1]["existing_documents"][0]["document_id"] == "other-doc"
+    assert result["items"][2]["existing_documents"] == []
     reader.page.assert_not_called()
 
 
@@ -458,3 +476,14 @@ def test_revision_text_projection_preserves_supported_list_image_and_reference_b
     identified = result["document_ast"]["sections"][0]["blocks"]
     assert all(block["id"] for block in identified)
     assert [{key: value for key, value in block.items() if key != "id"} for block in identified] == blocks
+
+
+@pytest.mark.parametrize("kind", ["ReviewAssessed", "ReviewAssessmentNotApplied"])
+@pytest.mark.parametrize("feedback_sequence,explicit,expected", [(9, False, False), (10, False, False), (11, False, True), (9, True, True)])
+def test_analysis_supersession_uses_later_feedback_or_explicit_snapshot_rejection(queries, kind, feedback_sequence, explicit, expected):
+    scenario, reader, _ = queries
+    analysis = {**event("analysis", kind, {"review_cycle": 2, "superseded": explicit}), "sequence": 10}
+    reader.review.return_value = replace(empty_review(), events=(analysis,), latest_sequences={"AuthorCommentAdded": feedback_sequence}, has_unassessed_feedback=True)
+    result = scenario.get_document("doc", "owner")
+    assert result["last_analysis"]["applied"] is (kind == "ReviewAssessed")
+    assert result["last_analysis"]["superseded"] is expected

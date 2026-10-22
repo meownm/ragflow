@@ -56,11 +56,15 @@ class CommandWriter(DocumentWriter, Protocol):
 
     def delete_decision(self, document_id: str, proposal_id: str) -> None: ...
 
-    def has_active_job(self, document_id: str) -> bool: ...
+    def has_active_job(self, document_id: str, *, include_queued: bool = True) -> bool: ...
 
     def insert_comment(self, **values: Any) -> None: ...
 
     def insert_job(self, **values: Any) -> None: ...
+    def work_requests(self, document_id: str) -> list[Record]: ...
+    def find_work(self, dedupe_key: str) -> Record | None: ...
+    def insert_work(self, **values: Any) -> None: ...
+    def update_work(self, request_id: str, **values: Any) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -94,6 +98,120 @@ class DocumentCommands:
     def __init__(self, writer: CommandWriter, content: DocumentContent, queries: DocumentQueries, changes: ApplyChanges, new_id: Callable[[], str], clock: Callable[[], int]):
         self._writer, self._content, self._queries, self._changes = (writer, content, queries, changes)
         self._new_id, self._clock = (new_id, clock)
+
+    def resume_confirmed_proposal(self, target: Record, migration_id: str) -> dict[str, Any]:
+        """Enqueue a frozen upgrade decision, retaining its original authorization."""
+        with self._writer.transaction():
+            document = self._writer.lock_document(target["document_id"])
+            if document is None or any(document[key] != target[key] for key in ("tenant_id", "owner_id", "active_review_cycle")):
+                return {"status": "SKIPPED"}
+            if document["document_type"] != "business_requirements" or document["lifecycle_state"] != "REVIEW" or not document["current_revision_id"]:
+                return {"status": "SKIPPED"}
+            review = self._writer.review(document["id"], document["active_review_cycle"])
+            proposal_id = target["proposal_id"]
+            if review.protocol_events["decisions"].get(proposal_id) != target["decision_event_id"]:
+                return {"status": "SKIPPED"}
+            try:
+                review.for_proposal_application(proposal_id)
+            except StateConflict:
+                return {"status": "SKIPPED"}
+            if not is_operation_quiescent(document["operation_state"], self._writer.has_active_job(document["id"])):
+                return {"status": "DEFERRED"}
+            self._enqueue_work(document, review.decisions[proposal_id]["actor_id"], "PLAN_CHANGES", proposal_id=proposal_id, migration_id=migration_id)
+            result = self._admit_work(document)
+            return {"status": "ENQUEUED", **({"job_id": result["job_id"]} if result else {})}
+
+    def _enqueue_work(self, document, actor_id, kind, *, proposal_id=None, migration_id=None):
+        review = self._writer.review(document["id"], document["active_review_cycle"])
+        payload = {"owner_id": document["owner_id"], "active_review_cycle": document["active_review_cycle"]}
+        if proposal_id:
+            review.for_proposal_application(proposal_id)
+            payload.update(proposal_id=proposal_id, decision_event_id=review.protocol_events["decisions"][proposal_id])
+        if migration_id:
+            payload["migration_id"] = migration_id
+        key = stable_hash({"document_id": document["id"], "decision_event_id": payload["decision_event_id"]}) if proposal_id else None
+        if key and (existing := self._writer.find_work(key)):
+            if existing["status"] in {"FAILED", "CANCELLED"}:
+                self._writer.update_work(existing["id"], status="QUEUED", job_id=None, error=None, sequence=document["state_version"] * 2, actor_id=actor_id, payload=payload)
+            return
+        if not proposal_id:
+            for request in self._writer.work_requests(document["id"]):
+                if request["kind"] != kind or request["payload"] != payload:
+                    continue
+                if request["status"] == "QUEUED":
+                    return
+                if request["status"] == "FAILED":
+                    self._writer.update_work(request["id"], status="CANCELLED")
+        request_id = self._new_id()
+        self._writer.insert_work(
+            id=request_id,
+            document_id=document["id"],
+            tenant_id=document["tenant_id"],
+            actor_id=actor_id,
+            kind=kind,
+            status="QUEUED",
+            sequence=document["state_version"] * 2 + (kind == "ASSESS_REVIEW"),
+            dedupe_key=key or request_id,
+            payload=payload,
+        )
+
+    def advance_work(self, document_id: str):
+        """Worker admission shares document locking and the command job implementation."""
+        with self._writer.transaction():
+            document = self._writer.lock_document(document_id)
+            return self._admit_work(document) if document else None
+
+    def _admit_work(self, document):
+        if not is_operation_quiescent(document["operation_state"], self._writer.has_active_job(document["id"], include_queued=False)):
+            return None
+        for request in self._writer.work_requests(document["id"]):
+            if request["status"] != "QUEUED":
+                continue
+            payload = request["payload"]
+            if document["lifecycle_state"] != "REVIEW" or document["tenant_id"] != request["tenant_id"] or any(document[key] != payload[key] for key in ("owner_id", "active_review_cycle")):
+                self._writer.update_work(request["id"], status="CANCELLED")
+                continue
+            review = self._writer.review(document["id"], document["active_review_cycle"])
+            proposal_id = payload.get("proposal_id")
+            if proposal_id:
+                try:
+                    review.for_proposal_application(proposal_id)
+                    if review.protocol_events["decisions"].get(proposal_id) != payload["decision_event_id"]:
+                        raise StateConflict("DECISION_CHANGED", "The decision changed")
+                except StateConflict:
+                    self._writer.update_work(request["id"], status="CANCELLED")
+                    continue
+            envelope = _CommandEnvelope(
+                "1",
+                self._new_id(),
+                request["dedupe_key"],
+                document["state_version"],
+                CommandType.APPLY_CHANGES if proposal_id else CommandType.REQUEST_REVIEW_ASSESSMENT,
+                {"base_revision_id": document["current_revision_id"], **payload},
+            )
+            result = self._request_job(
+                document,
+                request["actor_id"],
+                envelope,
+                request["kind"],
+                OperationState.APPLYING_CHANGES if proposal_id else OperationState.ANALYZING_REVIEW,
+                review=review,
+                proposal_id=proposal_id,
+                actor_type="SYSTEM",
+                background=True,
+            )
+            self._writer.update_work(request["id"], status="RUNNING", job_id=result["job_id"])
+            return result
+        return None
+
+    def _after_feedback(self, document, actor_id, event_id, *, proposal_id=None):
+        if proposal_id:
+            self._enqueue_work(document, actor_id, "PLAN_CHANGES", proposal_id=proposal_id)
+        # An analysis uses only its starting snapshot. Later feedback gets a fresh pass.
+        if document.get("active_job_id") and document["operation_state"] == "ANALYZING_REVIEW":
+            self._enqueue_work(document, actor_id, "ASSESS_REVIEW")
+        result = self._admit_work(document)
+        return result or self._command_response(document, document["state_version"], event_id)
 
     def execute(
         self, tenant_id: str, actor_id: str, document_id: str, raw: object, is_admin: bool = False, access_role: BusinessDocumentRole | str = BusinessDocumentRole.AUTHOR_CREATOR
@@ -156,7 +274,16 @@ class DocumentCommands:
         return response
 
     def _command_result(self, response: dict[str, Any], envelope: _CommandEnvelope, access: DocumentAccess, document_id: str) -> dict[str, Any]:
-        if envelope.type in {CommandType.CONFIRM_PREPARED_CHANGES, CommandType.DECIDE_PROPOSAL, CommandType.ACCEPT_PROPOSAL, CommandType.RESTORE_REVISION}:
+        if envelope.type in {
+            CommandType.CONFIRM_PREPARED_CHANGES,
+            CommandType.DECIDE_PROPOSAL,
+            CommandType.ACCEPT_PROPOSAL,
+            CommandType.RESTORE_REVISION,
+            CommandType.REQUEST_REVIEW_ASSESSMENT,
+            CommandType.ADD_COMMENT,
+            CommandType.ANSWER_QUESTION,
+            CommandType.CANCEL_PROPOSAL_ACCEPTANCE,
+        }:
             # Keep the durable receipt small; return the current view with this caller's permissions, including on replay.
             return {**response, "document": self._queries.get_document(document_id, access.actor_id, access.is_admin, access.assigned_role)}
         return response
@@ -176,14 +303,22 @@ class DocumentCommands:
         review_commands = {CommandType.REQUEST_INTAKE_ASSESSMENT, CommandType.REQUEST_REVIEW_ASSESSMENT, CommandType.REQUEST_DRAFT, CommandType.APPLY_CHANGES, CommandType.PREPARE_CHANGES}
         review = self._writer.review(document["id"], document["active_review_cycle"]) if envelope.type in review_commands and document["lifecycle_state"] != "ARCHIVED" else None
         preview = self._writer.preview(document, self._clock()) if envelope.type in {CommandType.APPLY_CHANGES, CommandType.CONFIRM_PREPARED_CHANGES, CommandType.DISCARD_PREPARED_CHANGES} else None
-        if problem := command_problem(envelope.type, document, review, envelope.payload, preview=preview):
+        if problem := command_problem(
+            envelope.type, document, review, envelope.payload, preview=preview, work_pending=any(item["status"] == "QUEUED" for item in self._writer.work_requests(document["id"]))
+        ):
             error_type = ConflictError if isinstance(problem, StateConflict) else ValidationError
             raise error_type(problem.code, problem.message, problem.details)
         match envelope.type:
             case CommandType.REQUEST_INTAKE_ASSESSMENT:
                 return self._request_job(document, actor_id, envelope, "ASSESS_INTAKE", OperationState.ANALYZING, review=review)
             case CommandType.REQUEST_REVIEW_ASSESSMENT:
-                return self._request_job(document, actor_id, envelope, "ASSESS_REVIEW", OperationState.ANALYZING_REVIEW, review=review)
+                self._enqueue_work(document, actor_id, "ASSESS_REVIEW")
+                if result := self._admit_work(document):
+                    return result
+                version = document["state_version"] + 1
+                document = self._writer.update_document(document, {"state_version": version})
+                event_id = self._writer.append_event(document["id"], version, "ReviewWorkQueued", "USER", actor_id, {"kind": "ASSESS_REVIEW"}, envelope.command_id)
+                return self._command_response(document, version, event_id)
             case CommandType.REQUEST_DRAFT:
                 return self._request_job(document, actor_id, envelope, "GENERATE_DRAFT", OperationState.GENERATING_DRAFT, review=review)
             case CommandType.ANSWER_QUESTION:
@@ -264,13 +399,30 @@ class DocumentCommands:
         )
         return self._command_response(document, version, event_id)
 
-    def _request_job(self, document: Record, actor_id: str, envelope: _CommandEnvelope, job_type: str, operation_state: OperationState, *, review=None) -> dict[str, Any]:
+    def _request_job(
+        self,
+        document: Record,
+        actor_id: str,
+        envelope: _CommandEnvelope,
+        job_type: str,
+        operation_state: OperationState,
+        *,
+        review=None,
+        proposal_id: str | None = None,
+        actor_type: str = "USER",
+        background: bool = False,
+    ) -> dict[str, Any]:
         new_version = document["state_version"] + 1
         job_id = self._new_id()
         snapshot = self._job_snapshot(document, envelope.payload, review)
         snapshot["task_type"] = job_type
+        if background:
+            snapshot["background_work"] = True
         if job_type == "PLAN_CHANGES":
             snapshot["agreement_history"] = self._writer.agreement_history(document["id"])
+            if proposal_id is not None:
+                snapshot["apply_proposal_id"] = proposal_id
+                snapshot["active_change_input_event_ids"] = [review.protocol_events["decisions"][proposal_id]]
         if envelope.type == CommandType.PREPARE_CHANGES:
             snapshot["preview_only"] = True
         snapshot["requested_by_actor_id"] = actor_id
@@ -287,7 +439,9 @@ class DocumentCommands:
         dedupe_key = stable_hash({"document_id": document["id"], "job_type": job_type, "source_state_version": new_version})
         now = self._clock()
         # Claim the version before inserting the unique job, within the command savepoint.
-        document = self._writer.update_document(document, {"operation_state": operation_state.value, "last_error": None, "state_version": new_version})
+        document = self._writer.update_document(
+            document, {"operation_state": operation_state.value, "last_error": None, "state_version": new_version, **({"active_job_id": job_id} if background else {})}
+        )
         self._writer.insert_job(
             id=job_id,
             document_id=document["id"],
@@ -315,12 +469,13 @@ class DocumentCommands:
             document["id"],
             new_version,
             "BusinessDocumentJobRequested",
-            "USER",
+            actor_type,
             actor_id,
             {
                 "job_id": job_id,
                 "job_type": job_type,
                 "source_state_version": new_version,
+                **({"migration_id": envelope.payload["migration_id"]} if actor_type == "SYSTEM" and "migration_id" in envelope.payload else {}),
                 **({"prompt_name": prompt["name"], "prompt_version": prompt["version"], "prompt_hash": prompt["content_hash"]} if prompt is not None else {}),
             },
             envelope.command_id,
@@ -370,7 +525,7 @@ class DocumentCommands:
         event_id = self._writer.append_event(
             document["id"], new_version, "QuestionAnswered", "USER", actor_id, {"question_id": question["id"], "answer_id": answer_id, "selected_option_id": selected_option_id}, envelope.command_id
         )
-        return self._command_response(document, new_version, event_id)
+        return self._after_feedback(document, actor_id, event_id) if expected_stage == "REVIEW" else self._command_response(document, new_version, event_id)
 
     def _decide_proposal(self, document: Record, actor_id: str, envelope: _CommandEnvelope) -> dict[str, Any]:
         proposal_id = envelope.payload.get("proposal_id")
@@ -378,6 +533,19 @@ class DocumentCommands:
         if proposal is None:
             raise ValidationError("PROPOSAL_NOT_FOUND", "Proposal does not belong to the active review cycle")
         if self._writer.has_decision(document["id"], proposal["id"]):
+            if envelope.type == CommandType.ACCEPT_PROPOSAL:
+                review = self._writer.review(document["id"], document["active_review_cycle"])
+                try:
+                    review.for_proposal_application(proposal["id"])
+                except StateConflict as error:
+                    raise ConflictError(error.code, error.message, error.details) from error
+                existing = self._writer.find_work(stable_hash({"document_id": document["id"], "decision_event_id": review.protocol_events["decisions"][proposal["id"]]}))
+                if existing and existing["status"] in {"QUEUED", "RUNNING"}:
+                    return self._command_response(document, document["state_version"], envelope.command_id)
+                version = document["state_version"] + 1
+                document = self._writer.update_document(document, {"state_version": version})
+                event_id = self._writer.append_event(document["id"], version, "ProposalApplicationRetried", "USER", actor_id, {"proposal_id": proposal["id"]}, envelope.command_id)
+                return self._after_feedback(document, actor_id, event_id, proposal_id=proposal["id"])
             raise ConflictError("PROPOSAL_ALREADY_DECIDED", "The current proposal decision cannot be overwritten")
         decision = "ACCEPTED" if envelope.type == CommandType.ACCEPT_PROPOSAL else envelope.payload.get("decision")
         if decision not in {"ACCEPTED", "REJECTED"}:
@@ -389,12 +557,17 @@ class DocumentCommands:
         event_id = self._writer.append_event(
             document["id"], new_version, "ProposalDecided", "USER", actor_id, {"proposal_id": proposal["id"], "decision_id": decision_id, "decision": decision}, envelope.command_id
         )
-        return self._command_response(document, new_version, event_id)
+        return self._after_feedback(document, actor_id, event_id, proposal_id=proposal_id if decision == "ACCEPTED" and envelope.type == CommandType.ACCEPT_PROPOSAL else None)
 
     def _cancel_proposal_acceptance(self, document: Record, actor_id: str, envelope: _CommandEnvelope) -> dict[str, Any]:
-        if self._writer.has_active_job(document["id"]):
+        if not document.get("active_job_id") and self._writer.has_active_job(document["id"], include_queued=False):
             raise ConflictError("OPERATION_IN_PROGRESS", "Another operation is already in progress")
         proposal_id = envelope.payload["proposal_id"]
+        for request in self._writer.work_requests(document["id"]):
+            if request["payload"].get("proposal_id") == proposal_id and request["status"] == "RUNNING":
+                raise ConflictError("PROPOSAL_APPLICATION_IN_PROGRESS", "This proposal is being applied; other feedback remains available")
+            if request["payload"].get("proposal_id") == proposal_id and request["status"] in {"QUEUED", "FAILED"}:
+                self._writer.update_work(request["id"], status="CANCELLED")
         if self._writer.proposal(document["id"], proposal_id, document["active_review_cycle"]) is None:
             raise ValidationError("PROPOSAL_NOT_FOUND", "Proposal does not belong to the active review cycle")
         review = self._writer.review(document["id"], document["active_review_cycle"])
@@ -415,15 +588,13 @@ class DocumentCommands:
             {"proposal_id": proposal_id, "decision_id": decision["id"], "decision_event_id": review.protocol_events["decisions"][proposal_id]},
             envelope.command_id,
         )
-        return self._command_response(document, version, event_id)
+        return self._after_feedback(document, actor_id, event_id)
 
     def _add_comment(self, document: Record, actor_id: str, envelope: _CommandEnvelope) -> dict[str, Any]:
         text = envelope.payload.get("text")
         if not isinstance(text, str) or not text.strip():
             raise ValidationError("INVALID_COMMENT", "Comment text must be non-empty")
         revision_id = envelope.payload.get("revision_id")
-        if revision_id != document["current_revision_id"]:
-            raise ConflictError("COMMENT_REVISION_CONFLICT", "Comment must target the current revision")
         revision = self._writer.revision_or_none(document["id"], revision_id)
         if revision is None:
             raise ConflictError("COMMENT_REVISION_CONFLICT", "Comment must target the current revision")
@@ -444,7 +615,7 @@ class DocumentCommands:
         )
         document = self._writer.update_document(document, {"state_version": new_version})
         event_id = self._writer.append_event(document["id"], new_version, "AuthorCommentAdded", "USER", actor_id, {"comment_id": comment_id, "revision_id": revision_id}, envelope.command_id)
-        return self._command_response(document, new_version, event_id)
+        return self._after_feedback(document, actor_id, event_id)
 
     def _transition(self, document, actor_id, envelope, event_type, **changes):
         version = document["state_version"] + 1
@@ -485,11 +656,11 @@ class DocumentCommands:
         }
 
     def _allowed_commands(self, document, *, include_preview=False):
-        if not is_operation_quiescent(document["operation_state"]) or document["lifecycle_state"] == "ARCHIVED":
+        if (not is_operation_quiescent(document["operation_state"]) and not document.get("active_job_id")) or document["lifecycle_state"] == "ARCHIVED":
             return []
         review = self._writer.review(document["id"], document["active_review_cycle"])
         preview = self._writer.preview(document, self._clock()) if include_preview else None
-        return available_commands(document, review, preview=preview)
+        return available_commands(document, review, preview=preview, work_pending=any(item["status"] == "QUEUED" for item in self._writer.work_requests(document["id"])))
 
     def _command_response(self, document, new_version, event_id):
         return {

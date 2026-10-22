@@ -19,6 +19,8 @@ from api.apps.business_documents.sql_query_requirements import TenantRequirement
 from api.apps.business_documents.worker import BusinessDocumentJobQueue, BusinessDocumentWorker
 from api.db.db_models import (
     BusinessDocumentJob,
+    BusinessDocumentWorkRequest,
+    BusinessDocument,
     BusinessDocumentSqlAgentCommand,
     BusinessDocumentSqlAgentProposal,
     BusinessDocumentSqlQueryArtifact,
@@ -34,7 +36,7 @@ ACTOR = "author-1"
 @pytest.fixture()
 def database():
     database = SqliteDatabase(":memory:", check_same_thread=False)
-    tables = BusinessDocumentSqlAgentService.model_tables()
+    tables = (*BusinessDocumentSqlAgentService.model_tables(), BusinessDocumentWorkRequest, BusinessDocument)
     with database.bind_ctx(tables, bind_refs=False, bind_backrefs=False):
         database.connect()
         database.create_tables(tables)

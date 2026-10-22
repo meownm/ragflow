@@ -3909,6 +3909,11 @@ Important structured information may include: names, dates, locations, events, k
         modelComparison: 'Model comparison',
         caseProgress: 'Scenarios',
         seriesSummary: 'Series summary',
+        periodDays_one: 'Last {{count}} day',
+        periodDays_other: 'Last {{count}} days',
+        comparisonNotQualifiedShort: 'Ranking unavailable',
+        comparisonConditions: 'Comparison conditions',
+        p95Note: 'p95: 95% of measured durations do not exceed this value.',
         processedRuns: 'Runs processed',
         completeRuns: 'Complete results',
         incompleteRuns: 'Incomplete reports',
@@ -4001,6 +4006,12 @@ Important structured information may include: names, dates, locations, events, k
         reasons: {
           PROVIDER_USAGE_MISSING: 'The provider did not report token usage.',
           INVALID_AI_JSON: 'The model returned invalid JSON.',
+          INVALID_CHANGE_PLAN: 'The change plan failed validation.',
+          INVALID_DOCUMENT_DRAFT: 'The document draft failed validation.',
+          INVALID_EXECUTION_AUDIT: 'Job execution data is invalid.',
+          ACCEPTED_PROPOSAL_OMITTED:
+            'An accepted proposal is missing from the change plan.',
+          STALE_AI_RESULT: 'The document changed; the job result is outdated.',
           MODEL_ERROR: 'The model request failed.',
           CANCELLED: 'The check was cancelled.',
           EXECUTION_CANCELLED: 'Check execution was cancelled.',
@@ -4092,6 +4103,13 @@ Important structured information may include: names, dates, locations, events, k
           'No recorded specification checks in this period.',
         technicalOperationsTab: 'Specification operations',
         technicalOperations: {
+          emptyNote:
+            'Statistics appear after the first recorded specification check. Golden evaluations are tracked separately.',
+          groups: {
+            execution: 'Execution',
+            reports: 'Reports',
+            tokens: 'Tokens and usage',
+          },
           title: 'Specification check operations',
           cohortNote:
             'Recorded checks accepted within the selected period. History before instrumentation may be absent. A dash means no verified measurement; total usage requires reasoning accounting.',
@@ -4273,6 +4291,12 @@ Important structured information may include: names, dates, locations, events, k
         operationalOnly:
           'These are operational metrics. Text quality scores require a separate golden scenario run.',
         taskTypes: {
+          GENERATE_EXPORT: 'Document export',
+          SQL_AGENT_QUERY: 'SQL query planning',
+          SQL_AGENT_SCHEMA: 'Data schema selection',
+          SQL_QUERY_RUN: 'SQL query execution',
+          SQL_AGENT_REQUIREMENTS: 'SQL query requirements',
+          SQL_AGENT_REVISION: 'SQL query changes',
           ASSESS_INTAKE: 'Assess intake',
           GENERATE_DRAFT: 'Generate draft',
           ASSESS_REVIEW: 'Assess review',

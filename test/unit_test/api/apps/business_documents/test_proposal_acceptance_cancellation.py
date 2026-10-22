@@ -42,8 +42,7 @@ def test_cancel_and_reaccept_preserves_history_and_excludes_cancelled_input(data
     review = document_commands._writer.review(document["document_id"], document["active_review_cycle"])
     assert old_event not in review.active_inputs | review.accepted_inputs
     assert review.has_unassessed_feedback
-    document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(after, "ACCEPT_PROPOSAL", {"proposal_id": proposal_id}))
-    after, requested = _request_changes(after, preview=False)
+    requested = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(after, "ACCEPT_PROPOSAL", {"proposal_id": proposal_id}))
     job = BusinessDocumentJob.get_by_id(requested["job_id"])
     assert old_event not in job.payload["active_change_input_event_ids"]
     result = _complete(job.id, _plan(after, requested))
@@ -165,4 +164,4 @@ def test_failed_job_reason_survives_unrelated_job_and_clears_on_reacceptance(dat
     document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(view, "CANCEL_PROPOSAL_ACCEPTANCE", {"proposal_id": proposal_id}))
     view = document_queries.get_document(document["document_id"], AUTHOR)
     result = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(view, "ACCEPT_PROPOSAL", {"proposal_id": proposal_id}))
-    assert result["document"]["protocol"]["proposals"][0]["application"] == {"status": "WAITING", "error": None}
+    assert result["document"]["protocol"]["proposals"][0]["application"] == {"status": "PENDING", "error": None}

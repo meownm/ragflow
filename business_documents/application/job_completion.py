@@ -17,7 +17,7 @@ from business_documents.domain.assessment import canonical_tag, empty_section_qu
 from business_documents.domain.change_plan import validate_evidence_sources, validate_snapshot_sources
 from business_documents.domain.errors import RuleViolation
 from business_documents.domain.execution_audit import validate_audit_envelope, validate_ai_audit, validate_retrieval_audit, verify_pinned_evidence
-from business_documents.domain.job import SnapshotIndex, has_current_lease, prompt_audit, requested_by
+from business_documents.domain.job import targets_current_document, SnapshotIndex, has_current_lease, prompt_audit, requested_by
 from business_documents.domain.content import SECTION_CONTENT_WARNING_CODES, with_document_warnings
 
 
@@ -45,6 +45,7 @@ class JobWriter(AssessmentWriter, Protocol):
     def lock_job(self, tenant_id: str, job_id: str) -> tuple[Record, Record]: ...
     def document(self, tenant_id: str, document_id: str) -> Record: ...
     def evidence_snapshot(self, job_id: str) -> Record | None: ...
+    def finish_work(self, job_id: str, status: str, error=None) -> None: ...
     def finish_job(self, job: Record, worker_id: str, lease_token: str | None, completion_time: int, changes: Record) -> int: ...
 
 
@@ -134,13 +135,16 @@ class JobCompletion:
                 return self._queries.project(document)
             self._require_lease(job, actor_id, lease_token)
             execution = self._execution_audit(execution_audit, job)
-            if document["state_version"] != job["source_state_version"]:
+            if not targets_current_document(document, job):
                 raise ConflictError("STALE_AI_RESULT", "Worker result targets an outdated document state", {"source": job["source_state_version"], "actual": document["state_version"]})
             if job["job_type"] == "GENERATE_EXPORT":
                 output = self._exports.commit(output, document=document, job=job)
             elif not isinstance(output, dict):
                 raise ValidationError("INVALID_JOB_OUTPUT", "Worker output must be a JSON object")
+            superseded = job["job_type"] == "ASSESS_REVIEW" and job["payload"].get("background_work") and document["state_version"] != job["source_state_version"]
             match job["job_type"]:
+                case "ASSESS_REVIEW" if superseded:
+                    document = self._finish(document, job, actor_id, execution, self._new_id(), "ReviewAssessmentNotApplied", {"review_cycle": document["active_review_cycle"], "superseded": True})
                 case "ASSESS_INTAKE" | "ASSESS_REVIEW" if isinstance(output.get("unapplied_assessment"), str):
                     intake = job["job_type"] == "ASSESS_INTAKE"
                     if document["operation_state"] != ("ANALYZING" if intake else "ANALYZING_REVIEW") or document["lifecycle_state"] != ("INTAKE" if intake else "REVIEW"):
@@ -189,6 +193,13 @@ class JobCompletion:
                     "result": {"output": output, **prompt_audit(job), **({"execution": execution} if execution else {})},
                 },
             )
+            if job["payload"].get("background_work"):
+                unapplied = output.get("unapplied_changes") or (output.get("unapplied_assessment") and not superseded)
+                self._writer.finish_work(
+                    job["id"],
+                    "FAILED" if unapplied else "DONE",
+                    {"code": "RESULT_NOT_APPLIED", "message": "Результат требует уточнения", "warnings": output.get("warnings", [])} if unapplied else None,
+                )
             if job["job_type"] == "PLAN_CHANGES":
                 event_type = "not_applied" if output.get("unapplied_changes") else "preview_ready" if job["payload"].get("preview_only") is True else "applied"
                 self._writer.append_job_event(job["id"], event_type, {"state_version": document["state_version"]})
@@ -200,10 +211,14 @@ class JobCompletion:
             if job["status"] == "DEAD":
                 return self._queries.project(document)
             self._require_lease(job, actor_id, lease_token)
-            if document["state_version"] == job["source_state_version"] and document["current_revision_id"] == job["base_revision_id"]:
+            if targets_current_document(document, job):
                 version = document["state_version"] + 1
-                self._writer.update_document(document, {"operation_state": "FAILED", "last_error": error, "state_version": version})
+                self._writer.update_document(
+                    document, {"operation_state": "FAILED", "last_error": error, "state_version": version, **({"active_job_id": None} if job["payload"].get("background_work") else {})}
+                )
                 self._writer.append_event(document["id"], version, "BusinessDocumentJobFailed", "SYSTEM", actor_id, {"job_id": job["id"], "error": error}, job["correlation_id"])
+            if job["payload"].get("background_work"):
+                self._writer.finish_work(job["id"], "FAILED", error)
             self._finalize(job, actor_id, lease_token, {"status": "DEAD", "progress_stage": "FAILED", "progress_message": "Не удалось завершить обработку", "error": error})
             if job["job_type"] == "PLAN_CHANGES":
                 self._writer.append_job_event(job["id"], "failed", {"code": error.get("code", "WORKER_FAILURE")})
@@ -377,7 +392,7 @@ class JobCompletion:
 
     def _finish(self, document, job, actor_id, execution, event_id, event_type, payload, **changes):
         version = document["state_version"] + 1
-        updated = self._writer.update_document(document, {**changes, "operation_state": "IDLE", "state_version": version})
+        updated = self._writer.update_document(document, {**changes, "operation_state": "IDLE", "state_version": version, **({"active_job_id": None} if job["payload"].get("background_work") else {})})
         self._writer.append_event(
             document["id"],
             version,

@@ -238,6 +238,9 @@ def test_catalog_sync_replaces_previous_source_rows_and_v3_derives_the_title(dat
     assert all(item["capability_level"] == "L5" for item in listed["items"])
     assert created["catalog_entry_id"] == first["id"]
     assert created["title"] == first["title"]
+    with_document = next(item for item in document_queries.list_catalog()["items"] if item["id"] == first["id"])
+    assert with_document["existing_documents"] == [{"document_id": created["document_id"], "title": first["title"], "lifecycle_state": created["lifecycle_state"]}]
+    assert all(not item["existing_documents"] for item in listed["items"])
 
 
 @pytest.mark.p0

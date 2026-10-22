@@ -1,7 +1,12 @@
 import { DiagramCodeBlock } from '@/components/diagram-code-block';
-import { AlertTriangle, FileText, MousePointer2 } from 'lucide-react';
+import {
+  AlertTriangle,
+  ChevronRight,
+  FileText,
+  MousePointer2,
+} from 'lucide-react';
 import type { Nodes, Root } from 'mdast';
-import { isValidElement, useEffect, useRef, useState } from 'react';
+import { isValidElement, useEffect, useId, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type {
@@ -18,6 +23,7 @@ interface DocumentPaneProps {
   previousRevision?: BusinessDocumentRevision;
   onSelectionChange: (selection: BusinessDocumentSelection | null) => void;
   highlightedSectionIds?: string[];
+  savedSectionIds?: string[];
   focusRequest?: { sectionId: string; sequence: number } | null;
   changePreview?: BusinessDocumentChangePreview | null;
   preliminary?: boolean;
@@ -221,6 +227,7 @@ export function DocumentPane({
   revision,
   onSelectionChange,
   highlightedSectionIds = [],
+  savedSectionIds = [],
   focusRequest,
   changePreview,
   preliminary = false,
@@ -229,6 +236,10 @@ export function DocumentPane({
   previousRevision,
 }: DocumentPaneProps) {
   const paneRef = useRef<HTMLDivElement>(null);
+  const contentId = useId();
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [selectionError, setSelectionError] = useState<string | null>(null);
   const [focusedSectionId, setFocusedSectionId] = useState<string | null>(null);
   const changes = new Map(
@@ -260,10 +271,21 @@ export function DocumentPane({
       (candidate) => candidate.dataset.sectionId === focusRequest.sectionId,
     );
     if (!section) return;
-    section.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+    setCollapsedSections((previous) => {
+      if (!previous.has(focusRequest.sectionId)) return previous;
+      const next = new Set(previous);
+      next.delete(focusRequest.sectionId);
+      return next;
+    });
+    const frame = window.requestAnimationFrame(() =>
+      section.scrollIntoView?.({ behavior: 'smooth', block: 'center' }),
+    );
     setFocusedSectionId(focusRequest.sectionId);
     const timer = window.setTimeout(() => setFocusedSectionId(null), 2500);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+    };
   }, [focusRequest]);
 
   const rejectSelection = (message: string) => {
@@ -395,8 +417,10 @@ export function DocumentPane({
           <article className="mx-auto max-w-[860px] text-[15px] leading-7 text-text-primary">
             {sections.map((section) => {
               const change = changes.get(section.id);
-              const sectionText = revision.section_texts[section.id] ?? '';
-              const previewText = change ? change.after : sectionText;
+              const savedText = revision.section_texts[section.id];
+              const sectionText = savedText ?? '';
+              const previewText =
+                change && !preliminary ? change.after : sectionText;
               const displayedSectionText = previewText.trim()
                 ? previewText
                 : 'Требования отсутствуют';
@@ -404,38 +428,84 @@ export function DocumentPane({
                 6,
                 2 + section.id.split('.').length - 1,
               );
-              const headingMarkdown = `${'#'.repeat(headingLevel)} ${section.id}. ${section.title}`;
+              const Heading = `h${headingLevel}` as
+                | 'h2'
+                | 'h3'
+                | 'h4'
+                | 'h5'
+                | 'h6';
+              const collapsed = collapsedSections.has(section.id);
+              const sectionContentId = `${contentId}-${section.id}`;
               return (
                 <section
                   key={section.id}
                   data-section-id={section.id}
                   data-section-text={sectionText}
-                  data-section-preview={Boolean(change)}
+                  data-section-preview={Boolean(
+                    change && (!preliminary || savedText === undefined),
+                  )}
+                  data-background-state={
+                    highlightedSectionIds.includes(section.id)
+                      ? 'possible'
+                      : savedSectionIds.includes(section.id)
+                        ? 'saved'
+                        : undefined
+                  }
                   data-testid="business-document-section"
                   className={
                     focusedSectionId === section.id
-                      ? 'rounded-md bg-accent-primary/10 ring-2 ring-accent-primary/50 ring-offset-4'
+                      ? 'rounded-md bg-accent-primary/10 ring-2 ring-accent-primary/50 ring-offset-0'
                       : change || highlightedSectionIds.includes(section.id)
-                        ? 'rounded-md bg-accent-primary/5 ring-1 ring-accent-primary/20 ring-offset-4'
-                        : undefined
+                        ? 'rounded-md bg-state-warning/5 ring-1 ring-state-warning/30 ring-offset-0'
+                        : savedSectionIds.includes(section.id)
+                          ? 'rounded-md bg-state-success/5 ring-1 ring-state-success/30 ring-offset-0'
+                          : undefined
                   }
                 >
-                  <ReactMarkdown
-                    components={{
-                      h2: ({ children }) => (
-                        <h2 className="mb-3 mt-9 border-b border-border-button pb-2 text-xl font-semibold tracking-tight first:mt-0">
-                          {children}
-                        </h2>
-                      ),
-                      h3: ({ children }) => (
-                        <h3 className="mb-2 mt-6 text-base font-semibold">
-                          {children}
-                        </h3>
-                      ),
-                    }}
+                  <Heading
+                    className={
+                      headingLevel === 2
+                        ? 'mb-3 mt-9 border-b border-border-button pb-2 text-xl font-semibold tracking-tight first:mt-0'
+                        : 'mb-2 mt-6 text-base font-semibold'
+                    }
                   >
-                    {headingMarkdown}
-                  </ReactMarkdown>
+                    <button
+                      type="button"
+                      aria-expanded={!collapsed}
+                      aria-controls={sectionContentId}
+                      onMouseUp={(event) => event.stopPropagation()}
+                      onClick={() =>
+                        setCollapsedSections((previous) => {
+                          const next = new Set(previous);
+                          if (next.has(section.id)) next.delete(section.id);
+                          else next.add(section.id);
+                          return next;
+                        })
+                      }
+                      className="flex w-full items-start gap-2 rounded text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary"
+                    >
+                      <ChevronRight
+                        aria-hidden="true"
+                        className={`mt-1 size-4 shrink-0 transition-transform ${collapsed ? '' : 'rotate-90'}`}
+                      />
+                      <span>
+                        {section.id}. {section.title}
+                      </span>
+                    </button>
+                  </Heading>
+                  {!change && highlightedSectionIds.includes(section.id) && (
+                    <p className="mb-3 text-xs text-state-warning">
+                      Возможно изменение · можно комментировать сохранённый
+                      текст
+                    </p>
+                  )}
+                  {!change &&
+                    !highlightedSectionIds.includes(section.id) &&
+                    savedSectionIds.includes(section.id) && (
+                      <p className="mb-3 text-xs text-state-success">
+                        Изменения сохранены в этой ревизии
+                      </p>
+                    )}
                   {change && (
                     <p className="mb-3 text-xs font-medium text-accent-primary">
                       {preliminary
@@ -443,120 +513,124 @@ export function DocumentPane({
                         : 'Изменения проверены · ещё не применены'}
                     </p>
                   )}
-                  <div data-section-body>
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm, remarkSelectionSource]}
-                      components={{
-                        p: ({ children }) => <p className="mb-4">{children}</p>,
-                        ul: ({ children }) => (
-                          <ul className="mb-4 list-disc space-y-1 ps-6">
-                            {children}
-                          </ul>
-                        ),
-                        ol: ({ children }) => (
-                          <ol className="mb-4 list-decimal space-y-1 ps-6">
-                            {children}
-                          </ol>
-                        ),
-                        blockquote: ({ children }) => (
-                          <blockquote className="my-5 border-s-2 border-accent-primary ps-4 text-text-secondary">
-                            {children}
-                          </blockquote>
-                        ),
-                        table: ({ children }) => (
-                          <div className="mb-5 overflow-x-auto">
-                            <table className="w-full border-collapse text-sm">
+                  <div id={sectionContentId} hidden={collapsed}>
+                    <div data-section-body>
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm, remarkSelectionSource]}
+                        components={{
+                          p: ({ children }) => (
+                            <p className="mb-4">{children}</p>
+                          ),
+                          ul: ({ children }) => (
+                            <ul className="mb-4 list-disc space-y-1 ps-6">
                               {children}
-                            </table>
-                          </div>
-                        ),
-                        th: ({ children }) => (
-                          <th className="border-b border-border-default bg-bg-card px-3 py-2 text-start font-medium">
-                            {children}
-                          </th>
-                        ),
-                        td: ({ children }) => (
-                          <td className="border-b border-border-button px-3 py-2 align-top">
-                            {children}
-                          </td>
-                        ),
-                        pre: ({ children }) => {
-                          const code = isValidElement<{
-                            className?: string;
-                            children?: unknown;
-                          }>(children)
-                            ? children
-                            : null;
-                          if (
-                            code?.props.className
-                              ?.split(/\s+/)
-                              .includes('language-plantuml')
-                          ) {
+                            </ul>
+                          ),
+                          ol: ({ children }) => (
+                            <ol className="mb-4 list-decimal space-y-1 ps-6">
+                              {children}
+                            </ol>
+                          ),
+                          blockquote: ({ children }) => (
+                            <blockquote className="my-5 border-s-2 border-accent-primary ps-4 text-text-secondary">
+                              {children}
+                            </blockquote>
+                          ),
+                          table: ({ children }) => (
+                            <div className="mb-5 overflow-x-auto">
+                              <table className="w-full border-collapse text-sm">
+                                {children}
+                              </table>
+                            </div>
+                          ),
+                          th: ({ children }) => (
+                            <th className="border-b border-border-default bg-bg-card px-3 py-2 text-start font-medium">
+                              {children}
+                            </th>
+                          ),
+                          td: ({ children }) => (
+                            <td className="border-b border-border-button px-3 py-2 align-top">
+                              {children}
+                            </td>
+                          ),
+                          pre: ({ children }) => {
+                            const code = isValidElement<{
+                              className?: string;
+                              children?: unknown;
+                            }>(children)
+                              ? children
+                              : null;
+                            if (
+                              code?.props.className
+                                ?.split(/\s+/)
+                                .includes('language-plantuml')
+                            ) {
+                              return (
+                                <DiagramCodeBlock
+                                  language="plantuml"
+                                  source={String(
+                                    code.props.children ?? '',
+                                  ).replace(/\n$/, '')}
+                                />
+                              );
+                            }
                             return (
-                              <DiagramCodeBlock
-                                language="plantuml"
-                                source={String(
-                                  code.props.children ?? '',
-                                ).replace(/\n$/, '')}
-                              />
+                              <pre className="mb-4 overflow-x-auto rounded bg-bg-card p-3 text-sm">
+                                {children}
+                              </pre>
                             );
-                          }
-                          return (
-                            <pre className="mb-4 overflow-x-auto rounded bg-bg-card p-3 text-sm">
+                          },
+                          code: ({ children, node }) => (
+                            <code
+                              data-source-start={node?.position?.start.offset}
+                              data-source-end={node?.position?.end.offset}
+                              data-source-literal="true"
+                              className="rounded bg-bg-card px-1.5 py-0.5 font-mono text-[0.9em]"
+                            >
                               {children}
-                            </pre>
-                          );
-                        },
-                        code: ({ children, node }) => (
-                          <code
-                            data-source-start={node?.position?.start.offset}
-                            data-source-end={node?.position?.end.offset}
-                            data-source-literal="true"
-                            className="rounded bg-bg-card px-1.5 py-0.5 font-mono text-[0.9em]"
-                          >
-                            {children}
-                          </code>
-                        ),
-                        a: ({ children, href }) => (
-                          <a
-                            href={href}
-                            target="_blank"
-                            rel="noreferrer noopener"
-                            className="text-accent-primary underline-offset-4 hover:underline"
-                          >
-                            {children}
-                          </a>
-                        ),
-                      }}
-                    >
-                      {displayedSectionText}
-                    </ReactMarkdown>
-                  </div>
-                  {previousRevision &&
-                    previousRevision.section_texts[section.id] !==
-                      sectionText && (
-                      <details
-                        open
-                        className="mb-6 rounded border border-border-button bg-bg-card p-3"
+                            </code>
+                          ),
+                          a: ({ children, href }) => (
+                            <a
+                              href={href}
+                              target="_blank"
+                              rel="noreferrer noopener"
+                              className="text-accent-primary underline-offset-4 hover:underline"
+                            >
+                              {children}
+                            </a>
+                          ),
+                        }}
                       >
-                        <summary className="mb-3 cursor-pointer text-xs font-medium">
-                          Изменения относительно ревизии{' '}
-                          {previousRevision.revision_number}
-                        </summary>
-                        <RevisionTextDiff
-                          before={
-                            previousRevision.section_texts[section.id] ?? ''
-                          }
-                          after={sectionText}
-                        />
-                      </details>
+                        {displayedSectionText}
+                      </ReactMarkdown>
+                    </div>
+                    {previousRevision &&
+                      previousRevision.section_texts[section.id] !==
+                        sectionText && (
+                        <details
+                          open
+                          className="mb-6 rounded border border-border-button bg-bg-card p-3"
+                        >
+                          <summary className="mb-3 cursor-pointer text-xs font-medium">
+                            Изменения относительно ревизии{' '}
+                            {previousRevision.revision_number}
+                          </summary>
+                          <RevisionTextDiff
+                            before={
+                              previousRevision.section_texts[section.id] ?? ''
+                            }
+                            after={sectionText}
+                          />
+                        </details>
+                      )}
+                    {change && (
+                      <DocumentSectionChange
+                        change={change}
+                        onFocusSource={onFocusSource}
+                      />
                     )}
-                  {change && (
-                    <DocumentSectionChange
-                      change={change}
-                      onFocusSource={onFocusSource}
-                    />
-                  )}
+                  </div>
                 </section>
               );
             })}

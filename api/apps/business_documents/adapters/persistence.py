@@ -11,6 +11,7 @@ from api.apps.business_documents.adapters.queries import find_change_preview_row
 from api.db.db_models import (
     BusinessDocument,
     BusinessDocumentAnswer,
+    BusinessDocumentAcceptedChangesMigration,
     BusinessDocumentCatalog,
     BusinessDocumentComment,
     BusinessDocumentCommand,
@@ -20,6 +21,7 @@ from api.db.db_models import (
     BusinessDocumentExportArtifact,
     BusinessDocumentExportStage,
     BusinessDocumentJob,
+    BusinessDocumentWorkRequest,
     BusinessDocumentJobStreamEvent,
     BusinessDocumentProposal,
     BusinessDocumentProposalDecision,
@@ -38,6 +40,8 @@ from common.time_utils import current_timestamp
 
 
 DOCUMENT_TABLES = (
+    BusinessDocumentWorkRequest,
+    BusinessDocumentAcceptedChangesMigration,
     DocumentExchangeBinding,
     BusinessDocumentCatalog,
     BusinessDocument,
@@ -92,8 +96,10 @@ class PeeweeDocumentWriter:
         )
         return row.__data__.copy() if row is not None else None
 
-    def has_active_job(self, document_id):
-        return BusinessDocumentJob.select().where((BusinessDocumentJob.document_id == document_id) & (BusinessDocumentJob.status.in_(ACTIVE_JOB_STATUSES))).exists()
+    def has_active_job(self, document_id, *, include_queued=True):
+        return BusinessDocumentJob.select().where((BusinessDocumentJob.document_id == document_id) & (BusinessDocumentJob.status.in_(ACTIVE_JOB_STATUSES))).exists() or (
+            include_queued and BusinessDocumentWorkRequest.select().where((BusinessDocumentWorkRequest.document_id == document_id) & (BusinessDocumentWorkRequest.status == "QUEUED")).exists()
+        )
 
     def catalog_entry(self, entry_id):
         row = BusinessDocumentCatalog.get_or_none(BusinessDocumentCatalog.id == entry_id)
@@ -178,6 +184,7 @@ class PeeweeDocumentWriter:
         release(document.tenant_id, "business_requirements", document_id)
         # Durable export stages outlive their document until blob cleanup succeeds.
         for model in (
+            BusinessDocumentWorkRequest,
             BusinessDocumentEvaBinding,
             BusinessDocumentEvidenceSnapshot,
             BusinessDocumentExportArtifact,
@@ -247,6 +254,30 @@ class PeeweeDocumentWriter:
     def insert_job(self, **values):
         self._require_transaction()
         BusinessDocumentJob.create(**values, **timestamps())
+
+    def work_requests(self, document_id):
+        return list(
+            BusinessDocumentWorkRequest.select()
+            .where((BusinessDocumentWorkRequest.document_id == document_id) & BusinessDocumentWorkRequest.status.in_(("QUEUED", "RUNNING", "FAILED")))
+            .order_by(BusinessDocumentWorkRequest.sequence, BusinessDocumentWorkRequest.id)
+            .dicts()
+        )
+
+    def find_work(self, dedupe_key):
+        row = BusinessDocumentWorkRequest.get_or_none(BusinessDocumentWorkRequest.dedupe_key == dedupe_key)
+        return row.__data__.copy() if row else None
+
+    def insert_work(self, **values):
+        self._require_transaction()
+        BusinessDocumentWorkRequest.create(**values, **timestamps())
+
+    def update_work(self, request_id, **values):
+        self._require_transaction()
+        BusinessDocumentWorkRequest.update(**values, update_time=current_timestamp(), update_date=datetime.now()).where(BusinessDocumentWorkRequest.id == request_id).execute()
+
+    def finish_work(self, job_id, status, error=None):
+        self._require_transaction()
+        BusinessDocumentWorkRequest.update(status=status, error=error, update_time=current_timestamp(), update_date=datetime.now()).where(BusinessDocumentWorkRequest.job_id == job_id).execute()
 
     def document(self, tenant_id, document_id):
         row = BusinessDocument.get_or_none((BusinessDocument.id == document_id) & (BusinessDocument.tenant_id == tenant_id))

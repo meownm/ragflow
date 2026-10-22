@@ -338,6 +338,16 @@ test('technical operations show an empty cohort and hide stale values after fail
   expect(screen.queryByText('noTechnicalObservations')).not.toBeInTheDocument();
 });
 
+test('a failed history request does not claim the QA tenant is unconfigured', async () => {
+  jest
+    .mocked(listDocumentQualityRuns)
+    .mockRejectedValue(new Error('unavailable'));
+  mount();
+  expect(await screen.findByRole('alert')).toHaveTextContent('runsLoadError');
+  expect(screen.queryByText('notConfigured')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'runNow' })).toBeDisabled();
+});
+
 test('separates model quality and exact operational denominators', async () => {
   mount();
   expect(await screen.findByText(/3\/3/)).toBeInTheDocument();
@@ -1031,6 +1041,7 @@ test('manual case names and operation reasons are localized and raw reasons rema
   jest.mocked(getSpecificationOperations).mockResolvedValue(
     response({
       ...specificationOperations,
+      counts: { total: 2, execution_complete: 0, reports_complete: 0 },
       reasons: [{ code: 'MODEL_TIMEOUT', count: 2 }],
     }),
   );
@@ -1052,11 +1063,144 @@ test('manual case names and operation reasons are localized and raw reasons rema
   );
 });
 
+test.each(['business_requirements', 'technical_specification'])(
+  'overview distinguishes processed, complete and incomplete %s runs',
+  async (product) => {
+    await useLocale('ru');
+    jest.mocked(listDocumentQualityCampaigns).mockResolvedValue(
+      response({
+        campaigns: [
+          {
+            ...campaign,
+            status: 'PARTIAL',
+            runs: [
+              run,
+              {
+                ...run,
+                id: 'incomplete-summary',
+                status: 'INCOMPLETE',
+                report: null,
+              },
+              {
+                ...run,
+                id: 'running-summary',
+                status: 'RUNNING',
+                report: null,
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    mount('/admin/document-quality?product=' + product);
+    const summary = await screen.findByLabelText('Итоги серии');
+    expect(
+      within(summary).getByText('Обработано запусков').nextElementSibling,
+    ).toHaveTextContent('2/3');
+    expect(
+      within(summary).getByText('Полных результатов').nextElementSibling,
+    ).toHaveTextContent('1');
+    expect(
+      within(summary).getByText('Неполных отчётов').nextElementSibling,
+    ).toHaveTextContent('1');
+  },
+);
+
+test('overview period follows the selected operational window across tabs', async () => {
+  await useLocale('ru');
+  jest
+    .mocked(getDocumentQuality)
+    .mockImplementation(async (days) => response({ ...operations, days }));
+  mount('/admin/document-quality?days=30');
+  expect(await screen.findByText('За последние 30 дней')).toBeInTheDocument();
+  expect(getDocumentQuality).toHaveBeenLastCalledWith(30);
+  fireEvent.click(screen.getByRole('tab', { name: 'Задания БТ' }));
+  fireEvent.click(screen.getByRole('button', { name: '24 часа' }));
+  await waitFor(() => expect(getDocumentQuality).toHaveBeenLastCalledWith(1));
+  fireEvent.click(screen.getByRole('tab', { name: 'Обзор' }));
+  expect(await screen.findByText('За последний 1 день')).toBeInTheDocument();
+});
+
+test('empty technical operations keep the empty state and omit unmeasured detail grids', async () => {
+  await useLocale('ru');
+  mount(
+    '/admin/document-quality?product=technical_specification&tab=operations',
+  );
+  const panel = await screen.findByRole('region', {
+    name: 'Эксплуатационные показатели проверок ТЗ',
+  });
+  expect(within(panel).getByRole('status')).toHaveTextContent(
+    'За выбранный период зарегистрированных проверок ТЗ нет.',
+  );
+  expect(
+    within(panel).getByText('Зарегистрировано проверок').nextElementSibling,
+  ).toHaveTextContent('0');
+  expect(
+    within(panel).queryByText('Полный расход токенов'),
+  ).not.toBeInTheDocument();
+  expect(within(panel).queryByRole('table')).not.toBeInTheDocument();
+});
+
+test.each(['ru', 'en'] as const)(
+  'known job types and latency units are localized in %s while unknown types remain distinct',
+  async (language) => {
+    await useLocale(language);
+    const known = [
+      'GENERATE_EXPORT',
+      'SQL_AGENT_QUERY',
+      'SQL_AGENT_REQUIREMENTS',
+      'SQL_AGENT_REVISION',
+      'SQL_AGENT_SCHEMA',
+      'SQL_QUERY_RUN',
+    ];
+    jest.mocked(getDocumentQuality).mockResolvedValue(
+      response({
+        ...operations,
+        latency_p95_ms: 184141,
+        tasks: [...known, 'NEW_TASK_TYPE'].map((task_type) => ({
+          task_type,
+          category: 'EXPORT',
+          completed: 1,
+          dead: 0,
+          pending: 0,
+          retry: 0,
+          running: 0,
+        })),
+      }),
+    );
+    mount('/admin/document-quality?tab=operations');
+    const title = language === 'ru' ? 'Экспорт документа' : 'Document export';
+    expect(
+      (await screen.findAllByText(new RegExp(title))).length,
+    ).toBeGreaterThan(0);
+    for (const code of known)
+      expect(document.body.textContent).not.toContain(code);
+    expect(document.body.textContent).toContain('NEW_TASK_TYPE');
+    expect(document.body.textContent).toContain(
+      language === 'ru' ? 'мс' : 'ms',
+    );
+    expect(document.body.textContent).toContain(
+      language === 'ru'
+        ? '95% измеренных длительностей'
+        : '95% of measured durations',
+    );
+  },
+);
+
 test.each(['ru', 'en'] as const)(
   'error filter keeps distinct codes and submits the selected code in %s',
   async (language) => {
     await useLocale(language);
-    const codes = ['EMPTY_AI_RESPONSE', 'JOB_LEASE_EXPIRED', 'INVALID_AI_JSON'];
+    const codes = [
+      'EMPTY_AI_RESPONSE',
+      'JOB_LEASE_EXPIRED',
+      'INVALID_AI_JSON',
+      'INVALID_CHANGE_PLAN',
+      'INVALID_DOCUMENT_DRAFT',
+      'INVALID_EXECUTION_AUDIT',
+      'ACCEPTED_PROPOSAL_OMITTED',
+      'STALE_AI_RESULT',
+    ];
     jest.mocked(getDocumentQualityJobs).mockResolvedValue(
       response({
         days: 7,
@@ -1075,10 +1219,14 @@ test.each(['ru', 'en'] as const)(
       name: language === 'ru' ? 'Код ошибки' : 'Error code',
     });
     await waitFor(() =>
-      expect(within(select).getAllByRole('option')).toHaveLength(5),
+      expect(within(select).getAllByRole('option')).toHaveLength(
+        codes.length + 2,
+      ),
     );
     const options = within(select).getAllByRole('option').slice(1);
-    expect(new Set(options.map((o) => o.textContent)).size).toBe(4);
+    expect(new Set(options.map((o) => o.textContent)).size).toBe(
+      codes.length + 1,
+    );
     for (const code of [...codes, 'RETIRED_ERROR']) {
       expect(
         within(select).getByRole('option', { name: new RegExp(code) }),

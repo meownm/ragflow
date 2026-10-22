@@ -96,6 +96,12 @@ def _idle_problem(document: Mapping[str, Any]) -> StateConflict | None:
     return None
 
 
+def _feedback_problem(document: Mapping[str, Any]) -> StateConflict | None:
+    if document.get("active_job_id") and document["lifecycle_state"] == "REVIEW":
+        return None
+    return _idle_problem(document)
+
+
 def command_problem(
     command: str,
     document: Mapping[str, Any],
@@ -103,6 +109,7 @@ def command_problem(
     payload: Mapping[str, Any] | None = None,
     *,
     preview: Mapping[str, Any] | None = None,
+    work_pending: bool = False,
 ) -> RuleViolation | None:
     """First command-state failure; omitted payload checks eligibility for the UI.
 
@@ -112,6 +119,15 @@ def command_problem(
 
     if document["lifecycle_state"] == "ARCHIVED":
         return StateConflict("DOCUMENT_ARCHIVED", "Archived documents cannot be changed")
+    if work_pending and command not in {
+        CommandType.REQUEST_REVIEW_ASSESSMENT,
+        CommandType.ANSWER_QUESTION,
+        CommandType.DECIDE_PROPOSAL,
+        CommandType.ACCEPT_PROPOSAL,
+        CommandType.CANCEL_PROPOSAL_ACCEPTANCE,
+        CommandType.ADD_COMMENT,
+    }:
+        return StateConflict("OPERATION_IN_PROGRESS", "Review work is queued")
     match command:
         case CommandType.REQUEST_INTAKE_ASSESSMENT:
             assert review is not None
@@ -124,7 +140,7 @@ def command_problem(
             assert review is not None
             if review.open_question_ids("REVIEW") and not review.has_unassessed_feedback:
                 return StateConflict("OPEN_REVIEW_QUESTIONS", "Add new review feedback before reassessment while questions remain open")
-            return _idle_problem(document)
+            return _feedback_problem(document)
         case CommandType.REQUEST_DRAFT:
             if problem := _lifecycle_problem(document, "INTAKE"):
                 return problem
@@ -158,7 +174,7 @@ def command_problem(
                 return StateConflict("CHANGE_PREVIEW_STALE", "The prepared changes are no longer current")
             return None
         case CommandType.DECIDE_PROPOSAL | CommandType.ACCEPT_PROPOSAL | CommandType.CANCEL_PROPOSAL_ACCEPTANCE | CommandType.ADD_COMMENT:
-            return _idle_problem(document) or _lifecycle_problem(document, "REVIEW")
+            return _feedback_problem(document) or _lifecycle_problem(document, "REVIEW")
         case CommandType.START_REVIEW:
             return _idle_problem(document) or _lifecycle_problem(document, "AGREED")
         case CommandType.RESTORE_REVISION:
@@ -178,17 +194,19 @@ def command_problem(
                 if payload.get("format") not in {"MARKDOWN", "DOCX", "EVA_WIKI"}:
                     return RuleViolation("INVALID_EXPORT_FORMAT", "Unsupported export format")
             return _idle_problem(document)
-        case CommandType.ANSWER_QUESTION | CommandType.ARCHIVE:
+        case CommandType.ANSWER_QUESTION:
+            return _feedback_problem(document)
+        case CommandType.ARCHIVE:
             return _idle_problem(document)
         case _:
             return RuleViolation("UNKNOWN_COMMAND", "Unsupported command type")
 
 
-def available_commands(document: Mapping[str, Any], review: ReviewState, *, preview: Mapping[str, Any] | None = None) -> list[str]:
+def available_commands(document: Mapping[str, Any], review: ReviewState, *, preview: Mapping[str, Any] | None = None, work_pending: bool = False) -> list[str]:
     """Choose ordered UI actions, then apply the same state rules as execution."""
 
     lifecycle = document["lifecycle_state"]
-    if not is_operation_quiescent(document["operation_state"]) or lifecycle == "ARCHIVED":
+    if (not is_operation_quiescent(document["operation_state"]) and not document.get("active_job_id")) or lifecycle == "ARCHIVED":
         return []
     if lifecycle == "INTAKE":
         commands = ["ARCHIVE"]
@@ -219,4 +237,4 @@ def available_commands(document: Mapping[str, Any], review: ReviewState, *, prev
     if preview is not None:
         commands = [command for command in commands if command not in {"APPLY_CHANGES", "PREPARE_CHANGES"}]
         commands.extend(("CONFIRM_PREPARED_CHANGES", "DISCARD_PREPARED_CHANGES"))
-    return [command for command in commands if command_problem(command, document, review, preview=preview) is None]
+    return [command for command in commands if command_problem(command, document, review, preview=preview, work_pending=work_pending) is None]

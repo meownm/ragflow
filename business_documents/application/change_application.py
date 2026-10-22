@@ -92,7 +92,7 @@ class ApplyChanges:
 
         version = document["state_version"] + 1
         event_id = self._new_id()
-        changes: dict[str, Any] = {"operation_state": "IDLE", "state_version": version}
+        changes: dict[str, Any] = {"operation_state": "IDLE", "state_version": version, **({"active_job_id": None} if job["payload"].get("background_work") else {})}
         if mode is ChangeMode.PREVIEW:
             kind = "ChangePreviewPrepared"
             payload = {"job_id": job["id"], "base_revision_id": job["base_revision_id"], "review_cycle": document["active_review_cycle"]}
@@ -106,6 +106,7 @@ class ApplyChanges:
                 "remaining_proposal_ids": list(inputs.pending_proposal_ids),
                 "acknowledged_no_change_event_ids": list(inputs.acknowledged_event_ids),
                 "source_event_ids": list(inputs.source_event_ids),
+                "changed_section_ids": sorted({operation["section_id"] for operation in plan["operations"] if "section_id" in operation}),
                 "evidence_refs": list(inputs.evidence_refs),
                 **prompt_audit(job),
                 **({"execution": execution} if execution else {}),

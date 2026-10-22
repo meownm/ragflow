@@ -531,6 +531,7 @@ export interface BusinessDocumentProposal {
   applied?: boolean;
   application?: {
     status:
+      | 'QUEUED'
       | 'WAITING'
       | 'PENDING'
       | 'RUNNING'
@@ -679,6 +680,23 @@ export interface BusinessDocumentProjection {
   allowed_commands: BusinessDocumentCommandType[];
   last_error?: BusinessDocumentOperationError | string | null;
   latest_job?: BusinessDocumentJobSummary | null;
+  background_work?: Array<{
+    request_id: string;
+    kind: 'PLAN_CHANGES' | 'ASSESS_REVIEW';
+    status: 'QUEUED' | 'RUNNING' | 'FAILED';
+    proposal_id?: string | null;
+    job_id?: string | null;
+    error?: BusinessDocumentOperationError | string | null;
+  }>;
+  last_analysis?: {
+    event_id: string;
+    applied: boolean;
+    superseded?: boolean;
+    question_count?: number;
+    proposal_count?: number;
+    created_at: number;
+  } | null;
+  last_application?: { revision_id: string; section_ids: string[] } | null;
   change_preview?: { job_id: string; base_revision_id: string } | null;
   latest_exports?: BusinessDocumentExportArtifact[];
   eva_binding?: BusinessDocumentEvaBinding | null;
@@ -1211,6 +1229,9 @@ export interface BusinessDocumentCatalogEntry {
   capability_level: 'L5';
   capability_type?: string | null;
   hierarchy: Record<string, string>;
+  existing_documents?: Array<
+    Pick<BusinessDocumentSummary, 'document_id' | 'title' | 'lifecycle_state'>
+  >;
 }
 
 export interface BusinessDocumentCatalog {

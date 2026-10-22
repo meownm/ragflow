@@ -28,6 +28,7 @@ def commands():
     writer, queries, changes = Mock(), Mock(), Mock()
     writer.transaction.side_effect = nullcontext
     writer.lock_document.return_value = document()
+    writer.work_requests.return_value = []
     writer.command_receipt.return_value = None
     writer.receipt_after_conflict.return_value = None
     writer.review.return_value = empty_review()
@@ -136,7 +137,7 @@ def test_proposals_are_scoped_to_cycle_and_existing_decisions_are_immutable(comm
     "damage,code",
     [
         ("blank-text", "INVALID_COMMENT"),
-        ("old-revision", "COMMENT_REVISION_CONFLICT"),
+        ("foreign-revision", "COMMENT_REVISION_CONFLICT"),
         ("missing-revision", "COMMENT_REVISION_CONFLICT"),
         ("missing-section", "COMMENT_SECTION_NOT_FOUND"),
         ("anchor-revision", "INVALID_COMMENT_ANCHOR"),
@@ -151,8 +152,9 @@ def test_comments_reject_stale_revision_section_and_browser_selection_before_wri
     payload = {"revision_id": "revision", "section_id": None, "text": "A comment", "anchor": None}
     if damage == "blank-text":
         payload["text"] = "  "
-    elif damage == "old-revision":
-        payload["revision_id"] = "old-revision"
+    elif damage == "foreign-revision":
+        payload["revision_id"] = "foreign-revision"
+        writer.revision_or_none.return_value = None
     elif damage == "missing-revision":
         writer.revision_or_none.return_value = None
     elif damage == "missing-section":
@@ -191,7 +193,7 @@ def test_receipted_success_replays_without_new_mutation_but_revoked_owner_cannot
     writer.record_command.reset_mock()
     second = scenario.execute("tenant", "owner", "doc", request)
     assert second == {**first, "idempotent_replay": True}
-    assert receipt["response"] == first
+    assert receipt["response"] == {key: value for key, value in first.items() if key != "document"}
     writer.insert_answer.assert_not_called()
     writer.update_document.assert_not_called()
     writer.record_command.assert_not_called()

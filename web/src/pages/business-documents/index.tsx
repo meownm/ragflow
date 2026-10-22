@@ -83,6 +83,7 @@ import {
   useState,
 } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
+import { BackgroundWork } from './components/background-work';
 import { ChangePreviewPanel } from './components/change-preview-panel';
 import { BusinessDocumentError } from './components/document-error';
 import { DocumentMarkdown } from './components/document-markdown';
@@ -100,7 +101,6 @@ import { EvaChangeWorkbench } from './components/eva-change-workbench';
 import { evidenceRefsChanged } from './components/evidence-refs-diff';
 import { ProtocolPane } from './components/protocol-pane';
 import { ResizeHandle } from './components/resize-handle';
-import { ReviewActivity } from './components/review-activity';
 import { RevisionHistoryPanel } from './components/revision-history-panel';
 import { appendVoiceTranscript, VoiceInput } from './components/voice-input';
 import type {
@@ -196,8 +196,9 @@ const exportLabels = {
 } as const;
 
 const BusinessDocumentKeys = {
+  lists: () => ['business-documents'] as const,
   list: (page: number, scope: 'mine' | 'all') =>
-    ['business-documents', scope, page] as const,
+    [...BusinessDocumentKeys.lists(), scope, page] as const,
   catalog: () => ['business-document-catalog'] as const,
   detail: (documentId?: string) => ['business-document', documentId] as const,
   accessUsers: () => ['business-document-access-users'] as const,
@@ -253,11 +254,29 @@ function CreateBusinessDocumentPage() {
   const selectedCatalogEntry = catalogQuery.data?.items.find(
     (item) => item.id === catalogEntryId,
   );
+  const existingDocuments = selectedCatalogEntry?.existing_documents ?? [];
+  const catalogGroups = [
+    {
+      label: 'Без документов',
+      items: (catalogQuery.data?.items ?? []).filter(
+        (item) => !item.existing_documents?.length,
+      ),
+    },
+    {
+      label: 'Документ уже есть',
+      items: (catalogQuery.data?.items ?? []).filter(
+        (item) => item.existing_documents?.length,
+      ),
+    },
+  ];
   const canCreate = documentsQuery.data?.capabilities?.create === true;
   const createMutation = useMutation({
     mutationFn: createBusinessDocument,
     onSuccess: async (document) => {
       setEvaMatches([]);
+      void queryClient.invalidateQueries({
+        queryKey: BusinessDocumentKeys.catalog(),
+      });
       if (document.current_revision) {
         navigate(`${Routes.BusinessDocuments}/${document.document_id}`);
         return;
@@ -295,9 +314,14 @@ function CreateBusinessDocumentPage() {
   const deleteMutation = useMutation({
     mutationFn: (documentId: string) => deleteBusinessDocument(documentId),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({
-        queryKey: ['business-documents'],
-      });
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: BusinessDocumentKeys.lists(),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: BusinessDocumentKeys.catalog(),
+        }),
+      ]);
     },
   });
 
@@ -612,18 +636,32 @@ function CreateBusinessDocumentPage() {
                   setEvaMatches([]);
                 }}
                 disabled={catalogQuery.isLoading || catalogQuery.isError}
-                className="h-9 w-full rounded-md border border-border-button bg-bg-input px-3 text-sm font-normal outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                className="h-9 w-full rounded-md border border-border-button bg-bg-base px-3 text-sm font-normal text-text-primary outline-none [color-scheme:light] focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 dark:[color-scheme:dark] [&_optgroup]:bg-bg-base [&_optgroup]:text-text-primary [&_option]:bg-bg-base [&_option]:text-text-primary"
                 aria-label="Название документа"
+                aria-describedby={
+                  existingDocuments.length
+                    ? 'existing-topic-documents'
+                    : undefined
+                }
                 data-testid="business-document-catalog-select"
               >
                 <option value="" disabled>
                   Выберите документ из справочника
                 </option>
-                {(catalogQuery.data?.items ?? []).map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.title}
-                  </option>
-                ))}
+                {catalogGroups
+                  .filter((group) => group.items.length)
+                  .map((group) => (
+                    <optgroup key={group.label} label={group.label}>
+                      {group.items.map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.title}
+                          {item.existing_documents?.length
+                            ? ' — документ уже есть'
+                            : ''}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
               </select>
               {catalogQuery.isLoading && (
                 <span className="block text-xs font-normal text-text-secondary">
@@ -641,6 +679,35 @@ function CreateBusinessDocumentPage() {
                 </span>
               )}
             </label>
+            {existingDocuments.length > 0 && (
+              <div
+                id="existing-topic-documents"
+                role="status"
+                className="mt-3 rounded-md border border-border-button bg-bg-card p-3 text-sm"
+                data-testid="business-document-existing-topic"
+              >
+                <p className="font-medium text-text-primary">
+                  По этой теме документ уже есть
+                </p>
+                <p className="mt-1 text-xs leading-5 text-text-secondary">
+                  Откройте существующий документ, чтобы продолжить работу, или
+                  создайте ещё один.
+                </p>
+                <ul className="mt-2 space-y-2">
+                  {existingDocuments.map((document) => (
+                    <li key={document.document_id}>
+                      <Link
+                        to={`${Routes.BusinessDocuments}/${document.document_id}`}
+                        className="font-medium text-text-primary underline underline-offset-4"
+                      >
+                        {document.title} ·{' '}
+                        {lifecycleLabels[document.lifecycle_state]}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             <label className="mt-5 block space-y-2 text-sm font-medium">
               <span>Идея (необязательно)</span>
               <div className="relative">
@@ -801,7 +868,9 @@ function CreateBusinessDocumentPage() {
                 disabled={!catalogEntryId}
               >
                 <Sparkles className="size-4" />
-                Начать работу
+                {existingDocuments.length
+                  ? 'Создать ещё один документ'
+                  : 'Начать работу'}
               </Button>
             </div>
           </form>
@@ -891,7 +960,12 @@ export default function BusinessDocumentsPage() {
     retry: false,
     refetchInterval: (query) => {
       const state = query.state.data?.operation_state;
-      return state && state !== 'IDLE' && state !== 'FAILED' ? 2000 : false;
+      return (state && state !== 'IDLE' && state !== 'FAILED') ||
+        query.state.data?.background_work?.some(
+          (work) => work.status === 'QUEUED',
+        )
+        ? 2000
+        : false;
     },
   });
 
@@ -1042,28 +1116,21 @@ export default function BusinessDocumentsPage() {
     [],
   );
   const highlightedSectionIds = useMemo(() => {
-    if (document?.change_preview && inlineChangePreview)
-      return inlineChangePreview.sections.map((section) => section.section_id);
-    if (
-      !document ||
-      !['ANALYZING_REVIEW', 'APPLYING_CHANGES'].includes(
-        document.operation_state,
-      )
-    )
-      return [];
+    if (!document) return [];
+    const proposals = new Set(
+      document.background_work
+        ?.filter((work) => work.status !== 'FAILED')
+        .map((work) => work.proposal_id),
+    );
     return [
       ...new Set(
         [
           ...(inlineChangePreview?.sections.map(
             (section) => section.section_id,
           ) ?? []),
-          ...document.protocol.questions.map(
-            (question) => question.target_section_id,
-          ),
-          ...document.protocol.proposals.map(
-            (proposal) => proposal.target_section_id,
-          ),
-          ...document.protocol.comments.map((comment) => comment.section_id),
+          ...document.protocol.proposals
+            .filter((proposal) => proposals.has(proposal.proposal_id))
+            .map((proposal) => proposal.target_section_id),
         ].filter((sectionId): sectionId is string => Boolean(sectionId)),
       ),
     ];
@@ -1131,7 +1198,7 @@ export default function BusinessDocumentsPage() {
   });
   useEffect(() => {
     clearSelection();
-  }, [clearSelection, currentRevisionId]);
+  }, [clearSelection, documentId]);
   const revisionsQuery = useQuery({
     queryKey: ['business-document-revisions', documentId],
     queryFn: () => listBusinessDocumentRevisions(documentId!),
@@ -2066,6 +2133,7 @@ export default function BusinessDocumentsPage() {
             />
           )}
           <DocumentPane
+            key={documentId}
             revision={displayedRevision}
             historyMode={historyOpen}
             previousRevision={previousDisplayedRevision}
@@ -2073,6 +2141,13 @@ export default function BusinessDocumentsPage() {
             preliminary={!document.change_preview}
             onFocusSource={focusSource}
             highlightedSectionIds={documentHighlightedSectionIds}
+            savedSectionIds={
+              !historyOpen &&
+              document.last_application &&
+              document.last_application.revision_id === currentRevisionId
+                ? document.last_application.section_ids
+                : []
+            }
             focusRequest={sectionFocus}
             onSelectionChange={(nextSelection) => {
               if (!historyOpen) setSelection(nextSelection);
@@ -2100,14 +2175,7 @@ export default function BusinessDocumentsPage() {
               operationLabel={operationLabels[document.operation_state]}
             />
           )}
-          {['ANALYZING_REVIEW', 'APPLYING_CHANGES'].includes(
-            document.operation_state,
-          ) && (
-            <ReviewActivity
-              reviewCycle={document.protocol}
-              onFocusSection={focusSection}
-            />
-          )}
+          <BackgroundWork document={document} onFocusSection={focusSection} />
         </div>
         <div className="col-start-3 row-start-2 grid min-h-0 max-lg:col-start-1 max-lg:row-start-3">
           {historyOpen ? (
@@ -2150,7 +2218,7 @@ export default function BusinessDocumentsPage() {
               revision={document.current_revision}
               selection={selection}
               allowedCommands={[...allowed]}
-              pending={isBusy}
+              pending={commandMutation.isPending}
               editable={
                 Boolean(promptStorageIdentity) &&
                 document.permissions?.edit !== false &&

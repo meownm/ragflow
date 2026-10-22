@@ -97,7 +97,7 @@ def test_compact_eva_resizing_and_review_history(page, base_url, width):
     old_proposal.locator("summary").click()
     expect(old_proposal.get_by_test_id("revision-text-diff")).to_contain_text("Запись удерживается 15 минут")
     expect(old_proposal.get_by_test_id("revision-text-diff")).to_contain_text("Запись сразу подтверждается")
-    expect(page.get_by_role("button", name="Принять", exact=True)).to_have_count(0)
+    expect(page.get_by_role("button", name="Применить", exact=True)).to_have_count(0)
     expect(input_field).to_have_value("Замечание сохранится при изменении размеров")
     history_path = Path(os.environ.get("PW_ARTIFACTS_DIR", "test/playwright/artifacts")) / f"compact-bt-history-{width}.png"
     history_path.parent.mkdir(parents=True, exist_ok=True)
@@ -280,6 +280,78 @@ def _install_common_routes(page):
 
 
 @pytest.mark.p1
+@pytest.mark.parametrize("width,theme", [(1440, "light"), (390, "light"), (1440, "dark")])
+def test_business_document_catalog_availability_and_theme(page, base_url, width, theme):
+    page.set_viewport_size({"width": width, "height": 1000 if width > 1000 else 844})
+    _install_session(page)
+    page.add_init_script(f"localStorage.setItem('ragflow-ui-theme', '{theme}')")
+    page.route("**/api/v1/**", lambda route: route.fulfill(json=_envelope({})))
+    _install_common_routes(page)
+    capabilities = {"read": True, "create": True, "edit_own": True, "edit_all": False, "delete": False, "assign": False}
+    page.route("**/api/v1/business-documents?*", lambda route: route.fulfill(json=_envelope({"items": [], "total": 0, "page": 1, "page_size": 20, "capabilities": capabilities})))
+    title = "12.06.06.01.01 Ведение и согласование табеля рабочего времени"
+    page.route(
+        "**/api/v1/business-documents/catalog",
+        lambda route: route.fulfill(
+            json=_envelope(
+                {
+                    "items": [
+                        {"id": "free", "title": "Новая тема", "existing_documents": []},
+                        {"id": "occupied", "title": title, "existing_documents": [{"document_id": "existing-doc", "title": title, "lifecycle_state": "REVIEW"}]},
+                    ],
+                    "total": 2,
+                }
+            )
+        ),
+    )
+    page.goto(f"{base_url.rstrip('/')}/business-documents")
+    select = page.get_by_test_id("business-document-catalog-select")
+    expect(select).to_be_visible(timeout=RESULT_TIMEOUT_MS)
+    expect(select.locator('optgroup[label="Без документов"] option')).to_have_count(1)
+    expect(select.locator('optgroup[label="Документ уже есть"] option')).to_contain_text("документ уже есть")
+    select.select_option("occupied")
+    notice = page.get_by_test_id("business-document-existing-topic")
+    expect(notice).to_contain_text("По этой теме документ уже есть")
+    expect(notice.get_by_role("link")).to_have_attribute("href", "/business-documents/existing-doc")
+    expect(page.get_by_role("button", name="Создать ещё один документ", exact=True)).to_be_enabled()
+    colors = select.evaluate("""el => {
+      const menu = getComputedStyle(el.querySelector('option[value="occupied"]'));
+      return {background: menu.backgroundColor, color: menu.color, scheme: getComputedStyle(el).colorScheme};
+    }""")
+
+    def luminance(color):
+        rgb = [int(value) / 255 for value in re.findall(r"\d+", color)[:3]]
+        channels = [value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4 for value in rgb]
+        return sum(value * weight for value, weight in zip(channels, (0.2126, 0.7152, 0.0722)))
+
+    background, foreground = luminance(colors["background"]), luminance(colors["color"])
+    assert colors["scheme"] == theme
+    assert background > 0.8 if theme == "light" else background < 0.15
+    assert (max(background, foreground) + 0.05) / (min(background, foreground) + 0.05) >= 4.5
+    link_colors = notice.evaluate("""el => {
+      const backgrounds = [];
+      for (let node = el; node; node = node.parentElement) backgrounds.push(getComputedStyle(node).backgroundColor);
+      return {backgrounds: backgrounds.reverse(), color: getComputedStyle(el.querySelector('a')).color};
+    }""")
+    effective_background = [1.0, 1.0, 1.0]
+    for color in link_colors["backgrounds"]:
+        channels = [float(value) for value in re.findall(r"[\d.]+", color)]
+        alpha = channels[3] if len(channels) > 3 else 1.0
+        effective_background = [channel / 255 * alpha + background * (1 - alpha) for channel, background in zip(channels[:3], effective_background)]
+    link_background = luminance("rgb(" + ",".join(str(round(channel * 255)) for channel in effective_background) + ")")
+    link_foreground = luminance(link_colors["color"])
+    assert (max(link_background, link_foreground) + 0.05) / (min(link_background, link_foreground) + 0.05) >= 4.5
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    notice.scroll_into_view_if_needed()
+    artifacts = Path(os.environ["PW_ARTIFACTS_DIR"])
+    artifacts.mkdir(parents=True, exist_ok=True)
+    page.screenshot(path=str(artifacts / f"catalog-{theme}-{width}.png"))
+    select.select_option("free")
+    expect(notice).to_have_count(0)
+    expect(page.get_by_role("button", name="Начать работу", exact=True)).to_be_enabled()
+
+
+@pytest.mark.p1
 @pytest.mark.parametrize("width", [1440, 390])
 def test_business_document_protocol_markdown_and_decisions(page, base_url, width):
     _install_session(page)
@@ -326,8 +398,9 @@ def test_business_document_protocol_markdown_and_decisions(page, base_url, width
     expect(proposal_card.locator("code")).to_have_text("идентификатор")
     expect(page.get_by_test_id("business-document-comment").locator("blockquote strong")).to_have_text("Комментарий автора")
     with page.expect_request("**/api/v1/business-documents/doc-ui-1/commands") as decision_request:
-        proposal_card.get_by_role("button", name="Принять", exact=True).click()
-    assert decision_request.value.post_data_json["payload"] == {"proposal_id": "proposal-1", "decision": "ACCEPTED"}
+        proposal_card.get_by_role("button", name="Применить", exact=True).click()
+    assert decision_request.value.post_data_json["type"] == "ACCEPT_PROPOSAL"
+    assert decision_request.value.post_data_json["payload"] == {"proposal_id": "proposal-1"}
 
 
 @pytest.mark.p1
@@ -853,8 +926,8 @@ def test_streamed_document_section_stays_preliminary_after_reload(page, base_url
     expect(preview).to_contain_text("Предварительные изменения", timeout=RESULT_TIMEOUT_MS)
     section = page.locator('[data-section-id="1"]')
     body = section.locator("[data-section-body]")
-    expect(body).to_contain_text("Новая измеримая цель.")
-    expect(body).not_to_contain_text("Сократить время перевода до одной минуты.")
+    expect(body).to_contain_text("Сократить время перевода до одной минуты.")
+    expect(body).not_to_contain_text("Новая измеримая цель.")
     expect(preview.get_by_role("button", name="Подтвердить применение")).to_have_count(0)
     expect(section.get_by_text("Основания изменений", exact=False)).to_be_visible()
     difference = section.get_by_test_id("revision-text-diff")
@@ -865,9 +938,9 @@ def test_streamed_document_section_stays_preliminary_after_reload(page, base_url
     expect(section.locator("details")).to_have_attribute("open", "")
 
     page.reload()
-    expect(body).to_contain_text("Новая измеримая цель.", timeout=RESULT_TIMEOUT_MS)
+    expect(body).to_contain_text("Сократить время перевода до одной минуты.", timeout=RESULT_TIMEOUT_MS)
     expect(preview).to_contain_text("Предварительные изменения")
-    expect(section).to_have_attribute("data-section-preview", "true")
+    expect(section).to_have_attribute("data-section-preview", "false")
     expect(difference.locator("pre").nth(0)).to_have_text("Сократить время перевода до одной минуты.")
     expect(difference.locator("pre").nth(1)).to_have_text("Новая измеримая цель.")
     expect(section.locator("details")).not_to_have_attribute("open", "")
@@ -962,12 +1035,13 @@ def test_document_changes_are_saved_and_visible_without_confirmation(page, base_
     page.goto(f"{base_url.rstrip('/')}/business-documents/doc-ui-1")
     page.get_by_role("button", name="Применить исправления").click()
     section = page.locator('[data-section-id="1"]')
-    expect(section.locator("[data-section-body]")).to_contain_text("Новая измеримая цель.", timeout=RESULT_TIMEOUT_MS)
-    expect(section).to_have_attribute("data-section-preview", "true")
+    expect(page.get_by_test_id("business-document-change-preview")).to_contain_text("Предварительные изменения", timeout=RESULT_TIMEOUT_MS)
+    expect(section.locator("[data-section-body]")).to_contain_text("Сократить время перевода до одной минуты.")
+    expect(section).to_have_attribute("data-section-preview", "false")
     assert projection["current_revision"]["revision_id"] == "revision-3"
     page.reload()
-    expect(section).to_have_attribute("data-section-preview", "true", timeout=RESULT_TIMEOUT_MS)
-    expect(section.locator("[data-section-body]")).to_contain_text("Новая измеримая цель.")
+    expect(section).to_have_attribute("data-section-preview", "false", timeout=RESULT_TIMEOUT_MS)
+    expect(section.locator("[data-section-body]")).to_contain_text("Сократить время перевода до одной минуты.")
     assert projection["current_revision"]["revision_id"] == "revision-3"
     assert len(submitted) == 1 and len(streams) >= 2
 

@@ -11,7 +11,7 @@ from business_documents.domain.content import SECTION_CONTENT_WARNING_CODES, ren
 from business_documents.domain.block_diff import with_block_ids
 from business_documents.application.errors import BusinessDocumentError, ConflictError, NotFoundError, PermissionDeniedError, ValidationError
 from business_documents.domain.access import BusinessDocumentRole, DocumentAccess, normalize_role
-from business_documents.domain.review import ReviewState
+from business_documents.domain.review import REVIEW_FEEDBACK, ReviewState
 from business_documents.domain.workflow import available_commands
 
 
@@ -56,11 +56,13 @@ class DocumentReader(Protocol):
     def jobs(self, document_id: str) -> Iterable[Record]: ...
     def job(self, document_id: str, job_id: str) -> Record | None: ...
     def stream_events(self, job_id: str, after: int) -> tuple[list[dict[str, Any]], str | None]: ...
+    def work_requests(self, document_id: str) -> Iterable[Record]: ...
     def latest_job(self, document_id: str) -> Record | None: ...
     def proposal_jobs(self, document_id: str, after_version: int) -> Iterable[Record]: ...
     def preview(self, document: Record, now: int) -> Record | None: ...
     def exports(self, document_id: str) -> Iterable[Record]: ...
     def catalog(self) -> Iterable[Record]: ...
+    def catalog_documents(self) -> Iterable[Record]: ...
     def active_users(self) -> Iterable[Record]: ...
 
 
@@ -254,7 +256,10 @@ class DocumentQueries:
         return document
 
     def list_catalog(self) -> dict[str, Any]:
-        items = list(self._reader.catalog())
+        documents: dict[str, list[dict[str, Any]]] = {}
+        for row in self._reader.catalog_documents():
+            documents.setdefault(row["catalog_entry_id"], []).append({"document_id": row["id"], "title": row["title"], "lifecycle_state": row["lifecycle_state"]})
+        items = [{**item, "existing_documents": documents.get(item["id"], [])} for item in self._reader.catalog()]
         return {"items": items, "total": len(items)}
 
     def list_documents(
@@ -353,8 +358,18 @@ class DocumentQueries:
         access = access or DocumentAccess(document["owner_id"])
         permissions = access.permissions(document["owner_id"])
         preview = self._reader.preview(document, self._clock())
-        commands = available_commands(document, review, preview=preview)
         awaiting = review.accepted_inputs & review.active_inputs
+        work = [row for row in self._reader.work_requests(document["id"]) if row["payload"]["active_review_cycle"] == document["active_review_cycle"]]
+        commands = available_commands(document, review, preview=preview, work_pending=any(item["status"] == "QUEUED" for item in work))
+        analysis = next(
+            (
+                event
+                for event in reversed(review.events)
+                if event["event_type"] in {"ReviewAssessed", "ReviewAssessmentNotApplied"} and event["payload"].get("review_cycle") == document["active_review_cycle"]
+            ),
+            None,
+        )
+        application = next((event for event in reversed(review.events) if event["event_type"] == "ChangesApplied" and event["payload"].get("review_cycle") == document["active_review_cycle"]), None)
         fields = (
             "tenant_id",
             "owner_id",
@@ -384,12 +399,30 @@ class DocumentQueries:
                 document["current_revision_id"],
                 self._reader.proposal_jobs(document["id"], min(review.events_by_id[event_id]["sequence"] for event_id in awaiting)) if awaiting else (),
                 preview_id=preview["id"] if preview else None,
+                work_requests=work,
             ),
             "allowed_commands": commands if permissions["edit"] else [],
             "protocol_history": [
                 {"review_cycle": previous.review_cycle, **project_protocol(previous, document["current_revision_id"])}
                 for previous in self._reader.review_history(document["id"], document["active_review_cycle"])
             ],
+            "last_application": ({"revision_id": application["payload"]["revision_id"], "section_ids": application["payload"].get("changed_section_ids", [])} if application else None),
+            "background_work": [
+                {"request_id": row["id"], "kind": row["kind"], "status": row["status"], "proposal_id": row["payload"].get("proposal_id"), "job_id": row["job_id"], "error": row["error"]}
+                for row in work
+            ],
+            "last_analysis": (
+                {
+                    "event_id": analysis["id"],
+                    "created_at": analysis["create_time"],
+                    "applied": analysis["event_type"] == "ReviewAssessed",
+                    "question_count": analysis["payload"].get("question_count", 0),
+                    "proposal_count": analysis["payload"].get("proposal_count", 0),
+                    "superseded": bool(analysis["payload"].get("superseded") or any(review.latest_sequences.get(kind, 0) > analysis["sequence"] for kind in REVIEW_FEEDBACK)),
+                }
+                if analysis
+                else None
+            ),
             "latest_job": project_job(self._reader.latest_job(document["id"])),
             "change_preview": {"job_id": preview["id"], "base_revision_id": preview["base_revision_id"]} if preview else None,
             "latest_exports": list(self._reader.exports(document["id"])),
@@ -479,10 +512,13 @@ class DocumentQueries:
         }
 
 
-def project_protocol(review: ReviewState, current_revision_id: str | None, proposal_jobs: Iterable[Record] = (), *, preview_id: str | None = None) -> dict[str, Any]:
+def project_protocol(
+    review: ReviewState, current_revision_id: str | None, proposal_jobs: Iterable[Record] = (), *, preview_id: str | None = None, work_requests: Iterable[Record] = ()
+) -> dict[str, Any]:
     warnings = with_document_warnings({}, [warning for event in review.events for warning in event["payload"].get("warnings", []) if warning["code"] not in SECTION_CONTENT_WARNING_CODES]).get(
         "warnings", []
     )
+    work_by_proposal = {row["payload"].get("proposal_id"): row for row in work_requests}
     applied_proposal_events = review.accepted_inputs - review.active_inputs
     applications = {}
     awaiting = review.accepted_inputs & review.active_inputs
@@ -542,7 +578,11 @@ def project_protocol(review: ReviewState, current_revision_id: str | None, propo
                 "decision": review.decisions[row["id"]]["decision"] if row["id"] in review.decisions else "PENDING",
                 "decision_event_id": review.protocol_events["decisions"].get(row["id"]),
                 "applied": review.protocol_events["decisions"].get(row["id"]) in applied_proposal_events,
-                "application": applications.get(review.protocol_events["decisions"].get(row["id"]), {"status": "WAITING", "error": None})
+                "application": (
+                    {"status": "QUEUED" if work_by_proposal[row["id"]]["status"] == "QUEUED" else "DEAD", "error": work_by_proposal[row["id"]]["error"]}
+                    if row["id"] in work_by_proposal and work_by_proposal[row["id"]]["status"] in {"QUEUED", "FAILED"}
+                    else applications.get(review.protocol_events["decisions"].get(row["id"]), {"status": "WAITING", "error": None})
+                )
                 if review.protocol_events["decisions"].get(row["id"]) in awaiting
                 else None,
             }

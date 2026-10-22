@@ -25,6 +25,21 @@ def requested_by(job: Mapping[str, Any], fallback: str) -> str:
     return actor_id if isinstance(actor_id, str) and actor_id else fallback
 
 
+def targets_current_document(document: Mapping[str, Any], job: Mapping[str, Any]) -> bool:
+    """Feedback may advance the version; content, owner and active job stay fenced."""
+    if document["current_revision_id"] != job["base_revision_id"]:
+        return False
+    payload = job["payload"] or {}
+    if not payload.get("background_work"):
+        return document["state_version"] == job["source_state_version"]
+    return bool(
+        document.get("active_job_id") == job["id"]
+        and document["owner_id"] == payload["owner_id"]
+        and document["active_review_cycle"] == payload["active_review_cycle"]
+        and document["lifecycle_state"] == "REVIEW"
+    )
+
+
 def has_current_lease(job: Mapping[str, Any], worker_id: str, lease_token: str | None, now: int) -> bool:
     return bool(
         job["status"] == "RUNNING" and lease_token and job["lease_owner"] == worker_id and job["lease_token"] == lease_token and job["lease_expires_at"] is not None and job["lease_expires_at"] > now

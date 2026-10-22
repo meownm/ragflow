@@ -3818,6 +3818,13 @@ export default {
         modelComparison: 'Сравнение моделей',
         caseProgress: 'Сценарии',
         seriesSummary: 'Итоги серии',
+        periodDays_one: 'За последний {{count}} день',
+        periodDays_few: 'За последние {{count}} дня',
+        periodDays_many: 'За последние {{count}} дней',
+        periodDays_other: 'За последние {{count}} дня',
+        comparisonNotQualifiedShort: 'Рейтинг недоступен',
+        comparisonConditions: 'Условия сравнения',
+        p95Note: 'p95: 95% измеренных длительностей не превышают это значение.',
         processedRuns: 'Обработано запусков',
         completeRuns: 'Полных результатов',
         incompleteRuns: 'Неполных отчётов',
@@ -3910,6 +3917,12 @@ export default {
         reasons: {
           PROVIDER_USAGE_MISSING: 'Провайдер не передал расход токенов.',
           INVALID_AI_JSON: 'Модель вернула некорректный JSON.',
+          INVALID_CHANGE_PLAN: 'План изменений не прошёл проверку.',
+          INVALID_DOCUMENT_DRAFT: 'Черновик документа не прошёл проверку.',
+          INVALID_EXECUTION_AUDIT: 'Данные о выполнении задания некорректны.',
+          ACCEPTED_PROPOSAL_OMITTED:
+            'Принятое предложение отсутствует в плане изменений.',
+          STALE_AI_RESULT: 'Документ изменился; результат задания устарел.',
           MODEL_ERROR: 'Ошибка обращения к модели.',
           CANCELLED: 'Проверка отменена.',
           EXECUTION_CANCELLED: 'Выполнение проверки отменено.',
@@ -4003,14 +4016,21 @@ export default {
           'За выбранный период зарегистрированных проверок ТЗ нет.',
         technicalOperationsTab: 'Рабочие проверки ТЗ',
         technicalOperations: {
+          emptyNote:
+            'Статистика появится после первой рабочей проверки ТЗ. Эталонные прогоны учитываются отдельно.',
+          groups: {
+            execution: 'Исполнение',
+            reports: 'Отчёты',
+            tokens: 'Токены и учёт расхода',
+          },
           title: 'Эксплуатационные показатели проверок ТЗ',
           cohortNote:
-            'Учтены зарегистрированные проверки, принятые за выбранный период. История до начала учёта может отсутствовать. Прочерк означает отсутствие подтверждённого измерения; полный расход требует учёта reasoning.',
+            'Учтены зарегистрированные проверки, принятые за выбранный период. История до начала учёта может отсутствовать. Прочерк означает отсутствие подтверждённого измерения; полный расход требует учёта токенов рассуждений.',
           firstObservation: 'Первое наблюдение',
           executionRate: 'Завершённое исполнение',
           reportRate: 'Полные отчёты',
           total_tokens: 'Полный расход токенов',
-          known_spent_tokens: 'Учтено по usage провайдера',
+          known_spent_tokens: 'Учтённый расход провайдера',
           reserved_tokens: 'Резерв токенового бюджета',
           known_reserved_tokens: 'Известная часть резерва',
           meanMs: 'Среднее, мс',
@@ -4184,6 +4204,12 @@ export default {
         operationalOnly:
           'Здесь показаны операционные показатели. Оценки качества текста требуют отдельного прогона эталонных сценариев.',
         taskTypes: {
+          GENERATE_EXPORT: 'Экспорт документа',
+          SQL_AGENT_QUERY: 'Построение SQL-запроса',
+          SQL_AGENT_SCHEMA: 'Подбор схемы данных',
+          SQL_QUERY_RUN: 'Выполнение SQL-запроса',
+          SQL_AGENT_REQUIREMENTS: 'Требования к SQL-запросу',
+          SQL_AGENT_REVISION: 'Правки SQL-запроса',
           ASSESS_INTAKE: 'Оценка входных данных',
           GENERATE_DRAFT: 'Создание черновика',
           ASSESS_REVIEW: 'Оценка правок',

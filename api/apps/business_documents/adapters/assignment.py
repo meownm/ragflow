@@ -8,7 +8,7 @@ from typing import Any
 
 from business_documents.application.errors import BusinessDocumentError
 from api.apps.business_documents.runtime import document_queries
-from api.db.db_models import BusinessDocument, BusinessDocumentEvent, BusinessDocumentJob, User
+from api.db.db_models import BusinessDocument, BusinessDocumentEvent, BusinessDocumentJob, BusinessDocumentWorkRequest, User
 from business_documents.application.assign_document import (
     AssignDocument,
     AssignDocumentCommand,
@@ -83,7 +83,10 @@ class _PeeweeAssignmentUnitOfWork(AssignmentUnitOfWork):
         )
 
     def has_active_job(self, document_id: str) -> bool:
-        return BusinessDocumentJob.select(BusinessDocumentJob.id).where((BusinessDocumentJob.document_id == document_id) & (BusinessDocumentJob.status.in_(ACTIVE_JOB_STATUSES))).exists()
+        return (
+            BusinessDocumentJob.select(BusinessDocumentJob.id).where((BusinessDocumentJob.document_id == document_id) & (BusinessDocumentJob.status.in_(ACTIVE_JOB_STATUSES))).exists()
+            or BusinessDocumentWorkRequest.select().where((BusinessDocumentWorkRequest.document_id == document_id) & (BusinessDocumentWorkRequest.status == "QUEUED")).exists()
+        )
 
     def compare_and_set_owner(
         self,

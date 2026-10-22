@@ -50,13 +50,13 @@ const closedPendingProposalPresentation = {
 };
 
 const applicationMessages = {
-  WAITING:
-    'Предложение принято. Текст документа не изменён. Проанализируйте замечания и нажмите «Применить исправления».',
+  QUEUED: 'В очереди. Применим к последней сохранённой ревизии.',
+  WAITING: 'Предложение ожидает применения.',
   PENDING: 'Применение ожидает запуска задачи.',
-  RUNNING: 'Изменения вносятся. Дождитесь завершения задачи.',
+  RUNNING: 'Анализируем и вносим изменения. Можно продолжать обсуждение.',
   RETRY:
     'Попытка применения завершилась ошибкой. Запланирован автоматический повтор.',
-  DEAD: 'Подготовка изменений завершилась ошибкой. Повторите подготовку изменений или отмените принятие.',
+  DEAD: 'Не удалось применить предложение. Повторите попытку или отмените принятие.',
   PREPARED:
     'Изменения подготовлены. Для сохранения нажмите «Применить исправления». После отмены принятия потребуется подготовить их заново.',
   PREVIEW_STALE:
@@ -159,7 +159,13 @@ export function ProposalItem({
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={!canCancelAcceptance || pending}
+                  disabled={
+                    !canCancelAcceptance ||
+                    pending ||
+                    ['PENDING', 'RUNNING', 'RETRY'].includes(
+                      proposal.application?.status ?? '',
+                    )
+                  }
                   data-testid={`cancel-acceptance-${proposal.proposal_id}`}
                   onClick={onCancelAcceptance}
                 >
@@ -185,7 +191,11 @@ export function ProposalItem({
                   Отклонить
                 </Button>
               )}
-              {isPending && (
+              {(isPending ||
+                (isAwaitingApplication &&
+                  ['DEAD', 'COMPLETED', 'WAITING', 'PREVIEW_STALE'].includes(
+                    proposal.application?.status ?? 'WAITING',
+                  ))) && (
                 <Button
                   size="sm"
                   variant="accent"
@@ -201,7 +211,7 @@ export function ProposalItem({
                   }
                 >
                   <Check className="size-3.5" />
-                  Принять
+                  {isPending ? 'Применить' : 'Повторить применение'}
                 </Button>
               )}
             </div>

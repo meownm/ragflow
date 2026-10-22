@@ -27,11 +27,12 @@ function show(item = proposal, canCancel = true) {
 }
 
 test.each([
-  ['WAITING', 'Предложение принято. Текст документа не изменён.'],
+  ['WAITING', 'Предложение ожидает применения.'],
+  ['QUEUED', 'В очереди.'],
   ['PENDING', 'Применение ожидает запуска задачи.'],
-  ['RUNNING', 'Изменения вносятся.'],
+  ['RUNNING', 'Анализируем и вносим изменения.'],
   ['RETRY', 'Запланирован автоматический повтор.'],
-  ['DEAD', 'Подготовка изменений завершилась ошибкой.'],
+  ['DEAD', 'Не удалось применить предложение.'],
   ['PREPARED', 'Изменения подготовлены.'],
   ['PREVIEW_STALE', 'Подготовленные изменения больше не актуальны'],
   ['COMPLETED', 'применение этого предложения не подтверждено.'],
@@ -82,7 +83,7 @@ test.each(['PENDING', 'REJECTED', 'APPLIED'] as const)(
 
 test('accepts a pending proposal as a decision', () => {
   const callbacks = show({ ...proposal, decision: 'PENDING' });
-  fireEvent.click(screen.getByRole('button', { name: 'Принять' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Применить' }));
   expect(callbacks.onDecide).toHaveBeenCalledWith({
     proposal_id: 'p1',
     decision: 'ACCEPTED',
@@ -98,7 +99,7 @@ test('renders proposal and rationale Markdown without changing the decision payl
   });
   expect(screen.getByText('Новое').tagName).toBe('STRONG');
   expect(screen.getByText('Обоснование').tagName).toBe('EM');
-  fireEvent.click(screen.getByRole('button', { name: 'Принять' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Применить' }));
   expect(callbacks.onDecide).toHaveBeenCalledWith({
     proposal_id: 'p1',
     decision: 'ACCEPTED',

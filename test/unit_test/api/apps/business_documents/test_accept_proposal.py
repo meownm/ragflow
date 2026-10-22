@@ -3,6 +3,7 @@
 from copy import deepcopy
 
 import pytest
+from test.unit_test.api.apps.business_documents.helpers import record_confirmed_proposal
 
 from test.unit_test.api.apps.business_documents.test_business_document_service import (
     AUTHOR,
@@ -71,7 +72,7 @@ def _request_changes(document, *, preview=True):
     return document, requested
 
 
-@pytest.mark.parametrize("kind", ["ACCEPT_PROPOSAL", "DECIDE_PROPOSAL"])
+@pytest.mark.parametrize("kind", ["DECIDE_PROPOSAL"])
 @pytest.mark.parametrize("open_questions", [False, True])
 def test_accept_only_records_decision_without_queue_or_revision(database, monkeypatch, kind, open_questions):
     document = _document(open_questions)
@@ -116,7 +117,7 @@ def test_accept_only_records_decision_without_queue_or_revision(database, monkey
 def test_separate_preparation_keeps_original_until_explicit_confirmation(database, open_questions):
     document = _document(open_questions)
     proposal_id = document["protocol"]["proposals"][0]["proposal_id"]
-    document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "ACCEPT_PROPOSAL", {"proposal_id": proposal_id}))
+    record_confirmed_proposal(document, proposal_id)
     document, requested = _request_changes(document)
     job = BusinessDocumentJob.get_by_id(requested["job_id"])
     assert job.payload["preview_only"] is True
@@ -137,7 +138,7 @@ def test_separate_preparation_keeps_original_until_explicit_confirmation(databas
 def test_failed_preparation_preserves_acceptance_and_can_be_prepared_again(database):
     document = _document()
     proposal_id = document["protocol"]["proposals"][0]["proposal_id"]
-    document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "ACCEPT_PROPOSAL", {"proposal_id": proposal_id}))
+    record_confirmed_proposal(document, proposal_id)
     document, requested = _request_changes(document)
     job = BusinessDocumentJobQueue.claim("worker")
     job_completion.fail(TENANT, "worker", job.id, {"code": "MODEL_UNAVAILABLE", "message": "Model unavailable"}, job.lease_token)
@@ -158,7 +159,7 @@ def test_failed_preparation_preserves_acceptance_and_can_be_prepared_again(datab
         ("reader", "DOCUMENT_PERMISSION_DENIED"),
         ("stale", "STATE_VERSION_CONFLICT"),
         ("missing", "PROPOSAL_NOT_FOUND"),
-        ("rejected", "PROPOSAL_ALREADY_DECIDED"),
+        ("rejected", "PROPOSAL_NOT_ACCEPTED"),
         ("busy", "OPERATION_IN_PROGRESS"),
         ("cycle", "PROPOSAL_NOT_FOUND"),
     ],
@@ -204,18 +205,7 @@ def test_accept_rolls_back_decision_if_audit_fails(database, monkeypatch):
 
 def test_evidence_only_change_creates_a_revision_even_when_markdown_is_identical(database):
     document = _document()
-    document_commands.execute(
-        TENANT,
-        AUTHOR,
-        document["document_id"],
-        _command(
-            document,
-            "ACCEPT_PROPOSAL",
-            {
-                "proposal_id": document["protocol"]["proposals"][0]["proposal_id"],
-            },
-        ),
-    )
+    record_confirmed_proposal(document, document["protocol"]["proposals"][0]["proposal_id"])
     document, requested = _request_changes(document, preview=False)
     output = _plan(document, requested)
     section = next(section for section in document["current_revision"]["document_ast"]["sections"] if section["id"] == "5.5")
@@ -236,7 +226,7 @@ def test_evidence_only_change_creates_a_revision_even_when_markdown_is_identical
 def test_existing_scoped_job_keeps_its_saved_application_contract(database):
     document = _document()
     proposal_id = document["protocol"]["proposals"][0]["proposal_id"]
-    document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "ACCEPT_PROPOSAL", {"proposal_id": proposal_id}))
+    record_confirmed_proposal(document, proposal_id)
     document, requested = _request_changes(document, preview=False)
     job = BusinessDocumentJob.get_by_id(requested["job_id"])
     payload = {**job.payload, "apply_proposal_id": proposal_id}
@@ -253,8 +243,8 @@ def test_explicit_application_saves_accepted_proposal_without_preview_confirmati
     proposal_id = document["protocol"]["proposals"][0]["proposal_id"]
     accepted = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "ACCEPT_PROPOSAL", {"proposal_id": proposal_id}))
     assert accepted["document"]["current_revision"] == document["current_revision"]
-    assert "job_id" not in accepted
-    document, requested = _request_changes(document, preview=False)
+    assert "job_id" in accepted
+    requested = accepted
     assert "preview_only" not in BusinessDocumentJob.get_by_id(requested["job_id"]).payload
     output = _plan(document, requested)
     result = _complete(requested["job_id"], output)

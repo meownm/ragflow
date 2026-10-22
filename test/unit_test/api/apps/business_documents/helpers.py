@@ -14,6 +14,29 @@ def append_document_event(*args, **kwargs):
         return document_writer.append_event(*args, **kwargs)
 
 
+def record_confirmed_proposal(document, proposal_id):
+    """Seed a pre-upgrade confirmed decision for migration and saved-plan tests."""
+    from api.apps.business_documents.runtime import document_queries, document_writer
+    from common.misc_utils import get_uuid
+
+    with document_writer.transaction():
+        current = document_writer.lock_document(document["document_id"])
+        decision_id, event_id = get_uuid(), get_uuid()
+        document_writer.insert_decision(id=decision_id, document_id=current["id"], proposal_id=proposal_id, actor_id=current["owner_id"], decision="ACCEPTED")
+        current = document_writer.update_document(current, {"state_version": current["state_version"] + 1})
+        document_writer.append_event(
+            current["id"],
+            current["state_version"],
+            "ProposalDecided",
+            "USER",
+            current["owner_id"],
+            {"proposal_id": proposal_id, "decision_id": decision_id, "decision": "ACCEPTED"},
+            event_id,
+            event_id=event_id,
+        )
+    return {"accepted": True, "state_version": current["state_version"], "document": document_queries.get_document(current["id"], current["owner_id"])}
+
+
 @contextmanager
 def temporary_common_settings(settings_module: ModuleType) -> Iterator[None]:
     """Install a collection-time settings stub without leaking it to other tests."""

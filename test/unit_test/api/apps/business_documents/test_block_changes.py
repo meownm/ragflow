@@ -68,7 +68,9 @@ def test_worker_uses_block_schema_full_context_and_persists_stable_ids(database)
 
 def test_preview_aggregates_block_pairs_then_confirms_atomically_and_replays(database):
     document = _document(open_questions=False)
-    decision = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "ACCEPT_PROPOSAL", {"proposal_id": document["protocol"]["proposals"][0]["proposal_id"]}))
+    decision = document_commands.execute(
+        TENANT, AUTHOR, document["document_id"], _command(document, "DECIDE_PROPOSAL", {"proposal_id": document["protocol"]["proposals"][0]["proposal_id"], "decision": "ACCEPTED"})
+    )
     document, requested = _request_changes(decision["document"], preview=True)
     job = BusinessDocumentJob.get_by_id(requested["job_id"])
     before_count = BusinessDocumentRevision.select().count()
@@ -141,7 +143,9 @@ def test_legacy_revision_gets_ids_without_rewriting_history_then_uses_block_edit
     projected = document_queries.get_document(document["document_id"], AUTHOR)
     assert projected == document_queries.get_document(document["document_id"], AUTHOR)
     assert BusinessDocumentRevision.get_by_id(saved.id).document_ast == legacy
-    decision = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(projected, "ACCEPT_PROPOSAL", {"proposal_id": projected["protocol"]["proposals"][0]["proposal_id"]}))
+    decision = document_commands.execute(
+        TENANT, AUTHOR, document["document_id"], _command(projected, "DECIDE_PROPOSAL", {"proposal_id": projected["protocol"]["proposals"][0]["proposal_id"], "decision": "ACCEPTED"})
+    )
     _, requested = _request_changes(decision["document"], preview=False)
     job = BusinessDocumentJob.get_by_id(requested["job_id"])
     assert BusinessDocumentWorker(ai=BusinessDocumentAI(PlanAdapter(block_plan(job), None))).run_once()

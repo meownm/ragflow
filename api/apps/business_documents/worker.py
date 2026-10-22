@@ -25,19 +25,23 @@ from datetime import datetime
 from time import monotonic
 from typing import Any
 
+from peewee import fn
+
 from api.apps.business_documents.ai import BusinessDocumentAI
 from api.apps.business_documents.evidence import BusinessDocumentEvidence, related_file_search_enabled
 from api.apps.business_documents.exports import BusinessDocumentExportService
-from api.apps.business_documents.runtime import job_completion
+from api.apps.business_documents.runtime import job_completion, document_commands
+from api.apps.business_documents.migrations import resume_accepted_changes
 from api.apps.business_documents.recovery import AIRecovery, is_transient_failure, retry_delay_ms
 from api.apps.business_documents.sql_query_agent_worker import BusinessDocumentSqlAgentRunner
 from api.apps.business_documents.sql_query_agents import BusinessDocumentSqlAgentService
 from api.apps.business_documents.sql_query_runs import BusinessDocumentSqlRunService
 from api.apps.business_documents.sql_query_retention import expire_due_results
 from api.apps.business_documents.stream_events import BusinessDocumentStreamEvents
-from api.db.db_models import BusinessDocument, BusinessDocumentJob
+from api.db.db_models import BusinessDocument, BusinessDocumentJob, BusinessDocumentWorkRequest
 from business_documents.application.errors import BusinessDocumentError, ConflictError
 from business_documents.domain.hashing import stable_hash
+from business_documents.domain.job import targets_current_document
 from business_documents.domain.job_recovery import MAX_AI_SECONDS
 from common.misc_utils import get_uuid
 from common.time_utils import current_timestamp
@@ -63,10 +67,17 @@ class BusinessDocumentJobQueue:
     def checkpoint_ai(cls, job: BusinessDocumentJob, worker_id: str, state: dict[str, Any]) -> None:
         now = current_timestamp()
         document = BusinessDocument.get_or_none(BusinessDocument.id == job.document_id)
-        if document is None or document.state_version != job.source_state_version or document.current_revision_id != job.base_revision_id:
+        if document is None or not targets_current_document(document.__data__, job.__data__):
             raise ConflictError("STALE_AI_RESULT", "Документ изменился; результат задания больше не актуален")
         changed = (
-            BusinessDocumentJob.update(result={"recovery": state})
+            BusinessDocumentJob.update(
+                result={"recovery": state},
+                **(
+                    {"progress": 0.65, "progress_stage": "VALIDATING", "progress_message": "Проверяем выполнение принятого предложения"}
+                    if job.job_type == "PLAN_CHANGES" and state.get("candidate") is not None
+                    else {}
+                ),
+            )
             .where(
                 (BusinessDocumentJob.id == job.id)
                 & (BusinessDocumentJob.status == "RUNNING")
@@ -411,6 +422,16 @@ class BusinessDocumentWorker:
         return output, consumer() if callable(consumer) else None
 
     def run_once(self, *, now_ms: int | None = None) -> bool:
+        candidates = (
+            BusinessDocumentWorkRequest.select(BusinessDocumentWorkRequest.document_id)
+            .join(BusinessDocument, on=(BusinessDocumentWorkRequest.document_id == BusinessDocument.id))
+            .where((BusinessDocumentWorkRequest.status == "QUEUED") & BusinessDocument.operation_state.in_(("IDLE", "FAILED")))
+            .group_by(BusinessDocumentWorkRequest.document_id)
+            .order_by(fn.MIN(BusinessDocumentWorkRequest.sequence))
+            .limit(32)
+        )
+        for document_id in dict.fromkeys(row.document_id for row in candidates):
+            document_commands.advance_work(document_id)
         job = BusinessDocumentJobQueue.claim(self.worker_id, lease_ms=self.lease_ms, now_ms=now_ms)
         if job is None:
             return False
@@ -528,6 +549,11 @@ class BusinessDocumentWorker:
             recovered, dead = self.recover_stale()
         except Exception:
             logging.exception("Business document stale-job recovery failed")
+        migrated = 0
+        try:
+            migrated = resume_accepted_changes()
+        except Exception:
+            logging.exception("Business document accepted-change migration failed")
         reconciled = {"cleaned": 0}
         try:
             reconciled = self.reconcile_exports()
@@ -538,7 +564,7 @@ class BusinessDocumentWorker:
             expired = expire_due_results()
         except Exception:
             logging.exception("SQL result retention cleanup failed")
-        return bool(recovered or dead or reconciled["cleaned"] or expired)
+        return bool(recovered or dead or migrated or reconciled["cleaned"] or expired)
 
     def run_forever(self, stop_event: threading.Event, *, poll_seconds: float = 2.0, maintenance_lock: threading.Lock | None = None) -> None:
         database = BusinessDocumentJob._meta.database

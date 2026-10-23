@@ -80,9 +80,29 @@ def restore_eva_formatting(soup: BeautifulSoup) -> None:
 def prepare_eva_html(value: str) -> str:
     """Use the native editor representations accepted by EVA's save renderer."""
     soup = BeautifulSoup(value, "html.parser")
-    if not soup.select('input[type="checkbox"], .tox-checklist, ol[reversed], font, a[cmf_converted], a[data-document-heading-anchor]'):
+    if not soup.select('table, input[type="checkbox"], .tox-checklist, ol[reversed], font, a[cmf_converted], a[data-document-heading-anchor]'):
         return value
     restore_eva_formatting(soup)
+    for index, table in enumerate(soup.select("table"), start=1):
+        if table.find_parent(attrs={"data-macros": "wikitables"}) is None:
+            node_id = str(table.get("data-id", f"eva-table-{index}"))
+            wrapper = soup.new_tag("div", attrs={"class": "tableView-content-wrap cmf-scrollbar", "data-macros": "wikitables", "data-id": f"{node_id}-wrap"})
+            table.wrap(wrapper)
+        occupied_until = {}
+        rows = (row for row in table.find_all("tr") if row.find_parent("table") is table)
+        for y, row in enumerate(rows):
+            x = 0
+            for cell in row.find_all(["th", "td"], recursive=False):
+                while occupied_until.get(x, 0) > y:
+                    x += 1
+                for attribute in ("colspan", "rowspan"):
+                    raw = str(cell.get(attribute, "1"))
+                    cell[attribute] = str(max(1, min(1000, int(raw)))) if re.fullmatch(r"[0-9]{1,6}", raw) else "1"
+                cell.attrs.update({"data-x": str(x), "data-y": str(y)})
+                colspan, rowspan = int(cell["colspan"]), int(cell["rowspan"])
+                for column in range(x, x + colspan):
+                    occupied_until[column] = y + rowspan
+                x += colspan
     for listing in soup.select("ul, ol"):
         items = listing.find_all("li", recursive=False)
         boxes = [next((box for box in item.select('input[type="checkbox"]') if box.find_parent("li") is item), None) for item in items]
@@ -132,6 +152,18 @@ def sanitize_style(value: str) -> str:
 
 def sanitize_html(value: str) -> str:
     soup = BeautifulSoup(str(value or ""), "html.parser")
+    for wrapper in soup.select('div[data-macros="wikitables"]'):
+        elements = wrapper.find_all(recursive=False)
+        if (
+            wrapper.attrs.keys() <= {"class", "data-macros", "data-id"}
+            and set(wrapper.get("class", [])) <= {"tableView-content-wrap", "cmf-scrollbar"}
+            and len(elements) == 1
+            and elements[0].name == "table"
+            and not any(text.strip() for text in wrapper.find_all(string=True, recursive=False))
+        ):
+            # This editor shell is reconstructed on export. Retaining it as a
+            # generic div would add another shell on every import/export cycle.
+            wrapper.unwrap()
     restore_eva_formatting(soup)
     for comment in soup.find_all(string=lambda value: isinstance(value, Comment)):
         comment.extract()

@@ -1476,6 +1476,8 @@ def test_export_requires_durable_storage_write_and_docx_is_valid_zip(database):
 
 @pytest.mark.p0
 def test_eva_wiki_exact_shape_escapes_content_and_excludes_protocol(database, monkeypatch):
+    from bs4 import BeautifulSoup
+
     class FrozenDateTime:
         @classmethod
         def now(cls, timezone=None):
@@ -1502,7 +1504,7 @@ def test_eva_wiki_exact_shape_escapes_content_and_excludes_protocol(database, mo
     }
 
     rendered = BusinessDocumentExportService._render_eva_wiki(ast, 7)
-    assert rendered == "\n".join(
+    expected = "\n".join(
         [
             f'<div class="business-requirements" data-template-version="{published_template()["template_version"]}" data-revision="7" data-generated-at="2026-08-26">',
             '<h2 data-id="br-r7-s1">1. Scope &lt;trusted&gt;</h2>',
@@ -1522,6 +1524,7 @@ def test_eva_wiki_exact_shape_escapes_content_and_excludes_protocol(database, mo
             "</div>",
         ]
     )
+    assert BeautifulSoup(rendered, "html.parser") == BeautifulSoup(expected, "html.parser")
     assert "Комментарии автора" not in rendered
     assert "Предложения агента" not in rendered
     assert "Вопросы агента" not in rendered

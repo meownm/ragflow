@@ -16,9 +16,10 @@ class EvaPageError(Exception):
 
 
 class EvaPages:
-    def __init__(self, connection, decode_html, origin, *, write_connection=None, encode_markdown=None):
+    def __init__(self, connection, decode_html, origin, *, write_connection=None, encode_markdown=None, retains_html=None):
         self.connection, self.decode_html, self.origin = connection, decode_html, origin
         self.write_connection, self.encode_markdown = write_connection, encode_markdown
+        self.retains_html = retains_html or (lambda _expected, _actual: True)
 
     def search_sources(self, actor_id, query="", limit=20):
         if not isinstance(query, str) or type(limit) is not int or not 1 <= limit <= 100:
@@ -114,7 +115,7 @@ class EvaPages:
             html = self.encode_markdown(markdown, reader)
             expected_hash = content_hash(self.decode_html(html))
             actual_hash = content_hash(self.decode_html(str(remote.get("html") or "")))
-            if actual_hash == expected_hash and str(remote.get("name") or "").strip() == name:
+            if actual_hash == expected_hash and str(remote.get("name") or "").strip() == name and self.retains_html(html, str(remote.get("html") or "")):
                 source = self.decode_html(str(remote.get("html") or ""))
                 return self._binding(binding["connector_id"], reader, binding, remote, source), source
             if str(remote.get("version") or "") != binding["remote_version"] or actual_hash != binding["remote_content_hash"]:
@@ -130,7 +131,11 @@ class EvaPages:
                 raise EvaPageError("EVA_CHANGED", "Опубликованный текст Eva изменился во время выгрузки. Проверьте страницу", 409)
             if content_hash(self.decode_html(str(saved.get("draft_html") or ""))) != expected_hash or str(saved.get("name") or "").strip() != name:
                 raise EvaPageError("EVA_DRAFT_CONFLICT", "Черновик Eva изменился во время выгрузки. Проверьте страницу", 409)
+            if not self.retains_html(html, str(saved.get("draft_html") or "")):
+                raise EvaPageError("EVA_DRAFT_VERIFICATION_FAILED", "Не удалось подтвердить оформление после сохранения черновика Eva", 409)
             published = publish_draft(reader, writer, document_id, expected_hash, name, self.decode_html)
+            if not self.retains_html(html, str(published.get("html") or "")):
+                raise EvaPageError("EVA_PUBLISH_VERIFICATION_FAILED", "Не удалось подтвердить оформление после публикации. Проверьте страницу Eva", 409)
             source = self.decode_html(str(published.get("html") or ""))
             return self._binding(binding["connector_id"], reader, binding, published, source), source
 

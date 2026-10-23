@@ -74,24 +74,6 @@ def _eva_markdown(value: str, node_id: str, policy: dict[str, Any], environment:
         tag["data-id"] = node_id if index == 0 else f"{node_id}-md{index}"
         if tag.name == "ul":
             tag["class"] = policy["nested_list_class"] if tag.find_parent(["ul", "ol"]) else policy["root_list_class"]
-        elif tag.name == "table":
-            wrapper = soup.new_tag("div", attrs={"class": policy["table_wrapper_class"], "data-macros": policy["table_wrapper_macro"], "data-id": f"{tag['data-id']}-wrap"})
-            tag.wrap(wrapper)
-            occupied_until = {}
-            rows = (row for row in tag.find_all("tr") if row.find_parent("table") is tag)
-            for y, row in enumerate(rows):
-                x = 0
-                for cell in row.find_all(["th", "td"], recursive=False):
-                    while occupied_until.get(x, 0) > y:
-                        x += 1
-                    for attribute in ("colspan", "rowspan"):
-                        raw = str(cell.get(attribute, "1"))
-                        cell[attribute] = str(max(1, min(1000, int(raw)))) if re.fullmatch(r"[0-9]{1,6}", raw) else "1"
-                    cell.attrs.update({"data-x": str(x), "data-y": str(y)})
-                    colspan, rowspan = int(cell["colspan"]), int(cell["rowspan"])
-                    for column in range(x, x + colspan):
-                        occupied_until[column] = y + rowspan
-                    x += colspan
     return str(soup).strip()
 
 

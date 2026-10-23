@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import re
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -45,7 +46,43 @@ class _MarkdownRenderer(mistune.HTMLRenderer):
         return f"<{tag}{alignment}><p>{text or '&#160;'}</p></{tag}>\n"
 
 
-_MARKDOWN = mistune.create_markdown(renderer=_MarkdownRenderer(escape=False), plugins=["table", table_in_list, table_in_quote, "task_lists", "strikethrough", "url"])
+def _table_cells(line: str) -> list[str]:
+    cells = re.split(r" *(?<!\\)(?:\\\\)*\| *", line.strip())
+    if not cells[0]:
+        cells.pop(0)
+    if cells and not cells[-1]:
+        cells.pop()
+    return [cell.strip() for cell in cells]
+
+
+def _parse_gfm_table(block, match, state):
+    headers = _table_cells(match.group("gfm_head"))
+    delimiters = _table_cells(match.group("gfm_align"))
+    if len(headers) != len(delimiters) or not all(re.fullmatch(r":?-+:?", cell) for cell in delimiters):
+        return None
+    aligns = ["center" if cell.startswith(":") and cell.endswith(":") else "left" if cell.startswith(":") else "right" if cell.endswith(":") else None for cell in delimiters]
+
+    def row(cells, head=False):
+        # GFM, also used by the preview: missing cells are empty, excess cells
+        # are ignored. A ragged row must not turn the complete table into text.
+        values = (cells + [""] * len(headers))[: len(headers)]
+        return [{"type": "table_cell", "text": value, "attrs": {"align": align, "head": head}} for value, align in zip(values, aligns)]
+
+    rows = [{"type": "table_row", "children": row(_table_cells(line))} for line in match.group("gfm_body").splitlines()]
+    state.append_token({"type": "table", "children": [{"type": "table_head", "children": row(headers, True)}, {"type": "table_body", "children": rows}]})
+    return match.end()
+
+
+def _gfm_tables(markdown):
+    # Keep Mistune's table renderer and container integration; accept optional
+    # outside pipes independently on each row, as the browser's GFM parser does.
+    pattern = r"^ {0,3}(?P<gfm_head>(?=\S)[^\n]*\|[^\n]*)\n {0,3}(?P<gfm_align>[| :\-]+)\n(?P<gfm_body>(?: {0,3}(?=\S)[^\n]*\|[^\n]*(?:\n|$))*)"
+    markdown.block.register("gfm_table", pattern, _parse_gfm_table, before="table")
+    for rules in (markdown.block.list_rules, markdown.block.block_quote_rules):
+        markdown.block.insert_rule(rules, "gfm_table", before="table")
+
+
+_MARKDOWN = mistune.create_markdown(renderer=_MarkdownRenderer(escape=False), plugins=["table", table_in_list, table_in_quote, _gfm_tables, "task_lists", "strikethrough", "url"])
 
 
 def markdown_environment(source: str) -> dict[str, Any]:

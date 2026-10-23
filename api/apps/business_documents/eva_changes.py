@@ -101,7 +101,7 @@ def _html_to_markdown(value: str) -> str:
 
 
 def _markdown_to_html(value: str) -> str:
-    return render_markdown(_canonical_markdown(value))
+    return prepare_eva_html(render_markdown(_canonical_markdown(value)))
 
 
 def _split_sections(markdown: str) -> list[dict[str, Any]]:
@@ -407,6 +407,7 @@ class EvaDocumentChangeService:
             EvaWikiConnector._url_origin,
             write_connection=cls._page_write_connection,
             encode_markdown=lambda content, reader: render_eva_diagrams(prepare_eva_html(render_markdown(content)), reader.render_plantuml),
+            retains_html=rendered_diagrams_match,
         )
 
     @classmethod
@@ -442,7 +443,7 @@ class EvaDocumentChangeService:
     @classmethod
     def resolve_page_url(cls, actor_id: str, page_url: object) -> dict[str, Any]:
         # Optional BT linking retains an explicit read-only link when Eva is
-        # unavailable. The shared reader itself reports the failure to TЗ.
+        # unavailable. The shared reader itself reports the failure to TZ.
         normalized = cls._validate_text(page_url, "eva_page_url", maximum=2048)
         try:
             binding = EvaPages.link(normalized)
@@ -697,9 +698,9 @@ class EvaDocumentChangeService:
                     if cls._remote_published_hash(remote) != cls._serialized_draft_hash(change):
                         raise
                 cls._ensure_draft_unchanged(change, remote)
+            draft_html = render_eva_diagrams(prepare_eva_html(change.draft_html), lambda source: reader.render_plantuml(source))
             user_token_operation = True
             mutation_client, credential_version = cls._mutation_client(connector, actor_id)
-            draft_html = render_eva_diagrams(prepare_eva_html(change.draft_html), lambda source: reader.render_plantuml(source))
             mutation_client.update_document_draft(change.eva_document_id, draft_html, change.eva_document_name)
             user_token_operation = False
             verified = reader.get_document_for_edit(change.eva_document_id)

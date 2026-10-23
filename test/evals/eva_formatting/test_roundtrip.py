@@ -83,7 +83,10 @@ def semantic_html(source):
         node.unwrap()
     for node in list(soup.select("div")):
         children = [child for child in node.contents if not isinstance(child, NavigableString) or child.strip()]
-        if not node.attrs and len(children) == 1 and isinstance(children[0], Tag) and children[0].name == "table":
+        native_table_wrapper = (
+            node.get("data-macros") == "wikitables" and node.attrs.keys() <= {"class", "data-macros", "data-id"} and set(node.get("class", [])) <= {"tableView-content-wrap", "cmf-scrollbar"}
+        )
+        if (not node.attrs or native_table_wrapper) and len(children) == 1 and isinstance(children[0], Tag) and children[0].name == "table":
             node.unwrap()
     for node in list(soup.select("b, i, s, strike")):
         node.name = {"b": "strong", "i": "em", "s": "del", "strike": "del"}[node.name]
@@ -240,10 +243,26 @@ def test_formatting_oracle_rejects_data_and_style_loss(before, after):
     assert semantic_html(before) != semantic_html(after)
 
 
-def test_formatting_oracle_accepts_table_editor_serialization():
+@pytest.mark.parametrize("wrapper", ["", ' class="tableView-content-wrap cmf-scrollbar" data-macros="wikitables" data-id="eva-table-1-wrap"'])
+def test_formatting_oracle_accepts_table_editor_serialization(wrapper):
     expected = "<table><tr><th>A</th></tr><tr><td></td></tr></table>"
-    editor = '<div><table>\n<thead>\n<tr>\n<th colspan="1"><p>A</p>\n</th>\n</tr>\n</thead>\n<tbody>\n<tr><td rowspan="1"><p>&#160;</p></td></tr>\n</tbody>\n</table></div>'
+    editor = f'<div{wrapper}><table>\n<thead>\n<tr>\n<th colspan="1"><p>A</p>\n</th>\n</tr>\n</thead>\n<tbody>\n<tr><td rowspan="1"><p>&#160;</p></td></tr>\n</tbody>\n</table></div>'
     assert semantic_html(editor) == semantic_html(expected)
+
+
+@pytest.mark.parametrize(
+    "attribute", [{"style": "text-align:right"}, {"dir": "rtl"}, {"id": "table-anchor"}, {"title": "Table tooltip"}, {"width": "300"}, {"data-macros": "other"}, {"class": ["custom-table"]}]
+)
+def test_formatting_oracle_retains_meaningful_table_wrappers(attribute):
+    table = "<table><tr><td>A</td></tr></table>"
+    wrapped = BeautifulSoup(f'<div data-macros="wikitables">{table}</div>', "html.parser")
+    wrapped.div.attrs.update(attribute)
+    assert semantic_html(str(wrapped)) != semantic_html(table)
+
+
+def test_formatting_oracle_retains_content_next_to_native_table():
+    table = "<table><tr><td>A</td></tr></table>"
+    assert semantic_html(f'<div data-macros="wikitables">Before{table}After</div>') != semantic_html(table)
 
 
 @pytest.mark.parametrize("case", ALL_CASES, ids=lambda case: case.id)

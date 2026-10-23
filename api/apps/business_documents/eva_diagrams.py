@@ -2,13 +2,13 @@
 
 import hashlib
 import json
-import logging
 from collections import Counter
 from collections.abc import Callable
 
 from bs4 import BeautifulSoup
 
 from common.data_source.exceptions import ConnectorValidationError
+from business_documents.application.errors import BusinessDocumentError
 
 
 _SVG_TAGS = frozenset(
@@ -62,7 +62,8 @@ _SVG_ATTRIBUTES = frozenset(
 
 
 def _safe_svg(value: str) -> str:
-    soup = BeautifulSoup(value, "html.parser")
+    # EVA embeds this as inline HTML, including SVG returned with an XML prolog.
+    soup = BeautifulSoup(f"<div>{value}</div>", "html.parser")
     svg = soup.find("svg")
     if svg is None:
         raise ConnectorValidationError("EVA Wiki returned an invalid PlantUML image")
@@ -131,14 +132,14 @@ def render_eva_diagrams(value: str, render: Callable[[str], str]) -> str:
     for index, pre in enumerate(soup.select("pre")):
         code = pre.find("code")
         source = (code or pre).get_text().strip()
-        if not source.startswith("@startuml") or not source.endswith("@enduml"):
+        language = set(pre.get("class", [])) | set(code.get("class", []) if code is not None else [])
+        if not language.intersection({"language-plantuml", "language-puml", "language-startuml"}) and not (source.startswith("@startuml") and source.endswith("@enduml")):
             continue
         try:
             if source not in rendered:
                 rendered[source] = _safe_svg(render(source))
-        except ConnectorValidationError:
-            logging.warning("EVA PlantUML preview unavailable; retaining diagram source")
-            continue
+        except ConnectorValidationError as error:
+            raise BusinessDocumentError("EVA_DIAGRAM_RENDER_FAILED", "Не удалось построить схему PlantUML для EVA. Документ не отправлен. Проверьте схему и повторите выгрузку.", 502) from error
         identifier = f"plantuml+{index}-{hashlib.sha256(source.encode()).hexdigest()[:16]}"
         macro = soup.new_tag(
             "div",

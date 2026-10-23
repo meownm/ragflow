@@ -19,6 +19,17 @@ def test_native_eva_representation_is_equivalent_and_idempotent(case):
     assert_formatting(_markdown_to_html(_html_to_markdown(prepared)), case.html, stage="Native EVA editor import")
 
 
+def test_table_editor_shell_does_not_accumulate_on_import():
+    source = '<table><tr><td colspan="2" style="color:red">Body</td></tr></table>'
+    for _ in range(3):
+        exported = _markdown_to_html(_html_to_markdown(prepare_eva_html(source)))
+        soup = BeautifulSoup(exported, "html.parser")
+        assert len(soup.select("div")) == len(soup.select('div[data-macros="wikitables"]')) == 1
+        assert soup.td["colspan"] == "2" and soup.td["style"] == "color:red"
+        assert soup.td.text == "Body"
+        source = exported
+
+
 @pytest.mark.parametrize(
     "before,after",
     [

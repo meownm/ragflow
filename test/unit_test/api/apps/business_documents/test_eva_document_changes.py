@@ -15,6 +15,7 @@
 #
 
 from pathlib import Path
+from contextlib import contextmanager
 import sys
 from types import ModuleType, SimpleNamespace
 from unittest.mock import patch
@@ -63,14 +64,16 @@ def test_eva_diagram_round_trip_retains_sources_and_discards_rendered_labels():
     assert EVA_CHANGES_MODULE._html_to_markdown(rendered) == EVA_CHANGES_MODULE._html_to_markdown(original)
 
 
-def test_eva_diagram_svg_is_sanitized_without_sending_source_to_external_images():
+@pytest.mark.parametrize("prefix", ["", '<?xml version="1.0" encoding="UTF-8"?>'])
+def test_eva_diagram_svg_is_sanitized_without_sending_source_to_external_images(prefix):
     from bs4 import BeautifulSoup
     from api.apps.business_documents.eva_diagrams import render_eva_diagrams
 
     original = EVA_CHANGES_MODULE._markdown_to_html("```plantuml\n@startuml\nA -> B\n@enduml\n```")
     rendered = render_eva_diagrams(
         original,
-        lambda _: '<svg onload="alert(1)"><script>alert(2)</script><foreignObject><p>Unsafe</p></foreignObject><image href="https://external.test/x"/><path fill="url(https://external.test/x)"/><text>Safe</text></svg>',
+        lambda _: prefix
+        + '<svg onload="alert(1)"><script>alert(2)</script><foreignObject><p>Unsafe</p></foreignObject><image href="https://external.test/x"/><path fill="url(https://external.test/x)"/><text>Safe</text></svg>',
     )
     soup = BeautifulSoup(rendered, "html.parser")
     assert soup.svg.text == "Safe"
@@ -78,7 +81,7 @@ def test_eva_diagram_svg_is_sanitized_without_sending_source_to_external_images(
 
 
 @pytest.mark.parametrize("failure", ["invalid_svg", "renderer_unavailable"])
-def test_eva_diagram_failure_preserves_existing_code(failure):
+def test_eva_diagram_failure_is_explicit(failure):
     from api.apps.business_documents.eva_diagrams import render_eva_diagrams
 
     original = EVA_CHANGES_MODULE._markdown_to_html("```plantuml\n@startuml\nA -> B\n@enduml\n```")
@@ -88,9 +91,9 @@ def test_eva_diagram_failure_preserves_existing_code(failure):
             raise ConnectorValidationError("Unavailable")
         return "not an SVG"
 
-    result = render_eva_diagrams(original, render)
-    assert EVA_CHANGES_MODULE._html_to_markdown(result) == EVA_CHANGES_MODULE._html_to_markdown(original)
-    assert "data-macros" not in result
+    with pytest.raises(BusinessDocumentError) as caught:
+        render_eva_diagrams(original, render)
+    assert caught.value.code == "EVA_DIAGRAM_RENDER_FAILED"
 
 
 def test_repeated_diagrams_render_once_and_retain_unique_macro_ids():
@@ -106,6 +109,75 @@ def test_repeated_diagrams_render_once_and_retain_unique_macro_ids():
     render.assert_called_once_with("@startuml\nA -> B\n@enduml")
     assert len(macros) == len({macro["id"] for macro in macros}) == 2
     assert EVA_CHANGES_MODULE._html_to_markdown(result) == EVA_CHANGES_MODULE._html_to_markdown(original)
+
+
+@pytest.mark.parametrize("language", ["plantuml", "puml", "startuml"])
+@pytest.mark.parametrize("placement", ["pre", "code"])
+def test_eva_diagram_language_on_wrapper_or_code_is_exported_as_plugin(language, placement):
+    import html
+    import json
+    from bs4 import BeautifulSoup
+    from api.apps.business_documents.eva_diagrams import render_eva_diagrams
+
+    source = 'Alice -> Bob: "Данные & результат"'
+    classes = {placement: f' class="language-{language}"'}
+    original = f"<pre{classes.get('pre', '')}><code{classes.get('code', '')}>{html.escape(source)}</code></pre>"
+    rendered = render_eva_diagrams(original, lambda _: "<svg><text>Preview</text></svg>")
+    macro = BeautifulSoup(rendered, "html.parser").select_one('[data-macros="plantuml"]')
+    assert macro is not None
+    assert json.loads(macro["data-macros-parameters"])["uml"] == source
+    assert f"```plantuml\n{source}\n```" == EVA_CHANGES_MODULE._html_to_markdown(rendered)
+
+
+@pytest.mark.parametrize("loss", [None, "draft", "published"])
+def test_connected_page_export_verifies_plantuml_plugin_even_for_unchanged_text(loss):
+    from api.document_exchange.content import content_hash
+    from api.document_exchange.pages import EvaPageError
+    from api.apps.business_documents.eva_diagrams import rendered_diagrams_match
+
+    client = FakeEvaClient()
+    markdown = "```plantuml\n@startuml\nA -> B: Данные\n@enduml\n```"
+    fallback = EVA_CHANGES_MODULE._markdown_to_html(markdown)
+    client.document.update(html=fallback, draft_html="")
+    binding = {
+        "document_id": client.document["id"],
+        "project_id": client.document["project_id"],
+        "connector_id": CONNECTOR.id,
+        "remote_version": client.document["version"],
+        "remote_content_hash": content_hash(EVA_CHANGES_MODULE._html_to_markdown(fallback)),
+    }
+
+    @contextmanager
+    def connection(*_args):
+        yield CONNECTOR, client, client
+
+    update, publish = client.update_document_draft, client.publish_document
+
+    def save(*args):
+        update(*args)
+        if loss == "draft":
+            client.document["draft_html"] = fallback
+
+    def commit(*args):
+        publish(*args)
+        if loss == "published":
+            client.document["html"] = fallback
+
+    client.update_document_draft, client.publish_document = save, commit
+    with patch.object(EvaDocumentChangeService, "_page_write_connection", connection):
+        pages = EvaDocumentChangeService.pages()
+        if loss is not None:
+            with pytest.raises(EvaPageError) as caught:
+                pages.publish_connected_page(AUTHOR, binding, markdown, client.document["name"])
+            assert caught.value.code == ("EVA_DRAFT_VERIFICATION_FAILED" if loss == "draft" else "EVA_PUBLISH_VERIFICATION_FAILED")
+            assert client.publish_calls == (0 if loss == "draft" else 1)
+        else:
+            result, imported = pages.publish_connected_page(AUTHOR, binding, markdown, client.document["name"])
+            assert imported == EVA_CHANGES_MODULE._html_to_markdown(fallback)
+            assert rendered_diagrams_match(client.document["draft_html"], client.document["html"])
+            assert 'data-macros="plantuml"' in client.document["html"]
+            assert pages.publish_connected_page(AUTHOR, result, markdown, client.document["name"]) == (result, imported)
+            assert client.publish_calls == 1
 
 
 def _prepared_same_text_diagram_change():

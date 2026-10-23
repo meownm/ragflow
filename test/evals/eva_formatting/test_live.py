@@ -22,6 +22,9 @@ def eva_page(record_testsuite_property):
     assert row is not None and row.source == "eva_wiki", "Dedicated local QA EVA connector is missing"
     config = dict(row.config)
     assert urlsplit(config["api_base_url"]).hostname in {"host.docker.internal", "eva-wiki-http", "eva-wiki", "localhost", "127.0.0.1"}, "The QA connector must target the local EVA contour"
+    if api_url := os.environ.get("RAGFLOW_LOCAL_EVA_QA_API_URL"):
+        assert urlsplit(api_url).hostname in {"eva-wiki-http", "eva-wiki", "localhost", "127.0.0.1"}, "The QA route override must stay local"
+        config["api_base_url"] = api_url
     config["retry_count"] = 0
     credentials = config.pop("credentials", None)
     assert isinstance(credentials, dict) and credentials.get("eva_api_token"), "Local QA EVA credentials are missing"
@@ -99,3 +102,58 @@ def test_live_governed_heading_anchors(eva_page):
     exported = BeautifulSoup(BusinessDocumentExportService._render_eva_wiki(imported, 2), "html.parser")
     assert exported.find("h2", id="section") is not None
     assert exported.find("a", href="#section").text == "Jump"
+
+
+def test_live_plantuml_plugin_export_import_and_repeat(eva_page, record_testsuite_property):
+    import json
+    from contextlib import contextmanager
+    from unittest.mock import patch
+
+    from bs4 import BeautifulSoup
+    from api.apps.business_documents.assets import import_document_markdown, published_template, render_document_ast
+    from api.apps.business_documents.eva_changes import EvaDocumentChangeService
+    from api.document_exchange.content import content_hash
+
+    reader, writer, page_id = eva_page
+    sources = [
+        '@startuml\nactor "Автор & проверяющий" as User\nUser -> Service: <данные>\n@enduml',
+        "@startuml\nstart\n:Проверить заявку;\nif (Данные полные?) then (да)\n:Сохранить;\nelse (нет)\n:Запросить уточнение;\nendif\nstop\n@enduml",
+    ]
+    document = {
+        "sections": [{"id": section["id"], "title": section["title"], "blocks": [{"type": "paragraph", "text": f"Synthetic section {section['id']}"}]} for section in published_template()["sections"]]
+    }
+    for section_id, source in zip(("4.1", "4.3"), sources):
+        next(section for section in document["sections"] if section["id"] == section_id)["blocks"].append({"type": "plantuml", "source": source})
+    markdown = render_document_ast(document)
+    # The text is already in Eva as code; exporting must still install plugins.
+    writer.update_document_draft(page_id, _markdown_to_html(markdown))
+    writer.publish_document(page_id)
+    before = reader.get_document_for_edit(page_id)
+
+    @contextmanager
+    def connection(*_args):
+        yield None, reader, writer
+
+    with patch.object(EvaDocumentChangeService, "_page_write_connection", connection):
+        pages = EvaDocumentChangeService.pages()
+        binding = {
+            "connector_id": "local-qa",
+            "document_id": page_id,
+            "project_id": before["project_id"],
+            "remote_version": before["version"],
+            "remote_content_hash": content_hash(_html_to_markdown(before["html"])),
+        }
+        published_binding, imported_markdown = pages.publish_connected_page("local-qa", binding, markdown, before["name"])
+        remote = reader.get_document_for_edit(page_id)
+        macros = BeautifulSoup(remote["html"], "html.parser").select('[data-macros="plantuml"]')
+        assert [json.loads(macro["data-macros-parameters"])["uml"] for macro in macros] == sources
+        assert all(macro.find("svg") is not None and macro.select_one('[data-macros-action="macros-edit"]') is not None for macro in macros)
+        imported = import_document_markdown(imported_markdown)
+        assert [block["source"] for section in imported["sections"] for block in section["blocks"] if block["type"] == "plantuml"] == sources
+        assert [section["id"] for section in imported["sections"]] == [section["id"] for section in document["sections"]]
+        repeated_binding, repeated_markdown = pages.publish_connected_page("local-qa", published_binding, render_document_ast(imported), before["name"])
+        assert repeated_binding["remote_version"] == published_binding["remote_version"]
+        assert repeated_markdown == imported_markdown
+    record_testsuite_property("plantuml_plugins", len(macros))
+    record_testsuite_property("plantuml_sources_preserved", "true")
+    record_testsuite_property("plantuml_repeated_export", "no_new_publication")

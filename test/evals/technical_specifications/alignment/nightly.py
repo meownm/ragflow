@@ -2,6 +2,8 @@
 
 Each experiment is an independent, fixed-budget series. A retained reservation
 or changed model stops later series; a new ledger never erases unknown debt.
+Unavailable thinking controls retain an unknown experiment while allowing the
+full corpus to run when no inference was issued.
 """
 
 from copy import deepcopy
@@ -110,9 +112,20 @@ async def run_nightly(ai, actor, *, checkpoint=None):
                 report["reason_code"] = "NIGHTLY_REQUEST_ID_INVALID"
             request_ids.add(request_id)
         complete = [item.get("case_id") for item in items] == experiment_case_ids(kind) and all(item.get("status") in {"PASS", "FAIL"} for item in items)
+        budget = stage.get("budget", {})
+        metadata = stage.get("thinking_metadata_sha256")
+        unavailable_reasoning = (
+            kind == "REASONING"
+            and stage.get("reason_code") == "THINKING_CAPABILITY_UNAVAILABLE"
+            and items == []
+            and stage.get("expected_case_ids") == experiment_case_ids(kind)
+            and isinstance(metadata, str)
+            and len(metadata) == 64
+            and all(character in "0123456789abcdef" for character in metadata)
+            and all(type(budget.get(key)) is int and budget[key] == 0 for key in ("calls", "spent_tokens", "reserved_tokens"))
+        )
         if (
-            not complete
-            or stage.get("reason_code")
+            ((not complete or stage.get("reason_code")) and not unavailable_reasoning)
             or stage.get("budget", {}).get("reserved_tokens") != 0
             or len(identities) != 1
             or any(not model or not digest for model, digest in identities)

@@ -160,13 +160,13 @@ def assert_formatting(actual, expected, *, stage):
 
 @pytest.mark.parametrize("case", MARKDOWN_CASES, ids=lambda case: case.id)
 def test_markdown_export(case):
-    assert_formatting(_markdown_to_html(case.markdown), case.html, stage="Markdown -> EVA HTML")
+    assert_formatting(_markdown_to_html(case.markdown), case.eva_html, stage="Markdown -> EVA HTML")
 
 
 @pytest.mark.parametrize("case", ALL_CASES, ids=lambda case: case.id)
 def test_eva_html_import(case):
     markdown = _html_to_markdown(case.html)
-    assert_formatting(_markdown_to_html(markdown), case.html, stage=f"EVA HTML -> Markdown -> HTML\nMarkdown: {markdown}")
+    assert_formatting(_markdown_to_html(markdown), case.eva_html, stage=f"EVA HTML -> Markdown -> HTML\nMarkdown: {markdown}")
 
 
 @pytest.mark.parametrize("case", MARKDOWN_CASES, ids=lambda case: case.id)
@@ -175,7 +175,7 @@ def test_two_roundtrips(case):
     losses = []
     for cycle in (1, 2):
         html = _markdown_to_html(_html_to_markdown(html))
-        if semantic_html(html) != semantic_html(case.html):
+        if semantic_html(html) != semantic_html(case.eva_html):
             losses.append(f"Cycle {cycle}: {html}")
     assert not losses, "\n".join(losses)
 
@@ -237,6 +237,8 @@ def test_import_removes_active_content_and_keeps_safe_formatting(unsafe):
         ('<input type="checkbox" checked>', '<input type="checkbox">'),
         ('<table><tr><td colspan="2">A</td></tr></table>', "<table><tr><td>A</td></tr></table>"),
         ('<table><tr><td><p style="color:red">A</p></td></tr></table>', "<table><tr><td><p>A</p></td></tr></table>"),
+        ('<table style="width:100%"><tr><td>A</td></tr></table>', "<table><tr><td>A</td></tr></table>"),
+        ('<table width="320"><tr><td>A</td></tr></table>', '<table width="640"><tr><td>A</td></tr></table>'),
     ],
 )
 def test_formatting_oracle_rejects_data_and_style_loss(before, after):
@@ -276,7 +278,7 @@ def test_governed_import_and_eva_export_preserve_body(case):
     draft["sections"][0]["blocks"] = [{"type": "paragraph", "text": case.markdown if case.markdown is not None else case.html}]
     html = BusinessDocumentExportService._render_eva_wiki(draft, 1)
     imported = import_document_markdown(_html_to_markdown(html))
-    assert_formatting(_markdown_to_html(render_section_text(imported["sections"][0])), case.html, stage="AST -> EVA export -> governed AST import")
+    assert_formatting(_markdown_to_html(render_section_text(imported["sections"][0])), case.eva_html, stage="AST -> EVA export -> governed AST import")
     reexported = BeautifulSoup(BusinessDocumentExportService._render_eva_wiki(imported, 2), "html.parser")
     # Assert spans on the actual export consumer, not just the direct converter.
     expected = BeautifulSoup(case.html, "html.parser")

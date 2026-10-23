@@ -84,6 +84,12 @@ def prepare_eva_html(value: str) -> str:
         return value
     restore_eva_formatting(soup)
     for index, table in enumerate(soup.select("table"), start=1):
+        # The EVA table renderer collapses an unspecified width to its smallest
+        # columns. Match the native editor's full-container default, including
+        # nested tables, while retaining authored table and cell dimensions.
+        style = str(table.get("style", ""))
+        if not table.get("width") and not re.search(r"(?:^|;)\s*width\s*:", style, re.IGNORECASE):
+            table["style"] = ";".join(part for part in (style.rstrip(";"), "width:100%") if part)
         if table.find_parent(attrs={"data-macros": "wikitables"}) is None:
             node_id = str(table.get("data-id", f"eva-table-{index}"))
             wrapper = soup.new_tag("div", attrs={"class": "tableView-content-wrap cmf-scrollbar", "data-macros": "wikitables", "data-id": f"{node_id}-wrap"})

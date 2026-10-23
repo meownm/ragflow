@@ -112,7 +112,7 @@ def rendered_diagrams_match(expected_html: str, actual_html: str) -> bool:
     def sources(value: str) -> Counter[str]:
         rendered = Counter()
         for macro in BeautifulSoup(value, "html.parser").select('[data-macros="plantuml"]'):
-            if macro.find("svg") is None:
+            if macro.select_one(".macros-preview svg") is None or macro.select_one(".macros-edit svg path") is None:
                 continue
             try:
                 source = json.loads(macro.get("data-macros-parameters", ""))["uml"]
@@ -158,8 +158,20 @@ def render_eva_diagrams(value: str, render: Callable[[str], str]) -> str:
         label.append(excerpt)
         title.append(label)
         actions = soup.new_tag("span", attrs={"class": "macros-actions"})
-        edit = soup.new_tag("span", attrs={"class": "macros-edit", "data-macros-action": "macros-edit"})
-        edit.string = "Изменить"
+        edit = soup.new_tag("span", attrs={"class": "macros-edit", "title": "Изменить PlantUML"})
+        # EVA delegates macro actions from the icon to its .macros-edit parent.
+        # A text-only span renders in the 14px icon slot and never opens UML.
+        icon = soup.new_tag("svg", attrs={"viewBox": "0 0 24 24", "width": "14", "height": "14"})
+        icon.append(
+            soup.new_tag(
+                "path",
+                attrs={
+                    "fill": "currentColor",
+                    "d": "M20.71,7.04C21.1,6.65 21.1,6 20.71,5.63L18.37,3.29C18,2.9 17.35,2.9 16.96,3.29L15.12,5.12L18.87,8.87M3,17.25V21H6.75L17.81,9.93L14.06,6.18L3,17.25Z",
+                },
+            )
+        )
+        edit.append(icon)
         actions.append(edit)
         title.append(actions)
         macro.append(title)

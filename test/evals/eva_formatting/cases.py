@@ -10,6 +10,11 @@ class FormattingCase:
     markdown: str | None
     html: str
 
+    @property
+    def eva_html(self) -> str:
+        """EVA fills the container for corpus tables without authored widths."""
+        return self.html.replace("<table>", '<table style="width:100%">')
+
 
 CASES = [
     *(FormattingCase(f"heading-h{n}", "#" * n + " Заголовок", f"<h{n}>Заголовок</h{n}>") for n in range(1, 7)),

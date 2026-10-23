@@ -1513,7 +1513,7 @@ def test_eva_wiki_exact_shape_escapes_content_and_excludes_protocol(database, mo
             '<li data-id="br-r7-s1-b2-li1"><p data-id="br-r7-s1-b2-li1-p">one</p></li>'
             '<li data-id="br-r7-s1-b2-li2"><p data-id="br-r7-s1-b2-li2-p">&lt;two&gt;</p></li></ul>',
             f'<div class="{policy["table_wrapper_class"]}" data-macros="{policy["table_wrapper_macro"]}" data-id="br-r7-s1-b3">'
-            '<table data-id="br-r7-s1-b3-table"><thead><tr data-id="br-r7-s1-b3-r0">'
+            '<table data-id="br-r7-s1-b3-table" style="width:100%"><thead><tr data-id="br-r7-s1-b3-r0">'
             '<th colspan="1" rowspan="1" data-x="0" data-y="0" data-id="br-r7-s1-b3-h0">'
             '<p data-id="br-r7-s1-b3-h0-p">Key</p></th></tr></thead><tbody><tr data-id="br-r7-s1-b3-r1">'
             '<td colspan="1" rowspan="1" data-x="0" data-y="1" data-id="br-r7-s1-b3-c0-1">'

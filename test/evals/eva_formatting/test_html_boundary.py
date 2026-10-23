@@ -14,9 +14,9 @@ from test.evals.eva_formatting.cases import ALL_CASES
 @pytest.mark.parametrize("case", ALL_CASES, ids=lambda case: case.id)
 def test_native_eva_representation_is_equivalent_and_idempotent(case):
     prepared = prepare_eva_html(case.html)
-    assert_formatting(prepared, case.html, stage="Native EVA editor representation")
+    assert_formatting(prepared, case.eva_html, stage="Native EVA editor representation")
     assert prepare_eva_html(prepared) == prepared
-    assert_formatting(_markdown_to_html(_html_to_markdown(prepared)), case.html, stage="Native EVA editor import")
+    assert_formatting(_markdown_to_html(_html_to_markdown(prepared)), case.eva_html, stage="Native EVA editor import")
 
 
 def test_table_editor_shell_does_not_accumulate_on_import():
@@ -28,6 +28,24 @@ def test_table_editor_shell_does_not_accumulate_on_import():
         assert soup.td["colspan"] == "2" and soup.td["style"] == "color:red"
         assert soup.td.text == "Body"
         source = exported
+
+
+@pytest.mark.parametrize("dimensions", ["", 'width="320"', 'style="width:65%;color:red"', 'style="width:auto"'])
+def test_eva_table_default_width_retains_authored_dimensions(dimensions):
+    source = f'<table {dimensions}><tr><td style="width:120px">A</td><td><table><tr><td>B</td></tr></table></td></tr></table>'
+    prepared = prepare_eva_html(source)
+    soup = BeautifulSoup(prepared, "html.parser")
+    table, nested = soup.select("table")
+    assert nested["style"] == "width:100%"
+    assert soup.td["style"] == "width:120px"
+    if not dimensions:
+        assert table["style"] == "width:100%"
+    elif dimensions.startswith("width="):
+        assert table["width"] == "320" and not table.has_attr("style")
+    else:
+        assert table["style"] == dimensions.removeprefix('style="').removesuffix('"')
+    assert prepare_eva_html(prepared) == prepared
+    assert_formatting(_markdown_to_html(_html_to_markdown(prepared)), prepared, stage="Table dimensions roundtrip")
 
 
 @pytest.mark.parametrize(
@@ -78,7 +96,7 @@ def test_numbered_heading_retains_anchor_and_governed_outline():
 def test_safe_block_formatting_and_literal_markers_survive(source):
     for _ in range(2):
         result = _markdown_to_html(_html_to_markdown(source))
-        assert_formatting(result, source, stage="Safe HTML block")
+        assert_formatting(result, source.replace("<table>", '<table style="width:100%">'), stage="Safe HTML block")
         source = result
 
 

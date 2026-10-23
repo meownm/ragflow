@@ -65,7 +65,7 @@ def test_live_markdown_draft_publish_and_reload(eva_page, case):
     failures = []
     for stage, actual in (("draft", saved["draft_html"]), ("published", published["html"]), ("reimport", _markdown_to_html(_html_to_markdown(published["html"])))):
         try:
-            assert_formatting(actual, case.html, stage=stage)
+            assert_formatting(actual, case.eva_html, stage=stage)
         except AssertionError as error:
             failures.append(str(error))
     assert not failures, "\n".join(failures)
@@ -77,8 +77,8 @@ def test_live_native_eva_html_import(eva_page, case):
     writer.update_document_draft(page_id, prepare_eva_html(case.html))
     writer.publish_document(page_id)
     remote = reader.get_document_for_edit(page_id)
-    assert_formatting(remote["html"], case.html, stage="Native HTML through EVA")
-    assert_formatting(_markdown_to_html(_html_to_markdown(remote["html"])), case.html, stage="Native EVA -> Markdown -> HTML")
+    assert_formatting(remote["html"], case.eva_html, stage="Native HTML through EVA")
+    assert_formatting(_markdown_to_html(_html_to_markdown(remote["html"])), case.eva_html, stage="Native EVA -> Markdown -> HTML")
 
 
 def test_live_governed_heading_anchors(eva_page):
@@ -147,7 +147,7 @@ def test_live_plantuml_plugin_export_import_and_repeat(eva_page, record_testsuit
         remote = reader.get_document_for_edit(page_id)
         macros = BeautifulSoup(remote["html"], "html.parser").select('[data-macros="plantuml"]')
         assert [json.loads(macro["data-macros-parameters"])["uml"] for macro in macros] == sources
-        assert all(macro.find("svg") is not None and macro.select_one('[data-macros-action="macros-edit"]') is not None for macro in macros)
+        assert all(macro.select_one(".macros-preview svg") is not None and macro.select_one(".macros-edit > svg > path") is not None for macro in macros)
         imported = import_document_markdown(imported_markdown)
         assert [block["source"] for section in imported["sections"] for block in section["blocks"] if block["type"] == "plantuml"] == sources
         assert [section["id"] for section in imported["sections"]] == [section["id"] for section in document["sections"]]

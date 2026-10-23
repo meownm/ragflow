@@ -44,4 +44,4 @@ def test_approved_formatting_is_reloaded_without_loss(case):
         assert published["workflow_state"] == "PUBLISHED" and client.publish_calls == 1
         binding, markdown = EvaDocumentChangeService.read_connected_page(AUTHOR, {"connector_id": CONNECTOR.id, "document_id": client.document["id"]})
         assert binding["document_id"] == client.document["id"]
-        assert_formatting(_markdown_to_html(markdown), case.html, stage="Approved draft -> publish -> connected-page import")
+        assert_formatting(_markdown_to_html(markdown), case.eva_html, stage="Approved draft -> publish -> connected-page import")

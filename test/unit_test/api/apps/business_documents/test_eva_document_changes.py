@@ -51,17 +51,24 @@ EVA_CHANGES_MODULE = sys.modules[EvaDocumentChangeService.__module__]
 def test_eva_diagram_round_trip_retains_sources_and_discards_rendered_labels():
     import json
     from bs4 import BeautifulSoup
-    from api.apps.business_documents.eva_diagrams import render_eva_diagrams
+    from api.apps.business_documents.eva_diagrams import render_eva_diagrams, rendered_diagrams_match
 
     source = '@startuml\nactor "Автор & проверяющий" as User\nUser -> Service: <данные>\n@enduml'
     original = EVA_CHANGES_MODULE._markdown_to_html(f"## 4.3. Сценарий\n\n```plantuml\n{source}\n```\n\nПосле схемы.")
     rendered = render_eva_diagrams(original, lambda _: '<svg><text>Не часть документа</text><path style="stroke:#333;stroke-width:1.5" d="M0 0 L10 10" /></svg>')
     soup = BeautifulSoup(rendered, "html.parser")
     assert json.loads(soup.select_one('[data-macros="plantuml"]')["data-macros-parameters"])["uml"] == source
-    assert soup.path["stroke"] == "#333"
+    assert soup.select_one(".macros-preview path")["stroke"] == "#333"
     assert soup.select_one('[data-macros="plantuml"]')["id"].startswith("plantuml+")
-    assert soup.select_one('[data-macros-action="macros-edit"]').text == "Изменить"
+    edit = soup.select_one(".macros-edit > svg")
+    assert edit is not None and edit.find("path") is not None
+    assert edit.parent["title"] == "Изменить PlantUML"
     assert EVA_CHANGES_MODULE._html_to_markdown(rendered) == EVA_CHANGES_MODULE._html_to_markdown(original)
+    soup.select_one(".macros-preview svg").decompose()
+    assert not rendered_diagrams_match(rendered, str(soup)), "The edit icon cannot stand in for the diagram preview"
+    soup = BeautifulSoup(rendered, "html.parser")
+    soup.select_one(".macros-edit").clear()
+    assert not rendered_diagrams_match(rendered, str(soup)), "An unchanged old page must receive working macro controls"
 
 
 @pytest.mark.parametrize("prefix", ["", '<?xml version="1.0" encoding="UTF-8"?>'])
@@ -76,8 +83,9 @@ def test_eva_diagram_svg_is_sanitized_without_sending_source_to_external_images(
         + '<svg onload="alert(1)"><script>alert(2)</script><foreignObject><p>Unsafe</p></foreignObject><image href="https://external.test/x"/><path fill="url(https://external.test/x)"/><text>Safe</text></svg>',
     )
     soup = BeautifulSoup(rendered, "html.parser")
-    assert soup.svg.text == "Safe"
-    assert not soup.select("script, foreignObject, image, [onload], [href], [fill]")
+    preview = soup.select_one(".macros-preview")
+    assert preview.svg.text == "Safe"
+    assert not preview.select("script, foreignObject, image, [onload], [href], [fill]")
 
 
 @pytest.mark.parametrize("failure", ["invalid_svg", "renderer_unavailable"])

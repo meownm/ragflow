@@ -406,6 +406,13 @@ jobs:
       env:
         RAGFLOW_IMAGE: ${{ steps.image.outputs.digest }}
       run: bash deployment/runner/test-native-image.sh output/ci-native/parser.test output/ci-image/native
+    - name: Qualify blue-green HTTP transition and rejected candidate
+      env:
+        RAGFLOW_TEST_DISPOSABLE: '1'
+      run: >-
+        python3 deployment/runner/test-blue-green.py
+        --image '${{ steps.image.outputs.digest }}'
+        --output output/ci-image/blue-green
     - name: Qualify previous image upgrade and restore
       env:
         RAGFLOW_IMAGE: ${{ steps.image.outputs.digest }}
@@ -444,6 +451,7 @@ jobs:
         python3 deployment/runner/test-qualified-upgrade.py "${args[@]}" --output output/ci-image/upgrade
       if: ${{ inputs.profile == 'release' }}
     - uses: actions/upload-artifact@v4
+      if: always()
       with:
         name: image-${{ github.run_id }}-${{ github.run_attempt }}
         path: output/ci-image

@@ -22,6 +22,24 @@
 - `release_publish.py`: перенос готового образа, immutable assets, журнал и указатели.
 - `deployment/runner`: disposable stack, готовность, native probes и cleanup.
 
+В `build_image` также обязателен disposable blue/green HTTP transition через
+`deployment/runner/test-blue-green.py`. Проверяется тот же controller, который
+вызывает локальный `deploy.ps1`: постоянный nginx, два web слота, отдельный worker,
+readiness, SSE drain, rollback и recovery. HTTP/worker в этой lane синтетические;
+она дополняет существующую живую API/browser-приёмку. Отчёт входит в packet,
+проверяется по candidate SHA/digest и хешу controller из source SHA при публикации.
+Previous-image upgrade дополнительно проверяет чтение новой схемы прежним образом.
+Локальный BlueGreen блокирует изменённые schema/initializer inputs и не выполняет
+миграции. Первоначальный перенос порта требует окна обслуживания; следующие
+app-only обновления используют graceful reload постоянного прокси.
+
+Для активации нового gate изменения сначала публикуются проверенным commit
+в защищённый main. Затем `RELEASE_PUBLISHER_SHA` переводится на этот commit
+и выполняется `release` с `dry_run=true` на том же SHA. Старый закреплённый
+publisher не содержит нового verifier/сборщика packet; локальные проверки
+не заменяют обновление pin и успешную GitHub qualification. Первый перенос
+рабочего порта выполняется отдельно по локальному runbook.
+
 ```mermaid
 flowchart TD
   S[Commit и профиль] --> P[Prerequisites и быстрые проверки]

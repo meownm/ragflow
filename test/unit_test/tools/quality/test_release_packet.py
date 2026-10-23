@@ -45,11 +45,34 @@ def packet(tmp_path, monkeypatch):
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("installer from qualified source", encoding="utf-8")
     incoming = tmp_path / "incoming"
+    controller = source / "deployment/blue_green.py"
+    controller.parent.mkdir(parents=True)
+    controller.write_text("# controller from qualified source\n")
     for name in origin.qualification_producers("123", 2):
         (incoming / name).mkdir(parents=True)
     image = incoming / "image-123-2"
     for name in ("image-build.json", "browser-build.json", "runtime-images.json", "native/proof.json"):
         write_json(image / name, {"transport_fixture": name})
+    write_json(
+        image / "blue-green/blue-green.json",
+        {
+            "schema": 1,
+            "purpose": "blue-green-http-transition",
+            "status": "PASS",
+            "cleanup": "PASS",
+            "source_sha": identity["sha"],
+            "image_digest": "registry/staging@sha256:" + "b" * 64,
+            "requests": 20,
+            "failed_requests": 0,
+            "sse_drain": True,
+            "old_assets": True,
+            "unready_rejected": True,
+            "gateway_unchanged": True,
+            "post_switch_rollback": True,
+            "interrupted_recovery": True,
+            "controller_sha256": hashlib.sha256(controller.read_bytes()).hexdigest(),
+        },
+    )
     write_json(
         image / "upgrade/qualified-upgrade.json",
         {
@@ -64,6 +87,7 @@ def packet(tmp_path, monkeypatch):
             "previous_image_digest": "registry/previous@sha256:" + "e" * 64,
             "candidate_restore": True,
             "previous_restore": True,
+            "previous_reads_upgraded": True,
         },
     )
     for browser_name in ("chromium", "firefox", "webkit"):

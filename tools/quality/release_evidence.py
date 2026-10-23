@@ -84,6 +84,26 @@ def verify_branch_coverage(report: Path, minimum: int = 79) -> dict:
     return {"branches_valid": valid, "branches_covered": covered, "minimum": minimum}
 
 
+def verify_blue_green(report: dict, revision: str, image_digest: str) -> None:
+    """Reject missing, failed, foreign or partial HTTP transition qualification."""
+    if (
+        report.get("schema") != 1
+        or report.get("purpose") != "blue-green-http-transition"
+        or report.get("status") != "PASS"
+        or report.get("cleanup") != "PASS"
+        or report.get("source_sha") != revision
+        or report.get("image_digest") != image_digest
+        or type(report.get("requests")) is not int
+        or report["requests"] < 2
+        or type(report.get("failed_requests")) is not int
+        or report["failed_requests"] != 0
+        or any(report.get(key) is not True for key in ("sse_drain", "old_assets", "unready_rejected", "gateway_unchanged", "post_switch_rollback", "interrupted_recovery"))
+        or not isinstance(report.get("controller_sha256"), str)
+        or not HEX_DIGEST.fullmatch(report["controller_sha256"])
+    ):
+        raise ValueError("blue-green HTTP transition qualification missing, incomplete or foreign")
+
+
 def verify_runtime_upgrade(report: dict, revision: str, image_digest: str) -> dict:
     if (
         report.get("status") != "PASS"
@@ -94,7 +114,7 @@ def verify_runtime_upgrade(report: dict, revision: str, image_digest: str) -> di
         or not SHA.fullmatch(report["previous_source_sha"])
         or not isinstance(report.get("previous_image_digest"), str)
         or not DIGEST.fullmatch(report["previous_image_digest"])
-        or any(report.get(check) is not True for check in ("repeated_initializer", "candidate_restore", "previous_restore"))
+        or any(report.get(check) is not True for check in ("repeated_initializer", "candidate_restore", "previous_restore", "previous_reads_upgraded"))
     ):
         raise ValueError("previous qualified runtime migration/restore incomplete")
     if report.get("purpose") == "initial-runtime-baseline-upgrade":

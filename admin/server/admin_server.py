@@ -72,7 +72,8 @@ if __name__ == "__main__":
     login_manager.init_app(app)
     settings.init_settings()
     setup_auth(login_manager)
-    init_default_admin()
+    if os.environ.get("RAGFLOW_SKIP_DATABASE_INIT") != "true":
+        init_default_admin()
     SERVICE_CONFIGS.configs = load_configurations(SERVICE_CONF)
 
     def quality_worker():
@@ -85,7 +86,8 @@ if __name__ == "__main__":
                 DB.close()
             stop_event.wait(5)
 
-    threading.Thread(target=quality_worker, daemon=True, name="business-document-quality").start()
+    if os.environ.get("RAGFLOW_BACKGROUND_ENABLED", "true") == "true":
+        threading.Thread(target=quality_worker, daemon=True, name="business-document-quality").start()
 
     try:
         logging.info(f"RAGFlow admin is ready after {time.time() - start_ts}s initialization.")

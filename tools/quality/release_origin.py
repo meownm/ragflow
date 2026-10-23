@@ -173,10 +173,14 @@ def verify_source_inventories(receipt: dict, packet: Path) -> None:
     """Read policy as data from the qualified source, without executing candidate code."""
     from tools.quality.api_case_evidence import ENGINES, SUITES, verify_report
     from tools.quality.browser_inventory import expected_inventory, verify_junit
-    from tools.quality.release_evidence import verify_runtime_upgrade
+    from tools.quality.release_evidence import verify_blue_green, verify_runtime_upgrade
 
     ci = receipt["ci"]
     repository, revision = ci["repository"], receipt["source_revision"]
+    transition = json.loads((packet / "blue-green/blue-green.json").read_text())
+    verify_blue_green(transition, revision, receipt["image"]["staging_digest"])
+    if transition["controller_sha256"] != hashlib.sha256(source_bytes(repository, revision, "deployment/blue_green.py")).hexdigest():
+        raise ValueError("blue-green controller differs from qualified source")
     recovery = verify_runtime_upgrade(json.loads((packet / "upgrade/qualified-upgrade.json").read_text()), revision, receipt["image"]["staging_digest"])
     if receipt.get("recovery") != recovery:
         raise ValueError("qualification receipt differs from verified recovery scope")

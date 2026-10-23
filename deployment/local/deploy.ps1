@@ -7,6 +7,9 @@ param(
     [string[]]$Services = @("ragflow-cpu"),
     [ValidateSet("Auto", "Fast", "Feature", "Candidate", "Release")]
     [string]$Mode = "Auto",
+    [ValidateSet("BlueGreen", "Recreate")]
+    [string]$Strategy = "BlueGreen",
+    [switch]$InitializeBlueGreen,
     [string]$FeatureImageReference,
     [string]$FeatureSourceId,
     [string]$CandidateRegistry = "192.168.1.175:5443",
@@ -115,7 +118,14 @@ function Get-GitLines {
 }
 
 function Get-DeployedRevision {
-    $containerId = ((Invoke-Compose -Arguments @("ps", "-q", "ragflow-cpu") -Capture) -join "").Trim()
+    $blueGreenState = Join-Path $repoRoot ".local/runtime/$ProjectName/blue-green/state.json"
+    if (Test-Path -LiteralPath $blueGreenState) {
+        $active = Get-Content -LiteralPath $blueGreenState -Raw | ConvertFrom-Json
+        $containerId = "$ProjectName-$($active.slot)"
+    }
+    else {
+        $containerId = ((Invoke-Compose -Arguments @("ps", "-q", "ragflow-cpu") -Capture) -join "").Trim()
+    }
     if (-not $containerId) {
         return $null
     }
@@ -419,7 +429,16 @@ $candidateOnlyDirtyPaths = @($changePlan.image_inputs + $changePlan.unmounted_ru
 $resolvedMode = $Mode
 $asrOnly = $Services.Count -eq 1 -and $Services[0] -eq "t-one-asr"
 if ($resolvedMode -eq "Auto") {
-    $resolvedMode = if ($asrOnly -or -not $changePlan.requires_candidate) { "Fast" } else { "Candidate" }
+    $resolvedMode = if ($Strategy -eq "BlueGreen") { "Candidate" } elseif ($asrOnly -or -not $changePlan.requires_candidate) { "Fast" } else { "Candidate" }
+}
+if ($Strategy -eq "BlueGreen" -and ($resolvedMode -eq "Fast" -or $Services.Count -ne 1 -or $Services[0] -ne "ragflow-cpu")) {
+    throw "BlueGreen requires one immutable application image. Use a separate -Strategy Recreate maintenance deployment for Fast or infrastructure changes."
+}
+if ($Strategy -eq "Recreate" -and (Test-Path -LiteralPath (Join-Path $repoRoot ".local/runtime/$ProjectName/blue-green/state.json"))) {
+    throw "A blue/green gateway owns this project. Recreate requires a separately planned maintenance handover."
+}
+if ($InitializeBlueGreen -and $Strategy -ne "BlueGreen") {
+    throw "InitializeBlueGreen requires Strategy BlueGreen."
 }
 if ($resolvedMode -eq "Feature") {
     if (($FeatureImageReference -cnotmatch '^sha256:[0-9a-f]{64}$' -and
@@ -535,6 +554,18 @@ if ($resolvedMode -eq "Fast" -and $changePlan.asr.Count -gt 0) {
 
 $renderedConfig = Invoke-Compose -Arguments @("config") -Capture
 $renderedConfig | Set-Content -LiteralPath (Join-Path $EvidenceDirectory "compose-config.yml") -Encoding utf8
+if ($Strategy -eq "BlueGreen") {
+    $blueGreenRuntime = Join-Path $repoRoot ".local/runtime/$ProjectName/blue-green"
+    if (-not $InitializeBlueGreen -and -not (Test-Path -LiteralPath (Join-Path $blueGreenRuntime "state.json"))) {
+        throw "First gateway installation needs a maintenance window: explicitly use -InitializeBlueGreen. Subsequent updates preserve the public listener."
+    }
+    if (Test-Path -LiteralPath (Join-Path $blueGreenRuntime "pending.json")) {
+        throw "An interrupted blue/green deployment requires recovery before retry. See deployment/local/README.md."
+    }
+    $blueGreenConfigPath = Join-Path $EvidenceDirectory "blue-green-input.json"
+    ((Invoke-Compose -Arguments @("config", "--format", "json") -Capture) -join [Environment]::NewLine) |
+        Set-Content -LiteralPath $blueGreenConfigPath -Encoding utf8
+}
 Write-Host "Deploy plan: mode=$resolvedMode; services=$($Services -join ','); image=$deploymentImage"
 if ($changePlan.unmounted_runtime.Count -gt 0) {
     Write-Host "Unmounted runtime paths require candidate image: $($changePlan.unmounted_runtime -join ', ')"
@@ -545,6 +576,7 @@ if ($CheckOnly) {
         schema = 1
         mode = "check-only"
         planned_mode = $resolvedMode
+        strategy = $Strategy
         created_at = [DateTimeOffset]::Now.ToString("o")
         project = $ProjectName
         services = $Services
@@ -676,10 +708,22 @@ if ($backupRequired) {
 }
 
 $deploymentAction = "none"
+$blueGreenEvidence = $null
 $restartOnly = $resolvedMode -eq "Fast" -and $Services.Count -eq 1 -and
     $Services[0] -eq "ragflow-cpu" -and $changePlan.runtime.Count -gt 0 -and
     $changePlan.frontend.Count -eq 0 -and $changePlan.compose_config.Count -eq 0 -and -not $Build
-if ($restartOnly) {
+if ($Strategy -eq "BlueGreen") {
+    $python = Join-Path $repoRoot ".venv/Scripts/python.exe"
+    $blueGreenArguments = @("-B", (Join-Path $repoRoot "deployment/blue_green.py"),
+        "--config", $blueGreenConfigPath, "--project", $ProjectName,
+        "--runtime", $blueGreenRuntime, "--output", (Join-Path $EvidenceDirectory "blue-green.json"),
+        "--timeout", "$HealthTimeoutSeconds")
+    if ($InitializeBlueGreen) { $blueGreenArguments += "--initialize" }
+    Invoke-Native -FilePath $python -Arguments $blueGreenArguments
+    $blueGreenEvidence = Get-Content -LiteralPath (Join-Path $EvidenceDirectory "blue-green.json") -Raw | ConvertFrom-Json
+    $deploymentAction = "blue-green"
+}
+elseif ($restartOnly) {
     Invoke-Compose -Arguments (@("restart") + $Services)
     $deploymentAction = "restart"
 }
@@ -698,7 +742,12 @@ elseif ($Services.Count -gt 0) {
 
 $containerEvidence = @()
 foreach ($service in $Services) {
-    $containerId = Wait-ContainerHealth -Service $service -TimeoutSeconds $HealthTimeoutSeconds
+    if ($blueGreenEvidence -and $service -eq "ragflow-cpu") {
+        $containerId = "$ProjectName-$($blueGreenEvidence.slot)"
+    }
+    else {
+        $containerId = Wait-ContainerHealth -Service $service -TimeoutSeconds $HealthTimeoutSeconds
+    }
     $inspection = & docker inspect $containerId | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0) {
         throw "Could not inspect deployed service '$service'."
@@ -727,6 +776,8 @@ $evidence = [ordered]@{
     project = $ProjectName
     services = $Services
     action = $deploymentAction
+    strategy = $Strategy
+    blue_green = $blueGreenEvidence
     build = [bool]$Build
     build_frontend = [bool]$BuildFrontend
     observability = [bool]$Observability

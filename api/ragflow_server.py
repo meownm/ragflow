@@ -108,12 +108,13 @@ if __name__ == "__main__":
         debugpy.listen(("0.0.0.0", RAGFLOW_DEBUGPY_LISTEN))
 
     # init db
-    init_web_db()
-    init_web_data()
+    if os.environ.get("RAGFLOW_SKIP_DATABASE_INIT") != "true":
+        init_web_db()
+        init_web_data()
     try:
         from api.db.services.audit_service import purge_expired_audit_events
 
-        purged = purge_expired_audit_events()
+        purged = purge_expired_audit_events() if os.environ.get("RAGFLOW_BACKGROUND_ENABLED", "true") == "true" else 0
         if purged:
             logging.info("Purged %s audit events outside the 30-day retention window", purged)
     except Exception:
@@ -178,7 +179,9 @@ if __name__ == "__main__":
 
         start_linked_document_worker(stop_event)
 
-    if RuntimeConfig.DEBUG:
+    if os.environ.get("RAGFLOW_BACKGROUND_ENABLED", "true") != "true":
+        logging.info("Background services run in the dedicated worker container")
+    elif RuntimeConfig.DEBUG:
         if os.environ.get("WERKZEUG_RUN_MAIN") == "true":
             threading.Timer(1.0, delayed_start_update_progress).start()
             start_chat_channels()

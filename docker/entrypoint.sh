@@ -237,6 +237,7 @@ function ensure_docling() {
 }
 
 function ensure_db_init() {
+    [[ "${RAGFLOW_SKIP_DATABASE_INIT:-false}" == "true" ]] && return 0
     echo "Initializing database tables..."
     "$PY" -c "from api.db.db_models import init_database_tables as init_web_db; init_web_db()"
     echo "Database tables initialized."

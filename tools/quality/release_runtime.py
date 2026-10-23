@@ -162,6 +162,9 @@ def create_receipt(packet: Path, needs: dict, profile: str) -> dict:
     build["toolchain"]["runtime"] = hashlib.sha256(json.dumps(runtime["services"], sort_keys=True).encode()).hexdigest()
     upgrade = json.loads((packet / "upgrade/qualified-upgrade.json").read_text())
     recovery = verify_runtime_upgrade(upgrade, revision, build["digest"])
+    from tools.quality.release_evidence import verify_blue_green
+
+    verify_blue_green(json.loads((packet / "blue-green/blue-green.json").read_text()), revision, build["digest"])
     native = json.loads((packet / "native/native-image.json").read_text())
     if native.get("status") != "PASS" or native.get("source_sha") != revision or native.get("image_digest") != build["digest"]:
         raise ValueError("native final-image qualification missing or foreign")

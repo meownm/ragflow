@@ -86,6 +86,8 @@ def assemble(incoming: Path, packet: Path, *, identity: dict | None = None, sour
         shutil.copy2(image / name, packet / name)
     shutil.copytree(image / "native", packet / "native")
     shutil.copytree(image / "upgrade", packet / "upgrade")
+    (packet / "blue-green").mkdir()
+    shutil.copy2(image / "blue-green/blue-green.json", packet / "blue-green/blue-green.json")
     shutil.copy2(image / "runtime-images.json", packet / "runtime-images.json")
     for source, destination in (("python-", "python"), ("preflight-", "preflight"), ("browser-results-", "browser-results")):
         shutil.copytree(incoming / (source + run), packet / destination)

@@ -146,6 +146,7 @@ def test_unavailable_runner_and_queued_deadlines():
         {"repeated_initializer": False},
         {"candidate_restore": False},
         {"previous_restore": False},
+        {"previous_reads_upgraded": False},
     ],
 )
 def test_only_complete_qualified_upgrade_allows_release(changes):
@@ -164,6 +165,7 @@ def test_only_complete_qualified_upgrade_allows_release(changes):
         "repeated_initializer": True,
         "candidate_restore": True,
         "previous_restore": True,
+        "previous_reads_upgraded": True,
     }
     proof.update(changes)
     if changes:
@@ -202,6 +204,7 @@ def test_initial_baseline_is_explicit_and_cannot_claim_previous_qualification(ch
         "repeated_initializer": True,
         "candidate_restore": True,
         "previous_restore": True,
+        "previous_reads_upgraded": True,
         "bootstrap_baseline_sha256": hashlib.sha256(content).hexdigest(),
         "historical_baseline": {
             "repository": baseline["repository"],

@@ -76,9 +76,11 @@ def test_snapshot_comparison_allows_only_additive_changes(upgrade):
         upgrade.assert_preserved(old, {"documents": [{"id": "one", "body": "changed"}], "events": []})
     with pytest.raises(ValueError, match="rows changed"):
         upgrade.assert_preserved({"events": []}, {"events": [{"id": "unexpected"}]})
+    with pytest.raises(ValueError, match="columns disappeared"):
+        upgrade.assert_preserved(old, {"documents": [{"id": "one"}], "events": []})
 
 
-@pytest.mark.parametrize("failure", [None, "repeat", "restore", "previous_restore", "probe", "cleanup"])
+@pytest.mark.parametrize("failure", [None, "repeat", "restore", "previous_restore", "coexistence", "probe", "cleanup"])
 @pytest.mark.parametrize("mode", ["qualified", "diagnostic", "bootstrap"])
 def test_real_image_sequence_and_cleanup(upgrade, approved_policy, monkeypatch, tmp_path, failure, mode):
     diagnostic = mode == "diagnostic"
@@ -117,6 +119,8 @@ def test_real_image_sequence_and_cleanup(upgrade, approved_policy, monkeypatch, 
             calls.append((label, image, mode))
             if failure == "probe" and label == "candidate-upgraded":
                 raise RuntimeError("Old dependency mismatch")
+            if failure == "coexistence" and label == "previous-reads-upgraded":
+                raise RuntimeError("Previous runtime cannot read the upgraded schema")
             if (failure == "repeat" and label == "candidate-repeat") or (failure == "restore" and label == "candidate-restored") or (failure == "previous_restore" and label == "previous-restored"):
                 return {}
             return old if image == OLD_IMAGE else current
@@ -151,6 +155,7 @@ def test_real_image_sequence_and_cleanup(upgrade, approved_policy, monkeypatch, 
         assert ("previous-seeded", OLD_IMAGE, "seed") in calls
         assert ("candidate-upgraded", NEW_IMAGE, "upgrade") in calls
         assert ("previous-restored", OLD_IMAGE, "read") in calls
+        assert ("previous-reads-upgraded", OLD_IMAGE, "read") in calls
     if failure is None and not diagnostic:
         verify_runtime_upgrade(result, SHA, NEW_IMAGE)
     else:

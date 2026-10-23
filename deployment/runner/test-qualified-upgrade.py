@@ -84,6 +84,8 @@ def assert_preserved(previous: dict, current: dict) -> None:
         if table not in current:
             raise ValueError(f"Previous qualified table disappeared: {table}")
         columns = set().union(*(row.keys() for row in rows))
+        if any(not columns <= row.keys() for row in current[table]):
+            raise ValueError(f"Previous qualified columns disappeared: {table}")
         projected = [{column: row[column] for column in columns} for row in current[table]]
         if sorted(rows, key=order) != sorted(projected, key=order):
             raise ValueError(f"Previous qualified rows changed: {table}")
@@ -317,6 +319,8 @@ def qualify(
         repeated = state.run_probe(current_image, current_sha, network, "upgrade", main, "candidate-repeat")
         if repeated != upgraded:
             raise ValueError("Repeated actual image initializer changed rows")
+        compatible = state.run_probe(old_image, old_sha, network, "read", main, "previous-reads-upgraded")
+        assert_preserved(old, compatible)
         current_dump = state.postgres_tool("pg_dump", main)
         (output / "candidate.dump").write_bytes(current_dump)
         state.postgres_tool("pg_restore", restore, current_dump)
@@ -330,6 +334,7 @@ def qualify(
             repeated_initializer=True,
             candidate_restore=True,
             previous_restore=True,
+            previous_reads_upgraded=True,
             postgres_image_digest=postgres_image,
             previous_tables_checked=len(old),
             probe_sha256=hashlib.sha256(PROBE.read_bytes()).hexdigest(),

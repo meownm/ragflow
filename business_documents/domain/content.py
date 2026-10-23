@@ -641,7 +641,6 @@ def render_document_ast(document: dict[str, Any], template: dict[str, Any]) -> s
         level = base_level + section["id"].count(".")
         lines.append(f"{'#' * level} {section['id']}. {section['title']}")
         section_text = render_section_text(section)
-        if section_text:
-            lines.extend(section_text.splitlines())
+        lines.extend((section_text if section_text.strip() else "Требований нет").splitlines())
         lines.append("")
     return "\n".join(lines).strip("\n")

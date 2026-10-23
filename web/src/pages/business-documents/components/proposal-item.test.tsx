@@ -54,7 +54,9 @@ test('shows the saved failure and permits cancellation without immediate applica
   expect(screen.getByText('Модель недоступна')).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'Отменить принятие' }));
   expect(callbacks.onCancelAcceptance).toHaveBeenCalledTimes(1);
-  expect(screen.queryByRole('button', { name: 'Применить' })).toBeNull();
+  expect(
+    screen.queryByRole('button', { name: 'Принять предложение' }),
+  ).toBeNull();
   expect(callbacks.onDecide).not.toHaveBeenCalled();
 });
 
@@ -63,7 +65,9 @@ test('disables cancellation during a job or without edit permission', () => {
   expect(
     screen.getByRole('button', { name: 'Отменить принятие' }),
   ).toBeDisabled();
-  expect(screen.queryByRole('button', { name: 'Применить' })).toBeNull();
+  expect(
+    screen.queryByRole('button', { name: 'Принять предложение' }),
+  ).toBeNull();
 });
 
 test.each(['PENDING', 'REJECTED', 'APPLIED'] as const)(
@@ -83,11 +87,25 @@ test.each(['PENDING', 'REJECTED', 'APPLIED'] as const)(
 
 test('accepts a pending proposal as a decision', () => {
   const callbacks = show({ ...proposal, decision: 'PENDING' });
-  fireEvent.click(screen.getByRole('button', { name: 'Применить' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Принять предложение' }));
   expect(callbacks.onDecide).toHaveBeenCalledWith({
     proposal_id: 'p1',
     decision: 'ACCEPTED',
   });
+});
+
+test('offers preparation for an accepted proposal without claiming a retry or save', () => {
+  const callbacks = show();
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Подготовить изменения' }),
+  );
+  expect(callbacks.onDecide).toHaveBeenCalledWith({
+    proposal_id: 'p1',
+    decision: 'ACCEPTED',
+  });
+  expect(
+    screen.queryByRole('button', { name: /Применить|Повторить/ }),
+  ).toBeNull();
 });
 
 test('renders proposal and rationale Markdown without changing the decision payload', () => {
@@ -99,7 +117,7 @@ test('renders proposal and rationale Markdown without changing the decision payl
   });
   expect(screen.getByText('Новое').tagName).toBe('STRONG');
   expect(screen.getByText('Обоснование').tagName).toBe('EM');
-  fireEvent.click(screen.getByRole('button', { name: 'Применить' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Принять предложение' }));
   expect(callbacks.onDecide).toHaveBeenCalledWith({
     proposal_id: 'p1',
     decision: 'ACCEPTED',

@@ -110,7 +110,7 @@ test('compares the actual revision tied to a decision, rather than the latest do
     </QueryClientProvider>,
   );
   const item = screen.getByTestId('business-document-proposal');
-  expect(await screen.findByText(/Внесено в ревизию 2/)).toBeVisible();
+  expect(await screen.findByText(/Внесено в редакцию 2/)).toBeVisible();
   fireEvent.click(within(item).getByText('Принятое предложение'));
   expect(within(item).getByTestId('revision-text-diff')).toHaveTextContent(
     'До изменения',

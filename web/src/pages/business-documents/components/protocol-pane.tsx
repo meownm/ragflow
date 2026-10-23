@@ -392,7 +392,7 @@ export function ProtocolPane({
       <div
         className="flex h-9 shrink-0 items-center gap-1 px-4"
         role="tablist"
-        aria-label="Обсуждение и история"
+        aria-label="Текущие и завершённые обсуждения"
       >
         <Button
           role="tab"
@@ -410,11 +410,12 @@ export function ProtocolPane({
           id="review-history-tab"
           aria-controls="review-history-panel"
           aria-selected={tab === 'history'}
+          aria-label={`Завершённые обсуждения · ${historyCount}`}
           size="sm"
           variant={tab === 'history' ? 'secondary' : 'ghost'}
           onClick={() => setTab('history')}
         >
-          История · {historyCount}
+          Завершённые · {historyCount}
         </Button>
       </div>
       {tab === 'work' && (questions.length > 0 || proposals.length > 0) && (
@@ -499,10 +500,14 @@ export function ProtocolPane({
               >
                 <MessageSquareText className="mx-auto size-7 stroke-[1.25] text-text-disabled" />
                 <p className="mt-3 text-sm font-medium text-text-primary">
-                  Обсуждение пока пусто
+                  {historyCount > 0
+                    ? 'В работе пока ничего нет'
+                    : 'Обсуждение пока пусто'}
                 </p>
                 <p className="mt-1 text-xs leading-5 text-text-secondary">
-                  Вопросы, предложения и комментарии появятся здесь.
+                  {historyCount > 0
+                    ? 'Завершённые обсуждения доступны на вкладке «Завершённые».'
+                    : 'Вопросы, предложения и комментарии появятся здесь.'}
                 </p>
               </div>
             )}
@@ -585,7 +590,7 @@ export function ProtocolPane({
                         className="mb-1 text-[11px] font-medium text-state-error"
                         data-testid="business-document-orphaned-anchor"
                       >
-                        Фрагмент относится к предыдущей ревизии
+                        Фрагмент относится к предыдущей редакции
                       </p>
                     )}
                     <blockquote
@@ -660,8 +665,12 @@ export function ProtocolPane({
                   className="max-h-64 overflow-y-auto rounded-md border border-border-button bg-bg-base scrollbar-auto"
                   data-testid="business-document-saved-prompts"
                 >
-                  <div className="border-b border-border-button px-3 py-2 text-[11px] font-medium text-text-secondary">
-                    Промпты на будущее
+                  <div className="border-b border-border-button px-3 py-2 text-[11px] text-text-secondary">
+                    <p className="font-medium">Заметки к документу</p>
+                    <p className="mt-1">
+                      Только в этом браузере. Сохранение в заметки не отправляет
+                      комментарий в обсуждение.
+                    </p>
                   </div>
                   {savedPrompts.map((prompt, index) => (
                     <div
@@ -678,7 +687,7 @@ export function ProtocolPane({
                       <button
                         type="button"
                         className="mt-0.5 shrink-0 text-text-disabled hover:text-state-error"
-                        aria-label={`Удалить сохранённый промпт ${index + 1}`}
+                        aria-label={`Удалить заметку ${index + 1}`}
                         onClick={() =>
                           persistSavedPrompts(
                             savedPrompts.filter(
@@ -760,8 +769,8 @@ export function ProtocolPane({
             <Button
               size="icon"
               variant="ghost"
-              aria-label="Сохранить промпт на будущее"
-              title="Сохранить промпт на будущее"
+              aria-label="Сохранить в заметки"
+              title="Сохранить в заметки"
               disabled={!comment.trim() || !editable}
               onClick={savePromptForLater}
               data-testid="business-document-save-prompt"
@@ -769,7 +778,7 @@ export function ProtocolPane({
               <BookmarkPlus className="size-4" />
             </Button>
             <Button
-              size="icon"
+              size="sm"
               className="ms-auto"
               variant="accent"
               aria-label="Добавить комментарий"
@@ -778,18 +787,19 @@ export function ProtocolPane({
               onClick={submitComment}
             >
               <Send className="size-4" />
+              Добавить комментарий
             </Button>
           </div>
         </div>
         <p className="mt-2 line-clamp-2 shrink-0 text-[11px] leading-4 text-text-secondary">
           {canComment
             ? pending
-              ? 'Можно подготовить и сохранить следующий промпт, пока обрабатывается текущий запрос'
+              ? 'Пока идёт обработка, можно подготовить следующий комментарий и добавить его в заметки'
               : selection
                 ? 'Уберите привязку, чтобы оставить комментарий ко всему документу · Ctrl + Enter — отправить'
                 : 'Чтобы привязать комментарий к месту, выделите текст в документе · Ctrl + Enter — отправить'
             : editable
-              ? 'Промпт можно подготовить и сохранить на будущее; отправка сейчас недоступна'
+              ? 'Можно подготовить комментарий и добавить его в заметки; отправка сейчас недоступна'
               : 'Комментарии сейчас недоступны'}
         </p>
       </div>

@@ -386,7 +386,7 @@ export function DocumentPane({
         </div>
         {revision && (
           <span className="font-mono text-xs text-text-secondary">
-            Ревизия {revision.revision_number}
+            Редакция {revision.revision_number}
           </span>
         )}
       </div>
@@ -402,8 +402,8 @@ export function DocumentPane({
               Черновик ещё не создан
             </h2>
             <p className="mt-2 text-sm leading-6 text-text-secondary">
-              Ответьте на вопросы справа. Когда вводных будет достаточно, агент
-              подготовит первую ревизию.
+              Ответьте на вопросы в обсуждении. Когда вводных будет достаточно,
+              агент подготовит первую редакцию.
             </p>
           </div>
         </div>
@@ -423,7 +423,7 @@ export function DocumentPane({
                 change && !preliminary ? change.after : sectionText;
               const displayedSectionText = previewText.trim()
                 ? previewText
-                : 'Требования отсутствуют';
+                : 'Требований нет';
               const headingLevel = Math.min(
                 6,
                 2 + section.id.split('.').length - 1,
@@ -502,8 +502,8 @@ export function DocumentPane({
                   {!change &&
                     !highlightedSectionIds.includes(section.id) &&
                     savedSectionIds.includes(section.id) && (
-                      <p className="mb-3 text-xs text-state-success">
-                        Изменения сохранены в этой ревизии
+                      <p className="mb-3 text-xs text-text-primary">
+                        Изменения сохранены в этой редакции
                       </p>
                     )}
                   {change && (
@@ -613,7 +613,7 @@ export function DocumentPane({
                           className="mb-6 rounded border border-border-button bg-bg-card p-3"
                         >
                           <summary className="mb-3 cursor-pointer text-xs font-medium">
-                            Изменения относительно ревизии{' '}
+                            Изменения относительно редакции{' '}
                             {previousRevision.revision_number}
                           </summary>
                           <RevisionTextDiff

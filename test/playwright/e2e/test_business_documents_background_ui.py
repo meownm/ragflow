@@ -132,11 +132,11 @@ def test_background_failure_retry_and_analysis_result(page, base_url):
     state["latest_job"].update(status="DEAD", progress_stage="FAILED")
     state["background_work"][0].update(status="FAILED", error={"code": "MODEL_UNAVAILABLE", "message": "Модель недоступна"})
     state["protocol"]["proposals"][0]["application"] = {"status": "DEAD", "error": {"code": "MODEL_UNAVAILABLE", "message": "Модель недоступна"}}
-    expect(page.get_by_role("button", name="Повторить применение")).to_be_visible(timeout=10000)
+    expect(page.get_by_role("button", name="Подготовить изменения")).to_be_visible(timeout=10000)
     expect(page.get_by_role("textbox", name="Комментарий", exact=True)).to_be_editable()
     screenshot(page, "background-failed.png")
     with page.expect_response("**/api/v1/business-documents/doc-ui-1/commands"):
-        page.get_by_role("button", name="Повторить применение").click()
+        page.get_by_role("button", name="Подготовить изменения").click()
     expect(page.get_by_test_id("business-document-operation")).to_contain_text("Этап 2/4")
     assert requests[-1]["type"] == "ACCEPT_PROPOSAL"
     state["state_version"] += 1
@@ -211,7 +211,7 @@ def test_section_collapse_during_background_work(page, base_url, width):
     toggle.click()
     expect(section).to_have_attribute("data-background-state", "saved", timeout=10000)
     expect(body).to_be_hidden()
-    expect(section.get_by_text("Изменения сохранены в этой ревизии", exact=True)).to_be_visible()
+    expect(section.get_by_text("Изменения сохранены в этой редакции", exact=True)).to_be_visible()
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
     screenshot(page, f"collapsed-saved-{width}.png")
 

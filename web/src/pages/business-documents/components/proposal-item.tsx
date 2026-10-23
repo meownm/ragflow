@@ -50,7 +50,7 @@ const closedPendingProposalPresentation = {
 };
 
 const applicationMessages = {
-  QUEUED: 'В очереди. Применим к последней сохранённой ревизии.',
+  QUEUED: 'В очереди. Применим к последней сохранённой редакции.',
   WAITING: 'Предложение ожидает применения.',
   PENDING: 'Применение ожидает запуска задачи.',
   RUNNING: 'Анализируем и вносим изменения. Можно продолжать обсуждение.',
@@ -211,7 +211,7 @@ export function ProposalItem({
                   }
                 >
                   <Check className="size-3.5" />
-                  {isPending ? 'Применить' : 'Повторить применение'}
+                  {isPending ? 'Принять предложение' : 'Подготовить изменения'}
                 </Button>
               )}
             </div>

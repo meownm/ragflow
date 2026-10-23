@@ -581,7 +581,7 @@ test('shows an explicit message for an empty document section', async () => {
 
   const sections = await screen.findAllByTestId('business-document-section');
   expect(sections[3]).toHaveTextContent('4. Ограничения');
-  expect(sections[3]).toHaveTextContent('Требования отсутствуют');
+  expect(sections[3]).toHaveTextContent('Требований нет');
   expect(sections[3]).toHaveAttribute('data-section-text', '');
 });
 
@@ -639,14 +639,14 @@ test('uses semantic status colors for questions and proposals', async () => {
   expect(screen.getByTestId('question-status-question-9')).toHaveTextContent(
     'Требует ответа',
   );
-  fireEvent.click(screen.getByRole('tab', { name: /История/ }));
+  fireEvent.click(screen.getByRole('tab', { name: /Завершённые обсуждения/ }));
   expect(screen.getByText('Ответ зафиксирован')).toHaveClass(
     'text-state-success',
   );
   expect(screen.getByText('Закрыт')).toBeVisible();
   expect(screen.getByText('Отклонено')).toHaveClass('text-text-secondary');
   expect(
-    screen.queryByRole('button', { name: 'Применить' }),
+    screen.queryByRole('button', { name: 'Принять предложение' }),
   ).not.toBeInTheDocument();
 });
 
@@ -662,7 +662,7 @@ test('renders an undecided proposal as closed history after review completion', 
   expect(
     screen.getByTestId('business-document-review-progress'),
   ).toHaveTextContent('Без решения: 1');
-  fireEvent.click(screen.getByRole('tab', { name: /История/ }));
+  fireEvent.click(screen.getByRole('tab', { name: /Завершённые обсуждения/ }));
   expect(screen.getByText('Не принято')).toBeVisible();
   expect(screen.getByText('§ 3.1 · Разбор завершён без решения')).toBeVisible();
   expect(
@@ -751,7 +751,7 @@ test('shows which comments, questions and AI proposals produced each revision', 
     'Инициировал: Мария Авторова (maria@example.test)',
   );
   expect(screen.getByTestId('business-document-history')).toHaveTextContent(
-    'Исполнитель: ai-worker-1',
+    'Исполнитель: Помощник',
   );
   expect(screen.getByTestId('business-document-history')).toHaveTextContent(
     'Автор изменений: Мария Авторова (maria@example.test)',
@@ -777,7 +777,7 @@ test('keeps the section diff available in revision history', async () => {
     await screen.findByTestId('business-document-history-toggle'),
   );
   const diff = await screen.findByTestId('business-document-revision-diff');
-  expect(diff).toHaveTextContent('Изменения ревизии 3');
+  expect(diff).toHaveTextContent('Изменения редакции 3');
   expect(
     within(
       screen.getAllByTestId('business-document-section')[0],
@@ -1230,7 +1230,7 @@ test('marks a preserved comment when its anchor belongs to an older revision', a
 
   expect(
     await screen.findByTestId('business-document-orphaned-anchor'),
-  ).toHaveTextContent('Фрагмент относится к предыдущей ревизии');
+  ).toHaveTextContent('Фрагмент относится к предыдущей редакции');
   expect(screen.getByTestId('business-document-comment')).toHaveTextContent(
     'Уточнить терминологию',
   );
@@ -1724,9 +1724,7 @@ test('keeps the prompt editable while work is running and saves it for later', a
   fireEvent.change(comment, {
     target: { value: 'Добавить это в следующей версии' },
   });
-  fireEvent.click(
-    screen.getByRole('button', { name: 'Сохранить промпт на будущее' }),
-  );
+  fireEvent.click(screen.getByRole('button', { name: 'Сохранить в заметки' }));
 
   expect(
     screen.getByTestId('business-document-saved-prompts'),
@@ -2490,7 +2488,7 @@ test('cancels acceptance and returns the proposal to the decision controls', asy
     }),
   );
   expect(screen.getByTestId('accept-proposal-proposal-12')).toHaveTextContent(
-    'Применить',
+    'Принять предложение',
   );
   expect(screen.getByTestId('reject-proposal-proposal-12')).toBeEnabled();
   expect(screen.getByTestId('business-document-markdown')).toHaveTextContent(
@@ -2857,7 +2855,7 @@ test('discards inline changes and restores the saved text without changing its r
     firstSectionText,
   );
   expect(screen.getByTestId('business-document-pane')).toHaveTextContent(
-    'Ревизия 3',
+    'Редакция 3',
   );
   expect(mockedSubmit).toHaveBeenCalledWith(
     'doc-1',
@@ -3192,7 +3190,7 @@ test.each(['permission', 'version'])(
     );
     expect(section).toHaveTextContent('ещё не применены');
     expect(screen.getByTestId('business-document-pane')).toHaveTextContent(
-      'Ревизия 3',
+      'Редакция 3',
     );
   },
 );
@@ -3842,7 +3840,7 @@ test('lists saved documents so work can be resumed', async () => {
     await screen.findByTestId('business-document-list-item'),
   ).toHaveTextContent('Сохранённые требования');
   expect(screen.getByTestId('business-document-list-item')).toHaveTextContent(
-    'Ревизия 2',
+    'Редакция 2',
   );
   fireEvent.click(screen.getByTestId('business-document-list-item'));
   await waitFor(() => expect(mockedFetch).toHaveBeenCalledWith('saved-1'));
@@ -4385,7 +4383,7 @@ test('automatically displays the saved worker result after one apply action', as
     ),
   );
   expect(screen.getByTestId('business-document-pane')).toHaveTextContent(
-    'Ревизия 4',
+    'Редакция 4',
   );
   expect(screen.queryByTestId('business-document-change-preview')).toBeNull();
   expect(mockedSubmit).toHaveBeenCalledTimes(1);
@@ -4439,7 +4437,7 @@ test('previews a historical revision and restores it from the authoritative resp
   );
   expect(screen.getByText('Просмотр истории')).toBeVisible();
   fireEvent.click(
-    screen.getByRole('button', { name: 'Восстановить эту ревизию' }),
+    screen.getByRole('button', { name: 'Восстановить эту редакцию' }),
   );
   expect(mockedSubmit).not.toHaveBeenCalled();
   fireEvent.click(
@@ -4463,7 +4461,7 @@ test('previews a historical revision and restores it from the authoritative resp
   expect(screen.getByTestId('business-document-markdown')).toHaveTextContent(
     'Старая цель.',
   );
-  expect(screen.getByText('Ревизия 4')).toBeVisible();
+  expect(screen.getByText('Редакция 4')).toBeVisible();
   expect(mockedFetch).toHaveBeenCalledTimes(1);
 });
 
@@ -4487,7 +4485,7 @@ test('lets a reader inspect history without restore actions', async () => {
   );
   fireEvent.click(await screen.findByTestId('business-document-revision-2'));
   expect(
-    screen.queryByRole('button', { name: 'Восстановить эту ревизию' }),
+    screen.queryByRole('button', { name: 'Восстановить эту редакцию' }),
   ).not.toBeInTheDocument();
 });
 
@@ -4557,10 +4555,12 @@ test('keeps previous cycles read-only and the comment draft while changing tabs 
   expect(resize).toHaveAttribute('aria-valuenow', '212');
   fireEvent.click(screen.getByRole('button', { name: 'Свернуть' }));
   expect(resize).toHaveAttribute('aria-valuenow', '188');
-  fireEvent.click(screen.getByRole('tab', { name: /История/ }));
+  fireEvent.click(screen.getByRole('tab', { name: /Завершённые обсуждения/ }));
   expect(screen.getByText('Ответ: 30 дней')).toBeVisible();
   expect(screen.queryByRole('button', { name: 'Ответить' })).toBeNull();
-  expect(screen.queryByRole('button', { name: 'Применить' })).toBeNull();
+  expect(
+    screen.queryByRole('button', { name: 'Принять предложение' }),
+  ).toBeNull();
   expect(input).toHaveValue('Незавершённое замечание');
   fireEvent.click(screen.getByRole('tab', { name: /В работе/ }));
   expect(input).toHaveValue('Незавершённое замечание');

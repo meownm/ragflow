@@ -529,7 +529,7 @@ function CreateBusinessDocumentPage() {
                     <span>{formatUpdateTime(item.update_time)}</span>
                     <span>
                       {item.current_revision_number
-                        ? `Ревизия ${item.current_revision_number}`
+                        ? `Редакция ${item.current_revision_number}`
                         : 'Без черновика'}
                     </span>
                     {item.operation_state !== 'IDLE' && (
@@ -748,7 +748,7 @@ function CreateBusinessDocumentPage() {
                     </p>
                     <p className="mt-1 text-xs leading-5 text-text-secondary">
                       Выберите свободную страницу: её содержимое откроется как
-                      первая ревизия для комментариев и анализа.
+                      первая редакция для комментариев и анализа.
                     </p>
                     <div className="mt-3 space-y-2">
                       {evaMatches.map((match) => (
@@ -1528,9 +1528,6 @@ export default function BusinessDocumentsPage() {
             >
               {lifecycleLabels[document.lifecycle_state]}
             </Badge>
-            <span className="font-mono text-[11px] text-text-secondary">
-              v{document.state_version}
-            </span>
           </div>
           {!isBusinessDocumentOperationActive(document.operation_state) && (
             <p className="text-xs text-text-secondary">
@@ -1661,7 +1658,7 @@ export default function BusinessDocumentsPage() {
                       </Button>
                     </form>
                     <p className="text-xs text-text-secondary">
-                      Привязка сохраняет текущую ревизию. Чтение обновления и
+                      Привязка сохраняет текущую редакцию. Чтение обновления и
                       публикация выполняются отдельно.
                     </p>
                     {rebindEvaMutation.error && (
@@ -1833,7 +1830,7 @@ export default function BusinessDocumentsPage() {
               data-testid="business-document-history-toggle"
             >
               <FileClock className="size-4" />
-              История
+              История документа
             </Button>
           )}
           {allowed.has('REQUEST_INTAKE_ASSESSMENT') && (
@@ -1884,7 +1881,9 @@ export default function BusinessDocumentsPage() {
                 }
               >
                 <Download className="size-4" />
-                Создать Markdown
+                {historyOpen
+                  ? `Markdown · текущая редакция ${document.current_revision?.revision_number}`
+                  : 'Создать Markdown'}
               </Button>
               <Button
                 size="sm"
@@ -1898,7 +1897,9 @@ export default function BusinessDocumentsPage() {
                 }
               >
                 <Send className="size-4" />
-                Создать HTML для EvaWiki
+                {historyOpen
+                  ? `HTML для EvaWiki · текущая редакция ${document.current_revision?.revision_number}`
+                  : 'Создать HTML для EvaWiki'}
               </Button>
             </>
           )}

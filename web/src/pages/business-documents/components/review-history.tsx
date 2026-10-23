@@ -53,12 +53,12 @@ export function ReviewHistory({
     <div className="px-4 pb-4" data-testid="business-document-review-history">
       {hasApplied && revisions.isLoading && (
         <p className="py-3 text-xs text-text-secondary" role="status">
-          Загружаем ревизии для сравнения…
+          Загружаем редакции для сравнения…
         </p>
       )}
       {hasApplied && revisions.error && (
         <div role="alert" className="py-3 text-xs text-state-error">
-          Не удалось загрузить ревизии.{' '}
+          Не удалось загрузить редакции.{' '}
           <Button size="sm" variant="ghost" onClick={() => revisions.refetch()}>
             Повторить
           </Button>
@@ -179,7 +179,7 @@ export function ReviewHistory({
                     <p className="text-[11px] text-text-secondary">
                       {sectionId && `§ ${sectionId} · `}
                       {revision
-                        ? `Внесено в ревизию ${revision.revision_number}`
+                        ? `Внесено в редакцию ${revision.revision_number}`
                         : proposal.applied
                           ? 'Правка внесена'
                           : proposal.decision === 'PENDING'
@@ -198,7 +198,7 @@ export function ReviewHistory({
                     {revision && after !== undefined ? (
                       <>
                         <p className="text-text-secondary">
-                          Ревизия {previous?.revision_number ?? '—'} →{' '}
+                          Редакция {previous?.revision_number ?? '—'} →{' '}
                           {revision.revision_number}
                           {sectionId ? ` · § ${sectionId}` : ' · весь документ'}
                         </p>
@@ -207,7 +207,7 @@ export function ReviewHistory({
                     ) : (
                       <p className="text-text-secondary">
                         {proposal.applied
-                          ? 'Сравнение доступно, когда найдена ревизия с источником этого решения.'
+                          ? 'Сравнение доступно, когда найдена редакция с источником этого решения.'
                           : 'Сохранённое решение. Повторное принятие недоступно.'}
                       </p>
                     )}

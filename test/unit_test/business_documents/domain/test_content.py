@@ -79,6 +79,16 @@ def test_inheritance_requires_an_exact_dotted_parent(other_id):
     assert normalized["sections"][0]["blocks"] == []
 
 
+def test_rendering_keeps_every_section_and_marks_empty_bodies_without_changing_content():
+    document = {"sections": [_section("1", {"type": "paragraph", "text": "Цель проекта"}), _section("2"), _section("3", {"type": "paragraph", "text": "  "})]}
+    original = deepcopy(document)
+
+    markdown = render_document_ast(document, {"rendering": {"body_heading_base_level": 2}})
+
+    assert markdown == "## 1. 1\nЦель проекта\n\n## 2. 2\nТребований нет\n\n## 3. 3\nТребований нет"
+    assert document == original
+
+
 def test_optional_sections_stay_empty_and_template_fields_are_removed_from_owned_copy():
     template = _template(("1", False, ["paragraph"]), ("2", True, ["paragraph"]))
     section = {**_section("1.1", {"type": "paragraph", "text": "Child"}), "parent_id": "1", "required": True, "allowed_blocks": ["paragraph"], "semantic_requirements": ["requirement"]}

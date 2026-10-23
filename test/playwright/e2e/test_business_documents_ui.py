@@ -8,7 +8,7 @@ import pytest
 from playwright.sync_api import expect
 
 from business_documents.domain.comment_anchor import validate_comment_anchor
-from business_documents.domain.content import render_section_text
+from business_documents.domain.content import render_document_ast, render_section_text
 from test.playwright.helpers._next_apps_helpers import RESULT_TIMEOUT_MS, _goto_home
 
 
@@ -17,6 +17,243 @@ AXE_SCRIPT = Path(os.environ.get("RAGFLOW_AXE_SCRIPT", str(Path(__file__).resolv
 
 def _envelope(data):
     return {"code": 0, "data": data}
+
+
+@pytest.mark.p1
+@pytest.mark.parametrize("width", [1440, 1280, 390])
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_business_document_comment_to_saved_edition_pilot(page, base_url, width, theme):
+    """Synthetic UI journey; responses do not qualify real inference/storage."""
+    from copy import deepcopy
+
+    page.set_viewport_size({"width": width, "height": 900 if width > 1000 else 844})
+    _install_session(page)
+    page.add_init_script(f"localStorage.setItem('ragflow-ui-theme', '{theme}')")
+    page.route("**/api/v1/**", lambda route: route.fulfill(json=_envelope({})))
+    _install_common_routes(page)
+    initial_text = "Срок удержания записи — 15 минут."
+    updated_text = "Срок удержания записи — 20 минут."
+    comment_text = "Изменить срок удержания записи с 15 на 20 минут."
+    projection = _projection(allowed_commands=["ADD_COMMENT", "REQUEST_REVIEW_ASSESSMENT"])
+    projection.update(title="Запись в отделение · пилот", state_version=11, latest_exports=[])
+    revision = projection["current_revision"]
+    template = json.loads((Path(__file__).resolve().parents[3] / "agent/business_requirements/templates/business_requirements.v1.json").read_text(encoding="utf-8"))
+    outline = template["sections"]
+    revision["document_ast"]["sections"] = [{"id": item["id"], "title": item["title"], "blocks": [{"type": "paragraph", "text": initial_text}] if item["id"] == "1" else []} for item in outline]
+    revision.update(
+        revision_id="revision-1",
+        revision_number=1,
+        section_texts={item["id"]: render_section_text(item) for item in revision["document_ast"]["sections"]},
+        body_markdown=render_document_ast(revision["document_ast"], template),
+    )
+    projection["protocol"] = {"questions": [], "proposals": [], "comments": []}
+    revisions = [deepcopy(revision)]
+    commands = []
+
+    def respond(route, data):
+        route.fulfill(json=_envelope(data))
+
+    def documents(route):
+        nonlocal projection
+        request = route.request
+        path = urlparse(request.url).path
+        if path.endswith(("/capabilities", "/eva/access")):
+            route.fallback()
+        elif path.endswith("/catalog"):
+            respond(route, {"items": [], "total": 0})
+        elif path.endswith("/revisions"):
+            respond(route, revisions)
+        elif path == "/api/v1/business-documents":
+            respond(
+                route,
+                {
+                    "items": [
+                        {
+                            "document_id": "doc-ui-1",
+                            "title": projection["title"],
+                            "lifecycle_state": "REVIEW",
+                            "operation_state": "IDLE",
+                            "current_revision_number": projection["current_revision"]["revision_number"],
+                            "update_time": 1_756_000_000,
+                        }
+                    ],
+                    "page": 1,
+                    "page_size": 20,
+                    "total": 1,
+                },
+            )
+        elif request.method == "GET":
+            respond(route, projection)
+        else:
+            command = request.post_data_json
+            commands.append(command)
+            assert command["expected_state_version"] == projection["state_version"]
+            projection["state_version"] += 1
+            kind = command["type"]
+            protocol = projection["protocol"]
+            if kind == "ADD_COMMENT":
+                payload = command["payload"]
+                assert payload["text"] == comment_text and payload["revision_id"] == "revision-1"
+                protocol["comments"].append(
+                    {
+                        "comment_id": "comment-pilot",
+                        "text": payload["text"],
+                        "anchor": payload["anchor"],
+                        "anchor_status": "ANCHORED",
+                        "revision_id": payload["revision_id"],
+                        "section_id": payload["section_id"],
+                    }
+                )
+            elif kind == "REQUEST_REVIEW_ASSESSMENT":
+                protocol["proposals"] = [
+                    {
+                        "proposal_id": "proposal-pilot",
+                        "target_section_id": "1",
+                        "text": "Удерживать запись 20 минут.",
+                        "rationale": "Подтверждённое замечание автора",
+                        "decision": "PENDING",
+                        "applied": False,
+                    }
+                ]
+                projection["allowed_commands"] = ["ADD_COMMENT", "DECIDE_PROPOSAL", "ACCEPT_PROPOSAL", "APPLY_CHANGES"]
+            elif kind == "ACCEPT_PROPOSAL":
+                protocol["proposals"][0]["decision"] = "ACCEPTED"
+                protocol["proposals"][0]["decision_event_id"] = "event-decision-pilot"
+            elif kind == "APPLY_CHANGES":
+                assert command["payload"] == {"base_revision_id": "revision-1"}
+                assert protocol["proposals"][0]["decision"] == "ACCEPTED"
+                protocol["proposals"][0]["applied"] = True
+                saved = deepcopy(projection["current_revision"])
+                saved.update(
+                    revision_id="revision-2",
+                    revision_number=2,
+                    section_texts={**projection["current_revision"]["section_texts"], "1": updated_text},
+                    source_event_ids=["event-comment-pilot", "event-decision-pilot"],
+                    change_basis=[
+                        {
+                            "event_id": "event-comment-pilot",
+                            "type": "COMMENT",
+                            "title": "Замечание к сроку удержания",
+                            "summary": comment_text,
+                            "actor_type": "AI",
+                            "actor_id": "opaque-worker-pilot",
+                            "initiated_by_actor_id": "business-documents-ui-user",
+                            "initiated_by_actor_name": "Автор",
+                            "section_id": "1",
+                        }
+                    ],
+                )
+                saved["document_ast"]["sections"][0]["blocks"][0]["text"] = updated_text
+                saved["body_markdown"] = render_document_ast(saved["document_ast"], template)
+                revisions.append(saved)
+                projection.update(
+                    current_revision=saved,
+                    protocol_history=[{**deepcopy(protocol), "review_cycle": 1}],
+                    protocol={"questions": [], "proposals": [], "comments": []},
+                    allowed_commands=["REQUEST_EXPORT", "RESTORE_REVISION"],
+                    last_application={"revision_id": "revision-2", "section_ids": ["1"]},
+                )
+            elif kind == "REQUEST_EXPORT":
+                assert command["payload"]["revision_id"] == "revision-2"
+            else:
+                pytest.fail(f"Unexpected pilot command: {kind}")
+            respond(
+                route,
+                {
+                    "accepted": True,
+                    "document_id": "doc-ui-1",
+                    "state_version": projection["state_version"],
+                    "lifecycle_state": projection["lifecycle_state"],
+                    "operation_state": "IDLE",
+                    "allowed_commands": projection["allowed_commands"],
+                    "document": deepcopy(projection),
+                },
+            )
+
+    page.route("**/api/v1/business-documents**", documents)
+    evidence = Path(os.environ["PW_ARTIFACTS_DIR"]) / "pilot" / f"{width}-{theme}"
+    evidence.mkdir(parents=True, exist_ok=True)
+
+    def capture(name):
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
+        assert page.evaluate("innerWidth") == width
+        assert page.evaluate("innerHeight") == (900 if width > 1000 else 844)
+        assert page.locator("html").evaluate("node => node.classList.contains('dark')") == (theme == "dark")
+        if name != "01-list":
+            sections = page.get_by_test_id("business-document-section")
+            assert sections.evaluate_all("nodes => nodes.map(node => node.dataset.sectionId)") == [item["id"] for item in outline]
+            for item in outline:
+                section_node = sections.filter(has=page.get_by_role("button", name=f"{item['id']}. {item['title']}", exact=True))
+                expect(section_node).to_have_count(1)
+                if item["id"] != "1":
+                    expect(section_node.locator("[data-section-body]")).to_have_text("Требований нет")
+            (evidence / f"{name}.json").write_text(
+                json.dumps({"template_version": template["template_version"], "sections": [{"id": item["id"], "title": item["title"]} for item in outline]}, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        page.screenshot(path=str(evidence / f"{name}.png"), full_page=True)
+
+    page.goto(f"{base_url.rstrip('/')}/business-documents")
+    document_link = page.get_by_role("link", name=re.compile("Запись в отделение · пилот"))
+    expect(document_link).to_contain_text("Редакция 1", timeout=RESULT_TIMEOUT_MS)
+    capture("01-list")
+    document_link.click()
+    pane = page.get_by_test_id("business-document-pane")
+    expect(pane).to_contain_text(initial_text, timeout=RESULT_TIMEOUT_MS)
+    expect(page.get_by_test_id("business-document-header")).not_to_contain_text("v11")
+    page.locator('[data-section-id="5.5"]').scroll_into_view_if_needed()
+    capture("01-complete-outline")
+    section = page.locator('[data-section-id="1"]')
+    section.locator("[data-section-body]").evaluate("""body => {
+        const range = document.createRange();
+        range.selectNodeContents(body.querySelector('p') || body);
+        const selection = window.getSelection();
+        selection.removeAllRanges(); selection.addRange(range);
+    }""")
+    section.dispatch_event("mouseup")
+    expect(page.get_by_test_id("business-document-comment-scope-selector")).to_contain_text("выделенный фрагмент")
+    field = page.get_by_role("textbox", name="Комментарий", exact=True)
+    field.fill(comment_text)
+    page.get_by_role("button", name="Сохранить в заметки", exact=True).click()
+    expect(page.get_by_test_id("business-document-saved-prompts")).to_contain_text("не отправляет комментарий")
+    assert commands == []
+    page.keyboard.press("Escape")
+    page.get_by_role("button", name="Добавить комментарий", exact=True).click()
+    expect(field).to_have_value("")
+    assert commands[0]["payload"]["anchor"]["selected_text"] == initial_text
+    page.get_by_role("button", name="Проанализировать замечания", exact=True).click()
+    proposal_card = page.get_by_test_id("business-document-proposal")
+    proposal_card.get_by_role("button", name="Принять предложение", exact=True).click()
+    expect(pane).to_contain_text(initial_text)
+    expect(page.get_by_test_id("proposal-status-proposal-pilot")).to_have_text("Принято к применению")
+    section.scroll_into_view_if_needed()
+    capture("02-document")
+    proposal_card.get_by_role("button", name="Подготовить изменения", exact=True).click(trial=True)
+    capture("02-review")
+    page.get_by_role("button", name="Применить исправления", exact=True).click()
+    expect(pane).to_contain_text(updated_text)
+    expect(pane).to_contain_text("Редакция 2")
+    expect(page.get_by_role("button", name="Подтвердить применение")).to_have_count(0)
+    page.reload()
+    expect(pane).to_contain_text(updated_text, timeout=RESULT_TIMEOUT_MS)
+    expect(page.get_by_test_id("business-document-protocol-empty")).to_contain_text("В работе пока ничего нет")
+    capture("03-saved")
+    page.get_by_role("tab", name="Завершённые обсуждения · 2", exact=True).click()
+    expect(page.get_by_role("tabpanel")).to_contain_text(comment_text)
+    expect(page.get_by_role("tabpanel")).to_contain_text("Внесено в редакцию 2")
+    expect(page.get_by_role("tabpanel")).not_to_contain_text("Внесение в документ не подтверждено")
+    capture("03-discussion")
+    page.get_by_role("button", name="История документа", exact=True).click()
+    history = page.get_by_test_id("business-document-history")
+    expect(history).to_contain_text("Исполнитель: Помощник")
+    expect(history).not_to_contain_text("opaque-worker-pilot")
+    page.get_by_label("Редакция для просмотра").select_option("revision-1")
+    expect(pane).to_contain_text(initial_text)
+    with page.expect_response(lambda response: response.request.method == "POST" and urlparse(response.url).path.endswith("/commands")):
+        page.get_by_role("button", name="Markdown · текущая редакция 2", exact=True).click()
+    assert commands[-1]["type"] == "REQUEST_EXPORT"
+    capture("04-history")
+    assert [item["type"] for item in commands] == ["ADD_COMMENT", "REQUEST_REVIEW_ASSESSMENT", "ACCEPT_PROPOSAL", "APPLY_CHANGES", "REQUEST_EXPORT"]
 
 
 @pytest.mark.p1
@@ -90,14 +327,14 @@ def test_compact_eva_resizing_and_review_history(page, base_url, width):
         page.mouse.move(resize["x"] + 30, resize["y"] - 100, steps=10)
         page.mouse.up()
         assert composer.bounding_box()["height"] > old_height + 80
-    page.get_by_role("tab", name=re.compile("История")).click()
+    page.get_by_role("tab", name=re.compile("Завершённые обсуждения")).click()
     expect(page.get_by_text("Ответ: 15 минут", exact=True)).to_be_visible()
     expect(page.get_by_text("Не принято", exact=True)).to_be_visible()
     old_proposal = page.locator('[data-protocol-id="old-proposal"]')
     old_proposal.locator("summary").click()
     expect(old_proposal.get_by_test_id("revision-text-diff")).to_contain_text("Запись удерживается 15 минут")
     expect(old_proposal.get_by_test_id("revision-text-diff")).to_contain_text("Запись сразу подтверждается")
-    expect(page.get_by_role("button", name="Применить", exact=True)).to_have_count(0)
+    expect(page.get_by_role("button", name="Принять предложение", exact=True)).to_have_count(0)
     expect(input_field).to_have_value("Замечание сохранится при изменении размеров")
     history_path = Path(os.environ.get("PW_ARTIFACTS_DIR", "test/playwright/artifacts")) / f"compact-bt-history-{width}.png"
     history_path.parent.mkdir(parents=True, exist_ok=True)
@@ -398,7 +635,7 @@ def test_business_document_protocol_markdown_and_decisions(page, base_url, width
     expect(proposal_card.locator("code")).to_have_text("идентификатор")
     expect(page.get_by_test_id("business-document-comment").locator("blockquote strong")).to_have_text("Комментарий автора")
     with page.expect_request("**/api/v1/business-documents/doc-ui-1/commands") as decision_request:
-        proposal_card.get_by_role("button", name="Применить", exact=True).click()
+        proposal_card.get_by_role("button", name="Принять предложение", exact=True).click()
     assert decision_request.value.post_data_json["type"] == "ACCEPT_PROPOSAL"
     assert decision_request.value.post_data_json["payload"] == {"proposal_id": "proposal-1"}
 
@@ -1163,7 +1400,7 @@ def test_revision_history_restore(page, base_url):
     page.route("**/api/v1/business-documents/doc-ui-1/commands", restore)
     page.goto(f"{base_url.rstrip('/')}/business-documents/doc-ui-1")
     page.get_by_test_id("business-document-history-toggle").click()
-    selector = page.get_by_label("Ревизия для просмотра")
+    selector = page.get_by_label("Редакция для просмотра")
     expect(selector).to_have_value("revision-3")
     section = page.locator('[data-section-id="1"]')
     expect(section.get_by_test_id("revision-text-diff")).to_have_count(1)
@@ -1174,16 +1411,16 @@ def test_revision_history_restore(page, base_url):
     page.screenshot(path=str(evidence / "revision-history.png"), full_page=True)
     selector.select_option("revision-2")
     expect(section.locator("[data-section-body]")).to_contain_text(previous["section_texts"]["1"])
-    page.get_by_role("button", name="Восстановить эту ревизию").click()
+    page.get_by_role("button", name="Восстановить эту редакцию").click()
     page.get_by_role("button", name="Отмена", exact=True).click()
     assert submitted == []
-    page.get_by_role("button", name="Восстановить эту ревизию").click()
+    page.get_by_role("button", name="Восстановить эту редакцию").click()
     page.get_by_role("button", name="Восстановить документ", exact=True).click()
     expect(page.get_by_test_id("business-document-history")).to_have_count(0)
-    expect(page.get_by_text("Ревизия 4", exact=True)).to_be_visible()
+    expect(page.get_by_text("Редакция 4", exact=True)).to_be_visible()
     expect(section.locator("[data-section-body]")).to_contain_text(previous["section_texts"]["1"])
     assert len(submitted) == 1
     assert len(detail_reads) == 1
     page.reload()
-    expect(page.get_by_text("Ревизия 4", exact=True)).to_be_visible()
+    expect(page.get_by_text("Редакция 4", exact=True)).to_be_visible()
     expect(section.locator("[data-section-body]")).to_contain_text(previous["section_texts"]["1"])

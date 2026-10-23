@@ -140,10 +140,10 @@ export function RevisionHistoryPanel({
         <div>
           <div className="flex items-center gap-2">
             <FileClock className="size-4 text-accent-primary" />
-            <h2 className="text-sm font-semibold">История изменений</h2>
+            <h2 className="text-sm font-semibold">История редакций</h2>
           </div>
           <p className="mt-1 text-xs leading-5 text-text-secondary">
-            Вопросы, комментарии и предложения, вошедшие в каждую ревизию.
+            Вопросы, комментарии и предложения, вошедшие в каждую редакцию.
           </p>
         </div>
         <Button
@@ -159,7 +159,7 @@ export function RevisionHistoryPanel({
 
       {loading && (
         <p className="px-5 py-8 text-sm text-text-secondary">
-          Загружаем ревизии…
+          Загружаем редакции…
         </p>
       )}
       {error && (
@@ -169,14 +169,14 @@ export function RevisionHistoryPanel({
       )}
       {!loading && !error && !ordered.length && (
         <p className="px-5 py-8 text-sm text-text-secondary">
-          Ревизий пока нет.
+          Редакций пока нет.
         </p>
       )}
 
       {selectedRevision && (
         <section className="space-y-3 border-b border-border-button px-5 py-4">
           <label className="block space-y-1 text-xs text-text-secondary">
-            <span>Ревизия для просмотра</span>
+            <span>Редакция для просмотра</span>
             <select
               className="w-full rounded border border-border-button bg-bg-base px-3 py-2 text-sm text-text-primary"
               value={selectedRevisionId}
@@ -189,7 +189,7 @@ export function RevisionHistoryPanel({
             >
               {ordered.map((revision) => (
                 <option key={revision.revision_id} value={revision.revision_id}>
-                  Ревизия {revision.revision_number}
+                  Редакция {revision.revision_number}
                   {revision.revision_id === currentRevisionId
                     ? ' · текущая'
                     : ''}
@@ -198,26 +198,26 @@ export function RevisionHistoryPanel({
             </select>
           </label>
           <p className="text-sm font-medium">
-            Просмотр ревизии {selectedRevision.revision_number}
+            Просмотр редакции {selectedRevision.revision_number}
           </p>
           <p className="text-xs text-text-secondary">
-            Полный текст выбранной ревизии показан слева. Изменения сравниваются
-            с предыдущей ревизией.
+            Полный текст выбранной редакции показан в области документа.
+            Изменения сравниваются с предыдущей редакцией.
           </p>
           {canRestore && selectedRevision.revision_id !== currentRevisionId && (
             <AlertDialog>
               <AlertDialogTrigger asChild>
                 <Button variant="secondary" disabled={pending}>
-                  Восстановить эту ревизию
+                  Восстановить эту редакцию
                 </Button>
               </AlertDialogTrigger>
               <AlertDialogContent>
                 <AlertDialogHeader>
                   <AlertDialogTitle>
-                    Восстановить ревизию {selectedRevision.revision_number}?
+                    Восстановить редакцию {selectedRevision.revision_number}?
                   </AlertDialogTitle>
                   <AlertDialogDescription>
-                    Будет создана новая ревизия с этим содержимым и новый цикл
+                    Будет создана новая редакция с этим содержимым и новый цикл
                     проверки. Текущая версия останется в истории. Незавершённые
                     обсуждения и подготовленные правки не переносятся.
                   </AlertDialogDescription>
@@ -242,7 +242,7 @@ export function RevisionHistoryPanel({
           data-testid="business-document-revision-diff"
         >
           <h3 className="text-xs font-semibold text-text-primary">
-            Изменения ревизии {selectedRevision?.revision_number}
+            Изменения редакции {selectedRevision?.revision_number}
           </h3>
           <div className="mt-3 space-y-2">
             {changedSections.map(({ id, before, after }) => (
@@ -293,7 +293,7 @@ export function RevisionHistoryPanel({
               >
                 <span className="flex flex-wrap items-baseline justify-between gap-2">
                   <span className="text-sm font-semibold text-text-primary">
-                    Ревизия {revision.revision_number}
+                    Редакция {revision.revision_number}
                     {current ? ' · текущая' : ''}
                   </span>
                   <span className="text-[11px] text-text-disabled">
@@ -352,7 +352,9 @@ export function RevisionHistoryPanel({
                                       basis.actor_name,
                                       basis.actor_login,
                                     )
-                                  : basis.actor_id}
+                                  : basis.actor_type === 'AI'
+                                    ? 'Помощник'
+                                    : 'Система'}
                               </span>
                             )}
                             <DocumentMarkdown

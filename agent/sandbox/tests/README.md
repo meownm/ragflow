@@ -19,6 +19,11 @@ tests/
 
 Unit tests use mocks and don't require any external services or credentials.
 
+The async JavaScript cases in `test_aliyun_codeinterpreter.py` require Node.js on
+`PATH`. They execute the generated wrapper locally to check that both declared
+and exported async entrypoints are awaited and their actual results decoded.
+The Aliyun API remains mocked; missing Node.js is a failed prerequisite, not a skip.
+
 **Files:**
 - `test_providers.py` - Tests for base provider interface and manager
 - `test_aliyun_provider.py` - Tests for Aliyun provider with mocked API calls

@@ -128,6 +128,7 @@ class OpenMetadataConfig:
     dataset_top_n: int = 20
     dataset_similarity_threshold: float = 0.05
     dataset_vector_similarity_weight: float = 0.3
+    login_timeout_seconds: float = 60.0
 
     @classmethod
     def from_env(cls) -> OpenMetadataConfig:
@@ -142,6 +143,7 @@ class OpenMetadataConfig:
             password=os.getenv("OPENMETADATA_PASSWORD", ""),
             jwt_token=os.getenv("OPENMETADATA_JWT_TOKEN", "").strip(),
             timeout_seconds=max(1.0, float(os.getenv("OPENMETADATA_TIMEOUT_SECONDS", "12"))),
+            login_timeout_seconds=max(1.0, float(os.getenv("OPENMETADATA_LOGIN_TIMEOUT_SECONDS", "60"))),
             retries=max(0, min(4, int(os.getenv("OPENMETADATA_RETRIES", "2")))),
             cache_ttl_seconds=max(10, int(os.getenv("OPENMETADATA_CACHE_TTL_SECONDS", "900"))),
             stale_after_hours=max(1, int(os.getenv("OPENMETADATA_STALE_AFTER_HOURS", "168"))),
@@ -402,18 +404,20 @@ class OpenMetadataClient:
                 f"{self.config.base_url}/api/v1/users/login",
                 json={"email": self.config.username, "password": password},
                 headers={"Accept": "application/json"},
-                timeout=self.config.timeout_seconds,
+                timeout=(self.config.timeout_seconds, max(self.config.timeout_seconds, self.config.login_timeout_seconds)),
             )
         except requests.RequestException as exc:
-            raise OpenMetadataAuthenticationError("OpenMetadata login is unavailable") from exc
-        if response.status_code >= 400:
+            raise OpenMetadataError("OpenMetadata login is unavailable") from exc
+        if response.status_code in {401, 403}:
             raise OpenMetadataAuthenticationError("OpenMetadata rejected the configured credentials")
+        if response.status_code >= 400:
+            raise OpenMetadataError(f"OpenMetadata login failed with HTTP {response.status_code}")
         try:
-            token = str(response.json()["accessToken"])
+            token = response.json()["accessToken"]
         except (ValueError, KeyError, TypeError) as exc:
-            raise OpenMetadataAuthenticationError("OpenMetadata login returned an invalid response") from exc
-        if not token:
-            raise OpenMetadataAuthenticationError("OpenMetadata login returned an empty token")
+            raise OpenMetadataError("OpenMetadata login returned an invalid response") from exc
+        if not isinstance(token, str) or not token.strip():
+            raise OpenMetadataError("OpenMetadata login returned an empty token")
         return token
 
     def _authorization(self, *, force_refresh: bool = False) -> str:

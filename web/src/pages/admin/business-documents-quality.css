@@ -165,18 +165,6 @@
   max-width: 36rem;
 }
 
-.quality-disclosure > summary {
-  list-style: none;
-}
-
-.quality-disclosure > summary::-webkit-details-marker {
-  display: none;
-}
-
-.quality-disclosure[open] > summary .quality-disclosure-icon {
-  transform: rotate(90deg);
-}
-
 .document-quality-comparison-table {
   table-layout: auto;
 }

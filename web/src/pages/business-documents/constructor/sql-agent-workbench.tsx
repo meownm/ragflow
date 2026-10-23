@@ -554,6 +554,25 @@ function QueryReview({
           <dl className="mt-3 grid grid-cols-[120px_1fr] gap-y-2 border-y border-border-button py-3 text-xs">
             <dt className="text-text-secondary">Лимит</dt>
             <dd>{proposal.row_limit} строк</dd>
+            {proposal.top_per_group && (
+              <>
+                <dt className="text-text-secondary">В каждой группе</dt>
+                <dd>
+                  Лимит строк: {proposal.top_per_group.row_limit}. Группы:{' '}
+                  {proposal.top_per_group.partition_by
+                    .map((id) => selectName.get(id) || id)
+                    .join(', ')}
+                  . Порядок выбора:{' '}
+                  {proposal.top_per_group.order_by
+                    .map(
+                      (item) =>
+                        `${selectName.get(item.select_item_id) || item.select_item_id} ${item.direction === 'DESC' ? 'по убыванию' : 'по возрастанию'}`,
+                    )
+                    .join(', ')}
+                  .
+                </dd>
+              </>
+            )}
             <dt className="text-text-secondary">Сортировка</dt>
             <dd>
               {proposal.order_by

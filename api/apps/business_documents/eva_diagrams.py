@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 from collections import Counter
 from collections.abc import Callable
 
@@ -59,6 +60,27 @@ _SVG_ATTRIBUTES = frozenset(
         "gradienttransform",
     }
 )
+_SVG_PRESENTATION_ATTRIBUTES = frozenset(
+    {
+        "fill",
+        "fill-opacity",
+        "stroke",
+        "stroke-width",
+        "stroke-opacity",
+        "stroke-dasharray",
+        "stroke-linecap",
+        "stroke-linejoin",
+        "font-family",
+        "font-size",
+        "font-weight",
+        "font-style",
+        "text-anchor",
+        "dominant-baseline",
+        "stop-color",
+        "stop-opacity",
+    }
+)
+_SVG_CSS_VALUE = re.compile(r"(?:[a-zA-Z0-9#.,%\s'\"+\-]+|(?:rgb|rgba|hsl|hsla)\([0-9.,% /+\-]+\))")
 
 
 def _safe_svg(value: str) -> str:
@@ -68,7 +90,7 @@ def _safe_svg(value: str) -> str:
     if svg is None:
         raise ConnectorValidationError("EVA Wiki returned an invalid PlantUML image")
     # PlantUML emits geometry, text and presentation attributes. Executable SVG,
-    # embedded HTML, remote resources and CSS are not needed for these diagrams.
+    # embedded HTML and remote resources are not needed for these diagrams.
     for tag in [svg, *svg.find_all(True)]:
         if tag.name is None:
             continue
@@ -79,10 +101,16 @@ def _safe_svg(value: str) -> str:
             if attribute == "style":
                 for declaration in str(tag[attribute]).split(";"):
                     name, _, content = declaration.partition(":")
-                    if name.strip() in _SVG_ATTRIBUTES and "url(" not in content.casefold():
+                    if name.strip() in _SVG_PRESENTATION_ATTRIBUTES and _SVG_CSS_VALUE.fullmatch(content.strip()):
                         tag[name.strip()] = content.strip()
-            if attribute not in _SVG_ATTRIBUTES or "url(" in str(tag[attribute]).casefold():
+            if attribute not in _SVG_ATTRIBUTES or "url(" in str(tag[attribute]).casefold() or attribute in _SVG_PRESENTATION_ATTRIBUTES and not _SVG_CSS_VALUE.fullmatch(str(tag[attribute])):
                 del tag[attribute]
+        # EVA's save sanitizer accepts style on every SVG element, but removes
+        # stroke attributes from lines and polygons. Keep safe presentation CSS
+        # as well as attributes so the saved preview matches the native editor.
+        style = ";".join(f"{name}:{value}" for name, value in tag.attrs.items() if name in _SVG_PRESENTATION_ATTRIBUTES and _SVG_CSS_VALUE.fullmatch(str(value)))
+        if style:
+            tag["style"] = style
     return str(svg)
 
 
@@ -109,7 +137,7 @@ def rendered_diagrams_match(expected_html: str, actual_html: str) -> bool:
     that a prepared SVG replaced the published source-code fallback.
     """
 
-    def sources(value: str) -> Counter[str]:
+    def sources(value: str) -> Counter[tuple[str, int, int]]:
         rendered = Counter()
         for macro in BeautifulSoup(value, "html.parser").select('[data-macros="plantuml"]'):
             if macro.select_one(".macros-preview svg") is None or macro.select_one(".macros-edit svg path") is None:
@@ -119,7 +147,14 @@ def rendered_diagrams_match(expected_html: str, actual_html: str) -> bool:
             except (ValueError, KeyError, TypeError):
                 continue
             if isinstance(source, str) and source.strip():
-                rendered[source.replace("\r\n", "\n").strip()] += 1
+                lines = macro.select(".macros-preview line")
+                painted = 0
+                for line in lines:
+                    css = dict(declaration.strip().split(":", 1) for declaration in line.get("style", "").split(";") if ":" in declaration)
+                    stroke = css.get("stroke", line.get("stroke", "none")).strip().casefold()
+                    if stroke not in {"none", "transparent", ""}:
+                        painted += 1
+                rendered[source.replace("\r\n", "\n").strip(), len(lines), painted] += 1
         return rendered
 
     expected = sources(expected_html)

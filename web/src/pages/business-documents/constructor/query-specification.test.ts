@@ -92,6 +92,38 @@ function workspace(twoTables = false): SchemaWorkspaceState {
 }
 
 describe('query specification model', () => {
+  it('preserves per-group selection through the editable proposal and compile request', () => {
+    const source = workspace();
+    const original = createQuerySpecificationDraft(source);
+    const top = {
+      partition_by: [original.select[0].id],
+      order_by: [
+        { select_item_id: original.select[1].id, direction: 'DESC' as const },
+      ],
+      row_limit: 1,
+    };
+    const request = buildQueryCompileRequest(source, {
+      ...original,
+      topPerGroup: top,
+    });
+    const proposal = {
+      base_entity_id: original.baseEntityId,
+      aliases: original.aliases,
+      select: request.specification.select,
+      joins: [],
+      filters: [],
+      order_by: request.specification.order_by,
+      row_limit: original.rowLimit,
+      top_per_group: top,
+    };
+    const draft = applyQueryPlanProposal(proposal);
+    expect(
+      buildQueryCompileRequest(source, draft).specification.top_per_group,
+    ).toEqual(top);
+    top.partition_by.push('another-field');
+    expect(draft.topPerGroup?.partition_by).toEqual([original.select[0].id]);
+  });
+
   it('creates selected fields and blocks an unconfirmed join suggestion', () => {
     const source = workspace(true);
     const draft = createQuerySpecificationDraft(source);

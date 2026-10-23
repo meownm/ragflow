@@ -5,6 +5,7 @@ must not change the selection of unit tests or P0 document requirements.
 
 | Lane | Command from repository root | Boundary |
 | --- | --- | --- |
+| On-demand security | See [Trivy, Syft, Gitleaks and Grype commands](../tools/security/README.md) | Explicit request only; source/image vulnerability and configuration scans, SBOM, redacted file/history secret checks. Missing tools/databases and partial scans are INCOMPLETE; no runtime or authorization acceptance |
 | Python unit | `python run_tests.py -i` | In-process dependencies and fixtures |
 | Technical Specifications requirements | `python -B -m pytest -q test/unit_test/technical_specifications test/unit_test/document_exchange test/evals/technical_specifications/test_live_quality.py` | TZ-01–TZ-40 in `api/technical_specifications/REQUIREMENTS.md` and `test/fixtures/technical_specifications/requirements_traceability.md`: format/limits, real anonymous auth functions, role/tenant isolation, drafts, chat leases/replay, comment identity, no-op revisions, shared Eva import/binding/publish and failure preservation. Disposable SQLite and controlled model/Eva; browser, PostgreSQL and real-LLM evidence remain separate lanes |
 | Resource names | `python -m pytest test/unit_test/test_resource_names.py test/unit_test/test_team_resource_visibility.py` | Owner/category namespaces, private-name non-disclosure, validation and team/session access; disposable SQLite |

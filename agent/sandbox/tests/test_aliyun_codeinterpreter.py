@@ -24,6 +24,7 @@ Official SDK: https://github.com/Serverless-Devs/agentrun-sdk-python
 """
 
 import pytest
+import subprocess
 from unittest.mock import patch, MagicMock
 
 from agent.sandbox.providers.base import SandboxProvider
@@ -201,14 +202,18 @@ class TestAliyunCodeInterpreterProvider:
         assert result.exit_code != 0
         assert len(result.stderr) > 0
 
+    @pytest.mark.parametrize("entrypoint", ["async function main(args)", "module.exports.main = async function(args)"])
     @patch("agent.sandbox.providers.aliyun_codeinterpreter.Sandbox")
-    def test_execute_code_uses_structured_result_marker_for_async_javascript(self, mock_sandbox_class):
+    def test_execute_code_uses_structured_result_marker_for_async_javascript(self, mock_sandbox_class, entrypoint):
         """Test JavaScript wrapper uses the structured result marker and awaits async main."""
         mock_sandbox = MagicMock()
-        mock_sandbox.context.execute.return_value = {
-            "results": [{"type": "stdout", "text": "__RAGFLOW_RESULT__:eyJwcmVzZW50Ijp0cnVlLCJ2YWx1ZSI6eyJhIjoiYiJ9LCJ0eXBlIjoianNvbiJ9"}],
-            "contextId": "kernel-12345-67890",
-        }
+
+        def execute_in_node(*, code, language, timeout):
+            completed = subprocess.run(["node", "-e", code], capture_output=True, text=True, timeout=timeout, check=True)
+            assert completed.stderr == ""
+            return {"results": [{"type": "stdout", "text": completed.stdout}], "contextId": "kernel-12345-67890"}
+
+        mock_sandbox.context.execute.side_effect = execute_in_node
         mock_sandbox_class.connect.return_value = mock_sandbox
 
         provider = AliyunCodeInterpreterProvider()
@@ -217,14 +222,16 @@ class TestAliyunCodeInterpreterProvider:
 
         result = provider.execute_code(
             instance_id="01JCED8Z9Y6XQVK8M2NRST5WXY",
-            code="async function main(args) { return { a: 'b' }; }",
+            code=entrypoint + " { await new Promise(resolve => setTimeout(resolve, 5)); return { a: args.a }; }",
             language="javascript",
+            arguments={"a": "b"},
             timeout=10,
         )
 
         wrapped_code = mock_sandbox.context.execute.call_args.kwargs["code"]
         assert "__RAGFLOW_RESULT__:" in wrapped_code
-        assert "await Promise.resolve(main(" in wrapped_code
+        assert result.exit_code == 0
+        assert result.stdout == ""
         assert result.metadata["result_present"] is True
         assert result.metadata["result_value"] == {"a": "b"}
         assert result.metadata["result_type"] == "json"

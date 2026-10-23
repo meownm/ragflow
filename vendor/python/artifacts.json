@@ -1,0 +1,30 @@
+[
+  {
+    "name": "crawl4ai",
+    "version": "0.9.5+ragflow.1",
+    "file": "crawl4ai-0.9.5+ragflow.1.tar.gz",
+    "sha256": "379743e15700bb7d6698f88163d22d0a1cc326c2c996d2625b12b5dbfb4165e8",
+    "upstream_sha256": "84fa6f4970fbb086a68893c9fb18605a93fcd609c72bee6fbb1d2715924afbff"
+  },
+  {
+    "name": "moodlepy",
+    "version": "0.24.1+ragflow.1",
+    "file": "moodlepy-0.24.1+ragflow.1.tar.gz",
+    "sha256": "93909e8c3ccce4cd474f6f81d7359c6363b4bded5b76516660b81d5c52fda584",
+    "upstream_sha256": "94d361e4da56748d29910e01979e4652a42220994112b4f07589f200cb7915e3"
+  },
+  {
+    "name": "agentrun-sdk",
+    "version": "0.0.51+ragflow.1",
+    "file": "agentrun_sdk-0.0.51+ragflow.1.tar.gz",
+    "sha256": "3b132a5a69e78725491c27715d0fabbffedf17ac18ea38680f3b77efe476aa4e",
+    "upstream_sha256": "48ec49fd925bb204d1565488f832fc0a53cd8304938274f0ab528d5a57cdb1d6"
+  },
+  {
+    "name": "scholarly",
+    "version": "1.7.11+ragflow.1",
+    "file": "scholarly-1.7.11+ragflow.1.tar.gz",
+    "sha256": "e294fc3d86beecc87d38e129800df3958d0d1caf9394fe615bb3ec55c6303080",
+    "upstream_sha256": "2c983dd44d9d9398a6f2605102ae6e5586023b41ebbaec1461917ee48eb153f0"
+  }
+]

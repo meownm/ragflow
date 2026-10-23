@@ -9,6 +9,7 @@ authors = [{ name = "RAGFlow Team" }]
 keywords = ["elasticsearch", "oceanbase", "migration", "vector", "rag"]
 
 dependencies = [
+    "certifi>=2026.10.19",
     "elasticsearch>=8.0.0",
     "pyobvector>=0.1.0",
     "pymysql>=1.0.0",

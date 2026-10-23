@@ -148,6 +148,12 @@ def test_live_plantuml_plugin_export_import_and_repeat(eva_page, record_testsuit
         macros = BeautifulSoup(remote["html"], "html.parser").select('[data-macros="plantuml"]')
         assert [json.loads(macro["data-macros-parameters"])["uml"] for macro in macros] == sources
         assert all(macro.select_one(".macros-preview svg") is not None and macro.select_one(".macros-edit > svg > path") is not None for macro in macros)
+        lines = macros[1].select(".macros-preview line")
+        assert lines, "The activity diagram must contain connectors, not only arrowheads"
+        for line in lines:
+            css = dict(declaration.strip().split(":", 1) for declaration in line.get("style", "").split(";") if ":" in declaration)
+            assert css.get("stroke", "none").strip() != "none", "EVA must retain the connector stroke after publication"
+            assert float(css.get("stroke-width", "0")) > 0
         imported = import_document_markdown(imported_markdown)
         assert [block["source"] for section in imported["sections"] for block in section["blocks"] if block["type"] == "plantuml"] == sources
         assert [section["id"] for section in imported["sections"]] == [section["id"] for section in document["sections"]]
@@ -156,4 +162,5 @@ def test_live_plantuml_plugin_export_import_and_repeat(eva_page, record_testsuit
         assert repeated_markdown == imported_markdown
     record_testsuite_property("plantuml_plugins", len(macros))
     record_testsuite_property("plantuml_sources_preserved", "true")
+    record_testsuite_property("plantuml_connector_strokes_preserved", "true")
     record_testsuite_property("plantuml_repeated_export", "no_new_publication")

@@ -84,8 +84,10 @@ def test_invoke_returns_content_and_sets_formalized_content(monkeypatch):
     monkeypatch.setattr(ssrf, "pin_dns_global", lambda *a, **k: contextlib.nullcontext())
 
     crawler, out = _make_tool()
+    loops = []
 
     async def fake_get_web(url):
+        loops.append(asyncio.get_running_loop())
         return "PAGE CONTENT for " + url
 
     crawler.get_web = fake_get_web
@@ -94,6 +96,37 @@ def test_invoke_returns_content_and_sets_formalized_content(monkeypatch):
 
     assert result == "PAGE CONTENT for http://example.com"
     assert out["formalized_content"] == "PAGE CONTENT for http://example.com"
+    assert len(loops) == 1 and loops[0].is_closed()
+
+
+@pytest.mark.parametrize("outcome", ["error", "cancel"])
+def test_invoke_closes_worker_loop_without_publishing_failed_content(monkeypatch, outcome):
+    import common.ssrf_guard as ssrf
+
+    monkeypatch.setattr(ssrf, "assert_url_is_safe", lambda url: ("example.com", "93.184.216.34"))
+    monkeypatch.setattr(ssrf, "pin_dns_global", lambda *a, **k: contextlib.nullcontext())
+    crawler, out = _make_tool()
+    canceled = [False]
+    loops = []
+    crawler.check_if_canceled = lambda *a, **k: canceled[0]
+
+    async def fake_get_web(url):
+        loops.append(asyncio.get_running_loop())
+        if outcome == "error":
+            raise RuntimeError("fixture failure")
+        canceled[0] = True
+        return "Content from a canceled operation"
+
+    crawler.get_web = fake_get_web
+    result = crawler._invoke(query="http://example.com")
+
+    assert "formalized_content" not in out
+    if outcome == "error":
+        assert result == "An unexpected error occurred: fixture failure"
+        assert out["_ERROR"] == result
+    else:
+        assert result is None and out == {}
+    assert len(loops) == 1 and loops[0].is_closed()
 
 
 def test_invoke_empty_query_returns_empty():

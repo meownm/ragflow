@@ -1360,6 +1360,57 @@ def test_existing_prepared_changes_keep_confirm_and_discard_contracts(page, base
 
 
 @pytest.mark.p1
+@pytest.mark.parametrize("width", [1440, 390])
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_revision_history_arbitrary_pair_and_titles(page, base_url, tmp_path, width, theme):
+    from copy import deepcopy
+
+    _install_session(page)
+    _install_common_routes(page)
+    page.set_viewport_size({"width": width, "height": 960})
+    page.add_init_script(f"localStorage.setItem('ragflow-ui-theme', '{theme}')")
+    projection = _projection(allowed_commands=[])
+    current = projection["current_revision"]
+    current["document_ast"]["sections"][0]["title"] = "Новая цель"
+    previous = deepcopy(current)
+    previous.update(revision_id="revision-1", revision_number=1, section_texts={"1": "Сократить время перевода до пяти минут."})
+    previous["document_ast"]["sections"][0]["title"] = "Старая цель"
+    previous["document_ast"]["sections"][0]["blocks"][0]["text"] = previous["section_texts"]["1"]
+    middle = deepcopy(previous)
+    middle.update(revision_id="revision-2", revision_number=2)
+    middle["document_ast"]["sections"][0]["title"] = "Новая цель"
+    commands = []
+    page.route("**/api/v1/business-documents/doc-ui-1", lambda route: route.fulfill(json=_envelope(projection)))
+    page.route("**/api/v1/business-documents/doc-ui-1/revisions", lambda route: route.fulfill(json=_envelope([previous, middle, current])))
+    page.route("**/api/v1/business-documents/doc-ui-1/commands", lambda route: (commands.append(route.request.post_data_json), route.fulfill(json=_envelope({}))))
+    page.goto(f"{base_url.rstrip('/')}/business-documents/doc-ui-1")
+    page.get_by_test_id("business-document-history-toggle").click()
+    target = page.get_by_label("Редакция для просмотра")
+    comparison = page.get_by_label("Сравнить с редакцией")
+    expect(comparison).to_have_value("revision-2")
+    comparison.select_option("revision-1")
+    history = page.get_by_test_id("business-document-revision-diff")
+    expect(history).to_contain_text("Редакция 1 → редакция 3")
+    history.locator("summary").filter(has_text="§ 1").click()
+    title = history.get_by_role("region", name="Изменение заголовка раздела 1")
+    expect(title.locator("del")).to_have_text("Старая")
+    expect(title.locator("ins")).to_have_text("Новая")
+    history.scroll_into_view_if_needed()
+    page.screenshot(path=str(tmp_path / f"bt-pair-title-{width}-{theme}.png"), full_page=True)
+    target.select_option("revision-2")
+    expect(history.get_by_test_id("revision-text-diff")).to_have_count(1)
+    target.select_option("revision-1")
+    expect(history).to_contain_text("Содержимое редакций совпадает.")
+    comparison.select_option("revision-3")
+    expect(history).to_contain_text("Редакция 3 → редакция 1")
+    section = page.locator('[data-section-id="1"]')
+    expect(section.locator("del")).to_have_text(["одной", "минуты"])
+    expect(section.locator("ins")).to_have_text(["пяти", "минут"])
+    expect(page.get_by_role("button", name="Восстановить эту редакцию")).to_have_count(0)
+    assert commands == []
+
+
+@pytest.mark.p1
 def test_revision_history_restore(page, base_url):
     """Browse, inspect a word diff, cancel, restore and reload a historical snapshot."""
     from copy import deepcopy

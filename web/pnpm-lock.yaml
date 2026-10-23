@@ -348,6 +348,9 @@ importers:
         specifier: ^4.5.2
         version: 4.5.7(@types/react@18.3.31)(immer@10.2.0)(react@18.3.1)
     devDependencies:
+      '@babel/plugin-transform-modules-commonjs':
+        specifier: ^7.27.1
+        version: 7.29.7(@babel/core@7.29.7)
       '@hookform/devtools':
         specifier: ^4.4.0
         version: 4.4.0(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -444,6 +447,9 @@ importers:
       cross-env:
         specifier: ^7.0.3
         version: 7.0.3
+      esbuild:
+        specifier: 0.27.7
+        version: 0.27.7
       esbuild-jest:
         specifier: ^0.5.0
         version: 0.5.0(esbuild@0.27.7)
@@ -534,6 +540,9 @@ importers:
       vite-svg-loader:
         specifier: ^5.1.0
         version: 5.1.1(vue@3.5.38(typescript@5.9.3))
+      whatwg-fetch:
+        specifier: 3.6.20
+        version: 3.6.20
 
 packages:
 

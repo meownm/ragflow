@@ -80,6 +80,8 @@ ignored `docker/.env.local` file:
 | `OPENMETADATA_PUBLIC_URL` | Browser-facing OpenMetadata origin |
 | `OPENMETADATA_USERNAME`, `OPENMETADATA_PASSWORD` | Basic-login credentials |
 | `OPENMETADATA_JWT_TOKEN` | Optional JWT alternative to basic login |
+| `OPENMETADATA_TIMEOUT_SECONDS` | API request and login connection timeout; default 12 seconds |
+| `OPENMETADATA_LOGIN_TIMEOUT_SECONDS` | Login response timeout; default 60 seconds, at least the API timeout |
 | `OPENMETADATA_WRITE_ENABLED` | Enables preview/confirm for RAGFlow superusers |
 | `OPENMETADATA_CACHE_TTL_SECONDS` | Catalog projection cache lifetime |
 | `OPENMETADATA_STALE_AFTER_HOURS` | Freshness threshold shown in UX and answers |
@@ -92,6 +94,12 @@ ignored `docker/.env.local` file:
 
 If a user-domain map is configured and a user has no direct or wildcard entry,
 the catalog scope is empty (fail closed).
+
+Password login uses the longer response timeout because OpenMetadata can take
+over 30 seconds to authenticate while warming up. Concurrent requests share
+one login and reuse its token. Login POSTs are not automatically replayed after
+a timeout. A timed-out login, transport failure, or server error returns connection
+error `105`; rejected credentials (HTTP 401/403) return authentication error `109`.
 
 The local verified configuration uses the existing Ollama embedding model
 `qwen3-embedding:0.6b`; the setup must not pull a new model implicitly.

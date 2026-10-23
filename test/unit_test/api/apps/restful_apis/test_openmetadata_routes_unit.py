@@ -212,6 +212,22 @@ def test_status_exposes_governance_only_to_superuser(monkeypatch):
     assert result["data"]["governance_allowed"] is False
 
 
+def test_status_distinguishes_login_unavailability_from_authentication_failure(monkeypatch):
+    module, permission_error = _load_route(monkeypatch, user=SimpleNamespace(id="admin", is_superuser=True))
+    service = _FakeService(permission_error)
+    module._SERVICE = service
+
+    for error_type, expected_code in [(module.OpenMetadataError, 105), (module.OpenMetadataAuthenticationError, 109)]:
+
+        def fail_status(**_kwargs):
+            raise error_type("login failure")
+
+        service.status = fail_status
+        result = asyncio.run(module.status())
+        assert result["code"] == expected_code
+        assert result["message"] == "login failure"
+
+
 def test_catalog_routes_deny_user_without_dataset_access(monkeypatch):
     route_cases = [
         ("status", {}, {}),

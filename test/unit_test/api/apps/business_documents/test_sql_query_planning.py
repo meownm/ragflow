@@ -156,6 +156,69 @@ class ScriptedPlanner:
 
 
 @pytest.mark.asyncio
+async def test_per_group_winners_survive_proposal_acceptance_and_catalog_guard():
+    from business_documents.sql_query.project_compilation import build_project_compile_command
+
+    request = _request()
+    request["accepted_requirements"] = "- " + REQUIREMENTS
+    request["schema_snapshot"]["original_requirements"] = "- " + REQUIREMENTS
+    raw = _raw_plan()
+    raw["top_per_group"] = {
+        "partition_by": ["customer_name"],
+        "order_by": [{"select_alias": "order_id", "direction": "DESC"}],
+        "row_limit": 1,
+    }
+    result = await QueryPlanningScenario(ScriptedPlanner(raw)).run(parse_plan_query_command(request, tenant_id="tenant"))
+    proposal = result["proposal"]
+    assert result["status"] == "PROPOSED"
+    assert proposal["top_per_group"] == {
+        "partition_by": ["select-2"],
+        "order_by": [{"select_item_id": "select-1", "direction": "DESC"}],
+        "row_limit": 1,
+    }
+    # The test actor explicitly confirms the same proposal as the application.
+    for kind in ("joins", "filters"):
+        for item in proposal[kind]:
+            item.update({"decision": "user", "confirmed": True})
+    compiled = compile_query_payload(
+        build_project_compile_command(
+            {"requirements": [{"statement": REQUIREMENTS.removeprefix("- ")}]},
+            {key: request[key] for key in ("schema_snapshot", "accepted_schema")},
+            proposal,
+        )
+    )
+    assert compiled["status"] == "READY"
+    assert compiled["guard"]["status"] == "PASS"
+    assert compiled["output_columns"] == ["order_id", "customer_name"]
+    assert compiled["parameters"]["__ragflow_group_limit"] == 1
+    assert compiled["parameters"]["row_limit"] == 1000
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "damage",
+    [
+        {"partition_by": ["secret"]},
+        {"partition_by": ["customer_name", "customer_name"]},
+        {"row_limit": 0},
+        {"row_limit": True},
+        {"order_by": [{"select_alias": "secret", "direction": "DESC"}]},
+    ],
+)
+async def test_invalid_per_group_selection_never_becomes_an_executable_draft(damage):
+    raw = _raw_plan()
+    raw["top_per_group"] = {
+        "partition_by": ["customer_name"],
+        "order_by": [{"select_alias": "order_id", "direction": "DESC"}],
+        "row_limit": 1,
+        **damage,
+    }
+    result = await QueryPlanningScenario(ScriptedPlanner(raw)).run(parse_plan_query_command(_request(), tenant_id="tenant"))
+    assert result["status"] == "FALLBACK"
+    assert result["proposal"] is None
+
+
+@pytest.mark.asyncio
 async def test_planner_returns_only_catalog_bound_unconfirmed_draft():
     command = parse_plan_query_command(_request(), tenant_id="tenant-1")
     planner = ScriptedPlanner(_raw_plan())
@@ -289,6 +352,30 @@ async def test_tenant_planner_uses_one_bounded_contract_call(clarifications):
     assert "{{" not in calls[0][1]
     assert '"additionalProperties": false' in calls[0][1]
     assert "sql" not in calls[0][2]["catalog_context"]
+
+
+@pytest.mark.asyncio
+async def test_model_response_schema_limits_references_without_mutating_the_shared_contract():
+    from jsonschema import ValidationError as SchemaError, validate
+    from api.apps.business_documents.assets import contract_schema
+
+    captured = []
+
+    class Model:
+        async def async_generate(self, tenant_id, system_prompt, payload):
+            schema, _ = json.JSONDecoder().raw_decode(system_prompt[system_prompt.index("{") :])
+            captured.append(schema)
+            return _raw_plan()
+
+    request = _request()
+    await TenantQueryPlanner(Model()).propose(parse_plan_query_command(request, tenant_id="tenant"))
+    validate(_raw_plan(), captured[0])
+    invented = _raw_plan()
+    invented["select"][0]["column_id"] = "orders.order_id"
+    with pytest.raises(SchemaError):
+        validate(invented, captured[0])
+    # Request-scoped allowed IDs must not leak into a following tenant's cached contract.
+    assert "enum" not in contract_schema("sql_query_plan")["properties"]["select"]["items"]["properties"]["column_id"]
 
 
 def test_planner_context_refuses_an_unbounded_schema_instead_of_truncating_it():

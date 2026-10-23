@@ -2,6 +2,13 @@
 
 Read [the repository guide](../AGENTS.md) first. These rules apply to work in `web/` by any agent, including tasks started at the repository root.
 
+## Product and visual consistency
+
+- For new screens, changed user journeys, interface copy or visual consistency reviews, read [the project profile](../docs/develop/frontend-product-design-ru.md) and use the shared `frontend-product-design` skill when available. Follow existing tokens and components rather than inventing a style for each page.
+- Keep user-facing task, result and recovery clear. Show technical details when they support the audience's decision; move safe implementation diagnostics to details rather than using internal versions, IDs or raw exceptions as primary interface copy. Preserve meaningful technical content in SQL and specification documents.
+- Select the domain customer/end-user role from the project profile: `business_analyst`, `systems_analyst` or `data_analyst`. `product_manager` owns product scenario/copy proposals, `ux_ui_designer` owns interaction/layout/state proposals, and `art_director` owns visual hierarchy/consistency proposals. The main agent owns implementation and verification. Delegate according to the user request or applicable instructions; small fixes do not require every role. Recommendations do not authorize shared-library edits or deployment.
+- Review complete affected states and adjacent screens, including standalone/embedded variants. Distinguish browser evidence, source inspection and proposed acceptance; record actual viewport/theme and any runtime/source mismatch.
+
 ## Stack and checks
 
 React/TypeScript/Vite, shadcn/ui, Tailwind CSS, Zustand, TanStack Query and react-i18next.

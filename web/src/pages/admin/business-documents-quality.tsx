@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronRight, RefreshCw } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import { useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router';
@@ -933,18 +933,6 @@ export default function AdminBusinessDocumentsQuality() {
       )}
       {selectedDetail && (
         <div className="mt-3 space-y-3 text-sm">
-          <details className="break-all text-text-secondary">
-            <summary className="cursor-pointer">
-              {label('technicalDetails')}
-            </summary>
-            <p>
-              {selectedRun} ·{' '}
-              {selectedDetail.model_name || selectedDetail.report?.model || '—'}{' '}
-              · {selectedDetail.model_digest || '—'} ·{' '}
-              {selectedDetail.source_revision} ·{' '}
-              {date(selectedDetail.finished_at)}
-            </p>
-          </details>
           {technical && (
             <p>
               {label('qualityStatus')}:{' '}
@@ -1110,29 +1098,12 @@ export default function AdminBusinessDocumentsQuality() {
               </span>
             </p>
           )}
-          <details className="quality-disclosure mt-2 text-xs text-text-secondary">
-            <summary className="flex cursor-pointer items-center gap-1">
-              <ChevronRight
-                aria-hidden="true"
-                className="quality-disclosure-icon size-3"
-              />
-              {label('technicalDetails')}
-            </summary>
-            <p className="mt-2 text-sm">
-              {label(technical ? 'technicalDescription' : 'description')}
-            </p>
-            <p className="mt-2">
-              {label('source')}: {runs.data?.source_revision || '—'} ·{' '}
-              <span data-testid="quality-updated-at">
-                {label('updated')}: {date(updatedAt)}
-              </span>
-              {runs.data?.source_revision === 'unverified' && (
-                <span className="ml-2 text-state-warning">
-                  {label('unverified')}
-                </span>
-              )}
-            </p>
-          </details>
+          <p
+            className="mt-2 text-xs text-text-secondary"
+            data-testid="quality-updated-at"
+          >
+            {label('updated')}: {date(updatedAt)}
+          </p>
         </div>
         <Button
           variant="outline"

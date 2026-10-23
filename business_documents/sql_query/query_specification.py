@@ -258,6 +258,13 @@ class OrderItem:
 
 
 @dataclass(frozen=True, slots=True)
+class TopPerGroup:
+    partition_by: tuple[str, ...]
+    order_by: tuple[OrderItem, ...]
+    row_limit: int
+
+
+@dataclass(frozen=True, slots=True)
 class QuerySpecification:
     base_entity_id: str
     base_alias: str
@@ -267,6 +274,7 @@ class QuerySpecification:
     order_by: tuple[OrderItem, ...]
     parameters: tuple[Parameter, ...]
     limit_parameter: str
+    top_per_group: TopPerGroup | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -698,9 +706,24 @@ def _order_items(value: Any) -> tuple[OrderItem, ...]:
     return tuple(result)
 
 
+def _top_per_group(value: Any) -> TopPerGroup | None:
+    if value is None:
+        return None
+    item = _record(value, "specification.top_per_group")
+    _closed(item, {"partition_by", "order_by", "row_limit"}, "specification.top_per_group")
+    partitions = tuple(_text(v, "top_per_group.partition_by", 128) for v in _array(item.get("partition_by"), "top_per_group.partition_by", 100))
+    order = _order_items(item.get("order_by"))
+    limit = item.get("row_limit")
+    if not partitions or len(set(partitions)) != len(partitions) or not order:
+        raise QuerySpecificationValidationError("top_per_group requires distinct group fields and a winner ordering")
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_QUERY_ROW_LIMIT:
+        raise QuerySpecificationValidationError("top_per_group.row_limit must be an integer from 1 to 10000")
+    return TopPerGroup(partitions, order, limit)
+
+
 def _specification(value: Any) -> QuerySpecification:
     spec = _record(value, "specification")
-    _closed(spec, {"dialect", "from", "select", "joins", "filters", "order_by", "parameters", "limit_parameter"}, "specification")
+    _closed(spec, {"dialect", "from", "select", "joins", "filters", "order_by", "parameters", "limit_parameter", "top_per_group"}, "specification")
     if spec.get("dialect") != QUERY_DIALECT:
         raise QuerySpecificationValidationError("Only the postgres dialect is supported")
     source = _record(spec.get("from"), "specification.from")
@@ -714,6 +737,7 @@ def _specification(value: Any) -> QuerySpecification:
         order_by=_order_items(spec.get("order_by")),
         parameters=_parameters(spec.get("parameters")),
         limit_parameter=_identifier(spec.get("limit_parameter"), "specification.limit_parameter"),
+        top_per_group=_top_per_group(spec.get("top_per_group")),
     )
 
 
@@ -868,6 +892,15 @@ def _binding_issues(command: CompileQueryCommand) -> tuple[list[BlockingIssue], 
         parameter_by_name,
     )
     order_issues, limit_parameters = _ordering_and_limit_issues(spec, parameter_by_name)
+    if spec.top_per_group is not None:
+        selected = {item.id: item for item in spec.select}
+        referenced = (*spec.top_per_group.partition_by, *(item.select_item_id for item in spec.top_per_group.order_by))
+        if any(key not in selected for key in referenced):
+            raise QuerySpecificationValidationError("top_per_group references an unknown select item")
+        if any(item.kind != "column" for item in spec.select):
+            raise QuerySpecificationValidationError("top_per_group requires detail columns without aggregates or date buckets")
+        if "__ragflow_group_limit" in parameter_by_name:
+            raise QuerySpecificationValidationError("Parameter __ragflow_group_limit is reserved for per-group selection")
     issues.extend(filter_issues)
     issues.extend(order_issues)
     used_parameters = filter_parameters | limit_parameters
@@ -918,6 +951,14 @@ def _compile_sql(command: CompileQueryCommand, aliases: Mapping[str, str]) -> st
         raise QuerySpecificationValidationError("Base table is not available")
     lines = ["SELECT"]
     rendered_select = [_select_sql(snapshot, aliases, item) for item in spec.select]
+    select_by_id = {item.id: item for item in spec.select}
+    rank_alias = "__ragflow_group_rank"
+    if spec.top_per_group is not None:
+        while rank_alias.casefold() in {item.alias.casefold() for item in spec.select}:
+            rank_alias += "_"
+        partition = ", ".join(_column_sql(snapshot, aliases, select_by_id[key].column_id) for key in spec.top_per_group.partition_by)
+        ranking = ", ".join(f"{_column_sql(snapshot, aliases, select_by_id[item.select_item_id].column_id)} {item.direction}" for item in spec.top_per_group.order_by)
+        rendered_select.append(f"ROW_NUMBER() OVER (PARTITION BY {partition} ORDER BY {ranking}) AS {rank_alias}")
     lines.extend(f"    {value}{',' if index < len(rendered_select) - 1 else ''}" for index, value in enumerate(rendered_select))
     lines.append(f"FROM {base.physical_relation} AS {spec.base_alias}")
     for join in spec.joins:
@@ -938,7 +979,10 @@ def _compile_sql(command: CompileQueryCommand, aliases: Mapping[str, str]) -> st
         lines.append("GROUP BY")
         rendered_group = [_select_sql(snapshot, aliases, item).rsplit(" AS ", 1)[0] for item in group_items]
         lines.extend(f"    {value}{',' if index < len(rendered_group) - 1 else ''}" for index, value in enumerate(rendered_group))
-    select_by_id = {item.id: item for item in spec.select}
+    if spec.top_per_group is not None:
+        inner = "\n".join("    " + line for line in lines)
+        projection = ", ".join(f"{item.alias} AS {item.alias}" for item in spec.select)
+        lines = [f"WITH ranked_rows AS (\n{inner}\n)", f"SELECT {projection}", "FROM ranked_rows", f"WHERE {rank_alias} <= :__ragflow_group_limit"]
     lines.append("ORDER BY " + ", ".join(f"{select_by_id[item.select_item_id].alias} {item.direction}" for item in spec.order_by))
     lines.append(f"LIMIT :{spec.limit_parameter}")
     return "\n".join(lines)
@@ -1039,11 +1083,17 @@ def compile_query(command: CompileQueryCommand) -> dict[str, Any]:
         return response
     sql = _compile_sql(command, aliases)
     parameter_values = {parameter.name: parameter.value for parameter in command.specification.parameters}
-    guard = guard_read_only_sql(
-        sql,
-        allowed_tables=[table.physical_relation for table in command.snapshot.tables],
-        parameter_names=list(parameter_values),
-    )
+    if command.specification.top_per_group is not None:
+        from business_documents.sql_query.advanced_query import guard_advanced_sql
+
+        parameter_values["__ragflow_group_limit"] = command.specification.top_per_group.row_limit
+        guard = guard_advanced_sql(sql, command.snapshot, list(parameter_values))
+    else:
+        guard = guard_read_only_sql(
+            sql,
+            allowed_tables=[table.physical_relation for table in command.snapshot.tables],
+            parameter_names=list(parameter_values),
+        )
     response.update({"sql": sql, "parameters": parameter_values, "guard": guard, "output_columns": [item.alias for item in command.specification.select]})
     return response
 

@@ -343,7 +343,7 @@ def normalize_query_plan(command: PlanQueryCommand, value: Any) -> tuple[dict[st
     proposal = _record(value, "proposal")
     _closed(
         proposal,
-        {"schema_version", "base_entity_id", "select", "joins", "filters", "order_by", "row_limit", "clarification_questions"},
+        {"schema_version", "base_entity_id", "select", "joins", "filters", "order_by", "row_limit", "clarification_questions", "top_per_group"},
         "proposal",
     )
     if proposal.get("schema_version") != QUERY_PLAN_VERSION:
@@ -365,6 +365,20 @@ def normalize_query_plan(command: PlanQueryCommand, value: Any) -> tuple[dict[st
     )
     filters = _normalize_filters(command.snapshot, proposal.get("filters"))
     order_by = _normalize_order(proposal.get("order_by"), alias_to_id)
+    top_per_group = None
+    if proposal.get("top_per_group") is not None:
+        top = _record(proposal["top_per_group"], "proposal.top_per_group")
+        _closed(top, {"partition_by", "order_by", "row_limit"}, "proposal.top_per_group")
+        partitions = _array(top.get("partition_by"), "proposal.top_per_group.partition_by", MAX_PLAN_SELECT_ITEMS, allow_empty=False)
+        keys = [_identifier(key, "proposal.top_per_group.partition_by").casefold() for key in partitions]
+        if len(set(keys)) != len(keys) or any(key not in alias_to_id for key in keys):
+            raise QueryPlanValidationError("top_per_group requires distinct selected group aliases")
+        count = top.get("row_limit")
+        if isinstance(count, bool) or not isinstance(count, int) or not 1 <= count <= MAX_PLAN_ROW_LIMIT:
+            raise QueryPlanValidationError("top_per_group.row_limit must be an integer from 1 to 10000")
+        if any(item["kind"] != "column" for item in select):
+            raise QueryPlanValidationError("top_per_group requires detail columns")
+        top_per_group = {"partition_by": [alias_to_id[key] for key in keys], "order_by": _normalize_order(top.get("order_by"), alias_to_id), "row_limit": count}
     row_limit = proposal.get("row_limit")
     if isinstance(row_limit, bool) or not isinstance(row_limit, int) or not 1 <= row_limit <= MAX_PLAN_ROW_LIMIT:
         raise QueryPlanValidationError(f"proposal.row_limit must be an integer from 1 to {MAX_PLAN_ROW_LIMIT}")
@@ -381,6 +395,7 @@ def normalize_query_plan(command: PlanQueryCommand, value: Any) -> tuple[dict[st
             "filters": filters,
             "order_by": order_by,
             "row_limit": row_limit,
+            **({"top_per_group": top_per_group} if top_per_group is not None else {}),
         },
         questions,
     )

@@ -16,7 +16,10 @@
 
 """Unit tests for api.utils.file_utils (filename_type, thumbnail_img, sanitize_path, read_potential_broken_pdf)."""
 
+from io import BytesIO
+
 import pytest
+from PIL import Image
 from api.db import FileType
 from api.utils.file_utils import (
     MAX_BLOB_SIZE_PDF,
@@ -134,6 +137,47 @@ class TestThumbnailImg:
     def test_oversized_blob_returns_none(self):
         huge = b"x" * (MAX_BLOB_SIZE_THUMBNAIL + 1)
         assert thumbnail_img("x.pdf", huge) is None
+
+    @pytest.mark.parametrize(
+        "mode,image_format,extension",
+        [
+            ("RGB", "JPEG", "jpg"),
+            ("RGBA", "PNG", "png"),
+            ("LA", "PNG", "png"),
+            ("P", "GIF", "gif"),
+            ("L", "TIFF", "tif"),
+            ("RGB", "WEBP", "webp"),
+        ],
+    )
+    def test_decodes_supported_images_to_png(self, mode, image_format, extension):
+        source = BytesIO()
+        Image.new(mode, (120, 80)).save(source, format=image_format)
+
+        result = thumbnail_img(f"image.{extension}", source.getvalue())
+
+        assert result is not None
+        with Image.open(BytesIO(result)) as image:
+            image.load()
+            assert image.format == "PNG"
+            assert image.size == (30, 20)
+            assert image.mode == ("L" if mode == "L" else "RGB")
+
+    def test_integer_tiff_thumbnail_preserves_png_clipping(self):
+        image = Image.new("I", (3, 1))
+        image.putdata([-200, 1000, 70000])
+        source = BytesIO()
+        image.save(source, format="TIFF")
+
+        result = thumbnail_img("image.tif", source.getvalue())
+
+        assert result is not None
+        with Image.open(BytesIO(result)) as thumbnail_image:
+            assert thumbnail_image.format == "PNG"
+            assert thumbnail_image.size == (3, 1)
+            assert [thumbnail_image.getpixel((x, 0)) for x in range(3)] == [0, 1000, 65535]
+
+    def test_truncated_image_returns_none(self):
+        assert thumbnail_img("image.png", b"\x89PNG\r\n\x1a\n") is None
 
 
 class TestThumbnail:

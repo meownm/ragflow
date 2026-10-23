@@ -69,10 +69,12 @@ function formatUserIdentity(name?: string | null, login?: string | null) {
 interface RevisionHistoryPanelProps {
   revisions: BusinessDocumentRevision[];
   selectedRevisionId?: string;
+  comparisonRevision?: BusinessDocumentRevision;
   currentRevisionId?: string;
   loading?: boolean;
   error?: Error | null;
   onSelect: (revision: BusinessDocumentRevision) => void;
+  onCompare: (revision: BusinessDocumentRevision) => void;
   onClose: () => void;
   canRestore?: boolean;
   pending?: boolean;
@@ -82,10 +84,12 @@ interface RevisionHistoryPanelProps {
 export function RevisionHistoryPanel({
   revisions,
   selectedRevisionId,
+  comparisonRevision,
   currentRevisionId,
   loading,
   error,
   onSelect,
+  onCompare,
   onClose,
   canRestore,
   pending,
@@ -97,12 +101,8 @@ export function RevisionHistoryPanel({
   const selectedRevision = ordered.find(
     (revision) => revision.revision_id === selectedRevisionId,
   );
-  const previousRevision = ordered.find(
-    (revision) =>
-      revision.revision_number === (selectedRevision?.revision_number ?? 0) - 1,
-  );
   const beforeSections = new Map(
-    previousRevision?.document_ast.sections.map((section) => [
+    comparisonRevision?.document_ast.sections.map((section) => [
       section.id,
       section,
     ]),
@@ -114,7 +114,7 @@ export function RevisionHistoryPanel({
     ]),
   );
   const changedSections =
-    selectedRevision && previousRevision
+    selectedRevision && comparisonRevision
       ? [...new Set([...afterSections.keys(), ...beforeSections.keys()])]
           .map((id) => ({
             id,
@@ -125,7 +125,7 @@ export function RevisionHistoryPanel({
             ({ id, before, after }) =>
               before?.title !== after?.title ||
               selectedRevision.section_texts[id] !==
-                previousRevision.section_texts[id] ||
+                comparisonRevision.section_texts[id] ||
               evidenceRefsChanged(before?.evidence_refs, after?.evidence_refs),
           )
       : [];
@@ -197,12 +197,33 @@ export function RevisionHistoryPanel({
               ))}
             </select>
           </label>
+          <label className="block space-y-1 text-xs text-text-secondary">
+            <span>Сравнить с редакцией</span>
+            <select
+              className="w-full rounded border border-border-button bg-bg-base px-3 py-2 text-sm text-text-primary"
+              value={comparisonRevision?.revision_id ?? ''}
+              onChange={(event) => {
+                const revision = ordered.find(
+                  (item) => item.revision_id === event.target.value,
+                );
+                if (revision) onCompare(revision);
+              }}
+            >
+              {ordered.map((revision) => (
+                <option key={revision.revision_id} value={revision.revision_id}>
+                  Редакция {revision.revision_number}
+                  {revision.revision_id === currentRevisionId
+                    ? ' · текущая'
+                    : ''}
+                </option>
+              ))}
+            </select>
+          </label>
           <p className="text-sm font-medium">
             Просмотр редакции {selectedRevision.revision_number}
           </p>
           <p className="text-xs text-text-secondary">
             Полный текст выбранной редакции показан в области документа.
-            Изменения сравниваются с предыдущей редакцией.
           </p>
           {canRestore && selectedRevision.revision_id !== currentRevisionId && (
             <AlertDialog>
@@ -236,14 +257,20 @@ export function RevisionHistoryPanel({
           )}
         </section>
       )}
-      {previousRevision && changedSections.length > 0 && (
+      {selectedRevision && comparisonRevision && (
         <section
           className="border-b border-border-button px-5 py-4"
           data-testid="business-document-revision-diff"
         >
           <h3 className="text-xs font-semibold text-text-primary">
-            Изменения редакции {selectedRevision?.revision_number}
+            Редакция {comparisonRevision.revision_number} → редакция{' '}
+            {selectedRevision.revision_number}
           </h3>
+          {changedSections.length === 0 && (
+            <p className="mt-3 text-xs text-text-secondary">
+              Содержимое редакций совпадает.
+            </p>
+          )}
           <div className="mt-3 space-y-2">
             {changedSections.map(({ id, before, after }) => (
               <details
@@ -255,10 +282,23 @@ export function RevisionHistoryPanel({
                   {!after ? 'удалён' : !before ? 'добавлен' : 'изменён'}
                 </summary>
                 <div className="space-y-2 border-t border-border-button p-3 text-xs">
-                  <RevisionTextDiff
-                    before={previousRevision.section_texts[id] ?? ''}
-                    after={selectedRevision?.section_texts[id] ?? ''}
-                  />
+                  {before?.title !== after?.title && (
+                    <section aria-label={`Изменение заголовка раздела ${id}`}>
+                      <h4 className="font-medium">Заголовок раздела</h4>
+                      <RevisionTextDiff
+                        before={before?.title ?? ''}
+                        after={after?.title ?? ''}
+                        emptyText="Заголовок отсутствует"
+                      />
+                    </section>
+                  )}
+                  {comparisonRevision.section_texts[id] !==
+                    selectedRevision.section_texts[id] && (
+                    <RevisionTextDiff
+                      before={comparisonRevision.section_texts[id] ?? ''}
+                      after={selectedRevision.section_texts[id] ?? ''}
+                    />
+                  )}
                   <EvidenceRefsDiff
                     before={before?.evidence_refs}
                     after={after?.evidence_refs}

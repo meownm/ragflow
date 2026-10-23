@@ -81,6 +81,7 @@ export interface QuerySpecificationDraft {
   filters: QueryFilterDraft[];
   orderBy: Array<{ selectItemId: string; direction: 'ASC' | 'DESC' }>;
   rowLimit: number;
+  topPerGroup?: SqlQueryPlanProposal['top_per_group'];
 }
 
 export interface QueryDraftIssue {
@@ -552,6 +553,7 @@ export function buildQueryCompileRequest(
       })),
       parameters,
       limit_parameter: 'row_limit',
+      ...(draft.topPerGroup ? { top_per_group: draft.topPerGroup } : {}),
     },
   };
 }
@@ -619,5 +621,16 @@ export function applyQueryPlanProposal(
       direction: item.direction,
     })),
     rowLimit: proposal.row_limit,
+    ...(proposal.top_per_group
+      ? {
+          topPerGroup: {
+            ...proposal.top_per_group,
+            partition_by: [...proposal.top_per_group.partition_by],
+            order_by: proposal.top_per_group.order_by.map((item) => ({
+              ...item,
+            })),
+          },
+        }
+      : {}),
   };
 }

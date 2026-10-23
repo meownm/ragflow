@@ -3922,7 +3922,6 @@ Important structured information may include: names, dates, locations, events, k
         unknownReason: 'Unrecognized reason',
         noMatchingRuns: 'No evaluations match the selected filters.',
         resetFilters: 'Reset filters',
-        technicalDetails: 'Technical run details',
         scenarioId: 'Scenario {{id}}',
         caseNames: {
           M01_incomplete_idea_requests_clarification:
@@ -4093,8 +4092,6 @@ Important structured information may include: names, dates, locations, events, k
         },
         qualityStatus: 'Model evaluation result',
         executionEvidence: 'Execution evidence',
-        technicalDescription:
-          'Golden checks of technical specifications against agreed business requirements, LLM limits and evidence completeness.',
         noTechnicalObservations:
           'No recorded specification checks in this period.',
         technicalOperationsTab: 'Specification operations',
@@ -4144,9 +4141,7 @@ Important structured information may include: names, dates, locations, events, k
           history: 'Run history',
           operations: 'Document jobs',
         },
-        source: 'Source',
         updated: 'Updated',
-        unverified: 'Revision unverified',
         latestRun: 'Latest run',
         latestComparable: 'Latest full run',
         noComparable: 'None yet',
@@ -4218,8 +4213,6 @@ Important structured information may include: names, dates, locations, events, k
           JOB_FAILED: 'The job failed',
           REQUIREMENT: 'A requirement check failed',
         },
-        description:
-          'Golden evaluations and Business Documents AI job activity.',
         evaluationTitle: 'Quality evaluations',
         evaluationDescription:
           'Nightly at 02:00 Moscow time and monthly on the first at 03:00. Runs use a dedicated QA tenant.',

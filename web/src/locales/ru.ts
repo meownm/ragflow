@@ -3848,7 +3848,6 @@ export default {
         unknownReason: 'Причина не распознана',
         noMatchingRuns: 'Проверок с выбранными фильтрами нет.',
         resetFilters: 'Сбросить фильтры',
-        technicalDetails: 'Технические сведения о запуске',
         scenarioId: 'Сценарий {{id}}',
         caseNames: {
           M01_incomplete_idea_requests_clarification: 'Уточнение неполной идеи',
@@ -4020,8 +4019,6 @@ export default {
         },
         qualityStatus: 'Результат проверки модели',
         executionEvidence: 'Полнота доказательств',
-        technicalDescription:
-          'Эталонные проверки соответствия технических заданий согласованным бизнес-требованиям, лимитов LLM и полноты доказательств.',
         noTechnicalObservations:
           'За выбранный период зарегистрированных проверок ТЗ нет.',
         technicalOperationsTab: 'Рабочие проверки ТЗ',
@@ -4071,9 +4068,7 @@ export default {
           history: 'История проверок',
           operations: 'Задания БТ',
         },
-        source: 'Исходный код',
         updated: 'Обновлено',
-        unverified: 'Ревизия не подтверждена',
         latestRun: 'Последний запуск',
         latestComparable: 'Последний полный запуск',
         sourceVersion: 'Версия',
@@ -4148,8 +4143,6 @@ export default {
           JOB_FAILED: 'Задание завершилось ошибкой',
           REQUIREMENT: 'Нарушена проверка требования',
         },
-        description:
-          'Эталонные проверки и работа AI-задач раздела «Бизнес-требования».',
         evaluationTitle: 'Проверки качества',
         evaluationDescription:
           'Ночная проверка в 02:00 МСК, ежемесячная — первого числа в 03:00 МСК. Запуски выполняются на выделенном тестовом тенанте.',

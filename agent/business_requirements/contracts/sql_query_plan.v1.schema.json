@@ -159,9 +159,33 @@
         }
       }
     },
+    "top_per_group": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["partition_by", "order_by", "row_limit"],
+      "properties": {
+        "partition_by": {
+          "type": "array", "minItems": 1, "maxItems": 100, "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 128 }
+        },
+        "order_by": {
+          "type": "array", "minItems": 1, "maxItems": 100,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["select_alias", "direction"],
+            "properties": {
+              "select_alias": { "type": "string", "minLength": 1, "maxLength": 128 },
+              "direction": { "enum": ["ASC", "DESC"] }
+            }
+          }
+        },
+        "row_limit": { "type": "integer", "minimum": 1, "maximum": 10000 }
+      }
+    },
     "row_limit": { "type": "integer", "minimum": 1, "maximum": 10000 },
     "clarification_questions": {
       "type": "array",
+      "description": "Only missing business decisions that change the result. Empty when requirements and catalog already determine the answer; do not reconfirm explicit conditions or logically redundant compatible exclusions.",
       "maxItems": 12,
       "items": { "type": "string", "minLength": 1, "maxLength": 1000 }
     }

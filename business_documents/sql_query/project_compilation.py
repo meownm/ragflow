@@ -125,5 +125,6 @@ def build_project_compile_command(
             "order_by": query.get("order_by"),
             "parameters": parameters,
             "limit_parameter": "row_limit",
+            **({"top_per_group": query["top_per_group"]} if query.get("top_per_group") is not None else {}),
         },
     }

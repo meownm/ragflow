@@ -1,0 +1,23 @@
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -3 +3 @@
+-version = "0.0.51"
++version = "0.0.51+ragflow.1"
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -19 +18,0 @@
+-    "agentrun-mem0ai>=0.0.10",
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -23,0 +24 @@
++memory = ["agentrun-mem0ai>=0.0.10"]
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -216 +216 @@
+-requires = ["setuptools>=61.0", "wheel"]
++requires = ["setuptools==80.9.0", "wheel==0.45.1"]
+--- a/agentrun/__init__.py
++++ b/agentrun/__init__.py
+@@ -22 +22 @@
+-__version__ = "0.0.51"
++__version__ = "0.0.51+ragflow.1"

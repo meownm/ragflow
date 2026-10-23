@@ -76,8 +76,10 @@ class Crawler(ToolBase, ABC):
         try:
             # pin_dns_global is used (not thread-local) because crawl4ai resolves
             # DNS in asyncio executor threads that don't share thread-local state.
-            with pin_dns_global(_ssrf_hostname, _ssrf_ip):
-                result = asyncio.run(self.get_web(url))
+            # timeout runs this method in a worker thread. Own its loop even
+            # when nest_asyncio has replaced the process-wide asyncio.run.
+            with pin_dns_global(_ssrf_hostname, _ssrf_ip), asyncio.Runner() as runner:
+                result = runner.run(self.get_web(url))
 
             if self.check_if_canceled("Crawler processing"):
                 return

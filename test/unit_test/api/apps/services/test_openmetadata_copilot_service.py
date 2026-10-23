@@ -19,7 +19,9 @@ from __future__ import annotations
 import importlib.util
 import sys
 from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -317,6 +319,57 @@ def test_password_login_retries_patch_once_after_401(om_module):
         ("PATCH", "Bearer expired"),
         ("PATCH", "Bearer fresh"),
     ]
+
+
+def test_login_timeout_is_separate_from_api_timeout(om_module, monkeypatch):
+    monkeypatch.delenv("OPENMETADATA_LOGIN_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.setenv("OPENMETADATA_TIMEOUT_SECONDS", "12")
+    assert om_module.OpenMetadataConfig.from_env().login_timeout_seconds == 60
+    monkeypatch.setenv("OPENMETADATA_LOGIN_TIMEOUT_SECONDS", "90")
+    assert om_module.OpenMetadataConfig.from_env().login_timeout_seconds == 90
+
+
+@pytest.mark.parametrize("api_timeout, login_timeout, expected", [(12, 60, (12, 60)), (90, 60, (90, 90)), (12, 120, (12, 120))])
+def test_password_login_preserves_connection_and_response_timeouts(om_module, api_timeout, login_timeout, expected):
+    def post(*_args, **kwargs):
+        assert kwargs["timeout"] == expected
+        return SimpleNamespace(status_code=200, json=lambda: {"accessToken": "fresh"})
+
+    client = om_module.OpenMetadataClient(
+        replace(_config(om_module), timeout_seconds=api_timeout, login_timeout_seconds=login_timeout),
+        session=SimpleNamespace(post=post),
+    )
+    assert client._authorization() == "fresh"
+
+
+@pytest.mark.parametrize("failure", ["timeout", "connection", 401, 403, 429, 500, 502, 503, 504])
+def test_login_failure_distinguishes_unavailability_from_rejected_credentials(om_module, failure):
+    calls = []
+
+    def post(*_args, **_kwargs):
+        calls.append(True)
+        if failure == "timeout":
+            raise om_module.requests.ReadTimeout("slow login")
+        if failure == "connection":
+            raise om_module.requests.ConnectionError("unreachable")
+        return SimpleNamespace(status_code=failure)
+
+    client = om_module.OpenMetadataClient(_config(om_module), session=SimpleNamespace(post=post))
+    with pytest.raises(om_module.OpenMetadataError) as error:
+        client._authorization()
+    assert isinstance(error.value, om_module.OpenMetadataAuthenticationError) == (failure in {401, 403})
+    assert client._token == ""
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("payload", [{}, {"accessToken": None}, {"accessToken": ""}, {"accessToken": " "}, {"accessToken": 123}])
+def test_invalid_login_response_is_unavailability(om_module, payload):
+    session = SimpleNamespace(post=lambda *_args, **_kwargs: SimpleNamespace(status_code=200, json=lambda: payload))
+    client = om_module.OpenMetadataClient(_config(om_module), session=session)
+    with pytest.raises(om_module.OpenMetadataError) as error:
+        client._authorization()
+    assert not isinstance(error.value, om_module.OpenMetadataAuthenticationError)
+    assert client._token == ""
 
 
 def test_client_lists_table_test_cases_with_entity_link_and_pagination(om_module):

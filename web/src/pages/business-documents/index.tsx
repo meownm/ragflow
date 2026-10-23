@@ -906,6 +906,7 @@ export default function BusinessDocumentsPage() {
   const [hasConflict, setHasConflict] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [selectedRevisionId, setSelectedRevisionId] = useState<string>();
+  const [comparisonRevisionId, setComparisonRevisionId] = useState<string>();
   const [evaSyncNotice, setEvaSyncNotice] = useState<string>();
   const [ownerSelection, setOwnerSelection] = useState('');
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -1039,6 +1040,7 @@ export default function BusinessDocumentsPage() {
             if (activeDocumentId.current === documentId) {
               setHistoryOpen(false);
               setSelectedRevisionId(undefined);
+              setComparisonRevisionId(undefined);
             }
             void queryClient.invalidateQueries({
               queryKey: ['business-document-revisions', documentId],
@@ -1253,6 +1255,7 @@ export default function BusinessDocumentsPage() {
         if (activeDocumentId.current === targetDocumentId) {
           setHistoryOpen(false);
           setSelectedRevisionId(undefined);
+          setComparisonRevisionId(undefined);
         }
         await queryClient.invalidateQueries({
           queryKey: ['business-document-revisions', targetDocumentId],
@@ -1317,12 +1320,17 @@ export default function BusinessDocumentsPage() {
     revisionsQuery.data,
     selectedRevisionId,
   ]);
-  const previousDisplayedRevision = historyOpen
-    ? revisionsQuery.data?.find(
+  const comparisonRevision = historyOpen
+    ? (revisionsQuery.data?.find(
+        (revision) => revision.revision_id === comparisonRevisionId,
+      ) ??
+      revisionsQuery.data?.find(
         (revision) =>
           revision.revision_number ===
           (displayedRevision?.revision_number ?? 0) - 1,
-      )
+      ) ??
+      displayedRevision ??
+      undefined)
     : undefined;
   const documentWarnings = historyOpen
     ? (displayedRevision?.document_ast.warnings ?? [])
@@ -1337,14 +1345,17 @@ export default function BusinessDocumentsPage() {
         ).values(),
       );
   const documentHighlightedSectionIds =
-    historyOpen && displayedRevision && previousDisplayedRevision
+    historyOpen && displayedRevision && comparisonRevision
       ? displayedRevision.document_ast.sections
           .filter(
             (section) =>
               displayedRevision.section_texts[section.id] !==
-                previousDisplayedRevision.section_texts[section.id] ||
+                comparisonRevision.section_texts[section.id] ||
+              comparisonRevision.document_ast.sections.find(
+                (item) => item.id === section.id,
+              )?.title !== section.title ||
               evidenceRefsChanged(
-                previousDisplayedRevision.document_ast.sections.find(
+                comparisonRevision.document_ast.sections.find(
                   (item) => item.id === section.id,
                 )?.evidence_refs,
                 section.evidence_refs,
@@ -1826,6 +1837,7 @@ export default function BusinessDocumentsPage() {
               onClick={() => {
                 setHistoryOpen((open) => !open);
                 setSelectedRevisionId(undefined);
+                setComparisonRevisionId(undefined);
               }}
               data-testid="business-document-history-toggle"
             >
@@ -2137,7 +2149,7 @@ export default function BusinessDocumentsPage() {
             key={documentId}
             revision={displayedRevision}
             historyMode={historyOpen}
-            previousRevision={previousDisplayedRevision}
+            previousRevision={comparisonRevision}
             changePreview={historyOpen ? null : inlineChangePreview}
             preliminary={!document.change_preview}
             onFocusSource={focusSource}
@@ -2186,6 +2198,10 @@ export default function BusinessDocumentsPage() {
                 selectedRevisionId ?? document.current_revision?.revision_id
               }
               currentRevisionId={document.current_revision?.revision_id}
+              comparisonRevision={comparisonRevision}
+              onCompare={(revision) =>
+                setComparisonRevisionId(revision.revision_id)
+              }
               loading={revisionsQuery.isLoading}
               error={revisionsQuery.error}
               canRestore={allowed.has('RESTORE_REVISION')}
@@ -2202,6 +2218,7 @@ export default function BusinessDocumentsPage() {
               onClose={() => {
                 setHistoryOpen(false);
                 setSelectedRevisionId(undefined);
+                setComparisonRevisionId(undefined);
               }}
             />
           ) : (

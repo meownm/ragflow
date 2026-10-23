@@ -108,6 +108,9 @@ def test_attention_compares_all_changes_with_one_guarded_apply(page, base_url, t
     expect(preview).to_be_visible()
     expect(preview.get_by_text("Сейчас", exact=True)).to_be_visible()
     expect(preview.get_by_text("После применения", exact=True)).to_be_visible()
+    difference = preview.get_by_test_id("revision-text-diff")
+    expect(difference.locator("del")).to_have_text("Сохранить")
+    expect(difference.locator("ins")).to_have_text("Записать")
     if conflict:
         expect(preview.get_by_role("button", name="Применить изменения")).to_have_count(0)
         expect(preview.get_by_text("Лимит в разделах 4 и 5 противоречит друг другу")).to_be_visible()

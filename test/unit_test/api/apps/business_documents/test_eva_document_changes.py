@@ -88,6 +88,53 @@ def test_eva_diagram_svg_is_sanitized_without_sending_source_to_external_images(
     assert not preview.select("script, foreignObject, image, [onload], [href], [fill]")
 
 
+@pytest.mark.parametrize("presentation", ['style="stroke:#181818;stroke-width:1.0;stroke-dasharray:7,7"', 'stroke="#181818" stroke-width="1.0" stroke-dasharray="7,7"'])
+def test_eva_diagram_connectors_retain_paint_when_eva_drops_line_attributes(presentation):
+    from bs4 import BeautifulSoup
+    from api.apps.business_documents.eva_diagrams import render_eva_diagrams
+
+    original = EVA_CHANGES_MODULE._markdown_to_html("```plantuml\n@startuml\nstart\n:First;\n:Second;\nstop\n@enduml\n```")
+    svg = f'<svg><line {presentation} x1="10" y1="30" x2="10" y2="50"/><polygon {presentation} fill="#181818" points="6,40,10,50,14,40,10,44"/></svg>'
+    preview = BeautifulSoup(render_eva_diagrams(original, lambda _: svg), "html.parser").select_one(".macros-preview")
+    # EVA allows coordinates/points and global style, but strips line/polygon
+    # stroke attributes. Arrowheads alone must not pass as connected geometry.
+    for tag in preview.select("line, polygon"):
+        for attribute in ("stroke", "stroke-width", "stroke-dasharray"):
+            del tag[attribute]
+        css = dict(declaration.split(":", 1) for declaration in tag["style"].split(";"))
+        assert css["stroke"] == "#181818"
+        assert css["stroke-width"] == "1.0"
+        assert css["stroke-dasharray"] == "7,7"
+    assert preview.line["y2"] == "50"
+    assert preview.polygon["points"] == "6,40,10,50,14,40,10,44"
+
+
+@pytest.mark.parametrize("paint", ["url(https://external.test/x)", r"u\72l(https://external.test/x)", "expression(alert(1))", "red!important"])
+@pytest.mark.parametrize("attribute", ["stroke", "style"])
+def test_eva_diagram_does_not_copy_unsafe_paint_into_css(paint, attribute):
+    from bs4 import BeautifulSoup
+    from api.apps.business_documents.eva_diagrams import render_eva_diagrams
+
+    value = f"stroke:{paint}" if attribute == "style" else paint
+    original = EVA_CHANGES_MODULE._markdown_to_html("```plantuml\nA -> B\n```")
+    rendered = render_eva_diagrams(original, lambda _: f'<svg><line {attribute}="{value}" x1="0" x2="10"/></svg>')
+    line = BeautifulSoup(rendered, "html.parser").select_one(".macros-preview line")
+    assert not line.has_attr("stroke")
+    assert not line.has_attr("style")
+
+
+def test_eva_diagram_verification_rejects_old_preview_without_connector_strokes():
+    from bs4 import BeautifulSoup
+    from api.apps.business_documents.eva_diagrams import render_eva_diagrams, rendered_diagrams_match
+
+    rendered = render_eva_diagrams('<pre class="language-plantuml">A -> B</pre>', lambda _: '<svg><line x1="0" x2="10" style="stroke:#181818;stroke-width:1.0"/></svg>')
+    saved = BeautifulSoup(rendered, "html.parser")
+    del saved.select_one(".macros-preview line")["stroke"]
+    assert rendered_diagrams_match(rendered, str(saved)), "Native CSS must suffice after EVA strips presentation attributes"
+    del saved.select_one(".macros-preview line")["style"]
+    assert not rendered_diagrams_match(rendered, str(saved)), "Re-export must repair old broken previews even when UML is unchanged"
+
+
 @pytest.mark.parametrize("failure", ["invalid_svg", "renderer_unavailable"])
 def test_eva_diagram_failure_is_explicit(failure):
     from api.apps.business_documents.eva_diagrams import render_eva_diagrams

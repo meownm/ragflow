@@ -1,0 +1,15 @@
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -21 +21 @@
+-    "unclecode-litellm==1.81.13",
++    "litellm==1.88.6",
+--- a/crawl4ai/__version__.py
++++ b/crawl4ai/__version__.py
+@@ -4 +4 @@
+-__version__ = "0.9.5"
++__version__ = "0.9.5+ragflow.1"
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -2 +2 @@
+-requires = ["setuptools>=64.0.0", "wheel"]
++requires = ["setuptools==80.9.0", "wheel==0.45.1"]

@@ -231,6 +231,7 @@ RUN --mount=type=cache,id=ragflow_apt,target=/var/cache/apt,sharing=locked \
 
 # install dependencies from uv.lock file
 COPY pyproject.toml uv.lock ./
+COPY vendor/python vendor/python
 
 # https://github.com/astral-sh/uv/issues/10462
 # uv records index url into uv.lock but doesn't failover among multiple indexes
@@ -310,6 +311,7 @@ COPY business_documents business_documents
 COPY document_exchange document_exchange
 COPY pyproject.toml uv.lock ./
 COPY mcp mcp
+COPY vendor/python vendor/python
 COPY common common
 COPY memory memory
 COPY bin bin

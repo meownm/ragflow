@@ -382,6 +382,18 @@ test('shows complete nightly comparison and safe failed-case diagnosis', async (
   expect(getDocumentQualityRun).toHaveBeenCalledWith('run-1');
 });
 
+test.each(['business_requirements', 'technical_specification'])(
+  '%s hides technical run blocks while keeping scenario results and update time',
+  async (product) => {
+    mount(`/admin/document-quality?product=${product}&tab=history`);
+    fireEvent.click(await screen.findByRole('button', { name: /qwen/ }));
+    expect(await screen.findByText(/scenario_rule/)).toBeInTheDocument();
+    expect(screen.queryByText('technicalDetails')).not.toBeInTheDocument();
+    expect(screen.queryByText(run.model_digest)).not.toBeInTheDocument();
+    expect(screen.getByTestId('quality-updated-at')).not.toHaveTextContent('—');
+  },
+);
+
 test('does not score incomplete model runs', async () => {
   jest.mocked(listDocumentQualityCampaigns).mockResolvedValue(
     response({

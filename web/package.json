@@ -138,6 +138,7 @@
     "zustand": "^4.5.2"
   },
   "devDependencies": {
+    "@babel/plugin-transform-modules-commonjs": "^7.27.1",
     "@hookform/devtools": "^4.4.0",
     "@react-dev-inspector/babel-plugin": "^2.0.1",
     "@react-dev-inspector/vite-plugin": "^2.0.1",
@@ -170,6 +171,7 @@
     "autoprefixer": "^10.4.21",
     "axe-core": "^4.13.0",
     "cross-env": "^7.0.3",
+    "esbuild": "0.27.7",
     "esbuild-jest": "^0.5.0",
     "eslint": "^8.56.0",
     "eslint-plugin-check-file": "^2.8.0",
@@ -199,7 +201,8 @@
     "vite": "^7.2.7",
     "vite-plugin-html": "^3.2.2",
     "vite-plugin-static-copy": "^3.1.4",
-    "vite-svg-loader": "^5.1.0"
+    "vite-svg-loader": "^5.1.0",
+    "whatwg-fetch": "3.6.20"
   },
   "engines": {
     "node": ">=18.20.4"

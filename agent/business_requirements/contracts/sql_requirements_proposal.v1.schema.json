@@ -25,6 +25,7 @@
     },
     "questions": {
       "type": "array",
+      "description": "Cover every missing essential business decision. For a vague problem-finding task, thresholds, period and limit do not replace separate questions about row grain and which information to show or exclude. Do not ask again about explicitly supplied decisions.",
       "maxItems": 12,
       "items": {
         "type": "object",

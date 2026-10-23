@@ -129,7 +129,7 @@ def test_specification_long_chat_keeps_composer_visible_and_links_proposals(page
         preview = answer.get_by_role("region", name="Предложенные изменения")
         expect(preview).to_have_count(1)
         expect(preview.get_by_text(f"Запрос {number}", exact=True)).to_be_visible()
-        preview.locator("summary").click()
+        preview.locator(":scope > details > summary").click()
         assert page.locator("main.tz-workspace").evaluate("e => e.scrollWidth <= e.clientWidth + 1")
         assert preview.evaluate("e => e.scrollWidth <= e.clientWidth + 1")
         expect(composer).to_be_in_viewport()

@@ -161,6 +161,9 @@ def thumbnail_img(filename, blob):
             if image.mode in ("RGBA", "P", "LA"):
                 image = image.convert("RGB")
             image.thumbnail((30, 30))
+            if image.mode == "I":
+                # PNG supports at most 16-bit channels; preserve integer TIFF clipping.
+                image = image.convert("I;16")
             buffered = BytesIO()
             image.save(buffered, format="png")
             return buffered.getvalue()

@@ -777,7 +777,7 @@ test('keeps the section diff available in revision history', async () => {
     await screen.findByTestId('business-document-history-toggle'),
   );
   const diff = await screen.findByTestId('business-document-revision-diff');
-  expect(diff).toHaveTextContent('Изменения редакции 3');
+  expect(diff).toHaveTextContent('Редакция 2 → редакция 3');
   expect(
     within(
       screen.getAllByTestId('business-document-section')[0],
@@ -4436,6 +4436,9 @@ test('previews a historical revision and restores it from the authoritative resp
     'Старая цель.',
   );
   expect(screen.getByText('Просмотр истории')).toBeVisible();
+  fireEvent.change(screen.getByLabelText('Сравнить с редакцией'), {
+    target: { value: projection.current_revision!.revision_id },
+  });
   fireEvent.click(
     screen.getByRole('button', { name: 'Восстановить эту редакцию' }),
   );
@@ -4463,6 +4466,55 @@ test('previews a historical revision and restores it from the authoritative resp
   );
   expect(screen.getByText('Редакция 4')).toBeVisible();
   expect(mockedFetch).toHaveBeenCalledTimes(1);
+});
+
+test('compares any two revisions in both directions, including titles and identical snapshots', async () => {
+  const current = projection.current_revision!;
+  const revision = (number: number, title: string, text: string) => ({
+    ...current,
+    revision_id: `revision-${number}`,
+    revision_number: number,
+    document_ast: {
+      ...current.document_ast,
+      sections: current.document_ast.sections.map((section) =>
+        section.id === '1' ? { ...section, title } : section,
+      ),
+    },
+    section_texts: { ...current.section_texts, '1': text },
+  });
+  const first = revision(1, 'Старая цель', 'Срок 10 дней.');
+  const middle = revision(2, 'Новая цель', 'Срок 10 дней.');
+  const latest = revision(3, 'Новая цель', 'Срок 20 дней.');
+  mockedFetch.mockResolvedValue({ ...projection, current_revision: latest });
+  mockedListRevisions.mockResolvedValueOnce([first, middle, latest]);
+  renderPage();
+  fireEvent.click(
+    await screen.findByTestId('business-document-history-toggle'),
+  );
+  const comparison = await screen.findByLabelText('Сравнить с редакцией');
+  const target = screen.getByLabelText('Редакция для просмотра');
+  fireEvent.change(comparison, { target: { value: 'revision-1' } });
+  const history = screen.getByTestId('business-document-revision-diff');
+  expect(history).toHaveTextContent('Редакция 1 → редакция 3');
+  const title = within(history).getByLabelText('Изменение заголовка раздела 1');
+  expect(title.querySelector('del')).toHaveTextContent('Старая');
+  expect(title.querySelector('ins')).toHaveTextContent('Новая');
+  const pane = screen.getByTestId('business-document-pane');
+  expect(pane.querySelector('del')).toHaveTextContent('10');
+  expect(pane.querySelector('ins')).toHaveTextContent('20');
+
+  fireEvent.change(target, { target: { value: 'revision-2' } });
+  expect(within(history).getAllByTestId('revision-text-diff')).toHaveLength(1);
+  expect(history).toHaveTextContent('Заголовок раздела');
+  fireEvent.change(target, { target: { value: 'revision-1' } });
+  expect(history).toHaveTextContent('Содержимое редакций совпадает.');
+  expect(history.querySelector('del, ins')).toBeNull();
+  fireEvent.change(comparison, { target: { value: 'revision-3' } });
+  expect(history).toHaveTextContent('Редакция 3 → редакция 1');
+  expect(pane.querySelector('del')).toHaveTextContent('20');
+  expect(pane.querySelector('ins')).toHaveTextContent('10');
+  expect(mockedSubmit).not.toHaveBeenCalled();
+  expect(mockedListRevisions).toHaveBeenCalledTimes(1);
 });
 
 test('lets a reader inspect history without restore actions', async () => {

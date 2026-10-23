@@ -5,8 +5,10 @@ This is the shared operating guide for agents working in this repository. Follow
 ## Read the applicable guide
 
 - Before working in `web/`, including a task started at the repository root, read [web/AGENTS.md](web/AGENTS.md).
+- For user-facing frontend scenarios, copy and visual consistency, read [the product and visual guide](docs/develop/frontend-product-design-ru.md). It also applies to embedded ASR/translator frontends; use the shared `frontend-product-design` skill when available.
 - For RAGFlow Figma tasks, use [the project skill](.agents/skills/ragflow-figma/SKILL.md) and [the Figma workflow guide](docs/develop/figma-workflow-ru.md) for file structure, code/design sources and acceptance checks.
 - Select checks and read their prerequisites in [test/REGRESSION.md](test/REGRESSION.md). Run only lanes justified by affected behavior and consumers; full matrices belong to releases, upstream updates or explicitly broad work.
+- For requested Trivy, Syft, Gitleaks or Grype checks, follow [the on-demand security guide](tools/security/README.md). Select the requested source/history/image scope, record input identity, tool/database versions and exit codes, redact secrets, and report incomplete coverage explicitly. Do not run these scans automatically on ordinary edits or deployment; a scan request alone does not authorize fixes or publication.
 - Before deployment or creating disposable workspaces, read [deployment/local/README.md](deployment/local/README.md). Deployment authorization is defined below; the README owns commands, modes and workspace mechanics.
 - For article processing and linked documents, apply the architecture and technical specification standards described in [the document standards guide](docs/develop/article-document-standards-ru.md). Keep their requirements in `api/source_workbench/document_standards.py`; apply them to the requested output type, preserve source evidence and approval boundaries, and do not impose these outlines on ordinary articles.
 - For Go naming, use [the naming skill](.agents/skills/go-naming/SKILL.md).

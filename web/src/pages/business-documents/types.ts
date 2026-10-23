@@ -138,6 +138,7 @@ export interface SqlQueryCompileRequest {
       value: unknown;
     }>;
     limit_parameter: string;
+    top_per_group?: SqlTopPerGroup;
   };
 }
 
@@ -172,6 +173,12 @@ export type SqlQueryPlanRequest = Pick<
   locale: 'ru' | 'en';
 };
 
+export interface SqlTopPerGroup {
+  partition_by: string[];
+  order_by: Array<{ select_item_id: string; direction: 'ASC' | 'DESC' }>;
+  row_limit: number;
+}
+
 export interface SqlQueryPlanProposal {
   base_entity_id: string;
   aliases: Record<string, string>;
@@ -197,6 +204,7 @@ export interface SqlQueryPlanProposal {
     confirmed: boolean;
   }>;
   order_by: SqlQueryCompileRequest['specification']['order_by'];
+  top_per_group?: SqlTopPerGroup;
   row_limit: number;
 }
 

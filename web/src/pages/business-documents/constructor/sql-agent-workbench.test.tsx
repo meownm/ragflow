@@ -429,85 +429,107 @@ describe('SqlAgentWorkbench', () => {
     expect(screen.getByTestId('sql-agent-run-schema')).toBeEnabled();
   });
 
-  it('requires separate acknowledgement of each JOIN and filter before accepting SQL', async () => {
-    const review = project({
-      stage: 'QUERY',
-      operation_state: 'REVIEW',
-      next_agent: null,
-      pending_proposal: {
-        id: 'proposal-query',
-        kind: 'QUERY',
-        status: 'PENDING',
-        source_state_version: 3,
-        payload: {
-          agent_result: {
-            proposal: {
-              select: [
-                {
-                  id: 'select-1',
-                  alias: 'value',
-                  kind: 'column',
-                  column_id: 'column-1',
-                },
-              ],
-              joins: [
-                {
-                  id: 'join-1',
-                  join_type: 'INNER',
-                  entity_id: 'table-2',
-                  left_column_id: 'a',
-                  right_column_id: 'b',
-                  description: 'Связь заказов',
-                },
-              ],
-              filters: [
-                {
-                  id: 'filter-1',
-                  column_id: 'column-1',
-                  operator: 'eq',
-                  parameter_name: 'period',
-                  description: 'Период',
-                },
-              ],
-              order_by: [],
-              row_limit: 100,
+  it.each([false, true])(
+    'requires JOIN/filter acknowledgement and shows per-group selection: %s',
+    async (perGroup) => {
+      const review = project({
+        stage: 'QUERY',
+        operation_state: 'REVIEW',
+        next_agent: null,
+        pending_proposal: {
+          id: 'proposal-query',
+          kind: 'QUERY',
+          status: 'PENDING',
+          source_state_version: 3,
+          payload: {
+            agent_result: {
+              proposal: {
+                select: [
+                  {
+                    id: 'select-1',
+                    alias: 'value',
+                    kind: 'column',
+                    column_id: 'column-1',
+                  },
+                ],
+                joins: [
+                  {
+                    id: 'join-1',
+                    join_type: 'INNER',
+                    entity_id: 'table-2',
+                    left_column_id: 'a',
+                    right_column_id: 'b',
+                    description: 'Связь заказов',
+                  },
+                ],
+                filters: [
+                  {
+                    id: 'filter-1',
+                    column_id: 'column-1',
+                    operator: 'eq',
+                    parameter_name: 'period',
+                    description: 'Период',
+                  },
+                ],
+                order_by: [],
+                row_limit: 100,
+                ...(perGroup
+                  ? {
+                      top_per_group: {
+                        partition_by: ['select-1'],
+                        order_by: [
+                          { select_item_id: 'select-1', direction: 'DESC' },
+                        ],
+                        row_limit: 1,
+                      },
+                    }
+                  : {}),
+              },
             },
           },
         },
-      },
-    });
-    mockedList.mockResolvedValue([review]);
-    mockedFetch.mockResolvedValue(review);
-    mockedDecide.mockResolvedValue(
-      project({ stage: 'COMPLETE', state_version: 4, next_agent: null }),
-    );
-    render(<SqlAgentWorkbench />);
-    const accept = await screen.findByRole('button', {
-      name: 'Подтвердить и собрать SQL',
-    });
-    expect(accept).toBeDisabled();
-    fireEvent.click(
-      screen.getByRole('checkbox', { name: /Подтверждаю связь/ }),
-    );
-    expect(accept).toBeDisabled();
-    fireEvent.click(
-      screen.getByRole('checkbox', { name: /Подтверждаю исключение строк/ }),
-    );
-    expect(accept).toBeEnabled();
-    fireEvent.click(accept);
-    await waitFor(() =>
-      expect(mockedDecide).toHaveBeenCalledWith(
-        'project-1',
-        'proposal-query',
-        expect.objectContaining({
-          artifact_payload: {
-            confirmed_join_ids: ['join-1'],
-            confirmed_filter_ids: ['filter-1'],
-          },
-        }),
-      ),
-    );
-  });
+      });
+      mockedList.mockResolvedValue([review]);
+      mockedFetch.mockResolvedValue(review);
+      mockedDecide.mockResolvedValue(
+        project({ stage: 'COMPLETE', state_version: 4, next_agent: null }),
+      );
+      render(<SqlAgentWorkbench />);
+      const accept = await screen.findByRole('button', {
+        name: 'Подтвердить и собрать SQL',
+      });
+      if (perGroup) {
+        expect(screen.getByText('В каждой группе')).toBeInTheDocument();
+        expect(
+          screen.getByText(
+            /Лимит строк: 1.*Группы: value.*Порядок выбора: value по убыванию/,
+          ),
+        ).toBeInTheDocument();
+      }
+      expect(accept).toBeDisabled();
+      fireEvent.click(
+        screen.getByRole('checkbox', { name: /Подтверждаю связь/ }),
+      );
+      expect(accept).toBeDisabled();
+      fireEvent.click(
+        screen.getByRole('checkbox', { name: /Подтверждаю исключение строк/ }),
+      );
+      expect(accept).toBeEnabled();
+      fireEvent.click(accept);
+      await waitFor(() =>
+        expect(mockedDecide).toHaveBeenCalledWith(
+          'project-1',
+          'proposal-query',
+          expect.objectContaining({
+            artifact_payload: {
+              confirmed_join_ids: ['join-1'],
+              confirmed_filter_ids: ['filter-1'],
+            },
+          }),
+        ),
+      );
+    },
+  );
 
   it('opens an earlier verified result after a later run fails', async () => {
     const ready = {

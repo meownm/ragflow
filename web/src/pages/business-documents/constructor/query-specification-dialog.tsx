@@ -1208,6 +1208,27 @@ export function QuerySpecificationDialog({
                       </div>
                     ))}
                   </div>
+                  {draft.topPerGroup && (
+                    <p className="text-xs text-text-secondary">
+                      В каждой группе действует лимит строк:{' '}
+                      {draft.topPerGroup.row_limit}. Группы:{' '}
+                      {draft.topPerGroup.partition_by
+                        .map(
+                          (id) =>
+                            draft.select.find((item) => item.id === id)
+                              ?.alias || id,
+                        )
+                        .join(', ')}
+                      . Порядок выбора:{' '}
+                      {draft.topPerGroup.order_by
+                        .map(
+                          (item) =>
+                            `${draft.select.find((field) => field.id === item.select_item_id)?.alias || item.select_item_id} ${item.direction === 'DESC' ? 'по убыванию' : 'по возрастанию'}`,
+                        )
+                        .join(', ')}
+                      .
+                    </p>
+                  )}
                   <label className="space-y-1 text-xs font-medium">
                     <span>Максимум строк</span>
                     <Input

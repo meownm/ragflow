@@ -69,17 +69,23 @@ function textParts(before: string, after: string): Part[] {
 export function RevisionTextDiff({
   before,
   after,
+  beforeLabel = 'Было · удалённое зачёркнуто',
+  afterLabel = 'Стало · добавленное подчёркнуто',
+  emptyText = 'Требования отсутствуют',
+  className = 'space-y-3 text-sm',
 }: {
   before: string;
   after: string;
+  beforeLabel?: string;
+  afterLabel?: string;
+  emptyText?: string;
+  className?: string;
 }) {
   const parts = textParts(before, after);
   return (
-    <div className="space-y-3 text-sm" data-testid="revision-text-diff">
-      <div>
-        <p className="font-medium text-state-error">
-          Было · удалённое зачёркнуто
-        </p>
+    <div className={className} data-testid="revision-text-diff">
+      <div className="min-w-0">
+        <p className="font-medium text-state-error">{beforeLabel}</p>
         <pre className="mt-1 whitespace-pre-wrap break-words font-sans leading-6">
           {before
             ? parts
@@ -96,13 +102,11 @@ export function RevisionTextDiff({
                     part.text
                   ),
                 )
-            : 'Требования отсутствуют'}
+            : emptyText}
         </pre>
       </div>
-      <div>
-        <p className="font-medium text-state-success">
-          Стало · добавленное подчёркнуто
-        </p>
+      <div className="min-w-0">
+        <p className="font-medium text-state-success">{afterLabel}</p>
         <pre className="mt-1 whitespace-pre-wrap break-words font-sans leading-6">
           {after
             ? parts
@@ -119,7 +123,7 @@ export function RevisionTextDiff({
                     part.text
                   ),
                 )
-            : 'Требования отсутствуют'}
+            : emptyText}
         </pre>
       </div>
     </div>

@@ -40,6 +40,51 @@ def boundary_database():
         yield config
 
 
+@pytest.mark.parametrize(
+    "per_group,global_limit,expected",
+    [
+        (1, 2, [[1, 101, "100.00"], [2, 103, "80.00"]]),
+        (2, 4, [[1, 101, "100.00"], [1, 102, "100.00"], [2, 103, "80.00"], [2, 106, "30.00"]]),
+    ],
+)
+def test_structured_per_group_limit_preserves_winning_rows_and_applies_global_limit_last(database, per_group, global_limit, expected):
+    schema = accepted_schema()
+    schema["schema_snapshot"]["requirements"] = [item for item in schema["schema_snapshot"]["requirements"] if item["selected_table"]["id"] == "orders"]
+    schema["accepted_schema"] = [item for item in schema["accepted_schema"] if item["entity_id"] == "orders"]
+    command = {
+        "schema_version": "1",
+        **schema,
+        "accepted_requirements": schema["schema_snapshot"]["original_requirements"],
+        "specification": {
+            "dialect": "postgres",
+            "from": {"entity_id": "orders", "alias": "o"},
+            "select": [{"id": name, "kind": "column", "column_id": "synthetic.qa.public.orders." + name, "alias": name, "grain": None} for name in ("customer_id", "id", "amount")],
+            "joins": [],
+            "filters": [
+                {"id": "paid", "column_id": "synthetic.qa.public.orders.status", "operator": "eq", "parameter": "status", "description": "Только оплаченные", "decision": "user", "confirmed": True},
+                {
+                    "id": "customer",
+                    "column_id": "synthetic.qa.public.orders.customer_id",
+                    "operator": "is_not_null",
+                    "parameter": None,
+                    "description": "С известным клиентом",
+                    "decision": "user",
+                    "confirmed": True,
+                },
+            ],
+            "order_by": [{"select_item_id": "amount", "direction": "DESC"}, {"select_item_id": "id", "direction": "ASC"}],
+            "parameters": [{"name": "status", "type": "text", "value": "paid"}, {"name": "row_limit", "type": "integer", "value": global_limit}],
+            "limit_parameter": "row_limit",
+            "top_per_group": {"partition_by": ["customer_id"], "order_by": [{"select_item_id": "amount", "direction": "DESC"}, {"select_item_id": "id", "direction": "ASC"}], "row_limit": per_group},
+        },
+    }
+    compiled = compile_query_payload(command)
+    assert compiled["guard"]["status"] == "PASS"
+    result = execute_postgres(database, compiled["sql"], compiled["parameters"], timeout_ms=5000, max_rows=100, max_result_bytes=100000)
+    assert result["columns"] == ["customer_id", "id", "amount"]
+    assert result["rows"] == expected
+
+
 def test_driver_types_and_download_preserve_postgres_precision(database):
     result = execute_postgres(
         database,

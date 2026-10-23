@@ -490,3 +490,47 @@ async def test_unknown_backend_stops_semantics_and_real_probes_independent_of_er
     assert calls == [1] and report["status"] == "INCOMPLETE"
     assert len(report["cases"]) == 1 and report["budget"]["reserved_tokens"] == 30
     assert report["real_limit_probes"]["reason_code"] == "BACKEND_USAGE_UNKNOWN_AFTER_INTERRUPTED_CASE"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stop", [None, "unknown-debt", "identity", "failure"])
+async def test_core_daily_runs_once_without_experiments_or_limit_probes(monkeypatch, stop):
+    from test.evals.technical_specifications.alignment import real_limits
+    from test.unit_test.tools.quality.test_release_evidence import _alignment_report
+
+    fixture = _alignment_report()
+    calls = []
+
+    async def check(_actor, document, basis, *, budget, on_reserved):
+        index = len(calls)
+        calls.append(evaluate.CASES[index][0])
+        result = fixture["cases"][index]["result"]
+        if stop == "unknown-debt":
+            budget.claim(100)
+            return {"execution_status": "INCOMPLETE", "report_status": "INCOMPLETE", "quality_status": "UNKNOWN", "audit": {"model_digest": "a" * 64, "profile_sha256": "b" * 64}}
+        audit = result["audit"]
+        claim = budget.claim(1000)
+        budget.settle(audit["prompt_tokens"], audit["completion_tokens"], claim_id=claim)
+        if stop == "identity" and index == 1:
+            audit["profile_sha256"] = "c" * 64
+        if stop == "failure" and index == 0:
+            return {"execution_status": "COMPLETE", "report_status": "INCOMPLETE", "quality_status": "FAIL", "evidence_status": "INCOMPLETE", "audit": audit}
+        return result
+
+    async def forbidden(*args, **kwargs):
+        raise AssertionError("Core daily must not dispatch limit probes")
+
+    monkeypatch.setattr(real_limits, "run", forbidden)
+    report = await evaluate.run_evaluation(SimpleNamespace(check=check), "synthetic", core_only=True)
+    assert report["scope"] == "CORE"
+    assert "real_limit_probes" not in report and "nightly_experiments" not in report
+    assert report["budget"]["call_limit"] == 65
+    assert calls == [case[0] for case in evaluate.CASES][: 1 if stop == "unknown-debt" else 2 if stop == "identity" else 65]
+    assert report["status"] == ("PASS" if stop is None else "FAIL" if stop == "failure" else "INCOMPLETE")
+    assert report["budget"]["reserved_tokens"] == (100 if stop == "unknown-debt" else 0)
+    if stop is None:
+        from test.evals.technical_specifications.alignment.evidence import verify_execution
+
+        assert verify_execution(report, core_only=True) == "pass"
+        with pytest.raises(ValueError):
+            verify_execution(report)  # A daily result cannot qualify the extended release suite.

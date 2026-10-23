@@ -98,7 +98,8 @@ def execute(row, root, tenant, source_revision, source_fingerprint):
     if row.model_name and row.model_digest and quality_model_digest(tenant, row.model_name) != row.model_digest:
         return "INCOMPLETE", None, "Model digest changed before execution"
     metadata = {"document_type": "technical_specification", "source_revision": source_revision, "source_fingerprint": source_fingerprint, "campaign_id": row.campaign_id}
-    nightly = getattr(row, "trigger", None) in {"NIGHTLY", "MONTHLY"} and row.scope == "FULL"
+    core_only = getattr(row, "trigger", None) == "NIGHTLY" and row.scope == "FULL"
+    nightly = getattr(row, "trigger", None) == "MONTHLY" and row.scope == "FULL"
     with record_quality_evidence("run", row.id, metadata) as directory:
         target = directory / "report.json"
         command = [sys.executable, "-B", "-m", "test.evals.technical_specifications.alignment.evaluate", "--tenant", tenant, "--report", str(target)]
@@ -108,6 +109,8 @@ def execute(row, root, tenant, source_revision, source_fingerprint):
             command.extend(["--case-id", row.case_id])
         if nightly:
             command.append("--nightly")
+        elif core_only:
+            command.append("--core-only")
         env = {**os.environ, "TZ_ALIGNMENT_LIVE": "1", "PYTHONDONTWRITEBYTECODE": "1"}
         with (directory / "pytest.log").open("w", encoding="utf-8") as log:
             try:
@@ -119,7 +122,11 @@ def execute(row, root, tenant, source_revision, source_fingerprint):
         report = json.loads(target.read_text(encoding="utf-8"))
         expected = [case for case in CASES if not row.case_id or case[0] == row.case_id]
         identifiers = [case.get("case_id") for case in report.get("cases", [])]
-        if report.get("expected_case_ids") != [case[0] for case in expected] or identifiers != report["expected_case_ids"][: len(identifiers)] or (not nightly and len(identifiers) != len(expected)):
+        if (
+            report.get("expected_case_ids") != [case[0] for case in expected]
+            or identifiers != report["expected_case_ids"][: len(identifiers)]
+            or (not nightly and not core_only and len(identifiers) != len(expected))
+        ):
             return "INCOMPLETE", None, "Live model report has incomplete inventory"
         for case, item in zip(expected[: len(identifiers)], report["cases"], strict=True):
             result = item["result"]
@@ -152,9 +159,10 @@ def execute(row, root, tenant, source_revision, source_fingerprint):
             summary.update(status=status, evidence_status="INCOMPLETE")
             return status, summary, "Nightly experiment qualification is incomplete"
         try:
-            quality = verify_execution(report)
+            quality = verify_execution(report, core_only=core_only)
         except (ValueError, TypeError, KeyError):
             status = "FAIL" if report.get("quality_status") == "FAIL" else "INCOMPLETE"
+            summary["evidence_status"] = "INCOMPLETE"
         else:
             status = "PASS" if quality == "pass" and process.returncode == 0 else "FAIL" if quality == "fail" else "INCOMPLETE"
         if status == "INCOMPLETE":

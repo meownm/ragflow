@@ -25,10 +25,14 @@ CASE_SECONDS = 300
 PROBE_SECONDS = 180
 
 
-def evaluation_policy(case_count, *, limits_only=False):
+def evaluation_policy(case_count, *, limits_only=False, core_only=False):
     """Approved budgets; a report cannot enlarge this policy."""
     if type(case_count) is not int or case_count < 0:
         raise ValueError("Invalid corpus size")
+    if core_only:
+        if limits_only:
+            raise ValueError("Core corpus cannot include limit probes")
+        return {"call_limit": case_count, "token_limit": TOKEN_LIMIT, "time_limit_ms": case_count * CASE_SECONDS * 1000}
     return {"call_limit": 3 if limits_only else case_count + 3, "token_limit": TOKEN_LIMIT, "time_limit_ms": ((0 if limits_only else case_count * CASE_SECONDS) + PROBE_SECONDS) * 1000}
 
 

@@ -248,7 +248,7 @@ def test_scheduled_series_collects_experiments_and_cannot_pass_unattested_budget
         report.update(cases=[], quality_status="UNKNOWN", status="INCOMPLETE", qualifies=False)
         report["nightly_experiments"]["REPEATS"]["cases"][-1]["status"] = "INCOMPLETE"
         report["nightly_experiments"]["REPEATS"]["budget"]["reserved_tokens"] = 100
-    row = SimpleNamespace(id="synthetic-nightly", trigger="NIGHTLY", source_revision="a" * 40, campaign_id=None, model_name=None, model_digest=None, case_id=None, scope="FULL")
+    row = SimpleNamespace(id="synthetic-monthly", trigger="MONTHLY", source_revision="a" * 40, campaign_id=None, model_name=None, model_digest=None, case_id=None, scope="FULL")
 
     def subprocess_run(command, **options):
         assert "--nightly" in command and options["timeout"] == execution_seconds()
@@ -278,3 +278,52 @@ def test_stale_detection_uses_scheduled_series_deadline(queue, monkeypatch):
     assert not runs.process_next_run()
     assert runs.get_quality_run(scheduled["id"], "technical_specification")["status"] == "RUNNING"
     assert runs.get_quality_run(manual["id"], "technical_specification")["status"] == "INCOMPLETE"
+
+
+@pytest.mark.parametrize("defect", [None, "missing-case", "unknown-debt", "extra-probes", "foreign-scope", "changed-model", "known-failure", "partial-failure", "exit-2"])
+def test_daily_series_uses_only_core_corpus_with_strict_evidence(queue, monkeypatch, defect):
+    import json
+    from types import SimpleNamespace
+
+    import technical_specification_quality as quality
+
+    from test.evals.technical_specifications.alignment.real_limits import evaluation_policy
+    from test.unit_test.tools.quality.test_release_evidence import _alignment_report
+
+    report = _alignment_report()
+    report.update(scope="CORE")
+    del report["real_limit_probes"]
+    report["budget"].update(evaluation_policy(len(report["cases"]), core_only=True))
+    report["budget"]["calls"] = len(report["cases"])
+    report["budget"]["spent_tokens"] -= 236  # synthetic probe usage from the fixture
+    if defect in {"missing-case", "partial-failure"}:
+        report["cases"].pop()
+    if defect == "unknown-debt":
+        report["budget"]["reserved_tokens"] = 1
+    if defect == "extra-probes":
+        report["real_limit_probes"] = {}
+    if defect == "foreign-scope":
+        report["scope"] = "FULL"
+    if defect == "changed-model":
+        report["cases"][-1]["result"]["audit"]["profile_sha256"] = "b" * 64
+    if defect in {"known-failure", "partial-failure"}:
+        item = report["cases"][0]
+        item.update(status="FAIL", errors=["ALIGNMENT_REPORT_INVALID"])
+        item["result"].update(report_status="INCOMPLETE", quality_status="FAIL", reason_code="ALIGNMENT_REPORT_INVALID", evidence_status="INCOMPLETE")
+        report.update(quality_status="FAIL", status="FAIL", qualifies=False)
+    row = SimpleNamespace(id="synthetic-core", trigger="NIGHTLY", campaign_id=None, model_name=None, model_digest=None, case_id=None, scope="FULL")
+
+    def subprocess_run(command, **options):
+        assert "--core-only" in command and "--nightly" not in command
+        assert options["timeout"] == quality.execution_timeout()
+        Path(command[command.index("--report") + 1]).write_text(json.dumps(report), encoding="utf-8")
+        return SimpleNamespace(returncode=2 if defect == "exit-2" else 0)
+
+    monkeypatch.setattr(quality.subprocess, "run", subprocess_run)
+    status, summary, _reason = quality.execute(row, Path.cwd(), "qa", "current-image", None)
+    expected = "PASS" if defect is None else "FAIL" if defect in {"known-failure", "partial-failure"} else "INCOMPLETE"
+    assert status == summary["status"] == expected
+    assert "nightly_experiments" not in summary
+    assert summary["expected_cases"] == 65
+    if defect is not None:
+        assert summary["evidence_status"] == "INCOMPLETE"

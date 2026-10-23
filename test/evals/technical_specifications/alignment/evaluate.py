@@ -25,6 +25,8 @@ def case_observation(case, result):
 
 
 async def run_cases(ai, actor, *, case_id=None, checkpoint=None, budget=None, expected_identity=None):
+    from test.evals.technical_specifications.alignment.real_limits import evaluation_policy
+
     chosen = [case for case in CASES if case_id is None or case[0] == case_id]
     if not chosen:
         raise ValueError("Unknown or empty alignment corpus")
@@ -32,12 +34,13 @@ async def run_cases(ai, actor, *, case_id=None, checkpoint=None, budget=None, ex
         "schema_version": 1,
         "document_type": "technical_specification",
         "suite_id": "bt-tz-alignment-v1",
-        "scope": "DIAGNOSTIC" if case_id else "FULL",
+        "scope": "DIAGNOSTIC" if case_id else "CORE",
         "expected_case_ids": [case[0] for case in chosen],
         "cases": [],
         "status": "INCOMPLETE",
     }
-    budget = budget or AlignmentBudget(seconds=len(chosen) * 300, calls=len(chosen), token_limit=4_000_000)
+    policy = evaluation_policy(len(chosen), core_only=True)
+    budget = budget or AlignmentBudget(seconds=policy["time_limit_ms"] / 1000, calls=policy["call_limit"], token_limit=policy["token_limit"])
     for case in chosen:
         document, basis = inputs(case)
         report["active_case_id"] = case[0]
@@ -80,12 +83,14 @@ async def run_cases(ai, actor, *, case_id=None, checkpoint=None, budget=None, ex
     return report
 
 
-async def run_evaluation(ai, actor, *, case_id=None, checkpoint=None, limits_only=False, expected_identity=None):
+async def run_evaluation(ai, actor, *, case_id=None, checkpoint=None, limits_only=False, core_only=False, expected_identity=None):
     from test.evals.technical_specifications.alignment.real_limits import IDS, evaluation_policy
     from test.evals.technical_specifications.alignment.real_limits import run as run_limits
 
-    if case_id:
-        return await run_cases(ai, actor, case_id=case_id, checkpoint=checkpoint)
+    if core_only and (case_id or limits_only):
+        raise ValueError("Core corpus requires all scenarios without limit probes")
+    if case_id or core_only:
+        return await run_cases(ai, actor, case_id=case_id, checkpoint=checkpoint, expected_identity=expected_identity)
     policy = evaluation_policy(len(CASES), limits_only=limits_only)
     budget = AlignmentBudget(seconds=policy["time_limit_ms"] / 1000, calls=policy["call_limit"], token_limit=policy["token_limit"])
     report = (
@@ -102,7 +107,7 @@ async def run_evaluation(ai, actor, *, case_id=None, checkpoint=None, limits_onl
         if limits_only
         else await run_cases(ai, actor, checkpoint=checkpoint, budget=budget, expected_identity=expected_identity)
     )
-    report.update(qualifies=False, status="INCOMPLETE", real_limit_probes={"status": "INCOMPLETE", "expected_case_ids": list(IDS), "cases": []})
+    report.update(scope="DIAGNOSTIC" if limits_only else "FULL", qualifies=False, status="INCOMPLETE", real_limit_probes={"status": "INCOMPLETE", "expected_case_ids": list(IDS), "cases": []})
 
     def save(probes, ledger):
         report["real_limit_probes"]["cases"] = list(probes)
@@ -241,10 +246,14 @@ def main():
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--case-id")
     parser.add_argument("--model")
-    parser.add_argument("--nightly", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--nightly", action="store_true")
+    mode.add_argument("--core-only", action="store_true")
     args = parser.parse_args()
     if args.nightly and args.case_id:
         parser.error("Nightly collection requires the complete corpus")
+    if args.core_only and args.case_id:
+        parser.error("Core collection requires the complete corpus")
     if os.environ.get("TZ_ALIGNMENT_LIVE") != "1":
         raise ValueError("Explicit live QA opt-in required")
     from common import settings
@@ -267,7 +276,7 @@ def main():
 
         report = asyncio.run(run_nightly(ai, tenant.id, checkpoint=checkpoint))
     else:
-        report = asyncio.run(run_evaluation(ai, tenant.id, case_id=args.case_id, checkpoint=checkpoint))
+        report = asyncio.run(run_evaluation(ai, tenant.id, case_id=args.case_id, core_only=args.core_only, checkpoint=checkpoint))
     checkpoint(report)
     return 0 if report["qualifies"] else 1 if report.get("quality_status") == "FAIL" else 2
 

@@ -9,7 +9,7 @@ class EvidenceIncomplete(ValueError):
     """The invocation cannot establish complete model evidence."""
 
 
-def verify_execution(report):
+def verify_execution(report, *, core_only=False):
     from api.technical_specifications.alignment import fingerprint, materialize_report, report_input, validate_report
     from api.technical_specifications.alignment_ai import SYSTEM, ollama_request
     from api.technical_specifications.domain import SpecificationError
@@ -17,8 +17,8 @@ def verify_execution(report):
 
     if type(report.get("schema_version")) is not int or report["schema_version"] != 1 or report.get("document_type") != "technical_specification" or report.get("suite_id") != "bt-tz-alignment-v1":
         raise ValueError("Technical Specifications quality report has an invalid identity")
-    if report.get("scope") != "FULL":
-        raise EvidenceIncomplete("Technical Specifications diagnostic run cannot qualify a release")
+    if report.get("scope") != ("CORE" if core_only else "FULL"):
+        raise EvidenceIncomplete("Technical Specifications execution scope does not match the requested verification")
     expected = [case[0] for case in CASES]
     cases = report.get("cases")
     if (
@@ -92,8 +92,40 @@ def verify_execution(report):
         requests.add(request_id)
         signatures.add((model, digest, audit["profile_sha256"]))
         spent_tokens += audit["prompt_tokens"] + audit["completion_tokens"]
-    from test.evals.technical_specifications.alignment.real_limits import IDS, evaluation_policy, probe_kind, probe_spec, validate_probe_audit
+    from test.evals.technical_specifications.alignment.real_limits import evaluation_policy
 
+    if core_only:
+        if "real_limit_probes" in report or "nightly_experiments" in report:
+            raise EvidenceIncomplete("Technical Specifications core corpus contains extra experiments")
+    else:
+        spent_tokens += _verify_probes(report, signatures, requests)
+    policy = evaluation_policy(len(CASES), core_only=core_only)
+    ledger = report.get("budget")
+    if (
+        not isinstance(ledger, dict)
+        or any(type(ledger.get(key)) is not int or ledger[key] < 0 for key in ("calls", "call_limit", "spent_tokens", "reserved_tokens", "token_limit", "elapsed_ms", "time_limit_ms"))
+        or ledger["calls"] != policy["call_limit"]
+        or ledger["call_limit"] != policy["call_limit"]
+        or ledger["token_limit"] != policy["token_limit"]
+        or ledger["time_limit_ms"] != policy["time_limit_ms"]
+        or ledger["reserved_tokens"] != 0
+        or ledger["spent_tokens"] != spent_tokens
+        or ledger["spent_tokens"] > policy["token_limit"]
+        or ledger["elapsed_ms"] > policy["time_limit_ms"]
+    ):
+        raise EvidenceIncomplete("Technical Specifications total execution budget is unverified")
+    quality = "FAIL" if failed else "PASS"
+    if len(signatures) != 1 or report.get("evidence_status") != "VERIFIED":
+        raise EvidenceIncomplete("Technical Specifications model identity or evidence changed")
+    if report.get("quality_status") != quality or report.get("status") != quality or report.get("qualifies") is not (quality == "PASS"):
+        raise ValueError("Technical Specifications aggregate result is inconsistent")
+    return quality.lower()
+
+
+def _verify_probes(report, signatures, requests):
+    from test.evals.technical_specifications.alignment.real_limits import IDS, probe_kind, probe_spec, validate_probe_audit
+
+    spent_tokens = 0
     limits = report.get("real_limit_probes")
     if (
         not isinstance(limits, dict)
@@ -164,24 +196,4 @@ def verify_execution(report):
     if usage["completion_tokens"] > plan["output_limit"] or usage["prompt_tokens"] + usage["completion_tokens"] > plan["context_limit"]:
         raise ValueError("Technical Specifications canceled request exceeded its limits")
     spent_tokens += usage["prompt_tokens"] + usage["completion_tokens"]
-    policy = evaluation_policy(len(CASES))
-    ledger = report.get("budget")
-    if (
-        not isinstance(ledger, dict)
-        or any(type(ledger.get(key)) is not int or ledger[key] < 0 for key in ("calls", "call_limit", "spent_tokens", "reserved_tokens", "token_limit", "elapsed_ms", "time_limit_ms"))
-        or ledger["calls"] != policy["call_limit"]
-        or ledger["call_limit"] != policy["call_limit"]
-        or ledger["token_limit"] != policy["token_limit"]
-        or ledger["time_limit_ms"] != policy["time_limit_ms"]
-        or ledger["reserved_tokens"] != 0
-        or ledger["spent_tokens"] != spent_tokens
-        or ledger["spent_tokens"] > policy["token_limit"]
-        or ledger["elapsed_ms"] > policy["time_limit_ms"]
-    ):
-        raise EvidenceIncomplete("Technical Specifications total execution budget is unverified")
-    quality = "FAIL" if failed else "PASS"
-    if len(signatures) != 1 or report.get("evidence_status") != "VERIFIED":
-        raise EvidenceIncomplete("Technical Specifications model identity or evidence changed")
-    if report.get("quality_status") != quality or report.get("status") != quality or report.get("qualifies") is not (quality == "PASS"):
-        raise ValueError("Technical Specifications aggregate result is inconsistent")
-    return quality.lower()
+    return spent_tokens

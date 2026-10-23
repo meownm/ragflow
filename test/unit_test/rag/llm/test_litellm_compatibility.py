@@ -8,6 +8,7 @@ from threading import Event, Thread
 from types import SimpleNamespace
 
 import litellm
+from litellm.litellm_core_utils.logging_worker import GLOBAL_LOGGING_WORKER
 import pytest
 import pytest_asyncio
 
@@ -126,7 +127,10 @@ def provider():
 @pytest_asyncio.fixture(autouse=True)
 async def sdk_clients():
     yield
-    await litellm.close_litellm_async_clients()
+    try:
+        await asyncio.wait_for(GLOBAL_LOGGING_WORKER.flush(), timeout=5)
+    finally:
+        await litellm.close_litellm_async_clients()
 
 
 @pytest.fixture
@@ -229,7 +233,14 @@ async def test_sync_multimodal_completion(model_factory, provider):
         {"type": "image_url", "image_url": {"url": "data:image/png;base64,aW1hZ2U="}},
     ]
     args = model._construct_completion_args([{"role": "user", "content": content}], stream=False, tools=False)
-    response = await asyncio.to_thread(litellm.completion, **args, timeout=5)
+
+    def completion():
+        # The sync SDK also runs async service telemetry on its worker thread.
+        # Give that thread an owned loop, including shutdown of its callbacks.
+        with asyncio.Runner():
+            return litellm.completion(**args, timeout=5)
+
+    response = await asyncio.to_thread(completion)
     assert response.choices[0].message.content == "OK"
     assert response.usage.total_tokens == 5
     assert provider.requests[0][2]["messages"][0]["content"] == content

@@ -25,6 +25,7 @@ from api.apps.business_documents.assets import validate_contract, apply_change_p
 from api.apps.business_documents.exports import BusinessDocumentExportService
 from business_documents.domain.block_diff import with_block_ids
 from business_documents.domain.content import section_hash
+from business_documents.application.errors import ValidationError
 from api.apps.business_documents.runtime import document_commands, document_queries
 from api.apps.business_documents.worker import BusinessDocumentWorker
 from api.db.db_models import BusinessDocumentJob, BusinessDocumentRevision
@@ -85,7 +86,9 @@ def test_worker_saves_document_and_advice_after_format_deviation(database, kind)
     elif kind == "markdown_diagram":
         text += '\n```plantuml\n@startuml\nrectangle "Получение заявки" {\n[Клиент] --> [Оператор]\n}\n@enduml\n```'
         output = text
-        assert isinstance(BusinessDocumentAI._parse(output), dict)
+        with pytest.raises(ValidationError) as error:
+            BusinessDocumentAI._parse(output)
+        assert error.value.code == "INVALID_AI_JSON"
     elif kind == "section_metadata":
         section["note"] = text
     elif kind == "section_text":

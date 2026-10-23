@@ -16,7 +16,6 @@
 
 import asyncio
 import contextlib
-import gc
 
 import pytest
 
@@ -24,15 +23,6 @@ import pytest
 pytest.importorskip("crawl4ai")
 
 from agent.tools.crawler import Crawler, CrawlerParam  # noqa: E402
-
-
-@pytest.fixture(autouse=True)
-def _close_event_loops():
-    yield
-    asyncio.set_event_loop(None)
-    for obj in gc.get_objects():
-        if isinstance(obj, asyncio.AbstractEventLoop) and not obj.is_closed() and not obj.is_running():
-            obj.close()
 
 
 def _make_tool():

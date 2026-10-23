@@ -75,7 +75,7 @@ def provider():
 @pytest.fixture
 def adapter_models(provider, monkeypatch):
     models = []
-    config = {"llm_factory": "OpenAI-API-Compatible", "llm_name": "local", "model_type": "chat", "max_tokens": 65536, "api_base": provider.url}
+    config = {"llm_factory": "OpenAI-API-Compatible", "llm_name": "local", "model_type": "chat", "max_tokens": 65536, "max_output_tokens": 4096, "api_base": provider.url}
 
     def model_instance(_config, **kwargs):
         model = OpenAI_APIChat("synthetic", "local", provider.url, **kwargs)

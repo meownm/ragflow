@@ -30,6 +30,7 @@ when present, and download only what is still missing.
 import os
 
 from test.asyncio_policy import event_loop_policy as event_loop_policy
+from test.asyncio_policy import owned_policy_loop as owned_policy_loop
 
 import nltk
 
@@ -44,7 +45,8 @@ if os.path.isdir(_LOCAL_NLTK_DATA) and _LOCAL_NLTK_DATA not in nltk.data.path:
 # (download name, resource path used by nltk.data.find)
 _REQUIRED_NLTK_DATA = (
     ("punkt_tab", "tokenizers/punkt_tab"),
-    ("wordnet", "corpora/wordnet"),
+    # The trailing slash lets NLTK find the directory inside wordnet.zip too.
+    ("wordnet", "corpora/wordnet/"),
 )
 for _name, _find_path in _REQUIRED_NLTK_DATA:
     try:

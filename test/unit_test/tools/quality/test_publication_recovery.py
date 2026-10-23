@@ -144,14 +144,15 @@ def test_registry_failure_preserves_channel_and_durable_reason(publication, monk
     assert json.loads(journal[sorted(journal)[-1]])["stage"] == "image-pending"
 
 
-def test_altered_partial_asset_blocks_retry_and_keeps_previous(publication, monkeypatch):
+@pytest.mark.parametrize("corrupted", [b"foreign content", b"{}", b"\xff"])
+def test_altered_partial_asset_blocks_retry_and_keeps_previous(publication, monkeypatch, corrupted):
     receipt, packet = publication
     github = GitHub("asset-after")
     monkeypatch.setattr(publisher, "command", github.command)
     with pytest.raises(RuntimeError):
         publisher.publish(receipt, packet, "nightly-123-2", True)
     assets = github.releases["nightly-123-2"]["assets"]
-    assets[next(iter(assets))] = b"foreign content"
+    assets[next(iter(assets))] = corrupted
     with pytest.raises(ValueError, match="conflict"):
         publisher.publish(receipt, packet, "nightly-123-2", True)
     assert github.pointer["sha"] == "previous"

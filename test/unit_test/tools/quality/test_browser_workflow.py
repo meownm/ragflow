@@ -3,7 +3,10 @@
 import ast
 import hashlib
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
@@ -90,6 +93,20 @@ class BrowserWorkflowTests(unittest.TestCase):
         parsed = ast.parse((ROOT / "test/run_browser_regression.py").read_text())
         suites = next(ast.literal_eval(node.value) for node in parsed.body if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "SUITES" for target in node.targets))
         self.assertEqual({node.split("::", 1)[0] for node in self.mandatory}, set(suites))
+        # Parameter additions inside an existing suite must also update the
+        # independently pinned inventory before browser qualification starts.
+        collected = subprocess.run(
+            [sys.executable, "-B", "-m", "pytest", "--collect-only", "-q", "-o", "addopts=", "-o", f"cache_dir={self.root / 'collection-cache'}", *suites],
+            cwd=ROOT,
+            env={**os.environ, "PYTEST_ADDOPTS": "", "PYTHONDONTWRITEBYTECODE": "1", "PYTHONUTF8": "1"},
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=60,
+        )
+        self.assertEqual(collected.returncode, 0, collected.stdout + collected.stderr)
+        nodes = {line.strip() for line in collected.stdout.splitlines() if line.startswith("test/playwright/e2e/") and "::test_" in line}
+        self.assertEqual(self.mandatory, nodes)
 
     def junit(self, nodes=None):
         nodes = sorted(self.mandatory) if nodes is None else nodes

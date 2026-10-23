@@ -154,8 +154,14 @@ def test_cache_project_registration_never_traverses_or_removes_target(tmp_path, 
     original = frontend.os.scandir
 
     def scan(path):
-        assert not Path(path).is_relative_to(project)
-        assert Path(path) != link
+        # POSIX rmtree traverses directories through file descriptors.
+        # Compare directory identity before any target traversal can start.
+        if isinstance(path, int):
+            if project.exists():
+                assert not os.path.samestat(os.fstat(path), project.stat())
+        else:
+            assert not Path(path).is_relative_to(project)
+            assert Path(path) != link
         return original(path)
 
     monkeypatch.setattr(frontend.os, "scandir", scan)

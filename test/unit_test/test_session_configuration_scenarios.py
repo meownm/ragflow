@@ -12,6 +12,7 @@ import pytest
 from ragflow_sdk import RAGFlow
 from ragflow_sdk.modules.chat import Chat
 from ragflow_sdk.modules.session import Session
+from common.resource_names import validate_resource_name
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -28,14 +29,18 @@ finally:
 def handlers():
     path = ROOT / "api/apps/restful_apis/chat_api.py"
     tree = ast.parse(path.read_text())
-    functions = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in {"_validate_name", "create_session", "update_session"}]
+    functions = [
+        node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in {"_validate_name", "_ensure_accessible_chat", "_session_scope", "create_session", "update_session"}
+    ]
     for function in functions:
         function.decorator_list = []
     stored = {"id": "session", "dialog_id": "chat", "name": "existing"}
     writes = []
 
-    async def owned(_chat):
-        return True
+    async def thread_pool_exec(function, *args, **kwargs):
+        return function(*args, **kwargs)
 
     async def request_json():
         return deepcopy(namespace["payload"])
@@ -57,9 +62,13 @@ def handlers():
         model=SimpleNamespace(_meta=SimpleNamespace(fields=dict.fromkeys(stored))),
     )
     namespace = {
-        "_ensure_owned_chat": owned,
+        "validate_resource_name": validate_resource_name,
+        "thread_pool_exec": thread_pool_exec,
         "get_request_json": request_json,
-        "DialogService": SimpleNamespace(get_by_id=lambda _: (True, SimpleNamespace(prompt_config={"prologue": "hello"}))),
+        "DialogService": SimpleNamespace(
+            get_by_id=lambda _: (True, SimpleNamespace(prompt_config={"prologue": "hello"})),
+            get_accessible_chat=lambda chat_id, user_id: [SimpleNamespace(id=chat_id)] if (chat_id, user_id) == ("chat", "tenant") else [],
+        ),
         "ConversationService": conversation,
         "get_uuid": lambda: "session",
         "current_user": SimpleNamespace(id="tenant"),

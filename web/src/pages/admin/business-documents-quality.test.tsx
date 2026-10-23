@@ -977,7 +977,9 @@ test('history details stay beside their selected row, expose context and return 
   });
   expect(firstButton.parentElement).toContainElement(panel);
   expect(panel).toHaveTextContent('qwen');
-  expect(panel).toHaveTextContent('20.09.2026');
+  expect(panel).toHaveTextContent(
+    new Date(run.started_at).toLocaleDateString('ru'),
+  );
   expect(firstButton).toHaveAttribute('aria-controls', panel.id);
   expect(firstButton).toHaveAttribute('data-selected', 'true');
   await waitFor(() =>

@@ -51,10 +51,13 @@ from api.db.db_models import (
     BusinessDocumentExportStage,
     BusinessDocumentJob,
     BusinessDocumentRevision,
+    DocumentExchangeBinding,
     User,
 )
 from business_documents.application.assign_document import AssignDocument, AssignDocumentCommand, AssignDocumentError
 from common.time_utils import current_timestamp
+
+_EXPORT_MARKDOWN = "## 1. Transaction-safe export\nDurable export content."
 
 
 @pytest.fixture
@@ -129,8 +132,8 @@ def _agreed_document():
         id=revision_id,
         document_id=document_id,
         revision_number=1,
-        document_ast={"sections": []},
-        body_markdown="# Transaction-safe export",
+        document_ast={"sections": [{"id": "1", "title": "Transaction-safe export", "blocks": [{"type": "paragraph", "text": "Durable export content."}]}]},
+        body_markdown=_EXPORT_MARKDOWN,
         content_hash="sha256:transaction-safe-export",
         source_event_ids=[created_event.id],
         create_time=now_ms,
@@ -318,14 +321,12 @@ def test_concurrent_document_creation_enforces_normalized_title_uniqueness(postg
 @pytest.mark.p0
 def test_concurrent_creation_enforces_unique_eva_identity(postgres_database, monkeypatch):
     barrier = Barrier(2)
-    create_binding = BusinessDocumentEvaBinding.create
 
-    def synchronized_binding_create(*args, **kwargs):
-        barrier.wait(timeout=10)
-        return create_binding(*args, **kwargs)
-
-    def resolve_binding(_actor_id, raw, _schema_version, display_title):
+    def resolve_binding(actor_id, raw, _schema_version, display_title, tenant_id):
+        assert (actor_id, tenant_id) == ("pg-author", "pg-tenant")
         suffix = "one" if display_title.endswith("one") else "two"
+        # Both requests resolve before the transaction reserves the page.
+        barrier.wait(timeout=10)
         return {
             "page_url": f"https://eva.example.test/project/Document/{suffix}",
             "status": "CONNECTED",
@@ -336,7 +337,6 @@ def test_concurrent_creation_enforces_unique_eva_identity(postgres_database, mon
             "document_name": display_title,
         }
 
-    monkeypatch.setattr(BusinessDocumentEvaBinding, "create", synchronized_binding_create)
     monkeypatch.setattr(document_creation, "_resolve_binding", resolve_binding)
     results = _parallel(
         postgres_database,
@@ -359,6 +359,10 @@ def test_concurrent_creation_enforces_unique_eva_identity(postgres_database, mon
     assert rejected.code == "EVA_PAGE_ALREADY_LINKED"
     assert BusinessDocument.select().count() == 1
     assert BusinessDocumentEvaBinding.select().count() == 1
+    assert DocumentExchangeBinding.select().count() == 1
+    reservation = DocumentExchangeBinding.get()
+    assert reservation.scope == "pg-tenant" and reservation.owner_kind == "business_requirements"
+    assert reservation.document_id == BusinessDocumentEvaBinding.get().document_id
 
 
 @pytest.mark.p0
@@ -944,7 +948,7 @@ def test_real_minio_blob_is_reconciled_after_interruption_immediately_after_put(
         stage = BusinessDocumentExportStage.get(BusinessDocumentExportStage.document_id == document["document_id"])
         location = (stage.storage_bucket, stage.storage_key)
         assert stage.state == "RESERVED"
-        assert minio_storage.get(*location) == b"# Transaction-safe export"
+        assert minio_storage.get(*location) == _EXPORT_MARKDOWN.encode("utf-8")
         assert BusinessDocumentExportService.reconcile_staging(storage=minio_storage, now_ms=job.lease_expires_at - 1) == {
             "scanned": 1,
             "cleaned": 0,

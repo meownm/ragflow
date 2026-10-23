@@ -313,8 +313,13 @@ def publish(receipt: dict, packet: Path, tag: str, nightly: bool) -> None:
             prior.mkdir()
             command("gh", "release", "download", tag, "--repo", repository, "--pattern", "release-manifest.json", "--dir", str(prior), allow_missing=True)
             old = prior / "release-manifest.json"
-            if old.exists() and json.loads(old.read_text()) != manifest:
-                raise ValueError("immutable GitHub release content conflict")
+            if old.exists():
+                try:
+                    prior_manifest = json.loads(old.read_text())
+                except (ValueError, UnicodeError) as exc:
+                    raise ValueError("immutable GitHub release content conflict: invalid manifest") from exc
+                if prior_manifest != manifest:
+                    raise ValueError("immutable GitHub release content conflict")
             if not json.loads(existing)["isDraft"]:
                 if not old.exists():
                     raise ValueError("completed release lacks trusted manifest")

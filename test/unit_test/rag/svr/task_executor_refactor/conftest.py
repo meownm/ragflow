@@ -213,40 +213,6 @@ def recording_context():
     set_recording_context(RecordingContext())
 
 
-@pytest.fixture(autouse=True)
-def cleanup_resources(request):
-    """Global resource cleanup fixture.
-
-    Runs after each test to clean up:
-    - Unclosed event loops
-    - Unclosed sockets (via garbage collection)
-    - Unawaited coroutines
-    - MagicMock objects that may hold unclosed resources
-
-    This prevents ResourceWarning and RuntimeWarning from failing
-    tests when filterwarnings is set to "error".
-
-    Optimization: Uses minimal gc cycles and generation-2 collection
-    for faster teardown.
-    """
-    yield
-    import warnings
-
-    # Suppress warnings during cleanup to avoid recursive warning issues
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-
-        # Close any unclosed event loops
-        try:
-            policy = asyncio.get_event_loop_policy()
-            loop = policy.get_event_loop()
-            if not loop.is_closed():
-                loop.close()
-        except RuntimeError:
-            # No event loop exists, which is fine
-            pass
-
-
 # =============================================================================
 # External System Mocks (Boundary Mocks)
 # =============================================================================

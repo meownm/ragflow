@@ -207,7 +207,7 @@ def qualify(image: str, output: Path) -> dict:
             target = f"{project}-{name}"
             inspection = subprocess.run(["docker", "inspect", target], capture_output=True, text=True, timeout=30)
             if inspection.returncode:
-                if "No such" not in inspection.stderr:
+                if "no such" not in inspection.stderr.lower():
                     errors.append(target)
                 continue
             info = json.loads(inspection.stdout)[0]
@@ -223,9 +223,15 @@ def qualify(image: str, output: Path) -> dict:
         else:
             command("docker", "network", "rm", network)
         for image_name in images:
+            inspection = subprocess.run(["docker", "image", "inspect", image_name], capture_output=True, text=True, timeout=30)
+            if inspection.returncode:
+                if "no such" not in inspection.stderr.lower():
+                    errors.append(image_name)
+                continue
             command("docker", "image", "rm", image_name)
         report["cleanup"] = "FAIL" if errors else "PASS"
         if errors:
+            report["cleanup_errors"] = errors
             report["status"] = "FAIL"
         write_json(output / "blue-green.json", report)
     return report

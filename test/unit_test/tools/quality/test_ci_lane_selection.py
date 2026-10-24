@@ -125,6 +125,38 @@ class CiLaneSelectionTest(unittest.TestCase):
             {"has_go_changes": "false", "has_python_changes": "false", "has_web_changes": "false"},
         )
 
+    def test_native_cache_tooling_with_runner_documentation_only_selects_python(self):
+        self.commit("deployment/runner/native_artifacts.py", "# native cache change")
+        self.commit("test/unit_test/deployment/test_build_artifacts.py", "# cache tests")
+        self.commit("deployment/runner/README.md", "# Native cache")
+        for event, ref, pr_base in (("push", "refs/heads/main", ""), ("pull_request", "refs/pull/1/merge", self.before)):
+            with self.subTest(event=event):
+                self.assertEqual(
+                    self.select(event=event, ref=ref, pr_base=pr_base),
+                    {"has_go_changes": "false", "has_python_changes": "true", "has_web_changes": "false"},
+                )
+
+    def test_deployment_documentation_only_skips_source_lanes(self):
+        for name in ("deployment/runner/README.md", "deployment/local/README.md"):
+            with self.subTest(path=name):
+                self.commit(name, "# Build documentation")
+                self.assertEqual(
+                    self.select(),
+                    {"has_go_changes": "false", "has_python_changes": "false", "has_web_changes": "false"},
+                )
+
+    def test_frontend_readme_still_selects_web(self):
+        self.commit("web/README.md", "# Frontend")
+        self.assertEqual(
+            self.select(),
+            {"has_go_changes": "false", "has_python_changes": "false", "has_web_changes": "true"},
+        )
+
+    def test_unknown_deployment_input_with_readme_still_selects_all_lanes(self):
+        self.commit("deployment/runner/README.md", "# Runner")
+        self.commit("deployment/runner/build-go-linux.sh", "# build command change")
+        self.assertEqual(set(self.select().values()), {"true"})
+
     def test_deleted_python_source_still_selects_python(self):
         self.commit("api/removed.py", "value = 1")
         before = self.git("rev-parse", "HEAD").stdout.strip()

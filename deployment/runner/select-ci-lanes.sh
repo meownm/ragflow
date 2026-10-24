@@ -31,7 +31,7 @@ if [[ "$all" == false ]]; then
     while IFS= read -r -d '' file; do
       case "$file" in
         docs/references/http_api_reference.md) has_web=true ;;
-        README.md|docs/*.md|docs/*.mdx) : ;;
+        README.md|docs/*.md|docs/*.mdx|deployment/runner/README.md|deployment/local/README.md) : ;;
         web/*) has_web=true ;;
         *.go|go.mod|go.sum) has_go=true ;;
         test/evals/source_workbench/*|agent/business_requirements/golden_model_quality/*.json|agent/business_requirements/golden_dialogs/*.json|agent/business_requirements/evals/*.json|agent/business_requirements/prompts/*.md)

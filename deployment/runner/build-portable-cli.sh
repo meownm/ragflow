@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # The portable distribution deliberately selects the supported no-CGO profile.
 set -euo pipefail
+
+# vendor/python holds Python archives; Go builds use the locked module graph.
+case " ${GOFLAGS:-} " in
+  *" -mod="*) ;;
+  *) export GOFLAGS="${GOFLAGS:+${GOFLAGS} }-mod=readonly" ;;
+esac
 test "${CGO_ENABLED:?}" = 0
 test "$#" = 1
 output="$1"

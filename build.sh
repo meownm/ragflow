@@ -1,6 +1,12 @@
 #!/bin/bash
 set -e
 
+# vendor/python holds Python archives; Go builds use the locked module graph.
+case " ${GOFLAGS:-} " in
+    *" -mod="*) ;;
+    *) export GOFLAGS="${GOFLAGS:+${GOFLAGS} }-mod=readonly" ;;
+esac
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'

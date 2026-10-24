@@ -104,7 +104,8 @@ jobs:
           test -n "$PREVIOUS_RELEASE_TAG" || [[ "$INITIAL_BOOTSTRAP" == true ]] || { echo '::error::INCOMPLETE: previous qualified baseline or approved initial bootstrap is not configured'; exit 1; }
         fi
     if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository &&
-      contains(github.event.pull_request.labels.*.name, 'ci')) }}
+      contains(github.event.pull_request.labels.*.name, 'ci') &&
+      (github.event.action != 'labeled' || github.event.label.name == 'ci')) }}
   ragflow_preflight:
     name: ragflow_preflight
     runs-on:

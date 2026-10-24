@@ -8128,9 +8128,12 @@ dependencies = [
 
 [package.dev-dependencies]
 test = [
+    { name = "beautifulsoup4" },
     { name = "codecov" },
     { name = "hypothesis" },
     { name = "jsonschema" },
+    { name = "markdownify" },
+    { name = "mistune" },
     { name = "openpyxl" },
     { name = "pycryptodomex" },
     { name = "pytest" },
@@ -8290,9 +8293,12 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 test = [
+    { name = "beautifulsoup4", specifier = ">=4.13.5,<5" },
     { name = "codecov", specifier = ">=2.1.13" },
     { name = "hypothesis", specifier = ">=6.132.0" },
     { name = "jsonschema", specifier = "==4.26.0" },
+    { name = "markdownify", specifier = ">=1.2.0" },
+    { name = "mistune", specifier = ">=3.3.0,<4" },
     { name = "openpyxl", specifier = ">=3.1.5" },
     { name = "pycryptodomex", specifier = "==3.20.0" },
     { name = "pytest", specifier = ">=9.0.3,<10" },

@@ -73,6 +73,39 @@ def test_queue_watchdog_is_manual_and_push_smoke_remains_enabled():
 
 
 @pytest.mark.parametrize(
+    "event,action,head_repository,labels,label,expected",
+    [
+        ("pull_request", "labeled", "meownm/ragflow", ["ci"], "ci", True),
+        ("pull_request", "labeled", "meownm/ragflow", ["ci", "documentation"], "documentation", False),
+        ("pull_request", "labeled", "meownm/ragflow", ["documentation"], "documentation", False),
+        ("pull_request", "labeled", "external/ragflow", ["ci"], "ci", False),
+        ("pull_request", "opened", "meownm/ragflow", ["ci"], "", True),
+        ("pull_request", "synchronize", "meownm/ragflow", ["ci"], "", True),
+        ("pull_request", "reopened", "meownm/ragflow", ["ci"], "", True),
+        ("pull_request", "synchronize", "meownm/ragflow", [], "", False),
+        ("pull_request", "synchronize", "external/ragflow", ["ci"], "", False),
+        ("workflow_dispatch", "", "", [], "", True),
+        ("push", "", "", [], "", True),
+    ],
+)
+def test_actual_heavy_ci_condition_rejects_unrelated_labels(event, action, head_repository, labels, label, expected):
+    condition = workflow("tests.yml")["jobs"]["ready"]["if"].removeprefix("${{").removesuffix("}}")
+    values = {
+        "github.event_name": event,
+        "github.event.action": action,
+        "github.event.pull_request.head.repo.full_name": head_repository,
+        "github.event.pull_request.labels.*.name": labels,
+        "github.event.label.name": label,
+        "github.repository": "meownm/ragflow",
+    }
+    for name, value in values.items():
+        condition = condition.replace(name, repr(value))
+    # Evaluate the workflow's boolean predicate, not a separately copied policy.
+    condition = condition.replace("&&", "and").replace("||", "or")
+    assert eval(condition, {"__builtins__": {}, "contains": lambda items, item: item in items}) is expected
+
+
+@pytest.mark.parametrize(
     "event,ref,dry_run,publish,tag,nightly",
     [
         ("push", "refs/tags/v1.2.3", "", "true", "v1.2.3", "false"),

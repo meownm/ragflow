@@ -13,6 +13,10 @@
 # most Linux CI runners and would otherwise fail with
 # `sh: 1: [[: not found`. Keeping the hooks POSIX avoids pinning
 # lefthook to bash and keeps them portable to macOS/Linux/containers.
+# Installed Git hooks select the prepared Python; direct CI runs retain python3.
+# Setup and prerequisites: tools/hooks/README.md.
+lefthook: sh tools/hooks/lefthook.sh
+
 pre-commit:
   parallel: true
   jobs:
@@ -20,25 +24,25 @@ pre-commit:
       stage_fixed: true
       run: |
         if [ "${LEFTHOOK_CHECK_ONLY:-}" = "1" ]; then
-          python3 tools/hooks/check_files.py eof
+          sh tools/hooks/python.sh tools/hooks/check_files.py eof
         else
-          python3 tools/hooks/check_files.py eof --fix
+          sh tools/hooks/python.sh tools/hooks/check_files.py eof --fix
         fi
     - name: trailing-whitespace
       stage_fixed: true
       run: |
         if [ "${LEFTHOOK_CHECK_ONLY:-}" = "1" ]; then
-          python3 tools/hooks/check_files.py trailing-whitespace
+          sh tools/hooks/python.sh tools/hooks/check_files.py trailing-whitespace
         else
-          python3 tools/hooks/check_files.py trailing-whitespace --fix
+          sh tools/hooks/python.sh tools/hooks/check_files.py trailing-whitespace --fix
         fi
     - name: mixed-line-ending
       stage_fixed: true
       run: |
         if [ "${LEFTHOOK_CHECK_ONLY:-}" = "1" ]; then
-          python3 tools/hooks/check_files.py mixed-line-ending
+          sh tools/hooks/python.sh tools/hooks/check_files.py mixed-line-ending
         else
-          python3 tools/hooks/check_files.py mixed-line-ending --fix
+          sh tools/hooks/python.sh tools/hooks/check_files.py mixed-line-ending --fix
         fi
     - name: ruff
       glob: "*.py"
@@ -75,18 +79,25 @@ pre-commit:
     - name: web-prettier
       glob: "web/**/*.{css,less,json,js,jsx,ts,tsx}"
       stage_fixed: true
-      run: python3 tools/hooks/web_check.py prettier {staged_files}
+      run: >-
+        sh tools/hooks/python.sh tools/hooks/web_check.py prettier {staged_files}
     - name: web-eslint
       glob: "web/**/*.{js,jsx,ts,tsx}"
       stage_fixed: true
-      run: python3 tools/hooks/web_check.py eslint {staged_files}
+      run: >-
+        sh tools/hooks/python.sh tools/hooks/web_check.py eslint {staged_files}
     - name: check-yaml
-      run: python3 tools/hooks/check_files.py yaml
+      run: >-
+        sh tools/hooks/python.sh tools/hooks/check_files.py yaml
     - name: check-json
-      run: python3 tools/hooks/check_files.py json
+      run: >-
+        sh tools/hooks/python.sh tools/hooks/check_files.py json
     - name: check-case-conflict
-      run: python3 tools/hooks/check_files.py case-conflict
+      run: >-
+        sh tools/hooks/python.sh tools/hooks/check_files.py case-conflict
     - name: check-merge-conflict
-      run: python3 tools/hooks/check_files.py merge-conflict
+      run: >-
+        sh tools/hooks/python.sh tools/hooks/check_files.py merge-conflict
     - name: check-symlinks
-      run: python3 tools/hooks/check_files.py symlinks
+      run: >-
+        sh tools/hooks/python.sh tools/hooks/check_files.py symlinks

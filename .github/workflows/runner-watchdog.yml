@@ -1,7 +1,5 @@
 name: runner-watchdog
 'on':
-  schedule:
-  - cron: '*/10 * * * *'
   workflow_dispatch: {}
 permissions:
   contents: read

@@ -1,7 +1,5 @@
 name: release
 'on':
-  schedule:
-  - cron: 0 13 * * *
   push:
     tags:
     - v*.*.*
@@ -40,15 +38,29 @@ jobs:
       id: meta
       env:
         DRY_RUN: ${{ inputs.dry_run }}
-        NIGHTLY_ENABLED: ${{ vars.RELEASE_NIGHTLY_ENABLED }}
-      run: "python3 - <<'PY'\nfrom datetime import datetime,timezone\nimport os,re,tomllib\nnightly=os.environ['GITHUB_EVENT_NAME']!='push'\n\
-        ref=os.environ['GITHUB_REF']\nif not nightly:\n    tag=ref.removeprefix('refs/tags/')\n    assert re.fullmatch(r'v\\\
-        d+\\.\\d+\\.\\d+',tag), 'unsupported stable tag'\n    version=tomllib.load(open('pyproject.toml','rb'))['project']['version']\n\
-        \    assert tag=='v'+version, 'stable tag/project version mismatch'\n    publish=True\nelse:\n    assert ref=='refs/heads/main',\
-        \ 'nightly is only qualified from main'\n    tag='nightly-'+os.environ['GITHUB_RUN_ID']+'-'+os.environ['GITHUB_RUN_ATTEMPT']\n\
-        \    publish=(os.environ['GITHUB_EVENT_NAME']=='schedule' and os.environ['NIGHTLY_ENABLED']=='true') or (os.environ['GITHUB_EVENT_NAME']=='workflow_dispatch'\
-        \ and os.environ['DRY_RUN']=='false')\nwith open(os.environ['GITHUB_OUTPUT'],'a') as out:\n    out.write(f'publish={str(publish).lower()}\\\
-        ntag={tag}\\nnightly={str(nightly).lower()}\\n')\nPY"
+      run: |
+        python3 - <<'PY'
+        import os
+        import re
+        import tomllib
+
+        event = os.environ['GITHUB_EVENT_NAME']
+        assert event in {'push', 'workflow_dispatch'}, 'unsupported release event'
+        nightly = event == 'workflow_dispatch'
+        ref = os.environ['GITHUB_REF']
+        if not nightly:
+            tag = ref.removeprefix('refs/tags/')
+            assert re.fullmatch(r'v\d+\.\d+\.\d+', tag), 'unsupported stable tag'
+            version = tomllib.load(open('pyproject.toml', 'rb'))['project']['version']
+            assert tag == 'v' + version, 'stable tag/project version mismatch'
+            publish = True
+        else:
+            assert ref == 'refs/heads/main', 'nightly is only qualified from main'
+            tag = 'nightly-' + os.environ['GITHUB_RUN_ID'] + '-' + os.environ['GITHUB_RUN_ATTEMPT']
+            publish = os.environ['DRY_RUN'] == 'false'
+        with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+            out.write(f'publish={str(publish).lower()}\ntag={tag}\nnightly={str(nightly).lower()}\n')
+        PY
     - name: Require configured infrastructure
       env:
         GH_TOKEN: ${{ secrets.RUNNER_READ_TOKEN }}

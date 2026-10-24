@@ -75,8 +75,10 @@ additional groups/sudo, закрывает password login, готовит system
 Публичный CA можно передать через `REGISTRY_CA_FILE` и независимо проверенный
 `REGISTRY_CA_SHA256`. Private keys остаются на management host. Не отключайте
 TLS verification. Сначала выполните две полные dry qualification одного SHA,
-negative ACL/provenance/retry checks, внутренний nightly и восстановление;
-только затем разрешайте `RELEASE_NIGHTLY_ENABLED=true`.
+negative ACL/provenance/retry checks и восстановление; только затем запускайте
+публикацию. Полная квалификация выполняется на версионном теге `vX.Y.Z` или
+вручную через `release.yml` с `dry_run=true`; ежедневного расписания нет.
+При ручном `dry_run=false` сохраняется публикация во внутренний nightly-канал.
 
 ## Native dependency cache
 
@@ -232,9 +234,11 @@ management API доступа. Login authority — host[:port] из staging repo
 без repository path, userinfo или URL scheme; TLS/CA проверяется для обоих
 registry/auth endpoints.
 
-Hosted readiness использует `RUNNER_READ_TOKEN`; scheduled queue watchdog —
+Hosted readiness использует `RUNNER_READ_TOKEN`; ручной queue watchdog —
 `RUNNER_WATCHDOG_TOKEN` с runner metadata read и Actions write только нужного
 repository. Tokens management/GitHub CLI accounts в guest не переносятся.
+`runner-watchdog.yml` запускается только через `workflow_dispatch`, когда нужно
+проверить зависшую очередь; периодического опроса каждые десять минут нет.
 Перед публикацией hosted job повторно проверяет online publisher после полной
 qualification. Watchdog контролирует `queued` jobs обеих ролей: offline более
 15 минут и busy queue более двух часов. `waiting` (Environment approval) и

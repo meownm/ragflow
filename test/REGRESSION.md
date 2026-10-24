@@ -231,8 +231,10 @@ engine lanes from the verified successful baseline or complete PR diff. Unknown
 inputs select the full appropriate set. It never grants publication eligibility.
 The `release` profile always runs p3 on Elasticsearch and Infinity, the complete
 browser inventory on Chromium/Firefox/WebKit, native image probes, six portable
-CLI and both Python wheels. Schedules, version tags and full manual candidates use
-this profile regardless of changed paths. `sep-tests.yml` remains a temporary
+CLI and both Python wheels. Version tags and full manual candidates use this
+profile regardless of changed paths. Full release qualification and the runner
+queue watchdog have no periodic schedules; the watchdog is manual, and release
+dry-runs remain available before publication. `sep-tests.yml` remains a temporary
 manual entry during the five-run observation period; it calls the same owner.
 
 Release API evidence is checked against `test/mandatory-api-cases.json`, not a

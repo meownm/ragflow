@@ -1,6 +1,11 @@
 """Release event, ownership, identity and fail-closed wiring."""
 
+import os
 from pathlib import Path
+import subprocess
+import sys
+
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -50,15 +55,63 @@ def test_qualification_is_single_owner_and_release_does_not_select_changes():
         assert prepare["run"] == "bash ../deployment/runner/prepare-engine.sh"
 
 
-def test_stable_only_version_tags_and_nightly_does_not_trigger_itself():
+def test_stable_version_tags_and_manual_candidates_are_explicit():
     release = workflow("release.yml")
     events = release.get("on", release.get(True))
     assert events["push"]["tags"] == ["v*.*.*"]
     assert events["workflow_dispatch"]["inputs"]["dry_run"]["default"] is True
     scripts = "\n".join(step.get("run", "") for step in release["jobs"]["prepare"]["steps"])
-    assert "RELEASE_NIGHTLY_ENABLED" in str(release)
+    assert set(events) == {"push", "workflow_dispatch"}
+    assert "RELEASE_NIGHTLY_ENABLED" not in str(release)
     assert "stable tag/project version mismatch" in scripts
     assert "git tag" not in scripts
+
+
+def test_queue_watchdog_is_manual_and_push_smoke_remains_enabled():
+    assert workflow("runner-watchdog.yml")["on"] == {"workflow_dispatch": {}}
+    assert workflow("pr-smoke.yml")["on"]["push"]["branches"] == ["main"]
+
+
+@pytest.mark.parametrize(
+    "event,ref,dry_run,publish,tag,nightly",
+    [
+        ("push", "refs/tags/v1.2.3", "", "true", "v1.2.3", "false"),
+        ("workflow_dispatch", "refs/heads/main", "true", "false", "nightly-123-1", "true"),
+        ("workflow_dispatch", "refs/heads/main", "false", "true", "nightly-123-1", "true"),
+        ("schedule", "refs/heads/main", "false", None, None, None),
+        ("pull_request", "refs/heads/main", "false", None, None, None),
+        ("push", "refs/heads/main", "false", None, None, None),
+        ("push", "refs/tags/v1.2.4", "", None, None, None),
+        ("push", "refs/tags/v1.2.3-rc1", "", None, None, None),
+        ("workflow_dispatch", "refs/heads/feature", "false", None, None, None),
+    ],
+)
+def test_actual_release_event_resolver_preserves_publication_boundaries(tmp_path, event, ref, dry_run, publish, tag, nightly):
+    meta = next(step for step in workflow("release.yml")["jobs"]["prepare"]["steps"] if step.get("id") == "meta")
+    script = meta["run"].removeprefix("python3 - <<'PY'\n").removesuffix("PY\n")
+    (tmp_path / "pyproject.toml").write_text('[project]\nversion = "1.2.3"\n', encoding="utf-8")
+    output = tmp_path / "output.txt"
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "GITHUB_EVENT_NAME": event,
+            "GITHUB_REF": ref,
+            "DRY_RUN": dry_run,
+            "GITHUB_RUN_ID": "123",
+            "GITHUB_RUN_ATTEMPT": "1",
+            "GITHUB_OUTPUT": str(output),
+        },
+        capture_output=True,
+        text=True,
+    )
+    if publish is None:
+        assert result.returncode != 0
+        assert not output.exists()
+    else:
+        assert result.returncode == 0, result.stderr
+        assert dict(line.split("=", 1) for line in output.read_text().splitlines()) == {"publish": publish, "tag": tag, "nightly": nightly}
 
 
 def test_six_portable_platforms_have_native_execution_without_cgo():

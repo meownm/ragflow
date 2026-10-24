@@ -21,7 +21,7 @@ import yaml
 
 VERSION = "1.7.12"
 CHECKSUMS_SHA256 = "433028cf0ba3c42163ea1a668dedce30fcdbe84fe912b1a5e288c006eab8a4f5"
-WORKFLOWS = tuple(f".github/workflows/{name}.yml" for name in ("tests", "release", "browser-regression", "release-cli", "runner-watchdog", "sep-tests"))
+WORKFLOWS = tuple(f".github/workflows/{name}.yml" for name in ("tests", "release", "browser-regression", "release-cli", "runner-watchdog", "sep-tests", "ci-dry-run"))
 QUEUE_DIAGNOSTIC = 'unexpected key "queue" for "concurrency" section. expected one of "cancel-in-progress", "group"'
 
 
@@ -182,8 +182,10 @@ def actionlint_binary(root: Path, cache: Path) -> Path:
 def check(root: Path, cache: Path) -> int:
     location = validate_queue(root)
     binary = actionlint_binary(root, cache)
+    configuration = root / ".github/actionlint.yaml"
+    config_args = ["-config-file", str(configuration)] if configuration.is_file() else []
     result = subprocess.run(
-        [str(binary), "-format", "{{json .}}", *WORKFLOWS],
+        [str(binary), *config_args, "-format", "{{json .}}", *WORKFLOWS],
         cwd=root,
         capture_output=True,
         text=True,

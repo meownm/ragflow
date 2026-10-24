@@ -370,8 +370,7 @@ jobs:
     - name: Build native binaries
       run: |
         set -euo pipefail
-        bash deployment/runner/build-go-linux.sh --cpp
-        bash deployment/runner/build-go-linux.sh
+        bash deployment/runner/build-go-linux.sh --artifacts
     - name: Go regression
       if: ${{ inputs.profile == 'release' || needs.ragflow_preflight.outputs.has_go_changes == 'true' }}
       env:

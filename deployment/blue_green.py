@@ -48,20 +48,30 @@ for name in ('entrypoint.sh','api/ragflow_server.py','admin/server/admin_server.
 )
 
 COPY_ASSETS = """
-import hashlib,pathlib,shutil
-source=pathlib.Path('/ragflow/web/dist/assets')
+import hashlib,pathlib,shutil,tempfile
+root=pathlib.Path('/ragflow/web/dist')
 target=pathlib.Path('/release-assets')
-assert source.is_dir(), 'Image has no Vite assets'
-for p in source.rglob('*'):
-    assert not p.is_symlink(), 'Asset links are forbidden'
-    if p.is_file():
-        dest=target/p.relative_to(source)
-        dest.parent.mkdir(parents=True,exist_ok=True)
-        if dest.exists():
-            assert hashlib.sha256(dest.read_bytes()).digest()==hashlib.sha256(p.read_bytes()).digest(), 'Asset name collision'
-        else:
-            shutil.copyfile(p,dest)
-            dest.chmod(0o644)
+for name in ('assets','entry','chunk'):
+    source=root/name
+    assert source.is_dir() and not source.is_symlink(), 'Image has no regular Vite '+name+' directory'
+    destination=target if name=='assets' else target/name
+    for p in source.rglob('*'):
+        assert not p.is_symlink(), 'Asset links are forbidden'
+        if p.is_file():
+            dest=destination/p.relative_to(source)
+            dest.parent.mkdir(parents=True,exist_ok=True)
+            if dest.exists():
+                assert hashlib.sha256(dest.read_bytes()).digest()==hashlib.sha256(p.read_bytes()).digest(), 'Asset name collision'
+            else:
+                # Stage on the same filesystem; readers only see complete assets.
+                with tempfile.NamedTemporaryFile(prefix='.ragflow-asset-',suffix='.tmp',dir=dest.parent,delete=False) as stream:
+                    temporary=pathlib.Path(stream.name)
+                try:
+                    shutil.copyfile(p,temporary)
+                    temporary.chmod(0o644)
+                    temporary.replace(dest)
+                finally:
+                    temporary.unlink(missing_ok=True)
 """
 
 DRAINED = """
@@ -124,6 +134,12 @@ events {{ worker_connections 2048; }}
 http {{
     include /etc/nginx/mime.types;
     access_log off;
+    sendfile on;
+    gzip on;
+    gzip_min_length 1024;
+    gzip_comp_level 5;
+    gzip_types text/plain text/css application/javascript application/json application/xml image/svg+xml;
+    gzip_vary on;
     map $http_upgrade $connection_upgrade {{ default upgrade; '' ''; }}
     server {{
         listen 80;
@@ -131,6 +147,14 @@ http {{
         add_header X-Ragflow-Deployment {token} always;
         location ^~ /assets/ {{
             alias /release-assets/;
+            expires 1y;
+        }}
+        location ^~ /entry/ {{
+            alias /release-assets/entry/;
+            expires 1y;
+        }}
+        location ^~ /chunk/ {{
+            alias /release-assets/chunk/;
             expires 1y;
         }}
         location / {{
@@ -371,6 +395,9 @@ class BlueGreen:
         try:
             self.up(slot)
             ready = self.wait_ready(slot)
+            if previous:
+                # Preserve JS from the active image even when its volume predates JS retention.
+                self.execute(previous["slot"], "python3", "-c", COPY_ASSETS)
             self.execute(slot, "python3", "-c", COPY_ASSETS)
             if not previous:
                 # Existing direct-port service is stopped only after candidate warmup.

@@ -103,6 +103,64 @@ The Go module/build caches live under `~/.cache/ragflow-go-builder`, outside the
 ephemeral Actions job directory. BuildKit's named apt, uv, and npm caches are also
 retained by the Docker daemon between jobs.
 
+## Incremental application builds
+
+`Dockerfile` builds Python dependencies, browser resources, frontend and release
+identity independently. `runtime-base` contains the system packages, virtualenv
+and offline browsers, without application source, SPA or release identity. The
+production target always starts from that stage, so repeated releases do not
+inherit old application layers. It can also be exported explicitly:
+
+```bash
+docker build --target runtime-base -t local/ragflow-runtime-base .
+```
+
+The Python build normalizes only the virtual root project's version in temporary
+manifest copies. Dependency versions, hashes and sources remain unchanged; the
+image receives the original `pyproject.toml` and `uv.lock`. Release-only changes
+therefore retain the dependency layer. `RAGFLOW_BUILD_JOBS` (default `2`) bounds
+Python source builds, including NumPy's Meson compiler processes, to avoid
+exhausting memory on a builder that shares a machine with running services.
+
+Feature and qualified CI builds use `build-go-linux.sh --artifacts`. On a miss,
+it compiles C++ and stripped Go binaries through `build.sh`; on a hit, it verifies
+and restores the two binaries and tokenizer static library. The cache lives in
+`~/.cache/ragflow-go-builder/artifacts`, outside source snapshots. Its key includes
+Go/C++ sources and embedded resources, library bytes, immutable builder image ID,
+build scripts and flags. Python, frontend and release-version changes reuse it.
+The incremental Go compiler cache is namespaced by the actual C++ static library,
+native library bytes and builder identity: Go itself does not track changes in
+external cgo libraries. Ordinary Go edits retain that incremental compiler cache.
+Go binaries use `-trimpath -buildvcs=false`; source identity is supplied by the
+image's checked VERSION/SOURCE_REVISION contract. Corrupt cache entries rebuild;
+missing libraries and invalid toolchain identity fail the build. Per-key locks
+serialize cache publication; output hashes are verified before restoration.
+Existing native final-image tests and release qualification still run.
+
+For comparable rebuild timings, create two separate managed disposable source
+trees (no `.git`), populate their native binaries, and select the same immutable
+base-image digests in both environments. Record the digests: mutable tags may
+change while preparing a long benchmark and invalidate unrelated layers. Then
+run from the checkout:
+
+```bash
+python3 deployment/runner/benchmark-build.py --before /task/before \
+  --after /task/after --output /task/evidence
+```
+
+The benchmark completes each source variant's initial build and selected probes
+before moving to the other variant. This avoids alternating two large cache
+working sets; record the builder's GC policy with `docker buildx inspect` when
+interpreting cache misses. It builds on the same Docker builder, with no cache
+pruning, push or deployment. Select relevant repeats with
+`--scenarios unchanged python version`; both initial builds always run.
+It restores its temporary probes and saves each
+command, exit code, elapsed time, image ID, Docker-accounted size, layer count and
+raw build log.
+Initial runs use the existing cache and must not be called cold builds. Compare
+warm runs after initial builds complete, without other concurrent builds. Docker
+image accounting is not a measurement of compressed registry transfer size.
+
 ## Candidate registry
 
 Provision the LAN-only TLS registry once:

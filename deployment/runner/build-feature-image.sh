@@ -29,18 +29,7 @@ PY
 )"
 cd "${source}"
 
-builder="ragflow_feature_cpp_${source_id:0:12}_$$"
-cleanup() { docker rm -f -v "${builder}" >/dev/null 2>&1 || true; }
-trap cleanup EXIT
-docker run --privileged -d --name "${builder}" \
-  -v "${source}:/ragflow" \
-  -v "${source}/internal/binding/cpp/resource:/usr/share/infinity/resource" \
-  infiniflow/infinity_builder:ubuntu22_clang20 >/dev/null
-docker exec "${builder}" bash -c 'cd /ragflow && ./build.sh --cpp'
-cleanup
-trap - EXIT
-
-bash deployment/runner/build-go-linux.sh
+bash deployment/runner/build-go-linux.sh --artifacts
 DOCKER_BUILDKIT=1 docker build \
   --build-arg "RAGFLOW_BUILD_VERSION=${version}-dev.${source_id:0:12}" \
   --build-arg 'RAGFLOW_SOURCE_REVISION=' \

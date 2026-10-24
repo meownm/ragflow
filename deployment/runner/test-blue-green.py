@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 import argparse
 import copy
+import gzip
 import hashlib
 import json
 import os
@@ -19,12 +20,13 @@ import sys
 import tempfile
 import threading
 import urllib.request
+import urllib.error
 from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from deployment.blue_green import BlueGreen, IMAGE_CONTRACT, command, deployment_config, deployment_lock, write_json
+from deployment.blue_green import COPY_ASSETS, BlueGreen, IMAGE_CONTRACT, command, deployment_config, deployment_lock, write_json
 
 CONTROLLER_SHA256 = hashlib.sha256((ROOT / "deployment/blue_green.py").read_bytes()).hexdigest()
 
@@ -50,7 +52,8 @@ def qualify(image: str, output: Path) -> dict:
         raise ValueError("Blue/green test base image has a foreign source SHA")
     project = "rf-bg-" + uuid4().hex[:16]
     network = project + "-network"
-    images = []
+    base_tag = f"{project}:base"
+    images = [base_tag]
     report = {
         "schema": 1,
         "purpose": "blue-green-http-transition",
@@ -86,20 +89,31 @@ def qualify(image: str, output: Path) -> dict:
 
     try:
         command("docker", "network", "create", "--label", f"org.ragflow.blue-green={project}", network)
+        # BuildKit interprets a bare sha256 image ID as a registry repository.
+        # A disposable local tag keeps FROM tied to the already inspected image.
+        base_id = command("docker", "image", "inspect", "--format", "{{.Id}}", image)
+        command("docker", "image", "tag", base_id, base_tag)
         with tempfile.TemporaryDirectory(prefix="blue-green-context-", dir=output) as directory:
             context = Path(directory)
             shutil.copy2(ROOT / "test/integration/fixtures/blue_green_http.py", context / "server.py")
             for version in ("v1", "v2"):
                 (context / "Dockerfile").write_text(
-                    f"FROM {image}\nCOPY server.py /fixture/server.py\nENV FIXTURE_VERSION={version}\n"
-                    f"RUN mkdir -p /ragflow/web/dist/assets && printf {version} > /ragflow/web/dist/assets/fixture-{version}.js\n"
+                    f"FROM {base_tag}\nCOPY server.py /fixture/server.py\nENV FIXTURE_VERSION={version}\n"
+                    f"RUN mkdir -p /ragflow/web/dist/assets /ragflow/web/dist/entry/js /ragflow/web/dist/chunk/js && "
+                    f"printf {version} > /ragflow/web/dist/assets/fixture-{version}.js && "
+                    f"printf {version} > /ragflow/web/dist/entry/js/fixture-{version}.js && "
+                    f"printf {version} > /ragflow/web/dist/chunk/js/fixture-{version}.js && "
+                    "python3 -c \"from pathlib import Path; Path('/ragflow/web/dist/assets/compressible.css').write_text('body { color: black; }\\n' * 1000)\"\n"
                     'ENTRYPOINT ["python3", "/fixture/server.py"]\n',
                     encoding="utf-8",
                 )
                 tag = f"{project}:{version}"
                 images.append(tag)
-                command("docker", "build", "--network", "none", "-t", tag, str(context), timeout=300)
-        ids = [command("docker", "image", "inspect", "--format", "{{.Id}}", name) for name in images]
+                build = subprocess.run(["docker", "build", "--network", "none", "-t", tag, str(context)], capture_output=True, timeout=300)
+                (output / f"build-{version}.log").write_bytes(build.stdout + build.stderr)
+                if build.returncode:
+                    raise RuntimeError(f"Fixture build failed; see build-{version}.log")
+        ids = [command("docker", "image", "inspect", "--format", "{{.Id}}", name) for name in images[1:]]
         health = {"test": ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1/api/v1/system/healthz')"], "interval": "1s", "timeout": "2s", "retries": 2}
         base = {"services": {"ragflow-cpu": {"image": ids[0], "networks": {"app": {}}, "environment": {}, "healthcheck": health}}, "networks": {"app": {"name": network}}, "volumes": {}}
         config = deployment_config(base, project, ids[0])
@@ -113,11 +127,65 @@ def qualify(image: str, output: Path) -> dict:
         gateway_id = controller.inspect("gateway")["Id"]
         worker_id = controller.inspect("worker")["Id"]
         assert request() == b"v1"
+        # Simulate a volume created before retention covered entry/chunk JavaScript.
+        controller.execute("web-blue", "python3", "-c", "import shutil; shutil.rmtree('/release-assets/entry'); shutil.rmtree('/release-assets/chunk')")
         with traffic_pool(stop) as pool:
             polling = pool.submit(traffic)
+            candidate = deployment_config(base, project, ids[1])
+            active_before_copy = controller.state_path.read_bytes()
+            real_execute = controller.execute
+            copy_interrupted = False
+
+            def interrupt_asset_copy(role, *args):
+                nonlocal copy_interrupted
+                if role == "web-green" and args == ("python3", "-c", COPY_ASSETS):
+                    copy_interrupted = True
+                    interrupted = (
+                        """
+import os,pathlib,shutil,signal
+real_copy=shutil.copyfile
+def partial_copy(src,dst):
+    if str(src).endswith('/chunk/js/fixture-v2.js'):
+        pathlib.Path(dst).write_bytes(b'v')
+        os.kill(os.getpid(),signal.SIGKILL)
+    return real_copy(src,dst)
+shutil.copyfile=partial_copy
+"""
+                        + COPY_ASSETS
+                    )
+                    return real_execute(role, "python3", "-c", interrupted)
+                return real_execute(role, *args)
+
+            controller.execute = interrupt_asset_copy
+            phase = "interrupted-asset-copy"
+            try:
+                with deployment_lock(runtime):
+                    controller.deploy(candidate)
+            except RuntimeError:
+                pass
+            else:
+                raise AssertionError("Interrupted asset copy was accepted")
+            finally:
+                controller.execute = real_execute
+            assert copy_interrupted
+            assert controller.state_path.read_bytes() == active_before_copy
+            assert not controller.journal.exists()
+            assert request() == b"v1"
+            try:
+                request("/chunk/js/fixture-v2.js")
+            except urllib.error.HTTPError as error:
+                assert error.code == 404
+            else:
+                raise AssertionError("Partial JavaScript was published")
+            controller.execute(
+                "web-green",
+                "python3",
+                "-c",
+                "from pathlib import Path; root=Path('/release-assets/chunk/js'); assert any(p.stat().st_size==1 for p in root.glob('.ragflow-asset-*.tmp'))",
+            )
+            phase = "retry-after-asset-copy"
             with urllib.request.urlopen(f"http://127.0.0.1:{port}/stream", timeout=20) as stream:
                 assert stream.readline() == b"data: v1:start\n"
-                candidate = deployment_config(base, project, ids[1])
                 with deployment_lock(runtime):
                     controller.deploy(candidate)
                 phase = "candidate-active"
@@ -125,8 +193,26 @@ def qualify(image: str, output: Path) -> dict:
             assert request() == b"v2"
             assert controller.inspect("gateway")["Id"] == gateway_id, "Gateway was recreated"
             assert controller.inspect("worker")["Id"] != worker_id
-            assert request("/assets/fixture-v1.js") == b"v1", "Old lazy-loaded assets disappeared"
-            assert request("/assets/fixture-v2.js") == b"v2"
+            for prefix in ("assets", "entry/js", "chunk/js"):
+                for version in ("v1", "v2"):
+                    path = f"/{prefix}/fixture-{version}.js"
+                    assert request(path) == version.encode(), f"Versioned file disappeared: {path}"
+                    with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=10) as response:
+                        assert response.headers.get_content_type() == "application/javascript"
+                        assert "max-age=31536000" in response.headers.get("Cache-Control", "")
+                try:
+                    request(f"/{prefix}/missing.js")
+                except urllib.error.HTTPError as error:
+                    assert error.code == 404
+                else:
+                    raise AssertionError(f"Missing {prefix} file received SPA fallback")
+            compressed_request = urllib.request.Request(f"http://127.0.0.1:{port}/assets/compressible.css", headers={"Accept-Encoding": "gzip"})
+            with urllib.request.urlopen(compressed_request, timeout=10) as response:
+                compressed = response.read()
+                assert response.headers.get("Content-Encoding") == "gzip"
+                assert response.headers.get("Vary") == "Accept-Encoding"
+                assert gzip.decompress(compressed) == b"body { color: black; }\n" * 1000
+                assert len(compressed) < 1000
             assert request("/echo", b"unique-write") == b"unique-write"
             active = controller.state_path.read_bytes()
             unready = copy.deepcopy(candidate)
@@ -188,10 +274,15 @@ def qualify(image: str, output: Path) -> dict:
             failed_requests=len(failures),
             sse_drain=True,
             old_assets=True,
+            old_javascript=True,
+            legacy_asset_volume=True,
+            missing_assets_404=True,
+            static_gzip=True,
             unready_rejected=True,
             gateway_unchanged=True,
             post_switch_rollback=True,
             interrupted_recovery=True,
+            interrupted_asset_copy_retry=True,
             controller_sha256=CONTROLLER_SHA256,
         )
     except BaseException as error:

@@ -296,13 +296,16 @@ If you want your instance to be available under `https`, follow these steps:
          - /etc/letsencrypt/live/your-ragflow-domain.com/fullchain.pem:/etc/nginx/ssl/fullchain.pem:ro
          - /etc/letsencrypt/live/your-ragflow-domain.com/privkey.pem:/etc/nginx/ssl/privkey.pem:ro
          # Switch to HTTPS nginx configuration
-         - ./nginx/ragflow.https.conf:/etc/nginx/conf.d/ragflow.conf
+         - ./nginx/ragflow.https.conf:/etc/nginx/conf.d/ragflow.conf:ro
          # ...other existing volumes...
 
    ```
 
 4. **Update nginx configuration**
-   Edit `nginx/ragflow.https.conf` and replace `my_ragflow_domain.com` with your actual domain name.
+   Edit `nginx/ragflow.https.conf` and replace `your-ragflow-domain.com` with your actual domain name.
+   This template uses the Python API profile and includes the ASR, translator and PlantUML routes.
+   An explicitly mounted `ragflow.conf` takes precedence over automatic profile selection and is never overwritten at startup.
+   Go/hybrid deployments need a matching custom HTTPS configuration.
 
 5. **Restart the services**
    ```bash

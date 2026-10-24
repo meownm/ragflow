@@ -66,38 +66,53 @@ chmod 644 /etc/nginx/ssl/fullchain.pem
 chmod 600 /etc/nginx/ssl/privkey.pem
 ```
 
-## 5. Switch Nginx to HTTPS configuration
+## 5. Persist the HTTPS configuration
 
-Replace the default HTTP configuration with the HTTPS template:
+For a persistent setup, exit the container and edit `docker/nginx/ragflow.https.conf`
+on the host. Replace `your-ragflow-domain.com` with your domain. The template uses
+the Python API profile and includes ASR, translator and PlantUML routes;
+Go/hybrid deployments require a matching custom configuration.
 
-1. Navigate to the configuration directory: `cd /etc/nginx/conf.d/`.
-2. Back up the original configuration: `mv ragflow.conf ragflow.conf.bak`.
-3. Enable the HTTPS template: `cp /etc/nginx/ragflow.https.conf ./ragflow.conf`.
+Mount the configuration and certificates read-only in the application service
+(paths below are relative to the Compose file in `docker/`):
 
-## 6. Edit the HTTPS template
-
-1. Open the configuration file: `vi ragflow.conf`.
-2. Ensure `ssl_certificate` and `ssl_certificate_key` paths point to your files in `/etc/nginx/ssl/`.
-3. Verify the Nginx syntax: `nginx -t`.
-
-## 7. Apply the configuration
-
-Reload Nginx to apply changes:
-
-```bash
-nginx -s reload
+```yaml
+services:
+  ragflow-cpu:
+    volumes:
+      - ./nginx/ragflow.https.conf:/etc/nginx/conf.d/ragflow.conf:ro
+      - ./ssl/fullchain.pem:/etc/nginx/ssl/fullchain.pem:ro
+      - ./ssl/privkey.pem:/etc/nginx/ssl/privkey.pem:ro
 ```
 
-If the changes do not take effect, exit the container and restart it:
+Use your actual certificate paths and service name. An explicitly mounted
+`ragflow.conf` takes precedence over automatic profile selection and is never
+overwritten at startup, including when the mount is read-only.
+
+This recipe is for a directly published application container. The local
+blue/green gateway uses its own routing configuration; terminate TLS at an
+external reverse proxy for that topology.
+
+## 6. Validate and apply
+
+Validate Compose before recreating the selected application service through
+your deployment procedure. After recreation, validate Nginx inside the container:
 
 ```bash
-exit
-docker restart docker-ragflow-cpu-1
+docker compose config --quiet
+docker exec docker-ragflow-cpu-1 nginx -t
+```
+
+For later edits to the mounted configuration, validate before a graceful reload:
+
+```bash
+docker exec docker-ragflow-cpu-1 nginx -t && docker exec docker-ragflow-cpu-1 nginx -s reload
 ```
 
 ## Configuration persistence
 
 :::tip IMPORTANT
-Changes made via `docker cp` and `docker exec` are lost if the container is removed or stopped via `docker-compose down`.
-**Recommendation**: After a successful test, store the certificates on the host machine and use `volumes` in your `docker-compose.yaml` to mount the certificates and `ragflow.conf` permanently.
+Files copied into a container are lost when it is removed. Keep the configuration
+and certificates on the host and use the read-only mounts above. Restarting alone
+does not install a new mount definition.
 :::

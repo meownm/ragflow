@@ -182,7 +182,9 @@ PY=python3
 # Select Nginx Configuration based on API_PROXY_SCHEME
 # -----------------------------------------------------------------------------
 NGINX_CONF_DIR="/etc/nginx/conf.d"
-if [ -n "$API_PROXY_SCHEME" ]; then
+if mountpoint -q "$NGINX_CONF_DIR/ragflow.conf"; then
+    echo "Using mounted nginx config: $NGINX_CONF_DIR/ragflow.conf"
+elif [ -n "$API_PROXY_SCHEME" ]; then
     if [[ "${API_PROXY_SCHEME}" == "hybrid" ]]; then
         cp -f "$NGINX_CONF_DIR/ragflow.conf.hybrid" "$NGINX_CONF_DIR/ragflow.conf"
         echo "Applied nginx config: ragflow.conf.hybrid"

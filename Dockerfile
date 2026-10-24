@@ -216,11 +216,18 @@ RUN --mount=type=bind,from=ragflow_deps,source=/chromedriver-linux64-155-0-8059-
     mv chromedriver /usr/local/bin/ && \
     rm -f /usr/bin/google-chrome
 
-# builder stage
-FROM base AS builder
+# Release metadata must not invalidate the Python dependency graph. These copies
+# are build inputs only; production receives the original manifests below.
+FROM base AS python_inputs
+COPY pyproject.toml uv.lock ./
+COPY deployment/runner/python_dependency_inputs.py /tmp/python_dependency_inputs.py
+RUN python3 /tmp/python_dependency_inputs.py --output /python-inputs
+
+FROM base AS python_dependencies
 USER root
 
 WORKDIR /ragflow
+ARG RAGFLOW_BUILD_JOBS=2
 
 # Install build-only dependencies for compiling Python C extensions.
 # These are not inherited from base to keep the production image smaller.
@@ -230,7 +237,7 @@ RUN --mount=type=cache,id=ragflow_apt,target=/var/cache/apt,sharing=locked \
     rm -rf /var/lib/apt/lists/*
 
 # install dependencies from uv.lock file
-COPY pyproject.toml uv.lock ./
+COPY --from=python_inputs /python-inputs/ ./
 COPY vendor/python vendor/python
 
 # https://github.com/astral-sh/uv/issues/10462
@@ -256,17 +263,31 @@ RUN --mount=type=cache,id=ragflow_uv,target=/root/.cache/uv,sharing=locked \
     # DEFAULT_HEALTH_CHECK_STALENESS_MULTIPLIER, 1.88.0 wheel pulled via
     # some proxies missing RedisPipelineLpopOperation) — always re-fetching
     # the locked version avoids serving a half-broken cached copy.
-    uv sync --python 3.13 --frozen --group test --refresh-package litellm && \
+    UV_CONCURRENT_BUILDS=${RAGFLOW_BUILD_JOBS} uv sync --python 3.13 --frozen --no-install-project \
+        --group test --refresh-package litellm --config-settings-package "numpy:compile-args=-j${RAGFLOW_BUILD_JOBS}" && \
     # Ensure pip is available in the venv for runtime package installation (fixes #12651)
     .venv/bin/python3 -m ensurepip --upgrade && \
     uv pip install --python .venv/bin/python3 'pip>=26.2.0,<27'
 
-# Crawl4AI uses Playwright's Chromium and headless shell. Their revisions follow
-# the locked SDK; provision both at build time for offline runtime use.
-RUN PLAYWRIGHT_BROWSERS_PATH=/opt/playwright .venv/bin/python3 -m playwright install chromium
+# The browser download depends on the locked Playwright package bytes, rather
+# than every package in the Python environment. The installer uses only stdlib
+# and its bundled Node driver. Both Chromium variants remain available offline.
+FROM base AS browsers
+COPY --from=python_dependencies /ragflow/.venv/lib/python3.13/site-packages/playwright /tmp/playwright
+RUN PYTHONPATH=/tmp PLAYWRIGHT_BROWSERS_PATH=/opt/playwright "$(uv python find 3.13)" -m playwright install chromium
+
+# This target contains no application, frontend or release identity. Every
+# production image starts here, never from a previous application image.
+FROM base AS runtime-base
+ENV VIRTUAL_ENV=/ragflow/.venv
+COPY --from=python_dependencies ${VIRTUAL_ENV} ${VIRTUAL_ENV}
+ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
+COPY --from=browsers /opt/playwright /opt/playwright
 
 # Install frontend dependencies — depends only on package manifests so
-# web source / docs changes don't invalidate this layer.
+# Python, browser and release changes cannot invalidate this stage.
+FROM base AS frontend
 COPY web/package.json web/package-lock.json web/.npmrc ./web/
 RUN --mount=type=cache,id=ragflow_npm,target=/root/.npm,sharing=locked \
     cd web && NODE_OPTIONS="--max-old-space-size=8192" npm ci
@@ -280,24 +301,19 @@ RUN --mount=type=cache,id=ragflow_npm,target=/root/.npm,sharing=locked \
 
 # Build identity is supplied by the caller, not by copying Git history.
 # Standalone builds without args remain usable but explicitly unverified.
+FROM base AS builder
 ARG RAGFLOW_BUILD_VERSION=""
 ARG RAGFLOW_SOURCE_REVISION=""
+COPY pyproject.toml ./
 COPY tools/quality/write_build_identity.py /ragflow/tools/quality/write_build_identity.py
 RUN python3 tools/quality/write_build_identity.py \
     --version "$RAGFLOW_BUILD_VERSION" --revision "$RAGFLOW_SOURCE_REVISION"
 
 # production stage
-FROM base AS production
+FROM runtime-base AS production
 USER root
 
 WORKDIR /ragflow
-
-# Copy Python environment and packages
-ENV VIRTUAL_ENV=/ragflow/.venv
-COPY --from=builder ${VIRTUAL_ENV} ${VIRTUAL_ENV}
-ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
-ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
-COPY --from=builder /opt/playwright /opt/playwright
 
 ENV PYTHONPATH=/ragflow/
 
@@ -329,14 +345,14 @@ COPY docker/entrypoint.sh ./
 RUN chmod +x ./entrypoint*.sh
 
 # Copy nginx configuration for frontend serving
-COPY docker/nginx/ragflow.conf.golang docker/nginx/ragflow.conf.python docker/nginx/ragflow.conf.hybrid docker/nginx/nginx.conf docker/nginx/proxy.conf /etc/nginx/
+COPY docker/nginx/ragflow.conf.golang docker/nginx/ragflow.conf.python docker/nginx/ragflow.conf.hybrid docker/nginx/ragflow.https.conf docker/nginx/nginx.conf docker/nginx/proxy.conf /etc/nginx/
 RUN mv /etc/nginx/ragflow.conf.golang /etc/nginx/conf.d/ragflow.conf.golang && \
     mv /etc/nginx/ragflow.conf.python /etc/nginx/conf.d/ragflow.conf.python && \
     mv /etc/nginx/ragflow.conf.hybrid /etc/nginx/conf.d/ragflow.conf.hybrid && \
     rm -f /etc/nginx/sites-enabled/default
 
 # Copy compiled web pages
-COPY --from=builder /ragflow/web/dist /ragflow/web/dist
+COPY --from=frontend /ragflow/web/dist /ragflow/web/dist
 
 COPY --from=builder /ragflow/VERSION /ragflow/VERSION
 COPY --from=builder /ragflow/SOURCE_REVISION /ragflow/SOURCE_REVISION

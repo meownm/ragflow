@@ -45,6 +45,7 @@ toolchain={'python':version(*docker,'run','--rm','--entrypoint','/ragflow/.venv/
            'go':version(*docker,'run','--rm','--entrypoint','go','ragflow-go-builder:go1.26.9-ubuntu22','version'),
            'node':version(*docker,'run','--rm','--entrypoint','node',os.environ['IMAGE_DIGEST'],'--version'),'native':hashlib.sha256(json.dumps(native,sort_keys=True).encode()).hexdigest()}
 Path('output/ci-image/image-build.json').write_text(json.dumps({'sha':os.environ['SOURCE_SHA'],
-    'digest':os.environ['IMAGE_DIGEST'],'toolchain':toolchain,'native_files':native}))
+    'digest':os.environ['IMAGE_DIGEST'],'toolchain':toolchain,'native_files':native,
+    'native_build':json.loads(Path('output/ci-native/artifacts.json').read_text())}))
 PY
 printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"

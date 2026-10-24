@@ -3,10 +3,13 @@
 import copy
 import json
 from pathlib import Path
+import subprocess
+import sys
+import time
 
 import pytest
 
-from deployment.blue_green import BlueGreen, deployment_config, deployment_lock, gateway_config, shared_runtime
+from deployment.blue_green import COPY_ASSETS, BlueGreen, deployment_config, deployment_lock, gateway_config, shared_runtime
 
 IMAGE = "sha256:" + "a" * 64
 
@@ -131,6 +134,96 @@ def test_proxy_does_not_retry_writes_or_buffer_streams_or_force_shutdown():
     assert "proxy_request_buffering off;" in config
     assert "worker_shutdown_timeout" not in config
     assert "proxy_pass http://172.20.0.2:80;" in config
+
+
+@pytest.mark.parametrize("directory", ["assets", "entry", "chunk"])
+def test_versioned_files_are_retained_and_collisions_preserve_existing_bytes(tmp_path, directory):
+    source, target = tmp_path / "dist", tmp_path / "retained"
+    for name in ("assets", "entry", "chunk"):
+        (source / name).mkdir(parents=True)
+        (source / name / "v1.js").write_bytes(b"v1")
+    script = COPY_ASSETS.replace("'/ragflow/web/dist'", repr(str(source))).replace("'/release-assets'", repr(str(target)))
+    exec(script, {})
+    destination = target if directory == "assets" else target / directory
+    assert (destination / "v1.js").read_bytes() == b"v1"
+    (source / directory / "v2.js").write_bytes(b"v2")
+    exec(script, {})
+    assert (destination / "v1.js").read_bytes() == b"v1"
+    assert (destination / "v2.js").read_bytes() == b"v2"
+    (source / directory / "v1.js").write_bytes(b"different")
+    with pytest.raises(AssertionError, match="Asset name collision"):
+        exec(script, {})
+    assert (destination / "v1.js").read_bytes() == b"v1"
+
+
+@pytest.mark.parametrize("directory", ["assets", "entry", "chunk"])
+def test_partial_asset_copy_can_be_retried_after_write_failure(tmp_path, directory, monkeypatch):
+    import shutil
+
+    source, target = tmp_path / "dist", tmp_path / "retained"
+    for name in ("assets", "entry", "chunk"):
+        (source / name).mkdir(parents=True)
+    data = b"complete JavaScript;" * 1000
+    (source / directory / "retry.js").write_bytes(data)
+    script = COPY_ASSETS.replace("'/ragflow/web/dist'", repr(str(source))).replace("'/release-assets'", repr(str(target)))
+    destination = (target if directory == "assets" else target / directory) / "retry.js"
+
+    def partial_copy(src, dst):
+        Path(dst).write_bytes(Path(src).read_bytes()[:100])
+        raise OSError("simulated ENOSPC")
+
+    with monkeypatch.context() as fault:
+        fault.setattr(shutil, "copyfile", partial_copy)
+        with pytest.raises(OSError, match="ENOSPC"):
+            exec(script, {})
+    assert not destination.exists()
+    assert not any(path.is_file() for path in target.rglob("*"))
+    exec(script, {})
+    assert destination.read_bytes() == data
+    exec(script, {})
+    assert destination.read_bytes() == data
+
+
+@pytest.mark.parametrize("directory", ["assets", "entry", "chunk"])
+def test_partial_asset_copy_can_be_retried_after_process_kill(tmp_path, directory):
+    source, target = tmp_path / "dist", tmp_path / "retained"
+    for name in ("assets", "entry", "chunk"):
+        (source / name).mkdir(parents=True)
+    data = b"complete JavaScript;" * 1000
+    (source / directory / "retry.js").write_bytes(data)
+    script = COPY_ASSETS.replace("'/ragflow/web/dist'", repr(str(source))).replace("'/release-assets'", repr(str(target)))
+    destination = (target if directory == "assets" else target / directory) / "retry.js"
+    marker = tmp_path / "partial-copy-ready"
+    interrupted = (
+        f"""
+import pathlib,shutil,time
+def partial_copy(src,dst):
+    pathlib.Path(dst).write_bytes(pathlib.Path(src).read_bytes()[:100])
+    pathlib.Path({str(marker)!r}).write_text('ready')
+    time.sleep(60)
+shutil.copyfile=partial_copy
+"""
+        + script
+    )
+    process = subprocess.Popen([sys.executable, "-B", "-c", interrupted], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        deadline = time.monotonic() + 10
+        while not marker.exists() and process.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert marker.exists(), "Copy process did not reach the partial write"
+        process.kill()
+        process.communicate(timeout=10)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.communicate(timeout=10)
+    assert not destination.exists()
+    # Abrupt termination bypasses finally: leftover staging files cannot poison retry.
+    assert any(path.is_file() and path.stat().st_size == 100 for path in target.rglob("*"))
+    exec(script, {})
+    assert destination.read_bytes() == data
+    exec(script, {})
+    assert destination.read_bytes() == data
 
 
 def test_runtime_bootstrap_separates_initialization_and_background_services():

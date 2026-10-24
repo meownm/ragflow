@@ -2,16 +2,15 @@ server {
     listen 80;
     server_name _;
     root /ragflow/web/dist;
+    absolute_redirect off;
 
     gzip on;
     gzip_min_length 1k;
-    gzip_comp_level 9;
-    gzip_types text/plain application/javascript application/x-javascript text/css application/xml text/javascript application/x-httpd-php image/jpeg image/gif image/png;
+    gzip_comp_level 5;
+    gzip_types text/plain text/css application/javascript application/json application/xml image/svg+xml;
     gzip_vary on;
-    gzip_disable "MSIE [1-6]\.";
 
     location = /asr {
-        absolute_redirect off;
         return 308 /asr/;
     }
     location ^~ /asr/ {
@@ -23,11 +22,9 @@ server {
     }
 
     location = /translate {
-        absolute_redirect off;
         return 308 /translate/;
     }
     location = /translate/address-form {
-        absolute_redirect off;
         return 308 /translate/address-form/;
     }
     location ^~ /translate/address-form/ {
@@ -120,9 +117,9 @@ server {
         try_files $uri $uri/ /index.html;
     }
 
-    # Cache-Control: max-age Expires
-    location ~ ^/static/(css|js|media)/ {
-        expires 10y;
+    location ~ ^/(assets|entry|chunk)/ {
+        try_files $uri =404;
+        expires 1y;
         access_log off;
     }
 }

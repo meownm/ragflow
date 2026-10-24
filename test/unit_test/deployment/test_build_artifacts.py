@@ -2,10 +2,13 @@
 
 import json
 from pathlib import Path
+import sys
 import tomllib
+from types import SimpleNamespace
 
 import pytest
 
+from deployment.runner import native_artifacts
 from deployment.runner.native_artifacts import OUTPUTS, cache_key, identity, restore, store
 from deployment.runner.python_dependency_inputs import normalize
 
@@ -74,21 +77,110 @@ def test_python_ui_version_and_generated_outputs_reuse_native_artifacts(native, 
     assert cache_key(identity(source, libraries, toolchain)) == before
 
 
-@pytest.mark.parametrize("kind", ["go", "embedded", "library", "toolchain", "flags"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "deployment/runner/build-go-linux.sh",
+        "deployment/runner/go_builder.py",
+        "deployment/runner/Dockerfile.go-builder",
+        "deployment/runner/native_artifacts.py",
+    ],
+)
+def test_orchestration_edits_reuse_native_artifacts_with_the_same_toolchain(native, tmp_path, name):
+    source, _, _ = native
+    key = cache_key(identity(*native))
+    for output in OUTPUTS:
+        path = source / output
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(output.encode())
+    entry = tmp_path / "cache" / key
+    store(entry, source, key)
+    path = source / name
+    path.write_text(path.read_text() + "\n# changed logging only\n")
+    after = cache_key(identity(*native))
+    assert after == key
+    for _ in range(2):
+        for output in OUTPUTS:
+            (source / output).unlink()
+        assert restore(entry, source, after) is not None
+        assert all((source / output).read_bytes() == output.encode() for output in OUTPUTS)
+
+
+@pytest.mark.parametrize("kind", ["go", "cpp", "embedded", "recipe", "modules", "native-profile", "verification", "library", "toolchain", "flags", "command", "cpp-command", "go-flags"])
 def test_native_cache_invalidated_by_actual_build_inputs(native, kind, monkeypatch):
     source, libraries, toolchain = native
     before = cache_key(identity(*native))
     if kind == "go":
         (source / "internal/parser/parser.go").write_text("changed")
+    elif kind in {"cpp", "recipe", "modules", "native-profile", "verification"}:
+        name = {
+            "cpp": "internal/binding/cpp/CMakeLists.txt",
+            "recipe": "build.sh",
+            "modules": "go.mod",
+            "native-profile": "ragflow_deps/native-deps.json",
+            "verification": "ragflow_deps/prepare_native.py",
+        }[kind]
+        path = source / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("changed")
     elif kind == "embedded":
         (source / "internal/agent/templates/document.xml").write_text("changed")
     elif kind == "library":
         (libraries / "library.a").write_bytes(b"changed")
     elif kind == "toolchain":
         toolchain = "sha256:" + "b" * 64
+    elif kind == "command":
+        monkeypatch.setattr(native_artifacts, "GO_COMMAND", ("bash", "build.sh", "--go"))
+    elif kind == "cpp-command":
+        monkeypatch.setattr(native_artifacts, "CPP_COMMAND", (*native_artifacts.CPP_COMMAND, "--verbose"))
+    elif kind == "go-flags":
+        monkeypatch.setattr(native_artifacts, "GO_FLAGS", (*native_artifacts.GO_FLAGS, "-race"))
     else:
         monkeypatch.setenv("GOAMD64", "v3")
     assert cache_key(identity(source, libraries, toolchain)) != before
+
+
+def test_native_entrypoint_builds_once_and_restores_after_orchestration_edits(native, tmp_path, monkeypatch):
+    source, libraries, toolchain = native
+    # Exercise cache policy on Windows too; Linux locking is separate from it.
+    if sys.platform == "win32":
+        monkeypatch.setitem(sys.modules, "fcntl", SimpleNamespace(LOCK_EX=2, flock=lambda *args: None))
+    monkeypatch.setattr(sys, "argv", ["native_artifacts.py", "--root", str(source), "--libraries", str(libraries), "--toolchain", toolchain, "--cache", str(tmp_path / "cache")])
+    monkeypatch.setenv("GOCACHE", str(tmp_path / "go-cache"))
+    monkeypatch.setenv("GOFLAGS", "-mod=readonly")
+    commands = []
+
+    def compile_outputs(command, *, cwd, check, env=None):
+        assert cwd == source and check is True
+        commands.append(command)
+        if env is not None:
+            assert env["GOFLAGS"] == "-mod=readonly -trimpath -buildvcs=false"
+        outputs = OUTPUTS[2:] if len(commands) == 1 else OUTPUTS[:2]
+        for name in outputs:
+            path = source / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(name.encode())
+
+    monkeypatch.setattr(native_artifacts.subprocess, "run", compile_outputs)
+    native_artifacts.main()
+    first = json.loads((source / "output/ci-native/artifacts.json").read_text())
+    assert first["cache_hit"] is False and first["status"] == "PASS"
+    assert commands == [native_artifacts.CPP_COMMAND, native_artifacts.GO_COMMAND]
+
+    def unexpected_compile(*args, **kwargs):
+        raise AssertionError("Orchestration edits must restore artifacts without compilation")
+
+    monkeypatch.setattr(native_artifacts.subprocess, "run", unexpected_compile)
+    for name in ("go_builder.py", "native_artifacts.py"):
+        with (source / "deployment/runner" / name).open("a") as stream:
+            stream.write("\n# logging only\n")
+        for output in OUTPUTS:
+            (source / output).unlink()
+        native_artifacts.main()
+        receipt = json.loads((source / "output/ci-native/artifacts.json").read_text())
+        assert receipt["cache_hit"] is True and receipt["status"] == "PASS"
+        assert receipt["key"] == first["key"] and receipt["outputs"] == first["outputs"]
+        assert all((source / output).read_bytes() == output.encode() for output in OUTPUTS)
 
 
 @pytest.mark.parametrize("corruption", [None, "binary", "missing", "manifest", "unexpected-output", "wrong-key"])

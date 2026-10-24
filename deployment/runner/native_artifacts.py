@@ -21,6 +21,9 @@ import time
 
 OUTPUTS = ("bin/ragflow_server", "bin/ragflow-cli", "internal/binding/cpp/cmake-build-release/librag_tokenizer_c_api.a")
 IGNORED = {"build", "cmake-build-release", "cmake-build-debug", "__pycache__", ".git"}
+CPP_COMMAND = ("bash", "build.sh", "--cpp")
+GO_COMMAND = ("bash", "build.sh", "--go", "--strip")
+GO_FLAGS = ("-trimpath", "-buildvcs=false")
 
 
 def digest(path: Path) -> str:
@@ -55,20 +58,18 @@ def identity(root: Path, libraries: Path, toolchain: str) -> dict:
             "go.mod",
             "go.sum",
             "build.sh",
-            "deployment/runner/build-go-linux.sh",
-            "deployment/runner/go_builder.py",
-            "deployment/runner/Dockerfile.go-builder",
-            "deployment/runner/native_artifacts.py",
             "ragflow_deps/prepare_native.py",
             "ragflow_deps/native-deps.json",
         )
     }
     return {
-        "schema": 1,
+        "schema": 2,
         "source": source,
         "libraries": tree(libraries),
         "toolchain": toolchain,
-        "flags": ["--cpp", "--go", "--strip", "-trimpath", "-buildvcs=false"],
+        # Hash the recipe executed below, not orchestration/logging implementation.
+        # The immutable image ID already identifies the complete toolchain.
+        "recipe": {"cpp": CPP_COMMAND, "go": GO_COMMAND, "go_flags": GO_FLAGS},
         "environment": {name: os.environ.get(name, "") for name in ("GOFLAGS", "GOEXPERIMENT", "GOAMD64", "GOARCH", "GOOS", "CGO_CFLAGS", "CGO_LDFLAGS")},
     }
 
@@ -145,13 +146,13 @@ def main() -> None:
         if hit and cache_key(identity(args.root, args.libraries, args.toolchain)) != key:
             raise ValueError("Native inputs changed during cache restoration")
         if not hit:
-            subprocess.run(["bash", "build.sh", "--cpp"], cwd=args.root, check=True)
-            environment = {**os.environ, "GOFLAGS": (os.environ.get("GOFLAGS", "") + " -trimpath -buildvcs=false").strip()}
+            subprocess.run(CPP_COMMAND, cwd=args.root, check=True)
+            environment = {**os.environ, "GOFLAGS": " ".join(filter(None, (os.environ.get("GOFLAGS", ""), *GO_FLAGS)))}
             # Go's build cache does not track external cgo static libraries.
             # Reuse its incremental cache only within the same native-library set.
             namespace = cache_key({"libraries": inputs["libraries"], "toolchain": args.toolchain, "tokenizer": digest(args.root / OUTPUTS[2])})
             environment["GOCACHE"] = str(Path(os.environ["GOCACHE"]) / namespace)
-            subprocess.run(["bash", "build.sh", "--go", "--strip"], cwd=args.root, env=environment, check=True)
+            subprocess.run(GO_COMMAND, cwd=args.root, env=environment, check=True)
             if cache_key(identity(args.root, args.libraries, args.toolchain)) != key:
                 raise ValueError("Native inputs changed during compilation")
             manifest = store(entry, args.root, key)

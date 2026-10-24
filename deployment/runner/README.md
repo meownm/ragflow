@@ -129,7 +129,14 @@ it compiles C++ and stripped Go binaries through `build.sh`; on a hit, it verifi
 and restores the two binaries and tokenizer static library. The cache lives in
 `~/.cache/ragflow-go-builder/artifacts`, outside source snapshots. Its key includes
 Go/C++ sources and embedded resources, library bytes, immutable builder image ID,
-build scripts and flags. Python, frontend and release-version changes reuse it.
+`build.sh`, the native verification/profile files, and the actual build commands
+and flags. The commands/flags used for execution also define the cache recipe;
+changes to their meaning require updating that recipe (or its identity schema).
+Launcher, cache-handler and Docker orchestration bytes are excluded: logging or
+wrapper edits reuse artifacts when the toolchain and compilation inputs match.
+The Dockerfile is represented by the resulting immutable builder image ID.
+Python, frontend and release-version changes reuse it. Identity schema 2 starts
+a new artifact namespace; old entries are retained without automatic promotion.
 The incremental Go compiler cache is namespaced by the actual C++ static library,
 native library bytes and builder identity: Go itself does not track changes in
 external cgo libraries. Ordinary Go edits retain that incremental compiler cache.

@@ -653,3 +653,85 @@ def test_managed_dependency_links_never_traverse_external_data(tmp_path, depende
     assert (outside / "postgres.dump").read_bytes() == b"keep"
     assert (outside / "postgres.dump").stat().st_mtime_ns == outside_time
     assert outside.stat().st_mtime_ns == outside_directory_time
+
+
+@pytest.mark.parametrize("recovery", [False, True])
+def test_complete_only_removes_requested_task_and_its_receipt(tmp_path, recovery):
+    from tools.quality.workspace import _directory_identity
+
+    root = tmp_path / "tmp/ragflow"
+    assert run(root, "-Name", "requested").returncode == 0
+    task = root / "requested"
+    receipts = {}
+    for name in ("requested", "foreign-recovery", "foreign-expired"):
+        other = root / name
+        other.mkdir(exist_ok=True)
+        (other / "result").write_bytes(name.encode())
+        if name != "requested":
+            managed(other)
+            age(other)
+        if name == "foreign-recovery" or (name == "requested" and recovery):
+            record = root / (".ragflow-cleanup-" + uuid.uuid4().hex + ".json")
+            record.write_text(json.dumps({"version": 1, "original": name, "identity": _directory_identity(other), "job": "Global\\RAGFlow-build-" + uuid.uuid4().hex}))
+            receipts[name] = record
+    malformed = root / (".ragflow-cleanup-" + uuid.uuid4().hex + ".json")
+    malformed.write_bytes(b"unidentifiable foreign record")
+    preserved = {p: (p.read_bytes(), p.stat().st_mtime_ns) for p in root.rglob("*") if p.is_file() and not p.is_relative_to(task) and p != receipts.get("requested")}
+    result = run(root, "-Name", "requested", "-Complete")
+    assert result.returncode == 0, result.stderr
+    assert not task.exists()
+    if recovery:
+        assert not receipts["requested"].exists()
+    for path, (contents, modified) in preserved.items():
+        assert path.read_bytes() == contents
+        assert path.stat().st_mtime_ns == modified
+    assert {p.name for p in root.iterdir() if p.is_dir()} == {"foreign-recovery", "foreign-expired"}
+
+
+def test_complete_never_enters_shared_cache_cleanup(tmp_path):
+    root = tmp_path / "tmp/ragflow"
+    assert run(root, "-Name", "requested").returncode == 0
+    line = next(i for i, value in enumerate(SCRIPT.read_text(encoding="utf-8").splitlines(), 1) if value.startswith("if ($CleanCache -and"))
+    proof = tmp_path / "shared-cache-cleanup-entered"
+    command = """
+function global:docker { $global:LASTEXITCODE=0 }
+$null=Set-PSBreakpoint -Script $env:TEST_SCRIPT -Line ([int]$env:TEST_LINE) -Action {
+    Set-Content -LiteralPath $env:TEST_PROOF -Value 'shared cleanup reached'
+    exit 73
+}
+& $env:TEST_SCRIPT -Root $env:TEST_ROOT -Name requested -Complete -CleanCache
+"""
+    result = subprocess.run(
+        [PWSH, "-NoProfile", "-Command", command],
+        env={**os.environ, "TEST_SCRIPT": str(SCRIPT), "TEST_ROOT": str(root), "TEST_LINE": str(line), "TEST_PROOF": str(proof)},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert not proof.exists()
+    assert not (root / "requested").exists()
+
+
+@pytest.mark.parametrize("alias", ["absolute", "relative", "stale", "external"])
+def test_complete_handles_pytest_aliases_but_preserves_external_targets(tmp_path, alias):
+    root = tmp_path / "tmp/ragflow"
+    assert run(root, "-Name", "requested").returncode == 0
+    task = root / "requested"
+    outside = root / "foreign/test_result0"
+    outside.mkdir(parents=True)
+    payload = outside / "important"
+    payload.write_bytes(b"keep")
+    target = task / "test_result0"
+    if alias == "external":
+        target = outside
+    elif alias != "stale":
+        target.mkdir()
+    (task / "test_resultcurrent").symlink_to(target.name if alias == "relative" else target, target_is_directory=True)
+    result = run(root, "-Name", "requested", "-Complete")
+    assert (result.returncode == 0) is (alias != "external"), result.stderr
+    assert task.exists() is (alias == "external")
+    if alias == "external":
+        assert (task / ".keep").is_file()
+        assert (task / "test_resultcurrent").is_symlink()
+    assert payload.read_bytes() == b"keep"

@@ -248,14 +248,36 @@ def _retire(path: Path, job: str | None = None, *, remove_pin: bool = False, lea
                 owned_lease.close()
 
 
+def _pytest_current_link(path: Path) -> bool:
+    """Accept pytest's sibling numbered-directory alias, including a stale one."""
+    prefix = path.name.removesuffix("current")
+    if not prefix or prefix == path.name:
+        return False
+    try:
+        target = Path(os.path.abspath(path.parent / path.readlink()))
+        _unlinked(target.parent)
+        # Windows readlink may use the extended \\?\ spelling of the same parent.
+        if not target.parent.samefile(path.parent) or not re.fullmatch(re.escape(prefix) + r"[0-9]+", target.name):
+            return False
+        try:
+            status = target.lstat()
+        except FileNotFoundError:
+            return True
+        return stat.S_ISDIR(status.st_mode) and not (stat.S_ISLNK(status.st_mode) or getattr(status, "st_file_attributes", 0) & 0x400)
+    except (OSError, ValueError):
+        return False
+
+
 def _guard_entry(path: Path, *, ignore_pin: Path | None = None):
     status = path.lstat()
     name = path.name.casefold()
     if (name == ".keep" and path != ignore_pin) or name in {".git", "backup", "backups"} or _BACKUP.search(name):
         raise _ProtectedTask(f"Protected entry: {path}")
     linked = stat.S_ISLNK(status.st_mode) or bool(getattr(status, "st_file_attributes", 0) & 0x400)
-    # pnpm's dependency links are disposable entries, never traversal roots.
+    # Disposable links are entries to unlink, never traversal roots.
     if linked:
+        if stat.S_ISLNK(status.st_mode) and _pytest_current_link(path):
+            return status, True
         if any(parent.name.casefold() == "node_modules" for parent in path.parents) and (stat.S_ISLNK(status.st_mode) or path.is_junction()):
             return status, True
         raise _ProtectedTask(f"Linked entry: {path}")
@@ -337,7 +359,7 @@ def _directory_identity(path: Path) -> list[int]:
     return [status.st_dev, status.st_ino, getattr(status, "st_birthtime_ns", 0)]
 
 
-def _receipt(root: Path, receipt: Path, stream=None) -> dict:
+def _receipt(root: Path, receipt: Path, stream=None, *, expected_task: str | None = None) -> dict:
     if receipt.parent != root or not re.fullmatch(r"\.ragflow-cleanup-[0-9a-f]{32}\.json", receipt.name):
         raise ValueError("invalid cleanup receipt path")
     _unlinked(receipt)
@@ -345,6 +367,8 @@ def _receipt(root: Path, receipt: Path, stream=None) -> dict:
     if value.get("version") != 1 or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._-]*", value.get("original", "")):
         raise ValueError("invalid cleanup receipt")
     target = root / value["original"]
+    if expected_task is not None and target != root / expected_task:
+        raise ValueError("cleanup receipt belongs to another task")
     _unlinked(target)
     identity = value["identity"]
     if not isinstance(identity, list) or len(identity) != 3 or any(type(item) is not int for item in identity) or not identity[1]:
@@ -385,6 +409,7 @@ def main():
     parser.add_argument("--job")
     parser.add_argument("--owner", type=int)
     parser.add_argument("--manual", action="store_true")
+    parser.add_argument("--expected-task", help="Restrict receipt inspection/recovery to this task name")
     args = parser.parse_args()
     if args.action == "watch-job":
         _watch_job(args.job, args.owner)
@@ -406,15 +431,15 @@ def main():
         return
     if args.action in {"inspect", "recover"}:
         if args.action == "inspect":
-            print(json.dumps(_receipt(root, path)))
+            print(json.dumps(_receipt(root, path, expected_task=args.expected_task)))
             return
         with _open_lease(path, create=False) as stream:
-            info = _receipt(root, path, stream)
+            info = _receipt(root, path, stream, expected_task=args.expected_task)
             target = Path(info["path"])
             with _task_lock(target):
                 # The directory may have been replaced since the inspector ran.
                 stream.seek(0)
-                info = _receipt(root, path, stream)
+                info = _receipt(root, path, stream, expected_task=args.expected_task)
                 if info["active"]:
                     raise _ProtectedTask("cleanup job still has active processes")
                 if info["matches"]:

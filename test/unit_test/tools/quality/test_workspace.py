@@ -169,3 +169,103 @@ def test_atomic_launch_does_not_replace_concurrent_stdlib_creation(monkeypatch):
         finally:
             release.set()
         assert future.result(timeout=15) == "guarded"
+
+
+@pytest.mark.parametrize("alias", ["pytest", "relative", "stale"])
+def test_workspace_removes_pytest_current_links_without_following_them(tmp_path, alias):
+    from _pytest.pathlib import make_numbered_dir
+
+    work = tmp_path / "work"
+    outside = tmp_path / "important"
+    outside.write_bytes(b"keep")
+    with disposable_workspace(work):
+        tests = work / "tests"
+        tests.mkdir()
+        target = make_numbered_dir(tests, "test_result")
+        link = tests / "test_resultcurrent"
+        assert link.is_symlink(), "pytest current-link creation is required for this regression"
+        if alias != "pytest":
+            link.unlink()
+            link.symlink_to(target.name, target_is_directory=True)
+        if alias == "stale":
+            target.rmdir()
+        else:
+            (target / "result").write_bytes(b"disposable")
+    assert not work.exists()
+    assert outside.read_bytes() == b"keep"
+
+
+@pytest.mark.parametrize("alias", ["external", "chain", "ordinary", "file"])
+def test_workspace_rejects_unrecognized_or_escaping_current_links(tmp_path, alias):
+    work = tmp_path / "work"
+    outside = tmp_path / "outside/test_result0"
+    outside.mkdir(parents=True)
+    payload = outside / "important"
+    payload.write_bytes(b"keep")
+    with pytest.raises(OSError, match="Linked entry"), disposable_workspace(work):
+        target = work / "test_result0"
+        if alias == "external":
+            target = outside
+        elif alias == "chain":
+            target.symlink_to(outside, target_is_directory=True)
+        elif alias == "file":
+            target.write_bytes(b"keep")
+        else:
+            target.mkdir()
+        (work / ("latest" if alias == "ordinary" else "test_resultcurrent")).symlink_to(target, target_is_directory=alias != "file")
+    assert work.is_dir()
+    assert payload.read_bytes() == b"keep"
+
+
+@pytest.mark.parametrize("protected", [".keep", "postgres.dump", ".git"])
+def test_pytest_alias_does_not_hide_protected_target_contents(tmp_path, protected):
+    work = tmp_path / "work"
+    with pytest.raises(OSError, match="Protected entry"), disposable_workspace(work):
+        target = work / "test_result0"
+        target.mkdir()
+        (target / protected).write_bytes(b"keep")
+        (work / "test_resultcurrent").symlink_to(target, target_is_directory=True)
+    assert (target / protected).read_bytes() == b"keep"
+
+
+def test_pytest_link_retargeted_after_preflight_does_not_escape_workspace(tmp_path, monkeypatch):
+    work = tmp_path / "work"
+    outside = tmp_path / "outside/test_result0"
+    outside.mkdir(parents=True)
+    payload = outside / "important"
+    payload.write_bytes(b"keep")
+    original = workspace._remove_tree
+
+    def remove(path):
+        link = path / "test_resultcurrent"
+        link.unlink()
+        link.symlink_to(outside, target_is_directory=True)
+        original(path)
+
+    monkeypatch.setattr(workspace, "_remove_tree", remove)
+    with pytest.raises(OSError, match="Linked entry"), disposable_workspace(work):
+        target = work / "test_result0"
+        target.mkdir()
+        (work / "test_resultcurrent").symlink_to(target, target_is_directory=True)
+    assert (work / "test_resultcurrent").is_symlink()
+    assert payload.read_bytes() == b"keep"
+
+
+def test_recovery_expected_task_cannot_delete_foreign_receipt_target(tmp_path):
+    root = tmp_path / "tmp/ragflow"
+    foreign = root / "foreign"
+    foreign.mkdir(parents=True)
+    (foreign / ".keep").write_bytes(b"active")
+    receipt = root / (".ragflow-cleanup-" + "0" * 32 + ".json")
+    contents = json.dumps({"version": 1, "original": "foreign", "identity": workspace._directory_identity(foreign), "job": "Global\\RAGFlow-build-" + "0" * 32})
+    receipt.write_text(contents)
+    result = subprocess.run(
+        [sys.executable, "-B", workspace.__file__, "recover", "--root", str(root), "--path", str(receipt), "--manual", "--expected-task", "requested"],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert result.returncode != 0
+    assert "another task" in result.stderr
+    assert (foreign / ".keep").read_bytes() == b"active"
+    assert receipt.read_text() == contents

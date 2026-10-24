@@ -100,12 +100,23 @@ $replacedPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::Or
 # Receipts live outside the tree being removed, including after partial rmtree.
 # A receipt authorizes retry only for the same filesystem directory identity.
 foreach ($receipt in Get-ChildItem -LiteralPath $Root -Filter '.ragflow-cleanup-*.json' -File -Force) {
+    $receiptOptions = @()
+    if ($Complete) {
+        # Foreign or unidentifiable receipts are outside this named operation.
+        if ($receipt.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+        try {
+            $claim = Get-Content -LiteralPath $receipt.FullName -Raw | ConvertFrom-Json
+            if ($claim.original -isnot [string] -or $claim.original -ne $Name) { continue }
+        } catch { continue }
+        $receiptOptions = @('--expected-task', $Name)
+    }
     try {
-        $pending = Invoke-Workspace inspect $receipt.FullName
+        $pending = Invoke-Workspace inspect $receipt.FullName -Options $receiptOptions
         if ($pending.matches) { $null = $pendingPaths.Add($pending.path) }
         if ($pending.active -or (Test-TaskInUse $pending.path)) { continue }
         if ($PSCmdlet.ShouldProcess($pending.path, 'Retry incomplete temporary cleanup')) {
-            $options = if ($Complete -and $Name -and $pending.path -eq (Join-Path $Root $Name) -and $pending.matches) { @('--manual') } else { @() }
+            $options = $receiptOptions
+            if ($Complete -and $pending.matches) { $options += '--manual' }
             $recovered = Invoke-Workspace recover $receipt.FullName -Options $options
             if ($recovered.completed) { $null = $completedPaths.Add($pending.path) }
             if ($recovered.replaced) { $null = $replacedPaths.Add($pending.path) }
@@ -142,6 +153,9 @@ if ($Name) {
         }
         catch { throw "Cannot complete task until protected data is saved outside it: $($_.Exception.Message)" }
     }
+    if ($failures.Count) { throw ($failures -join [Environment]::NewLine) }
+    # Named completion never sweeps other tasks or cleans the shared cache.
+    return
 }
 
 $cutoff = [DateTime]::UtcNow.AddDays(-$KeepDays)

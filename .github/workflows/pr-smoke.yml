@@ -61,7 +61,8 @@ jobs:
       - name: Install small check environment
         run: |
           uv venv --python 3.13
-          uv pip install pytest pytest-asyncio pyyaml ruff==0.13.3
+          # Release-evidence checks import the alignment HTTP adapter.
+          uv pip install pytest pytest-asyncio pyyaml aiohttp ruff==0.13.3
       - name: Lint changed Python files
         env:
           BASE_SHA: ${{ needs.changed-paths.outputs.base_sha }}

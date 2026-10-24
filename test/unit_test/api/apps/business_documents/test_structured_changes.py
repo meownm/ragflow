@@ -232,6 +232,48 @@ def test_foreign_document_source_fails_before_semantic_verification(database):
     assert BusinessDocumentRevision.select().count() == 2
 
 
+@pytest.mark.parametrize("preview_only", [False, True])
+@pytest.mark.parametrize("disposition,acknowledge", [("CONFIRMED_CHANGE", True), ("NO_CHANGE", False)])
+def test_comment_disposition_conflict_fails_before_verification_and_is_logged(database, caplog, disposition, acknowledge, preview_only):
+    document = _request_and_complete_draft(_create())
+    document_commands.execute(
+        TENANT,
+        AUTHOR,
+        document["document_id"],
+        _command(document, "ADD_COMMENT", {"revision_id": document["current_revision"]["revision_id"], "section_id": None, "anchor": None, "text": "Конфиденциальный текст замечания."}),
+    )
+    document = _complete_review_assessment(document_queries.get_document(document["document_id"], AUTHOR), comment_disposition=disposition)
+    requested = document_commands.execute(
+        TENANT,
+        AUTHOR,
+        document["document_id"],
+        _command(document, "PREPARE_CHANGES" if preview_only else "APPLY_CHANGES", {"base_revision_id": document["current_revision"]["revision_id"]}),
+    )
+    comment_id = document["protocol"]["comments"][0]["source_event_id"]
+    plan = _plan(document, requested)["change_plan"]
+    if acknowledge:
+        plan["operations"] = []
+        plan["acknowledged_no_change_event_ids"] = [comment_id]
+    adapter = PlanAdapter(plan, None)
+    assert BusinessDocumentWorker(ai=BusinessDocumentAI(adapter)).run_once()
+
+    job = BusinessDocumentJob.get_by_id(requested["job_id"])
+    code = "COMMENT_NO_CHANGE_NOT_CONFIRMED" if acknowledge else "COMMENT_CHANGE_NOT_CONFIRMED"
+    assert job.status == "DEAD" and job.error["code"] == code
+    assert job.attempt == 1
+    assert job.result["recovery"]["candidate"] is None
+    assert [call["job_input"]["task_type"] for call in adapter.calls] == ["PLAN_CHANGES"]
+    assert adapter.calls[0]["job_input"]["active_comment_dispositions"] == {comment_id: disposition}
+    assert document_queries.get_document(document["document_id"], AUTHOR)["current_revision"] == document["current_revision"]
+    assert BusinessDocumentRevision.select().count() == 1
+    assert not BusinessDocumentWorker(ai=BusinessDocumentAI(adapter)).run_once()
+    records = [record for record in caplog.records if "Business document job failed" in record.getMessage()]
+    assert len(records) == 1
+    for value in (job.id, job.document_id, job.job_type, code, job.correlation_id):
+        assert value in records[0].getMessage()
+    assert "Конфиденциальный текст замечания" not in records[0].getMessage()
+
+
 def test_stale_document_cannot_commit_a_new_diff(database):
     requested, plan = request_plan()
     adapter = PlanAdapter(plan, None)

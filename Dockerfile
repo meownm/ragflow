@@ -1,7 +1,7 @@
-ARG RAGFLOW_DEPS_IMAGE=infiniflow/ragflow_deps:latest
+ARG RAGFLOW_DEPS_IMAGE=infiniflow/ragflow_deps@sha256:e69762c256ea2338a786a9b2f003da8e91e5e69b26bb6797c2206276ce32e5ff
 
 # Pin browser/parser resources independently of the model/tokenizer image.
-FROM alpine:3.24 AS resource_updates
+FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 AS resource_updates
 ARG NEED_MIRROR=0
 RUN apk add --no-cache ca-certificates curl
 WORKDIR /resources
@@ -32,7 +32,7 @@ FROM ${RAGFLOW_DEPS_IMAGE} AS ragflow_deps
 COPY --from=resource_updates /resources/ /
 
 # base stage
-FROM ubuntu:24.04 AS base
+FROM ubuntu:24.04@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517 AS base
 USER root
 SHELL ["/bin/bash", "-c"]
 

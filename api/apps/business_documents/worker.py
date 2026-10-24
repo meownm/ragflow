@@ -492,6 +492,16 @@ class BusinessDocumentWorker:
         except Exception as error:
             if not isinstance(error, BusinessDocumentError) or error.code != "JOB_LEASE_LOST":
                 payload = _error_payload(error)
+                logging.error(
+                    "Business document job failed job_id=%s document_id=%s job_type=%s attempt=%s code=%s correlation_id=%s",
+                    job.id,
+                    job.document_id,
+                    job.job_type,
+                    job.attempt,
+                    payload.get("code", "WORKER_FAILURE"),
+                    job.correlation_id,
+                    exc_info=not isinstance(error, BusinessDocumentError),
+                )
                 current_job = BusinessDocumentJob.get_or_none(BusinessDocumentJob.id == job.id)
                 if current_job is not None and current_job.lease_owner == self.worker_id and current_job.lease_token == claimed_lease_token:
                     document_job = current_job.job_type in {"ASSESS_INTAKE", "ASSESS_REVIEW", "GENERATE_DRAFT", "PLAN_CHANGES", "GENERATE_EXPORT"}

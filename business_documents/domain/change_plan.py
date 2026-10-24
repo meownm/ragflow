@@ -47,6 +47,20 @@ def validate_evidence_sources(allowed: frozenset[str], evidence_refs: object) ->
         )
 
 
+def validate_comment_change_sources(dispositions: Mapping[str, Mapping[str, Any]], source_event_ids: Iterable[str], *, no_change: bool = False) -> None:
+    """Keep plan attribution consistent with the pinned review decision."""
+    expected = "NO_CHANGE" if no_change else "CONFIRMED_CHANGE"
+    invalid = sorted(event_id for event_id in source_event_ids if dispositions.get(event_id, {}).get("disposition") != expected)
+    if invalid:
+        raise RuleViolation(
+            "COMMENT_NO_CHANGE_NOT_CONFIRMED" if no_change else "COMMENT_CHANGE_NOT_CONFIRMED",
+            "A comment can be acknowledged as no-change only when the current review assessment says NO_CHANGE"
+            if no_change
+            else "A comment can authorize a change only when the current review assessment says CONFIRMED_CHANGE",
+            {"event_ids": invalid} if no_change else {"event_id": invalid[0]},
+        )
+
+
 def _validate_operation_sources(review: ReviewState, operation: Mapping[str, Any]) -> None:
     source_ids = operation["source_event_ids"]
     missing = [event_id for event_id in source_ids if event_id not in review.events_by_id]
@@ -59,12 +73,8 @@ def _validate_operation_sources(review: ReviewState, operation: Mapping[str, Any
             raise RuleViolation("INVALID_CHANGE_SOURCE_TYPE", "Event type cannot authorize a document change", {"event_id": event_id})
         if kind == "ProposalDecided" and event["payload"].get("decision") != "ACCEPTED":
             raise RuleViolation("REJECTED_PROPOSAL_SOURCE", "Rejected proposals cannot support a change", {"event_id": event_id})
-        if kind == "AuthorCommentAdded" and review.comment_dispositions.get(event_id, {}).get("disposition") != "CONFIRMED_CHANGE":
-            raise RuleViolation(
-                "COMMENT_CHANGE_NOT_CONFIRMED",
-                "A comment can authorize a change only when the current review assessment says CONFIRMED_CHANGE",
-                {"event_id": event_id},
-            )
+        if kind == "AuthorCommentAdded":
+            validate_comment_change_sources(review.comment_dispositions, [event_id])
         source_cycle, _ = review.event_scopes.get(event_id, (None, None))
         if source_cycle != review.review_cycle:
             raise RuleViolation("CHANGE_SOURCE_REVIEW_CYCLE_CONFLICT", "Change source is outside the active review cycle", {"event_id": event_id})
@@ -115,15 +125,11 @@ def validate_change_inputs(
     accepted_no_change = sorted(acknowledged & review.accepted_inputs)
     if accepted_no_change:
         raise RuleViolation("ACCEPTED_PROPOSAL_ACKNOWLEDGED_NO_CHANGE", "An accepted proposal must authorize a concrete change operation", {"event_ids": accepted_no_change})
-    invalid_comments = sorted(
-        event_id for event_id in acknowledged if review.events_by_id[event_id]["event_type"] == "AuthorCommentAdded" and review.comment_dispositions.get(event_id, {}).get("disposition") != "NO_CHANGE"
+    validate_comment_change_sources(
+        review.comment_dispositions,
+        (event_id for event_id in acknowledged if review.events_by_id[event_id]["event_type"] == "AuthorCommentAdded"),
+        no_change=True,
     )
-    if invalid_comments:
-        raise RuleViolation(
-            "COMMENT_NO_CHANGE_NOT_CONFIRMED",
-            "A comment can be acknowledged as no-change only when the current review assessment says NO_CHANGE",
-            {"event_ids": invalid_comments},
-        )
     missing = review.applicable_inputs - used - acknowledged
     missing_accepted = sorted(missing & review.accepted_inputs)
     if missing_accepted:

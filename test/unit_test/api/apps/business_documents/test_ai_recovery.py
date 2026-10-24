@@ -84,6 +84,21 @@ def test_worker_classifies_provider_failure_without_changing_revision(database, 
     assert BusinessDocumentRevision.select().count() == 1
 
 
+def test_worker_logs_unexpected_failure_with_traceback_and_job_context(database, caplog):
+    requested, plan = request_plan()
+    adapter = PlanAdapter(plan, None)
+    adapter.generate = lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("Unexpected test failure"))
+    assert BusinessDocumentWorker(ai=BusinessDocumentAI(adapter)).run_once()
+    job = BusinessDocumentJob.get_by_id(requested["job_id"])
+    assert job.status == "DEAD" and job.error["code"] == "WORKER_FAILURE"
+    records = [record for record in caplog.records if "Business document job failed" in record.getMessage()]
+    assert len(records) == 1
+    assert records[0].exc_info[0] is RuntimeError
+    assert job.id in records[0].getMessage() and job.document_id in records[0].getMessage()
+    assert "code=WORKER_FAILURE" in records[0].getMessage()
+    assert BusinessDocumentRevision.select().count() == 1
+
+
 def test_format_repair_receives_error_and_preserves_complete_original_context(database):
     requested, plan = request_plan()
     adapter = PlanAdapter(plan, None)

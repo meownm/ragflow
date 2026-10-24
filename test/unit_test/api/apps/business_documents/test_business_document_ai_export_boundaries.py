@@ -412,7 +412,7 @@ def test_change_plan_hashes_are_bound_from_server_snapshot(database):
 
 
 @pytest.mark.p0
-def test_change_plan_preserves_invalid_acknowledgements_for_domain_rejection(database):
+def test_change_plan_rejects_invalid_acknowledgements_before_verification(database):
     base = _draft()
     job = BusinessDocumentJob(
         id="plan-job",
@@ -449,9 +449,12 @@ def test_change_plan_preserves_invalid_acknowledgements_for_domain_rejection(dat
         ],
     }
 
-    validated = BusinessDocumentAI._validate(job, output)
+    with pytest.raises(ValidationError) as caught:
+        BusinessDocumentAI._validate(job, output)
 
-    assert validated["change_plan"]["acknowledged_no_change_event_ids"] == ["old-answer-1", "old-answer-2"]
+    assert caught.value.code == "SOURCE_NOT_IN_JOB_SNAPSHOT"
+    assert caught.value.details["event_ids"] == ["old-answer-1", "old-answer-2"]
+    assert output["acknowledged_no_change_event_ids"] == ["old-answer-1", "old-answer-2"]
 
 
 def test_preliminary_section_requires_valid_content_and_active_source():
@@ -669,6 +672,7 @@ def test_model_metadata_is_bound_from_the_job_even_when_missing_or_incorrect(met
     if empty_plan:
         plan["operations"] = []
         plan["acknowledged_no_change_event_ids"] = ["comment-event"]
+        job.payload["protocol"]["comments"][0]["disposition"] = {"disposition": "NO_CHANGE"}
     if metadata == "missing":
         plan.pop("base_revision_id")
         plan.pop("source_state_version")

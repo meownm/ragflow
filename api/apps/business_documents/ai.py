@@ -51,7 +51,7 @@ from business_documents.domain.content import render_block_changes, render_secti
 from business_documents.domain.content_quality import parent_child_section_pairs, semantic_duplicate_section_pairs
 from business_documents.domain.change_stream import ChangeOperationStream
 from business_documents.domain.requirement_coverage import agreement_decisions, changed_section_repetitions, validate_requirement_coverage
-from business_documents.domain.change_plan import validate_snapshot_sources, validate_evidence_sources
+from business_documents.domain.change_plan import validate_comment_change_sources, validate_snapshot_sources, validate_evidence_sources
 from business_documents.domain.errors import RuleViolation
 from business_documents.domain.hashing import stable_hash
 from api.db.db_models import BusinessDocumentJob
@@ -117,6 +117,14 @@ def _active_change_input_event_ids(job_payload: dict[str, Any]) -> list[str]:
         if isinstance(comment, dict) and isinstance(comment.get("source_event_id"), str):
             event_ids.append(comment["source_event_id"])
     return list(dict.fromkeys(event_ids))
+
+
+def _comment_dispositions(job_payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {
+        comment["source_event_id"]: comment.get("disposition") or {}
+        for comment in (job_payload.get("protocol") or {}).get("comments", [])
+        if isinstance(comment, dict) and isinstance(comment.get("source_event_id"), str)
+    }
 
 
 def _confirmed_change_sources(payload: dict[str, Any]) -> dict[str, dict[str, str]]:
@@ -1117,6 +1125,7 @@ class BusinessDocumentAI:
         if job.job_type == "PLAN_CHANGES":
             active_event_ids = _active_change_input_event_ids(job_input)
             job_input["active_change_input_event_ids"] = active_event_ids
+            job_input["active_comment_dispositions"] = {event_id: item.get("disposition") for event_id, item in _comment_dispositions(job_input).items() if event_id in active_event_ids}
             if isinstance(job_input.get("source_events"), list):
                 active = set(active_event_ids)
                 job_input["active_change_inputs"] = [event for event in job_input["source_events"] if isinstance(event, dict) and event.get("event_id") in active]
@@ -1129,6 +1138,10 @@ class BusinessDocumentAI:
                 "может обосновывать другой или несколько разделов независимо от исходного section_id или target_section_id; не подтверждай "
                 "отсутствие изменения для события, уже использованного в операции. "
                 "Не используй question_id, proposal_id и comment_id вместо event_id."
+                "\nРешения active_comment_dispositions обязательны: CONFIRMED_CHANGE требует реальной операции "
+                "с event_id комментария в source_event_ids, NO_CHANGE допускает только acknowledged_no_change_event_ids. "
+                "Если операция одновременно реализует комментарий и ответ на его вопрос, укажи оба события в source_event_ids. "
+                "Не переоценивай комментарий и не создавай фиктивные изменения уже существующего текста."
             )
         model_evidence = evidence
         if job.job_type == "GENERATE_DRAFT" and evidence is not None:
@@ -1166,7 +1179,7 @@ class BusinessDocumentAI:
                     parsed = json.loads(fenced[0])
                 except ValueError:
                     pass
-        if not isinstance(parsed, dict):
+        if not isinstance(parsed, dict) or (not parsed and not raw.lstrip().startswith(("{", "```json"))):
             raise ValidationError("INVALID_AI_JSON", "AI response must be a JSON object")
         return parsed
 
@@ -1408,6 +1421,12 @@ class BusinessDocumentAI:
                 for operation in output["operations"]:
                     validate_snapshot_sources(allowed, operation["source_event_ids"])
                     validate_evidence_sources(evidence_refs, operation.get("evidence_refs", []))
+                acknowledgements = output.get("acknowledged_no_change_event_ids", [])
+                validate_snapshot_sources(allowed, acknowledgements)
+                dispositions = _comment_dispositions(job.payload)
+                for operation in output["operations"]:
+                    validate_comment_change_sources(dispositions, (event_id for event_id in operation["source_event_ids"] if event_id in dispositions))
+                validate_comment_change_sources(dispositions, (event_id for event_id in acknowledgements if event_id in dispositions), no_change=True)
             except RuleViolation as error:
                 raise ValidationError(error.code, error.message, error.details) from error
             return {"change_plan": output}

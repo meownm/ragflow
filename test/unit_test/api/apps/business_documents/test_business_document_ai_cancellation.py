@@ -8,7 +8,11 @@ from unittest.mock import Mock
 
 import pytest
 
-from test.unit_test.api.apps.business_documents.test_business_document_adapter_contracts import ai_module, RAGFlowLLMAdapter
+from business_documents.adapters import llm as llm_module
+
+from test.unit_test.api.apps.business_documents.test_business_document_adapter_contracts import RAGFlowLLMAdapter
+from api.apps.business_documents import ai as ai_module
+from api.apps.business_documents.ai_prompt import build_prompt
 from api.apps.business_documents.assets import prompt_descriptor
 from api.db.db_models import BusinessDocumentJob
 from business_documents.application.errors import BusinessDocumentError
@@ -60,7 +64,7 @@ def model_boundary(monkeypatch):
     async def drain():
         calls["drained"] += 1
 
-    monkeypatch.setattr(ai_module, "_drain_litellm_callbacks", drain)
+    monkeypatch.setattr(llm_module, "_drain_litellm_callbacks", drain)
     return config, lookup, Bundle, calls
 
 
@@ -231,7 +235,7 @@ async def test_complete_change_prompt_fits_budget_without_truncating_history(mod
     job = _coverage_job()
     job.payload["source_events"].append({"event_id": "historical", "event_type": "ChangesApplied", "payload": {"text": " complete history" * 40000}})
     snapshot = json.dumps(job.payload, ensure_ascii=False)
-    prompt = ai_module.BusinessDocumentAI._prompt(job)
+    prompt = build_prompt(job.job_type, job.payload)
     serialized = json.dumps(prompt.input_payload, ensure_ascii=False)
     used = len(encoder.encode(prompt.system)) + len(encoder.encode(serialized)) + 256
     assert 65536 < used < 131072

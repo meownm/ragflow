@@ -28,6 +28,7 @@ if "api.apps" not in sys.modules:
     sys.modules["api.apps"] = api_apps
 
 from api.apps.business_documents.ai import BusinessDocumentAI
+from api.apps.business_documents.ai_prompt import build_prompt
 from api.apps.business_documents.assets import (
     apply_change_plan,
     contract_schema,
@@ -833,7 +834,7 @@ def test_change_prompt_retains_history_and_marks_only_active_inputs():
     job.payload["current_revision"]["change_basis"] = [{"summary": "x" * 1000}]
     job.payload["current_revision"].update(body_markdown="Duplicate markdown", section_texts={"1": "Duplicate text"})
     snapshot = deepcopy(job.payload)
-    inputs = BusinessDocumentAI._prompt(job).input_payload["job_input"]
+    inputs = build_prompt(job.job_type, job.payload).input_payload["job_input"]
     assert inputs["source_events"] == snapshot["source_events"]
     assert inputs["protocol"] == snapshot["protocol"]
     expected_revision = {key: value for key, value in snapshot["current_revision"].items() if key not in {"body_markdown", "section_texts"}}
@@ -934,7 +935,7 @@ def test_change_prompt_preserves_full_protocol_and_summarizes_only_active_confir
         {"event_id": "eva", "event_type": "EvaDocumentPulled", "payload": {"text": "EVA context"}},
     ]
     snapshot = deepcopy(job.payload)
-    payload = BusinessDocumentAI._prompt(job).input_payload
+    payload = build_prompt(job.job_type, job.payload).input_payload
     encoded = json.dumps(payload, ensure_ascii=False)
     inputs = payload["job_input"]
     assert inputs["protocol"] == snapshot["protocol"]
@@ -1296,7 +1297,7 @@ def test_transport_retry_does_not_treat_previous_failure_as_author_instruction(d
     job.attempt = 2
     job.error = {"code": "REQUIRED_SECTION_EMPTY", "message": "A required section is empty", "details": {}}
 
-    prompt = BusinessDocumentAI._prompt(job)
+    prompt = build_prompt(job.job_type, job.payload)
 
     assert "retry_feedback" not in prompt.input_payload["job_input"]
     assert job.error["message"] not in prompt.system
@@ -1311,7 +1312,7 @@ def test_change_prompt_includes_the_current_document_block_contract(schema_versi
     if schema_version == "2":
         base["section_scope"] = "required"
 
-    prompt = BusinessDocumentAI._prompt(job)
+    prompt = build_prompt(job.job_type, job.payload)
     schemas, _ = json.JSONDecoder().raw_decode(prompt.system.split("# Контракт выхода\n\n", 1)[1])
 
     public_plan = contract_schema("change_plan")
@@ -1370,7 +1371,7 @@ def test_initial_draft_schema_selects_concept_diagram_without_changing_public_as
     public = contract_schema("document_draft")
     original = deepcopy(public)
     job = SimpleNamespace(job_type="GENERATE_DRAFT", payload={"prompt": prompt_descriptor("GENERATE_DRAFT")})
-    prompt = BusinessDocumentAI._prompt(job)
+    prompt = build_prompt(job.job_type, job.payload)
     schemas, _ = json.JSONDecoder().raw_decode(prompt.system.split("# Контракт выхода\n\n", 1)[1])
     model_schema = schemas["document_draft"]
     document = {
@@ -1404,7 +1405,7 @@ def test_draft_prompt_separates_evidence_sentences_without_losing_or_trusting_te
     evidence = {"evidence_hash": "pinned-snapshot", "chunks": [{"source_ref": "ragflow://dataset/d/document/doc/chunk/c", "content_hash": "pinned-content", "content": content}]}
     original = deepcopy(evidence)
 
-    prompt = BusinessDocumentAI._prompt(job, evidence)
+    prompt = build_prompt(job.job_type, job.payload, evidence)
 
     chunk = prompt.input_payload["evidence"]["chunks"][0]
     assert "content" not in chunk
@@ -1436,7 +1437,7 @@ def test_review_prompt_identifies_exact_active_comment_events_without_mutating_s
     )
     original = deepcopy(job.payload)
 
-    prompt = BusinessDocumentAI._prompt(job)
+    prompt = build_prompt(job.job_type, job.payload)
 
     assert prompt.input_payload["job_input"]["active_review_comment_event_ids"] == ["active-event-1", "active-event-2"]
     assert json.dumps(["active-event-1", "active-event-2"]) in prompt.system
@@ -1475,7 +1476,7 @@ def test_review_prompt_forbids_reusing_answered_question_tags_for_comments():
         },
     )
 
-    prompt = BusinessDocumentAI._prompt(job)
+    prompt = build_prompt(job.job_type, job.payload)
 
     assert prompt.input_payload["job_input"]["closed_review_question_semantic_tags"] == ["eva_sync_completeness"]
     assert prompt.input_payload["job_input"]["resolved_comment_questions"] == [

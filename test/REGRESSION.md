@@ -61,6 +61,14 @@ reassess the affected checks before reusing their results.
 | Web/admin API | `python -m pytest test/testcases/test_web_api` and separately `python -m pytest test/testcases/test_admin_api` | Disposable stack; SDK installed, provider configuration and mapped admin endpoint |
 | Go | `bash test/run_go_regression.sh` | Linux CI after native build; all packages, disposable MinIO and tokenizer dictionaries |
 
+Repeat deployment preparation may reuse successful deterministic checks through
+`python -B -m tools.quality.check_cache -- <command>`. Source/test/dependency,
+command and environment identity must match; see [the local guide](../deployment/local/README.md#быстрый-образ-из-текущего-checkout).
+Do not cache live/API/DB/browser acceptance, mutable external input or release
+qualification. The cache behavior itself is covered by
+`test/unit_test/deployment/test_incremental_deploy.py` (real subprocess reruns and
+simulated Docker build orchestration); it does not prove a full image build.
+
 On Windows, use `.venv/Scripts/python.exe` for `python`. Before running local
 lanes, reserve a disposable task and redirect generated evidence/cache outside
 the reviewed source (the examples below run from the repository root):

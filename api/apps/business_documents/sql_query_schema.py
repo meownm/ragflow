@@ -10,7 +10,7 @@ from typing import Any
 
 from json_repair import repair_json
 
-from api.apps.business_documents.ai import MODEL_TIMEOUT_SECONDS, RAGFlowLLMAdapter
+from business_documents.adapters.llm import MODEL_TIMEOUT_SECONDS, RAGFlowLLMAdapter
 from api.apps.business_documents.assets import contract_schema, prompt_descriptor, prompt_text, validate_contract
 from api.apps.business_documents.authorization import BusinessDocumentAccess
 from api.apps.services.openmetadata_copilot_service import normalize_table
@@ -294,7 +294,7 @@ class BusinessDocumentSqlQuerySchemaService:
 
     @classmethod
     def project_graph(cls, tenant_id, actor_id, project_id, raw, is_admin=False, access_role="AUTHOR_CREATOR"):
-        from api.apps.business_documents.async_runtime import run_in_worker_loop
+        from business_documents.async_runtime import run_in_worker_loop
         from api.apps.business_documents.sql_query_access import authorize_sql_source, read_sql_project
 
         if (

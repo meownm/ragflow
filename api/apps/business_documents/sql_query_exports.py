@@ -6,7 +6,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from api.apps.business_documents.async_runtime import run_in_worker_loop
+from business_documents.async_runtime import run_in_worker_loop
 from api.apps.business_documents.sql_query_access import SqlReadSource, authorize_catalog_sources, authorize_sql_source, authorized_result, read_sql_project
 from api.apps.business_documents.sql_query_agents import _stable_hash
 from api.apps.business_documents.sql_query_schema import BusinessDocumentSqlQuerySchemaService

@@ -34,18 +34,22 @@ python3 -m tools.quality.release_runtime spa --path output/ci-image/web/dist \
   --sha "$SOURCE_SHA" --image-digest "$digest" --output output/ci-image/browser-build.json
 export IMAGE_DIGEST="$digest"
 python3 - <<'PY'
-import json,os,subprocess
+import json,os,re,subprocess
 from pathlib import Path
 docker=['sudo','-n','docker','--config',os.environ['CI_DOCKER_CONFIG']]
 def version(*args):return subprocess.check_output(args,text=True).strip()
 from tools.quality.release_evidence import file_manifest
 native=file_manifest(Path(os.environ.get('RAGFLOW_NATIVE_CACHE',str(Path.home()/'ragflow-native-libs'))))
 import hashlib
+native_build=json.loads(Path('output/ci-native/artifacts.json').read_text())
+builder_id=native_build.get('toolchain')
+if native_build.get('status') != 'PASS' or not isinstance(builder_id,str) or not re.fullmatch(r'sha256:[0-9a-f]{64}',builder_id):
+    raise ValueError('Native build must provide a successful immutable builder ID')
 toolchain={'python':version(*docker,'run','--rm','--entrypoint','/ragflow/.venv/bin/python',os.environ['IMAGE_DIGEST'],'--version'),
-           'go':version(*docker,'run','--rm','--entrypoint','go','ragflow-go-builder:go1.26.9-ubuntu22','version'),
+           'go':version(*docker,'run','--rm','--entrypoint','go',builder_id,'version'),
            'node':version(*docker,'run','--rm','--entrypoint','node',os.environ['IMAGE_DIGEST'],'--version'),'native':hashlib.sha256(json.dumps(native,sort_keys=True).encode()).hexdigest()}
 Path('output/ci-image/image-build.json').write_text(json.dumps({'sha':os.environ['SOURCE_SHA'],
     'digest':os.environ['IMAGE_DIGEST'],'toolchain':toolchain,'native_files':native,
-    'native_build':json.loads(Path('output/ci-native/artifacts.json').read_text())}))
+    'native_build':native_build}))
 PY
 printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"

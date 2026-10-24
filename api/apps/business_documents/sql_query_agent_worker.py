@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from api.apps.business_documents.async_runtime import run_in_worker_loop
+from business_documents.async_runtime import run_in_worker_loop
 from api.apps.business_documents.authorization import BusinessDocumentAccess
 from api.apps.business_documents.sql_query_planner import TenantQueryPlanner, query_planner_provenance
 from api.apps.business_documents.sql_query_revision_ai import propose_revision

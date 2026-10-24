@@ -6,10 +6,11 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import stat
 import subprocess
 import tomllib
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 
 MANIFEST = "candidate.json"
 OMITTED = {"docker/.env"}
@@ -42,6 +43,17 @@ def _relative_parts(name: str) -> tuple[str, ...]:
     return relative.parts
 
 
+def _comparison_path(path: PurePath) -> PurePath:
+    """Compare equivalent resolved DOS/UNC spellings without changing I/O paths."""
+    if isinstance(path, PureWindowsPath):
+        spelling = str(path)
+        if spelling.upper().startswith("\\\\?\\UNC\\"):
+            return PureWindowsPath("\\\\" + spelling[8:])
+        if re.fullmatch(r"\\\\\?\\[A-Za-z]:", path.drive):
+            return PureWindowsPath(spelling[4:])
+    return path
+
+
 def safe_path(root: Path, name: str) -> Path:
     if root.is_symlink() or root.is_junction():
         raise ValueError("linked root")
@@ -51,7 +63,7 @@ def safe_path(root: Path, name: str) -> Path:
             break
         if parent.is_symlink() or parent.is_junction():
             raise ValueError(f"linked path: {name}")
-    if not path.resolve().is_relative_to(root.resolve()):
+    if not _comparison_path(path.resolve()).is_relative_to(_comparison_path(root.resolve())):
         raise ValueError(f"path escapes root: {name}")
     return path
 
@@ -108,7 +120,8 @@ def snapshot(root: Path, destination: Path, include: list[str], allow_dirty: boo
     _check_artifact_path(destination)
     root = root.resolve()
     destination = destination.resolve()
-    if destination.is_relative_to(root) or root.is_relative_to(destination):
+    root_boundary, destination_boundary = _comparison_path(root), _comparison_path(destination)
+    if destination_boundary.is_relative_to(root_boundary) or root_boundary.is_relative_to(destination_boundary):
         raise ValueError("candidate must be outside the repository and its ancestors")
     if build.keys() - BUILD_KEYS or build.get("platform") != "linux/amd64":
         raise ValueError("explicit linux/amd64 build profile and only allowlisted build parameters required")

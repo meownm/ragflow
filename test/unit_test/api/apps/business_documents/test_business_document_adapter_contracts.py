@@ -18,6 +18,8 @@ from types import ModuleType
 
 import pytest
 
+from business_documents.adapters import llm as llm_module
+
 import common
 from test.unit_test.api.apps.business_documents.helpers import temporary_common_settings
 
@@ -32,10 +34,10 @@ with temporary_common_settings(contract_settings):
         api_apps.__path__ = [str(Path(__file__).resolve().parents[5] / "api" / "apps")]
         sys.modules["api.apps"] = api_apps
 
-    from api.apps.business_documents import ai as ai_module
     from api.apps.business_documents.adapters.storage import BusinessDocumentStorageAdapter, StorageRemovalVerificationError
-    from api.apps.business_documents.ai import BusinessDocumentAI, RAGFlowLLMAdapter
-    from api.apps.business_documents.async_runtime import run_in_worker_loop
+    from api.apps.business_documents.ai import BusinessDocumentAI
+    from business_documents.adapters.llm import RAGFlowLLMAdapter
+    from business_documents.async_runtime import run_in_worker_loop
     from api.apps.business_documents.evidence import BusinessDocumentEvidence, RAGFlowDatasetSearchAdapter
     from api.apps.business_documents.exports import BusinessDocumentExportService
 
@@ -138,7 +140,7 @@ def test_llm_adapter_preserves_tenant_prompt_payload_and_retry_contract(monkeypa
     async def drain_litellm_callbacks():
         drain_calls.append(True)
 
-    monkeypatch.setattr(ai_module, "_drain_litellm_callbacks", drain_litellm_callbacks)
+    monkeypatch.setattr(llm_module, "_drain_litellm_callbacks", drain_litellm_callbacks)
 
     payload = {"job_input": {"task_type": task_type}, "document": {"title": "Регламент"}}
     # The synchronous adapter owns its private loop in the production worker
@@ -257,7 +259,7 @@ async def test_litellm_callback_drain_does_not_stop_or_clear_the_global_worker(m
     logging_worker.GLOBAL_LOGGING_WORKER = FakeWorker()
     monkeypatch.setitem(sys.modules, logging_worker.__name__, logging_worker)
 
-    await ai_module._drain_litellm_callbacks()
+    await llm_module._drain_litellm_callbacks()
 
     assert calls == ["flush"]
 

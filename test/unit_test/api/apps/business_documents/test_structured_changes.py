@@ -212,6 +212,29 @@ def test_invalid_sources_fail_before_semantic_verification(database):
     assert BusinessDocumentRevision.select().count() == 1
 
 
+@pytest.mark.parametrize(
+    "defect,code",
+    [
+        ("omitted", "ACCEPTED_PROPOSAL_OMITTED"),
+        ("conflicting-disposition", "CHANGE_INPUT_DISPOSITION_CONFLICT"),
+        ("accepted-no-change", "ACCEPTED_PROPOSAL_ACKNOWLEDGED_NO_CHANGE"),
+    ],
+)
+def test_incomplete_or_conflicting_plan_stops_before_semantic_verification(database, defect, code):
+    requested, plan = request_plan()
+    sources = list(plan["operations"][0]["source_event_ids"])
+    plan["acknowledged_no_change_event_ids"] = [] if defect == "omitted" else sources
+    if defect != "conflicting-disposition":
+        plan["operations"] = []
+    adapter = PlanAdapter(plan, None)
+    assert BusinessDocumentWorker(ai=BusinessDocumentAI(adapter)).run_once()
+    job = BusinessDocumentJob.get_by_id(requested["job_id"])
+    assert job.status == "DEAD" and job.error["code"] == code
+    assert job.result["recovery"]["candidate"] is None
+    assert [call["job_input"]["task_type"] for call in adapter.calls] == ["PLAN_CHANGES"]
+    assert BusinessDocumentRevision.select().count() == 1
+
+
 def test_foreign_document_source_fails_before_semantic_verification(database):
     foreign = _request_and_complete_draft(_create(title="Другой документ"))
     comment = document_commands.execute(

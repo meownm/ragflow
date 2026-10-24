@@ -10,7 +10,7 @@ from typing import Any
 
 from peewee import SqliteDatabase
 
-from api.apps.business_documents.async_runtime import run_in_worker_loop
+from business_documents.async_runtime import run_in_worker_loop
 from api.apps.business_documents.authorization import BusinessDocumentAccess
 from api.apps.business_documents.sql_execution_registry import BusinessDocumentSqlExecutionRegistryService
 from api.apps.business_documents.sql_query_agents import BusinessDocumentSqlAgentService, _stable_hash
@@ -191,10 +191,13 @@ def _require_run_lifetime(run: BusinessDocumentSqlQueryRun) -> None:
 
 def _retained_sql_result(project: BusinessDocumentSqlQueryProject, run_id: str) -> BusinessDocumentSqlQueryRun | None:
     expire_project_results(project.tenant_id, project.id)
-    scope = ((BusinessDocumentSqlQueryRun.id == run_id) & (BusinessDocumentSqlQueryRun.project_id == project.id)
-             & (BusinessDocumentSqlQueryRun.tenant_id == project.tenant_id) & (BusinessDocumentSqlQueryRun.kind == "SQL"))
-    metadata_query = BusinessDocumentSqlQueryRun.select(BusinessDocumentSqlQueryRun.id, BusinessDocumentSqlQueryRun.status,
-                                                      BusinessDocumentSqlQueryRun.create_time).where(scope)
+    scope = (
+        (BusinessDocumentSqlQueryRun.id == run_id)
+        & (BusinessDocumentSqlQueryRun.project_id == project.id)
+        & (BusinessDocumentSqlQueryRun.tenant_id == project.tenant_id)
+        & (BusinessDocumentSqlQueryRun.kind == "SQL")
+    )
+    metadata_query = BusinessDocumentSqlQueryRun.select(BusinessDocumentSqlQueryRun.id, BusinessDocumentSqlQueryRun.status, BusinessDocumentSqlQueryRun.create_time).where(scope)
     database = BusinessDocumentSqlQueryRun._meta.database
     if database.in_transaction() and not isinstance(database, SqliteDatabase):
         # Keep the final source check and publication ahead of competing cleanup.

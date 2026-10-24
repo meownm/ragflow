@@ -310,7 +310,7 @@ class BusinessDocumentSqlAgentService:
                 artifacts.append(artifact)
             if source.schema_artifact_id:
                 # Reuse the current catalog/ACL check; copying never opens PostgreSQL.
-                from api.apps.business_documents.ai import run_in_worker_loop
+                from business_documents.async_runtime import run_in_worker_loop
                 from api.apps.business_documents.sql_query_schema import BusinessDocumentSqlQuerySchemaService
 
                 run_in_worker_loop(BusinessDocumentSqlQuerySchemaService.verify_snapshot(actor_id, artifacts[1].payload["schema_snapshot"], is_admin, access_role))
@@ -543,7 +543,7 @@ class BusinessDocumentSqlAgentService:
     @classmethod
     def restore_query(cls, tenant_id: str, actor_id: str, project_id: str, raw: object, is_admin: bool = False, access_role: BusinessDocumentRole | str = BusinessDocumentRole.AUTHOR_CREATOR):
         """Restore selected SQL through the same query commit and current guard."""
-        from api.apps.business_documents.async_runtime import run_in_worker_loop
+        from business_documents.async_runtime import run_in_worker_loop
         from api.apps.business_documents.sql_query_access import authorize_sql_source
         from api.apps.business_documents.sql_query_schema import BusinessDocumentSqlQuerySchemaService
 

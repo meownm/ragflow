@@ -10,7 +10,7 @@ from typing import Any
 
 from json_repair import repair_json
 
-from api.apps.business_documents.ai import MODEL_TIMEOUT_SECONDS, RAGFlowLLMAdapter
+from business_documents.adapters.llm import MODEL_TIMEOUT_SECONDS, RAGFlowLLMAdapter
 from api.apps.business_documents.assets import contract_schema, prompt_descriptor, prompt_text, validate_contract
 from business_documents.sql_query.requirements_analysis import (
     AnalyzeRequirementsCommand,

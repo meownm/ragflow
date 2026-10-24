@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from typing import Any, Callable, Protocol
 from urllib.parse import quote
 
-from api.apps.business_documents.async_runtime import run_in_worker_loop
+from business_documents.async_runtime import run_in_worker_loop
 from business_documents.application.errors import BusinessDocumentError
 from peewee import IntegrityError
 

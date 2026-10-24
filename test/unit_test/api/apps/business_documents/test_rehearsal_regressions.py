@@ -7,6 +7,7 @@ import pytest
 
 from test.unit_test.api.apps.business_documents.test_business_document_ai_export_boundaries import CoverageAdapter, _coverage_job, _coverage_plan
 from api.apps.business_documents.ai import BusinessDocumentAI
+from api.apps.business_documents.ai_prompt import build_prompt
 from api.apps.business_documents.assets import validate_document_ast
 
 
@@ -178,7 +179,7 @@ def test_model_input_explicitly_identifies_active_eva_comparison_without_comment
     job.payload["active_change_input_event_ids"] = ["eva"] if active else []
     job.payload["source_events"] = [{"event_id": "eva", "event_type": "EvaDocumentPulled", "payload": {"remote_markdown": "Полное сравниваемое содержание.", "review_cycle": 2}}]
     original = deepcopy(job.payload)
-    bundle = BusinessDocumentAI._prompt(job)
+    bundle = build_prompt(job.job_type, job.payload)
     inputs = bundle.input_payload["job_input"]
     assert inputs["active_eva_update_event_ids"] == (["eva"] if active else [])
     assert inputs["source_events"] == original["source_events"]

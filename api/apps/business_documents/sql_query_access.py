@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from api.apps.business_documents.async_runtime import run_in_worker_loop
+from business_documents.async_runtime import run_in_worker_loop
 from api.apps.business_documents.authorization import BusinessDocumentAccess
 from api.apps.business_documents.sql_query_agents import BusinessDocumentSqlAgentService, _stable_hash
 from api.apps.business_documents.sql_query_schema import BusinessDocumentSqlQuerySchemaService
@@ -91,7 +91,9 @@ def authorize_sql_source(
             raise ValueError("Stored parameter values do not match accepted decisions")
     except (ProjectCompilationError, QuerySpecificationValidationError, SqlGuardError, KeyError, TypeError, ValueError) as error:
         raise ConflictError("SQL_RESULT_SOURCE_UNAVAILABLE", "The saved SQL source cannot be verified") from error
-    entity_ids, changed = authorize_catalog_sources(project, actor_id, command, compiled, is_admin=is_admin, access_role=access_role, extra_entity_ids=extra_entity_ids, include_schema_tables=include_schema_tables)
+    entity_ids, changed = authorize_catalog_sources(
+        project, actor_id, command, compiled, is_admin=is_admin, access_role=access_role, extra_entity_ids=extra_entity_ids, include_schema_tables=include_schema_tables
+    )
     return SqlReadSource(compilation, requirements, schema, query, command, compiled, tuple(sorted(entity_ids)), changed)
 
 

@@ -6,7 +6,7 @@ import os
 import shutil
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import pytest
 
@@ -194,6 +194,76 @@ def link_directory(link, target):
         link.symlink_to(target, target_is_directory=True)
 
 
+@pytest.mark.parametrize(
+    "resolved_root,resolved_child,allowed",
+    [
+        (r"S:\cache", r"\\?\S:\cache\entry", True),
+        (r"\\?\S:\cache", r"S:\cache\entry", True),
+        (r"\\server\share\cache", r"\\?\UNC\server\share\cache\entry", True),
+        (r"\\?\UNC\server\share\cache", r"\\server\share\cache\entry", True),
+        (r"S:\Cache", r"\\?\s:\cache\entry", True),
+        (r"S:\cache", r"\\?\S:\cache-other\entry", False),
+        (r"S:\cache", r"\\?\T:\cache\entry", False),
+        (r"\\server\share\cache", r"\\?\UNC\server\other\cache\entry", False),
+        (r"\\server\share\cache", r"\\?\UNC\other\share\cache\entry", False),
+        (r"S:\cache", r"\\?\GLOBALROOT\Device\HarddiskVolume1\cache\entry", False),
+    ],
+)
+def test_safe_path_compares_windows_resolved_spellings_without_changing_boundary(tmp_path, monkeypatch, resolved_root, resolved_child, allowed):
+    root = tmp_path / "not-created"
+    child = root / "entry"
+    original = Path.resolve
+
+    def resolve(path, *args, **kwargs):
+        if path == root:
+            return PureWindowsPath(resolved_root)
+        if path == child:
+            return PureWindowsPath(resolved_child)
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", resolve)
+    if allowed:
+        assert candidate.safe_path(root, "entry") == child
+    else:
+        with pytest.raises(ValueError, match="path escapes root"):
+            candidate.safe_path(root, "entry")
+    assert not root.exists()
+
+
+@pytest.mark.parametrize("boundary", ["root", "parent", "leaf"])
+def test_safe_path_rejects_directory_links_at_every_boundary(tmp_path, boundary):
+    root = tmp_path / "root"
+    target = tmp_path / "target"
+    target.mkdir()
+    link = root if boundary == "root" else root / "linked"
+    if boundary != "root":
+        root.mkdir()
+    link_directory(link, target)
+    try:
+        name = {"root": "entry", "parent": "linked/entry", "leaf": "linked"}[boundary]
+        with pytest.raises(ValueError, match="link"):
+            candidate.safe_path(root, name)
+        assert not list(target.iterdir())
+    finally:
+        link.rmdir() if os.name == "nt" else link.unlink()
+
+
+def test_cache_lock_rejects_linked_root_before_creating_files(tmp_path):
+    from tools.quality.check_cache import cache_lock
+
+    target = tmp_path / "target"
+    target.mkdir()
+    cache = tmp_path / "linked-cache"
+    link_directory(cache, target)
+    try:
+        with pytest.raises(ValueError, match="linked root"):
+            with cache_lock(cache, "key"):
+                pytest.fail("A linked cache must not be opened")
+        assert not list(target.iterdir())
+    finally:
+        cache.rmdir() if os.name == "nt" else cache.unlink()
+
+
 def test_linked_source_root_rejected(repository, tmp_path):
     destination = tmp_path / "candidate"
     snapshot(repository, destination)
@@ -247,6 +317,22 @@ def test_nested_destination_and_unknown_build_parameters_rejected(repository, tm
         snapshot(repository, repository / "candidate")
     with pytest.raises(ValueError, match="allowlisted"):
         candidate.snapshot(repository, tmp_path / "candidate", [], False, {"platform": "linux/amd64", "SECRET_TOKEN": "synthetic"})
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows extended-length paths")
+@pytest.mark.parametrize("extended_root", [False, True])
+@pytest.mark.parametrize("destination_kind", ["nested", "same", "ancestor"])
+def test_snapshot_rejects_overlapping_windows_path_spellings(tmp_path, extended_root, destination_kind):
+    root = tmp_path / "repo"
+    root.mkdir()
+    destination = {"nested": root / "candidate", "same": root, "ancestor": tmp_path}[destination_kind]
+    # The overlap must be rejected before any Git access or source copying.
+    if extended_root:
+        root = Path("\\\\?\\" + str(root))
+    else:
+        destination = Path("\\\\?\\" + str(destination))
+    with pytest.raises(ValueError, match="outside the repository"):
+        candidate.snapshot(root, destination, [], False, {"platform": "linux/amd64"})
 
 
 def test_linked_tracked_source_parent_rejected(repository, tmp_path):

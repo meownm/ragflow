@@ -22,6 +22,7 @@ param(
     [switch]$BuildFrontend,
     [switch]$SkipBackup,
     [switch]$CheckOnly,
+    [switch]$ForceChecks,
     [ValidateRange(1, 168)]
     [int]$BackupFreshHours = 24,
     [ValidateRange(30, 1800)]
@@ -619,7 +620,12 @@ if ($deploymentImage) {
     elseif ($actualRevision -ne $CandidateRevision) {
         throw "Candidate image revision mismatch: expected $CandidateRevision, got '$actualRevision'."
     }
-    & docker run --rm --entrypoint /ragflow/.venv/bin/python $deploymentImage -c "import business_documents"
+    $checkPython = Join-Path $repoRoot ".venv/Scripts/python.exe"
+    $checkArguments = @("-B", (Join-Path $repoRoot "deployment/runner/feature_image.py"),
+        "--image-import", $deploymentImage, "--cache", (Join-Path $repoRoot ".local/cache/deploy"))
+    if ($ForceChecks) { $checkArguments += "--force" }
+    # Cached command: import business_documents; bound to immutable image ID and Docker engine.
+    & $checkPython @checkArguments
     if ($LASTEXITCODE -ne 0) {
         throw "Deployment image is incomplete: business_documents cannot be imported."
     }

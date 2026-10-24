@@ -19,28 +19,14 @@ print(verify(Path(sys.argv[1]))["source_id"])
 PY
 )"
 [[ "${source_id}" =~ ^[0-9a-f]{64}$ ]]
-chmod +x "${source}/build.sh"
+result="${root}/feature-result.json"
+python3 -B "${source}/deployment/runner/feature_image.py" --snapshot "${root}" "${@:2}" | tee "${root}/feature-build.log"
+# The cache may return a build from before a Git commit, with identical source bytes.
+tail -n 1 "${root}/feature-build.log" > "${result}"
+image_id="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["image_id"])' "${result}")"
+source_id="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["source_id"])' "${result}")"
 image="192.168.1.175:8443/docker-hosted/ragflow:dev-${source_id}"
-version="$(python3 - "${manifest}" <<'PY'
-import json
-import sys
-print(json.load(open(sys.argv[1], encoding="utf-8"))["identity"]["version"])
-PY
-)"
-cd "${source}"
-
-bash deployment/runner/build-go-linux.sh --artifacts
-DOCKER_BUILDKIT=1 docker build \
-  --build-arg "RAGFLOW_BUILD_VERSION=${version}-dev.${source_id:0:12}" \
-  --build-arg 'RAGFLOW_SOURCE_REVISION=' \
-  --label "org.ragflow.source-id=${source_id}" \
-  --label 'org.ragflow.validation=feature-build-only' \
-  -f Dockerfile -t "${image}" .
-
-actual="$(docker image inspect "${image}" --format '{{index .Config.Labels "org.ragflow.source-id"}}')"
-test "${actual}" = "${source_id}"
-test "$(docker run --rm --entrypoint cat "${image}" /ragflow/SOURCE_REVISION)" = unverified
-docker run --rm --entrypoint /ragflow/.venv/bin/python "${image}" -c 'import business_documents'
+docker tag "${image_id}" "${image}"
 
 # The host owns Nexus. Read the bootstrap credential only into docker login stdin.
 # No credential or authenticated Docker config is written to this source snapshot.

@@ -12,7 +12,7 @@ from typing import Any
 import sqlglot
 from json_repair import repair_json
 
-from api.apps.business_documents.ai import MODEL_TIMEOUT_SECONDS, RAGFlowLLMAdapter
+from business_documents.adapters.llm import MODEL_TIMEOUT_SECONDS, RAGFlowLLMAdapter
 from business_documents.sql_query.project_compilation import ProjectCompilationError, build_project_compile_command
 from business_documents.sql_query.query_specification import QuerySpecificationValidationError, SqlGuardError, compile_query_payload
 from business_documents.sql_query.revisions import preserves_document_facts, query_blocks

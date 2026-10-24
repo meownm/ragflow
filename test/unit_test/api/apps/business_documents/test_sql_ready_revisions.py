@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 import json
+import logging
 from time import perf_counter
 import tracemalloc
 from types import SimpleNamespace
@@ -249,10 +250,13 @@ def test_new_run_has_new_compilation_and_retains_the_three_result_quota(executio
     preserved(old, before, tenant=tenant, actor=actor)
 
 
-def test_project_projection_does_not_load_retained_row_payloads(project, monkeypatch, tmp_path):
+def test_project_projection_does_not_load_retained_row_payloads(project, monkeypatch, tmp_path, caplog):
     blob = "x" * 2_000_000
-    for number in range(3):
-        stored(project, run_id=f"result-{number}", rows=[[blob]])
+    # Fixture INSERTs must not leave multi-megabyte capture buffers whose growth
+    # is later attributed to the projection. Its own query logging stays enabled.
+    with caplog.at_level(logging.WARNING, logger="peewee"):
+        for number in range(3):
+            stored(project, run_id=f"result-{number}", rows=[[blob]])
     db = BusinessDocumentSqlQueryRun._meta.database
     execute = db.execute_sql
     statements = []

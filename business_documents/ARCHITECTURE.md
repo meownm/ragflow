@@ -44,6 +44,14 @@ review assessment for both the command response and direct command execution.
   owns claiming, heartbeat and execution; both use the same application rules
   when committing changes. Query assembly does not invoke command execution.
 
+The shared tenant-model adapter lives in `business_documents/adapters/llm.py`.
+Its imports do not load `api.apps`, database models or network clients; concrete
+RAGFlow integrations are loaded when a model call is executed. SQL scenarios
+import this adapter directly. `business_documents/async_runtime.py` owns private
+worker event loops. Document prompt composition lives in
+`api/apps/business_documents/ai_prompt.py` and consumes job snapshot values;
+`ai.py` owns generation, normalization and bounded recovery.
+
 The target scenario modules are `commands`, `job_completion`, `change_application`, `documents`,
 `eva_sync` and `queries`. Domain rules are grouped by `workflow`, `review`,
 `change_plan` and `comment_anchor`. Persistence separates aggregate writes from
@@ -109,6 +117,12 @@ before these completeness checks, retaining stable error priority/details.
 Confirmed comments, author answers and accepted proposals may coordinate changes
 across sections. Source section IDs describe context, not authorization limits.
 Build snapshot/evidence membership sets once per result.
+
+Generation and commit share `validate_plan_sources` for attribution, conflicting
+dispositions and completeness. Invalid candidates are rejected before semantic
+verification and before being checkpointed. Commit additionally checks event
+kinds, cycles and resolved sources against the locked current review, preserving
+the existing lease, tenant, version and transaction fences.
 
 EVA pull text is review context; accepted proposals and author answers determine
 which external changes become requirements. Generation and verification retain

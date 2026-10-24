@@ -8,9 +8,9 @@ from typing import Any
 
 from json_repair import repair_json
 
-from api.apps.business_documents.ai import MODEL_TIMEOUT_SECONDS, RAGFlowLLMAdapter
+from business_documents.adapters.llm import MODEL_TIMEOUT_SECONDS, RAGFlowLLMAdapter
 from api.apps.business_documents.assets import prompt_descriptor, prompt_text
-from api.apps.business_documents.async_runtime import run_in_worker_loop
+from business_documents.async_runtime import run_in_worker_loop
 from business_documents.application.errors import BusinessDocumentError
 from business_documents.sql_query.conclusion import ConclusionValidationError, validate_conclusion
 

@@ -7,7 +7,9 @@ from types import SimpleNamespace
 import pytest
 
 from test.unit_test.api.apps.business_documents import test_business_document_ai_cancellation as model_fixtures
-from api.apps.business_documents.ai import BusinessDocumentAI, RAGFlowLLMAdapter, _classification_response_tokens
+from api.apps.business_documents.ai import BusinessDocumentAI
+from api.apps.business_documents.ai_prompt import build_prompt
+from business_documents.adapters.llm import RAGFlowLLMAdapter, classification_response_tokens
 from api.apps.business_documents.assets import prompt_descriptor
 from api.apps.business_documents.evidence import MAX_CHUNK_CHARS, MAX_CHUNKS, MAX_TOTAL_CHARS
 from api.apps.business_documents.recovery import AIRecovery
@@ -32,7 +34,7 @@ def _classification(chunks):
     evidence = {"chunks": [{"source_ref": f"ragflow://dataset/d/document/doc/chunk/{i}", "content_hash": str(i), "content": content} for i, content in enumerate(chunks)]}
     capture = Capture()
     ai = BusinessDocumentAI(capture)
-    selected = ai._prepare_draft_evidence(job, ai._prompt(job, evidence), AIRecovery())
+    selected = ai._prepare_draft_evidence(job, build_prompt(job.job_type, job.payload, evidence), AIRecovery())
     assert ["".join(chunk["content_fragments"]) for chunk in selected.input_payload["evidence"]["chunks"]] == chunks
     return capture.entries
 
@@ -74,7 +76,7 @@ async def test_full_input_output_and_reserves_must_fit_before_provider_call(mode
     [(system, payload)] = _classification(["A. " * 1000])
     adapter = RAGFlowLLMAdapter()
     await adapter.async_generate("disposable-tenant", system, payload)
-    required = _classification_response_tokens([int(identifier) for identifier in payload["fragments"]])
+    required = classification_response_tokens([int(identifier) for identifier in payload["fragments"]])
     serialized = json.dumps(payload, ensure_ascii=False)
     input_tokens = max(len(encoder.encode(system)) + len(encoder.encode(serialized)), len(system.encode("utf-8")) + len(serialized.encode("utf-8")))
     exact_window = input_tokens + max(256, math.ceil(input_tokens / 20)) + required

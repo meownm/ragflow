@@ -56,6 +56,7 @@ def identity(root: Path, libraries: Path, toolchain: str) -> dict:
             "go.sum",
             "build.sh",
             "deployment/runner/build-go-linux.sh",
+            "deployment/runner/go_builder.py",
             "deployment/runner/Dockerfile.go-builder",
             "deployment/runner/native_artifacts.py",
             "ragflow_deps/prepare_native.py",

@@ -24,7 +24,7 @@ if "api.apps" not in sys.modules:
     api_apps.__path__ = [str(ROOT / "api/apps")]
     sys.modules["api.apps"] = api_apps
 
-from api.apps.business_documents.ai import RAGFlowLLMAdapter
+from business_documents.adapters.llm import RAGFlowLLMAdapter
 from api.apps.business_documents.sql_query_postgres import execute_postgres
 from api.apps.business_documents.sql_query_revision_ai import propose_revision
 from test.evals.sql_projects.database import disposable_database

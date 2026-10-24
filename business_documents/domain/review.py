@@ -30,6 +30,11 @@ def _latest_by(rows: Iterable[Record], key: str) -> dict[str, Record]:
     return result
 
 
+def applicable_change_inputs(active_inputs: Iterable[str], dispositions: Mapping[str, Record]) -> frozenset[str]:
+    """Defer ambiguous comments until their clarifying answers are assessed."""
+    return frozenset(event_id for event_id in active_inputs if dispositions.get(event_id, {}).get("disposition") != "NEEDS_QUESTION")
+
+
 @dataclass(frozen=True)
 class ReviewState:
     document_id: str
@@ -70,8 +75,7 @@ class ReviewState:
 
     @property
     def applicable_inputs(self) -> frozenset[str]:
-        """Defer ambiguous comments until their clarifying answers are assessed."""
-        return frozenset(event_id for event_id in self.active_inputs if self.comment_dispositions.get(event_id, {}).get("disposition") != "NEEDS_QUESTION")
+        return applicable_change_inputs(self.active_inputs, self.comment_dispositions)
 
     @property
     def review_changes_ready(self) -> bool:

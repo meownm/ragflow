@@ -11,8 +11,8 @@ from unittest.mock import Mock
 import openai
 import pytest
 
-from test.unit_test.api.apps.business_documents.test_business_document_adapter_contracts import ai_module
-from api.apps.business_documents.async_runtime import run_in_worker_loop
+from test.unit_test.api.apps.business_documents.test_business_document_adapter_contracts import RAGFlowLLMAdapter
+from business_documents.async_runtime import run_in_worker_loop
 from api.apps.business_documents.recovery import is_transient_failure
 from api.db.services import llm_service, tenant_llm_service
 from rag.llm.chat_model import OpenAI_APIChat
@@ -104,7 +104,7 @@ def test_adapter_closes_real_sdk_on_its_request_loop(provider, adapter_models, s
     async def call():
         loop = asyncio.get_running_loop()
         loops.append(loop)
-        task = asyncio.create_task(ai_module.RAGFlowLLMAdapter().async_generate("tenant", "system", {}, chunks.append if streaming else None))
+        task = asyncio.create_task(RAGFlowLLMAdapter().async_generate("tenant", "system", {}, chunks.append if streaming else None))
         try:
             if provider.hold:
                 assert await asyncio.to_thread(provider.received.wait, 3)
@@ -178,7 +178,7 @@ def test_adapter_preserves_operation_error_when_callback_flush_fails(provider, a
             await asyncio.sleep(0)
 
         monkeypatch.setattr(GLOBAL_LOGGING_WORKER, "flush", failing_flush)
-        task = asyncio.create_task(ai_module.RAGFlowLLMAdapter().async_generate("tenant", "system", {}, chunks.append if streaming else None))
+        task = asyncio.create_task(RAGFlowLLMAdapter().async_generate("tenant", "system", {}, chunks.append if streaming else None))
         try:
             if provider.hold:
                 assert await asyncio.to_thread(provider.received.wait, 3)

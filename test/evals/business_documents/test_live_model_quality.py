@@ -28,7 +28,8 @@ if "api.apps" not in sys.modules:
     api_apps.__path__ = [str(REPO_ROOT / "api" / "apps")]
     sys.modules["api.apps"] = api_apps
 
-from api.apps.business_documents.ai import BusinessDocumentAI, RAGFlowLLMAdapter
+from api.apps.business_documents.ai import BusinessDocumentAI
+from business_documents.adapters.llm import RAGFlowLLMAdapter
 from api.apps.business_documents.assets import published_template, validate_document_ast
 from api.apps.business_documents.evidence import BusinessDocumentEvidence
 from api.apps.business_documents.runtime import document_queries

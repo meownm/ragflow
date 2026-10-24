@@ -7,7 +7,10 @@ import httpx
 import pytest
 
 from test.unit_test.api.apps.business_documents import test_business_document_ai_export_boundaries  # noqa: F401 - shared import boundary
-from api.apps.business_documents.ai import BusinessDocumentAI, PromptBundle
+from api.apps.business_documents.ai import BusinessDocumentAI
+from api.apps.business_documents.ai_prompt import build_prompt
+from api.apps.business_documents import ai as ai_module
+from api.apps.business_documents.ai_prompt import PromptBundle
 from api.apps.business_documents.assets import prompt_descriptor
 from api.apps.business_documents import assets
 from api.apps.business_documents.recovery import AIRecovery
@@ -124,7 +127,7 @@ def test_excluded_source_cannot_be_cited_or_rebound_by_literal_matching(monkeypa
             return result
 
     ai = BusinessDocumentAI(Excluded())
-    monkeypatch.setattr(ai, "_prompt", lambda *_: prompt)
+    monkeypatch.setattr(ai_module, "build_prompt", lambda *_: prompt)
     output = ai.process(job, evidence={"chunks": [{"source_ref": prompt.input_payload["evidence"]["chunks"][0]["source_ref"], "content": "Reservation lasts 45 minutes."}]})
     assert not output["draft"]["sections"][0].get("evidence_refs")
     assert any(w["code"] == "EVIDENCE_CLASSIFICATION_UNAVAILABLE" for w in output["draft"]["warnings"])
@@ -165,7 +168,7 @@ def test_completed_source_decisions_are_reused_after_transport_failure(monkeypat
 
     adapter = FailingGeneration()
     ai = BusinessDocumentAI(adapter)
-    monkeypatch.setattr(ai, "_prompt", lambda *_: prompt)
+    monkeypatch.setattr(ai_module, "build_prompt", lambda *_: prompt)
     monkeypatch.setattr(ai, "_normalize_and_validate", lambda _job, raw, _evidence: raw)
     recovery = AIRecovery(clock=lambda: 100)
     with pytest.raises(httpx.ConnectError):
@@ -213,7 +216,7 @@ def test_changed_classifier_prompt_invalidates_the_pinned_draft_job(monkeypatch)
     monkeypatch.setattr(assets, "prompt_text", lambda name: original(name) + ("\nChanged policy" if name == "draft_evidence" else ""))
 
     with pytest.raises(ValidationError) as caught:
-        BusinessDocumentAI()._prompt(job)
+        build_prompt(job.job_type, job.payload)
 
     assert caught.value.code == "PROMPT_ASSET_CHANGED"
 
@@ -232,7 +235,7 @@ def test_classification_and_generation_share_remaining_time_and_call_limit(monke
 
     adapter = TimedAdapter()
     ai = BusinessDocumentAI(adapter)
-    monkeypatch.setattr(ai, "_prompt", lambda *_: prompt)
+    monkeypatch.setattr(ai_module, "build_prompt", lambda *_: prompt)
     monkeypatch.setattr(ai, "_normalize_and_validate", lambda _job, raw, _evidence: raw)
     recovery = AIRecovery(clock=lambda: now[0])
     assert ai.process(job, recovery=recovery) == {"draft": {}}
@@ -249,7 +252,7 @@ def test_classification_and_generation_share_remaining_time_and_call_limit(monke
 def dense_inputs():
     job, _ = inputs()
     evidence = {"chunks": [{"source_ref": f"ragflow://dataset/d/document/doc/chunk/{index}", "content": ". " * 1000} for index in range(12)]}
-    return job, BusinessDocumentAI()._prompt(job, evidence)
+    return job, build_prompt(job.job_type, job.payload, evidence)
 
 
 class DenseAdapter(Adapter):
@@ -284,7 +287,7 @@ def test_large_source_resumes_only_complete_batches_with_shared_call_budget(monk
     assert adapter.calls[1][2]["fragments"] == adapter.calls[2][2]["fragments"]
     assert all(not (first_batch & set(call[2]["fragments"])) for call in adapter.calls[1:])
     assert len(resumed.state["draft_evidence"]["decisions"]) == 12012 and resumed.state["calls"] == 5
-    monkeypatch.setattr(ai, "_prompt", lambda *_: prompt)
+    monkeypatch.setattr(ai_module, "build_prompt", lambda *_: prompt)
     monkeypatch.setattr(ai, "_normalize_and_validate", lambda _job, raw, _evidence: raw)
     assert ai.process(job, recovery=resumed) == {"draft": {}}
     assert resumed.state["calls"] == 6

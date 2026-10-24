@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from business_documents.domain.errors import RuleViolation
-from business_documents.domain.review import ReviewState
+from business_documents.domain.review import ReviewState, applicable_change_inputs
 
 
 @dataclass(frozen=True)
@@ -93,7 +93,34 @@ def validate_change_inputs(
     snapshot_source_ids: frozenset[str],
     evidence_source_refs: frozenset[str],
 ) -> ChangeInputs:
-    """Validate a schema-checked plan in source order, without performing I/O."""
+    """Revalidate attribution and current review state in the commit transaction."""
+    sources, evidence, acknowledgements = validate_plan_sources(
+        plan,
+        snapshot_source_ids=snapshot_source_ids,
+        evidence_source_refs=evidence_source_refs,
+        active_inputs=review.active_inputs,
+        accepted_inputs=review.accepted_inputs,
+        dispositions={event_id: review.comment_dispositions.get(event_id, {}) for event_id in review.comment_events},
+        review=review,
+    )
+    return ChangeInputs(sources, evidence, acknowledgements, review.pending_proposal_ids, tuple(review.open_question_ids("REVIEW")))
+
+
+def validate_plan_sources(
+    plan: Mapping[str, Any],
+    *,
+    snapshot_source_ids: frozenset[str],
+    evidence_source_refs: frozenset[str],
+    active_inputs: frozenset[str],
+    accepted_inputs: frozenset[str],
+    dispositions: Mapping[str, Mapping[str, Any]],
+    review: ReviewState | None = None,
+) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    """One attribution/completeness policy for pinned generation and current commit.
+
+    A commit additionally checks event kinds, review cycles and resolved inputs
+    against its locked review; generation uses its already pinned active sources.
+    """
 
     sources: list[str] = []
     evidence: list[str] = []
@@ -102,18 +129,24 @@ def validate_change_inputs(
             raise RuleViolation("UNSUPPORTED_CHANGE", "Every change operation requires source_event_ids")
         validate_snapshot_sources(snapshot_source_ids, operation["source_event_ids"])
         validate_evidence_sources(evidence_source_refs, operation.get("evidence_refs", []))
-        _validate_operation_sources(review, operation)
+        if review is not None:
+            _validate_operation_sources(review, operation)
+        else:
+            validate_comment_change_sources(dispositions, (event_id for event_id in operation["source_event_ids"] if event_id in dispositions))
         sources.extend(operation["source_event_ids"])
         evidence.extend(operation.get("evidence_refs", []))
     acknowledgements = plan.get("acknowledged_no_change_event_ids", [])
+    if review is None:
+        validate_snapshot_sources(snapshot_source_ids, acknowledgements)
     acknowledged = set(acknowledgements)
-    invalid = sorted(acknowledged - review.active_inputs)
+    invalid = sorted(acknowledged - active_inputs)
     if invalid:
         raise RuleViolation(
             "INVALID_NO_CHANGE_ACKNOWLEDGEMENT",
             "Only authorizing events from the active review cycle can be acknowledged as no-change",
             {"event_ids": invalid},
         )
+    validate_snapshot_sources(snapshot_source_ids, acknowledgements)
     used = set(sources)
     duplicate = sorted(acknowledged & used)
     if duplicate:
@@ -122,16 +155,17 @@ def validate_change_inputs(
             "A review input cannot both authorize a change and be acknowledged as no-change",
             {"event_ids": duplicate},
         )
-    accepted_no_change = sorted(acknowledged & review.accepted_inputs)
+    accepted_no_change = sorted(acknowledged & accepted_inputs)
     if accepted_no_change:
         raise RuleViolation("ACCEPTED_PROPOSAL_ACKNOWLEDGED_NO_CHANGE", "An accepted proposal must authorize a concrete change operation", {"event_ids": accepted_no_change})
     validate_comment_change_sources(
-        review.comment_dispositions,
-        (event_id for event_id in acknowledged if review.events_by_id[event_id]["event_type"] == "AuthorCommentAdded"),
+        dispositions,
+        (event_id for event_id in acknowledged if event_id in dispositions),
         no_change=True,
     )
-    missing = review.applicable_inputs - used - acknowledged
-    missing_accepted = sorted(missing & review.accepted_inputs)
+    applicable = applicable_change_inputs(active_inputs, dispositions)
+    missing = applicable - used - acknowledged
+    missing_accepted = sorted(missing & accepted_inputs)
     if missing_accepted:
         raise RuleViolation(
             "ACCEPTED_PROPOSAL_OMITTED",
@@ -144,4 +178,33 @@ def validate_change_inputs(
             "Every active review answer and comment must authorize a change or be explicitly acknowledged as no-change",
             {"event_ids": sorted(missing)},
         )
-    return ChangeInputs(tuple(sources), tuple(dict.fromkeys(evidence)), tuple(acknowledgements), review.pending_proposal_ids, tuple(review.open_question_ids("REVIEW")))
+    return tuple(sources), tuple(dict.fromkeys(evidence)), tuple(acknowledgements)
+
+
+def active_change_input_event_ids(job_payload: dict[str, Any]) -> list[str]:
+    pinned = job_payload.get("active_change_input_event_ids")
+    if isinstance(pinned, list) and all(isinstance(event_id, str) for event_id in pinned):
+        return list(dict.fromkeys(pinned))
+    protocol = job_payload.get("protocol")
+    if not isinstance(protocol, dict):
+        return []
+    event_ids: list[str] = []
+    for question in protocol.get("questions", []):
+        answer = question.get("answer") if isinstance(question, dict) else None
+        if isinstance(answer, dict) and isinstance(answer.get("source_event_id"), str):
+            event_ids.append(answer["source_event_id"])
+    for proposal in protocol.get("proposals", []):
+        if isinstance(proposal, dict) and proposal.get("decision") == "ACCEPTED" and isinstance(proposal.get("decision_event_id"), str):
+            event_ids.append(proposal["decision_event_id"])
+    for comment in protocol.get("comments", []):
+        if isinstance(comment, dict) and isinstance(comment.get("source_event_id"), str):
+            event_ids.append(comment["source_event_id"])
+    return list(dict.fromkeys(event_ids))
+
+
+def comment_dispositions(job_payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {
+        comment["source_event_id"]: comment.get("disposition") or {}
+        for comment in (job_payload.get("protocol") or {}).get("comments", [])
+        if isinstance(comment, dict) and isinstance(comment.get("source_event_id"), str)
+    }

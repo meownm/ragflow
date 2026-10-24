@@ -10,7 +10,8 @@ import httpx
 import pytest
 
 from test.unit_test.api.apps.business_documents.test_structured_changes import PlanAdapter, request_plan, database as structured_database
-from api.apps.business_documents.ai import BusinessDocumentAI, RAGFlowLLMAdapter
+from api.apps.business_documents.ai import BusinessDocumentAI
+from business_documents.adapters.llm import RAGFlowLLMAdapter
 from api.apps.business_documents import recovery as recovery_module, worker as worker_module
 from api.apps.business_documents.recovery import AIRecovery, is_transient_failure, retry_delay_ms
 from api.apps.business_documents.worker import BusinessDocumentJobQueue, BusinessDocumentWorker

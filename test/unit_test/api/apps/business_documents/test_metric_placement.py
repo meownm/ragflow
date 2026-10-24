@@ -16,6 +16,7 @@ from test.unit_test.api.apps.business_documents.test_business_document_service i
     database as service_database,
 )
 from api.apps.business_documents.ai import BusinessDocumentAI
+from api.apps.business_documents.ai_prompt import build_prompt
 from api.apps.business_documents.runtime import document_commands, document_queries
 from api.apps.business_documents.worker import BusinessDocumentWorker
 from api.db.db_models import BusinessDocumentJob, BusinessDocumentRevision
@@ -187,14 +188,15 @@ def test_overlapping_comment_does_not_replace_accepted_proposal_source(database)
     failed = BusinessDocumentJob.get_by_id(job.id)
     assert failed.error["code"] == "ACCEPTED_PROPOSAL_OMITTED"
     assert document_queries.get_document(job.document_id, AUTHOR)["change_preview"] is None
-    assert [payload["job_input"]["task_type"] for _, payload in adapter.calls] == ["PLAN_CHANGES", "VERIFY_REQUIREMENT_COVERAGE"]
+    assert [payload["job_input"]["task_type"] for _, payload in adapter.calls] == ["PLAN_CHANGES"]
+    assert failed.result["recovery"]["candidate"] is None
     assert BusinessDocumentRevision.select().count() == 1
 
 
 def test_planner_receives_complete_confirmed_content_independent_of_its_original_section(database):
     _, job, _ = _request_placement()
     snapshot = deepcopy(job.payload)
-    prompt = BusinessDocumentAI._prompt(job)
+    prompt = build_prompt(job.job_type, job.payload)
     fragments = prompt.input_payload["job_input"]["confirmed_requirement_fragments"]
     proposal = job.payload["protocol"]["proposals"][0]["decision_event_id"]
     answer = job.payload["protocol"]["questions"][0]["answer"]["source_event_id"]
@@ -208,7 +210,7 @@ def test_planner_receives_complete_confirmed_content_independent_of_its_original
     inactive = deepcopy(job.payload["protocol"]["proposals"][0])
     inactive.update(decision="REJECTED", decision_event_id="rejected-event", text="Удалить все метрики")
     job.payload["protocol"]["proposals"].append(inactive)
-    inputs = BusinessDocumentAI._prompt(job).input_payload["job_input"]
+    inputs = build_prompt(job.job_type, job.payload).input_payload["job_input"]
     assert "rejected-event" not in {fragment["source_id"] for fragment in inputs["confirmed_requirement_fragments"].values()}
     assert inputs["protocol"]["proposals"][-1] == inactive
 

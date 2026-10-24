@@ -1,7 +1,10 @@
 """Validate the bounded verdict of one semantic review of a structured diff."""
 
 from collections.abc import Collection, Mapping
+import re
+from typing import Any
 
+from business_documents.domain.change_plan import active_change_input_event_ids
 from business_documents.domain.errors import RuleViolation
 from business_documents.domain.content_quality import semantic_duplicate_section_pairs
 
@@ -108,3 +111,53 @@ def validate_requirement_coverage(report: object, sources: Mapping[str, Mapping[
         ):
             invalid()
     return {"status": status, "issues": [{key: issue[key] for key in ("source_id", "section_id", "reason")} for issue in issues]}
+
+
+def confirmed_change_sources(payload: dict[str, Any]) -> dict[str, dict[str, str]]:
+    active = set(active_change_input_event_ids(payload))
+    protocol = payload.get("protocol") or {}
+    sources: dict[str, str] = {}
+    contexts: dict[str, str] = {}
+    section_titles = {section["id"]: section["title"] for section in payload.get("current_revision", {}).get("document_ast", {}).get("sections", [])}
+    for comment in protocol.get("comments", []):
+        event_id = comment.get("source_event_id")
+        if event_id in active and (comment.get("disposition") or {}).get("disposition") == "CONFIRMED_CHANGE":
+            sources[event_id] = comment["text"]
+            if comment.get("section_id"):
+                section_id = comment["section_id"]
+                contexts[event_id] = f"Комментарий к разделу {section_id} «{section_titles.get(section_id, '')}»."
+                if quote := (comment.get("anchor") or {}).get("selected_text"):
+                    contexts[event_id] += f" Выделенный фрагмент: {quote}"
+    for proposal in protocol.get("proposals", []):
+        event_id = proposal.get("decision_event_id")
+        if event_id in active and proposal.get("decision") == "ACCEPTED":
+            sources[event_id] = proposal["text"]
+            if proposal.get("target_section_id"):
+                section_id = proposal["target_section_id"]
+                contexts[event_id] = f"Предложение к разделу {section_id} «{section_titles.get(section_id, '')}»."
+    for question in protocol.get("questions", []):
+        answer = question.get("answer") or {}
+        event_id = answer.get("source_event_id")
+        if event_id in active:
+            selected = next((option for option in question.get("options", []) if option.get("option_id") == answer.get("selected_option_id")), {})
+            sources[event_id] = answer.get("custom_answer") or selected.get("label") or ""
+            contexts[event_id] = question["text"]
+    return {event_id: {"text": text, **({"context": contexts[event_id]} if event_id in contexts else {})} for event_id, text in sources.items()}
+
+
+def active_eva_update_event_ids(payload: dict[str, Any]) -> list[str]:
+    active = set(active_change_input_event_ids(payload))
+    return [
+        event["event_id"]
+        for event in payload.get("source_events", [])
+        if event.get("event_id") in active and event.get("event_type") == "EvaDocumentPulled" and isinstance(event.get("payload", {}).get("remote_markdown"), str)
+    ]
+
+
+def requirement_fragments(sources: dict[str, dict[str, str]]) -> dict[str, dict[str, str]]:
+    return {
+        f"{source_id}:{index}": {"source_id": source_id, "text": text.strip(), **({"context": source["context"]} if "context" in source else {})}
+        for source_id, source in sources.items()
+        for index, text in enumerate(re.split(r"(?<=[.!?;])\s+|\n+", source["text"]))
+        if text.strip()
+    }

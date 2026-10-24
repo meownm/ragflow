@@ -8,6 +8,7 @@ from test.unit_test.api.apps.business_documents.test_accept_proposal import _doc
 from test.unit_test.api.apps.business_documents.test_business_document_service import AUTHOR, TENANT, _command
 from test.unit_test.api.apps.business_documents.test_structured_changes import PlanAdapter, request_plan
 from api.apps.business_documents.ai import BusinessDocumentAI
+from api.apps.business_documents.ai_prompt import build_prompt
 from api.apps.business_documents.runtime import document_commands, document_queries
 from api.apps.business_documents.worker import BusinessDocumentWorker
 from api.db.db_models import BusinessDocumentJob, BusinessDocumentRevision
@@ -50,7 +51,7 @@ def test_worker_uses_block_schema_full_context_and_persists_stable_ids(database)
     job = BusinessDocumentJob.get_by_id(requested["job_id"])
     before = deepcopy(job.payload["current_revision"]["document_ast"])
     adapter = PlanAdapter(block_plan(job), None)
-    assert '"enum": ["ADD_SECTION", "DELETE_BLOCK", "INSERT_BLOCK", "REPLACE_BLOCK"]' in BusinessDocumentAI._prompt(job).system
+    assert '"enum": ["ADD_SECTION", "DELETE_BLOCK", "INSERT_BLOCK", "REPLACE_BLOCK"]' in build_prompt(job.job_type, job.payload).system
     assert BusinessDocumentWorker(ai=BusinessDocumentAI(adapter)).run_once()
     job = BusinessDocumentJob.get_by_id(job.id)
     assert job.status == "COMPLETED", job.error

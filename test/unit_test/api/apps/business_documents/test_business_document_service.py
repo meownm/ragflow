@@ -45,6 +45,7 @@ from api.apps.business_documents.runtime import document_creation
 from api.apps.business_documents.adapters.persistence import DOCUMENT_TABLES
 from api.apps.business_documents.runtime import document_deletion, change_user_role
 from api.apps.business_documents.ai import BusinessDocumentAI
+from api.apps.business_documents.ai_prompt import build_prompt
 from api.apps.business_documents.stream_events import BusinessDocumentStreamEvents
 from api.apps.business_documents.worker import BusinessDocumentJobQueue, BusinessDocumentWorker
 from api.db.db_models import (
@@ -4209,7 +4210,6 @@ def test_job_snapshot_batches_review_reads_and_plan_validation_performs_no_queri
     assert {key: value for key, value in snapshot["current_revision"].items() if key != "section_hashes"} == {
         key: value for key, value in document["current_revision"].items() if key != "section_texts"
     }
-    from api.apps.business_documents.ai import BusinessDocumentAI
     from api.apps.business_documents.assets import prompt_descriptor
 
     snapshot["prompt"] = prompt_descriptor("PLAN_CHANGES")
@@ -4217,7 +4217,7 @@ def test_job_snapshot_batches_review_reads_and_plan_validation_performs_no_queri
     old_job = SimpleNamespace(
         payload={**snapshot, "current_revision": {**snapshot["current_revision"], "section_texts": document["current_revision"]["section_texts"]}}, job_type="PLAN_CHANGES", attempt=1
     )
-    assert BusinessDocumentAI._prompt(new_job).input_payload == BusinessDocumentAI._prompt(old_job).input_payload
+    assert build_prompt(new_job.job_type, new_job.payload).input_payload == build_prompt(old_job.job_type, old_job.payload).input_payload
     with count_queries(only_select=True) as review_queries:
         review = load_review_state(row.id, row.active_review_cycle)
     assert review_queries.count <= 7  # Includes the bounded cross-cycle answered-section projection.

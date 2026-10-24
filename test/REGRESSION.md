@@ -3,6 +3,18 @@
 Run each lane separately: the live API conftest selects priority markers and
 must not change the selection of unit tests or P0 document requirements.
 
+Before selecting lanes, use the task's acceptance outcomes from
+[AGENTS.md](../AGENTS.md#task-scope-and-ownership). In the existing task/PR report,
+associate each outcome with an existing check, a necessary new check or an
+explicit acceptance gap; a test count alone does not establish completeness.
+Check fixture expectations against the original requirement or authoritative
+schema/template, rather than deriving both input and expected output from the
+implementation. Preserve the required content and ordering in representative
+fixtures: a one-section document cannot prove that a complete template survives
+editing or history navigation. Reuse existing traceability and evidence files;
+small changes need no separate matrix. If requirements or tested source change,
+reassess the affected checks before reusing their results.
+
 | Lane | Command from repository root | Boundary |
 | --- | --- | --- |
 | On-demand security | See [Trivy, Syft, Gitleaks and Grype commands](../tools/security/README.md) | Explicit request only; source/image vulnerability and configuration scans, SBOM, redacted file/history secret checks. Missing tools/databases and partial scans are INCOMPLETE; no runtime or authorization acceptance |

@@ -1,6 +1,6 @@
 ### Summary
 
-Describe the concrete problem and resulting behavior, including what users observe.
+Describe the concrete problem and resulting behavior, including what users observe. Reuse or link the task's accepted outcomes; explain any change to them.
 
 ### Scope
 
@@ -10,10 +10,12 @@ Describe the concrete problem and resulting behavior, including what users obser
 
 ### Verification
 
-List actual commands, environment and results. Identify missing prerequisites or untested behavior explicitly; do not report skipped required checks as passed.
+For each accepted outcome, give the actual check/result or explicit gap, with the tested source identity and environment. Link existing CI reports and evidence instead of copying logs; do not report skipped required checks as passed.
 
 - [ ] Relevant behavior, boundaries and consumers were checked.
 - [ ] Core changes are justified and kept focused.
 - [ ] Coverage scope and exceptions were not weakened to hide a regression.
 
 For schema/DSL or upstream changes, include source/target versions, migration checks on previous-release data and recovery evidence. Mark non-applicable items with a reason.
+
+When publication/deployment is in scope, link its existing receipt and image/source identity, and state runtime acceptance or the remaining gap. For tasks in the [workflow pilot](../AGENTS.md#task-scope-and-ownership), reuse the task's short measurement line. No separate progress log or metrics report is required.

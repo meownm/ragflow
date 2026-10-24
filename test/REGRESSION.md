@@ -220,7 +220,9 @@ Re-evaluate the threshold for other embedding models; do not lower the oracle
 or infer a quality gate from one run.
 
 `browser-regression.yml` runs the isolated browser matrix on pull requests.
-`pr-smoke.yml` runs without the `ci` label: it checks changed-path selection,
+`pr-smoke.yml` runs on pushes to `main` and pull requests without the `ci` label.
+It compares the complete push range from `event.before`, or the PR base; a missing
+base selects all lanes and checks the entire tree. It checks changed-path selection,
 patch whitespace, applicable small Python boundary/tooling checks, changed-file
 lint, frontend type-checking, and changed Go formatting. It does not replace
 the engine, live-model, or browser lanes and is not yet a required branch rule.

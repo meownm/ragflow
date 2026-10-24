@@ -7,8 +7,37 @@ import sys
 import tempfile
 import unittest
 
+import yaml
+
 
 SCRIPT = Path(__file__).resolve().parents[4] / "deployment/runner/select-ci-lanes.sh"
+WORKFLOW = yaml.safe_load((SCRIPT.parents[2] / ".github/workflows/pr-smoke.yml").read_text(encoding="utf-8"))
+
+
+class SmokeWorkflowContractTest(unittest.TestCase):
+    def test_push_and_pr_pass_their_complete_base_to_selection(self):
+        self.assertEqual(WORKFLOW["on"]["push"]["branches"], ["main"])
+        self.assertIn("pull_request", WORKFLOW["on"])
+        steps = WORKFLOW["jobs"]["changed-paths"]["steps"]
+        resolver = next(step for step in steps if step.get("id") == "base")
+        self.assertIn("github.event.before", resolver["env"]["BASE_SHA"])
+        self.assertIn("github.event.pull_request.base.sha", resolver["env"]["BASE_SHA"])
+        selector = next(step for step in steps if step.get("id") == "select")
+        self.assertEqual(selector["env"]["CI_BEFORE"], "${{ github.event.before }}")
+        self.assertEqual(selector["env"]["CI_PR_BASE"], "${{ github.event.pull_request.base.sha }}")
+
+    def test_all_diff_consumers_use_resolved_base_and_events_do_not_cancel_each_other(self):
+        jobs = WORKFLOW["jobs"]
+        self.assertEqual(jobs["changed-paths"]["outputs"]["base_sha"], "${{ steps.base.outputs.sha }}")
+        for name, job in jobs.items():
+            for step in job["steps"]:
+                if '"$BASE_SHA"' in step.get("run", "") or 'os.environ["BASE_SHA"]' in step.get("run", ""):
+                    if step.get("id") == "base":
+                        continue
+                    expected = "${{ steps.base.outputs.sha }}" if name == "changed-paths" else "${{ needs.changed-paths.outputs.base_sha }}"
+                    self.assertEqual(step["env"]["BASE_SHA"], expected)
+        self.assertIn("github.event_name", WORKFLOW["concurrency"]["group"])
+        self.assertIn("github.ref", WORKFLOW["concurrency"]["group"])
 
 
 @unittest.skipIf(sys.platform == "win32", "The CI lane selector runs in Bash on Linux")
@@ -46,6 +75,32 @@ class CiLaneSelectionTest(unittest.TestCase):
         }
         subprocess.run(["bash", str(SCRIPT)], cwd=self.repo, env=env, check=True)
         return dict(line.split("=", 1) for line in output.read_text().splitlines())
+
+    def resolve_base(self, base):
+        output = self.repo / "base.txt"
+        output.write_text("", encoding="utf-8")
+        resolver = next(step for step in WORKFLOW["jobs"]["changed-paths"]["steps"] if step.get("id") == "base")
+        subprocess.run(
+            ["bash", "-c", resolver["run"]],
+            cwd=self.repo,
+            env={**os.environ, "BASE_SHA": base, "GITHUB_OUTPUT": str(output)},
+            check=True,
+        )
+        return dict(line.split("=", 1) for line in output.read_text().splitlines())["sha"]
+
+    def test_workflow_diff_includes_all_pushed_commits(self):
+        self.commit("api/example.py", "value = 1")
+        self.commit("web/example.ts", "export const value = 1")
+        base = self.resolve_base(self.before)
+        self.assertEqual(set(self.git("diff", "--name-only", base, "HEAD").stdout.splitlines()), {"api/example.py", "web/example.ts"})
+
+    def test_workflow_missing_base_checks_entire_tree_instead_of_skipping(self):
+        self.commit("api/example.py", "value = 1")
+        for value in ("", "0" * 40, "f" * 40, "invalid"):
+            with self.subTest(base=value):
+                base = self.resolve_base(value)
+                self.assertEqual(set(self.git("diff", "--name-only", base, "HEAD").stdout.splitlines()), {"README.md", "api/example.py"})
+                self.assertEqual(set(self.select(before=value).values()), {"true"})
 
     def test_push_includes_every_commit_in_event(self):
         self.commit("api/example.py", "value = 1")

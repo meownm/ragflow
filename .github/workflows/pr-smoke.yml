@@ -1,6 +1,8 @@
 name: pr-smoke
 
-on:
+'on':
+  push:
+    branches: [main]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 
@@ -8,13 +10,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: pr-smoke-${{ github.event.pull_request.number }}
+  group: pr-smoke-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   changed-paths:
     runs-on: ubuntu-latest
     outputs:
+      base_sha: ${{ steps.base.outputs.sha }}
       has_go_changes: ${{ steps.select.outputs.has_go_changes }}
       has_python_changes: ${{ steps.select.outputs.has_python_changes }}
       has_web_changes: ${{ steps.select.outputs.has_web_changes }}
@@ -22,14 +25,26 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+      - name: Resolve complete event base
+        id: base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] && git cat-file -e "${BASE_SHA}^{commit}"; then
+            echo "sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
+          else
+            # An initial push or unavailable base must check the entire tree.
+            echo "sha=$(git hash-object -w -t tree /dev/null)" >> "$GITHUB_OUTPUT"
+          fi
       - name: Check patch whitespace
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ steps.base.outputs.sha }}
         run: git diff --check "$BASE_SHA" HEAD
       - name: Select changed lanes
         id: select
         env:
           CI_PR_BASE: ${{ github.event.pull_request.base.sha }}
+          CI_BEFORE: ${{ github.event.before }}
         run: bash deployment/runner/select-ci-lanes.sh
 
   python-smoke:
@@ -46,10 +61,10 @@ jobs:
       - name: Install small check environment
         run: |
           uv venv --python 3.13
-          uv pip install pytest pytest-asyncio ruff==0.13.3
+          uv pip install pytest pytest-asyncio pyyaml ruff==0.13.3
       - name: Lint changed Python files
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ needs.changed-paths.outputs.base_sha }}
         run: |
           .venv/bin/python - <<'PY'
           import os
@@ -93,7 +108,7 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Lint changed frontend files
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ needs.changed-paths.outputs.base_sha }}
         run: |
           python3 - <<'PY'
           import os
@@ -125,7 +140,7 @@ jobs:
           go-version-file: go.mod
       - name: Check changed Go formatting
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ needs.changed-paths.outputs.base_sha }}
         run: |
           python3 - <<'PY'
           import os

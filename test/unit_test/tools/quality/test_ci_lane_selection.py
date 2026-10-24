@@ -125,6 +125,16 @@ class CiLaneSelectionTest(unittest.TestCase):
             {"has_go_changes": "false", "has_python_changes": "false", "has_web_changes": "false"},
         )
 
+    def test_deleted_python_source_still_selects_python(self):
+        self.commit("api/removed.py", "value = 1")
+        before = self.git("rev-parse", "HEAD").stdout.strip()
+        self.git("rm", "api/removed.py")
+        self.git("commit", "-qm", "remove Python source")
+        self.assertEqual(
+            self.select(before=before),
+            {"has_go_changes": "false", "has_python_changes": "true", "has_web_changes": "false"},
+        )
+
     def test_documentation_embedded_in_web_selects_web(self):
         self.commit("api/example.py", "value = 1")
         self.commit("docs/references/http_api_reference.md", "# API")

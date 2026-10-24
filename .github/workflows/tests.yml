@@ -617,7 +617,7 @@ jobs:
       image_artifact: image-${{ github.run_id }}-${{ github.run_attempt }}
       image_digest: ${{ needs.build_image.outputs.digest }}
   evidence:
-    if: always()
+    if: ${{ always() && needs.ready.result != 'skipped' }}
     needs:
     - ready
     - ragflow_preflight

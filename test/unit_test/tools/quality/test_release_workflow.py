@@ -45,7 +45,7 @@ def test_publisher_is_rechecked_after_qualification_before_runner_assignment():
 def test_qualification_is_single_owner_and_release_does_not_select_changes():
     jobs = workflow("tests.yml")["jobs"]
     assert set(jobs["evidence"]["needs"]) >= {"build_image", "frontend", "browser_regression", "package_python", "build_cli", "ragflow_tests_infinity", "ragflow_tests_elasticsearch"}
-    assert jobs["evidence"]["if"] == "always()"
+    assert jobs["evidence"]["if"] == "${{ always() && needs.ready.result != 'skipped' }}"
     assert jobs["browser_regression"]["with"]["image_digest"] == "${{ needs.build_image.outputs.digest }}"
     for engine in ("infinity", "elasticsearch"):
         lane = jobs["ragflow_tests_" + engine]

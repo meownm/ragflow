@@ -52,6 +52,8 @@ Backend entrypoints/services live in `api/`, retrieval and parsing in `rag/` and
 - If already committed, reuse its SHA and push unpublished deployment refs; do not create an empty commit. Verify remote branch/tag targets against the intended commit before reporting completion. Report commit SHA, deployed source identity and push result. If push fails, report the concrete blocker and unfinished publication without asking for authorization again.
 - Failed deployment and `-CheckOnly` must not trigger commit/push. Explicit task-level no-commit/no-push instructions still apply.
 - For an upstream update, use a separate integration branch/worktree from a complete committed local snapshot. Merge a verified upstream commit; do not rewrite published fork history or use blanket ours/theirs conflict resolution. Test migrations and recovery before release. A new worktree does not include uncommitted work automatically.
+- Keep `origin.fetch` on `+refs/heads/*:refs/remotes/origin/*`. Remove completed branches only after proving their tips are included in published `main`, checking open PRs and worktrees, and saving recoverable refs. Preserve dirty or active worktrees; use exact-SHA leases for remote deletion.
+- Before removing a worktree, preserve unique ignored configuration, logs and reports and check runtime mounts/processes. On Windows use `git -c core.longpaths=true worktree remove`; detach shared dependency junctions as links only. If removal is partial, preserve the remaining directory in a recovery archive on the same volume instead of forcing recursive deletion through links.
 
 ## Checks and evidence
 

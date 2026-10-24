@@ -118,6 +118,13 @@ class CiLaneSelectionTest(unittest.TestCase):
             {"has_go_changes": "false", "has_python_changes": "true", "has_web_changes": "false"},
         )
 
+    def test_documentation_only_push_skips_source_lanes(self):
+        self.commit("docs/develop/guide.md", "guide")
+        self.assertEqual(
+            self.select(),
+            {"has_go_changes": "false", "has_python_changes": "false", "has_web_changes": "false"},
+        )
+
     def test_documentation_embedded_in_web_selects_web(self):
         self.commit("api/example.py", "value = 1")
         self.commit("docs/references/http_api_reference.md", "# API")

@@ -15,6 +15,10 @@ WORKFLOW = yaml.safe_load((SCRIPT.parents[2] / ".github/workflows/pr-smoke.yml")
 
 
 class SmokeWorkflowContractTest(unittest.TestCase):
+    def test_python_smoke_includes_selector_regression(self):
+        steps = WORKFLOW["jobs"]["python-smoke"]["steps"]
+        self.assertTrue(any("test/unit_test/tools/quality/test_ci_lane_selection.py" in step.get("run", "") for step in steps))
+
     def test_push_and_pr_pass_their_complete_base_to_selection(self):
         self.assertEqual(WORKFLOW["on"]["push"]["branches"], ["main"])
         self.assertIn("pull_request", WORKFLOW["on"])
@@ -155,6 +159,30 @@ class CiLaneSelectionTest(unittest.TestCase):
     def test_unknown_deployment_input_with_readme_still_selects_all_lanes(self):
         self.commit("deployment/runner/README.md", "# Runner")
         self.commit("deployment/runner/build-go-linux.sh", "# build command change")
+        self.assertEqual(set(self.select().values()), {"true"})
+
+    def test_ci_selector_and_its_tests_only_select_python(self):
+        self.commit("deployment/runner/select-ci-lanes.sh", "# selector change")
+        for include_tests in (False, True):
+            if include_tests:
+                self.commit("test/unit_test/tools/quality/test_ci_lane_selection.py", "# selector tests")
+            for event, ref, pr_base in (("push", "refs/heads/main", ""), ("pull_request", "refs/pull/1/merge", self.before)):
+                with self.subTest(include_tests=include_tests, event=event):
+                    self.assertEqual(
+                        self.select(event=event, ref=ref, pr_base=pr_base),
+                        {"has_go_changes": "false", "has_python_changes": "true", "has_web_changes": "false"},
+                    )
+        self.assertEqual(set(self.select(before="0" * 40).values()), {"true"})
+
+    def test_ci_selector_with_unknown_file_still_selects_all_lanes(self):
+        self.commit("deployment/runner/select-ci-lanes.sh", "# selector change")
+        self.commit("deployment/runner/unknown-policy.conf", "unknown")
+        self.assertEqual(set(self.select().values()), {"true"})
+
+    def test_ci_selector_keeps_go_and_web_changes_in_the_same_push(self):
+        self.commit("deployment/runner/select-ci-lanes.sh", "# selector change")
+        self.commit("internal/example.go", "package example")
+        self.commit("web/example.ts", "export const value = 1")
         self.assertEqual(set(self.select().values()), {"true"})
 
     def test_deleted_python_source_still_selects_python(self):

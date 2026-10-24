@@ -41,7 +41,8 @@ if [[ "$all" == false ]]; then
           has_go=true
           has_python=true
           ;;
-        *.py|pyproject.toml|requirements*.txt) has_python=true ;;
+        # python-smoke exercises this selector's routing and workflow contracts.
+        deployment/runner/select-ci-lanes.sh|*.py|pyproject.toml|requirements*.txt) has_python=true ;;
         *) all=true ;;
       esac
     done < "$changed_files"

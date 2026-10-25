@@ -3,6 +3,7 @@
 set -euo pipefail
 
 has_go=false
+has_go_format=false
 has_python=false
 has_web=false
 all=false
@@ -29,6 +30,9 @@ if [[ "$all" == false ]]; then
     # Include both sides of a rename: removing a .go file must still select Go.
     git diff --name-only --no-renames -z "$base" HEAD > "$changed_files"
     while IFS= read -r -d '' file; do
+      if [[ "$file" == *.go && -f "$file" ]]; then
+        has_go_format=true
+      fi
       case "$file" in
         docs/references/http_api_reference.md) has_web=true ;;
         README.md|docs/*.md|docs/*.mdx|deployment/runner/README.md|deployment/local/README.md) : ;;
@@ -54,13 +58,15 @@ fi
 
 if [[ "$all" == true ]]; then
   has_go=true
+  has_go_format=true
   has_python=true
   has_web=true
 fi
 
 {
   echo "has_go_changes=$has_go"
+  echo "has_go_format_changes=$has_go_format"
   echo "has_python_changes=$has_python"
   echo "has_web_changes=$has_web"
 } >> "$GITHUB_OUTPUT"
-echo "Go: $has_go, Python: $has_python, Web: $has_web"
+echo "Go: $has_go, Go format: $has_go_format, Python: $has_python, Web: $has_web"

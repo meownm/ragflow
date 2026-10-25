@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       base_sha: ${{ steps.base.outputs.sha }}
-      has_go_changes: ${{ steps.select.outputs.has_go_changes }}
+      has_go_format_changes: ${{ steps.select.outputs.has_go_format_changes }}
       has_python_changes: ${{ steps.select.outputs.has_python_changes }}
       has_web_changes: ${{ steps.select.outputs.has_web_changes }}
     steps:
@@ -130,7 +130,7 @@ jobs:
 
   go-format:
     needs: changed-paths
-    if: ${{ needs.changed-paths.outputs.has_go_changes == 'true' }}
+    if: ${{ needs.changed-paths.outputs.has_go_format_changes == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

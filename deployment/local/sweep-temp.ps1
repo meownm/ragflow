@@ -12,6 +12,32 @@ try {
 } catch {
     $report.error = $_.Exception.Message
 } finally {
+    try {
+        $python = Join-Path $repo '.venv\Scripts\python.exe'
+        $lifecycleScript = Join-Path $repo 'tools\quality\artifact_lifecycle.py'
+        $retirement = @(& $python -B $lifecycleScript cleanup --apply 2>&1)
+        if ($LASTEXITCODE -ne 0) { throw "Artifact retirement failed: $($retirement -join [Environment]::NewLine)" }
+        $report.docker_cleanup = ($retirement -join [Environment]::NewLine) | ConvertFrom-Json
+        $expiry = @(& $python -B $lifecycleScript gc --apply 2>&1)
+        if ($LASTEXITCODE -ne 0) { throw "Artifact recovery expiry failed: $($expiry -join [Environment]::NewLine)" }
+        $report.recovery_cleanup = ($expiry -join [Environment]::NewLine) | ConvertFrom-Json
+    } catch {
+        $report.docker_cleanup_error = $_.Exception.Message
+        $report.succeeded = $false
+        if (-not $report.ContainsKey('error')) { $report.error = $report.docker_cleanup_error }
+    }
+    # Refresh observations even after cleanup fails; never use this index to delete.
+    try {
+        $python = Join-Path $repo '.venv\Scripts\python.exe'
+        $inventoryScript = Join-Path $repo 'tools\quality\artifact_registry.py'
+        $inventory = @(& $python -B $inventoryScript --repo $repo 2>&1)
+        if ($LASTEXITCODE -ne 0) { throw "Artifact inventory failed: $($inventory -join [Environment]::NewLine)" }
+        $report.inventory = ($inventory -join [Environment]::NewLine) | ConvertFrom-Json
+    } catch {
+        $report.inventory_error = $_.Exception.Message
+        $report.succeeded = $false
+        if (-not $report.ContainsKey('error')) { $report.error = $report.inventory_error }
+    }
     # One atomically replaced report, without accumulating per-run log folders.
     foreach ($path in @($repo, (Join-Path $repo '.local'), (Join-Path $repo '.local\maintenance'), $reportDirectory)) {
         if ((Test-Path -LiteralPath $path) -and ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "Linked report directory: $path" }

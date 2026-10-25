@@ -36,6 +36,9 @@ apt-get install -y --no-install-recommends \
 systemctl enable --now docker
 usermod -aG docker "${RUNNER_USER}"
 
+# Offline recovery uses this immutable GNU tar helper; the sweeper never pulls.
+docker pull ubuntu@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac
+
 # The repository workflows use sudo for Docker, workspace ownership, and apt.
 sudoers_file="/etc/sudoers.d/ragflow-runner-${RUNNER_USER}"
 printf '%s ALL=(ALL) NOPASSWD: ALL\n' "${RUNNER_USER}" > "${sudoers_file}"

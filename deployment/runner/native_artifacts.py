@@ -15,6 +15,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -78,7 +79,7 @@ def cache_key(inputs: dict) -> str:
     return hashlib.sha256(json.dumps(inputs, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
-def restore(entry: Path, root: Path, key: str) -> dict | None:
+def verified_entry(entry: Path, key: str) -> dict | None:
     if entry.is_symlink() or (entry / "manifest.json").is_symlink():
         raise ValueError("Symlink native artifact cache is not allowed")
     try:
@@ -90,6 +91,13 @@ def restore(entry: Path, root: Path, key: str) -> dict | None:
             if path.is_symlink() or digest(path) != expected:
                 return None
     except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return manifest
+
+
+def restore(entry: Path, root: Path, key: str) -> dict | None:
+    manifest = verified_entry(entry, key)
+    if manifest is None:
         return None
     for name in OUTPUTS:
         destination = root / name
@@ -123,6 +131,17 @@ def store(entry: Path, root: Path, key: str) -> dict:
 
 
 def main() -> None:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    if os.environ.get("RAGFLOW_ARTIFACT_TRANSPORT") == "receipt" and not re.fullmatch(r"[0-9a-f]{32}", os.environ.get("RAGFLOW_ARTIFACT_RUN_ID", "")):
+        raise ValueError("Receipt transport requires its host lifecycle run")
+    if os.environ.get("RAGFLOW_ARTIFACT_RUN_ID"):
+        return _main()
+    from tools.quality.artifact_lifecycle import managed
+
+    return managed("native-artifacts", category="cache", days=30)(_main)()
+
+
+def _main() -> None:
     import fcntl
 
     parser = argparse.ArgumentParser(description=__doc__)
@@ -131,34 +150,71 @@ def main() -> None:
     parser.add_argument("--libraries", type=Path, required=True)
     parser.add_argument("--toolchain", required=True)
     args = parser.parse_args()
-    started = time.monotonic()
+    tracked = os.environ.get("RAGFLOW_ARTIFACT_TRANSPORT") != "receipt"
+    if not tracked and not re.fullmatch(r"[0-9a-f]{32}", os.environ.get("RAGFLOW_ARTIFACT_RUN_ID", "")):
+        raise ValueError("Receipt transport requires its host lifecycle run")
+    if tracked:
+        from tools.quality.artifact_lifecycle import note, note_all
+
+        note(args.root / "output/ci-native/artifacts.json", category="metadata")
+        note(args.cache, category="cache")
+        note(args.libraries, category="runtime")
+        for name in OUTPUTS:
+            note(args.root / name, category="cache")
     output = args.root / "output/ci-native/artifacts.json"
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps({"schema": 1, "status": "INCOMPLETE"}) + "\n")
-    inputs = identity(args.root, args.libraries, args.toolchain)
-    key = cache_key(inputs)
-    args.cache.mkdir(parents=True, exist_ok=True)
-    entry = args.cache / key
-    with (args.cache / f"{key}.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        manifest = restore(entry, args.root, key)
-        hit = manifest is not None
-        if hit and cache_key(identity(args.root, args.libraries, args.toolchain)) != key:
-            raise ValueError("Native inputs changed during cache restoration")
-        if not hit:
-            subprocess.run(CPP_COMMAND, cwd=args.root, check=True)
-            environment = {**os.environ, "GOFLAGS": " ".join(filter(None, (os.environ.get("GOFLAGS", ""), *GO_FLAGS)))}
-            # Go's build cache does not track external cgo static libraries.
-            # Reuse its incremental cache only within the same native-library set.
-            namespace = cache_key({"libraries": inputs["libraries"], "toolchain": args.toolchain, "tokenizer": digest(args.root / OUTPUTS[2])})
-            environment["GOCACHE"] = str(Path(os.environ["GOCACHE"]) / namespace)
-            subprocess.run(GO_COMMAND, cwd=args.root, env=environment, check=True)
-            if cache_key(identity(args.root, args.libraries, args.toolchain)) != key:
-                raise ValueError("Native inputs changed during compilation")
-            manifest = store(entry, args.root, key)
-    receipt = {**manifest, "status": "PASS", "cache_hit": hit, "toolchain": args.toolchain, "seconds": round(time.monotonic() - started, 3)}
-    output.write_text(json.dumps(receipt, sort_keys=True) + "\n")
-    print(json.dumps(receipt, sort_keys=True), flush=True)
+    entry = None
+    failure = None
+    try:
+        started = time.monotonic()
+        output.parent.mkdir(parents=True, exist_ok=True)
+        pending = {
+            "schema": 1,
+            "status": "INCOMPLETE",
+            "toolchain": args.toolchain,
+            "expected_outputs": list(OUTPUTS),
+            "artifact_run_id": os.environ.get("RAGFLOW_ARTIFACT_RUN_ID"),
+            "invocation": os.environ.get("RAGFLOW_NATIVE_INVOCATION"),
+        }
+        output.write_text(json.dumps(pending) + "\n")
+        inputs = identity(args.root, args.libraries, args.toolchain)
+        key = cache_key(inputs)
+        output.write_text(json.dumps({**pending, "key": key}) + "\n")
+        args.cache.mkdir(parents=True, exist_ok=True)
+        entry = args.cache / key
+        with (args.cache / f"{key}.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            manifest = restore(entry, args.root, key)
+            hit = manifest is not None
+            if hit and cache_key(identity(args.root, args.libraries, args.toolchain)) != key:
+                raise ValueError("Native inputs changed during cache restoration")
+            if not hit:
+                subprocess.run(CPP_COMMAND, cwd=args.root, check=True)
+                environment = {**os.environ, "GOFLAGS": " ".join(filter(None, (os.environ.get("GOFLAGS", ""), *GO_FLAGS)))}
+                # Go's build cache does not track external cgo static libraries.
+                # Reuse its incremental cache only within the same native-library set.
+                namespace = cache_key({"libraries": inputs["libraries"], "toolchain": args.toolchain, "tokenizer": digest(args.root / OUTPUTS[2])})
+                environment["GOCACHE"] = str(Path(os.environ["GOCACHE"]) / namespace)
+                subprocess.run(GO_COMMAND, cwd=args.root, env=environment, check=True)
+                if cache_key(identity(args.root, args.libraries, args.toolchain)) != key:
+                    raise ValueError("Native inputs changed during compilation")
+                manifest = store(entry, args.root, key)
+        receipt = {**manifest, "status": "PASS", "cache_hit": hit, "toolchain": args.toolchain, "seconds": round(time.monotonic() - started, 3)}
+        if os.environ.get("RAGFLOW_ARTIFACT_RUN_ID"):
+            receipt["artifact_run_id"] = os.environ["RAGFLOW_ARTIFACT_RUN_ID"]
+        if os.environ.get("RAGFLOW_NATIVE_INVOCATION"):
+            receipt["invocation"] = os.environ["RAGFLOW_NATIVE_INVOCATION"]
+        output.write_text(json.dumps(receipt, sort_keys=True) + "\n")
+        print(json.dumps(receipt, sort_keys=True), flush=True)
+    except BaseException as error:
+        failure = error
+        raise
+    finally:
+        if tracked:
+            entries = [(output, "metadata", output.is_file()), (args.cache, "cache", False)]
+            if entry is not None:
+                entries.append((entry, "cache", False))
+            entries.extend((args.root / name, "cache", False) for name in OUTPUTS)
+            note_all(entries, primary=failure)
 
 
 if __name__ == "__main__":

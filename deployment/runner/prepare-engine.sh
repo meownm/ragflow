@@ -128,3 +128,17 @@ mkdir -p "${ARTIFACTS_DIR}"
 CI_LOG_DIR="${ARTIFACTS_DIR}/runtime-logs"
 mkdir -p "${CI_LOG_DIR}"
 echo "CI_LOG_DIR=${CI_LOG_DIR}" >> "${GITHUB_ENV}"
+
+# Persist the CI generation outside actions/checkout's ignored-file cleanup.
+export RAGFLOW_ARTIFACT_DOCKER_SUDO=1
+echo 'RAGFLOW_ARTIFACT_DOCKER_SUDO=1' >> "${GITHUB_ENV}"
+artifact_owner=$(python3 -B ../tools/quality/artifact_lifecycle.py begin --producer "ci-engine:${DOC_ENGINE}" --keep-days 0)
+ARTIFACT_OWNER_JSON="$artifact_owner" python3 - <<'PY'
+import json, os
+owner = json.loads(os.environ['ARTIFACT_OWNER_JSON'])
+print('::add-mask::' + owner['owner_token'])
+with open(os.environ['GITHUB_ENV'], 'a') as stream:
+    stream.write('RAGFLOW_ARTIFACT_RUN_ID=' + owner['run_id'] + '\n')
+    stream.write('RAGFLOW_ARTIFACT_STATE=' + owner['state'] + '\n')
+    stream.write('RAGFLOW_ARTIFACT_OWNER_TOKEN=' + owner['owner_token'] + '\n')
+PY

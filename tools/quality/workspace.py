@@ -14,6 +14,8 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 MARKER = "ragflow-disposable-v2\n"
 _JOB_PATTERN = re.compile(r"Global\\RAGFlow-build-[0-9a-f]{32}\Z")
 _job = None
@@ -147,6 +149,9 @@ def job_active(name: str) -> bool:
 
 def start_process(command, **options) -> subprocess.Popen:
     """Create the child in its job atomically, including on owner failure."""
+    from tools.quality.artifact_lifecycle import docker_args
+
+    command = docker_args(command)
     if os.name != "nt":
         return subprocess.Popen(command, **options)
     process_job()
@@ -234,6 +239,10 @@ def _retire(path: Path, job: str | None = None, *, remove_pin: bool = False, lea
         try:
             pin = path / ".keep" if remove_pin else None
             _tree_stats(path, ignore_pin=pin)
+            from tools.quality.artifact_lifecycle import store_path
+            from tools.quality.artifact_paths import workspace_evidence_ready
+
+            workspace_evidence_ready(path, store_path())
             receipt = path.parent / (".ragflow-cleanup-" + uuid.uuid4().hex + ".json")
             with _open_lease(receipt, exclusive=True) as stream:
                 stream.write(json.dumps({"version": 1, "original": path.name, "identity": _directory_identity(path), "job": job}).encode("utf-8"))
@@ -241,7 +250,11 @@ def _retire(path: Path, job: str | None = None, *, remove_pin: bool = False, lea
                 os.fsync(stream.fileno())
                 if pin is not None:
                     pin.unlink(missing_ok=True)
+                directory_identity = _directory_identity(path)
                 _remove_tree(path)
+                from tools.quality.artifact_lifecycle import workspace_retired
+
+                workspace_retired(path, directory_identity)
                 receipt.unlink()
         finally:
             if owned_lease:
@@ -341,6 +354,11 @@ def _reserve(path: Path):
         _unlinked(path / ".keep")
         path.mkdir(exist_ok=True)
         (path / ".keep").write_text("Active task. Protected until explicit completion; save unique results and backups first.\n", encoding="utf-8")
+        from tools.quality.artifact_lifecycle import workspace_reserved
+        from tools.quality.artifact_lifecycle import current
+
+        if current() is not None or (path.parent.name == "ragflow" and path.parent.parent.name == "tmp"):
+            workspace_reserved(path)
 
 
 def _scan(path: Path) -> dict:
@@ -391,6 +409,10 @@ def disposable_workspace(path: Path):
         lease = _open_lease(path / ".lease")
         lease.write(b"ragflow-build-v1\n")
         lease.flush()
+        from tools.quality.artifact_lifecycle import current, workspace_reserved
+
+        if current() is not None or (path.parent.name == "ragflow" and path.parent.parent.name == "tmp"):
+            workspace_reserved(path)
         yield path
     finally:
         try:
@@ -447,9 +469,17 @@ def main():
                     try:
                         pin = target / ".keep" if args.manual else None
                         _tree_stats(target, ignore_pin=pin)
+                        from tools.quality.artifact_lifecycle import store_path
+                        from tools.quality.artifact_paths import workspace_evidence_ready
+
+                        workspace_evidence_ready(target, store_path())
                         if pin is not None:
                             pin.unlink(missing_ok=True)
+                        directory_identity = _directory_identity(target)
                         _remove_tree(target)
+                        from tools.quality.artifact_lifecycle import workspace_retired
+
+                        workspace_retired(target, directory_identity)
                     finally:
                         if lease:
                             lease.close()

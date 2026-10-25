@@ -8,6 +8,8 @@ import sys
 
 import pytest
 
+from tools.quality import artifact_lifecycle as life
+
 
 ROOT = Path(__file__).resolve().parents[4]
 HELPER = ROOT / "deployment/runner/staging-docker-auth.sh"
@@ -72,6 +74,9 @@ PY
   [[ "${TEST_LOGIN_FAIL:-0}" == 0 ]] || exit 95
 elif [[ "$1" == compose ]]; then
   printf '%s\n' "$@" >> "$TEST_DOCKER_LOG"
+  if [[ " $* " == *' config --format json '* ]]; then
+    printf '%s\n' '{"services":{"ragflow":{"image":"synthetic-image"}}}'
+  fi
   [[ " $* " != *' up '* ]] || exit 42
 else
   exit 96
@@ -244,13 +249,56 @@ def test_cleanup_rejects_symlink_config_without_deleting_target(scenario):
     assert config.is_dir()
 
 
-def test_engine_compose_never_builds_pinned_images(scenario, tmp_path):
+class LifecycleEngine:
+    """Docker stand-in for the shell/auth contract; creation stays in the real adapter."""
+
+    identity = "auth-test-engine"
+    prefix = ["docker"]
+
+    def __init__(self, **_):
+        self.env = dict(os.environ)
+
+    def owned(self, _):
+        return []
+
+    def inspect(self, kind, reference):
+        assert kind == "image"
+        return {"Id": reference}
+
+
+def test_engine_compose_never_builds_pinned_images(scenario, tmp_path, monkeypatch):
     environment, config = prepared(scenario, "engine")
     env_file = tmp_path / "engine.env"
     env_file.write_text("SVR_HTTP_PORT=9380\nADMIN_SVR_HTTP_PORT=9381\nSVR_WEB_HTTP_PORT=80\n", encoding="utf-8")
     environment.update({"CI_ENV_FILE": env_file.as_posix(), "RUNTIME_IMAGE_OVERRIDE": "owned-override.json", "COMPOSE_PROJECT_NAME": "rf-owned"})
-    result = run(ROOT / "deployment/runner/test-engine.sh", [], environment, cwd=tmp_path)
+    # Keep generated output isolated while exercising the standard lifecycle
+    # CLI with a synthetic Docker backend, rather than bypassing its ownership.
+    entrypoint = tmp_path / "tools/quality/artifact_lifecycle.py"
+    entrypoint.parent.mkdir(parents=True)
+    entrypoint.write_text(
+        f"import sys\nsys.path.insert(0, {str(ROOT)!r})\n"
+        "from tools.quality import artifact_docker, artifact_lifecycle\n"
+        "from test.unit_test.tools.quality.test_staging_docker_auth import LifecycleEngine\n"
+        "artifact_docker.Engine = LifecycleEngine\n"
+        "import subprocess\n"
+        "original_run = subprocess.run\n"
+        "def bash_run(arguments, **kwargs):\n"
+        f"    return original_run([{_bash()!r}, '--noprofile', '--norc', '-c', 'exec \"$@\"', 'auth-fixture', *arguments], **kwargs)\n"
+        "subprocess.run = bash_run\n"
+        "raise SystemExit(artifact_lifecycle.main())\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("RAGFLOW_ARTIFACT_STATE", str(tmp_path / "lifecycle"))
+    monkeypatch.delenv("RAGFLOW_ARTIFACT_RUN_ID", raising=False)
+    with life.Run("shell-auth-contract") as owner:
+        owner._engine = LifecycleEngine()
+        owner.data["engine"] = owner._engine.identity
+        owner.persist()
+        environment.update({name: os.environ[name] for name in ("RAGFLOW_ARTIFACT_STATE", "RAGFLOW_ARTIFACT_RUN_ID", "RAGFLOW_ARTIFACT_OWNER_TOKEN")})
+        result = run(ROOT / "deployment/runner/test-engine.sh", [], environment, cwd=tmp_path)
+        owner.failed = bool(result.returncode)
     assert result.returncode == 42, result.stderr
+    assert any(item["kind"] == "container" for item in owner.data["creation_intents"])
     log = Path(environment["TEST_DOCKER_LOG"]).read_text()
     assert "up\n-d\n--no-build\n" in log
     assert config.is_dir()

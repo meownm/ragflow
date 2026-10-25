@@ -12,6 +12,12 @@ from tools.quality.workspace import disposable_workspace
 from tools.quality import workspace
 
 
+@pytest.fixture(autouse=True)
+def isolated_lifecycle(monkeypatch, tmp_path_factory):
+    monkeypatch.setenv("RAGFLOW_ARTIFACT_STATE", str(tmp_path_factory.mktemp("lifecycle-state")))
+    monkeypatch.delenv("RAGFLOW_ARTIFACT_RUN_ID", raising=False)
+
+
 def test_workspace_error_removes_tree_without_touching_sibling(tmp_path):
     sibling = tmp_path / "unique-result"
     sibling.write_text("keep", encoding="utf-8")

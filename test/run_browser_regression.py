@@ -11,6 +11,8 @@ from threading import Thread
 from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 SUITES = [
     "test/playwright/e2e/test_document_constructor_ui.py",
     "test/playwright/e2e/test_sql_revision_ui.py",
@@ -68,6 +70,12 @@ class SPAHandler(SimpleHTTPRequestHandler):
 
 
 def main():
+    from tools.quality.artifact_lifecycle import managed
+
+    return managed("browser-regression", category="evidence", days=30)(_main)()
+
+
+def _main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--browser", choices=("chromium", "firefox", "webkit"), default="chromium")
     parser.add_argument("--dist-root", type=Path, default=ROOT / "web" / "dist")
@@ -75,6 +83,9 @@ def main():
     parser.add_argument("pytest_args", nargs="*")
     args = parser.parse_args()
     dist = args.dist_root.resolve()
+    from tools.quality.artifact_lifecycle import note
+
+    note(dist, category="runtime")
     if not (dist / "index.html").is_file():
         parser.error("Build the frontend first: cd web && pnpm build")
     server = SPAServer(("127.0.0.1", 0), partial(SPAHandler, directory=str(dist)))
@@ -96,6 +107,9 @@ def main():
         server.shutdown()
         server.server_close()
         thread.join()
+        from tools.quality.artifact_lifecycle import note
+
+        note(Path(env["PW_ARTIFACTS_DIR"]))
 
 
 if __name__ == "__main__":

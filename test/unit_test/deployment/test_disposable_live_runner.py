@@ -13,6 +13,13 @@ import pytest
 from test.integration.live_ragflow import runner
 
 
+@pytest.fixture(autouse=True)
+def lifecycle_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("RAGFLOW_ARTIFACT_STATE", str(tmp_path / "lifecycle"))
+    monkeypatch.setenv("RAGFLOW_ARTIFACT_ARCHIVES", str(tmp_path / "recovery"))
+    monkeypatch.delenv("RAGFLOW_ARTIFACT_RUN_ID", raising=False)
+
+
 def test_quality_setup_failure_returns_nonzero_and_cleans_own_project(tmp_path, monkeypatch):
     from api.utils import crypt as encryption
 
@@ -54,10 +61,31 @@ def test_quality_setup_failure_returns_nonzero_and_cleans_own_project(tmp_path, 
     monkeypatch.setattr(runner.subprocess, "check_output", git_output)
     monkeypatch.setattr(runner.socket, "socket", lambda *_: nullcontext(SimpleNamespace(bind=lambda *_: None)))
     monkeypatch.setattr(encryption, "crypt", lambda _: "synthetic-encrypted-password")
+    from tools.quality import artifact_docker
+
+    class Engine:
+        identity = "synthetic-engine"
+
+        def __init__(self, **_):
+            pass
+
+        def owned(self, *_):
+            return []
+
+        def stop_owned(self, *_):
+            pass
+
+    monkeypatch.setattr(artifact_docker, "Engine", Engine)
 
     assert runner.main() != 0
     assert (tmp_path / "evidence/failure.txt").read_text(encoding="utf-8") == "Synthetic SDK setup failure"
-    assert logs[-5:] == ["app.log", "cleanup.log", "remaining-containers.log", "remaining-volumes.log", "remaining-networks.log"]
+    assert logs[-4:] == ["app.log", "remaining-containers.log", "remaining-volumes.log", "remaining-networks.log"]
+    assert json.loads((tmp_path / "evidence/cleanup.log").read_text())["errors"] == []
+    from tools.quality.artifact_lifecycle import runs
+
+    (saved,) = list(runs(tmp_path / "lifecycle"))
+    assert saved["state"] == "failed"
+    assert any(item.get("path") == str(tmp_path / "evidence") for item in saved["resources"])
 
 
 @pytest.mark.parametrize("architecture,context", [("qwen3", 262144), ("bert", 8192)])

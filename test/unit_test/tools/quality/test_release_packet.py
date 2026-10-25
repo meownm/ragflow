@@ -13,6 +13,7 @@ import pytest
 
 from tools.quality.api_case_evidence import ENGINES, SUITES, verify_report
 from tools.quality import release_origin as origin
+from tools.quality import artifact_lifecycle as lifecycle
 from tools.quality.release_packet import assemble
 from test.unit_test.tools.quality.test_portable_cli_probe import proof_for
 
@@ -232,13 +233,22 @@ def test_engine_workflow_finalizer_checks_actual_packet_identity(packet, tmp_pat
     finalizer = script.split("python - <<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
     output = root / ("engine-" + engine + ".json")
     previous = output.read_bytes()
-    if foreign_sha:
-        with pytest.raises(ValueError):
+    monkeypatch.setenv("RAGFLOW_ARTIFACT_STATE", str(work / "lifecycle"))
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setenv("GITHUB_SHA", receipt["source_revision"])
+    monkeypatch.delenv("RAGFLOW_ARTIFACT_RUN_ID", raising=False)
+    with lifecycle.Run("ci-engine:" + engine) as owner:
+        if foreign_sha:
+            with pytest.raises(ValueError):
+                exec(compile(finalizer, "test-engine.sh:finalizer", "exec"), {})
+            assert output.read_bytes() == previous
+        else:
             exec(compile(finalizer, "test-engine.sh:finalizer", "exec"), {})
-        assert output.read_bytes() == previous
-    else:
-        exec(compile(finalizer, "test-engine.sh:finalizer", "exec"), {})
-        assert json.loads(output.read_text())["sha"] == receipt["source_revision"]
+            proof = json.loads(output.read_text())
+            assert proof["sha"] == receipt["source_revision"]
+            assert proof["artifact_run_id"] == owner.data["run_id"]
+            assert proof["artifact_subject"] == lifecycle.consumption_subject(owner.data)
+            assert lifecycle.qa_success_report(output, owner.data)[0] == "ci-engine"
 
 
 @pytest.mark.parametrize("name", ["installers/install.sh", "native/proof.json", "cli/ragflow-cli-linux-amd64"])

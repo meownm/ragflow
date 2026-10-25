@@ -28,6 +28,7 @@ sys.path.insert(0, str(ROOT))
 from tools.quality.release_evidence import DIGEST, SHA, validate_publication
 from tools.quality.release_origin import verify_release_download
 from tools.quality.redact_ci_log import redact
+from tools.quality.artifact_lifecycle import current, docker_args, managed, note
 
 PROBE = ROOT / "test/integration/fixtures/upgrade_data_probe.py"
 BOOTSTRAP_POLICY = ROOT / "tools/quality/release-bootstrap-baseline.json"
@@ -35,7 +36,7 @@ OWNER_LABEL = "ragflow.qualified-upgrade"
 
 
 def command(arguments, *, data=None, timeout=240):
-    result = subprocess.run(arguments, input=data, capture_output=True, timeout=timeout, check=False)
+    result = subprocess.run(docker_args(arguments), input=data, capture_output=True, timeout=timeout, check=False)
     if result.returncode:
         raise RuntimeError(f"{arguments[0]} operation failed: {redact(result.stderr.decode(errors='replace'))[-2000:]}")
     return result.stdout
@@ -122,29 +123,15 @@ class DisposableUpgrade:
         return identifier
 
     def cleanup(self) -> None:
-        errors = []
-        for kind, identifier in reversed(tuple(self.resources)):
-            try:
-                label_path = ".Config.Labels" if kind == "container" else ".Labels"
-                labels = json.loads(command(["docker", kind, "inspect", identifier, "--format", "{{json " + label_path + "}}"]))
-                if not isinstance(labels, dict) or labels.get(OWNER_LABEL) != self.owner:
-                    raise ValueError("Refusing to remove foreign Docker resource")
-                args = ["docker", kind, "rm", identifier]
-                if kind == "container":
-                    args.insert(3, "--force")
-                command(args)
-                remaining = subprocess.run(["docker", kind, "inspect", identifier], capture_output=True, timeout=30)
-                if remaining.returncode == 0:
-                    raise RuntimeError("Owned Docker resource survived cleanup")
-                if b"No such" not in remaining.stderr and b"not found" not in remaining.stderr:
-                    raise RuntimeError("Cannot verify owned resource removal")
-                self.resources.remove((kind, identifier))
-                self.record_resources()
-            except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as error:
-                errors.append(f"{kind}: {type(error).__name__}")
-        if errors:
-            raise RuntimeError("Owned resource cleanup incomplete: " + ", ".join(errors))
+        owner = current()
+        if owner is None:
+            raise RuntimeError("Owned resource cleanup incomplete: lifecycle owner required")
+        result = owner.retire_owned()
+        if result["errors"] or result["blocked"]:
+            raise RuntimeError("Owned resource cleanup incomplete; see lifecycle receipt")
+        self.resources.clear()
         self.record_resources()
+        note(self.output)
 
     def start_postgres(self, image: str):
         network = self.create("network", ["--internal", self.name])
@@ -360,6 +347,7 @@ def qualify(
     return report
 
 
+@managed("qualified-upgrade-qa", days=0)
 def main() -> int:
     def cancelled(signum, frame):
         raise KeyboardInterrupt("Qualification cancelled")

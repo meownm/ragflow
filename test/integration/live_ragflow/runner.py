@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
 from test.playwright.helpers.redaction import redact_browser_secrets
+from tools.quality.artifact_lifecycle import annotate_compose, current, docker_args, managed, note, note_all
 
 OUT = Path(__file__).resolve().parent
 PROJECT = "ragflow-t1-live-20260906-b-" + secrets.token_hex(4)
@@ -53,6 +54,7 @@ def sanitized(text):
 
 
 def command(args, *, env, log, input=None, check=True, cwd=None, timeout=180):
+    args = docker_args(args)
     process = subprocess.Popen(
         args,
         env=env,
@@ -100,6 +102,7 @@ def verify_source(candidate, source, env, phase):
     command([sys.executable, "-B", "-c", script, str(source / "tools/quality"), str(candidate)], env=env, log=f"candidate-{phase}.log")
 
 
+@managed("live-regression-qa", days=0)
 def main():
     global OUT
     sys.dont_write_bytecode = True
@@ -130,336 +133,353 @@ def main():
     OUT = args.evidence_dir.resolve()
     if candidate and (OUT.is_relative_to(source) or (args.skip_browser_tests and dist.is_relative_to(source))):
         parser.error("Evidence and generated dist must stay outside the frozen source snapshot")
+    note(OUT)
     OUT.mkdir(parents=True, exist_ok=True)
-    if args.business_documents_quality:
-        (OUT / "business-documents-quality.json").write_text(
-            json.dumps({"schema_version": "2", "status": "INCOMPLETE", "failure": "Live model run did not complete"}, indent=2) + "\n",
-            encoding="utf-8",
-        )
-    if any(Path(name).name == "test_source_workbench_quality_live.py" for name in args.tests):
-        (OUT / "source-workbench-quality.json").write_text(
-            json.dumps({"status": "incomplete", "failure": "Live retrieval run did not complete"}, indent=2) + "\n",
-            encoding="utf-8",
-        )
-    assert (source / "api/ragflow_server.py").is_file()
-    if not args.skip_browser_tests:
-        assert (dist / "index.html").is_file()
-    else:
-        dist.mkdir(parents=True, exist_ok=True)
-    for port in (19382, 19383):
-        with socket.socket() as probe:
-            probe.bind(("127.0.0.1", port))
-    env = dict(os.environ)
-    env.update(PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
-    env.update(QA_STORAGE_PASSWORD=secrets.token_urlsafe(32), QA_ADMIN_PASSWORD=secrets.token_urlsafe(32), QA_ADMIN_EMAIL=f"regression-probe-{secrets.token_hex(5)}@example.org")
-    SECRET_VALUES.extend([env["QA_STORAGE_PASSWORD"], env["QA_ADMIN_PASSWORD"]])
-    for resource, arguments in (("containers", ["ps", "-a"]), ("volumes", ["volume", "ls"]), ("networks", ["network", "ls"])):
-        existing = command(["docker", *arguments, "-q", "--filter", f"label=com.docker.compose.project={PROJECT}"], env=env, log=f"preflight-{resource}.log")
-        assert not existing.stdout.strip(), "Disposable project name is already in use"
-    compose = yaml.safe_load(Path(__file__).with_name("compose.yml").read_text(encoding="utf-8"))
-    compose["name"] = PROJECT
-    app = compose["services"]["app"]
-    if args.app_image:
-        app["image"] = args.app_image
-    app["ports"] = ["127.0.0.1:19382:80", "127.0.0.1:19383:9381"]
-    app["command"].append("--workers=1")
-    app["environment"].update(
-        DEFAULT_SUPERUSER_EMAIL="${QA_ADMIN_EMAIL:?required}", DEFAULT_SUPERUSER_PASSWORD="${QA_ADMIN_PASSWORD:?required}", MANAGED_RESOURCE_OWNER_EMAIL="${QA_ADMIN_EMAIL:?required}"
-    )
-    app["volumes"] = [f"{source.as_posix()}/{item[6:]}" if item.startswith("../../") else item for item in app["volumes"]]
-    app["volumes"] = [f"{dist.as_posix()}:/ragflow/web/dist:ro" if ":/ragflow/web/dist:" in item else item for item in app["volumes"]]
-    if args.business_documents_quality:
-        app["volumes"].extend((f"{(source / 'test').as_posix()}:/ragflow/test:ro", f"{OUT.as_posix()}:/ragflow/qa-evidence"))
-    if candidate:
-        input_files = json.loads((candidate / "candidate.json").read_text(encoding="utf-8"))["identity"]["files"]
-    else:
-        input_files = subprocess.check_output(["git", "ls-files", "conf", "rag/res"], cwd=source, text=True).splitlines()
-    mounted_assets = {}
-    for name in input_files:
-        if (name.startswith("conf/") and name != "conf/service_conf.yaml") or name.startswith("rag/res/"):
-            app["volumes"].append(f"{(source / name).as_posix()}:/ragflow/{name}:ro")
-            mounted_assets["/ragflow/" + name] = hashlib.sha256((source / name).read_bytes()).hexdigest()
-    compose_path = OUT / "compose.yml"
-    compose_path.write_text(yaml.safe_dump(compose, sort_keys=False), encoding="utf-8")
-    cmd = ["docker", "compose", "-p", PROJECT, "-f", str(compose_path)]
-    if candidate:
-        verify_source(candidate, source, env, "before")
-        source_identity = json.loads((candidate / "candidate.json").read_text(encoding="utf-8"))["source_id"]
-    else:
-        source_identity = "development:" + subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=source, text=True).strip()
-    identity = {
-        "project": PROJECT,
-        "source": str(source),
-        "dist": str(dist),
-        "source_id": source_identity,
-        "harness_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-        "mounted_assets_sha256": mounted_assets,
-        "dist_sha256": {path.relative_to(dist).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted(dist.rglob("*")) if path.is_file()},
-        "targets": [BASE, "http://127.0.0.1:19383", OLLAMA_CONTAINER_URL],
-        "images": {name: command(["docker", "image", "inspect", "--format", "{{.Id}}", svc["image"]], env=env, log=f"image-{name}.log").stdout.strip() for name, svc in compose["services"].items()},
-    }
-    with urlopen(f"{OLLAMA_HOST_URL}/api/tags", timeout=30) as response:
-        tags = {model["name"]: model for model in json.load(response)["models"]}
-    identity["ollama_models"] = {name: {key: tags[name][key] for key in ("digest", "size")} for name, _ in models}
-    assert all(model["size"] > 1_000_000 for model in identity["ollama_models"].values()), "Only installed local model weights are allowed"
-    for model, _ in models:
-        request = Request(f"{OLLAMA_HOST_URL}/api/show", data=json.dumps({"model": model}).encode(), headers={"Content-Type": "application/json"})
-        with urlopen(request, timeout=30) as response:
-            identity["ollama_models"][model]["context_length"] = model_context_length(json.load(response))
-    if candidate and not args.skip_browser_tests:
-        assert args.frontend_archive, "Frozen live proof requires the matching frontend artifact"
-        archive = args.frontend_archive.resolve()
-        command(
-            [sys.executable, "-B", str(source / "tools/quality/frontend_artifact.py"), "verify", "--candidate", str(candidate), "--archive", str(archive)], env=env, log="frontend-verification.log"
-        )
-        receipt = json.loads(Path(str(archive) + ".json").read_text(encoding="utf-8"))
-        assert identity["dist_sha256"] == {name: value["sha256"] for name, value in receipt["files"].items()}, "Mounted dist differs from the verified candidate build"
-        identity["frontend_receipt_id"] = receipt["receipt_id"]
-    (OUT / "identity.json").write_text(json.dumps(identity, indent=2), encoding="utf-8")
-    exit_code = 1
+    failure = None
     try:
-        print("Starting disposable regression stack", flush=True)
-        command([*cmd, "up", "-d", "--pull", "never"], env=env, log="startup.log")
-        deadline = time.monotonic() + 480
-        while True:
-            try:
-                api("/api/v1/auth/login/channels")
-                break
-            except Exception:
-                if time.monotonic() > deadline:
-                    raise RuntimeError("Backend readiness timeout")
-                time.sleep(3)
-        print("Backend ready; initializing canonical empty QA model catalog", flush=True)
-        check_assets = (
-            "import json,hashlib;from pathlib import Path;expected="
-            + repr(mounted_assets)
-            + ";assert all(hashlib.sha256(Path(p).read_bytes()).hexdigest()==h for p,h in expected.items());print(json.dumps({'candidate_assets_verified':len(expected)}))"
+        if args.business_documents_quality:
+            (OUT / "business-documents-quality.json").write_text(
+                json.dumps({"schema_version": "2", "status": "INCOMPLETE", "failure": "Live model run did not complete"}, indent=2) + "\n",
+                encoding="utf-8",
+            )
+        if any(Path(name).name == "test_source_workbench_quality_live.py" for name in args.tests):
+            (OUT / "source-workbench-quality.json").write_text(
+                json.dumps({"status": "incomplete", "failure": "Live retrieval run did not complete"}, indent=2) + "\n",
+                encoding="utf-8",
+            )
+        assert (source / "api/ragflow_server.py").is_file()
+        if not args.skip_browser_tests:
+            assert (dist / "index.html").is_file()
+        else:
+            dist.mkdir(parents=True, exist_ok=True)
+        for port in (19382, 19383):
+            with socket.socket() as probe:
+                probe.bind(("127.0.0.1", port))
+        env = dict(os.environ)
+        env.update(PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+        env.update(QA_STORAGE_PASSWORD=secrets.token_urlsafe(32), QA_ADMIN_PASSWORD=secrets.token_urlsafe(32), QA_ADMIN_EMAIL=f"regression-probe-{secrets.token_hex(5)}@example.org")
+        SECRET_VALUES.extend([env["QA_STORAGE_PASSWORD"], env["QA_ADMIN_PASSWORD"]])
+        for resource, arguments in (("containers", ["ps", "-a"]), ("volumes", ["volume", "ls"]), ("networks", ["network", "ls"])):
+            existing = command(["docker", *arguments, "-q", "--filter", f"label=com.docker.compose.project={PROJECT}"], env=env, log=f"preflight-{resource}.log")
+            assert not existing.stdout.strip(), "Disposable project name is already in use"
+        compose = yaml.safe_load(Path(__file__).with_name("compose.yml").read_text(encoding="utf-8"))
+        compose["name"] = PROJECT
+        app = compose["services"]["app"]
+        if args.app_image:
+            app["image"] = args.app_image
+        app["ports"] = ["127.0.0.1:19382:80", "127.0.0.1:19383:9381"]
+        app["command"].append("--workers=1")
+        app["environment"].update(
+            DEFAULT_SUPERUSER_EMAIL="${QA_ADMIN_EMAIL:?required}", DEFAULT_SUPERUSER_PASSWORD="${QA_ADMIN_PASSWORD:?required}", MANAGED_RESOURCE_OWNER_EMAIL="${QA_ADMIN_EMAIL:?required}"
         )
-        command([*cmd, "exec", "-T", "app", "/ragflow/.venv/bin/python", "-"], env=env, log="runtime-assets.log", input=check_assets)
-        seed = Path(__file__).with_name("seed_catalog.py").read_text(encoding="utf-8")
-        command([*cmd, "exec", "-T", "app", "/ragflow/.venv/bin/python", "-"], env=env, log="catalog.log", input=seed)
-        sys.path.insert(0, str(source))
-        from api.utils.crypt import crypt
+        app["volumes"] = [f"{source.as_posix()}/{item[6:]}" if item.startswith("../../") else item for item in app["volumes"]]
+        app["volumes"] = [f"{dist.as_posix()}:/ragflow/web/dist:ro" if ":/ragflow/web/dist:" in item else item for item in app["volumes"]]
+        if args.business_documents_quality:
+            app["volumes"].extend((f"{(source / 'test').as_posix()}:/ragflow/test:ro", f"{OUT.as_posix()}:/ragflow/qa-evidence"))
+        if candidate:
+            input_files = json.loads((candidate / "candidate.json").read_text(encoding="utf-8"))["identity"]["files"]
+        else:
+            input_files = subprocess.check_output(["git", "ls-files", "conf", "rag/res"], cwd=source, text=True).splitlines()
+        mounted_assets = {}
+        for name in input_files:
+            if (name.startswith("conf/") and name != "conf/service_conf.yaml") or name.startswith("rag/res/"):
+                app["volumes"].append(f"{(source / name).as_posix()}:/ragflow/{name}:ro")
+                mounted_assets["/ragflow/" + name] = hashlib.sha256((source / name).read_bytes()).hexdigest()
+        compose_path = OUT / "compose.yml"
+        compose_path.write_text(yaml.safe_dump(annotate_compose(compose), sort_keys=False), encoding="utf-8")
+        cmd = ["docker", "compose", "-p", PROJECT, "-f", str(compose_path)]
+        if candidate:
+            verify_source(candidate, source, env, "before")
+            source_identity = json.loads((candidate / "candidate.json").read_text(encoding="utf-8"))["source_id"]
+        else:
+            source_identity = "development:" + subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=source, text=True).strip()
+        identity = {
+            "project": PROJECT,
+            "source": str(source),
+            "dist": str(dist),
+            "source_id": source_identity,
+            "harness_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+            "mounted_assets_sha256": mounted_assets,
+            "dist_sha256": {path.relative_to(dist).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted(dist.rglob("*")) if path.is_file()},
+            "targets": [BASE, "http://127.0.0.1:19383", OLLAMA_CONTAINER_URL],
+            "images": {
+                name: command(["docker", "image", "inspect", "--format", "{{.Id}}", svc["image"]], env=env, log=f"image-{name}.log").stdout.strip() for name, svc in compose["services"].items()
+            },
+        }
+        with urlopen(f"{OLLAMA_HOST_URL}/api/tags", timeout=30) as response:
+            tags = {model["name"]: model for model in json.load(response)["models"]}
+        identity["ollama_models"] = {name: {key: tags[name][key] for key in ("digest", "size")} for name, _ in models}
+        assert all(model["size"] > 1_000_000 for model in identity["ollama_models"].values()), "Only installed local model weights are allowed"
+        for model, _ in models:
+            request = Request(f"{OLLAMA_HOST_URL}/api/show", data=json.dumps({"model": model}).encode(), headers={"Content-Type": "application/json"})
+            with urlopen(request, timeout=30) as response:
+                identity["ollama_models"][model]["context_length"] = model_context_length(json.load(response))
+        if candidate and not args.skip_browser_tests:
+            assert args.frontend_archive, "Frozen live proof requires the matching frontend artifact"
+            archive = args.frontend_archive.resolve()
+            command(
+                [sys.executable, "-B", str(source / "tools/quality/frontend_artifact.py"), "verify", "--candidate", str(candidate), "--archive", str(archive)], env=env, log="frontend-verification.log"
+            )
+            receipt = json.loads(Path(str(archive) + ".json").read_text(encoding="utf-8"))
+            assert identity["dist_sha256"] == {name: value["sha256"] for name, value in receipt["files"].items()}, "Mounted dist differs from the verified candidate build"
+            identity["frontend_receipt_id"] = receipt["receipt_id"]
+        (OUT / "identity.json").write_text(json.dumps(identity, indent=2), encoding="utf-8")
+        exit_code = 1
+        try:
+            print("Starting disposable regression stack", flush=True)
+            command([*cmd, "up", "-d", "--pull", "never"], env=env, log="startup.log")
+            deadline = time.monotonic() + 480
+            while True:
+                try:
+                    api("/api/v1/auth/login/channels")
+                    break
+                except Exception:
+                    if time.monotonic() > deadline:
+                        raise RuntimeError("Backend readiness timeout")
+                    time.sleep(3)
+            print("Backend ready; initializing canonical empty QA model catalog", flush=True)
+            check_assets = (
+                "import json,hashlib;from pathlib import Path;expected="
+                + repr(mounted_assets)
+                + ";assert all(hashlib.sha256(Path(p).read_bytes()).hexdigest()==h for p,h in expected.items());print(json.dumps({'candidate_assets_verified':len(expected)}))"
+            )
+            command([*cmd, "exec", "-T", "app", "/ragflow/.venv/bin/python", "-"], env=env, log="runtime-assets.log", input=check_assets)
+            seed = Path(__file__).with_name("seed_catalog.py").read_text(encoding="utf-8")
+            command([*cmd, "exec", "-T", "app", "/ragflow/.venv/bin/python", "-"], env=env, log="catalog.log", input=seed)
+            sys.path.insert(0, str(source))
+            from api.utils.crypt import crypt
 
-        encrypted = crypt(env["QA_ADMIN_PASSWORD"])
-        SECRET_VALUES.append(encrypted)
-        user, token = api("/api/v1/auth/login", "POST", {"email": env["QA_ADMIN_EMAIL"], "password": encrypted})
-        assert token and user.get("is_superuser"), "Synthetic managed-resource admin login failed"
-        SECRET_VALUES.append(token)
-        print("Synthetic superuser authenticated; configuring real local Ollama", flush=True)
-        for model, kind in models:
+            encrypted = crypt(env["QA_ADMIN_PASSWORD"])
+            SECRET_VALUES.append(encrypted)
+            user, token = api("/api/v1/auth/login", "POST", {"email": env["QA_ADMIN_EMAIL"], "password": encrypted})
+            assert token and user.get("is_superuser"), "Synthetic managed-resource admin login failed"
+            SECRET_VALUES.append(token)
+            print("Synthetic superuser authenticated; configuring real local Ollama", flush=True)
+            for model, kind in models:
+                api(
+                    "/v1/llm/add_llm",
+                    "POST",
+                    {"llm_factory": "Ollama", "llm_name": model, "model_type": kind, "api_base": OLLAMA_CONTAINER_URL, "max_tokens": identity["ollama_models"][model]["context_length"]},
+                    token,
+                )
+                print(f"Validated local {kind} model {model}", flush=True)
+            api("/api/v1/providers", "PUT", {"provider_name": "Ollama"}, token)
             api(
-                "/v1/llm/add_llm",
+                "/api/v1/providers/Ollama/instances",
                 "POST",
-                {"llm_factory": "Ollama", "llm_name": model, "model_type": kind, "api_base": OLLAMA_CONTAINER_URL, "max_tokens": identity["ollama_models"][model]["context_length"]},
+                {
+                    "instance_name": "QA",
+                    "api_key": "",
+                    "base_url": OLLAMA_CONTAINER_URL,
+                    "region": "default",
+                    "model_info": [{"model_name": model, "model_type": [kind], "max_tokens": identity["ollama_models"][model]["context_length"]} for model, kind in models],
+                },
                 token,
             )
-            print(f"Validated local {kind} model {model}", flush=True)
-        api("/api/v1/providers", "PUT", {"provider_name": "Ollama"}, token)
-        api(
-            "/api/v1/providers/Ollama/instances",
-            "POST",
-            {
-                "instance_name": "QA",
-                "api_key": "",
-                "base_url": OLLAMA_CONTAINER_URL,
-                "region": "default",
-                "model_info": [{"model_name": model, "model_type": [kind], "max_tokens": identity["ollama_models"][model]["context_length"]} for model, kind in models],
-            },
-            token,
-        )
-        for model, kind in (MODELS[0], MODELS[-1]):
-            api("/api/v1/models/default", "PATCH", {"model_provider": "Ollama", "model_instance": "QA", "model_name": model, "model_type": kind}, token)
-        tenant, _ = api("/api/v1/users/me/models", token=token)
-        api(
-            "/api/v1/users/me/models",
-            "PATCH",
-            {"tenant_id": tenant["tenant_id"], "llm_id": f"{MODELS[0][0]}@QA@Ollama", "embd_id": f"{MODELS[-1][0]}@QA@Ollama", "img2txt_id": "", "asr_id": "", "rerank_id": "", "tts_id": ""},
-            token,
-        )
-        env.update(
-            RAGFLOW_BASE_URL=BASE,
-            SEEDED_USER_EMAIL=env["QA_ADMIN_EMAIL"],
-            SEEDED_USER_PASSWORD=env["QA_ADMIN_PASSWORD"],
-            PW_BROWSER="chromium",
-            PW_TRACE="0",
-            RUN_ID="t1-live-" + secrets.token_hex(4),
-            PW_STEP_LOG="1",
-            PYTHONPATH=str(source),
-            QA_LIVE_TOKEN=token,
-            QA_LIVE_EVIDENCE=str(OUT),
-            PYTHONDONTWRITEBYTECODE="1",
-            QA_DISPOSABLE_PROJECT=PROJECT,
-            PW_ARTIFACTS_DIR=str(OUT / "artifacts"),
-        )
-        (OUT / "bootstrap.json").write_text(json.dumps({"admin_authenticated": True, "real_models_validated": True}), encoding="utf-8")
-        tests = args.tests or [
-            str(source / "test/playwright/e2e" / filename)
-            for filename in ("test_live_document_roundtrip.py", "test_dataset_upload_parse.py", "test_next_apps_chat.py", "test_next_apps_search.py", "test_business_document_live_intake.py")
-        ]
-        # Registration through pytest_configure occurs after pytest-playwright,
-        # so the explicit test profile wins without mutating production config.
-        profile = """import pytest, os
-class Profile:
- @pytest.fixture(scope="session")
- def browser_context_args(self):
-  base=os.environ["RAGFLOW_BASE_URL"]
-  return {"viewport":{"width":1920,"height":1080},"locale":"en-US","storage_state":{"cookies":[],"origins":[{"origin":base,"localStorage":[{"name":"lng","value":"en"}]}]}}
-def pytest_configure(config):
- config.pluginmanager.register(Profile(),"t1-english")
-"""
-        (OUT / "live_profile.py").write_text(profile, encoding="utf-8")
-        env["PYTHONPATH"] += os.pathsep + str(OUT)
-        result = (
-            command(
-                [
-                    sys.executable,
-                    "-B",
-                    "-m",
-                    "pytest",
-                    "-p",
-                    "live_profile",
-                    *tests,
-                    "--color=no",
-                    "--tb=short",
-                    "-rA",
-                    "-s",
-                    "-o",
-                    f"cache_dir={OUT / 'pytest-cache'}",
-                    f"--junitxml={OUT / 'browser.xml'}",
-                ],
-                env=env,
-                log="browser.log",
-                check=False,
-                cwd=source,
-                timeout=1800,
+            for model, kind in (MODELS[0], MODELS[-1]):
+                api("/api/v1/models/default", "PATCH", {"model_provider": "Ollama", "model_instance": "QA", "model_name": model, "model_type": kind}, token)
+            tenant, _ = api("/api/v1/users/me/models", token=token)
+            api(
+                "/api/v1/users/me/models",
+                "PATCH",
+                {"tenant_id": tenant["tenant_id"], "llm_id": f"{MODELS[0][0]}@QA@Ollama", "embd_id": f"{MODELS[-1][0]}@QA@Ollama", "img2txt_id": "", "asr_id": "", "rerank_id": "", "tts_id": ""},
+                token,
             )
-            if not args.skip_browser_tests
-            else None
-        )
-        exit_code = result.returncode if result else 0
-        if result:
-            print(f"Live browser exit={exit_code}; see browser.log", flush=True)
-        if args.business_documents_quality:
-            command(
-                [*cmd, "exec", "-T", "app", "/ragflow/.venv/bin/python", "-m", "pip", "install", "--disable-pip-version-check", "pytest==9.0.2"],
-                env=env,
-                log="business-quality-dependency.log",
-                timeout=240,
+            env.update(
+                RAGFLOW_BASE_URL=BASE,
+                SEEDED_USER_EMAIL=env["QA_ADMIN_EMAIL"],
+                SEEDED_USER_PASSWORD=env["QA_ADMIN_PASSWORD"],
+                PW_BROWSER="chromium",
+                PW_TRACE="0",
+                RUN_ID="t1-live-" + secrets.token_hex(4),
+                PW_STEP_LOG="1",
+                PYTHONPATH=str(source),
+                QA_LIVE_TOKEN=token,
+                QA_LIVE_EVIDENCE=str(OUT),
+                PYTHONDONTWRITEBYTECODE="1",
+                QA_DISPOSABLE_PROJECT=PROJECT,
+                PW_ARTIFACTS_DIR=str(OUT / "artifacts"),
             )
-            if args.business_documents_nightly:
-                nightly_script = """
-import json
-import sys
-from datetime import datetime
-from pathlib import Path
-from zoneinfo import ZoneInfo
-
-sys.path.insert(0, '/ragflow/admin/server')
-from api.db.db_models import DB
-from document_quality_runs import enqueue_nightly_campaign, get_quality_campaign, process_next_run
-
-progress = Path('/ragflow/qa-evidence/nightly-campaign.json')
-with DB.connection_context():
-    day = datetime.now(ZoneInfo('Europe/Moscow')).date().isoformat()
-    campaign = enqueue_nightly_campaign(day)
-    progress.write_text(json.dumps(campaign, ensure_ascii=False, indent=2), encoding='utf-8')
-    while process_next_run():
-        campaign = get_quality_campaign(campaign['id'])
-        progress.write_text(json.dumps(campaign, ensure_ascii=False, indent=2), encoding='utf-8')
-    campaign = get_quality_campaign(campaign['id'])
-    assert campaign and all(run['status'] not in ('PENDING', 'RUNNING') for run in campaign['runs'])
-    print(json.dumps({'status': campaign['status'], 'baseline': campaign['baseline_status'],
-                      'models': len(campaign['runs']), 'completed': len(campaign['runs'])}))
-"""
-                quality_result = command(
-                    [*cmd, "exec", "-T", "-e", f"BUSINESS_DOCUMENT_QUALITY_TENANT_ID={tenant['tenant_id']}", "app", "/ragflow/.venv/bin/python", "-"],
+            (OUT / "bootstrap.json").write_text(json.dumps({"admin_authenticated": True, "real_models_validated": True}), encoding="utf-8")
+            tests = args.tests or [
+                str(source / "test/playwright/e2e" / filename)
+                for filename in ("test_live_document_roundtrip.py", "test_dataset_upload_parse.py", "test_next_apps_chat.py", "test_next_apps_search.py", "test_business_document_live_intake.py")
+            ]
+            # Registration through pytest_configure occurs after pytest-playwright,
+            # so the explicit test profile wins without mutating production config.
+            profile = """import pytest, os
+    class Profile:
+     @pytest.fixture(scope="session")
+     def browser_context_args(self):
+      base=os.environ["RAGFLOW_BASE_URL"]
+      return {"viewport":{"width":1920,"height":1080},"locale":"en-US","storage_state":{"cookies":[],"origins":[{"origin":base,"localStorage":[{"name":"lng","value":"en"}]}]}}
+    def pytest_configure(config):
+     config.pluginmanager.register(Profile(),"t1-english")
+    """
+            (OUT / "live_profile.py").write_text(profile, encoding="utf-8")
+            env["PYTHONPATH"] += os.pathsep + str(OUT)
+            result = (
+                command(
+                    [
+                        sys.executable,
+                        "-B",
+                        "-m",
+                        "pytest",
+                        "-p",
+                        "live_profile",
+                        *tests,
+                        "--color=no",
+                        "--tb=short",
+                        "-rA",
+                        "-s",
+                        "-o",
+                        f"cache_dir={OUT / 'pytest-cache'}",
+                        f"--junitxml={OUT / 'browser.xml'}",
+                    ],
                     env=env,
-                    log="business-nightly.log",
-                    input=nightly_script,
+                    log="browser.log",
                     check=False,
-                    timeout=20 * 60 * 12,
+                    cwd=source,
+                    timeout=1800,
                 )
-                progress = OUT / "nightly-campaign.json"
-                if progress.is_file():
-                    campaign = json.loads(progress.read_text(encoding="utf-8"))
-                    (OUT / "business-documents-quality.json").write_text(
-                        json.dumps(
-                            {
-                                "schema_version": "2",
-                                "status": campaign["status"],
-                                "campaign_id": campaign["id"],
-                                "baseline_status": campaign["baseline_status"],
-                                "models": len(campaign["runs"]),
-                                "completed_models": sum(run["status"] not in ("PENDING", "RUNNING") for run in campaign["runs"]),
-                            },
-                            indent=2,
-                        )
-                        + "\n",
-                        encoding="utf-8",
-                    )
-                exit_code = exit_code or quality_result.returncode
-                print(f"Business Documents nightly exit={quality_result.returncode}; see nightly-campaign.json", flush=True)
-                return exit_code
-            if candidate:
-                source_manifest = json.loads((candidate / "candidate.json").read_text(encoding="utf-8"))
-                source_revision = source_manifest["identity"]["head"]
-                source_dirty = source_manifest["identity"]["dirty"]
-            else:
-                source_revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=source, text=True).strip()
-                source_dirty = bool(subprocess.check_output(["git", "status", "--porcelain=v1", "--untracked-files=all"], cwd=source))
-            quality_result = command(
-                [
-                    *cmd,
-                    "exec",
-                    "-T",
-                    "-e",
-                    "BUSINESS_DOCUMENT_LIVE_LLM=1",
-                    "-e",
-                    f"BUSINESS_DOCUMENT_LIVE_TENANT_ID={tenant['tenant_id']}",
-                    "-e",
-                    "BUSINESS_DOCUMENT_QUALITY_REPORT=/ragflow/qa-evidence/business-documents-quality.json",
-                    "-e",
-                    f"BUSINESS_DOCUMENT_MODEL_DIGEST={identity['ollama_models'][MODELS[0][0]]['digest']}",
-                    "-e",
-                    f"GITHUB_SHA={source_revision}",
-                    "-e",
-                    f"RAGFLOW_QA_SOURCE_DIRTY={int(source_dirty)}",
-                    *(["-e", f"BUSINESS_DOCUMENT_QUALITY_CASE_ID={args.business_documents_case_id}"] if args.business_documents_case_id else []),
-                    "app",
-                    "/ragflow/.venv/bin/python",
-                    "-m",
-                    "pytest",
-                    "-q",
-                    "-c",
-                    "/dev/null",
-                    "--confcutdir=/ragflow/test/evals/business_documents",
-                    "/ragflow/test/evals/business_documents/test_live_model_quality.py",
-                ],
-                env=env,
-                log="business-quality.log",
-                check=False,
-                timeout=1500 if args.business_documents_case_id else 3600,
+                if not args.skip_browser_tests
+                else None
             )
-            exit_code = exit_code or quality_result.returncode or (2 if args.business_documents_case_id else 0)
-            print(f"Business Documents real-model exit={quality_result.returncode}; see business-quality.log", flush=True)
-    except Exception as exc:
-        exit_code = exit_code or 1
-        (OUT / "failure.txt").write_text(sanitized(str(exc)), encoding="utf-8")
-        print(sanitized(str(exc)), flush=True)
-    finally:
-        try:
-            command([*cmd, "logs", "--no-color", "--tail", "250", "app"], env=env, log="app.log", check=False)
+            exit_code = result.returncode if result else 0
+            if result:
+                print(f"Live browser exit={exit_code}; see browser.log", flush=True)
+            if args.business_documents_quality:
+                command(
+                    [*cmd, "exec", "-T", "app", "/ragflow/.venv/bin/python", "-m", "pip", "install", "--disable-pip-version-check", "pytest==9.0.2"],
+                    env=env,
+                    log="business-quality-dependency.log",
+                    timeout=240,
+                )
+                if args.business_documents_nightly:
+                    nightly_script = """
+    import json
+    import sys
+    from datetime import datetime
+    from pathlib import Path
+    from zoneinfo import ZoneInfo
+
+    sys.path.insert(0, '/ragflow/admin/server')
+    from api.db.db_models import DB
+    from document_quality_runs import enqueue_nightly_campaign, get_quality_campaign, process_next_run
+
+    progress = Path('/ragflow/qa-evidence/nightly-campaign.json')
+    with DB.connection_context():
+        day = datetime.now(ZoneInfo('Europe/Moscow')).date().isoformat()
+        campaign = enqueue_nightly_campaign(day)
+        progress.write_text(json.dumps(campaign, ensure_ascii=False, indent=2), encoding='utf-8')
+        while process_next_run():
+            campaign = get_quality_campaign(campaign['id'])
+            progress.write_text(json.dumps(campaign, ensure_ascii=False, indent=2), encoding='utf-8')
+        campaign = get_quality_campaign(campaign['id'])
+        assert campaign and all(run['status'] not in ('PENDING', 'RUNNING') for run in campaign['runs'])
+        print(json.dumps({'status': campaign['status'], 'baseline': campaign['baseline_status'],
+                          'models': len(campaign['runs']), 'completed': len(campaign['runs'])}))
+    """
+                    quality_result = command(
+                        [*cmd, "exec", "-T", "-e", f"BUSINESS_DOCUMENT_QUALITY_TENANT_ID={tenant['tenant_id']}", "app", "/ragflow/.venv/bin/python", "-"],
+                        env=env,
+                        log="business-nightly.log",
+                        input=nightly_script,
+                        check=False,
+                        timeout=20 * 60 * 12,
+                    )
+                    progress = OUT / "nightly-campaign.json"
+                    if progress.is_file():
+                        campaign = json.loads(progress.read_text(encoding="utf-8"))
+                        (OUT / "business-documents-quality.json").write_text(
+                            json.dumps(
+                                {
+                                    "schema_version": "2",
+                                    "status": campaign["status"],
+                                    "campaign_id": campaign["id"],
+                                    "baseline_status": campaign["baseline_status"],
+                                    "models": len(campaign["runs"]),
+                                    "completed_models": sum(run["status"] not in ("PENDING", "RUNNING") for run in campaign["runs"]),
+                                },
+                                indent=2,
+                            )
+                            + "\n",
+                            encoding="utf-8",
+                        )
+                    exit_code = exit_code or quality_result.returncode
+                    print(f"Business Documents nightly exit={quality_result.returncode}; see nightly-campaign.json", flush=True)
+                    return exit_code
+                if candidate:
+                    source_manifest = json.loads((candidate / "candidate.json").read_text(encoding="utf-8"))
+                    source_revision = source_manifest["identity"]["head"]
+                    source_dirty = source_manifest["identity"]["dirty"]
+                else:
+                    source_revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=source, text=True).strip()
+                    source_dirty = bool(subprocess.check_output(["git", "status", "--porcelain=v1", "--untracked-files=all"], cwd=source))
+                quality_result = command(
+                    [
+                        *cmd,
+                        "exec",
+                        "-T",
+                        "-e",
+                        "BUSINESS_DOCUMENT_LIVE_LLM=1",
+                        "-e",
+                        f"BUSINESS_DOCUMENT_LIVE_TENANT_ID={tenant['tenant_id']}",
+                        "-e",
+                        "BUSINESS_DOCUMENT_QUALITY_REPORT=/ragflow/qa-evidence/business-documents-quality.json",
+                        "-e",
+                        f"BUSINESS_DOCUMENT_MODEL_DIGEST={identity['ollama_models'][MODELS[0][0]]['digest']}",
+                        "-e",
+                        f"GITHUB_SHA={source_revision}",
+                        "-e",
+                        f"RAGFLOW_QA_SOURCE_DIRTY={int(source_dirty)}",
+                        *(["-e", f"BUSINESS_DOCUMENT_QUALITY_CASE_ID={args.business_documents_case_id}"] if args.business_documents_case_id else []),
+                        "app",
+                        "/ragflow/.venv/bin/python",
+                        "-m",
+                        "pytest",
+                        "-q",
+                        "-c",
+                        "/dev/null",
+                        "--confcutdir=/ragflow/test/evals/business_documents",
+                        "/ragflow/test/evals/business_documents/test_live_model_quality.py",
+                    ],
+                    env=env,
+                    log="business-quality.log",
+                    check=False,
+                    timeout=1500 if args.business_documents_case_id else 3600,
+                )
+                exit_code = exit_code or quality_result.returncode or (2 if args.business_documents_case_id else 0)
+                print(f"Business Documents real-model exit={quality_result.returncode}; see business-quality.log", flush=True)
+        except Exception as exc:
+            exit_code = exit_code or 1
+            (OUT / "failure.txt").write_text(sanitized(str(exc)), encoding="utf-8")
+            print(sanitized(str(exc)), flush=True)
         finally:
-            command([*cmd, "down", "--volumes", "--remove-orphans"], env=env, log="cleanup.log", check=False)
-        remain = command(["docker", "ps", "-a", "-q", "--filter", f"label=com.docker.compose.project={PROJECT}"], env=env, log="remaining-containers.log").stdout.strip()
-        volumes = command(["docker", "volume", "ls", "-q", "--filter", f"label=com.docker.compose.project={PROJECT}"], env=env, log="remaining-volumes.log").stdout.strip()
-        network = command(["docker", "network", "ls", "-q", "--filter", f"label=com.docker.compose.project={PROJECT}"], env=env, log="remaining-networks.log").stdout.strip()
-        assert not remain and not volumes and not network, "Disposable resources remain; see cleanup logs"
-        if candidate:
-            verify_source(candidate, source, env, "after")
-        print("Own containers, volumes and network removed", flush=True)
-    return exit_code
+            try:
+                command([*cmd, "logs", "--no-color", "--tail", "250", "app"], env=env, log="app.log", check=False)
+            finally:
+                cleanup = current().retire_owned()
+                (OUT / "cleanup.log").write_text(json.dumps(cleanup, indent=2), encoding="utf-8")
+                if cleanup["errors"] or cleanup["blocked"]:
+                    raise RuntimeError("Owned QA cleanup incomplete; recovery preserved in lifecycle receipt")
+            remain = command(["docker", "ps", "-a", "-q", "--filter", f"label=com.docker.compose.project={PROJECT}"], env=env, log="remaining-containers.log").stdout.strip()
+            volumes = command(["docker", "volume", "ls", "-q", "--filter", f"label=com.docker.compose.project={PROJECT}"], env=env, log="remaining-volumes.log").stdout.strip()
+            network = command(["docker", "network", "ls", "-q", "--filter", f"label=com.docker.compose.project={PROJECT}"], env=env, log="remaining-networks.log").stdout.strip()
+            assert not remain and not volumes and not network, "Disposable resources remain; see cleanup logs"
+            if candidate:
+                verify_source(candidate, source, env, "after")
+            print("Own containers, volumes and network removed", flush=True)
+            note(OUT / "identity.json", receipt=True)
+            note(OUT)
+            if exit_code == 0:
+                current().close_consumption("live-regression-qa", exit_code=0, cleanup=cleanup, receipt=OUT / "identity.json")
+        return exit_code
+    except BaseException as error:
+        failure = error
+        raise
+    finally:
+        note_all([(OUT, "evidence", False)], primary=failure)
 
 
 if __name__ == "__main__":

@@ -27,6 +27,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from deployment.blue_green import COPY_ASSETS, BlueGreen, IMAGE_CONTRACT, command, deployment_config, deployment_lock, write_json
+from tools.quality.artifact_lifecycle import current, docker_args, managed, note
 
 CONTROLLER_SHA256 = hashlib.sha256((ROOT / "deployment/blue_green.py").read_bytes()).hexdigest()
 
@@ -41,6 +42,7 @@ def traffic_pool(stop):
         pool.shutdown(wait=True)
 
 
+@managed("blue-green-qa", days=0)
 def qualify(image: str, output: Path) -> dict:
     if os.environ.get("RAGFLOW_TEST_DISPOSABLE") != "1":
         raise ValueError("RAGFLOW_TEST_DISPOSABLE=1 is required")
@@ -109,7 +111,7 @@ def qualify(image: str, output: Path) -> dict:
                 )
                 tag = f"{project}:{version}"
                 images.append(tag)
-                build = subprocess.run(["docker", "build", "--network", "none", "-t", tag, str(context)], capture_output=True, timeout=300)
+                build = subprocess.run(docker_args(["docker", "build", "--network", "none", "-t", tag, str(context)]), capture_output=True, timeout=300)
                 (output / f"build-{version}.log").write_bytes(build.stdout + build.stderr)
                 if build.returncode:
                     raise RuntimeError(f"Fixture build failed; see build-{version}.log")
@@ -293,38 +295,21 @@ shutil.copyfile=partial_copy
         errors = []
         log = subprocess.run(["docker", "logs", "--tail", "100", f"{project}-gateway"], capture_output=True, timeout=30)
         (output / "gateway.log").write_bytes(log.stdout + log.stderr)
-        # Resource identity is checked before every removal, even on test failure.
-        for name in ("worker", "gateway", "web-blue", "web-green", "ragflow-cpu-1"):
-            target = f"{project}-{name}"
-            inspection = subprocess.run(["docker", "inspect", target], capture_output=True, text=True, timeout=30)
-            if inspection.returncode:
-                if "no such" not in inspection.stderr.lower():
-                    errors.append(target)
-                continue
-            info = json.loads(inspection.stdout)[0]
-            labels = info["Config"].get("Labels", {})
-            if labels.get("org.ragflow.blue-green") != project and not (target == legacy and labels.get("com.docker.compose.project") == project):
-                errors.append(target)
-                continue
-            command("docker", "rm", "-f", target)
-        for name in command("docker", "volume", "ls", "-q", "--filter", f"label=org.ragflow.blue-green={project}").splitlines():
-            command("docker", "volume", "rm", name)
-        if command("docker", "network", "inspect", "--format", '{{index .Labels "org.ragflow.blue-green"}}', network) != project:
-            errors.append(network)
-        else:
-            command("docker", "network", "rm", network)
-        for image_name in images:
-            inspection = subprocess.run(["docker", "image", "inspect", image_name], capture_output=True, text=True, timeout=30)
-            if inspection.returncode:
-                if "no such" not in inspection.stderr.lower():
-                    errors.append(image_name)
-                continue
-            command("docker", "image", "rm", image_name)
+        try:
+            cleanup = current().retire_owned()
+            errors.extend(cleanup["errors"])
+            errors.extend(cleanup["blocked"])
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+            errors.append(type(error).__name__)
         report["cleanup"] = "FAIL" if errors else "PASS"
         if errors:
             report["cleanup_errors"] = errors
             report["status"] = "FAIL"
         write_json(output / "blue-green.json", report)
+        note(output / "blue-green.json", receipt=True)
+        note(output)
+        if report["status"] == "PASS" and not errors:
+            current().close_consumption("blue-green-qa", exit_code=0, cleanup=cleanup, receipt=output / "blue-green.json")
     return report
 
 

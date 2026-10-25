@@ -51,10 +51,14 @@ elif args[0] == "install":
     assert os.environ["VITE_BUILD_SOURCEMAP"] == "false"
     pathlib.Path("node_modules").mkdir()
     pathlib.Path("node_modules/install-proof").write_text("installed")
+    placeholder = pathlib.Path("node_modules/.pnpm/example@1/node_modules/example/lib/.keep")
+    placeholder.parent.mkdir(parents=True)
+    placeholder.touch()
     store = pathlib.Path(args[args.index("--store-dir") + 1])
     (store / "synthetic-package").write_bytes(b"package bytes")
 elif args == ["exec", "vite", "build", "--mode", "production"]:
     assert pathlib.Path("node_modules/install-proof").exists()
+    assert not pathlib.Path("node_modules/.pnpm/example@1/node_modules/example/lib/.keep").exists()
     pathlib.Path("dist/assets").mkdir(parents=True)
     pathlib.Path("dist/index.html").write_text("<html>built</html>")
     pathlib.Path("dist/assets/app.js").write_text("console.log('built');")
@@ -98,6 +102,26 @@ def test_shared_cache_is_bounded_and_workspaces_are_removed(setup, monkeypatch):
     assert not work.exists()
     assert not list(frontend.CACHE_ROOT.iterdir())
     assert frontend.verify(snapshot, archive, Path(str(archive) + ".json"))["source_id"]
+
+
+def test_package_placeholders_never_remove_pins_or_follow_dependency_links(tmp_path, request):
+    web = tmp_path / "private-build/web"
+    package = web / "node_modules/.pnpm/example@1/node_modules/example"
+    package.mkdir(parents=True)
+    placeholder = package / "lib/.keep"
+    placeholder.parent.mkdir()
+    placeholder.touch()
+    pins = [web / ".keep", web / "node_modules/.keep", package / ".keep"]
+    for path in pins:
+        path.write_bytes(b"keep this task or package")
+    outside = tmp_path / "working-data"
+    outside.mkdir()
+    sentinel = outside / ".keep"
+    sentinel.touch()
+    _directory_link(package / "external", outside, request)
+    assert frontend._remove_package_placeholders(web) == 1
+    assert not placeholder.exists()
+    assert sentinel.exists() and all(path.read_bytes() == b"keep this task or package" for path in pins)
 
 
 def test_cache_expires_and_rejects_concurrent_users(tmp_path):

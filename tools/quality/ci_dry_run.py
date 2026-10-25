@@ -17,6 +17,8 @@ import shutil
 import subprocess
 from uuid import uuid4
 
+from tools.quality.artifact_lifecycle import current, managed, note
+
 ROOT = Path(__file__).resolve().parents[2]
 PURPOSE = "ci-infrastructure-dry-run"
 LABEL = "org.ragflow.ci-dry-run"
@@ -63,6 +65,15 @@ def source_files(root: Path) -> dict:
         "test/integration/fixtures/blue_green_http.py",
         "tools/quality/ci_dry_run.py",
         "tools/quality/check_release_workflows.py",
+        "tools/quality/artifact_lifecycle.py",
+        "tools/quality/artifact_docker.py",
+        "tools/quality/artifact_paths.py",
+        "tools/quality/artifact_blobs.py",
+        "tools/quality/artifact_registry.py",
+        "tools/quality/artifact_retention.py",
+        "tools/quality/artifact_policy.py",
+        "tools/quality/check_cache.py",
+        "tools/quality/candidate.py",
         ".github/actionlint.yaml",
     }
     paths.update(p.relative_to(root).as_posix() for p in (root / ".github/workflows").glob("*.yml"))
@@ -80,7 +91,13 @@ def remove_fixture(packet: dict):
     image = json.loads(docker("image", "inspect", packet["tag"]))[0]
     if image["Id"] != packet["image_id"] or image["Config"].get("Labels", {}).get(LABEL) != packet["owner"]:
         raise ValueError("Refusing to remove a foreign fixture image")
-    docker("image", "rm", packet["tag"])
+    if run := current():
+        run.legacy_image(LABEL, packet["owner"])
+        result = run.retire_owned()
+        if result["errors"] or result["blocked"]:
+            raise RuntimeError("CI fixture retirement incomplete; recovery retained")
+    else:
+        docker("image", "rm", "--no-prune", packet["tag"])
 
 
 def package(output: Path, work: Path) -> dict:
@@ -89,6 +106,8 @@ def package(output: Path, work: Path) -> dict:
     source = identity()
     inputs = source_files(ROOT)
     owner = uuid4().hex
+    if run := current():
+        run.legacy_image(LABEL, owner)
     tag = f"rf-ci-dry-run-{owner}:fixture"
     context = work / "context"
     for name in (*STARTUP, *schema_paths(ROOT)):
@@ -143,6 +162,9 @@ def consume(directory: Path, output: Path, manifest_sha256: str) -> dict:
     try:
         docker("image", "load", "--input", str(directory / "image.tar"))
         loaded = True
+        if run := current():
+            run.legacy_image(LABEL, packet["owner"])
+            run.use_image(packet["tag"])
         image = json.loads(docker("image", "inspect", packet["tag"]))[0]
         if image["Id"] != packet["image_id"] or image["Config"].get("Labels", {}).get(LABEL) != packet["owner"]:
             raise ValueError("Imported image identity mismatch")
@@ -180,6 +202,7 @@ def consume(directory: Path, output: Path, manifest_sha256: str) -> dict:
     return report
 
 
+@managed("ci-infrastructure-fixture", days=7)
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -192,6 +215,7 @@ def main():
     verify.add_argument("--manifest-sha256", required=True)
     args = parser.parse_args()
     result = package(args.output.resolve(), args.work.resolve()) if args.command == "package" else consume(args.packet.resolve(), args.output.resolve(), args.manifest_sha256)
+    note(args.output.resolve())
     if args.command == "package" and os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as stream:
             for key, value in result.items():

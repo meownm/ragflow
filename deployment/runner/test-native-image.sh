@@ -3,6 +3,8 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "${repo_root}/deployment/runner/artifact-shell.sh"
+artifact_managed_entry native-image-qa "$@"
 image="${RAGFLOW_IMAGE:?Set the qualified image reference including @sha256 digest}"
 source_sha="${SOURCE_SHA:?}"
 parser_binary="${1:?Usage: test-native-image.sh parser.test output-directory}"
@@ -21,7 +23,6 @@ cleanup() {
   if [[ -n "$container" ]]; then
     docker rm -f "$container" >/dev/null || status=1
   fi
-  rm -rf -- "$fixture"
   if [[ "$status" != 0 ]]; then
     python3 - "$output/native-image.json" <<'PY'
 import json, pathlib, sys
@@ -30,6 +31,13 @@ report = json.loads(path.read_text()) if path.exists() else {}
 report.update(status="FAIL", reason="Native image qualification or owned-resource cleanup failed")
 path.write_text(json.dumps(report, indent=2) + "\n")
 PY
+  fi
+  python3 -B "$artifact_driver" record --category evidence --evidence "$fixture" || status=1
+  python3 -B "$artifact_driver" record --category evidence --evidence "$output" || status=1
+  if [[ "$status" == 0 ]]; then
+    rm -rf -- "$fixture"
+  else
+    echo "Native QA materials retained: $fixture" >&2
   fi
   exit "$status"
 }

@@ -665,6 +665,17 @@ if ($BuildFrontend) {
     }
 }
 
+function Register-BackupArtifact {
+    param([string]$BackupPath, [string]$Validation)
+    Invoke-Native -FilePath (Join-Path $repoRoot '.venv/Scripts/python.exe') -Arguments @(
+        '-B', (Join-Path $repoRoot 'tools/quality/artifact_lifecycle.py'), 'register',
+        '--category', 'backup', '--producer', 'local-deploy-backup',
+        '--task-ref', $EvidenceDirectory, '--purpose', "PostgreSQL recovery before $resolvedMode deployment of $ProjectName",
+        '--data-scope', "$ProjectName/postgres", '--validation', $Validation,
+        '--evidence', $BackupPath, '--related-receipt', (Join-Path $EvidenceDirectory 'deployment.json')
+    )
+}
+
 $backup = $null
 $backupRequired = $resolvedMode -in @("Feature", "Candidate", "Release") -or
     $changePlan.database_sensitive.Count -gt 0 -or $changePlan.compose_config.Count -gt 0
@@ -700,17 +711,27 @@ if ($backupRequired) {
         "pg_dump -U `"`$POSTGRES_USER`" -d `"`$POSTGRES_DB`" -Fc -f '$containerBackup' && pg_restore --list '$containerBackup' >/dev/null"
     )
     $backupPath = Join-Path $EvidenceDirectory $backupName
+    $backupCopied = $false
     try {
         Invoke-Native -FilePath "docker" -Arguments @("cp", "${postgresContainer}:$containerBackup", $backupPath)
+        $backupCopied = $true
     }
     finally {
         & docker exec $postgresContainer rm -f $containerBackup | Out-Null
+        if (Test-Path -LiteralPath $backupPath -PathType Leaf) {
+            Register-BackupArtifact -BackupPath $backupPath -Validation $(if ($backupCopied) { 'format-checked' } else { 'incomplete' })
+        }
     }
     $backup = [ordered]@{
         path = $backupPath
         sha256 = (Get-FileHash -LiteralPath $backupPath -Algorithm SHA256).Hash
         reused = $false
     }
+}
+
+if ($backup -and $backup.reused) {
+    # Account for new/reused backups before any runtime mutation, including failed deployments.
+    Register-BackupArtifact -BackupPath $backup.path -Validation 'checksum-only'
 }
 
 $deploymentAction = "none"

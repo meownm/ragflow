@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+source deployment/runner/artifact-shell.sh
+RAGFLOW_ARTIFACT_CATEGORY=cache RAGFLOW_ARTIFACT_KEEP_DAYS=30 artifact_managed_entry qualified-image "$@"
 test "$(git rev-parse HEAD)" = "${SOURCE_SHA:?}"
 git diff --quiet
 git diff --cached --quiet
@@ -8,15 +10,26 @@ test -z "$(git ls-files --others --exclude-standard)" || {
 }
 source deployment/runner/staging-docker-auth.sh
 prepare_staging_docker_auth build
-docker=(sudo -n docker --config "$CI_DOCKER_CONFIG")
+docker=(python3 -B "$artifact_driver" docker -- sudo -n docker --config "$CI_DOCKER_CONFIG")
 version=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+python3 -B "$artifact_driver" record --category evidence --evidence output/ci-image
 mkdir -p output/ci-image/web/dist
+container=""
+cleanup() {
+  local result=$?
+  if [[ -n "$container" ]]; then
+    "${docker[@]}" rm -f "$container" >/dev/null || result=1
+  fi
+  python3 -B "$artifact_driver" record --category evidence --evidence output/ci-image || result=1
+  exit "$result"
+}
+trap cleanup EXIT
 if [[ -n "${REPLAY_IMAGE:-}" ]]; then
   [[ "$REPLAY_IMAGE" =~ @sha256:[0-9a-f]{64}$ ]]
   "${docker[@]}" pull "$REPLAY_IMAGE"
   digest="$REPLAY_IMAGE"
 else
-  sudo -n DOCKER_BUILDKIT=1 docker --config "$CI_DOCKER_CONFIG" build --build-arg "RAGFLOW_BUILD_VERSION=${version}" \
+  DOCKER_BUILDKIT=1 "${docker[@]}" build --build-arg "RAGFLOW_BUILD_VERSION=${version}" \
     --build-arg "RAGFLOW_SOURCE_REVISION=${SOURCE_SHA}" --build-arg "NEED_MIRROR=${NEED_MIRROR:-0}" \
     -f Dockerfile -t "${STAGING_IMAGE:?}" .
   "${docker[@]}" push "$STAGING_IMAGE"
@@ -26,8 +39,6 @@ fi
 test "$("${docker[@]}" run --rm --entrypoint cat "$digest" /ragflow/SOURCE_REVISION)" = "$SOURCE_SHA"
 "${docker[@]}" run --rm --entrypoint /ragflow/.venv/bin/python "$digest" -c 'import business_documents'
 container=$("${docker[@]}" create "$digest")
-cleanup() { "${docker[@]}" rm -f "$container" >/dev/null; }
-trap cleanup EXIT
 "${docker[@]}" cp "$container:/ragflow/web/dist/." output/ci-image/web/dist/
 sudo chown -R "$(id -un)" output/ci-image
 python3 -m tools.quality.release_runtime spa --path output/ci-image/web/dist \
@@ -37,7 +48,8 @@ python3 - <<'PY'
 import json,os,re,subprocess
 from pathlib import Path
 docker=['sudo','-n','docker','--config',os.environ['CI_DOCKER_CONFIG']]
-def version(*args):return subprocess.check_output(args,text=True).strip()
+from tools.quality.artifact_lifecycle import docker_args
+def version(*args):return subprocess.check_output(docker_args(args),text=True).strip()
 from tools.quality.release_evidence import file_manifest
 native=file_manifest(Path(os.environ.get('RAGFLOW_NATIVE_CACHE',str(Path.home()/'ragflow-native-libs'))))
 import hashlib

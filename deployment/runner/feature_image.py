@@ -8,14 +8,19 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from deployment.runner import go_builder
 from deployment.runner.native_artifacts import cache_key, identity as native_identity
-from tools.quality.candidate import canonical, digest, file_digest, verify
+from tools.quality.candidate import canonical, digest, file_digest, safe_path, verify
 from tools.quality.check_cache import cache_lock, read_success, run_check, write_success
+from tools.quality.artifact_lifecycle import docker_args, managed, note
+from tools.quality.artifact_registry import save
+
+FEATURE_REPOSITORY = "192.168.1.175:8443/docker-hosted/ragflow"
 
 
 def image_import(reference: str, cache: Path, *, force: bool = False) -> dict:
@@ -52,7 +57,7 @@ def build(snapshot: Path, cache: Path, *, local: bool, force: bool = False) -> d
         "python_jobs": "2",
     }
     key = digest(canonical(inputs))
-    image = ("local/ragflow-feature:" if local else "192.168.1.175:8443/docker-hosted/ragflow:dev-") + manifest["source_id"]
+    image = ("local/ragflow-feature:" if local else FEATURE_REPOSITORY + ":dev-") + key
     with cache_lock(cache, key):
         receipt = cache / (key + ".json")
         previous = read_success(receipt, key)
@@ -73,6 +78,7 @@ def build(snapshot: Path, cache: Path, *, local: bool, force: bool = False) -> d
                 if cache_key(native_identity(source, libraries, builder_id)) != cache_key(inputs["native"]):
                     raise ValueError("Native inputs changed during cache lookup")
                 image_import(previous["image_id"], cache)
+                note(receipt, receipt=True, category="cache")
                 return {**previous, "cache_hit": True}
         receipt.unlink(missing_ok=True)
         go_builder.run_builder(source, builder_id, ["--artifacts"])
@@ -99,9 +105,22 @@ def build(snapshot: Path, cache: Path, *, local: bool, force: bool = False) -> d
                 str(source),
             ]
         )
-        subprocess.run(command, check=True)
-        info = go_builder.inspect(image)
-        image_id = info["Id"]
+        with tempfile.TemporaryDirectory(prefix="build-", dir=cache) as temporary:
+            iidfile = Path(temporary) / "image.id"
+            subprocess.run(docker_args([*command[:-1], "--iidfile", str(iidfile), command[-1]]), check=True)
+            image_id = iidfile.read_text().strip()
+            if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
+                raise ValueError("Feature build did not produce an immutable Docker image ID")
+        info = go_builder.inspect(image_id)
+        labels = info["Config"]["Labels"] or {}
+        if (info["Id"], info["Os"], info["Architecture"], labels.get("org.ragflow.source-id"), labels.get("org.ragflow.validation")) != (
+            image_id,
+            "linux",
+            "amd64",
+            manifest["source_id"],
+            "feature-build-only",
+        ):
+            raise ValueError("Feature build image identity mismatch")
         if go_builder.docker("run", "--rm", "--network", "none", "--entrypoint", "cat", image_id, "/ragflow/SOURCE_REVISION") != "unverified":
             raise ValueError("Feature source revision mismatch")
         if go_builder.docker("run", "--rm", "--network", "none", "--entrypoint", "cat", image_id, "/ragflow/VERSION") != version:
@@ -114,9 +133,30 @@ def build(snapshot: Path, cache: Path, *, local: bool, force: bool = False) -> d
             raise ValueError("Native inputs changed during Feature build")
         result = {"schema": 1, "key": key, "status": "PASS", "image": image, "image_id": image_id, "source_id": manifest["source_id"], "version": version, "bases": inputs["bases"]}
         write_success(receipt, result)
+        note(receipt, receipt=True, category="cache")
         return {**result, "cache_hit": False}
 
 
+def publish(result: dict) -> dict:
+    image_id = result["image_id"]
+    if result.get("status") != "PASS" or not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
+        raise ValueError("Publication requires a successfully checked immutable image")
+    image = FEATURE_REPOSITORY + ":dev-" + image_id.removeprefix("sha256:")
+    go_builder.docker("tag", image_id, image)
+    with tempfile.TemporaryDirectory(prefix="ragflow-registry-") as temporary:
+        # Docker's credentials live only in this private directory, never in receipts.
+        command = ["docker", "--config", temporary]
+        password = subprocess.check_output(["sudo", "docker", "exec", "nexus", "cat", "/nexus-data/admin.password"])
+        subprocess.run(docker_args([*command, "login", FEATURE_REPOSITORY.split("/", 1)[0], "-u", "admin", "--password-stdin"]), input=password, stdout=subprocess.DEVNULL, check=True)
+        subprocess.run(docker_args([*command, "push", image]), check=True)
+        info = json.loads(subprocess.check_output(docker_args([*command, "image", "inspect", image_id]), text=True))[0]
+        matches = [value for value in info.get("RepoDigests", []) if value.startswith(FEATURE_REPOSITORY + "@sha256:")]
+        if info["Id"] != image_id or len(matches) != 1 or not re.fullmatch(re.escape(FEATURE_REPOSITORY) + r"@sha256:[0-9a-f]{64}", matches[0]):
+            raise ValueError("Published image digest does not match the requested image/repository")
+    return {**result, "image": image, "digest": matches[0]}
+
+
+@managed("feature-image", category="cache", days=30)
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     action = parser.add_mutually_exclusive_group(required=True)
@@ -125,8 +165,21 @@ def main() -> None:
     parser.add_argument("--cache", type=Path, default=Path.home() / ".cache/ragflow-feature")
     parser.add_argument("--local", action="store_true")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--publish", action="store_true", help="Publish the checked Feature image to Nexus on the builder host")
+    parser.add_argument("--output", type=Path, help="Write the result as atomic JSON, independently of build logs")
     args = parser.parse_args()
+    if args.publish and (args.local or args.image_import):
+        parser.error("--publish requires --snapshot without --local")
+    if args.output:
+        safe_path(args.output.parent, args.output.name)
+        args.output.unlink(missing_ok=True)
+        note(args.output, category="metadata")
     result = image_import(args.image_import, args.cache, force=args.force) if args.image_import else build(args.snapshot, args.cache, local=args.local, force=args.force)
+    if args.publish:
+        result = publish(result)
+    if args.output:
+        save(result, args.output)
+        note(args.output, receipt=True, category="metadata")
     print(json.dumps(result), flush=True)
 
 

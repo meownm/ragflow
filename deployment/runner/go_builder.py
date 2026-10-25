@@ -10,16 +10,20 @@ import re
 import subprocess
 import sys
 import tempfile
+import uuid
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from tools.quality.candidate import canonical, digest, file_digest
 from tools.quality.check_cache import cache_lock, read_success, write_success
+from tools.quality.artifact_lifecycle import docker_args, managed, note, note_all
+from tools.quality.artifact_docker import base_references
+from tools.quality.artifact_registry import save
 
 
 def docker(*args: str) -> str:
-    return subprocess.check_output(["docker", *args], text=True).strip()
+    return subprocess.check_output(docker_args(["docker", *args]), text=True).strip()
 
 
 def inspect(reference: str) -> dict:
@@ -27,14 +31,9 @@ def inspect(reference: str) -> dict:
 
 
 def base_images(recipe_path: Path) -> dict:
-    recipe = recipe_path.read_text()
-    defaults = dict(re.findall(r"^ARG (\w+)=([^\s]+)", recipe, re.M))
     bases = {}
-    stages = set()
-    for image, stage in re.findall(r"^FROM (\S+)(?: AS (\S+))?", recipe, re.M):
-        for name, value in defaults.items():
-            image = image.replace("${" + name + "}", value)
-        if image not in stages:
+    for image in base_references(recipe_path):
+        if image:
             try:
                 info = inspect(image)
             except subprocess.CalledProcessError:
@@ -47,8 +46,6 @@ def base_images(recipe_path: Path) -> dict:
             if not references:
                 raise ValueError(f"Base image needs an immutable repository digest: {image}")
             bases[image] = sorted(references)[0]
-        if stage:
-            stages.add(stage)
     return bases
 
 
@@ -64,6 +61,7 @@ def prepare_builder(source: Path, cache: Path) -> str:
             try:
                 info = inspect(previous["image_id"])
                 if (info["Os"], info["Architecture"]) == ("linux", "amd64"):
+                    note(receipt, receipt=True, category="cache")
                     return info["Id"]
             except (subprocess.CalledProcessError, KeyError):
                 pass
@@ -75,11 +73,12 @@ def prepare_builder(source: Path, cache: Path) -> str:
             iidfile = Path(temporary) / "image.id"
             # Keep the immutable image available independently of other builds.
             build_tag = "ragflow-go-builder:" + Path(temporary).name
-            subprocess.run([*command, "-t", build_tag, "--iidfile", str(iidfile), str(recipe.parent)], check=True)
+            subprocess.run(docker_args([*command, "-t", build_tag, "--iidfile", str(iidfile), str(recipe.parent)]), check=True)
             image_id = iidfile.read_text().strip()
             if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
                 raise ValueError("Builder did not produce an immutable Docker image ID")
         write_success(receipt, {"schema": 1, "key": key, "status": "PASS", "image_id": image_id})
+        note(receipt, receipt=True, category="cache")
         return image_id
 
 
@@ -95,8 +94,19 @@ def run_builder(source: Path, builder_id: str, arguments: list[str]) -> None:
     if not libraries.is_dir():
         raise ValueError(f"Native dependency cache not found: {libraries}")
     artifacts = arguments == ["--artifacts"]
+    invocation = uuid.uuid4().hex
+    parent_run = os.environ.get("RAGFLOW_ARTIFACT_RUN_ID")
     if "--artifacts" in arguments and not artifacts:
         raise ValueError("--artifacts does not accept build.sh arguments")
+    note(libraries, category="runtime")
+    note(cache, category="cache")
+    native_receipt = source / "output/ci-native/artifacts.json"
+    if artifacts:
+        from deployment.runner.native_artifacts import OUTPUTS
+
+        note(native_receipt, category="metadata")
+        for name in OUTPUTS:
+            note(source / name, category="cache")
     command = ["docker", "run", "--rm", "--platform", "linux/amd64", "--workdir", "/ragflow", "--entrypoint", "python3" if artifacts else "/bin/bash"]
     if hasattr(os, "getuid"):
         command.extend(["--user", f"{os.getuid()}:{os.getgid()}"])
@@ -109,6 +119,9 @@ def run_builder(source: Path, builder_id: str, arguments: list[str]) -> None:
         "GIT_CONFIG_VALUE_0": "*",
     }.items():
         command.extend(["--env", f"{name}={value}"])
+    command.extend(["--env", "RAGFLOW_ARTIFACT_RUN_ID"])
+    command.extend(["--env", "RAGFLOW_ARTIFACT_TRANSPORT=receipt"])
+    command.extend(["--env", f"RAGFLOW_NATIVE_INVOCATION={invocation}"])
     for name in ("GOFLAGS", "GOEXPERIMENT", "GOAMD64", "GOARCH", "GOOS", "CGO_CFLAGS", "CGO_LDFLAGS"):
         command.extend(["--env", name])
     for host, guest, readonly in (
@@ -126,9 +139,42 @@ def run_builder(source: Path, builder_id: str, arguments: list[str]) -> None:
         command.extend(["deployment/runner/native_artifacts.py", "--cache", "/tmp/native-artifacts", "--libraries", "/tmp/builder-home/ragflow-native-libs", "--toolchain", builder_id])
     else:
         command.extend(["build.sh", *(arguments or ["--go"])])
-    subprocess.run(command, check=True)
+    if artifacts:
+        if parent_run:
+            save({"schema": 1, "status": "INCOMPLETE", "toolchain": builder_id, "artifact_run_id": parent_run, "invocation": invocation}, native_receipt)
+    completed = False
+    failure = None
+    try:
+        subprocess.run(docker_args(command), check=True)
+        completed = True
+    except BaseException as error:
+        failure = error
+        raise
+    finally:
+        if artifacts:
+            note_all([(native_receipt, "metadata", False), *((source / name, "cache", False) for name in OUTPUTS)], primary=failure)
+            try:
+                native = json.loads(native_receipt.read_bytes())
+            except (OSError, ValueError):
+                native = {}
+            valid = isinstance(native, dict) and native.get("artifact_run_id") == parent_run and native.get("invocation") == invocation and native.get("toolchain") == builder_id
+            qualified = False
+            if valid:
+                note_all([(native_receipt, "metadata", True)], primary=failure)
+                key = native.get("key")
+                if isinstance(key, str) and re.fullmatch(r"[0-9a-f]{64}", key):
+                    note_all([(cache / "artifacts" / key, "cache", False)], primary=failure)
+                    outputs = native.get("outputs")
+                    if native.get("schema") == 1 and native.get("status") == "PASS" and isinstance(outputs, dict) and set(outputs) == set(OUTPUTS):
+                        try:
+                            qualified = all((source / name).is_file() and not (source / name).is_symlink() and file_digest(source / name) == outputs[name] for name in OUTPUTS)
+                        except OSError:
+                            qualified = False
+            if completed and parent_run and not qualified:
+                raise ValueError("Native builder did not return this invocation's successful receipt")
 
 
+@managed("go-builder", category="cache", days=30)
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=ROOT)

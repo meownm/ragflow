@@ -16,6 +16,7 @@ import time
 from uuid import uuid4
 
 from minio import Minio
+from minio.error import S3Error
 import psycopg2
 import pytest
 import urllib3
@@ -110,6 +111,9 @@ def test_coordinated_postgres_and_minio_snapshot_restores_linked_data(tmp_path: 
             env=environment,
         )
         created_containers.append(name)
+        return connect_postgres(name)
+
+    def connect_postgres(name: str) -> int:
         port = host_port(name, "5432/tcp")
         deadline = time.monotonic() + 60
         while True:
@@ -242,6 +246,9 @@ def test_coordinated_postgres_and_minio_snapshot_restores_linked_data(tmp_path: 
             ".",
         )
 
+        # Recovery must work with both original services unavailable, rather
+        # than accidentally reading a still-live source endpoint.
+        _docker("stop", names["pg_source"])
         _docker(
             "run",
             "--rm",
@@ -284,10 +291,12 @@ def test_coordinated_postgres_and_minio_snapshot_restores_linked_data(tmp_path: 
         # Negative control: a partial restore must be detected by the same
         # linkage check rather than reported as a successful database restore.
         restored_minio.remove_object(bucket, object_key)
-        with pytest.raises(Exception):
+        with pytest.raises(S3Error) as missing:
             verify_linkage(restored_pg_port, restored_minio)
+        assert missing.value.code == "NoSuchKey"
+        _docker("start", names["pg_source"])
         _docker("start", names["minio_source"])
-        verify_linkage(source_pg_port, connect_minio(names["minio_source"])[0])
+        verify_linkage(connect_postgres(names["pg_source"]), connect_minio(names["minio_source"])[0])
     finally:
         for name in reversed(created_containers):
             _docker("rm", "-f", name)

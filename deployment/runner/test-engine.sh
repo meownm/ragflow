@@ -2,7 +2,7 @@
 # All acceptance suites exercise the same digest with disposable state.
 set -euo pipefail
 [[ -d "${CI_DOCKER_CONFIG:?}" && "${DOCKER_CONFIG:?}" == "$CI_DOCKER_CONFIG" ]] || exit 1
-docker=(sudo -n docker --config "$CI_DOCKER_CONFIG")
+docker=(python3 -B tools/quality/artifact_lifecycle.py docker -- sudo -n docker --config "$CI_DOCKER_CONFIG")
 mkdir -p output/ci-engine
 set -a
 source "${CI_ENV_FILE:?}"
@@ -57,13 +57,18 @@ cmp output/ci-engine/models-before.json output/ci-engine/models-after.json
 python - <<'PY'
 import json,os
 from pathlib import Path
+from tools.quality.artifact_lifecycle import current,consumption_subject
 from tools.quality.release_packet import verify_api_reports
 root=Path('output/ci-engine')
 if os.environ['HTTP_API_TEST_LEVEL']=='p3':
     identity={'repository':os.environ['GITHUB_REPOSITORY'],'sha':os.environ['SOURCE_SHA'],
               'run_id':os.environ['GITHUB_RUN_ID'],'run_attempt':os.environ['GITHUB_RUN_ATTEMPT']}
     verify_api_reports(root,os.environ['DOC_ENGINE'],identity=identity,inventory=Path('test/mandatory-api-cases.json'),image_digest=os.environ['RAGFLOW_IMAGE'])
+owner=current()
+assert owner is not None
 (root/('engine-'+os.environ['DOC_ENGINE']+'.json')).write_text(json.dumps({
+  'schema':1,'project':'ragflow','kind':'ci-engine','status':'PASS',
+  'artifact_run_id':owner.data['run_id'],'artifact_subject':consumption_subject(owner.data),'ci':owner.data.get('ci'),
   'sha':os.environ['SOURCE_SHA'],'image_digest':os.environ['RAGFLOW_IMAGE'],
   'engine':os.environ['DOC_ENGINE'],'models':json.loads((root/'models-after.json').read_text())}))
 PY

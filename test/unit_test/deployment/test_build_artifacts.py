@@ -1,6 +1,7 @@
 """Dependency invalidation and native cache integrity across source snapshots."""
 
 import json
+import os
 from pathlib import Path
 import sys
 import tomllib
@@ -41,7 +42,11 @@ def test_invalid_dependency_inputs_fail_closed(mutation):
 
 
 @pytest.fixture
-def native(tmp_path):
+def native(tmp_path, monkeypatch):
+    monkeypatch.setenv("RAGFLOW_ARTIFACT_STATE", str(tmp_path / "lifecycle"))
+    monkeypatch.setenv("RAGFLOW_ARTIFACT_ARCHIVES", str(tmp_path / "recovery"))
+    for name in ("RAGFLOW_ARTIFACT_RUN_ID", "RAGFLOW_ARTIFACT_OWNER_TOKEN", "RAGFLOW_ARTIFACT_TRANSPORT"):
+        monkeypatch.delenv(name, raising=False)
     source = tmp_path / "source"
     for name in (
         "cmd/main.go",
@@ -161,7 +166,7 @@ def test_native_entrypoint_builds_once_and_restores_after_orchestration_edits(na
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(name.encode())
 
-    monkeypatch.setattr(native_artifacts.subprocess, "run", compile_outputs)
+    monkeypatch.setattr(native_artifacts, "subprocess", SimpleNamespace(run=compile_outputs))
     native_artifacts.main()
     first = json.loads((source / "output/ci-native/artifacts.json").read_text())
     assert first["cache_hit"] is False and first["status"] == "PASS"
@@ -170,7 +175,7 @@ def test_native_entrypoint_builds_once_and_restores_after_orchestration_edits(na
     def unexpected_compile(*args, **kwargs):
         raise AssertionError("Orchestration edits must restore artifacts without compilation")
 
-    monkeypatch.setattr(native_artifacts.subprocess, "run", unexpected_compile)
+    monkeypatch.setattr(native_artifacts, "subprocess", SimpleNamespace(run=unexpected_compile))
     for name in ("go_builder.py", "native_artifacts.py"):
         with (source / "deployment/runner" / name).open("a") as stream:
             stream.write("\n# logging only\n")
@@ -181,6 +186,62 @@ def test_native_entrypoint_builds_once_and_restores_after_orchestration_edits(na
         assert receipt["cache_hit"] is True and receipt["status"] == "PASS"
         assert receipt["key"] == first["key"] and receipt["outputs"] == first["outputs"]
         assert all((source / output).read_bytes() == output.encode() for output in OUTPUTS)
+
+
+@pytest.mark.parametrize("outcome", ["success", "cpp-failure", "go-failure", "interrupted"])
+def test_native_public_entrypoint_accounts_for_partial_outputs_and_failure(native, tmp_path, monkeypatch, outcome):
+    from tools.quality import artifact_lifecycle as life
+
+    source, libraries, toolchain = native
+    if sys.platform == "win32":
+        monkeypatch.setitem(sys.modules, "fcntl", SimpleNamespace(LOCK_EX=2, flock=lambda *args: None))
+    cache = tmp_path / "cache"
+    receipt = source / "output/ci-native/artifacts.json"
+    monkeypatch.setattr(sys, "argv", ["native_artifacts.py", "--root", str(source), "--libraries", str(libraries), "--toolchain", toolchain, "--cache", str(cache)])
+    monkeypatch.setenv("GOCACHE", str(tmp_path / "go-cache"))
+    calls = []
+
+    def compile_outputs(command, **kwargs):
+        saved = list(life.runs(tmp_path / "lifecycle"))
+        assert len(saved) == 1 and saved[0]["state"] == "running"
+        intents = {item.get("path") for item in saved[0]["creation_intents"]}
+        assert str(cache.absolute()) in intents and str(receipt.absolute()) in intents
+        calls.append(command)
+        outputs = OUTPUTS[2:] if len(calls) == 1 else OUTPUTS[:2]
+        for name in outputs:
+            target = source / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(name.encode())
+        if outcome == "interrupted":
+            raise KeyboardInterrupt()
+        if (outcome == "cpp-failure" and len(calls) == 1) or (outcome == "go-failure" and len(calls) == 2):
+            raise RuntimeError("synthetic compile failure")
+
+    monkeypatch.setattr(native_artifacts, "subprocess", SimpleNamespace(run=compile_outputs))
+    if outcome == "success":
+        native_artifacts.main()
+    else:
+        with pytest.raises(KeyboardInterrupt if outcome == "interrupted" else RuntimeError):
+            native_artifacts.main()
+    saved = list(life.runs(tmp_path / "lifecycle"))
+    assert len(saved) == 1
+    run = saved[0]
+    assert run["state"] == ("completed" if outcome == "success" else "failed")
+    recorded = {item.get("path"): item for item in run["resources"]}
+    assert recorded[str(libraries.absolute())]["category"] == "runtime"
+    assert str(receipt.absolute()) in recorded
+    assert {str((source / name).absolute()) for name in OUTPUTS if (source / name).exists()} <= recorded.keys()
+    assert any(item["path"] == str(receipt.absolute()) for item in run["receipts"])
+    assert json.loads(receipt.read_bytes())["status"] == ("PASS" if outcome == "success" else "INCOMPLETE")
+    assert "RAGFLOW_ARTIFACT_RUN_ID" not in os.environ
+
+
+def test_native_receipt_transport_requires_existing_parent_before_creating_anything(native, tmp_path, monkeypatch):
+    monkeypatch.setenv("RAGFLOW_ARTIFACT_TRANSPORT", "receipt")
+    with pytest.raises(ValueError, match="host lifecycle run"):
+        native_artifacts.main()
+    assert not (tmp_path / "lifecycle").exists()
+    assert not (native[0] / "output").exists()
 
 
 @pytest.mark.parametrize("corruption", [None, "binary", "missing", "manifest", "unexpected-output", "wrong-key"])

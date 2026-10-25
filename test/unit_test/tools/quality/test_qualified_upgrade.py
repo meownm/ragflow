@@ -20,7 +20,9 @@ OLD_SHA = "3d168d5bc503f87f32eb255b8a21dad509f7b0db"
 
 
 @pytest.fixture
-def upgrade(monkeypatch):
+def upgrade(monkeypatch, tmp_path):
+    monkeypatch.setenv("RAGFLOW_ARTIFACT_STATE", str(tmp_path / "lifecycle"))
+    monkeypatch.delenv("RAGFLOW_ARTIFACT_RUN_ID", raising=False)
     module = types.ModuleType("qualified_upgrade_test")
     module.__file__ = str(SCRIPT)
     exec(compile(SCRIPT.read_text(), str(SCRIPT), "exec"), module.__dict__)
@@ -305,7 +307,7 @@ def test_bootstrap_cli_failure_cannot_emit_success(upgrade, approved_policy, mon
         verify_runtime_upgrade(report, SHA, NEW_IMAGE)
 
 
-def test_cleanup_never_removes_foreign_resource_and_continues(upgrade, monkeypatch, tmp_path):
+def test_cleanup_requires_lifecycle_owner_before_any_resource_removal(upgrade, monkeypatch, tmp_path):
     state = upgrade.DisposableUpgrade(tmp_path)
     state.resources = [("network", "f" * 64), ("container", "a" * 64)]
     calls = []
@@ -321,8 +323,7 @@ def test_cleanup_never_removes_foreign_resource_and_continues(upgrade, monkeypat
     monkeypatch.setattr(upgrade.subprocess, "run", lambda *args, **kwargs: subprocess.CompletedProcess(args, 1, b"", b"No such network"))
     with pytest.raises(RuntimeError, match="cleanup incomplete"):
         state.cleanup()
-    assert ["docker", "network", "rm", "f" * 64] in calls
-    assert not any(args[:3] == ["docker", "container", "rm"] for args in calls)
+    assert not calls
 
 
 def test_probe_rejects_different_running_image(upgrade, monkeypatch, tmp_path):

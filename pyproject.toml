@@ -1,6 +1,6 @@
 [project]
 name = "ragflow"
-version = "1.56.3"
+version = "1.57.0"
 description = "[RAGFlow](https://ragflow.io/) is an open-source RAG (Retrieval-Augmented Generation) engine based on deep document understanding. It offers a streamlined RAG workflow for businesses of any scale, combining LLM (Large Language Models) to provide truthful question-answering capabilities, backed by well-founded citations from various complex formatted data."
 authors = [{ name = "Zhichang Yu", email = "yuzhichang@gmail.com" }]
 license-files = ["LICENSE"]
@@ -347,6 +347,7 @@ filterwarnings = [
 
 # Command line options
 addopts = [
+    "-p", "tools.quality.pytest_artifacts",  # Labels/recovery only for explicitly opted-in disposable QA.
     "-v",  # Verbose output
     "--strict-markers",  # Enforce marker definitions
     "--tb=short",  # Simplified traceback

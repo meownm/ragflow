@@ -32,9 +32,15 @@ def main() -> int:
     root = Path(__file__).resolve().parents[2]
     sys.path.insert(0, str(root))
     from tools.quality.workspace import disposable_workspace
+    from tools.quality.artifact_lifecycle import managed
 
+    # The producer owns one long-lived run; its subprocess builders record their own runs.
+    return managed("feature-snapshot", category="cache", days=30)(_build_run)(args, root, disposable_workspace)
+
+
+def _build_run(args, root, disposable_workspace):
     if not args.local and not args.ssh_key.is_file():
-        parser.error(f"SSH key does not exist: {args.ssh_key}")
+        raise ValueError(f"SSH key does not exist: {args.ssh_key}")
     untracked = subprocess.check_output(["git", "-C", str(root), "ls-files", "--others", "--exclude-standard", "-z"]).decode().strip("\0").split("\0")
     omitted = sorted(set(filter(None, untracked)) - set(args.include))
     if omitted:
@@ -50,15 +56,21 @@ def main() -> int:
         for name in args.include:
             command.extend(["--include", name])
         run(*command)
+        from tools.quality.artifact_lifecycle import note
+
+        # Native compilation adds generated files to the working snapshot. Keep
+        # its immutable input separately so normal teardown can retire that tree.
+        archive = temporary / "snapshot.tar.gz"
+        with tarfile.open(archive, "w:gz") as stream:
+            stream.add(candidate, arcname="snapshot")
+        note(archive, category="archive")
+        note(candidate, category="cache")
         if args.local:
             command = [sys.executable, "-B", str(root / "deployment/runner/feature_image.py"), "--snapshot", str(candidate), "--local", "--cache", str(root / ".local/cache/deploy")]
             if args.force:
                 command.append("--force")
             run(*command)
             return 0
-        archive = temporary / "snapshot.tar.gz"
-        with tarfile.open(archive, "w:gz") as stream:
-            stream.add(candidate, arcname="snapshot")
         ssh = ["ssh", "-i", str(args.ssh_key), "-o", "BatchMode=yes", args.host]
         scp = ["scp", "-i", str(args.ssh_key), "-o", "BatchMode=yes"]
         remote = run(*ssh, "mktemp -d /tmp/ragflow-feature-XXXXXXXX", capture=True).strip()
@@ -72,11 +84,14 @@ def main() -> int:
                 + remote
                 + "/snapshot.tar.gz -C "
                 + remote
-                + " && bash "
+                + ' && RAGFLOW_ARTIFACT_STATE="${RAGFLOW_ARTIFACT_STATE:-$HOME/.local/state/ragflow-artifacts}" python3 -B '
                 + remote
-                + "/snapshot/source/deployment/runner/build-feature-image.sh "
+                + "/snapshot/source/deployment/runner/feature_image.py --publish --snapshot "
                 + remote
                 + "/snapshot"
+                + " --output "
+                + remote
+                + "/feature-result.json"
                 + (" --force" if args.force else ""),
             )
         finally:

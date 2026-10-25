@@ -186,6 +186,24 @@ def _check_inputs(work_source: Path, manifest: dict) -> None:
         raise ValueError("frontend source inputs changed in build workspace")
 
 
+def _remove_package_placeholders(web: Path) -> int:
+    """Discard empty pnpm package placeholders in this private installed tree."""
+    root = web / "node_modules/.pnpm"
+    _unlinked(root)
+    removed = 0
+    for directory, folders, files in os.walk(root, followlinks=False):
+        parent = Path(directory)
+        folders[:] = [name for name in folders if not (parent / name).is_symlink() and not (parent / name).is_junction()]
+        if parent == root or ".keep" not in files:
+            continue
+        path = parent / ".keep"
+        info = path.lstat()
+        if stat.S_ISREG(info.st_mode) and not getattr(info, "st_file_attributes", 0) & 0x400 and info.st_size == 0:
+            path.unlink()
+            removed += 1
+    return removed
+
+
 def _environment(work: Path, profile: dict) -> dict:
     # No inherited provider credentials, proxy tokens, NODE_OPTIONS or VITE_*.
     allowed = {"PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "OS", "PROCESSOR_ARCHITECTURE", "NUMBER_OF_PROCESSORS"}
@@ -239,6 +257,7 @@ def build(candidate: Path, work: Path, output: Path, pnpm_cli: Path | None = Non
         raise ValueError("build cache, candidate, workspace and artifact must have separate paths")
     cache.mkdir(parents=True, exist_ok=True)
     with _cache_lease(cache), disposable_workspace(work):
+        owned_output = False
         try:
             source = work / "source"
             shutil.copytree(candidate / "source", source)
@@ -250,7 +269,10 @@ def build(candidate: Path, work: Path, output: Path, pnpm_cli: Path | None = Non
             }
             if versions["node"] != profile["node"].removeprefix("v") or versions["pnpm"] != profile["package_manager"].removeprefix("pnpm@"):
                 raise ValueError("installed frontend toolchain does not match candidate profile")
-            _run([*pnpm, "install", "--frozen-lockfile", "--ignore-scripts", "--prod=false", "--store-dir", str(cache)], source / "web", env, work / "install.log", 1200)
+            try:
+                _run([*pnpm, "install", "--frozen-lockfile", "--ignore-scripts", "--prod=false", "--store-dir", str(cache)], source / "web", env, work / "install.log", 1200)
+            finally:
+                _remove_package_placeholders(source / "web")
             _check_inputs(source, manifest)
             _run([*pnpm, "exec", "vite", "build", "--mode", profile["mode"]], source / "web", env, work / "build.log", 1200)
             _check_inputs(source, manifest)
@@ -264,6 +286,7 @@ def build(candidate: Path, work: Path, output: Path, pnpm_cli: Path | None = Non
             output.parent.mkdir(parents=True, exist_ok=True)
             # Exclusive creation prevents concurrent writers from replacing published bytes.
             with output.open("xb") as stream, tarfile.open(fileobj=stream, mode="w:gz") as archive:
+                owned_output = True
                 for name in sorted(files):
                     archive.add(identity.safe_path(dist, name), arcname=name, recursive=False)
             receipt = {
@@ -284,6 +307,11 @@ def build(candidate: Path, work: Path, output: Path, pnpm_cli: Path | None = Non
                 stream.write(identity.canonical(receipt) + b"\n")
             return verify(candidate, output, receipt_path)
         finally:
+            from tools.quality.artifact_lifecycle import note
+
+            if owned_output:
+                note(output)
+            note(cache, category="cache")
             # Keep bounded diagnostic files, never a second source/dependency tree.
             logs = sorted(work.glob("*.log"))
             if logs:
@@ -292,6 +320,7 @@ def build(candidate: Path, work: Path, output: Path, pnpm_cli: Path | None = Non
                 with zipfile.ZipFile(log_archive, "x", compression=zipfile.ZIP_DEFLATED) as bundle:
                     for log in logs:
                         bundle.write(log, log.name)
+                note(log_archive)
 
 
 def _verify_archive(archive: Path, receipt: dict) -> None:
@@ -330,6 +359,12 @@ def verify(candidate: Path, archive: Path, receipt: Path) -> dict:
 
 
 def main() -> int:
+    from tools.quality.artifact_lifecycle import managed
+
+    return managed("frontend-artifact", category="evidence", days=30)(_main)()
+
+
+def _main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=["build", "verify", "clean-cache"])
     parser.add_argument("--candidate", type=Path)
@@ -351,6 +386,12 @@ def main() -> int:
             data = build(args.candidate, args.work, args.archive, args.pnpm_cli)
         else:
             data = verify(args.candidate, args.archive, args.receipt or Path(str(args.archive) + ".json"))
+        from tools.quality.artifact_lifecycle import note
+
+        note(args.archive)
+        note((args.receipt if args.action == "verify" else None) or Path(str(args.archive) + ".json"), receipt=True)
+        note(Path(str(args.archive) + ".logs.zip"))
+        note(CACHE_ROOT, category="cache")
         print(json.dumps({"source_id": data["source_id"], "integrity": "PASS", "validation": "NOT_ASSERTED"}))
         return 0
     except (OSError, ValueError, KeyError, subprocess.SubprocessError, tarfile.TarError) as exc:

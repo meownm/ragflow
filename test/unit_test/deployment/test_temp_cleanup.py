@@ -17,6 +17,12 @@ PWSH = shutil.which("pwsh") or shutil.which("powershell")
 pytestmark = pytest.mark.skipif(not PWSH or os.name != "nt", reason="Windows PowerShell and CIM are required")
 
 
+@pytest.fixture(autouse=True)
+def isolated_lifecycle(monkeypatch, tmp_path_factory):
+    monkeypatch.setenv("RAGFLOW_ARTIFACT_STATE", str(tmp_path_factory.mktemp("lifecycle-state")))
+    monkeypatch.delenv("RAGFLOW_ARTIFACT_RUN_ID", raising=False)
+
+
 def run(root, *args):
     # Other chats may create/remove live containers during this unit lane.
     # Docker mount/failure behavior has dedicated fixtures below; CIM stays real.
@@ -395,6 +401,16 @@ def test_weekly_wrapper_reports_failure_and_reuses_one_report_on_retry(tmp_path)
     scripts.mkdir(parents=True)
     wrapper = scripts / "sweep-temp.ps1"
     shutil.copyfile(SCRIPT.with_name("sweep-temp.ps1"), wrapper)
+    # Exercise the wrapper's native Python exit handling without inspecting live Docker.
+    checkout = scripts.parents[1]
+    python = checkout / ".venv/Scripts/python.exe"
+    python.parent.mkdir(parents=True)
+    shutil.copyfile(sys.executable, python)
+    (python.parent.parent / "pyvenv.cfg").write_text(f"home = {sys.base_prefix}\ninclude-system-site-packages = false\n")
+    inventory = checkout / "tools/quality/artifact_registry.py"
+    inventory.parent.mkdir(parents=True)
+    inventory.write_text('import os, sys\nprint(\'{"complete": true, "counts": {}}\')\nsys.exit(int(os.environ.get("TEST_INVENTORY_EXIT", "0")))\n')
+    inventory.with_name("artifact_lifecycle.py").write_text('import os, sys\nprint(\'{"removed": 0, "errors": 0}\')\nsys.exit(int(os.environ.get("TEST_LIFECYCLE_EXIT", "0")))\n')
     (scripts / "temp.ps1").write_text("param([switch]$CleanCache)\n& $env:TEST_SCRIPT -Root $env:TEST_ROOT", encoding="utf-8")
     command = "function global:docker { $global:LASTEXITCODE=0 }; & $env:TEST_WRAPPER"
     env = {**os.environ, "TEST_SCRIPT": str(SCRIPT), "TEST_ROOT": str(root), "TEST_WRAPPER": str(wrapper)}
@@ -413,9 +429,21 @@ def test_weekly_wrapper_reports_failure_and_reuses_one_report_on_retry(tmp_path)
     assert result.returncode == 0, result.stderr
     report = json.loads((report_directory / "last-run.json").read_text(encoding="utf-8-sig"))
     assert report["succeeded"] is True
+    assert report["inventory"]["complete"] is True
     assert len(report["removed"]) == 1
     assert [path.name for path in report_directory.iterdir()] == ["last-run.json"]
     assert not list(root.iterdir())
+    env["TEST_INVENTORY_EXIT"] = "1"
+    result = sweep()
+    assert result.returncode != 0
+    report = json.loads((report_directory / "last-run.json").read_text(encoding="utf-8-sig"))
+    assert "Artifact inventory failed" in report["inventory_error"]
+    env["TEST_INVENTORY_EXIT"] = "0"
+    env["TEST_LIFECYCLE_EXIT"] = "1"
+    result = sweep()
+    assert result.returncode != 0
+    report = json.loads((report_directory / "last-run.json").read_text(encoding="utf-8-sig"))
+    assert "Artifact retirement failed" in report["docker_cleanup_error"]
 
 
 @pytest.mark.parametrize("complete", [False, True])

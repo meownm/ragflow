@@ -16,6 +16,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import time
 import urllib.request
 
@@ -84,7 +85,25 @@ for p in pathlib.Path('/proc').glob('[0-9]*/cmdline'):
 
 
 def command(*args: str, data: bytes | None = None, timeout: int = 120) -> str:
-    result = subprocess.run(args, input=data, capture_output=True, timeout=timeout)
+    arguments = args
+    runtime = None
+    environment = None
+    if os.environ.get("RAGFLOW_ARTIFACT_RUN_ID"):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from deployment.artifact_runtime import current_runtime
+        from tools.quality.artifact_lifecycle import docker_args
+
+        runtime = current_runtime()
+        if runtime:
+            if args[:2] == ("docker", "run") and "--rm" in args:
+                result = runtime.probe(args, subprocess.run, input=data, capture_output=True, timeout=timeout)
+            else:
+                arguments, environment = runtime.arguments(args)
+        else:
+            arguments = docker_args(args)
+    if not runtime or args[:2] != ("docker", "run") or "--rm" not in args:
+        options = {"env": environment} if environment is not None else {}
+        result = subprocess.run(arguments, input=data, capture_output=True, timeout=timeout, **options)
     if result.returncode:
         # Compose config and environment can contain credentials. Never echo them.
         raise RuntimeError(f"{args[0]} {args[1]} failed (exit {result.returncode})")
@@ -466,17 +485,26 @@ def main() -> int:
     parser.add_argument("--initialize", action="store_true")
     parser.add_argument("--recover", action="store_true", help="Restore the pre-deployment route and worker after interruption")
     args = parser.parse_args()
-    with deployment_lock(args.runtime):
+    if not args.recover and (not args.config or not args.output):
+        parser.error("--config and --output are required for deployment")
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from deployment.artifact_runtime import RuntimeAccounting
+    from tools.quality.artifact_lifecycle import current
+
+    parent = current()
+    disposable_parent = parent and os.environ.get("RAGFLOW_TEST_DISPOSABLE") == "1" and parent.data["category"] in {"disposable", "cache", "evidence"}
+    accounting = deployment_lock(args.runtime) if disposable_parent else RuntimeAccounting(args.project, args.runtime, lock=deployment_lock(args.runtime), config=args.config, output=args.output)
+    with accounting as runtime:
         deployer = BlueGreen(args.project, args.runtime, args.timeout)
         if args.recover:
             deployer.recover()
             return 0
-        if not args.config or not args.output:
-            parser.error("--config and --output are required for deployment")
-        base = json.loads(args.config.read_text(encoding="utf-8-sig"))
+        base = runtime.read_config(args.config) if runtime else json.loads(args.config.read_text(encoding="utf-8-sig"))
         config = deployment_config(base, args.project, base["services"]["ragflow-cpu"]["image"])
+        if runtime:
+            runtime.use_config_images(config)
         result = deployer.deploy(config, initialize=args.initialize)
-    write_json(args.output, result)
+        write_json(args.output, result)
     return 0
 
 

@@ -630,6 +630,7 @@ def restore(run: dict, recovery_run):
         if dependency not in recovery_run.data.setdefault("recovery_dependencies", []):
             recovery_run.data["recovery_dependencies"].append(dependency)
             recovery_run.persist()
+        run["recovery_epoch"] = run.get("recovery_epoch", 0) + 1
         invalidate_release(run, "recovery-resumed")
         write_run(recovery_run.store, run)
     engine = recovery_run.engine() if any(target["kind"] != "path" for target in resources) else None

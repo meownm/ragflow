@@ -907,7 +907,7 @@ def run_subject(run: dict) -> dict:
 
 
 def invalidate_release(run: dict, reason: str):
-    """Resumed recovery needs a new approval and retention window."""
+    """Revoke recovery expiry approval while retaining its referenced packets."""
     if run.get("recovery_released_at"):
         run.setdefault("invalidated_releases", []).append(
             {
@@ -922,7 +922,6 @@ def invalidate_release(run: dict, reason: str):
         )
     for key in ("recovery_released_at", "release_evidence", "expiry_files", "expiry_subject"):
         run.pop(key, None)
-    run["recovery_epoch"] = run.get("recovery_epoch", 0) + 1
 
 
 def operator_evidence(path: Path, run: dict, action: str) -> dict:

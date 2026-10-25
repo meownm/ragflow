@@ -1,7 +1,9 @@
 """A successful QA consumer releases inputs without approving product retirement."""
 
 from datetime import datetime, timezone
+import json
 from pathlib import Path
+import sys
 
 import pytest
 
@@ -61,7 +63,7 @@ def test_explicit_successful_qa_consumption_releases_only_image_reference(state,
     assert life.consumption_closed(saved)
 
 
-@pytest.mark.parametrize("changed", ["failed", "paused", "source", "engine", "epoch", "dependency", "generation", "receipt-changed", "receipt-missing", "foreign-proof"])
+@pytest.mark.parametrize("changed", ["failed", "paused", "source", "engine", "epoch", "recovery-epoch", "dependency", "generation", "receipt-changed", "receipt-missing", "foreign-proof"])
 def test_changed_or_unfinished_consumer_keeps_image_protected(state, tmp_path, changed):
     owner = producer(state)
     receipt = tmp_path / "qa.json"
@@ -80,6 +82,8 @@ def test_changed_or_unfinished_consumer_keeps_image_protected(state, tmp_path, c
         saved["consumption_closed"]["subject"]["engine"] = "foreign-engine"
     elif changed == "epoch":
         saved["usage_epoch"] = "new-activity"
+    elif changed == "recovery-epoch":
+        saved["recovery_epoch"] = saved.get("recovery_epoch", 0) + 1
     elif changed == "dependency":
         saved["image_dependencies"].append({"image_id": "another-image", "reference": "another-image"})
     elif changed == "generation":
@@ -93,6 +97,47 @@ def test_changed_or_unfinished_consumer_keeps_image_protected(state, tmp_path, c
     life.write_run(state, saved)
     assert not life.consumption_closed(saved)
     assert life.image_has_user(state, owner.data, {"kind": "image", "identity": "input-image"})
+
+
+@pytest.mark.parametrize("task_status", ["completed", "superseded", "open"])
+@pytest.mark.parametrize("released", [False, True])
+def test_complete_preserves_successful_qa_consumption_and_revokes_only_expiry_approval(state, tmp_path, monkeypatch, task_status, released):
+    owner = producer(state)
+    with life.Run("pytest-disposable", store=state, days=7) as qa:
+        qa._engine = Engine()
+        qa.data["engine"] = "engine"
+        qa.use_image("input-image")
+        qa.close_consumption("pytest-disposable", exit_code=0, cleanup=teardown(qa))
+    before = life.read_run(state, qa.data["run_id"])
+    assert life.consumption_closed(before)
+    for action in ["release", "complete"] if released else ["complete"]:
+        saved = life.read_run(state, qa.data["run_id"])
+        evidence = tmp_path / f"{action}.json"
+        evidence.write_text(
+            json.dumps(
+                {
+                    "schema": 1,
+                    "project": "ragflow",
+                    "action": action,
+                    "subject": life.run_subject(saved),
+                    "execution_status": "completed",
+                    "approved_by": "qa-owner",
+                    "task_status": "completed" if action == "release" else task_status,
+                    "recovery_needed": action != "release",
+                }
+            )
+        )
+        monkeypatch.setattr(sys, "argv", ["artifact_lifecycle", action, "--state", str(state), "--run", qa.data["run_id"], "--evidence", str(evidence)])
+        assert life.main() == 0
+    after = life.read_run(state, qa.data["run_id"])
+    assert after["task_status"] == task_status
+    assert life.consumption_closed(after) and after["consumption_closed"] == before["consumption_closed"]
+    assert not life.image_has_user(state, owner.data, {"kind": "image", "identity": "input-image"})
+    assert not after.get("recovery_released_at")
+    if released:
+        assert after["invalidated_releases"][-1]["reason"] == "generation-completed-again"
+    first = life.run_path(state, qa.data["run_id"]).read_bytes()
+    assert life.main() == 0 and life.run_path(state, qa.data["run_id"]).read_bytes() == first
 
 
 @pytest.mark.parametrize("invalid", ["failed-qa", "failed-cleanup", "foreign-cleanup", "missing-cleanup", "live-generation", "wrong-producer"])

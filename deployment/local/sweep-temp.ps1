@@ -29,8 +29,12 @@ try {
     # Refresh observations even after cleanup fails; never use this index to delete.
     try {
         $python = Join-Path $repo '.venv\Scripts\python.exe'
-        $inventoryScript = Join-Path $repo 'tools\quality\artifact_registry.py'
-        $inventory = @(& $python -B $inventoryScript --repo $repo 2>&1)
+        Push-Location -LiteralPath $repo
+        try {
+            $inventory = @(& $python -B -m tools.quality.artifact_registry --repo $repo 2>&1)
+        } finally {
+            Pop-Location
+        }
         if ($LASTEXITCODE -ne 0) { throw "Artifact inventory failed: $($inventory -join [Environment]::NewLine)" }
         $report.inventory = ($inventory -join [Environment]::NewLine) | ConvertFrom-Json
     } catch {

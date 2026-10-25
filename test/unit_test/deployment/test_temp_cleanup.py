@@ -409,14 +409,19 @@ def test_weekly_wrapper_reports_failure_and_reuses_one_report_on_retry(tmp_path)
     (python.parent.parent / "pyvenv.cfg").write_text(f"home = {sys.base_prefix}\ninclude-system-site-packages = false\n")
     inventory = checkout / "tools/quality/artifact_registry.py"
     inventory.parent.mkdir(parents=True)
-    inventory.write_text('import os, sys\nprint(\'{"complete": true, "counts": {}}\')\nsys.exit(int(os.environ.get("TEST_INVENTORY_EXIT", "0")))\n')
-    inventory.with_name("artifact_lifecycle.py").write_text('import os, sys\nprint(\'{"removed": 0, "errors": 0}\')\nsys.exit(int(os.environ.get("TEST_LIFECYCLE_EXIT", "0")))\n')
+    inventory.write_text(
+        'import os, sys\nfrom tools.quality.artifact_lifecycle import inventory_marker\nassert inventory_marker()\nprint(\'{"complete": true, "counts": {}}\')\nsys.exit(int(os.environ.get("TEST_INVENTORY_EXIT", "0")))\n'
+    )
+    inventory.with_name("artifact_lifecycle.py").write_text(
+        'import os, sys\ndef inventory_marker(): return True\nif __name__ == "__main__":\n print(\'{"removed": 0, "errors": 0}\')\n sys.exit(int(os.environ.get("TEST_LIFECYCLE_EXIT", "0")))\n'
+    )
     (scripts / "temp.ps1").write_text("param([switch]$CleanCache)\n& $env:TEST_SCRIPT -Root $env:TEST_ROOT", encoding="utf-8")
     command = "function global:docker { $global:LASTEXITCODE=0 }; & $env:TEST_WRAPPER"
     env = {**os.environ, "TEST_SCRIPT": str(SCRIPT), "TEST_ROOT": str(root), "TEST_WRAPPER": str(wrapper)}
+    env.pop("PYTHONPATH", None)
 
     def sweep():
-        return subprocess.run([PWSH, "-NoProfile", "-Command", command], env=env, capture_output=True, text=True, timeout=30)
+        return subprocess.run([PWSH, "-NoProfile", "-Command", command], cwd=tmp_path, env=env, capture_output=True, text=True, timeout=30)
 
     report_directory = tmp_path / "checkout/.local/maintenance/temp-cleanup"
     with (task / "locked.bin").open("rb"):
@@ -444,6 +449,26 @@ def test_weekly_wrapper_reports_failure_and_reuses_one_report_on_retry(tmp_path)
     assert result.returncode != 0
     report = json.loads((report_directory / "last-run.json").read_text(encoding="utf-8-sig"))
     assert "Artifact retirement failed" in report["docker_cleanup_error"]
+
+
+def test_cleanup_installer_previews_s4u_limited_without_registering_task(tmp_path):
+    script = SCRIPT.with_name("install-temp-cleanup.ps1")
+    command = r"""
+Import-Module ScheduledTasks
+function global:Get-ScheduledTask { param($TaskName, $ErrorAction) return $null }
+function global:New-ScheduledTaskPrincipal {
+    param($UserId, $LogonType, $RunLevel)
+    $global:principal = @{user=$UserId;logon=$LogonType;level=$RunLevel}
+    ScheduledTasks\New-ScheduledTaskPrincipal -UserId $UserId -LogonType $LogonType -RunLevel $RunLevel
+}
+function global:Register-ScheduledTask { throw 'WhatIf must not register a task' }
+& $env:TEST_INSTALLER -WhatIf
+@{principal=$global:principal;user=[Security.Principal.WindowsIdentity]::GetCurrent().Name}|ConvertTo-Json -Compress
+"""
+    result = subprocess.run([PWSH, "-NoProfile", "-Command", command], cwd=tmp_path, env={**os.environ, "TEST_INSTALLER": str(script)}, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    value = json.loads(result.stdout.splitlines()[-1])
+    assert value["principal"] == {"user": value["user"], "logon": "S4U", "level": "Limited"}
 
 
 @pytest.mark.parametrize("complete", [False, True])

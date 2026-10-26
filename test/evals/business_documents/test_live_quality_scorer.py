@@ -270,6 +270,24 @@ def test_scorer_detects_semantic_paraphrase_across_sections():
     assert score.criterion_scores["content_nonredundancy"] < 4
 
 
+def test_scorer_allows_shared_user_categories_and_scenario_actors():
+    document = _document_ast()
+    by_id = {section["id"]: section for section in document["sections"]}
+    by_id["1"]["blocks"] = [
+        {
+            "type": "paragraph",
+            "text": "Физические лица — действующие и новые клиенты банка — получают возможность самостоятельно записаться в отделение банка в России через веб-сервис, выбрав удобное отделение, дату и время визита, без обращения к сотруднику банка.",
+        }
+    ]
+    by_id["3.1"]["blocks"] = [{"type": "paragraph", "text": "Единственная категория пользователей — физические лица: действующие и новые клиенты банка."}]
+    by_id["4.3"]["blocks"].insert(0, {"type": "list", "items": ["Клиент (физическое лицо)", "Веб-сервис записи"]})
+
+    score = score_document_quality(document, _protocol(), TEMPLATE, RUBRIC, FACTS, SNAPSHOT)
+
+    assert score.duplicate_content == ()
+    assert score.criterion_scores["content_nonredundancy"] == 4
+
+
 def test_scorer_allows_same_fact_in_text_and_diagram_within_one_section():
     document = _document_ast()
     scenario = next(section for section in document["sections"] if section["id"] == "4.3")

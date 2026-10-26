@@ -10,6 +10,7 @@ import httpx
 import pytest
 
 from test.unit_test.api.apps.business_documents.test_structured_changes import PlanAdapter, request_plan, database as structured_database
+from test.unit_test.api.apps.business_documents.test_business_document_service import AUTHOR
 from api.apps.business_documents.ai import BusinessDocumentAI, RAGFlowLLMAdapter
 from api.apps.business_documents import recovery as recovery_module, worker as worker_module
 from api.apps.business_documents.recovery import AIRecovery, is_transient_failure, retry_delay_ms
@@ -124,6 +125,74 @@ def test_second_invalid_format_is_preserved_without_verification_or_revision(dat
     assert job.result["output"]["unapplied_changes"]
     assert job.result["output"]["warnings"][0]["code"] == "CHANGE_FORMAT_NOT_APPLIED"
     assert len(adapter.calls) == 2 and not worker.run_once()
+    assert BusinessDocumentRevision.select().count() == 1
+
+
+@pytest.mark.parametrize("damage", ["missing_block", "wrong_section", "conflicting_block_id"])
+@pytest.mark.parametrize("repaired", [True, False])
+def test_block_reference_repair_is_bounded_and_never_applies_an_invalid_plan(database, damage, repaired):
+    requested, plan = request_plan()
+    before = deepcopy(document_queries.get_document(BusinessDocumentJob.get_by_id(requested["job_id"]).document_id, AUTHOR)["current_revision"])
+    adapter = PlanAdapter(plan, None)
+    generate = adapter.generate
+
+    def invalid_reference(tenant, system, payload, *, timeout_seconds=None):
+        result = generate(tenant, system, payload, timeout_seconds=timeout_seconds)
+        if payload["job_input"]["task_type"] == "PLAN_CHANGES" and (not repaired or "format_repair" not in payload):
+            from business_documents.domain.block_diff import with_block_ids
+
+            operation = result["operations"][0]
+            base = with_block_ids(payload["job_input"]["current_revision"]["document_ast"])
+            section = next(section for section in base["sections"] if section["id"] == operation["section_id"])
+            operation.update(type="REPLACE_BLOCK", block_id="missing" if damage == "missing_block" else section["blocks"][0]["id"], block=operation.pop("content")["blocks"][0])
+            if damage == "wrong_section":
+                other_section = next(section for section in base["sections"] if section["id"] != operation["section_id"] and section["blocks"])
+                operation["block_id"] = other_section["blocks"][0]["id"]
+            if damage == "conflicting_block_id":
+                operation["block"]["id"] = "invented"
+        return result
+
+    adapter.generate = invalid_reference
+    assert BusinessDocumentWorker(ai=BusinessDocumentAI(adapter)).run_once()
+    job = BusinessDocumentJob.get_by_id(requested["job_id"])
+    assert job.status == "COMPLETED" and not job.error
+    assert len(adapter.calls) == (3 if repaired else 2)
+    feedback = adapter.calls[1]["format_repair"]
+    assert feedback["error"]["code"] == ("BLOCK_ID_CONFLICT" if damage == "conflicting_block_id" else "CHANGE_BLOCK_NOT_FOUND")
+    assert adapter.calls[0]["job_input"] == adapter.calls[1]["job_input"]
+    if damage != "conflicting_block_id":
+        invalid_operation = feedback["previous_response"]["operations"][0]
+        assert feedback["error"]["details"] == {"block_id": invalid_operation["block_id"], "section_id": invalid_operation["section_id"]}
+    assert BusinessDocumentRevision.select().count() == (2 if repaired else 1)
+    if repaired:
+        assert job.result["output"]["change_plan"] == plan
+        assert job.result["output"]["requirement_coverage"]["status"] == "PASS"
+    else:
+        assert job.result["output"]["unapplied_changes"]
+        assert job.result["output"]["warnings"][0]["code"] == "CHANGE_FORMAT_NOT_APPLIED"
+        assert document_queries.get_document(job.document_id, AUTHOR)["current_revision"] == before
+
+
+def test_block_reference_repair_cannot_introduce_a_foreign_source(database):
+    requested, plan = request_plan()
+    adapter = PlanAdapter(plan, None)
+    generate = adapter.generate
+
+    def invalid_then_foreign_source(tenant, system, payload, *, timeout_seconds=None):
+        result = generate(tenant, system, payload, timeout_seconds=timeout_seconds)
+        if "format_repair" in payload:
+            result["operations"][0]["source_event_ids"] = ["foreign-source"]
+        else:
+            operation = result["operations"][0]
+            operation.update(type="REPLACE_BLOCK", block_id="missing", block=operation.pop("content")["blocks"][0])
+        return result
+
+    adapter.generate = invalid_then_foreign_source
+    assert BusinessDocumentWorker(ai=BusinessDocumentAI(adapter)).run_once()
+    job = BusinessDocumentJob.get_by_id(requested["job_id"])
+    assert job.status == "DEAD" and job.error["code"] == "SOURCE_NOT_IN_JOB_SNAPSHOT"
+    assert len(adapter.calls) == 2
+    assert job.result["recovery"]["candidate"] is None
     assert BusinessDocumentRevision.select().count() == 1
 
 

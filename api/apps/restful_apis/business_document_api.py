@@ -152,11 +152,16 @@ async def export_business_document_sql_project(project_id: str):
         data = await get_request_json()
         actor_id = str(current_user.id)
         artifact = await thread_pool_exec(BusinessDocumentSqlExportService.export, actor_id, actor_id, project_id, data, _is_admin(), _access_role())
-        return Response(artifact.chunks, content_type=f"{artifact.content_type}; charset=utf-8", headers={
-            "Content-Disposition": f'attachment; filename="{artifact.filename}"',
-            "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
-            "Content-Security-Policy": "sandbox; default-src 'none'; style-src 'unsafe-inline'",
-        })
+        return Response(
+            artifact.chunks,
+            content_type=f"{artifact.content_type}; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename="{artifact.filename}"',
+                "Cache-Control": "no-store",
+                "X-Content-Type-Options": "nosniff",
+                "Content-Security-Policy": "sandbox; default-src 'none'; style-src 'unsafe-inline'",
+            },
+        )
     except (AttributeError, TypeError, BadRequest):
         return _error(BusinessDocumentError("INVALID_SQL_EXPORT", "Request body must be a valid export command", 422))
     except BusinessDocumentError as error:
@@ -355,8 +360,20 @@ async def request_business_document_sql_revision(project_id: str, thread_id: str
         proposed_schema = None
         if isinstance(data, dict) and data.get("additional_entity_ids"):
             project = await thread_pool_exec(BusinessDocumentSqlAgentService.get_project, actor_id, actor_id, project_id, _is_admin(), _access_role())
-            proposed_schema = await BusinessDocumentSqlQuerySchemaService.revision_schema(actor_id, (project.get("artifacts") or {}).get("schema") or {}, data["additional_entity_ids"], _is_admin(), _access_role())
-        result = await thread_pool_exec(BusinessDocumentSqlRevisionService.request_change, actor_id, actor_id, project_id, thread_id, data, _is_admin(), _access_role(), **({"proposed_schema": proposed_schema} if proposed_schema is not None else {}))
+            proposed_schema = await BusinessDocumentSqlQuerySchemaService.revision_schema(
+                actor_id, (project.get("artifacts") or {}).get("schema") or {}, data["additional_entity_ids"], _is_admin(), _access_role()
+            )
+        result = await thread_pool_exec(
+            BusinessDocumentSqlRevisionService.request_change,
+            actor_id,
+            actor_id,
+            project_id,
+            thread_id,
+            data,
+            _is_admin(),
+            _access_role(),
+            **({"proposed_schema": proposed_schema} if proposed_schema is not None else {}),
+        )
         wake_business_document_worker()
         return _success(result, 202)
     except (AttributeError, TypeError, BadRequest):
@@ -853,8 +870,13 @@ async def check_business_document_sql_query_connection(project_id: str):
     try:
         actor_id = str(current_user.id)
         result = await thread_pool_exec(
-            BusinessDocumentSqlRunService.check_connection, actor_id, actor_id, project_id,
-            await request.get_json(), _is_admin(), _access_role(),
+            BusinessDocumentSqlRunService.check_connection,
+            actor_id,
+            actor_id,
+            project_id,
+            await request.get_json(),
+            _is_admin(),
+            _access_role(),
         )
         return _success(result)
     except (AttributeError, TypeError, BadRequest):
@@ -1437,7 +1459,8 @@ def _stream_after() -> int:
 async def list_business_document_job_events(document_id, job_id):
     try:
         actor_id = current_user.id
-        data = await thread_pool_exec(document_queries.read_job_stream_events, actor_id, actor_id, document_id, job_id, _stream_after(), _is_admin(), _access_role())
+        cursor = _stream_after()
+        data = await thread_pool_exec(document_queries.read_job_stream_events, actor_id, document_id, job_id, cursor, _is_admin(), _access_role())
         return _success(data)
     except BusinessDocumentError as error:
         return _error(error)
@@ -1451,7 +1474,7 @@ async def stream_business_document_job_events(document_id, job_id):
         is_admin = _is_admin()
         access_role = _access_role()
         cursor = _stream_after()
-        await thread_pool_exec(document_queries.read_job_stream_events, actor_id, actor_id, document_id, job_id, cursor, is_admin, access_role)
+        await thread_pool_exec(document_queries.read_job_stream_events, actor_id, document_id, job_id, cursor, is_admin, access_role)
     except BusinessDocumentError as error:
         return _error(error)
 
@@ -1460,7 +1483,7 @@ async def stream_business_document_job_events(document_id, job_id):
         idle_polls = 0
         while True:
             try:
-                batch = await thread_pool_exec(document_queries.read_job_stream_events, actor_id, actor_id, document_id, job_id, cursor, is_admin, access_role)
+                batch = await thread_pool_exec(document_queries.read_job_stream_events, actor_id, document_id, job_id, cursor, is_admin, access_role)
             except BusinessDocumentError:
                 yield "event: access_revoked\ndata: {}\n\n"
                 return

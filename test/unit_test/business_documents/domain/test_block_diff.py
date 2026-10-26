@@ -55,6 +55,51 @@ def apply(base, *operations):
     return apply_change_plan(base, plan(base, *operations), TEMPLATE, SCHEMA)
 
 
+@pytest.mark.parametrize("kind", ["REPLACE_BLOCK", "DELETE_BLOCK", "INSERT_BLOCK"])
+def test_block_identity_resolves_omitted_section_without_mutating_input(kind):
+    base = document()
+    target = base["sections"][0]["blocks"][0]["id"]
+    operation = {"operation_id": "edit", "type": kind, "source_event_ids": ["confirmed"]}
+    operation["after_block_id" if kind == "INSERT_BLOCK" else "block_id"] = target
+    if kind != "DELETE_BLOCK":
+        operation["block"] = {"type": "paragraph", "text": "Changed"}
+    raw = {"schema_version": "1", "acknowledged_no_change_event_ids": [], "operations": [operation]}
+    original = deepcopy(raw)
+    bound = bind_change_plan_snapshot(base, raw, base_revision_id="revision-1", source_state_version=3)
+    assert bound["operations"][0]["section_id"] == "1"
+    validate_contract("change_plan", bound, PLAN_SCHEMA)
+    apply_change_plan(base, bound, TEMPLATE, SCHEMA)
+    assert raw == original
+
+
+@pytest.mark.parametrize("kind", ["REPLACE_BLOCK", "DELETE_BLOCK", "INSERT_BLOCK"])
+def test_unknown_block_cannot_supply_an_omitted_section(kind):
+    operation = {"type": kind, "after_block_id" if kind == "INSERT_BLOCK" else "block_id": "foreign-block"}
+    with pytest.raises(RuleViolation) as caught:
+        bind_change_plan_snapshot(document(), {"operations": [operation]}, base_revision_id="revision-1", source_state_version=3)
+    assert caught.value.code == "CHANGE_BLOCK_NOT_FOUND"
+
+
+def test_explicit_wrong_section_stays_invalid_for_saved_plans():
+    base = document()
+    base["sections"].append({"id": "2", "title": "Other", "blocks": [{"type": "paragraph", "text": "Keep"}]})
+    raw = {"operations": [{"type": "DELETE_BLOCK", "operation_id": "delete", "section_id": "2", "block_id": base["sections"][0]["blocks"][0]["id"], "source_event_ids": ["confirmed"]}]}
+    bound = bind_change_plan_snapshot(base, raw, base_revision_id="revision-1", source_state_version=3)
+    assert bound["operations"][0]["section_id"] == "2"
+    with pytest.raises(RuleViolation) as caught:
+        apply_change_plan(base, bound, TEMPLATE, SCHEMA)
+    assert caught.value.code == "CHANGE_BLOCK_NOT_FOUND"
+
+
+def test_ambiguous_block_identity_cannot_resolve_an_omitted_section():
+    base = document()
+    target = base["sections"][0]["blocks"][0]["id"]
+    base["sections"].append({"id": "2", "blocks": [{"id": target, "type": "paragraph", "text": "Ambiguous"}]})
+    with pytest.raises(RuleViolation) as caught:
+        bind_change_plan_snapshot(base, {"operations": [{"type": "DELETE_BLOCK", "block_id": target}]}, base_revision_id="r1", source_state_version=1)
+    assert caught.value.code == "INVALID_BLOCK_ID"
+
+
 def test_deleting_last_requirement_and_adding_a_new_one_updates_the_placeholder():
     base = document()
     emptied = apply(base, *({"type": "DELETE_BLOCK", "block_id": block["id"]} for block in base["sections"][0]["blocks"]))

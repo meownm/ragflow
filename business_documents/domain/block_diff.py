@@ -10,6 +10,21 @@ from business_documents.domain.hashing import stable_hash
 BLOCK_OPERATIONS = frozenset({"INSERT_BLOCK", "REPLACE_BLOCK", "DELETE_BLOCK", "ADD_SECTION"})
 
 
+def bind_block_section(operation: dict[str, Any], block_sections: dict[str, str]) -> None:
+    """Resolve an omitted section from a unique block in the pinned document."""
+    if "section_id" in operation:
+        return
+    kind = operation.get("type")
+    if kind not in {"REPLACE_BLOCK", "DELETE_BLOCK", "INSERT_BLOCK"}:
+        return
+    target = operation.get("after_block_id" if kind == "INSERT_BLOCK" else "block_id")
+    if kind == "INSERT_BLOCK" and target is None:
+        return
+    if not isinstance(target, str) or target not in block_sections:
+        raise RuleViolation("CHANGE_BLOCK_NOT_FOUND", "Block is outside the base document", {"block_id": target})
+    operation["section_id"] = block_sections[target]
+
+
 def with_block_ids(document: dict[str, Any]) -> dict[str, Any]:
     """Identify old blocks deterministically; retain identity across future edits."""
     result = deepcopy(document)

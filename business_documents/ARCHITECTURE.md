@@ -22,6 +22,10 @@ revision. Moderators retain their current cross-owner permissions; the shared
 readable catalog must not acquire an accidental tenant filter. Jobs retain the
 document's tenant identity, version and lease fence.
 
+Job progress resolves the document and its read permissions directly, then fences
+the job to that document's tenant. HTTP JSON and SSE reads use this narrow query
+without loading the full document projection, revision or protocol history.
+
 Acceptance requires one implementation of each workflow rule, database-free
 domain/application imports, bounded batch reads instead of per-item SQL,
 unchanged replay/rollback and snapshot behavior, and removal of the superseded
@@ -165,8 +169,10 @@ the current revision is retained. Evidence-only AST changes still create revisio
 
 The generator receives a copy of the complete immutable snapshot: the current
 AST, protocol with question options and answers, event history and pinned evidence.
-Duplicate revision markdown and flattened section texts are omitted. Active events
-are also listed in `active_change_inputs`; `confirmed_requirement_fragments`
+Duplicate revision markdown, flattened section texts and event execution telemetry
+are omitted from model input. Event identities, order and business payloads remain;
+the stored snapshot retains the full audit. Active event IDs select the original
+events without duplicating their bodies; `confirmed_requirement_fragments`
 summarizes active confirmed text and selected/custom answers with question,
 section-purpose and author-selection context.
 Historical context does not authorize operations: only active input event IDs do.
@@ -186,7 +192,12 @@ disposition on the model's behalf. Domain validation rejects these omissions.
 
 Change generation requests block operations in `change_plan`: stable block IDs,
 insert/replace/delete operations, explicit additions of absent sections,
-server-bound base hashes and authorizing source IDs. Untouched blocks are copied
+server-bound base hashes and authorizing source IDs. The model identifies existing
+blocks or insertion anchors without repeating their section; snapshot binding
+resolves that section through the document's unique block IDs. New sections and
+insertions without an anchor retain an explicit section. Explicit section IDs in
+saved plans stay authoritative and must match the target; unknown or duplicate
+block identities are rejected. Untouched blocks are copied
 from the immutable base, rather than regenerated. Block identity survives replacements;
 insert identity is assigned by the server. Legacy revisions receive deterministic
 IDs in their read projection without updating saved history. Persisted section

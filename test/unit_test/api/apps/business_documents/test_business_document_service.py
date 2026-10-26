@@ -4282,13 +4282,14 @@ def test_job_stream_replays_in_order_and_fences_old_worker_attempts(database):
     assert not BusinessDocumentStreamEvents.append(job.id, "section_preview", {"section_id": "old"}, lease_token="lease-1", expected_attempt=1)
     assert BusinessDocumentStreamEvents.append(job.id, "section_preview", {"section_id": "3"}, lease_token="lease-2", expected_attempt=2)
 
-    replay = document_queries.read_job_stream_events(TENANT, AUTHOR, document["document_id"], job.id, 1)
+    replay = document_queries.read_job_stream_events(AUTHOR, document["document_id"], job.id, 1)
     assert [(event["id"], event["attempt"], event["type"]) for event in replay["events"]] == [(2, 1, "retry"), (3, 2, "section_preview")]
     assert replay["status"] == "RUNNING"
     with pytest.raises(BusinessDocumentError):
-        document_queries.read_job_stream_events(TENANT, AUTHOR, document["document_id"], "another-job", 0)
+        document_queries.read_job_stream_events(AUTHOR, document["document_id"], "another-job", 0)
+    BusinessDocumentJob.update(tenant_id="another-tenant").where(BusinessDocumentJob.id == job.id).execute()
     with pytest.raises(BusinessDocumentError):
-        document_queries.read_job_stream_events("another-tenant", AUTHOR, document["document_id"], job.id, 0)
+        document_queries.read_job_stream_events(AUTHOR, document["document_id"], job.id, 0)
 
     BusinessDocumentJob.update(status="COMPLETED", lease_owner=None, lease_token=None, lease_expires_at=None).where(BusinessDocumentJob.id == job.id).execute()
     document_deletion.execute(AUTHOR, document["document_id"], access_role="EXTENDED_MODERATOR")
@@ -4357,12 +4358,12 @@ def test_worker_publishes_checked_section_before_full_plan_is_committed(database
         assert document_queries.get_change_preview(document["document_id"], requested["job_id"])["warnings"][0]["code"] == "REQUIREMENT_COVERAGE_FAILED"
         assert not worker.run_once()
         assert len(observed_generation_inputs) == 1
-        replay = document_queries.read_job_stream_events(TENANT, AUTHOR, document["document_id"], requested["job_id"], 0)
+        replay = document_queries.read_job_stream_events(AUTHOR, document["document_id"], requested["job_id"], 0)
         assert replay["events"][-1]["type"] == "preview_ready"
         return
     assert len(observed_generation_inputs) == 1
     assert any(event["type"] == "section_preview" and event["payload"]["after"] == "Новый контроль ошибок" for event in observed_during_generation)
     assert BusinessDocumentJob.get_by_id(requested["job_id"]).status == "COMPLETED"
-    replay = document_queries.read_job_stream_events(TENANT, AUTHOR, document["document_id"], requested["job_id"], 0)
+    replay = document_queries.read_job_stream_events(AUTHOR, document["document_id"], requested["job_id"], 0)
     assert replay["events"][-1]["type"] == "preview_ready"
     assert document_queries.get_change_preview(document["document_id"], requested["job_id"])["sections"][0]["after"] == "Новый контроль ошибок"

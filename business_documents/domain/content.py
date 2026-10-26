@@ -26,7 +26,7 @@ from jsonschema import Draft202012Validator
 
 from business_documents.domain.errors import RuleViolation
 from business_documents.domain.hashing import stable_hash
-from business_documents.domain.block_diff import BLOCK_OPERATIONS, apply_block_operations, bind_block_operation, block_changes, with_block_ids
+from business_documents.domain.block_diff import BLOCK_OPERATIONS, apply_block_operations, bind_block_operation, bind_block_section, block_changes, with_block_ids
 
 
 _MARKDOWN_SECTION_HEADING = re.compile(r"^(#{1,6})\s+([0-9]+(?:\.[0-9]+)*)\.\s+(.+?)\s*$")
@@ -507,11 +507,13 @@ def bind_change_plan_snapshot(base_document: dict[str, Any], change_plan: object
     # Saved section plans hash raw content; block plans include stable block IDs.
     sections = {section["id"]: section for section in base_document.get("sections", []) if isinstance(section, dict) and isinstance(section.get("id"), str)}
     block_sections = {section["id"]: section for section in with_block_ids(base_document).get("sections", [])}
+    block_owners = {block["id"]: section["id"] for section in block_sections.values() for block in section["blocks"]}
     hashes = {}
     for operation in bound["operations"]:
         if not isinstance(operation, dict):
             continue
         block_operation = operation.get("type") in BLOCK_OPERATIONS
+        bind_block_section(operation, block_owners)
         section_id = operation.get("section_id")
         key = (block_operation, section_id)
         if key not in hashes:
@@ -641,6 +643,7 @@ def render_document_ast(document: dict[str, Any], template: dict[str, Any]) -> s
         level = base_level + section["id"].count(".")
         lines.append(f"{'#' * level} {section['id']}. {section['title']}")
         section_text = render_section_text(section)
-        lines.extend((section_text if section_text.strip() else "Требований нет").splitlines())
+        if section_text:
+            lines.extend(section_text.splitlines())
         lines.append("")
     return "\n".join(lines).strip("\n")

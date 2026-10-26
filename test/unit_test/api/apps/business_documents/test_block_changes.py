@@ -45,11 +45,16 @@ def block_plan(job):
     }
 
 
-def test_worker_uses_block_schema_full_context_and_persists_stable_ids(database):
+@pytest.mark.parametrize("omit_sections", [False, True])
+def test_worker_uses_block_schema_full_context_and_persists_stable_ids(database, omit_sections):
     requested, _ = request_plan()
     job = BusinessDocumentJob.get_by_id(requested["job_id"])
     before = deepcopy(job.payload["current_revision"]["document_ast"])
-    adapter = PlanAdapter(block_plan(job), None)
+    raw = block_plan(job)
+    if omit_sections:
+        for operation in raw["operations"]:
+            del operation["section_id"]
+    adapter = PlanAdapter(raw, None)
     assert '"enum": ["ADD_SECTION", "DELETE_BLOCK", "INSERT_BLOCK", "REPLACE_BLOCK"]' in BusinessDocumentAI._prompt(job).system
     assert BusinessDocumentWorker(ai=BusinessDocumentAI(adapter)).run_once()
     job = BusinessDocumentJob.get_by_id(job.id)
@@ -66,7 +71,67 @@ def test_worker_uses_block_schema_full_context_and_persists_stable_ids(database)
     assert job.result["output"]["change_plan"]["operations"][1]["block"]["id"] == changed["blocks"][1]["id"]
 
 
-def test_preview_aggregates_block_pairs_then_confirms_atomically_and_replays(database):
+@pytest.mark.parametrize("preview", [False, True])
+def test_model_can_edit_and_stream_blocks_without_repeating_section_ids(database, preview):
+    import json
+
+    requested, _ = request_plan()
+    job = BusinessDocumentJob.get_by_id(requested["job_id"])
+    raw = block_plan(job)
+    for operation in raw["operations"]:
+        del operation["section_id"]
+    job.payload = {**job.payload, "preview_only": preview}
+    BusinessDocumentJob.update(payload=job.payload).where(BusinessDocumentJob.id == job.id).execute()
+
+    class StreamingAdapter(PlanAdapter):
+        def generate_stream(self, tenant, system, payload, on_chunk, *, timeout_seconds=None):
+            result = self.generate(tenant, system, payload, timeout_seconds=timeout_seconds)
+            text = json.dumps(result)
+            for offset in range(0, len(text), 11):
+                on_chunk(text[offset : offset + 11])
+            return text
+
+    adapter = StreamingAdapter(raw, None)
+    previews = []
+    output = BusinessDocumentAI(adapter).process(job, on_section_preview=previews.append)
+    assert all(operation["section_id"] == "5.5" for operation in output["change_plan"]["operations"])
+    if preview:
+        assert len(previews) == 2
+        assert previews[-1]["section_id"] == "5.5" and "Порог предупреждения установлен" in previews[-1]["after"]
+    assert all("section_id" not in operation for operation in raw["operations"])
+
+
+def test_model_schema_requires_sections_only_for_unanchored_or_new_content(database):
+    import json
+    from jsonschema import Draft202012Validator
+
+    requested, _ = request_plan()
+    job = BusinessDocumentJob.get_by_id(requested["job_id"])
+    system = BusinessDocumentAI._prompt(job).system
+    schemas, _ = json.JSONDecoder().raw_decode(system[system.index('{"change_plan":') :])
+    validator = Draft202012Validator(schemas["change_plan"])
+    raw = block_plan(job)
+    for operation in raw["operations"]:
+        del operation["section_id"]
+    validator.validate(raw)
+    raw["operations"][0]["section_id"] = "5.5"
+    assert list(validator.iter_errors(raw))
+    raw["operations"] = [{"operation_id": "first", "type": "INSERT_BLOCK", "after_block_id": None, "block": {"type": "paragraph", "text": "New"}, "source_event_ids": ["source"]}]
+    assert list(validator.iter_errors(raw))
+    raw["operations"][0]["section_id"] = "5.5"
+    validator.validate(raw)
+    raw["operations"] = [{"operation_id": "delete", "type": "DELETE_BLOCK", "block_id": "existing", "source_event_ids": ["source"]}]
+    validator.validate(raw)
+    raw["operations"][0]["section_id"] = "5.5"
+    assert list(validator.iter_errors(raw))
+    raw["operations"] = [{"operation_id": "add", "type": "ADD_SECTION", "section_id": "new", "title": "New", "content": {"blocks": []}, "source_event_ids": ["source"]}]
+    validator.validate(raw)
+    del raw["operations"][0]["section_id"]
+    assert list(validator.iter_errors(raw))
+
+
+@pytest.mark.parametrize("omit_sections", [False, True])
+def test_preview_aggregates_block_pairs_then_confirms_atomically_and_replays(database, omit_sections):
     document = _document(open_questions=False)
     decision = document_commands.execute(
         TENANT, AUTHOR, document["document_id"], _command(document, "DECIDE_PROPOSAL", {"proposal_id": document["protocol"]["proposals"][0]["proposal_id"], "decision": "ACCEPTED"})
@@ -74,7 +139,11 @@ def test_preview_aggregates_block_pairs_then_confirms_atomically_and_replays(dat
     document, requested = _request_changes(decision["document"], preview=True)
     job = BusinessDocumentJob.get_by_id(requested["job_id"])
     before_count = BusinessDocumentRevision.select().count()
-    assert BusinessDocumentWorker(ai=BusinessDocumentAI(PlanAdapter(block_plan(job), None))).run_once()
+    raw = block_plan(job)
+    if omit_sections:
+        for operation in raw["operations"]:
+            del operation["section_id"]
+    assert BusinessDocumentWorker(ai=BusinessDocumentAI(PlanAdapter(raw, None))).run_once()
     job = BusinessDocumentJob.get_by_id(job.id)
     assert job.status == "COMPLETED", job.error
     preview = document_queries.get_change_preview(document["document_id"], job.id)
@@ -106,7 +175,14 @@ def test_invalid_plan_does_not_write_a_revision(database, error):
     adapter = PlanAdapter(raw, None)
     assert BusinessDocumentWorker(ai=BusinessDocumentAI(adapter)).run_once()
     job = BusinessDocumentJob.get_by_id(job.id)
-    assert job.status != "COMPLETED"
+    if error == "source":
+        assert job.status == "DEAD" and job.error["code"] == "SOURCE_NOT_IN_JOB_SNAPSHOT"
+        assert len(adapter.calls) == 1
+    else:
+        assert job.status == "COMPLETED" and not job.error
+        assert job.result["output"]["unapplied_changes"]
+        assert job.result["output"]["warnings"][0]["code"] == "CHANGE_FORMAT_NOT_APPLIED"
+        assert len(adapter.calls) == 2
     assert BusinessDocumentRevision.select().count() == count
 
 

@@ -75,6 +75,7 @@ Backend entrypoints/services live in `api/`, retrieval and parsing in `rag/` and
 
 ## Review mode
 
+- For explicitly delegated `code_reviewer` work, use [the role profile](docs/develop/code-reviewer-ru.md): `design` checks a proposed change before implementation, `diff` checks the resulting code. The profile does not require delegation or add a publication approval gate; the main agent retains integrated ownership.
 - Requests such as `ревью`, `проведи ревью` or `review` include correctness, architecture, module boundaries and simplicity unless the user explicitly narrows the scope. Passing tests do not replace these checks.
 - Honor an explicit PR, commit, base branch or path. Otherwise review the current task's increment when identifiable; if not, use tracked changes against `HEAD` plus relevant untracked files. State the scope, comparison base and source identity before reviewing. If the tree is clean and the target cannot be inferred from the task, ask for the target rather than choosing an arbitrary commit. Review the whole repository only when requested.
 - A review-only request authorizes analysis and relevant checks, not source edits, cleanup, staging, commits or deployment. Report proposed removals and simplifications as findings. Use checks without auto-fixes; Lefthook requires `LEFTHOOK_CHECK_ONLY=1`. Keep generated test artifacts outside the reviewed source and use disposable state for checks that write data. When fixes are already authorized, separate review and repair stages within that scope.

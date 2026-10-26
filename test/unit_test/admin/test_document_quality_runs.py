@@ -561,6 +561,32 @@ def test_daily_baseline_runs_across_application_changes(monkeypatch, product):
     campaign = SimpleNamespace(id="daily-baseline", document_type=product, source_revision="old-image", models={"source_fingerprint": "old-files"})
     assert runs._run_campaign_baseline(campaign) == ("PASS", None)
     assert len(calls) == 1
+    assert all(Path(path).is_file() for path in calls[0])
+    assert {Path(path).name for path in calls[0]} == (
+        {"test_alignment.py", "test_alignment_citations.py", "test_alignment_metrics.py", "test_alignment_evaluator.py"}
+        if product == "technical_specification"
+        else {"test_golden_dialogue_harness.py"}
+    )
+
+
+@pytest.mark.parametrize("exit_code,status", [(1, "FAIL"), (2, "INCOMPLETE"), (5, "INCOMPLETE")])
+def test_baseline_distinguishes_failed_assertions_from_an_unexecuted_suite(monkeypatch, exit_code, status):
+    monkeypatch.setattr(runs, "_run_suite", lambda *_args: exit_code)
+    campaign = SimpleNamespace(id="baseline-exit", document_type="technical_specification", source_revision="source")
+    assert runs._run_campaign_baseline(campaign) == (status, "BASELINE_FAILED")
+
+
+def test_baseline_paths_share_one_pytest_process(monkeypatch, tmp_path):
+    commands = []
+
+    def execute(command, **_kwargs):
+        commands.append(command)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(runs.subprocess, "run", execute)
+    assert runs._run_suite(("validator.py", "scorer.py"), {}, tmp_path) == 0
+    assert len(commands) == 1
+    assert commands[0][commands[0].index("no:cacheprovider") + 1 :][:2] == ["validator.py", "scorer.py"]
 
 
 def test_daily_full_result_survives_different_campaign_and_runtime_builds(monkeypatch):

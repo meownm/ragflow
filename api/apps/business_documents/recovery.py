@@ -111,7 +111,7 @@ class AIRecovery:
             "error": {
                 "code": error.code,
                 "message": error.message[:800],
-                "details": {key: details[key] for key in ("path", "validator", "block_type", "allowed_block_types", "section_id", "section_ids") if key in details},
+                "details": {key: details[key] for key in ("path", "validator", "block_type", "allowed_block_types", "block_id", "section_id", "section_ids") if key in details},
             },
         }
         self.checkpoint()

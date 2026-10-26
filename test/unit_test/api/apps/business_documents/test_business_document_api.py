@@ -198,8 +198,8 @@ async def test_job_event_routes_replay_cursor_and_reject_invalid_cursor(route_ap
     app, module = route_app
     calls = []
 
-    def read_events(tenant_id, actor_id, document_id, job_id, after, is_admin, access_role):
-        calls.append((tenant_id, actor_id, document_id, job_id, after, is_admin, access_role))
+    def read_events(actor_id, document_id, job_id, after, is_admin, access_role):
+        calls.append((actor_id, document_id, job_id, after, is_admin, access_role))
         events = [] if after else [{"id": 1, "job_id": job_id, "attempt": 1, "base_revision_id": "revision-1", "type": "section_preview", "payload": {"section_id": "1"}}]
         return {"events": events, "status": "COMPLETED", "job_id": job_id}
 
@@ -216,7 +216,8 @@ async def test_job_event_routes_replay_cursor_and_reject_invalid_cursor(route_ap
     assert stream.status_code == 200
     assert "id: 1\nevent: section_preview\n" in body
     assert '"section_id": "1"' in body
-    assert calls[0] == (ACTOR, ACTOR, "doc-1", "job-1", 0, False, "AUTHOR_CREATOR")
+    assert calls and all(call[:3] == (ACTOR, "doc-1", "job-1") for call in calls)
+    assert calls[0] == (ACTOR, "doc-1", "job-1", 0, False, "AUTHOR_CREATOR")
 
 
 @pytest.mark.p0

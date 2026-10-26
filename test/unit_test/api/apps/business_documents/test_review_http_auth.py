@@ -25,6 +25,7 @@ from test.unit_test.api.apps.business_documents.test_structured_changes import P
 from test.unit_test.technical_specifications.test_auth_boundary import _install_application_error_handlers
 from api.apps.business_documents.ai import BusinessDocumentAI
 from api.apps.business_documents.worker import BusinessDocumentWorker
+from api.apps.business_documents.stream_events import BusinessDocumentStreamEvents
 from api.db.db_models import BusinessDocumentCommand, BusinessDocumentJob, BusinessDocumentRevision, User, migrate_business_document_catalog
 from api.db.services.access_group_service import AccessGroupService
 from api.utils.api_utils import get_json_result
@@ -114,6 +115,66 @@ async def sign_in(client, user):
     async with client.session_transaction() as cookie:
         cookie["_user_id"] = user.id
         cookie["_token_fingerprint"] = hashlib.sha256(user.access_token.encode()).hexdigest()
+
+
+@pytest.mark.p0
+@pytest.mark.asyncio
+@pytest.mark.parametrize("suffix", ["events", "events/stream"])
+@pytest.mark.parametrize("actor", [service.AUTHOR, "reader", "moderator"])
+async def test_job_progress_uses_document_tenant_for_authorized_shared_reads(authenticated_app, database, monkeypatch, suffix, actor):
+    app, users = authenticated_app
+    document = service._request_and_complete_draft(service._create())
+    job = BusinessDocumentJob.get(BusinessDocumentJob.document_id == document["document_id"])
+    assert job.tenant_id != actor
+    assert BusinessDocumentStreamEvents.append(job.id, "stage", {"stage": "progress-evidence"})
+    client = app.test_client()
+    await sign_in(client, users[actor])
+    statements = []
+    execute = database.execute_sql
+
+    def record(sql, *args, **kwargs):
+        statements.append(sql)
+        return execute(sql, *args, **kwargs)
+
+    monkeypatch.setattr(database, "execute_sql", record)
+    response = await client.get(f"{BASE}/{document['document_id']}/jobs/{job.id}/{suffix}")
+    assert response.status_code == 200, await response.get_data()
+    if suffix == "events":
+        data = (await response.get_json())["data"]
+        assert data["job_id"] == job.id and data["status"] == "COMPLETED"
+        assert any(event["payload"].get("stage") == "progress-evidence" for event in data["events"])
+    else:
+        assert response.mimetype == "text/event-stream"
+        assert b"progress-evidence" in await response.get_data()
+    # Includes session authentication and, for SSE, readiness plus the first batch.
+    # Loading the document projection here adds at least 21 unrelated queries.
+    assert len(statements) <= 10, statements
+
+
+@pytest.mark.p0
+@pytest.mark.asyncio
+@pytest.mark.parametrize("suffix", ["events", "events/stream"])
+@pytest.mark.parametrize("denied", ["anonymous", "revoked-section", "wrong-document", "wrong-job", "wrong-job-tenant"])
+async def test_job_progress_does_not_expose_events_outside_authorized_scope(authenticated_app, monkeypatch, suffix, denied):
+    app, users = authenticated_app
+    document = service._request_and_complete_draft(service._create())
+    job = BusinessDocumentJob.get(BusinessDocumentJob.document_id == document["document_id"])
+    assert BusinessDocumentStreamEvents.append(job.id, "stage", {"stage": "private-progress-evidence"})
+    document_id, job_id = document["document_id"], job.id
+    client = app.test_client()
+    if denied != "anonymous":
+        await sign_in(client, users[service.AUTHOR])
+    if denied == "revoked-section":
+        monkeypatch.setattr(AccessGroupService, "effective_policy", staticmethod(lambda _: {"dataset_ids": set(), "sections": set()}))
+    elif denied == "wrong-document":
+        document_id = service._create(title="Другой документ для проверки прогресса")["document_id"]
+    elif denied == "wrong-job":
+        job_id = "missing-job"
+    elif denied == "wrong-job-tenant":
+        BusinessDocumentJob.update(tenant_id="foreign-tenant").where(BusinessDocumentJob.id == job.id).execute()
+    response = await client.get(f"{BASE}/{document_id}/jobs/{job_id}/{suffix}")
+    assert response.status_code == (401 if denied == "anonymous" else 403 if denied == "revoked-section" else 404)
+    assert b"private-progress-evidence" not in await response.get_data()
 
 
 def reviewed_document(disposition="NO_CHANGE", text="Проверить требования"):

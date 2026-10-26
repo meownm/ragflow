@@ -437,9 +437,8 @@ def evidence_failures(case, evidence, prompts, template, schema, change_schema):
             aliases = {q["question_id"]: q["answer"]["source_event_id"] for q in protocol.get("questions", []) if q.get("question_id") and (q.get("answer") or {}).get("source_event_id")}
             aliases.update({p["proposal_id"]: p["decision_event_id"] for p in protocol.get("proposals", []) if p.get("proposal_id") and p.get("decision_event_id")})
             for operation in generated.get("operations", []) if isinstance(generated.get("operations"), list) else []:
-                if isinstance(operation, dict) and isinstance(operation.get("section_id"), str):
-                    if isinstance(operation.get("source_event_ids"), list):
-                        operation["source_event_ids"] = [aliases.get(value, value) if isinstance(value, str) else value for value in operation["source_event_ids"]]
+                if isinstance(operation, dict) and isinstance(operation.get("source_event_ids"), list):
+                    operation["source_event_ids"] = [aliases.get(value, value) if isinstance(value, str) else value for value in operation["source_event_ids"]]
             revision_id = inputs.get("current_revision", {}).get("revision_id")
             state_version = inputs.get("state_version")
             if not isinstance(revision_id, str) or type(state_version) is not int:

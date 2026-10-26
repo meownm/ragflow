@@ -46,7 +46,8 @@ from business_documents.domain.change_plan import validate_plan_sources
 from business_documents.domain.errors import RuleViolation
 from business_documents.domain.hashing import stable_hash
 from api.db.db_models import BusinessDocumentJob
-from api.apps.business_documents.ai_prompt import PromptBundle, build_prompt
+from api.apps.business_documents.ai_prompt import PromptBundle, build_prompt, model_source_events
+from business_documents.domain.block_diff import bind_block_section, with_block_ids
 from business_documents.adapters.llm import RAGFlowLLMAdapter, classification_response_tokens
 from business_documents.domain.change_plan import active_change_input_event_ids, comment_dispositions
 from business_documents.domain.requirement_coverage import active_eva_update_event_ids, confirmed_change_sources, requirement_fragments
@@ -284,13 +285,18 @@ class BusinessDocumentAI:
         stream_generate = getattr(self._adapter, "generate_stream", None)
         if job.job_type == "PLAN_CHANGES" and job.payload.get("preview_only") is True and on_section_preview is not None and callable(stream_generate):
             stream = ChangeOperationStream()
-            sections = {section["id"]: section for section in job.payload["current_revision"]["document_ast"]["sections"]}
+            sections = {section["id"]: section for section in with_block_ids(job.payload["current_revision"]["document_ast"])["sections"]}
+            block_sections = {block["id"]: section["id"] for section in sections.values() for block in section["blocks"]}
             active_sources = frozenset(active_change_input_event_ids(job.payload))
 
             candidates = []
 
             def on_chunk(chunk: str) -> None:
                 for operation in stream.feed(chunk):
+                    try:
+                        bind_block_section(operation, block_sections)
+                    except RuleViolation:
+                        continue
                     candidates.append(operation)
                     preview = self._preliminary_section(job, operation, sections, active_sources, candidates)
                     if preview is not None:
@@ -460,7 +466,7 @@ class BusinessDocumentAI:
                 "context_sections": context,
                 "section_titles": titles,
                 "cross_section_repetitions": [list(pair) for pair in changed_section_repetitions(base, final)],
-                "source_events": deepcopy(job.payload.get("source_events", [])),
+                "source_events": model_source_events(job.payload.get("source_events", [])),
                 "agreement_history": deepcopy(job.payload.get("agreement_history", {})),
                 "agreement_decisions": agreement_decisions(job.payload),
                 "protocol": deepcopy(job.payload.get("protocol", {})),

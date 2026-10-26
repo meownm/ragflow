@@ -22,6 +22,17 @@ class PromptBundle:
     input_payload: dict[str, Any]
 
 
+def model_source_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Retain the ordered business history without execution telemetry."""
+    result = []
+    for event in events:
+        payload = event.get("payload")
+        if isinstance(payload, dict):
+            event = {**event, "payload": {key: value for key, value in payload.items() if key not in {"execution", "prompt_name", "prompt_version", "prompt_hash"}}}
+        result.append(event)
+    return deepcopy(result)
+
+
 def _closed_review_question_context(job_payload: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Return compact answered-question constraints for review reassessment."""
 
@@ -95,8 +106,17 @@ def build_prompt(job_type: str, payload: dict[str, Any], evidence: dict[str, Any
         operation_schema = plan_schema["properties"]["operations"]["items"]
         operation_schema["properties"].pop("expected_section_hash")
         operation_schema["required"].remove("expected_section_hash")
+        operation_schema["required"].remove("section_id")
         operation_schema["properties"]["type"]["enum"] = sorted(BLOCK_OPERATIONS)
         operation_schema["allOf"] = [variant for variant in operation_schema["allOf"] if variant["if"]["properties"]["type"]["const"] in BLOCK_OPERATIONS]
+        for variant in operation_schema["allOf"]:
+            kind = variant["if"]["properties"]["type"]["const"]
+            if kind == "ADD_SECTION":
+                variant["then"]["required"].append("section_id")
+            elif kind in {"REPLACE_BLOCK", "DELETE_BLOCK"}:
+                variant["then"]["not"]["anyOf"].append({"required": ["section_id"]})
+            else:
+                variant["then"]["allOf"] = [{"if": {"properties": {"after_block_id": {"type": "null"}}}, "then": {"required": ["section_id"]}, "else": {"not": {"required": ["section_id"]}}}]
         base_document = (payload.get("current_revision") or {}).get("document_ast") or {}
         document_contract = "document_draft_v2" if base_document.get("schema_version") == "2" else "document_draft"
         schemas["document_draft"] = contract_schema(document_contract)
@@ -138,8 +158,11 @@ def build_prompt(job_type: str, payload: dict[str, Any], evidence: dict[str, Any
             "draft соответствует document_draft, review_questions соответствует question_batch со stage REVIEW, "
             "proposals соответствует массиву proposals из review_plan."
         )
-    job_input = deepcopy(payload)
+    job_input = deepcopy({key: value for key, value in payload.items() if key != "source_events"})
+    if job_type not in {"PLAN_CHANGES", "ASSESS_REVIEW"} and "source_events" in payload:
+        job_input["source_events"] = deepcopy(payload["source_events"])
     if job_type in {"PLAN_CHANGES", "ASSESS_REVIEW"}:
+        job_input["source_events"] = model_source_events(payload.get("source_events", []))
         job_input["active_eva_update_event_ids"] = active_eva_update_event_ids(job_input)
     if job_type == "PLAN_CHANGES":
         job_input["confirmed_requirement_fragments"] = requirement_fragments(confirmed_change_sources(job_input))
@@ -201,9 +224,12 @@ def build_prompt(job_type: str, payload: dict[str, Any], evidence: dict[str, Any
         active = set(active_event_ids)
         job_input["active_change_input_event_ids"] = active_event_ids
         job_input["active_comment_dispositions"] = {event_id: item.get("disposition") for event_id, item in comment_dispositions(job_input).items() if event_id in active}
-        if isinstance(job_input.get("source_events"), list):
-            job_input["active_change_inputs"] = [event for event in job_input["source_events"] if isinstance(event, dict) and event.get("event_id") in active]
         system += (
+            "\n\n# Адрес блока\n"
+            "В REPLACE_BLOCK и DELETE_BLOCK передавай только block_id без section_id. "
+            "В INSERT_BLOCK с исходным after_block_id не передавай section_id: раздел определит сервер по якорю. "
+            "Для INSERT_BLOCK с after_block_id=null и для ADD_SECTION укажи section_id. "
+            "Хеши, base_revision_id и source_state_version назначает сервер. "
             "\n\n# Активные основания текущего цикла\n"
             "В operations.source_event_ids и acknowledged_no_change_event_ids используй только event_id из "
             f"job_input.active_change_input_event_ids: {json.dumps(active_event_ids, ensure_ascii=False)}. "

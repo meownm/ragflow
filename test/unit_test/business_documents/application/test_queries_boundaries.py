@@ -276,13 +276,13 @@ def test_stream_cursor_is_strict_and_never_passes_bad_value_to_event_reader(quer
     scenario, reader, _ = queries
     reader.job.return_value = {"tenant_id": "tenant"}
     with pytest.raises(ValidationError) as caught:
-        scenario.read_job_stream_events("tenant", "reader", "doc", "job", cursor)
+        scenario.read_job_stream_events("reader", "doc", "job", cursor)
     assert caught.value.code == "INVALID_EVENT_CURSOR"
     reader.stream_events.assert_not_called()
 
 
 @pytest.mark.parametrize("missing", ["document", "foreign-document", "job", "foreign-job"])
-def test_stream_never_reads_events_for_unknown_or_foreign_tenant(queries, missing):
+def test_stream_never_reads_events_for_unknown_records_or_mismatched_tenants(queries, missing):
     scenario, reader, _ = queries
     reader.job.return_value = {"tenant_id": "tenant"}
     if missing == "document":
@@ -292,10 +292,10 @@ def test_stream_never_reads_events_for_unknown_or_foreign_tenant(queries, missin
     else:
         reader.job.return_value = None if missing == "job" else {"tenant_id": "another-tenant"}
     with pytest.raises(BusinessDocumentError) as caught:
-        scenario.read_job_stream_events("tenant", "reader", "doc", "job", 0)
+        scenario.read_job_stream_events("reader", "doc", "job", 0)
     assert caught.value.status == 404
     reader.stream_events.assert_not_called()
-    if "document" in missing:
+    if missing == "document":
         reader.job.assert_not_called()
 
 
@@ -304,7 +304,7 @@ def test_stream_keeps_cursor_order_and_terminal_status(queries):
     reader.job.return_value = {"tenant_id": "tenant"}
     events = [{"sequence": 8, "type": "delta"}, {"sequence": 9, "type": "completed"}]
     reader.stream_events.return_value = events, "COMPLETED"
-    result = scenario.read_job_stream_events("tenant", "reader", "doc", "job", 7)
+    result = scenario.read_job_stream_events("reader", "doc", "job", 7)
     assert result == {"events": events, "status": "COMPLETED", "job_id": "job"}
     reader.stream_events.assert_called_once_with("job", 7)
 

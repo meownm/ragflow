@@ -431,7 +431,6 @@ class DocumentQueries:
 
     def read_job_stream_events(
         self,
-        tenant_id: str,
         actor_id: str,
         document_id: str,
         job_id: str,
@@ -440,12 +439,10 @@ class DocumentQueries:
         access_role: BusinessDocumentRole | str = BusinessDocumentRole.AUTHOR_CREATOR,
     ) -> dict[str, Any]:
         document = self._document(document_id)
-        if document["tenant_id"] != tenant_id:
-            raise NotFoundError()
         if not DocumentAccess(actor_id, access_role, is_admin).permissions(document["owner_id"])["read"]:
             raise PermissionDeniedError("This role cannot read business documents")
         job = self._reader.job(document_id, job_id)
-        if job is None or job["tenant_id"] != tenant_id:
+        if job is None or job["tenant_id"] != document["tenant_id"]:
             raise NotFoundError()
         if type(after) is not int or after < 0:
             raise ValidationError("INVALID_EVENT_CURSOR", "Event cursor must be a non-negative integer")

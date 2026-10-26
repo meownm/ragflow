@@ -427,10 +427,14 @@ def test_saved_pass_requires_the_actual_plan_and_successful_matching_review(tmp_
 
 
 @pytest.mark.parametrize("transport", ["json", "fenced_after_arrays", "envelope", "schema_echo", "aliases", "server_hash", "server_snapshot", "numeric_version", "generator_transport"])
-def test_saved_proof_accepts_supported_transport_and_successful_retry(tmp_path, transport):
+@pytest.mark.parametrize("omit_sections", [False, True])
+def test_saved_proof_accepts_supported_transport_and_successful_retry(tmp_path, transport, omit_sections):
     report = _report()
     evidence = next(result["evidence"] for result in report["case_results"] if result["case_id"] == CASE["id"])
     call = evidence["model_calls"][0]
+    if omit_sections:
+        for operation in call["response"]["operations"]:
+            del operation["section_id"]
     if transport == "json":
         call["response"] = json.dumps(call["response"], ensure_ascii=False)
     elif transport == "fenced_after_arrays":

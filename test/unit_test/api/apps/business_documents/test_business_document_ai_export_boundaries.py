@@ -826,6 +826,27 @@ def test_one_semantic_call_receives_all_sources_and_the_complete_result_document
     assert result["requirement_coverage"] == {"status": "PASS", "issues": []}
 
 
+def test_generation_and_verification_keep_business_history_without_execution_metrics():
+    job = _coverage_job()
+    event = job.payload["source_events"][0]
+    event["payload"].update(execution={"prompt_tokens": 100000, "trace": "x" * 5000}, prompt_name="old", prompt_version="1", prompt_hash="sha256:old")
+    event["payload"]["business_fact"] = {"execution": "Keep this nested user fact"}
+    snapshot = deepcopy(job.payload)
+    adapter = CoverageAdapter()
+    BusinessDocumentAI(adapter).process(job)
+    for call in adapter.calls:
+        inputs = call["job_input"]
+        assert len(inputs["source_events"]) == len(snapshot["source_events"])
+        for actual, original in zip(inputs["source_events"], snapshot["source_events"], strict=True):
+            expected = deepcopy(original)
+            for key in ("execution", "prompt_name", "prompt_version", "prompt_hash"):
+                expected["payload"].pop(key, None)
+            assert actual == expected
+        assert inputs["protocol"] == snapshot["protocol"]
+        assert inputs.get("agreement_history", {}) == snapshot.get("agreement_history", {})
+    assert job.payload == snapshot
+
+
 def test_change_prompt_retains_history_and_marks_only_active_inputs():
     job = _coverage_job()
     job.payload["source_events"].extend({"event_id": f"old-{index}", "event_type": "ChangesApplied", "payload": {"execution": "x" * 1000}} for index in range(100))
@@ -835,13 +856,18 @@ def test_change_prompt_retains_history_and_marks_only_active_inputs():
     job.payload["current_revision"].update(body_markdown="Duplicate markdown", section_texts={"1": "Duplicate text"})
     snapshot = deepcopy(job.payload)
     inputs = build_prompt(job.job_type, job.payload).input_payload["job_input"]
-    assert inputs["source_events"] == snapshot["source_events"]
+    assert [event["event_id"] for event in inputs["source_events"]] == [event["event_id"] for event in snapshot["source_events"]]
+    for actual, original in zip(inputs["source_events"], snapshot["source_events"], strict=True):
+        expected = deepcopy(original)
+        for key in ("execution", "prompt_name", "prompt_version", "prompt_hash"):
+            expected["payload"].pop(key, None)
+        assert actual == expected
     assert inputs["protocol"] == snapshot["protocol"]
     expected_revision = {key: value for key, value in snapshot["current_revision"].items() if key not in {"body_markdown", "section_texts"}}
     expected_revision["document_ast"] = with_block_ids(expected_revision["document_ast"])
     assert inputs["current_revision"] == expected_revision
     assert inputs["active_change_input_event_ids"] == ["comment-event"]
-    assert inputs["active_change_inputs"] == [event for event in snapshot["source_events"] if event["event_id"] == "comment-event"]
+    assert "active_change_inputs" not in inputs
     assert {fragment["source_id"] for fragment in inputs["confirmed_requirement_fragments"].values()} == {"comment-event"}
     assert job.payload == snapshot
     inputs["protocol"]["comments"][0]["text"] = "Changed copy"
@@ -1316,18 +1342,19 @@ def test_change_prompt_includes_the_current_document_block_contract(schema_versi
     schemas, _ = json.JSONDecoder().raw_decode(prompt.system.split("# Контракт выхода\n\n", 1)[1])
 
     public_plan = contract_schema("change_plan")
-    expected_plan = deepcopy(public_plan)
-    for name in ("base_revision_id", "source_state_version"):
-        expected_plan["properties"].pop(name)
-        expected_plan["required"].remove(name)
-    operation = expected_plan["properties"]["operations"]["items"]
-    operation["properties"].pop("expected_section_hash")
-    operation["required"].remove("expected_section_hash")
+    model_plan = schemas["change_plan"]
+    assert set(model_plan["required"]) == {"schema_version", "acknowledged_no_change_event_ids", "operations"}
+    assert set(model_plan["properties"]) == set(public_plan["properties"]) - {"base_revision_id", "source_state_version"}
+    operation = model_plan["properties"]["operations"]["items"]
+    assert set(operation["required"]) == {"operation_id", "type", "source_event_ids"}
+    public_operation = public_plan["properties"]["operations"]["items"]
+    for name, schema in public_operation["properties"].items():
+        if name not in {"type", "expected_section_hash"}:
+            assert operation["properties"][name] == schema
+    assert "expected_section_hash" not in operation["properties"]
     supported_operations = ["ADD_SECTION", "DELETE_BLOCK", "INSERT_BLOCK", "REPLACE_BLOCK"]
-    operation["properties"]["type"]["enum"] = supported_operations
-    operation["allOf"] = [variant for variant in operation["allOf"] if variant["if"]["properties"]["type"]["const"] in supported_operations]
+    assert operation["properties"]["type"]["enum"] == supported_operations
     assert "REPLACE_SECTION_CONTENT" in public_plan["properties"]["operations"]["items"]["properties"]["type"]["enum"]
-    assert schemas["change_plan"] == expected_plan
     assert contract_schema("change_plan") == public_plan
     assert schemas["document_draft"] == contract_schema("document_draft_v2" if schema_version == "2" else "document_draft")
     assert "XML BPMN не поддерживаются" in prompt.system

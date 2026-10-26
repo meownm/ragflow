@@ -507,16 +507,17 @@ def process_quality_cycle() -> bool:
     return process_next_run()
 
 
-def _run_suite(test_path: str, env: dict[str, str], temp: Path, *, deadline: float | None = None) -> int:
+def _run_suite(test_path: str | tuple[str, ...], env: dict[str, str], temp: Path, *, deadline: float | None = None) -> int:
+    paths = (test_path,) if isinstance(test_path, str) else test_path
     timeout = RUN_TIMEOUT_SECONDS if deadline is None else min(RUN_TIMEOUT_SECONDS, deadline - time.monotonic())
     if timeout <= 0:
         raise subprocess.TimeoutExpired(test_path, RUN_TIMEOUT_SECONDS)
     with tempfile.TemporaryDirectory(prefix="business-document-pytest-") as scratch, (temp / "pytest.log").open("a", encoding="utf-8") as log:
-        log.write(f"\n=== {Path(test_path).name} ===\n")
+        log.write(f"\n=== {', '.join(Path(path).name for path in paths)} ===\n")
         log.flush()
         try:
             completed = subprocess.run(
-                [sys.executable, "-B", "-m", "pytest", "-vv", "--tb=long", "-p", "no:cacheprovider", test_path, "--basetemp", str(Path(scratch) / "pytest")],
+                [sys.executable, "-B", "-m", "pytest", "-vv", "--tb=long", "-p", "no:cacheprovider", *paths, "--basetemp", str(Path(scratch) / "pytest")],
                 cwd=ROOT,
                 env=env,
                 stdout=log,
@@ -834,17 +835,19 @@ def _execute(row: BusinessDocumentQualityRun) -> tuple[str, dict | None, str | N
 
 
 def _run_campaign_baseline(campaign: BusinessDocumentQualityCampaign) -> tuple[str, str | None]:
-    golden_test = ROOT / (
-        "test/unit_test/technical_specifications"
+    # Model comparisons depend on the report validator, corpus and scorer.
+    # Application, storage and publication regression runs in CI independently.
+    tests = (
+        tuple(str(ROOT / "test/unit_test/technical_specifications" / name) for name in ("test_alignment.py", "test_alignment_citations.py", "test_alignment_metrics.py", "test_alignment_evaluator.py"))
         if getattr(campaign, "document_type", BUSINESS_REQUIREMENTS) == TECHNICAL_SPECIFICATION
-        else "test/evals/business_documents/test_golden_dialogue_harness.py"
+        else (str(ROOT / "test/evals/business_documents/test_golden_dialogue_harness.py"),)
     )
-    if not golden_test.exists() or importlib.util.find_spec("pytest") is None:
+    if any(not Path(path).is_file() for path in tests) or importlib.util.find_spec("pytest") is None:
         return "INCOMPLETE", "TEST_ASSETS_MISSING"
     with record_quality_evidence("campaign", campaign.id, {"source_revision": campaign.source_revision, "document_type": getattr(campaign, "document_type", BUSINESS_REQUIREMENTS)}) as temp:
         env = {**os.environ, "BUSINESS_DOCUMENT_RELATED_FILE_SEARCH_ENABLED": "true", "BUSINESS_DOCUMENT_GOLDEN_REPORT": str(temp / "golden.json"), "PYTHONDONTWRITEBYTECODE": "1"}
         try:
-            exit_code = _run_suite(str(golden_test), env, temp)
+            exit_code = _run_suite(tests, env, temp)
         except subprocess.TimeoutExpired:
             return "INCOMPLETE", "BASELINE_TIMEOUT"
         report_path = temp / "golden.json"
@@ -854,7 +857,9 @@ def _run_campaign_baseline(campaign: BusinessDocumentQualityCampaign) -> tuple[s
                 BusinessDocumentQualityCampaign.update(baseline_report=summary).where(BusinessDocumentQualityCampaign.id == campaign.id).execute()
             except (ValueError, OSError):
                 pass
-        return ("PASS", None) if exit_code == 0 else ("FAIL", "BASELINE_FAILED")
+        if exit_code == 0:
+            return "PASS", None
+        return ("FAIL" if exit_code == 1 else "INCOMPLETE"), "BASELINE_FAILED"
 
 
 def _refresh_campaign(campaign_id: str) -> None:

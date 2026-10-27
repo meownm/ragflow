@@ -125,7 +125,7 @@ def score_document_quality(
     scenario_text = _normalize(_section_text(section_by_id.get("4.3")))
     scenario_checks = (
         bool(scenario_text),
-        any(token in scenario_text for token in ("клиент", "пользователь", "автор")),
+        any(token in scenario_text for token in ("клиент", "пользователь", "автор", "сотрудник", "сотрудниц", "руководител")),
         any(token in scenario_text for token in ("система", "сервис", "приложение")),
         any(token in scenario_text for token in ("ошиб", "недоступ", "отказ", "таймаут", "повтор")),
     )

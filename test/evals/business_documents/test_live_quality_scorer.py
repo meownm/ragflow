@@ -154,6 +154,42 @@ def test_scorer_passes_template_protocol_monitoring_and_grounded_references():
     assert score.duplicate_content == ()
 
 
+@pytest.mark.parametrize(
+    ("actor_action", "expected_score"),
+    [
+        ("Клиент выбирает слот.", 4),
+        ("Пользователь выбирает слот.", 4),
+        ("Автор выбирает слот.", 4),
+        ("Сотрудник выбирает слот.", 4),
+        ("Слот выбран сотрудником.", 4),
+        ("Сотрудники выбирают слоты.", 4),
+        ("Сотрудница выбирает слот.", 4),
+        ("Руководитель выбирает слот.", 4),
+        ("Слот выбран руководителем.", 4),
+        ("Руководители выбирают слоты.", 4),
+        ("Руководительница выбирает слот.", 4),
+        ("", 3),
+        ("Сотрудничество систем автоматизировано.", 3),
+        ("Руководство по настройке применяется системой.", 3),
+    ],
+)
+def test_scenario_actor_roles_include_employee_and_manager(actor_action, expected_score):
+    document = _document_ast()
+    scenario = next(section for section in document["sections"] if section["id"] == "4.3")
+    scenario["blocks"] = [
+        {
+            "type": "paragraph",
+            "text": actor_action + " Система подтверждает запись. При ошибке расписания сервис предлагает повторить операцию. Слот удерживается 15 минут.",
+        }
+    ]
+
+    score = score_document_quality(document, _protocol(), TEMPLATE, RUBRIC, FACTS, SNAPSHOT)
+
+    assert score.criterion_scores["scenario_quality"] == expected_score
+    assert score.semantic_coverage == 1
+    assert score.grounded_reference_precision == 1
+
+
 def test_scorer_allows_confirmed_review_inputs_in_document_body():
     document = _document_ast()
     scenario = next(section for section in document["sections"] if section["id"] == "4.3")

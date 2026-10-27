@@ -14,7 +14,7 @@ import hashlib
 import json
 from pathlib import Path
 import sys
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 from peewee import SqliteDatabase
@@ -48,6 +48,31 @@ from test.unit_test.api.apps.business_documents.helpers import required_section_
 
 TENANT = "tenant-evidence"
 AUTHOR = "author-evidence"
+
+
+@pytest.mark.parametrize("length", [MAX_CHUNK_CHARS - 1, MAX_CHUNK_CHARS, MAX_CHUNK_CHARS + 1])
+def test_chunk_boundary_is_not_reported_as_server_truncation(length):
+    chunks = [
+        {"kb_id": "dataset", "doc_id": "doc", "id": "first", "content_with_weight": "x" * length},
+        {"kb_id": "dataset", "doc_id": "doc", "id": "next", "content_with_weight": "Continuation of the requirement."},
+    ]
+    snapshot = BusinessDocumentEvidence._normalize(SimpleNamespace(id="job"), "query", ["dataset"], chunks)
+    first, following = snapshot["chunks"]
+    assert first["original_content_chars"] == length
+    assert first["content_truncated"] is (length > MAX_CHUNK_CHARS)
+    assert first["content"] == "x" * min(length, MAX_CHUNK_CHARS)
+    assert following["original_content_chars"] == len(chunks[1]["content_with_weight"])
+    assert following["content_truncated"] is False
+    assert following["content"] == chunks[1]["content_with_weight"]
+
+
+def test_total_budget_cut_is_attributed_to_the_affected_chunk(monkeypatch):
+    monkeypatch.setattr(evidence_module, "MAX_TOTAL_CHARS", MAX_CHUNK_CHARS + 10)
+    chunks = [{"kb_id": "dataset", "doc_id": "doc", "id": str(i), "content_with_weight": "x" * MAX_CHUNK_CHARS} for i in range(2)]
+    snapshot = BusinessDocumentEvidence._normalize(SimpleNamespace(id="job"), "query", ["dataset"], chunks)
+    assert [chunk["content_truncated"] for chunk in snapshot["chunks"]] == [False, True]
+    assert len(snapshot["chunks"][1]["content"]) == 10
+    assert snapshot["chunks"][1]["original_content_chars"] == MAX_CHUNK_CHARS
 
 
 @pytest.fixture()

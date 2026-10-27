@@ -204,7 +204,7 @@ class RAGFlowLLMAdapter:
         elif (
             model_config.get("llm_factory") == "OpenAI-API-Compatible"
             and str(model_config.get("llm_name") or model_config.get("model_name") or "").lower().split("/")[-1].startswith("qwen3")
-            and task_type in {"PLAN_CHANGES", "VERIFY_REQUIREMENT_COVERAGE", "CLASSIFY_DRAFT_EVIDENCE"}
+            and task_type in {"ASSESS_INTAKE", "ASSESS_REVIEW", "GENERATE_DRAFT", "PLAN_CHANGES", "VERIFY_REQUIREMENT_COVERAGE", "CLASSIFY_DRAFT_EVIDENCE"}
         ):
             generation_parameters["reasoning_effort"] = "none"
         provider = " ".join(str(model_config.get("llm_factory") or "unknown").split())[:128]

@@ -91,6 +91,12 @@ export default {
       removeImage: 'Удалить изображение',
       cropArea: 'Область обрезки',
       renderingDiagram: 'Построение диаграммы…',
+      plantUmlSyntaxErrorLine:
+        'Ошибка синтаксиса PlantUML в строке {{line}}. Исправьте код схемы ниже.',
+      plantUmlSyntaxError:
+        'Ошибка синтаксиса PlantUML. Исправьте код схемы ниже.',
+      plantUmlRenderFailed:
+        'Не удалось построить схему PlantUML (HTTP {{status}}). Код схемы показан ниже.',
       zoomOut: 'Уменьшить',
       zoomIn: 'Увеличить',
       wordPreviewUnavailable: 'Предпросмотр этого документа Word недоступен',

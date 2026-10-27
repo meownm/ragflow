@@ -1,5 +1,6 @@
 import '@/locales/config';
 import { render, screen, waitFor } from '@testing-library/react';
+import i18n from 'i18next';
 import mermaid from 'mermaid';
 import { DiagramCodeBlock, getDiagramKind } from '.';
 
@@ -14,8 +15,9 @@ jest.mock('mermaid', () => ({
 const mockedMermaidRender = mermaid.render as jest.Mock;
 
 describe('DiagramCodeBlock', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     jest.clearAllMocks();
+    await i18n.changeLanguage('ru');
   });
 
   afterEach(() => {
@@ -99,19 +101,67 @@ describe('DiagramCodeBlock', () => {
     expect(screen.getByText(source)).toBeInTheDocument();
   });
 
-  it('shows PlantUML source when rendering fails', async () => {
-    jest
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(new Response('render failed', { status: 400 }));
-    const source = '@startuml\ninvalid source\n@enduml';
+  it.each([400, 502])(
+    'shows PlantUML source on HTTP %s without a syntax error',
+    async (status) => {
+      jest
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(new Response('render failed', { status }));
+      const source = '@startuml\ninvalid source\n@enduml';
 
-    render(<DiagramCodeBlock language="plantuml" source={source} />);
+      render(<DiagramCodeBlock language="plantuml" source={source} />);
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        `Не удалось построить схему PlantUML (HTTP ${status})`,
+      );
+      expect(screen.getByText(/invalid source/)).toBeInTheDocument();
+    },
+  );
+
+  it('shows the one-based syntax error line and preserves the original source', async () => {
+    const source = '@startuml\nstart\ninvalid source\n@enduml';
+    jest.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('<svg><script>bad()</script></svg>', {
+        status: 400,
+        headers: {
+          'Content-Type': 'image/svg+xml',
+          'X-PlantUML-Diagram-Error': 'Syntax Error?',
+          'X-PlantUML-Diagram-Error-Line': '2',
+        },
+      }),
+    );
+
+    const { container } = render(
+      <DiagramCodeBlock language="plantuml" source={source} />,
+    );
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
-      'PlantUML renderer returned HTTP 400',
+      'Ошибка синтаксиса PlantUML в строке 3',
     );
-    expect(screen.getByText(/invalid source/)).toBeInTheDocument();
+    expect(container.querySelector('pre')?.textContent).toBe(source);
+    expect(container.querySelector('svg')).not.toBeInTheDocument();
   });
+
+  it.each([null, '-1', 'NaN', '99999'])(
+    'shows syntax errors without an invalid line number (%s)',
+    async (line) => {
+      const headers: Record<string, string> = {
+        'X-PlantUML-Diagram-Error': 'Syntax Error?',
+      };
+      if (line !== null) headers['X-PlantUML-Diagram-Error-Line'] = line;
+      jest
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(
+          new Response('render failed', { status: 400, headers }),
+        );
+      render(
+        <DiagramCodeBlock language="plantuml" source="@startuml\n@enduml" />,
+      );
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'Ошибка синтаксиса PlantUML. Исправьте код схемы ниже.',
+      );
+    },
+  );
 
   it('does not add an empty source block when no diagram code is available', async () => {
     mockedMermaidRender.mockRejectedValue(new Error('Mermaid render failed'));

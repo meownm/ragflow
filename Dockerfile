@@ -276,14 +276,48 @@ FROM base AS browsers
 COPY --from=python_dependencies /ragflow/.venv/lib/python3.13/site-packages/playwright /tmp/playwright
 RUN PYTHONPATH=/tmp PLAYWRIGHT_BROWSERS_PATH=/opt/playwright "$(uv python find 3.13)" -m playwright install chromium
 
+FROM base AS runtime-system-files
+RUN --mount=type=bind,source=deployment/runner/deduplicate_runtime.py,target=/tmp/deduplicate_runtime.py \
+    python3 /tmp/deduplicate_runtime.py \
+        /ragflow/rag/res/deepdoc /usr/share/infinity/resource /usr/include/node
+
+FROM python_dependencies AS runtime-python
+# The dependency builder owns binutils; no stripping tool enters the runtime.
+# Keep loaded segments/dynamic symbols byte-identical, then share equal assets.
+RUN --mount=type=bind,source=deployment/runner/strip_runtime_debug.py,target=/tmp/strip_runtime_debug.py \
+    python3 /tmp/strip_runtime_debug.py /ragflow/.venv
+RUN --mount=type=bind,source=deployment/runner/deduplicate_runtime.py,target=/tmp/deduplicate_runtime.py \
+    python3 /tmp/deduplicate_runtime.py /ragflow/.venv
+
+FROM browsers AS runtime-browsers
+RUN --mount=type=bind,source=deployment/runner/deduplicate_runtime.py,target=/tmp/deduplicate_runtime.py \
+    python3 /tmp/deduplicate_runtime.py /opt/playwright
+
+# Keep all installed files, but omit superseded bytes from the system's build
+# history. Only this stable system layer is compacted; application releases still
+# share the same system, Python and browser layers. Build stages retain base so
+# their existing dependency caches do not change.
+FROM scratch AS runtime-system
+COPY --link --from=runtime-system-files / /
+SHELL ["/bin/bash", "-c"]
+USER root
+WORKDIR /ragflow
+ENV PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    TIKA_SERVER_JAR=file:///ragflow/tika-server-standard-3.3.3.jar \
+    DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 \
+    UV_HTTP_TIMEOUT=200 UV_HTTP_RETRIES=3
+LABEL org.opencontainers.image.version="24.04"
+CMD ["/bin/bash"]
+
 # This target contains no application, frontend or release identity. Every
 # production image starts here, never from a previous application image.
-FROM base AS runtime-base
+FROM runtime-system AS runtime-base
 ENV VIRTUAL_ENV=/ragflow/.venv
-COPY --from=python_dependencies ${VIRTUAL_ENV} ${VIRTUAL_ENV}
+COPY --link --from=runtime-python ${VIRTUAL_ENV} ${VIRTUAL_ENV}
 ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
-COPY --from=browsers /opt/playwright /opt/playwright
+COPY --link --from=runtime-browsers /opt/playwright /opt/playwright
 
 # Install frontend dependencies — depends only on package manifests so
 # Python, browser and release changes cannot invalidate this stage.

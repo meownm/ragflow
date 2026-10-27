@@ -34,6 +34,7 @@ def nginx_container(tmp_path, *, https=False):
     docker(
         "run",
         "-d",
+        "--rm",
         "--pull",
         "never",
         "--name",
@@ -85,7 +86,7 @@ def nginx_container(tmp_path, *, https=False):
         yield name
     finally:
         assert docker("inspect", "--format", '{{index .Config.Labels "org.ragflow.nginx-test"}}', name).strip() == name
-        docker("rm", "-f", name)
+        docker("stop", "--time", "1", name)
 
 
 def test_profile_selection_survives_restarts_and_all_profiles_parse(tmp_path):

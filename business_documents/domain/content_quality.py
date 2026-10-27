@@ -73,7 +73,10 @@ def semantic_duplicate_section_pairs(
             if configured_pairs is not None and pair_key not in allowed:
                 continue
             overlap = len(signature & prior_signature)
-            if overlap < 5 or overlap / min(len(signature), len(prior_signature)) < 0.75:
+            # A short actor/category list can be contained in a detailed goal
+            # without repeating its meaning. Shared terms must also cover at
+            # least half the combined vocabulary, not only the shorter block.
+            if overlap < 5 or overlap / min(len(signature), len(prior_signature)) < 0.75 or overlap / len(signature | prior_signature) < 0.5:
                 continue
             pair = allowed.get(pair_key, (prior_section_id, section_id))
             if pair not in duplicates:

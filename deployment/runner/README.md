@@ -124,6 +124,19 @@ therefore retain the dependency layer. `RAGFLOW_BUILD_JOBS` (default `2`) bounds
 Python source builds, including NumPy's Meson compiler processes, to avoid
 exhausting memory on a builder that shares a machine with running services.
 
+`runtime-python` removes DWARF debug data from dependency shared libraries with
+GNU `strip --strip-debug --no-merge-notes`, before deduplicating installed assets.
+The build verifies identical ELF program headers, allocated sections and loaded
+segment bytes (except the ELF section-table locator fields). Dynamic symbols,
+unwind tables, CUDA payload and models remain intact. A library whose layout
+changes is reported and retained byte-for-byte; tool errors or malformed ELF
+fail the build.
+The original libraries and binutils stay in `python_dependencies`, so native
+source-level debugging can use that build stage. Ordinary Python tracebacks are
+unchanged. Installed wheel `RECORD` hashes and sizes are refreshed for the changed
+libraries, keeping package integrity metadata and check-cache fingerprints accurate.
+See the [GNU strip reference](https://www.sourceware.org/binutils/docs/binutils/strip.html).
+
 Feature and qualified CI builds use `build-go-linux.sh --artifacts`. On a miss,
 it compiles C++ and stripped Go binaries through `build.sh`; on a hit, it verifies
 and restores the two binaries and tokenizer static library. The cache lives in

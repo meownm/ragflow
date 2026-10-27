@@ -53,6 +53,16 @@ async function renderMermaid(source: string) {
   return sanitizeSvg(result.svg);
 }
 
+class PlantUmlRenderError extends Error {
+  constructor(
+    readonly status: number,
+    readonly syntaxError: boolean,
+    readonly line?: number,
+  ) {
+    super(`PlantUML renderer returned HTTP ${status}`);
+  }
+}
+
 async function renderPlantUml(source: string, signal: AbortSignal) {
   const response = await fetch('/plantuml/svg/', {
     method: 'POST',
@@ -65,7 +75,21 @@ async function renderPlantUml(source: string, signal: AbortSignal) {
 
   const contentType = response.headers.get('content-type') ?? '';
   if (!response.ok || !contentType.includes('image/svg+xml')) {
-    throw new Error(`PlantUML renderer returned HTTP ${response.status}`);
+    const syntaxError =
+      response.status === 400 &&
+      !!response.headers.get('x-plantuml-diagram-error');
+    const errorLine = response.headers.get('x-plantuml-diagram-error-line');
+    const line =
+      syntaxError && errorLine !== null && /^\d+$/.test(errorLine)
+        ? Number(errorLine) + 1
+        : undefined;
+    throw new PlantUmlRenderError(
+      response.status,
+      syntaxError,
+      line !== undefined && line <= source.split('\n').length
+        ? line
+        : undefined,
+    );
   }
 
   return sanitizeSvg(await response.text());
@@ -111,12 +135,40 @@ export function DiagramCodeBlock({
         }
       })
       .catch((renderError: unknown) => {
-        if (active && !abortController.signal.aborted) {
-          const message =
+        if (!active || abortController.signal.aborted) {
+          return;
+        }
+        if (!(renderError instanceof PlantUmlRenderError)) {
+          setError(
             renderError instanceof Error
               ? renderError.message
-              : String(renderError || 'Unable to render diagram.');
-          setError(message);
+              : String(renderError || 'Unable to render diagram.'),
+          );
+          return;
+        }
+        if (renderError.line !== undefined) {
+          setError(
+            tUi('common.plantUmlSyntaxErrorLine', {
+              line: renderError.line,
+              defaultValue:
+                'PlantUML syntax error on line {{line}}. Correct the diagram code below.',
+            }),
+          );
+        } else if (renderError.syntaxError) {
+          setError(
+            tUi('common.plantUmlSyntaxError', {
+              defaultValue:
+                'PlantUML syntax error. Correct the diagram code below.',
+            }),
+          );
+        } else {
+          setError(
+            tUi('common.plantUmlRenderFailed', {
+              status: renderError.status,
+              defaultValue:
+                'Unable to render PlantUML (HTTP {{status}}). The diagram code is shown below.',
+            }),
+          );
         }
       });
 
@@ -124,7 +176,7 @@ export function DiagramCodeBlock({
       active = false;
       abortController.abort();
     };
-  }, [kind, source]);
+  }, [kind, source, tUi]);
 
   if (!kind) {
     return null;

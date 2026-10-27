@@ -50,3 +50,14 @@ def test_mixed_component_and_sequence_is_detected_by_real_renderer(compile_sourc
     assert compile_source(mixed).returncode != 0
     component = declarations + "Reader --> Portal : Запрос\nPortal --> Reader : Данные\n@enduml"
     assert compile_source(component).returncode == 0
+
+
+def test_multiway_activity_branch_uses_switch_instead_of_repeated_else(compile_source):
+    # Production's generated activity used one if with multiple else branches.
+    # Keep the branch actions and labels unchanged when correcting its syntax.
+    prefix = '@startuml\nstart\npartition "Инициация" {\n'
+    suffix = "\n}\nstop\n@enduml"
+    invalid = prefix + "if (Тип триггера?) then (Клиент)\n:Обращение;\nelse (Жёлтый)\n:Перепроверка;\nelse (Красный)\n:Алерт;\nendif" + suffix
+    valid = prefix + "switch (Тип триггера?)\ncase (Клиент)\n:Обращение;\ncase (Жёлтый)\n:Перепроверка;\ncase (Красный)\n:Алерт;\nendswitch" + suffix
+    assert compile_source(invalid).returncode != 0
+    assert compile_source(valid).returncode == 0

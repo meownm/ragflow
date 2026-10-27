@@ -119,7 +119,7 @@ def base_references(recipe_path: Path, overrides: dict | None = None) -> list[st
     for image, stage in re.findall(r"^FROM (\S+)(?: AS (\S+))?", recipe, re.M):
         for name, value in defaults.items():
             image = image.replace("${" + name + "}", value)
-        if image not in stages:
+        if image != "scratch" and image not in stages:
             result.append(image)
         if stage:
             stages.add(stage)

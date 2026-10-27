@@ -12,6 +12,7 @@ OFFLINE_INSTALL=${OFFLINE_INSTALL:-0}
 REGISTRY_INSTALL=${REGISTRY_INSTALL:-0}
 IMAGE_ENV_FILE=${IMAGE_ENV_FILE:-}
 BACKUP_MINIO=${BACKUP_MINIO:-1}
+OBSERVABILITY_ENABLED=${OBSERVABILITY_ENABLED:-}
 ALLOW_DOWNGRADE=${ALLOW_DOWNGRADE:-0}
 ALLOW_UNHEALTHY=${ALLOW_UNHEALTHY:-0}
 CHECK_ONLY=0
@@ -22,6 +23,7 @@ MIN_COMPOSE_VERSION=2.26.1
 [[ ${BACKUP_ROOT} == /* && ${BACKUP_ROOT} != "/" ]] || { echo "BACKUP_ROOT must be an absolute non-root path." >&2; exit 1; }
 [[ ${PROJECT_NAME} =~ ^[a-z0-9][a-z0-9_-]*$ ]] || { echo "Invalid Compose project name: ${PROJECT_NAME}" >&2; exit 1; }
 [[ ${BACKUP_MINIO} == "0" || ${BACKUP_MINIO} == "1" ]] || { echo "BACKUP_MINIO must be 0 or 1." >&2; exit 1; }
+[[ -z ${OBSERVABILITY_ENABLED} || ${OBSERVABILITY_ENABLED} == "0" || ${OBSERVABILITY_ENABLED} == "1" ]] || { echo "OBSERVABILITY_ENABLED must be 0 or 1." >&2; exit 1; }
 [[ ${ALLOW_DOWNGRADE} == "0" || ${ALLOW_DOWNGRADE} == "1" ]] || { echo "ALLOW_DOWNGRADE must be 0 or 1." >&2; exit 1; }
 [[ ${ALLOW_UNHEALTHY} == "0" || ${ALLOW_UNHEALTHY} == "1" ]] || { echo "ALLOW_UNHEALTHY must be 0 or 1." >&2; exit 1; }
 [[ ${OFFLINE_INSTALL} == "0" || ${OFFLINE_INSTALL} == "1" ]] || { echo "OFFLINE_INSTALL must be 0 or 1." >&2; exit 1; }
@@ -94,7 +96,11 @@ compose() {
   shift
   (
     cd "${root}/docker"
-    sudo docker compose --profile cpu --profile elasticsearch --profile observability \
+    local profiles=(--profile cpu --profile elasticsearch)
+    if [[ ${OBSERVABILITY_ENABLED:-1} == "1" ]]; then
+      profiles+=(--profile observability)
+    fi
+    sudo env COMPOSE_PROFILES= docker compose "${profiles[@]}" \
       --env-file .env -p "${PROJECT_NAME}" \
       -f docker-compose.yml \
       -f docker-compose.local.yml \
@@ -114,7 +120,11 @@ validate_compose() {
     die "Refusing to upgrade: MySQL is active in the merged Compose config."
   fi
   if [[ ${require_full_stack} == "1" ]]; then
-    for required_service in t-one-asr sandbox-executor-manager otel-collector tempo loki prometheus grafana; do
+    local required_services=(t-one-asr sandbox-executor-manager)
+    if [[ ${OBSERVABILITY_ENABLED:-1} == "1" ]]; then
+      required_services+=(otel-collector tempo loki prometheus grafana)
+    fi
+    for required_service in "${required_services[@]}"; do
       grep -qx "${required_service}" <<<"${services}" || die "Required service is absent: ${required_service}"
     done
   fi
@@ -198,6 +208,8 @@ version_at_least "${DOCKER_VERSION}" "${MIN_DOCKER_VERSION}" || die "Docker ${DO
 version_at_least "${COMPOSE_VERSION}" "${MIN_COMPOSE_VERSION}" || die "Docker Compose ${COMPOSE_VERSION} is too old."
 
 CURRENT_ENV=${INSTALL_DIR}/docker/.env
+OBSERVABILITY_ENABLED=${OBSERVABILITY_ENABLED:-$(env_value "${CURRENT_ENV}" OBSERVABILITY_ENABLED 1)}
+[[ ${OBSERVABILITY_ENABLED} == "0" || ${OBSERVABILITY_ENABLED} == "1" ]] || die "OBSERVABILITY_ENABLED must be 0 or 1."
 RAGFLOW_PORT=${RAGFLOW_PORT:-$(env_value "${CURRENT_ENV}" SVR_WEB_HTTP_PORT 80)}
 [[ ${RAGFLOW_PORT} =~ ^[0-9]+$ && ${RAGFLOW_PORT} -ge 1 && ${RAGFLOW_PORT} -le 65535 ]] || die "Invalid RAGFLOW_PORT: ${RAGFLOW_PORT}"
 [[ $(env_value "${CURRENT_ENV}" DB_TYPE) == "postgres" ]] || die "Existing installation is not configured for PostgreSQL."
@@ -267,6 +279,13 @@ sudo rsync -a --delete \
   --exclude node_modules --exclude output --exclude docker/ragflow-logs \
   "${SOURCE_ROOT}/" "${STAGE_DIR}/"
 sudo install -m 0600 "${CURRENT_ENV}" "${STAGE_DIR}/docker/.env"
+set_env "${STAGE_DIR}/docker/.env" OBSERVABILITY_ENABLED "${OBSERVABILITY_ENABLED}"
+if [[ ${OBSERVABILITY_ENABLED} == "0" ]]; then
+  set_env "${STAGE_DIR}/docker/.env" OTEL_EXPORTER_OTLP_ENDPOINT ""
+else
+  otlp_endpoint=$(env_value "${STAGE_DIR}/docker/.env" OTEL_EXPORTER_OTLP_ENDPOINT "")
+  set_env "${STAGE_DIR}/docker/.env" OTEL_EXPORTER_OTLP_ENDPOINT "${otlp_endpoint:-http://otel-collector:4318}"
+fi
 if [[ -r ${INSTALL_DIR}/docker/.env.local ]]; then
   sudo install -m 0600 "${INSTALL_DIR}/docker/.env.local" "${STAGE_DIR}/docker/.env.local"
 fi
@@ -427,8 +446,10 @@ sudo chmod 0600 "${RECOVERY_REQUIRED_FILE}"
 DATA_MAY_HAVE_CHANGED=1
 compose "${INSTALL_DIR}" up -d --no-build --pull never
 wait_for_health "${BACKUP_DIR}/health-after.json"
-curl -fsS --max-time 10 http://127.0.0.1:3001/api/health | jq -e '.database == "ok"' >/dev/null
-curl -fsS --max-time 10 http://127.0.0.1:9090/-/ready >/dev/null
+if [[ ${OBSERVABILITY_ENABLED} == "1" ]]; then
+  curl -fsS --max-time 10 http://127.0.0.1:3001/api/health | jq -e '.database == "ok"' >/dev/null
+  curl -fsS --max-time 10 http://127.0.0.1:9090/-/ready >/dev/null
+fi
 ASR_CONTAINER=$(compose "${INSTALL_DIR}" ps -q t-one-asr)
 SANDBOX_CONTAINER=$(compose "${INSTALL_DIR}" ps -q sandbox-executor-manager)
 [[ -n ${ASR_CONTAINER} && -n ${SANDBOX_CONTAINER} ]] || upgrade_fail "ASR or sandbox manager is not running after upgrade."

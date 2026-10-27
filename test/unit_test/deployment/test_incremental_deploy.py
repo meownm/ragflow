@@ -509,7 +509,7 @@ def test_feature_snapshot_preserves_input_before_native_outputs_and_retires_work
 
 def test_base_inputs_resolve_args_and_skip_prior_stages(tmp_path, monkeypatch):
     recipe = tmp_path / "Dockerfile"
-    recipe.write_text("ARG DEPS=registry:5443/deps:latest\nFROM ${DEPS} AS base\nFROM base AS runtime\nFROM ubuntu:24.04 AS frontend\n")
+    recipe.write_text("ARG DEPS=registry:5443/deps:latest\nFROM ${DEPS} AS base\nFROM scratch AS system\nCOPY --from=base / /\nFROM system AS runtime\nFROM ubuntu:24.04 AS frontend\n")
     references = {"registry:5443/deps:latest": "registry:5443/deps@sha256:" + "a" * 64, "ubuntu:24.04": "ubuntu@sha256:" + "b" * 64}
     monkeypatch.setattr(go_builder, "inspect", lambda image: {"RepoDigests": [references[image]]})
     assert go_builder.base_images(recipe) == references

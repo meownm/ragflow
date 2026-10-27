@@ -120,12 +120,13 @@ try {
         Invoke-QualityTool 'frontend_artifact.py' @('verify', '--candidate', $CandidateDirectory, '--archive', $verifiedFrontend)
     }
     $excludedDirectoryNames = @(
-        '.git', '.venv', '.codex_tmp', '.playwright-cli',
+        '.git', '.venv', '.local', '.codex_tmp', '.playwright-cli',
         '.cache', '.hypothesis', '.mypy_cache', '.pytest_cache', '.ruff_cache',
         'node_modules', '__pycache__', 'coverage', 'ragflow-logs', 'output'
     )
     $excludedDirectoryPaths = @(
         'build', 'dist', 'release', 'web/dist',
+        'internal/binding/cpp/build',
         'services/asr-online-service/artifacts',
         'services/asr-online-service/openapi',
         'services/asr-online-service/scripts',
@@ -176,7 +177,10 @@ try {
                 $item.Name -eq '.git' -or
                 $normalizedPath -match '(^|/)\.env\.local$' -or
                 ($item.Name -eq '.env' -and $normalizedPath -ne 'web/.env') -or
-                $normalizedPath -match '\.(tar\.gz|bundle)(\.sha256)?$' -or
+                (
+                    $normalizedPath -match '\.(tar(\.gz)?|a|bundle)(\.sha256)?$' -and
+                    $normalizedPath -notmatch '^vendor/python/[^/]+\.tar\.gz$'
+                ) -or
                 $item.Name -eq '.DS_Store' -or
                 $normalizedPath -match '\.(log|dump|sqlite|sqlite3)$' -or
                 $normalizedPath -in @('.coverage', 'intake-complete.png', 'review-revision-1.png') -or
@@ -299,7 +303,7 @@ try {
             if (
                 $relativePath -in @('docker/.env', 'docker/.env.local') -or
                 (
-                    $relativePath -match '(^|/)(\.git|\.venv|\.codex_tmp|\.playwright-cli|node_modules|__pycache__|coverage|ragflow-logs|output|build|cmake-build-[^/]+|dist|release)(/|$)' -and
+                    $relativePath -match '(^|/)(\.git|\.venv|\.local|\.codex_tmp|\.playwright-cli|node_modules|__pycache__|coverage|ragflow-logs|output|build|cmake-build-[^/]+|dist|release)(/|$)' -and
                     -not $isBundledFrontend
                 ) -or
                 $relativePath -match '^services/asr-online-service/uploads/' -or
@@ -311,7 +315,10 @@ try {
                 $relativePath -match '^deployment/linux-pg/registry-images-.*\.env$' -or
                 $relativePath -match '^ragflow_deps/(?!Dockerfile$|download_deps\.py$|download_go_deps\.py$|prepare_native\.py$|native-deps\.json$)' -or
                 $relativePath -match '^[0-9a-f]{32,64}$' -or
-                $relativePath -match '\.(tar\.gz|bundle)(\.sha256)?$'
+                (
+                    $relativePath -match '\.(tar(\.gz)?|a|bundle)(\.sha256)?$' -and
+                    $relativePath -notmatch '^vendor/python/[^/]+\.tar\.gz$'
+                )
             ) {
                 $relativePath
             }

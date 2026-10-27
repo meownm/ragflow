@@ -2,7 +2,7 @@ services:
   ragflow-cpu:
     environment: &ragflow-observability-env
       LOG_FORMAT: json
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT-http://otel-collector:4318}
       OTEL_TRACES_SAMPLER_ARG: "1.0"
       GRAFANA_PUBLIC_URL: http://localhost:${GRAFANA_PORT:-3001}
       GRAFANA_LOKI_DATASOURCE_UID: loki

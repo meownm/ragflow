@@ -80,6 +80,46 @@ def test_archive_contains_importable_native_preparation_contract(source_tree, tm
     assert archive.with_name(archive.name + ".sha256").read_text().split()[0] == expected_hash
 
 
+def test_archive_excludes_local_state_and_generated_payloads(source_tree, tmp_path):
+    unwanted = (
+        ".local/runtime/ragflow-local/service-conf.yaml",
+        ".local/cache/native/payload.bin",
+        ".local/backups/previous.tar",
+        "services/embedded/.local/runtime.json",
+        "deployment/linux-pg/docker-images.tar",
+        "deployment/linux-pg/docker-images.tar.sha256",
+        "resource/librag_tokenizer_c_api.a",
+        "internal/binding/cpp/build/CMakeCache.txt",
+    )
+    for name in (*unwanted, ".localization/messages.json", "api/local.py"):
+        target = source_tree / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"synthetic fixture\n")
+
+    result, archive = package(source_tree, tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    with tarfile.open(archive) as bundle:
+        names = {name.removeprefix("./") for name in bundle.getnames()}
+    assert not set(unwanted) & names
+    assert all(".local" not in Path(name).parts for name in names)
+    assert {".localization/messages.json", "api/local.py"} <= names
+
+
+def test_archive_preserves_vendored_python_sources(source_tree, tmp_path):
+    sources = sorted((ROOT / "vendor/python").glob("*.tar.gz"))
+    assert sources, "Vendored Python source distributions are required build inputs"
+    target = source_tree / "vendor/python"
+    target.mkdir(parents=True)
+    for source in sources:
+        shutil.copy2(source, target / source.name)
+
+    result, archive = package(source_tree, tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    with tarfile.open(archive) as bundle:
+        for source in sources:
+            assert bundle.extractfile(f"./vendor/python/{source.name}").read() == source.read_bytes()
+
+
 @pytest.mark.parametrize("missing", ["prepare_native.py", "native-deps.json"])
 def test_missing_native_source_fails_before_archive_publication(source_tree, tmp_path, missing):
     (source_tree / "ragflow_deps" / missing).unlink()

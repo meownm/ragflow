@@ -91,6 +91,45 @@ def test_upgrade_has_data_and_rollback_gates() -> None:
     assert 'docker logs "${SANDBOX_CONTAINER}" 2>&1 | grep -Eq' not in script
 
 
+@pytest.mark.parametrize("enabled", ["0", "1"])
+def test_upgrade_selects_monitoring_profile_without_inheriting_old_profiles(enabled):
+    script = _read("upgrade.sh")
+    compose = script[script.index("compose() {") : script.index("\nvalidate_compose()")]
+    harness = r"""
+set -euo pipefail
+root=$(mktemp -d)
+trap 'rm -rf -- "$root"' EXIT
+mkdir -p "$root/docker"
+PROJECT_NAME=fixture
+sudo() { printf '%s\n' "$@"; }
+"""
+    result = subprocess.run(
+        [shutil.which("bash"), "-s"],
+        input=(f"OBSERVABILITY_ENABLED={enabled}\nCOMPOSE_PROFILES=observability\n" + harness + compose + '\ncompose "$root" config --services\n').encode(),
+        capture_output=True,
+        check=True,
+    )
+    arguments = result.stdout.decode().splitlines()
+    profiles = [arguments[index + 1] for index, value in enumerate(arguments) if value == "--profile"]
+    assert profiles == ["cpu", "elasticsearch", *(["observability"] if enabled == "1" else [])]
+    assert "COMPOSE_PROFILES=" in arguments
+
+
+@pytest.mark.parametrize("enabled,success", [("0", True), ("1", False)])
+def test_upgrade_without_monitoring_still_requires_application_dependencies(enabled, success):
+    script = _read("upgrade.sh")
+    validation = script[script.index("validate_compose() {") : script.index("\nverify_runsc_runtime()")]
+    harness = "set -euo pipefail\ndie() { echo \"$*\" >&2; exit 1; }\ncompose() { printf 'postgres\\nt-one-asr\\nsandbox-executor-manager\\n'; }\n"
+    result = subprocess.run(
+        [shutil.which("bash"), "-s"],
+        input=(f"OBSERVABILITY_ENABLED={enabled}\n" + harness + validation + "\nvalidate_compose /unused 1\n").encode(),
+        capture_output=True,
+    )
+    assert (result.returncode == 0) == success
+    if not success:
+        assert b"Required service is absent: otel-collector" in result.stderr
+
+
 def test_upgrade_preflight_checks_runtime_and_offline_images_before_success() -> None:
     script = _read("upgrade.sh")
     preflight = script[script.index('validate_compose "${STAGE_DIR}" 1') :]

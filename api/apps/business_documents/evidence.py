@@ -265,6 +265,8 @@ class BusinessDocumentEvidence:
                 "vector_score": cls._score(raw.get("vector_similarity")),
                 "term_score": cls._score(raw.get("term_similarity")),
                 "content": bounded_content,
+                "original_content_chars": len(content),
+                "content_truncated": len(bounded_content) < len(content),
                 "content_hash": _sha256_bytes(bounded_content.encode("utf-8")),
             }
             chunks.append(chunk)

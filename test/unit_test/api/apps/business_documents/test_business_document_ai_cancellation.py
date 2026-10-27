@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import math
 import sys
 from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock
@@ -321,14 +322,23 @@ async def test_compatible_ollama_uses_loaded_window_and_qwen_content_budget(mode
 
     monkeypatch.setattr(httpx.AsyncClient, "get", ps)
     adapter = RAGFlowLLMAdapter()
-    for task in ["PLAN_CHANGES", "VERIFY_REQUIREMENT_COVERAGE"]:
+    tasks = ["ASSESS_INTAKE", "ASSESS_REVIEW", "GENERATE_DRAFT", "PLAN_CHANGES", "VERIFY_REQUIREMENT_COVERAGE", "CLASSIFY_DRAFT_EVIDENCE"]
+    for task in tasks:
         payload = {"job_input": {"task_type": task, "text": " full requirement" * 12000}}
-        available = window - len(encoder.encode("system")) - len(encoder.encode(json.dumps(payload, ensure_ascii=False))) - 256
+        if task == "CLASSIFY_DRAFT_EVIDENCE":
+            payload["job_input"]["text"] = "Full classification input."
+            payload["fragments"] = {"0": "Known requirement."}
+        content = json.dumps(payload, ensure_ascii=False)
+        input_tokens = len(encoder.encode("system")) + len(encoder.encode(content))
+        if task == "CLASSIFY_DRAFT_EVIDENCE":
+            input_tokens = max(input_tokens, len(b"system") + len(content.encode()))
+        reserve = max(256, math.ceil(input_tokens / 20)) if task == "CLASSIFY_DRAFT_EVIDENCE" else 256
+        available = window - input_tokens - reserve
         await adapter.async_generate("tenant", "system", payload, (lambda _: None) if stream else None)
         expected = {"temperature": 0, "top_p": 0.1, "max_tokens": available, "reasoning_effort": "none"}
         assert calls["parameters"][-1] == expected
         assert validate_ai_audit(adapter.consume_execution_audit())["parameters"] == expected
-    assert len(lookups) == len(calls["bundle"]) == 2
+    assert len(lookups) == len(calls["bundle"]) == len(tasks)
     assert config["max_tokens"] == 8192
 
 

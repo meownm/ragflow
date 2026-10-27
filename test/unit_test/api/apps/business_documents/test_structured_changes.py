@@ -231,7 +231,12 @@ def test_incomplete_or_conflicting_plan_stops_before_semantic_verification(datab
     job = BusinessDocumentJob.get_by_id(requested["job_id"])
     assert job.status == "DEAD" and job.error["code"] == code
     assert job.result["recovery"]["candidate"] is None
-    assert [call["job_input"]["task_type"] for call in adapter.calls] == ["PLAN_CHANGES"]
+    assert [call["job_input"]["task_type"] for call in adapter.calls] == ["PLAN_CHANGES", "PLAN_CHANGES"]
+    assert adapter.calls[1]["format_repair"]["error"] == {
+        "code": code,
+        "message": job.error["message"],
+        "details": {"event_ids": sources},
+    }
     assert BusinessDocumentRevision.select().count() == 1
 
 
@@ -285,7 +290,7 @@ def test_comment_disposition_conflict_fails_before_verification_and_is_logged(da
     assert job.status == "DEAD" and job.error["code"] == code
     assert job.attempt == 1
     assert job.result["recovery"]["candidate"] is None
-    assert [call["job_input"]["task_type"] for call in adapter.calls] == ["PLAN_CHANGES"]
+    assert [call["job_input"]["task_type"] for call in adapter.calls] == ["PLAN_CHANGES", "PLAN_CHANGES"]
     assert adapter.calls[0]["job_input"]["active_comment_dispositions"] == {comment_id: disposition}
     assert document_queries.get_document(document["document_id"], AUTHOR)["current_revision"] == document["current_revision"]
     assert BusinessDocumentRevision.select().count() == 1

@@ -10,16 +10,17 @@ import httpx
 import pytest
 
 from test.unit_test.api.apps.business_documents.test_structured_changes import PlanAdapter, request_plan, database as structured_database
-from test.unit_test.api.apps.business_documents.test_business_document_service import AUTHOR
+from test.unit_test.api.apps.business_documents.test_business_document_service import AUTHOR, TENANT, _command, _complete, _create, _draft, _question_batch, _request_and_complete_draft
 from api.apps.business_documents.ai import BusinessDocumentAI
 from business_documents.adapters.llm import RAGFlowLLMAdapter
 from api.apps.business_documents import recovery as recovery_module, worker as worker_module
 from api.apps.business_documents.recovery import AIRecovery, is_transient_failure, retry_delay_ms
 from api.apps.business_documents.worker import BusinessDocumentJobQueue, BusinessDocumentWorker
-from api.apps.business_documents.runtime import document_queries
-from api.db.db_models import BusinessDocumentJob, BusinessDocumentRevision, BusinessDocumentJobStreamEvent
+from api.apps.business_documents.runtime import document_commands, document_queries, document_writer
+from api.db.db_models import BusinessDocumentEvent, BusinessDocumentJob, BusinessDocumentRevision, BusinessDocumentJobStreamEvent
 from business_documents.application.errors import BusinessDocumentError
 from business_documents.domain.hashing import stable_hash
+from business_documents.domain.content import section_hash
 
 
 @pytest.fixture()
@@ -128,6 +129,223 @@ def test_format_repair_receives_error_and_preserves_complete_original_context(da
     from test.evals.business_documents.test_live_model_quality import _aggregate_ai_audits
 
     assert _aggregate_ai_audits([audit])["execution_count"] == 3
+
+
+def _request_review_inputs(*, preview, retention_in_base=True):
+    questions = _question_batch("REVIEW", "tabel_retention_period")
+    questions["questions"][0].update(
+        text="Каков срок хранения согласованных табелей?",
+        target_section_id="5",
+        options=[{"option_id": "five", "label": "5 лет"}, {"option_id": "ten", "label": "10 лет"}],
+    )
+    draft = _draft()
+    next(section for section in draft["sections"] if section["id"] == "5")["blocks"] = [
+        {"type": "paragraph", "text": "Согласованные табели хранятся 5 лет." if retention_in_base else "Срок хранения согласованных табелей не определён."}
+    ]
+    document = _request_and_complete_draft(_create(), review_questions=questions, draft=draft)
+    document_commands.execute(
+        TENANT,
+        AUTHOR,
+        document["document_id"],
+        _command(document, "ANSWER_QUESTION", {"question_id": document["protocol"]["questions"][0]["question_id"], "selected_option_id": "five", "custom_answer": None}),
+    )
+    for section_id, text in [("4.3", "Добавить экспорт согласованного табеля."), ("5", "Название раздела уже указано верно, менять не нужно.")]:
+        document = document_queries.get_document(document["document_id"], AUTHOR)
+        selected = document["current_revision"]["section_texts"][section_id]
+        anchor = {
+            "revision_id": document["current_revision"]["revision_id"],
+            "section_id": section_id,
+            "selected_text": selected,
+            "prefix": "",
+            "suffix": "",
+            "start_offset": 0,
+            "end_offset": len(selected),
+        }
+        document_commands.execute(
+            TENANT,
+            AUTHOR,
+            document["document_id"],
+            _command(document, "ADD_COMMENT", {"revision_id": document["current_revision"]["revision_id"], "section_id": section_id, "text": text, "anchor": anchor}),
+        )
+    document = document_queries.get_document(document["document_id"], AUTHOR)
+    answer_id = document["protocol"]["questions"][0]["answer"]["source_event_id"]
+    change_id, no_change_id = [comment["source_event_id"] for comment in document["protocol"]["comments"]]
+    assessment = document_commands.execute(TENANT, AUTHOR, document["document_id"], _command(document, "REQUEST_REVIEW_ASSESSMENT"))
+    document = _complete(
+        assessment["job_id"],
+        {
+            "schema_version": "1",
+            "questions": [],
+            "proposals": [],
+            "comment_dispositions": [{"comment_event_id": change_id, "disposition": "CONFIRMED_CHANGE"}, {"comment_event_id": no_change_id, "disposition": "NO_CHANGE"}],
+        },
+    )
+    base = document["current_revision"]
+    requested = document_commands.execute(
+        TENANT,
+        AUTHOR,
+        document["document_id"],
+        _command(document, "PREPARE_CHANGES" if preview else "APPLY_CHANGES", {"base_revision_id": base["revision_id"]}),
+    )
+    scenario = next(section for section in base["document_ast"]["sections"] if section["id"] == "4.3")
+    plan = {
+        "schema_version": "1",
+        "base_revision_id": base["revision_id"],
+        "source_state_version": requested["state_version"],
+        "acknowledged_no_change_event_ids": [answer_id, no_change_id],
+        "operations": [
+            {
+                "operation_id": "export",
+                "type": "INSERT_BLOCK",
+                "section_id": "4.3",
+                "expected_section_hash": section_hash(scenario),
+                "after_block_id": scenario["blocks"][-1]["id"],
+                "block": {"type": "paragraph", "text": "Пользователь экспортирует согласованный табель."},
+                "source_event_ids": [change_id],
+            }
+        ],
+    }
+    return requested, plan, document, (answer_id, change_id, no_change_id)
+
+
+@pytest.mark.parametrize("preview", [False, True])
+@pytest.mark.parametrize("repaired", [False, True])
+@pytest.mark.parametrize("defect", ["answer_omitted", "comment_omitted", "conflicting", "comment_no_change", "comment_change"])
+def test_review_input_repair_preserves_answers_comments_and_full_document(database, preview, repaired, defect):
+    requested, plan, before, (answer_id, change_id, no_change_id) = _request_review_inputs(preview=preview)
+    invalid = deepcopy(plan)
+    code, event_ids = "CHANGE_INPUT_OMITTED", [answer_id if defect == "answer_omitted" else no_change_id]
+    if defect in {"answer_omitted", "comment_omitted"}:
+        invalid["acknowledged_no_change_event_ids"].remove(event_ids[0])
+    elif defect == "conflicting":
+        invalid["acknowledged_no_change_event_ids"].append(change_id)
+        code, event_ids = "CHANGE_INPUT_DISPOSITION_CONFLICT", [change_id]
+    elif defect == "comment_no_change":
+        invalid["operations"] = []
+        invalid["acknowledged_no_change_event_ids"].append(change_id)
+        code, event_ids = "COMMENT_NO_CHANGE_NOT_CONFIRMED", [change_id]
+    else:
+        invalid["operations"][0]["source_event_ids"].append(no_change_id)
+        invalid["acknowledged_no_change_event_ids"].remove(no_change_id)
+        code, event_ids = "COMMENT_CHANGE_NOT_CONFIRMED", [no_change_id]
+    adapter = PlanAdapter(plan, None)
+    generate = adapter.generate
+
+    def generate_plan(tenant, system, payload, *, timeout_seconds=None):
+        result = generate(tenant, system, payload, timeout_seconds=timeout_seconds)
+        if payload["job_input"]["task_type"] == "PLAN_CHANGES" and (not repaired or "format_repair" not in payload):
+            return deepcopy(invalid)
+        return result
+
+    adapter.generate = generate_plan
+    worker = BusinessDocumentWorker(ai=BusinessDocumentAI(adapter))
+    assert worker.run_once()
+    job = BusinessDocumentJob.get_by_id(requested["job_id"])
+    assert len(adapter.calls) == (3 if repaired else 2)
+    assert adapter.calls[0]["job_input"] == adapter.calls[1]["job_input"]
+    feedback = adapter.calls[1]["format_repair"]
+    assert feedback["previous_response"] == invalid
+    assert feedback["error"]["code"] == code
+    assert feedback["error"]["details"] == ({"event_id": no_change_id} if defect == "comment_change" else {"event_ids": event_ids})
+    current = document_queries.get_document(job.document_id, AUTHOR)
+    if repaired:
+        assert job.status == "COMPLETED" and not job.error
+        saved_plan = deepcopy(job.result["output"]["change_plan"])
+        assert saved_plan["operations"][0]["block"].pop("id")
+        assert saved_plan == plan
+        assert job.result["output"]["requirement_coverage"]["status"] == "PASS"
+        if preview:
+            assert current["current_revision"] == before["current_revision"]
+            assert current["protocol"] == before["protocol"]
+            assert {answer_id, change_id, no_change_id} <= document_writer.review(job.document_id, before["active_review_cycle"]).active_inputs
+            command = _command(current, "CONFIRM_PREPARED_CHANGES", {"job_id": job.id})
+            current = document_commands.execute(TENANT, AUTHOR, job.document_id, command)["document"]
+            assert document_commands.execute(TENANT, AUTHOR, job.document_id, command)["idempotent_replay"]
+        assert BusinessDocumentRevision.select().count() == 2
+        expected_protocol = deepcopy(before["protocol"])
+        for comment in expected_protocol["comments"]:
+            comment["anchor_status"] = "ORPHANED"
+        assert current["protocol"] == expected_protocol
+        before_sections = before["current_revision"]["document_ast"]["sections"]
+        after_sections = current["current_revision"]["document_ast"]["sections"]
+        assert [section["id"] for section in after_sections] == [section["id"] for section in before_sections]
+        for old, new in zip(before_sections, after_sections):
+            if old["id"] == "4.3":
+                assert new["blocks"][:-1] == old["blocks"]
+                assert new["blocks"][-1]["text"] == "Пользователь экспортирует согласованный табель."
+            else:
+                assert new == old
+        event = BusinessDocumentEvent.get((BusinessDocumentEvent.document_id == job.document_id) & (BusinessDocumentEvent.event_type == "ChangesApplied"))
+        assert event.payload["source_event_ids"] == [change_id]
+        assert event.payload["acknowledged_no_change_event_ids"] == [answer_id, no_change_id]
+        assert not document_writer.review(job.document_id, before["active_review_cycle"]).active_inputs
+    else:
+        assert job.status == "DEAD" and job.error["code"] == code
+        assert job.result["recovery"]["candidate"] is None
+        assert current["current_revision"] == before["current_revision"]
+        assert current["protocol"] == before["protocol"]
+        assert BusinessDocumentRevision.select().count() == 1
+        assert {answer_id, change_id, no_change_id} <= document_writer.review(job.document_id, before["active_review_cycle"]).active_inputs
+    assert not worker.run_once()
+
+
+def test_repair_applies_missing_answer_as_content_without_changing_other_inputs(database):
+    requested, plan, before, (answer_id, change_id, no_change_id) = _request_review_inputs(preview=False, retention_in_base=False)
+    plan["acknowledged_no_change_event_ids"].remove(answer_id)
+    section = next(section for section in before["current_revision"]["document_ast"]["sections"] if section["id"] == "5")
+    adapter = PlanAdapter(plan, None)
+    generate = adapter.generate
+
+    def repair_answer(tenant, system, payload, *, timeout_seconds=None):
+        result = generate(tenant, system, payload, timeout_seconds=timeout_seconds)
+        if payload["job_input"]["task_type"] == "PLAN_CHANGES" and "format_repair" in payload:
+            result["operations"].append(
+                {
+                    "operation_id": "retention",
+                    "type": "REPLACE_BLOCK",
+                    "block_id": section["blocks"][0]["id"],
+                    "block": {"type": "paragraph", "text": "Согласованные табели хранятся 5 лет."},
+                    "source_event_ids": [answer_id],
+                }
+            )
+        return result
+
+    adapter.generate = repair_answer
+    assert BusinessDocumentWorker(ai=BusinessDocumentAI(adapter)).run_once()
+    job = BusinessDocumentJob.get_by_id(requested["job_id"])
+    assert job.status == "COMPLETED", job.error
+    current = document_queries.get_document(job.document_id, AUTHOR)
+    assert current["protocol"]["questions"] == before["protocol"]["questions"]
+    assert current["current_revision"]["section_texts"]["5"] == "Согласованные табели хранятся 5 лет."
+    assert len(current["protocol"]["comments"]) == 2
+    event = BusinessDocumentEvent.get((BusinessDocumentEvent.document_id == job.document_id) & (BusinessDocumentEvent.event_type == "ChangesApplied"))
+    assert set(event.payload["source_event_ids"]) == {answer_id, change_id}
+    assert event.payload["acknowledged_no_change_event_ids"] == [no_change_id]
+    assert adapter.calls[1]["format_repair"]["error"]["details"] == {"event_ids": [answer_id]}
+
+
+def test_input_repair_cannot_authorize_a_foreign_source(database):
+    requested, plan, before, (answer_id, _change_id, _no_change_id) = _request_review_inputs(preview=False)
+    adapter = PlanAdapter(plan, None)
+    generate = adapter.generate
+
+    def foreign_after_omission(tenant, system, payload, *, timeout_seconds=None):
+        result = generate(tenant, system, payload, timeout_seconds=timeout_seconds)
+        if "format_repair" in payload:
+            result["operations"][0]["source_event_ids"].append("foreign-source")
+        else:
+            result["acknowledged_no_change_event_ids"].remove(answer_id)
+        return result
+
+    adapter.generate = foreign_after_omission
+    assert BusinessDocumentWorker(ai=BusinessDocumentAI(adapter)).run_once()
+    job = BusinessDocumentJob.get_by_id(requested["job_id"])
+    assert job.status == "DEAD" and job.error["code"] == "SOURCE_NOT_IN_JOB_SNAPSHOT"
+    assert len(adapter.calls) == 2
+    current = document_queries.get_document(job.document_id, AUTHOR)
+    assert current["current_revision"] == before["current_revision"]
+    assert current["protocol"] == before["protocol"]
+    assert job.result["recovery"]["candidate"] is None
 
 
 def test_second_invalid_format_is_preserved_without_verification_or_revision(database):

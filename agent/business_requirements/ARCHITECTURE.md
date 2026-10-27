@@ -133,7 +133,12 @@ active-cycle answer, accepted proposal, and applicable author comment must eithe
 appear in `acknowledged_no_change_event_ids`. The domain verifies this disposition,
 current-cycle provenance, evidence references, and section hashes, applies
 operations to the stored base AST, validates the result, and renders Markdown
-itself. Comments with `NEEDS_QUESTION` are deferred and cannot authorize a change
+itself. Missing or conflicting plan input attribution gets one model correction
+within the shared recovery budget, with the original snapshot and exact failing
+event IDs. The server never invents attribution or acknowledges an input for the
+author. If correction fails, no revision is saved and the inputs remain unresolved.
+Foreign sources, stale state and access failures are not repairable.
+Comments with `NEEDS_QUESTION` are deferred and cannot authorize a change
 or be acknowledged as no-change. The model never supplies an authoritative full
 replacement body. If unanswered questions or undecided proposals remain, the
 service commits the authorized operations (or audits a fully acknowledged no-op),

@@ -321,7 +321,9 @@ async def test_http_worker_rejects_contradictory_acknowledgement_and_logs_once(a
     job = BusinessDocumentJob.get_by_id(requested["job_id"])
     assert job.status == "DEAD" and job.error["code"] == "COMMENT_NO_CHANGE_NOT_CONFIRMED"
     assert job.result["recovery"]["candidate"] is None
-    assert [call["job_input"]["task_type"] for call in adapter.calls] == ["PLAN_CHANGES"]
+    assert [call["job_input"]["task_type"] for call in adapter.calls] == ["PLAN_CHANGES", "PLAN_CHANGES"]
+    assert adapter.calls[1]["job_input"] == adapter.calls[0]["job_input"]
+    assert adapter.calls[1]["format_repair"]["error"]["details"] == {"event_ids": plan["acknowledged_no_change_event_ids"]}
     assert BusinessDocumentRevision.select().count() == revisions
     current = await client.get(path)
     assert (await current.get_json())["data"]["current_revision"]["revision_id"] == base["revision_id"]

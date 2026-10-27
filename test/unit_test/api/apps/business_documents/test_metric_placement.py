@@ -188,7 +188,10 @@ def test_overlapping_comment_does_not_replace_accepted_proposal_source(database)
     failed = BusinessDocumentJob.get_by_id(job.id)
     assert failed.error["code"] == "ACCEPTED_PROPOSAL_OMITTED"
     assert document_queries.get_document(job.document_id, AUTHOR)["change_preview"] is None
-    assert [payload["job_input"]["task_type"] for _, payload in adapter.calls] == ["PLAN_CHANGES"]
+    assert [payload["job_input"]["task_type"] for _, payload in adapter.calls] == ["PLAN_CHANGES", "PLAN_CHANGES"]
+    repair = adapter.calls[1][1]["format_repair"]["error"]
+    assert repair["code"] == "ACCEPTED_PROPOSAL_OMITTED"
+    assert repair["details"]["event_ids"] == [proposal]
     assert failed.result["recovery"]["candidate"] is None
     assert BusinessDocumentRevision.select().count() == 1
 

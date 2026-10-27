@@ -67,7 +67,7 @@ def retry_delay_ms(error: Exception, default: int) -> int:
 
 
 class AIRecovery:
-    """One budget and one format repair per stage, retained across queue retries.
+    """One budget and one output repair per stage, retained across queue retries.
 
     The worker supplies a checkpoint writer that checks ownership and document
     freshness. Direct adapter consumers use the same bounds in memory.
@@ -111,7 +111,9 @@ class AIRecovery:
             "error": {
                 "code": error.code,
                 "message": error.message[:800],
-                "details": {key: details[key] for key in ("path", "validator", "block_type", "allowed_block_types", "block_id", "section_id", "section_ids") if key in details},
+                "details": {
+                    key: details[key] for key in ("path", "validator", "block_type", "allowed_block_types", "block_id", "section_id", "section_ids", "event_id", "event_ids") if key in details
+                },
             },
         }
         self.checkpoint()

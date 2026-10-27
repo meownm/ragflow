@@ -21,6 +21,19 @@ REPAIRABLE_OUTPUT_CODES = frozenset(
     }
 )
 
+# The model may correct attribution against the same pinned author decisions.
+# A second invalid plan must fail rather than become an unapplied format warning.
+REPAIRABLE_PLAN_INPUT_CODES = frozenset(
+    {
+        "CHANGE_INPUT_OMITTED",
+        "ACCEPTED_PROPOSAL_OMITTED",
+        "CHANGE_INPUT_DISPOSITION_CONFLICT",
+        "ACCEPTED_PROPOSAL_ACKNOWLEDGED_NO_CHANGE",
+        "COMMENT_CHANGE_NOT_CONFIRMED",
+        "COMMENT_NO_CHANGE_NOT_CONFIRMED",
+    }
+)
+
 TRANSIENT_FAILURE_CODES = frozenset(
     {
         "DATASET_ACCESS_UNAVAILABLE",

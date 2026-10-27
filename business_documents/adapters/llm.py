@@ -173,6 +173,8 @@ class RAGFlowLLMAdapter:
             input_tokens = max(input_tokens, len(system_prompt.encode("utf-8")) + len(content.encode("utf-8")))
         input_reserve = max(256, math.ceil(input_tokens / 20)) if task_type == "CLASSIFY_DRAFT_EVIDENCE" else 256
         available = context_window - input_tokens - input_reserve
+        if task_type == "REPAIR_PLANTUML":
+            available = min(available, 4096)
         if output_limit is not None:
             available = min(available, output_limit)
         required_response_tokens = classification_response_tokens([int(identifier) for identifier in input_payload["fragments"]]) if task_type == "CLASSIFY_DRAFT_EVIDENCE" else 1
@@ -204,7 +206,7 @@ class RAGFlowLLMAdapter:
         elif (
             model_config.get("llm_factory") == "OpenAI-API-Compatible"
             and str(model_config.get("llm_name") or model_config.get("model_name") or "").lower().split("/")[-1].startswith("qwen3")
-            and task_type in {"ASSESS_INTAKE", "ASSESS_REVIEW", "GENERATE_DRAFT", "PLAN_CHANGES", "VERIFY_REQUIREMENT_COVERAGE", "CLASSIFY_DRAFT_EVIDENCE"}
+            and task_type in {"ASSESS_INTAKE", "ASSESS_REVIEW", "GENERATE_DRAFT", "PLAN_CHANGES", "VERIFY_REQUIREMENT_COVERAGE", "CLASSIFY_DRAFT_EVIDENCE", "REPAIR_PLANTUML"}
         ):
             generation_parameters["reasoning_effort"] = "none"
         provider = " ".join(str(model_config.get("llm_factory") or "unknown").split())[:128]

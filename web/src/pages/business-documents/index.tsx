@@ -83,13 +83,13 @@ import {
   useState,
 } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
-import { BackgroundWork } from './components/background-work';
 import { ChangePreviewPanel } from './components/change-preview-panel';
 import { BusinessDocumentError } from './components/document-error';
 import { DocumentMarkdown } from './components/document-markdown';
 import { DocumentPane } from './components/document-pane';
 import {
   BusinessDocumentProgress,
+  BusinessDocumentStatus,
   isBusinessDocumentOperationActive,
 } from './components/document-progress';
 import {
@@ -931,6 +931,7 @@ export default function BusinessDocumentsPage() {
     const tenantId = tenantInfo?.tenant_id?.trim();
     return userId && tenantId ? `${tenantId}.${userId}` : null;
   }, [tenantInfo?.tenant_id, userInfo?.id]);
+  const commandInFlight = useRef(false);
 
   const resizeProtocolPane = useCallback((width: number) => {
     const nextWidth = clampProtocolPaneWidth(width);
@@ -1279,6 +1280,9 @@ export default function BusinessDocumentsPage() {
         setHasConflict(false);
       }
     },
+    onSettled: () => {
+      commandInFlight.current = false;
+    },
   });
 
   const submitCommand = useCallback(
@@ -1286,8 +1290,12 @@ export default function BusinessDocumentsPage() {
       type: BusinessDocumentCommandType,
       payload: Record<string, unknown>,
       onSuccess?: () => void,
-    ) => commandMutation.mutate({ type, payload }, { onSuccess }),
-    [commandMutation],
+    ) => {
+      if (!documentId || !document || commandInFlight.current) return;
+      commandInFlight.current = true;
+      commandMutation.mutate({ type, payload }, { onSuccess });
+    },
+    [commandMutation, document, documentId],
   );
 
   const allowed = useMemo(
@@ -1527,7 +1535,7 @@ export default function BusinessDocumentsPage() {
         className="flex min-h-14 min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-border-button px-5 py-2"
         data-testid="business-document-header"
       >
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 basis-full flex-1 lg:basis-72">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <h1 className="min-w-0 break-words text-lg font-semibold tracking-tight sm:truncate">
               {document.title}
@@ -1540,11 +1548,12 @@ export default function BusinessDocumentsPage() {
               {lifecycleLabels[document.lifecycle_state]}
             </Badge>
           </div>
-          {!isBusinessDocumentOperationActive(document.operation_state) && (
-            <p className="text-xs text-text-secondary">
-              {operationLabels[document.operation_state]}
-            </p>
-          )}
+          <BusinessDocumentStatus
+            key={documentId}
+            document={document}
+            operationLabel={operationLabels[document.operation_state]}
+            onFocusSection={focusSection}
+          />
         </div>
         <div
           className="flex w-full min-w-0 flex-wrap items-center justify-start gap-2 sm:w-auto sm:justify-end"
@@ -2099,7 +2108,7 @@ export default function BusinessDocumentsPage() {
       </div>
 
       <div
-        className="grid min-h-0 grid-cols-[minmax(0,1fr)_8px_var(--business-document-protocol-width)] grid-rows-[auto_minmax(0,1fr)] max-lg:grid-cols-1 max-lg:grid-rows-[auto_minmax(360px,1fr)_minmax(520px,0.8fr)] max-lg:overflow-y-auto scrollbar-auto"
+        className="grid min-h-0 grid-cols-[minmax(0,1fr)_8px_var(--business-document-protocol-width)] grid-rows-[auto_minmax(0,1fr)] max-lg:grid-cols-1 max-lg:grid-rows-[minmax(360px,1fr)_minmax(520px,0.8fr)] max-lg:overflow-y-auto scrollbar-auto"
         data-testid="business-document-panes"
         style={
           {
@@ -2107,7 +2116,7 @@ export default function BusinessDocumentsPage() {
           } as CSSProperties
         }
       >
-        <div className="row-span-2 flex min-h-0 flex-col max-lg:row-start-2 max-lg:row-span-1">
+        <div className="row-span-2 flex min-h-0 flex-col max-lg:row-start-1 max-lg:row-span-1">
           {documentWarnings.length > 0 && (
             <details
               className="shrink-0 border-b border-state-warning/30 bg-state-warning/5 px-5 py-3 text-sm"
@@ -2177,20 +2186,7 @@ export default function BusinessDocumentsPage() {
           onChange={resizeProtocolPane}
           onReset={() => resizeProtocolPane(defaultProtocolPaneWidth)}
         />
-        <div
-          className="col-start-3 row-start-1 min-w-0 lg:max-h-64 lg:overflow-y-auto max-lg:col-start-1 scrollbar-auto"
-          data-testid="business-document-activity"
-        >
-          {isBusinessDocumentOperationActive(document.operation_state) && (
-            <BusinessDocumentProgress
-              job={document.latest_job}
-              operationState={document.operation_state}
-              operationLabel={operationLabels[document.operation_state]}
-            />
-          )}
-          <BackgroundWork document={document} onFocusSection={focusSection} />
-        </div>
-        <div className="col-start-3 row-start-2 grid min-h-0 max-lg:col-start-1 max-lg:row-start-3">
+        <div className="col-start-3 row-span-2 row-start-1 grid min-h-0 max-lg:col-start-1 max-lg:row-span-1 max-lg:row-start-2">
           {historyOpen ? (
             <RevisionHistoryPanel
               revisions={revisionsQuery.data ?? []}
@@ -2237,6 +2233,7 @@ export default function BusinessDocumentsPage() {
               selection={selection}
               allowedCommands={[...allowed]}
               pending={commandMutation.isPending}
+              busy={isBusy}
               editable={
                 Boolean(promptStorageIdentity) &&
                 document.permissions?.edit !== false &&

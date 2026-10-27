@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from test.unit_test.api.apps.business_documents import test_business_document_ai_export_boundaries  # noqa: F401 - shared import boundary
+from test.unit_test.api.apps.business_documents.test_business_document_service import _draft
 from api.apps.business_documents.ai import BusinessDocumentAI
 from api.apps.business_documents.ai_prompt import build_prompt
 from api.apps.business_documents import ai as ai_module
@@ -18,7 +19,11 @@ from business_documents.application.errors import ValidationError
 
 
 def inputs():
-    job = SimpleNamespace(job_type="GENERATE_DRAFT", tenant_id="synthetic-tenant", payload={"prompt": prompt_descriptor("GENERATE_DRAFT"), "idea": "Equipment reservation"})
+    job = SimpleNamespace(
+        job_type="GENERATE_DRAFT",
+        tenant_id="synthetic-tenant",
+        payload={"prompt": prompt_descriptor("GENERATE_DRAFT"), "idea": "Equipment reservation", "template_version": assets.published_template()["template_version"]},
+    )
     prompt = PromptBundle(
         "1",
         "Generate the draft",
@@ -39,6 +44,11 @@ def inputs():
         },
     )
     return job, prompt
+
+
+def completed_draft():
+    job, _ = inputs()
+    return BusinessDocumentAI._validate(job, {"draft": _draft()})
 
 
 class Adapter:
@@ -168,7 +178,7 @@ def test_completed_source_decisions_are_reused_after_transport_failure(monkeypat
             self.calls.append((tenant, system, deepcopy(payload), kwargs["timeout_seconds"]))
             if len(self.calls) == 2:
                 raise httpx.ConnectError("synthetic provider failure")
-            return {"draft": {}}
+            return completed_draft()
 
     adapter = FailingGeneration()
     ai = BusinessDocumentAI(adapter)
@@ -179,7 +189,7 @@ def test_completed_source_decisions_are_reused_after_transport_failure(monkeypat
         ai.process(job, recovery=recovery)
     resumed = AIRecovery(recovery.state, clock=lambda: 100)
 
-    assert ai.process(job, recovery=resumed) == {"draft": {}}
+    assert ai.process(job, recovery=resumed) == completed_draft()
     assert [call[2]["job_input"]["task_type"] for call in adapter.calls] == ["CLASSIFY_DRAFT_EVIDENCE", "GENERATE_DRAFT", "GENERATE_DRAFT"]
     assert resumed.state["calls"] == 3
 
@@ -235,14 +245,14 @@ def test_classification_and_generation_share_remaining_time_and_call_limit(monke
             if payload["job_input"]["task_type"] == "CLASSIFY_DRAFT_EVIDENCE":
                 now[0] += 20
                 return value
-            return {"draft": {}}
+            return completed_draft()
 
     adapter = TimedAdapter()
     ai = BusinessDocumentAI(adapter)
     monkeypatch.setattr(ai_module, "build_prompt", lambda *_: prompt)
     monkeypatch.setattr(ai, "_normalize_and_validate", lambda _job, raw, _evidence: raw)
     recovery = AIRecovery(clock=lambda: now[0])
-    assert ai.process(job, recovery=recovery) == {"draft": {}}
+    assert ai.process(job, recovery=recovery) == completed_draft()
     assert [call[3] for call in adapter.calls] == [900, 880]
     limited = AIRecovery(clock=lambda: now[0])
     limited.state["calls"] = 5
@@ -272,7 +282,7 @@ def test_large_source_resumes_only_complete_batches_with_shared_call_budget(monk
         def generate(self, tenant, system, payload, **kwargs):
             if payload["job_input"].get("task_type") != "CLASSIFY_DRAFT_EVIDENCE":
                 self.calls.append((tenant, system, deepcopy(payload), kwargs["timeout_seconds"]))
-                return {"draft": {}}
+                return completed_draft()
             result = super().generate(tenant, system, payload, **kwargs)
             if len(self.calls) == 2:
                 raise httpx.ConnectError("Synthetic second-batch interruption")
@@ -293,10 +303,13 @@ def test_large_source_resumes_only_complete_batches_with_shared_call_budget(monk
     assert len(resumed.state["draft_evidence"]["decisions"]) == 12012 and resumed.state["calls"] == 5
     monkeypatch.setattr(ai_module, "build_prompt", lambda *_: prompt)
     monkeypatch.setattr(ai, "_normalize_and_validate", lambda _job, raw, _evidence: raw)
-    assert ai.process(job, recovery=resumed) == {"draft": {}}
+    assert ai.process(job, recovery=resumed) == completed_draft()
     assert resumed.state["calls"] == 6
+    # A validated draft survives retry without another generation call.
+    assert ai.process(job, recovery=resumed) == completed_draft()
+    assert len(adapter.calls) == 6 and resumed.state["calls"] == 6
     with pytest.raises(ValidationError) as caught:
-        ai.process(job, recovery=resumed)
+        resumed.before_call()
     assert caught.value.code == "AI_CALL_BUDGET_EXCEEDED" and len(adapter.calls) == 6
 
 

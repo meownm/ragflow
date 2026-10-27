@@ -77,6 +77,154 @@ def screenshot(page, name):
     page.screenshot(path=str(path), full_page=True)
 
 
+def open_activity(page):
+    status = page.get_by_test_id("business-document-status-toggle")
+    if status.get_attribute("aria-expanded") != "true":
+        status.click()
+
+
+@pytest.mark.p1
+@pytest.mark.parametrize("theme,pane_width", [("dark", 360), ("light", 360), ("dark", 460), ("light", 460)])
+def test_comment_sending_preserves_draft_and_button_geometry(page, base_url, theme, pane_width):
+    page.set_viewport_size({"width": 1440, "height": 1000})
+    page.add_init_script(f"localStorage.setItem('ragflow-ui-theme', '{theme}'); localStorage.setItem('ragflow.business-documents.protocol-pane-width', '{pane_width}')")
+    state, _ = setup(page, base_url)
+    state.update(
+        operation_state="ANALYZING_REVIEW", latest_job={"job_id": "analysis-job", "job_type": "ASSESS_REVIEW", "status": "RUNNING", "attempt": 1, "max_attempts": 3, "progress_stage": "MODEL_REQUEST"}
+    )
+    page.reload()
+    composer = page.get_by_test_id("business-document-comment-composer")
+    text = composer.get_by_role("textbox", name="Комментарий", exact=True)
+    send = composer.get_by_role("button", name="Добавить комментарий", exact=True)
+    held = []
+    page.route("**/api/v1/business-documents/doc-ui-1/commands", lambda route: held.append(route))
+    wheel = composer.get_by_role("button", name="Идёт обработка документа", exact=True)
+    expect(wheel).to_be_disabled()
+    expect(wheel.locator("svg.animate-spin")).to_have_count(1)
+    empty_bounds = wheel.bounding_box()
+    output = Path(os.environ["PW_ARTIFACTS_DIR"]) / f"comment-empty-{theme}-{pane_width}.png"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    composer.screenshot(path=str(output))
+    text.fill("Отправленный комментарий")
+    expect(send).to_be_enabled()
+    expect(send).to_have_attribute("aria-busy", "false")
+    before = send.bounding_box()
+    for dimension in ("x", "y", "width", "height"):
+        assert abs(empty_bounds[dimension] - before[dimension]) < 1
+    send.click()
+    expect(send).to_have_attribute("aria-busy", "false")
+    expect(send).to_be_disabled()
+    expect(send.locator("svg")).to_have_count(1)
+    expect(send.locator("svg.animate-spin")).to_have_count(0)
+    expect(text).to_be_editable()
+    during = send.bounding_box()
+    for dimension in ("x", "y", "width", "height"):
+        assert abs(before[dimension] - during[dimension]) < 1, (before, during)
+    assert send.evaluate("node => node.scrollWidth <= node.clientWidth + 1")
+    text.fill("Следующий черновик")
+    text.press("Control+Enter")
+    expect(composer.get_by_role("button", name="Сохранить в заметки", exact=True)).to_be_enabled()
+    assert len(held) == 1
+    submitted = held[0].request.post_data_json
+    assert submitted["payload"]["text"] == "Отправленный комментарий"
+    output = Path(os.environ["PW_ARTIFACTS_DIR"]) / f"comment-sending-{theme}-{pane_width}.png"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    composer.screenshot(path=str(output))
+    state["state_version"] += 1
+    state["protocol"]["comments"].append({"comment_id": "sent-comment", **submitted["payload"], "anchor_status": "GENERAL"})
+    held[0].fulfill(
+        json=_envelope(
+            {
+                "accepted": True,
+                "document_id": state["document_id"],
+                "state_version": state["state_version"],
+                "lifecycle_state": state["lifecycle_state"],
+                "operation_state": state["operation_state"],
+                "document": state,
+            }
+        )
+    )
+    expect(send).to_have_attribute("aria-busy", "false")
+    expect(send).to_be_enabled()
+    expect(text).to_have_value("Следующий черновик")
+    expect(page.get_by_test_id("business-document-comment").filter(has_text="Отправленный комментарий")).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
+
+
+@pytest.mark.p1
+@pytest.mark.parametrize("width,theme", [(1440, "dark"), (1280, "light"), (700, "dark"), (390, "dark"), (390, "light")])
+def test_compact_header_status_keyboard_and_states(page, base_url, width, theme):
+    page.set_viewport_size({"width": width, "height": 1000})
+    page.add_init_script(f"localStorage.setItem('ragflow-ui-theme', '{theme}')")
+    state, requests = setup(page, base_url)
+    state.update(
+        title="Очень длинное название бизнес-требований для проверки компактного статуса " * 3,
+        operation_state="APPLYING_CHANGES",
+        allowed_commands=[],
+        permissions={"edit": False},
+        latest_job={
+            "job_id": "compact-job",
+            "job_type": "PLAN_CHANGES",
+            "status": "RUNNING",
+            "attempt": 1,
+            "max_attempts": 3,
+            "progress_stage": "GENERATING",
+            "create_time": int(time.time() * 1000) - 9000,
+        },
+        background_work=[{"request_id": "work", "kind": "PLAN_CHANGES", "status": "RUNNING"}],
+        last_analysis={"event_id": "old-analysis", "applied": True, "superseded": True, "created_at": int(time.time() * 1000)},
+    )
+    page.reload()
+    header = page.get_by_test_id("business-document-header")
+    status = header.get_by_test_id("business-document-status-toggle")
+    expect(status).to_contain_text("Готовим исправления", timeout=RESULT_TIMEOUT_MS)
+    expect(status).to_contain_text("2/4")
+    expect(status).not_to_contain_text("Попытка")
+    expect(page.get_by_role("button", name="Подробнее", exact=True)).to_have_count(0)
+    expect(page.get_by_test_id("business-document-activity")).to_have_count(0)
+    assert status.bounding_box()["height"] == 24
+    assert status.evaluate("node => node.scrollWidth <= node.clientWidth + 1")
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
+    screenshot(page, f"compact-status-{width}-{theme}.png")
+    status.focus()
+    status.press("Enter")
+    details = page.get_by_role("dialog", name="Подробности фоновой работы")
+    expect(details).to_be_visible()
+    expect(details).to_contain_text("Попытка 1 из 3")
+    expect(details).to_contain_text("Результат предыдущего анализа устарел")
+    expect(details).to_contain_text("Работа идёт в фоне")
+    assert details.evaluate("node => node.scrollWidth <= node.clientWidth + 1")
+    screenshot(page, f"compact-details-{width}-{theme}.png")
+    page.keyboard.press("Escape")
+    expect(details).to_have_count(0)
+    expect(status).to_be_focused()
+    status.press("Space")
+    expect(details).to_be_visible()
+    header.get_by_role("heading", level=1).click()
+    expect(details).to_have_count(0)
+    state["latest_job"].update(status="RETRY", attempt=2)
+    state["background_work"].append({"request_id": "queued", "kind": "PLAN_CHANGES", "status": "QUEUED"})
+    expect(status).to_contain_text("2/3", timeout=10000)
+    expect(status).to_contain_text("В очереди: 1")
+    assert status.evaluate("node => node.scrollWidth <= node.clientWidth + 1")
+    screenshot(page, f"compact-retry-{width}-{theme}.png")
+    state.update(operation_state="IDLE", background_work=[], last_analysis={"event_id": "done", "applied": True, "created_at": int(time.time() * 1000), "question_count": 0, "proposal_count": 1})
+    state["latest_job"].update(status="COMPLETED", progress_stage="COMPLETED", error=None)
+    expect(status).to_contain_text("Обработка завершена", timeout=10000)
+    expect(status).not_to_contain_text("Новые")
+    open_activity(page)
+    expect(page.get_by_test_id("business-document-analysis-result")).to_contain_text("предложений — 1")
+    page.keyboard.press("Escape")
+    state.update(operation_state="FAILED", last_error={"message": "Модель недоступна"})
+    state["latest_job"].update(status="DEAD", progress_stage="FAILED")
+    state["background_work"] = [{"request_id": "failed", "kind": "PLAN_CHANGES", "status": "FAILED"}]
+    # Idle documents stop polling; a reload reads the next server state.
+    page.reload()
+    expect(status).to_contain_text("Не удалось завершить работу", timeout=RESULT_TIMEOUT_MS)
+    expect(status).not_to_contain_text("2/4")
+    assert not requests, "Inspecting progress must not issue document commands"
+
+
 @pytest.mark.p1
 @pytest.mark.parametrize("width,theme", [(1440, "light"), (1280, "light"), (1440, "dark")])
 def test_background_queue_comments_reload_and_revision_change(page, base_url, width, theme):
@@ -85,10 +233,10 @@ def test_background_queue_comments_reload_and_revision_change(page, base_url, wi
     state, requests = setup(page, base_url)
     original_revision = state["current_revision"]["revision_id"]
     page.get_by_test_id("accept-proposal-proposal-1").click()
-    expect(page.get_by_test_id("business-document-operation")).to_contain_text("Этап 2/4")
+    expect(page.get_by_test_id("business-document-status-toggle")).to_contain_text("2/4")
     expect(page.get_by_test_id("accept-proposal-proposal-2")).to_be_enabled()
     page.get_by_test_id("accept-proposal-proposal-2").click()
-    expect(page.get_by_test_id("business-document-background-work")).to_contain_text("В очереди: 1")
+    expect(page.get_by_test_id("business-document-status-toggle")).to_contain_text("В очереди: 1")
     section = page.locator('[data-section-id="1"][data-section-text]')
     expect(section).to_have_attribute("data-background-state", "possible")
     # Select a quote in saved content while its next version is being prepared.
@@ -117,7 +265,7 @@ def test_background_queue_comments_reload_and_revision_change(page, base_url, wi
     assert [item["type"] for item in requests] == ["ACCEPT_PROPOSAL", "ACCEPT_PROPOSAL", "ADD_COMMENT"]
     composer.fill("Незавершённый комментарий")
     page.reload()
-    expect(page.get_by_test_id("business-document-background-work")).to_contain_text("В очереди: 1", timeout=RESULT_TIMEOUT_MS)
+    expect(page.get_by_test_id("business-document-status-toggle")).to_contain_text("В очереди: 1", timeout=RESULT_TIMEOUT_MS)
     expect(page.get_by_role("textbox", name="Комментарий", exact=True)).to_have_value("Незавершённый комментарий")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
     screenshot(page, f"background-queue-{width}-{theme}.png")
@@ -137,7 +285,7 @@ def test_background_failure_retry_and_analysis_result(page, base_url):
     screenshot(page, "background-failed.png")
     with page.expect_response("**/api/v1/business-documents/doc-ui-1/commands"):
         page.get_by_role("button", name="Подготовить изменения").click()
-    expect(page.get_by_test_id("business-document-operation")).to_contain_text("Этап 2/4")
+    expect(page.get_by_test_id("business-document-status-toggle")).to_contain_text("2/4")
     assert requests[-1]["type"] == "ACCEPT_PROPOSAL"
     state["state_version"] += 1
     state["protocol"]["proposals"][0].update(applied=True, application=None)
@@ -146,15 +294,18 @@ def test_background_failure_retry_and_analysis_result(page, base_url):
     expect(page.get_by_test_id("accept-proposal-proposal-1")).to_have_count(0)
     expect(page.locator('[data-section-id="1"][data-section-text]')).to_have_attribute("data-background-state", "saved", timeout=10000)
     page.get_by_role("button", name="Проанализировать замечания").click()
-    expect(page.get_by_test_id("business-document-operation")).to_contain_text("Этап 3/4")
+    expect(page.get_by_test_id("business-document-status-toggle")).to_contain_text("3/4")
     state["state_version"] += 1
     state.update(
         operation_state="IDLE", background_work=[], last_analysis={"event_id": "analysis-done", "created_at": int(time.time() * 1000), "applied": True, "question_count": 0, "proposal_count": 0}
     )
     state["latest_job"]["status"] = "COMPLETED"
+    open_activity(page)
     expect(page.get_by_test_id("business-document-analysis-result")).to_contain_text("Анализ завершён: новых вопросов — 0, предложений — 0", timeout=10000)
     screenshot(page, "background-analysis-done.png")
     page.reload()
+    expect(page.get_by_test_id("business-document-status-toggle")).to_be_visible(timeout=RESULT_TIMEOUT_MS)
+    open_activity(page)
     expect(page.get_by_test_id("business-document-analysis-result")).to_be_visible(timeout=RESULT_TIMEOUT_MS)
 
 
@@ -186,6 +337,7 @@ def test_section_collapse_during_background_work(page, base_url, width):
     expect(body).to_be_hidden()
     screenshot(page, f"collapsed-background-{width}.png")
     # Navigation from the queue opens the target before scrolling to it.
+    open_activity(page)
     page.get_by_test_id("business-document-background-work").get_by_role("button", name="§ 1", exact=True).click()
     expect(toggle).to_have_attribute("aria-expanded", "true")
     expect(body).to_be_visible()
@@ -220,20 +372,23 @@ def test_section_collapse_during_background_work(page, base_url, width):
 def test_unapplied_analysis_displays_failure_until_later_feedback(page, base_url):
     state, requests = setup(page, base_url)
     page.get_by_role("button", name="Проанализировать замечания").click()
-    expect(page.get_by_test_id("business-document-operation")).to_contain_text("Этап 3/4")
+    expect(page.get_by_test_id("business-document-status-toggle")).to_contain_text("3/4")
     state["state_version"] += 1
     state["operation_state"] = "IDLE"
     state["latest_job"].update(status="COMPLETED", progress_stage="COMPLETED")
     state["background_work"][0].update(status="FAILED", error={"code": "RESULT_NOT_APPLIED", "message": "Результат требует уточнения"})
     state["last_analysis"] = {"event_id": "analysis-not-applied", "applied": False, "superseded": False, "created_at": int(time.time() * 1000)}
+    open_activity(page)
     result = page.get_by_test_id("business-document-analysis-result")
     expect(result).to_have_text("Анализ завершён без применения результата. Проверьте замечания.", timeout=10000)
     expect(result).not_to_contain_text("устарел")
     screenshot(page, "analysis-not-applied.png")
+    page.keyboard.press("Escape")
     page.get_by_role("textbox", name="Комментарий", exact=True).fill("Новое замечание после анализа")
     # The server projection marks the older result stale after this new comment.
     state["last_analysis"]["superseded"] = True
     page.get_by_role("button", name="Добавить комментарий", exact=True).click()
     expect(page.get_by_test_id("business-document-comment")).to_contain_text("Новое замечание после анализа")
+    open_activity(page)
     expect(result).to_have_text("Результат предыдущего анализа устарел после новых замечаний.")
     assert requests[-1]["type"] == "ADD_COMMENT"

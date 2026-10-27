@@ -7,13 +7,22 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import {
   BookmarkPlus,
+  Loader2,
   MessageSquareText,
   Quote,
   Send,
   Sparkles,
   Trash2,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  type SetStateAction,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import type {
   BusinessDocumentCommandType,
   BusinessDocumentReviewCycle,
@@ -46,6 +55,7 @@ interface ProtocolPaneProps {
   selection: BusinessDocumentSelection | null;
   allowedCommands: BusinessDocumentCommandType[];
   pending: boolean;
+  busy: boolean;
   editable: boolean;
   onCommand: (
     type: BusinessDocumentCommandType,
@@ -71,12 +81,18 @@ export function ProtocolPane({
   selection,
   allowedCommands,
   pending,
+  busy,
   editable,
   onCommand,
   onClearSelection,
   focusRequest,
 }: ProtocolPaneProps) {
   const [comment, setComment] = useState('');
+  const draftVersion = useRef(0);
+  const updateComment = useCallback((value: SetStateAction<string>) => {
+    draftVersion.current += 1;
+    setComment(value);
+  }, []);
   const [tab, setTab] = useState<'work' | 'history'>('work');
   const minimumComposerHeight = selection ? 260 : 188;
   const [composerHeight, setComposerHeight] = useState(188);
@@ -116,9 +132,17 @@ export function ProtocolPane({
   const focusedSequence = useRef<number | null>(null);
   const allowed = useMemo(() => new Set(allowedCommands), [allowedCommands]);
   const canComment = allowed.has('ADD_COMMENT');
+  const hasComment = Boolean(comment.trim());
+  const showProcessing = busy && !hasComment;
   const draftStorageKey = storageIdentity
     ? `ragflow.business-documents.prompt-draft.${storageIdentity}.${documentId}`
     : null;
+  useLayoutEffect(() => {
+    draftVersion.current += 1;
+    return () => {
+      draftVersion.current += 1;
+    };
+  }, [draftStorageKey, selection]);
   const savedStorageKey = storageIdentity
     ? `ragflow.business-documents.saved-prompts.${storageIdentity}.${documentId}`
     : null;
@@ -217,7 +241,7 @@ export function ProtocolPane({
 
   useEffect(() => {
     if (!draftStorageKey || !savedStorageKey || !editable) {
-      setComment('');
+      updateComment('');
       setSavedPrompts([]);
       setLoadedDraftStorageKey(null);
       return;
@@ -229,7 +253,7 @@ export function ProtocolPane({
       window.localStorage.removeItem(
         `ragflow.business-documents.saved-prompts.${documentId}`,
       );
-      setComment(window.localStorage.getItem(draftStorageKey) ?? '');
+      updateComment(window.localStorage.getItem(draftStorageKey) ?? '');
       const stored = JSON.parse(
         window.localStorage.getItem(savedStorageKey) ?? '[]',
       );
@@ -243,7 +267,7 @@ export function ProtocolPane({
       setSavedPrompts([]);
       setLoadedDraftStorageKey(draftStorageKey);
     }
-  }, [documentId, draftStorageKey, editable, savedStorageKey]);
+  }, [documentId, draftStorageKey, editable, savedStorageKey, updateComment]);
 
   useEffect(() => {
     if (
@@ -343,7 +367,15 @@ export function ProtocolPane({
 
   const submitComment = () => {
     const text = comment.trim();
-    if (!text || !canComment || pending) return;
+    if (
+      !text ||
+      !editable ||
+      !canComment ||
+      pending ||
+      loadedDraftStorageKey !== draftStorageKey
+    )
+      return;
+    const submittedDraftVersion = draftVersion.current;
     onCommand(
       'ADD_COMMENT',
       {
@@ -353,7 +385,8 @@ export function ProtocolPane({
         anchor: selection,
       },
       () => {
-        setComment('');
+        if (draftVersion.current !== submittedDraftVersion) return;
+        updateComment('');
         onClearSelection();
       },
     );
@@ -680,7 +713,7 @@ export function ProtocolPane({
                       <button
                         type="button"
                         className="line-clamp-2 min-w-0 flex-1 text-start text-xs leading-5 text-text-primary hover:text-accent-primary"
-                        onClick={() => setComment(prompt)}
+                        onClick={() => updateComment(prompt)}
                       >
                         {prompt}
                       </button>
@@ -748,7 +781,7 @@ export function ProtocolPane({
               }
               className="h-full min-h-0 rounded-b-none border-0 bg-transparent pe-3 text-[13px] focus-visible:ring-inset"
               disabled={!editable}
-              onChange={(event) => setComment(event.target.value)}
+              onChange={(event) => updateComment(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
                   event.preventDefault();
@@ -762,7 +795,9 @@ export function ProtocolPane({
               label="Замечание к документу"
               disabled={!editable || pending}
               onTranscript={(transcript) =>
-                setComment((value) => appendVoiceTranscript(value, transcript))
+                updateComment((value) =>
+                  appendVoiceTranscript(value, transcript),
+                )
               }
               testId="voice-input-comment"
             />
@@ -778,16 +813,29 @@ export function ProtocolPane({
               <BookmarkPlus className="size-4" />
             </Button>
             <Button
-              size="sm"
+              size="icon"
               className="ms-auto"
               variant="accent"
-              aria-label="Добавить комментарий"
-              disabled={!comment.trim() || !canComment || pending}
-              loading={pending}
+              aria-label={
+                showProcessing
+                  ? 'Идёт обработка документа'
+                  : 'Добавить комментарий'
+              }
+              disabled={
+                !hasComment ||
+                !editable ||
+                !canComment ||
+                pending ||
+                loadedDraftStorageKey !== draftStorageKey
+              }
+              aria-busy={showProcessing}
               onClick={submitComment}
             >
-              <Send className="size-4" />
-              Добавить комментарий
+              {showProcessing ? (
+                <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <Send className="size-4" aria-hidden="true" />
+              )}
             </Button>
           </div>
         </div>

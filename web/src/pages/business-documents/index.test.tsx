@@ -356,7 +356,7 @@ function renderPage(path = '/business-documents/doc-1') {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  const rendered = render(
+  const tree = () => (
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[path]}>
         <RouterRoutes>
@@ -374,9 +374,22 @@ function renderPage(path = '/business-documents/doc-1') {
           />
         </RouterRoutes>
       </MemoryRouter>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
-  return { ...rendered, client };
+  const rendered = render(tree());
+  return { ...rendered, client, refresh: () => rendered.rerender(tree()) };
+}
+
+function delayNextCommand() {
+  let resolve!: (result: BusinessDocumentCommandResult) => void;
+  let reject!: (error: Error) => void;
+  mockedSubmit.mockReturnValueOnce(
+    new Promise((resolvePromise, rejectPromise) => {
+      resolve = resolvePromise;
+      reject = rejectPromise;
+    }),
+  );
+  return { resolve, reject };
 }
 
 async function selectCatalogEntry() {
@@ -1744,6 +1757,309 @@ test('keeps the prompt editable while work is running and saves it for later', a
   ).toBeNull();
 });
 
+test('shows processing for an empty composer and send for a filled composer', async () => {
+  const request = delayNextCommand();
+  renderPage();
+  fireEvent.click(await screen.findByTestId('accept-proposal-proposal-12'));
+  await waitFor(() => expect(mockedSubmit).toHaveBeenCalledTimes(1));
+  const comment = screen.getByRole('textbox', { name: 'Комментарий' });
+  const send = screen.getByRole('button', { name: 'Идёт обработка документа' });
+  expect(send).toHaveAttribute('aria-busy', 'true');
+  expect(send.querySelector('.animate-spin')).not.toBeNull();
+  expect(send.querySelectorAll('svg')).toHaveLength(1);
+  expect(comment).toBeEnabled();
+  fireEvent.change(comment, { target: { value: 'Следующий комментарий' } });
+  expect(send).toHaveAccessibleName('Добавить комментарий');
+  expect(send).toHaveAttribute('aria-busy', 'false');
+  expect(send.querySelector('.animate-spin')).toBeNull();
+  expect(send).toBeDisabled();
+  fireEvent.keyDown(comment, { key: 'Enter', ctrlKey: true });
+  expect(mockedSubmit).toHaveBeenCalledTimes(1);
+  await act(async () => request.resolve(commandResult));
+  await waitFor(() => expect(send).toBeEnabled());
+  expect(comment).toHaveValue('Следующий комментарий');
+});
+
+test('sends one comment for repeated clicks and keyboard submission in one turn', async () => {
+  const request = delayNextCommand();
+  renderPage();
+  const comment = await screen.findByRole('textbox', { name: 'Комментарий' });
+  fireEvent.change(comment, { target: { value: 'Один комментарий' } });
+  const send = screen.getByRole('button', { name: 'Добавить комментарий' });
+  act(() => {
+    send.click();
+    fireEvent.keyDown(comment, { key: 'Enter', ctrlKey: true });
+    send.click();
+  });
+  await waitFor(() => expect(mockedSubmit).toHaveBeenCalledTimes(1));
+  expect(send).toHaveAttribute('aria-busy', 'false');
+  expect(send.querySelectorAll('svg')).toHaveLength(1);
+  expect(send.querySelector('.animate-spin')).toBeNull();
+  expect(comment).toBeEnabled();
+  await act(async () => request.resolve(commandResult));
+  await waitFor(() => expect(comment).toHaveValue(''));
+  expect(send).toHaveAttribute('aria-busy', 'false');
+  expect(
+    localStorage.getItem(
+      'ragflow.business-documents.prompt-draft.tenant-1.user-1.doc-1',
+    ),
+  ).toBeNull();
+});
+
+test('keeps send available during background analysis and restores the wheel when text is cleared', async () => {
+  mockedFetch.mockResolvedValueOnce({
+    ...projection,
+    operation_state: 'ANALYZING_REVIEW',
+  });
+  renderPage();
+  const comment = await screen.findByRole('textbox', { name: 'Комментарий' });
+  const action = screen.getByRole('button', {
+    name: 'Идёт обработка документа',
+  });
+  expect(action).toBeDisabled();
+  expect(action.querySelectorAll('svg')).toHaveLength(1);
+  expect(action.querySelector('.animate-spin')).not.toBeNull();
+  fireEvent.change(comment, { target: { value: 'Новый комментарий' } });
+  expect(action).toHaveAccessibleName('Добавить комментарий');
+  expect(action).toBeEnabled();
+  expect(action.querySelector('.animate-spin')).toBeNull();
+  fireEvent.change(comment, { target: { value: '' } });
+  expect(action).toHaveAccessibleName('Идёт обработка документа');
+  expect(action).toBeDisabled();
+  expect(action.querySelector('.animate-spin')).not.toBeNull();
+  expect(mockedSubmit).not.toHaveBeenCalled();
+});
+
+test.each(['Новый комментарий', 'Отправленный комментарий'])(
+  'preserves the edited draft after sending even when its final text is %s',
+  async (nextText) => {
+    const request = delayNextCommand();
+    renderPage();
+    const comment = await screen.findByRole('textbox', { name: 'Комментарий' });
+    fireEvent.change(comment, {
+      target: { value: 'Отправленный комментарий' },
+    });
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Добавить комментарий' }),
+    );
+    await waitFor(() => expect(mockedSubmit).toHaveBeenCalledTimes(1));
+    fireEvent.change(comment, { target: { value: '' } });
+    fireEvent.change(comment, { target: { value: nextText } });
+    await act(async () => request.resolve(commandResult));
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Добавить комментарий' }),
+      ).toBeEnabled(),
+    );
+    expect(comment).toHaveValue(nextText);
+    expect(
+      localStorage.getItem(
+        'ragflow.business-documents.prompt-draft.tenant-1.user-1.doc-1',
+      ),
+    ).toBe(nextText);
+    expect(mockedSubmit.mock.calls[0][1].payload.text).toBe(
+      'Отправленный комментарий',
+    );
+  },
+);
+
+test.each([false, true])(
+  'preserves the draft when its anchor changes during sending (same quote: %s)',
+  async (sameQuote) => {
+    const request = delayNextCommand();
+    renderPage();
+    const comment = await screen.findByRole('textbox', { name: 'Комментарий' });
+    const markdown = screen.getByTestId('business-document-markdown');
+    const sections = screen.getAllByTestId('business-document-section');
+    let selectionSpy = mockTextSelection(
+      'Сократить время перевода',
+      sections[0],
+    );
+    fireEvent.mouseUp(markdown);
+    fireEvent.change(comment, { target: { value: 'Комментарий к цитате' } });
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Добавить комментарий' }),
+    );
+    await waitFor(() => expect(mockedSubmit).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole('button', { name: 'Убрать привязку' }));
+    selectionSpy.mockRestore();
+    const nextQuote = sameQuote
+      ? 'Сократить время перевода'
+      : 'Повторяемая фраза';
+    selectionSpy = mockTextSelection(nextQuote, sections[sameQuote ? 0 : 1]);
+    fireEvent.mouseUp(markdown);
+    await act(async () => request.resolve(commandResult));
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Добавить комментарий' }),
+      ).toBeEnabled(),
+    );
+    expect(comment).toHaveValue('Комментарий к цитате');
+    expect(
+      screen.getByTestId('business-document-comment-composer'),
+    ).toHaveTextContent(nextQuote);
+    expect(mockedSubmit.mock.calls[0][1].payload.anchor).toEqual(
+      expect.objectContaining({ selected_text: 'Сократить время перевода' }),
+    );
+    selectionSpy.mockRestore();
+  },
+);
+
+test('does not clear a reopened composer when its previous submission completes', async () => {
+  const request = delayNextCommand();
+  renderPage();
+  const comment = await screen.findByRole('textbox', { name: 'Комментарий' });
+  fireEvent.change(comment, { target: { value: 'Первый комментарий' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Добавить комментарий' }));
+  await waitFor(() => expect(mockedSubmit).toHaveBeenCalledTimes(1));
+  fireEvent.click(screen.getByTestId('business-document-history-toggle'));
+  await waitFor(() =>
+    expect(screen.queryByRole('textbox', { name: 'Комментарий' })).toBeNull(),
+  );
+  fireEvent.click(screen.getByTestId('business-document-history-toggle'));
+  const reopened = await screen.findByRole('textbox', { name: 'Комментарий' });
+  const sections = screen.getAllByTestId('business-document-section');
+  const selectionSpy = mockTextSelection('Повторяемая фраза', sections[1]);
+  fireEvent.mouseUp(screen.getByTestId('business-document-markdown'));
+  fireEvent.change(reopened, { target: { value: 'Новый черновик' } });
+  await act(async () => request.resolve(commandResult));
+  await waitFor(() =>
+    expect(
+      screen.getByRole('button', { name: 'Добавить комментарий' }),
+    ).toBeEnabled(),
+  );
+  expect(reopened).toHaveValue('Новый черновик');
+  expect(
+    screen.getByTestId('business-document-comment-composer'),
+  ).toHaveTextContent('Повторяемая фраза');
+  selectionSpy.mockRestore();
+});
+
+test('keeps another document draft when the old comment submission completes', async () => {
+  const request = delayNextCommand();
+  mockedFetch.mockImplementation(async (id) => ({
+    ...projection,
+    document_id: id,
+    title: id === 'doc-2' ? 'Другой документ' : projection.title,
+  }));
+  function SwitchDocument() {
+    const navigate = useNavigate();
+    return (
+      <button onClick={() => navigate('/business-documents/doc-2')}>
+        Перейти к другому документу
+      </button>
+    );
+  }
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter initialEntries={['/business-documents/doc-1']}>
+        <SwitchDocument />
+        <RouterRoutes>
+          <Route
+            path="/business-documents/:id"
+            element={<BusinessDocumentsPage />}
+          />
+        </RouterRoutes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+  fireEvent.change(
+    await screen.findByRole('textbox', { name: 'Комментарий' }),
+    { target: { value: 'Комментарий документа А' } },
+  );
+  fireEvent.click(screen.getByRole('button', { name: 'Добавить комментарий' }));
+  await waitFor(() => expect(mockedSubmit).toHaveBeenCalledTimes(1));
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Перейти к другому документу' }),
+  );
+  await waitFor(() =>
+    expect(screen.getByTestId('business-document-header')).toHaveTextContent(
+      'Другой документ',
+    ),
+  );
+  const comment = screen.getByRole('textbox', { name: 'Комментарий' });
+  fireEvent.change(comment, { target: { value: 'Черновик документа Б' } });
+  expect(
+    screen.getByRole('button', { name: 'Добавить комментарий' }),
+  ).toHaveAttribute('aria-busy', 'false');
+  await act(async () =>
+    request.resolve({ ...commandResult, document: projection }),
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByRole('button', { name: 'Добавить комментарий' }),
+    ).toBeEnabled(),
+  );
+  expect(comment).toHaveValue('Черновик документа Б');
+  expect(
+    localStorage.getItem(
+      'ragflow.business-documents.prompt-draft.tenant-1.user-1.doc-2',
+    ),
+  ).toBe('Черновик документа Б');
+  expect(mockedSubmit.mock.calls[0][0]).toBe('doc-1');
+});
+
+test('keeps another user draft when the old comment submission completes', async () => {
+  const userHook = jest.spyOn(
+    jest.requireMock('@/hooks/use-user-setting-request'),
+    'useFetchUserInfo',
+  );
+  userHook.mockReturnValue({ data: { id: 'user-1' }, loading: false });
+  try {
+    const request = delayNextCommand();
+    const { refresh } = renderPage();
+    fireEvent.change(
+      await screen.findByRole('textbox', { name: 'Комментарий' }),
+      { target: { value: 'Комментарий первого пользователя' } },
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Добавить комментарий' }),
+    );
+    await waitFor(() => expect(mockedSubmit).toHaveBeenCalledTimes(1));
+    userHook.mockReturnValue({ data: { id: 'user-2' }, loading: false });
+    refresh();
+    const comment = screen.getByRole('textbox', { name: 'Комментарий' });
+    fireEvent.change(comment, {
+      target: { value: 'Черновик второго пользователя' },
+    });
+    expect(
+      screen.getByRole('button', { name: 'Добавить комментарий' }),
+    ).toHaveAttribute('aria-busy', 'false');
+    await act(async () => request.resolve(commandResult));
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Добавить комментарий' }),
+      ).toBeEnabled(),
+    );
+    expect(comment).toHaveValue('Черновик второго пользователя');
+    expect(
+      localStorage.getItem(
+        'ragflow.business-documents.prompt-draft.tenant-1.user-2.doc-1',
+      ),
+    ).toBe('Черновик второго пользователя');
+  } finally {
+    userHook.mockRestore();
+  }
+});
+
+test('allows retry after a failed comment without losing the draft', async () => {
+  const request = delayNextCommand();
+  renderPage();
+  const comment = await screen.findByRole('textbox', { name: 'Комментарий' });
+  fireEvent.change(comment, { target: { value: 'Повторить отправку' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Добавить комментарий' }));
+  await waitFor(() => expect(mockedSubmit).toHaveBeenCalledTimes(1));
+  await act(async () => request.reject(new Error('network down')));
+  await screen.findByTestId('business-document-command-error');
+  expect(comment).toHaveValue('Повторить отправку');
+  fireEvent.click(screen.getByRole('button', { name: 'Добавить комментарий' }));
+  await waitFor(() => expect(mockedSubmit).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(comment).toHaveValue(''));
+});
+
 test('resizes the discussion rail with the keyboard and remembers the width', async () => {
   renderPage();
   const resizer = await screen.findByRole('separator', {
@@ -2269,6 +2585,7 @@ test('shows queued target sections and navigates without claiming confirmed impa
     allowed_commands: [],
   });
   renderPage();
+  fireEvent.click(await screen.findByTestId('business-document-status-toggle'));
   const activity = await screen.findByTestId(
     'business-document-background-work',
   );
@@ -2279,7 +2596,19 @@ test('shows queued target sections and navigates without claiming confirmed impa
   const toggle = screen.getByRole('button', { name: '1. Цель' });
   fireEvent.click(toggle);
   expect(toggle).toHaveAttribute('aria-expanded', 'false');
-  fireEvent.click(within(activity).getByRole('button', { name: '§ 1' }));
+  fireEvent.keyDown(activity, { key: 'Escape' });
+  await waitFor(() =>
+    expect(
+      screen.queryByTestId('business-document-background-work'),
+    ).not.toBeInTheDocument(),
+  );
+  fireEvent.click(screen.getByTestId('business-document-status-toggle'));
+  fireEvent.click(
+    within(screen.getByTestId('business-document-background-work')).getByRole(
+      'button',
+      { name: '§ 1' },
+    ),
+  );
   expect(toggle).toHaveAttribute('aria-expanded', 'true');
   const section = screen.getAllByTestId('business-document-section')[0];
   expect(section).toHaveClass('ring-2');
@@ -3310,6 +3639,11 @@ test.each(['FAILED', 'APPLYING_CHANGES'] as const)(
       },
     });
     renderPage();
+    if (operation_state !== 'FAILED') {
+      fireEvent.click(
+        await screen.findByTestId('business-document-status-toggle'),
+      );
+    }
     const panel = await screen.findByTestId(
       operation_state === 'FAILED'
         ? 'business-document-operation-error'
@@ -3390,6 +3724,9 @@ test.each([null, {}, '', { message: '   ' }])(
       },
     });
     renderPage();
+    fireEvent.click(
+      await screen.findByTestId('business-document-status-toggle'),
+    );
     expect(
       await screen.findByTestId('business-document-operation'),
     ).not.toHaveTextContent('Предыдущая ошибка');
@@ -3418,6 +3755,12 @@ test('shows the active attempt and previous validation error while retrying', as
 
   renderPage();
 
+  const status = await screen.findByTestId('business-document-status-toggle');
+  expect(status).toHaveTextContent('Попытка 2/3');
+  expect(
+    screen.queryByTestId('business-document-operation'),
+  ).not.toBeInTheDocument();
+  fireEvent.click(status);
   expect(
     await screen.findByTestId('business-document-operation'),
   ).toHaveTextContent('Попытка 2 из 3');

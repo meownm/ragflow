@@ -808,6 +808,8 @@ def test_business_document_soar_requirement_error_details(page, base_url, operat
         ),
     )
     page.goto(f"{base_url.rstrip('/')}/business-documents/doc-ui-1")
+    if operation_state != "FAILED":
+        page.get_by_test_id("business-document-status-toggle").click()
     panel = page.get_by_test_id("business-document-operation-error" if operation_state == "FAILED" else "business-document-operation")
     expect(panel).to_be_visible(timeout=RESULT_TIMEOUT_MS)
     expect(panel).to_contain_text("План изменений не сохранил подтверждённые требования.")
@@ -821,6 +823,8 @@ def test_business_document_soar_requirement_error_details(page, base_url, operat
         panel.get_by_role("listitem").last.scroll_into_view_if_needed()
         expect(panel.get_by_role("listitem").last).to_be_in_viewport()
     page.reload()
+    if operation_state != "FAILED":
+        page.get_by_test_id("business-document-status-toggle").click()
     expect(panel.get_by_role("listitem")).to_have_count(8)
     if operation_state == "FAILED":
         page.get_by_role("button", name="Закрыть сообщение об ошибке").click()

@@ -99,7 +99,12 @@ def test_queued_semantic_review_uses_pinned_intake_answer_and_complete_history(d
     assert [call["task_type"] for call in adapter.calls] == ["PLAN_CHANGES", "VERIFY_REQUIREMENT_COVERAGE"]
     verification = adapter.calls[1]
     assert verification["agreement_history"] == snapshot["agreement_history"]
-    assert verification["source_events"] == snapshot["source_events"]
+    # The model receives business history; execution/prompt metadata stays in the stored snapshot.
+    business_events = deepcopy(snapshot["source_events"])
+    for event in business_events:
+        for field in ("execution", "prompt_name", "prompt_version", "prompt_hash"):
+            event["payload"].pop(field, None)
+    assert verification["source_events"] == business_events
     assert verification["protocol"] == snapshot["protocol"]
     assert verification["active_review_cycle"] == 1
     assert verification["agreement_history"]["answers"][0]["custom_answer"] == "Только сотрудники банка."

@@ -356,6 +356,7 @@ def test_prompt_pack_is_contract_first_and_treats_evidence_as_data():
         "eva_change.v1.md",
         "intake.v1.md",
         "draft_evidence.v1.md",
+        "plantuml_repair.v1.md",
         "requirement_coverage.v1.md",
         "review.v1.md",
         "sql_conclusion.v1.md",
@@ -365,6 +366,13 @@ def test_prompt_pack_is_contract_first_and_treats_evidence_as_data():
         "sql_schema_search.v1.md",
     }
     for name, prompt in prompts.items():
+        if name == "plantuml_repair.v1.md":
+            assert "только JSON" in prompt
+            assert all(field in prompt for field in ("edits", "replacement", "source_lines", "editable_lines", "scenario_text", "multiway_groups"))
+            assert "не выбирай одну из версий" in prompt.lower()
+            assert "не удаляй и не переставляй ветки" in prompt.lower()
+            assert "не выполняй" in prompt.lower()
+            continue
         if name == "sql_conclusion.v1.md":
             assert "только JSON" in prompt
             assert all(f"`{field}`" in prompt for field in ("text", "citations", "row_index", "column", "context", "completeness", "LIMITED"))

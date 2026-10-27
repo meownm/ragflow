@@ -326,7 +326,7 @@ async def test_compatible_ollama_uses_loaded_window_and_qwen_content_budget(mode
 
     monkeypatch.setattr(httpx.AsyncClient, "get", ps)
     adapter = RAGFlowLLMAdapter()
-    tasks = ["ASSESS_INTAKE", "ASSESS_REVIEW", "GENERATE_DRAFT", "PLAN_CHANGES", "VERIFY_REQUIREMENT_COVERAGE", "CLASSIFY_DRAFT_EVIDENCE"]
+    tasks = ["ASSESS_INTAKE", "ASSESS_REVIEW", "GENERATE_DRAFT", "PLAN_CHANGES", "VERIFY_REQUIREMENT_COVERAGE", "CLASSIFY_DRAFT_EVIDENCE", "REPAIR_PLANTUML"]
     for task in tasks:
         payload = {"job_input": {"task_type": task, "text": " full requirement" * 12000}}
         if task == "CLASSIFY_DRAFT_EVIDENCE":
@@ -338,6 +338,8 @@ async def test_compatible_ollama_uses_loaded_window_and_qwen_content_budget(mode
             input_tokens = max(input_tokens, len(b"system") + len(content.encode()))
         reserve = max(256, math.ceil(input_tokens / 20)) if task == "CLASSIFY_DRAFT_EVIDENCE" else 256
         available = window - input_tokens - reserve
+        if task == "REPAIR_PLANTUML":
+            available = min(available, 4096)
         await adapter.async_generate("tenant", "system", payload, (lambda _: None) if stream else None)
         expected = {"temperature": 0, "top_p": 0.1, "max_tokens": available, "reasoning_effort": "none"}
         assert calls["parameters"][-1] == expected

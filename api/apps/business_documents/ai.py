@@ -49,6 +49,9 @@ from api.db.db_models import BusinessDocumentJob
 from api.apps.business_documents.ai_prompt import PromptBundle, build_prompt, model_source_events
 from business_documents.domain.block_diff import bind_block_section, with_block_ids
 from business_documents.adapters.llm import RAGFlowLLMAdapter, classification_response_tokens
+from business_documents.adapters.plantuml import PlantUmlRenderer
+from business_documents.application.diagram_repair import DiagramRepairResult, repair_diagram, repair_generated_diagrams
+from business_documents.application.errors import BusinessDocumentError
 from business_documents.domain.change_plan import active_change_input_event_ids, comment_dispositions
 from business_documents.domain.requirement_coverage import active_eva_update_event_ids, confirmed_change_sources, requirement_fragments
 
@@ -76,8 +79,9 @@ def _classification_batches(identifiers: list[int]) -> list[list[int]]:
 
 
 class BusinessDocumentAI:
-    def __init__(self, adapter: BusinessDocumentAIAdapter | None = None):
+    def __init__(self, adapter: BusinessDocumentAIAdapter | None = None, *, diagram_renderer: PlantUmlRenderer | None = None):
         self._adapter = adapter or RAGFlowLLMAdapter()
+        self._diagram_renderer = diagram_renderer or PlantUmlRenderer()
         self._recovery: AIRecovery | None = None
 
     def consume_execution_audit(self) -> dict[str, Any] | None:
@@ -107,9 +111,9 @@ class BusinessDocumentAI:
         final = None
         cached = recovery.state["candidate"]
         if cached is not None:
-            # Only validated plans are checkpointed. Recheck against this lease's
-            # evidence and pinned prompt before another semantic review.
-            validated = {**cached, **self._validate(job, cached["change_plan"], evidence)}
+            # Validated drafts/plans survive worker restarts before renderer/model I/O.
+            checked = cached["change_plan"] if job.job_type == "PLAN_CHANGES" else cached
+            validated = {**cached, **self._validate(job, checked, evidence)}
             final = self._candidate_document(job, validated)
         else:
             while True:
@@ -152,9 +156,17 @@ class BusinessDocumentAI:
                         break
                     continue
                 break
-            if job.job_type == "PLAN_CHANGES" and "change_plan" in validated:
+            if job.job_type == "GENERATE_DRAFT" or (job.job_type == "PLAN_CHANGES" and "change_plan" in validated):
                 recovery.state["candidate"] = deepcopy(validated)
                 recovery.checkpoint()
+        if job.job_type in {"GENERATE_DRAFT", "PLAN_CHANGES"}:
+            previous_plan = validated.get("change_plan")
+            validated = self._repair_diagrams(job, validated, final, recovery)
+            if job.job_type == "GENERATE_DRAFT" or "change_plan" in validated:
+                recovery.state["candidate"] = deepcopy(validated)
+                recovery.checkpoint()
+            if job.job_type == "PLAN_CHANGES" and validated.get("change_plan") != previous_plan:
+                final = self._candidate_document(job, validated)
         if job.job_type == "GENERATE_DRAFT":
             validated["draft"] = with_document_warnings(validated["draft"], (recovery.state.get("draft_evidence") or {}).get("warnings", []))
         if job.job_type == "PLAN_CHANGES" and "change_plan" in validated:
@@ -168,6 +180,45 @@ class BusinessDocumentAI:
                 validated["warnings"] = warnings
         recovery.checkpoint()
         return validated
+
+    def _repair_diagrams(self, job, validated, final, recovery):
+        prompt = prompt_text("plantuml_repair")
+        prompt_hash = stable_hash(prompt)
+
+        def repair(source, kind, context, position):
+            entries = recovery.state.setdefault("diagram_repairs", {})
+            binding = stable_hash({"kind": kind, "context": context, "prompt": prompt_hash})
+            entry = entries.setdefault(position, {"original_source": source, "binding": binding, "repair": {}})
+            if entry["binding"] != binding or source not in {entry["original_source"], entry.get("repaired_source")}:
+                raise ValidationError("DIAGRAM_RECOVERY_CORRUPT", "Изменились исходные данные проверки схемы")
+            try:
+                outcome = repair_diagram(
+                    entry["original_source"],
+                    kind,
+                    context,
+                    check=self._diagram_renderer.check,
+                    generate=lambda payload: self._generate(job.tenant_id, prompt, payload, "diagram_repair", recovery),
+                    state=entry["repair"],
+                    checkpoint=recovery.checkpoint,
+                )
+            except BusinessDocumentError as error:
+                if error.code not in {"AI_CALL_BUDGET_EXCEEDED", "AI_TIME_BUDGET_EXCEEDED", "MODEL_CONTEXT_TOO_LARGE", "MODEL_OUTPUT_LIMIT_UNAVAILABLE"}:
+                    raise
+                return DiagramRepairResult(source, "unavailable", True)
+            except (TimeoutError, ConnectionError):
+                return DiagramRepairResult(source, "unavailable", True)
+            if outcome.status == "repaired":
+                entry["repaired_source"] = outcome.source
+                recovery.checkpoint()
+            return outcome
+
+        return repair_generated_diagrams(
+            validated,
+            job.job_type,
+            base_document=(job.payload.get("current_revision") or {}).get("document_ast") or {},
+            final_document=final,
+            repair=repair,
+        )
 
     def _prepare_draft_evidence(self, job: BusinessDocumentJob, prompt: PromptBundle, recovery: AIRecovery) -> PromptBundle:
         evidence = prompt.input_payload.get("evidence") or {}

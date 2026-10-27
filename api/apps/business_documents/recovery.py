@@ -124,10 +124,11 @@ class AIRecovery:
     def audit(self) -> dict[str, Any] | None:
         generation = [step["audit"] for step in self.state["audits"] if step["stage"] == "generation"]
         verification = [step["audit"] for step in self.state["audits"] if step["stage"] == "verification"]
+        additional = [*generation[1:], *[step["audit"] for step in self.state["audits"] if step["stage"] == "diagram_repair"]]
         if not generation:
             return None
         return {
             **generation[0],
-            **({"recovery": generation[1:]} if len(generation) > 1 else {}),
+            **({"recovery": additional} if additional else {}),
             **({"verification": verification[0] if len(verification) == 1 else verification} if verification else {}),
         }

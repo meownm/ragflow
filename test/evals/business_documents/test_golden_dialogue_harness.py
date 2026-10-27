@@ -30,6 +30,7 @@ from business_documents.domain.content import render_section_text, section_hash
 from business_documents.domain.workflow import CommandType
 from api.apps.business_documents.evidence import BusinessDocumentEvidence
 from business_documents.application.errors import BusinessDocumentError
+from business_documents.application.diagram_repair import DiagramCheck
 from api.apps.business_documents.exports import BusinessDocumentExportService
 from api.apps.business_documents.runtime import document_queries
 from api.apps.business_documents.runtime import document_commands
@@ -51,6 +52,7 @@ from test.unit_test.api.apps.business_documents.helpers import required_section_
 
 GOLDEN_PATH = Path(__file__).parents[3] / "agent" / "business_requirements" / "golden_dialogs" / "v3.json"
 KNOWN_P1_GAPS: dict[str, str] = {}
+SCRIPTED_RENDERER = SimpleNamespace(check=lambda source: DiagramCheck("valid"))
 
 
 def load_golden_cases(case_ids: set[str]) -> dict[str, dict[str, Any]]:
@@ -167,7 +169,7 @@ class GoldenDialogueRunner:
     def _work(self, adapter: ScriptedAIAdapter):
         worker = BusinessDocumentWorker(
             worker_id=f"golden-worker-{self.sequence}",
-            ai=BusinessDocumentAI(adapter),
+            ai=BusinessDocumentAI(adapter, diagram_renderer=SCRIPTED_RENDERER),
             retry_base_ms=0,
             lease_ms=60_000,
         )
@@ -958,7 +960,7 @@ class GoldenDialogueRunner:
         )
         worker = BusinessDocumentWorker(
             worker_id="golden-evidence-injection",
-            ai=BusinessDocumentAI(adapter),
+            ai=BusinessDocumentAI(adapter, diagram_renderer=SCRIPTED_RENDERER),
             evidence=evidence,
             retry_base_ms=0,
             lease_ms=60_000,
@@ -1039,7 +1041,7 @@ class GoldenDialogueRunner:
         )
         worker = BusinessDocumentWorker(
             worker_id="golden-evidence-conflict",
-            ai=BusinessDocumentAI(adapter),
+            ai=BusinessDocumentAI(adapter, diagram_renderer=SCRIPTED_RENDERER),
             evidence=evidence,
             retry_base_ms=0,
             lease_ms=60_000,

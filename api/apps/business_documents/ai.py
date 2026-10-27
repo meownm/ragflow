@@ -211,9 +211,9 @@ class BusinessDocumentAI:
             except BusinessDocumentError as error:
                 if error.code not in {"AI_CALL_BUDGET_EXCEEDED", "AI_TIME_BUDGET_EXCEEDED", "MODEL_CONTEXT_TOO_LARGE", "MODEL_OUTPUT_LIMIT_UNAVAILABLE"}:
                     raise
-                return DiagramRepairResult(source, "unavailable", True)
+                return DiagramRepairResult(source, "unavailable")
             except (TimeoutError, ConnectionError):
-                return DiagramRepairResult(source, "unavailable", True)
+                return DiagramRepairResult(source, "unavailable")
             if outcome.status == "repaired":
                 entry["repaired_source"] = outcome.source
                 recovery.checkpoint()

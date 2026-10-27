@@ -99,7 +99,7 @@ class PlanAdapter:
         return audit
 
 
-def request_plan():
+def request_plan(*, preview=False):
     document = _document()
     document_commands.execute(
         TENANT,
@@ -114,7 +114,7 @@ def request_plan():
             },
         ),
     )
-    document, requested = _request_changes(document, preview=False)
+    document, requested = _request_changes(document, preview=preview)
     return requested, _plan(document, requested)["change_plan"]
 
 

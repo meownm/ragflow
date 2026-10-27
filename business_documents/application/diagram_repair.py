@@ -23,7 +23,6 @@ class DiagramCheck:
 class DiagramRepairResult:
     source: str
     status: str
-    requires_review: bool = False
 
 
 def repair_diagram(
@@ -45,18 +44,18 @@ def repair_diagram(
         if checked.status == "valid":
             return DiagramRepairResult(current, "repaired")
         # Do not revert an already verified patch when the renderer becomes unavailable.
-        return DiagramRepairResult(current, "exhausted", True) if checked.status == "syntax_error" else DiagramRepairResult(current, "unavailable")
+        return DiagramRepairResult(current, "exhausted") if checked.status == "syntax_error" else DiagramRepairResult(current, "unavailable")
     rendered = check(source)
     if rendered.status != "syntax_error":
         return DiagramRepairResult(source, "unchanged" if rendered.status == "valid" else "unavailable")
     try:
         syntax_context(original, kind)
     except RuleViolation:
-        return DiagramRepairResult(original, "unverifiable", True)
+        return DiagramRepairResult(original, "unverifiable")
     attempts = state.setdefault("attempts", [])
     if attempts and attempts[-1]["status"] == "reserved":
         # A crashed/cancelled request may have reached the provider. Never resend it.
-        return DiagramRepairResult(original, "uncertain", True)
+        return DiagramRepairResult(original, "uncertain")
     if current != source:
         rendered = check(current)
     while len(attempts) < 2:
@@ -88,7 +87,7 @@ def repair_diagram(
             if patch == {"edits": []}:
                 attempt["status"] = "declined"
                 checkpoint()
-                return DiagramRepairResult(original, "declined", True)
+                return DiagramRepairResult(original, "declined")
             fixed = apply_syntax_edits(current, patch, kind)
             rendered = check(fixed)
             attempt.update(status=rendered.status, diagnostic={"message": rendered.message[:800], "line": rendered.line})
@@ -99,12 +98,12 @@ def repair_diagram(
                 return DiagramRepairResult(fixed, "repaired")
             if rendered.status != "syntax_error":
                 checkpoint()
-                return DiagramRepairResult(original, "unavailable", True)
+                return DiagramRepairResult(original, "unavailable")
             current = fixed
         except (RuleViolation, ValueError, TypeError, RecursionError) as error:
             attempt.update(status="unsafe", diagnostic={"message": str(error)[:800]})
         checkpoint()
-    return DiagramRepairResult(original, "exhausted", True)
+    return DiagramRepairResult(original, "exhausted")
 
 
 def repair_generated_diagrams(
@@ -115,7 +114,7 @@ def repair_generated_diagrams(
     final_document: dict[str, Any] | None,
     repair: Callable[[str, str, str, str], DiagramRepairResult],
 ) -> dict[str, Any]:
-    """Repair only generated/changed blocks; failed plans remain unapplied atomically."""
+    """Repair generated/changed blocks without blocking plans on render failures."""
     result = deepcopy(output)
     warning_code = "PLANTUML_REPAIR_NOT_APPLIED"
     if job_type == "GENERATE_DRAFT":
@@ -137,7 +136,6 @@ def repair_generated_diagrams(
     sections = {section["id"]: section for section in document.get("sections", [])}
     old_sources = {block["id"]: block.get("source") for section in base_document.get("sections", []) for block in section["blocks"] if block.get("id") and block.get("type") == "plantuml"}
     warnings = []
-    requires_review = False
     for section_id, position, block in targets:
         if block.get("type") != "plantuml" or section_id not in {"4.1", "4.3"}:
             continue
@@ -153,7 +151,6 @@ def repair_generated_diagrams(
         outcome = repair(source, "component" if section_id == "4.1" else "activity", context, position)
         block["source"] = outcome.source
         if outcome.status not in {"repaired", "unchanged"}:
-            requires_review = requires_review or outcome.requires_review
             message = (
                 "Не удалось проверить схему. Исходный код сохранён."
                 if outcome.status == "unavailable"
@@ -162,8 +159,6 @@ def repair_generated_diagrams(
             warnings.append({"code": warning_code, "section_id": section_id, "message": message})
     if job_type == "GENERATE_DRAFT":
         result["draft"] = with_document_warnings(document, warnings)
-    elif warnings and requires_review:
-        return {"unapplied_changes": json.dumps(result["change_plan"], ensure_ascii=False), "warnings": [*result.get("warnings", []), *warnings]}
     elif warnings:
         result["warnings"] = [*result.get("warnings", []), *warnings]
     return result

@@ -175,7 +175,7 @@ def test_renderer_outage_does_not_revert_a_previously_verified_patch():
     state = {}
     fixed = repair_diagram(SOURCE, "activity", "text", check=lambda s: DiagramCheck("valid" if "switch" in s else "syntax_error"), generate=lambda _: PATCH, state=state, checkpoint=lambda: None)
     resumed = repair_diagram(SOURCE, "activity", "text", check=lambda _: DiagramCheck("unavailable"), generate=lambda _: pytest.fail("resent"), state=state, checkpoint=lambda: None)
-    assert resumed.source == fixed.source and resumed.status == "unavailable" and not resumed.requires_review
+    assert resumed.source == fixed.source and resumed.status == "unavailable"
 
 
 def test_only_changed_plan_diagram_is_repaired_with_current_scenario_text():
@@ -203,12 +203,12 @@ def test_only_changed_plan_diagram_is_repaired_with_current_scenario_text():
 def test_excessive_source_nesting_is_rejected_without_model_guess():
     source = "@startuml\n" + 'partition "Роль" {\n' * 70 + ":Действие;\n" + "}\n" * 70 + "@enduml"
     result = repair_diagram(source, "activity", "text", check=lambda _: DiagramCheck("syntax_error"), generate=lambda _: pytest.fail("model called"), state={}, checkpoint=lambda: None)
-    assert result.source == source and result.status == "unverifiable" and result.requires_review
+    assert result.source == source and result.status == "unverifiable"
 
 
 def test_excessively_nested_model_json_consumes_only_two_attempts():
     state = {}
     raw = "[" * 2000 + "0" + "]" * 2000
     result = repair_diagram(SOURCE, "activity", "text", check=lambda _: DiagramCheck("syntax_error"), generate=lambda _: raw, state=state, checkpoint=lambda: None)
-    assert result.source == SOURCE and result.status == "exhausted" and result.requires_review
+    assert result.source == SOURCE and result.status == "exhausted"
     assert len(state["attempts"]) == 2

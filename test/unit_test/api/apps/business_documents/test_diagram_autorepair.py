@@ -136,8 +136,8 @@ def test_two_unsafe_patch_attempts_preserve_draft_and_warning(database):
     assert len(adapter.calls) == 3 and BusinessDocumentRevision.select().count() == 1
 
 
-def diagram_plan():
-    requested, plan = request_plan()
+def diagram_plan(*, preview=False):
+    requested, plan = request_plan(preview=preview)
     job = BusinessDocumentJob.get_by_id(requested["job_id"])
     base = job.payload["current_revision"]["document_ast"]
     section = next(s for s in base["sections"] if s["id"] == "4.3")
@@ -157,15 +157,41 @@ def test_worker_repairs_plan_before_coverage_and_guarded_application(database):
     assert all(section == next(old for old in base["sections"] if old["id"] == section["id"]) for section in current["sections"] if section["id"] != "4.3")
 
 
-def test_unsafe_plan_remains_unapplied_and_preserves_original_revision(database):
-    requested, plan, base = diagram_plan()
+@pytest.mark.parametrize("preview", [False, True])
+def test_two_failed_repairs_apply_whole_plan_and_preserve_problematic_source(database, preview):
+    requested, plan, base = diagram_plan(preview=preview)
+    good_source = "@startuml\nstart\n:Другая операция;\nstop\n@enduml"
+    plan["operations"][0]["content"]["blocks"].append({"type": "plantuml", "source": good_source})
+    other = deepcopy(plan["operations"][0])
+    other.update(
+        operation_id="change_goal",
+        section_id="1",
+        expected_section_hash=section_hash(next(section for section in base["sections"] if section["id"] == "1")),
+        content={"blocks": [{"type": "paragraph", "text": "Согласованная новая цель."}]},
+    )
+    plan["operations"].append(other)
     adapter = Adapter(plan=plan, unsafe=True)
     assert BusinessDocumentWorker(ai=BusinessDocumentAI(adapter, diagram_renderer=Renderer())).run_once()
     job = BusinessDocumentJob.get_by_id(requested["job_id"])
     assert job.status == "COMPLETED", job.error
-    assert "unapplied_changes" in job.result["output"] and len(adapter.calls) == 3
-    assert document_queries.get_document(job.document_id, AUTHOR)["current_revision"]["document_ast"] == base
-    assert BusinessDocumentRevision.select().count() == 1
+    assert "change_plan" in job.result["output"] and "unapplied_changes" not in job.result["output"]
+    assert [call["job_input"]["task_type"] for call in adapter.calls] == ["PLAN_CHANGES", "REPAIR_PLANTUML", "REPAIR_PLANTUML", "VERIFY_REQUIREMENT_COVERAGE"]
+    current = document_queries.get_document(job.document_id, AUTHOR)
+    if preview:
+        assert current["current_revision"]["document_ast"] == base
+        assert BusinessDocumentRevision.select().count() == 1
+        change_preview = document_queries.get_change_preview(job.document_id, job.id)
+        assert {section["section_id"] for section in change_preview["sections"]} == {"1", "4.3"}
+        confirm = _command(current, "CONFIRM_PREPARED_CHANGES", {"job_id": job.id})
+        current = document_commands.execute(TENANT, AUTHOR, job.document_id, confirm)["document"]
+        assert document_commands.execute(TENANT, AUTHOR, job.document_id, confirm)["idempotent_replay"]
+    ast = current["current_revision"]["document_ast"]
+    sources = [block["source"] for section in ast["sections"] if section["id"] == "4.3" for block in section["blocks"] if block["type"] == "plantuml"]
+    assert sources == [SOURCE, good_source]
+    assert current["current_revision"]["section_texts"]["1"] == "Согласованная новая цель."
+    assert any(warning["code"] == "PLANTUML_REPAIR_NOT_APPLIED" for warning in ast["warnings"])
+    assert all(section == next(old for old in base["sections"] if old["id"] == section["id"]) for section in ast["sections"] if section["id"] not in {"1", "4.3"})
+    assert BusinessDocumentRevision.select().count() == 2
 
 
 def test_restart_after_repair_checkpoint_does_not_regenerate_or_repair_again(database):
@@ -205,7 +231,8 @@ def test_cancellation_during_patch_cannot_publish_candidate(database):
     assert any(attempt["status"] == "reserved" for entry in recovery.state["diagram_repairs"].values() for attempt in entry["repair"].get("attempts", []))
 
 
-def test_stale_document_during_patch_cannot_be_committed(database):
+@pytest.mark.parametrize("unsafe", [False, True])
+def test_stale_document_during_patch_cannot_be_committed(database, unsafe):
     requested, plan, base = diagram_plan()
     job = BusinessDocumentJob.get_by_id(requested["job_id"])
 
@@ -218,7 +245,7 @@ def test_stale_document_during_patch_cannot_be_committed(database):
             _command(current, "ADD_COMMENT", {"revision_id": current["current_revision"]["revision_id"], "section_id": None, "text": "Новые требования", "anchor": None}),
         )
 
-    adapter = Adapter(plan=plan, before_repair=edit)
+    adapter = Adapter(plan=plan, unsafe=unsafe, before_repair=edit)
     assert BusinessDocumentWorker(ai=BusinessDocumentAI(adapter, diagram_renderer=Renderer())).run_once()
     assert document_queries.get_document(job.document_id, AUTHOR)["current_revision"]["document_ast"] == base
     assert BusinessDocumentRevision.select().count() == 1

@@ -755,6 +755,7 @@ class BusinessDocumentSqlAgentService:
                     "is_admin": bool(is_admin),
                     "access_role": str(access_role),
                     "request": job_request,
+                    **({"source_request": project.source_request} if command.kind == "SCHEMA" else {}),
                 },
                 available_at=current_timestamp(),
                 correlation_id=get_uuid(),

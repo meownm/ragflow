@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 SUITES = [
+    "test/playwright/e2e/test_admin_users_ui.py",
     "test/playwright/e2e/test_document_constructor_ui.py",
     "test/playwright/e2e/test_sql_revision_ui.py",
     "test/playwright/e2e/test_sql_workspace_ui.py",

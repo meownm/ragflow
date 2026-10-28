@@ -1,4 +1,4 @@
-import { listUsers } from '@/services/admin-service';
+import { deleteUser, listUsers } from '@/services/admin-service';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
@@ -14,6 +14,7 @@ jest.mock('@/routes', () => ({
 jest.mock('@/services/admin-service', () => ({
   listUsers: jest.fn(),
   listRoles: jest.fn(),
+  deleteUser: jest.fn(),
 }));
 jest.mock('./forms/change-password-form', () => ({
   __esModule: true,
@@ -36,10 +37,12 @@ jest.mock('@/services/business-document-service', () => ({
 }));
 jest.mock('@/utils', () => ({ rsaPsw: (value: string) => value }));
 
+const clients: QueryClient[] = [];
 function mount() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
+  clients.push(client);
   render(
     <MemoryRouter>
       <QueryClientProvider client={client}>
@@ -50,6 +53,7 @@ function mount() {
 }
 
 beforeEach(() => jest.clearAllMocks());
+afterEach(() => clients.splice(0).forEach((client) => client.clear()));
 
 test('403 is an access state rather than an empty user list', async () => {
   jest
@@ -103,4 +107,57 @@ test('filtering existing users produces a distinct no-results state', async () =
   expect(
     await screen.findByRole('region', { name: 'Пользователи не найдены' }),
   ).toBeInTheDocument();
+});
+
+function pagedUsers() {
+  return Array.from({ length: 11 }, (_, index) => ({
+    id: `u${index}`,
+    email:
+      index === 0
+        ? 'unique-first@example.test'
+        : `person-${index}@example.test`,
+    nickname: `Аналитик ${index}`,
+    is_active: '1',
+    is_superuser: false,
+    business_document_role: 'AUTHOR_CREATOR',
+  }));
+}
+
+test('searching from the last page shows a matching user on the remaining page', async () => {
+  jest.mocked(listUsers).mockResolvedValue({
+    data: { code: 0, data: pagedUsers() },
+  } as never);
+  mount();
+  await screen.findByText('unique-first@example.test');
+  fireEvent.click(screen.getByText('2', { selector: 'a' }));
+  await screen.findByText('person-10@example.test');
+  fireEvent.change(screen.getByLabelText('Поиск по имени или почте'), {
+    target: { value: 'unique-first@example.test' },
+  });
+  expect(await screen.findByText('unique-first@example.test')).toBeVisible();
+  expect(screen.queryByText('Пользователи не найдены')).toBeNull();
+});
+
+test('deleting the only user on the last page returns to a populated page', async () => {
+  const users = pagedUsers();
+  jest
+    .mocked(listUsers)
+    .mockResolvedValueOnce({ data: { code: 0, data: users } } as never)
+    .mockResolvedValue({
+      data: { code: 0, data: users.slice(0, 10) },
+    } as never);
+  jest
+    .mocked(deleteUser)
+    .mockResolvedValue({ data: { code: 0, data: true } } as never);
+  mount();
+  await screen.findByText('unique-first@example.test');
+  fireEvent.click(screen.getByText('2', { selector: 'a' }));
+  fireEvent.click(
+    await screen.findByRole('button', {
+      name: 'Удалить пользователя person-10@example.test',
+    }),
+  );
+  fireEvent.click(screen.getByRole('button', { name: /^delete$/ }));
+  expect(await screen.findByText('unique-first@example.test')).toBeVisible();
+  expect(screen.queryByText('Пользователи не найдены')).toBeNull();
 });

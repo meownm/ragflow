@@ -323,7 +323,7 @@ def list_users():
 def create_user():
     try:
         data = request.get_json()
-        if not data or "username" not in data or "password" not in data:
+        if not isinstance(data, dict) or any(not isinstance(data.get(key), str) or not data[key].strip() for key in ("username", "password")):
             return error_response("Username and password are required", 400)
 
         username = data["username"]
@@ -367,7 +367,7 @@ def delete_user(username):
 def change_password(username):
     try:
         data = request.get_json()
-        if not data or "new_password" not in data:
+        if not isinstance(data, dict) or not isinstance(data.get("new_password"), str) or not data["new_password"].strip():
             return error_response("New password is required", 400)
 
         new_password = data["new_password"]
@@ -386,7 +386,7 @@ def change_password(username):
 def alter_user_activate_status(username):
     try:
         data = request.get_json()
-        if not data or "activate_status" not in data:
+        if not isinstance(data, dict) or not isinstance(data.get("activate_status"), str) or data["activate_status"].lower() not in {"on", "off"}:
             return error_response("Activation status is required", 400)
         activate_status = data["activate_status"]
         msg = UserMgr.update_user_activate_status(username, activate_status)

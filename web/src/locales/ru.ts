@@ -4400,7 +4400,8 @@ export default {
       invalidEmail:
         'Пожалуйста, введите действительный адрес электронной почты!',
       passwordRequired: 'Пожалуйста, введите ваш пароль!',
-      passwordMinLength: 'Пароль должен быть длиннее 8 символов.',
+      createPasswordMinLength: 'Пароль должен содержать не менее 6 символов.',
+      passwordMinLength: 'Пароль должен содержать не менее 8 символов.',
       confirmPasswordRequired: 'Пожалуйста, подтвердите ваш пароль!',
       confirmPasswordDoNotMatch: 'Введенные вами пароли не совпадают!',
 

@@ -52,6 +52,7 @@ class BusinessDocumentSqlAgentRunner:
                 tenant_id=job.tenant_id,
                 actor_id=actor_id,
                 is_admin=is_admin,
+                source_request=payload.get("source_request", ""),
             )
             return await SchemaResolutionScenario(OpenMetadataCatalogResolver(), TenantSchemaInterpreter()).run(command)
         if job.job_type == "SQL_AGENT_QUERY":

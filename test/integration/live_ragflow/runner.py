@@ -1,7 +1,9 @@
 """Disposable live regression runner; generated secrets remain in the process environment."""
 
 import argparse
+from copy import deepcopy
 import hashlib
+from ipaddress import IPv4Network
 import json
 import os
 from pathlib import Path
@@ -28,12 +30,28 @@ SECRET_VALUES = []
 MODELS = (("qwen3.8:latest", "chat"), ("qwen3.6:27b", "chat"), ("bge-m3:latest", "embedding"))
 OLLAMA_HOST_URL = "http://127.0.0.1:11435"
 OLLAMA_CONTAINER_URL = "http://host.docker.internal:11435"
+BROWSER_PROFILE = """import os
+import pytest
+
+class Profile:
+    @pytest.fixture(scope="session")
+    def browser_context_args(self):
+        base = os.environ["RAGFLOW_BASE_URL"]
+        return {"viewport": {"width": 1920, "height": 1080}, "locale": "en-US", "storage_state": {"cookies": [], "origins": [{"origin": base, "localStorage": [{"name": "lng", "value": "en"}]}]}}
+
+def pytest_configure(config):
+    config.pluginmanager.register(Profile(), "t1-english")
+"""
 
 
-def models_for_run(tests: list[str], skip_browser_tests: bool) -> tuple[tuple[str, str], ...]:
-    if skip_browser_tests or (len(tests) == 1 and Path(tests[0]).name == "test_source_workbench_quality_live.py"):
-        return MODELS[0], MODELS[-1]
-    return MODELS
+def models_for_run(tests: list[str], skip_browser_tests: bool, chat_models: list[str] | None = None) -> tuple[tuple[str, str], ...]:
+    """Debug on qwen3.8; additional chat models require explicit selection."""
+    chats = tuple((name, "chat") for name in dict.fromkeys(chat_models or [MODELS[0][0]]))
+    if any(Path(path).name == "test_live_document_roundtrip.py" for path in tests) and len(chats) < 2:
+        raise ValueError("The two-model roundtrip requires two explicitly authorized --chat-model values")
+    retrieval = {"test_source_workbench_quality_live.py", "test_dataset_upload_parse.py", "test_next_apps_chat.py", "test_next_apps_search.py", "test_live_document_roundtrip.py"}
+    embedding = not skip_browser_tests and (not tests or any(Path(path).name in retrieval for path in tests))
+    return chats + ((MODELS[-1],) if embedding else ())
 
 
 def model_context_length(metadata: dict) -> int:
@@ -54,7 +72,18 @@ def sanitized(text):
 
 
 def command(args, *, env, log, input=None, check=True, cwd=None, timeout=180):
-    args = docker_args(args)
+    # The lifecycle adapter resolves Compose before Popen receives its env.
+    # Expose generated QA values only during that resolution, without files.
+    previous = {key: os.environ.get(key) for key in env if key.startswith("QA_")}
+    try:
+        os.environ.update({key: env[key] for key in previous})
+        args = docker_args(args, cwd=cwd or ROOT)
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
     process = subprocess.Popen(
         args,
         env=env,
@@ -104,7 +133,7 @@ def verify_source(candidate, source, env, phase):
 
 @managed("live-regression-qa", days=0)
 def main():
-    global OUT
+    global OUT, BASE
     sys.dont_write_bytecode = True
     parser = argparse.ArgumentParser()
     parser.add_argument("--app-image", help="Explicit disposable QA image; recorded by immutable image ID")
@@ -112,12 +141,18 @@ def main():
     parser.add_argument("--dist-root", type=Path, required=True)
     parser.add_argument("--evidence-dir", type=Path, required=True)
     parser.add_argument("--frontend-archive", type=Path, help="Verified frontend archive and adjacent .json receipt; required for frozen browser candidates")
+    parser.add_argument("--chat-model", action="append", help="Explicitly authorized chat model; repeat for an explicitly requested multi-model run. Default: qwen3.8:latest")
+    parser.add_argument("--worker-service", action="store_true", help="Run background work in a separate unpublished container")
+    parser.add_argument("--openmetadata-network", help="Existing private Docker network for the real OpenMetadata server")
+    parser.add_argument("--network-subnet", type=IPv4Network, help="Explicit unused QA IPv4 CIDR when Docker's automatic address pools are exhausted")
+    parser.add_argument("--base-port", type=int, choices=(19382, 19482), default=19382, help="Dedicated loopback QA HTTP port; admin uses the next port")
     parser.add_argument("--business-documents-quality", action="store_true", help="Run the real-model Business Documents suite in this disposable app")
     parser.add_argument("--business-documents-case-id", help="Run one Business Documents case for diagnosis; the quality report remains incomplete")
     parser.add_argument("--business-documents-nightly", action="store_true", help="Run one full nightly series across the disposable QA tenant's Ollama catalog")
     parser.add_argument("--skip-browser-tests", action="store_true", help="Use only with Business Documents model quality; no built SPA or browser evidence")
     parser.add_argument("tests", nargs="*")
     args = parser.parse_args()
+    BASE = f"http://127.0.0.1:{args.base_port}"
     if args.skip_browser_tests and not args.business_documents_quality:
         parser.error("--skip-browser-tests requires --business-documents-quality")
     if args.business_documents_case_id and not args.business_documents_quality:
@@ -126,7 +161,7 @@ def main():
         parser.error("--business-documents-nightly requires quality and skip-browser-tests, without a case id")
     if args.skip_browser_tests and args.tests:
         parser.error("--skip-browser-tests cannot select browser tests")
-    models = models_for_run(args.tests, args.skip_browser_tests)
+    models = models_for_run(args.tests, args.skip_browser_tests, args.chat_model)
     source = args.source_root.resolve()
     dist = args.dist_root.resolve()
     candidate = source.parent if (source.parent / "candidate.json").is_file() else None
@@ -152,26 +187,42 @@ def main():
             assert (dist / "index.html").is_file()
         else:
             dist.mkdir(parents=True, exist_ok=True)
-        for port in (19382, 19383):
+        for port in (args.base_port, args.base_port + 1):
             with socket.socket() as probe:
                 probe.bind(("127.0.0.1", port))
         env = dict(os.environ)
         env.update(PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
         env.update(QA_STORAGE_PASSWORD=secrets.token_urlsafe(32), QA_ADMIN_PASSWORD=secrets.token_urlsafe(32), QA_ADMIN_EMAIL=f"regression-probe-{secrets.token_hex(5)}@example.org")
         SECRET_VALUES.extend([env["QA_STORAGE_PASSWORD"], env["QA_ADMIN_PASSWORD"]])
+        SECRET_VALUES.extend(env.get(key, "") for key in ("QA_OPENMETADATA_PASSWORD", "QA_OPENMETADATA_JWT_TOKEN"))
+        if env.get("QA_EVA_CONNECTOR_CONFIG"):
+            credentials = json.loads(env["QA_EVA_CONNECTOR_CONFIG"]).get("credentials", {})
+            SECRET_VALUES.extend(value for value in credentials.values() if isinstance(value, str) and value)
         for resource, arguments in (("containers", ["ps", "-a"]), ("volumes", ["volume", "ls"]), ("networks", ["network", "ls"])):
             existing = command(["docker", *arguments, "-q", "--filter", f"label=com.docker.compose.project={PROJECT}"], env=env, log=f"preflight-{resource}.log")
             assert not existing.stdout.strip(), "Disposable project name is already in use"
         compose = yaml.safe_load(Path(__file__).with_name("compose.yml").read_text(encoding="utf-8"))
+        if args.network_subnet:
+            compose.setdefault("networks", {})["default"] = {"ipam": {"config": [{"subnet": str(args.network_subnet)}]}}
         compose["name"] = PROJECT
         app = compose["services"]["app"]
         if args.app_image:
             app["image"] = args.app_image
-        app["ports"] = ["127.0.0.1:19382:80", "127.0.0.1:19383:9381"]
+        app["ports"] = [f"127.0.0.1:{args.base_port}:80", f"127.0.0.1:{args.base_port + 1}:9381"]
         app["command"].append("--workers=1")
         app["environment"].update(
             DEFAULT_SUPERUSER_EMAIL="${QA_ADMIN_EMAIL:?required}", DEFAULT_SUPERUSER_PASSWORD="${QA_ADMIN_PASSWORD:?required}", MANAGED_RESOURCE_OWNER_EMAIL="${QA_ADMIN_EMAIL:?required}"
         )
+        if args.openmetadata_network:
+            compose.setdefault("networks", {})["openmetadata"] = {"external": True, "name": args.openmetadata_network}
+            app["networks"] = ["default", "openmetadata"]
+            app["environment"].update(
+                OPENMETADATA_URL="http://openmetadata-server:8585",
+                OPENMETADATA_USERNAME="${QA_OPENMETADATA_USERNAME:-}",
+                OPENMETADATA_PASSWORD="${QA_OPENMETADATA_PASSWORD:-}",
+                OPENMETADATA_JWT_TOKEN="${QA_OPENMETADATA_JWT_TOKEN:-}",
+                OPENMETADATA_DATASET_ID="",
+            )
         app["volumes"] = [f"{source.as_posix()}/{item[6:]}" if item.startswith("../../") else item for item in app["volumes"]]
         app["volumes"] = [f"{dist.as_posix()}:/ragflow/web/dist:ro" if ":/ragflow/web/dist:" in item else item for item in app["volumes"]]
         if args.business_documents_quality:
@@ -185,6 +236,26 @@ def main():
             if (name.startswith("conf/") and name != "conf/service_conf.yaml") or name.startswith("rag/res/"):
                 app["volumes"].append(f"{(source / name).as_posix()}:/ragflow/{name}:ro")
                 mounted_assets["/ragflow/" + name] = hashlib.sha256((source / name).read_bytes()).hexdigest()
+        if args.worker_service:
+            app["environment"]["RAGFLOW_BACKGROUND_ENABLED"] = "false"
+            # BT/TZ/SQL do not enqueue dataset-ingestion tasks. Keep that separate
+            # executor out of both containers; durable document jobs still run.
+            app["command"].append("--disable-taskexecutor")
+            app.update(mem_limit="3g", cpus=2.0)
+            for name, limit in {"postgres": "512m", "redis": "256m", "minio": "512m", "es01": "1g", "plantuml-server": "512m"}.items():
+                compose["services"][name]["mem_limit"] = limit
+            app["healthcheck"] = {
+                "test": ["CMD", "python3", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:9380/api/v1/system/healthz',timeout=5)"],
+                "interval": "5s",
+                "timeout": "8s",
+                "retries": 90,
+            }
+            worker = deepcopy(app)
+            worker.pop("ports", None)
+            worker["command"] = ["--disable-datasync", "--disable-taskexecutor", "--workers=1"]
+            worker["environment"].update(RAGFLOW_BACKGROUND_ENABLED="true", RAGFLOW_SKIP_DATABASE_INIT="true")
+            worker["depends_on"] = {"app": {"condition": "service_healthy"}}
+            compose["services"]["worker"] = worker
         compose_path = OUT / "compose.yml"
         compose_path.write_text(yaml.safe_dump(annotate_compose(compose), sort_keys=False), encoding="utf-8")
         cmd = ["docker", "compose", "-p", PROJECT, "-f", str(compose_path)]
@@ -201,7 +272,7 @@ def main():
             "harness_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
             "mounted_assets_sha256": mounted_assets,
             "dist_sha256": {path.relative_to(dist).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted(dist.rglob("*")) if path.is_file()},
-            "targets": [BASE, "http://127.0.0.1:19383", OLLAMA_CONTAINER_URL],
+            "targets": [BASE, f"http://127.0.0.1:{args.base_port + 1}", OLLAMA_CONTAINER_URL],
             "images": {
                 name: command(["docker", "image", "inspect", "--format", "{{.Id}}", svc["image"]], env=env, log=f"image-{name}.log").stdout.strip() for name, svc in compose["services"].items()
             },
@@ -227,7 +298,7 @@ def main():
         exit_code = 1
         try:
             print("Starting disposable regression stack", flush=True)
-            command([*cmd, "up", "-d", "--pull", "never"], env=env, log="startup.log")
+            command([*cmd, "up", "-d", "--pull", "never"], env=env, log="startup.log", timeout=600)
             deadline = time.monotonic() + 480
             while True:
                 try:
@@ -276,13 +347,24 @@ def main():
                 },
                 token,
             )
-            for model, kind in (MODELS[0], MODELS[-1]):
+            defaults = {}
+            for model, kind in models:
+                defaults.setdefault(kind, model)
+            for kind, model in defaults.items():
                 api("/api/v1/models/default", "PATCH", {"model_provider": "Ollama", "model_instance": "QA", "model_name": model, "model_type": kind}, token)
             tenant, _ = api("/api/v1/users/me/models", token=token)
             api(
                 "/api/v1/users/me/models",
                 "PATCH",
-                {"tenant_id": tenant["tenant_id"], "llm_id": f"{MODELS[0][0]}@QA@Ollama", "embd_id": f"{MODELS[-1][0]}@QA@Ollama", "img2txt_id": "", "asr_id": "", "rerank_id": "", "tts_id": ""},
+                {
+                    "tenant_id": tenant["tenant_id"],
+                    "llm_id": f"{defaults['chat']}@QA@Ollama",
+                    "embd_id": f"{defaults['embedding']}@QA@Ollama" if "embedding" in defaults else "",
+                    "img2txt_id": "",
+                    "asr_id": "",
+                    "rerank_id": "",
+                    "tts_id": "",
+                },
                 token,
             )
             env.update(
@@ -298,25 +380,19 @@ def main():
                 QA_LIVE_EVIDENCE=str(OUT),
                 PYTHONDONTWRITEBYTECODE="1",
                 QA_DISPOSABLE_PROJECT=PROJECT,
+                QA_LIVE_PORT=str(args.base_port),
                 PW_ARTIFACTS_DIR=str(OUT / "artifacts"),
+                QA_LIVE_APP_CONTAINER=command([*cmd, "ps", "-q", "app"], env=env, log="app-container.log").stdout.strip(),
+                QA_LIVE_WORKER_CONTAINER=command([*cmd, "ps", "-q", "worker"], env=env, log="worker-container.log").stdout.strip() if args.worker_service else "",
             )
             (OUT / "bootstrap.json").write_text(json.dumps({"admin_authenticated": True, "real_models_validated": True}), encoding="utf-8")
             tests = args.tests or [
                 str(source / "test/playwright/e2e" / filename)
-                for filename in ("test_live_document_roundtrip.py", "test_dataset_upload_parse.py", "test_next_apps_chat.py", "test_next_apps_search.py", "test_business_document_live_intake.py")
+                for filename in ("test_dataset_upload_parse.py", "test_next_apps_chat.py", "test_next_apps_search.py", "test_business_document_live_intake.py")
             ]
             # Registration through pytest_configure occurs after pytest-playwright,
             # so the explicit test profile wins without mutating production config.
-            profile = """import pytest, os
-    class Profile:
-     @pytest.fixture(scope="session")
-     def browser_context_args(self):
-      base=os.environ["RAGFLOW_BASE_URL"]
-      return {"viewport":{"width":1920,"height":1080},"locale":"en-US","storage_state":{"cookies":[],"origins":[{"origin":base,"localStorage":[{"name":"lng","value":"en"}]}]}}
-    def pytest_configure(config):
-     config.pluginmanager.register(Profile(),"t1-english")
-    """
-            (OUT / "live_profile.py").write_text(profile, encoding="utf-8")
+            (OUT / "live_profile.py").write_text(BROWSER_PROFILE, encoding="utf-8")
             env["PYTHONPATH"] += os.pathsep + str(OUT)
             result = (
                 command(
@@ -457,6 +533,8 @@ def main():
             print(sanitized(str(exc)), flush=True)
         finally:
             try:
+                if args.worker_service:
+                    command([*cmd, "logs", "--no-color", "--tail", "500", "worker"], env=env, log="worker.log", check=False, timeout=30)
                 command([*cmd, "logs", "--no-color", "--tail", "250", "app"], env=env, log="app.log", check=False)
             finally:
                 cleanup = current().retire_owned()

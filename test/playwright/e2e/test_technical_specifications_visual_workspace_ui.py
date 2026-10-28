@@ -1,6 +1,7 @@
 """Figma workspace interactions against a built SPA and controlled API state."""
 
 from copy import deepcopy
+import re
 
 import pytest
 from playwright.sync_api import expect
@@ -9,15 +10,18 @@ from test.playwright.e2e.test_business_documents_ui import _install_common_route
 from test.playwright.helpers.technical_specification_api import ACTOR, DETAIL, LOCATION, SpecificationApi
 
 
-def open_workspace(page, base_url, width, theme="dark", api=None):
+def open_workspace(page, base_url, width, theme="dark", api=None, alignment_route=None):
     api = api or SpecificationApi()
     page.set_viewport_size({"width": width, "height": 960})
     _install_session(page)
     _install_common_routes(page)
-    page.add_init_script("localStorage.setItem('theme', '" + theme + "')")
+    page.add_init_script("localStorage.setItem('ragflow-ui-theme', '" + theme + "')")
     page.route("**/api/v1/source-workspaces**", api.route)
+    if alignment_route:
+        page.route("**" + DETAIL + "/alignment", alignment_route)
     page.goto(base_url + LOCATION)
     expect(page.get_by_role("textbox", name="Раздел 1", exact=True)).to_be_visible()
+    expect(page.locator("html")).to_have_class(re.compile(rf"(^|\s){theme}(\s|$)"))
     return api
 
 
@@ -26,6 +30,7 @@ def test_collapsing_assistant_retains_the_reading_position(page, base_url):
     api = SpecificationApi()
     api.document["messages"] = [{"id": f"answer-{index}", "role": "assistant", "text": f"Ответ {index}. " + "Подробное объяснение. " * 40} for index in range(20)]
     open_workspace(page, base_url, 1440, api=api)
+    page.get_by_role("button", name="Открыть помощника", exact=True).click()
     history = page.get_by_role("region", name="История чата")
     history.evaluate("e=>e.scrollTop=0")
     expect(page.get_by_role("button", name="К последнему сообщению")).to_be_visible()
@@ -37,12 +42,12 @@ def test_collapsing_assistant_retains_the_reading_position(page, base_url):
 
 
 @pytest.mark.p1
-@pytest.mark.parametrize("width", [1440, 1280, 1149, 761, 760, 390])
+@pytest.mark.parametrize("width", [1440, 1280, 1151, 1149, 768, 767, 761, 760, 390])
 @pytest.mark.parametrize("theme", ["light", "dark"])
 def test_workspace_assistant_resizes_and_retains_draft_when_collapsed(page, base_url, tmp_path, width, theme):
     api = open_workspace(page, base_url, width, theme)
-    if width <= 760:
-        page.get_by_role("button", name="Открыть помощника", exact=True).click()
+    expect(page.get_by_role("complementary", name="Помощник по ТЗ")).not_to_be_visible()
+    page.get_by_role("button", name="Открыть помощника", exact=True).click()
     assistant = page.get_by_role("complementary", name="Помощник по ТЗ")
     expect(assistant).to_be_visible()
     text = page.get_by_role("textbox", name="Сообщение помощнику")
@@ -53,7 +58,7 @@ def test_workspace_assistant_resizes_and_retains_draft_when_collapsed(page, base
     page.keyboard.press("ArrowUp")
     expect(height).to_have_attribute("aria-valuenow", "104")
     assert text.evaluate("e=>e.getBoundingClientRect().height") == 104
-    if width > 760:
+    if width > 767:
         separator = page.get_by_role("separator", name="Ширина правой панели ТЗ")
         separator.focus()
         for _ in range(9):
@@ -70,6 +75,8 @@ def test_workspace_assistant_resizes_and_retains_draft_when_collapsed(page, base
         page.mouse.move(box["x"] - 60, box["y"] + 90)
         page.mouse.up()
         assert int(separator.get_attribute("aria-valuenow")) > 380
+    else:
+        expect(page.get_by_role("separator", name="Ширина правой панели ТЗ")).not_to_be_visible()
     page.get_by_role("button", name="Свернуть помощника", exact=True).last.click()
     expect(assistant).not_to_be_visible()
     page.get_by_role("button", name="Открыть помощника", exact=True).click()
@@ -80,8 +87,7 @@ def test_workspace_assistant_resizes_and_retains_draft_when_collapsed(page, base
     assert page.locator("html").evaluate("e=>e.scrollWidth<=innerWidth")
     page.screenshot(path=str(tmp_path / f"workspace-{theme}-{width}.png"), full_page=True)
     page.reload()
-    if width <= 760:
-        page.get_by_role("button", name="Открыть помощника", exact=True).click()
+    page.get_by_role("button", name="Открыть помощника", exact=True).click()
     expect(text).to_have_value("Не отправленный вопрос по разделу")
     expect(height).to_have_attribute("aria-valuenow", "104")
 
@@ -180,7 +186,6 @@ def test_comment_threads_show_quote_and_decision_without_changing_document(page,
 @pytest.mark.p1
 def test_sources_are_a_read_only_summary_and_do_not_run_alignment(page, base_url, tmp_path):
     api = SpecificationApi()
-    open_workspace(page, base_url, 1440, api=api)
     calls = []
 
     def alignment(route):
@@ -200,12 +205,13 @@ def test_sources_are_a_read_only_summary_and_do_not_run_alignment(page, base_url
             },
         )
 
-    page.route("**" + DETAIL + "/alignment", alignment)
+    open_workspace(page, base_url, 1440, api=api, alignment_route=alignment)
     page.get_by_role("button", name="Источники", exact=True).click()
-    link = page.get_by_role("link", name="БТ загрузки заявок")
+    panel = page.get_by_role("complementary", name="Источники", exact=True)
+    link = panel.get_by_role("link", name="БТ загрузки заявок")
     expect(link).to_have_attribute("href", "/business-documents/bt-one")
-    expect(page.get_by_text("Согласованная редакция 4")).to_be_visible()
-    expect(page.get_by_role("button", name="Проверить соответствие")).to_have_count(0)
+    expect(panel.get_by_text("Согласованная редакция 4")).to_be_visible()
+    expect(panel.get_by_role("button", name="Проверить соответствие")).to_have_count(0)
     page.screenshot(path=str(tmp_path / "sources-1440.png"), full_page=True)
     assert calls and all(method == "GET" for method in calls)
     assert api.model_calls == 0

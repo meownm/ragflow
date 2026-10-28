@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, TypeVar
@@ -39,6 +40,7 @@ _INTERPRETATION_FIELDS = {
 _TERM_KINDS = {"entity", "field", "unknown"}
 _T = TypeVar("_T")
 _R = TypeVar("_R")
+_EXPLICIT_TABLE_FQN = re.compile(r"(?<![\w.$/@:-])([A-Za-z_][A-Za-z0-9_$-]*\.[A-Za-z_][A-Za-z0-9_$-]*\.[A-Za-z_][A-Za-z0-9_$]*\.[A-Za-z_][A-Za-z0-9_$]*)(?![\w$-]|\.[\w$\"'])")
 
 
 class SchemaResolutionValidationError(ValueError):
@@ -257,6 +259,7 @@ class ResolveSchemaCommand:
     locale: str
     is_admin: bool = False
     clarifications: tuple[AcceptedClarification, ...] = ()
+    source_request: str = ""
 
 
 @dataclass(frozen=True)
@@ -278,7 +281,7 @@ class CatalogResolver(Protocol):
 class SchemaInterpreter(Protocol):
     def prompt_provenance(self) -> PromptProvenance | None: ...
 
-    async def plan_search(self, *, tenant_id: str, requirements: str, locale: str) -> Mapping[str, Any]: ...
+    async def plan_search(self, *, tenant_id: str, requirements: str, locale: str, source_request: str = "") -> Mapping[str, Any]: ...
 
     async def interpret(
         self,
@@ -501,13 +504,17 @@ def catalog_result_from_mapping(
     if not isinstance(answer, Mapping):
         raise CatalogLookupError("Catalog returned an invalid response")
     raw_entities = answer.get("entities")
+    explicit_source = _EXPLICIT_TABLE_FQN.fullmatch(term) is not None
+    if explicit_source:
+        # Exact sources must not disappear behind the semantic result limit.
+        raw_entities = [raw for raw in raw_entities if isinstance(raw, Mapping) and str(raw.get("fqn") or "").casefold() == term.casefold()] if isinstance(raw_entities, list) else []
     candidates = tuple(
         candidate
         for candidate in (_candidate(raw, term=term, include_all_columns=include_all_columns) for raw in (raw_entities[:MAX_CATALOG_CANDIDATES] if isinstance(raw_entities, list) else []))
         if candidate is not None
     )
     exact_ids = _exact_candidate_ids(term, candidates)
-    needs_clarification = bool(answer.get("needs_clarification")) or not candidates or (len(candidates) > 1 and len(exact_ids) != 1)
+    needs_clarification = (len(candidates) != 1) if explicit_source else bool(answer.get("needs_clarification")) or not candidates or (len(candidates) > 1 and len(exact_ids) != 1)
     sources = tuple(source for source in (_source(value) for value in answer.get("sources", [])[:100]) if source is not None) if isinstance(answer.get("sources"), list) else ()
     return CatalogResult(
         question=(_optional_mapping_text(answer.get("question")) or term)[:2_000],
@@ -550,6 +557,7 @@ def parse_resolve_schema_command(
     tenant_id: str,
     actor_id: str,
     is_admin: bool = False,
+    source_request: str = "",
 ) -> ResolveSchemaCommand:
     if not isinstance(payload, dict):
         raise SchemaResolutionValidationError("Request body must be a JSON object")
@@ -574,6 +582,7 @@ def parse_resolve_schema_command(
         locale=_locale(payload.get("locale", "ru")),
         is_admin=bool(is_admin),
         clarifications=clarifications,
+        source_request=_optional_text(source_request, "source_request", maximum=MAX_REQUIREMENTS_LENGTH) or "",
     )
 
 
@@ -921,6 +930,7 @@ class SchemaResolutionScenario:
         except TimeoutError as exc:
             raise CatalogLookupError("Catalog authorization timed out") from exc
 
+        requirements = requirements_for_planning(command.requirements, command.clarifications)
         terms = command.terms
         queries = {term: term for term in terms}
         if not terms:
@@ -928,12 +938,16 @@ class SchemaResolutionScenario:
                 raw = await asyncio.wait_for(
                     self._interpreter.plan_search(
                         tenant_id=command.tenant_id,
-                        requirements=requirements_for_planning(command.requirements, command.clarifications),
+                        requirements=requirements,
                         locale=command.locale,
+                        source_request=command.source_request,
                     ),
                     timeout=max(0.001, deadline - loop.time()),
                 )
                 queries = _search_queries(raw)
+                references = {match.group(1).casefold() for match in _EXPLICIT_TABLE_FQN.finditer(requirements + "\n" + command.source_request)}
+                if any(_EXPLICIT_TABLE_FQN.fullmatch(query) and query.casefold() not in references for query in queries.values()):
+                    raise SchemaResolutionValidationError("Search plan invented a physical source reference")
                 terms = tuple(queries)
             except (TimeoutError, SchemaInterpretationError, SchemaResolutionValidationError) as exc:
                 raise SchemaInterpretationError("Could not derive catalog searches from requirements") from exc
@@ -967,7 +981,7 @@ class SchemaResolutionScenario:
                 raw = await asyncio.wait_for(
                     self._interpreter.interpret(
                         tenant_id=command.tenant_id,
-                        requirements=requirements_for_planning(command.requirements, command.clarifications),
+                        requirements=requirements,
                         locale=command.locale,
                         catalog_answers=llm_candidates,
                     ),

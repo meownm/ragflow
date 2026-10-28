@@ -142,7 +142,7 @@ export const CreateUserForm = ({
                     {t('admin.role')}
                   </FormLabel>
                   <FormControl>
-                    <Select {...field}>
+                    <Select value={field.value} onValueChange={field.onChange}>
                       <SelectTrigger className="w-full h-10">
                         <SelectValue />
                       </SelectTrigger>
@@ -183,7 +183,11 @@ function useCreateUserForm(props?: {
     return z
       .object({
         email: z.string().email({ message: t('admin.invalidEmail') }),
-        password: z.string().min(6, { message: t('admin.passwordMinLength') }),
+        password: z.string().min(6, {
+          message: t('admin.createPasswordMinLength', {
+            defaultValue: 'Password must contain at least 6 characters.',
+          }),
+        }),
         confirmPassword: z
           .string()
           .min(1, { message: t('admin.confirmPasswordRequired') }),

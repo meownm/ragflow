@@ -1,11 +1,12 @@
 """A saved user layout survives graph-neighborhood changes without SQL writes."""
 
 from copy import deepcopy
+import re
 
 import pytest
 from playwright.sync_api import expect
 
-from test.playwright.e2e.test_sql_workspace_ui import _no_query_mutations, _open
+from test.playwright.e2e.test_sql_workspace_ui import _no_query_mutations, _open, _open_sql_panels
 
 
 def test_sql_dragged_node_keeps_its_saved_position_when_related_depth_changes(page, base_url):
@@ -23,18 +24,25 @@ def test_sql_dragged_node_keeps_its_saved_position_when_related_depth_changes(pa
         page.mouse.up()
     saved = deepcopy(stub.view["view"]["positions"]["query:root:o"])
     assert saved != initial
-    with page.expect_response(lambda response: response.request.method == "PUT" and response.url.endswith("/view") and response.request.post_data_json["view"]["depth"] == 2 and response.request.post_data_json["view"]["positions"].get("query:root:o") == saved):
+    with page.expect_response(
+        lambda response: response.request.method == "PUT"
+        and response.url.endswith("/view")
+        and response.request.post_data_json["view"]["depth"] == 2
+        and response.request.post_data_json["view"]["positions"].get("query:root:o") == saved
+    ):
         graph.get_by_label("Глубина связанных таблиц").select_option("2")
     expect(graph.locator('[data-entity-id="products"]')).to_have_count(1)
     actual = graph.locator('.react-flow__node[data-id="query:root:o"]').evaluate("node => {const matrix=new DOMMatrix(getComputedStyle(node).transform);return {x:matrix.m41,y:matrix.m42};}")
-    assert actual == pytest.approx(saved, abs=.01)
+    assert actual == pytest.approx(saved, abs=0.01)
     page.reload(wait_until="commit")
+    expect(page.locator("summary").filter(has_text=re.compile("^Сущности и связи$"))).to_be_visible(timeout=30000)
+    _open_sql_panels(page)
     graph = page.get_by_test_id("sql-schema-graph")
     expect(graph.get_by_label("Глубина связанных таблиц")).to_have_value("2", timeout=30000)
     restored = graph.locator('.react-flow__node[data-id="query:root:o"]')
     expect(restored).to_have_count(1)
     actual = restored.evaluate("node => {const matrix=new DOMMatrix(getComputedStyle(node).transform);return {x:matrix.m41,y:matrix.m42};}")
-    assert actual == pytest.approx(saved, abs=.01)
+    assert actual == pytest.approx(saved, abs=0.01)
     _no_query_mutations(stub)
 
 
@@ -71,7 +79,7 @@ def test_sql_metadata_refresh_keeps_dragged_coordinates_while_save_is_pending(pa
     refreshed.value.finished()
     expect(graph.locator('[data-entity-id="orders"]')).to_have_count(1)
     actual = graph.locator('.react-flow__node[data-id="query:root:o"]').evaluate("node => {const m=new DOMMatrix(getComputedStyle(node).transform);return {x:m.m41,y:m.m42};}")
-    assert actual == pytest.approx(moved, abs=.01)
+    assert actual == pytest.approx(moved, abs=0.01)
     assert sum(method == "GET" and path.endswith("/view") for method, path in stub.requests) == view_reads
     with page.expect_response(lambda response: response.request == held[0].request):
         stub(held[0])

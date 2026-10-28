@@ -156,6 +156,7 @@ def delete_user_data(user_id: str) -> dict:
             done_msg += "Start to delete owned tenant.\n"
             tenant_id = owned_tenant[0]["tenant_id"]
             kb_ids = KnowledgebaseService.get_kb_ids(usr.id)
+            doc_ids = []
             # step1.1 delete dataset related file and info
             if kb_ids:
                 # step1.1.1 delete files in storage, remove bucket
@@ -176,13 +177,14 @@ def delete_user_data(user_id: str) -> dict:
                     done_msg += f"- Deleted {doc_delete_res} document records.\n"
                     task_delete_res = TaskService.delete_by_doc_ids([i["id"] for i in doc_ids])
                     done_msg += f"- Deleted {task_delete_res} task records.\n"
-                file_ids = FileService.get_all_file_ids_by_tenant_id(usr.id)
-                if file_ids:
-                    file_delete_res = FileService.delete_by_ids([f["id"] for f in file_ids])
-                    done_msg += f"- Deleted {file_delete_res} file records.\n"
-                if doc_ids or file_ids:
-                    file2doc_delete_res = File2DocumentService.delete_by_document_ids_or_file_ids([i["id"] for i in doc_ids], [f["id"] for f in file_ids])
-                    done_msg += f"- Deleted {file2doc_delete_res} document-file relation records.\n"
+            file_ids = FileService.get_all_file_ids_by_tenant_id(usr.id)
+            if file_ids:
+                file_delete_res = FileService.delete_by_ids([f["id"] for f in file_ids])
+                done_msg += f"- Deleted {file_delete_res} file records.\n"
+            if doc_ids or file_ids:
+                file2doc_delete_res = File2DocumentService.delete_by_document_ids_or_file_ids([i["id"] for i in doc_ids], [f["id"] for f in file_ids])
+                done_msg += f"- Deleted {file2doc_delete_res} document-file relation records.\n"
+            if kb_ids:
                 # step1.1.3 delete chunk in es
                 r = settings.docStoreConn.delete({"kb_id": kb_ids}, search.index_name(tenant_id), kb_ids)
                 done_msg += f"- Deleted {r} chunk records.\n"

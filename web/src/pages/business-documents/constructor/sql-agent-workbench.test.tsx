@@ -1242,6 +1242,27 @@ describe('persisted project connection', () => {
     expect(mockedRun).not.toHaveBeenCalled();
   });
 
+  it('explains a stale catalog without running or changing the source', async () => {
+    setup({ execution_profile_id: 'profile-1' });
+    mockedPreflight.mockRejectedValueOnce(
+      Object.assign(
+        new Error(
+          'Catalog schema changed or is unavailable; refresh the selected tables',
+        ),
+        { code: 'SQL_SCHEMA_STALE' },
+      ),
+    );
+    render(<SqlAgentWorkbench />);
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Обновите выбранные таблицы в разделе «Данные», затем повторите проверку SQL.',
+    );
+    expect(
+      screen.getByRole('button', { name: 'Выполнить запрос' }),
+    ).toBeDisabled();
+    expect(mockedRun).not.toHaveBeenCalled();
+    expect(configure).not.toHaveBeenCalled();
+  });
+
   it('keeps connection availability separate from failed SQL verification', async () => {
     setup({ execution_profile_id: 'profile-1' });
     mockedPreflight.mockRejectedValueOnce(

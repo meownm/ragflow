@@ -322,7 +322,7 @@ def test_specification_autosave_failure_keeps_new_input_and_explicit_retry(page,
 
 
 @pytest.mark.p1
-def test_specification_inline_proposal_and_arbitrary_history_pair(page, base_url, tmp_path):
+def test_specification_proposal_comparison_and_arbitrary_history_pair(page, base_url, tmp_path):
     api = open_specification(page, base_url)
     page.get_by_role("button", name="Чат", exact=True).click()
     page.get_by_label("Контекст чата").select_option("5")
@@ -331,7 +331,9 @@ def test_specification_inline_proposal_and_arbitrary_history_pair(page, base_url
     expect(page.get_by_role("region", name="Предложенные изменения")).to_be_visible()
     assert api.calls("chat")[0][2]["draft"]["context"]["scope"] == "5"
     page.get_by_role("button", name="Документ", exact=True).click()
-    preview = page.locator("#tz-section-5").get_by_role("region", name="Предложенные изменения")
+    page.get_by_role("button", name="Требует внимания", exact=False).click()
+    page.get_by_role("button", name="Посмотреть изменения", exact=True).click()
+    preview = page.get_by_role("region", name="Сравнение предложенных изменений")
     expect(preview).to_contain_text("Кнопка Записать")
     assert api.document["revision"] == 1
     preview.scroll_into_view_if_needed()

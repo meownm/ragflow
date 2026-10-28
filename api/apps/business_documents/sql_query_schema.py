@@ -197,7 +197,7 @@ class TenantSchemaInterpreter:
         self._llm = llm if llm is not None else RAGFlowLLMAdapter()
         self._timeout_seconds = timeout_seconds
 
-    async def plan_search(self, *, tenant_id: str, requirements: str, locale: str) -> Mapping[str, Any]:
+    async def plan_search(self, *, tenant_id: str, requirements: str, locale: str, source_request: str = "") -> Mapping[str, Any]:
         descriptor = prompt_descriptor("PLAN_SQL_SCHEMA_SEARCH")
         if descriptor is None:
             raise SchemaInterpretationError("SQL schema search prompt is unavailable")
@@ -213,6 +213,7 @@ class TenantSchemaInterpreter:
                     {
                         "prompt": descriptor,
                         "job_input": {"task_type": "PLAN_SQL_SCHEMA_SEARCH", "requirements": requirements, "locale": locale},
+                        "context": {"source_request": source_request},
                     },
                 ),
                 timeout=self._timeout_seconds,

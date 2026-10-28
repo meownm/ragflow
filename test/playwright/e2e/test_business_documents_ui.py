@@ -180,6 +180,12 @@ def test_business_document_comment_to_saved_edition_pilot(page, base_url, width,
         assert page.evaluate("innerHeight") == (900 if width > 1000 else 844)
         assert page.locator("html").evaluate("node => node.classList.contains('dark')") == (theme == "dark")
         if name != "01-list":
+            pane = page.get_by_test_id("business-document-pane")
+            markdown = page.get_by_test_id("business-document-markdown")
+            expect(pane.get_by_role("navigation")).to_have_count(0)
+            assert markdown.evaluate("e=>Math.abs(e.getBoundingClientRect().width-e.parentElement.getBoundingClientRect().width)<2")
+            if width >= 1280:
+                assert markdown.evaluate("e=>e.scrollHeight>e.clientHeight")
             sections = page.get_by_test_id("business-document-section")
             assert sections.evaluate_all("nodes => nodes.map(node => node.dataset.sectionId)") == [item["id"] for item in outline]
             for item in outline:
@@ -202,6 +208,8 @@ def test_business_document_comment_to_saved_edition_pilot(page, base_url, width,
     expect(pane).to_contain_text(initial_text, timeout=RESULT_TIMEOUT_MS)
     expect(page.get_by_test_id("business-document-header")).not_to_contain_text("v11")
     page.locator('[data-section-id="5.5"]').scroll_into_view_if_needed()
+    if width >= 1280:
+        assert page.get_by_test_id("business-document-markdown").evaluate("e=>e.scrollTop>0")
     capture("01-complete-outline")
     section = page.locator('[data-section-id="1"]')
     section.locator("[data-section-body]").evaluate("""body => {
@@ -317,7 +325,7 @@ def test_compact_eva_resizing_and_review_history(page, base_url, width):
         page.set_viewport_size({"width": width, "height": 1000})
         expect(handle).to_have_attribute("aria-valuemax", str(int(width * 0.8)))
         handle.dblclick()
-        expect(handle).to_have_attribute("aria-valuenow", "460")
+        expect(handle).to_have_attribute("aria-valuenow", "320")
         expect(input_field).to_have_value("Замечание сохранится при изменении размеров")
         composer = page.get_by_test_id("business-document-comment-composer")
         old_height = composer.bounding_box()["height"]
@@ -776,6 +784,7 @@ def test_business_documents_list_validation_and_create_navigation(
 @pytest.mark.parametrize("operation_state", ["FAILED", "APPLYING_CHANGES"])
 def test_business_document_soar_requirement_error_details(page, base_url, operation_state):
     _install_session(page)
+    page.route("**/api/v1/**", lambda route: route.fulfill(json=_envelope({})))
     _install_common_routes(page)
     suite = json.loads((Path(__file__).resolve().parents[3] / "agent/business_requirements/golden_model_quality/v2.json").read_text(encoding="utf-8"))
     case = next(case for case in suite["cases"] if case["workflow"] == "metric_placement")

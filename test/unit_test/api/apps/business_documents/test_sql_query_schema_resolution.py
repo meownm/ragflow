@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 from types import ModuleType
 
@@ -345,7 +346,8 @@ async def test_approved_answers_reach_the_real_schema_adapter_without_rewriting_
 
     command = parse_resolve_schema_command(
         {"requirements": "Нужны заказы", "terms": ["Заказ"], "locale": "ru", "clarifications": [{"question": "Какой год и часовой пояс?", "answer": "2026, Pacific/Apia"}]},
-        tenant_id="tenant-1", actor_id="actor-1",
+        tenant_id="tenant-1",
+        actor_id="actor-1",
     )
     catalog = FakeCatalog({"Заказ": _answer(_entity("orders", "dwh.order_fact"))})
     result = await SchemaResolutionScenario(catalog, TenantSchemaInterpreter(CapturingLlm(), timeout_seconds=1)).run(command)
@@ -366,6 +368,9 @@ async def test_openmetadata_adapter_reuses_shared_service_and_enforces_dataset_a
             return _answer(_entity("orders", "dwh.order_fact"))
 
     class Client:
+        def search_tables(self, query, size):
+            return []
+
         def get_table(self, entity_id):
             calls.append(("live_table", entity_id))
             return {
@@ -431,6 +436,7 @@ async def test_openmetadata_adapter_reuses_shared_service_and_enforces_dataset_a
     assert calls[3][2]["forced_intent"] == "discovery"
     assert calls[4] == ("live_table", "orders")
     assert calls[5] == ("live_acl", "orders", "actor-1")
+    assert len(calls) == 6
 
 
 @pytest.mark.asyncio
@@ -594,3 +600,32 @@ async def test_selected_entity_batch_loads_full_schema_and_fingerprint():
     assert len(result["entities"][0]["entity"]["column_details"]) == 45
     assert result["entities"][0]["entity"]["schema_fingerprint"].startswith("sha256:")
     assert result["entities"][1]["lookup"]["status"] == "ERROR"
+
+
+@pytest.mark.asyncio
+async def test_explicit_source_survives_semantic_result_limit():
+    fqn = "catalog.db.public.orders"
+    unrelated = [_entity(f"other-{i}", f"catalog.db.other.orders_{i}") for i in range(6)]
+    catalog = FakeCatalog({fqn: _answer(*unrelated, _entity("wanted", fqn), needs_clarification=True)})
+    interpreter = FakeInterpreter({"schema_version": "1", "resolutions": [_interpretation(fqn, "wanted")]})
+    command = replace(_command(fqn), requirements=f"Используй только `{fqn}`.")
+
+    result = await SchemaResolutionScenario(catalog, interpreter).run(command)
+
+    assert catalog.lookups == [(fqn, "actor-1", "ru")]
+    assert [entity["id"] for entity in result["resolutions"][0]["catalog_answer"]["entities"]] == ["wanted"]
+    assert result["llm"]["status"] == "APPLIED"
+    assert command.requirements == f"Используй только `{fqn}`."
+
+
+@pytest.mark.asyncio
+async def test_missing_explicit_source_never_substitutes_a_semantic_neighbor():
+    fqn = "catalog.db.public.missing"
+    catalog = FakeCatalog({fqn: _answer(_entity("other", "catalog.db.public.orders"))})
+    interpreter = FakeInterpreter()
+
+    result = await SchemaResolutionScenario(catalog, interpreter).run(replace(_command(fqn), requirements=f"Используй {fqn}"))
+
+    assert result["status"] == "NEEDS_CLARIFICATION"
+    assert result["resolutions"][0]["catalog_answer"]["entities"] == []
+    assert not interpreter.calls

@@ -105,7 +105,32 @@ def test_missing_or_invalid_native_context_fails_closed(info):
 def test_retrieval_only_run_does_not_require_unused_chat_model():
     minimal = runner.models_for_run(["test/playwright/e2e/test_source_workbench_quality_live.py"], False)
     assert minimal == (runner.MODELS[0], runner.MODELS[-1])
-    assert runner.models_for_run(["test/playwright/e2e/test_source_workbench_quality_live.py", "other.py"], False) == runner.MODELS
+    assert runner.models_for_run(["test/playwright/e2e/test_source_workbench_quality_live.py", "other.py"], False) == minimal
+
+
+def test_four_workbench_live_checks_never_validate_an_unrequested_model():
+    assert runner.models_for_run(["test/playwright/e2e/test_workbench_integrations_live.py"], False) == (("qwen3.8:latest", "chat"),)
+    assert runner.models_for_run([], True) == (("qwen3.8:latest", "chat"),)
+
+
+def test_generated_browser_profile_imports_and_registers(monkeypatch):
+    monkeypatch.setenv("RAGFLOW_BASE_URL", runner.BASE)
+    namespace = {}
+    exec(compile(runner.BROWSER_PROFILE, "live_profile.py", "exec"), namespace)
+    registered = []
+    config = SimpleNamespace(pluginmanager=SimpleNamespace(register=lambda plugin, name: registered.append((plugin, name))))
+    namespace["pytest_configure"](config)
+    assert registered[0][1] == "t1-english"
+    assert registered[0][0].browser_context_args.__wrapped__(registered[0][0])["storage_state"]["origins"][0]["origin"] == runner.BASE
+
+
+def test_additional_chat_model_requires_explicit_selection():
+    assert runner.models_for_run(["other.py"], False, ["qwen3.8:latest", "qwen3.6:27b"]) == (("qwen3.8:latest", "chat"), ("qwen3.6:27b", "chat"))
+
+
+def test_two_model_journey_fails_before_setup_without_explicit_models():
+    with pytest.raises(ValueError, match="explicitly authorized"):
+        runner.models_for_run(["test_live_document_roundtrip.py"], False)
 
 
 def test_command_decodes_utf8_and_tolerates_invalid_log_bytes(tmp_path, monkeypatch):
@@ -117,6 +142,21 @@ def test_command_decodes_utf8_and_tolerates_invalid_log_bytes(tmp_path, monkeypa
     )
     assert result.returncode == 0
     assert (tmp_path / "unicode.log").read_text(encoding="utf-8") == "Привет 😀\ufffd"
+
+
+def test_compose_instrumentation_uses_child_qa_environment_without_leaking_it(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "OUT", tmp_path)
+    monkeypatch.delenv("QA_STORAGE_PASSWORD", raising=False)
+
+    def adapt(args, **_):
+        assert os.environ["QA_STORAGE_PASSWORD"] == "synthetic-secret"
+        return args
+
+    monkeypatch.setattr(runner, "docker_args", adapt)
+    result = runner.command([sys.executable, "-c", "print('ok')"], env={**os.environ, "QA_STORAGE_PASSWORD": "synthetic-secret"}, log="environment.log")
+    assert result.returncode == 0
+    assert "QA_STORAGE_PASSWORD" not in os.environ
+    assert "synthetic-secret" not in (tmp_path / "environment.log").read_text()
 
 
 def test_command_timeout_terminates_children_holding_output_pipe(tmp_path, monkeypatch):

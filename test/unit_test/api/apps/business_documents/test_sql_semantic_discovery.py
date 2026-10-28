@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -162,7 +163,7 @@ async def test_slow_optional_dataset_search_falls_back_to_live_catalog_within_lo
     monkeypatch.setattr(schema_adapter, "_DATASET_LOOKUP_TIMEOUT_SECONDS", 0.01)
     monkeypatch.setattr(schema_adapter, "retrieve_openmetadata_dataset_hits", slow_dataset)
     monkeypatch.setattr(schema_adapter, "thread_pool_exec", run_sync)
-    resolver = schema_adapter.OpenMetadataCatalogResolver(type("Service", (), {"catalog": Catalog()})())
+    resolver = schema_adapter.OpenMetadataCatalogResolver(type("Service", (), {"catalog": Catalog(), "client": type("Client", (), {"search_tables": lambda *args: []})()})())
     answer = await asyncio.wait_for(resolver.resolve(term="payment refund", actor_id="actor-1", locale="ru"), timeout=0.2)
     assert cancelled == [True]
     assert answer.candidates[0].id == "actual-refund"
@@ -170,3 +171,61 @@ async def test_slow_optional_dataset_search_falls_back_to_live_catalog_within_lo
     assert calls[0][0] == "payment refund"
     assert calls[0][1]["user_id"] == "actor-1" and calls[0][1]["forced_intent"] == "discovery"
     assert "dataset_hits" not in calls[0][1]
+
+
+@pytest.mark.asyncio
+async def test_exact_source_and_business_search_both_reach_the_catalog():
+    fqn = "catalog.db.public.orders"
+    interpreter = Planner(
+        plan(("Заказы", fqn), ("Клиенты", "customer")), response={"schema_version": "1", "resolutions": [_interpretation("Заказы", "orders"), _interpretation("Клиенты", "customers")]}
+    )
+    catalog = FakeCatalog({fqn: _answer(_entity("orders", fqn)), "customer": _answer(_entity("customers", "catalog.db.public.customers"))})
+    parsed = command(requirements=f"Заказы из {fqn} и ФИО клиента из справочника клиентов")
+
+    result = await SchemaResolutionScenario(catalog, interpreter).run(parsed)
+
+    assert len(interpreter.plans) == 1
+    assert [row["term"] for row in result["resolutions"]] == ["Заказы", "Клиенты"]
+    assert {term for term, _, _ in catalog.lookups} == {fqn, "customer"}
+
+
+@pytest.mark.asyncio
+async def test_original_context_remains_separate_and_does_not_force_excluded_source():
+    fqn = "catalog.db.public.old_orders"
+    interpreter = Planner(plan(("Заказы", "current order")), response={"schema_version": "1", "resolutions": [_interpretation("Заказы", "orders")]})
+    catalog = FakeCatalog({"current order": _answer(_entity("orders", "catalog.db.public.orders"))})
+    parsed = replace(command(requirements=f"Не используй {fqn}; найди актуальные заказы"), source_request=f"Используй только {fqn}")
+
+    await SchemaResolutionScenario(catalog, interpreter).run(parsed)
+
+    assert catalog.lookups == [("current order", "actor-1", "ru")]
+    assert interpreter.plans[0]["requirements"] == parsed.requirements
+    assert interpreter.plans[0]["source_request"] == parsed.source_request
+    assert interpreter.calls[0]["requirements"] == parsed.requirements
+
+
+@pytest.mark.asyncio
+async def test_original_positive_reference_survives_canonical_business_requirements():
+    fqn = "catalog.db.public.orders"
+    interpreter = Planner(plan(("Заказы", fqn)), response={"schema_version": "1", "resolutions": [_interpretation("Заказы", "orders")]})
+    catalog = FakeCatalog({fqn: _answer(_entity("orders", fqn))})
+    parsed = replace(command(requirements="Покажи заказы"), source_request=f"Используй только {fqn}.")
+
+    result = await SchemaResolutionScenario(catalog, interpreter).run(parsed)
+
+    assert result["resolutions"][0]["term"] == "Заказы"
+    assert catalog.lookups == [(fqn, "actor-1", "ru")]
+    assert interpreter.plans[0]["source_request"] == parsed.source_request
+    assert interpreter.plans[0]["requirements"] == parsed.requirements == "Покажи заказы"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("context", ["Нужны заказы", "https://catalog.db.public.orders", "user@catalog.db.public.orders", "catalog.db.public.orders.id"])
+async def test_invented_or_embedded_source_cannot_become_an_exact_catalog_query(context):
+    catalog = FakeCatalog({})
+    interpreter = Planner(plan(("Заказы", "catalog.db.public.orders")))
+
+    with pytest.raises(SchemaInterpretationError):
+        await SchemaResolutionScenario(catalog, interpreter).run(command(requirements=context))
+
+    assert not catalog.lookups

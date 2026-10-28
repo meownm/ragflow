@@ -194,6 +194,13 @@ def test_schema_agent_uses_accepted_requirements_without_retyping_search_terms(d
     assert job.job_type == "SQL_AGENT_SCHEMA"
     assert job.payload["request"]["terms"] == []
     assert "Show orders" in job.payload["request"]["requirements"]
+    assert job.payload["source_request"] == BusinessDocumentSqlQueryProject.get_by_id(project["id"]).source_request
+    from business_documents.sql_query.schema_resolution import parse_resolve_schema_command
+
+    command = parse_resolve_schema_command(job.payload["request"], tenant_id=TENANT, actor_id=ACTOR, is_admin=False)
+    assert command.source_request == ""
+    command = parse_resolve_schema_command(job.payload["request"], tenant_id=TENANT, actor_id=ACTOR, is_admin=False, source_request=job.payload["source_request"])
+    assert command.source_request == job.payload["source_request"]
 
 
 @pytest.mark.parametrize("requirements", [{"requirements": None}, {"requirements": [{"statement": " "}]}])
@@ -220,3 +227,34 @@ def test_schema_search_result_is_reviewed_without_fabricating_model_proposal(dat
     assert proposal.payload["agent_result"] == result
     assert BusinessDocumentSqlQueryProject.get_by_id(project["id"]).operation_state == "REVIEW"
     assert BusinessDocumentSqlQueryArtifact.select().count() == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("legacy", [False, True])
+async def test_schema_worker_reads_new_context_and_accepts_legacy_jobs(database, monkeypatch, legacy):
+    from api.apps.business_documents import sql_query_agent_worker as worker
+    from api.db.db_models import User
+
+    project = schema_project()
+    Service.request_agent(TENANT, ACTOR, project["id"], {"schema_version": "1", "expected_state_version": 1, "idempotency_key": "worker-context", "kind": "SCHEMA", "payload": {}})
+    job = BusinessDocumentJob.get()
+    expected = job.payload.pop("source_request") if legacy else job.payload["source_request"]
+    if legacy:
+        expected = ""
+
+    class Scenario:
+        def __init__(self, *args):
+            pass
+
+        async def run(self, command):
+            assert command.source_request == expected
+            assert "Show orders" in command.requirements
+            return {"checked": True}
+
+    monkeypatch.setattr(worker, "SchemaResolutionScenario", Scenario)
+    monkeypatch.setattr(worker, "OpenMetadataCatalogResolver", lambda: None)
+    monkeypatch.setattr(worker, "TenantSchemaInterpreter", lambda: None)
+    with database.bind_ctx([User], bind_refs=False, bind_backrefs=False):
+        database.create_tables([User])
+        User.create(id=ACTOR, nickname="QA", email="qa@example.invalid", status="1", business_document_role="AUTHOR_CREATOR")
+        assert await worker.BusinessDocumentSqlAgentRunner()._process(job) == {"checked": True}

@@ -544,11 +544,13 @@ function AdminUserManagement() {
     autoResetPageIndex: false,
   });
 
+  const pageIndex = table.getState().pagination.pageIndex;
+  const pageCount = table.getPageCount();
   useLayoutEffect(() => {
-    if (table.getState().pagination.pageIndex > table.getPageCount()) {
-      table.setPageIndex(Math.max(0, table.getPageCount() - 1));
+    if (pageIndex >= pageCount && pageIndex > 0) {
+      table.setPageIndex(Math.max(0, pageCount - 1));
     }
-  }, [usersList, table]);
+  }, [pageIndex, pageCount, table]);
 
   return (
     <>

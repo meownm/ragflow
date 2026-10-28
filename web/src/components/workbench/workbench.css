@@ -64,48 +64,10 @@
 }
 .rf-workbench [data-testid='business-document-pane'] {
   background: transparent;
-  container-type: inline-size;
 }
 .rf-workbench [data-testid='business-document-pane'] > :first-child {
   background: var(--ui-paper);
   border: 0;
-}
-.rf-document-body {
-  display: grid;
-  grid-template-columns: 208px minmax(0, 1fr);
-  gap: 24px;
-  flex: 1;
-  min-height: 0;
-}
-.rf-document-outline {
-  overflow: auto;
-  min-height: 0;
-  padding: 4px 0 16px;
-}
-.rf-document-outline p {
-  margin-bottom: 8px;
-  color: rgb(var(--text-secondary));
-}
-.rf-document-outline a {
-  display: block;
-  width: 100%;
-  padding: 10px 12px;
-  text-align: start;
-  border-radius: 6px;
-  color: rgb(var(--text-secondary));
-  overflow-wrap: anywhere;
-  line-height: 1.45;
-}
-.rf-document-outline a:hover {
-  background: var(--bg-card);
-}
-.rf-document-outline a[aria-current='true'] {
-  color: rgb(var(--text-primary));
-  background: var(--bg-card);
-  font-weight: 500;
-}
-.rf-document-outline a[data-nested='true'] {
-  padding-inline-start: 20px;
 }
 .rf-workbench [data-testid='business-document-markdown'] {
   background: var(--ui-paper);
@@ -459,18 +421,7 @@
 .rf-notice[data-intent='info'] > svg {
   color: var(--ui-accent-text);
 }
-@container (max-width: 600px) {
-  .rf-document-body {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .rf-document-outline {
-    max-height: 160px;
-  }
-}
 @media (min-width: 1400px) {
-  .rf-document-body {
-    grid-template-columns: 220px minmax(0, 1fr);
-  }
   .rf-workbench .tz-document-layout.tz-with-panel {
     grid-template-columns: 220px minmax(0, 1fr) 8px minmax(
         280px,
@@ -482,10 +433,6 @@
   }
 }
 @media (max-width: 1150px) {
-  .rf-document-body {
-    grid-template-columns: 160px minmax(0, 1fr);
-    gap: 16px;
-  }
   .rf-workbench .tz-document-layout.tz-with-panel {
     grid-template-columns: minmax(0, 1fr) 8px minmax(
         280px,
@@ -509,12 +456,6 @@
 @media (max-width: 767px) {
   .rf-section-label {
     display: none;
-  }
-  .rf-document-body {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .rf-document-outline {
-    max-height: 180px;
   }
   .rf-workbench .tz-document-layout,
   .rf-workbench .tz-document-layout.tz-with-panel {
@@ -548,7 +489,7 @@
     flex: 1;
   }
 }
-@media (max-width: 760px) {
+@media (max-width: 767px) {
   .rf-workbench .tz-document-layout.tz-with-panel,
   .rf-workbench .tz-document-layout.tz-chat-layout.tz-with-panel {
     grid-template-columns: minmax(0, 1fr);

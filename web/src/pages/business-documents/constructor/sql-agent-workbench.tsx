@@ -121,6 +121,13 @@ function commandKey(prefix: string) {
 }
 
 function errorMessage(error: unknown) {
+  if (
+    error instanceof Error &&
+    'code' in error &&
+    error.code === 'SQL_SCHEMA_STALE'
+  ) {
+    return 'Схема выбранных таблиц изменилась или недоступна. Обновите выбранные таблицы в разделе «Данные», затем повторите проверку SQL.';
+  }
   return error instanceof Error ? error.message : 'Операция не выполнена.';
 }
 

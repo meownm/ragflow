@@ -2,7 +2,7 @@
 
 from playwright.sync_api import expect
 
-from test.playwright.e2e.test_sql_workspace_ui import _no_query_mutations, _open
+from test.playwright.e2e.test_sql_workspace_ui import _no_query_mutations, _open, _open_sql_panels
 
 
 def test_sql_reload_cancels_inflight_view_save_without_unhandled_browser_error(page, base_url):
@@ -29,6 +29,8 @@ def test_sql_reload_cancels_inflight_view_save_without_unhandled_browser_error(p
         page.evaluate("window.dispatchEvent(new Event('pagehide'))")
     assert cancelled.value.failure
     page.reload(wait_until="commit")
+    expect(page.get_by_test_id("sql-agent-workbench")).to_be_visible()
+    _open_sql_panels(page)
     graph = page.get_by_test_id("sql-schema-graph")
     expect(graph.locator('[data-entity-id="orders"]')).to_have_count(1, timeout=30000)
     expect(graph.get_by_label("Только запрос", exact=True)).not_to_be_checked()

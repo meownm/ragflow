@@ -98,9 +98,9 @@ request.interceptors.response.use(
       });
     } else if (data?.code === 100) {
       message.error(data?.message);
-    } else if (response.status === 401 || data?.code === 401) {
+    } else if (response?.status === 401 || data?.code === 401) {
       message.error({
-        message: data?.message || response.statusText,
+        message: data?.message || response?.statusText,
         description:
           data?.message || RetcodeMessage[response?.status as ResultCode],
         duration: 3,
@@ -115,14 +115,17 @@ request.interceptors.response.use(
         description: data?.message,
         duration: 3,
       });
-    } else if (response.status) {
+    } else if (response?.status) {
       message.error({
         message: `${i18n.t('message.requestError')} ${response.status}: ${response.config.url}`,
         description:
           RetcodeMessage[response.status as ResultCode] || response.statusText,
       });
-    } else if (response.status === 413 || response?.status === 504) {
-      message.error(RetcodeMessage[response?.status as ResultCode]);
+    } else {
+      message.error({
+        description: i18n.t('message.networkAnomalyDescription'),
+        message: i18n.t('message.networkAnomaly'),
+      });
     }
 
     throw error;

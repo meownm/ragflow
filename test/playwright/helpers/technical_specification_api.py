@@ -166,6 +166,8 @@ class SpecificationApi:
             return self.respond(route, {"id": self.import_request["operation_id"], "state": "completed", "document": self.document})
         if path == DETAIL and request.method == "GET":
             return self.respond(route, self.document)
+        if path == DETAIL + "/alignment" and request.method == "GET":
+            return self.respond(route, {"document": self.document, "checks": []})
         if path == DETAIL + "/draft":
             if request.method == "PUT":
                 self.draft = {"version": body["version"] + 1, **deepcopy(body["draft"])}

@@ -15,7 +15,7 @@ from business_documents.sql_query.query_specification import compile_query_paylo
 from business_documents.sql_query.revisions import query_blocks
 from test.playwright.e2e.test_document_constructor_ui import _envelope, _fulfill_json
 from test.playwright.e2e.test_sql_connection_ui import ConnectionBrowserStub, _fail_connection
-from test.playwright.e2e.test_sql_workspace_ui import _open
+from test.playwright.e2e.test_sql_workspace_ui import _open, _open_sql_panels
 
 
 class HistoryBrowserStub(ConnectionBrowserStub):
@@ -32,15 +32,28 @@ class HistoryBrowserStub(ConnectionBrowserStub):
         old_parameters = deepcopy(project["artifacts"]["query"]["parameters"])
         current_parameters = deepcopy(old_parameters)
         next(item for item in current_parameters if item["name"] == "row_limit")["value"] = 25
-        self.records = [self.record("query-current", "compilation-current", 2, current_parameters, "qa-current-author", "schema-current"), self.record("query-original", "compilation-original", 1, old_parameters, "qa-original-author", "schema-original")]
+        self.records = [
+            self.record("query-current", "compilation-current", 2, current_parameters, "qa-current-author", "schema-current"),
+            self.record("query-original", "compilation-original", 1, old_parameters, "qa-original-author", "schema-original"),
+        ]
         self.records[1]["matches_current_context"] = False
         self.original_records = deepcopy(self.records)
         self.history = [self.records[1]]
-        self.source_snapshots.update({"compilation-original": {"sql": self.sql, "schema": old_schema, "query_id": "query-original"}, "compilation-current": {"sql": self.sql, "schema": current_schema, "query_id": "query-current"}})
+        self.source_snapshots.update(
+            {
+                "compilation-original": {"sql": self.sql, "schema": old_schema, "query_id": "query-original"},
+                "compilation-current": {"sql": self.sql, "schema": current_schema, "query_id": "query-current"},
+            }
+        )
         query = {"mode": "manual", "sql": self.sql, "parameters": current_parameters, "confirmed_alignment": True}
         compiled = compile_query_payload(build_project_compile_command(project["artifacts"]["requirements"], current_schema, query))
         assert compiled["status"] == "READY"
-        project.update(state_version=7, artifact_ids={"requirements": "requirements-1", "schema": "schema-current", "query": "query-current"}, artifacts={**project["artifacts"], "schema": current_schema, "query": query}, compilation={"id": "compilation-current", "result": compiled})
+        project.update(
+            state_version=7,
+            artifact_ids={"requirements": "requirements-1", "schema": "schema-current", "query": "query-current"},
+            artifacts={**project["artifacts"], "schema": current_schema, "query": query},
+            compilation={"id": "compilation-current", "result": compiled},
+        )
         project["latest_run"].update(compilation_id="compilation-original", profile_version=7)
         self.original_run = deepcopy(project["latest_run"])
         if without_current_schema:
@@ -54,7 +67,9 @@ class HistoryBrowserStub(ConnectionBrowserStub):
         self.pending_context = []
         for snapshot in self.source_snapshots.values():
             snapshot["requirements"] = deepcopy(project["artifacts"]["requirements"])
-            snapshot["requirements"]["questions"] = [{"text": "Сохранённое уточнение " + str(i), "answer": "я" * 1800 + (" Последний согласованный ответ" if i == 14 else ""), "status": "ANSWERED"} for i in range(15)]
+            snapshot["requirements"]["questions"] = [
+                {"text": "Сохранённое уточнение " + str(i), "answer": "я" * 1800 + (" Последний согласованный ответ" if i == 14 else ""), "status": "ANSWERED"} for i in range(15)
+            ]
         self.context_artifacts = {}
         self.restored = {}
         self.restore_failure = None
@@ -63,7 +78,20 @@ class HistoryBrowserStub(ConnectionBrowserStub):
         self.pending_restore = []
 
     def record(self, query_id, compilation_id, revision, parameters, author, schema_id, origin=None):
-        return {"id": query_id, "compilation_id": compilation_id, "revision": revision, "sql": self.sql, "parameters": deepcopy(parameters), "blocks": query_blocks(self.sql), "accepted_by": author, "created_at": 1792440000000 + revision * 1000, "source_artifact_ids": ["requirements-1", schema_id], "source_proposal_id": f"proposal-{revision}", "matches_current_context": True, "restored_from": origin}
+        return {
+            "id": query_id,
+            "compilation_id": compilation_id,
+            "revision": revision,
+            "sql": self.sql,
+            "parameters": deepcopy(parameters),
+            "blocks": query_blocks(self.sql),
+            "accepted_by": author,
+            "created_at": 1792440000000 + revision * 1000,
+            "source_artifact_ids": ["requirements-1", schema_id],
+            "source_proposal_id": f"proposal-{revision}",
+            "matches_current_context": True,
+            "restored_from": origin,
+        }
 
     def __call__(self, route):
         path = urlparse(route.request.url).path.rstrip("/")
@@ -85,11 +113,26 @@ class HistoryBrowserStub(ConnectionBrowserStub):
             snapshot = self.source_snapshots[command["compilation_id"]]
             metadata = {"revision": 1, "accepted_by": "qa-context-author", "created_at": record["created_at"], "content_hash": "sha256:context", "source_proposal_id": "context-proposal"}
             response = {
-                "schema_version": "1", "project_id": self.primary,
-                "source": {**{key: command[key] for key in ("compilation_id", "query_artifact_id")}, "requirements_artifact_id": record["source_artifact_ids"][0], "schema_artifact_id": record["source_artifact_ids"][1]},
+                "schema_version": "1",
+                "project_id": self.primary,
+                "source": {
+                    **{key: command[key] for key in ("compilation_id", "query_artifact_id")},
+                    "requirements_artifact_id": record["source_artifact_ids"][0],
+                    "schema_artifact_id": record["source_artifact_ids"][1],
+                },
                 "catalog_changed": record["matches_current_context"] is False,
-                "requirements": {**metadata, "id": record["source_artifact_ids"][0], "text": "\n".join("- " + item["statement"] for item in snapshot["requirements"]["requirements"]), **snapshot["requirements"]},
-                "schema": {**metadata, "id": record["source_artifact_ids"][1], "accepted_schema": snapshot["schema"]["accepted_schema"], "snapshot": asdict(parse_schema_snapshot(snapshot["schema"]["schema_snapshot"]))},
+                "requirements": {
+                    **metadata,
+                    "id": record["source_artifact_ids"][0],
+                    "text": "\n".join("- " + item["statement"] for item in snapshot["requirements"]["requirements"]),
+                    **snapshot["requirements"],
+                },
+                "schema": {
+                    **metadata,
+                    "id": record["source_artifact_ids"][1],
+                    "accepted_schema": snapshot["schema"]["accepted_schema"],
+                    "snapshot": asdict(parse_schema_snapshot(snapshot["schema"]["schema_snapshot"])),
+                },
             }
             if self.hold_context:
                 self.pending_context.append((route, response))
@@ -98,17 +141,63 @@ class HistoryBrowserStub(ConnectionBrowserStub):
             return
         if path == prefix + "/workspace":
             current = next((item for item in self.records if item["id"] == project["artifact_ids"].get("query")), None)
-            history = [{"id": item["id"], "kind": "QUERY", "revision": item["revision"], "content_hash": "sha256:fixture", "preview": item["sql"], **{key: item[key] for key in ("accepted_by", "created_at", "source_artifact_ids", "source_proposal_id", "restored_from")}} for item in self.records]
+            history = [
+                {
+                    "id": item["id"],
+                    "kind": "QUERY",
+                    "revision": item["revision"],
+                    "content_hash": "sha256:fixture",
+                    "preview": item["sql"],
+                    **{key: item[key] for key in ("accepted_by", "created_at", "source_artifact_ids", "source_proposal_id", "restored_from")},
+                }
+                for item in self.records
+            ]
             for identity, packet in self.context_artifacts.items():
                 kind = "REQUIREMENTS" if packet["requirements"] is not None else "SCHEMA"
                 artifact = packet["requirements"] or packet["schema"]
-                history.append({"id": identity, "kind": kind, "revision": artifact["revision"], "content_hash": artifact["content_hash"], "preview": "Сохранённая версия без SQL", "accepted_by": artifact["accepted_by"], "created_at": artifact["created_at"]})
-            _fulfill_json(route, _envelope({"project_id": self.primary, "state_version": project["state_version"], "query_artifact_id": project["artifact_ids"].get("query"), "document_artifact_id": None, "sql": current["sql"] if current else "", "blocks": current["blocks"] if current else [], "query_revisions": deepcopy(self.records), "history": history, "draft": None, "threads": []}))
+                history.append(
+                    {
+                        "id": identity,
+                        "kind": kind,
+                        "revision": artifact["revision"],
+                        "content_hash": artifact["content_hash"],
+                        "preview": "Сохранённая версия без SQL",
+                        "accepted_by": artifact["accepted_by"],
+                        "created_at": artifact["created_at"],
+                    }
+                )
+            _fulfill_json(
+                route,
+                _envelope(
+                    {
+                        "project_id": self.primary,
+                        "state_version": project["state_version"],
+                        "query_artifact_id": project["artifact_ids"].get("query"),
+                        "document_artifact_id": None,
+                        "sql": current["sql"] if current else "",
+                        "blocks": current["blocks"] if current else [],
+                        "query_revisions": deepcopy(self.records),
+                        "history": history,
+                        "draft": None,
+                        "threads": [],
+                    }
+                ),
+            )
             return
         if path == prefix + "/preflight":
             profile = self.profiles[0]
             allowed = project["capabilities"]["execute"]
-            _fulfill_json(route, _envelope({"compilation_id": (project.get("compilation") or {}).get("id"), "state_version": project["state_version"], "binding": {"status": "BOUND" if allowed else "UNAVAILABLE", "selection": {"profile": profile} if allowed else None, "candidates": self.profiles if allowed else []}, **({"blocker": {"code": "SQL_EXECUTION_FORBIDDEN", "message": "Выполнение недоступно"}} if not allowed else {})}))
+            _fulfill_json(
+                route,
+                _envelope(
+                    {
+                        "compilation_id": (project.get("compilation") or {}).get("id"),
+                        "state_version": project["state_version"],
+                        "binding": {"status": "BOUND" if allowed else "UNAVAILABLE", "selection": {"profile": profile} if allowed else None, "candidates": self.profiles if allowed else []},
+                        **({"blocker": {"code": "SQL_EXECUTION_FORBIDDEN", "message": "Выполнение недоступно"}} if not allowed else {}),
+                    }
+                ),
+            )
             return
         if path == prefix + "/query-history/restore":
             command = route.request.post_data_json
@@ -123,7 +212,12 @@ class HistoryBrowserStub(ConnectionBrowserStub):
                 assert command["expected_state_version"] == project["state_version"]
                 selected = next(item for item in self.records if item["compilation_id"] == command["compilation_id"])
                 number = max(item["revision"] for item in self.records) + 1
-                origin = {"query_artifact_id": selected["id"], "compilation_id": selected["compilation_id"], "requirements_artifact_id": selected["source_artifact_ids"][0], "schema_artifact_id": selected["source_artifact_ids"][1]}
+                origin = {
+                    "query_artifact_id": selected["id"],
+                    "compilation_id": selected["compilation_id"],
+                    "requirements_artifact_id": selected["source_artifact_ids"][0],
+                    "schema_artifact_id": selected["source_artifact_ids"][1],
+                }
                 restored = self.record(f"restored-query-{number}", f"restored-compilation-{number}", number, selected["parameters"], "qa-restoring-author", project["artifact_ids"]["schema"], origin)
                 self.records.insert(0, restored)
                 query = {"mode": "manual", "sql": restored["sql"], "parameters": restored["parameters"], "confirmed_alignment": True, "restored_from": origin}
@@ -154,6 +248,8 @@ class HistoryBrowserStub(ConnectionBrowserStub):
 
 
 def select_original(page):
+    expect(page.locator("summary").filter(has_text=re.compile("^Доработка и обсуждения$"))).to_be_visible()
+    _open_sql_panels(page)
     page.get_by_role("button", name="Запрос · версия 1", exact=True).click()
 
 
@@ -165,7 +261,10 @@ def test_sql_history_context_reads_full_saved_answers_and_schema_as_reader(page,
     page.get_by_role("button", name="Требования и схема запроса", exact=True).click()
     context = page.get_by_role("region", name="Контекст выбранного запроса")
     expect(context.get_by_test_id("sql-history-requirements")).to_be_visible()
-    expect(context.get_by_text(re.compile("schema-original · автор: qa-context-author"))).to_be_visible()
+    for summary in context.locator("summary").filter(has_text="Технические сведения об источнике").all():
+        summary.click()
+    expect(context.get_by_text("Версия: schema-original", exact=True)).to_be_visible()
+    expect(context.get_by_text("Автор: qa-context-author", exact=True).first).to_be_visible()
     context.get_by_text("Уточнения, ответы и принятые требования", exact=True).click()
     expect(context.get_by_text(re.compile("Последний согласованный ответ"))).to_be_visible()
     schema = context.get_by_test_id("sql-history-schema")
@@ -238,17 +337,24 @@ def test_sql_session_pagehide_removes_all_private_dom_before_bfcache(page, base_
     select_original(page)
     page.get_by_role("button", name="Требования и схема запроса", exact=True).click()
     expect(page.get_by_test_id("sql-history-schema")).to_be_visible()
-    assert page.evaluate("""() => {
+    assert (
+        page.evaluate("""() => {
         window.dispatchEvent(new PageTransitionEvent('pagehide', {persisted:true}));
         return document.querySelectorAll('[data-testid="sql-agent-workbench"], [data-testid="sql-schema-graph"], [data-testid="sql-history-schema"]').length;
-    }""") == 0
+    }""")
+        == 0
+    )
     page.evaluate("window.dispatchEvent(new PageTransitionEvent('pageshow', {persisted:true}))")
+    expect(page.locator("summary").filter(has_text=re.compile("^Сущности и связи$"))).to_be_visible()
+    _open_sql_panels(page)
     expect(page.get_by_test_id("sql-schema-graph")).to_be_visible()
     expect(page.get_by_test_id("sql-history-schema")).to_have_count(0)
-    page.goto(f"{base_url.rstrip('/')}/document-constructor", wait_until="commit")
-    expect(page.get_by_role("heading", name="Конструктор документов", exact=True)).to_be_visible(timeout=30000)
+    page.route("**/__sql-qa-away", lambda route: route.fulfill(content_type="text/html", body="<!doctype html><title>SQL QA navigation</title>"))
+    page.goto(f"{base_url.rstrip('/')}/__sql-qa-away", wait_until="commit")
     page.go_back(wait_until="commit")
     expect(page.get_by_test_id("sql-agent-workbench")).to_be_visible(timeout=30000)
+    expect(page.locator("summary").filter(has_text=re.compile("^Сущности и связи$"))).to_be_visible()
+    _open_sql_panels(page)
     expect(page.get_by_test_id("sql-schema-graph")).to_be_visible()
     expect(page.get_by_test_id("sql-history-schema")).to_have_count(0)
     stub.assert_no_run_or_history_overwrite()
@@ -280,7 +386,8 @@ def test_sql_session_cross_tab_change_drops_private_state(page, base_url, change
     other.route("**/api/v1/**", stub)
     try:
         other.goto(f"{base_url.rstrip('/')}/login", wait_until="commit")
-        other.evaluate("""change => {
+        other.evaluate(
+            """change => {
             if (change === 'logout') {
                 ['Authorization', 'token', 'userInfo'].forEach(key => localStorage.removeItem(key));
             } else {
@@ -288,7 +395,9 @@ def test_sql_session_cross_tab_change_drops_private_state(page, base_url, change
                 localStorage.setItem('token', 'another-synthetic-account');
                 localStorage.setItem('userInfo', JSON.stringify({id:'another-synthetic-owner'}));
             }
-        }""", change)
+        }""",
+            change,
+        )
         expect(page.get_by_test_id("sql-history-schema")).to_have_count(0)
         expect(page.get_by_test_id("sql-schema-graph")).to_have_count(0)
         expect(page.get_by_test_id("sql-revision-workspace")).to_have_count(0)
@@ -321,9 +430,16 @@ def test_sql_history_accepted_context_without_any_query_is_fully_readable(page, 
     identity = "uncompiled-context"
     metadata = {"id": identity, "revision": 3, "content_hash": "sha256:uncompiled", "accepted_by": "qa-uncompiled-author", "created_at": 1792440000000}
     schema = stub.source_snapshots["compilation-original"]["schema"]
-    packet = {"schema_version": "1", "project_id": stub.primary, "source": {"artifact_id": identity}, "catalog_changed": False,
-              "requirements": {**metadata, "text": "Принятое требование без запроса", "requirements": [{"statement": "Принятое требование без запроса"}], "questions": []} if kind == "REQUIREMENTS" else None,
-              "schema": {**metadata, "accepted_schema": schema["accepted_schema"], "snapshot": asdict(parse_schema_snapshot(schema["schema_snapshot"]))} if kind == "SCHEMA" else None}
+    packet = {
+        "schema_version": "1",
+        "project_id": stub.primary,
+        "source": {"artifact_id": identity},
+        "catalog_changed": False,
+        "requirements": {**metadata, "text": "Принятое требование без запроса", "requirements": [{"statement": "Принятое требование без запроса"}], "questions": []}
+        if kind == "REQUIREMENTS"
+        else None,
+        "schema": {**metadata, "accepted_schema": schema["accepted_schema"], "snapshot": asdict(parse_schema_snapshot(schema["schema_snapshot"]))} if kind == "SCHEMA" else None,
+    }
     stub.context_artifacts[identity] = packet
     _open(page, base_url, stub=stub)
     title = "Требования" if kind == "REQUIREMENTS" else "Данные"
@@ -331,7 +447,11 @@ def test_sql_history_accepted_context_without_any_query_is_fully_readable(page, 
     label = "Полные требования" if kind == "REQUIREMENTS" else "Полная схема"
     page.get_by_role("button", name=label, exact=True).click()
     expect(page.get_by_test_id("sql-history-requirements" if kind == "REQUIREMENTS" else "sql-history-schema")).to_be_visible()
-    expect(page.get_by_text(re.compile("uncompiled-context · автор: qa-uncompiled-author"))).to_be_visible()
+    summary = page.get_by_text("Технические сведения об источнике", exact=True)
+    summary.click()
+    metadata = summary.locator("..")
+    expect(metadata.get_by_text("Версия: uncompiled-context", exact=True)).to_be_visible()
+    expect(metadata.get_by_text("Автор: qa-uncompiled-author", exact=True)).to_be_visible()
     assert stub.context_requests == [{"schema_version": "1", "artifact_id": identity}]
     stub.assert_no_run_or_history_overwrite()
 
@@ -339,6 +459,7 @@ def test_sql_history_accepted_context_without_any_query_is_fully_readable(page, 
 def test_sql_history_compares_exact_params_author_and_saved_graph(page, base_url):
     stub, graph = _open(page, base_url, stub=HistoryBrowserStub())
     select_original(page)
+    page.get_by_text("Технические сведения о версии", exact=True).first.click()
     expect(page.get_by_text(re.compile("Автор: qa-original-author")).first).to_be_visible()
     expect(page.locator('time[datetime="2026-10-19T20:00:01.000Z"]').first).to_be_visible()
     expect(page.get_by_text("Источник: requirements-1 · schema-original", exact=True).first).to_be_visible()
@@ -363,12 +484,19 @@ def test_sql_history_restore_is_new_revision_preserves_results_and_reload(page, 
     assert stub.projects[stub.primary]["compilation"]["result"]["parameters"]["row_limit"] == 100
     page.reload(wait_until="commit")
     expect(page.get_by_test_id("sql-agent-workbench")).to_be_visible(timeout=30000)
+    expect(page.locator("summary").filter(has_text=re.compile("^Доработка и обсуждения$"))).to_be_visible()
+    _open_sql_panels(page)
     expect(page.get_by_role("button", name="Запрос · версия 3", exact=True)).to_be_visible()
+    page.get_by_text("Технические сведения о версии", exact=True).first.click()
     expect(page.get_by_text("Восстановлено из запроса query-original · проверка compilation-original", exact=True).first).to_be_visible()
     stub.assert_no_run_or_history_overwrite()
 
 
-@pytest.mark.parametrize("failure", [(403, "CATALOG_ACCESS_DENIED", "Доступ к таблице отозван"), (409, "SQL_SCHEMA_STALE", "Подтвердите обновлённую схему"), (422, "SQL_QUERY_BLOCKED", "Поле прежней версии недоступно")], ids=["revoked", "schema-stale", "guard-blocked"])
+@pytest.mark.parametrize(
+    "failure",
+    [(403, "CATALOG_ACCESS_DENIED", "Доступ к таблице отозван"), (409, "SQL_SCHEMA_STALE", "Подтвердите обновлённую схему"), (422, "SQL_QUERY_BLOCKED", "Поле прежней версии недоступно")],
+    ids=["revoked", "schema-stale", "guard-blocked"],
+)
 def test_sql_history_restore_failure_keeps_selected_version(page, base_url, failure):
     stub, graph = _open(page, base_url, stub=HistoryBrowserStub())
     select_original(page)

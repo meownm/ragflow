@@ -72,8 +72,8 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
           className={cn(
             'peer/input',
             'flex h-8 w-full rounded-md border-0.5 border-border-button bg-bg-input px-3 py-2 outline-none text-sm text-text-primary',
-            'file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-text-disabled',
-            'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent-primary',
+            'file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-[rgb(var(--ui-secondary))]',
+            'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ui-focus)] aria-[invalid=true]:border-[rgb(var(--ui-error))]',
             'disabled:cursor-not-allowed disabled:opacity-50 transition-colors',
             type === 'number' &&
               '[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none',

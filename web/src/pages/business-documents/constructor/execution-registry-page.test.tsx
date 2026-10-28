@@ -198,6 +198,34 @@ describe('ExecutionRegistryPage', () => {
     });
   });
 
+  it('cancels both new forms in place without a write and discards unsaved values', async () => {
+    renderRegistry();
+    await screen.findByText('Warehouse RO');
+    fireEvent.click(screen.getByRole('button', { name: 'Добавить профиль' }));
+    fireEvent.change(screen.getByLabelText('Название'), {
+      target: { value: 'discard profile' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Отмена' }));
+    expect(screen.queryByLabelText('Название')).not.toBeInTheDocument();
+    expect(screen.getByTestId('sql-execution-profile-list')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Добавить профиль' }));
+    expect(screen.getByLabelText('Название')).toHaveValue('');
+    fireEvent.click(screen.getByRole('button', { name: 'Отмена' }));
+    fireEvent.click(screen.getByRole('button', { name: /Привязки схем/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Добавить привязку' }));
+    fireEvent.change(screen.getByLabelText('Сервис'), {
+      target: { value: 'discard service' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Отмена' }));
+    expect(screen.getByTestId('sql-catalog-binding-list')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Добавить привязку' }));
+    expect(screen.getByLabelText('Сервис')).toHaveValue('');
+    expect(mockedCreateProfile).not.toHaveBeenCalled();
+    expect(mockedCreateBinding).not.toHaveBeenCalled();
+    expect(mockedUpdateProfile).not.toHaveBeenCalled();
+    expect(mockedUpdateBinding).not.toHaveBeenCalled();
+  });
+
   it('uses record versions when editing or disabling registry entries', async () => {
     renderRegistry();
 

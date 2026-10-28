@@ -15,17 +15,24 @@ function Identity({
 }) {
   const date = item.created_at == null ? null : new Date(item.created_at);
   return (
-    <p className="mt-1 break-all text-xs text-text-secondary">
-      {item.id} · автор: {item.accepted_by || 'не записан'} ·{' '}
-      {date && Number.isFinite(date.getTime()) ? (
-        <time dateTime={date.toISOString()}>{date.toLocaleString()}</time>
-      ) : (
-        'время не записано'
-      )}
-      {item.source_proposal_id
-        ? ` · основание: ${item.source_proposal_id}`
-        : ''}
-    </p>
+    <div className="mt-1 break-words text-xs text-text-secondary">
+      <p>
+        Принято:{' '}
+        {date && Number.isFinite(date.getTime()) ? (
+          <time dateTime={date.toISOString()}>{date.toLocaleString()}</time>
+        ) : (
+          'время не записано'
+        )}
+      </p>
+      <details className="mt-1 break-all">
+        <summary className="cursor-pointer">
+          Технические сведения об источнике
+        </summary>
+        <p>Автор: {item.accepted_by || 'не записан'}</p>
+        <p>Версия: {item.id}</p>
+        {item.source_proposal_id && <p>Основание: {item.source_proposal_id}</p>}
+      </details>
+    </div>
   );
 }
 
@@ -133,13 +140,20 @@ export function SqlHistoryContext({
       </div>
       {open && (
         <div className="mt-3 min-w-0 max-w-full space-y-4 rounded-md border border-border-button p-3">
-          <p className="break-all text-xs text-text-secondary">
-            Сохранённый контекст ·{' '}
-            {'compilation_id' in source
-              ? `проверка ${source.compilation_id}`
-              : `версия ${source.artifact_id}`}
-            . Просмотр не меняет текущий проект.
+          <p className="text-xs text-text-secondary">
+            Сохранённый контекст выбранного запроса. Просмотр не меняет текущий
+            проект.
           </p>
+          <details className="break-all text-xs text-text-secondary">
+            <summary className="cursor-pointer">
+              Технические сведения о запросе
+            </summary>
+            <p>
+              {'compilation_id' in source
+                ? `Проверка: ${source.compilation_id}`
+                : `Версия: ${source.artifact_id}`}
+            </p>
+          </details>
           {loading && <p role="status">Загружаем требования и схему…</p>}
           {error && (
             <p role="alert" className="text-sm text-state-error">

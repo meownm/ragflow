@@ -17,10 +17,6 @@
   overflow-y: auto;
 }
 
-.sql-project-registry .text-text-disabled {
-  color: rgb(var(--text-secondary));
-}
-
 .sql-project-registry[data-open='true'] {
   position: absolute;
   inset: 48px auto 0 0;
@@ -46,12 +42,20 @@
 .sql-project-context {
   margin-top: 24px;
 }
-.sql-project-context > summary {
+.sql-result-details {
+  margin-top: 20px;
+  min-width: 0;
+  border-top: 1px solid var(--border-button);
+}
+.sql-result-details > summary {
   cursor: pointer;
   padding: 12px 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: rgb(var(--text-primary));
 }
-.sql-project-context[data-preparing='false'] > summary {
-  display: none;
+.sql-result-details > :not(summary) {
+  margin-top: 12px;
 }
 .sql-preparation-steps {
   display: flex;

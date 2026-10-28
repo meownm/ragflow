@@ -66,26 +66,32 @@ function HistoryIdentity({
 }) {
   const date = item.created_at == null ? null : new Date(item.created_at);
   return (
-    <div className="mt-2 space-y-1 break-all text-xs text-text-secondary">
+    <div className="mt-2 space-y-1 break-words text-xs text-text-secondary">
       <p>
-        Автор: {item.accepted_by || 'не записан'} ·{' '}
+        Принято:{' '}
         {date && Number.isFinite(date.getTime()) ? (
           <time dateTime={date.toISOString()}>{date.toLocaleString()}</time>
         ) : (
           'время не записано'
         )}
       </p>
-      {item.source_artifact_ids?.length ? (
-        <p>Источник: {item.source_artifact_ids.join(' · ')}</p>
-      ) : null}
-      {item.source_proposal_id && <p>Основание: {item.source_proposal_id}</p>}
-      {compilationId && <p>Проверка: {compilationId}</p>}
-      {item.restored_from && (
-        <p>
-          Восстановлено из запроса {item.restored_from.query_artifact_id} ·
-          проверка {item.restored_from.compilation_id}
-        </p>
-      )}
+      <details className="break-all">
+        <summary className="cursor-pointer">
+          Технические сведения о версии
+        </summary>
+        <p>Автор: {item.accepted_by || 'не записан'}</p>
+        {item.source_artifact_ids?.length ? (
+          <p>Источник: {item.source_artifact_ids.join(' · ')}</p>
+        ) : null}
+        {item.source_proposal_id && <p>Основание: {item.source_proposal_id}</p>}
+        {compilationId && <p>Проверка: {compilationId}</p>}
+        {item.restored_from && (
+          <p>
+            Восстановлено из запроса {item.restored_from.query_artifact_id} ·
+            проверка {item.restored_from.compilation_id}
+          </p>
+        )}
+      </details>
     </div>
   );
 }

@@ -180,17 +180,11 @@ export function SqlProjectConnectionPanel({
   connection,
   busy = false,
   hasResult = false,
-  resultSource,
   children,
 }: {
   connection: Connection;
   busy?: boolean;
   hasResult?: boolean;
-  resultSource?: {
-    profile_id: string;
-    profile_name?: string | null;
-    profile_version?: number;
-  };
   children?: ReactNode;
 }) {
   const {
@@ -338,13 +332,6 @@ export function SqlProjectConnectionPanel({
             timeout {binding.selection.profile.statement_timeout_ms} мс
           </p>
         </div>
-      )}
-      {resultSource && (
-        <p className="text-xs text-text-secondary">
-          Источник выбранного запуска:{' '}
-          {resultSource.profile_name || resultSource.profile_id} · версия{' '}
-          {resultSource.profile_version}
-        </p>
       )}
     </section>
   );

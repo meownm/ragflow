@@ -3,7 +3,7 @@ import {
   exportBusinessDocumentSqlProject,
   type SqlExportRequest,
 } from '@/services/business-document-service';
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState, type ComponentProps } from 'react';
 import { isExpiredResultError } from './sql-result-deadline';
 
 export function SqlExportButton({
@@ -14,6 +14,8 @@ export function SqlExportButton({
   copySql = false,
   disabled = false,
   onExpired,
+  variant = 'ghost',
+  size = 'sm',
 }: {
   projectId: string;
   stateVersion: number;
@@ -22,6 +24,8 @@ export function SqlExportButton({
   copySql?: boolean;
   disabled?: boolean;
   onExpired?: () => void;
+  variant?: ComponentProps<typeof Button>['variant'];
+  size?: ComponentProps<typeof Button>['size'];
 }) {
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -115,8 +119,8 @@ export function SqlExportButton({
   return (
     <div className="inline-flex flex-col items-start gap-1">
       <Button
-        size="sm"
-        variant="ghost"
+        size={size}
+        variant={variant}
         disabled={disabled || busy}
         onClick={() => void execute()}
       >

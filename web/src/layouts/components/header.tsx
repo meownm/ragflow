@@ -32,6 +32,13 @@ export function Header({
   ...props
 }: React.HTMLAttributes<HTMLElement>) {
   const { pathname } = useLocation();
+  const workbenchTitle = pathname.startsWith('/business-documents')
+    ? 'Бизнес-требования'
+    : pathname.startsWith('/technical-specifications')
+      ? 'Технические задания'
+      : pathname.startsWith('/sql-projects')
+        ? 'SQL-проекты'
+        : null;
   const changeLanguage = useChangeLanguage();
   const { t } = useTranslation();
 
@@ -67,7 +74,7 @@ export function Header({
         {...props}
       >
         <div className="inline-flex shrink-0 items-center gap-2">
-          {isCompact && (
+          {(isCompact || workbenchTitle) && (
             <MobileNavbar
               renderFooter={(close) => <MobileMenuFooter onClose={close} />}
             />
@@ -84,16 +91,24 @@ export function Header({
                 className="size-10"
               />
             </Link>
+            {workbenchTitle && (
+              <>
+                <span className="rf-brand-label">Агент Раггер</span>
+                <span className="rf-section-label">{workbenchTitle}</span>
+              </>
+            )}
           </div>
         </div>
 
-        {!isCompact && (
+        {!isCompact && !workbenchTitle && (
           <div className="flex min-w-0 flex-1 justify-center overflow-hidden">
             <DesktopNavbar />
           </div>
         )}
 
-        {isCompact && <div className="flex-1" aria-hidden />}
+        {(isCompact || workbenchTitle) && (
+          <div className="flex-1" aria-hidden />
+        )}
 
         <div
           className={cn(

@@ -4,21 +4,10 @@ import { NavLink, Outlet, useNavigate } from 'react-router';
 
 import { useMutation, useQuery } from '@tanstack/react-query';
 
-import {
-  LucideActivity,
-  LucideFiles,
-  LucideMenu,
-  LucideMonitor,
-  LucideScrollText,
-  LucideServerCrash,
-  LucideSquareUserRound,
-  LucideUserCog,
-  LucideUserStar,
-  LucideUsersRound,
-  LucideZap,
-} from 'lucide-react';
+import { LucideMenu } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import '@/components/workbench/workbench.css';
 import { cn } from '@/lib/utils';
 import { Routes } from '@/routes';
 import { getSystemVersion, logout } from '@/services/admin-service';
@@ -45,59 +34,48 @@ const AdminNavigationLayout = () => {
       {
         path: Routes.AdminServices,
         name: t('admin.serviceStatus'),
-        icon: <LucideServerCrash className="size-[1em]" />,
       },
       {
         path: Routes.AdminUserManagement,
-        name: t('admin.userManagement'),
-        icon: <LucideUserCog className="size-[1em]" />,
+        name: t('admin.usersNavigation', { defaultValue: 'Пользователи' }),
       },
       {
         path: Routes.AdminSandboxSettings,
-        name: t('admin.sandboxSettings'),
-        icon: <LucideZap className="size-[1em]" />,
+        name: t('admin.sandboxNavigation', { defaultValue: 'Песочница' }),
       },
       {
         path: Routes.AdminNavigationVisibility,
         name: t('admin.navigationVisibility'),
-        icon: <LucideMenu className="size-[1em]" />,
       },
       {
         path: Routes.AdminAccessGroups,
         name: t('admin.accessGroups'),
-        icon: <LucideUsersRound className="size-[1em]" />,
       },
       {
         path: Routes.AdminBusinessDocumentsSettings,
         name: t('admin.businessDocumentsSettings'),
-        icon: <LucideFiles className="size-[1em]" />,
       },
       {
         path: Routes.AdminBusinessDocumentsQuality,
         name: t('admin.businessDocumentsQuality'),
-        icon: <LucideActivity className="size-[1em]" />,
       },
       {
         path: Routes.AdminAudit,
         name: t('admin.audit'),
-        icon: <LucideScrollText className="size-[1em]" />,
       },
       ...(IS_ENTERPRISE
         ? [
             {
               path: Routes.AdminWhitelist,
               name: t('admin.registrationWhitelist'),
-              icon: <LucideUserStar className="size-[1em]" />,
             },
             {
               path: Routes.AdminRoles,
               name: t('admin.roles'),
-              icon: <LucideSquareUserRound className="size-[1em]" />,
             },
             {
               path: Routes.AdminMonitoring,
               name: t('admin.monitoring'),
-              icon: <LucideMonitor className="size-[1em]" />,
             },
           ]
         : []),
@@ -120,35 +98,29 @@ const AdminNavigationLayout = () => {
   });
 
   return (
-    <main className="flex h-screen w-screen min-w-0 flex-col gap-3 p-3 md:flex-row md:gap-0 md:px-6 md:pb-6 md:pt-12 dark:*:focus-visible:ring-white">
-      <Button
-        variant="ghost"
-        className="shrink-0 self-start md:hidden"
-        aria-controls="admin-navigation"
-        aria-expanded={mobileNavigationOpen}
-        onClick={() => setMobileNavigationOpen((open) => !open)}
-      >
-        <LucideMenu aria-hidden="true" />
-        {t('admin.title')}
-      </Button>
+    <main className="rf-workbench rf-admin min-w-0">
+      <header className="rf-admin-header">
+        <img src="/app-icon.png" alt="Агент Раггер" />
+        <span className="font-medium">Агент Раггер</span>
+        <span className="text-text-secondary">Панель администратора</span>
+        <Button
+          variant="ghost"
+          className="shrink-0 self-start md:hidden"
+          aria-controls="admin-navigation"
+          aria-expanded={mobileNavigationOpen}
+          onClick={() => setMobileNavigationOpen((open) => !open)}
+        >
+          <LucideMenu aria-hidden="true" />
+          {t('admin.title')}
+        </Button>
+      </header>
       <aside
         id="admin-navigation"
-        className={cn(
-          'hidden max-h-[50vh] w-full shrink-0 flex-col gap-6 overflow-y-auto md:mr-6 md:flex md:max-h-none md:w-72 md:overflow-visible',
-          mobileNavigationOpen && 'flex',
-        )}
+        className="rf-admin-nav"
+        data-open={mobileNavigationOpen}
       >
-        <div className="mb-6 hidden items-center md:flex">
-          <img
-            className="size-8 mr-5"
-            src="/app-icon.png"
-            alt={t('common.logo')}
-          />
-          <span className="text-xl font-bold">{t('admin.title')}</span>
-        </div>
-
         <nav>
-          <ul className="space-y-4">
+          <ul className="grid gap-2">
             {navItems.map((it) => (
               <li key={it.path}>
                 <NavLink
@@ -168,8 +140,7 @@ const AdminNavigationLayout = () => {
                     )
                   }
                 >
-                  {it.icon}
-                  <span className="ml-3">{it.name}</span>
+                  <span>{it.name}</span>
                 </NavLink>
               </li>
             ))}
@@ -182,7 +153,7 @@ const AdminNavigationLayout = () => {
               {version}
             </span>
 
-            <ThemeSwitch />
+            <ThemeSwitch aria-label="Тёмная тема" />
           </div>
 
           <Button
@@ -196,7 +167,7 @@ const AdminNavigationLayout = () => {
         </div>
       </aside>
 
-      <section className="min-h-0 min-w-0 flex-1">
+      <section className="rf-admin-content">
         <Outlet />
       </section>
     </main>

@@ -146,6 +146,7 @@ export default function DocumentConstructorPage({
 
   useEffect(() => {
     if (
+      surface === 'sql' ||
       accessQuery.data?.capabilities?.create !== true ||
       !storageScope ||
       !storageKey
@@ -160,7 +161,12 @@ export default function DocumentConstructorPage({
     setNotice(null);
     setSaveState(storage ? 'saved' : 'error');
     setLoadedStorageKey(storageKey);
-  }, [accessQuery.data?.capabilities?.create, storageKey, storageScope]);
+  }, [
+    accessQuery.data?.capabilities?.create,
+    storageKey,
+    storageScope,
+    surface,
+  ]);
 
   useEffect(() => {
     if (
@@ -173,6 +179,7 @@ export default function DocumentConstructorPage({
 
   useEffect(() => {
     if (
+      surface === 'sql' ||
       !storageScope ||
       !storageKey ||
       loadedStorageKey !== storageKey ||
@@ -201,25 +208,38 @@ export default function DocumentConstructorPage({
     loadedStorageKey,
     storageKey,
     storageScope,
+    surface,
   ]);
 
   const storageIdentityPending = userInfoLoading || tenantInfoLoading;
-  const canUseConstructor = accessQuery.data?.capabilities?.create === true;
+  const canCreate = accessQuery.data?.capabilities?.create === true;
+  const canUseConstructor =
+    surface === 'sql'
+      ? accessQuery.data?.capabilities?.read === true
+      : canCreate;
   const isAdmin = accessQuery.data?.access_role === 'ADMIN';
   const draftIsReady = storageKey !== null && loadedStorageKey === storageKey;
   const gateIsLoading =
-    accessQuery.isPending ||
+    (Boolean(actorId) && accessQuery.isPending) ||
     storageIdentityPending ||
-    (canUseConstructor && !draftIsReady);
+    (surface !== 'sql' && canUseConstructor && !draftIsReady);
 
   if (gateIsLoading || !canUseConstructor || !storageScope) {
     const message = gateIsLoading
-      ? 'Проверяем доступ и открываем ваш локальный черновик…'
+      ? surface === 'sql'
+        ? 'Проверяем доступ к SQL-проектам…'
+        : 'Проверяем доступ и открываем ваш локальный черновик…'
       : accessQuery.isError
-        ? 'Не удалось проверить право на использование конструктора.'
+        ? surface === 'sql'
+          ? 'Не удалось проверить доступ к SQL-проектам.'
+          : 'Не удалось проверить право на использование конструктора.'
         : !canUseConstructor
-          ? 'Конструктор доступен только пользователям с правом создания документов.'
-          : 'Не удалось определить владельца локального черновика.';
+          ? surface === 'sql'
+            ? 'Нет доступа к SQL-проектам.'
+            : 'Конструктор доступен только пользователям с правом создания документов.'
+          : surface === 'sql'
+            ? 'Не удалось определить пользователя и рабочее пространство SQL-проекта.'
+            : 'Не удалось определить владельца локального черновика.';
     return (
       <main
         className="flex h-full min-h-0 items-center justify-center bg-bg-base p-6 text-text-primary"
@@ -546,6 +566,7 @@ export default function DocumentConstructorPage({
         <div className="min-h-0 flex-1 overflow-hidden">
           <SqlSessionBoundary>
             <SqlAgentWorkbench
+              canCreate={canCreate}
               projectId={sqlProjectId}
               onProjectSelected={onSqlProjectSelected}
             />

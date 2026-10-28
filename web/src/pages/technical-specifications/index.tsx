@@ -1,6 +1,7 @@
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { WorkbenchNotice } from '@/components/workbench/notice';
 import { useFetchUserInfo } from '@/hooks/use-user-setting-request';
 import {
   createSourceWorkspace,
@@ -207,7 +208,10 @@ export default function TechnicalSpecifications() {
         project.error ||
         documents.error ||
         current.error) && (
-        <p role="alert" className="text-state-error">
+        <WorkbenchNotice
+          intent="error"
+          title="Не удалось открыть техническое задание"
+        >
           {error ||
             sourceRequestError(
               projects.error ||
@@ -216,7 +220,7 @@ export default function TechnicalSpecifications() {
                 current.error,
               'Не удалось загрузить ТЗ',
             )}
-        </p>
+        </WorkbenchNotice>
       )}
       {!documentId && (
         <section className="tz-list space-y-5">
@@ -399,9 +403,7 @@ function Editor({
   const compareRequest = useRef(0);
   const liveEditing = useRef(editing);
   const manualSaved = useRef(!initialGoal || !documentDirty(editing));
-  const [assistantOpen, setAssistantOpen] = useState(
-    () => window.innerWidth > 760,
-  );
+  const [assistantOpen, setAssistantOpen] = useState(false);
   const [highlightComment, setHighlightComment] = useState<string | null>(null);
   const layout = useWorkspaceLayout(manualKey + ':layout');
   const [mode, setMode] = useState<'document' | 'chat'>('document');
@@ -507,9 +509,13 @@ function Editor({
   );
   const showAssistant =
     panel !== 'history' && (mode === 'chat' || (!panel && assistantOpen));
+  const showProposalSummary =
+    mode === 'document' && !panel && !showAssistant && ready.length > 0;
   const hasSidePanel =
     panel !== 'history' &&
-    (Boolean(panel) || (mode === 'document' && assistantOpen));
+    (Boolean(panel) ||
+      (mode === 'document' && assistantOpen) ||
+      showProposalSummary);
   const proposalRequests = new Map(
     doc.messages
       .filter((item) => item.role === 'user')
@@ -1321,6 +1327,33 @@ function Editor({
       >
         {mode === 'document' && panel !== 'history' && (
           <nav className="tz-toc" aria-label="Оглавление ТЗ">
+            <section className="tz-sources-summary" aria-label="Источники ТЗ">
+              <h2>Источники</h2>
+              <AlignmentPanel
+                mode="sources"
+                key={doc.id}
+                document={doc}
+                disabled={busy || saving || dirty}
+                canEdit={canEdit}
+                onConfigure={() => setPanel('alignment')}
+                onDocument={(value) => {
+                  setDoc((current) =>
+                    value.version >= current.version ? value : current,
+                  );
+                  onSaved(value);
+                }}
+              />
+              <div className="tz-source-item">
+                <h3>Страница Eva</h3>
+                <p>
+                  {doc.eva?.document_name ||
+                    (doc.eva ? 'Связанная страница' : 'Источник не выбран')}
+                </p>
+                <Button variant="outline" onClick={() => setPanel('eva')}>
+                  {doc.eva ? 'Открыть источник' : 'Выбрать источник'}
+                </Button>
+              </div>
+            </section>
             <p>Содержание</p>
             {headings.map((heading, index) => (
               <a
@@ -1485,27 +1518,68 @@ function Editor({
                         Выделите фрагмент заново; область чата не изменена.
                       </p>
                     )}
-                    {ready.map((proposal) => proposalCard(proposal, section))}
                   </section>
                 );
               })}
             </article>
           )}
         </div>
-        {hasSidePanel && (mode === 'document' || Boolean(panel)) && (
-          <div className="tz-pane-resize">
-            <ResizeHandle
-              direction="width"
-              value={layout.width}
-              min={280}
-              max={480}
-              onChange={layout.setWidth}
-              onReset={layout.resetWidth}
-              label="Ширина правой панели ТЗ"
-              testId="tz-panel-resize"
-            />
-          </div>
+        {showProposalSummary && (
+          <>
+            <div className="tz-pane-resize" aria-hidden="true" />
+            <aside className="tz-panel" aria-label="Предложения к ТЗ">
+              <h2 className="text-lg font-medium">Требует внимания</h2>
+              <p className="my-4 text-sm text-text-secondary">
+                Предложений: {ready.length}. Сохранённый текст остаётся в
+                документе. Сравнение открывается для выбранного предложения.
+              </p>
+              <div className="space-y-4">
+                {ready.map((proposal) => (
+                  <section className="tz-attention-item" key={proposal.id}>
+                    <h3 className="font-medium">
+                      {proposalRequests.get(proposal.message_id || '')?.text ||
+                        `Предложение ${doc.proposals.indexOf(proposal) + 1}`}
+                    </h3>
+                    <p className="text-sm text-text-secondary">
+                      Редакция {proposal.base_revision} · разделы{' '}
+                      {headings
+                        .map((_, index) => String(index + 1))
+                        .filter(
+                          (key) => proposal.sections[key] !== doc.sections[key],
+                        )
+                        .join(', ')}
+                    </p>
+                    {proposal.status === 'needs_resolution' && (
+                      <p>Нужно устранить противоречия</p>
+                    )}
+                    <Button
+                      variant="outline"
+                      onClick={() => setPreviewProposal(proposal.id)}
+                    >
+                      Посмотреть изменения
+                    </Button>
+                  </section>
+                ))}
+              </div>
+            </aside>
+          </>
         )}
+        {hasSidePanel &&
+          !showProposalSummary &&
+          (mode === 'document' || Boolean(panel)) && (
+            <div className="tz-pane-resize">
+              <ResizeHandle
+                direction="width"
+                value={layout.width}
+                min={280}
+                max={480}
+                onChange={layout.setWidth}
+                onReset={layout.resetWidth}
+                label="Ширина правой панели ТЗ"
+                testId="tz-panel-resize"
+              />
+            </div>
+          )}
         <aside
           hidden={!showAssistant}
           className={`tz-assistant ${showAssistant ? '' : 'hidden'}`}

@@ -166,7 +166,7 @@ def test_sql_reader_can_view_query_history_er_and_result_without_mutation(page, 
         "Сохранить источник",
         "Проверить подключение",
         "Редактировать финальный SQL",
-        "Завершить",
+        "Сохранить документ и удалить строки",
         "Удалить данные этого запуска",
         "Сформировать вывод",
         "Преобразовать в Python",
@@ -178,7 +178,7 @@ def test_sql_reader_can_view_query_history_er_and_result_without_mutation(page, 
     expect(page.get_by_role("button", name="Выполнить запрос", exact=True)).to_have_count(0)
     if ready:
         expect(page.get_by_test_id("sql-result-table")).to_contain_text("1250.00")
-        expect(page.get_by_test_id("sql-agent-complete")).to_contain_text("Original warehouse · версия 3")
+        expect(page.get_by_test_id("sql-run-identity")).to_contain_text("Original warehouse · версия профиля 3")
     page.reload()
     expect(page.get_by_label("Проверенный SQL")).to_have_value(stub.sql)
     if ready:
@@ -451,9 +451,9 @@ def test_sql_preparation_keyboard_order_follows_primary_step(page, base_url, wid
     context = page.locator(".sql-project-context")
     assert review.evaluate("(el, context) => !!(el.compareDocumentPosition(context) & Node.DOCUMENT_POSITION_FOLLOWING)", context.element_handle())
     requirements = context.get_by_role("heading", name="Подтверждённые требования", exact=True)
-    context.locator("summary").click()
+    context.locator("summary").filter(has_text=re.compile("^Требования и источники$")).click()
     expect(requirements).to_be_visible()
-    context.locator("summary").click()
+    context.locator("summary").filter(has_text=re.compile("^Требования и источники$")).click()
     expect(requirements).not_to_be_visible()
 
 

@@ -129,6 +129,23 @@ test('close discards data and reopening performs a fresh permission check', asyn
   expect(screen.queryByTestId('sql-history-schema')).not.toBeInTheDocument();
 });
 
+test('keeps technical identities available in collapsed details without hiding source content', async () => {
+  render(<SqlHistoryContext projectId="project-1" source={source} />);
+  open();
+  await screen.findByTestId('sql-history-requirements');
+  expect(screen.getByText('Проверка: compilation-old')).not.toBeVisible();
+  expect(screen.getByText('Версия: requirements-old')).not.toBeVisible();
+  for (const value of screen.getAllByText('Основание: proposal-old'))
+    expect(value).not.toBeVisible();
+  fireEvent.click(screen.getByText('Технические сведения о запросе'));
+  expect(screen.getByText('Проверка: compilation-old')).toBeVisible();
+  fireEvent.click(screen.getAllByText('Технические сведения об источнике')[0]);
+  expect(screen.getByText('Версия: requirements-old')).toBeVisible();
+  expect(screen.getByTestId('sql-history-requirements')).toHaveTextContent(
+    'Последнее условие',
+  );
+});
+
 test.each(['close', 'pagehide', 'unmount', 'source-change'])(
   'ignores a delayed context after %s and aborts its request',
   async (action) => {

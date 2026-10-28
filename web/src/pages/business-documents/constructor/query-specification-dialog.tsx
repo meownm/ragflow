@@ -360,8 +360,9 @@ export function QuerySpecificationDialog({
                   </h3>
                   <p className="mt-1 text-xs text-text-secondary">
                     В разделе «Схема данных» укажите исходные требования,
-                    выберите физические таблицы и хотя бы одно поле. Статус
-                    снимка должен быть READY и freshness — актуальным.
+                    выберите физические таблицы и хотя бы одно поле. Подтвердите
+                    таблицы и поля и обновите поиск в каталоге, чтобы схема была
+                    актуальной.
                   </p>
                 </div>
               </div>
@@ -395,7 +396,7 @@ export function QuerySpecificationDialog({
                     variant="outline"
                     className="border-state-success/40 text-state-success"
                   >
-                    Снимок READY · {tables.length}{' '}
+                    Схема подтверждена · {tables.length}{' '}
                     {tables.length === 1 ? 'таблица' : 'таблиц'}
                   </Badge>
                 </div>

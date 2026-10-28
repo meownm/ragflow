@@ -32,10 +32,16 @@ class RevisionBrowserStub(DocumentConstructorStub):
 
     def _catalog_answer(self):
         answer = super()._catalog_answer()
-        orders = self._catalog_table("orders", "dwh.order_fact", [
-            ("order_id", "BIGINT"), ("status_id", "BIGINT"),
-            ("paid_amount_rub", "NUMERIC(18,2)"), ("customer_id", "BIGINT"),
-        ])
+        orders = self._catalog_table(
+            "orders",
+            "dwh.order_fact",
+            [
+                ("order_id", "BIGINT"),
+                ("status_id", "BIGINT"),
+                ("paid_amount_rub", "NUMERIC(18,2)"),
+                ("customer_id", "BIGINT"),
+            ],
+        )
         orders["table_constraints"].append({"constraint_type": "FOREIGN_KEY", "columns": ["customer_id"], "referred_columns": ["dwh.customer_dim.customer_id"]})
         customers = self._catalog_table("customers", "dwh.customer_dim", [("customer_id", "BIGINT")])
         answer["entities"] = [orders, customers, *(entity for entity in answer["entities"] if entity["id"] != "orders")]
@@ -173,9 +179,16 @@ class RevisionBrowserStub(DocumentConstructorStub):
         request = route.request
         path = urlparse(request.url).path.rstrip("/")
         if path.endswith("/preflight"):
-            _fulfill_json(route, _envelope({"compilation_id": self.sql_agent_project["compilation"]["id"],
-                "state_version": self.sql_agent_project["state_version"],
-                "binding": {"status": "BOUND", "selection": {"profile": {"id": "profile-1", "name": "QA warehouse", "max_rows": 1000, "statement_timeout_ms": 5000}}, "candidates": []}}))
+            _fulfill_json(
+                route,
+                _envelope(
+                    {
+                        "compilation_id": self.sql_agent_project["compilation"]["id"],
+                        "state_version": self.sql_agent_project["state_version"],
+                        "binding": {"status": "BOUND", "selection": {"profile": {"id": "profile-1", "name": "QA warehouse", "max_rows": 1000, "statement_timeout_ms": 5000}}, "candidates": []},
+                    }
+                ),
+            )
             return
         if re.fullmatch(r"/api/v1/business-documents/sql-query/projects/[^/]+/workspace", path) and request.method == "GET":
             _fulfill_json(route, _envelope(self._workspace()))
@@ -233,11 +246,13 @@ def test_sql_revision_comments_survive_saved_document_and_reload(page, base_url)
     completed = workbench.get_by_test_id("sql-agent-complete")
     completed.get_by_role("button", name="Выполнить запрос").click()
     expect(completed.get_by_test_id("sql-result-table")).to_contain_text("1250.00")
-    completed.get_by_role("button", name="Завершить", exact=True).click()
+    completed.get_by_role("button", name="Сохранить документ и удалить строки", exact=True).click()
+    page.get_by_role("alertdialog").get_by_role("button", name="Сохранить и удалить строки", exact=True).click()
     expect(completed.get_by_test_id("sql-completed-document")).to_contain_text("Документ · ревизия 1")
     completed.get_by_test_id("sql-completed-document").get_by_role("button", name="Доработать").click()
     expect(page.get_by_test_id("sql-revision-workspace")).to_be_visible()
     page.reload()
+    _open_revision(page)
     revision = page.get_by_test_id("sql-revision-workspace")
     revision.get_by_role("button", name="Вложенная выборка").click()
     revision.get_by_label("Что изменить?").fill("После сохранения измени проверку внутри подзапроса")
@@ -249,9 +264,11 @@ def test_sql_revision_comments_survive_saved_document_and_reload(page, base_url)
     completed.get_by_role("button", name="Повторить запрос").click()
     completed.get_by_role("button", name="Выполнить запрос").click()
     expect(completed.get_by_test_id("sql-result-table")).to_contain_text("1250.00")
-    completed.get_by_role("button", name="Завершить", exact=True).click()
+    completed.get_by_role("button", name="Сохранить документ и удалить строки", exact=True).click()
+    page.get_by_role("alertdialog").get_by_role("button", name="Сохранить и удалить строки", exact=True).click()
     expect(completed.get_by_test_id("sql-completed-document")).to_contain_text("Документ · ревизия 2")
     page.reload()
+    _open_revision(page)
     revision = page.get_by_test_id("sql-revision-workspace")
     revision.get_by_role("button", name="Итоговый документ").click()
     expect(revision).to_contain_text("Получено 10 заказов")
@@ -286,8 +303,7 @@ class RetainedRevisionBrowserStub(RevisionBrowserStub):
         history = project.setdefault("runs", [])
         response = super()._run_sql_project(payload)
         run = project["latest_run"]
-        run.update(id=f"run-{len(history) + 1}",
-                   profile_id="profile-1", profile_version=3, profile_name="Original warehouse")
+        run.update(id=f"run-{len(history) + 1}", profile_id="profile-1", profile_version=3, profile_name="Original warehouse")
         history.insert(0, run)
         response["run_id"] = run["id"]
         return response
@@ -297,8 +313,7 @@ class RetainedRevisionBrowserStub(RevisionBrowserStub):
         match = re.search(r"/runs/([^/]+)/preview$", path)
         if match:
             run = next(item for item in self.sql_agent_project["runs"] if item["id"] == match.group(1))
-            _fulfill_json(route, _envelope({"run_id": run["id"], "columns": run["columns"],
-                "rows": [[42, "1250.00"]], "offset": 0, "row_count": 1, "checks": run["checks"]}))
+            _fulfill_json(route, _envelope({"run_id": run["id"], "columns": run["columns"], "rows": [[42, "1250.00"]], "offset": 0, "row_count": 1, "checks": run["checks"]}))
             return
         return super().__call__(route)
 
@@ -312,6 +327,7 @@ def test_sql_revision_retains_ready_result_and_runs_new_version(page, base_url):
     completed.get_by_role("button", name="Выполнить запрос").click()
     expect(completed.get_by_test_id("sql-result-table")).to_contain_text("1250.00")
     old = deepcopy(stub.sql_agent_project["latest_run"])
+    completed.locator("summary").filter(has_text=re.compile("^SQL и параметры$")).click()
     expect(completed.get_by_test_id("guided-sql-form")).to_be_visible()
     expect(completed.get_by_test_id("sql-historical-result")).to_have_count(0)
 
@@ -325,13 +341,14 @@ def test_sql_revision_retains_ready_result_and_runs_new_version(page, base_url):
     proposal.get_by_role("button", name="Принять версию").click()
     expect(revision.get_by_label("Проверенный SQL")).to_have_value(re.compile("LEFT JOIN"))
     expect(completed.get_by_test_id("sql-historical-result")).to_contain_text("предыдущей проверенной версии")
-    expect(completed.get_by_role("button", name="Завершить", exact=True)).to_be_disabled()
+    expect(completed.get_by_role("button", name="Сохранить документ и удалить строки", exact=True)).to_be_disabled()
     expect(completed.get_by_test_id("sql-result-table")).to_contain_text("1250.00")
-    expect(completed).to_contain_text("Источник выбранного запуска: Original warehouse · версия 3")
+    expect(completed.get_by_test_id("sql-run-identity")).to_contain_text("Источник выбранного запуска: Original warehouse · версия профиля 3")
     assert stub.sql_agent_project["latest_run"] == old
     assert len([item for item in stub.sql_project_commands if item[0] == "run"]) == 1
 
     page.reload()
+    _open_revision(page)
     completed = page.get_by_test_id("sql-agent-complete")
     expect(completed.get_by_test_id("sql-historical-result")).to_be_visible()
     expect(completed.get_by_test_id("sql-result-table")).to_contain_text("1250.00")
@@ -339,13 +356,21 @@ def test_sql_revision_retains_ready_result_and_runs_new_version(page, base_url):
     expect(completed.get_by_test_id("sql-historical-result")).to_have_count(0)
     assert stub.sql_agent_project["latest_run"]["compilation_id"] == "compilation-2"
     assert stub.sql_agent_project["runs"][1] == old
+    completed.locator("summary").filter(has_text=re.compile("^История запусков$")).click()
     completed.get_by_role("button", name="Запуск 1 · данные доступны", exact=True).click()
     expect(completed.get_by_test_id("sql-historical-result")).to_be_visible()
-    expect(completed.get_by_role("button", name="Завершить", exact=True)).to_be_disabled()
+    expect(completed.get_by_role("button", name="Сохранить документ и удалить строки", exact=True)).to_be_disabled()
     expect(completed.get_by_test_id("sql-result-table")).to_contain_text("1250.00")
     assert len([item for item in stub.sql_project_commands if item[0] == "run"]) == 2
     assert page._diag["page_errors"] == []
     assert page._diag["console_errors"] == []
+
+
+def _open_revision(page):
+    summary = page.locator("summary").filter(has_text=re.compile("^Доработка и обсуждения$"))
+    expect(summary).to_be_visible(timeout=30000)
+    if summary.locator("..").get_attribute("open") is None:
+        summary.click()
 
 
 def _create_reviewed_query(page, base_url, stub):
@@ -361,10 +386,11 @@ def _create_reviewed_query(page, base_url, stub):
     requirements = workbench.get_by_test_id("sql-agent-requirements-review")
     requirements.get_by_role("button", name="Календарный месяц").click()
     requirements.get_by_role("button", name="Подтвердить требования").click()
-    workbench.get_by_label("Что искать в данных?").fill("Заказ")
+    workbench.locator("summary").filter(has_text="Уточнить поиск").click()
+    workbench.get_by_label("Темы для уточнения поиска").fill("Заказ")
     workbench.get_by_test_id("sql-agent-run-schema").click()
     schema = workbench.get_by_test_id("sql-agent-schema-review")
-    schema.get_by_role("button", name=re.compile("order_fact")).first.click()
+    schema.get_by_role("button", name="Просмотреть таблицу", exact=True).click()
     for column in ("order_id", "status_id", "paid_amount_rub"):
         schema.get_by_role("checkbox", name=column).check()
     schema.get_by_role("button", name="Подтвердить схему").click()
@@ -372,4 +398,5 @@ def _create_reviewed_query(page, base_url, stub):
     query.get_by_role("checkbox", name="Подтверждаю исключение строк этим условием.").check()
     query.get_by_role("button", name="Подтвердить и собрать SQL").click()
 
+    _open_revision(page)
     return workbench

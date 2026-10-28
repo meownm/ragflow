@@ -1,5 +1,6 @@
 import {
   exportSpecification,
+  getAlignment,
   getSpecification,
   getSpecificationDraft,
   listSpecifications,
@@ -17,6 +18,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from '@testing-library/react';
 import { createMemoryRouter, Link, RouterProvider } from 'react-router';
 import TechnicalSpecifications, { SpecificationKeys } from './index';
@@ -41,6 +43,7 @@ jest.mock('@/services/source-workbench-service', () => ({
   sourceRequestError: (_error: unknown, fallback: string) => fallback,
 }));
 jest.mock('@/services/technical-specification-service', () => ({
+  getAlignment: jest.fn(),
   exportSpecification: jest.fn(),
   getSpecification: jest.fn(),
   listSpecifications: jest.fn(),
@@ -133,6 +136,9 @@ async function openChat() {
 }
 
 beforeEach(() => {
+  jest
+    .mocked(getAlignment)
+    .mockResolvedValue({ document: specification, checks: [] });
   localStorage.clear();
   jest.clearAllMocks();
   jest.useFakeTimers();
@@ -711,6 +717,45 @@ test('semantic contradictions show details and offer Eva resolution', async () =
     screen.queryByRole('button', { name: 'Применить изменения' }),
   ).not.toBeInTheDocument();
   expect(consoleError).not.toHaveBeenCalled();
+});
+
+test('document shows proposal summaries and opens one comparison without applying it', async () => {
+  const client = await openChat();
+  const proposals = ['first', 'second'].map((id, index) => ({
+    id,
+    base_revision: 1,
+    status: 'ready' as const,
+    source: 'chat' as const,
+    sections: {
+      ...specification.sections,
+      '2': `Предложенный текст ${index + 1}`,
+    },
+  }));
+  await act(async () => {
+    client.setQueryData(SpecificationKeys.document('actor', 'project', 'doc'), {
+      ...specification,
+      version: 2,
+      proposals,
+    });
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Документ' }));
+  const summary = await screen.findByRole('complementary', {
+    name: 'Предложения к ТЗ',
+  });
+  expect(
+    within(summary).getAllByRole('button', { name: 'Посмотреть изменения' }),
+  ).toHaveLength(2);
+  expect(screen.queryByTestId('revision-text-diff')).toBeNull();
+  expect(
+    screen.getByRole('region', { name: 'Источники ТЗ' }),
+  ).toBeInTheDocument();
+  fireEvent.click(
+    within(summary).getAllByRole('button', { name: 'Посмотреть изменения' })[0],
+  );
+  expect(screen.getByTestId('revision-text-diff')).toHaveTextContent(
+    'Предложенный текст 1',
+  );
+  expect(specificationAction).not.toHaveBeenCalled();
 });
 
 test('autosave serializes requests and preserves typing during an in-flight save', async () => {

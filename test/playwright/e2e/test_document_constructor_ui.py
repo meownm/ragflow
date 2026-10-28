@@ -1336,7 +1336,7 @@ def test_sql_agent_mvp_golden_from_request_to_document(page, base_url):
     completed = workbench.get_by_test_id("sql-agent-complete")
     expect(completed).to_contain_text("SQL проверен. Данные ещё не получены.")
     expect(completed.get_by_test_id("sql-result-table")).to_have_count(0)
-    completed.get_by_role("button", name="Открыть SQL").click()
+    completed.locator("summary").filter(has_text=re.compile("^SQL и параметры$")).click()
     expect(completed.locator("pre")).to_contain_text("SELECT")
     expect(completed).to_contain_text("Read-only · проверка пройдена")
 
@@ -1347,7 +1347,8 @@ def test_sql_agent_mvp_golden_from_request_to_document(page, base_url):
     expect(completed).to_contain_text("Данные получены")
     assert [kind for kind, _ in stub.sql_project_commands] == ["compile", "run"]
 
-    completed.get_by_role("button", name="Завершить", exact=True).click()
+    completed.get_by_role("button", name="Сохранить документ и удалить строки", exact=True).click()
+    page.get_by_role("alertdialog").get_by_role("button", name="Сохранить и удалить строки", exact=True).click()
     document = completed.get_by_test_id("sql-completed-document")
     expect(document).to_contain_text("Документ · ревизия 1")
     expect(document).to_contain_text("строки удалены")

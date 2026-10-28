@@ -2,6 +2,28 @@
 @tailwind components;
 @tailwind utilities;
 
+/* UI-kit proposal aliases. Shared controls can use these in portal content too. */
+:root {
+  --ui-secondary: 85 89 93;
+  --ui-accent-text: #006963;
+  --ui-focus: #006963;
+  --ui-success: 33 107 59;
+  --ui-warning: 128 83 0;
+  --ui-error: 180 35 42;
+  --ui-on-accent: #161618;
+  --ui-destructive: #b4232a;
+  --ui-canvas: rgb(var(--bg-canvas));
+  --ui-paper: var(--bg-base);
+}
+.dark {
+  --ui-secondary: 178 181 183;
+  --ui-accent-text: #5ee5da;
+  --ui-focus: #5ee5da;
+  --ui-success: 139 219 168;
+  --ui-warning: 255 210 119;
+  --ui-error: 255 180 183;
+}
+
 @layer base {
   :root {
     --background: 0 0% 100%;

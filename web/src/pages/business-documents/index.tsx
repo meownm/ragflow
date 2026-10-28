@@ -142,8 +142,8 @@ const staleConflictCodes = new Set([
 
 const protocolPaneWidthStorageKey =
   'ragflow.business-documents.protocol-pane-width';
-const defaultProtocolPaneWidth = 460;
-const minProtocolPaneWidth = 360;
+const defaultProtocolPaneWidth = 320;
+const minProtocolPaneWidth = 280;
 function getMaxProtocolPaneWidth() {
   return typeof window === 'undefined'
     ? defaultProtocolPaneWidth

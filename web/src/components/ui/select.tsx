@@ -33,9 +33,9 @@ const SelectTrigger = React.forwardRef<
     ref={ref}
     className={cn(
       'flex h-8 w-full items-center bg-bg-input justify-between rounded-md border-0.5 border-border-button',
-      'px-3 py-2 text-sm outline-none transition-colors text-text-secondary placeholder:text-muted-foreground',
+      'px-3 py-2 text-sm outline-none transition-colors text-[rgb(var(--ui-secondary))] placeholder:text-muted-foreground',
       'hover:text-text-primary hover:bg-border-button',
-      'focus-visible:text-text-primary focus-visible:bg-border-button',
+      'focus-visible:text-text-primary focus-visible:bg-border-button focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ui-focus)] aria-[invalid=true]:border-[rgb(var(--ui-error))]',
       'disabled:cursor-not-allowed disabled:opacity-50 [&>span]:line-clamp-1',
       className,
     )}
@@ -65,7 +65,7 @@ const SelectScrollUpButton = React.forwardRef<
   <SelectPrimitive.ScrollUpButton
     ref={ref}
     className={cn(
-      'flex cursor-default items-center justify-center py-1 text-text-secondary hover:text-text-primary',
+      'flex cursor-default items-center justify-center py-1 text-[rgb(var(--ui-secondary))] hover:text-text-primary',
       className,
     )}
     {...props}
@@ -82,7 +82,7 @@ const SelectScrollDownButton = React.forwardRef<
   <SelectPrimitive.ScrollDownButton
     ref={ref}
     className={cn(
-      'flex cursor-default items-center justify-center py-1 text-text-secondary hover:text-text-primary',
+      'flex cursor-default items-center justify-center py-1 text-[rgb(var(--ui-secondary))] hover:text-text-primary',
       className,
     )}
     {...props}
@@ -148,7 +148,7 @@ const SelectItem = React.forwardRef<
   <SelectPrimitive.Item
     ref={ref}
     className={cn(
-      'relative flex w-full cursor-default select-none items-center rounded-sm py-1.5 ps-2 pe-2 text-sm outline-none text-text-secondary',
+      'relative flex w-full cursor-default select-none items-center rounded-sm py-1.5 ps-2 pe-2 text-sm outline-none text-[rgb(var(--ui-secondary))]',
       'focus:bg-border-button focus:text-text-primary data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
       className,
     )}

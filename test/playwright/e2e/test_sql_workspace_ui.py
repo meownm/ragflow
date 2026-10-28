@@ -185,12 +185,22 @@ class SqlWorkspaceBrowserStub(DocumentConstructorStub):
         return super().__call__(route)
 
 
+def _open_sql_panels(page):
+    for label in ("Сущности и связи", "Доработка и обсуждения", "Источник для следующего запуска"):
+        summary = page.locator("summary").filter(has_text=re.compile(f"^{label}$"))
+        if summary.count() and summary.locator("..").get_attribute("open") is None:
+            summary.click()
+
+
 def _open(page, base_url, *, stub=None, compact=False):
     stub = stub or SqlWorkspaceBrowserStub()
     _install_session(page)
     page.route("**/api/v1/**", stub)
     page.set_viewport_size({"width": 390 if compact else 1440, "height": 844 if compact else 1000})
     page.goto(f"{base_url.rstrip('/')}/sql-projects", wait_until="commit")
+    expect(page.get_by_test_id("sql-agent-workbench")).to_be_visible(timeout=120000)
+    expect(page.locator("summary").filter(has_text=re.compile("^Сущности и связи$"))).to_be_visible(timeout=120000)
+    _open_sql_panels(page)
     graph = page.get_by_test_id("sql-schema-graph")
     expect(graph).to_be_visible(timeout=120000)
     expect(graph.locator('[data-entity-id="orders"]')).to_have_count(1, timeout=30000)
@@ -251,7 +261,7 @@ def test_sql_er_active_and_unused_tables_have_distinct_readable_styles(page, bas
     _no_query_mutations(stub)
 
 
-def test_sql_er_hover_and_selection_keep_unused_table_outside_query(page, base_url):
+def test_sql_er_hover_and_selection_keep_unused_table_outside_query(page, base_url, snap):
     stub, graph = _open(page, base_url)
     unused = graph.locator('[data-entity-id="customers"]')
     unused.hover()
@@ -260,6 +270,14 @@ def test_sql_er_hover_and_selection_keep_unused_table_outside_query(page, base_u
     expect(graph.get_by_label("Свойства выбранной сущности")).to_contain_text("Пока не входит в запрос")
     expect(graph.get_by_label("Свойства выбранной сущности").locator("p.font-mono").filter(has_text=re.compile(r"^id\s+BIGINT$"))).to_be_visible()
     expect(graph.get_by_label("Свойства выбранной сущности")).to_contain_text("BIGINT")
+    disclosure = page.locator("summary").filter(has_text=re.compile("^Сущности и связи$"))
+    disclosure.click()
+    expect(graph).not_to_be_visible()
+    disclosure.click()
+    unused.hover()
+    unused.click()
+    expect(graph.get_by_label("Свойства выбранной сущности")).to_contain_text("Пока не входит в запрос")
+    snap("er-after-reopen")
     _no_query_mutations(stub)
 
 
@@ -309,6 +327,8 @@ def test_sql_er_personal_view_survives_reload_without_creating_query_revision(pa
     expect(graph.get_by_role("status").filter(has_text="Вид сохранён")).to_be_visible(timeout=15000)
     assert stub.view["view"]["mode"] == "query"
     page.reload(wait_until="commit")
+    expect(page.locator("summary").filter(has_text=re.compile("^Сущности и связи$"))).to_be_visible(timeout=30000)
+    _open_sql_panels(page)
     expect(page.get_by_test_id("sql-schema-graph").get_by_label("Только запрос", exact=True)).to_be_checked(timeout=30000)
     _no_query_mutations(stub)
 
@@ -320,6 +340,8 @@ def test_sql_er_catalog_failure_and_retry_preserve_current_query(page, base_url)
     page.route("**/api/v1/**", stub)
     page.goto(f"{base_url.rstrip('/')}/sql-projects", wait_until="commit")
     graph = page.get_by_test_id("sql-schema-graph")
+    expect(page.locator("summary").filter(has_text=re.compile("^Сущности и связи$"))).to_be_visible(timeout=30000)
+    _open_sql_panels(page)
     expect(graph.get_by_role("alert")).to_contain_text("Каталог временно недоступен", timeout=30000)
     stub.graph_offline = False
     graph.get_by_role("button", name="Обновить схему").click()

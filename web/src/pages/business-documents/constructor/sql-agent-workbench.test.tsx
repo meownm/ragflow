@@ -26,6 +26,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from '@testing-library/react';
 import { SqlAgentWorkbench } from './sql-agent-workbench';
 
@@ -895,7 +896,9 @@ describe('SqlAgentWorkbench', () => {
       expect.any(String),
       null,
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Открыть SQL' }));
+    fireEvent.click(
+      screen.getByText('SQL и параметры', { selector: 'summary' }),
+    );
     expect(await screen.findByText(/SELECT SUM/)).toBeInTheDocument();
     expect(
       screen.getByText('Read-only · проверка пройдена'),
@@ -1453,7 +1456,7 @@ describe('persisted project connection', () => {
       await waitFor(() => expect(configure).toHaveBeenCalledTimes(1));
       expect(
         await screen.findByText(
-          `Источник выбранного запуска: ${sourceName || 'profile-1'} · версия 3`,
+          `Источник выбранного запуска: ${sourceName || 'имя не записано'} · версия профиля 3`,
         ),
       ).toBeInTheDocument();
       expect(await screen.findByTestId('sql-result-table')).toHaveTextContent(
@@ -1507,7 +1510,7 @@ describe('persisted project connection', () => {
       '42',
     );
     for (const name of [
-      'Завершить',
+      'Сохранить документ и удалить строки',
       'Удалить данные этого запуска',
       'Сформировать вывод',
       'Применить Python',
@@ -1518,9 +1521,13 @@ describe('persisted project connection', () => {
     ]) {
       expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
     }
-    fireEvent.click(screen.getByRole('button', { name: 'Открыть SQL' }));
+    fireEvent.click(
+      screen.getByText('SQL и параметры', { selector: 'summary' }),
+    );
     expect(
-      screen.getByText('SELECT value FROM public.sales LIMIT :row_limit'),
+      await screen.findByText(
+        'SELECT value FROM public.sales LIMIT :row_limit',
+      ),
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Копировать' })).toBeEnabled();
     expect(mockedComplete).not.toHaveBeenCalled();
@@ -1586,7 +1593,11 @@ describe('persisted project connection', () => {
     expect(await screen.findByTestId('sql-result-table')).toHaveTextContent(
       '42',
     );
-    expect(screen.getByRole('button', { name: 'Завершить' })).toBeEnabled();
+    expect(
+      screen.getByRole('button', {
+        name: 'Сохранить документ и удалить строки',
+      }),
+    ).toBeEnabled();
     expect(
       screen.getByRole('button', { name: 'Сформировать вывод' }),
     ).toBeEnabled();
@@ -1602,6 +1613,157 @@ describe('persisted project connection', () => {
     expect(
       screen.getByRole('button', { name: 'Выполнить запрос' }),
     ).toBeDisabled();
+    expect(mockedRun).not.toHaveBeenCalled();
+  });
+
+  it('places the immutable result first and confirms clearing every ready root and derived result', async () => {
+    const ready = {
+      id: 'old-run',
+      status: 'READY',
+      row_count: 1,
+      columns: ['value'],
+      duration_ms: 1,
+      compilation_id: 'compilation-1',
+      profile_id: 'old-profile',
+      profile_name: 'Original source',
+      profile_version: 3,
+    };
+    setup({
+      execution_profile_id: 'profile-2',
+      latest_run: ready,
+      runs: [
+        ready,
+        { ...ready, id: 'other-ready' },
+        { ...ready, id: 'purged', status: 'PURGED' },
+      ],
+      derived_runs: [
+        {
+          id: 'py',
+          kind: 'PYTHON',
+          source_run_id: 'other-ready',
+          status: 'READY',
+        },
+        {
+          id: 'lookup',
+          kind: 'LOOKUP',
+          source_run_id: 'old-run',
+          status: 'READY',
+        },
+        {
+          id: 'removed-py',
+          kind: 'PYTHON',
+          source_run_id: 'old-run',
+          status: 'PURGED',
+        },
+      ],
+    });
+    render(<SqlAgentWorkbench />);
+    const result = await screen.findByTestId('sql-result-table');
+    expect(screen.getByTestId('sql-run-identity')).toHaveTextContent(
+      'Original source · версия профиля 3',
+    );
+    expect(screen.getByTestId('sql-run-identity')).not.toHaveTextContent(
+      'QA B',
+    );
+    const context = screen
+      .getByText('Сущности и связи', { selector: 'summary' })
+      .closest('details')!;
+    expect(
+      result.compareDocumentPosition(context) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(context.open).toBe(false);
+    expect(
+      screen
+        .getByText('История запусков', { selector: 'summary' })
+        .closest('details')!.open,
+    ).toBe(false);
+    expect(screen.getByTestId('sql-completion-warning')).toHaveTextContent(
+      'Запусков SQL: 2; производных результатов: 2',
+    );
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Сохранить документ и удалить строки',
+      }),
+    );
+    const dialog = screen.getByRole('alertdialog');
+    expect(dialog).toHaveTextContent('Это затронет и другие запуски');
+    expect(dialog).toHaveTextContent(
+      'Запусков SQL: 2; производных результатов: 2',
+    );
+    expect(mockedComplete).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Отмена' }));
+    expect(mockedComplete).not.toHaveBeenCalled();
+    expect(screen.getByTestId('sql-result-table')).toHaveTextContent('42');
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'Сохранить документ и удалить строки',
+      }),
+    );
+    fireEvent.click(
+      within(screen.getByRole('alertdialog')).getByRole('button', {
+        name: 'Сохранить и удалить строки',
+      }),
+    );
+    await waitFor(() => expect(mockedComplete).toHaveBeenCalledTimes(1));
+    expect(mockedComplete).toHaveBeenCalledWith(
+      'project-1',
+      7,
+      expect.any(String),
+      'old-run',
+    );
+    expect(mockedRun).not.toHaveBeenCalled();
+  });
+
+  it('closes a completion confirmation when the retained rows expire', async () => {
+    const start = Date.now();
+    let now = start;
+    const clock = jest.spyOn(Date, 'now').mockImplementation(() => now);
+    const ready = {
+      id: 'old-run',
+      status: 'READY',
+      expires_at: start + 60_000,
+      row_count: 1,
+      columns: ['value'],
+      duration_ms: 1,
+      compilation_id: 'compilation-1',
+    };
+    setup({ latest_run: ready, runs: [ready] });
+    const rendered = render(<SqlAgentWorkbench />);
+    try {
+      await screen.findByTestId('sql-result-table');
+      fireEvent.click(
+        screen.getByRole('button', {
+          name: 'Сохранить документ и удалить строки',
+        }),
+      );
+      expect(screen.getByRole('alertdialog')).toBeInTheDocument();
+      act(() => {
+        now = start + 60_000;
+        window.dispatchEvent(new Event('focus'));
+      });
+      await waitFor(() =>
+        expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument(),
+      );
+      expect(screen.queryByTestId('sql-result-table')).not.toBeInTheDocument();
+      expect(mockedComplete).not.toHaveBeenCalled();
+    } finally {
+      rendered.unmount();
+      clock.mockRestore();
+    }
+  });
+
+  it('does not offer new or copied projects without create capability', async () => {
+    setup({ capabilities: { edit: true, execute: false, copy: true } });
+    render(<SqlAgentWorkbench canCreate={false} />);
+    await screen.findByTestId('sql-agent-complete');
+    expect(
+      screen.queryByRole('button', { name: 'Новый запрос' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Создать копию' }),
+    ).not.toBeInTheDocument();
+    expect(mockedCreate).not.toHaveBeenCalled();
     expect(mockedRun).not.toHaveBeenCalled();
   });
 
@@ -1634,7 +1796,9 @@ describe('persisted project connection', () => {
       );
       if (compilationId !== 'compilation-1') {
         expect(
-          screen.getByRole('button', { name: 'Завершить' }),
+          screen.getByRole('button', {
+            name: 'Сохранить документ и удалить строки',
+          }),
         ).toBeDisabled();
       }
       await waitFor(() =>
@@ -1645,7 +1809,7 @@ describe('persisted project connection', () => {
       expect(mockedRun).not.toHaveBeenCalled();
       expect(
         screen.getByText(
-          'Источник выбранного запуска: Original source · версия 3',
+          'Источник выбранного запуска: Original source · версия профиля 3',
         ),
       ).toBeInTheDocument();
     },

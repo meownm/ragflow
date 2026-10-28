@@ -8,7 +8,7 @@ const Table = React.forwardRef<
 >(({ className, rootClassName, ...props }, ref) => (
   <div
     className={cn(
-      'relative w-full overflow-auto rounded-2xl bg-bg-card scrollbar-auto',
+      'relative w-full overflow-auto rounded-md bg-bg-base scrollbar-auto',
       rootClassName,
     )}
   >
@@ -28,7 +28,7 @@ const TableHeader = React.forwardRef<
   <thead
     ref={ref}
     className={cn(
-      '[&_tr]:border-b-0.5 top-0 sticky bg-bg-title z-10',
+      '[&_tr]:border-b-0.5 top-0 sticky bg-bg-card z-10',
       className,
     )}
     {...props}
@@ -70,7 +70,7 @@ const TableRow = React.forwardRef<
   <tr
     ref={ref}
     className={cn(
-      'border-b-0.5 border-border-button transition-colors hover:bg-bg-card data-[state=selected]:bg-bg-card',
+      'border-b-0.5 border-border-button transition-colors hover:bg-bg-card data-[state=selected]:bg-accent-primary/10 data-[state=selected]:hover:bg-accent-primary/10 data-[state=selected]:shadow-[inset_3px_0_0_var(--ui-accent-text)]',
       className,
     )}
     {...props}
@@ -85,7 +85,7 @@ const TableHead = React.forwardRef<
   <th
     ref={ref}
     className={cn(
-      'first-of-type:pl-6 last-of-type:pr-6 h-14 px-4 text-left align-middle font-normal text-text-secondary [&:has([role=checkbox])]:pr-0 ',
+      'first-of-type:pl-6 last-of-type:pr-6 h-11 px-4 text-left align-middle text-xs font-normal text-[rgb(var(--ui-secondary))] [&:has([role=checkbox])]:pr-0 ',
       className,
     )}
     {...props}

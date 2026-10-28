@@ -643,19 +643,20 @@ function ExecutionRegistryWorkspace() {
                         ? 'Сохранить профиль'
                         : 'Создать профиль'}
                     </Button>
-                    {editingProfileId && (
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => {
-                          setEditingProfileId(null);
-                          setFormOpen(false);
-                        }}
-                      >
-                        Отмена
-                      </Button>
-                    )}
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      disabled={saving}
+                      onClick={() => {
+                        setEditingProfileId(null);
+                        setFormOpen(false);
+                        setError(null);
+                        setProfileDraft(EMPTY_PROFILE);
+                      }}
+                    >
+                      Отмена
+                    </Button>
                   </div>
                 </form>
               </div>
@@ -900,19 +901,20 @@ function ExecutionRegistryWorkspace() {
                         ? 'Сохранить привязку'
                         : 'Привязать схему'}
                     </Button>
-                    {editingBindingId && (
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => {
-                          setEditingBindingId(null);
-                          setFormOpen(false);
-                        }}
-                      >
-                        Отмена
-                      </Button>
-                    )}
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      disabled={saving}
+                      onClick={() => {
+                        setEditingBindingId(null);
+                        setFormOpen(false);
+                        setError(null);
+                        setBindingDraft(EMPTY_BINDING);
+                      }}
+                    >
+                      Отмена
+                    </Button>
                   </div>
                 </form>
               </div>

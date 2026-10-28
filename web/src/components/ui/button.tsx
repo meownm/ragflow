@@ -8,7 +8,7 @@ import { Link, LinkProps } from 'react-router';
 
 const buttonVariants = cva(
   cn(
-    'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm transition-colors outline-0',
+    'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm transition-colors outline-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ui-focus)]',
     'disabled:pointer-events-none disabled:opacity-50 rounded border-0.5 border-transparent',
     '[&_svg]:pointer-events-none [&_svg:not([class*="size-"])]:size-4 shrink-0 [&_svg]:shrink-0',
   ),
@@ -32,25 +32,25 @@ const buttonVariants = cva(
         `,
 
         accent: `
-          bg-accent-primary text-white
+          bg-accent-primary text-[var(--ui-on-accent)]
           hover:bg-accent-primary/90 focus-visible:bg-accent-primary/90
         `,
 
         destructive: `
-          bg-state-error text-white shadow-xs
-          hover:bg-state-error/90 focus-visible:ring-state-error/20 dark:focus-visible:ring-state-error/40
+          bg-[var(--ui-destructive)] text-white shadow-xs
+          hover:brightness-90
         `,
 
         // Outline variant series
         // Button has transparent or greyish background, may have borders
         outline: `
-          text-text-secondary bg-bg-input border-0.5 border-border-button
+          text-[rgb(var(--ui-secondary))] bg-bg-input border-0.5 border-border-button
           hover:text-text-primary hover:bg-border-button hover:border-border-default
           focus-visible:text-text-primary focus-visible:bg-border-button focus-visible:border-border-button
         `, // light: bg=transparent, dark: bg-input
 
         dashed: `
-          text-text-secondary border-border-button border-dashed
+          text-[rgb(var(--ui-secondary))] border-border-button border-dashed
           hover:text-text-primary hover:bg-border-button hover:border-border-default
           focus-visible:text-text-primary focus-visible:bg-border-button focus-visible:border-border-button
         `,
@@ -58,7 +58,7 @@ const buttonVariants = cva(
         icon: 'bg-transparent text-foreground hover:bg-transparent/80',
 
         transparent: `
-          text-text-secondary bg-transparent border-0.5 border-border-button
+          text-[rgb(var(--ui-secondary))] bg-transparent border-0.5 border-border-button
           hover:text-text-primary hover:bg-border-button
           focus-visible:text-text-primary focus-visible:bg-border-button focus-visible:border-border-button
         `,
@@ -78,13 +78,13 @@ const buttonVariants = cva(
         // Ghost variant series
         // Button has transparent background, without borders
         ghost: `
-          text-text-secondary
+          text-[rgb(var(--ui-secondary))]
           hover:bg-border-button focus-visible:bg-border-button
           hover:text-text-primary focus-visible:text-text-primary
         `,
 
         delete: `
-          text-text-secondary
+          text-[rgb(var(--ui-secondary))]
           hover:bg-state-error-5 hover:text-state-error
           focus-visible:text-state-error focus-visible:bg-state-error-5
         `,
@@ -94,7 +94,7 @@ const buttonVariants = cva(
         // Static
         // Button has no interaction transitions
         static:
-          'text-text-secondary hover:text-text-primary focus-visible:text-text-primary',
+          'text-[rgb(var(--ui-secondary))] hover:text-text-primary focus-visible:text-text-primary',
       },
       size: {
         auto: '',

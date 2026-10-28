@@ -10,6 +10,7 @@ export default function ThemeButton({ className }: { className?: string }) {
 
   return (
     <Button
+      aria-label="Переключить тему"
       variant="ghost"
       size="icon"
       className={cn('relative size-10 shrink-0 lg:size-8', className)}

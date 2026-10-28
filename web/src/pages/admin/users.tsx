@@ -29,8 +29,6 @@ import {
 
 import { rsaPsw } from '@/utils';
 
-import Spotlight from '@/components/spotlight';
-import { TableEmpty } from '@/components/table-skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -72,7 +70,9 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { StatePanel } from '@/components/workbench/state-panel';
 import { Routes } from '@/routes';
+import { isAxiosError } from 'axios';
 import { LucideFilter, LucideSearch } from 'lucide-react';
 
 import useChangePasswordForm from './forms/change-password-form';
@@ -157,9 +157,22 @@ function AdminUserManagement() {
     placeholderData: keepPreviousData,
   });
 
-  const { data: usersList } = useQuery({
+  const {
+    data: usersList,
+    error: usersError,
+    isPending: usersLoading,
+    refetch: refetchUsers,
+  } = useQuery({
     queryKey: ['admin/listUsers'],
-    queryFn: async () => (await listUsers()).data.data,
+    queryFn: async () => {
+      const response = await listUsers();
+      if (response.data.code !== 0) {
+        throw Object.assign(new Error('Не удалось загрузить пользователей'), {
+          code: response.data.code,
+        });
+      }
+      return response.data.data;
+    },
     retry: false,
     placeholderData: keepPreviousData,
   });
@@ -459,6 +472,7 @@ function AdminUserManagement() {
           return (
             <div className="opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100 transition-opacity">
               <Button
+                aria-label={`Открыть пользователя ${row.original.email}`}
                 variant="transparent"
                 size="icon"
                 className="border-0"
@@ -474,6 +488,7 @@ function AdminUserManagement() {
               {!isMe && (
                 <>
                   <Button
+                    aria-label={`Изменить пароль ${row.original.email}`}
                     variant="transparent"
                     size="icon"
                     className="border-0"
@@ -485,6 +500,7 @@ function AdminUserManagement() {
                     <LucideUserLock />
                   </Button>
                   <Button
+                    aria-label={`Удалить пользователя ${row.original.email}`}
                     variant="danger"
                     size="icon"
                     className="border-0"
@@ -536,17 +552,19 @@ function AdminUserManagement() {
 
   return (
     <>
-      <Card className="!shadow-none relative h-full bg-transparent overflow-hidden">
-        <Spotlight />
-
+      <Card className="rf-admin-users !shadow-none relative h-full overflow-hidden">
         <ScrollArea className="size-full">
-          <CardHeader className="space-y-0 flex flex-row justify-between items-center">
+          <CardHeader className="rf-admin-users-head space-y-0 flex flex-row justify-between items-center">
             <CardTitle>{t('admin.userManagement')}</CardTitle>
 
-            <div className="ml-auto flex justify-end gap-4">
+            <div className="rf-admin-users-tools ml-auto flex justify-end gap-4">
               <Popover>
                 <PopoverTrigger asChild>
-                  <Button size="icon-lg" variant="outline">
+                  <Button
+                    size="icon-lg"
+                    variant="outline"
+                    aria-label="Фильтры пользователей"
+                  >
                     <LucideFilter className="size-4" />
                   </Button>
                 </PopoverTrigger>
@@ -636,10 +654,11 @@ function AdminUserManagement() {
                 </PopoverContent>
               </Popover>
 
-              <div className="relative w-56">
+              <div className="relative min-w-0 flex-1">
                 <LucideSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
 
                 <Input
+                  aria-label="Поиск по имени или почте"
                   className="pl-10 h-10 bg-bg-input border-border-button"
                   placeholder={t('header.search')}
                   value={table.getState().globalFilter}
@@ -648,7 +667,8 @@ function AdminUserManagement() {
               </div>
 
               <Button
-                className="h-10 px-4"
+                className="rf-admin-add-user h-10 px-4"
+                disabled={usersLoading || Boolean(usersError)}
                 onClick={() => setCreateUserModalOpen(true)}
               >
                 <LucideUserPlus />
@@ -657,72 +677,98 @@ function AdminUserManagement() {
             </div>
           </CardHeader>
 
-          <CardContent>
-            <Table>
-              <colgroup>
-                <col width="*" />
-                <col className="w-[22%]" />
-
-                <EnterpriseFeature>
-                  {() => <col className="w-24" />}
-                </EnterpriseFeature>
-
-                <col className="w-40" />
-                <col className="w-40" />
-                <col className="w-52" />
-              </colgroup>
-
-              <TableHeader>
-                {table.getHeaderGroups().map((headerGroup) => (
-                  <TableRow key={headerGroup.id}>
-                    {headerGroup.headers.map((header) => (
-                      <TableHead key={header.id}>
-                        {header.isPlaceholder
-                          ? null
-                          : flexRender(
-                              header.column.columnDef.header,
-                              header.getContext(),
-                            )}
-                      </TableHead>
+          <CardContent data-testid="admin-user-table-content">
+            {usersLoading ? (
+              <StatePanel title="Загружаем пользователей" loading />
+            ) : usersError ? (
+              <StatePanel
+                title={
+                  (isAxiosError(usersError) &&
+                    usersError.response?.status === 403) ||
+                  ('code' in usersError && usersError.code === 403)
+                    ? 'Нет доступа к пользователям'
+                    : 'Не удалось загрузить пользователей'
+                }
+                onRetry={() => void refetchUsers()}
+              >
+                {(isAxiosError(usersError) &&
+                  usersError.response?.status === 403) ||
+                ('code' in usersError && usersError.code === 403)
+                  ? 'Для этого действия нужны права администратора.'
+                  : 'Проверьте соединение и повторите загрузку.'}
+              </StatePanel>
+            ) : (
+              <>
+                <Table>
+                  <TableHeader>
+                    {table.getHeaderGroups().map((headerGroup) => (
+                      <TableRow key={headerGroup.id}>
+                        {headerGroup.headers.map((header) => (
+                          <TableHead key={header.id}>
+                            {header.isPlaceholder
+                              ? null
+                              : flexRender(
+                                  header.column.columnDef.header,
+                                  header.getContext(),
+                                )}
+                          </TableHead>
+                        ))}
+                      </TableRow>
                     ))}
-                  </TableRow>
-                ))}
-              </TableHeader>
+                  </TableHeader>
 
-              <TableBody>
-                {table.getRowModel().rows?.length ? (
-                  table.getRowModel().rows.map((row) => (
-                    <TableRow key={row.id} className="group/row">
-                      {row.getVisibleCells().map((cell) => (
-                        <TableCell key={cell.id}>
-                          {flexRender(
-                            cell.column.columnDef.cell,
-                            cell.getContext(),
-                          )}
+                  <TableBody>
+                    {table.getRowModel().rows?.length ? (
+                      table.getRowModel().rows.map((row) => (
+                        <TableRow key={row.id} className="group/row">
+                          {row.getVisibleCells().map((cell) => (
+                            <TableCell key={cell.id}>
+                              {flexRender(
+                                cell.column.columnDef.cell,
+                                cell.getContext(),
+                              )}
+                            </TableCell>
+                          ))}
+                        </TableRow>
+                      ))
+                    ) : (
+                      <TableRow>
+                        <TableCell colSpan={columnDefs.length}>
+                          <StatePanel
+                            title={
+                              usersList?.length
+                                ? 'Пользователи не найдены'
+                                : 'Пользователей пока нет'
+                            }
+                          >
+                            {usersList?.length
+                              ? 'Измените поиск или сбросьте фильтры.'
+                              : 'Добавьте первого пользователя.'}
+                          </StatePanel>
                         </TableCell>
-                      ))}
-                    </TableRow>
-                  ))
-                ) : (
-                  <TableEmpty key="empty" columnsLength={columnDefs.length} />
-                )}
-              </TableBody>
-            </Table>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </>
+            )}
           </CardContent>
 
-          <CardFooter className="flex items-center justify-end">
-            <RAGFlowPagination
-              total={table.getFilteredRowModel().rows.length}
-              current={table.getState().pagination.pageIndex + 1}
-              pageSize={table.getState().pagination.pageSize}
-              onChange={(page, pageSize) => {
-                table.setPagination({
-                  pageIndex: page - 1,
-                  pageSize,
-                });
-              }}
-            />
-          </CardFooter>
+          {!usersError && !usersLoading && (
+            <CardFooter className="flex items-center justify-end">
+              <RAGFlowPagination
+                total={table.getFilteredRowModel().rows.length}
+                current={table.getState().pagination.pageIndex + 1}
+                pageSize={table.getState().pagination.pageSize}
+                onChange={(page, pageSize) => {
+                  table.setPagination({
+                    pageIndex: page - 1,
+                    pageSize,
+                  });
+                }}
+              />
+            </CardFooter>
+          )}
         </ScrollArea>
       </Card>
 

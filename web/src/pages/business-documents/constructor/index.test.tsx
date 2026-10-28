@@ -16,6 +16,13 @@ jest.mock('@/hooks/use-user-setting-request', () => ({
 jest.mock('@/services/business-document-service', () => ({
   getBusinessDocumentCapabilities: jest.fn(),
 }));
+jest.mock('./sql-agent-workbench', () => ({
+  SqlAgentWorkbench: ({ canCreate }: { canCreate: boolean }) => (
+    <div data-testid="sql-agent-workbench">
+      {canCreate ? 'creation enabled' : 'saved projects only'}
+    </div>
+  ),
+}));
 const mockedGetBusinessDocumentCapabilities =
   getBusinessDocumentCapabilities as jest.Mock;
 
@@ -24,14 +31,14 @@ const storageKey = createDocumentConstructorStorageKey({
   tenantId: 'tenant-1',
 });
 
-function renderPage() {
+function renderPage(surface: 'template' | 'sql' = 'template') {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={['/document-constructor']}>
-        <DocumentConstructorPage />
+        <DocumentConstructorPage surface={surface} />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -188,4 +195,39 @@ describe('DocumentConstructorPage', () => {
       await screen.findByTestId('open-sql-execution-registry'),
     ).toHaveAttribute('href', '/sql-sources');
   });
+
+  it.each(['AUTHOR_EDITOR', 'READER'])(
+    'opens saved SQL for %s without loading or writing the template draft',
+    async (role) => {
+      mockedGetBusinessDocumentCapabilities.mockResolvedValue({
+        access_role: role,
+        capabilities: { read: true, create: false },
+      });
+      window.localStorage.setItem(storageKey, 'unrelated template draft');
+      renderPage('sql');
+      expect(
+        await screen.findByTestId('sql-agent-workbench'),
+      ).toHaveTextContent('saved projects only');
+      expect(
+        screen.queryByTestId('open-sql-execution-registry'),
+      ).not.toBeInTheDocument();
+      expect(window.localStorage.getItem(storageKey)).toBe(
+        'unrelated template draft',
+      );
+    },
+  );
+
+  it.each([null, { capabilities: { read: false, create: false } }])(
+    'does not open SQL without an explicit read grant: %s',
+    async (access) => {
+      mockedGetBusinessDocumentCapabilities.mockResolvedValue(access);
+      renderPage('sql');
+      expect(
+        await screen.findByTestId('document-constructor-access-denied'),
+      ).toHaveTextContent('Нет доступа к SQL-проектам');
+      expect(
+        screen.queryByTestId('sql-agent-workbench'),
+      ).not.toBeInTheDocument();
+    },
+  );
 });

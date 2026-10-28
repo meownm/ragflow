@@ -2066,15 +2066,15 @@ test('resizes the discussion rail with the keyboard and remembers the width', as
     name: 'Изменить ширину обсуждения',
   });
 
-  expect(resizer).toHaveAttribute('aria-valuenow', '460');
+  expect(resizer).toHaveAttribute('aria-valuenow', '320');
   fireEvent.keyDown(resizer, { key: 'ArrowLeft' });
 
-  expect(resizer).toHaveAttribute('aria-valuenow', '484');
+  expect(resizer).toHaveAttribute('aria-valuenow', '344');
   expect(
     window.localStorage.getItem(
       'ragflow.business-documents.protocol-pane-width',
     ),
-  ).toBe('484');
+  ).toBe('344');
 
   Object.defineProperty(window, 'innerWidth', {
     configurable: true,
@@ -2082,7 +2082,7 @@ test('resizes the discussion rail with the keyboard and remembers the width', as
   });
   fireEvent(window, new Event('resize'));
   expect(resizer).toHaveAttribute('aria-valuemax', '640');
-  expect(resizer).toHaveAttribute('aria-valuenow', '484');
+  expect(resizer).toHaveAttribute('aria-valuenow', '344');
 });
 
 test.each([1280, 1920])(
@@ -2127,7 +2127,7 @@ test.each([1280, 1920])(
     expect(resizer).toHaveAttribute('aria-valuemax', '960');
     expect(resizer).toHaveAttribute('aria-valuenow', '960');
     fireEvent.doubleClick(resizer);
-    expect(resizer).toHaveAttribute('aria-valuenow', '460');
+    expect(resizer).toHaveAttribute('aria-valuenow', '320');
   },
 );
 

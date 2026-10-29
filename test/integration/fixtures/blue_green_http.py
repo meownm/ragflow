@@ -23,6 +23,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(f"data: {os.environ['FIXTURE_VERSION']}:{value}\n\n".encode())
                 self.wfile.flush()
             self.close_connection = True
+        elif self.path.startswith("/request-target/"):
+            self.reply(200, self.path.encode())
         else:
             self.reply(200, os.environ["FIXTURE_VERSION"].encode())
 

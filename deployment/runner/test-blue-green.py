@@ -10,6 +10,7 @@ import argparse
 import copy
 import gzip
 import hashlib
+from ipaddress import ip_network
 import json
 import os
 from pathlib import Path
@@ -19,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import urllib.request
 import urllib.error
 from uuid import uuid4
@@ -40,6 +42,88 @@ def traffic_pool(stop):
     finally:
         stop.set()
         pool.shutdown(wait=True)
+
+
+def _available_subnet():
+    """Keep QA independent of exhausted default pools, without touching other networks."""
+    identities = command("docker", "network", "ls", "-q").split()
+    networks = json.loads(command("docker", "network", "inspect", *identities))
+    used = [ip_network(row["Subnet"]) for network in networks for row in (network.get("IPAM", {}).get("Config") or []) if row.get("Subnet") and ":" not in row["Subnet"]]
+    start = int(uuid4().hex[:2], 16)
+    for offset in range(256):
+        candidate = ip_network(f"10.254.{(start + offset) % 256}.0/24")
+        if not any(candidate.overlaps(existing) for existing in used):
+            return str(candidate)
+    raise ValueError("No non-overlapping QA subnet available in 10.254.0.0/16")
+
+
+def check_dns_recovery(controller, network, occupying_image, request):
+    """Force real address churn and a cold gateway boot, without controller reload."""
+    original_state = controller.state_path.read_bytes()
+    state = json.loads(original_state)
+    slot = state["slot"]
+    gateway = controller.inspect("gateway")
+    worker_id = controller.inspect("worker")["Id"]
+    configuration = controller.execute("gateway", "sha256sum", "/routing/nginx.conf")
+    changes = []
+    for index, restart_gateway in enumerate((True, False)):
+        active = controller.inspect(slot)
+        old_address = active["NetworkSettings"]["Networks"][network]["IPAddress"]
+        controller.compose("stop", slot)
+        command("docker", "rm", f"{controller.project}-{slot}")
+        # Occupy the old IP with a different version and the generic service alias.
+        # Routing by a cached IP or ambiguous 'web-green' must not pass this check.
+        command(
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            f"{controller.project}-old-ip-{index}",
+            "--network",
+            network,
+            "--network-alias",
+            slot,
+            "--ip",
+            old_address,
+            occupying_image,
+        )
+        if restart_gateway:
+            command("docker", "restart", f"{controller.project}-gateway")
+            assert controller.inspect("gateway")["State"]["Status"] == "running"
+            try:
+                request()
+            except urllib.error.HTTPError as error:
+                assert error.code == 502, "Missing selected DNS target must be unavailable"
+            else:
+                raise AssertionError("Gateway served another container while the selected name was absent")
+        started = controller.inspect("gateway")["State"]["StartedAt"]
+        controller.up(slot)
+        ready = controller.wait_ready(slot)
+        new_address = ready["NetworkSettings"]["Networks"][network]["IPAddress"]
+        assert old_address != new_address, "Recreation must actually change the IP"
+        deadline = time.monotonic() + 20
+        began = time.monotonic()
+        stable = 0
+        while stable < 12:
+            try:
+                stable = stable + 1 if request() == b"v2" else 0
+            except (OSError, urllib.error.URLError):
+                stable = 0
+            if time.monotonic() >= deadline:
+                raise AssertionError("DNS route did not stabilize automatically after address change")
+            time.sleep(0.2)
+        with urllib.request.urlopen(f"http://127.0.0.1:{controller.port}/api/v1/system/healthz", timeout=5) as response:
+            assert response.headers["X-Ragflow-Deployment"] == state["token"]
+        assert controller.inspect("gateway")["Id"] == gateway["Id"]
+        assert controller.inspect("gateway")["State"]["StartedAt"] == started
+        assert controller.execute("gateway", "sha256sum", "/routing/nginx.conf") == configuration
+        assert controller.state_path.read_bytes() == original_state
+        changes.append({"old_address": old_address, "new_address": new_address, "gateway_restarted_before_target": restart_gateway, "recovered_seconds": round(time.monotonic() - began, 3)})
+    assert controller.inspect("worker")["Id"] == worker_id
+    uri = "/request-target/a%2Fb?x=a%2Fb&x=two%20words"
+    assert request(uri) == uri.encode(), "Variable proxy_pass changed the original URI/query"
+    assert request("/echo", b"write-after-address-change") == b"write-after-address-change"
+    return changes
 
 
 @managed("blue-green-qa", days=0)
@@ -90,7 +174,9 @@ def qualify(image: str, output: Path) -> dict:
             stop.wait(0.03)
 
     try:
-        command("docker", "network", "create", "--label", f"org.ragflow.blue-green={project}", network)
+        subnet = _available_subnet()
+        command("docker", "network", "create", "--subnet", subnet, "--label", f"org.ragflow.blue-green={project}", network)
+        report["network_subnet"] = subnet
         # BuildKit interprets a bare sha256 image ID as a registry repository.
         # A disposable local tag keeps FROM tied to the already inspected image.
         base_id = command("docker", "image", "inspect", "--format", "{{.Id}}", image)
@@ -101,7 +187,7 @@ def qualify(image: str, output: Path) -> dict:
             for version in ("v1", "v2"):
                 (context / "Dockerfile").write_text(
                     f"FROM {base_tag}\nCOPY server.py /fixture/server.py\nENV FIXTURE_VERSION={version}\n"
-                    f"RUN mkdir -p /ragflow/web/dist/assets /ragflow/web/dist/entry/js /ragflow/web/dist/chunk/js && "
+                    f"RUN mkdir -p /release-assets /routing /ragflow/logs /ragflow/web/dist/assets /ragflow/web/dist/entry/js /ragflow/web/dist/chunk/js && "
                     f"printf {version} > /ragflow/web/dist/assets/fixture-{version}.js && "
                     f"printf {version} > /ragflow/web/dist/entry/js/fixture-{version}.js && "
                     f"printf {version} > /ragflow/web/dist/chunk/js/fixture-{version}.js && "
@@ -119,6 +205,9 @@ def qualify(image: str, output: Path) -> dict:
         health = {"test": ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1/api/v1/system/healthz')"], "interval": "1s", "timeout": "2s", "retries": 2}
         base = {"services": {"ragflow-cpu": {"image": ids[0], "networks": {"app": {}}, "environment": {}, "healthcheck": health}}, "networks": {"app": {"name": network}}, "volumes": {}}
         config = deployment_config(base, project, ids[0])
+        # Mount targets are built into the fixture; its process scratch is ephemeral.
+        # Empty mount-point directories must not look like unique writable evidence.
+        config["services"]["gateway"]["tmpfs"] = ["/tmp"]
         config["services"]["gateway"]["ports"][0].update(published=str(port), host_ip="127.0.0.1")
         runtime = output / "runtime"
         controller = BlueGreen(project, runtime, timeout=40, port=port)
@@ -268,6 +357,7 @@ shutil.copyfile=partial_copy
             polling.result(timeout=10)
             assert not failures, f"Traffic failed during deployment: {failures}"
             assert {"v1", "v2"} <= set(requests)
+        dns_changes = check_dns_recovery(controller, network, ids[0], request)
         if hashlib.sha256((ROOT / "deployment/blue_green.py").read_bytes()).hexdigest() != CONTROLLER_SHA256:
             raise ValueError("Controller source changed during qualification")
         report.update(
@@ -285,6 +375,11 @@ shutil.copyfile=partial_copy
             post_switch_rollback=True,
             interrupted_recovery=True,
             interrupted_asset_copy_retry=True,
+            automatic_dns_recovery=True,
+            gateway_boot_without_web=True,
+            exact_project_dns=True,
+            request_target_preserved=True,
+            dns_address_changes=dns_changes,
             controller_sha256=CONTROLLER_SHA256,
         )
     except BaseException as error:

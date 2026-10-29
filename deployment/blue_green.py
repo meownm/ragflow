@@ -145,10 +145,11 @@ def deployment_lock(root: Path):
                 msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
 
 
-def gateway_config(slot: str, token: str, address: str) -> str:
+def gateway_config(slot: str, token: str, hostname: str) -> str:
     if slot not in {"web-blue", "web-green"} or not re.fullmatch("[a-f0-9]{32}", token):
         raise ValueError("Invalid route identity")
-    address = str(IPv4Address(address))
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,45}-" + re.escape(slot), hostname):
+        raise ValueError("An exact project container name is required")
     return f"""worker_processes 2;
 pid /tmp/nginx.pid;
 error_log /dev/stderr warn;
@@ -163,6 +164,8 @@ http {{
     gzip_types text/plain text/css application/javascript application/json application/xml image/svg+xml;
     gzip_vary on;
     map $http_upgrade $connection_upgrade {{ default upgrade; '' ''; }}
+    resolver 127.0.0.11 valid=2s ipv6=off;
+    resolver_timeout 2s;
     server {{
         listen 80;
         client_max_body_size 0;
@@ -180,7 +183,9 @@ http {{
             expires 1y;
         }}
         location / {{
-            proxy_pass http://{address}:80;
+            # Defer DNS until requests arrive, including cold boot before web exists.
+            set $ragflow_backend {hostname}:80;
+            proxy_pass http://$ragflow_backend;
             proxy_http_version 1.1;
             proxy_set_header Host $http_host;
             proxy_set_header X-Real-IP $remote_addr;
@@ -302,24 +307,28 @@ class BlueGreen:
         gateway = self.inspect("gateway")
         target = self.inspect(slot)
         common = set(gateway["NetworkSettings"]["Networks"]) & set(target["NetworkSettings"]["Networks"])
-        addresses = [target["NetworkSettings"]["Networks"][name]["IPAddress"] for name in sorted(common)]
-        if not addresses or not addresses[0]:
+        addresses = {str(IPv4Address(target["NetworkSettings"]["Networks"][name]["IPAddress"])) for name in common if target["NetworkSettings"]["Networks"][name]["IPAddress"]}
+        if not addresses:
             raise ValueError("Gateway and candidate have no shared IPv4 network")
-        address = str(IPv4Address(addresses[0]))
+        hostname = f"{self.project}-{slot}"
+        config = gateway_config(slot, token, hostname)
         if reload:
             # Container-local health alone cannot prove the proxy can reach it.
             self.execute(
                 "gateway",
                 "python3",
                 "-c",
-                "import json,sys,urllib.request; "
+                "import json,socket,sys,urllib.request; "
+                "addresses={entry[4][0] for entry in socket.getaddrinfo(sys.argv[1],80,socket.AF_INET,socket.SOCK_STREAM)}; "
+                "assert addresses and addresses<=set(json.loads(sys.argv[2])), 'DNS does not identify the selected project container'; "
                 "response=urllib.request.urlopen('http://'+sys.argv[1]+'/api/v1/system/healthz',timeout=5); "
                 "assert json.load(response).get('status')=='ok'; "
                 "urllib.request.urlopen('http://'+sys.argv[1]+'/',timeout=5).close()",
-                address,
+                hostname,
+                json.dumps(sorted(addresses)),
             )
         path = self.root / "nginx.conf"
-        path.write_text(gateway_config(slot, token, address), encoding="utf-8")
+        path.write_text(config, encoding="utf-8")
         command("docker", "cp", str(path), f"{self.project}-gateway:/routing/next.conf")
         if reload:
             self.execute("gateway", "/usr/sbin/nginx", "-t", "-c", "/routing/next.conf")

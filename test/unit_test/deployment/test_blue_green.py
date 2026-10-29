@@ -128,12 +128,20 @@ def test_first_handover_does_not_skip_a_required_migration(tmp_path, monkeypatch
 
 
 def test_proxy_does_not_retry_writes_or_buffer_streams_or_force_shutdown():
-    config = gateway_config("web-blue", "a" * 32, "172.20.0.2")
+    config = gateway_config("web-blue", "a" * 32, "qa-bg-web-blue")
     assert "proxy_next_upstream off;" in config
     assert "proxy_buffering off;" in config
     assert "proxy_request_buffering off;" in config
     assert "worker_shutdown_timeout" not in config
-    assert "proxy_pass http://172.20.0.2:80;" in config
+    assert "resolver 127.0.0.11 valid=2s ipv6=off;" in config
+    assert "set $ragflow_backend qa-bg-web-blue:80;" in config
+    assert "proxy_pass http://$ragflow_backend;" in config
+
+
+@pytest.mark.parametrize("hostname", ["web-blue", "172.20.0.2", "qa-bg-web-green", "qa-bg-web-blue:81", "qa-bg-web-blue;", "../qa-bg-web-blue"])
+def test_gateway_rejects_generic_aliases_addresses_and_foreign_slot_names(hostname):
+    with pytest.raises(ValueError):
+        gateway_config("web-blue", "a" * 32, hostname)
 
 
 @pytest.mark.parametrize("directory", ["assets", "entry", "chunk"])

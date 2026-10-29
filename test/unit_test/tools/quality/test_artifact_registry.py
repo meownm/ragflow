@@ -217,3 +217,56 @@ def test_scope_ignores_unrelated_project_labels_and_preserves_known_project_volu
     selected, omitted = registry.project_selection(records, [], [Path("S:/ragflow")], Path("S:/tmp/ragflow"))
     assert [r["name"] for r in selected] == ["cache"]
     assert omitted == {"volume": 1}
+
+
+@pytest.mark.parametrize("reference", ["docker:engine:container:legacy", "docker:other-engine:container:legacy", "docker:engine:container:previous-generation"])
+def test_scope_retains_exact_reviewed_generations_and_their_shared_dependencies(reference):
+    legacy = {"Id": "legacy", "Name": "/private-database", "Image": IMAGE, "Mounts": [{"Type": "volume", "Name": "shared"}]}
+    foreign = {"Id": "foreign", "Name": "/other-service", "Image": IMAGE, "Mounts": [{"Type": "volume", "Name": "shared"}]}
+    records = registry.docker_records("engine", [legacy, foreign], [{"Id": IMAGE}], [{"Name": "shared"}], {}, [{"Id": "net", "Name": "shared", "Containers": {"legacy": {}, "foreign": {}}}])
+    selected, _ = registry.project_selection(records, [legacy, foreign], [Path("S:/ragflow")], Path("S:/tmp/ragflow"), reviewed={reference})
+    if reference != "docker:engine:container:legacy":
+        assert not selected
+        return
+    assert {r["kind"] for r in selected} == {"container", "image", "volume", "network"}
+    assert next(r for r in selected if r["kind"] == "container")["scope_basis"] == "ledger-reference-unconfirmed"
+    assert next(r for r in selected if r["kind"] == "image")["consumers"] == ["foreign", "legacy"]
+    assert all(not r["auto_delete"] for r in selected)
+
+
+def test_inventory_keeps_reviewed_legacy_container_visible_when_evidence_becomes_stale(tmp_path, monkeypatch):
+    from tools.quality import artifact_review
+
+    store = tmp_path / "state"
+    monkeypatch.setenv("RAGFLOW_ARTIFACT_STATE", str(store))
+    legacy = {"Id": "legacy", "Name": "/private-database", "Image": IMAGE, "Mounts": []}
+    records = registry.docker_records("engine", [legacy], [{"Id": IMAGE}], [], {})
+    evidence = tmp_path / "qualification.json"
+    evidence.write_text("pending qualification")
+    artifact_review.record(
+        store,
+        {"complete": True, "scope": {"docker_engine": "engine"}, "records": records},
+        [{"id": records[0]["id"], "owner": "task:qualification", "outcome": "open", "purpose": "Private qualification fixture", "reason": "Acceptance remains pending", "evidence": [str(evidence)]}],
+    )
+
+    def command(*args):
+        if args == ("docker", "context", "show"):
+            return "desktop-linux"
+        if args[:2] == ("docker", "info"):
+            return json.dumps("engine")
+        if args[:3] == ("docker", "system", "df"):
+            return json.dumps({"Type": "Build Cache"})
+        raise AssertionError(args)
+
+    monkeypatch.setattr(registry, "command", command)
+    monkeypatch.setattr(registry, "docker_objects", lambda kind: {"container": [legacy], "image": [{"Id": IMAGE}], "volume": [], "network": []}[kind])
+    for valid in (True, False):
+        if not valid:
+            evidence.write_text("changed qualification")
+        report = registry.inventory([tmp_path / "repo"], tmp_path / "temp")
+        assert report["complete"]
+        assert "ledger-references" in report["scope"]["docker_selection"]
+        item = next(r for r in report["records"] if r["kind"] == "container")
+        assert item["scope_basis"] == "ledger-reference-unconfirmed"
+        assert item["lifetime"]["review"]["evidence_valid"] == valid
+        assert not item["lifetime"]["deletion_authorized"] and not item["auto_delete"]

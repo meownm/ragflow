@@ -89,10 +89,12 @@ def project_labels(labels: dict | None) -> bool:
     return project == "ragflow" or project.startswith("ragflow-") or bool(labels.get("org.ragflow.ci-dry-run"))
 
 
-def project_selection(records: list[dict], containers: list[dict], repositories: list[Path], temp_root: Path) -> tuple[list[dict], dict]:
+def project_selection(records: list[dict], containers: list[dict], repositories: list[Path], temp_root: Path, *, reviewed: set[str] | None = None) -> tuple[list[dict], dict]:
     """Select RAGFlow resources, retaining global consumers of shared dependencies."""
     roots = [*repositories, temp_root]
     owned = set()
+    reviewed = reviewed or set()
+    reviewed_containers = {r["identity"] for r in records if r["kind"] == "container" and r["id"] in reviewed}
 
     def hint(value):
         return bool(re.search(r"(^|[/_-])ragflow([:/_-]|$)", value, re.IGNORECASE))
@@ -111,7 +113,7 @@ def project_selection(records: list[dict], containers: list[dict], repositories:
         for value in container.get("Config", {}).get("Env", [])
         if value.partition("=")[0] in {"SANDBOX_BASE_PYTHON_IMAGE", "SANDBOX_BASE_NODEJS_IMAGE"} and "=" in value
     }
-    hinted = {c["Id"] for c in containers if c.get("Image") in image_hints or c.get("Config", {}).get("Image") in sandbox_images or hint(c.get("Name", "").lstrip("/"))}
+    hinted = reviewed_containers | {c["Id"] for c in containers if c.get("Image") in image_hints or c.get("Config", {}).get("Image") in sandbox_images or hint(c.get("Name", "").lstrip("/"))}
     selected, omitted = [], Counter()
     for record in records:
         if record["kind"] == "container":
@@ -128,6 +130,8 @@ def project_selection(records: list[dict], containers: list[dict], repositories:
             hints = record.get("tags", []) if record["kind"] == "image" else [record.get("name", "")]
             if not reason and any(re.search(r"(^|[/_-])ragflow([:/_-]|$)", hint, re.IGNORECASE) for hint in hints):
                 reason = "name-hint-unconfirmed"
+        if record["id"] in reviewed and reason in {None, "container-hint-unconfirmed"}:
+            reason = "ledger-reference-unconfirmed"
         if reason:
             selected.append({**record, "scope_basis": reason})
         else:
@@ -464,7 +468,8 @@ def inventory(repositories: list[Path], temp_root: Path, *, measure: bool = Fals
             raise ValueError("Docker engine has no identity")
         containers, images, volumes = (docker_objects(kind) for kind in ("container", "image", "volume"))
         networks = docker_objects("network")
-        selected, omitted = project_selection(docker_records(engine, containers, images, volumes, pins, networks), containers, repositories, temp_root)
+        reviewed = {assessment["id"] for run in lifecycle for assessment in run.get("assessments") or []}
+        selected, omitted = project_selection(docker_records(engine, containers, images, volumes, pins, networks), containers, repositories, temp_root, reviewed=reviewed)
         statistics = [json.loads(line) for line in command("docker", "system", "df", "--format", "{{json .}}").splitlines() if line.strip()]
         cache = next(row for row in statistics if row.get("Type") == "Build Cache")
         shared_cache = {
@@ -496,7 +501,7 @@ def inventory(repositories: list[Path], temp_root: Path, *, measure: bool = Fals
                 "temp_root": str(temp_root),
                 "docker_engine": engine,
                 "project": "ragflow",
-                "docker_selection": "project-ownership-dependencies-and-unconfirmed-ragflow-name-hints",
+                "docker_selection": "project-ownership-ledger-references-dependencies-and-unconfirmed-hints",
                 "not_selected_docker_counts": omitted,
                 "exclusions": ["remote-hosts-and-registries", "undeclared-filesystem-roots", "file-level-index", "live-process-and-lease-verification"],
             },

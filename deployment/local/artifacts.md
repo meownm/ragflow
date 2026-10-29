@@ -150,6 +150,14 @@ Compose даёт менеджеру 45 секунд для штатного за
 `*-hint-unconfirmed` не назначает владельца и не разрешает удаление. Таким путём
 учитываются и старые sandbox-контейнеры без project labels.
 
+Исторические custody reviews удерживают в учёте точные Docker generations из
+существующего ledger и зависимости их контейнеров, даже без project labels,
+RAGFlow-тега или bind в checkout. Ссылка привязана к engine и immutable ID;
+невалидное/устаревшее evidence требует повторного разбора, но не скрывает объект
+из реестра. `ledger-reference-unconfirmed` расширяет только обнаружение, не
+назначает producer и не разрешает удаление. Незавершённая проверка OpenMetadata,
+её SQL/RDF checkpoints и rollback не становятся мусором от остановки контейнера.
+
 Pytest plugin активен только при RAGFLOW_ARTIFACT_MANAGED_QA=1,
 RAGFLOW_TEST_DISPOSABLE=1, RAGFLOW_MINIO_BACKUP_TEST=1,
 RAGFLOW_COORDINATED_BACKUP_TEST=1 или RAGFLOW_SANDBOX_IMAGE_TEST=1.

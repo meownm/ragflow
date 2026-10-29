@@ -183,6 +183,14 @@ def apply(report, previous=None):
     for record in report["records"]:
         key = resource_key(record, report.get("scope", {}).get("docker_engine"))
         declaration = declarations.get(key)
+        if not declaration and (sandbox := record.get("sandbox")):
+            declaration = {
+                "task_ref": "sandbox-manager:" + sandbox["manager"] + "@" + sandbox["epoch"],
+                "ownership_source": "producer",
+                "category": "disposable",
+                "purpose": "Sandbox " + sandbox["kind"] + " child; pool " + sandbox["pool"],
+                "depends_on": [sandbox["manager"]],
+            }
         if users := observations.get(key):
             custodians = sorted({user["custodian"] for user in users})
             declaration = {
@@ -206,6 +214,8 @@ def apply(report, previous=None):
             if review.get("closure_valid"):
                 declaration["origin_owner"] = review["origin_owner"]
         record["lifetime"] = assess(record, now=now, previous=before.get(record["id"]), declaration=declaration)
+        if record.get("sandbox"):
+            record["lifetime"]["retirement_executor"] = "sandbox-manager-and-stopped-orphan-cleaner"
         if review:
             record["lifetime"]["review"] = review
             if not review["evidence_valid"] or review["identity"] != record["identity"]:

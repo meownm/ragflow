@@ -30,12 +30,12 @@ async def _lifespan(app: FastAPI):
     """Asynchronous lifecycle management"""
     size = int(os.getenv("SANDBOX_EXECUTOR_MANAGER_POOL_SIZE", 1))
 
-    success_count, total_task_count = await init_containers(size)
-    logger.info(f"\n📊 Container pool initialization complete: {success_count}/{total_task_count} available")
-
-    yield
-
-    await teardown_containers()
+    try:
+        success_count, total_task_count = await init_containers(size)
+        logger.info(f"\n📊 Container pool initialization complete: {success_count}/{total_task_count} available")
+        yield
+    finally:
+        await teardown_containers()
 
 
 def init():

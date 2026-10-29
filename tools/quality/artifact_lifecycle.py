@@ -1337,6 +1337,10 @@ def main():
             return int(failed)
     if args.action == "cleanup":
         result = sweep(args.state, apply=args.apply)
+        from tools.quality.sandbox_pool import cleanup as cleanup_sandbox_pool
+
+        result["sandbox_pool"] = cleanup_sandbox_pool(args.state, apply=args.apply)
+        save(result, args.state / "cleanup.json")
         pending = [r["run_id"] for r in result["runs"] if r.get("delegated_teardown") and r.get("blocked")]
         print(
             json.dumps(
@@ -1346,10 +1350,11 @@ def main():
                     "removed": sum(len(r.get("removed", [])) for r in result["runs"]),
                     "errors": len(result["errors"]) + sum(len(r.get("errors", [])) for r in result["runs"]),
                     "pending_teardowns": pending,
+                    "sandbox_pool": result["sandbox_pool"],
                 }
             )
         )
-        return int(bool(result["errors"] or pending or any(r.get("errors") for r in result["runs"])))
+        return int(bool(result["errors"] or pending or result["sandbox_pool"]["errors"] or result["sandbox_pool"]["blocked"] or any(r.get("errors") for r in result["runs"])))
     if args.action == "exec":
         command = forwarded
         if not command:

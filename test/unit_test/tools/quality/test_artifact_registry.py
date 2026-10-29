@@ -13,6 +13,33 @@ from tools.quality import artifact_registry as registry
 IMAGE = "sha256:" + "a" * 64
 
 
+def test_scope_discovers_unlabeled_sandbox_images_and_named_builders_without_adopting_them():
+    containers = [
+        {"Id": "sandbox", "Name": "/sandbox_python_0", "Image": IMAGE},
+        {"Id": "builder", "Name": "/ragflow-test-runner", "Image": "builder"},
+        {"Id": "foreign", "Name": "/sandbox_python_other", "Image": "foreign"},
+    ]
+    records = registry.docker_records("engine", containers, [{"Id": IMAGE, "RepoTags": ["local/ragflow-sandbox:old"]}, {"Id": "builder"}, {"Id": "foreign"}], [], {})
+    selected, _ = registry.project_selection(records, containers, [Path("S:/ragflow")], Path("S:/tmp/ragflow"))
+    discovered = [r for r in selected if r["kind"] == "container"]
+    assert {r["name"] for r in discovered} == {"sandbox_python_0", "ragflow-test-runner"}
+    assert all(r["scope_basis"] == "container-hint-unconfirmed" and not r["owners"] and not r["auto_delete"] for r in discovered)
+
+
+def test_scope_discovers_sandbox_image_configured_by_confirmed_manager():
+    manager = {
+        "Id": "manager",
+        "Name": "/manager",
+        "Image": "manager-image",
+        "Config": {"Labels": {"com.docker.compose.project": "ragflow-local"}, "Env": ["SANDBOX_BASE_PYTHON_IMAGE=vendor/python:one", "PASSWORD=never-public"]},
+    }
+    child = {"Id": "child", "Name": "/sandbox_python_0", "Image": IMAGE, "Config": {"Image": "vendor/python:one"}}
+    records = registry.docker_records("engine", [manager, child], [], [], {})
+    selected, _ = registry.project_selection(records, [manager, child], [], Path("S:/tmp/ragflow"))
+    assert {r["identity"] for r in selected} == {"manager", "child"}
+    assert "never-public" not in json.dumps(selected)
+
+
 def test_declared_path_generation_distinguishes_same_name_replacement(tmp_path):
     path = tmp_path / "runtime.json"
     path.write_text("original")

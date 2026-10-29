@@ -156,6 +156,7 @@ services:
     restart: unless-stopped
 
   sandbox-executor-manager:
+    stop_grace_period: 45s
     profiles:
       - sandbox
     image: ${SANDBOX_EXECUTOR_MANAGER_IMAGE-infiniflow/sandbox-executor-manager:latest}

@@ -121,6 +121,34 @@ RAGFLOW_ARTIFACT_STATE задаёт другой постоянный store. В 
 | test-native-image.sh | Контейнер, fixtures/test binary, отчёт native проверки |
 | Browser regression | Используемый dist, browser artifacts |
 | Pytest disposable suites | Plugin при явном disposable opt-in |
+| Sandbox manager | Метки manager ID/StartedAt, pool/object generation; все дети, включая private и занятых; `--rm` при выходе |
+
+Sandbox-дети получают `org.ragflow.sandbox.manager` (полный immutable ID
+контейнера менеджера), `.epoch` (его StartedAt), `.pool`, `.kind` и явное
+`.cleanup=owner-lifetime`; общие project/class/object labels сохраняются.
+Менеджер проверяет поколение перед использованием и удалением, учитывает всех
+детей отдельно от очереди свободных исполнителей и очищает частичный startup,
+ошибку, отмену и shutdown. `--rm` удаляет завершившийся исполнитель даже после
+потери процесса менеджера. При нестандартном hostname задайте
+`SANDBOX_MANAGER_CONTAINER` именем или ID именно этого менеджера в его Docker
+daemon; без проверяемого владельца создание пула отклоняется.
+
+Существующий `artifact_lifecycle cleanup` также вызывает `sandbox_pool`:
+повторно проверяет manager ID/epoch, отсутствие активного исполнителя/exec,
+read-only root и постоянных mounts; сохраняет recovery до удаления точного ID.
+Изменения только пустых Docker-created tmpfs mountpoints сохраняются отдельно
+с повторным сравнением архива; произвольное writable-состояние блокирует уборку.
+Активный владелец сохраняет детей; работающий orphan требует разбора и не
+останавливается сборщиком. Неоднозначные старые объекты автоматически не удаляются.
+Compose даёт менеджеру 45 секунд для штатного завершения. `start.sh`/`stop.sh`
+не удаляют контейнеры по общим именам `sandbox_python_N`/`sandbox_nodejs_N`:
+поколениями владеет менеджер, а остановленными orphan — его проверяемый collector.
+
+Обнаружение Docker-контейнеров включает неподтверждённые подсказки по имени,
+образам RAGFlow и sandbox-образам из конфигурации подтверждённого менеджера,
+а также их общие image/volume/network зависимости. Это только расширение учёта:
+`*-hint-unconfirmed` не назначает владельца и не разрешает удаление. Таким путём
+учитываются и старые sandbox-контейнеры без project labels.
 
 Pytest plugin активен только при RAGFLOW_ARTIFACT_MANAGED_QA=1,
 RAGFLOW_TEST_DISPOSABLE=1, RAGFLOW_MINIO_BACKUP_TEST=1,

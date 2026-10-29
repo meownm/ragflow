@@ -34,7 +34,17 @@ OUTPUTS = {
     "logs": "log",
 }
 IMAGE_ID = re.compile(r"sha256:[0-9a-f]{64}$")
-OWNER_LABELS = ("org.ragflow.artifact.project", "org.ragflow.artifact.task", "org.ragflow.artifact.run", "org.ragflow.ci-dry-run", "ragflow.task", "codex.task", "com.docker.compose.project")
+OWNER_LABELS = (
+    "org.ragflow.artifact.project",
+    "org.ragflow.artifact.task",
+    "org.ragflow.artifact.run",
+    "org.ragflow.sandbox.manager",
+    "org.ragflow.sandbox.pool",
+    "org.ragflow.ci-dry-run",
+    "ragflow.task",
+    "codex.task",
+    "com.docker.compose.project",
+)
 
 
 def linked(info: os.stat_result) -> bool:
@@ -83,18 +93,33 @@ def project_selection(records: list[dict], containers: list[dict], repositories:
     """Select RAGFlow resources, retaining global consumers of shared dependencies."""
     roots = [*repositories, temp_root]
     owned = set()
+
+    def hint(value):
+        return bool(re.search(r"(^|[/_-])ragflow([:/_-]|$)", value, re.IGNORECASE))
+
+    image_hints = {r["identity"] for r in records if r["kind"] == "image" and any(hint(value) for value in r.get("tags", []))}
     for container in containers:
         labels = container.get("Config", {}).get("Labels") or {}
         paths = [m["Source"] for m in container.get("Mounts", []) if m["Type"] == "bind"]
         paths.extend(labels.get("com.docker.compose.project.working_dir", "").split(","))
         if project_labels(labels) or any(project_path(p, roots) for p in paths if p):
             owned.add(container["Id"])
+    sandbox_images = {
+        value.split("=", 1)[1]
+        for container in containers
+        if container["Id"] in owned
+        for value in container.get("Config", {}).get("Env", [])
+        if value.partition("=")[0] in {"SANDBOX_BASE_PYTHON_IMAGE", "SANDBOX_BASE_NODEJS_IMAGE"} and "=" in value
+    }
+    hinted = {c["Id"] for c in containers if c.get("Image") in image_hints or c.get("Config", {}).get("Image") in sandbox_images or hint(c.get("Name", "").lstrip("/"))}
     selected, omitted = [], Counter()
     for record in records:
         if record["kind"] == "container":
-            reason = "project-container" if record["identity"] in owned else None
+            reason = "project-container" if record["identity"] in owned else "container-hint-unconfirmed" if record["identity"] in hinted else None
         else:
             reason = "project-consumer" if owned.intersection(record.get("consumers", [])) else None
+            if not reason and hinted.intersection(record.get("consumers", [])):
+                reason = "hint-consumer-unconfirmed"
             if not reason and record.get("receipts"):
                 reason = "project-receipt"
             if not reason and project_labels(dict(value.split("=", 1) for value in record.get("owners", []))):
@@ -114,8 +139,11 @@ def docker_records(engine: str, containers: list[dict], images: list[dict], volu
     """Include stopped consumers and exact receipt references; names are not evidence."""
     image_refs, volume_refs = {}, {}
     result = []
+    from tools.quality.sandbox_pool import child_owner
+
     for container in containers:
         identity = container["Id"]
+        sandbox = child_owner(container)
         image_refs.setdefault(container["Image"], []).append(identity)
         for mount in container.get("Mounts", []):
             if mount["Type"] == "volume":
@@ -130,6 +158,7 @@ def docker_records(engine: str, containers: list[dict], images: list[dict], volu
                 "running": container.get("State", {}).get("Running"),
                 "created_at": container.get("Created"),
                 "image_id": container["Image"],
+                **({"sandbox": sandbox, "category": "disposable"} if sandbox else {}),
                 "bind_sources": [m["Source"] for m in container.get("Mounts", []) if m["Type"] == "bind"],
                 "status": "protected",
                 "blockers": ["container-exists"],

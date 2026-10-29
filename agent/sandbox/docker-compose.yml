@@ -13,6 +13,7 @@ services:
     networks:
       - sandbox-network
     restart: always
+    stop_grace_period: 45s
     security_opt:
       - no-new-privileges:true
     environment:

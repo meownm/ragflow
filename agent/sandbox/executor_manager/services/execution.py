@@ -21,7 +21,7 @@ import time
 import uuid
 
 from core.config import TIMEOUT
-from core.container import allocate_container_blocking, create_container, release_container
+from core.container import allocate_container_blocking, create_container, release_container, remove_container
 from core.logger import logger
 from models.enums import ResourceLimitType, ResultStatus, RuntimeErrorType, SupportLanguage, UnauthorizedAccessType
 from models.schemas import ArtifactItem, CodeExecutionRequest, CodeExecutionResult, ExecutionStructuredResult
@@ -199,7 +199,6 @@ async def execute_code(req: CodeExecutionRequest):
     private = bool(req.private)
     container = f"sql_private_{uuid.uuid4().hex}" if private else await allocate_container_blocking(language)
     if private and not await create_container(container, language, network_disabled=True):
-        await async_run_command("docker", "rm", "-f", container, timeout=10)
         return CodeExecutionResult(status=ResultStatus.PROGRAM_RUNNER_ERROR, stdout="", stderr="Isolated container is unavailable", exit_code=-10, detail="isolated_container_unavailable")
     if not container:
         return CodeExecutionResult(
@@ -318,7 +317,7 @@ async def execute_code(req: CodeExecutionRequest):
         cleanup_tasks = [async_run_command("docker", "exec", container, "rm", "-rf", f"/workspace/{task_id}"), async_run_command("rm", "-rf", workdir)]
         await asyncio.gather(*cleanup_tasks, return_exceptions=True)
         if private:
-            await async_run_command("docker", "rm", "-f", container, timeout=10)
+            await remove_container(container)
         else:
             await release_container(container, language)
 

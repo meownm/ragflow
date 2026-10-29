@@ -20,21 +20,7 @@ set -e
 BASE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$BASE_DIR"
 
-echo "🛑 Stopping all services..."
+echo "🛑 Stopping services; the sandbox manager owns child cleanup..."
 docker compose down
-
-echo "🧹 Deleting sandbox containers..."
-if [ -f .env ]; then
-  source .env
-  for i in $(seq 0 $((SANDBOX_EXECUTOR_MANAGER_POOL_SIZE - 1))); do
-    echo "🧹 Deleting sandbox_python_$i..."
-    docker rm -f "sandbox_python_$i" >/dev/null 2>&1 || true
-
-    echo "🧹 Deleting sandbox_nodejs_$i..."
-    docker rm -f "sandbox_nodejs_$i" >/dev/null 2>&1 || true
-  done
-else
-  echo "⚠️ .env not found, skipping container cleanup"
-fi
 
 echo "✅ Stopping and cleanup complete"

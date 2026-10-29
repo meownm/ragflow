@@ -26,11 +26,10 @@ async def async_run_command(*args, timeout: float = 5) -> Tuple[int, str, str]:
         if proc.returncode is None:
             raise RuntimeError("Process finished but returncode is None")
         return proc.returncode, stdout.decode(), stderr.decode()
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
-        raise RuntimeError("Command timed out")
-    except Exception as e:
-        proc.kill()
-        await proc.wait()
-        raise e
+    except BaseException as error:
+        if proc.returncode is None:
+            proc.kill()
+        await proc.communicate()
+        if isinstance(error, asyncio.TimeoutError):
+            raise RuntimeError("Command timed out") from error
+        raise

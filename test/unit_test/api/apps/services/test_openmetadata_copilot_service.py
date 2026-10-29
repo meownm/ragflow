@@ -1316,3 +1316,11 @@ def test_starter_role_honors_domain_scope_in_the_question(om_module):
     assert result["constraints"] == {"domain": "MeetingsScheduling"}
     assert "MeetingsScheduling" in result["answer"]
     assert "Finance" not in result["answer"]
+
+
+def test_client_resolves_table_name_without_enumerating_catalog(om_module):
+    client = object.__new__(om_module.OpenMetadataClient)
+    calls = []
+    client.get = lambda path, **kwargs: calls.append((path, kwargs)) or {"id": "table-1"}
+    assert client.get_table_by_name("postgres.bot.public.search_queries") == {"id": "table-1"}
+    assert calls == [("/api/v1/tables/name/postgres.bot.public.search_queries", {"params": {"fields": om_module._TABLE_FIELDS}})]

@@ -133,6 +133,8 @@ class BusinessDocumentSqlExportService:
                     "row_count": run.row_count,
                     "duration_ms": run.duration_ms,
                     "completeness": run.checks.get("completeness"),
+                    "execution_status": run.execution.get("phase", "SUCCEEDED"),
+                    "source_completeness": run.checks.get("source_completeness", {"status": "UNKNOWN"}),
                 },
             }
             try:

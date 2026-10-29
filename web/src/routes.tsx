@@ -31,6 +31,7 @@ export enum Routes {
   TechnicalSpecifications = '/technical-specifications',
   DocumentConstructor = '/document-constructor',
   SqlProjects = '/sql-projects',
+  SqlAssistant = '/sql-assistant',
   SqlSources = '/sql-sources',
   Transcription = '/transcription',
   Translator = '/translator',
@@ -275,6 +276,10 @@ const routeConfigOptions = [
         path: Routes.SqlProjects,
         Component: () =>
           import('@/pages/business-documents/constructor/sql-projects-page'),
+      },
+      {
+        path: Routes.SqlAssistant,
+        Component: () => import('@/pages/sql-assistant'),
       },
       {
         path: Routes.SqlSources,

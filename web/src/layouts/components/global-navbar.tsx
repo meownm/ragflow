@@ -43,6 +43,7 @@ const PathMap = {
   [Routes.TechnicalSpecifications]: [Routes.TechnicalSpecifications],
   [Routes.DocumentConstructor]: [Routes.DocumentConstructor],
   [Routes.SqlProjects]: [Routes.SqlProjects],
+  [Routes.SqlAssistant]: [Routes.SqlAssistant],
   [Routes.Transcription]: [Routes.Transcription],
   [Routes.Translator]: [Routes.Translator],
   [Routes.Files]: [Routes.Files],
@@ -152,6 +153,14 @@ const menuItems: Array<{
     'data-testid': 'nav-sql-projects',
   },
   {
+    path: Routes.SqlAssistant,
+    name: 'header.sqlAssistant',
+    fallbackName: 'SQL-помощник',
+    icon: Bot,
+    section: 'sql_assistant',
+    'data-testid': 'nav-sql-assistant',
+  },
+  {
     path: Routes.Files,
     name: 'header.fileManager',
     icon: LucideFolderOpen,
@@ -199,7 +208,10 @@ function useVisibleMenuItems() {
     const visibleSections = new Set(config?.visibleSections);
     return menuItems.filter(
       ({ section, requiresBusinessDocumentCreate }) =>
-        (!section || !config || visibleSections.has(section)) &&
+        (!section ||
+          (config
+            ? visibleSections.has(section)
+            : section !== 'sql_assistant')) &&
         (!requiresBusinessDocumentCreate || canCreateBusinessDocuments),
     );
   }, [canCreateBusinessDocuments, config]);

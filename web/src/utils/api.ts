@@ -336,6 +336,8 @@ export default {
     `${restAPIv1}/business-documents/sql-query/projects/${id}/runs/${runId}/conclusion/confirm`,
   businessDocumentSqlProjectRunCancel: (id: string, runId: string) =>
     `${restAPIv1}/business-documents/sql-query/projects/${id}/runs/${runId}/cancel`,
+  businessDocumentSqlProjectRunDiscard: (id: string, runId: string) =>
+    `${restAPIv1}/business-documents/sql-query/projects/${id}/runs/${runId}/discard`,
   businessDocumentSqlProjectComplete: (id: string) =>
     `${restAPIv1}/business-documents/sql-query/projects/${id}/complete`,
   businessDocumentSqlAgentJobs: (projectId: string) =>

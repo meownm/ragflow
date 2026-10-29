@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from datetime import UTC, datetime
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -13,7 +14,7 @@ from json_repair import repair_json
 from business_documents.adapters.llm import MODEL_TIMEOUT_SECONDS, RAGFlowLLMAdapter
 from api.apps.business_documents.assets import contract_schema, prompt_descriptor, prompt_text, validate_contract
 from api.apps.business_documents.authorization import BusinessDocumentAccess
-from api.apps.services.openmetadata_copilot_service import normalize_table
+from api.apps.services.openmetadata_copilot_service import OpenMetadataAuthenticationError, OpenMetadataError, OpenMetadataNotFoundError, OpenMetadataPermissionError, normalize_table
 from api.apps.services.openmetadata_dataset_retrieval import retrieve_openmetadata_dataset_hits
 from api.apps.services.openmetadata_runtime_service import get_openmetadata_service, openmetadata_catalog_accessible
 from business_documents.application.errors import BusinessDocumentError, ConflictError, PermissionDeniedError, ValidationError
@@ -22,12 +23,14 @@ from business_documents.sql_query.schema_resolution import (
     CatalogCandidate,
     CatalogLookupError,
     CatalogResult,
+    MAX_CATALOG_CANDIDATES,
     PromptProvenance,
     SchemaEntityDetailsScenario,
     SchemaInterpretationError,
     SchemaResolutionScenario,
     SchemaResolutionValidationError,
     catalog_result_from_mapping,
+    explicit_table_reference,
     parse_load_schema_entities_command,
     parse_resolve_schema_command,
 )
@@ -126,6 +129,36 @@ class OpenMetadataCatalogResolver:
         # Discovery scores the query tokens; instruction words would pollute retrieval.
         question = term
         try:
+            exact = explicit_table_reference(term)
+            if exact:
+                try:
+                    raw = await thread_pool_exec(self._service.client.get_table_by_name, exact)
+                except OpenMetadataNotFoundError:
+                    return self._live_result(term, [], locale)
+                current = await self._visible_current(raw, actor_id)
+                if current and current["fqn"].casefold() != exact.casefold():
+                    raise CatalogLookupError("Selected table name changed")
+                return self._live_result(term, [current] if current else [], locale)
+            try:
+                hits = await thread_pool_exec(self._service.client.search_tables, term, MAX_CATALOG_CANDIDATES)
+            except (OpenMetadataAuthenticationError, OpenMetadataPermissionError):
+                raise
+            except OpenMetadataError:
+                hits = []  # Preserve the Dataset/local projection fallback.
+            if hits:
+                entities = []
+                for hit in hits[:MAX_CATALOG_CANDIDATES]:
+                    preview = normalize_table(hit, self._service.config.public_url)
+                    if preview["deleted"] or not await thread_pool_exec(self._service.is_entity_visible, preview, user_id=actor_id):
+                        continue
+                    try:
+                        raw = await thread_pool_exec(self._service.client.get_table, preview["id"])
+                    except OpenMetadataNotFoundError:
+                        continue
+                    current = await self._visible_current(raw, actor_id, expected_id=preview["id"])
+                    if current:
+                        entities.append(current)
+                return self._live_result(term, entities, locale)
             try:
                 dataset_hits, dataset_warning = await asyncio.wait_for(
                     retrieve_openmetadata_dataset_hits(self._service, question, actor_id),
@@ -145,38 +178,48 @@ class OpenMetadataCatalogResolver:
                 kwargs["dataset_warning"] = dataset_warning
             answer = await thread_pool_exec(self._service.catalog.run, question, **kwargs)
             return catalog_result_from_mapping(term, answer)
+        except OpenMetadataPermissionError as exc:
+            raise CatalogAccessDenied("Current catalog access was denied") from exc
+        except CatalogAccessDenied:
+            raise
         except Exception as exc:
             LOGGER.warning("SQL schema catalog lookup failed: %s", type(exc).__name__)
             raise CatalogLookupError("Catalog lookup failed") from exc
 
+    async def _visible_current(self, raw, actor_id, expected_id=None):
+        current = normalize_table(raw, self._service.config.public_url)
+        if expected_id is not None and current["id"] != expected_id:
+            raise CatalogLookupError("Selected table identity changed")
+        if current["deleted"]:
+            return None
+        if not await thread_pool_exec(self._service.is_entity_visible, current, user_id=actor_id):
+            raise CatalogAccessDenied("Selected table is outside the current catalog policy")
+        return current
+
+    @staticmethod
+    def _live_result(term, entities, locale, *, include_all_columns=False):
+        checked_at = datetime.now(UTC).isoformat()
+        return catalog_result_from_mapping(
+            term,
+            {
+                "entities": entities,
+                "answer": "Current OpenMetadata table metadata." if locale == "en" else "Актуальные метаданные таблиц OpenMetadata.",
+                "retrieval": "omd_live_schema",
+                "freshness": {"snapshot_at": checked_at, "checked_at": checked_at, "catalog_checked_at": checked_at, "stale": False, "age_hours": 0},
+                "sources": [{"label": entity["fqn"], "url": entity["url"]} for entity in entities],
+            },
+            include_all_columns=include_all_columns,
+        )
+
     async def load_entity(self, *, entity_id: str, actor_id: str, locale: str) -> CatalogResult:
-        question = "Load the selected table schema." if locale == "en" else "Загрузи схему выбранной таблицы."
         try:
-            visible = await thread_pool_exec(self._service.get_visible_entity, entity_id, user_id=actor_id)
-            if visible is None:
-                raise CatalogAccessDenied("Selected table is outside the visible catalog")
-            answer = await thread_pool_exec(
-                self._service.catalog.run,
-                question,
-                selected_entity_id=entity_id,
-                user_id=actor_id,
-                locale=locale,
-                forced_intent="discovery",
-            )
-            client = getattr(self._service, "client", None)
-            if client is not None:
-                raw = await thread_pool_exec(client.get_table, entity_id)
-                current = normalize_table(raw, self._service.config.public_url)
-                if current["id"] != entity_id or current["deleted"]:
-                    raise CatalogLookupError("Selected table changed or was removed")
-                if not await thread_pool_exec(self._service.is_entity_visible, current, user_id=actor_id):
-                    raise CatalogAccessDenied("Selected table is outside the current catalog policy")
-                answer = {
-                    **answer,
-                    "entities": [current],
-                    "freshness": {**answer.get("freshness", {}), "stale": False},
-                }
-            return catalog_result_from_mapping(entity_id, answer, include_all_columns=True)
+            raw = await thread_pool_exec(self._service.client.get_table, entity_id)
+            current = await self._visible_current(raw, actor_id, expected_id=entity_id)
+            if current is None:
+                raise CatalogLookupError("Selected table was removed")
+            return self._live_result(entity_id, [current], locale, include_all_columns=True)
+        except OpenMetadataPermissionError as exc:
+            raise CatalogAccessDenied("Current catalog access was denied") from exc
         except CatalogAccessDenied:
             raise
         except Exception as exc:

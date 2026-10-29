@@ -1023,6 +1023,7 @@ async def confirm_business_document_sql_conclusion(project_id: str, run_id: str)
 
 
 @manager.route("/business-documents/sql-query/projects/<project_id>/runs/<run_id>/cancel", methods=["POST"])  # noqa: F821
+@manager.route("/business-documents/sql-query/projects/<project_id>/runs/<run_id>/discard", methods=["POST"])  # noqa: F821
 @login_required
 async def cancel_business_document_sql_run(project_id: str, run_id: str):
     try:
@@ -1038,6 +1039,7 @@ async def cancel_business_document_sql_run(project_id: str, run_id: str):
             data,
             _is_admin(),
             _access_role(),
+            discard=request.path.endswith("/discard"),
         )
         return _success(result)
     except (AttributeError, TypeError, BadRequest):

@@ -202,3 +202,18 @@ def test_specifications_and_business_documents_require_their_own_section(monkeyp
         ("business_document_api", "/api/v1/business-documents", "business_documents"),
     ):
         assert AccessGroupService.has_section_access(user, sections_for_request(blueprint, route)) is (section == required)
+
+
+def test_sql_assistant_has_independent_api_access_and_only_necessary_shared_readers(monkeypatch):
+    user = SimpleNamespace(id="member", is_superuser=False)
+    monkeypatch.setattr(AccessGroupService, "effective_policy", staticmethod(lambda _id: {"sections": {"sql_assistant"}, "dataset_ids": set()}))
+    assert AccessGroupService.has_section_access(user, sections_for_request("sql_assistant_api", "/api/v1/sql-assistant/sessions"))
+    for route in (
+        "/business-documents/sql-query/schema/entities",
+        "/business-documents/sql-query/projects/<project_id>/connection",
+        "/business-documents/sql-query/projects/<project_id>/connection/check",
+        "/business-documents/sql-query/projects/<project_id>/export",
+    ):
+        assert AccessGroupService.has_section_access(user, sections_for_request("business_document_api", route))
+    for route in ("/business-documents", "/business-documents/sql-query/projects", "/business-documents/sql-query/projects/<project_id>/runs"):
+        assert not AccessGroupService.has_section_access(user, sections_for_request("business_document_api", route))

@@ -20,7 +20,7 @@ from api.db.services.system_settings_service import SystemSettingsService
 
 
 NAVIGATION_VISIBILITY_SETTING = "navigation.visible_sections"
-NAVIGATION_VISIBILITY_VERSION = 6
+NAVIGATION_VISIBILITY_VERSION = 7
 NAVIGATION_SECTIONS = (
     "home",
     "dataset",
@@ -33,6 +33,7 @@ NAVIGATION_SECTIONS = (
     "technical_specifications",
     "document_constructor",
     "sql_projects",
+    "sql_assistant",
     "asr",
     "translator",
     "file_manager",
@@ -58,7 +59,7 @@ def validate_visible_sections(value: object) -> list[str]:
 def get_visible_sections() -> list[str]:
     settings = SystemSettingsService.get_by_name(NAVIGATION_VISIBILITY_SETTING)
     if not settings:
-        return list(NAVIGATION_SECTIONS)
+        return [section for section in NAVIGATION_SECTIONS if section != "sql_assistant"]
     if len(settings) != 1:
         return []
 
@@ -66,7 +67,7 @@ def get_visible_sections() -> list[str]:
         stored = json.loads(settings[0].value)
         if isinstance(stored, dict):
             version = stored.get("version")
-            if version not in (2, 3, 4, 5, NAVIGATION_VISIBILITY_VERSION):
+            if version not in (2, 3, 4, 5, 6, NAVIGATION_VISIBILITY_VERSION):
                 raise ValueError("Unknown navigation visibility version")
             sections = stored.get("visible_sections")
             if version == 2 and isinstance(sections, list) and "business_documents" in sections:

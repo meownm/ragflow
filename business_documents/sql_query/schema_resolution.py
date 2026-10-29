@@ -43,6 +43,12 @@ _R = TypeVar("_R")
 _EXPLICIT_TABLE_FQN = re.compile(r"(?<![\w.$/@:-])([A-Za-z_][A-Za-z0-9_$-]*\.[A-Za-z_][A-Za-z0-9_$-]*\.[A-Za-z_][A-Za-z0-9_$]*\.[A-Za-z_][A-Za-z0-9_$]*)(?![\w$-]|\.[\w$\"'])")
 
 
+def explicit_table_reference(value: str) -> str | None:
+    """Recognize a complete table identity, never a URL or a column reference."""
+    match = _EXPLICIT_TABLE_FQN.fullmatch(value)
+    return match.group(1) if match else None
+
+
 class SchemaResolutionValidationError(ValueError):
     """The caller or model produced an invalid closed contract."""
 
@@ -504,7 +510,7 @@ def catalog_result_from_mapping(
     if not isinstance(answer, Mapping):
         raise CatalogLookupError("Catalog returned an invalid response")
     raw_entities = answer.get("entities")
-    explicit_source = _EXPLICIT_TABLE_FQN.fullmatch(term) is not None
+    explicit_source = explicit_table_reference(term) is not None
     if explicit_source:
         # Exact sources must not disappear behind the semantic result limit.
         raw_entities = [raw for raw in raw_entities if isinstance(raw, Mapping) and str(raw.get("fqn") or "").casefold() == term.casefold()] if isinstance(raw_entities, list) else []

@@ -12,6 +12,19 @@ def route_app(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("operation,discard", [("cancel", False), ("discard", True)])
+async def test_stop_and_discard_are_distinct_transport_commands(route_app, monkeypatch, operation, discard):
+    app, module = route_app
+    calls = []
+    monkeypatch.setattr(module.BusinessDocumentSqlRunService, "cancel_result", staticmethod(lambda *args, **kwargs: calls.append((args, kwargs)) or {"rows_status": "READY"}))
+    body = {"schema_version": "1", "expected_state_version": 2, "idempotency_key": "stop", "run_id": "r1"}
+    response = await app.test_client().post(f"/business-documents/sql-query/projects/p1/runs/r1/{operation}", json=body)
+    assert response.status_code == 200
+    assert calls[0][0][:4] == (ACTOR, ACTOR, "p1", body)
+    assert calls[0][1] == {"discard": discard}
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("action,method,status", [("update_project", "patch", 200), ("copy_project", "post", 201)])
 async def test_registry_commands_bind_actor_and_keep_versioned_payload(route_app, monkeypatch, action, method, status):
     app, module = route_app
@@ -109,7 +122,15 @@ async def test_connection_probe_rejects_malformed_json(route_app):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("diagnostic,code,status", [("password authentication failed", "SQL_CONNECTION_AUTH_FAILED", 503), ("SSL error: certificate verify failed", "SQL_CONNECTION_TLS_FAILED", 503), ("Connection refused", "SQL_CONNECTION_NETWORK_FAILED", 503), ("timeout expired", "SQL_CONNECTION_TIMEOUT", 504)])
+@pytest.mark.parametrize(
+    "diagnostic,code,status",
+    [
+        ("password authentication failed", "SQL_CONNECTION_AUTH_FAILED", 503),
+        ("SSL error: certificate verify failed", "SQL_CONNECTION_TLS_FAILED", 503),
+        ("Connection refused", "SQL_CONNECTION_NETWORK_FAILED", 503),
+        ("timeout expired", "SQL_CONNECTION_TIMEOUT", 504),
+    ],
+)
 async def test_probe_http_error_keeps_family_without_driver_secrets(route_app, monkeypatch, diagnostic, code, status):
     import psycopg2
     from api.apps.business_documents.sql_query_postgres import _connection_failure
@@ -179,13 +200,17 @@ async def test_transport_preserves_domain_denials_and_conflicts(route_app, monke
     monkeypatch.setattr(module, "_access_role", lambda: "READER")
     error = PermissionDeniedError("Not permitted") if status == 403 else BusinessDocumentError("SQL_FAILURE", "Unavailable or conflict", status)
     if target == "graph":
+
         async def reject(*args):
             raise error
+
         monkeypatch.setattr(module.BusinessDocumentSqlQuerySchemaService, "graph", staticmethod(reject))
         response = await app.test_client().post("/business-documents/sql-query/schema/graph", json={"schema_version": "1", "entity_ids": ["orders"]})
     else:
+
         def reject(*args):
             raise error
+
         monkeypatch.setattr(module.BusinessDocumentSqlWorkspaceService, "save_view", staticmethod(reject))
         response = await app.test_client().put("/business-documents/sql-query/projects/project-1/view", json={"schema_version": "1"})
     assert response.status_code == status

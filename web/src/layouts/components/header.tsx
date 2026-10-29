@@ -32,13 +32,15 @@ export function Header({
   ...props
 }: React.HTMLAttributes<HTMLElement>) {
   const { pathname } = useLocation();
-  const workbenchTitle = pathname.startsWith('/business-documents')
-    ? 'Бизнес-требования'
-    : pathname.startsWith('/technical-specifications')
-      ? 'Технические задания'
-      : pathname.startsWith('/sql-projects')
-        ? 'SQL-проекты'
-        : null;
+  const workbenchTitle = pathname.startsWith('/sql-assistant')
+    ? 'SQL-помощник'
+    : pathname.startsWith('/business-documents')
+      ? 'Бизнес-требования'
+      : pathname.startsWith('/technical-specifications')
+        ? 'Технические задания'
+        : pathname.startsWith('/sql-projects')
+          ? 'SQL-проекты'
+          : null;
   const changeLanguage = useChangeLanguage();
   const { t } = useTranslation();
 

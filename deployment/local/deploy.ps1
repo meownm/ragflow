@@ -12,6 +12,7 @@ param(
     [switch]$InitializeBlueGreen,
     [string]$FeatureImageReference,
     [string]$FeatureSourceId,
+    [string]$SqlAssistantMaintenanceReceipt,
     [string]$CandidateRegistry = "192.168.1.175:5443",
     [string]$CandidateRevision,
     [string]$CandidateImageReference,
@@ -441,6 +442,14 @@ if ($Strategy -eq "Recreate" -and (Test-Path -LiteralPath (Join-Path $repoRoot "
 if ($InitializeBlueGreen -and $Strategy -ne "BlueGreen") {
     throw "InitializeBlueGreen requires Strategy BlueGreen."
 }
+if ($SqlAssistantMaintenanceReceipt) {
+    if ($resolvedMode -ne "Feature" -or $Strategy -ne "BlueGreen") {
+        throw "SQL-assistant maintenance receipts apply only to local Feature BlueGreen installs."
+    }
+    if (-not (Test-Path -LiteralPath $SqlAssistantMaintenanceReceipt -PathType Leaf)) {
+        throw "SQL-assistant maintenance receipt is missing."
+    }
+}
 if ($resolvedMode -eq "Feature") {
     if (($FeatureImageReference -cnotmatch '^sha256:[0-9a-f]{64}$' -and
         $FeatureImageReference -cnotmatch '^192\.168\.1\.175:8443/docker-hosted/ragflow@sha256:[0-9a-f]{64}$') -or
@@ -746,6 +755,9 @@ if ($Strategy -eq "BlueGreen") {
         "--runtime", $blueGreenRuntime, "--output", (Join-Path $EvidenceDirectory "blue-green.json"),
         "--timeout", "$HealthTimeoutSeconds")
     if ($InitializeBlueGreen) { $blueGreenArguments += "--initialize" }
+    if ($SqlAssistantMaintenanceReceipt) {
+        $blueGreenArguments += @("--sql-assistant-receipt", [System.IO.Path]::GetFullPath($SqlAssistantMaintenanceReceipt))
+    }
     Invoke-Native -FilePath $python -Arguments $blueGreenArguments
     $blueGreenEvidence = Get-Content -LiteralPath (Join-Path $EvidenceDirectory "blue-green.json") -Raw | ConvertFrom-Json
     $deploymentAction = "blue-green"
@@ -817,6 +829,9 @@ $evidence = [ordered]@{
     candidate_repo_digests = if ($candidateImage) { $deploymentRepoDigests } else { @() }
     feature_image = $featureImage
     feature_source_id = if ($featureImage) { $FeatureSourceId } else { $null }
+    sql_assistant_maintenance_receipt = if ($SqlAssistantMaintenanceReceipt) {
+        @{ path = [System.IO.Path]::GetFullPath($SqlAssistantMaintenanceReceipt); sha256 = (Get-FileHash -LiteralPath $SqlAssistantMaintenanceReceipt -Algorithm SHA256).Hash }
+    } else { $null }
     runtime_config_sha256 = if ($runtimeBinds) { $runtimeBinds.config_sha256 } else { $null }
     feature_image_id = if ($featureImage) { $deploymentImageId } else { $null }
     feature_repo_digests = if ($featureImage) { $deploymentRepoDigests } else { @() }

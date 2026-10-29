@@ -249,7 +249,7 @@ def test_run_preview_and_completion_purge_rows(database):
         sql_query_runs.BusinessDocumentSqlRunService.preview("tenant-1", "author-1", project_id, run["run_id"])
 
 
-def test_cancel_result_purges_without_document(database):
+def test_cancel_before_dispatch_never_executes_or_creates_a_document(database):
     project_id = database
     run = sql_query_runs.BusinessDocumentSqlRunService.run(
         "tenant-1",
@@ -263,7 +263,7 @@ def test_cancel_result_purges_without_document(database):
         project_id,
         {"schema_version": "1", "expected_state_version": 2, "idempotency_key": "cancel-1", "run_id": run["run_id"]},
     )
-    assert result["rows_status"] == "PURGED"
+    assert result["rows_status"] == "CANCELLED"
     assert sql_query_runs.BusinessDocumentSqlQueryRun.get_by_id(run["run_id"]).rows == []
     assert sql_query_runs.BusinessDocumentJob.get_by_id(sql_query_runs.BusinessDocumentSqlQueryRun.get_by_id(run["run_id"]).job_id).status == "CANCELED"
 
@@ -323,6 +323,7 @@ def test_python_creates_derived_result_without_changing_sql_rows(database, monke
         "author-1",
         project_id,
         {"schema_version": "1", "expected_state_version": 3, "idempotency_key": "cancel-source", "run_id": source["run_id"]},
+        discard=True,
     )
     assert sql_query_runs.BusinessDocumentSqlQueryRun.get_by_id(derived["run_id"]).status == "PURGED"
     assert sql_query_runs.BusinessDocumentSqlQueryRun.get_by_id(derived["run_id"]).rows == []
@@ -438,77 +439,94 @@ def test_conclusion_requires_human_confirmation_and_survives_only_in_document(da
 def test_expired_run_never_publishes_rows(database, monkeypatch, phase):
     from common.time_utils import current_timestamp
     from business_documents.sql_query.result_retention import RESULT_RETENTION_MS
-    queued = sql_query_runs.BusinessDocumentSqlRunService.run("tenant-1", "author-1", database,
-        {"schema_version":"1", "expected_state_version":1, "idempotency_key":"expired-job", "selected_profile_id":None})
+
+    queued = sql_query_runs.BusinessDocumentSqlRunService.run(
+        "tenant-1", "author-1", database, {"schema_version": "1", "expected_state_version": 1, "idempotency_key": "expired-job", "selected_profile_id": None}
+    )
     job = BusinessDocumentJobQueue.claim("retention-test")
     if phase == "before-save":
         output = sql_query_runs.BusinessDocumentSqlRunService.execute_job(job, "retention-test", job.lease_token)
-    sql_query_runs.BusinessDocumentSqlQueryRun.update(create_time=current_timestamp()-RESULT_RETENTION_MS).where(
-        sql_query_runs.BusinessDocumentSqlQueryRun.id==queued["run_id"]).execute()
+    sql_query_runs.BusinessDocumentSqlQueryRun.update(create_time=current_timestamp() - RESULT_RETENTION_MS).where(sql_query_runs.BusinessDocumentSqlQueryRun.id == queued["run_id"]).execute()
     monkeypatch.setattr(sql_query_runs, "explain_postgres", lambda *_args, **_kwargs: pytest.fail("Expired job must stop before DB port"))
     with pytest.raises(sql_query_runs.BusinessDocumentError) as raised:
         if phase == "before-db":
             sql_query_runs.BusinessDocumentSqlRunService.execute_job(job, "retention-test", job.lease_token)
         else:
             sql_query_runs.BusinessDocumentSqlRunService.complete_job(job, "retention-test", job.lease_token, output)
-    assert raised.value.code=="SQL_RESULT_EXPIRED"
-    sql_query_runs.BusinessDocumentSqlRunService.fail_job(job, "retention-test", job.lease_token,
-        {"code":raised.value.code, "message":raised.value.message})
-    stored=sql_query_runs.BusinessDocumentSqlQueryRun.get_by_id(queued["run_id"])
-    assert stored.status=="EXPIRED" and stored.rows==[] and stored.columns==[] and stored.checks=={}
+    assert raised.value.code == "SQL_RESULT_EXPIRED"
+    sql_query_runs.BusinessDocumentSqlRunService.fail_job(job, "retention-test", job.lease_token, {"code": raised.value.code, "message": raised.value.message})
+    stored = sql_query_runs.BusinessDocumentSqlQueryRun.get_by_id(queued["run_id"])
+    assert stored.status == "EXPIRED" and stored.rows == [] and stored.columns == [] and stored.checks == {}
 
 
 def test_python_finishing_after_source_deadline_cannot_store_a_derived_result(database, monkeypatch):
     from business_documents.sql_query.result_retention import RESULT_RETENTION_MS
-    queued=sql_query_runs.BusinessDocumentSqlRunService.run("tenant-1", "author-1", database,
-        {"schema_version":"1", "expected_state_version":1, "idempotency_key":"source-job", "selected_profile_id":None})
-    job=BusinessDocumentJobQueue.claim("retention-test")
-    output=sql_query_runs.BusinessDocumentSqlRunService.execute_job(job,"retention-test",job.lease_token)
-    sql_query_runs.BusinessDocumentSqlRunService.complete_job(job,"retention-test",job.lease_token,output)
+
+    queued = sql_query_runs.BusinessDocumentSqlRunService.run(
+        "tenant-1", "author-1", database, {"schema_version": "1", "expected_state_version": 1, "idempotency_key": "source-job", "selected_profile_id": None}
+    )
+    job = BusinessDocumentJobQueue.claim("retention-test")
+    output = sql_query_runs.BusinessDocumentSqlRunService.execute_job(job, "retention-test", job.lease_token)
+    sql_query_runs.BusinessDocumentSqlRunService.complete_job(job, "retention-test", job.lease_token, output)
     from api.apps.business_documents import sql_query_retention
+
     stored = sql_query_runs.BusinessDocumentSqlQueryRun.get_by_id(queued["run_id"])
     deadline = stored.create_time + RESULT_RETENTION_MS
     clock = [deadline - 1]
     monkeypatch.setattr(sql_query_retention, "current_timestamp", lambda: clock[0])
     monkeypatch.setattr(sql_query_runs, "current_timestamp", lambda: clock[0])
+
     def delayed(_code, columns, rows):
         clock[0] = deadline
-        return {"columns":columns,"rows":rows}
-    monkeypatch.setattr(sql_query_runs,"execute_result_python",delayed)
+        return {"columns": columns, "rows": rows}
+
+    monkeypatch.setattr(sql_query_runs, "execute_result_python", delayed)
     with pytest.raises(sql_query_runs.BusinessDocumentError) as raised:
-        sql_query_runs.BusinessDocumentSqlRunService.run_python("tenant-1","author-1",database,queued["run_id"],
-            {"schema_version":"1","expected_state_version":2,"idempotency_key":"late-python","code":"def main(columns, rows): return {}"})
-    assert raised.value.code=="SQL_RESULT_EXPIRED"
-    assert sql_query_runs.BusinessDocumentSqlQueryRun.select().where(sql_query_runs.BusinessDocumentSqlQueryRun.kind=="PYTHON").count()==0
+        sql_query_runs.BusinessDocumentSqlRunService.run_python(
+            "tenant-1", "author-1", database, queued["run_id"], {"schema_version": "1", "expected_state_version": 2, "idempotency_key": "late-python", "code": "def main(columns, rows): return {}"}
+        )
+    assert raised.value.code == "SQL_RESULT_EXPIRED"
+    assert sql_query_runs.BusinessDocumentSqlQueryRun.select().where(sql_query_runs.BusinessDocumentSqlQueryRun.kind == "PYTHON").count() == 0
 
 
 def test_expired_results_in_another_project_do_not_consume_owner_quota(database, monkeypatch):
     from common.time_utils import current_timestamp
     from business_documents.sql_query.result_retention import RESULT_RETENTION_MS
-    old = sql_query_runs.BusinessDocumentSqlQueryRun.create(id="old-other-project", project_id="other-project", tenant_id="tenant-1",
-        compilation_id="compiled", profile_id="profile-1", profile_version=1, status="READY", rows=[[42]], columns=["value"], checks={"status":"PASS"})
-    sql_query_runs.BusinessDocumentSqlQueryRun.update(create_time=current_timestamp()-RESULT_RETENTION_MS).where(
-        sql_query_runs.BusinessDocumentSqlQueryRun.id==old.id).execute()
+
+    old = sql_query_runs.BusinessDocumentSqlQueryRun.create(
+        id="old-other-project",
+        project_id="other-project",
+        tenant_id="tenant-1",
+        compilation_id="compiled",
+        profile_id="profile-1",
+        profile_version=1,
+        status="READY",
+        rows=[[42]],
+        columns=["value"],
+        checks={"status": "PASS"},
+    )
+    sql_query_runs.BusinessDocumentSqlQueryRun.update(create_time=current_timestamp() - RESULT_RETENTION_MS).where(sql_query_runs.BusinessDocumentSqlQueryRun.id == old.id).execute()
     monkeypatch.setattr(sql_query_runs, "_MAX_OWNER_ACTIVE_RESULTS", 1)
-    queued=sql_query_runs.BusinessDocumentSqlRunService.run("tenant-1","author-1",database,
-        {"schema_version":"1","expected_state_version":1,"idempotency_key":"new-after-retention","selected_profile_id":None})
-    assert sql_query_runs.BusinessDocumentSqlQueryRun.get_by_id(queued["run_id"]).status=="QUEUED"
-    assert sql_query_runs.BusinessDocumentSqlQueryRun.get_by_id(old.id).status=="EXPIRED"
+    queued = sql_query_runs.BusinessDocumentSqlRunService.run(
+        "tenant-1", "author-1", database, {"schema_version": "1", "expected_state_version": 1, "idempotency_key": "new-after-retention", "selected_profile_id": None}
+    )
+    assert sql_query_runs.BusinessDocumentSqlQueryRun.get_by_id(queued["run_id"]).status == "QUEUED"
+    assert sql_query_runs.BusinessDocumentSqlQueryRun.get_by_id(old.id).status == "EXPIRED"
 
 
 def test_retry_of_an_expired_run_command_cannot_return_old_success_or_start_a_second_job(database):
     from common.time_utils import current_timestamp
     from business_documents.sql_query.result_retention import RESULT_RETENTION_MS
-    request={"schema_version":"1","expected_state_version":1,"idempotency_key":"same-expired-run","selected_profile_id":None}
-    queued=sql_query_runs.BusinessDocumentSqlRunService.run("tenant-1","author-1",database,request)
-    job=BusinessDocumentJobQueue.claim("retention-test")
-    output=sql_query_runs.BusinessDocumentSqlRunService.execute_job(job,"retention-test",job.lease_token)
-    sql_query_runs.BusinessDocumentSqlRunService.complete_job(job,"retention-test",job.lease_token,output)
-    sql_query_runs.BusinessDocumentSqlQueryRun.update(create_time=current_timestamp()-RESULT_RETENTION_MS).where(
-        sql_query_runs.BusinessDocumentSqlQueryRun.id==queued["run_id"]).execute()
-    before=sql_query_runs.BusinessDocumentJob.select().count()
+
+    request = {"schema_version": "1", "expected_state_version": 1, "idempotency_key": "same-expired-run", "selected_profile_id": None}
+    queued = sql_query_runs.BusinessDocumentSqlRunService.run("tenant-1", "author-1", database, request)
+    job = BusinessDocumentJobQueue.claim("retention-test")
+    output = sql_query_runs.BusinessDocumentSqlRunService.execute_job(job, "retention-test", job.lease_token)
+    sql_query_runs.BusinessDocumentSqlRunService.complete_job(job, "retention-test", job.lease_token, output)
+    sql_query_runs.BusinessDocumentSqlQueryRun.update(create_time=current_timestamp() - RESULT_RETENTION_MS).where(sql_query_runs.BusinessDocumentSqlQueryRun.id == queued["run_id"]).execute()
+    before = sql_query_runs.BusinessDocumentJob.select().count()
     with pytest.raises(sql_query_runs.BusinessDocumentError) as raised:
-        sql_query_runs.BusinessDocumentSqlRunService.run("tenant-1","author-1",database,request)
-    assert raised.value.code=="SQL_RESULT_EXPIRED"
-    assert sql_query_runs.BusinessDocumentJob.select().count()==before
-    assert sql_query_runs.BusinessDocumentSqlQueryRun.select().count()==1
+        sql_query_runs.BusinessDocumentSqlRunService.run("tenant-1", "author-1", database, request)
+    assert raised.value.code == "SQL_RESULT_EXPIRED"
+    assert sql_query_runs.BusinessDocumentJob.select().count() == before
+    assert sql_query_runs.BusinessDocumentSqlQueryRun.select().count() == 1

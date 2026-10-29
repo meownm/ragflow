@@ -16,10 +16,12 @@ from api.apps.business_documents.sql_execution_registry import BusinessDocumentS
 from api.apps.business_documents.sql_query_agents import BusinessDocumentSqlAgentService, _stable_hash
 from api.apps.business_documents.sql_query_access import authorized_result, read_sql_project
 from api.apps.business_documents.sql_query_conclusions import propose_conclusion
-from api.apps.business_documents.sql_query_postgres import check_postgres_connection, execute_postgres, explain_postgres
+from api.apps.business_documents.sql_query_postgres import check_postgres_connection, execute_postgres, explain_postgres, observe_postgres
 from api.apps.business_documents.sql_query_python import execute_result_python
 from api.apps.business_documents.sql_query_schema import BusinessDocumentSqlQuerySchemaService
 from api.apps.business_documents.sql_query_retention import expire_due_results, expire_project_results
+from api.apps.sql_assistant.definitions import require_definition_admission
+from api.apps.business_documents.sql_llm_logs import require_llm_logs_admission
 from api.db.db_models import (
     BusinessDocumentJob,
     BusinessDocumentSqlExecutionProfile,
@@ -37,6 +39,7 @@ from business_documents.sql_query.project_compilation import ProjectCompilationE
 from business_documents.sql_query.query_specification import compile_query_payload, guard_read_only_sql, parse_schema_snapshot
 from business_documents.sql_query.result_validation import ResultValidationError, preview_rows, validate_result
 from business_documents.sql_query.result_retention import result_expires_at
+from business_documents.sql_query.execution import failed_outcome
 from common.misc_utils import get_uuid
 from common.time_utils import current_timestamp
 
@@ -44,6 +47,40 @@ _MAX_ACTIVE_RESULTS = 3
 _MAX_PYTHON_INPUT_BYTES = 10_000_000
 _MAX_OWNER_ACTIVE_RESULTS = 20
 _MAX_OWNER_STORED_BYTES = 100_000_000
+
+
+def _locked(model, identity):
+    query = model.select().where(model.id == identity)
+    if not isinstance(model._meta.database, SqliteDatabase):
+        query = query.for_update()
+    return query.get()
+
+
+def _execution_event(job, worker_id, lease_token, phase, *, expected_attempt=None, **values):
+    with BusinessDocumentJob._meta.database.atomic():
+        current_job = _locked(BusinessDocumentJob, job.id)
+        run = _locked(BusinessDocumentSqlQueryRun, job.payload["run_id"])
+        try:
+            BusinessDocumentSqlAgentService._require_job_lease(current_job, worker_id, lease_token)
+        except ConflictError:
+            # The original attempt may acknowledge completion after its lease
+            # was recovered. It can resolve UNKNOWN, never publish rows or
+            # acknowledge a different attempt.
+            if phase != "SUCCEEDED" or run.status != "UNKNOWN" or expected_attempt is None or run.execution.get("attempt_id") != expected_attempt or not run.execution.get("backend"):
+                raise
+            execution = {**run.execution, **values, "phase": "SUCCEEDED", "output_completeness": "unavailable", "updated_at": current_timestamp()}
+            BusinessDocumentSqlQueryRun.update(status="SUCCEEDED", execution=execution).where(BusinessDocumentSqlQueryRun.id == run.id).execute()
+            return execution
+        if phase == "DISPATCHING":
+            if run.status == "CANCEL_REQUESTED":
+                raise BusinessDocumentError("SQL_CANCELED", "Query canceled before dispatch", 409)
+            if run.status != "RUNNING" or run.execution.get("phase") != "PREPARED":
+                raise ConflictError("SQL_DISPATCH_FENCED", "This SQL attempt cannot be sent again")
+        if run.status not in {"RUNNING", "CANCEL_REQUESTED"}:
+            raise ConflictError("SQL_RUN_STATE_CHANGED", "SQL run state changed")
+        execution = {"attempt_id": get_uuid(), **run.execution, **values, "phase": phase, "updated_at": current_timestamp()}
+        BusinessDocumentSqlQueryRun.update(execution=execution).where(BusinessDocumentSqlQueryRun.id == run.id).execute()
+        return execution
 
 
 def _command(raw: object, fields: set[str]) -> tuple[int, str]:
@@ -106,6 +143,7 @@ def _source(project: BusinessDocumentSqlQueryProject) -> tuple[BusinessDocumentS
     fresh = compile_query_payload(command)
     if fresh.get("status") != "READY" or fresh.get("guard", {}).get("status") != "PASS" or fresh != compilation.payload.get("result"):
         raise ConflictError("SQL_COMPILATION_STALE", "Compiled SQL no longer matches accepted decisions")
+    require_definition_admission(project, compilation)
     return compilation, command
 
 
@@ -299,7 +337,14 @@ class BusinessDocumentSqlRunService:
                 result["blocker"] = {"code": "SQL_ROW_LIMIT_EXCEEDED", "message": "Reduce the row limit to fit the source profile"}
             elif connector is not None:
                 compiled = compilation.payload["result"]
-                explain_postgres(connector.config, compiled["sql"], compiled["parameters"], timeout_ms=profile.statement_timeout_ms)
+                timezone = require_definition_admission(project, compilation)
+                policy = require_llm_logs_admission(compilation.payload, actor_id, profile.id)
+                if policy is not None:
+                    from api.apps.business_documents.sql_query_postgres import check_source_access
+
+                    check_source_access(connector.config, policy)
+                    result["source_completeness"] = policy["source_completeness"]
+                explain_postgres(connector.config, compiled["sql"], compiled["parameters"], timeout_ms=profile.statement_timeout_ms, **({"timezone": timezone} if timezone else {}))
         return result
 
     @classmethod
@@ -354,7 +399,13 @@ class BusinessDocumentSqlRunService:
         compiled = compilation.payload["result"]
         if compiled["parameters"]["row_limit"] > profile.max_rows:
             raise ValidationError("SQL_ROW_LIMIT_EXCEEDED", "Reduce the row limit to fit the source profile")
-        explain_postgres(connector.config, compiled["sql"], compiled["parameters"], timeout_ms=profile.statement_timeout_ms)
+        timezone = require_definition_admission(project, compilation)
+        source_policy = require_llm_logs_admission(compilation.payload, actor_id, profile.id)
+        if source_policy is not None:
+            from api.apps.business_documents.sql_query_postgres import check_source_access
+
+            check_source_access(connector.config, source_policy)
+        explain_postgres(connector.config, compiled["sql"], compiled["parameters"], timeout_ms=profile.statement_timeout_ms, **({"timezone": timezone} if timezone else {}))
         with BusinessDocumentSqlQueryProject._meta.database.atomic():
             _check_owner_result_quota(tenant_id, new_result=True)
             current = BusinessDocumentSqlAgentService._get_project(tenant_id, project_id)
@@ -387,6 +438,7 @@ class BusinessDocumentSqlRunService:
                 columns=[],
                 rows=[],
                 checks={},
+                execution={"phase": "REGISTERED", "attempt_id": get_uuid()},
             )
             changed = (
                 BusinessDocumentSqlQueryProject.update(
@@ -428,10 +480,13 @@ class BusinessDocumentSqlRunService:
             raise ConflictError("SQL_RUN_JOB_MISMATCH", "SQL run job no longer matches its project")
         if run.status == "PURGED":
             return {"status": "PURGED"}
-        if run.status == "CANCEL_REQUESTED":
+        if run.status == "CANCEL_REQUESTED" and run.execution.get("phase") in {"REGISTERED", "PREPARED"}:
             return {"status": "CANCELED"}
-        changed = BusinessDocumentSqlQueryRun.update(status="RUNNING").where((BusinessDocumentSqlQueryRun.id == run.id) & (BusinessDocumentSqlQueryRun.status.in_(("QUEUED", "RUNNING")))).execute()
+        changed = BusinessDocumentSqlQueryRun.update(status="RUNNING").where((BusinessDocumentSqlQueryRun.id == run.id) & (BusinessDocumentSqlQueryRun.status == "QUEUED")).execute()
         if changed != 1:
+            current = BusinessDocumentSqlQueryRun.get_by_id(run.id)
+            if current.status == "CANCEL_REQUESTED" and current.execution.get("phase") in {"REGISTERED", "PREPARED"}:
+                return {"status": "CANCELED"}
             raise ConflictError("SQL_RUN_STATE_CHANGED", "SQL run state changed before execution")
         actor_id = payload["actor_id"]
         access_role, is_admin = _current_actor_access(actor_id)
@@ -452,13 +507,30 @@ class BusinessDocumentSqlRunService:
         if row_limit > profile.max_rows:
             raise ConflictError("SQL_ROW_LIMIT_EXCEEDED", "Source row limit changed before execution")
         _require_run_lifetime(run)
-        explain_postgres(connector.config, compiled["sql"], compiled["parameters"], timeout_ms=profile.statement_timeout_ms)
+        timezone = require_definition_admission(project, compilation)
+        explain_postgres(connector.config, compiled["sql"], compiled["parameters"], timeout_ms=profile.statement_timeout_ms, **({"timezone": timezone} if timezone else {}))
 
         def canceled() -> bool:
             with BusinessDocumentSqlQueryRun._meta.database.connection_context():
                 current = BusinessDocumentSqlQueryRun.get_by_id(run.id)
                 current_job = BusinessDocumentJob.get_by_id(job.id)
                 return current.status in {"CANCEL_REQUESTED", "PURGED"} or current_job.lease_token != lease_token or current_job.status != "RUNNING"
+
+        timezone = require_definition_admission(project, compilation)
+        _execution_event(job, worker_id, lease_token, "PREPARED")
+        attempt_id = BusinessDocumentSqlQueryRun.get_by_id(run.id).execution["attempt_id"]
+        source_policy = require_llm_logs_admission(compilation.payload, actor_id, profile.id)
+        if source_policy is not None:
+            _execution_event(job, worker_id, lease_token, "PREPARED", source_completeness=source_policy["source_completeness"], access_fingerprint=source_policy["access_fingerprint"])
+
+        def dispatch(identity):
+            current_role, current_admin = _current_actor_access(actor_id)
+            current_access = BusinessDocumentAccess(actor_id, current_role, current_admin)
+            current_access.require_edit(project.owner_id)
+            current_access.require_execute_sql()
+            require_definition_admission(project, compilation)
+            current_policy = require_llm_logs_admission(compilation.payload, actor_id, profile.id)
+            _execution_event(job, worker_id, lease_token, "DISPATCHING", backend=identity, **({"source_completeness": current_policy["source_completeness"]} if current_policy else {}))
 
         result = execute_postgres(
             connector.config,
@@ -468,7 +540,12 @@ class BusinessDocumentSqlRunService:
             max_rows=row_limit + 1,
             max_result_bytes=profile.max_result_bytes,
             should_cancel=canceled,
+            on_dispatch=dispatch,
+            on_completed=lambda: _execution_event(job, worker_id, lease_token, "SUCCEEDED", expected_attempt=attempt_id, completed_at=current_timestamp()),
+            source_policy={**source_policy, "attempt_name": "ragflow-sql:" + run.execution["attempt_id"]} if source_policy else None,
+            **({"timezone": timezone} if timezone else {}),
         )
+        _execution_event(job, worker_id, lease_token, "SUCCEEDED", expected_attempt=attempt_id, completed_at=current_timestamp())
         try:
             checked = validate_result(
                 result,
@@ -485,13 +562,15 @@ class BusinessDocumentSqlRunService:
         with BusinessDocumentJob._meta.database.atomic():
             if output["status"] == "READY":
                 _check_owner_result_quota(job.tenant_id, new_result=False, additional_bytes=output["result"]["result_bytes"])
-            current_job = BusinessDocumentJob.get_by_id(job.id)
+            current_job = _locked(BusinessDocumentJob, job.id)
             BusinessDocumentSqlAgentService._require_job_lease(current_job, worker_id, lease_token)
-            run = BusinessDocumentSqlQueryRun.get_by_id(job.payload["run_id"])
-            if run.status in {"CANCEL_REQUESTED", "PURGED"} or output["status"] != "READY":
-                BusinessDocumentSqlQueryRun.update(rows=[], columns=[], checks={}, status="PURGED").where(BusinessDocumentSqlQueryRun.id == run.id).execute()
+            run = _locked(BusinessDocumentSqlQueryRun, job.payload["run_id"])
+            if run.status == "PURGED" or output["status"] != "READY":
+                BusinessDocumentSqlQueryRun.update(rows=[], columns=[], checks={}, status="PURGED" if run.status == "PURGED" else "CANCELLED", execution={**run.execution, "phase": "CANCELLED"}).where(
+                    BusinessDocumentSqlQueryRun.id == run.id
+                ).execute()
                 status = "CANCELED"
-            elif run.status == "RUNNING":
+            elif run.status in {"RUNNING", "CANCEL_REQUESTED"}:
                 _require_run_lifetime(run)
                 checked = output["result"]
                 BusinessDocumentSqlQueryRun.update(
@@ -521,20 +600,26 @@ class BusinessDocumentSqlRunService:
     @classmethod
     def fail_job(cls, job: BusinessDocumentJob, worker_id: str, lease_token: str, error: dict[str, Any]) -> None:
         with BusinessDocumentJob._meta.database.atomic():
-            current_job = BusinessDocumentJob.get_by_id(job.id)
+            current_job = _locked(BusinessDocumentJob, job.id)
             BusinessDocumentSqlAgentService._require_job_lease(current_job, worker_id, lease_token)
-            run = BusinessDocumentSqlQueryRun.get_by_id(job.payload["run_id"])
-            canceled = run.status in {"CANCEL_REQUESTED", "PURGED"} or error.get("code") == "SQL_CANCELED"
-            expired = not canceled and error.get("code") == "SQL_RESULT_EXPIRED"
+            run = _locked(BusinessDocumentSqlQueryRun, job.payload["run_id"])
+            original_phase = run.execution.get("phase")
+            if original_phase is None and run.status in {"RUNNING", "CANCEL_REQUESTED"}:
+                original_phase = "DISPATCHING"
+            outcome, phase = failed_outcome(original_phase, error.get("code", "WORKER_FAILURE"))
+            if run.status == "PURGED":
+                outcome = "PURGED"
+            canceled, expired = outcome in {"PURGED", "CANCELLED"}, outcome == "EXPIRED"
             BusinessDocumentSqlQueryRun.update(
-                status="PURGED" if canceled else "EXPIRED" if expired else "FAILED",
+                status=outcome,
                 rows=[],
                 columns=[],
                 checks={},
                 error=None if canceled or expired else error,
+                execution={**run.execution, "phase": phase, "updated_at": current_timestamp(), "output_completeness": "unavailable"},
             ).where(BusinessDocumentSqlQueryRun.id == run.id).execute()
             BusinessDocumentJob.update(
-                status="CANCELED" if canceled else "FAILED",
+                status="CANCELED" if canceled else "COMPLETED" if outcome == "SUCCEEDED" else "FAILED",
                 error=None if canceled else error,
                 progress_stage="CANCELED" if canceled else "FAILED",
                 lease_owner=None,
@@ -545,9 +630,9 @@ class BusinessDocumentSqlRunService:
             ).where(BusinessDocumentJob.id == job.id).execute()
 
     @classmethod
-    def cancel_result(cls, tenant_id: str, actor_id: str, project_id: str, raw: object, is_admin: bool = False, access_role: str = "AUTHOR_CREATOR") -> dict[str, Any]:
+    def cancel_result(cls, tenant_id: str, actor_id: str, project_id: str, raw: object, is_admin: bool = False, access_role: str = "AUTHOR_CREATOR", *, discard: bool = False) -> dict[str, Any]:
         version, key = _command(raw, {"run_id"})
-        request_hash = _stable_hash({"type": "CANCEL_RESULT", "request": raw})
+        request_hash = _stable_hash({"type": "DISCARD_RESULT" if discard else "CANCEL_RESULT", "request": raw})
         with BusinessDocumentSqlQueryProject._meta.database.atomic():
             project = BusinessDocumentSqlAgentService._get_project(tenant_id, project_id)
             BusinessDocumentAccess(actor_id, access_role, is_admin).require_edit(project.owner_id)
@@ -561,12 +646,19 @@ class BusinessDocumentSqlRunService:
                 (BusinessDocumentSqlQueryRun.id == raw["run_id"])
                 & (BusinessDocumentSqlQueryRun.project_id == project_id)
                 & (BusinessDocumentSqlQueryRun.tenant_id == tenant_id)
-                & (BusinessDocumentSqlQueryRun.status.in_(("QUEUED", "RUNNING", "READY")))
+                & (BusinessDocumentSqlQueryRun.status.in_(("QUEUED", "RUNNING", "READY", "CANCEL_REQUESTED", "UNKNOWN", "SUCCEEDED")))
             )
             if run is None:
                 raise ConflictError("SQL_RESULT_MISSING", "Active result was not found")
-            status = "PURGED"
-            if run.status == "RUNNING":
+            if run.job_id:
+                _locked(BusinessDocumentJob, run.job_id)
+            run = _locked(BusinessDocumentSqlQueryRun, run.id)
+            if discard and run.status != "READY":
+                raise ConflictError("SQL_RUN_ACTIVE", "Only a saved result can be removed; execution must be resolved first")
+            status = run.status if run.status in {"UNKNOWN", "SUCCEEDED", "READY", "CANCEL_REQUESTED"} else "CANCELLED"
+            if run.status == "RUNNING" and run.execution.get("phase") == "SUCCEEDED":
+                status = "RUNNING"
+            elif run.status == "RUNNING":
                 status = "CANCEL_REQUESTED"
             elif run.status == "QUEUED":
                 canceled_job = (
@@ -576,8 +668,12 @@ class BusinessDocumentSqlRunService:
                 )
                 if canceled_job != 1:
                     status = "CANCEL_REQUESTED"
-            BusinessDocumentSqlQueryRun.update(rows=[], status=status).where(BusinessDocumentSqlQueryRun.id == run.id).execute()
-            if run.kind == "SQL":
+            if discard:
+                status = "PURGED"
+            BusinessDocumentSqlQueryRun.update(
+                status=status, **({"rows": [], "execution": {**run.execution, "phase": "CANCELLED"}} if status == "CANCELLED" else {"rows": []} if status == "PURGED" else {})
+            ).where(BusinessDocumentSqlQueryRun.id == run.id).execute()
+            if run.kind == "SQL" and status == "PURGED":
                 _purge_conclusion_drafts(project_id, tenant_id, run.id)
                 BusinessDocumentSqlQueryRun.update(rows=[], status="PURGED").where(
                     (BusinessDocumentSqlQueryRun.project_id == project_id)
@@ -592,7 +688,27 @@ class BusinessDocumentSqlRunService:
             ).where(BusinessDocumentSqlQueryProject.id == project_id).execute()
             response = {"run_id": run.id, "rows_status": status, "state_version": version + 1}
             BusinessDocumentSqlAgentService._record_command(tenant_id, project_id, key, request_hash, response)
-            return response
+        if status == "UNKNOWN" and run.execution.get("backend"):
+            response["observation"] = cls.execution_status(tenant_id, actor_id, project_id, run.id, is_admin, access_role, cancel=True).get("observation")
+        return response
+
+    @classmethod
+    def execution_status(cls, tenant_id, actor_id, project_id, run_id, is_admin=False, access_role="AUTHOR_CREATOR", *, cancel=False):
+        project = read_sql_project(tenant_id, actor_id, project_id, is_admin, access_role)
+        run = BusinessDocumentSqlQueryRun.get_or_none(
+            (BusinessDocumentSqlQueryRun.id == run_id) & (BusinessDocumentSqlQueryRun.project_id == project.id) & (BusinessDocumentSqlQueryRun.tenant_id == tenant_id)
+        )
+        if run is None:
+            raise BusinessDocumentError("SQL_RUN_NOT_FOUND", "SQL run was not found", 404)
+        result = {"run_id": run.id, "status": run.status, "phase": run.execution.get("phase", "UNKNOWN"), "resend_allowed": False}
+        if run.status == "UNKNOWN" and run.execution.get("backend"):
+            compilation, command = _source(project)
+            _, profile, connector = _binding(actor_id, is_admin, access_role, command, run.profile_id)
+            if profile is None or profile.version != run.profile_version or connector is None:
+                raise ConflictError("SQL_PROFILE_STALE", "The original execution profile is unavailable")
+            require_llm_logs_admission(compilation.payload, actor_id, profile.id)
+            result["observation"] = observe_postgres(connector.config, run.execution["backend"], cancel=cancel)
+        return result
 
     @classmethod
     def preview(cls, tenant_id: str, actor_id: str, project_id: str, run_id: str, offset: int = 0, is_admin: bool = False, access_role: str = "AUTHOR_CREATOR") -> dict[str, Any]:

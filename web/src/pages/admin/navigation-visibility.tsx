@@ -40,6 +40,7 @@ const SectionLabels: Record<NavigationSection, string> = {
   technical_specifications: 'header.technicalSpecifications',
   document_constructor: 'header.documentConstructor',
   sql_projects: 'header.sqlProjects',
+  sql_assistant: 'header.sqlAssistant',
   asr: 'header.transcription',
   translator: 'header.translator',
   file_manager: 'header.fileManager',

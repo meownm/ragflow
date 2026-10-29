@@ -15,6 +15,7 @@ import {
   requestBusinessDocumentSqlRevision,
   restoreBusinessDocumentSqlQuery,
 } from '@/services/business-document-service';
+import { isSqlRunUnresolved } from '@/utils/sql-execution';
 import {
   type ComponentProps,
   useCallback,
@@ -465,9 +466,7 @@ function SqlRevisionWorkspace({
     project.operation_state !== 'RUNNING' &&
     project.artifact_ids.requirements &&
     project.artifact_ids.schema &&
-    !project.runs?.some((item) =>
-      ['QUEUED', 'RUNNING', 'CANCEL_REQUESTED'].includes(item.status),
-    ),
+    !project.runs?.some((item) => isSqlRunUnresolved(item.status)),
   );
   const restoreSelected = () =>
     perform(async () => {

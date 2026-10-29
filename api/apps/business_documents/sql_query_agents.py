@@ -21,6 +21,10 @@ from api.db.db_models import (
     BusinessDocumentSqlQueryRun,
     BusinessDocumentSqlQueryThread,
     BusinessDocumentSqlQueryView,
+    SqlAssistantCommand,
+    SqlAssistantDefinition,
+    SqlAssistantDefinitionVersion,
+    SqlAssistantSession,
 )
 from business_documents.application.errors import BusinessDocumentError, ConflictError, ValidationError
 from business_documents.domain.access import BusinessDocumentRole
@@ -112,6 +116,10 @@ class BusinessDocumentSqlAgentService:
             BusinessDocumentSqlQueryThread,
             BusinessDocumentSqlQueryView,
             BusinessDocumentJob,
+            SqlAssistantSession,
+            SqlAssistantCommand,
+            SqlAssistantDefinition,
+            SqlAssistantDefinitionVersion,
         )
 
     @classmethod
@@ -219,6 +227,7 @@ class BusinessDocumentSqlAgentService:
             raise ValidationError("INVALID_SQL_PROJECT_SEARCH", "Invalid project search")
         access = BusinessDocumentAccess(actor_id, access_role, is_admin)
         query = BusinessDocumentSqlQueryProject.select().where(BusinessDocumentSqlQueryProject.tenant_id == tenant_id)
+        query = query.where(BusinessDocumentSqlQueryProject.id.not_in(SqlAssistantSession.select(SqlAssistantSession.id)))
         if not access.capabilities()["edit_all"]:
             query = query.where(BusinessDocumentSqlQueryProject.owner_id == actor_id)
         query = query.where(BusinessDocumentSqlQueryProject.archived_at.is_null(not archived))
@@ -1259,6 +1268,8 @@ class BusinessDocumentSqlAgentService:
             blockers.append({"code": project.last_error.get("code", "SQL_AGENT_FAILED"), "message": project.last_error.get("message", "Analysis failed"), "action": "RETRY_ANALYSIS"})
         if run is not None and run.status == "FAILED" and run.error:
             blockers.append({"code": run.error.get("code", "SQL_RUN_FAILED"), "message": run.error.get("message", "Query failed"), "action": "CHECK_QUERY"})
+        if run is not None and run.status == "UNKNOWN":
+            blockers.append({"code": "SQL_EXECUTION_UNKNOWN", "message": "Исход SQL неизвестен. Повторная отправка запрещена; требуется сверка состояния источника.", "action": "RECONCILE_EXECUTION"})
         if project.stage == "COMPLETE" and not compilation_current:
             blockers.append({"code": "SQL_COMPILATION_REQUIRED", "message": "Compile the accepted SQL before execution", "action": "COMPILE"})
         return {

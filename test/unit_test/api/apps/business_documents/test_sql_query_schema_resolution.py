@@ -432,11 +432,9 @@ async def test_openmetadata_adapter_reuses_shared_service_and_enforces_dataset_a
     assert details.candidates[0].schema_loaded is True
     assert details.candidates[0].version == 2
     assert details.freshness.stale is False
-    assert calls[3][2]["selected_entity_id"] == "orders"
-    assert calls[3][2]["forced_intent"] == "discovery"
-    assert calls[4] == ("live_table", "orders")
-    assert calls[5] == ("live_acl", "orders", "actor-1")
-    assert len(calls) == 6
+    assert calls[3] == ("live_table", "orders")
+    assert calls[4] == ("live_acl", "orders", "actor-1")
+    assert len(calls) == 5
 
 
 @pytest.mark.asyncio

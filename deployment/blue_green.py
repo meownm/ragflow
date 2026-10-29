@@ -31,6 +31,9 @@ for base in ('api','admin'):
             paths.add(p)
 for name in ('api/db/init_data.py','api/db/db_utils.py','api/db/__init__.py'):
     paths.add(root/name)
+optional=root/'api/db/sql_assistant_schema.py'
+if optional.is_file():
+    paths.add(optional)
 manifest={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(paths)}
 print(hashlib.sha256(json.dumps(manifest,sort_keys=True).encode()).hexdigest())
 """
@@ -376,11 +379,13 @@ class BlueGreen:
             command("docker", "start", legacy)
         self.journal.unlink()
 
-    def deploy(self, config: dict, *, initialize: bool = False) -> dict:
+    def deploy(self, config: dict, *, initialize: bool = False, sql_assistant_receipt: Path | None = None) -> dict:
         from uuid import uuid4
 
         if self.journal.exists():
             raise ValueError("Interrupted deployment: resolve pending.json before another deployment")
+        if (self.root / "sql-assistant-maintenance/pending.json").exists():
+            raise ValueError("Interrupted SQL-assistant maintenance: recover it before deployment")
         previous = json.loads(self.state_path.read_text()) if self.state_path.exists() else None
         if not previous and not initialize:
             raise ValueError("Gateway is not initialized. First port handover needs an explicit maintenance window (--initialize)")
@@ -388,7 +393,11 @@ class BlueGreen:
         if not re.fullmatch("[a-f0-9]{64}", schema):
             raise ValueError("Image schema identity is unavailable")
         if previous and previous["schema_sha256"] != schema:
-            raise ValueError("Schema/initializer inputs changed; use a separately verified maintenance migration")
+            if sql_assistant_receipt is None:
+                raise ValueError("Schema/initializer inputs changed; use a separately verified maintenance migration")
+            from deployment.sql_assistant_maintenance import admit_receipt
+
+            admit_receipt(sql_assistant_receipt, previous, config, schema, self.project, self.root)
         if not previous:
             legacy = f"{self.project}-ragflow-cpu-1"
             info = json.loads(command("docker", "inspect", legacy))[0]
@@ -484,6 +493,7 @@ def main() -> int:
     parser.add_argument("--timeout", type=int, default=1200)
     parser.add_argument("--initialize", action="store_true")
     parser.add_argument("--recover", action="store_true", help="Restore the pre-deployment route and worker after interruption")
+    parser.add_argument("--sql-assistant-receipt", type=Path, help="Verified, target/image-bound additive SQL-assistant maintenance receipt")
     args = parser.parse_args()
     if not args.recover and (not args.config or not args.output):
         parser.error("--config and --output are required for deployment")
@@ -503,7 +513,7 @@ def main() -> int:
         config = deployment_config(base, args.project, base["services"]["ragflow-cpu"]["image"])
         if runtime:
             runtime.use_config_images(config)
-        result = deployer.deploy(config, initialize=args.initialize)
+        result = deployer.deploy(config, initialize=args.initialize, sql_assistant_receipt=args.sql_assistant_receipt)
         write_json(args.output, result)
     return 0
 

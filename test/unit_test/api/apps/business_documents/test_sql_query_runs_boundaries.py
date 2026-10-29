@@ -146,15 +146,15 @@ def test_invalid_database_result_is_not_saved(project, monkeypatch):
     assert stored.status == "RUNNING" and stored.rows == []
 
 
-def test_cancellation_wins_over_late_valid_result(project):
+def test_completed_query_wins_over_late_cancellation(project):
     job, run = attempt(project)
     output = Service.execute_job(job, job.lease_owner, job.lease_token)
     canceled = Service.cancel_result(TENANT, ACTOR, project, {"schema_version": "1", "expected_state_version": 2, "idempotency_key": "cancel-late", "run_id": run.id})
-    assert canceled["rows_status"] == "CANCEL_REQUESTED"
+    assert canceled["rows_status"] == "RUNNING"
     Service.complete_job(job, job.lease_owner, job.lease_token, output)
     stored = BusinessDocumentSqlQueryRun.get_by_id(run.id)
-    assert stored.status == "PURGED" and stored.rows == stored.columns == [] and stored.checks == {}
-    assert BusinessDocumentJob.get_by_id(job.id).status == "CANCELED"
+    assert stored.status == "READY" and stored.rows == [[42]] and stored.checks["status"] == "PASS"
+    assert BusinessDocumentJob.get_by_id(job.id).status == "COMPLETED"
 
 
 @pytest.mark.parametrize("action", ["complete", "fail"])
@@ -179,7 +179,7 @@ def test_failure_classification_purges_rows_and_releases_lease(project, code):
     Service.fail_job(job, job.lease_owner, job.lease_token, {"code": code})
     stored = BusinessDocumentSqlQueryRun.get_by_id(run.id)
     finished = BusinessDocumentJob.get_by_id(job.id)
-    assert stored.status == ("PURGED" if code == "SQL_CANCELED" else "FAILED")
+    assert stored.status == ("CANCELLED" if code == "SQL_CANCELED" else "FAILED")
     assert stored.rows == stored.columns == [] and stored.checks == {}
     assert stored.error == ({} if code == "SQL_CANCELED" else {"code": code})
     assert finished.status == ("CANCELED" if code == "SQL_CANCELED" else "FAILED")
@@ -193,7 +193,7 @@ def test_claimed_queued_job_is_canceled_by_worker_instead_of_being_abandoned(pro
     assert BusinessDocumentJob.get_by_id(job.id).status == "RUNNING"
     output = Service.execute_job(job, job.lease_owner, job.lease_token)
     Service.complete_job(job, job.lease_owner, job.lease_token, output)
-    assert BusinessDocumentSqlQueryRun.get_by_id(run.id).status == "PURGED"
+    assert BusinessDocumentSqlQueryRun.get_by_id(run.id).status == "CANCELLED"
     assert BusinessDocumentJob.get_by_id(job.id).status == "CANCELED"
 
 

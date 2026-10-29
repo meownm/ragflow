@@ -1712,6 +1712,7 @@ class BusinessDocumentSqlQueryRun(DataBaseModel):
     result_bytes = IntegerField(null=False, default=0)
     checks = JSONField(null=False, default=dict)
     error = JSONField(null=True)
+    execution = JSONField(null=False, default=dict)
 
     class Meta:
         db_table = "business_document_sql_query_run"
@@ -1780,6 +1781,67 @@ class BusinessDocumentSqlQueryView(DataBaseModel):
     class Meta:
         db_table = "business_document_sql_query_view"
         indexes = ((("tenant_id", "project_id", "actor_id"), True),)
+
+
+class SqlAssistantSession(DataBaseModel):
+    """Research navigation and drafts over the shared immutable SQL runtime."""
+
+    id = CharField(max_length=32, primary_key=True)
+    tenant_id = CharField(max_length=32, null=False, index=True)
+    owner_id = CharField(max_length=32, null=False, index=True)
+    create_request_id = CharField(max_length=128, null=False)
+    create_request_hash = CharField(max_length=71, null=False)
+    revision = IntegerField(null=False, default=1)
+    state = JSONField(null=False, default=dict)
+
+    class Meta:
+        db_table = "sql_assistant_session"
+        indexes = ((("tenant_id", "owner_id", "create_request_id"), True),)
+
+
+class SqlAssistantCommand(DataBaseModel):
+    """Deduplicate research commands without caching formerly permitted data."""
+
+    id = CharField(max_length=32, primary_key=True)
+    session_id = CharField(max_length=32, null=False, index=True)
+    tenant_id = CharField(max_length=32, null=False)
+    actor_id = CharField(max_length=32, null=False)
+    client_request_id = CharField(max_length=128, null=False)
+    request_hash = CharField(max_length=71, null=False)
+    effect = JSONField(null=False, default=dict)
+
+    class Meta:
+        db_table = "sql_assistant_command"
+        indexes = ((("session_id", "actor_id", "client_request_id"), True),)
+
+
+class SqlAssistantDefinition(DataBaseModel):
+    """Current approved version of a managed SQL calculation definition."""
+
+    id = CharField(max_length=32, primary_key=True)
+    tenant_id = CharField(max_length=32, null=False, index=True)
+    version = IntegerField(null=False)
+    enabled = BooleanField(null=False, default=True)
+    scope_hash = CharField(max_length=71, null=False, index=True)
+
+    class Meta:
+        db_table = "sql_assistant_definition"
+
+
+class SqlAssistantDefinitionVersion(DataBaseModel):
+    """Append-only formula, semantic contract and catalog dependencies."""
+
+    id = CharField(max_length=32, primary_key=True)
+    definition_id = CharField(max_length=32, null=False, index=True)
+    tenant_id = CharField(max_length=32, null=False)
+    version = IntegerField(null=False)
+    payload = JSONField(null=False)
+    content_hash = CharField(max_length=71, null=False)
+    approved_by = CharField(max_length=32, null=False)
+
+    class Meta:
+        db_table = "sql_assistant_definition_version"
+        indexes = ((("definition_id", "version"), True),)
 
 
 class BusinessDocumentSqlQueryThread(DataBaseModel):
@@ -2648,6 +2710,13 @@ def _migrate_sql_project_registry(migrator):
         migrator.database.execute_sql('ALTER TABLE "business_document_sql_query_project" ADD COLUMN IF NOT EXISTS "copy_origin" JSON')
 
 
+def _migrate_sql_project_execution(migrator):
+    """Retain legacy rows and allow the previous binary to insert run metadata."""
+    with migrator.database.atomic():
+        migrator.database.execute_sql('ALTER TABLE "business_document_sql_query_run" ADD COLUMN IF NOT EXISTS "execution" TEXT NOT NULL DEFAULT \'{}\'::TEXT')
+        migrator.database.execute_sql('ALTER TABLE "business_document_sql_query_run" ALTER COLUMN "execution" SET DEFAULT \'{}\'::TEXT')
+
+
 def migrate_db():
     logging.disable(logging.ERROR)
     migrator = PostgresqlMigrator(DB)
@@ -2655,6 +2724,7 @@ def migrate_db():
     _migrate_document_quality_types(migrator)
     _migrate_sql_project_connection(migrator)
     _migrate_sql_project_registry(migrator)
+    _migrate_sql_project_execution(migrator)
     alter_db_add_column(migrator, "business_document_sql_query_run", "kind", CharField(max_length=16, null=False, default="SQL", index=True))
     alter_db_add_column(migrator, "business_document_sql_query_run", "source_run_id", CharField(max_length=32, null=True, index=True))
     alter_db_add_column(migrator, "business_document_sql_query_run", "job_id", CharField(max_length=32, null=True, unique=True))

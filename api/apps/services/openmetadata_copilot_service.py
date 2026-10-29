@@ -533,6 +533,11 @@ class OpenMetadataClient:
             raise OpenMetadataNotFoundError("Invalid OpenMetadata entity id")
         return self.get(f"/api/v1/tables/{entity_id}", params={"fields": _TABLE_FIELDS})
 
+    def get_table_by_name(self, fqn: str) -> dict[str, Any]:
+        if not isinstance(fqn, str) or not fqn.strip() or len(fqn) > 1000:
+            raise OpenMetadataNotFoundError("Invalid OpenMetadata table name")
+        return self.get(f"/api/v1/tables/name/{quote(fqn, safe='')}", params={"fields": _TABLE_FIELDS})
+
     def lineage(self, entity_id: str, depth: int) -> dict[str, Any]:
         if not _is_uuid(entity_id):
             raise OpenMetadataNotFoundError("Invalid OpenMetadata entity id")

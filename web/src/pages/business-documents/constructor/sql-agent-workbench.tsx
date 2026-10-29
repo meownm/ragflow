@@ -42,6 +42,7 @@ import {
   runBusinessDocumentSqlPython,
   updateBusinessDocumentSqlAgentProject,
 } from '@/services/business-document-service';
+import { isSqlRunUnresolved } from '@/utils/sql-execution';
 import {
   AlertCircle,
   ArrowRight,
@@ -274,7 +275,7 @@ function CreateProject({
   );
 }
 
-function RequirementsReview({
+export function RequirementsReview({
   project,
   busy,
   onDecision,
@@ -410,7 +411,7 @@ function RequirementsReview({
   );
 }
 
-function QueryReview({
+export function QueryReview({
   project,
   busy,
   onDecision,
@@ -1082,6 +1083,7 @@ function CompletedProject({
         project.state_version,
         commandKey('sql-cancel'),
         run.id,
+        run.status === 'READY',
       );
       setPreview(null);
       await onRefresh();
@@ -1265,8 +1267,7 @@ function CompletedProject({
             ? 'Срок хранения'
             : run?.status === 'READY'
               ? 'Результат'
-              : run &&
-                  ['QUEUED', 'RUNNING', 'CANCEL_REQUESTED'].includes(run.status)
+              : run && isSqlRunUnresolved(run.status)
                 ? 'Выполнение'
                 : document
                   ? 'Завершённый проект'
@@ -1277,12 +1278,17 @@ function CompletedProject({
             ? 'Срок хранения результата истёк'
             : run?.status === 'READY'
               ? 'Данные получены'
-              : run &&
-                  ['QUEUED', 'RUNNING', 'CANCEL_REQUESTED'].includes(run.status)
-                ? 'Запрос выполняется'
-                : document
-                  ? 'Документ сохранён, строки удалены'
-                  : 'Проверьте запрос перед запуском'}
+              : run?.status === 'UNKNOWN'
+                ? 'Исход выполнения неизвестен'
+                : run?.status === 'SUCCEEDED'
+                  ? 'SQL завершён, строки недоступны'
+                  : run?.status === 'CANCELLED'
+                    ? 'Выполнение отменено'
+                    : run && isSqlRunUnresolved(run.status)
+                      ? 'Запрос выполняется'
+                      : document
+                        ? 'Документ сохранён, строки удалены'
+                        : 'Проверьте запрос перед запуском'}
         </h3>
         {run?.status === 'READY' &&
           run.compilation_id !== project.compilation?.id && (
@@ -1303,16 +1309,19 @@ function CompletedProject({
               ? `${run.row_count} строк · ${run.duration_ms} мс · ${run.checks?.completeness === 'LIMITED' ? 'Показан ограниченный набор' : 'Полный набор в пределах запроса'} · проверка результата пройдена. Строки доступны ${rootDeadline ? `до ${new Date(rootDeadline).toLocaleString(i18n.resolvedLanguage || i18n.language)}` : 'временно'} или до завершения проекта.`
               : run?.status === 'FAILED'
                 ? `Данные не получены: ${run.error?.message || 'проверка или выполнение завершились ошибкой'}.`
-                : run &&
-                    ['QUEUED', 'RUNNING', 'CANCEL_REQUESTED'].includes(
-                      run.status,
-                    )
-                  ? 'Ожидаем результат. Можно отменить выполнение.'
-                  : document
-                    ? `Ревизия ${document.revision}. Повторный запрос создаст новый запуск и документ.`
-                    : compileError
-                      ? 'SQL требует исправления. Подключение можно проверить отдельно.'
-                      : 'SQL проверен. Данные ещё не получены.'}
+                : run?.status === 'UNKNOWN'
+                  ? 'Повторная отправка заблокирована. Обновите состояние для сверки с исполнителем; запрос отмены не подтверждает остановку.'
+                  : run?.status === 'SUCCEEDED'
+                    ? 'Исполнитель подтвердил завершение SQL, но строки не сохранены. Автоматического повтора нет.'
+                    : run?.status === 'CANCELLED'
+                      ? 'Остановка подтверждена или запрос отменён до отправки.'
+                      : run && isSqlRunUnresolved(run.status)
+                        ? 'Ожидаем результат. Можно отменить выполнение.'
+                        : document
+                          ? `Ревизия ${document.revision}. Повторный запрос создаст новый запуск и документ.`
+                          : compileError
+                            ? 'SQL требует исправления. Подключение можно проверить отдельно.'
+                            : 'SQL проверен. Данные ещё не получены.'}
         </p>
         {preview && (
           <div className="mt-3">
@@ -2239,10 +2248,7 @@ export function SqlAgentWorkbench({
 
   const runningProjectId =
     project?.operation_state === 'RUNNING' ||
-    (project?.latest_run &&
-      ['QUEUED', 'RUNNING', 'CANCEL_REQUESTED'].includes(
-        project.latest_run.status,
-      ))
+    (project?.latest_run && isSqlRunUnresolved(project.latest_run.status))
       ? project.id
       : null;
   useEffect(() => {
@@ -2582,9 +2588,7 @@ export function SqlAgentWorkbench({
   const registryBusy =
     busy ||
     project?.operation_state !== 'IDLE' ||
-    project?.runs?.some((run) =>
-      ['QUEUED', 'RUNNING', 'CANCEL_REQUESTED'].includes(run.status),
-    );
+    project?.runs?.some((run) => isSqlRunUnresolved(run.status));
 
   const projectContext = project && (
     <div key="project-context" className="sql-project-context">

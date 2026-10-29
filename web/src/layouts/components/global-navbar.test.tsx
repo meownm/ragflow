@@ -57,6 +57,30 @@ describe('DesktopNavbar', () => {
     });
   });
 
+  it('keeps the new assistant hidden while configuration is unavailable', () => {
+    mockUseSystemConfig.mockReturnValue({ config: undefined, loading: true });
+    renderNavbar('/sql-assistant');
+    expect(screen.queryByTestId('nav-sql-assistant')).not.toBeInTheDocument();
+  });
+
+  it('enables the assistant independently of existing SQL projects and creator capabilities', () => {
+    mockUseSystemConfig.mockReturnValue({
+      config: { visibleSections: ['sql_assistant'] },
+      loading: false,
+    });
+    renderNavbar('/sql-assistant');
+    expect(screen.getByTestId('nav-sql-assistant')).toHaveAttribute(
+      'href',
+      '/sql-assistant',
+    );
+    expect(screen.getByTestId('nav-sql-assistant')).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+    expect(screen.queryByTestId('nav-sql-projects')).not.toBeInTheDocument();
+    expect(mockedGetBusinessDocumentCapabilities).not.toHaveBeenCalled();
+  });
+
   it.each(['technical_specifications', 'business_documents'])(
     'shows %s independently of the other document section',
     (section) => {

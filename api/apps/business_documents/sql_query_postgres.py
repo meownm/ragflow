@@ -91,13 +91,15 @@ def _dbapi_sql(sql: str, parameters: Mapping[str, Any]) -> str:
     return translated
 
 
-def explain_postgres(config: Mapping[str, Any], sql: str, parameters: Mapping[str, Any], *, timeout_ms: int) -> None:
+def explain_postgres(config: Mapping[str, Any], sql: str, parameters: Mapping[str, Any], *, timeout_ms: int, timezone: str | None = None) -> None:
     """Check the live relation and column shape without reading result rows."""
     try:
         with closing(_connect(config)) as connection:
             connection.set_session(readonly=True, autocommit=False)
             with connection.cursor() as cursor:
                 cursor.execute("SELECT set_config('statement_timeout', %s, true)", (f"{timeout_ms}ms",))
+                if timezone is not None:
+                    cursor.execute("SELECT set_config('TimeZone', %s, true)", (timezone,))
                 cursor.execute("EXPLAIN " + _dbapi_sql(sql, parameters), dict(parameters))
             connection.rollback()
     except psycopg2.errors.QueryCanceled as exc:
@@ -117,6 +119,10 @@ def execute_postgres(
     max_rows: int,
     max_result_bytes: int,
     should_cancel: Callable[[], bool] | None = None,
+    timezone: str | None = None,
+    on_dispatch: Callable[[dict], None] | None = None,
+    on_completed: Callable[[], None] | None = None,
+    source_policy: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a bounded result; caller owns authorization and persistence."""
     started = monotonic()
@@ -124,6 +130,8 @@ def execute_postgres(
     try:
         with closing(_connect(config)) as connection:
             connection.set_session(readonly=True, autocommit=False)
+            if source_policy is not None:
+                verify_source_access(connection, source_policy)
             stop_watcher = threading.Event()
             watcher = None
             if should_cancel is not None:
@@ -144,7 +152,19 @@ def execute_postgres(
             try:
                 with connection.cursor() as cursor:
                     cursor.execute("SELECT set_config('statement_timeout', %s, true)", (f"{timeout_ms}ms",))
+                    if timezone is not None:
+                        cursor.execute("SELECT set_config('TimeZone', %s, true)", (timezone,))
+                    if on_dispatch is not None:
+                        cursor.execute("SELECT set_config('application_name', %s, true)", (source_policy.get("attempt_name", "ragflow-sql") if source_policy else "ragflow-sql",))
+                        cursor.execute("SELECT pid, extract(epoch from backend_start)::text, application_name FROM pg_stat_activity WHERE pid=pg_backend_pid()")
+                        pid, backend_start, application_name = cursor.fetchone()
+                        on_dispatch({"pid": pid, "backend_start": backend_start, "application_name": application_name})
+                    if should_cancel is not None and should_cancel():
+                        raise BusinessDocumentError("SQL_CANCELED", "Query canceled before dispatch", 409)
                     cursor.execute(_dbapi_sql(sql, parameters), dict(parameters))
+                    stop_watcher.set()
+                    if on_completed is not None:
+                        on_completed()
                     if cursor.description is None:
                         raise BusinessDocumentError("SQL_RESULT_INVALID", "Query returned no table", 422)
                     columns = [column.name for column in cursor.description]
@@ -170,6 +190,8 @@ def execute_postgres(
             raise BusinessDocumentError("SQL_CANCELED", "Query was canceled", 409) from exc
         raise BusinessDocumentError("SQL_TIMEOUT", "Query exceeded the profile timeout", 408) from exc
     except psycopg2.OperationalError as exc:
+        if on_dispatch is not None and getattr(exc, "pgcode", None) is None:
+            raise BusinessDocumentError("SQL_EXECUTION_UNKNOWN", "SQL outcome could not be confirmed; do not resend", 503) from None
         raise _connection_failure(exc) from None
     except (psycopg2.Error, KeyError, ValueError, TypeError) as exc:
         raise BusinessDocumentError("SQL_EXECUTION_FAILED", "PostgreSQL query failed", 502) from exc
@@ -181,3 +203,60 @@ def execute_postgres(
         "result_bytes": result_bytes,
         "duration_ms": round((monotonic() - started) * 1000),
     }
+
+
+def verify_source_access(connection, policy):
+    """The pilot has explicit column grants, never a privileged shared DB role."""
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT current_user, rolsuper, rolbypassrls FROM pg_roles WHERE rolname=current_user")
+        role, privileged, bypass = cursor.fetchone()
+        if role != policy["db_role"] or privileged or bypass:
+            raise BusinessDocumentError("SQL_SOURCE_ACCESS_DENIED", "The source role is not permitted for this pilot", 403)
+        cursor.execute(
+            "SELECT a.attname, has_column_privilege(current_user,c.oid,a.attnum,'SELECT') "
+            "FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace "
+            "WHERE n.nspname=%s AND c.relname=%s AND a.attnum>0 AND NOT a.attisdropped",
+            (policy["schema"], policy["table"]),
+        )
+        columns = dict(cursor.fetchall())
+        allowed = set(policy["columns"])
+        if not allowed <= columns.keys() or any(granted != (name in allowed) for name, granted in columns.items()):
+            raise BusinessDocumentError("SQL_SOURCE_ACCESS_DENIED", "Source column grants changed; ask the source administrator", 403)
+
+
+def check_source_access(config, policy):
+    try:
+        with closing(_connect(config)) as connection:
+            connection.set_session(readonly=True, autocommit=False)
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT set_config('statement_timeout', %s, true)", ("5000ms",))
+            verify_source_access(connection, policy)
+            connection.rollback()
+    except psycopg2.Error:
+        raise BusinessDocumentError("SQL_SOURCE_ACCESS_UNAVAILABLE", "Не удалось проверить действующие права источника", 503) from None
+
+
+def observe_postgres(config, identity, *, cancel=False):
+    """A matching active backend is evidence; absence proves no terminal outcome."""
+    try:
+        with closing(_connect(config)) as connection:
+            connection.set_session(readonly=True, autocommit=False)
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT set_config('statement_timeout', %s, true)", ("5000ms",))
+                cursor.execute(
+                    "SELECT state FROM pg_stat_activity WHERE pid=%s AND extract(epoch from backend_start)::text=%s AND application_name=%s",
+                    (identity.get("pid"), identity.get("backend_start"), identity.get("application_name")),
+                )
+                row = cursor.fetchone()
+                signalled = False
+                if row and cancel:
+                    cursor.execute(
+                        "SELECT pg_cancel_backend(pid) FROM pg_stat_activity WHERE pid=%s AND extract(epoch from backend_start)::text=%s AND application_name=%s",
+                        (identity.get("pid"), identity.get("backend_start"), identity.get("application_name")),
+                    )
+                    signal = cursor.fetchone()
+                    signalled = bool(signal and signal[0])
+            connection.rollback()
+    except psycopg2.Error:
+        raise BusinessDocumentError("SQL_EXECUTION_UNKNOWN", "Не удалось подтвердить исход SQL. Повторная отправка запрещена", 503) from None
+    return {"backend_present": row is not None, "backend_state": row[0] if row else None, "cancel_signal_sent": signalled}

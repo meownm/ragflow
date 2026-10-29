@@ -170,6 +170,10 @@ def _run_metadata(project, run_id):
         raise BusinessDocumentError("SQL_RUN_NOT_FOUND", "Result was not found", 404)
     if run.status == "EXPIRED":
         raise BusinessDocumentError("SQL_RESULT_EXPIRED", "Result rows have expired", 410)
+    if run.status == "UNKNOWN":
+        raise ConflictError("SQL_EXECUTION_UNKNOWN", "SQL outcome is unknown; do not resend the query")
+    if run.status == "SUCCEEDED":
+        raise ConflictError("SQL_RESULT_UNAVAILABLE", "SQL completed but its rows are unavailable; no automatic rerun")
     if run.status != "READY":
         raise ConflictError("SQL_RESULT_REMOVED", "Result rows were removed")
     if not isinstance(run.checks, Mapping) or run.checks.get("status") != "PASS" or run.kind not in {"SQL", "PYTHON", "LOOKUP"}:
@@ -186,6 +190,9 @@ def authorized_result(project, actor_id, run_id, *, is_admin=False, access_role=
         raise ConflictError("SQL_RESULT_SOURCE_UNAVAILABLE", "The result source chain cannot be verified")
     extra = (run.checks.get("lookup_entity_id"),) if run.kind == "LOOKUP" else ()
     source = authorize_sql_source(project, actor_id, parent.compilation_id, is_admin=is_admin, access_role=access_role, extra_entity_ids=extra)
+    from api.apps.business_documents.sql_llm_logs import authorize_pilot_result
+
+    source_policy = authorize_pilot_result(source, actor_id, parent.profile_id, parent.profile_version, is_admin, access_role)
     expire_project_results(project.tenant_id, project.id)
     _run_metadata(project, run_id)
     current = BusinessDocumentSqlQueryRun.get_or_none(
@@ -229,4 +236,6 @@ def authorized_result(project, actor_id, run_id, *, is_admin=False, access_role=
     ):
         raise ConflictError("SQL_RESULT_CHECK_REQUIRED", "Stored result rows do not match their schema")
     deadline = result_expires_at(current.create_time, source_deadline=result_expires_at(parent.create_time))
+    if source_policy is not None:
+        current.checks = {**current.checks, "source_completeness": source_policy["source_completeness"]}
     return current, source, deadline

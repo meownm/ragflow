@@ -105,7 +105,7 @@ def test_get_visible_sections_can_hide_sql_projects_independently(monkeypatch):
 
 def test_serialize_visible_sections_records_current_version():
     assert json.loads(service.serialize_visible_sections(["chat"])) == {
-        "version": 6,
+        "version": 7,
         "visible_sections": ["chat"],
     }
 
@@ -134,14 +134,27 @@ def test_saved_specifications_visibility_is_independent(monkeypatch, sections):
     assert service.get_visible_sections() == sections
 
 
-def test_unconfigured_installation_allows_all_sections(monkeypatch):
+def test_unconfigured_installation_hides_sql_assistant(monkeypatch):
     monkeypatch.setattr(
         service.SystemSettingsService,
         "get_by_name",
         lambda _name: [],
     )
 
-    assert service.get_visible_sections() == list(service.NAVIGATION_SECTIONS)
+    assert service.get_visible_sections() == [section for section in service.NAVIGATION_SECTIONS if section != "sql_assistant"]
+
+
+@pytest.mark.parametrize("version", [2, 3, 4, 5, 6])
+def test_existing_installation_does_not_expose_sql_assistant(monkeypatch, version):
+    stored = {"version": version, "visible_sections": ["business_documents", "document_constructor", "sql_projects"]}
+    monkeypatch.setattr(service.SystemSettingsService, "get_by_name", lambda _name: [SimpleNamespace(value=json.dumps(stored))])
+    assert "sql_assistant" not in service.get_visible_sections()
+
+
+def test_sql_assistant_can_be_enabled_without_enabling_old_sql_section(monkeypatch):
+    stored = service.serialize_visible_sections(["sql_assistant"])
+    monkeypatch.setattr(service.SystemSettingsService, "get_by_name", lambda _name: [SimpleNamespace(value=stored)])
+    assert service.get_visible_sections() == ["sql_assistant"]
 
 
 @pytest.mark.parametrize(

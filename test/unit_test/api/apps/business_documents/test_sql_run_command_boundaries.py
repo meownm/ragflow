@@ -94,12 +94,12 @@ def test_cancellation_replay_does_not_advance_version_or_change_other_result(pro
     replay = Service.cancel_result(TENANT, ACTOR, project, request_body)
     assert replay == first
     assert Agents._get_project(TENANT, project).__data__ == before
-    assert BusinessDocumentSqlQueryRun.get_by_id(run.id).rows == []
+    assert BusinessDocumentSqlQueryRun.get_by_id(run.id).rows == [[42]]
 
 
 def test_purged_result_preview_returns_conflict_without_exposing_saved_columns(project):
     run = ready_result(project)
-    Service.cancel_result(TENANT, ACTOR, project, result_command(run_id=run.id))
+    Service.cancel_result(TENANT, ACTOR, project, result_command(run_id=run.id), discard=True)
     with pytest.raises(BusinessDocumentError) as caught:
         Service.preview(TENANT, ACTOR, project, run.id)
     assert caught.value.code == "SQL_RESULT_REMOVED" and caught.value.status == 409
@@ -129,7 +129,7 @@ def test_stale_python_request_preserves_source_without_running_program(project, 
     assert BusinessDocumentSqlQueryRun.get_by_id(run.id).rows == [[42]]
 
 
-def test_canceling_derived_result_preserves_sql_source_and_its_conclusion_draft(project):
+def test_discarding_derived_result_preserves_sql_source_and_its_conclusion_draft(project):
     source = ready_result(project)
     derived = BusinessDocumentSqlQueryRun.create(
         id="derived",
@@ -155,7 +155,7 @@ def test_canceling_derived_result_preserves_sql_source_and_its_conclusion_draft(
         source_proposal_id=source.id,
         accepted_by=ACTOR,
     )
-    Service.cancel_result(TENANT, ACTOR, project, result_command(run_id=derived.id))
+    Service.cancel_result(TENANT, ACTOR, project, result_command(run_id=derived.id), discard=True)
     assert BusinessDocumentSqlQueryRun.get_by_id(derived.id).status == "PURGED"
     assert BusinessDocumentSqlQueryRun.get_by_id(source.id).status == "READY"
     assert BusinessDocumentSqlQueryRun.get_by_id(source.id).rows == [[42]]

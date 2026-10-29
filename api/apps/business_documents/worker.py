@@ -254,7 +254,7 @@ class BusinessDocumentJobQueue:
         )
         for job in stale:
             error = {"code": "JOB_LEASE_EXPIRED", "message": "Worker lease expired before completion"}
-            if job.attempt >= job.max_attempts:
+            if job.job_type == "SQL_QUERY_RUN" or job.attempt >= job.max_attempts:
                 recovery_owner = get_uuid()
                 recovery_token = get_uuid()
                 claimed = (
@@ -512,7 +512,23 @@ class BusinessDocumentWorker:
                     deadline_reached = bool(recovery and current_timestamp() + delay >= (recovery["started_at"] + MAX_AI_SECONDS) * 1000)
                     if deadline_reached and is_transient_failure(error):
                         payload = {"code": "AI_TIME_BUDGET_EXCEEDED", "message": "Повторная попытка выходит за предел времени восстановления документа"}
-                    if current_job.attempt >= current_job.max_attempts or deadline_reached or (document_job and not is_transient_failure(error)):
+                    # Research-chat failures require an explicit user action. Format
+                    # repair belongs inside the bounded model operation, not a new job.
+                    from api.db.db_models import SqlAssistantSession
+
+                    assistant_job = (
+                        current_job.job_type.startswith("SQL_AGENT_")
+                        and SqlAssistantSession.select().where((SqlAssistantSession.id == current_job.document_id) & (SqlAssistantSession.tenant_id == current_job.tenant_id)).exists()
+                    )
+                    if assistant_job and not isinstance(error, BusinessDocumentError):
+                        payload = {"code": "SQL_ASSISTANT_SERVICE_UNAVAILABLE", "message": "Подготовка SQL временно недоступна. Принятые условия сохранены; повторите текущий шаг позже."}
+                    if (
+                        assistant_job
+                        or current_job.job_type == "SQL_QUERY_RUN"
+                        or current_job.attempt >= current_job.max_attempts
+                        or deadline_reached
+                        or (document_job and not is_transient_failure(error))
+                    ):
                         try:
                             if current_job.job_type == "SQL_QUERY_RUN":
                                 BusinessDocumentSqlRunService.fail_job(

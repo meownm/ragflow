@@ -8,6 +8,7 @@ import {
   checkBusinessDocumentSqlProjectConnection,
   configureBusinessDocumentSqlProjectConnection,
 } from '@/services/business-document-service';
+import { isSqlRunUnresolved } from '@/utils/sql-execution';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 
 function errorText(error: unknown) {
@@ -38,12 +39,10 @@ export function useSqlProjectConnection(
     !project.archived_at &&
     project.capabilities.execute !== false &&
     project.capabilities.edit !== false;
-  const active = (status: string) =>
-    ['QUEUED', 'RUNNING', 'CANCEL_REQUESTED'].includes(status);
   const runsInProgress = Boolean(
-    active(project.latest_run?.status || '') ||
-    project.runs?.some((run) => active(run.status)) ||
-    project.derived_runs?.some((run) => active(run.status)),
+    isSqlRunUnresolved(project.latest_run?.status || '') ||
+    project.runs?.some((run) => isSqlRunUnresolved(run.status)) ||
+    project.derived_runs?.some((run) => isSqlRunUnresolved(run.status)),
   );
   const locked = project.operation_state !== 'IDLE' || runsInProgress;
 

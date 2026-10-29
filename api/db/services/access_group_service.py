@@ -34,6 +34,7 @@ BLUEPRINT_SECTIONS = {
     "memory_api": "memory",
     "openmetadata_api": "catalog",
     "business_document_api": "business_documents",
+    "sql_assistant_api": "sql_assistant",
     "technical_specifications_api": "technical_specifications",
     "openai_api": "chat",
     "dify_retrieval_api": "search",
@@ -95,7 +96,9 @@ def sections_for_request(blueprint, route):
         return ("chat",)
     if blueprint == "business_document_api":
         if path == "/business-documents/capabilities":
-            return ("business_documents", "document_constructor", "sql_projects")
+            return ("business_documents", "document_constructor", "sql_projects", "sql_assistant")
+        if path == "/business-documents/sql-query/schema/entities":
+            return ("document_constructor", "sql_projects", "sql_assistant")
         if path in {
             "/business-documents/sql-query/schema/resolve",
             "/business-documents/sql-query/schema/entities",
@@ -103,6 +106,12 @@ def sections_for_request(blueprint, route):
             "/business-documents/sql-query/plan",
         }:
             return ("document_constructor", "sql_projects")
+        if path in {
+            "/business-documents/sql-query/projects/<project_id>/connection",
+            "/business-documents/sql-query/projects/<project_id>/connection/check",
+            "/business-documents/sql-query/projects/<project_id>/export",
+        }:
+            return ("sql_projects", "sql_assistant")
         if path.startswith("/business-documents/sql-query/"):
             return ("sql_projects",)
     section = BLUEPRINT_SECTIONS.get(blueprint)

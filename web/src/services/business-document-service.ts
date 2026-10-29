@@ -1109,10 +1109,13 @@ export async function cancelBusinessDocumentSqlRun(
   expectedStateVersion: number,
   idempotencyKey: string,
   runId: string,
+  discard = false,
 ) {
   try {
     const response = await request.post(
-      api.businessDocumentSqlProjectRunCancel(projectId, runId),
+      (discard
+        ? api.businessDocumentSqlProjectRunDiscard
+        : api.businessDocumentSqlProjectRunCancel)(projectId, runId),
       {
         schema_version: '1',
         expected_state_version: expectedStateVersion,

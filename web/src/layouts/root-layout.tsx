@@ -5,7 +5,7 @@ import { Header } from './components/header';
 export function RootLayoutContainer({ children }: React.PropsWithChildren) {
   const { pathname } = useLocation();
   const workbench =
-    /^\/(business-documents|technical-specifications|sql-projects)(\/|$)/.test(
+    /^\/(business-documents|technical-specifications|sql-projects|sql-assistant)(\/|$)/.test(
       pathname,
     );
   return (

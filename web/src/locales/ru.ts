@@ -252,6 +252,7 @@ export default {
       technicalSpecifications: 'Технические задания',
       documentConstructor: 'Конструктор',
       sqlProjects: 'SQL-проекты',
+      sqlAssistant: 'SQL-помощник',
       transcription: 'Расшифровка',
       translator: 'Переводчик',
       openStandalone: 'Открыть в новой вкладке',

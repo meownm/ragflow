@@ -1836,7 +1836,7 @@ describe('persisted project connection', () => {
     },
   );
 
-  it.each(['QUEUED', 'RUNNING', 'CANCEL_REQUESTED'])(
+  it.each(['QUEUED', 'RUNNING', 'CANCEL_REQUESTED', 'UNKNOWN'])(
     'keeps editing and new execution unavailable while another retained run is %s',
     async (status) => {
       const ready = {
@@ -1866,6 +1866,39 @@ describe('persisted project connection', () => {
         screen.getByRole('button', { name: 'Сохранить источник' }),
       ).toBeDisabled();
       expect(mockedRun).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ['UNKNOWN', 'Исход выполнения неизвестен'],
+    ['SUCCEEDED', 'SQL завершён, строки недоступны'],
+    ['CANCELLED', 'Выполнение отменено'],
+  ])(
+    'shows the confirmed execution meaning for %s',
+    async (status, heading) => {
+      const run = {
+        id: 'run-1',
+        status,
+        row_count: 0,
+        columns: [],
+        compilation_id: 'compilation-1',
+        profile_id: 'profile-1',
+        profile_version: 3,
+      };
+      setup({
+        execution_profile_id: 'profile-1',
+        latest_run: run,
+        runs: [run],
+      });
+      render(<SqlAgentWorkbench />);
+      expect(
+        await screen.findByRole('heading', { name: heading }),
+      ).toBeInTheDocument();
+      expect(mockedRun).not.toHaveBeenCalled();
+      if (status === 'UNKNOWN')
+        expect(
+          screen.getByText(/Повторная отправка заблокирована/),
+        ).toBeInTheDocument();
     },
   );
 

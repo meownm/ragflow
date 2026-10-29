@@ -14,7 +14,16 @@ def digest(path: Path) -> str:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def put(stream, root: Path) -> dict:
+def put(stream, root: Path, *, reuse: dict | None = None) -> dict:
+    if reuse is not None:
+        path(root, reuse)  # Check the preserved compressed bytes before reuse.
+        value, size = hashlib.sha256(), 0
+        while chunk := stream.read(1024 * 1024):
+            value.update(chunk)
+            size += len(chunk)
+        if value.hexdigest() != reuse["raw_sha256"] or size != reuse["raw_bytes"]:
+            raise ValueError("Recovery input differs from the preserved blob")
+        return reuse
     directory = root / "blobs"
     unlinked(directory)
     directory.mkdir(parents=True, exist_ok=True)

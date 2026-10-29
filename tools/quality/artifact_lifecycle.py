@@ -455,6 +455,28 @@ class Run:
         self.capture()
         return retire(self.store, self.data["run_id"], engine, owner=self)
 
+    def request_teardown(self, evidence: Path):
+        """Delegate stopped live-QA Docker teardown if this owner is interrupted."""
+        if self.attached or _current.get() is not self or self.data["producer"] != "live-regression-qa" or self.data["category"] != "disposable":
+            raise ValueError("Only the active live-QA owner can delegate teardown")
+        from tools.quality.artifact_paths import identity
+
+        evidence = evidence.absolute()
+        unlinked(evidence)
+        if not evidence.is_dir():
+            raise ValueError("QA teardown requires an existing evidence directory")
+        self.path(evidence)
+        self.data["teardown_request"] = {
+            "schema": 1,
+            "run_id": self.data["run_id"],
+            "source": deepcopy(self.data["source"]),
+            "engine": self.engine().identity,
+            "recovery_epoch": self.data.get("recovery_epoch", 0),
+            "evidence": str(evidence),
+            "evidence_identity": identity(evidence),
+        }
+        self.persist()
+
 
 def managed(producer: str, *, category: str = "disposable", days: int = 7):
     def decorate(function):
@@ -899,6 +921,7 @@ def run_subject(run: dict) -> dict:
         "inputs_sha256": checksum({"inputs": run.get("input_files", [])}),
         "observations_sha256": checksum({"observations": run.get("runtime_observations", [])}),
         "consumption_sha256": checksum({"current": run.get("consumption_closed"), "history": run.get("consumption_history", [])}),
+        **({"teardown_sha256": checksum(run["teardown_request"])} if run.get("teardown_request") else {}),
         "resources": [
             {**{key: item.get(key) for key in fields}, "recovery_sha256": checksum(item.get("recovery") or {}), "preserved_sha256": checksum(item.get("preserved_evidence") or {})}
             for item in sorted(run["resources"], key=lambda item: item["key"])
@@ -944,12 +967,52 @@ def operator_evidence(path: Path, run: dict, action: str) -> dict:
     return {"path": str(path.absolute()), "sha256": hashlib.sha256(raw).hexdigest(), "approved_by": proof["approved_by"], "task_status": proof["task_status"]}
 
 
-def retire(store: Path, run_id: str, engine=None, *, owner: Run | None = None) -> dict:
+def teardown_requested(run: dict) -> bool:
+    request = run.get("teardown_request")
+    return (
+        isinstance(request, dict)
+        and not request.get("finished_at")
+        and request.get("schema") == 1
+        and run["producer"] == "live-regression-qa"
+        and run["category"] == "disposable"
+        and request.get("run_id") == run["run_id"]
+        and request.get("source") == run.get("source")
+        and bool(request.get("engine"))
+        and request["engine"] == run.get("engine")
+        and request.get("recovery_epoch") == run.get("recovery_epoch", 0)
+        and bool(request.get("evidence"))
+        and isinstance(request.get("evidence_identity"), list)
+    )
+
+
+def teardown_evidence(run: dict) -> Path:
+    from tools.quality.artifact_paths import identity
+
+    evidence = Path(run["teardown_request"]["evidence"])
+    unlinked(evidence)
+    if not evidence.is_dir() or identity(evidence) != run["teardown_request"]["evidence_identity"]:
+        raise ValueError("Delegated QA evidence generation changed or is missing")
+    return evidence
+
+
+def retire(store: Path, run_id: str, engine=None, *, owner: Run | None = None, resume_teardown: bool = False) -> dict:
     from tools.quality.artifact_docker import Engine
 
     def perform():
         run = owner.data if owner else read_run(store, run_id)
         merge_events(store, run)
+        if resume_teardown:
+            if owner or not teardown_requested(run):
+                raise ValueError("Missing live-QA teardown delegation")
+            from tools.quality.artifact_paths import preserve_evidence
+
+            request = run["teardown_request"]
+            evidence = teardown_evidence(run)
+            request["preserved_evidence"] = preserve_evidence(evidence, store)
+            for entry in run["resources"]:
+                if entry.get("path") == str(evidence) and entry.get("identity") == request["evidence_identity"]:
+                    entry["preserved_evidence"] = request["preserved_evidence"]
+            write_run(store, run)
 
         def checkpoint_run():
             if owner and owner.attached:
@@ -972,7 +1035,7 @@ def retire(store: Path, run_id: str, engine=None, *, owner: Run | None = None) -
         checkpoint_run()
         result = {"run_id": run_id, "removed": [], "blocked": [], "retained": [], "errors": []}
         result["blocked"].extend({"key": key, "reason": "retired-generation-reappeared"} for key in reappeared)
-        if not owner and (reason := eligible(run, datetime.now(timezone.utc))):
+        if not owner and not resume_teardown and (reason := eligible(run, datetime.now(timezone.utc))):
             result["blocked"].append(reason)
             return result
         errors = []
@@ -983,6 +1046,9 @@ def retire(store: Path, run_id: str, engine=None, *, owner: Run | None = None) -
         order = {"container": 0, "volume": 1, "network": 2, "image-alias": 3, "image": 4, "path": 5}
         for resource in sorted(run["resources"], key=lambda r: order[r["kind"]]):
             if resource.get("status") == "removed":
+                continue
+            if resume_teardown and (resource["kind"] not in {"container", "volume", "network"} or resource.get("category") != "disposable"):
+                result["retained"].append({"key": resource["key"], "reason": "outside-delegated-qa-teardown"})
                 continue
             if resource.get("category") not in {"disposable", "cache"}:
                 from tools.quality.artifact_policy import POLICIES
@@ -1063,6 +1129,9 @@ def retire(store: Path, run_id: str, engine=None, *, owner: Run | None = None) -
                 checkpoint_run()
                 result["errors"].append({"key": resource["key"], "error": type(error).__name__})
         run["cleanup"] = {**result, "checked_at": utc()}
+        if (owner or resume_teardown) and teardown_requested(run) and not result["blocked"] and not result["errors"]:
+            if all(item.get("status") == "removed" for item in run["resources"] if item["kind"] in {"container", "volume", "network"} and item.get("category") == "disposable"):
+                run["teardown_request"]["finished_at"] = utc()
         checkpoint_run()
         if owner:
             owner.data = run
@@ -1112,18 +1181,23 @@ def sweep(store: Path, *, apply: bool = False) -> dict:
             except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
                 result["runs"].append({"run_id": run["run_id"], "blocked": ["ci-completion-unverified"]})
                 continue
-        reason = eligible(run, datetime.now(timezone.utc))
-        if reason or not any(r.get("status") != "removed" for r in run["resources"]):
+        resume_teardown = teardown_requested(run)
+        reason = None if resume_teardown else eligible(run, datetime.now(timezone.utc))
+        if reason or (not resume_teardown and not any(r.get("status") != "removed" for r in run["resources"])):
             result["runs"].append({"run_id": run["run_id"], "blocked": [reason or "already-retired"]})
             continue
         try:
             if apply:
-                result["runs"].append(retire(store, run["run_id"]))
+                retired = retire(store, run["run_id"], resume_teardown=resume_teardown)
+                retired["delegated_teardown"] = resume_teardown
+                result["runs"].append(retired)
             else:
                 from tools.quality.artifact_docker import Engine
                 from tools.quality import artifact_paths
 
                 with lease(store, run["run_id"]):
+                    if resume_teardown:
+                        teardown_evidence(run)
                     engine = Engine(expected=run["engine"])
                     errors = []
                     pins = receipt_pins([ROOT], errors)
@@ -1134,7 +1208,9 @@ def sweep(store: Path, *, apply: bool = False) -> dict:
                     for resource in run["resources"]:
                         if resource.get("status") == "removed":
                             continue
-                        if resource.get("category") not in {"disposable", "cache"}:
+                        if resume_teardown and (resource["kind"] not in {"container", "volume", "network"} or resource.get("category") != "disposable"):
+                            reason = "outside-delegated-qa-teardown"
+                        elif resource.get("category") not in {"disposable", "cache"}:
                             reason = "retirement-conditions-unverified"
                         elif resource["kind"] == "path":
                             reason = artifact_paths.guard(resource, run, runs(store), engine)
@@ -1261,6 +1337,7 @@ def main():
             return int(failed)
     if args.action == "cleanup":
         result = sweep(args.state, apply=args.apply)
+        pending = [r["run_id"] for r in result["runs"] if r.get("delegated_teardown") and r.get("blocked")]
         print(
             json.dumps(
                 {
@@ -1268,10 +1345,11 @@ def main():
                     "runs": len(result["runs"]),
                     "removed": sum(len(r.get("removed", [])) for r in result["runs"]),
                     "errors": len(result["errors"]) + sum(len(r.get("errors", [])) for r in result["runs"]),
+                    "pending_teardowns": pending,
                 }
             )
         )
-        return int(bool(result["errors"] or any(r.get("errors") for r in result["runs"])))
+        return int(bool(result["errors"] or pending or any(r.get("errors") for r in result["runs"])))
     if args.action == "exec":
         command = forwarded
         if not command:

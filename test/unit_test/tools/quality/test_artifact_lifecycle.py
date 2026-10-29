@@ -240,6 +240,7 @@ def test_subject_cli_is_read_only_and_omits_private_config_and_capability(state,
     assert json.loads(output)["run_id"] == run.data["run_id"]
     assert "secret-canary" not in output and "private-capability-hash" not in output
     assert life.run_path(state, run.data["run_id"]).read_bytes() == original
+    assert "teardown_sha256" not in json.loads(output), "Existing closure subjects must retain their exact historical shape"
 
 
 def test_valid_recovery_release_uses_actual_approval_time_without_deleting_data(state, tmp_path, monkeypatch):
@@ -370,6 +371,96 @@ class FakeEngine:
 
     def __init__(self):
         self.removed = []
+
+
+def delegated_qa(state, tmp_path, monkeypatch):
+    engine = FakeEngine()
+    monkeypatch.setattr(docker, "Engine", lambda **_: engine)
+    monkeypatch.setattr(life, "receipt_pins", lambda *_: {})
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    evidence = tmp_path / "qa-results"
+    evidence.mkdir()
+    (evidence / "result.json").write_text('{"status":"INCOMPLETE"}')
+    return engine, evidence
+
+
+def test_sweep_resumes_failed_qa_teardown_without_accepting_product_or_removing_other_classes(state, tmp_path, monkeypatch):
+    engine, evidence = delegated_qa(state, tmp_path, monkeypatch)
+    with life.Run("live-regression-qa", store=state) as run:
+        run.request_teardown(evidence)
+        for kind, category in [("container", "disposable"), ("image", "disposable"), ("container", "runtime"), ("path", "cache")]:
+            run.add({"key": f"{kind}:{category}", "kind": kind, "identity": kind, "category": category, "status": "present"})
+        assert life.sweep(state, apply=True)["runs"][0]["blocked"] == ["run-lease-unavailable"]
+        run.failed = True
+    result = life.sweep(state, apply=True)
+    assert result["errors"] == []
+    assert engine.removed == ["container:disposable"]
+    saved = life.read_run(state, run.data["run_id"])
+    assert saved["state"] == "failed" and saved["task_status"] == "open"
+    packet = saved["teardown_request"]["preserved_evidence"]
+    docker.verify_archive(packet["archive"])
+    from tools.quality.artifact_retention import references
+
+    assert packet["archive"]["path"] in references(saved, tmp_path / "recovery")
+    assert json.loads(Path(packet["manifest"]["path"]).read_text())["result.json"]["sha256"]
+    assert not saved.get("consumption_closed")
+    life.sweep(state, apply=True)
+    assert engine.removed == ["container:disposable"]
+
+
+@pytest.mark.parametrize("change", ["missing-evidence", "different-source", "recovery-resumed", "different-engine", "no-request"])
+def test_delegated_teardown_fails_closed_on_changed_or_missing_authority(state, tmp_path, monkeypatch, change):
+    engine, evidence = delegated_qa(state, tmp_path, monkeypatch)
+    with life.Run("live-regression-qa", store=state) as run:
+        run.request_teardown(evidence)
+        run.add({"key": "container:test", "kind": "container", "identity": "one", "category": "disposable", "status": "present"})
+        run.failed = True
+    saved = life.read_run(state, run.data["run_id"])
+    if change == "missing-evidence":
+        (evidence / "result.json").unlink()
+        evidence.rmdir()
+    elif change == "different-source":
+        saved["source"] = {"head": "different"}
+    elif change == "recovery-resumed":
+        saved["recovery_epoch"] = 1
+    elif change == "different-engine":
+        saved["engine"] = "other"
+    else:
+        saved.pop("teardown_request")
+    life.write_run(state, saved)
+    result = life.sweep(state, apply=True)
+    assert not engine.removed
+    assert result["errors"] or result["runs"][0]["blocked"]
+
+
+def test_delegated_teardown_keeps_active_and_changed_container_guards(state, tmp_path, monkeypatch):
+    engine, evidence = delegated_qa(state, tmp_path, monkeypatch)
+    with life.Run("live-regression-qa", store=state) as run:
+        run.request_teardown(evidence)
+        for identity in ["active", "changed"]:
+            run.add({"key": "container:" + identity, "kind": "container", "identity": identity, "category": "disposable", "status": "present"})
+        run.failed = True
+    engine.guard = lambda target, *_: "container-active" if target["identity"] == "active" else "identity-or-configuration-changed"
+    result = life.sweep(state, apply=True)
+    assert not engine.removed
+    assert len(result["runs"][0]["blocked"]) == 2
+    assert result["runs"][0]["delegated_teardown"] is True
+
+
+def test_delegated_teardown_discovers_unjournaled_resources_after_owner_crash(state, tmp_path, monkeypatch):
+    engine, evidence = delegated_qa(state, tmp_path, monkeypatch)
+    with life.Run("live-regression-qa", store=state) as run:
+        run.request_teardown(evidence)
+    saved = life.read_run(state, run.data["run_id"])
+    saved["state"] = "running"
+    life.write_run(state, saved)
+    entry = {"key": "container:discovered", "kind": "container", "identity": "one", "category": "disposable", "status": "present"}
+    engine.owned = lambda *_: [entry]
+    result = life.sweep(state, apply=True)
+    assert not result["errors"] and engine.removed == [entry["key"]]
+    saved = life.read_run(state, run.data["run_id"])
+    assert saved["state"] == "running" and saved["task_status"] == "open"
+    assert saved["teardown_request"]["finished_at"]
 
 
 def ready(state, resource):
@@ -1174,6 +1265,20 @@ def test_recovery_blob_storage_deduplicates_and_rejects_corruption(tmp_path):
     artifact_blobs.path(tmp_path, first).write_bytes(b"corrupt")
     with pytest.raises(ValueError, match="checksum mismatch"):
         artifact_blobs.path(tmp_path, first)
+
+
+def test_known_recovery_blob_reuse_checks_source_bytes_and_corrupt_archive(tmp_path, monkeypatch):
+    import io
+    from tools.quality import artifact_blobs
+
+    blob = artifact_blobs.put(io.BytesIO(b"shared layer"), tmp_path)
+    monkeypatch.setattr(artifact_blobs.tempfile, "NamedTemporaryFile", lambda **_: pytest.fail("Known content must not be compressed again"))
+    assert artifact_blobs.put(io.BytesIO(b"shared layer"), tmp_path, reuse=blob) == blob
+    with pytest.raises(ValueError, match="differs"):
+        artifact_blobs.put(io.BytesIO(b"changed layer"), tmp_path, reuse=blob)
+    artifact_blobs.path(tmp_path, blob).write_bytes(b"corrupt")
+    with pytest.raises(ValueError, match="checksum mismatch"):
+        artifact_blobs.put(io.BytesIO(b"shared layer"), tmp_path, reuse=blob)
 
 
 def test_unmanaged_command_is_returned_without_changing_its_type(state):

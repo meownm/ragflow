@@ -369,6 +369,10 @@ class Engine:
 
         metadata = directory / "images" / (identifier.removeprefix("sha256:") + ".image.json")
         unlinked(metadata)
+        known = {}
+        for previous in (directory / "images").glob("*.image.json"):
+            unlinked(previous)
+            known.update({member["blob"]["raw_sha256"]: member["blob"] for member in json.loads(previous.read_bytes())["members"]})
         if metadata.exists():
             existing = archive_info(metadata, image_id=identifier, kind="image-cas")
             self.verify_image(existing)
@@ -382,7 +386,8 @@ class Engine:
                         continue
                     if not member.isfile():
                         raise ValueError("Unsupported image archive member")
-                    blob = artifact_blobs.put(bundle.extractfile(member), directory)
+                    expected_blob = member.name.rsplit("/", 1)[-1] if member.name.startswith("blobs/sha256/") else None
+                    blob = artifact_blobs.put(bundle.extractfile(member), directory, reuse=known.get(expected_blob))
                     value = blob["raw_sha256"]
                     if member.name.startswith("blobs/sha256/") and value != member.name.rsplit("/", 1)[-1]:
                         raise ValueError("Image archive blob digest mismatch")

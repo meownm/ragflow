@@ -85,6 +85,7 @@ def test_quality_setup_failure_returns_nonzero_and_cleans_own_project(tmp_path, 
 
     (saved,) = list(runs(tmp_path / "lifecycle"))
     assert saved["state"] == "failed"
+    assert saved["teardown_request"]["evidence"] == str(tmp_path / "evidence")
     assert any(item.get("path") == str(tmp_path / "evidence") for item in saved["resources"])
 
 

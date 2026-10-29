@@ -295,6 +295,7 @@ def main():
             assert identity["dist_sha256"] == {name: value["sha256"] for name, value in receipt["files"].items()}, "Mounted dist differs from the verified candidate build"
             identity["frontend_receipt_id"] = receipt["receipt_id"]
         (OUT / "identity.json").write_text(json.dumps(identity, indent=2), encoding="utf-8")
+        current().request_teardown(OUT)
         exit_code = 1
         try:
             print("Starting disposable regression stack", flush=True)

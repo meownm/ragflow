@@ -20,9 +20,14 @@ class BusinessDocumentSqlAgentRunner:
     """Dispatch one immutable job snapshot to its bounded agent capability."""
 
     def process(self, job: BusinessDocumentJob) -> dict[str, Any]:
+        if job.job_type == "SQL_AGENT_DIALOGUE":
+            from api.apps.sql_assistant.conversation import plan_job
+
+            actor_id, is_admin, access_role = self._authorize(job)
+            return plan_job(job, actor_id, is_admin, access_role)
         return run_in_worker_loop(self._process(job))
 
-    async def _process(self, job: BusinessDocumentJob) -> dict[str, Any]:
+    def _authorize(self, job: BusinessDocumentJob) -> tuple[str, bool, str]:
         payload = job.payload if isinstance(job.payload, dict) else {}
         actor_id = str(payload.get("actor_id") or "")
         user = User.get_or_none(User.id == actor_id)
@@ -34,15 +39,16 @@ class BusinessDocumentSqlAgentRunner:
         if project is None:
             raise RuntimeError("SQL agent project no longer exists")
         access = BusinessDocumentAccess(actor_id, access_role, is_admin)
-        if job.job_type == "SQL_AGENT_DIALOGUE":
+        if job.job_type == "SQL_AGENT_DIALOGUE" and ((payload.get("request") or {}).get("payload") or {}).get("kind") != "DEFINITION_BINDING":
             access.require_view_sql(project.owner_id)
         else:
             access.require_edit(project.owner_id)
-        request = payload.get("request")
-        if job.job_type == "SQL_AGENT_DIALOGUE":
-            from api.apps.sql_assistant.conversation import plan_job
+        return actor_id, is_admin, access_role
 
-            return plan_job(job, actor_id, is_admin, access_role)
+    async def _process(self, job: BusinessDocumentJob) -> dict[str, Any]:
+        payload = job.payload if isinstance(job.payload, dict) else {}
+        actor_id, is_admin, _ = self._authorize(job)
+        request = payload.get("request")
         if job.job_type == "SQL_AGENT_REQUIREMENTS":
             command = parse_analyze_requirements_command(request, tenant_id=job.tenant_id)
             result = await RequirementsAnalysisScenario(TenantRequirementsAnalyst()).run(command)

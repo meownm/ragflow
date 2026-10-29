@@ -8,7 +8,7 @@ import { useSqlResultDeadline } from '@/pages/business-documents/constructor/sql
 import { ArrowUp, LoaderCircle, Square, X } from 'lucide-react';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { MentionInput, referenceKey } from './mention-input';
-import type { SendCommand } from './workspace';
+import type { MessageDelivery, SendCommand } from './workspace';
 
 export type DrillRow = { row_index: number; dimension: string; label: string };
 
@@ -42,6 +42,7 @@ export function ResultDialogue({
   optionsLoading,
   optionsError,
   onQuestionChange,
+  delivery,
 }: {
   session: AssistantSession;
   send: SendCommand;
@@ -53,14 +54,14 @@ export function ResultDialogue({
   optionsLoading?: boolean;
   optionsError?: boolean;
   onQuestionChange?: (question: string) => void;
-  onOpenSql?: () => void;
-  onUseDefinition?: (id: string, version: number) => void;
+  delivery?: MessageDelivery;
 }) {
   const [question, setQuestion] = useState('');
   const [references, setReferences] = useState<AssistantReference[]>([]);
   const input = useRef<HTMLTextAreaElement>(null);
   const history = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
+  const acknowledged = useRef<string | null>(null);
   const result = session.cards?.find(
     (card) =>
       card.kind === 'RESULT' && card.run_id === session.selected_result_id,
@@ -95,6 +96,22 @@ export function ResultDialogue({
       requestAnimationFrame(() => input.current?.focus());
     }
   }, [parentRow]);
+  useEffect(() => {
+    if (!delivery || acknowledged.current === delivery.key) return;
+    acknowledged.current = delivery.key;
+    if (
+      question.trim() === delivery.payload.text &&
+      JSON.stringify(references.map(referenceKey)) ===
+        JSON.stringify(delivery.payload.references || []) &&
+      (!parentRow ||
+        (parentRow.row_index === delivery.payload.row_index &&
+          parentRow.dimension === delivery.payload.dimension))
+    ) {
+      setQuestion('');
+      setReferences([]);
+      onClearRow();
+    }
+  }, [delivery, question, references, parentRow, onClearRow]);
   const submit = async (text = question, chosenReferences = references) => {
     if (!text.trim() || blocked) return;
     try {

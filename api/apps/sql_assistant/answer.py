@@ -60,6 +60,16 @@ You have no SQL executor. Choose exactly one capability:
 Do not ask again for a known source, period or metric. Do not require choosing an execution mode.
 No extra keys, executable SQL, markdown fences, explanations of this protocol or invented numbers.
 Without selected_result only CHANGE or CLARIFICATION is available.
+Special case: selected_result.kind=DEFINITION_BINDING is a registered metric template, not rows.
+In that case ONLY CLARIFICATION or {"intent":"BIND_PARAMETERS","parameters":{"NAME":{"value":TYPED_VALUE,"source_quote":"exact user quote"}}} is allowed.
+Bind ALL and ONLY mutable_parameters from the user's original question and accepted replies.
+Never silently adopt template defaults. Resolve relative periods using as_of and the template timezone.
+The immutable formula, grain, filters, date column, timezone and units must satisfy the request;
+if they cannot, or a parameter is unknown, ask one necessary question instead of binding.
+Each value needs an exact quote from a user message; template defaults are not user evidence.
+If current_basis is present, preserve its unmentioned SQL conditions and parameters; history
+about other versions does not override that selected basis. Saved view filters apply only
+to the saved result; ask before broadening that scope to source data.
 """
 
 

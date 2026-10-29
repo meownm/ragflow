@@ -1,6 +1,5 @@
-"""Browser-authored conversations for the proposed single-composer SQL chat.
+"""Browser-authored acceptance for the single-composer SQL chat.
 
-These are acceptance tests, not evidence that the Figma proposal is implemented.
 Run through live_ragflow/runner.py with a matching frontend, qwen3.8, worker and
 real OpenMetadata. No conversation command or result is manufactured through API.
 The imported fixture owns three synthetic orders in the disposable QA stack.
@@ -258,8 +257,9 @@ def test_chat_clarifies_undefined_metric_before_running(page, live, chat_probe):
     questions = proposal.get("proposal", {}).get("questions")
     assert questions, "Undefined metric must be clarified"
     assert any(re.search("итог|сумм|количеств|показател", question["question"], re.IGNORECASE) for question in questions)
-    for question in questions:
-        expect(_root(page)).to_contain_text(question["question"])
+    active_question = value["session"]["conversation"]["question"]["text"]
+    assert active_question in {question["question"] for question in questions}
+    expect(_root(page)).to_contain_text(active_question)
     _send(page, chat_probe, "Итог — сумма amount только для status = paid за все имеющиеся строки. Одна колонка total, без DISTINCT, без JOIN.")
     value = _rows(page, live, chat_probe, [["19.75"]], ["total"])
     _complete(page, live, chat_probe, value)
@@ -339,3 +339,148 @@ def test_chat_new_conversation_does_not_inherit_previous_filters(page, live, cha
     live.browser(page, "/sql-assistant?session=" + first_id)
     restored = _rows(page, live, chat_probe, [PAID[0]])
     assert _identity(restored) == _identity(first)
+
+
+def test_chat_lost_response_replays_one_delivery_after_result_changes(page, live, chat_probe):
+    """C15: abort a real committed response; retry must not create another turn."""
+    _start(page, live, chat_probe)
+    _rows(page, live, chat_probe)
+    question = "Теперь оставь только заказы с amount не меньше 10."
+    endpoint = re.compile(r"/api/v1/sql-assistant/sessions/" + chat_probe["id"] + r"/commands(?:\?.*)?$")
+    wires = []
+
+    def delivery(route):
+        body = route.request.post_data_json
+        if body.get("type") == "message" and body.get("payload", {}).get("text") == question:
+            wires.append(deepcopy(body))
+            if len(wires) == 1:
+                response = route.fetch()
+                assert response.ok and response.json()["code"] == 0
+                # The application accepted the real browser command. Only its
+                # transport response is lost; no model/result is substituted.
+                route.abort("failed")
+                return
+        route.continue_()
+
+    page.route(endpoint, delivery)
+    try:
+        _send(page, chat_probe, question)
+        accepted = _rows(page, live, chat_probe, [PAID[0]])
+        revision = accepted["session"]["revision"]
+        runs = [item["id"] for item in accepted["session"]["project"]["runs"]]
+        retry = _root(page).get_by_role("button", name="Повторить отправку", exact=True)
+        expect(retry).to_be_visible()
+        retry.click()
+        expect(_root(page).get_by_label("Сообщение SQL-помощнику")).to_have_value("", timeout=30000)
+        after = _snapshot(live, chat_probe)
+        assert len(wires) == 2 and wires[0] == wires[1]
+        assert after["session"]["revision"] == revision
+        assert [item["id"] for item in after["session"]["project"]["runs"]] == runs
+        assert sum(message["text"] == question for message in after["session"]["messages"]) == 1
+        assert _identity(after) == _identity(accepted)
+        assert _idle(after["session"]["project"])
+        live.proof(chat_probe["proof_id"] + "-delivery", {"same_wire": True, "client_request_id": wires[0]["client_request_id"], "revision": revision, "run_ids": runs})
+        _complete(page, live, chat_probe, after)
+    finally:
+        page.unroute(endpoint, delivery)
+
+
+def test_chat_registered_metric_binds_the_requested_parameter(page, live, chat_probe):
+    """C02: registry setup is configuration; all dialogue/results come from UI+LLM."""
+    from business_documents.sql_query.query_specification import parse_schema_snapshot
+
+    _start(page, live, chat_probe)
+    seeded = _rows(page, live, chat_probe)
+    session = seeded["session"]
+    snapshot = parse_schema_snapshot(session["project"]["artifacts"]["schema"]["schema_snapshot"])
+    table = snapshot.tables[0]
+    columns = {column.name: column.id for column in table.columns}
+
+    def condition(name, column, value, value_type, operator):
+        return {
+            "id": name,
+            "column_id": columns[column],
+            "operator": operator,
+            "parameter_name": name,
+            "parameter_type": value_type,
+            "parameter_value": value,
+            "description": "Условие методики",
+            "confirmed": True,
+            "decision": "user",
+        }
+
+    title = "Оплаченная сумма"
+    query = {
+        "base_entity_id": table.id,
+        "aliases": {table.id: "o"},
+        "joins": [],
+        "select": [{"id": "total", "kind": "sum", "column_id": columns["amount"], "alias": "total", "grain": None}],
+        "filters": [condition("paid_status", "status", "paid", "text", "eq"), condition("minimum_amount", "amount", "0", "decimal", "gte")],
+        "row_filter_tree": {"operator": "AND", "children": [{"filter_id": "paid_status"}, {"filter_id": "minimum_amount"}]},
+        "aggregate_filters": [],
+        "aggregate_filter_tree": None,
+        "order_by": [{"select_item_id": "total", "direction": "ASC"}],
+        "row_limit": 100,
+    }
+    # Synthetic admin publishes only registry metadata, never a conversation
+    # answer or a fabricated Run. Its default 0 deliberately differs from 10.
+    published_response = live.response(
+        "POST",
+        SESSIONS + "/" + session["id"] + "/commands",
+        {
+            "client_request_id": "fixture-definition-" + uuid4().hex,
+            "expected_revision": session["revision"],
+            "expected_project_version": session["project"]["state_version"],
+            "type": "publish_definition",
+            "payload": {
+                "definition_id": None,
+                "expected_version": 0,
+                "title": title,
+                "description": "Сумма amount оплаченных заказов с минимальным порогом",
+                "query": query,
+                "base_query_artifact_id": session["project"]["artifact_ids"]["query"],
+                "contract": {
+                    "grain": [],
+                    "metrics": [{"select_item_id": "total", "unit": "RUB", "null_policy": "IGNORE_NULLS_NULL_IF_EMPTY", "reaggregation": "FORBIDDEN"}],
+                    "time_column_id": None,
+                    "timezone": "UTC",
+                    "mutable_parameters": ["minimum_amount"],
+                },
+            },
+        },
+    )
+    published_body = published_response.json()
+    assert published_response.status_code == 200 and published_body.get("code") == 0, (
+        "Synthetic definition registry setup failed: " + str(published_response.status_code) + " " + str(published_body)[:3000]
+    )
+    published = published_body["data"]["effect"]["definition"]
+    _start(
+        page,
+        live,
+        chat_probe,
+        f"Рассчитай показатель {title}. Источник только {chat_probe['fqn']}. Сумма amount только для status = paid и amount не меньше 10. Одна строка, одна колонка total. Без JOIN и DISTINCT.",
+    )
+    waiting = _wait(page, live, chat_probe, lambda value: ((value["session"].get("conversation") or {}).get("pending") or {}).get("kind") == "METRIC")
+    assert not waiting["session"]["project"]["runs"]
+    chat_probe["turns"].append({"text": title, "session_id": chat_probe["id"], "started_monotonic": time.monotonic()})
+    _root(page).get_by_role("button", name=title, exact=True).click()
+    bound = _wait(
+        page,
+        live,
+        chat_probe,
+        lambda value: value["session"].get("selected_result_id") is not None or (((value["session"].get("conversation") or {}).get("pending") or {}).get("kind") == "DEFINITION_CONFIRM"),
+    )
+    pending = (bound["session"].get("conversation") or {}).get("pending") or {}
+    if pending.get("kind") == "DEFINITION_CONFIRM":
+        assert Decimal(str(pending["plan"]["parameters"]["minimum_amount"]["value"])) == Decimal("10")
+        chat_probe["turns"].append({"text": "Да, выполнить", "session_id": chat_probe["id"], "started_monotonic": time.monotonic()})
+        _root(page).get_by_role("button", name="Да, выполнить", exact=True).click()
+    result = _rows(page, live, chat_probe, [["12.50"]], ["total"])
+    assert result["session"]["definition_status"] == "DEFINITION_VALIDATED"
+    assert Decimal(str(result["result"]["parameters"]["minimum_amount"])) == Decimal("10")
+    assert len(result["session"]["project"]["runs"]) == 1
+    live.proof(
+        chat_probe["proof_id"] + "-metric-binding",
+        {"definition_id": published["definition_id"], "version": published["version"], "parameters": result["result"]["parameters"], "expected_total": "12.50"},
+    )
+    _complete(page, live, chat_probe, result)

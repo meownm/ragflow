@@ -136,12 +136,7 @@ function SelectedResult({
   }) => void;
 }) {
   const [offset, setOffset] = useState(0);
-  const result = useAssistantResult(
-    actor,
-    session.id,
-    session.selected_result_id,
-    offset,
-  );
+  const result = useAssistantResult(actor, session, offset);
   const lifetime = useSqlResultDeadline(
     session.selected_result_id || '',
     result.data?.expires_at,

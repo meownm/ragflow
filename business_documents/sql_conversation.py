@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 import json
+import re
 
 from business_documents import sql_assistant as results
 from business_documents.sql_result_answer import validate_answer
@@ -133,9 +134,58 @@ def automatic_schema_payload(resolution, details, requirements):
     }
 
 
+def literal_parameter(value, source):
+    """A quoted 0 cannot attest 10, nor paid attest unpaid or 5 attest -5."""
+    value = str(value)
+    if not value.strip():
+        return False
+    numeric = re.fullmatch(r"[+-]?\d+(?:[.,]\d+)?", value)
+    before = r"(?<![\w+.,-])" if numeric else r"(?<!\w)"
+    after = r"(?!\w|[.,]\d|%)" if numeric else r"(?!\w)"
+    return re.search(before + re.escape(value) + after, source) is not None
+
+
+def definition_binding(plan, context):
+    """Only declared parameters may change; derived values need human review."""
+    if not isinstance(plan, dict):
+        raise ValueError("Неверный ответ о параметрах")
+    if plan.get("intent") == "CLARIFICATION" and set(plan) == {"intent", "text"}:
+        results.text(plan["text"], "Уточнение", 2000)
+        return plan
+    if set(plan) != {"intent", "parameters"} or plan["intent"] != "BIND_PARAMETERS" or not isinstance(plan["parameters"], dict):
+        raise ValueError("Для определения разрешены только параметры или уточнение")
+    if set(plan["parameters"]) != set(context["mutable_parameters"]):
+        raise ValueError("Укажите все и только изменяемые параметры определения")
+    user_texts = [item["text"] for item in context["discussion"] if item["role"] == "user"]
+    normalized = {}
+    for name, supplied in plan["parameters"].items():
+        if not isinstance(supplied, dict) or set(supplied) != {"value", "source_quote"}:
+            raise ValueError("Для параметра нужны значение и цитата пользователя")
+        quote = results.text(supplied["source_quote"], "Цитата", 2000)
+        if not any(literal_parameter(quote, text) for text in user_texts) or type(supplied["value"]) not in (str, int, float, bool, type(None)):
+            raise ValueError("Параметр не подтверждён исходной репликой")
+        json.dumps(supplied["value"], allow_nan=False)
+        normalized[name] = deepcopy(supplied)
+    return {"intent": "BIND_PARAMETERS", "parameters": normalized}
+
+
+def bind_definition_parameters(query, plan):
+    updated = deepcopy(query)
+    for item in updated["filters"]:
+        if item.get("parameter_name") in plan["parameters"]:
+            item["parameter_value"] = plan["parameters"][item["parameter_name"]]["value"]
+    return updated
+
+
+def confirms_definition(text):
+    return text.strip().casefold().rstrip(".!") in {"да", "да, выполнить", "верно", "подтверждаю", "хорошо", "ок", "выполняй", "давай"}
+
+
 def parse_intent(raw, context):
     """A model selects a bounded capability; it never supplies executable SQL."""
     plan = json.loads(raw) if isinstance(raw, str) else raw
+    if context and context.get("kind") == "DEFINITION_BINDING":
+        return definition_binding(plan, context)
     if not isinstance(plan, dict) or not isinstance(plan.get("intent"), str) or plan["intent"] not in INTENTS:
         raise ValueError("Неверное намерение диалога")
     kind = plan["intent"]

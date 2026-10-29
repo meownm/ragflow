@@ -1,6 +1,7 @@
 """Single-command conversation persistence over real SQLite artifacts."""
 
 import json
+import asyncio
 from copy import deepcopy
 
 import pytest
@@ -8,11 +9,13 @@ import pytest
 from test.unit_test.api.apps.business_documents import test_sql_assistant_service as native
 from api.apps.business_documents.sql_query_agents import BusinessDocumentSqlAgentService as Projects
 from api.apps.business_documents.worker import BusinessDocumentJobQueue
-from api.db.db_models import BusinessDocumentJob, SqlAssistantSession, User
+from api.db.db_models import BusinessDocumentJob, BusinessDocumentSqlQueryProject, BusinessDocumentSqlQueryRun, SqlAssistantSession, User
+from business_documents.application.errors import ConflictError
 
 project = native.project
 source = native.source
 research = native.research
+approved = native.approved
 
 
 @pytest.fixture
@@ -75,6 +78,47 @@ def test_sufficient_initial_question_queues_schema_without_manual_accept(researc
     assert len(current["messages"]) == 1
 
 
+def test_one_reply_reconsiders_remaining_questions_instead_of_asking_them_again(research, actor):
+    service = research[0]
+    created = service.create({"question": "Show total", "client_request_id": "create-total"})
+    session = SqlAssistantSession.get_by_id(created["id"])
+    proposal = requirements(blocking=True)
+    proposal["proposal"]["questions"] = [
+        {"id": "METRIC", "question": "Какой итог?", "blocking": True, "options": ["Сумма", "Количество"]},
+        {"id": "PERIOD", "question": "За какой период?", "blocking": True, "options": ["За всё время"]},
+    ]
+    finish_preparation(created["conversation"]["job_id"], proposal)
+    reply = "Сумма amount для paid за все имеющиеся строки, одна колонка total."
+    response = native.command(service, session, "message", {"text": reply}, key="total-answer")
+    current = response["session"]
+    job = BusinessDocumentJob.get_by_id(current["conversation"]["job_id"])
+    assert job.job_type == "SQL_AGENT_REQUIREMENTS"
+    assert "Show total" in job.payload["request"]["source_request"]
+    assert "Вопрос помощника: Какой итог?\nОтвет пользователя: " + reply in job.payload["request"]["source_request"]
+    assert "За какой период?" not in job.payload["request"]["source_request"]
+    assert current["conversation"]["phase"] == "PREPARING"
+    assert current["messages"][-1]["text"] == reply
+    assert current["selected_result_id"] is None
+    finish_preparation(job.id, requirements(blocking=False))
+    next_job = BusinessDocumentJob.get_by_id(service.get(session.id)["conversation"]["job_id"])
+    assert next_job.job_type == "SQL_AGENT_SCHEMA"
+
+
+def test_unknown_freeform_reply_does_not_count_as_a_resolved_requirement(research, actor):
+    service = research[0]
+    created = service.create({"question": "Show orders", "client_request_id": "create-unknown"})
+    session = SqlAssistantSession.get_by_id(created["id"])
+    finish_preparation(created["conversation"]["job_id"], requirements(blocking=True))
+    response = native.command(service, session, "message", {"text": "Пока не знаю"}, key="unknown-answer")
+    job = BusinessDocumentJob.get_by_id(response["session"]["conversation"]["job_id"])
+    assert job.job_type == "SQL_AGENT_REQUIREMENTS"
+    finish_preparation(job.id, requirements(blocking=True))
+    current = service.get(session.id)
+    assert current["conversation"]["phase"] == "WAITING"
+    assert current["messages"][-1]["text"] == "Какой год?"
+    assert current["selected_result_id"] is None
+
+
 def test_actor_downgrade_during_model_call_cannot_accept_or_enqueue_next_stage(research, actor):
     service = research[0]
     created = service.create({"question": "Show orders", "client_request_id": "create-chat"})
@@ -84,6 +128,36 @@ def test_actor_downgrade_during_model_call_cannot_accept_or_enqueue_next_stage(r
     assert current["conversation"]["phase"] == "ERROR"
     assert current["project"]["artifact_ids"]["requirements"] is None
     assert BusinessDocumentJob.select().count() == 1
+
+
+def test_query_clarification_keeps_the_actual_question_with_its_answer(research, actor):
+    service, session, _, _, _ = research
+    BusinessDocumentSqlQueryProject.update(stage="QUERY", query_artifact_id=None).where(BusinessDocumentSqlQueryProject.id == session.id).execute()
+    project = service.runtime.project(session.id)
+    queued = service.runtime.call(
+        Projects.request_agent, session.id, {"schema_version": "1", "expected_state_version": project["state_version"], "idempotency_key": "query-question", "kind": "QUERY", "payload": {}}
+    )
+    state = deepcopy(session.state)
+    state["conversation"] = {"turn_id": "turn", "message_id": "m1", "phase": "PREPARING", "job_id": queued["current_job"]["id"]}
+    SqlAssistantSession.update(state=state).where(SqlAssistantSession.id == session.id).execute()
+    finish_preparation(
+        queued["current_job"]["id"],
+        {
+            "schema_version": "1",
+            "status": "NEEDS_CLARIFICATION",
+            "proposal": {"select": [{"column_id": "order-id"}], "joins": [], "filters": []},
+            "clarification_questions": ["За какой год показать заказы?"],
+            "warning": None,
+            "diagnostic": None,
+        },
+    )
+    waiting = service.get(session.id)
+    assert waiting["conversation"]["phase"] == "WAITING"
+    assert waiting["messages"][-1]["text"] == "За какой год показать заказы?"
+    answered = native.command(service, session, "message", {"text": "2026"}, key="year-answer")
+    next_job = BusinessDocumentJob.get_by_id(answered["session"]["conversation"]["job_id"])
+    assert next_job.job_type == "SQL_AGENT_REQUIREMENTS"
+    assert "Вопрос помощника: За какой год показать заказы?\nОтвет пользователя: 2026" in next_job.payload["request"]["source_request"]
 
 
 def complete(service, job_id, plan):
@@ -118,6 +192,28 @@ def test_message_is_saved_before_model_and_job_never_copies_result_cells(researc
     assert BusinessDocumentJob.select().count() == 1
 
 
+def test_dialogue_runner_does_not_nest_the_provider_event_loop(research, actor, monkeypatch):
+    from api.apps.business_documents.sql_query_agent_worker import BusinessDocumentSqlAgentRunner
+    from api.apps.sql_assistant import conversation
+    from business_documents.async_runtime import run_in_worker_loop
+
+    service, session, run, _, _ = research
+    native.command(service, session, "select_result", {"run_id": run.id}, key="select")
+    native.command(service, session, "message", {"text": "Измени группировку"}, key="message")
+    job = BusinessDocumentJobQueue.claim("worker", lease_ms=60000)
+    actual_plan = conversation.plan_conversation
+
+    class Model:
+        def generate(self, *_args, **_kwargs):
+            return run_in_worker_loop(asyncio.sleep(0, result={"intent": "CHANGE"}))
+
+    def bounded_plan(*args):
+        return actual_plan(*args, llm=Model())
+
+    monkeypatch.setattr(conversation, "plan_conversation", bounded_plan)
+    assert BusinessDocumentSqlAgentRunner().process(job) == {"intent": "CHANGE"}
+
+
 def test_server_aggregate_is_recomputed_from_result_not_stored_as_text(research):
     service, session, run, _, _ = research
     native.command(service, session, "select_result", {"run_id": run.id}, key="select")
@@ -141,3 +237,93 @@ def test_stop_preserves_selected_ready_result(research):
     assert stopped["session"]["selected_result_id"] == run.id
     assert stopped["session"]["conversation"]["phase"] == "CANCELLED"
     assert BusinessDocumentJob.get_by_id(queued["session"]["project"]["current_job"]["id"]).status == "CANCELLED"
+
+
+@pytest.fixture
+def metric_binding(approved, actor):
+    service, session, _, definition, _, _ = approved
+    BusinessDocumentSqlQueryProject.update(query_artifact_id=None, stage="QUERY").where(BusinessDocumentSqlQueryProject.id == session.id).execute()
+    state = deepcopy(SqlAssistantSession.get_by_id(session.id).state)
+    state["messages"] = [{"id": "m1", "role": "user", "text": "Сумма по клиентам, порог пять", "parent_result_id": None}]
+    state["conversation"] = {
+        "turn_id": "m1",
+        "message_id": "m1",
+        "phase": "WAITING",
+        "pending": {"kind": "METRIC", "candidates": [{"id": definition["definition_id"], "version": definition["version"], "title": definition["title"]}]},
+    }
+    SqlAssistantSession.update(state=state).where(SqlAssistantSession.id == session.id).execute()
+    response = native.command(service, session, "message", {"text": definition["title"]}, key="metric-choice")
+    return service, session, response["session"]
+
+
+def test_metric_choice_does_not_execute_template_defaults(metric_binding):
+    _, _, current = metric_binding
+    assert current["conversation"]["phase"] == "ROUTING"
+    job = BusinessDocumentJob.get_by_id(current["conversation"]["job_id"])
+    assert job.job_type == "SQL_AGENT_DIALOGUE"
+    assert job.payload["request"]["payload"] == {"kind": "DEFINITION_BINDING"}
+    assert BusinessDocumentSqlQueryRun.select().count() == 1
+
+
+def test_interpreted_metric_parameter_requires_confirmation_before_run(metric_binding, monkeypatch):
+    service, session, current = metric_binding
+    plan = {"intent": "BIND_PARAMETERS", "parameters": {"positive": {"value": "5", "source_quote": "порог пять"}}}
+    finish_preparation(current["conversation"]["job_id"], plan)
+    waiting = service.get(session.id)
+    assert waiting["conversation"]["phase"] == "WAITING"
+    assert "5" in waiting["conversation"]["question"]["text"]
+    assert BusinessDocumentSqlQueryRun.select().count() == 1
+    resumed = []
+
+    def resume(current_session, _state):
+        from business_documents.sql_conversation import preparation_action
+
+        resumed.append(preparation_action(service.runtime.project(current_session.id)))
+
+    # This contract stops at native compilation/admission. Actual catalog/profile
+    # resolution and physical execution belong to the live journey.
+    monkeypatch.setattr(service, "_progress_preparation", resume)
+    native.command(service, session, "message", {"text": "Да"}, key="confirm-parameters")
+    updated = service.get(session.id)
+    assert resumed == ["EXECUTE"]
+    assert updated["project"]["compilation"]["result"]["parameters"]["positive"] == "5"
+    assert updated["definition_status"] == "DEFINITION_VALIDATED"
+    assert BusinessDocumentSqlQueryRun.select().count() == 1
+
+
+def test_metric_confirmation_cannot_apply_after_draft_changed(metric_binding):
+    service, session, current = metric_binding
+    finish_preparation(current["conversation"]["job_id"], {"intent": "BIND_PARAMETERS", "parameters": {"positive": {"value": "5", "source_quote": "порог пять"}}})
+    draft = deepcopy(service.get(session.id)["draft"])
+    draft["query"]["filters"][2]["parameter_value"] = "50"
+    native.command(service, session, "save_draft", {"query": draft["query"], "base_query_artifact_id": draft["base_query_artifact_id"]}, key="edit-draft")
+    with pytest.raises(ConflictError) as error:
+        native.command(service, session, "message", {"text": "Да, выполнить"}, key="stale-confirmation")
+    assert error.value.code == "SQL_DIALOGUE_CONTEXT_CHANGED"
+    assert BusinessDocumentSqlQueryRun.select().count() == 1
+
+
+def test_followup_metric_choice_keeps_result_and_exploration_revises_original_question(approved, actor):
+    service, session, run, definition, _, _ = approved
+    native.command(service, session, "select_result", {"run_id": run.id}, key="select")
+    question = definition["title"] + " с порогом десять"
+    queued = native.command(service, session, "message", {"text": question}, key="metric-followup")
+    finish_preparation(queued["session"]["conversation"]["job_id"], {"intent": "CHANGE"})
+    waiting = service.get(session.id)
+    assert waiting["conversation"]["pending"]["kind"] == "METRIC"
+    assert waiting["selected_result_id"] == run.id
+    response = native.command(service, session, "message", {"text": "Исследовательский расчёт"}, key="explore")
+    current = response["session"]
+    job = BusinessDocumentJob.get_by_id(current["conversation"]["job_id"])
+    assert job.job_type == "SQL_AGENT_REVISION"
+    assert question in json.dumps(job.payload, ensure_ascii=False)
+    assert current["selected_result_id"] == run.id
+    assert BusinessDocumentSqlQueryRun.select().count() == 1
+
+
+def test_metric_binding_rechecks_edit_permission_before_publication(metric_binding, actor):
+    service, session, current = metric_binding
+    User.update(business_document_role="READER").where(User.id == actor.id).execute()
+    finish_preparation(current["conversation"]["job_id"], {"intent": "BIND_PARAMETERS", "parameters": {"positive": {"value": "5", "source_quote": "порог пять"}}})
+    assert service.get(session.id)["conversation"]["phase"] == "ERROR"
+    assert BusinessDocumentSqlQueryRun.select().count() == 1

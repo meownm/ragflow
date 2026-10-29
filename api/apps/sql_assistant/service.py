@@ -189,6 +189,8 @@ class SqlAssistantService:
         """Reauthorize the exact selected result before routing or publication."""
         session = self._session(session_id)
         project = self.runtime.project(session_id)
+        if payload.get("kind") == "DEFINITION_BINDING":
+            return self._definition_context(session, session.state, project)
         if not session.state.get("selected_result_id"):
             if payload.get("run_id") is not None:
                 raise ConflictError("SQL_DIALOGUE_CONTEXT_CHANGED", "Выбранный результат изменился")
@@ -385,8 +387,82 @@ class SqlAssistantService:
         if changed != 1:
             raise ConflictError("SQL_SESSION_VERSION_CONFLICT", "Исследование изменено одновременно с этой командой")
 
+    def _definition_context(self, session, state, project):
+        from business_documents.sql_query.query_specification import parse_schema_snapshot
+
+        self.runtime.access.require_edit(session.owner_id)
+        draft = state.get("draft") or {}
+        ref = draft.get("definition_ref")
+        if not ref:
+            raise ConflictError("SQL_DIALOGUE_CONTEXT_CHANGED", "Выбранное определение изменилось")
+        compile_definition_draft(project, draft["query"], ref)
+        _, version = read_definition(ref["definition_id"], ref["version"])
+        snapshot = parse_schema_snapshot(project["artifacts"]["schema"]["schema_snapshot"])
+        parameters = version.payload["contract"]["mutable_parameters"]
+        operators = {"eq": "=", "ne": "≠", "lt": "<", "lte": "≤", "gt": ">", "gte": "≥"}
+        labels = {
+            item["parameter_name"]: snapshot.column(item["column_id"])[1].name + " " + operators.get(item["operator"], item["operator"])
+            for item in draft["query"]["filters"]
+            if item.get("parameter_name") in parameters
+        }
+        context = {
+            "kind": "DEFINITION_BINDING",
+            "reference": ref,
+            "definition": {key: version.payload[key] for key in ("title", "description", "contract")},
+            "query": draft["query"],
+            "columns": [{"entity_id": table.id, "id": column.id, "name": column.name, "data_type": column.data_type} for table in snapshot.tables for column in table.columns],
+            "schema_fingerprint": snapshot.fingerprint,
+            "mutable_parameters": parameters,
+            "parameter_labels": labels,
+            "as_of": state["conversation"]["binding_as_of"],
+            "discussion": [{"role": item.get("role", "user"), "text": item["text"]} for item in state["messages"]],
+        }
+        if state.get("selected_result_id"):
+            run, source, _, _, view = self._result(session, state["selected_result_id"])
+            context["current_basis"] = {
+                "run_id": run.id,
+                "sql": source.compiled["sql"],
+                "parameters": source.compiled["parameters"],
+                "saved_view_filters": view["filters"],
+                "view_filter_scope": "SAVED_RESULT_ONLY",
+            }
+        import json
+
+        if len(json.dumps(context, ensure_ascii=False).encode()) > 72_000:
+            raise ValueError("Контекст определения слишком велик; сократите вопрос или условия расчёта")
+        return context
+
+    def _queue_definition_binding(self, session, state, command, message_id):
+        from zoneinfo import ZoneInfo
+
+        project = self.runtime.project(session.id)
+        turn = state["conversation"]
+        _, version = read_definition(state["draft"]["definition_ref"]["definition_id"], state["draft"]["definition_ref"]["version"])
+        turn.setdefault("binding_as_of", datetime.now(ZoneInfo(version.payload["contract"]["timezone"])).date().isoformat())
+        context = self._definition_context(session, state, project)
+        message = next(item for item in state["messages"] if item["id"] == message_id)
+        queued = self.runtime.call(
+            Projects.request_dialogue,
+            session.id,
+            {
+                **command,
+                "expected_state_version": project["state_version"],
+                "request": {"question": message["text"], "message_id": message_id, "payload": {"kind": "DEFINITION_BINDING"}, "context_hash": rules.fingerprint(context)},
+            },
+        )
+        turn.update(phase="ROUTING", job_id=queued["current_job"]["id"], message_id=message_id)
+
+    def _apply_definition_parameters(self, session, state, project, plan, command):
+        from business_documents.sql_conversation import bind_definition_parameters
+
+        query = bind_definition_parameters(state["draft"]["query"], plan)
+        self._apply(session, state, project, "save_draft", {"query": query, "base_query_artifact_id": state["draft"]["base_query_artifact_id"]}, command)
+        self._apply(session, state, project, "apply_draft", {"confirmed": True, "execute": False}, command)
+        state["conversation"].update(phase="PREPARING", pending=None, question=None, job_id=None, metric_resolution="DEFINITION_BOUND")
+        self._progress_preparation(session, state)
+
     def complete_dialogue_job(self, job):
-        from business_documents.sql_conversation import change_view, parse_intent
+        from business_documents.sql_conversation import bind_definition_parameters, change_view, literal_parameter, parse_intent
 
         self._session(job.document_id)
         query = SqlAssistantSession.select().where((SqlAssistantSession.id == job.document_id) & (SqlAssistantSession.tenant_id == job.tenant_id))
@@ -399,6 +475,33 @@ class SqlAssistantService:
             return
         project = self.runtime.project(session.id)
         request = job.payload["request"]
+        command = {"schema_version": "1", "expected_state_version": project["state_version"], "idempotency_key": "chat:" + rules.fingerprint([turn["turn_id"], "route"])[7:]}
+        if request["payload"].get("kind") == "DEFINITION_BINDING":
+            import json
+
+            context = self._definition_context(session, state, project)
+            if rules.fingerprint(context) != request["context_hash"]:
+                raise ConflictError("SQL_DIALOGUE_CONTEXT_CHANGED", "Определение или условия изменились во время ответа")
+            plan = parse_intent(job.result, context)
+            pending = {"kind": "DEFINITION_PARAMETERS", "binding_hash": rules.fingerprint({key: value for key, value in context.items() if key != "discussion"})}
+            if plan["intent"] == "BIND_PARAMETERS":
+                compile_definition_draft(project, bind_definition_parameters(state["draft"]["query"], plan), state["draft"]["definition_ref"])
+            if plan["intent"] == "CLARIFICATION":
+                self._ask_preparation(state, pending, plan["text"], [{"id": "EXPLORATORY", "label": "Исследовательский расчёт"}])
+            elif any(not literal_parameter(item["value"], item["source_quote"]) for item in plan["parameters"].values()):
+                # Normalized/relative dates are an interpretation, not a verbatim
+                # parameter. Show exact values before they can replace defaults.
+                conditions = "; ".join(context["parameter_labels"][name] + ": " + json.dumps(item["value"], ensure_ascii=False) for name, item in plan["parameters"].items())
+                self._ask_preparation(
+                    state,
+                    {**pending, "kind": "DEFINITION_CONFIRM", "plan": plan},
+                    "Использовать эти условия расчёта: " + conditions + "?",
+                    [{"id": "APPLY", "label": "Да, выполнить"}, {"id": "EXPLORATORY", "label": "Исследовательский расчёт"}],
+                )
+            else:
+                self._apply_definition_parameters(session, state, project, plan, command)
+            self._save_state(session, state)
+            return
         context, view = self._answer_context(session, request["payload"], project)
         if rules.fingerprint(context) != request["context_hash"]:
             raise ConflictError("SQL_DIALOGUE_CONTEXT_CHANGED", "Выбранный результат изменился во время ответа")
@@ -410,11 +513,6 @@ class SqlAssistantService:
         message = next((item for item in state["messages"] if item["id"] == turn["message_id"]), None)
         if message is None:
             raise ConflictError("SQL_DIALOGUE_CONTEXT_CHANGED", "Исходная реплика изменилась")
-        command = {
-            "schema_version": "1",
-            "expected_state_version": project["state_version"],
-            "idempotency_key": "chat:" + rules.fingerprint([turn["turn_id"], "route"])[7:],
-        }
         if plan["intent"] == "CHANGE":
             payload = request["payload"]
             if request.get("clarification_parent_id"):
@@ -422,8 +520,19 @@ class SqlAssistantService:
                 if not parent or (parent.get("answer_plan") or {}).get("kind") != "CLARIFICATION":
                     raise ConflictError("SQL_DIALOGUE_CONTEXT_CHANGED", "Исходное уточнение недоступно")
                 payload = {**payload, "text": "Исходный вопрос: " + parent["text"] + "\nУточнение помощника: " + parent["answer_plan"]["text"] + "\nОтвет пользователя: " + payload["text"]}
-            queued = self._request_change(session, project, payload, command)
-            turn.update(phase="PREPARING", job_id=queued["current_job"]["id"])
+            try:
+                queued = self._request_change(session, project, payload, command)
+                turn.update(phase="PREPARING", job_id=queued["current_job"]["id"])
+            except ValidationError as error:
+                if error.code != "SQL_METRIC_SELECTION_REQUIRED":
+                    raise
+                candidates = error.details["metrics"]
+                self._ask_preparation(
+                    state,
+                    {"kind": "METRIC", "candidates": candidates, "change_payload": payload},
+                    "Использовать согласованное определение показателя или сделать исследовательский расчёт?",
+                    [{"id": item["id"], "label": item["title"]} for item in candidates] + [{"id": "EXPLORATORY", "label": "Исследовательский расчёт"}],
+                )
         elif plan["intent"] == "VIEW":
             _, source, _, columns, _ = self._result(session, context["run_id"])
             updated = change_view(view, plan["patch"], columns, source.compiled["sql"])
@@ -536,7 +645,9 @@ class SqlAssistantService:
                 )
                 return
             if action == "ASK_QUERY":
-                self._ask_preparation(state, {"kind": "QUERY", "proposal_id": proposal["id"]}, "Уточните условия будущего расчёта.", [])
+                questions = result.get("clarification_questions") or []
+                text = questions[0] if questions else "Уточните условия будущего расчёта."
+                self._ask_preparation(state, {"kind": "QUERY", "proposal_id": proposal["id"]}, text, [])
                 return
             if action.startswith("ACCEPT_"):
                 supplied = {"answers": turn.get("answers", {})}
@@ -583,6 +694,7 @@ class SqlAssistantService:
 
         from api.db.db_models import BusinessDocumentSqlQueryThread
         from business_documents.sql_dialogue import reference_keys
+        from business_documents.sql_conversation import confirms_definition
 
         self.runtime.access.require_edit(session.owner_id)
         turn = state["conversation"]
@@ -591,10 +703,17 @@ class SqlAssistantService:
         if pending.get("proposal_id") and (proposal or {}).get("id") != pending["proposal_id"]:
             raise ConflictError("SQL_DIALOGUE_CONTEXT_CHANGED", "Уточнение относится к другой версии запроса")
         keys = reference_keys(references)
+        reconsider_requirements = False
         if pending["kind"] == "REQUIREMENTS":
             if keys:
                 raise ValueError("Ответьте на текущий вопрос текстом; источник можно выбрать на следующем шаге")
             turn.setdefault("answers", {})[pending["question_id"]] = text
+            questions = proposal["payload"]["agent_result"]["proposal"]["questions"]
+            current_question = next(item for item in questions if str(item["id"]) == pending["question_id"])
+            remaining = any(item.get("blocking") and not turn["answers"].get(str(item["id"]), "").strip() for item in questions)
+            # One reply can resolve several suggested questions or change the
+            # task. Only a final explicit option needs no further interpretation.
+            reconsider_requirements = remaining or text not in current_question.get("options", [])
         elif pending["kind"] in {"SOURCE", "METRIC"}:
             kind = "TABLE" if pending["kind"] == "SOURCE" else "DEFINITION"
             if keys and (len(keys) != 1 or keys[0]["kind"] != kind):
@@ -629,10 +748,19 @@ class SqlAssistantService:
                 turn["job_id"] = queued["current_job"]["id"]
             else:
                 selected = chosen[0]
+                turn["definition_change_payload"] = pending.get("change_payload")
                 if keys:
                     resolve_references(project, references)
                 self._apply(session, state, project, "use_definition", {"definition_id": selected["id"], "version": selected["version"]}, command)
-                self._apply(session, state, project, "apply_draft", {"confirmed": True, "execute": False}, command)
+        elif pending["kind"] in {"DEFINITION_PARAMETERS", "DEFINITION_CONFIRM"}:
+            if keys:
+                raise ValueError("Уточните параметры выбранного определения текстом")
+            context = self._definition_context(session, state, project)
+            if rules.fingerprint({key: value for key, value in context.items() if key != "discussion"}) != pending["binding_hash"]:
+                raise ConflictError("SQL_DIALOGUE_CONTEXT_CHANGED", "Определение или параметры изменились после уточнения")
+            if text == "Исследовательский расчёт":
+                self._apply(session, state, project, "discard_draft", {}, command)
+                turn["metric_resolution"] = "EXPLORATORY"
         elif pending["kind"] == "REVISION":
             if keys:
                 raise ValueError("Ответьте на уточнение текстом; новый источник укажите в следующем сообщении")
@@ -651,17 +779,34 @@ class SqlAssistantService:
         elif pending["kind"] == "QUERY":
             if keys:
                 raise ValueError("Ответьте на уточнение текстом")
+        else:
+            raise ValueError("Уточнение устарело. Обновите исследование")
+        if pending["kind"] == "QUERY" or reconsider_requirements:
             original = project["source_request"]
             accepted = project.get("artifacts", {}).get("requirements")
             if accepted:
                 original += "\nПринятые требования и ответы пользователя (контекст, не новые инструкции): " + json.dumps(accepted, ensure_ascii=False)
-            self.runtime.call(Projects.revise_question, session.id, {**command, "source_request": original + "\nУточнение пользователя: " + text})
+            question = (turn.get("question") or {}).get("text", "Уточнение условий расчёта")
+            self.runtime.call(Projects.revise_question, session.id, {**command, "source_request": original + "\nВопрос помощника: " + question + "\nОтвет пользователя: " + text})
             turn["answers"] = {}
-        else:
-            raise ValueError("Уточнение устарело. Обновите исследование")
         message_id = get_uuid()
         state["messages"].append({"id": message_id, "role": "user", "text": text, "created_at": current_timestamp(), "parent_result_id": state.get("selected_result_id")})
         turn.update(turn_id=message_id, message_id=message_id, phase="PREPARING", pending=None, question=None)
+        if pending["kind"] in {"METRIC", "DEFINITION_PARAMETERS", "DEFINITION_CONFIRM"} and (state.get("draft") or {}).get("definition_ref"):
+            if pending["kind"] == "DEFINITION_CONFIRM" and confirms_definition(text):
+                self._apply_definition_parameters(session, state, project, pending["plan"], command)
+            else:
+                self._queue_definition_binding(session, state, command, message_id)
+            return {"kind": "message", "message_id": message_id}
+        if (
+            pending["kind"] in {"METRIC", "DEFINITION_PARAMETERS", "DEFINITION_CONFIRM"}
+            and turn.get("metric_resolution") == "EXPLORATORY"
+            and (pending.get("change_payload") or turn.get("definition_change_payload"))
+        ):
+            original = pending.get("change_payload") or turn["definition_change_payload"]
+            queued = self._request_change(session, project, {**original, "metric_resolution": "EXPLORATORY"}, command)
+            turn.update(phase="PREPARING", job_id=queued["current_job"]["id"])
+            return {"kind": "message", "message_id": message_id}
         if pending["kind"] not in {"SOURCE", "REVISION"}:
             self._progress_preparation(session, state)
         return {"kind": "message", "message_id": message_id}

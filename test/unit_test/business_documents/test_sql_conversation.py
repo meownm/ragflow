@@ -6,7 +6,7 @@ from decimal import Decimal
 import pytest
 
 from business_documents.sql_assistant import default_view
-from business_documents.sql_conversation import automatic_schema_payload, automatic_sources, change_view, parse_intent, preparation_action, saved_aggregate
+from business_documents.sql_conversation import automatic_schema_payload, automatic_sources, change_view, literal_parameter, parse_intent, preparation_action, saved_aggregate
 from business_documents.sql_query.query_specification import parse_schema_snapshot
 from business_documents.sql_result_answer import answer_context
 from test.evals.sql_projects.schema import accepted_schema
@@ -15,6 +15,22 @@ AMOUNT = "out_aaaaaaaaaa_1"
 STATUS = "out_bbbbbbbbbb_1"
 COLUMNS = [{"id": AMOUNT, "name": "amount"}, {"id": STATUS, "name": "status"}]
 SQL = "SELECT amount, status FROM public.orders"
+
+
+@pytest.mark.parametrize(
+    "value,quote,expected", [("0", "10", False), ("paid", "unpaid", False), (5, "-5", False), (5, "5%", False), ("10", "порог 10.", True), ("2026-10-01", "2026-10-01T00:00", False)]
+)
+def test_parameter_evidence_is_a_complete_literal(value, quote, expected):
+    assert literal_parameter(value, quote) is expected
+
+
+@pytest.mark.parametrize(
+    "parameters", [{}, {"other": {"value": "10", "source_quote": "10"}}, {"minimum": {"value": "0", "source_quote": "0"}}, {"minimum": {"value": float("nan"), "source_quote": "10"}}]
+)
+def test_definition_binding_rejects_missing_unknown_and_unattested_parameters(parameters):
+    source = {"kind": "DEFINITION_BINDING", "mutable_parameters": ["minimum"], "discussion": [{"role": "user", "text": "Порог 10"}]}
+    with pytest.raises(ValueError):
+        parse_intent({"intent": "BIND_PARAMETERS", "parameters": parameters}, source)
 
 
 def aggregate(operation="sum", column=AMOUNT):

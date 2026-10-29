@@ -21,8 +21,20 @@ export const SqlAssistantKeys = {
     [...SqlAssistantKeys.all(actor), 'sessions'] as const,
   session: (actor: string, id: string | null) =>
     [...SqlAssistantKeys.all(actor), 'session', id] as const,
-  result: (actor: string, id: string, run: string | null, offset: number) =>
-    [...SqlAssistantKeys.session(actor, id), 'result', run, offset] as const,
+  result: (
+    actor: string,
+    id: string,
+    run: string | null,
+    offset: number,
+    viewRevision: number,
+  ) =>
+    [
+      ...SqlAssistantKeys.session(actor, id),
+      'result',
+      run,
+      offset,
+      viewRevision,
+    ] as const,
   preflight: (actor: string, id: string, version: number) =>
     [...SqlAssistantKeys.session(actor, id), 'preflight', version] as const,
   catalog: (actor: string, q: string) =>
@@ -103,6 +115,13 @@ export function useAssistantCommand(actor: string, session: AssistantSession) {
         expected_project_version: projectVersion,
       }),
     retry: false,
+    onError: async () => {
+      // A lost HTTP response can hide an accepted command and its queued job.
+      await client.invalidateQueries({
+        queryKey: SqlAssistantKeys.session(actor, session.id),
+        exact: true,
+      });
+    },
     onSuccess: async (result) => {
       client.setQueryData(
         SqlAssistantKeys.session(actor, session.id),
@@ -121,17 +140,29 @@ export function useAssistantCommand(actor: string, session: AssistantSession) {
 
 export const useAssistantResult = (
   actor: string,
-  id: string,
-  run: string | null,
+  session: AssistantSession,
   offset: number,
-) =>
-  useQuery({
-    queryKey: SqlAssistantKeys.result(actor, id, run, offset),
-    queryFn: ({ signal }) => fetchAssistantResult(id, run!, offset, signal),
+) => {
+  const run = session.selected_result_id;
+  const card = session.cards?.find(
+    (item) => item.kind === 'RESULT' && item.run_id === run,
+  );
+  const viewRevision = card?.kind === 'RESULT' ? card.context.view_revision : 0;
+  return useQuery({
+    queryKey: SqlAssistantKeys.result(
+      actor,
+      session.id,
+      run,
+      offset,
+      viewRevision,
+    ),
+    queryFn: ({ signal }) =>
+      fetchAssistantResult(session.id, run!, offset, signal),
     enabled: Boolean(run),
     retry: false,
     staleTime: 0,
   });
+};
 export const useAssistantPreflight = (
   actor: string,
   session: AssistantSession,

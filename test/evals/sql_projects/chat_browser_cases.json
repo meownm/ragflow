@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "target": "RAGFlow single-composer SQL chat, Figma 161:208",
-  "status": "prepared_not_live_qualified",
+  "status": "partially_live_qualified",
   "model": "qwen3.8:latest",
   "source_head": "4a05f022aae27c563cf4f182373482efca182334",
   "fixtures": {
@@ -63,8 +63,14 @@
         "order grain"
       ],
       "automated_by": "test/playwright/e2e/test_sql_assistant_chat_live.py::test_chat_fast_answer_and_server_restore_in_fresh_context",
-      "status": "implemented_not_run",
-      "missing_prerequisite": "Matching runtime implementing the proposed single-composer UI; bindings must be verified there"
+      "status": "live_pass",
+      "missing_prerequisite": null,
+      "evidence": {
+        "source_id": "7148a0f4e98d69566efa0b4707dcf2061e246b7529dc41d3e103c7783a0063b0",
+        "receipt": ".local/archives/sql-product-figma-20261029/live-loop-subnet-path/browser.xml",
+        "model": "qwen3.8:latest",
+        "scope": "Frozen loop/view-refresh fix; subsequent definition/delivery increment not yet live qualified"
+      }
     },
     {
       "id": "C02",
@@ -81,7 +87,10 @@
       ],
       "automated_by": "test/playwright/e2e/test_sql_assistant_chat_live.py::test_chat_clarifies_undefined_metric_before_running",
       "status": "implemented_not_run",
-      "missing_prerequisite": "Matching runtime implementing the proposed single-composer UI; bindings must be verified there"
+      "missing_prerequisite": "Matching runtime implementing the proposed single-composer UI; bindings must be verified there",
+      "additional_checks": [
+        "test/playwright/e2e/test_sql_assistant_chat_live.py::test_chat_registered_metric_binds_the_requested_parameter"
+      ]
     },
     {
       "id": "C03",
@@ -141,8 +150,14 @@
         "view"
       ],
       "automated_by": "test/playwright/e2e/test_sql_assistant_chat_live.py::test_chat_fast_answer_and_server_restore_in_fresh_context",
-      "status": "implemented_not_run",
-      "missing_prerequisite": "Matching runtime implementing the proposed single-composer UI; bindings must be verified there"
+      "status": "live_pass",
+      "missing_prerequisite": null,
+      "evidence": {
+        "source_id": "7148a0f4e98d69566efa0b4707dcf2061e246b7529dc41d3e103c7783a0063b0",
+        "receipt": ".local/archives/sql-product-figma-20261029/live-loop-subnet-path/browser.xml",
+        "model": "qwen3.8:latest",
+        "scope": "Frozen loop/view-refresh fix; subsequent definition/delivery increment not yet live qualified"
+      }
     },
     {
       "id": "C06",
@@ -326,7 +341,7 @@
       "id": "C15",
       "priority": "P0",
       "title": "Потерянный ответ и повтор",
-      "fixture": "golden",
+      "fixture": "three-orders",
       "steps": [
         "Отправить изменение.",
         "Потерять HTTP-ответ после обработки.",
@@ -337,9 +352,9 @@
         "idempotency",
         "confirmed state"
       ],
-      "automated_by": null,
-      "status": "gap",
-      "missing_prerequisite": "Native browser automation for the new UI and the required owned real-service fault/persona/fixture boundary"
+      "automated_by": "test/playwright/e2e/test_sql_assistant_chat_live.py::test_chat_lost_response_replays_one_delivery_after_result_changes",
+      "status": "implemented_not_run",
+      "missing_prerequisite": "Matching frozen follow-up runtime and real post-commit transport fault"
     },
     {
       "id": "C16",

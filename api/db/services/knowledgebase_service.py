@@ -13,6 +13,7 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 #
+from contextlib import nullcontext
 from datetime import datetime
 
 from peewee import fn, JOIN, IntegrityError
@@ -386,8 +387,11 @@ class KnowledgebaseService(CommonService):
         original_name = payload["name"]
         for _ in range(1000):
             payload["name"] = duplicate_name(
-                cls.query_by_name_case_insensitive, name=original_name,
-                tenant_id=payload["tenant_id"], status=StatusEnum.VALID.value, max_length=DATASET_NAME_LIMIT,
+                cls.query_by_name_case_insensitive,
+                name=original_name,
+                tenant_id=payload["tenant_id"],
+                status=StatusEnum.VALID.value,
+                max_length=DATASET_NAME_LIMIT,
             )
             try:
                 with DB.atomic():
@@ -497,30 +501,22 @@ class KnowledgebaseService(CommonService):
         return ids
 
     @classmethod
-    @DB.connection_context()
     def accessible(cls, kb_id, user_id):
-        # Check if a dataset is accessible by a user
-        # Args:
-        #     kb_id: Knowledge base ID
-        #     user_id: User ID
-        # Returns:
-        #     Boolean indicating accessibility
-        e, kb = cls.get_by_id(kb_id)
-        if not e:
-            return False
+        """Check current grants while preserving the caller's transaction."""
+        with DB.connection_context() if DB.is_closed() else nullcontext():
+            kb = cls.model.get_or_none(cls.model.id == kb_id)
+            if kb is None or kb.status != StatusEnum.VALID.value:
+                return False
 
-        if kb.status != StatusEnum.VALID.value:
-            return False
+            from api.db.services.managed_resource_service import ManagedResourceService
 
-        from api.db.services.managed_resource_service import ManagedResourceService
+            if ManagedResourceService.user_is_superuser(user_id):
+                return True
 
-        if ManagedResourceService.user_is_superuser(user_id):
-            return True
+            from api.db.services.access_group_service import AccessGroupService
 
-        from api.db.services.access_group_service import AccessGroupService
-
-        allowed_dataset_ids = AccessGroupService.allowed_dataset_ids(user_id) or set()
-        return kb.id in allowed_dataset_ids
+            allowed_dataset_ids = AccessGroupService.allowed_dataset_ids(user_id) or set()
+            return kb.id in allowed_dataset_ids
 
     @classmethod
     @DB.connection_context()

@@ -198,7 +198,7 @@ export default function SqlAssistantPage() {
             </div>
           ) : (
             <AssistantWorkspace
-              key={id}
+              key={`${actor}:${id}`}
               actor={actor}
               session={session.data}
               refresh={async () => {

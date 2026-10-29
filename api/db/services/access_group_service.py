@@ -4,6 +4,8 @@
 #  Licensed under the Apache License, Version 2.0 (the "License");
 #
 
+from contextlib import nullcontext
+
 from peewee import IntegrityError
 
 from api.db.db_models import (
@@ -276,14 +278,15 @@ class AccessGroupService:
             raise LookupError("Access group not found")
 
     @staticmethod
-    @DB.connection_context()
     def effective_policy(user_id):
-        group_ids = [row.group_id for row in AccessGroupUser.select(AccessGroupUser.group_id).where(AccessGroupUser.user_id == user_id)]
-        if not group_ids:
-            return None
-        dataset_ids = {row.dataset_id for row in AccessGroupDataset.select(AccessGroupDataset.dataset_id).where(AccessGroupDataset.group_id.in_(group_ids))}
-        sections = {row.section for row in AccessGroupSection.select(AccessGroupSection.section).where(AccessGroupSection.group_id.in_(group_ids))}
-        return {"dataset_ids": dataset_ids, "sections": sections}
+        """Read current grants without closing the caller's connection."""
+        with DB.connection_context() if DB.is_closed() else nullcontext():
+            group_ids = [row.group_id for row in AccessGroupUser.select(AccessGroupUser.group_id).where(AccessGroupUser.user_id == user_id)]
+            if not group_ids:
+                return None
+            dataset_ids = {row.dataset_id for row in AccessGroupDataset.select(AccessGroupDataset.dataset_id).where(AccessGroupDataset.group_id.in_(group_ids))}
+            sections = {row.section for row in AccessGroupSection.select(AccessGroupSection.section).where(AccessGroupSection.group_id.in_(group_ids))}
+            return {"dataset_ids": dataset_ids, "sections": sections}
 
     @classmethod
     def has_section_access(cls, user, sections):

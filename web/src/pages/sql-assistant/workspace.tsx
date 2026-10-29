@@ -27,6 +27,11 @@ export type SendCommand = (
   payload?: Record<string, unknown>,
 ) => Promise<AssistantEffect>;
 
+export type MessageDelivery = {
+  key: string;
+  payload: Record<string, unknown>;
+};
+
 export function AssistantWorkspace({
   actor,
   session,
@@ -38,6 +43,7 @@ export function AssistantWorkspace({
 }) {
   const [parentRow, setParentRow] = useState<DrillRow | null>(null);
   const [localChanges, setLocalChanges] = useState(false);
+  const [delivery, setDelivery] = useState<MessageDelivery>();
   const [error, setError] = useState<ReturnType<
     typeof assistantFailure
   > | null>(null);
@@ -55,6 +61,8 @@ export function AssistantWorkspace({
   const locked = command.isPending || preparing;
   const canEdit = project.capabilities.edit !== false;
   const attempt = useRef<{
+    type: string;
+    payload: Record<string, unknown>;
     signature: string;
     key: string;
     revision: number;
@@ -64,21 +72,26 @@ export function AssistantWorkspace({
     const signature = JSON.stringify([type, payload]);
     if (attempt.current?.signature !== signature)
       attempt.current = {
+        type,
+        payload: JSON.parse(JSON.stringify(payload)),
         signature,
         key: assistantCommandId(),
         revision: session.revision,
         projectVersion: project.state_version,
       };
     setError(null);
+    const pending = attempt.current;
     try {
       const response = await command.mutateAsync({
-        type,
-        payload,
-        key: attempt.current.key,
-        revision: attempt.current.revision,
-        projectVersion: attempt.current.projectVersion,
+        type: pending.type,
+        payload: pending.payload,
+        key: pending.key,
+        revision: pending.revision,
+        projectVersion: pending.projectVersion,
       });
-      attempt.current = null;
+      if (pending.type === 'message')
+        setDelivery({ key: pending.key, payload: pending.payload });
+      if (attempt.current === pending) attempt.current = null;
       return response.effect;
     } catch (failure) {
       if (
@@ -89,12 +102,14 @@ export function AssistantWorkspace({
           failure.response &&
           failure.response.status >= 400 &&
           failure.response.status < 500)
-      )
-        attempt.current = null;
+      ) {
+        if (attempt.current === pending) attempt.current = null;
+      }
       setError(assistantFailure(failure));
       throw failure;
     }
   };
+  const retry = attempt.current;
   return (
     <section
       className="sa-workspace sa-conversation"
@@ -172,13 +187,31 @@ export function AssistantWorkspace({
             options={dialogue.data}
             optionsLoading={dialogue.isFetching}
             optionsError={dialogue.isError}
+            delivery={delivery}
           />
           {error && (
             <div className="sa-chat-error" role="alert">
               <p>{error.message}</p>
-              <Button variant="ghost" size="sm" onClick={() => void refresh()}>
-                Обновить состояние
-              </Button>
+              {retry ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={command.isPending}
+                  onClick={() =>
+                    void send(retry.type, retry.payload).catch(() => undefined)
+                  }
+                >
+                  Повторить отправку
+                </Button>
+              ) : (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void refresh()}
+                >
+                  Обновить состояние
+                </Button>
+              )}
             </div>
           )}
           {session.conversation?.phase === 'ERROR' && (
@@ -225,12 +258,7 @@ function SelectedSql({
   actor: string;
   session: AssistantSession;
 }) {
-  const source = useAssistantResult(
-    actor,
-    session.id,
-    session.selected_result_id,
-    0,
-  );
+  const source = useAssistantResult(actor, session, 0);
   const deadline = useSqlResultDeadline(
     session.selected_result_id || '',
     source.data?.expires_at,

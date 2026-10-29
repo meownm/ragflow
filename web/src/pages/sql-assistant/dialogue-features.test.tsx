@@ -109,7 +109,7 @@ it('asks for a metric definition only when the server requires clarification', a
       },
     },
   });
-  fireEvent.click(screen.getByRole('button', { name: 'Выручка', exact: true }));
+  fireEvent.click(screen.getByRole('button', { name: /^Выручка$/ }));
   await waitFor(() =>
     expect(send).toHaveBeenCalledWith(
       'message',

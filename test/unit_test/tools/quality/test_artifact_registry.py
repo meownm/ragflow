@@ -236,9 +236,12 @@ def test_scope_retains_exact_reviewed_generations_and_their_shared_dependencies(
 
 def test_inventory_keeps_reviewed_legacy_container_visible_when_evidence_becomes_stale(tmp_path, monkeypatch):
     from tools.quality import artifact_review
+    from tools.quality.artifact_lifecycle import Run
 
     store = tmp_path / "state"
     monkeypatch.setenv("RAGFLOW_ARTIFACT_STATE", str(store))
+    with Run("historical-fixture-custody", store=store, category="metadata") as historical:
+        historical.data["review_sequence"] = None
     legacy = {"Id": "legacy", "Name": "/private-database", "Image": IMAGE, "Mounts": []}
     records = registry.docker_records("engine", [legacy], [{"Id": IMAGE}], [], {})
     evidence = tmp_path / "qualification.json"

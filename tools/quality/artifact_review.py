@@ -133,7 +133,7 @@ def record(store, inventory, decisions):
                     raise ValueError("Supersession cycle is not a replacement")
                 visited.add(current)
                 current = graph[current]
-        sequence = max((run.get("review_sequence", 0) for run in previous), default=0) + 1
+        sequence = max((run.get("review_sequence") or 0 for run in previous), default=0) + 1
         with Run("artifact-queue-review", store=store, category="metadata") as run:
             run.data.update(assessments=assessments, review_sequence=sequence, purpose="Historical artifact custody and relevance review")
     return run.data["run_id"]
@@ -146,7 +146,7 @@ def declarations(report):
     bound_subjects = subjects(report)
     orders = {}
     decisions = {}
-    for run in sorted(report.get("lifecycle", []), key=lambda item: (item.get("review_sequence", 0), item["created_at"], item["run_id"])):
+    for run in sorted(report.get("lifecycle", []), key=lambda item: (item.get("review_sequence") or 0, item["created_at"], item["run_id"])):
         for decision in run.get("assessments") or []:
             valid = True
             for evidence in decision["evidence"]:

@@ -15,8 +15,7 @@
 #
 import os
 
-from api.db.db_models import User
-from api.db.services.system_settings_service import SystemSettingsService
+from api.db.db_models import SystemSettings, User
 from common.constants import StatusEnum
 
 
@@ -96,9 +95,11 @@ class ManagedResourceService:
         environment_owner = os.getenv(MANAGED_RESOURCE_OWNER_ENV, "").strip()
         if environment_owner:
             return environment_owner
-        rows = SystemSettingsService.get_by_name(MANAGED_RESOURCE_OWNER_SETTING)
-        if rows:
-            return str(rows[0].value or "").strip()
+        # Resolution also runs inside SQL admission/completion transactions;
+        # the caller owns the connection and its transaction lifetime.
+        setting = SystemSettings.get_or_none(SystemSettings.name == MANAGED_RESOURCE_OWNER_SETTING)
+        if setting:
+            return str(setting.value or "").strip()
         return ""
 
     @classmethod

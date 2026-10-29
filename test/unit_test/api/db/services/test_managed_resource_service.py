@@ -123,8 +123,8 @@ def test_owner_id_resolves_configured_account(monkeypatch):
 def test_configured_owner_prefers_environment_override_and_trims_whitespace(monkeypatch):
     monkeypatch.setenv("MANAGED_RESOURCE_OWNER_EMAIL", "env-owner@example.test")
     monkeypatch.setattr(
-        "api.db.services.managed_resource_service.SystemSettingsService.get_by_name",
-        lambda _name: [SimpleNamespace(value="  db-owner@example.test  ")],
+        "api.db.services.managed_resource_service.SystemSettings.get_or_none",
+        lambda _name: SimpleNamespace(value="  db-owner@example.test  "),
     )
 
     assert ManagedResourceService._configured_owner() == "env-owner@example.test"
@@ -133,8 +133,8 @@ def test_configured_owner_prefers_environment_override_and_trims_whitespace(monk
 def test_configured_owner_uses_environment_when_setting_is_absent(monkeypatch):
     monkeypatch.setenv("MANAGED_RESOURCE_OWNER_EMAIL", " env-owner@example.test ")
     monkeypatch.setattr(
-        "api.db.services.managed_resource_service.SystemSettingsService.get_by_name",
-        lambda _name: [],
+        "api.db.services.managed_resource_service.SystemSettings.get_or_none",
+        lambda _name: None,
     )
 
     assert ManagedResourceService._configured_owner() == "env-owner@example.test"
@@ -143,8 +143,8 @@ def test_configured_owner_uses_environment_when_setting_is_absent(monkeypatch):
 def test_configured_owner_uses_database_when_environment_is_absent(monkeypatch):
     monkeypatch.delenv("MANAGED_RESOURCE_OWNER_EMAIL", raising=False)
     monkeypatch.setattr(
-        "api.db.services.managed_resource_service.SystemSettingsService.get_by_name",
-        lambda _name: [SimpleNamespace(value=" db-owner@example.test ")],
+        "api.db.services.managed_resource_service.SystemSettings.get_or_none",
+        lambda _name: SimpleNamespace(value=" db-owner@example.test "),
     )
 
     assert ManagedResourceService._configured_owner() == "db-owner@example.test"
@@ -165,3 +165,31 @@ def test_user_is_superuser_is_fail_closed(monkeypatch, user, expected):
     )
 
     assert ManagedResourceService.user_is_superuser("user-1") is expected
+
+
+@pytest.mark.parametrize("rollback", [False, True])
+def test_owner_resolution_preserves_callers_transaction(monkeypatch, rollback):
+    from peewee import SqliteDatabase
+
+    from api.db.db_models import SystemSettings, User
+    from api.db.services.managed_resource_service import MANAGED_RESOURCE_OWNER_SETTING
+
+    monkeypatch.delenv("MANAGED_RESOURCE_OWNER_EMAIL", raising=False)
+    database = SqliteDatabase(":memory:")
+    with database.bind_ctx((SystemSettings, User)):
+        database.create_tables((SystemSettings, User))
+        try:
+            User.create(id="owner", nickname="Owner", email="owner@example.test", status="1")
+            SystemSettings.create(name=MANAGED_RESOURCE_OWNER_SETTING, source="test", data_type="string", value="owner@example.test")
+            with database.atomic() as transaction:
+                with database.atomic():
+                    User.update(nickname="Changed").where(User.id == "owner").execute()
+                    assert ManagedResourceService.owner_id() == "owner"
+                    assert database.in_transaction()
+                    assert not database.is_closed()
+                assert User.get_by_id("owner").nickname == "Changed"
+                if rollback:
+                    transaction.rollback()
+            assert User.get_by_id("owner").nickname == ("Owner" if rollback else "Changed")
+        finally:
+            database.close()

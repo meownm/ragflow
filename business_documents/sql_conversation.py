@@ -1,0 +1,271 @@
+"""Single-composer SQL conversation policy; no runtime or infrastructure imports."""
+
+from copy import deepcopy
+import json
+
+from business_documents import sql_assistant as results
+from business_documents.sql_result_answer import validate_answer
+from business_documents.sql_query.query_specification import parse_schema_snapshot
+
+INTENTS = {"CHANGE", "ANSWER", "AGGREGATE", "VIEW", "CLARIFICATION"}
+AGGREGATIONS = {"rows", "sum", "avg", "min", "max", "count", "distinct"}
+VIEW_FIELDS = {"column_order", "hidden", "labels", "formats", "sort", "chart", "appearance"}
+ACTIVE_JOB_STATUSES = {"PENDING", "RETRY", "RUNNING"}
+
+
+def preparing(project):
+    return project.get("operation_state") == "RUNNING" or (project.get("current_job") or {}).get("status") in ACTIVE_JOB_STATUSES
+
+
+def conversation_status(turn, job, runs):
+    """Terminal leases/runs remain authoritative after a worker restart."""
+    current = deepcopy(turn)
+    if not current or current.get("phase") not in {"ROUTING", "PREPARING", "EXECUTING", "CANCELLING"}:
+        return current
+    run = next((item for item in runs if item["id"] == current.get("pending_run_id")), {})
+    if run.get("status") == "UNKNOWN":
+        current.update(phase="RECONCILE", job_id=None)
+    elif run.get("status") == "CANCELLED" or (job or {}).get("status") == "CANCELLED":
+        current.update(phase="CANCELLED", job_id=None)
+    elif run.get("status") in {"FAILED", "EXPIRED", "PURGED"} or (job or {}).get("status") in {"DEAD", "STALE"}:
+        current.update(phase="ERROR", job_id=None, error={"code": "SQL_CONVERSATION_STOPPED", "message": "Не удалось завершить запрос. Последний успешный результат сохранён."})
+    return current
+
+
+def automatic_sources(resolution):
+    """Only a unique catalog resolution can progress without a source question."""
+    if resolution.get("status") != "READY" or not resolution.get("resolutions"):
+        return []
+    selected = []
+    for item in resolution["resolutions"]:
+        entities = item.get("catalog_answer", {}).get("entities", [])
+        if item.get("needs_clarification") or item.get("lookup", {}).get("status") != "OK" or len(entities) != 1:
+            return []
+        if entities[0]["id"] not in selected:
+            selected.append(entities[0]["id"])
+    return selected
+
+
+def automatic_schema_payload(resolution, details, requirements):
+    selected = automatic_sources(resolution)
+    if not selected:
+        return None
+    if details.get("status") != "READY":
+        raise ValueError("Полная схема источника недоступна")
+    loaded = {item["entity_id"]: item for item in details["entities"]}
+    table_fields = {
+        "id",
+        "fqn",
+        "name",
+        "display_name",
+        "technical_name",
+        "description",
+        "version",
+        "updated_at",
+        "service",
+        "database",
+        "schema",
+        "owners",
+        "domains",
+        "tags",
+        "glossary_terms",
+        "url",
+        "matched_by",
+        "column_count",
+        "schema_loaded",
+        "schema_fingerprint",
+        "table_constraints",
+    }
+    column_fields = {"id", "name", "fqn", "data_type", "description", "constraint", "glossary_terms"}
+    tables, references, retrieval, warnings = {}, [], [], []
+    freshness = None
+    for identity in selected:
+        item = loaded.get(identity) or {}
+        entity = item.get("entity") or {}
+        fresh = item.get("freshness") or {}
+        columns = entity.get("column_details") or []
+        if (
+            item.get("lookup", {}).get("status") != "OK"
+            or entity.get("id") != identity
+            or not entity.get("schema_loaded")
+            or fresh.get("stale") is not False
+            or not fresh.get("snapshot_at")
+            or not fresh.get("checked_at")
+            or entity.get("columns_truncated")
+            or not columns
+            or len(columns) != entity.get("column_count")
+        ):
+            raise ValueError("Схема неполная или устарела; автоматический расчёт недоступен")
+        table = {key: deepcopy(value) for key, value in entity.items() if key in table_fields}
+        table.update(
+            columns=[{**{key: deepcopy(value) for key, value in column.items() if key in column_fields}, "selected": True} for column in columns],
+            loaded_column_count=len(columns),
+            columns_truncated=False,
+        )
+        tables[identity] = table
+        freshness = fresh
+        references.extend(item.get("sources", []))
+        retrieval.append(item.get("retrieval", ""))
+        warnings.extend(item.get("warnings", []))
+    snapshot = {
+        "format": "ragflow-sql-schema-snapshot",
+        "schema_version": "1",
+        "status": "READY",
+        "original_requirements": requirements,
+        "source": {
+            "type": "openmetadata",
+            "catalog_snapshot_at": freshness["snapshot_at"],
+            "checked_at": freshness["checked_at"],
+            "stale": False,
+            "references": references,
+            "retrieval": list(dict.fromkeys(retrieval)),
+        },
+        "requirements": [
+            {"term": item["term"], "state": "CONFIRMED", "decision": "CATALOG", "interpretation": item.get("interpretation"), "selected_table": tables[item["catalog_answer"]["entities"][0]["id"]]}
+            for item in resolution["resolutions"]
+        ],
+        "warnings": warnings,
+    }
+    parse_schema_snapshot(snapshot)
+    return {
+        "schema_snapshot": snapshot,
+        "accepted_schema": [{"entity_id": identity, "version": table["version"], "schema_fingerprint": table["schema_fingerprint"]} for identity, table in tables.items()],
+    }
+
+
+def parse_intent(raw, context):
+    """A model selects a bounded capability; it never supplies executable SQL."""
+    plan = json.loads(raw) if isinstance(raw, str) else raw
+    if not isinstance(plan, dict) or not isinstance(plan.get("intent"), str) or plan["intent"] not in INTENTS:
+        raise ValueError("Неверное намерение диалога")
+    kind = plan["intent"]
+    fields = {
+        "CHANGE": {"intent"},
+        "ANSWER": {"intent", "answer"},
+        "AGGREGATE": {"intent", "operation", "column_id", "scope"},
+        "VIEW": {"intent", "patch"},
+        "CLARIFICATION": {"intent", "text"},
+    }[kind]
+    if set(plan) != fields:
+        raise ValueError("Неверный состав полей намерения")
+    if kind == "CLARIFICATION":
+        results.text(plan["text"], "Уточнение", 2000)
+        if context:
+            validate_answer({"kind": "CLARIFICATION", "text": plan["text"]}, context)
+    elif kind != "CHANGE":
+        if not context or not context.get("run_id"):
+            raise ValueError("Сначала получите результат")
+        if kind == "ANSWER":
+            validate_answer(plan["answer"], context)
+        elif kind == "AGGREGATE":
+            if plan["scope"] != "SAVED_RESULT" or not isinstance(plan["operation"], str) or plan["operation"] not in AGGREGATIONS:
+                raise ValueError("Сводка разрешена только по сохранённому результату")
+            visible = {column["id"] for column in context["columns"]}
+            if (plan["operation"] == "rows" and plan["column_id"] is not None) or (plan["operation"] != "rows" and (not isinstance(plan["column_id"], str) or plan["column_id"] not in visible)):
+                raise ValueError("Колонка сводки отсутствует в выбранном результате")
+        elif not isinstance(plan["patch"], dict) or not plan["patch"] or set(plan["patch"]) - VIEW_FIELDS:
+            raise ValueError("Неверные настройки представления")
+    return deepcopy(plan)
+
+
+def change_view(current, patch, columns, sql):
+    """Merge presentation fields without silently discarding unrelated settings."""
+    if not isinstance(patch, dict) or not patch or set(patch) - VIEW_FIELDS:
+        raise ValueError("Неверные настройки представления")
+    view = results.restore_view(deepcopy(current), columns)
+    for key, value in patch.items():
+        if key in {"labels", "formats", "appearance"}:
+            if not isinstance(value, dict):
+                raise ValueError("Неверные настройки представления")
+            view[key] = {**view.get(key, {}), **deepcopy(value)}
+        else:
+            view[key] = deepcopy(value)
+    if "chart" in patch and "display" not in patch.get("appearance", {}):
+        view["appearance"]["display"] = "chart" if patch["chart"] else "table"
+    return results.validate_view(view, columns, sql)
+
+
+def saved_aggregate(plan, rows, columns, view, sql, *, truncated):
+    """Use the existing exact-decimal engine on the complete saved filtered set."""
+    visible = [column for column in columns if column["id"] in view["column_order"] and column["id"] not in view["hidden"]]
+    parsed = parse_intent(plan, {"run_id": "saved", "columns": visible})
+    if parsed["intent"] != "AGGREGATE":
+        raise ValueError("Ожидалась сводка сохранённого результата")
+    metric = {"id": "conversation", "title": "По сохранённым строкам", "kind": parsed["operation"], "column_id": parsed["column_id"], "row_index": None}
+    settings = {**view, "metrics": [metric]}
+    value = results.result_metrics(rows, columns, settings, sql)[0]
+    return {**value, "scope": "LIMITED" if truncated else "SAVED_RESULT", "source_completeness": "UNKNOWN"}
+
+
+def render_aggregate(plan, rows, columns, view, sql, *, truncated):
+    value = saved_aggregate(plan, rows, columns, view, sql, truncated=truncated)
+    label = {"rows": "Число строк", "sum": "Сумма", "avg": "Среднее", "min": "Минимум", "max": "Максимум", "count": "Число значений", "distinct": "Число разных значений"}[plan["operation"]]
+    if value["status"] == "OK":
+        text = f"{label} по сохранённым строкам: {'≈ ' if value['rounded'] else ''}{value['value']}."
+    elif value["status"] == "NULL":
+        text = "В выбранных строках нет значений для этой сводки."
+    else:
+        text = "Для этой сводки нужен новый расчёт по источнику."
+    return {
+        "status": "READY",
+        "kind": "ANSWER" if value["status"] in {"OK", "NULL"} else "NEEDS_QUERY",
+        "text": text,
+        "scope": value["scope"],
+        "source_completeness": "UNKNOWN",
+        "context_limited": False,
+        "citations": [],
+        "calculation": {"operation": plan["operation"], "column_id": plan["column_id"]},
+    }
+
+
+def preparation_action(project, *, answers=None, pending_run_id=None):
+    """Choose one server step; an unrelated historical READY run never wins."""
+    if pending_run_id:
+        run = next((item for item in project.get("runs", []) if item["id"] == pending_run_id), None)
+        if run is None:
+            return "ERROR"
+        if run["status"] == "READY" and preparing(project):
+            return "WAIT"
+        return {
+            "READY": "SELECT_RESULT",
+            "FAILED": "ERROR",
+            "CANCELLED": "CANCELLED",
+            "EXPIRED": "ERROR",
+            "PURGED": "ERROR",
+            "UNKNOWN": "RECONCILE",
+            "SUCCEEDED": "ERROR",
+            "QUEUED": "WAIT",
+            "RUNNING": "WAIT",
+            "CANCEL_REQUESTED": "WAIT",
+        }.get(run["status"], "ERROR")
+    if preparing(project):
+        return "WAIT"
+    if project.get("last_error"):
+        return "ERROR"
+    proposal = project.get("pending_proposal")
+    if proposal:
+        result = proposal.get("payload", {}).get("agent_result") or {}
+        kind = proposal["kind"]
+        if kind == "REQUIREMENTS":
+            value = result.get("proposal")
+            if not value:
+                return "ERROR"
+            blocked = [question for question in value.get("questions", []) if question.get("blocking") and not (answers or {}).get(str(question["id"]), "").strip()]
+            return "ASK_REQUIREMENTS" if blocked else "ACCEPT_REQUIREMENTS"
+        if kind == "SCHEMA":
+            if result.get("status") == "DEGRADED":
+                return "ERROR"
+            return "ACCEPT_SCHEMA" if result.get("status") == "READY" and result.get("conversation_schema") else "ASK_SOURCE"
+        if kind == "QUERY":
+            return "ACCEPT_QUERY" if result.get("status") == "PROPOSED" and result.get("proposal") else "ASK_QUERY" if result.get("status") == "NEEDS_CLARIFICATION" else "ERROR"
+        if kind == "REVISION":
+            return "ACCEPT_REVISION" if result.get("proposal") and result["proposal"].get("checks", {}).get("status") == "PASS" else "ERROR"
+        return "ERROR"
+    next_agent = project.get("next_agent")
+    if next_agent in {"REQUIREMENTS", "SCHEMA", "QUERY"}:
+        return "REQUEST_" + next_agent
+    compilation = project.get("compilation")
+    if not compilation:
+        return "COMPILE" if project.get("artifact_ids", {}).get("query") else "ERROR"
+    compiled = compilation.get("result") or {}
+    return "EXECUTE" if compiled.get("status") == "READY" and compiled.get("guard", {}).get("status") == "PASS" else "ERROR"

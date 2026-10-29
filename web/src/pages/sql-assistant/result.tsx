@@ -62,34 +62,37 @@ export function AssistantResultPanel({
     (session.project.latest_run ? [session.project.latest_run] : []);
   return (
     <section className="sa-panel" aria-label="Результаты исследования">
-      <h2>Результаты и история</h2>
+      <h2>Результат</h2>
       {!runs.length ? (
         <p className="text-sm text-text-secondary">
           Результатов пока нет. Подготовьте запрос и выполните расчёт.
         </p>
       ) : (
-        <div className="flex flex-wrap gap-2 mb-5">
-          {runs.map((run, index) => (
-            <Button
-              key={run.id}
-              variant={
-                session.selected_result_id === run.id ? 'default' : 'outline'
-              }
-              size="sm"
-              disabled={busy || run.status !== 'READY'}
-              aria-pressed={session.selected_result_id === run.id}
-              onClick={() => {
-                void send('select_result', { run_id: run.id }).catch(
-                  () => undefined,
-                );
-              }}
-            >
-              R{runs.length - index} ·{' '}
-              {RunLabels[run.status] || 'Исход неизвестен'}
-              {run.status === 'READY' ? ` · ${run.row_count} строк` : ''}
-            </Button>
-          ))}
-        </div>
+        <details className="sa-result-history">
+          <summary>История результатов · {runs.length}</summary>
+          <div className="flex flex-wrap gap-2 mt-3">
+            {runs.map((run, index) => (
+              <Button
+                key={run.id}
+                variant={
+                  session.selected_result_id === run.id ? 'default' : 'outline'
+                }
+                size="sm"
+                disabled={busy || run.status !== 'READY'}
+                aria-pressed={session.selected_result_id === run.id}
+                onClick={() => {
+                  void send('select_result', { run_id: run.id }).catch(
+                    () => undefined,
+                  );
+                }}
+              >
+                R{runs.length - index} ·{' '}
+                {RunLabels[run.status] || 'Исход неизвестен'}
+                {run.status === 'READY' ? ` · ${run.row_count} строк` : ''}
+              </Button>
+            ))}
+          </div>
+        </details>
       )}
       {session.selected_result_id ? (
         <SelectedResult
@@ -302,30 +305,21 @@ function ResultData({
           label="Скачать результат"
         />
       </div>
-      <div className="sa-statuses">
-        <div>
-          <strong>Выполнение</strong>Завершено
-        </div>
-        <div>
-          <strong>Выдача</strong>
-          {result.output_completeness === 'FULL'
-            ? 'Сохранена полностью'
-            : 'Ограничена лимитом'}
-        </div>
-        <div>
-          <strong>Источник</strong>
-          {result.source_completeness === 'COMPLETE'
-            ? 'Полнота периода подтверждена'
-            : result.source_completeness === 'PARTIAL'
-              ? 'Период загружен частично'
-              : result.source_completeness === 'STALE'
-                ? 'Данные устарели'
-                : 'Полнота загрузки неизвестна'}
-        </div>
-        <div>
-          <strong>Определение</strong>
-          <DefinitionStatus value={result} />
-        </div>
+      <p className="sa-result-scope">
+        {result.output_completeness === 'FULL'
+          ? 'Выдача сохранена полностью'
+          : 'Выдача ограничена лимитом'}{' '}
+        ·{' '}
+        {result.source_completeness === 'COMPLETE'
+          ? 'Полнота периода подтверждена'
+          : result.source_completeness === 'PARTIAL'
+            ? 'Период загружен частично'
+            : result.source_completeness === 'STALE'
+              ? 'Источник устарел'
+              : 'Полнота источника не подтверждена'}
+      </p>
+      <div className="sa-result-definition">
+        <DefinitionStatus value={result} />
       </div>
       {result.catalog_changed && (
         <p role="status">

@@ -1,0 +1,515 @@
+{
+  "schema_version": 1,
+  "target": "RAGFlow single-composer SQL chat, Figma 161:208",
+  "status": "prepared_not_live_qualified",
+  "model": "qwen3.8:latest",
+  "source_head": "4a05f022aae27c563cf4f182373482efca182334",
+  "fixtures": {
+    "three-orders": {
+      "provisioner": "test.playwright.e2e.test_workbench_integrations_live::real_sql_catalog",
+      "rows": [
+        [
+          1,
+          "paid",
+          "12.50"
+        ],
+        [
+          2,
+          "cancelled",
+          "99.00"
+        ],
+        [
+          3,
+          "paid",
+          "7.25"
+        ]
+      ],
+      "paid_total": "19.75",
+      "all_total": "118.75"
+    },
+    "golden": {
+      "schema": "test/evals/sql_projects/fixtures/schema.sql",
+      "data": "test/evals/sql_projects/fixtures/data.sql",
+      "second_dataset": "test/evals/sql_projects/discriminators.py::SETUP_SQL",
+      "paid_september_total": [
+        "240.00",
+        "490.00"
+      ]
+    }
+  },
+  "required_evidence": [
+    "Browser-authored prompts and visible output",
+    "Server SQL/binds/source/selected run/view before and after changes",
+    "Independent exact row/decimal oracle",
+    "Fresh upstream qwen3.8 audit: timestamp/request identity, no cache/dedup",
+    "Job identities and worker claims where observed",
+    "Screenshot and fresh-context reload",
+    "Synthetic resource cleanup receipt"
+  ],
+  "pass_policy": "Collection, API-only conversation, mocked responses, this case catalog and Figma images never count as browser+live-model passes.",
+  "cases": [
+    {
+      "id": "C01",
+      "priority": "P0",
+      "title": "Быстрый ответ",
+      "fixture": "three-orders",
+      "steps": [
+        "Покажи paid-заказы: id, status, amount; id ASC."
+      ],
+      "expected": "Ровно (1,paid,12.50),(3,paid,7.25). Один composer, нет выбора режима или этапных подтверждений.",
+      "preserved": [
+        "source",
+        "paid",
+        "order grain"
+      ],
+      "automated_by": "test/playwright/e2e/test_sql_assistant_chat_live.py::test_chat_fast_answer_and_server_restore_in_fresh_context",
+      "status": "implemented_not_run",
+      "missing_prerequisite": "Matching runtime implementing the proposed single-composer UI; bindings must be verified there"
+    },
+    {
+      "id": "C02",
+      "priority": "P0",
+      "title": "Уточнение показателя",
+      "fixture": "three-orders",
+      "steps": [
+        "Покажи итог по таблице. Что именно считать итогом, я пока не выбрал.",
+        "Итог — SUM(amount) для paid, одна колонка total."
+      ],
+      "expected": "До ответа нет SQL-запуска и активного результата. После уточнения total=19.75. Вопрос уточняет показатель.",
+      "preserved": [
+        "source"
+      ],
+      "automated_by": "test/playwright/e2e/test_sql_assistant_chat_live.py::test_chat_clarifies_undefined_metric_before_running",
+      "status": "implemented_not_run",
+      "missing_prerequisite": "Matching runtime implementing the proposed single-composer UI; bindings must be verified there"
+    },
+    {
+      "id": "C03",
+      "priority": "P0",
+      "title": "Замена и снятие фильтра",
+      "fixture": "three-orders",
+      "steps": [
+        "Оставь amount>=10.",
+        "Вместо прежнего порога amount<10.",
+        "Убери только ограничение по amount."
+      ],
+      "expected": "По ходам id=1; id=3; id=1,3. Отменённый заказ 2 с суммой 99 не появляется.",
+      "preserved": [
+        "source",
+        "paid",
+        "columns",
+        "sort"
+      ],
+      "automated_by": "test/playwright/e2e/test_sql_assistant_chat_live.py::test_chat_filter_replacement_and_removal_keep_paid_scope",
+      "status": "implemented_not_run",
+      "missing_prerequisite": "Matching runtime implementing the proposed single-composer UI; bindings must be verified there"
+    },
+    {
+      "id": "C04",
+      "priority": "P0",
+      "title": "Ответ по сохранённым строкам",
+      "fixture": "three-orders",
+      "steps": [
+        "Какова сумма amount уже показанных строк? Новый SQL не запускай."
+      ],
+      "expected": "19.75; run_id, SQL, binds и число запусков не меняются. Полнота источника не выдумывается.",
+      "preserved": [
+        "source",
+        "query",
+        "result"
+      ],
+      "automated_by": "test/playwright/e2e/test_sql_assistant_chat_live.py::test_chat_answer_uses_saved_rows_without_new_sql_run",
+      "status": "implemented_not_run",
+      "missing_prerequisite": "Matching runtime implementing the proposed single-composer UI; bindings must be verified there"
+    },
+    {
+      "id": "C05",
+      "priority": "P0",
+      "title": "Серверное сохранение",
+      "fixture": "three-orders",
+      "steps": [
+        "Reload.",
+        "Открыть ссылку в новом browser context только с авторизацией.",
+        "Оставь amount>=10."
+      ],
+      "expected": "Сообщения, run_id, SQL, binds и view восстановлены. Продолжение возвращает id=1 с сохранённым paid.",
+      "preserved": [
+        "source",
+        "messages",
+        "query",
+        "result",
+        "view"
+      ],
+      "automated_by": "test/playwright/e2e/test_sql_assistant_chat_live.py::test_chat_fast_answer_and_server_restore_in_fresh_context",
+      "status": "implemented_not_run",
+      "missing_prerequisite": "Matching runtime implementing the proposed single-composer UI; bindings must be verified there"
+    },
+    {
+      "id": "C06",
+      "priority": "P0",
+      "title": "Группировка и drill-down",
+      "fixture": "three-orders",
+      "steps": [
+        "Сгруппируй текущую выборку по status, SUM(amount) AS total.",
+        "Для paid покажи исходные id,status,amount."
+      ],
+      "expected": "paid=19.75, затем детали id=1,3; отменённый заказ не возвращается.",
+      "preserved": [
+        "source",
+        "paid"
+      ],
+      "automated_by": "test/playwright/e2e/test_sql_assistant_chat_live.py::test_chat_group_and_drill_keep_selected_status",
+      "status": "implemented_not_run",
+      "missing_prerequisite": "Matching runtime implementing the proposed single-composer UI; bindings must be verified there"
+    },
+    {
+      "id": "C07",
+      "priority": "P1",
+      "title": "График и reload",
+      "fixture": "three-orders",
+      "steps": [
+        "По всем строкам SUM(amount) AS total по status.",
+        "Столбцы: X=status, Y=total.",
+        "Reload."
+      ],
+      "expected": "cancelled=99.00, paid=19.75. График виден до/после reload. Меняется view, а run_id/SQL/binds/строки и число запусков прежние.",
+      "preserved": [
+        "source",
+        "query",
+        "result"
+      ],
+      "automated_by": "test/playwright/e2e/test_sql_assistant_chat_live.py::test_chat_chart_changes_view_without_reexecuting_query",
+      "status": "implemented_not_run",
+      "missing_prerequisite": "Matching runtime implementing the proposed single-composer UI; bindings must be verified there"
+    },
+    {
+      "id": "C08",
+      "priority": "P0",
+      "title": "Изоляция диалогов",
+      "fixture": "three-orders",
+      "steps": [
+        "В A: paid и amount>=10.",
+        "Создать B: все заказы без фильтров.",
+        "Снова открыть A."
+      ],
+      "expected": "A: id=1. B: id=1,2,3, сумма118.75. Вернувшись в A, видим прежний id=1 и его run_id.",
+      "preserved": [
+        "per-conversation source",
+        "per-conversation filters"
+      ],
+      "automated_by": "test/playwright/e2e/test_sql_assistant_chat_live.py::test_chat_new_conversation_does_not_inherit_previous_filters",
+      "status": "implemented_not_run",
+      "missing_prerequisite": "Matching runtime implementing the proposed single-composer UI; bindings must be verified there"
+    },
+    {
+      "id": "C09",
+      "priority": "P0",
+      "title": "Период и timezone",
+      "fixture": "golden",
+      "steps": [
+        "paid-заказы сентября 2026 UTC, [01.09,01.10), id ASC.",
+        "SUM(amount), без DISTINCT."
+      ],
+      "expected": "Основной: ids101,102,105,107, total240.00. Дискриминатор: +108,109,110, total490.00. 101 включён, 103 исключён.",
+      "preserved": [
+        "source",
+        "paid",
+        "UTC",
+        "period"
+      ],
+      "automated_by": null,
+      "status": "gap",
+      "missing_prerequisite": "Native browser automation for the new UI and the required owned real-service fault/persona/fixture boundary"
+    },
+    {
+      "id": "C10",
+      "priority": "P0",
+      "title": "Уточнение года",
+      "fixture": "golden",
+      "steps": [
+        "Оставь октябрь; год не согласован.",
+        "2026, UTC."
+      ],
+      "expected": "До ответа прежний результат. После: id103, total80.00; вопрос не меняет paid и источник.",
+      "preserved": [
+        "source",
+        "paid",
+        "timezone"
+      ],
+      "automated_by": null,
+      "status": "gap",
+      "missing_prerequisite": "Native browser automation for the new UI and the required owned real-service fault/persona/fixture boundary"
+    },
+    {
+      "id": "C11",
+      "priority": "P0",
+      "title": "Пять ходов и объяснения",
+      "fixture": "golden",
+      "steps": [
+        "Почему такой период?",
+        "Оставь amount>=50.",
+        "Группировка по региону покупателя.",
+        "Поясни NULL.",
+        "Убери только порог суммы."
+      ],
+      "expected": "Пояснения не меняют данные. Финальные группы: NULL40, пустая строка0, North200; на втором наборе NULL190, пустая строка0, North200, South100.",
+      "preserved": [
+        "source",
+        "paid",
+        "period",
+        "timezone",
+        "buyer role"
+      ],
+      "automated_by": null,
+      "status": "gap",
+      "missing_prerequisite": "Native browser automation for the new UI and the required owned real-service fault/persona/fixture boundary"
+    },
+    {
+      "id": "C12",
+      "priority": "P0",
+      "title": "Противоречие и явная замена",
+      "fixture": "golden",
+      "steps": [
+        "Оставь amount>=50.",
+        "Теперь amount<50 вместо прежнего порога."
+      ],
+      "expected": "Вначале ids101,102 (+108,109,110 во втором наборе), затем105,107 в обоих. Явная замена не становится AND двух порогов. Неявное противоречие требует уточнения.",
+      "preserved": [
+        "source",
+        "paid",
+        "period"
+      ],
+      "automated_by": null,
+      "status": "gap",
+      "missing_prerequisite": "Native browser automation for the new UI and the required owned real-service fault/persona/fixture boundary"
+    },
+    {
+      "id": "C13",
+      "priority": "P0",
+      "title": "Ошибка нового SQL",
+      "fixture": "golden",
+      "steps": [
+        "При READY результате отправить изменение.",
+        "Вызвать реальную ошибку SQL в собственном QA-источнике.",
+        "Повторить после устранения сбоя."
+      ],
+      "expected": "Прежний run_id, строки и lineage активны до успешного нового выполнения. Ошибка видна, draft не выдан за готовый результат.",
+      "preserved": [
+        "confirmed analysis",
+        "previous result"
+      ],
+      "automated_by": null,
+      "status": "gap",
+      "missing_prerequisite": "Native browser automation for the new UI and the required owned real-service fault/persona/fixture boundary"
+    },
+    {
+      "id": "C14",
+      "priority": "P0",
+      "title": "Отмена и поздний worker",
+      "fixture": "golden",
+      "steps": [
+        "Начать живую генерацию.",
+        "Отменить.",
+        "Отправить другое изменение.",
+        "Дождаться позднего завершения первого задания."
+      ],
+      "expected": "Отменённое задание не публикует версию и не затирает более новый результат. Повтор создаёт один эффект.",
+      "preserved": [
+        "confirmed state",
+        "newer accepted state"
+      ],
+      "automated_by": null,
+      "status": "gap",
+      "missing_prerequisite": "Native browser automation for the new UI and the required owned real-service fault/persona/fixture boundary"
+    },
+    {
+      "id": "C15",
+      "priority": "P0",
+      "title": "Потерянный ответ и повтор",
+      "fixture": "golden",
+      "steps": [
+        "Отправить изменение.",
+        "Потерять HTTP-ответ после обработки.",
+        "Повторить штатным действием."
+      ],
+      "expected": "Одна логическая команда и один эффект. Проверить реальную БД/idempotency, а не подставленный успешный HTTP-ответ.",
+      "preserved": [
+        "idempotency",
+        "confirmed state"
+      ],
+      "automated_by": null,
+      "status": "gap",
+      "missing_prerequisite": "Native browser automation for the new UI and the required owned real-service fault/persona/fixture boundary"
+    },
+    {
+      "id": "C16",
+      "priority": "P0",
+      "title": "Две вкладки",
+      "fixture": "golden",
+      "steps": [
+        "Открыть одну версию в A и B.",
+        "Изменить в A.",
+        "Из B отправить устаревшее изменение."
+      ],
+      "expected": "B не затирает A. Конфликт понятен, текст B сохранён, повтор после refresh использует актуальную основу.",
+      "preserved": [
+        "accepted version",
+        "draft text"
+      ],
+      "automated_by": null,
+      "status": "gap",
+      "missing_prerequisite": "Native browser automation for the new UI and the required owned real-service fault/persona/fixture boundary"
+    },
+    {
+      "id": "C17",
+      "priority": "P0",
+      "title": "Смена источника",
+      "fixture": "golden",
+      "steps": [
+        "Получить результат на A.",
+        "Выбрать другой собственный QA-профиль B.",
+        "Открыть старый результат; продолжить расчёт."
+      ],
+      "expected": "Старые строки имеют источник A, будущий расчёт проверяет B. Изменение выбора не переименовывает lineage старого результата.",
+      "preserved": [
+        "historical source identity"
+      ],
+      "automated_by": null,
+      "status": "gap",
+      "missing_prerequisite": "Native browser automation for the new UI and the required owned real-service fault/persona/fixture boundary"
+    },
+    {
+      "id": "C18",
+      "priority": "P0",
+      "title": "Читатель и чужой tenant",
+      "fixture": "golden",
+      "steps": [
+        "Открыть читателем.",
+        "Открыть прямую ссылку чужим QA tenant.",
+        "Проверить прямой read/export."
+      ],
+      "expected": "Действия соответствуют server capabilities. Чужому tenant не раскрываются названия, условия, SQL и строки. Отказ сервера обязателен.",
+      "preserved": [
+        "tenant isolation",
+        "owner permissions"
+      ],
+      "automated_by": null,
+      "status": "gap",
+      "missing_prerequisite": "Native browser automation for the new UI and the required owned real-service fault/persona/fixture boundary"
+    },
+    {
+      "id": "C19",
+      "priority": "P0",
+      "title": "Отзыв доступа",
+      "fixture": "golden",
+      "steps": [
+        "Открыть данные.",
+        "Отозвать доступ у QA-персоны.",
+        "Продолжить, скачать и обновить."
+      ],
+      "expected": "Повторное чтение/экспорт запрещены. Поздние ответы не возвращают скрытые строки. Запрет не маскируется пустым успехом.",
+      "preserved": [
+        "current ACL"
+      ],
+      "automated_by": null,
+      "status": "gap",
+      "missing_prerequisite": "Native browser automation for the new UI and the required owned real-service fault/persona/fixture boundary"
+    },
+    {
+      "id": "C20",
+      "priority": "P1",
+      "title": "Истечение результата",
+      "fixture": "golden",
+      "steps": [
+        "Открыть запуск.",
+        "Установить/дождаться собственного QA-deadline.",
+        "Задать вопрос и скачать."
+      ],
+      "expected": "Нет ответа по истёкшим строкам и восстановления их из кэша. Сохранённые условия доступны; повторный расчёт требует актуальных прав.",
+      "preserved": [
+        "saved query conditions",
+        "retention"
+      ],
+      "automated_by": null,
+      "status": "gap",
+      "missing_prerequisite": "Native browser automation for the new UI and the required owned real-service fault/persona/fixture boundary"
+    },
+    {
+      "id": "C21",
+      "priority": "P1",
+      "title": "Пустой набор",
+      "fixture": "golden",
+      "steps": [
+        "Выбери январь 2028 UTC, остальные условия сохрани."
+      ],
+      "expected": "Ноль строк — успешный пустой результат, не сбой; период и paid не расширяются автоматически.",
+      "preserved": [
+        "source",
+        "paid",
+        "explicit period"
+      ],
+      "automated_by": null,
+      "status": "gap",
+      "missing_prerequisite": "Native browser automation for the new UI and the required owned real-service fault/persona/fixture boundary"
+    },
+    {
+      "id": "C22",
+      "priority": "P1",
+      "title": "Экспорт выбранной версии",
+      "fixture": "golden",
+      "steps": [
+        "Выбрать исторический результат с NULL, пустой строкой, нулём и decimal.",
+        "Скачать результат и SQL/параметры."
+      ],
+      "expected": "Файлы соответствуют выбранному run_id и типизированным ячейкам. NULL, пустая строка, 0 и decimal различимы; не экспортируется новый запрос вместо выбранного.",
+      "preserved": [
+        "selected historical identity",
+        "types"
+      ],
+      "automated_by": null,
+      "status": "gap",
+      "missing_prerequisite": "Native browser automation for the new UI and the required owned real-service fault/persona/fixture boundary"
+    },
+    {
+      "id": "C23",
+      "priority": "P1",
+      "title": "Фрагмент и полный итог",
+      "fixture": "golden",
+      "steps": [
+        "Первые два заказа по id.",
+        "Сумма видимых строк.",
+        "Полный итог по тем же условиям без ограничения первых двух."
+      ],
+      "expected": "Видимый итог200.00, полный240.00 /490.00. Для полного нужен полный расчёт либо честная невозможность. Нельзя выдавать 200 за полный итог.",
+      "preserved": [
+        "source",
+        "paid",
+        "period",
+        "declared scope"
+      ],
+      "automated_by": null,
+      "status": "gap",
+      "missing_prerequisite": "Native browser automation for the new UI and the required owned real-service fault/persona/fixture boundary"
+    },
+    {
+      "id": "C24",
+      "priority": "P1",
+      "title": "JOIN без fan-out",
+      "fixture": "golden",
+      "steps": [
+        "Покажи позиции и платежи заказа101.",
+        "Сумма заказа, затем сумма всех подходящих заказов."
+      ],
+      "expected": "У101 две позиции и два платежа; сумма100.00, не200/400. Полный итог240.00 /490.00. Сохранён order grain.",
+      "preserved": [
+        "source",
+        "paid",
+        "period",
+        "order grain"
+      ],
+      "automated_by": null,
+      "status": "gap",
+      "missing_prerequisite": "Native browser automation for the new UI and the required owned real-service fault/persona/fixture boundary"
+    }
+  ]
+}

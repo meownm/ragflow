@@ -12,7 +12,6 @@ import type { AssistantReference } from '@/interfaces/database/sql-assistant';
 import { useDebounce } from 'ahooks';
 import {
   ArrowRight,
-  ChartNoAxesCombined,
   Database,
   LoaderCircle,
   MessageSquare,
@@ -163,7 +162,9 @@ export default function SqlAssistantPage() {
           Данные и метаданные доступны в пределах ваших прав.
         </p>
       </aside>
-      <div className="sa-content">
+      <div
+        className={id && !catalog ? 'sa-content sa-content-chat' : 'sa-content'}
+      >
         {catalog ? (
           <AssistantCatalog
             actor={actor}
@@ -207,11 +208,10 @@ export default function SqlAssistantPage() {
           )
         ) : (
           <section className="sa-welcome" aria-labelledby="sa-welcome-title">
-            <p className="sa-caption text-accent-primary">Данные в контексте</p>
             <h1 id="sa-welcome-title">Что хотите узнать о данных?</h1>
             <p className="sa-description">
-              Задайте вопрос своими словами. Помощник уточнит условия, найдёт
-              источники и подготовит проверяемый расчёт.
+              Задайте вопрос. Помощник уточнит только то, что нужно для точного
+              ответа.
             </p>
             <form
               className="sa-composer"
@@ -228,6 +228,7 @@ export default function SqlAssistantPage() {
                 ref={questionRef}
                 value={question}
                 onChange={setQuestion}
+                onSend={() => void start()}
                 references={references}
                 onReferences={setReferences}
                 options={(mentions.data?.entities || []).map((entity) => ({
@@ -247,10 +248,7 @@ export default function SqlAssistantPage() {
                 rows={3}
               />
               <div className="sa-composer-actions">
-                <p>
-                  Источник выбирается из доступных подключений после подбора
-                  данных.
-                </p>
+                <p>Упомяните таблицу через @, если знаете источник.</p>
                 <Button
                   type="submit"
                   disabled={!question.trim() || create.isPending || !canCreate}
@@ -260,51 +258,13 @@ export default function SqlAssistantPage() {
                   ) : (
                     <ArrowRight className="size-4" />
                   )}
-                  Исследовать
+                  Отправить
                 </Button>
               </div>
               {create.isError && (
                 <p role="alert">{assistantFailure(create.error).message}</p>
               )}
             </form>
-            <div className="sa-scenarios">
-              <button onClick={() => questionRef.current?.focus()}>
-                <MessageSquare className="size-5" />
-                <h2>Получить данные</h2>
-                <p>
-                  Вопрос, уточнения и таблица. Продолжайте диалог с выбранным
-                  результатом.
-                </p>
-              </button>
-              <button onClick={() => navigate(null, 'catalog')}>
-                <Search className="size-5" />
-                <h2>Найти нужные данные</h2>
-                <p>Определения, владельцы, поля и происхождение связей.</p>
-              </button>
-              <button
-                onClick={() => {
-                  setQuestion(
-                    'Исследуй отклонения числа поисковых запросов по дням в bot за август 2026.',
-                  );
-                  questionRef.current?.focus();
-                }}
-              >
-                <ChartNoAxesCombined className="size-5" />
-                <h2>Исследовать отклонение</h2>
-                <p>Получите числовой ряд и проверьте отклонения от медианы.</p>
-              </button>
-            </div>
-            <div className="sa-context">
-              <Database className="size-5" />
-              <div>
-                <h2>Контекст из OpenMetadata</h2>
-                <p>
-                  Поиск метаданных не читает строки БД. Расчёты выполняются
-                  через разрешённое подключение PostgreSQL с ограничениями на
-                  чтение.
-                </p>
-              </div>
-            </div>
           </section>
         )}
       </div>

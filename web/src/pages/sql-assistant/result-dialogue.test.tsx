@@ -17,94 +17,91 @@ const session = {
 
 function setup(
   overrides: Partial<AssistantSession> = {},
-  send = jest.fn().mockResolvedValue({ kind: 'answer_result' }),
+  send = jest.fn().mockResolvedValue({ kind: 'message' }),
+  preparingQuery = false,
 ) {
   const props = {
     session: { ...session, ...overrides },
     send,
     busy: false,
-    preparingQuery: false,
+    preparingQuery,
     parentRow: null,
     onClearRow: jest.fn(),
   };
   return { ...render(<ResultDialogue {...props} />), send, props };
 }
+const input = () => screen.getByLabelText('Сообщение SQL-помощнику');
+const submit = () =>
+  screen.getByRole('button', { name: 'Отправить сообщение' });
 
-it('asks about the selected run by default, without a SQL change command', async () => {
+it('uses one composer and one command for both questions and changes', async () => {
   const { send } = setup();
-  fireEvent.change(screen.getByLabelText('Вопрос по выбранному результату'), {
-    target: { value: 'Кто первый?' },
-  });
-  fireEvent.click(screen.getByRole('button', { name: 'Получить ответ' }));
+  expect(screen.queryByRole('radio')).not.toBeInTheDocument();
+  fireEvent.change(input(), { target: { value: 'Оставь только оплаченные' } });
+  fireEvent.click(submit());
   await waitFor(() =>
-    expect(send).toHaveBeenCalledWith('answer_result', {
+    expect(send).toHaveBeenCalledWith('message', {
       run_id: 'saved-run',
-      text: 'Кто первый?',
+      text: 'Оставь только оплаченные',
     }),
   );
-  await waitFor(() =>
-    expect(
-      screen.getByLabelText('Вопрос по выбранному результату'),
-    ).toHaveValue(''),
-  );
+  await waitFor(() => expect(input()).toHaveValue(''));
   expect(send).toHaveBeenCalledTimes(1);
 });
-
-it('requires an explicit mode and submission for a SQL revision and preserves both drafts', async () => {
-  const { send } = setup();
-  fireEvent.change(screen.getByLabelText('Вопрос по выбранному результату'), {
-    target: { value: 'Сколько у первого?' },
-  });
-  fireEvent.click(screen.getByLabelText('Изменить запрос'));
-  fireEvent.change(screen.getByLabelText('Изменение запроса'), {
-    target: { value: 'Теперь по месяцам' },
-  });
-  fireEvent.click(screen.getByLabelText('Спросить о результате'));
-  expect(screen.getByLabelText('Вопрос по выбранному результату')).toHaveValue(
-    'Сколько у первого?',
-  );
-  expect(send).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByLabelText('Изменить запрос'));
-  fireEvent.click(
-    screen.getByRole('button', { name: 'Предложить изменение SQL' }),
-  );
-  await waitFor(() =>
-    expect(send).toHaveBeenCalledWith('follow_up', {
-      run_id: 'saved-run',
-      text: 'Теперь по месяцам',
-    }),
-  );
-});
-
-it('preserves unsent text after a conflict or inference failure', async () => {
+it('retains the submitted draft after conflict or model failure', async () => {
   const { send } = setup(
     {},
-    jest.fn().mockRejectedValue(new Error('Conflict')),
+    jest.fn().mockRejectedValue(new Error('conflict')),
   );
-  fireEvent.change(screen.getByLabelText('Вопрос по выбранному результату'), {
-    target: { value: 'Какое значение?' },
-  });
-  fireEvent.click(screen.getByRole('button', { name: 'Получить ответ' }));
+  fireEvent.change(input(), { target: { value: 'Покажи по месяцам' } });
+  fireEvent.click(submit());
   await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
-  expect(screen.getByLabelText('Вопрос по выбранному результату')).toHaveValue(
-    'Какое значение?',
-  );
+  expect(input()).toHaveValue('Покажи по месяцам');
 });
-
-it('lets a reader ask but does not offer SQL editing', async () => {
+it('allows a reader to ask without exposing an edit mode', async () => {
   const { send } = setup({
     project: { capabilities: { edit: false } } as AssistantSession['project'],
   });
-  expect(screen.queryByLabelText('Изменить запрос')).not.toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText('Вопрос по выбранному результату'), {
-    target: { value: 'Первое значение' },
-  });
-  fireEvent.click(screen.getByRole('button', { name: 'Получить ответ' }));
+  fireEvent.change(input(), { target: { value: 'Первое значение' } });
+  fireEvent.click(submit());
   await waitFor(() =>
-    expect(send).toHaveBeenCalledWith('answer_result', expect.anything()),
+    expect(send).toHaveBeenCalledWith('message', expect.anything()),
+  );
+  expect(screen.queryByRole('radio')).not.toBeInTheDocument();
+});
+it('answers a preparation question before any result exists', async () => {
+  const { send } = setup({
+    selected_result_id: null,
+    conversation: {
+      phase: 'WAITING',
+      pending: { kind: 'REQUIREMENTS' },
+      question: { text: 'Какой год?', options: ['2026'] },
+    },
+  });
+  fireEvent.click(screen.getByRole('button', { name: '2026' }));
+  await waitFor(() =>
+    expect(send).toHaveBeenCalledWith('message', { text: '2026' }),
   );
 });
-
+it('stops the running operation through the same composer', async () => {
+  const { send } = setup({}, undefined, true);
+  expect(input()).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Остановить запрос' }));
+  await waitFor(() => expect(send).toHaveBeenCalledWith('stop'));
+});
+it('Enter sends and Shift Enter keeps a multiline draft', async () => {
+  const { send } = setup();
+  fireEvent.change(input(), { target: { value: 'Сумма' } });
+  fireEvent.keyDown(input(), { key: 'Enter', shiftKey: true });
+  expect(send).not.toHaveBeenCalled();
+  fireEvent.keyDown(input(), { key: 'Enter' });
+  await waitFor(() =>
+    expect(send).toHaveBeenCalledWith('message', {
+      run_id: 'saved-run',
+      text: 'Сумма',
+    }),
+  );
+});
 it('displays a restored exact answer and exposes its source cells', () => {
   setup({
     messages: [
@@ -131,42 +128,9 @@ it('displays a restored exact answer and exposes its source cells', () => {
     ],
   });
   expect(screen.getByText('Значение: 0, пропуск: NULL.')).toBeVisible();
-  expect(screen.getByText(/Выдача ограничена/)).toBeVisible();
+  expect(screen.getByText(/По сохранённой части результата/)).toBeVisible();
   fireEvent.click(screen.getByText('Основания ответа'));
-  expect(screen.getByText('Строка 1 · Сумма: 0')).toBeVisible();
-});
-
-it('moves a new calculation to a draft without automatically generating SQL', () => {
-  const { send } = setup({
-    messages: [
-      {
-        id: 'answer',
-        text: 'Посчитай по месяцам',
-        created_at: 0,
-        parent_result_id: 'saved-run',
-        answer: {
-          status: 'READY',
-          kind: 'NEEDS_QUERY',
-          text: 'Нужен новый расчёт',
-        },
-      },
-    ],
-  });
-  fireEvent.click(
-    screen.getByRole('button', { name: 'Подготовить изменение запроса' }),
-  );
-  expect(screen.getByLabelText('Изменение запроса')).toHaveValue(
-    'Посчитай по месяцам',
-  );
-  expect(send).not.toHaveBeenCalled();
-});
-
-it('disables submission until a result is selected', () => {
-  setup({ selected_result_id: null });
-  fireEvent.change(screen.getByLabelText('Вопрос по выбранному результату'), {
-    target: { value: 'Первое значение' },
-  });
-  expect(screen.getByRole('button', { name: 'Получить ответ' })).toBeDisabled();
+  expect(screen.getByText('Сумма, строка 1: 0')).toBeVisible();
 });
 
 it('removes the answer and citations when the source retention expires', () => {

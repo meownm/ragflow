@@ -476,10 +476,15 @@ class BusinessDocumentWorker:
                 self._set_progress(job, 0.82, "VALIDATING", "Проверяем результат")
             self._set_progress(job, 0.92, "PERSISTING", "Сохраняем результат")
             heartbeat.ensure_current()
-            if job.job_type == "SQL_QUERY_RUN":
-                BusinessDocumentSqlRunService.complete_job(job, self.worker_id, claimed_lease_token, output)
-            elif job.job_type.startswith("SQL_AGENT_"):
-                BusinessDocumentSqlAgentService.complete_job(job, self.worker_id, job.lease_token, output)
+            if job.job_type == "SQL_QUERY_RUN" or job.job_type.startswith("SQL_AGENT_"):
+                with BusinessDocumentJob._meta.database.atomic():
+                    if job.job_type == "SQL_QUERY_RUN":
+                        BusinessDocumentSqlRunService.complete_job(job, self.worker_id, claimed_lease_token, output)
+                    else:
+                        BusinessDocumentSqlAgentService.complete_job(job, self.worker_id, job.lease_token, output)
+                    from api.apps.sql_assistant.conversation import advance
+
+                    advance(job)
             else:
                 job_completion.complete(
                     job.tenant_id,

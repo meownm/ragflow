@@ -116,13 +116,6 @@ export function ResultBuilder({
   return (
     <section className="sa-result-builder" aria-label="Конструктор результата">
       <div className="sa-toolbar">
-        <div>
-          <h3 className="font-semibold">Конструктор результата</h3>
-          <p className="text-xs text-text-secondary">
-            Поля, фильтры, внешний вид и показатели сохранённого набора. Без
-            выполнения нового SQL.
-          </p>
-        </div>
         <Button
           type="button"
           variant="outline"

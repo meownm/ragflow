@@ -730,13 +730,124 @@ class BusinessDocumentSqlAgentService:
             except AgentCycleConflict as exc:
                 raise ConflictError("SQL_AGENT_STAGE_CONFLICT", str(exc)) from exc
             job_request = cls._job_request(project, command.kind, command.payload)
-            new_version = project.state_version + 1
-            job_id = get_uuid()
+            cls._enqueue_agent(project, actor_id, command.kind, job_request, is_admin, access_role)
+            response = cls._project(BusinessDocumentSqlQueryProject.get_by_id(project.id), access=BusinessDocumentAccess(actor_id, access_role, is_admin))
+            cls._record_command(tenant_id, project.id, command.idempotency_key, request_hash, response)
+            return response
+
+    @classmethod
+    def _enqueue_agent(cls, project, actor_id, kind, job_request, is_admin, access_role):
+        new_version = project.state_version + 1
+        job_id = get_uuid()
+        changed = (
+            BusinessDocumentSqlQueryProject.update(
+                operation_state="RUNNING",
+                state_version=new_version,
+                current_job_id=job_id,
+                last_error=None,
+                update_time=current_timestamp(),
+                update_date=datetime.now(),
+            )
+            .where(
+                (BusinessDocumentSqlQueryProject.id == project.id)
+                & (BusinessDocumentSqlQueryProject.state_version == project.state_version)
+                & (BusinessDocumentSqlQueryProject.operation_state == "IDLE")
+            )
+            .execute()
+        )
+        if changed != 1:
+            raise ConflictError("SQL_AGENT_VERSION_CONFLICT", "Project state changed; reload before retrying")
+        BusinessDocumentJob.create(
+            id=job_id,
+            document_id=project.id,
+            tenant_id=project.tenant_id,
+            job_type=f"{_JOB_PREFIX}{kind}",
+            dedupe_key=_stable_hash({"project_id": project.id, "kind": kind, "state_version": new_version}),
+            source_state_version=new_version,
+            payload={
+                "schema_version": "1",
+                "project_id": project.id,
+                "actor_id": actor_id,
+                "is_admin": bool(is_admin),
+                "access_role": str(access_role),
+                "request": job_request,
+                **({"source_request": project.source_request} if kind == "SCHEMA" else {}),
+            },
+            available_at=current_timestamp(),
+            correlation_id=get_uuid(),
+        )
+        return job_id
+
+    @classmethod
+    def request_dialogue(cls, tenant_id, actor_id, project_id, raw, is_admin=False, access_role="AUTHOR_CREATOR"):
+        if not isinstance(raw, Mapping):
+            raise ValidationError("INVALID_SQL_DIALOGUE", "Неверный запрос диалога")
+        _closed(raw, {"schema_version", "expected_state_version", "idempotency_key", "request"}, "dialogue")
+        version = raw.get("expected_state_version")
+        request = raw.get("request")
+        if raw.get("schema_version") != "1" or type(version) is not int or version < 1 or not isinstance(request, dict):
+            raise ValidationError("INVALID_SQL_DIALOGUE", "Неверная версия или контекст диалога")
+        if len(json.dumps(request, ensure_ascii=False).encode()) > 128000:
+            raise ValidationError("INVALID_SQL_DIALOGUE", "Контекст диалога слишком велик")
+        key = _text(raw.get("idempotency_key"), "idempotency_key", 128)
+        request_hash = _stable_hash({"type": "SQL_DIALOGUE", "request": raw})
+        with BusinessDocumentSqlQueryProject._meta.database.atomic():
+            project = cls._get_project(tenant_id, project_id)
+            access = BusinessDocumentAccess(actor_id, access_role, is_admin)
+            access.require_view_sql(project.owner_id)
+            cls._require_active(project)
+            if not SqlAssistantSession.select().where((SqlAssistantSession.id == project.id) & (SqlAssistantSession.tenant_id == tenant_id)).exists():
+                raise ConflictError("SQL_SESSION_NOT_FOUND", "Исследование недоступно")
+            replay = cls._command_replay(tenant_id, project.id, key, request_hash)
+            if replay is not None:
+                return replay
+            if project.state_version != version or project.operation_state != "IDLE":
+                raise ConflictError("SQL_DIALOGUE_CONTEXT_CHANGED", "Исследование изменилось; обновите состояние")
+            if (
+                BusinessDocumentSqlQueryRun.select()
+                .where((BusinessDocumentSqlQueryRun.project_id == project.id) & (BusinessDocumentSqlQueryRun.tenant_id == tenant_id) & BusinessDocumentSqlQueryRun.status.in_(IN_PROGRESS_RUN_STATUSES))
+                .exists()
+            ):
+                raise ConflictError("SQL_RESULT_ACTIVE", "Завершите текущий расчёт или сверьте его исход перед новым сообщением")
+            cls._enqueue_agent(project, actor_id, "DIALOGUE", request, is_admin, access_role)
+            response = cls._project(BusinessDocumentSqlQueryProject.get_by_id(project.id), access=access)
+            cls._record_command(tenant_id, project.id, key, request_hash, response)
+            return response
+
+    @classmethod
+    def cancel_agent(cls, tenant_id, actor_id, project_id, raw, is_admin=False, access_role="AUTHOR_CREATOR"):
+        if not isinstance(raw, Mapping):
+            raise ValidationError("INVALID_SQL_DIALOGUE", "Неверная команда отмены")
+        _closed(raw, {"schema_version", "expected_state_version", "idempotency_key"}, "cancel agent")
+        key = _text(raw.get("idempotency_key"), "idempotency_key", 128)
+        version = raw.get("expected_state_version")
+        if raw.get("schema_version") != "1" or type(version) is not int or version < 1:
+            raise ValidationError("INVALID_SQL_DIALOGUE", "Неверная версия отмены")
+        request_hash = _stable_hash({"type": "CANCEL_SQL_AGENT", "request": raw})
+        with BusinessDocumentSqlQueryProject._meta.database.atomic():
+            project = cls._get_project(tenant_id, project_id)
+            access = BusinessDocumentAccess(actor_id, access_role, is_admin)
+            access.require_view_sql(project.owner_id)
+            replay = cls._command_replay(tenant_id, project.id, key, request_hash)
+            if replay is not None:
+                return replay
+            job = BusinessDocumentJob.get_or_none((BusinessDocumentJob.id == project.current_job_id) & (BusinessDocumentJob.tenant_id == tenant_id) & (BusinessDocumentJob.document_id == project.id))
+            if project.state_version != version or not job or not job.job_type.startswith(_JOB_PREFIX):
+                raise ConflictError("SQL_DIALOGUE_CONTEXT_CHANGED", "Нет текущего задания для отмены")
+            if not is_admin and (job.payload or {}).get("actor_id") != actor_id:
+                raise ConflictError("SQL_AGENT_OWNER_MISMATCH", "Отменить это задание может его автор")
+            changed = (
+                BusinessDocumentJob.update(status="CANCELLED", lease_owner=None, lease_token=None, lease_expires_at=None, update_time=current_timestamp(), update_date=datetime.now())
+                .where((BusinessDocumentJob.id == job.id) & BusinessDocumentJob.status.in_(("PENDING", "RETRY", "RUNNING")))
+                .execute()
+            )
+            if changed != 1:
+                raise ConflictError("SQL_DIALOGUE_CONTEXT_CHANGED", "Задание уже завершилось; обновите состояние")
             changed = (
                 BusinessDocumentSqlQueryProject.update(
-                    operation_state="RUNNING",
-                    state_version=new_version,
-                    current_job_id=job_id,
+                    operation_state="IDLE",
+                    current_job_id=None,
+                    state_version=project.state_version + 1,
                     last_error=None,
                     update_time=current_timestamp(),
                     update_date=datetime.now(),
@@ -744,33 +855,14 @@ class BusinessDocumentSqlAgentService:
                 .where(
                     (BusinessDocumentSqlQueryProject.id == project.id)
                     & (BusinessDocumentSqlQueryProject.state_version == project.state_version)
-                    & (BusinessDocumentSqlQueryProject.operation_state == "IDLE")
+                    & (BusinessDocumentSqlQueryProject.current_job_id == job.id)
                 )
                 .execute()
             )
             if changed != 1:
-                raise ConflictError("SQL_AGENT_VERSION_CONFLICT", "Project state changed; reload before retrying")
-            BusinessDocumentJob.create(
-                id=job_id,
-                document_id=project.id,
-                tenant_id=tenant_id,
-                job_type=f"{_JOB_PREFIX}{command.kind}",
-                dedupe_key=_stable_hash({"project_id": project.id, "kind": command.kind, "state_version": new_version}),
-                source_state_version=new_version,
-                payload={
-                    "schema_version": "1",
-                    "project_id": project.id,
-                    "actor_id": actor_id,
-                    "is_admin": bool(is_admin),
-                    "access_role": str(access_role),
-                    "request": job_request,
-                    **({"source_request": project.source_request} if command.kind == "SCHEMA" else {}),
-                },
-                available_at=current_timestamp(),
-                correlation_id=get_uuid(),
-            )
-            response = cls._project(BusinessDocumentSqlQueryProject.get_by_id(project.id), access=BusinessDocumentAccess(actor_id, access_role, is_admin))
-            cls._record_command(tenant_id, project.id, command.idempotency_key, request_hash, response)
+                raise ConflictError("SQL_DIALOGUE_CONTEXT_CHANGED", "Исследование изменилось во время отмены")
+            response = cls._project(BusinessDocumentSqlQueryProject.get_by_id(project.id), access=access)
+            cls._record_command(tenant_id, project.id, key, request_hash, response)
             return response
 
     @classmethod
@@ -871,6 +963,10 @@ class BusinessDocumentSqlAgentService:
             project = cls._get_project(job.tenant_id, job.document_id)
             if project.current_job_id != job.id or project.state_version != job.source_state_version:
                 cls._finish_job(current_job, "STALE", result=result)
+                return
+            if current_job.job_type == "SQL_AGENT_DIALOGUE":
+                cls._update_project_after_job(project, operation_state="IDLE", last_error=None)
+                cls._finish_job(current_job, "COMPLETED", result=result)
                 return
             if current_job.job_type == "SQL_AGENT_REVISION":
                 response = dialogue_response(result)

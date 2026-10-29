@@ -126,6 +126,34 @@ export type AssistantCard =
     };
 
 export interface AssistantSession {
+  capabilities?: { chat: boolean };
+  conversation?: {
+    phase:
+      | 'ROUTING'
+      | 'PREPARING'
+      | 'EXECUTING'
+      | 'WAITING'
+      | 'READY'
+      | 'ERROR'
+      | 'CANCELLED'
+      | 'CANCELLING'
+      | 'RECONCILE';
+    job_id?: string | null;
+    pending_run_id?: string | null;
+    pending?: {
+      kind: string;
+      candidates?: Array<{
+        id: string;
+        version?: number;
+        content_hash?: string;
+      }>;
+    } | null;
+    question?: {
+      text: string;
+      options: Array<string | { id: string; label: string }>;
+    } | null;
+    error?: { code: string; message: string } | null;
+  } | null;
   cards?: AssistantCard[];
   id: string;
   revision: number;
@@ -134,6 +162,7 @@ export interface AssistantSession {
   execution_timezone?: string | null;
   messages: Array<{
     id: string;
+    role?: 'user' | 'assistant';
     text: string;
     created_at: number;
     parent_result_id: string | null;

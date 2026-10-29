@@ -63,41 +63,31 @@ const session = {
   ],
 } as unknown as AssistantSession;
 
-function setup() {
-  const send = jest.fn().mockResolvedValue({ kind: 'answer_result' });
-  const onOpenSql = jest.fn();
-  const onUseDefinition = jest.fn();
+function setup(overrides: Partial<AssistantSession> = {}) {
+  const send = jest.fn().mockResolvedValue({ kind: 'message' });
   render(
     <ResultDialogue
-      session={session}
+      session={{ ...session, ...overrides }}
       send={send}
       busy={false}
       preparingQuery={false}
       parentRow={null}
       onClearRow={jest.fn()}
       options={options}
-      onOpenSql={onOpenSql}
-      onUseDefinition={onUseDefinition}
     />,
   );
-  return { send, onOpenSql, onUseDefinition };
+  return { send };
 }
-
-it('sends the displayed SQL context and resolved reference keys', async () => {
+it('sends the immutable displayed context and resolved mention keys', async () => {
   const { send } = setup();
-  expect(screen.getByLabelText('Контекст вопроса')).toHaveTextContent(
-    'Europe/Moscow',
-  );
-  fireEvent.click(screen.getByText('Версия SQL и параметры'));
-  expect(screen.getByText(/query-v1/)).toBeVisible();
-  fireEvent.change(screen.getByLabelText('Вопрос по выбранному результату'), {
+  fireEvent.change(screen.getByLabelText('Сообщение SQL-помощнику'), {
     target: { value: 'Покажи @bot', selectionStart: 11 },
   });
   fireEvent.click(screen.getByRole('button', { name: /Таблица · bot.orders/ }));
-  fireEvent.click(screen.getByRole('button', { name: 'Получить ответ' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Отправить сообщение' }));
   await waitFor(() =>
     expect(send).toHaveBeenCalledWith(
-      'answer_result',
+      'message',
       expect.objectContaining({
         context,
         references: [{ kind: 'TABLE', id: 'table-id' }],
@@ -105,53 +95,61 @@ it('sends the displayed SQL context and resolved reference keys', async () => {
     ),
   );
 });
-
-it('offers an explicit metric choice before a new calculation', async () => {
-  const { send, onUseDefinition } = setup();
-  fireEvent.click(screen.getByLabelText('Изменить запрос'));
-  fireEvent.change(screen.getByLabelText('Изменение запроса'), {
+it('asks for a metric definition only when the server requires clarification', async () => {
+  const { send } = setup({
+    conversation: {
+      phase: 'WAITING',
+      pending: {
+        kind: 'METRIC',
+        candidates: [{ id: 'metric', version: 3, content_hash: 'metric-hash' }],
+      },
+      question: {
+        text: 'Как считать выручку?',
+        options: [{ id: 'metric', label: 'Выручка' }],
+      },
+    },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Выручка', exact: true }));
+  await waitFor(() =>
+    expect(send).toHaveBeenCalledWith(
+      'message',
+      expect.objectContaining({
+        text: 'Выручка',
+        references: [
+          {
+            kind: 'DEFINITION',
+            id: 'metric',
+            version: 3,
+            content_hash: 'metric-hash',
+          },
+        ],
+      }),
+    ),
+  );
+});
+it('does not block a free question because a catalog metric happens to match', () => {
+  setup();
+  fireEvent.change(screen.getByLabelText('Сообщение SQL-помощнику'), {
     target: { value: 'Выручка по месяцам' },
   });
   expect(
-    screen.getByRole('button', { name: 'Предложить изменение SQL' }),
+    screen.getByRole('button', { name: 'Отправить сообщение' }),
+  ).toBeEnabled();
+  expect(screen.queryByRole('radio')).not.toBeInTheDocument();
+});
+it('blocks access to a selected result whose authorized context was removed', () => {
+  setup({ cards: [] });
+  expect(screen.getByLabelText('Сообщение SQL-помощнику')).toBeDisabled();
+  expect(
+    screen.getByRole('button', { name: 'Отправить сообщение' }),
   ).toBeDisabled();
-  fireEvent.click(
-    screen.getByRole('button', { name: 'Выбрать определение «Выручка»' }),
-  );
-  expect(onUseDefinition).toHaveBeenCalledWith('metric', 3);
-  expect(send).not.toHaveBeenCalled();
-  fireEvent.click(
-    screen.getByLabelText(
-      'Продолжить как исследовательский расчёт без применения определения',
-    ),
-  );
-  fireEvent.click(
-    screen.getByRole('button', { name: 'Предложить изменение SQL' }),
-  );
-  await waitFor(() =>
-    expect(send).toHaveBeenCalledWith(
-      'follow_up',
-      expect.objectContaining({ metric_resolution: 'EXPLORATORY' }),
-    ),
-  );
 });
-
-it('opens typed cards without generating SQL or parsing Markdown commands', () => {
-  const { send, onOpenSql } = setup();
-  fireEvent.click(
-    screen.getByRole('button', { name: 'Открыть SQL результата' }),
-  );
-  expect(onOpenSql).toHaveBeenCalledTimes(1);
-  fireEvent.click(screen.getByText('Сравнить изменения SQL'));
-  expect(screen.getByText('SELECT old')).toBeVisible();
-  expect(screen.getByText('SELECT next')).toBeVisible();
-  fireEvent.click(
-    screen.getByRole('button', { name: 'Продолжить исследование' }),
-  );
-  expect(screen.getByLabelText('Изменить запрос')).toBeChecked();
+it('does not repeat an execution whose outcome is unknown', () => {
+  const { send } = setup({ conversation: { phase: 'RECONCILE' } });
+  expect(screen.getByLabelText('Сообщение SQL-помощнику')).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Отправить сообщение' }));
   expect(send).not.toHaveBeenCalled();
 });
-
 it('inserts a keyboard mention at the caret and keeps following text', () => {
   function Composer() {
     const [text, setText] = useState('');
@@ -209,46 +207,4 @@ it('requires reconciliation instead of retry for an unknown execution outcome', 
     },
   };
   expect(assistantFailure(error).recovery).toBe('RECONCILE');
-});
-
-it('blocks questions when a selected result has lost its authorized context', () => {
-  const send = jest.fn();
-  render(
-    <ResultDialogue
-      session={{ ...session, cards: [] }}
-      send={send}
-      busy={false}
-      preparingQuery={false}
-      parentRow={null}
-      onClearRow={jest.fn()}
-    />,
-  );
-  fireEvent.change(screen.getByLabelText('Вопрос по выбранному результату'), {
-    target: { value: 'Значение?' },
-  });
-  expect(screen.getByRole('button', { name: 'Получить ответ' })).toBeDisabled();
-  expect(screen.getByRole('status')).toHaveTextContent(
-    'Контекст выбранного результата недоступен',
-  );
-  expect(send).not.toHaveBeenCalled();
-});
-
-it('resets mention selection when switching between retained drafts', () => {
-  setup();
-  fireEvent.click(screen.getByLabelText('Изменить запрос'));
-  fireEvent.change(screen.getByLabelText('Изменение запроса'), {
-    target: { value: 'Сумма по месяцам' },
-  });
-  fireEvent.click(screen.getByLabelText('Спросить о результате'));
-  fireEvent.change(screen.getByLabelText('Вопрос по выбранному результату'), {
-    target: { value: 'Кто @bot', selectionStart: 8 },
-  });
-  expect(screen.getByRole('listbox')).toBeVisible();
-  fireEvent.click(screen.getByLabelText('Изменить запрос'));
-  expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: 'Упомянуть объект @' }));
-  fireEvent.click(screen.getByRole('button', { name: /Таблица · bot.orders/ }));
-  expect(screen.getByLabelText('Изменение запроса')).toHaveValue(
-    'Сумма по месяцам @bot.orders ',
-  );
 });

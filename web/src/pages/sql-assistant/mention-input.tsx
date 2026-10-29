@@ -31,6 +31,7 @@ export const MentionInput = forwardRef<
     loading?: boolean;
     error?: boolean;
     onSearch?: (query: string, open: boolean) => void;
+    onSend?: () => void;
   }
 >(
   (
@@ -43,6 +44,7 @@ export const MentionInput = forwardRef<
       loading,
       error,
       onSearch,
+      onSend,
       ...props
     },
     ref,
@@ -84,7 +86,18 @@ export const MentionInput = forwardRef<
       update('', false);
     };
     const onKey = (event: KeyboardEvent<HTMLElement>) => {
-      if (!open) return;
+      if (!open) {
+        if (
+          event.key === 'Enter' &&
+          !event.shiftKey &&
+          !event.nativeEvent.isComposing &&
+          onSend
+        ) {
+          event.preventDefault();
+          onSend();
+        }
+        return;
+      }
       if (event.key === 'Escape') {
         event.preventDefault();
         update('', false);

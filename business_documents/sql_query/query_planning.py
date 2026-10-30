@@ -428,7 +428,7 @@ class QueryPlanningScenario:
                 "status": "FALLBACK",
                 "proposal": None,
                 "clarification_questions": [],
-                "warning": "LLM-план недоступен; продолжите ручную настройку.",
+                "warning": "Не удалось подготовить проверяемый запрос. Уточните вопрос и повторите попытку.",
                 "diagnostic": type(exc).__name__,
             }
         return {

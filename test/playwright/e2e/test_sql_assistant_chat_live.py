@@ -356,6 +356,26 @@ def test_chat_chart_changes_view_without_reexecuting_query(page, live, chat_prob
     _complete(page, live, chat_probe, restored)
 
 
+def _all_orders(value, schema):
+    result = value["result"]
+    if not result or not _idle(value["session"]["project"]):
+        return False
+    names = [column["name"] for column in result["columns"]]
+    if not _matches(result, names, ALL):
+        return False
+    statement = parse_one(result["sql"], dialect="postgres")
+    columns = [item.this if isinstance(item, exp.Alias) else item for item in statement.expressions]
+    tables = list(statement.find_all(exp.Table))
+    return (
+        all(isinstance(item, exp.Column) for item in columns)
+        and [item.name for item in columns] == COLUMNS
+        and statement.args.get("where") is None
+        and len(tables) == 1
+        and tables[0].db == schema
+        and tables[0].name == "regression_orders"
+    )
+
+
 def test_chat_new_conversation_does_not_inherit_previous_filters(page, live, chat_probe):
     """C08: A is paid and >=10; B must still contain the cancelled order."""
     _start(page, live, chat_probe)
@@ -365,12 +385,30 @@ def test_chat_new_conversation_does_not_inherit_previous_filters(page, live, cha
     first_id = chat_probe["id"]
     _start(page, live, chat_probe, f"В {chat_probe['fqn']} покажи все заказы без фильтров: id, status, amount; сортировка id ASC, LIMIT 100. Только чтение.")
     assert chat_probe["id"] != first_id
-    value = _rows(page, live, chat_probe, ALL)
-    _complete(page, live, chat_probe, value)
+    second_id = chat_probe["id"]
+    ready = _wait(page, live, chat_probe, lambda value: _all_orders(value, chat_probe["schema"]))
+    names = [column["name"] for column in ready["result"]["columns"]]
+    value = _rows(page, live, chat_probe, ALL, names)
+    assert value["result"]["run_id"] != first["result"]["run_id"]
     chat_probe["id"] = first_id
     live.browser(page, "/sql-assistant?session=" + first_id)
     restored = _rows(page, live, chat_probe, [PAID[0]])
     assert _identity(restored) == _identity(first)
+    live.proof(
+        chat_probe["proof_id"] + "-isolation",
+        {
+            "first_session": first_id,
+            "second_session": second_id,
+            "first_identity": _identity(first),
+            "second_identity": _identity(value),
+            "second_columns": value["result"]["columns"],
+            "second_rows": value["result"]["rows"],
+            "physical_projection": COLUMNS,
+            "second_has_no_where": True,
+            "first_restored_unchanged": True,
+        },
+    )
+    _complete(page, live, chat_probe, restored)
 
 
 def test_chat_lost_response_replays_one_delivery_after_result_changes(page, live, chat_probe):

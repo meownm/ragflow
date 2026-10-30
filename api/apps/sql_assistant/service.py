@@ -312,8 +312,8 @@ class SqlAssistantService:
             except BusinessDocumentError as error:
                 reference_error = error
         for stored in session.state["messages"]:
-            message = {key: value for key, value in stored.items() if key not in {"answer_plan", "aggregate_plan", "answer_view", "answer_binding"}}
-            if "answer_plan" in stored or "aggregate_plan" in stored:
+            message = {key: value for key, value in stored.items() if key not in {"answer_plan", "aggregate_plan", "explanation_plan", "answer_view", "answer_binding"}}
+            if "answer_plan" in stored or "aggregate_plan" in stored or "explanation_plan" in stored:
                 if stored["parent_result_id"] != session.state.get("selected_result_id"):
                     message["answer"] = {"status": "OTHER_RESULT", "text": "Выберите исходный результат, чтобы прочитать ответ."}
                 else:
@@ -340,6 +340,18 @@ class SqlAssistantService:
                             from business_documents.sql_conversation import render_aggregate
 
                             message["answer"] = render_aggregate(stored["aggregate_plan"], run.rows, columns, stored["answer_view"], source.compiled["sql"], truncated=run.checks.get("truncated"))
+                        elif "explanation_plan" in stored:
+                            from business_documents.sql_conversation import render_explanation
+
+                            message["answer"] = render_explanation(
+                                stored["explanation_plan"],
+                                source.compiled["sql"],
+                                source.compiled["parameters"],
+                                stored["answer_view"],
+                                columns,
+                                execution_timezone=session.state.get("execution_timezones", {}).get(source.query.id),
+                                truncated=run.checks.get("truncated"),
+                            )
                         else:
                             message["answer"] = answers.render_answer(stored["answer_plan"], context)
                         message["answer"]["expires_at"] = deadline
@@ -552,6 +564,8 @@ class SqlAssistantService:
         else:
             if plan["intent"] == "AGGREGATE":
                 message["aggregate_plan"] = plan
+            elif plan["intent"] == "EXPLAIN":
+                message["explanation_plan"] = plan
             else:
                 message["answer_plan"] = plan["answer"] if plan["intent"] == "ANSWER" else {"kind": "CLARIFICATION", "text": plan["text"]}
             message["answer_view"] = view

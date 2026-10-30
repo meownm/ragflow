@@ -397,6 +397,76 @@ async def test_model_response_schema_limits_references_without_mutating_the_shar
     assert "enum" not in contract_schema("sql_query_plan")["properties"]["select"]["items"]["properties"]["column_id"]
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid", ["datetime", "schema"])
+async def test_invalid_model_format_gets_one_correction_with_original_context(invalid):
+    request = _request()
+    table = request["schema_snapshot"]["requirements"][0]["selected_table"]
+    column = deepcopy(table["columns"][0])
+    column.update(id="dwh.order_fact.created_at", name="created_at", data_type="TIMESTAMPZ", constraint="")
+    table["columns"].append(column)
+    good = _raw_plan()
+    good["filters"][0].update(column_id=column["id"], parameter_type="datetime", parameter_value="2026-09-01T00:00:00+00:00")
+    bad = deepcopy(good)
+    if invalid == "datetime":
+        # Exact invalid spelling observed in the real calendar Qwen response.
+        bad["filters"][0]["parameter_value"] = "2026-09-01 00:00:00 UTC"
+    else:
+        bad["invented_field"] = True
+    calls = []
+
+    class Model:
+        async def async_generate(self, tenant_id, system, payload):
+            calls.append(deepcopy(payload))
+            return bad if len(calls) == 1 else good
+
+    command = parse_plan_query_command(request, tenant_id="tenant")
+    result = await TenantQueryPlanner(Model()).propose(command)
+    assert result == good and len(calls) == 2
+    assert calls[1]["catalog_context"] == calls[0]["catalog_context"]
+    assert calls[1]["prompt"] == calls[0]["prompt"]
+    assert calls[1]["format_correction"]["error"]
+    if invalid == "datetime":
+        assert "ISO datetime" in calls[1]["format_correction"]["error"]
+    assert bad == json.loads(calls[1]["format_correction"]["previous_response"])
+
+
+@pytest.mark.asyncio
+async def test_repeated_invalid_model_plan_stays_unavailable_without_a_third_call():
+    calls = []
+    request = _request()
+    table = request["schema_snapshot"]["requirements"][0]["selected_table"]
+    column = deepcopy(table["columns"][0])
+    column.update(id="dwh.order_fact.created_at", name="created_at", data_type="TIMESTAMPZ", constraint="")
+    table["columns"].append(column)
+
+    class Model:
+        async def async_generate(self, *_args):
+            calls.append(True)
+            raw = _raw_plan()
+            raw["filters"][0].update(column_id=column["id"], parameter_type="datetime", parameter_value="2026-09-01 00:00:00 UTC")
+            return raw
+
+    command = parse_plan_query_command(request, tenant_id="tenant")
+    result = await QueryPlanningScenario(TenantQueryPlanner(Model())).run(command)
+    assert result["status"] == "FALLBACK" and result["proposal"] is None
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_model_timeout_is_not_retried_as_a_format_error():
+    calls = []
+
+    class Model:
+        async def async_generate(self, *_args):
+            calls.append(True)
+            raise TimeoutError("upstream timeout")
+
+    with pytest.raises(QueryPlanUnavailable):
+        await TenantQueryPlanner(Model()).propose(parse_plan_query_command(_request(), tenant_id="tenant"))
+    assert len(calls) == 1
+
+
 def test_planner_context_refuses_an_unbounded_schema_instead_of_truncating_it():
     request = _request()
     large_table = _table(

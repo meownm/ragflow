@@ -229,6 +229,50 @@ def test_server_aggregate_is_recomputed_from_result_not_stored_as_text(research)
     assert "31125" not in json.dumps(SqlAssistantSession.get_by_id(session.id).state)
 
 
+@pytest.mark.parametrize("topic", ["conditions", "null", "scope"])
+def test_explanation_persists_a_guarded_plan_without_changing_the_result_or_executing_sql(research, topic):
+    service, session, run, _, _ = research
+    native.command(service, session, "select_result", {"run_id": run.id}, key="select")
+    before = service.get(session.id)
+    result = service.result(session.id, run.id)
+    count = BusinessDocumentSqlQueryRun.select().count()
+    queued = native.command(service, session, "message", {"text": "Объясни условия расчёта"}, key="explain")
+    complete(service, queued["session"]["project"]["current_job"]["id"], {"intent": "EXPLAIN", "topic": topic})
+    after = service.get(session.id)
+    assert after["conversation"]["phase"] == "READY" and after["selected_result_id"] == before["selected_result_id"]
+    assert after["messages"][-1]["answer"]["status"] == "READY"
+    assert "explanation_plan" not in after["messages"][-1]
+    stored = SqlAssistantSession.get_by_id(session.id).state["messages"][-1]
+    assert stored["explanation_plan"] == {"intent": "EXPLAIN", "topic": topic} and "answer" not in stored
+    refreshed = service.result(session.id, run.id)
+    assert {key: refreshed[key] for key in ("sql", "parameters", "rows", "view")} == {key: result[key] for key in ("sql", "parameters", "rows", "view")}
+    assert BusinessDocumentSqlQueryRun.select().count() == count
+
+
+@pytest.mark.parametrize("revoked", [False, True], ids=["expired", "revoked"])
+def test_stored_explanation_rechecks_result_lifetime_and_catalog_access(research, monkeypatch, revoked):
+    from business_documents.application.errors import PermissionDeniedError
+
+    service, session, run, _, _ = research
+    native.command(service, session, "select_result", {"run_id": run.id}, key="select")
+    queued = native.command(service, session, "message", {"text": "Поясни NULL"}, key="explain")
+    complete(service, queued["session"]["project"]["current_job"]["id"], {"intent": "EXPLAIN", "topic": "null"})
+    assert service.get(session.id)["messages"][-1]["answer"]["status"] == "READY"
+    if revoked:
+
+        async def deny(*_args):
+            raise PermissionDeniedError("Catalog access revoked")
+
+        monkeypatch.setattr(native.BusinessDocumentSqlQuerySchemaService, "load_entities", deny)
+        with pytest.raises(PermissionDeniedError):
+            service.get(session.id)
+    else:
+        BusinessDocumentSqlQueryRun.update(status="EXPIRED", rows=[]).where(BusinessDocumentSqlQueryRun.id == run.id).execute()
+        answer = service.get(session.id)["messages"][-1]["answer"]
+        assert answer["status"] == "UNAVAILABLE" and "NULL означает" not in answer["text"]
+    assert "answer" not in SqlAssistantSession.get_by_id(session.id).state["messages"][-1]
+
+
 def test_stop_preserves_selected_ready_result(research):
     service, session, run, _, _ = research
     native.command(service, session, "select_result", {"run_id": run.id}, key="select")
@@ -237,6 +281,20 @@ def test_stop_preserves_selected_ready_result(research):
     assert stopped["session"]["selected_result_id"] == run.id
     assert stopped["session"]["conversation"]["phase"] == "CANCELLED"
     assert BusinessDocumentJob.get_by_id(queued["session"]["project"]["current_job"]["id"]).status == "CANCELLED"
+
+
+def test_cancelled_explanation_job_cannot_publish_a_late_answer(research):
+    service, session, run, _, _ = research
+    native.command(service, session, "select_result", {"run_id": run.id}, key="select")
+    queued = native.command(service, session, "message", {"text": "Поясни период"}, key="explain")
+    job = BusinessDocumentJobQueue.claim("worker", lease_ms=60000)
+    assert job.id == queued["session"]["conversation"]["job_id"]
+    native.command(service, session, "stop", {}, key="stop")
+    with pytest.raises(ConflictError):
+        Projects.complete_job(job, "worker", job.lease_token, {"intent": "EXPLAIN", "topic": "conditions"})
+    after = service.get(session.id)
+    assert after["selected_result_id"] == run.id and after["conversation"]["phase"] == "CANCELLED"
+    assert all("explanation_plan" not in message for message in SqlAssistantSession.get_by_id(session.id).state["messages"])
 
 
 @pytest.mark.parametrize("bound,max_rows,expected", [(True, 50, 50), (True, 100000, 10000), (False, 50, None)])

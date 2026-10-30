@@ -20,6 +20,7 @@ from business_documents.sql_query.query_planning import (
     QueryPlanningScenario,
     QueryPlanUnavailable,
     QueryPlanValidationError,
+    normalize_query_plan,
     parse_plan_query_command,
     planner_context,
 )
@@ -37,7 +38,7 @@ def query_planner_provenance() -> dict[str, str] | None:
 
 
 class TenantQueryPlanner(QueryPlanner):
-    """Make one bounded call to the tenant model over accepted catalog IDs."""
+    """Plan over accepted catalog IDs with one deadline and one format correction."""
 
     def __init__(self, llm=None, *, timeout_seconds: float = MODEL_TIMEOUT_SECONDS):
         self._llm = llm if llm is not None else RAGFlowLLMAdapter()
@@ -76,15 +77,31 @@ class TenantQueryPlanner(QueryPlanner):
                 },
                 "catalog_context": context,
             }
-            raw = await asyncio.wait_for(
-                self._llm.async_generate(command.tenant_id, system_prompt, payload),
-                timeout=self._timeout_seconds,
-            )
-            parsed = raw if isinstance(raw, dict) else repair_json(raw, return_objects=True)
-            if not isinstance(parsed, dict):
-                raise QueryPlanUnavailable("Tenant LLM response must be a JSON object")
-            validate_contract("sql_query_plan", parsed)
-            return parsed
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + self._timeout_seconds
+            for attempt in range(2):
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    raise TimeoutError("SQL query planning deadline reached")
+                raw = await asyncio.wait_for(self._llm.async_generate(command.tenant_id, system_prompt, payload), timeout=remaining)
+                parsed = raw if isinstance(raw, dict) else repair_json(raw, return_objects=True)
+                try:
+                    if not isinstance(parsed, dict):
+                        raise ValueError("Tenant LLM response must be a JSON object")
+                    validate_contract("sql_query_plan", parsed)
+                    normalize_query_plan(command, parsed)
+                    return parsed
+                except (ValidationError, QueryPlanValidationError, ValueError) as error:
+                    if attempt:
+                        raise QueryPlanUnavailable("Tenant LLM plan remains invalid after format correction") from error
+                    payload = {
+                        **payload,
+                        "format_correction": {
+                            "error": str(error)[:500],
+                            "previous_response": json.dumps(parsed, ensure_ascii=False)[:16_000],
+                            "instruction": "Fix only the reported contract/format error. Return the complete plan. Preserve accepted requirements and valid decisions; do not invent values or broaden source, period or scope. Datetime parameters use ISO 8601 with the agreed zone offset, never a trailing zone name.",
+                        },
+                    }
         except Exception as exc:
             LOGGER.warning("SQL query LLM planning failed: %s", type(exc).__name__)
             raise QueryPlanUnavailable("Tenant LLM query planning failed") from exc

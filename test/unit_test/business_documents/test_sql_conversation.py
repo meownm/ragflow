@@ -6,7 +6,7 @@ from decimal import Decimal
 import pytest
 
 from business_documents.sql_assistant import default_view
-from business_documents.sql_conversation import automatic_schema_payload, automatic_sources, change_view, literal_parameter, parse_intent, preparation_action, saved_aggregate
+from business_documents.sql_conversation import automatic_schema_payload, automatic_sources, change_view, literal_parameter, parse_intent, preparation_action, render_explanation, saved_aggregate
 from business_documents.sql_query.query_specification import parse_schema_snapshot
 from business_documents.sql_result_answer import answer_context
 from test.evals.sql_projects.schema import accepted_schema
@@ -39,6 +39,71 @@ def aggregate(operation="sum", column=AMOUNT):
 
 def context(rows=None):
     return answer_context("Что в результате?", "r1", rows or [["12.50", "paid"]], COLUMNS, default_view(COLUMNS), SQL, {}, False)
+
+
+@pytest.mark.parametrize("topic", ["conditions", "null", "scope"])
+def test_explanation_is_a_closed_capability_requiring_a_selected_result(topic):
+    plan = {"intent": "EXPLAIN", "topic": topic}
+    assert parse_intent(plan, context()) == plan
+    with pytest.raises(ValueError):
+        parse_intent(plan, None)
+
+
+@pytest.mark.parametrize(
+    "plan",
+    [{"intent": "EXPLAIN", "topic": "unknown"}, {"intent": "EXPLAIN", "topic": []}, {"intent": "EXPLAIN", "topic": None}, {"intent": "EXPLAIN", "topic": "conditions", "text": "model-invented facts"}],
+)
+def test_explanation_cannot_carry_model_authored_facts(plan):
+    with pytest.raises(ValueError):
+        parse_intent(plan, context())
+
+
+def test_explanation_uses_actual_saved_period_parameters_without_mutating_the_query():
+    sql = "SELECT amount,status FROM public.orders WHERE status=:paid AND created_at>=:start AND created_at<:end LIMIT :row_limit"
+    parameters = {"paid": "paid", "start": "2026-09-01T00:00:00+00:00", "end": "2026-10-01T00:00:00+00:00", "row_limit": 2}
+    view = default_view(COLUMNS)
+    before = deepcopy(parameters), deepcopy(view)
+    answer = render_explanation({"intent": "EXPLAIN", "topic": "conditions"}, sql, parameters, view, COLUMNS, execution_timezone="UTC")
+    assert answer["status"] == "READY" and not answer["context_limited"]
+    assert all(value in answer["text"] for value in ("paid", parameters["start"], parameters["end"], "UTC", "Лимит выдачи: 2"))
+    assert "нельзя установить бизнес-причину выбора периода" in answer["text"]
+    assert (parameters, view) == before
+
+
+@pytest.mark.parametrize(
+    "sql,parameters",
+    [
+        ("SELECT * FROM x WHERE day=:missing", {}),
+        ("WITH x AS (SELECT * FROM orders WHERE day=1) SELECT * FROM x", {}),
+        ("SELECT * FROM orders " + " " * 16_001, {}),
+        ("SELECT * FROM orders; SELECT * FROM other", {}),
+        ("SELECT o.amount FROM orders o JOIN customers c ON c.id=o.customer_id AND c.region='North'", {}),
+        ("SELECT * FROM orders LIMIT 10 OFFSET 20", {}),
+        ("not a valid SELECT (", {}),
+        ("SELECT * FROM x WHERE id=:bad", {"bad": float("nan")}),
+    ],
+)
+def test_explanation_does_not_invent_unverifiable_query_conditions(sql, parameters):
+    answer = render_explanation({"intent": "EXPLAIN", "topic": "conditions"}, sql, parameters, default_view(COLUMNS), COLUMNS)
+    assert answer["context_limited"] and "SQL и основания" in answer["text"]
+    assert "Условия выбранного расчёта:" not in answer["text"]
+
+
+def test_explanation_keeps_sql_conditions_distinct_from_saved_view_filters():
+    view = default_view(COLUMNS)
+    view["labels"][AMOUNT] = "Сумма"
+    view["filters"] = [{"column_id": AMOUNT, "operator": "gte", "value": "10"}]
+    answer = render_explanation({"intent": "EXPLAIN", "topic": "conditions"}, SQL, {}, view, COLUMNS)
+    assert "фильтров WHERE нет" in answer["text"]
+    assert "Сумма ≥" in answer["text"] and AMOUNT not in answer["text"]
+
+
+def test_null_and_scope_explanations_do_not_claim_business_causes_or_full_source_coverage():
+    null = render_explanation({"intent": "EXPLAIN", "topic": "null"}, SQL, {}, default_view(COLUMNS), COLUMNS)
+    assert "не пустая строка и не ноль" in null["text"]
+    assert "нельзя установить причину" in null["text"]
+    scope = render_explanation({"intent": "EXPLAIN", "topic": "scope"}, SQL, {}, default_view(COLUMNS), COLUMNS, truncated=True)
+    assert scope["source_completeness"] == "UNKNOWN" and "выдача ограничена" in scope["text"]
 
 
 def schema_candidate():

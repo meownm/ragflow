@@ -4,11 +4,15 @@ from copy import deepcopy
 import json
 import re
 
+from sqlglot import exp, parse
+from sqlglot.errors import ParseError
+
 from business_documents import sql_assistant as results
 from business_documents.sql_result_answer import validate_answer
 from business_documents.sql_query.query_specification import parse_schema_snapshot
 
-INTENTS = {"CHANGE", "ANSWER", "AGGREGATE", "VIEW", "CLARIFICATION"}
+INTENTS = {"CHANGE", "ANSWER", "AGGREGATE", "VIEW", "CLARIFICATION", "EXPLAIN"}
+EXPLANATION_TOPICS = {"conditions", "null", "scope"}
 AGGREGATIONS = {"rows", "sum", "avg", "min", "max", "count", "distinct"}
 APPEARANCE_FIELDS = {"display", "density", "striped", "wrap"}
 VIEW_FIELDS = {"column_order", "hidden", "labels", "formats", "sort", "chart"} | APPEARANCE_FIELDS
@@ -196,6 +200,7 @@ def parse_intent(raw, context):
         "AGGREGATE": {"intent", "operation", "column_id", "scope"},
         "VIEW": {"intent", "patch"},
         "CLARIFICATION": {"intent", "text"},
+        "EXPLAIN": {"intent", "topic"},
     }[kind]
     if set(plan) != fields:
         raise ValueError("Неверный состав полей намерения")
@@ -208,6 +213,9 @@ def parse_intent(raw, context):
             raise ValueError("Сначала получите результат")
         if kind == "ANSWER":
             validate_answer(plan["answer"], context)
+        elif kind == "EXPLAIN":
+            if not isinstance(plan["topic"], str) or plan["topic"] not in EXPLANATION_TOPICS:
+                raise ValueError("Неизвестная тема объяснения расчёта")
         elif kind == "AGGREGATE":
             if plan["scope"] != "SAVED_RESULT" or not isinstance(plan["operation"], str) or plan["operation"] not in AGGREGATIONS:
                 raise ValueError("Сводка разрешена только по сохранённому результату")
@@ -269,6 +277,68 @@ def render_aggregate(plan, rows, columns, view, sql, *, truncated):
         "citations": [],
         "calculation": {"operation": plan["operation"], "column_id": plan["column_id"]},
     }
+
+
+def render_explanation(plan, sql, parameters, view, columns, *, execution_timezone=None, truncated=False):
+    """Explain saved query metadata; model prose never supplies factual values."""
+    if not isinstance(plan, dict) or plan.get("intent") != "EXPLAIN" or not isinstance(plan.get("topic"), str) or plan["topic"] not in EXPLANATION_TOPICS or set(plan) != {"intent", "topic"}:
+        raise ValueError("Неверное объяснение расчёта")
+    topic = plan["topic"]
+    limited = False
+    if topic == "null":
+        text = "NULL означает отсутствие значения. Это не пустая строка и не ноль. По одному NULL нельзя установить причину отсутствия значения или наличие связанной записи."
+    elif topic == "scope":
+        text = "Ответы по результату относятся к сохранённым строкам с настройками на момент вопроса. Полнота всего источника не подтверждена. Полный итог по источнику требует отдельного расчёта."
+        if truncated:
+            text += " Сохранённая выдача ограничена лимитом."
+    else:
+        unavailable = "Не удалось кратко разобрать все условия этого SQL. Проверьте их в разделе «SQL и основания». Выбранный результат не изменён."
+        if not isinstance(sql, str) or len(sql) > 16_000 or not isinstance(parameters, dict):
+            text, limited = unavailable, True
+        else:
+            try:
+                json.dumps(parameters, allow_nan=False)
+                statements = parse(sql, dialect="postgres")
+                statement = statements[0] if len(statements) == 1 else None
+                if not isinstance(statement, exp.Select) or len(list(statement.find_all(exp.Select))) != 1 or statement.args.get("joins") or statement.args.get("offset"):
+                    raise ValueError("Сложная область SQL")
+
+                def bind(node):
+                    if isinstance(node, exp.Placeholder):
+                        if node.name not in parameters:
+                            raise ValueError("Параметр SQL не сохранён")
+                        return exp.convert(parameters[node.name])
+                    return node
+
+                statement = statement.transform(bind)
+                where = statement.args.get("where")
+                lines = ["Условия выбранного расчёта: " + (where.this.sql(dialect="postgres") if where else "фильтров WHERE нет") + "."]
+                having = statement.args.get("having")
+                if having:
+                    lines.append("Условия после группировки: " + having.this.sql(dialect="postgres") + ".")
+                limit = statement.args.get("limit")
+                if limit:
+                    lines.append("Лимит выдачи: " + limit.expression.sql(dialect="postgres") + ".")
+                if execution_timezone:
+                    lines.append("Часовой пояс исполнения: " + str(execution_timezone) + ".")
+                names = {column["id"]: view.get("labels", {}).get(column["id"], column["name"]) for column in columns}
+                if view.get("filters"):
+                    operators = {"eq": "=", "ne": "≠", "gt": ">", "gte": "≥", "lt": "<", "lte": "≤", "contains": "содержит", "is_null": "NULL", "is_not_null": "не NULL"}
+                    filters = [
+                        names[item["column_id"]]
+                        + " "
+                        + operators[item["operator"]]
+                        + ("" if item["operator"] in {"is_null", "is_not_null"} else " " + json.dumps(item.get("value"), ensure_ascii=False, allow_nan=False))
+                        for item in view["filters"]
+                    ]
+                    lines.append("Дополнительные фильтры сохранённых строк: " + "; ".join(filters) + ".")
+                lines.append("По самим условиям SQL нельзя установить бизнес-причину выбора периода; здесь показаны действующие условия расчёта.")
+                text = "\n".join(lines)
+                if len(text) > 4000:
+                    text, limited = unavailable, True
+            except (ParseError, ValueError, KeyError, TypeError):
+                text, limited = unavailable, True
+    return {"status": "READY", "kind": "ANSWER", "text": text, "scope": "SAVED_RESULT", "source_completeness": "UNKNOWN", "context_limited": limited, "citations": []}
 
 
 def preparation_action(project, *, answers=None, pending_run_id=None):

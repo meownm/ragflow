@@ -258,6 +258,9 @@ def main():
             worker["command"] = ["--disable-datasync", "--disable-taskexecutor", "--workers=1"]
             worker["environment"].update(RAGFLOW_BACKGROUND_ENABLED="true", RAGFLOW_SKIP_DATABASE_INIT="true")
             worker["depends_on"] = {"app": {"condition": "service_healthy"}}
+            # The entrypoint starts nginx after the API; API readiness alone can
+            # precede a fatal nginx startup error and a stopped worker container.
+            worker["healthcheck"]["test"][-1] = "import urllib.request;urllib.request.urlopen('http://127.0.0.1/api/v1/system/healthz',timeout=5)"
             compose["services"]["worker"] = worker
         compose_path = OUT / "compose.yml"
         compose_path.write_text(yaml.safe_dump(annotate_compose(compose), sort_keys=False), encoding="utf-8")
@@ -305,7 +308,7 @@ def main():
         exit_code = 1
         try:
             print("Starting disposable regression stack", flush=True)
-            command([*cmd, "up", "-d", "--pull", "never"], env=env, log="startup.log", timeout=600)
+            command([*cmd, "up", "-d", "--pull", "never", "--wait", "--wait-timeout", "480"], env=env, log="startup.log", timeout=600)
             deadline = time.monotonic() + 480
             while True:
                 try:

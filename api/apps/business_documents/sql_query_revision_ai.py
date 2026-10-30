@@ -41,6 +41,17 @@ predicate and bindings no longer referenced. Explicit instructions to keep condi
 apply to their listed objects. Changing a bound value keeps its existing name and type, even if its name describes
 the old value. Never ask whether untouched conditions should stay: they stay by default.
 
+For calendar filters on timestamp-with-time-zone columns, let PostgreSQL convert local boundaries.
+Never add/subtract UTC offsets yourself or shift a calendar label by hours. Bind the requested local start/end
+as ISO datetime values without an offset, bind the requested IANA timezone as text, and use
+column >= (CAST(:start AS TIMESTAMP) AT TIME ZONE :calendar_timezone) AND
+column < (CAST(:end AS TIMESTAMP) AT TIME ZONE :calendar_timezone).
+Use the existing boundary parameter names and declared date/datetime types; new local timestamp bounds use datetime.
+Keep the same local calendar labels when
+only the timezone changes; a new month replaces those labels. Use the first local midnight of the next period
+as the exclusive end. Preserve this timezone expression/binding in later edits. PostgreSQL handles UTC offsets
+and daylight-saving changes; do not replace its conversion with model-calculated UTC timestamps.
+
 An aggregate without group keys replaces detail output with the requested aggregate(s), one row on the same cohort.
 Grouped aggregates output the supplied keys and aggregates. Remove incompatible old detail columns/ORDER BY;
 these necessary SQL changes are not missing business decisions. LEFT JOIN plus grouping includes the NULL group

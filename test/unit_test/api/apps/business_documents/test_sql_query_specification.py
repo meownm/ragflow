@@ -592,15 +592,18 @@ def test_exists_constant_projection_does_not_require_a_value_binding(negation):
     assert result["guard"]["tables"] == ["dwh.customer_dim", "dwh.order_fact"]
 
 
-@pytest.mark.parametrize("fragment", [
-    "EXISTS (SELECT 2 FROM dwh.customer_dim c)",
-    "EXISTS (SELECT 1+o.order_id FROM dwh.customer_dim c)",
-    "EXISTS (SELECT 1 FROM dwh.customer_dim c WHERE c.customer_id=1)",
-    "EXISTS (SELECT 1 FROM pg_catalog.pg_user c)",
-    "EXISTS (SELECT pg_sleep(1) FROM dwh.customer_dim c)",
-    "o.order_id IN (SELECT 1 FROM dwh.customer_dim c)",
-    "o.order_id=(SELECT 1 FROM dwh.customer_dim c)",
-])
+@pytest.mark.parametrize(
+    "fragment",
+    [
+        "EXISTS (SELECT 2 FROM dwh.customer_dim c)",
+        "EXISTS (SELECT 1+o.order_id FROM dwh.customer_dim c)",
+        "EXISTS (SELECT 1 FROM dwh.customer_dim c WHERE c.customer_id=1)",
+        "EXISTS (SELECT 1 FROM pg_catalog.pg_user c)",
+        "EXISTS (SELECT pg_sleep(1) FROM dwh.customer_dim c)",
+        "o.order_id IN (SELECT 1 FROM dwh.customer_dim c)",
+        "o.order_id=(SELECT 1 FROM dwh.customer_dim c)",
+    ],
+)
 def test_exists_projection_exception_does_not_allow_other_literals_or_access(fragment):
     sql = f"SELECT o.order_id AS order_id FROM dwh.order_fact o WHERE {fragment} LIMIT :row_limit"
     with pytest.raises(SqlGuardError):
@@ -610,3 +613,21 @@ def test_exists_projection_exception_does_not_allow_other_literals_or_access(fra
 def test_constant_outer_projection_still_requires_a_bound_value():
     with pytest.raises(SqlGuardError):
         compile_query_payload(_manual_payload("SELECT 1 AS constant FROM dwh.order_fact o LIMIT :row_limit"))
+
+
+def test_calendar_boundaries_use_bound_local_timestamps_and_postgres_timezone_conversion():
+    payload = _manual_payload(
+        "SELECT o.order_id AS order_id FROM dwh.order_fact o "
+        "WHERE o.created_at >= (CAST(:start AS TIMESTAMP) AT TIME ZONE :calendar_timezone) "
+        "AND o.created_at < (CAST(:end AS TIMESTAMP) AT TIME ZONE :calendar_timezone) LIMIT :row_limit"
+    )
+    payload["parameters"] = [
+        {"name": "start", "type": "datetime", "value": "2026-09-01T00:00:00"},
+        {"name": "end", "type": "datetime", "value": "2026-10-01T00:00:00"},
+        {"name": "calendar_timezone", "type": "text", "value": "Europe/Moscow"},
+        {"name": "row_limit", "type": "integer", "value": 100},
+    ]
+    result = compile_query_payload(payload)
+    assert result["status"] == "READY" and result["guard"]["status"] == "PASS"
+    assert result["parameters"] == {item["name"]: item["value"] for item in payload["parameters"]}
+    assert "AT TIME ZONE :calendar_timezone" in result["sql"]

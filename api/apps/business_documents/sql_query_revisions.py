@@ -64,6 +64,8 @@ def _parameters(query: BusinessDocumentSqlQueryArtifact | None, compiled: Mappin
     values = compiled.get("parameters")
     if not isinstance(values, Mapping):
         return []
+    # Compiled JSON keeps values, but not their declared date/decimal types.
+    declared = {item.get("parameter_name"): item.get("parameter_type") for item in (query.payload.get("filters") or []) if isinstance(item, Mapping)} if query else {}
     result = []
     for name, value in values.items():
         if isinstance(value, bool):
@@ -76,7 +78,7 @@ def _parameters(query: BusinessDocumentSqlQueryArtifact | None, compiled: Mappin
             kind = "integer_list" if all(isinstance(item, int) and not isinstance(item, bool) for item in value) else "text_list"
         else:
             kind = "text"
-        result.append({"name": name, "type": kind, "value": value})
+        result.append({"name": name, "type": declared.get(name) or kind, "value": value})
     return result
 
 

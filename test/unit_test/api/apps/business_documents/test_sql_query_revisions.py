@@ -38,6 +38,29 @@ ACTOR = "author-revision"
 SQL = "SELECT o.order_id AS order_id FROM dwh.order_fact AS o LIMIT :row_limit"
 
 
+def test_structured_revision_bindings_keep_declared_date_and_decimal_types():
+    query = BusinessDocumentSqlQueryArtifact(
+        payload={
+            "filters": [
+                {"parameter_name": "period_start", "parameter_type": "datetime"},
+                {"parameter_name": "report_date", "parameter_type": "date"},
+                {"parameter_name": "minimum_amount", "parameter_type": "decimal"},
+                {"parameter_name": "code", "parameter_type": "text"},
+            ]
+        }
+    )
+    values = {"period_start": "2026-09-01T00:00:00Z", "report_date": "2026-09-01", "minimum_amount": "0.10", "code": "2026-09-01", "row_limit": 100}
+    parameters = sql_query_revisions._parameters(query, {"parameters": values})
+    assert {item["name"]: item["type"] for item in parameters} == {"period_start": "datetime", "report_date": "date", "minimum_amount": "decimal", "code": "text", "row_limit": "integer"}
+    assert {item["name"]: item["value"] for item in parameters} == values
+
+
+def test_manual_revision_bindings_preserve_saved_types_and_values():
+    saved = [{"name": "start", "type": "datetime", "value": "2026-09-01T00:00:00"}, {"name": "zone", "type": "text", "value": "Europe/Moscow"}]
+    query = BusinessDocumentSqlQueryArtifact(payload={"mode": "manual", "parameters": saved})
+    assert sql_query_revisions._parameters(query, {"parameters": {"start": "other"}}) == saved
+
+
 @pytest.fixture()
 def project():
     database = SqliteDatabase(":memory:", check_same_thread=False)

@@ -209,8 +209,12 @@ class Engine:
     def stop_owned(self, run_id: str):
         self.assert_engine()
         for info in self.all("container", run_id):
-            if labels(info, "container").get(CLASS) != "disposable" or not labels(info, "container").get(OBJECT) or info.get("ExecIDs"):
+            if labels(info, "container").get(CLASS) != "disposable" or not labels(info, "container").get(OBJECT):
                 raise ValueError("Refusing to stop a persistent container")
+            for exec_id in info.get("ExecIDs") or []:
+                execution = self.api("GET", f"/exec/{exec_id}/json", {})
+                if execution.get("ContainerID") != info["Id"] or execution.get("Running") is not False:
+                    raise ValueError("Refusing to stop a container with an active or unverifiable exec")
             if info["State"]["Running"]:
                 # Only the owner in its teardown calls this, never the sweeper.
                 self.run("container", "stop", "--time", "30", info["Id"])

@@ -115,3 +115,64 @@ def test_preserved_backup_accepts_only_empty_dns_transport_changes(tmp_path, mon
     else:
         assert engine.backup(target, tmp_path / "state")["inspect"] == packet["inspect"]
     assert json.loads(inspect.read_text(encoding="utf-8")) == before
+
+
+@pytest.fixture
+def own_stop_engine():
+    info = container()
+    info["State"]["Running"] = True
+    info["ExecIDs"] = ["same-exec"]
+    stopped = []
+    engine = docker.Engine.__new__(docker.Engine)
+    engine.assert_engine = lambda: None
+    engine.all = lambda kind, run_id: [info] if (kind, run_id) == ("container", "own-run") else pytest.fail("Unexpected ownership scope")
+    engine.run = lambda *args: stopped.append(args)
+    return engine, info, stopped
+
+
+@pytest.mark.parametrize("running", [False, True])
+def test_completed_exec_metadata_does_not_block_own_container_teardown(own_stop_engine, running):
+    engine, info, stopped = own_stop_engine
+    info["State"]["Running"] = running
+
+    def inspect_exec(method, path, body):
+        assert (method, path, body) == ("GET", "/exec/same-exec/json", {})
+        return {"ContainerID": info["Id"], "Running": False, "ExitCode": 0}
+
+    engine.api = inspect_exec
+    engine.stop_owned("own-run")
+    assert stopped == ([("container", "stop", "--time", "30", info["Id"])] if running else [])
+
+
+@pytest.mark.parametrize("execution", [{"ContainerID": "same-id", "Running": True}, {"ContainerID": "other-id", "Running": False}, {"ContainerID": "same-id"}])
+def test_active_unknown_or_foreign_exec_keeps_own_container_protected(own_stop_engine, execution):
+    engine, _info, stopped = own_stop_engine
+    engine.api = lambda *_: execution
+    with pytest.raises(ValueError, match="active or unverifiable exec"):
+        engine.stop_owned("own-run")
+    assert stopped == []
+
+
+def test_exec_inspection_failure_never_stops_the_container(own_stop_engine):
+    engine, _info, stopped = own_stop_engine
+
+    def unavailable(*_):
+        raise RuntimeError("Exec inspection unavailable")
+
+    engine.api = unavailable
+    with pytest.raises(RuntimeError, match="inspection unavailable"):
+        engine.stop_owned("own-run")
+    assert stopped == []
+
+
+@pytest.mark.parametrize("change", ["persistent", "missing-generation"])
+def test_completed_exec_cannot_bypass_persistent_or_generation_guards(own_stop_engine, change):
+    engine, info, stopped = own_stop_engine
+    if change == "persistent":
+        info["Config"]["Labels"][docker.CLASS] = "runtime"
+    else:
+        del info["Config"]["Labels"][docker.OBJECT]
+    engine.api = lambda *_: pytest.fail("Protected container must not reach exec inspection")
+    with pytest.raises(ValueError, match="persistent container"):
+        engine.stop_owned("own-run")
+    assert stopped == []

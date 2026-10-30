@@ -99,7 +99,9 @@ class RAGFlowLLMAdapter:
             headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
             # Resolve each request so a replaced model or changed context cannot
             # retain a stale catalog limit in this long-lived worker adapter.
-            async with httpx.AsyncClient(timeout=10) as client:
+            # A failed TCP connection has not sent this read-only metadata
+            # request. Retry its connection once, never the model generation.
+            async with httpx.AsyncClient(timeout=10, transport=httpx.AsyncHTTPTransport(retries=1)) as client:
                 response = await client.post(f"{base}/api/show", headers=headers, json={"model": name})
                 response.raise_for_status()
                 try:

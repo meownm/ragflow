@@ -6,6 +6,8 @@ from api.apps.business_documents.sql_query_agents import BusinessDocumentSqlAgen
 from api.apps.business_documents.sql_query_revisions import BusinessDocumentSqlRevisionService as Revisions
 from api.apps.business_documents.sql_query_runs import BusinessDocumentSqlRunService as Runs
 from business_documents.sql_assistant_query import compile_assistant_query
+from business_documents.sql_query.project_compilation import build_project_schema_command
+from business_documents.sql_query.query_planning import MAX_PLAN_ROW_LIMIT
 
 __all__ = ["Projects", "Revisions", "Runs", "SqlRuntime"]
 
@@ -35,6 +37,16 @@ class SqlRuntime:
     def compile_draft(self, project, query):
         artifacts = project.get("artifacts") or {}
         return compile_assistant_query(artifacts["requirements"], artifacts["schema"], query)
+
+    def planning_row_limit(self, project):
+        from api.apps.business_documents.sql_execution_registry import BusinessDocumentSqlExecutionRegistryService
+
+        artifacts = project["artifacts"]
+        scope = build_project_schema_command(artifacts["requirements"], artifacts["schema"])
+        binding = BusinessDocumentSqlExecutionRegistryService.resolve(self.actor_id, {**scope, "selected_profile_id": project.get("execution_profile_id")}, self.is_admin, self.access_role)
+        if binding["status"] != "BOUND":
+            return None
+        return min(binding["selection"]["profile"]["max_rows"], MAX_PLAN_ROW_LIMIT)
 
     def follow_up(self, project, run_id, message, command):
         run, source, _ = self.result(project["id"], run_id)

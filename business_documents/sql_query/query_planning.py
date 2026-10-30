@@ -62,6 +62,7 @@ class PlanQueryCommand:
     accepted_requirements: str
     accepted_schema: tuple[AcceptedSchemaEntry, ...]
     clarifications: tuple[AcceptedClarification, ...] = ()
+    row_limit_cap: int | None = None
 
 
 def _record(value: Any, field: str) -> Mapping[str, Any]:
@@ -114,13 +115,16 @@ def _identifier(value: Any, field: str) -> str:
 
 def parse_plan_query_command(payload: Any, *, tenant_id: str) -> PlanQueryCommand:
     request = _record(payload, "request")
-    _closed(request, {"schema_version", "schema_snapshot", "accepted_requirements", "accepted_schema", "locale", "clarifications"}, "request")
+    _closed(request, {"schema_version", "schema_snapshot", "accepted_requirements", "accepted_schema", "locale", "clarifications", "row_limit_cap"}, "request")
     if request.get("schema_version") != QUERY_PLAN_VERSION:
         raise QueryPlanValidationError("schema_version is unsupported")
     locale = _text(request.get("locale"), "locale", 8)
     if locale not in {"ru", "en"}:
         raise QueryPlanValidationError("locale must be ru or en")
     accepted_requirements = _text(request.get("accepted_requirements"), "accepted_requirements", 20_000)
+    row_limit_cap = request.get("row_limit_cap")
+    if row_limit_cap is not None and (isinstance(row_limit_cap, bool) or not isinstance(row_limit_cap, int) or not 1 <= row_limit_cap <= MAX_PLAN_ROW_LIMIT):
+        raise QueryPlanValidationError(f"row_limit_cap must be an integer from 1 to {MAX_PLAN_ROW_LIMIT}")
     try:
         snapshot = parse_schema_snapshot(request.get("schema_snapshot"))
         accepted_schema = parse_accepted_schema(request.get("accepted_schema"))
@@ -137,6 +141,7 @@ def parse_plan_query_command(payload: Any, *, tenant_id: str) -> PlanQueryComman
         accepted_requirements=accepted_requirements,
         accepted_schema=accepted_schema,
         clarifications=clarifications,
+        row_limit_cap=row_limit_cap,
     )
 
 
@@ -150,6 +155,7 @@ def planner_context(command: PlanQueryCommand) -> dict[str, Any]:
         "schema_version": QUERY_PLAN_VERSION,
         "locale": command.locale,
         "requirements": requirements_for_planning(command.accepted_requirements, command.clarifications),
+        **({"row_limit_cap": command.row_limit_cap} if command.row_limit_cap is not None else {}),
         "tables": [
             {
                 "entity_id": table.id,
@@ -386,6 +392,13 @@ def normalize_query_plan(command: PlanQueryCommand, value: Any) -> tuple[dict[st
         _text(question, f"proposal.clarification_questions[{index}]", 1_000)
         for index, question in enumerate(_array(proposal.get("clarification_questions"), "proposal.clarification_questions", MAX_PLAN_QUESTIONS))
     ]
+    if command.row_limit_cap is not None and row_limit > command.row_limit_cap:
+        questions.insert(
+            0,
+            f"Источник разрешает не более {command.row_limit_cap} строк. Какой лимит показать?"
+            if command.locale == "ru"
+            else f"The source allows at most {command.row_limit_cap} rows. Which row limit should be used?",
+        )
     return (
         {
             "base_entity_id": base_entity_id,

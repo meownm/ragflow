@@ -625,7 +625,12 @@ class SqlAssistantService:
                             [{"id": item["id"], "label": item["title"]} for item in candidates] + [{"id": "EXPLORATORY", "label": "Исследовательский расчёт"}],
                         )
                         return
-                queued = self.runtime.call(Projects.request_agent, session.id, {**command, "kind": action.removeprefix("REQUEST_"), "payload": {"locale": "ru"}})
+                payload = {"locale": "ru"}
+                if action == "REQUEST_QUERY":
+                    row_limit = self.runtime.planning_row_limit(project)
+                    if row_limit is not None:
+                        payload["row_limit_cap"] = row_limit
+                queued = self.runtime.call(Projects.request_agent, session.id, {**command, "kind": action.removeprefix("REQUEST_"), "payload": payload})
                 turn.update(phase="PREPARING", job_id=queued["current_job"]["id"])
                 return
             if action == "ASK_REQUIREMENTS":

@@ -10,7 +10,8 @@ from business_documents.sql_query.query_specification import parse_schema_snapsh
 
 INTENTS = {"CHANGE", "ANSWER", "AGGREGATE", "VIEW", "CLARIFICATION"}
 AGGREGATIONS = {"rows", "sum", "avg", "min", "max", "count", "distinct"}
-VIEW_FIELDS = {"column_order", "hidden", "labels", "formats", "sort", "chart", "appearance"}
+APPEARANCE_FIELDS = {"display", "density", "striped", "wrap"}
+VIEW_FIELDS = {"column_order", "hidden", "labels", "formats", "sort", "chart"} | APPEARANCE_FIELDS
 ACTIVE_JOB_STATUSES = {"PENDING", "RETRY", "RUNNING"}
 
 
@@ -224,13 +225,15 @@ def change_view(current, patch, columns, sql):
         raise ValueError("Неверные настройки представления")
     view = results.restore_view(deepcopy(current), columns)
     for key, value in patch.items():
-        if key in {"labels", "formats", "appearance"}:
+        if key in APPEARANCE_FIELDS:
+            view["appearance"][key] = deepcopy(value)
+        elif key in {"labels", "formats"}:
             if not isinstance(value, dict):
                 raise ValueError("Неверные настройки представления")
             view[key] = {**view.get(key, {}), **deepcopy(value)}
         else:
             view[key] = deepcopy(value)
-    if "chart" in patch and "display" not in patch.get("appearance", {}):
+    if "chart" in patch and "display" not in patch:
         view["appearance"]["display"] = "chart" if patch["chart"] else "table"
     return results.validate_view(view, columns, sql)
 

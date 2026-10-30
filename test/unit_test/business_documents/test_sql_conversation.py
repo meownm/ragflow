@@ -170,7 +170,33 @@ def test_legacy_view_without_appearance_can_switch_to_chart():
     assert change_view(old, {"chart": {"kind": "line", "x": STATUS, "y": AMOUNT}}, COLUMNS, SQL)["appearance"]["display"] == "chart"
 
 
-@pytest.mark.parametrize("patch", [{"sql": "SELECT 1"}, {"filters": []}, {"chart": {"kind": "bar", "x": "foreign", "y": AMOUNT}}, {"appearance": {"display": "unknown"}}, {"labels": []}])
+def test_flat_chart_request_maps_to_native_view_without_replacing_other_settings():
+    current = default_view(COLUMNS)
+    current["appearance"].update(density="compact", striped=True)
+    old = deepcopy(current)
+    raw = {"intent": "VIEW", "patch": {"chart": {"kind": "bar", "x": STATUS, "y": AMOUNT}, "display": "chart", "wrap": True}}
+    plan = parse_intent(raw, {"run_id": "saved", "columns": COLUMNS})
+    changed = change_view(current, plan["patch"], COLUMNS, SQL)
+    assert current == old
+    assert changed["chart"] == raw["patch"]["chart"]
+    assert changed["appearance"] == {"display": "chart", "density": "compact", "striped": True, "wrap": True}
+    assert change_view(changed, {"display": "both"}, COLUMNS, SQL)["appearance"]["display"] == "both"
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {"sql": "SELECT 1"},
+        {"filters": []},
+        {"chart": {"kind": "bar", "x": "foreign", "y": AMOUNT}},
+        {"appearance": {"display": "chart"}},
+        {"display": "unknown"},
+        {"density": "unknown"},
+        {"striped": 1},
+        {"wrap": "true"},
+        {"labels": []},
+    ],
+)
 def test_view_intent_cannot_mutate_data_or_use_foreign_columns(patch):
     with pytest.raises(ValueError):
         change_view(default_view(COLUMNS), patch, COLUMNS, SQL)

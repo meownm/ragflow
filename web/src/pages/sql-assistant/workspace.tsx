@@ -3,14 +3,12 @@ import {
   assistantCommandId,
   useAssistantCommand,
   useAssistantDialogueOptions,
-  useAssistantResult,
 } from '@/hooks/use-sql-assistant-request';
 import type {
   AssistantEffect,
   AssistantSession,
 } from '@/interfaces/database/sql-assistant';
 import { PreQueryConnection } from '@/pages/business-documents/constructor/sql-project-connection';
-import { useSqlResultDeadline } from '@/pages/business-documents/constructor/sql-result-deadline';
 import { AssistantRequestError } from '@/services/sql-assistant-service';
 import { isSqlRunUnresolved } from '@/utils/sql-execution';
 import axios from 'axios';
@@ -143,28 +141,25 @@ export function AssistantWorkspace({
               busy={locked}
               onDrill={setParentRow}
             />
-            <details className="sa-advanced">
-              <summary>SQL и условия расчёта</summary>
-              <SelectedSql actor={actor} session={session} />
-              {canEdit && (
-                <>
-                  <AssistantBuilder
-                    session={session}
-                    surface="sql"
-                    send={send}
-                    busy={locked}
-                    onDirtyChange={setLocalChanges}
-                  />
-                  <AssistantDefinitions
-                    actor={actor}
-                    session={session}
-                    send={send}
-                    busy={locked}
-                    localChanges={localChanges}
-                  />
-                </>
-              )}
-            </details>
+            {canEdit && (
+              <details className="sa-advanced">
+                <summary>Изменить расчёт</summary>
+                <AssistantBuilder
+                  session={session}
+                  surface="sql"
+                  send={send}
+                  busy={locked}
+                  onDirtyChange={setLocalChanges}
+                />
+                <AssistantDefinitions
+                  actor={actor}
+                  session={session}
+                  send={send}
+                  busy={locked}
+                  localChanges={localChanges}
+                />
+              </details>
+            )}
           </div>
         )}
         <section
@@ -247,42 +242,6 @@ export function AssistantWorkspace({
           </details>
         </section>
       </div>
-    </section>
-  );
-}
-
-function SelectedSql({
-  actor,
-  session,
-}: {
-  actor: string;
-  session: AssistantSession;
-}) {
-  const source = useAssistantResult(actor, session, 0);
-  const deadline = useSqlResultDeadline(
-    session.selected_result_id || '',
-    source.data?.expires_at,
-    () => {
-      void source.refetch();
-    },
-  );
-  return (
-    <section className="sa-selected-sql" aria-label="SQL выбранного результата">
-      {source.isPending ? (
-        <p role="status">Проверяем SQL результата…</p>
-      ) : source.isError || deadline.expired ? (
-        <p role="alert">
-          SQL недоступен. Проверьте доступ и срок хранения результата.
-        </p>
-      ) : (
-        <>
-          <pre>{source.data.sql}</pre>
-          <p className="text-xs text-text-secondary">
-            Параметры выбранного запуска
-          </p>
-          <pre>{JSON.stringify(source.data.parameters, null, 2)}</pre>
-        </>
-      )}
     </section>
   );
 }

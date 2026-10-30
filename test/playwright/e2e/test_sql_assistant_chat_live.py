@@ -100,7 +100,8 @@ def _snapshot(live, probe):
     job = project.get("current_job")
     if job:
         probe["jobs"].add(job["id"])
-    error = project.get("last_error")
+    conversation = session.get("conversation") or {}
+    error = project.get("last_error") or (conversation.get("error") if conversation.get("phase") == "ERROR" else None)
     probe["last_error_code"] = error.get("code", "UNKNOWN") if isinstance(error, dict) else "UNKNOWN" if error else None
     assert not error, "Real chat worker failed: " + str(probe["last_error_code"])
     result = None
@@ -279,6 +280,26 @@ def test_chat_filter_replacement_and_removal_keep_paid_scope(page, live, chat_pr
     _complete(page, live, chat_probe, value)
 
 
+def test_chat_explicit_source_limit_requires_a_choice(page, live, chat_probe):
+    """A source cap cannot silently replace the user's explicit output limit."""
+    _start(
+        page,
+        live,
+        chat_probe,
+        f"Используй только {chat_probe['fqn']}. Покажи заказы со status = paid: id, status, amount; "
+        "сортировка id ASC. Лимит выдачи 200 строк. Одна строка — один заказ, других условий нет. Только чтение.",
+    )
+    waiting = _wait(page, live, chat_probe, lambda item: item["session"]["conversation"]["phase"] == "WAITING")
+    assert not waiting["session"]["project"].get("runs")
+    question = waiting["session"]["conversation"]["question"]["text"]
+    assert re.search(r"(?<!\d)100(?!\d)", question), "Must explain the actual source cap"
+    expect(_root(page)).to_contain_text(question)
+    _send(page, chat_probe, "Используй лимит 100 строк, остальные условия сохрани.")
+    value = _rows(page, live, chat_probe)
+    assert value["result"]["parameters"]["row_limit"] == 100
+    _complete(page, live, chat_probe, value)
+
+
 def test_chat_answer_uses_saved_rows_without_new_sql_run(page, live, chat_probe):
     """C04: ordinary prose question has a numerical oracle and no SQL side effect."""
     _start(page, live, chat_probe)
@@ -299,7 +320,18 @@ def test_chat_group_and_drill_keep_selected_status(page, live, chat_probe):
     _start(page, live, chat_probe)
     _rows(page, live, chat_probe)
     _send(page, chat_probe, "Сгруппируй текущую выборку по status. Колонки status и total = SUM(amount), сортировка status ASC.")
-    _rows(page, live, chat_probe, [["paid", "19.75"]], ["status", "total"])
+    grouped = _rows(page, live, chat_probe, [["paid", "19.75"]], ["status", "total"])
+    sql = _root(page).get_by_label("SQL выбранного результата", exact=True)
+    expect(sql).to_have_count(1)
+    sql.locator("summary").first.click()
+    expect(sql).to_contain_text(grouped["result"]["sql"])
+    sql.locator("summary").first.click()
+    expect(_root(page).get_by_text("Измерение для детализации", exact=True)).to_be_hidden()
+    row_action = _root(page).get_by_role("table", name="Данные выбранного результата", exact=True).get_by_role("button", name="Уточнить по этой строке", exact=True)
+    expect(row_action).to_be_enabled()
+    row_action.focus()
+    row_action.press("Enter")
+    expect(_root(page).get_by_role("button", name="Убрать выбранную группу", exact=True)).to_be_visible()
     _send(page, chat_probe, "Для группы paid покажи исходные заказы: id, status, amount, сортировка id ASC.")
     value = _rows(page, live, chat_probe)
     _complete(page, live, chat_probe, value)

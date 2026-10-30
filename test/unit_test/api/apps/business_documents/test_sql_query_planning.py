@@ -155,6 +155,25 @@ class ScriptedPlanner:
         return self.value
 
 
+@pytest.mark.parametrize("cap", [True, 0, -1, 10001, "100", 100.5])
+def test_source_row_limit_cap_requires_a_bounded_integer(cap):
+    with pytest.raises(QueryPlanValidationError, match="row_limit_cap"):
+        parse_plan_query_command({**_request(), "row_limit_cap": cap}, tenant_id="tenant")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("requested,expected", [(50, "PROPOSED"), (100, "PROPOSED"), (1000, "NEEDS_CLARIFICATION")])
+async def test_source_cap_is_visible_to_planner_and_excess_requires_a_choice(requested, expected):
+    command = parse_plan_query_command({**_request(), "row_limit_cap": 100}, tenant_id="tenant")
+    assert planner_context(command)["row_limit_cap"] == 100
+    raw = _raw_plan()
+    raw["row_limit"] = requested
+    result = await QueryPlanningScenario(ScriptedPlanner(raw)).run(command)
+    assert result["status"] == expected
+    assert result["proposal"]["row_limit"] == requested
+    assert bool(result["clarification_questions"]) == (requested > 100)
+
+
 @pytest.mark.asyncio
 async def test_per_group_winners_survive_proposal_acceptance_and_catalog_guard():
     from business_documents.sql_query.project_compilation import build_project_compile_command

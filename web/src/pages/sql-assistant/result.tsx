@@ -9,6 +9,7 @@ import type {
 import { SqlExportButton } from '@/pages/business-documents/constructor/sql-export-button';
 import { useSqlResultDeadline } from '@/pages/business-documents/constructor/sql-result-deadline';
 import dayjs from 'dayjs';
+import { MessageSquarePlus } from 'lucide-react';
 import { useRef, useState } from 'react';
 import {
   Bar,
@@ -279,14 +280,7 @@ function ResultData({
     <div data-testid="sql-assistant-result" className="space-y-4">
       <div className="sa-toolbar">
         <div>
-          <p className="text-sm font-medium">
-            Сохранённый результат ·{' '}
-            {dayjs(result.created_at).format('DD.MM.YYYY HH:mm:ss')}
-          </p>
-          <p className="text-xs text-text-secondary">
-            {result.row_count} строк · {result.duration_ms} мс · хранится до{' '}
-            {dayjs(result.expires_at).format('DD.MM.YYYY HH:mm')}
-          </p>
+          <p className="text-sm font-medium">{result.row_count} строк</p>
         </div>
         <SqlExportButton
           projectId={session.id}
@@ -436,7 +430,9 @@ function ResultData({
                         </button>
                       </th>
                     ))}
-                    <th>Продолжение</th>
+                    <th>
+                      <span className="sr-only">Уточнение по строке</span>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -454,6 +450,8 @@ function ResultData({
                         <Button
                           size="sm"
                           variant="ghost"
+                          aria-label="Уточнить по этой строке"
+                          title="Уточнить по этой строке"
                           disabled={
                             busy ||
                             !dimension ||
@@ -467,7 +465,7 @@ function ResultData({
                             })
                           }
                         >
-                          Детализировать
+                          <MessageSquarePlus className="size-4" />
                         </Button>
                       </td>
                     </tr>
@@ -476,21 +474,24 @@ function ResultData({
               </table>
             </div>
           )}
-          <div className="sa-result-tools">
-            <label>
-              Измерение для детализации
-              <select
-                value={dimension}
-                onChange={(event) => setDimension(event.target.value)}
-              >
-                {dimensions.map((column) => (
-                  <option key={column.id} value={column.id}>
-                    {columnName(column.id)}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
+          <details>
+            <summary>Детализация</summary>
+            <div className="sa-result-tools">
+              <label>
+                Измерение для детализации
+                <select
+                  value={dimension}
+                  onChange={(event) => setDimension(event.target.value)}
+                >
+                  {dimensions.map((column) => (
+                    <option key={column.id} value={column.id}>
+                      {columnName(column.id)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          </details>
         </>
       )}
       <div className="sa-toolbar">
@@ -612,8 +613,16 @@ function ResultData({
           </div>
         )}
       </details>
-      <details>
-        <summary>SQL, параметры и основания выбранного результата</summary>
+      <details
+        className="sa-selected-sql"
+        aria-label="SQL выбранного результата"
+      >
+        <summary>SQL и основания</summary>
+        <p className="text-xs text-text-secondary my-3">
+          Сохранено {dayjs(result.created_at).format('DD.MM.YYYY HH:mm:ss')} ·{' '}
+          {result.duration_ms} мс · доступно до{' '}
+          {dayjs(result.expires_at).format('DD.MM.YYYY HH:mm')}
+        </p>
         <pre>{result.sql}</pre>
         <pre className="mt-3">{JSON.stringify(result.parameters, null, 2)}</pre>
         <p className="text-sm whitespace-pre-wrap my-3">

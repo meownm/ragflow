@@ -43,7 +43,6 @@ from business_documents.sql_query.execution import failed_outcome
 from common.misc_utils import get_uuid
 from common.time_utils import current_timestamp
 
-_MAX_ACTIVE_RESULTS = 3
 _MAX_PYTHON_INPUT_BYTES = 10_000_000
 _MAX_OWNER_ACTIVE_RESULTS = 20
 _MAX_OWNER_STORED_BYTES = 100_000_000
@@ -416,13 +415,10 @@ class BusinessDocumentSqlRunService:
                 return replay
             if current.state_version != version or current.operation_state != "IDLE":
                 raise ConflictError("SQL_PROJECT_VERSION_CONFLICT", "Project changed before the query was queued")
-            retained_runs = BusinessDocumentSqlQueryRun.select(BusinessDocumentSqlQueryRun.status).where(
-                (BusinessDocumentSqlQueryRun.project_id == project_id)
-                & (BusinessDocumentSqlQueryRun.tenant_id == tenant_id)
-                & (BusinessDocumentSqlQueryRun.status.in_((*IN_PROGRESS_RUN_STATUSES, "READY")))
+            active_runs = BusinessDocumentSqlQueryRun.select().where(
+                (BusinessDocumentSqlQueryRun.project_id == project_id) & (BusinessDocumentSqlQueryRun.tenant_id == tenant_id) & (BusinessDocumentSqlQueryRun.status.in_(IN_PROGRESS_RUN_STATUSES))
             )
-            statuses = [item.status for item in retained_runs]
-            if len(statuses) >= _MAX_ACTIVE_RESULTS or any(status in IN_PROGRESS_RUN_STATUSES for status in statuses):
+            if active_runs.exists():
                 raise ConflictError("SQL_ACTIVE_RESULT_QUOTA", "Finish or cancel the active query before another run")
             job_id = get_uuid()
             run = BusinessDocumentSqlQueryRun.create(

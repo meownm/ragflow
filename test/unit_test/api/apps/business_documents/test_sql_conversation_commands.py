@@ -239,6 +239,30 @@ def test_stop_preserves_selected_ready_result(research):
     assert BusinessDocumentJob.get_by_id(queued["session"]["project"]["current_job"]["id"]).status == "CANCELLED"
 
 
+@pytest.mark.parametrize("bound,max_rows,expected", [(True, 50, 50), (True, 100000, 10000), (False, 50, None)])
+def test_preparation_passes_only_the_bound_source_row_cap_to_the_durable_query(research, monkeypatch, bound, max_rows, expected):
+    from api.apps.business_documents.sql_execution_registry import BusinessDocumentSqlExecutionRegistryService
+
+    service, session, _, _, _ = research
+    observed = []
+
+    def resolve(actor_id, scope, is_admin, access_role):
+        observed.append(scope)
+        assert actor_id == native.ACTOR and access_role == "AUTHOR_CREATOR"
+        return {"status": "BOUND" if bound else "AMBIGUOUS", "selection": {"profile": {"max_rows": max_rows}} if bound else None}
+
+    monkeypatch.setattr(BusinessDocumentSqlExecutionRegistryService, "resolve", resolve)
+    BusinessDocumentSqlQueryProject.update(query_artifact_id=None, stage="QUERY").where(BusinessDocumentSqlQueryProject.id == session.id).execute()
+    state = deepcopy(session.state)
+    state["conversation"] = {"turn_id": "limit-turn", "message_id": "m1", "phase": "PREPARING"}
+    with SqlAssistantSession._meta.database.atomic():
+        service._progress_preparation(session, state)
+    job = BusinessDocumentJob.get_by_id(state["conversation"]["job_id"])
+    assert job.job_type == "SQL_AGENT_QUERY"
+    assert job.payload["request"].get("row_limit_cap") == expected
+    assert observed[0]["schema_snapshot"]["status"] == "READY"
+
+
 @pytest.fixture
 def metric_binding(approved, actor):
     service, session, _, definition, _, _ = approved

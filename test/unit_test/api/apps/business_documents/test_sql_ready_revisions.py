@@ -211,7 +211,7 @@ def test_current_result_is_the_next_action_and_an_in_progress_run_takes_priority
     assert Agents.get_project(TENANT, ACTOR, project)["next_action"] == "WAIT"
 
 
-def test_new_run_has_new_compilation_and_retains_the_three_result_quota(execution, monkeypatch):
+def test_sequential_runs_preserve_history_while_concurrency_and_owner_quota_remain_bounded(execution, monkeypatch):
     from api.apps.business_documents import worker
 
     monkeypatch.setattr(worker, "wake_business_document_worker", lambda: None)
@@ -243,10 +243,15 @@ def test_new_run_has_new_compilation_and_retains_the_three_result_quota(executio
         runs.BusinessDocumentSqlRunService.run(tenant, actor, execution, {"schema_version": "1", "expected_state_version": 2, "idempotency_key": "parallel-query", "selected_profile_id": None})
     BusinessDocumentSqlQueryRun.update(status="READY").where(BusinessDocumentSqlQueryRun.id == queued["run_id"]).execute()
     stored(execution, tenant=tenant, compilation="third-compilation", run_id="third-result")
+    fourth = runs.BusinessDocumentSqlRunService.run(tenant, actor, execution, {"schema_version": "1", "expected_state_version": 2, "idempotency_key": "fourth-query", "selected_profile_id": None})
+    assert BusinessDocumentSqlQueryRun.select().count() == 4
+    BusinessDocumentSqlQueryRun.update(status="READY").where(BusinessDocumentSqlQueryRun.id == fourth["run_id"]).execute()
+    for index in range(4, runs._MAX_OWNER_ACTIVE_RESULTS):
+        stored(execution, tenant=tenant, run_id=f"retained-{index}")
     with pytest.raises(ConflictError) as quota:
-        runs.BusinessDocumentSqlRunService.run(tenant, actor, execution, {"schema_version": "1", "expected_state_version": 2, "idempotency_key": "fourth-query", "selected_profile_id": None})
-    assert quota.value.code == "SQL_ACTIVE_RESULT_QUOTA"
-    assert BusinessDocumentSqlQueryRun.select().count() == runs._MAX_ACTIVE_RESULTS == 3
+        runs.BusinessDocumentSqlRunService.run(tenant, actor, execution, {"schema_version": "1", "expected_state_version": 3, "idempotency_key": "over-owner-quota", "selected_profile_id": None})
+    assert quota.value.code == "SQL_RESULT_OWNER_QUOTA"
+    assert BusinessDocumentSqlQueryRun.select().count() == runs._MAX_OWNER_ACTIVE_RESULTS == 20
     preserved(old, before, tenant=tenant, actor=actor)
 
 

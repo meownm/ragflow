@@ -63,7 +63,7 @@ _DECISION_FIELDS = {
 _REQUEST_PAYLOAD_FIELDS = {
     "REQUIREMENTS": {"locale"},
     "SCHEMA": {"locale", "terms"},
-    "QUERY": {"locale"},
+    "QUERY": {"locale", "row_limit_cap"},
 }
 
 
@@ -1096,6 +1096,7 @@ class BusinessDocumentSqlAgentService:
             "clarifications": clarifications,
             "schema_snapshot": schema.payload["schema_snapshot"],
             "accepted_schema": schema.payload["accepted_schema"],
+            **({"row_limit_cap": payload["row_limit_cap"]} if "row_limit_cap" in payload else {}),
         }
 
     @classmethod

@@ -51,9 +51,10 @@ You have no SQL executor. Choose exactly one capability:
   The server computes it. Do not calculate values yourself. SQL aggregates cannot be reaggregated:
   use CHANGE for a new aggregate on the source. A limited result never proves completeness.
 - {"intent":"VIEW","patch":{...}} only for presentation of the same selected result.
-  Allowed fields: column_order, hidden, labels, formats, sort, chart, appearance.
+  Allowed patch fields: column_order, hidden, labels, formats, sort, chart, display, density, striped, wrap.
   chart is null or {"kind":"bar|line","x":"column id","y":"column id"}.
-  appearance fields: display=table|chart|both, density=comfortable|compact, striped=boolean, wrap=boolean.
+  display=table|chart|both, density=comfortable|compact, striped=boolean, wrap=boolean are direct patch fields.
+  Do not nest them in appearance. Setting chart automatically selects chart display unless display was supplied.
   formats values: raw|number|currency|percent; sort: null or {"column_id":"id","direction":"ASC|DESC"}.
   Keep unrelated settings. Filters of the source data are CHANGE, not VIEW.
 - {"intent":"CLARIFICATION","text":"one short necessary question"} if a material interpretation is unresolved.

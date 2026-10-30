@@ -433,6 +433,50 @@ def test_delegated_teardown_fails_closed_on_changed_or_missing_authority(state, 
     assert result["errors"] or result["runs"][0]["blocked"]
 
 
+@pytest.mark.parametrize("case", ["snapshot", "finished-snapshot", "discovered", "ordinary", "different-token", "different-purpose", "runtime", "in-use"])
+def test_delegated_teardown_recovers_only_its_transient_snapshot_images(state, tmp_path, monkeypatch, case):
+    engine, evidence = delegated_qa(state, tmp_path, monkeypatch)
+    image = {"key": "image:snapshot", "kind": "image", "identity": "snapshot-image", "token": "snapshot-token", "category": "disposable", "status": "present"}
+    with life.Run("live-regression-qa", store=state) as run:
+        run.request_teardown(evidence)
+        if case != "ordinary":
+            run.data["creation_intents"] = [
+                {"kind": "image", "object": "other-token" if case == "different-token" else "snapshot-token", "purpose": "build" if case == "different-purpose" else "container-snapshot"}
+            ]
+        if case == "runtime":
+            image["category"] = "runtime"
+        if case != "discovered":
+            run.add(image)
+        if case == "finished-snapshot":
+            run.data["teardown_request"]["finished_at"] = life.utc()
+        run.failed = True
+    if case == "discovered":
+        engine.owned = lambda *_: [image]
+    if case == "in-use":
+        engine.guard = lambda *_: "image-in-use"
+    result = life.retire(state, run.data["run_id"], engine, resume_teardown=True)
+    assert not result["errors"]
+    assert engine.removed == ([image["key"]] if case in {"snapshot", "finished-snapshot", "discovered"} else [])
+    if case == "in-use":
+        assert result["blocked"] == [{"key": image["key"], "reason": "image-in-use"}]
+    saved = life.read_run(state, run.data["run_id"])
+    assert saved["state"] == "failed" and saved["task_status"] == "open"
+    assert not saved.get("consumption_closed")
+
+
+def test_finished_delegation_does_not_reopen_for_ordinary_images(state, tmp_path, monkeypatch):
+    engine, evidence = delegated_qa(state, tmp_path, monkeypatch)
+    with life.Run("live-regression-qa", store=state) as run:
+        run.request_teardown(evidence)
+        run.add({"key": "image:ordinary", "kind": "image", "identity": "ordinary", "token": "ordinary", "category": "disposable", "status": "present"})
+        run.data["teardown_request"]["finished_at"] = life.utc()
+        run.failed = True
+    assert not life.teardown_requested(life.read_run(state, run.data["run_id"]))
+    with pytest.raises(ValueError, match="Missing live-QA teardown delegation"):
+        life.retire(state, run.data["run_id"], engine, resume_teardown=True)
+    assert not engine.removed
+
+
 def test_delegated_teardown_keeps_active_and_changed_container_guards(state, tmp_path, monkeypatch):
     engine, evidence = delegated_qa(state, tmp_path, monkeypatch)
     with life.Run("live-regression-qa", store=state) as run:

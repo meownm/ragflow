@@ -967,11 +967,20 @@ def operator_evidence(path: Path, run: dict, action: str) -> dict:
     return {"path": str(path.absolute()), "sha256": hashlib.sha256(raw).hexdigest(), "approved_by": proof["approved_by"], "task_status": proof["task_status"]}
 
 
+def _transient_snapshot(run: dict, resource: dict) -> bool:
+    return (
+        resource.get("kind") == "image"
+        and resource.get("category") == "disposable"
+        and bool(resource.get("token"))
+        and any(entry.get("kind") == "image" and entry.get("purpose") == "container-snapshot" and entry.get("object") == resource["token"] for entry in run.get("creation_intents", []))
+    )
+
+
 def teardown_requested(run: dict) -> bool:
     request = run.get("teardown_request")
     return (
         isinstance(request, dict)
-        and not request.get("finished_at")
+        and (not request.get("finished_at") or any(resource.get("status") != "removed" and _transient_snapshot(run, resource) for resource in run.get("resources", [])))
         and request.get("schema") == 1
         and run["producer"] == "live-regression-qa"
         and run["category"] == "disposable"
@@ -1001,6 +1010,10 @@ def retire(store: Path, run_id: str, engine=None, *, owner: Run | None = None, r
     def perform():
         run = owner.data if owner else read_run(store, run_id)
         merge_events(store, run)
+
+        def teardown_scope(resource):
+            return resource.get("category") == "disposable" and (resource["kind"] in {"container", "volume", "network"} or _transient_snapshot(run, resource))
+
         if resume_teardown:
             if owner or not teardown_requested(run):
                 raise ValueError("Missing live-QA teardown delegation")
@@ -1047,7 +1060,7 @@ def retire(store: Path, run_id: str, engine=None, *, owner: Run | None = None, r
         for resource in sorted(run["resources"], key=lambda r: order[r["kind"]]):
             if resource.get("status") == "removed":
                 continue
-            if resume_teardown and (resource["kind"] not in {"container", "volume", "network"} or resource.get("category") != "disposable"):
+            if resume_teardown and not teardown_scope(resource):
                 result["retained"].append({"key": resource["key"], "reason": "outside-delegated-qa-teardown"})
                 continue
             if resource.get("category") not in {"disposable", "cache"}:
@@ -1130,7 +1143,7 @@ def retire(store: Path, run_id: str, engine=None, *, owner: Run | None = None, r
                 result["errors"].append({"key": resource["key"], "error": type(error).__name__})
         run["cleanup"] = {**result, "checked_at": utc()}
         if (owner or resume_teardown) and teardown_requested(run) and not result["blocked"] and not result["errors"]:
-            if all(item.get("status") == "removed" for item in run["resources"] if item["kind"] in {"container", "volume", "network"} and item.get("category") == "disposable"):
+            if all(item.get("status") == "removed" for item in run["resources"] if teardown_scope(item)):
                 run["teardown_request"]["finished_at"] = utc()
         checkpoint_run()
         if owner:

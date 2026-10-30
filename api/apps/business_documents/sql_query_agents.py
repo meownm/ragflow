@@ -1032,6 +1032,7 @@ class BusinessDocumentSqlAgentService:
                             "thread_id",
                             "thread_version",
                             "proposed_schema",
+                            "pinned_compilation_id",
                         )
                     },
                 }

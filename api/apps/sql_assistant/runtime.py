@@ -18,8 +18,8 @@ class SqlRuntime:
         self.is_admin, self.access_role = is_admin, access_role
         self.access = BusinessDocumentAccess(actor_id, access_role, is_admin)
 
-    def call(self, method, project_id, *args):
-        return method(self.tenant_id, self.actor_id, project_id, *args, self.is_admin, self.access_role)
+    def call(self, method, project_id, *args, **kwargs):
+        return method(self.tenant_id, self.actor_id, project_id, *args, self.is_admin, self.access_role, **kwargs)
 
     def project(self, project_id):
         result = self.call(Projects.get_project, project_id)
@@ -28,6 +28,10 @@ class SqlRuntime:
         if schema:
             project = read_sql_project(self.tenant_id, self.actor_id, project_id, self.is_admin, self.access_role)
             _, result["catalog_changed"] = authorize_catalog_sources(project, self.actor_id, schema, None, is_admin=self.is_admin, access_role=self.access_role, include_schema_tables=True)
+            pending = (result.get("pending_proposal") or {}).get("payload", {}).get("agent_result", {}).get("source", {}).get("proposed_schema")
+            if pending is not None and pending != schema:
+                _, changed = authorize_catalog_sources(project, self.actor_id, pending, None, is_admin=self.is_admin, access_role=self.access_role, include_schema_tables=True)
+                result["catalog_changed"] |= changed
         return result
 
     def result(self, project_id, run_id):
@@ -48,7 +52,7 @@ class SqlRuntime:
             return None
         return min(binding["selection"]["profile"]["max_rows"], MAX_PLAN_ROW_LIMIT)
 
-    def follow_up(self, project, run_id, message, command):
+    def follow_up(self, project, run_id, message, command, *, source_text=None):
         run, source, _ = self.result(project["id"], run_id)
         thread = self.call(
             Revisions.create_thread,
@@ -60,5 +64,12 @@ class SqlRuntime:
                 "anchor": {"kind": "WHOLE"},
                 "text": message,
             },
+            compilation_id=source.compilation.id,
         )
-        return self.call(Revisions.request_change, project["id"], thread["id"], {**command, "idempotency_key": command["idempotency_key"] + ":revision"})
+        return self.call(
+            Revisions.request_change,
+            project["id"],
+            thread["id"],
+            {**command, "idempotency_key": command["idempotency_key"] + ":revision"},
+            source_text=source_text,
+        )

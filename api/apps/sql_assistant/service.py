@@ -368,6 +368,7 @@ class SqlAssistantService:
         if session.state.get("selected_result_id") != run.id or ("context" in payload and payload["context"] != self._context_identity(session, run, source)):
             raise ConflictError("SQL_DIALOGUE_CONTEXT_CHANGED", "Выбранный контекст изменился. Обновите результат перед изменением SQL.")
         references = resolve_references(project, payload.get("references", []))
+        source_text = message + "".join("\n" + item["fqn"] for item in references if item["kind"] == "TABLE")
         require_metric_choice(project, message, payload)
         if references:
             import json
@@ -383,7 +384,7 @@ class SqlAssistantService:
                 raise ValueError("Для детализации выберите измерение, а не рассчитанный показатель")
             value = run.rows[index][position]
             message += f"\nКонтекст выбранного результата: колонка {columns[position]['name']}, типизированное значение {value!r}. Сохрани остальные условия исходного SQL; неоднозначности уточни. Не агрегируй ограниченную выдачу вместо данных источника."
-        return self.runtime.follow_up(project, run.id, message, command)
+        return self.runtime.follow_up(project, run.id, message, command, source_text=source_text)
 
     def _save_state(self, session, state):
         changed = (

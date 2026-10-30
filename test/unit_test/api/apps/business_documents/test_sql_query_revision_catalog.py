@@ -11,10 +11,10 @@ from api.apps.business_documents import sql_query_revision_catalog as catalog
 from api.apps.business_documents.sql_query_agents import BusinessDocumentSqlAgentService as Agents
 from api.apps.business_documents.sql_query_revisions import BusinessDocumentSqlRevisionService as Revisions
 from api.apps.business_documents.worker import BusinessDocumentJobQueue
-from api.db.db_models import BusinessDocumentSqlAgentProposal, BusinessDocumentSqlQueryArtifact, BusinessDocumentSqlQueryRun
+from api.db.db_models import BusinessDocumentSqlAgentProposal, BusinessDocumentSqlQueryArtifact, BusinessDocumentSqlQueryProject, BusinessDocumentSqlQueryRun
 from business_documents.application.errors import ValidationError
 from business_documents.sql_query.schema_changes import extend_schema
-from business_documents.sql_query.schema_resolution import CatalogAccessDenied
+from business_documents.sql_query.schema_resolution import CatalogAccessDenied, catalog_result_from_mapping
 
 project = project_fixture
 BASE = "SELECT o.id AS id, o.amount AS amount FROM dwh.orders AS o WHERE o.status = :status_value AND o.amount >= :amount_min LIMIT :row_limit"
@@ -118,6 +118,119 @@ async def test_contract_source_request_loads_metadata_before_changing_sql(source
     assert result["proposal"]["checks"]["status"] == "PASS"
     assert len(model.contexts) == 2 and "verified_catalog_schema" in result
     assert model.contexts[1]["current_sql"] == BASE
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("explicit", [False, True])
+async def test_unrelated_source_requires_its_full_catalog_name_in_the_latest_human_edit(source, explicit):
+    request, entities = source
+    table = _table("archive", "archive.orders", ("id", "customer_id", "payer_id", "amount", "status"))
+    entities["archive"] = {**table, "column_details": deepcopy(table["columns"])}
+    request["comments"] = [
+        {"text": "Previously used archive.orders"},
+        {"text": "Use only archive.orders instead of the previous source; keep the filters" if explicit else "Keep the current source and filters"},
+    ]
+    request["catalog_source_text"] = request["comments"][-1]["text"]
+    before = deepcopy(request)
+
+    class Requested(Model):
+        async def async_generate(self, *args):
+            response = await super().async_generate(*args)
+            if len(self.contexts) == 1:
+                response["requested_sources"] = ["archive.orders"]
+            return response
+
+    model = Requested(BASE, BASE.replace("dwh.orders", "archive.orders"))
+    result = await generate(request, model)
+    if explicit:
+        assert result["proposal"]["checks"]["status"] == "PASS" and len(model.contexts) == 2
+        assert {item["entity_id"] for item in result["verified_catalog_schema"]["accepted_schema"]} == {"archive"}
+        assert {item["selected_table"]["id"] for item in result["verified_catalog_schema"]["schema_snapshot"]["requirements"]} == {"archive"}
+        assert catalog.query_revision_checks({**request, "schema": result["verified_catalog_schema"]}, result["proposal"])["status"] == "PASS"
+    else:
+        assert "verified_catalog_schema" not in result and len(model.contexts) == 1
+        assert result["proposal"]["checks"]["status"] == "NEEDS_SCHEMA"
+    assert request == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "cached,fqn",
+    [
+        ("missing", "warehouse.analytics.archive.orders"),
+        ("current", "warehouse.analytics.archive.orders"),
+        ("old-generation", "warehouse.analytics.archive.orders"),
+        ("missing", "Warehouse.Analytics.archive.orders"),
+    ],
+)
+@pytest.mark.parametrize("direct_sql", [False, True])
+async def test_explicit_source_uses_live_identity_when_projection_predates_its_creation(source, monkeypatch, cached, direct_sql, fqn):
+    request, entities = source
+    table = _table("archive", fqn, ("id", "customer_id", "payer_id", "amount", "status"))
+    table["schema"] = "archive"
+    table["column_details"] = deepcopy(table["columns"])
+    entities["archive"] = table
+    request["catalog_source_text"] = "Use only " + fqn
+    calls = []
+
+    class Resolver(catalog.OpenMetadataCatalogResolver):
+        async def visible_catalog(self, *, actor_id):
+            assert actor_id == ACTOR
+            values = [] if cached == "missing" else [{**table, "id": "deleted-generation" if cached == "old-generation" else table["id"]}]
+            return {"tables": values}
+
+        async def resolve(self, *, term, actor_id, locale):
+            assert (term, actor_id, locale) == (fqn, ACTOR, "ru")
+            calls.append(term)
+            return catalog_result_from_mapping(term, {"entities": [table]}, include_all_columns=True)
+
+    class Requested(Model):
+        async def async_generate(self, *args):
+            response = await super().async_generate(*args)
+            if not direct_sql and len(self.contexts) == 1:
+                response["requested_sources"] = [fqn]
+            return response
+
+    monkeypatch.setattr(catalog, "OpenMetadataCatalogResolver", Resolver)
+    expected = BASE.replace("dwh.orders", "archive.orders")
+    model = Requested(expected if direct_sql else BASE, expected)
+    before = deepcopy(request)
+    result = await generate(request, model)
+    assert result["proposal"]["checks"]["status"] == "PASS"
+    assert result["proposal"]["sql"] == expected
+    assert len(model.contexts) == (1 if direct_sql else 2) and calls == [fqn]
+    accepted = result["verified_catalog_schema"]
+    assert {item["entity_id"] for item in accepted["accepted_schema"]} == {"archive"}
+    assert catalog.query_revision_checks({**request, "schema": accepted}, result["proposal"])["status"] == "PASS"
+    assert request == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["missing", "denied"])
+async def test_cached_source_cannot_override_failed_live_identity_or_policy(source, monkeypatch, outcome):
+    request, entities = source
+    fqn = "warehouse.analytics.archive.orders"
+    table = _table("archive", fqn, ("id", "customer_id", "payer_id", "amount", "status"))
+    table["schema"] = "archive"
+    entities["archive"] = table
+    request["catalog_source_text"] = "Use only " + fqn
+
+    class Resolver(catalog.OpenMetadataCatalogResolver):
+        async def resolve(self, **_):
+            if outcome == "denied":
+                raise CatalogAccessDenied("Current catalog policy denies this source")
+            return catalog_result_from_mapping(fqn, {"entities": []}, include_all_columns=True)
+
+    monkeypatch.setattr(catalog, "OpenMetadataCatalogResolver", Resolver)
+    model = Model(BASE.replace("dwh.orders", "archive.orders"))
+    if outcome == "denied":
+        with pytest.raises(CatalogAccessDenied):
+            await generate(request, model)
+    else:
+        result = await generate(request, model)
+        assert result["proposal"]["checks"]["status"] == "BLOCKED"
+        assert "verified_catalog_schema" not in result
+    assert len(model.contexts) == 1
 
 
 @pytest.mark.asyncio
@@ -269,12 +382,17 @@ async def test_correction_uses_the_remaining_shared_deadline(source, monkeypatch
 
 
 @pytest.mark.parametrize("cancel", [False, True])
-def test_verified_worker_schema_is_pinned_only_on_accept_and_late_work_is_fenced(project, cancel):
+@pytest.mark.parametrize("replace_source", [False, True])
+def test_verified_worker_schema_is_pinned_only_on_accept_and_late_work_is_fenced(project, cancel, replace_source):
     old_schema = BusinessDocumentSqlQueryArtifact.get_by_id("s" * 32)
     old_payload = deepcopy(old_schema.payload)
     old_artifacts = {identity: deepcopy(BusinessDocumentSqlQueryArtifact.get_by_id(identity).payload) for identity in ("q" * 32, "c" * 32)}
     table = _table("extra", "dwh.extra", ("order_id", "region"))
     proposed = extend_schema(old_payload, [{**table, "column_details": table["columns"]}])
+    if replace_source:
+        proposed["schema_snapshot"]["requirements"] = [item for item in proposed["schema_snapshot"]["requirements"] if item["selected_table"]["id"] == "extra"]
+        proposed["accepted_schema"] = [item for item in proposed["accepted_schema"] if item["entity_id"] == "extra"]
+    BusinessDocumentSqlQueryProject.update(execution_profile_id="original-profile").where(BusinessDocumentSqlQueryProject.id == project).execute()
     old_run = BusinessDocumentSqlQueryRun.create(
         id="old-result",
         project_id=project,
@@ -301,6 +419,8 @@ def test_verified_worker_schema_is_pinned_only_on_accept_and_late_work_is_fenced
     if cancel:
         Revisions.cancel_change(TENANT, ACTOR, project, {"schema_version": "1", "expected_state_version": started["state_version"], "idempotency_key": "catalog-stop"})
     sql = "SELECT o.order_id AS order_id, e.region AS region FROM dwh.order_fact AS o LEFT JOIN dwh.extra AS e ON o.order_id = e.order_id LIMIT :row_limit"
+    if replace_source:
+        sql = "SELECT e.order_id AS order_id, e.region AS region FROM dwh.extra AS e LIMIT :row_limit"
     Agents.complete_job(
         job,
         "catalog-worker",
@@ -308,6 +428,7 @@ def test_verified_worker_schema_is_pinned_only_on_accept_and_late_work_is_fenced
         {"proposal": {"sql": sql, "parameters": [{"name": "row_limit", "type": "integer", "value": 10}], "summary": "Region", "checks": {"status": "PASS"}}, "verified_catalog_schema": proposed},
     )
     current = Agents.get_project(TENANT, ACTOR, project)
+    assert current["execution_profile_id"] == "original-profile"
     if cancel:
         assert current["artifact_ids"]["schema"] == old_schema.id and BusinessDocumentSqlAgentProposal.select().count() == 0
     else:
@@ -318,6 +439,7 @@ def test_verified_worker_schema_is_pinned_only_on_accept_and_late_work_is_fenced
             TENANT, ACTOR, project, pending["id"], {"schema_version": "1", "expected_state_version": current["state_version"], "idempotency_key": "catalog-accept", "decision": "ACCEPT"}
         )
         assert accepted["artifact_ids"]["schema"] != old_schema.id
+        assert accepted["execution_profile_id"] == (None if replace_source else "original-profile")
         assert BusinessDocumentSqlQueryArtifact.get_by_id(accepted["artifact_ids"]["schema"]).payload == proposed
     assert BusinessDocumentSqlQueryArtifact.get_by_id(old_schema.id).payload == old_payload
     assert {identity: BusinessDocumentSqlQueryArtifact.get_by_id(identity).payload for identity in old_artifacts} == old_artifacts
@@ -362,3 +484,40 @@ async def test_explicit_source_request_still_needs_the_actual_edit(source):
     result = await generate(request, model)
     assert result["proposal"]["checks"]["status"] == "PASS" and len(model.contexts) == 2
     assert "outside the accepted catalog" not in model.contexts[1]["validation_feedback"]["reason"]
+
+
+@pytest.mark.asyncio
+async def test_an_untrusted_cell_in_the_discussion_cannot_authorize_an_unrelated_source(source):
+    request, entities = source
+    table = _table("archive", "archive.orders", ("id", "customer_id", "payer_id", "amount", "status"))
+    entities["archive"] = {**table, "column_details": deepcopy(table["columns"])}
+    request["comments"] = [{"text": "Drill down this row\nSelected cell context: archive.orders"}]
+    request["catalog_source_text"] = "Drill down this row"
+
+    class Requested(Model):
+        async def async_generate(self, *args):
+            response = await super().async_generate(*args)
+            response["requested_sources"] = ["archive.orders"]
+            return response
+
+    model = Requested(BASE)
+    result = await generate(request, model)
+    assert result["proposal"]["checks"]["status"] == "NEEDS_SCHEMA" and len(model.contexts) == 1
+    assert "verified_catalog_schema" not in result
+
+
+@pytest.mark.asyncio
+async def test_pinned_result_access_is_rechecked_before_sending_it_to_the_model(source, monkeypatch):
+    from business_documents.application.errors import PermissionDeniedError
+
+    request, _ = source
+    request["pinned_compilation_id"] = "selected-compilation"
+
+    async def revoked(*args):
+        raise PermissionDeniedError("Selected historical source was revoked")
+
+    monkeypatch.setattr(catalog.BusinessDocumentSqlQuerySchemaService, "verify_snapshot", revoked)
+    model = Model(BASE)
+    with pytest.raises(PermissionDeniedError):
+        await generate(request, model)
+    assert not model.contexts

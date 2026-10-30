@@ -76,6 +76,22 @@ def test_generation_identity_and_active_consumers_keep_their_guards(change):
     assert guarded(before, after) == expected
 
 
+@pytest.mark.parametrize("state", [None, "Running", "Paused", "Restarting"])
+def test_own_container_guard_is_independent_of_unavailable_unrelated_inventory(state):
+    before, after = container(0), container(7)
+    if state:
+        after["State"][state] = True
+    engine = docker.Engine.__new__(docker.Engine)
+    engine.assert_engine = lambda: None
+    engine.inspect = lambda *_: after
+
+    def unavailable(*_):
+        raise RuntimeError("Unrelated container inventory is unavailable")
+
+    engine.all = unavailable
+    assert engine.guard(docker.resource(before, "container"), "own-run", {}, set()) == ("container-active" if state else None)
+
+
 @pytest.mark.parametrize("custom_dns", [False, True])
 def test_preserved_backup_accepts_only_empty_dns_transport_changes(tmp_path, monkeypatch, custom_dns):
     before, after = container(0), container(7)

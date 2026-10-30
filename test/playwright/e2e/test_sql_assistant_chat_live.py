@@ -49,9 +49,22 @@ def chat_probe(live, real_sql_catalog):
                 "observations": probe["observations"],
                 "last_observed": probe.get("last_observed"),
                 "last_error_code": probe.get("last_error_code"),
+                "failure_snapshot": probe.get("failure_snapshot"),
                 "jobs": sorted(probe["jobs"]),
             },
         )
+
+
+def _clarification_question(value):
+    turn = value["session"]["conversation"]
+    if turn.get("question"):
+        return turn["question"]["text"]
+    pending = turn.get("pending") or {}
+    assert pending.get("kind") == "ROUTER", "The waiting turn must expose its actual clarification"
+    message = next(item for item in value["session"]["messages"] if item["id"] == pending["message_id"])
+    answer = message["answer"]
+    assert answer["status"] == "READY" and answer["kind"] == "CLARIFICATION"
+    return answer["text"]
 
 
 def _root(page):
@@ -103,6 +116,8 @@ def _snapshot(live, probe):
     conversation = session.get("conversation") or {}
     error = project.get("last_error") or (conversation.get("error") if conversation.get("phase") == "ERROR" else None)
     probe["last_error_code"] = error.get("code", "UNKNOWN") if isinstance(error, dict) else "UNKNOWN" if error else None
+    if error:
+        probe["failure_snapshot"] = session
     assert not error, "Real chat worker failed: " + str(probe["last_error_code"])
     result = None
     if session.get("selected_result_id"):
@@ -258,7 +273,7 @@ def test_chat_clarifies_undefined_metric_before_running(page, live, chat_probe):
     questions = proposal.get("proposal", {}).get("questions")
     assert questions, "Undefined metric must be clarified"
     assert any(re.search("итог|сумм|количеств|показател", question["question"], re.IGNORECASE) for question in questions)
-    active_question = value["session"]["conversation"]["question"]["text"]
+    active_question = _clarification_question(value)
     assert active_question in {question["question"] for question in questions}
     expect(_root(page)).to_contain_text(active_question)
     _send(page, chat_probe, "Итог — сумма amount только для status = paid за все имеющиеся строки. Одна колонка total, без DISTINCT, без JOIN.")
@@ -291,7 +306,7 @@ def test_chat_explicit_source_limit_requires_a_choice(page, live, chat_probe):
     )
     waiting = _wait(page, live, chat_probe, lambda item: item["session"]["conversation"]["phase"] == "WAITING")
     assert not waiting["session"]["project"].get("runs")
-    question = waiting["session"]["conversation"]["question"]["text"]
+    question = _clarification_question(waiting)
     assert re.search(r"(?<!\d)100(?!\d)", question), "Must explain the actual source cap"
     expect(_root(page)).to_contain_text(question)
     _send(page, chat_probe, "Используй лимит 100 строк, остальные условия сохрани.")

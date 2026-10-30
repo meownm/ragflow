@@ -121,7 +121,14 @@ class BusinessDocumentSqlRevisionService:
             raise ConflictError("SQL_HISTORY_SOURCE_UNAVAILABLE", "The saved requirements cannot be verified")
 
         def identity(artifact):
-            return {"id": artifact.id, "revision": artifact.revision, "accepted_by": artifact.accepted_by, "created_at": artifact.create_time, "content_hash": artifact.content_hash, "source_proposal_id": artifact.source_proposal_id}
+            return {
+                "id": artifact.id,
+                "revision": artifact.revision,
+                "accepted_by": artifact.accepted_by,
+                "created_at": artifact.create_time,
+                "content_hash": artifact.content_hash,
+                "source_proposal_id": artifact.source_proposal_id,
+            }
 
         return {
             "schema_version": "1",
@@ -133,7 +140,9 @@ class BusinessDocumentSqlRevisionService:
                 "text": "\n".join(f"- {item.get('statement', '')}" for item in requirements.payload.get("requirements", []) if isinstance(item, Mapping)),
                 "requirements": requirements.payload.get("requirements", []),
                 "questions": requirements.payload.get("questions", []),
-            } if requirements else None,
+            }
+            if requirements
+            else None,
             "schema": {**identity(schema), "accepted_schema": schema.payload["accepted_schema"], "snapshot": asdict(parse_schema_snapshot(schema.payload["schema_snapshot"]))} if schema else None,
         }
 
@@ -430,7 +439,11 @@ class BusinessDocumentSqlRevisionService:
             return {"version": draft.version, "base_query_artifact_id": draft.base_query_artifact_id, "steps": draft.steps}
 
     @classmethod
-    def create_thread(cls, tenant_id: str, actor_id: str, project_id: str, raw: object, is_admin: bool = False, access_role: str = "AUTHOR_CREATOR") -> dict[str, Any]:
+    def create_thread(
+        cls, tenant_id: str, actor_id: str, project_id: str, raw: object, is_admin: bool = False, access_role: str = "AUTHOR_CREATOR", *, compilation_id: str | None = None
+    ) -> dict[str, Any]:
+        if compilation_id is not None and (not isinstance(compilation_id, str) or len(compilation_id) != 32):
+            raise ValidationError("INVALID_SQL_REVISION", "Select one saved compilation")
         data = _payload(raw, {"expected_state_version", "idempotency_key", "target", "base_artifact_id", "anchor", "text", "additional_entity_ids"})
         additional = data.get("additional_entity_ids", [])
         if (
@@ -442,7 +455,10 @@ class BusinessDocumentSqlRevisionService:
         ):
             raise ValidationError("INVALID_SQL_SCHEMA_CHANGE", "Select at most eight distinct tables for a query discussion")
         key = _key(data)
-        request_hash = _stable_hash({"type": "CREATE_SQL_THREAD", "request": data})
+        identity = {"type": "CREATE_SQL_THREAD", "request": data}
+        if compilation_id is not None:
+            identity["compilation_id"] = compilation_id
+        request_hash = _stable_hash(identity)
         with BusinessDocumentSqlQueryProject._meta.database.atomic():
             project = cls._project(tenant_id, actor_id, project_id, is_admin, access_role)
             replay = BusinessDocumentSqlAgentService._command_replay(tenant_id, project_id, key, request_hash)
@@ -466,6 +482,14 @@ class BusinessDocumentSqlRevisionService:
                         & (BusinessDocumentSqlQueryArtifact.tenant_id == tenant_id)
                         & (BusinessDocumentSqlQueryArtifact.kind == "DOCUMENT")
                     )
+                elif compilation_id is not None:
+                    from api.apps.business_documents.sql_query_access import authorize_sql_source
+
+                    selected = authorize_sql_source(project, actor_id, compilation_id, is_admin=is_admin, access_role=access_role, include_schema_tables=True)
+                    if selected.query.id != requested_base:
+                        raise ConflictError("SQL_HISTORY_SOURCE_MISMATCH", "Selected query does not match its compilation")
+                    artifact, sql = selected.query, selected.compiled["sql"]
+                    pinned_revision = requested_base != project.query_artifact_id
                 else:
                     artifact, sql, _ = cls._query_revision(project, requested_base)
                     if not sql:
@@ -479,6 +503,10 @@ class BusinessDocumentSqlRevisionService:
                 raise ValidationError("INVALID_SQL_ANCHOR", str(exc)) from exc
             if pinned_revision:
                 anchor["pinned_revision"] = True
+            if compilation_id is not None:
+                if target != "QUERY" or requested_base is None:
+                    raise ValidationError("INVALID_SQL_REVISION", "A saved compilation requires its selected query")
+                anchor["pinned_compilation_id"] = compilation_id
             thread = BusinessDocumentSqlQueryThread.create(
                 id=get_uuid(),
                 project_id=project_id,
@@ -610,6 +638,7 @@ class BusinessDocumentSqlRevisionService:
         access_role: str = "AUTHOR_CREATOR",
         *,
         proposed_schema: Mapping[str, Any] | None = None,
+        source_text: str | None = None,
     ) -> dict[str, Any]:
         data = _payload(raw, {"expected_state_version", "idempotency_key", "additional_entity_ids"})
         additional = data.get("additional_entity_ids", [])
@@ -622,7 +651,12 @@ class BusinessDocumentSqlRevisionService:
         ):
             raise ValidationError("INVALID_SQL_SCHEMA_CHANGE", "Additional tables require verified catalog evidence")
         version, key = _version(data), _key(data)
-        request_hash = _stable_hash({"type": "REQUEST_SQL_REVISION", "thread_id": thread_id, "request": data})
+        request_identity = {"type": "REQUEST_SQL_REVISION", "thread_id": thread_id, "request": data}
+        if source_text is not None:
+            if not isinstance(source_text, str) or not source_text.strip() or len(source_text) > 20_000:
+                raise ValidationError("INVALID_SQL_REVISION", "A bounded human source selection is required")
+            request_identity["source_text"] = source_text
+        request_hash = _stable_hash(request_identity)
         with BusinessDocumentSqlQueryProject._meta.database.atomic():
             project = cls._project(tenant_id, actor_id, project_id, is_admin, access_role)
             replay = BusinessDocumentSqlAgentService._command_replay(tenant_id, project_id, key, request_hash)
@@ -637,7 +671,17 @@ class BusinessDocumentSqlRevisionService:
                 raise ConflictError("SQL_THREAD_UNAVAILABLE", "Discussion is unavailable")
             artifact, sql = cls._source(project, thread.target)
             compiled_result = {}
-            if thread.target == "QUERY" and thread.anchor.get("pinned_revision"):
+            pinned_source = None
+            if thread.target == "QUERY" and thread.anchor.get("pinned_compilation_id"):
+                from api.apps.business_documents.sql_query_access import authorize_sql_source
+
+                pinned_source = authorize_sql_source(project, actor_id, thread.anchor["pinned_compilation_id"], is_admin=is_admin, access_role=access_role, include_schema_tables=True)
+                if pinned_source.query.id != thread.base_artifact_id:
+                    raise ConflictError("SQL_HISTORY_SOURCE_MISMATCH", "Selected query does not match its compilation")
+                artifact, sql, compiled_result = pinned_source.query, pinned_source.compiled["sql"], pinned_source.compiled
+                if proposed_schema is None and pinned_source.schema.id != project.schema_artifact_id:
+                    proposed_schema = pinned_source.schema.payload
+            elif thread.target == "QUERY" and thread.anchor.get("pinned_revision"):
                 artifact, sql, compiled_result = cls._query_revision(project, thread.base_artifact_id)
             if thread.target == "DOCUMENT":
                 artifact = BusinessDocumentSqlQueryArtifact.get_or_none(
@@ -665,10 +709,16 @@ class BusinessDocumentSqlRevisionService:
             current = BusinessDocumentSqlAgentService._project(project)
             result = current.get("compilation", {}).get("result") if current.get("compilation") else None
             query_artifact, _ = cls._source(project, "QUERY")
-            if thread.target == "QUERY" and thread.anchor.get("pinned_revision"):
+            if thread.target == "QUERY" and (thread.anchor.get("pinned_revision") or pinned_source is not None):
                 query_artifact = artifact
                 result = compiled_result
             parameters = _parameters(query_artifact, result or {})
+            messages = [dict(message) for message in thread.messages]
+            if source_text is not None:
+                messages[0]["catalog_source_text"] = source_text
+            human = [message for message in messages if message.get("role") != "assistant" and message.get("author_id") != "assistant"]
+            original_source_text = messages[0].get("catalog_source_text") if messages else None
+            catalog_source_text = "\n".join([original_source_text, *[message["text"] for message in human[1:]]]) if original_source_text is not None else human[-1]["text"] if human else ""
             request = {
                 "target": thread.target,
                 "base_artifact_id": artifact.id,
@@ -678,17 +728,20 @@ class BusinessDocumentSqlRevisionService:
                 "thread_id": thread.id,
                 "thread_version": thread.version + 1,
                 "anchor": location["anchor"],
-                "comments": thread.messages,
+                "comments": [{key: value for key, value in message.items() if key != "catalog_source_text"} for message in messages],
+                "catalog_source_text": catalog_source_text,
                 "sql": sql,
                 "parameters": parameters,
-                "requirements": (current.get("artifacts") or {}).get("requirements"),
-                "schema": proposed_schema if proposed_schema is not None else (current.get("artifacts") or {}).get("schema"),
+                "requirements": pinned_source.requirements.payload if pinned_source is not None else (current.get("artifacts") or {}).get("requirements"),
+                "schema": proposed_schema if proposed_schema is not None else pinned_source.schema.payload if pinned_source is not None else (current.get("artifacts") or {}).get("schema"),
                 "proposed_schema": proposed_schema,
+                "pinned_compilation_id": pinned_source.compilation.id if pinned_source is not None else None,
                 "document": artifact.payload if thread.target == "DOCUMENT" else None,
                 "locale": project.locale,
             }
             changed_thread = (
                 BusinessDocumentSqlQueryThread.update(
+                    messages=messages,
                     version=thread.version + 1,
                     update_time=current_timestamp(),
                     update_date=datetime.now(),
@@ -870,7 +923,13 @@ class BusinessDocumentSqlRevisionService:
             source = proposal.payload.get("agent_result", {}).get("source", {})
             target = source.get("target")
             artifact, _ = cls._source(project, target)
-            if target == "QUERY" and source.get("base_artifact_id") != project.query_artifact_id:
+            pinned_source = None
+            if target == "QUERY" and source.get("pinned_compilation_id") and decision == "ACCEPT":
+                from api.apps.business_documents.sql_query_access import authorize_sql_source
+
+                pinned_source = authorize_sql_source(project, actor_id, source["pinned_compilation_id"], is_admin=is_admin, access_role=access_role, include_schema_tables=True)
+                artifact = pinned_source.query
+            elif target == "QUERY" and source.get("base_artifact_id") != project.query_artifact_id:
                 artifact, _, _ = cls._query_revision(project, source.get("base_artifact_id"))
             if target == "DOCUMENT":
                 artifact = BusinessDocumentSqlQueryArtifact.get_or_none(
@@ -905,6 +964,9 @@ class BusinessDocumentSqlRevisionService:
                 schema = BusinessDocumentSqlAgentService._artifact(project.schema_artifact_id, "SCHEMA")
                 if source.get("base_schema_artifact_id") != project.schema_artifact_id or source.get("base_requirements_artifact_id") != project.requirements_artifact_id:
                     raise ConflictError("SQL_PROPOSAL_STALE", "Requirements or schema changed; prepare a new proposal")
+                if pinned_source is not None:
+                    requirements = pinned_source.requirements
+                    values["requirements_artifact_id"] = requirements.id
                 proposed_schema = source.get("proposed_schema")
                 schema_payload = proposed_schema if isinstance(proposed_schema, Mapping) else schema.payload
                 candidate = {"mode": "manual", "sql": result.get("sql"), "parameters": result.get("parameters"), "confirmed_alignment": True}
@@ -915,6 +977,10 @@ class BusinessDocumentSqlRevisionService:
                 if compiled.get("status") != "READY" or compiled.get("guard", {}).get("status") != "PASS":
                     raise ValidationError("SQL_QUERY_BLOCKED", "Proposed SQL did not pass current checks")
                 if proposed_schema is not None:
+                    previous_entities = {table.id for table in parse_schema_snapshot(schema.payload["schema_snapshot"]).tables}
+                    current_entities = {table.id for table in parse_schema_snapshot(schema_payload["schema_snapshot"]).tables}
+                    if previous_entities - current_entities:
+                        values["execution_profile_id"] = None
                     schema = BusinessDocumentSqlQueryArtifact.create(
                         id=get_uuid(),
                         project_id=project_id,

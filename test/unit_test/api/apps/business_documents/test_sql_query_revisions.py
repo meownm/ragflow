@@ -1048,3 +1048,172 @@ async def test_ai_document_revision_can_request_a_new_data_run():
 
     result = await propose_revision(TENANT, {"target": "DOCUMENT", "document": {"confirmed_conclusion": {"text": "There are 10 orders"}}}, llm=FakeLLM())
     assert result["proposal"]["checks"]["status"] == "NEEDS_RUN"
+
+
+@pytest.mark.parametrize("outcome", ["accept", "cancel", "revoked", "reject_revoked"])
+def test_selected_compilation_keeps_historical_scope_when_continuing_after_source_change(project, outcome, monkeypatch):
+    from copy import deepcopy
+    from test.unit_test.api.apps.business_documents.test_sql_query_specification import _table
+
+    old_schema = BusinessDocumentSqlQueryArtifact.get_by_id("s" * 32)
+    old_requirements = BusinessDocumentSqlQueryArtifact.get_by_id("r" * 32)
+    old_payloads = {kind: deepcopy(BusinessDocumentSqlQueryArtifact.get_by_id(kind * 32).payload) for kind in ("r", "s", "q", "c")}
+    table = _table("newscope", "archive.orders", ("order_id",))
+    visible_tables = {item["selected_table"]["id"]: item["selected_table"] for item in old_schema.payload["schema_snapshot"]["requirements"]}
+    visible_tables[table["id"]] = table
+
+    async def visible(_actor, request, _admin, _role):
+        return {"entities": [{"entity_id": identity, "lookup": {"status": "OK"}, "entity": visible_tables[identity]} for identity in request["entity_ids"] if identity in visible_tables]}
+
+    monkeypatch.setattr(BusinessDocumentSqlQuerySchemaService, "load_entities", visible)
+    newer_schema = deepcopy(old_schema.payload)
+    newer_schema["schema_snapshot"]["original_requirements"] = "- New source and a different basis"
+    newer_schema["schema_snapshot"]["requirements"] = [{"term": "New source", "state": "CONFIRMED", "decision": "USER", "selected_table": table}]
+    newer_schema["accepted_schema"] = [{"entity_id": table["id"], "version": table["version"], "schema_fingerprint": table["schema_fingerprint"]}]
+    payloads = {
+        "REQUIREMENTS": {"requirements": [{"statement": "New source and a different basis"}]},
+        "SCHEMA": newer_schema,
+        "QUERY": {
+            "mode": "manual",
+            "sql": "SELECT n.order_id AS order_id FROM archive.orders AS n LIMIT :row_limit",
+            "parameters": [{"name": "row_limit", "type": "integer", "value": 20}],
+            "confirmed_alignment": True,
+        },
+    }
+    newer = {}
+    for kind, payload in payloads.items():
+        newer[kind] = BusinessDocumentSqlQueryArtifact.create(
+            id=kind[0].lower() * 31 + "2",
+            project_id=project,
+            tenant_id=TENANT,
+            kind=kind,
+            revision=2,
+            payload=payload,
+            content_hash=_stable_hash(payload),
+            source_proposal_id="p" * 32,
+            accepted_by=ACTOR,
+        )
+    compiled = compile_query_payload(build_project_compile_command(payloads["REQUIREMENTS"], payloads["SCHEMA"], payloads["QUERY"]))
+    assert compiled["status"] == "READY", compiled
+    packet = {"source_artifact_ids": [newer[k].id for k in ("REQUIREMENTS", "SCHEMA", "QUERY")], "result": compiled}
+    newer_compilation = BusinessDocumentSqlQueryArtifact.create(
+        id="c" * 31 + "2", project_id=project, tenant_id=TENANT, kind="COMPILATION", revision=2, payload=packet, content_hash=_stable_hash(packet), source_proposal_id="p" * 32, accepted_by=ACTOR
+    )
+    BusinessDocumentSqlQueryProject.update(
+        requirements_artifact_id=newer["REQUIREMENTS"].id, schema_artifact_id=newer["SCHEMA"].id, query_artifact_id=newer["QUERY"].id, execution_profile_id="new-source-profile", state_version=2
+    ).where(BusinessDocumentSqlQueryProject.id == project).execute()
+    command = {
+        "schema_version": "1",
+        "expected_state_version": 2,
+        "idempotency_key": "pinned-compilation-thread",
+        "target": "QUERY",
+        "base_artifact_id": "q" * 32,
+        "anchor": {"kind": "WHOLE"},
+        "text": "Rename the original output; keep the original scope",
+    }
+    with pytest.raises(ConflictError, match="does not match"):
+        BusinessDocumentSqlRevisionService.create_thread(TENANT, ACTOR, project, command, compilation_id=newer_compilation.id)
+    thread = BusinessDocumentSqlRevisionService.create_thread(TENANT, ACTOR, project, command, compilation_id="c" * 32)
+    started = BusinessDocumentSqlRevisionService.request_change(TENANT, ACTOR, project, thread["id"], {"schema_version": "1", "expected_state_version": 2, "idempotency_key": "pinned-compilation-job"})
+    job = BusinessDocumentJobQueue.claim("pinned-source-worker")
+    request = job.payload["request"]
+    assert request["requirements"] == old_requirements.payload
+    assert request["schema"] == old_schema.payload and request["proposed_schema"] == old_schema.payload
+    assert request["sql"] == SQL and request["parameters"][0]["value"] == 10
+    assert request["base_schema_artifact_id"] == newer["SCHEMA"].id
+    assert request["base_requirements_artifact_id"] == newer["REQUIREMENTS"].id
+    if outcome == "cancel":
+        BusinessDocumentSqlRevisionService.cancel_change(TENANT, ACTOR, project, {"schema_version": "1", "expected_state_version": started["state_version"], "idempotency_key": "pinned-source-stop"})
+    candidate = SQL.replace("order_id AS order_id", "order_id AS original_id")
+    BusinessDocumentSqlAgentService.complete_job(
+        job, "pinned-source-worker", job.lease_token, {"proposal": {"sql": candidate, "parameters": request["parameters"], "summary": "Original basis", "checks": {"status": "PASS"}}}
+    )
+    current = BusinessDocumentSqlAgentService.get_project(TENANT, ACTOR, project)
+    if outcome == "cancel":
+        assert current["artifact_ids"]["requirements"] == newer["REQUIREMENTS"].id
+        assert current["artifact_ids"]["schema"] == newer["SCHEMA"].id and current["execution_profile_id"] == "new-source-profile"
+        assert current["pending_proposal"] is None
+    elif outcome in {"revoked", "reject_revoked"}:
+        from business_documents.application.errors import PermissionDeniedError
+
+        from api.apps.sql_assistant.runtime import SqlRuntime
+
+        for identity in list(visible_tables):
+            if identity != table["id"]:
+                del visible_tables[identity]
+        before = BusinessDocumentSqlQueryProject.get_by_id(project).__data__.copy()
+        with pytest.raises(PermissionDeniedError):
+            SqlRuntime(TENANT, ACTOR).project(project)
+        with pytest.raises(PermissionDeniedError):
+            BusinessDocumentSqlRevisionService.decide_change(
+                TENANT,
+                ACTOR,
+                project,
+                current["pending_proposal"]["id"],
+                {"schema_version": "1", "expected_state_version": current["state_version"], "idempotency_key": "pinned-source-revoked", "decision": "ACCEPT"},
+            )
+        assert BusinessDocumentSqlQueryProject.get_by_id(project).__data__ == before
+        if outcome == "reject_revoked":
+            rejected = BusinessDocumentSqlRevisionService.decide_change(
+                TENANT,
+                ACTOR,
+                project,
+                current["pending_proposal"]["id"],
+                {"schema_version": "1", "expected_state_version": current["state_version"], "idempotency_key": "pinned-source-reject-revoked", "decision": "REJECT"},
+            )
+            assert rejected["operation_state"] == "IDLE" and rejected["pending_proposal"] is None
+            assert rejected["artifact_ids"] == current["artifact_ids"] and rejected["execution_profile_id"] == "new-source-profile"
+    else:
+        accepted = BusinessDocumentSqlRevisionService.decide_change(
+            TENANT,
+            ACTOR,
+            project,
+            current["pending_proposal"]["id"],
+            {"schema_version": "1", "expected_state_version": current["state_version"], "idempotency_key": "pinned-source-accept", "decision": "ACCEPT"},
+        )
+        assert accepted["artifact_ids"]["requirements"] == old_requirements.id
+        assert BusinessDocumentSqlQueryArtifact.get_by_id(accepted["artifact_ids"]["schema"]).payload == old_schema.payload
+        assert accepted["execution_profile_id"] is None
+        assert accepted["compilation"]["result"]["sql"] == candidate
+    assert {kind: BusinessDocumentSqlQueryArtifact.get_by_id(kind * 32).payload for kind in old_payloads} == old_payloads
+    assert BusinessDocumentSqlQueryArtifact.get_by_id(newer["QUERY"].id).payload == payloads["QUERY"]
+
+
+def test_human_source_selection_survives_clarification_without_promoting_cell_or_model_text(project):
+    raw_source = "Use only actual.catalog.orders"
+    thread = BusinessDocumentSqlRevisionService.create_thread(
+        TENANT,
+        ACTOR,
+        project,
+        {
+            "schema_version": "1",
+            "expected_state_version": 1,
+            "idempotency_key": "source-evidence-thread",
+            "target": "QUERY",
+            "anchor": {"kind": "WHOLE"},
+            "text": raw_source + "\nSelected cell context: untrusted.cell.source",
+        },
+    )
+    BusinessDocumentSqlRevisionService.request_change(
+        TENANT, ACTOR, project, thread["id"], {"schema_version": "1", "expected_state_version": 1, "idempotency_key": "source-evidence-first"}, source_text=raw_source
+    )
+    first = BusinessDocumentJobQueue.claim("source-evidence-worker")
+    assert first.payload["request"]["catalog_source_text"] == raw_source
+    BusinessDocumentSqlAgentService.complete_job(
+        first,
+        "source-evidence-worker",
+        first.lease_token,
+        {"response_kind": "CLARIFICATION", "answer": "invented.model.source: what year?", "questions": [{"id": "year", "text": "What year?", "options": []}]},
+    )
+    BusinessDocumentSqlRevisionService.reply(
+        TENANT, ACTOR, project, thread["id"], {"schema_version": "1", "expected_thread_version": 3, "idempotency_key": "source-evidence-reply", "text": "2026 UTC"}
+    )
+    current = BusinessDocumentSqlAgentService.get_project(TENANT, ACTOR, project)
+    BusinessDocumentSqlRevisionService.request_change(
+        TENANT, ACTOR, project, thread["id"], {"schema_version": "1", "expected_state_version": current["state_version"], "idempotency_key": "source-evidence-next"}
+    )
+    second = BusinessDocumentJobQueue.claim("source-evidence-worker")
+    evidence = second.payload["request"]["catalog_source_text"]
+    assert raw_source in evidence and "2026 UTC" in evidence
+    assert "untrusted.cell.source" not in evidence and "invented.model.source" not in evidence
+    assert all("catalog_source_text" not in message for message in second.payload["request"]["comments"])

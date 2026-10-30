@@ -246,6 +246,7 @@ class Engine:
         if kind == "container":
             if any(info["State"].get(key) for key in ("Running", "Paused", "Restarting")):
                 return "container-active"
+            return None
         if kind == "image":
             if set(info.get("RepoTags") or []) - set(target.get("tags", [])):
                 return "image-tags-changed"

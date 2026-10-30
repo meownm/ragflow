@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+import re
 from typing import Any
 
 from api.apps.business_documents.sql_query_revision_ai import propose_revision, query_revision_checks
 from api.apps.business_documents.sql_query_schema import BusinessDocumentSqlQuerySchemaService, OpenMetadataCatalogResolver
 from business_documents.adapters.llm import MODEL_TIMEOUT_SECONDS
 from business_documents.sql_query.query_graph import QueryGraphError, project_query_graph, related_catalog, snapshot_tables
+from business_documents.sql_query.schema_resolution import explicit_table_reference
 
 
 async def propose_catalog_revision(
@@ -28,6 +30,8 @@ async def propose_catalog_revision(
     entities connected by actual FK metadata to the pinned schema.
     """
     async with asyncio.timeout(MODEL_TIMEOUT_SECONDS):
+        if request.get("pinned_compilation_id"):
+            await BusinessDocumentSqlQuerySchemaService.verify_snapshot(actor_id, request["schema"]["schema_snapshot"], is_admin, access_role)
         first = await propose_revision(tenant_id, request, llm=llm)
         proposal = first.get("proposal") or {}
         if request.get("target") != "QUERY" or proposal.get("checks", {}).get("status") not in {"BLOCKED", "NEEDS_SCHEMA"}:
@@ -46,8 +50,26 @@ async def propose_catalog_revision(
             await catalog.authorize(actor_id=actor_id, is_admin=is_admin)
             await BusinessDocumentSqlQuerySchemaService.verify_snapshot(actor_id, schema["schema_snapshot"], is_admin, access_role)
             visible = await catalog.visible_catalog(actor_id=actor_id)
+            mentioned = {name.casefold(): name for name in re.findall(r"[\w-]+(?:\.[\w-]+)+", str(request.get("catalog_source_text") or ""))}
+            exact_names = {name for name, original in mentioned.items() if explicit_table_reference(original)}
+            if len(exact_names) > 8:
+                return first
+            explicit = {table["id"]: table for table in visible["tables"] if str(table.get("fqn") or "").casefold() in mentioned.keys() - exact_names}
+            for name in sorted(exact_names):
+                answer = await catalog.resolve(term=mentioned[name], actor_id=actor_id, locale=request.get("locale") or "ru")
+                matches = [entity for entity in answer.candidates if entity.fqn.casefold() == name]
+                if len(matches) != 1:
+                    return first
+                entity = matches[0].to_api()
+                explicit[entity["id"]] = entity
+            # The projection can predate a newly created source or contain a
+            # deleted generation with its old ID. Exact names use live lookup;
+            # Missing pinned roots have just passed live snapshot/access verification.
+            current = [table for table in visible["tables"] if str(table.get("fqn") or "").casefold() not in exact_names]
+            available = list({table["id"]: table for table in [*tables, *current, *explicit.values()]}.values())
             try:
-                neighborhood = related_catalog(visible["tables"], [table["id"] for table in tables], depth=1)
+                neighborhood = related_catalog(available, [table["id"] for table in tables], depth=1)
+                neighborhood["tables"] = list({table["id"]: table for table in [*neighborhood["tables"], *explicit.values()]}.values())
                 graph = project_query_graph(proposal["sql"], neighborhood["tables"])
             except QueryGraphError:
                 # Ambiguous, unrelated and invented tables remain unapproved.
@@ -91,6 +113,10 @@ async def propose_catalog_revision(
             unused = set(additions) - used
             if unused == set(additions):
                 return repaired
+            if used & set(explicit) and not used & existing:
+                # A new explicitly named source replaces the old scope. It must
+                # not require the former source's profile or catalog access.
+                unused |= existing - used
             if unused:
                 schema = {
                     **schema,

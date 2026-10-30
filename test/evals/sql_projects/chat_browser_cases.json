@@ -232,9 +232,9 @@
         "UTC",
         "period"
       ],
-      "automated_by": null,
-      "status": "gap",
-      "missing_prerequisite": "Native browser automation for the new UI and the required owned real-service fault/persona/fixture boundary"
+      "automated_by": "test/playwright/e2e/test_sql_chat_calendar_live.py::test_chat_calendar_zone_then_period_keep_paid_scope",
+      "status": "implemented_not_run",
+      "missing_prerequisite": null
     },
     {
       "id": "C10",
@@ -251,9 +251,9 @@
         "paid",
         "timezone"
       ],
-      "automated_by": null,
-      "status": "gap",
-      "missing_prerequisite": "Native browser automation for the new UI and the required owned real-service fault/persona/fixture boundary"
+      "automated_by": "test/playwright/e2e/test_sql_chat_calendar_live.py::test_chat_missing_year_requires_an_ordinary_reply",
+      "status": "implemented_not_run",
+      "missing_prerequisite": null
     },
     {
       "id": "C11",
@@ -275,9 +275,9 @@
         "timezone",
         "buyer role"
       ],
-      "automated_by": null,
-      "status": "gap",
-      "missing_prerequisite": "Native browser automation for the new UI and the required owned real-service fault/persona/fixture boundary"
+      "automated_by": "test/playwright/e2e/test_sql_chat_relational_history_live.py::test_chat_five_turns_explain_then_keep_buyer_grain",
+      "status": "implemented_not_run",
+      "missing_prerequisite": null
     },
     {
       "id": "C12",
@@ -294,9 +294,9 @@
         "paid",
         "period"
       ],
-      "automated_by": null,
-      "status": "gap",
-      "missing_prerequisite": "Native browser automation for the new UI and the required owned real-service fault/persona/fixture boundary"
+      "automated_by": "test/playwright/e2e/test_sql_chat_relational_history_live.py::test_chat_explicit_threshold_replacement_is_not_an_impossible_and",
+      "status": "implemented_not_run",
+      "missing_prerequisite": null
     },
     {
       "id": "C13",
@@ -313,9 +313,9 @@
         "confirmed analysis",
         "previous result"
       ],
-      "automated_by": null,
-      "status": "gap",
-      "missing_prerequisite": "Native browser automation for the new UI and the required owned real-service fault/persona/fixture boundary"
+      "automated_by": "test/playwright/e2e/test_sql_chat_execution_failure_live.py::test_chat_real_execution_error_keeps_previous_result_until_success",
+      "status": "implemented_not_run",
+      "missing_prerequisite": null
     },
     {
       "id": "C14",
@@ -333,9 +333,9 @@
         "confirmed state",
         "newer accepted state"
       ],
-      "automated_by": null,
-      "status": "gap",
-      "missing_prerequisite": "Native browser automation for the new UI and the required owned real-service fault/persona/fixture boundary"
+      "automated_by": "test/playwright/e2e/test_sql_chat_cancellation_live.py::test_chat_stop_inflight_turn_then_accept_new_change_without_late_overwrite",
+      "status": "implemented_not_run",
+      "missing_prerequisite": null
     },
     {
       "id": "C15",
@@ -371,9 +371,9 @@
         "accepted version",
         "draft text"
       ],
-      "automated_by": null,
-      "status": "gap",
-      "missing_prerequisite": "Native browser automation for the new UI and the required owned real-service fault/persona/fixture boundary"
+      "automated_by": "test/playwright/e2e/test_sql_chat_concurrent_live.py::test_chat_two_tabs_reject_one_stale_command_without_losing_the_winner",
+      "status": "implemented_not_run",
+      "missing_prerequisite": null
     },
     {
       "id": "C17",
@@ -389,9 +389,15 @@
       "preserved": [
         "historical source identity"
       ],
-      "automated_by": null,
-      "status": "gap",
-      "missing_prerequisite": "Native browser automation for the new UI and the required owned real-service fault/persona/fixture boundary"
+      "automated_by": "test/playwright/e2e/test_sql_chat_source_change_live.py::test_chat_source_change_keeps_the_old_result_on_its_original_profile",
+      "status": "live_pass",
+      "missing_prerequisite": null,
+      "evidence": {
+        "source_id": "0482ff01f01ddbfbc71a36dbc482af71a2eb8d3426194737cc4e0e3c317dfdd9",
+        "receipt": ".local/archives/sql-product-figma-20261029/patch17-live/browser.xml",
+        "model": "qwen3.8:latest",
+        "scope": "Both original golden datasets, exact old/new rows and profile IDs, A->B->historyA->continueA; immutable old A/B exports unchanged; raw external harness identical AST apart from canonical import module paths."
+      }
     },
     {
       "id": "C18",
@@ -408,9 +414,9 @@
         "tenant isolation",
         "owner permissions"
       ],
-      "automated_by": null,
-      "status": "gap",
-      "missing_prerequisite": "Native browser automation for the new UI and the required owned real-service fault/persona/fixture boundary"
+      "automated_by": "test/playwright/e2e/test_sql_chat_reader_tenant_live.py::test_chat_reader_controls_and_foreign_tenant_cannot_read_or_export",
+      "status": "implemented_not_run",
+      "missing_prerequisite": null
     },
     {
       "id": "C19",
@@ -426,9 +432,9 @@
       "preserved": [
         "current ACL"
       ],
-      "automated_by": null,
-      "status": "gap",
-      "missing_prerequisite": "Native browser automation for the new UI and the required owned real-service fault/persona/fixture boundary"
+      "automated_by": "test/playwright/e2e/test_sql_chat_revocation_live.py::test_chat_real_catalog_revocation_hides_a_cached_answer_and_blocks_export",
+      "status": "implemented_not_run",
+      "missing_prerequisite": null
     },
     {
       "id": "C20",
@@ -445,9 +451,9 @@
         "saved query conditions",
         "retention"
       ],
-      "automated_by": null,
-      "status": "gap",
-      "missing_prerequisite": "Native browser automation for the new UI and the required owned real-service fault/persona/fixture boundary"
+      "automated_by": "test/playwright/e2e/test_sql_chat_retention_live.py::test_chat_retention_blocks_rows_answers_and_export_without_new_sql",
+      "status": "implemented_not_run",
+      "missing_prerequisite": null
     },
     {
       "id": "C21",
@@ -463,9 +469,9 @@
         "paid",
         "explicit period"
       ],
-      "automated_by": null,
-      "status": "gap",
-      "missing_prerequisite": "Native browser automation for the new UI and the required owned real-service fault/persona/fixture boundary"
+      "automated_by": "test/playwright/e2e/test_sql_chat_calendar_live.py::test_chat_empty_period_is_success_without_expanding_scope",
+      "status": "implemented_not_run",
+      "missing_prerequisite": null
     },
     {
       "id": "C22",
@@ -481,9 +487,9 @@
         "selected historical identity",
         "types"
       ],
-      "automated_by": null,
-      "status": "gap",
-      "missing_prerequisite": "Native browser automation for the new UI and the required owned real-service fault/persona/fixture boundary"
+      "automated_by": "test/playwright/e2e/test_sql_chat_typed_export_live.py::test_chat_historical_download_keeps_null_empty_zero_and_decimal",
+      "status": "implemented_not_run",
+      "missing_prerequisite": null
     },
     {
       "id": "C23",
@@ -502,9 +508,9 @@
         "period",
         "declared scope"
       ],
-      "automated_by": null,
-      "status": "gap",
-      "missing_prerequisite": "Native browser automation for the new UI and the required owned real-service fault/persona/fixture boundary"
+      "automated_by": "test/playwright/e2e/test_sql_chat_fragment_live.py::test_chat_saved_fragment_and_full_source_totals_have_distinct_scope",
+      "status": "implemented_not_run",
+      "missing_prerequisite": null
     },
     {
       "id": "C24",
@@ -522,9 +528,15 @@
         "period",
         "order grain"
       ],
-      "automated_by": null,
-      "status": "gap",
-      "missing_prerequisite": "Native browser automation for the new UI and the required owned real-service fault/persona/fixture boundary"
+      "automated_by": "test/playwright/e2e/test_sql_chat_fanout_live.py::test_chat_two_children_keep_order_amount_and_source_total",
+      "status": "implemented_not_run",
+      "missing_prerequisite": null
     }
-  ]
+  ],
+  "current_runtime": {
+    "version": "2.2.8-dev.0482ff01f01d",
+    "commit": "7546a2d3f89b0b01607e4d2143663e6a965408f0",
+    "source_id": "0482ff01f01ddbfbc71a36dbc482af71a2eb8d3426194737cc4e0e3c317dfdd9",
+    "qualification_boundary": "Feature/local installed and published. Each live_pass applies only to its evidence.source_id; C17A/B current-source PASS. Other current-source lanes remain incomplete."
+  }
 }

@@ -537,7 +537,7 @@
     "version": "2.2.9-dev.08a2a9ebeac5",
     "commit": "7eb5f14a44a158f368bf72748f43916f66c80ba2",
     "source_id": "08a2a9ebeac5581da264050581c7a312d8b2aa9a947dd16b5e00ace1c0a0d6d0",
-    "qualification_boundary": "Feature/local installed and published; current-source timezoneA/B and source/historyC17A/B smoke4 PASS. Full42distinct x3series remains incomplete. Each live_pass applies only to evidence.source_id.",
+    "qualification_boundary": "Feature/local installed and published; current-source timezoneA/B and source/historyC17A/B smoke4 PASS. One full pass of42distinct scenarios remains incomplete; repeat only failures and affected behavior after fixes. Triple full series are not required for this local delivery. Each live_pass applies only to evidence.source_id.",
     "verified_smoke_receipt": ".local/archives/sql-product-figma-20261029/patch18-canonical-remaining-smoke/browser.xml"
   }
 }

@@ -232,7 +232,7 @@
         "UTC",
         "period"
       ],
-      "automated_by": "test/playwright/e2e/test_sql_chat_calendar_live.py::test_chat_calendar_zone_then_period_keep_paid_scope",
+      "automated_by": "test/playwright/e2e/test_sql_chat_calendar_live.py::test_chat_utc_period_and_exact_sum",
       "status": "implemented_not_run",
       "missing_prerequisite": null
     },
@@ -393,10 +393,10 @@
       "status": "live_pass",
       "missing_prerequisite": null,
       "evidence": {
-        "source_id": "0482ff01f01ddbfbc71a36dbc482af71a2eb8d3426194737cc4e0e3c317dfdd9",
-        "receipt": ".local/archives/sql-product-figma-20261029/patch17-live/browser.xml",
+        "source_id": "08a2a9ebeac5581da264050581c7a312d8b2aa9a947dd16b5e00ace1c0a0d6d0",
+        "receipt": ".local/archives/sql-product-figma-20261029/patch18-canonical-remaining-smoke/browser.xml",
         "model": "qwen3.8:latest",
-        "scope": "Both original golden datasets, exact old/new rows and profile IDs, A->B->historyA->continueA; immutable old A/B exports unchanged; raw external harness identical AST apart from canonical import module paths."
+        "scope": "Both fullgolden datasets; original A->B->historyA->continueA exactrows/profile IDs; old A/B downloads remain unchanged. Canonical maintained browser tests; not full-series qualification."
       }
     },
     {
@@ -534,9 +534,10 @@
     }
   ],
   "current_runtime": {
-    "version": "2.2.8-dev.0482ff01f01d",
-    "commit": "7546a2d3f89b0b01607e4d2143663e6a965408f0",
-    "source_id": "0482ff01f01ddbfbc71a36dbc482af71a2eb8d3426194737cc4e0e3c317dfdd9",
-    "qualification_boundary": "Feature/local installed and published. Each live_pass applies only to its evidence.source_id; C17A/B current-source PASS. Other current-source lanes remain incomplete."
+    "version": "2.2.9-dev.08a2a9ebeac5",
+    "commit": "7eb5f14a44a158f368bf72748f43916f66c80ba2",
+    "source_id": "08a2a9ebeac5581da264050581c7a312d8b2aa9a947dd16b5e00ace1c0a0d6d0",
+    "qualification_boundary": "Feature/local installed and published; current-source timezoneA/B and source/historyC17A/B smoke4 PASS. Full42distinct x3series remains incomplete. Each live_pass applies only to evidence.source_id.",
+    "verified_smoke_receipt": ".local/archives/sql-product-figma-20261029/patch18-canonical-remaining-smoke/browser.xml"
   }
 }

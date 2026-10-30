@@ -169,3 +169,17 @@ def test_command_timeout_terminates_children_holding_output_pipe(tmp_path, monke
     assert "child started" in result.stdout
     assert monotonic() - started < 15, "A child kept the pipe open after the timeout"
     assert "Command timeout" in (tmp_path / "timeout.log").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("budget", ["0", "59", "7201", "invalid"])
+def test_invalid_browser_budget_is_rejected_before_runtime_access(tmp_path, monkeypatch, budget):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["runner.py", "--source-root", str(runner.ROOT), "--dist-root", str(tmp_path / "dist"), "--evidence-dir", str(tmp_path / "evidence"), "--browser-timeout-seconds", budget],
+    )
+    monkeypatch.setattr(runner, "command", lambda *_args, **_kwargs: pytest.fail("Invalid budget must not access Docker"))
+    monkeypatch.setattr(runner, "urlopen", lambda *_args, **_kwargs: pytest.fail("Invalid budget must not access a provider"))
+    with pytest.raises(SystemExit) as stopped:
+        runner.main()
+    assert stopped.value.code == 2

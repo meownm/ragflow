@@ -146,12 +146,15 @@ def main():
     parser.add_argument("--openmetadata-network", help="Existing private Docker network for the real OpenMetadata server")
     parser.add_argument("--network-subnet", type=IPv4Network, help="Explicit unused QA IPv4 CIDR when Docker's automatic address pools are exhausted")
     parser.add_argument("--base-port", type=int, choices=(19382, 19482), default=19382, help="Dedicated loopback QA HTTP port; admin uses the next port")
+    parser.add_argument("--browser-timeout-seconds", type=int, default=1800, help="Overall browser batch budget, 60..7200 seconds; individual test/model limits stay unchanged")
     parser.add_argument("--business-documents-quality", action="store_true", help="Run the real-model Business Documents suite in this disposable app")
     parser.add_argument("--business-documents-case-id", help="Run one Business Documents case for diagnosis; the quality report remains incomplete")
     parser.add_argument("--business-documents-nightly", action="store_true", help="Run one full nightly series across the disposable QA tenant's Ollama catalog")
     parser.add_argument("--skip-browser-tests", action="store_true", help="Use only with Business Documents model quality; no built SPA or browser evidence")
     parser.add_argument("tests", nargs="*")
     args = parser.parse_args()
+    if not 60 <= args.browser_timeout_seconds <= 7200:
+        parser.error("--browser-timeout-seconds must be between 60 and 7200")
     BASE = f"http://127.0.0.1:{args.base_port}"
     if args.skip_browser_tests and not args.business_documents_quality:
         parser.error("--skip-browser-tests requires --business-documents-quality")
@@ -266,6 +269,7 @@ def main():
             source_identity = "development:" + subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=source, text=True).strip()
         identity = {
             "project": PROJECT,
+            "browser_timeout_seconds": args.browser_timeout_seconds,
             "source": str(source),
             "dist": str(dist),
             "source_id": source_identity,
@@ -419,7 +423,7 @@ def main():
                     log="browser.log",
                     check=False,
                     cwd=source,
-                    timeout=1800,
+                    timeout=args.browser_timeout_seconds,
                 )
                 if not args.skip_browser_tests
                 else None

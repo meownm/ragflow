@@ -76,7 +76,7 @@ function LoginFormContent({
         >
           {title === 'login' ? t('loginTitle') : t('signUpTitle')}
         </h1>
-        <p className="text-sm text-text-secondary">
+        <p className="text-base text-text-secondary sm:text-sm">
           {title === 'login' ? t('loginDescription') : t('registerDescription')}
         </p>
       </div>
@@ -95,7 +95,9 @@ function LoginFormContent({
                 name="email"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel required>{t('emailLabel')}</FormLabel>
+                    <FormLabel required className="text-base sm:text-sm">
+                      {t('emailLabel')}
+                    </FormLabel>
                     <FormControl>
                       <Input
                         data-testid="auth-email"
@@ -117,7 +119,9 @@ function LoginFormContent({
                   name="nickname"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel required>{t('nicknameLabel')}</FormLabel>
+                      <FormLabel required className="text-base sm:text-sm">
+                        {t('nicknameLabel')}
+                      </FormLabel>
                       <FormControl>
                         <Input
                           data-testid="auth-nickname"
@@ -138,7 +142,9 @@ function LoginFormContent({
                 name="password"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel required>{t('passwordLabel')}</FormLabel>
+                    <FormLabel required className="text-base sm:text-sm">
+                      {t('passwordLabel')}
+                    </FormLabel>
                     <FormControl>
                       <Input
                         data-testid="auth-password"
@@ -174,7 +180,7 @@ function LoginFormContent({
                             className="size-5 group-hover:border-border-default group-hover:bg-border-button"
                           />
                         </FormControl>
-                        <FormLabel className="flex min-h-11 cursor-pointer items-center text-text-secondary">
+                        <FormLabel className="flex min-h-12 cursor-pointer items-center text-base text-text-secondary sm:min-h-11 sm:text-sm">
                           {t('rememberMe')}
                         </FormLabel>
                       </div>
@@ -188,7 +194,7 @@ function LoginFormContent({
                 type="submit"
                 loading={loading}
                 size="xl"
-                className="w-full"
+                className="w-full text-base"
               >
                 {title === 'login' ? t('login') : t('continue')}
               </ButtonLoading>
@@ -205,7 +211,7 @@ function LoginFormContent({
                 variant="outline"
                 key={item.channel}
                 onClick={() => handleLoginWithChannel(item.channel)}
-                className="min-h-12 w-full whitespace-normal"
+                className="min-h-12 w-full whitespace-normal text-base"
               >
                 <div className="flex items-center">
                   <SvgIcon
@@ -223,13 +229,13 @@ function LoginFormContent({
 
         {!disablePasswordLogin && title === 'login' && registerEnabled && (
           <div className="mt-5 text-center">
-            <p className="flex flex-wrap items-center justify-center gap-x-2 text-text-secondary text-sm">
+            <p className="flex flex-wrap items-center justify-center gap-x-2 text-base text-text-secondary sm:text-sm">
               {t('signInTip')}
               <Button
                 data-testid="auth-toggle-register"
                 variant={'transparent'}
                 onClick={changeTitle}
-                className="min-h-11 px-1 font-medium text-text-primary underline underline-offset-4 hover:bg-transparent"
+                className="min-h-12 px-1 text-base font-medium text-text-primary underline underline-offset-4 hover:bg-transparent sm:min-h-11 sm:text-sm"
               >
                 {t('signUp')}
               </Button>
@@ -238,13 +244,13 @@ function LoginFormContent({
         )}
         {!disablePasswordLogin && title === 'register' && (
           <div className="mt-5 text-center">
-            <p className="flex flex-wrap items-center justify-center gap-x-2 text-text-secondary text-sm">
+            <p className="flex flex-wrap items-center justify-center gap-x-2 text-base text-text-secondary sm:text-sm">
               {t('signUpTip')}
               <Button
                 data-testid="auth-toggle-login"
                 variant={'transparent'}
                 onClick={changeTitle}
-                className="min-h-11 px-1 font-medium text-text-primary underline underline-offset-4 hover:bg-transparent"
+                className="min-h-12 px-1 text-base font-medium text-text-primary underline underline-offset-4 hover:bg-transparent sm:min-h-11 sm:text-sm"
               >
                 {t('login')}
               </Button>

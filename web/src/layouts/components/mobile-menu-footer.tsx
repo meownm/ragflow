@@ -20,7 +20,7 @@ function FooterLink({
       target={target}
       rel={rel}
       onClick={onClick}
-      className="text-text-secondary transition-colors hover:text-text-primary"
+      className="inline-flex min-h-12 items-center px-3 text-text-primary transition-colors hover:underline"
     >
       {children}
     </a>
@@ -35,8 +35,8 @@ export function MobileMenuFooter({ onClose }: MobileMenuFooterProps) {
   const { t } = useTranslation();
 
   return (
-    <div className="shrink-0 border-t border-border-button px-4 py-4">
-      <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-sm">
+    <div className="shrink-0 border-t border-border-button px-4 py-2">
+      <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-base">
         <FooterLink
           href={USER_GUIDE_URL}
           target="_blank"

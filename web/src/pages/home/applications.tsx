@@ -68,7 +68,7 @@ export function Applications() {
   return (
     <section className="mt-8">
       <header className="mb-4 flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h2 className="flex items-center text-xl font-semibold sm:text-2xl">
+        <h2 className="flex items-center text-2xl font-semibold">
           <HomeIcon
             imgClass="me-2.5"
             name={`${IconMap[val as keyof typeof IconMap]}`}
@@ -87,7 +87,7 @@ export function Applications() {
           <Segmented
             buttonSize="lg"
             className="max-w-full flex-wrap gap-1"
-            itemClassName="min-h-11 px-2"
+            itemClassName="min-h-12 px-3 text-base sm:min-h-11 sm:px-2 sm:text-sm"
             options={options}
             value={val}
             onChange={handleChange}

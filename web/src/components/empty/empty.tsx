@@ -61,9 +61,13 @@ export const EmptyCard = (props: EmptyCardProps) => {
       {...restProps}
     >
       {icon}
-      {title && <div className="text-sm text-text-primary">{title}</div>}
+      {title && (
+        <div className="text-base text-text-primary sm:text-sm">{title}</div>
+      )}
       {description && (
-        <p className="text-sm text-text-secondary">{description}</p>
+        <p className="text-base text-text-secondary sm:text-sm">
+          {description}
+        </p>
       )}
       {children}
     </article>
@@ -125,7 +129,7 @@ export const EmptyAppCard = (props: {
             size="lg"
             className={cn(
               defaultClass,
-              'min-h-11 max-w-full whitespace-normal',
+              'min-h-12 max-w-full whitespace-normal text-base sm:min-h-11 sm:text-sm',
             )}
             onClick={props.onClick}
             data-testid={testId}

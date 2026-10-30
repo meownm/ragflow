@@ -124,12 +124,12 @@ export function Header({
               <Button
                 variant="ghost"
                 className={cn(
-                  'size-10 shrink-0 px-0',
-                  !isCompact && 'size-auto gap-1 px-4',
+                  'shrink-0 px-0',
+                  isCompact ? 'size-12 sm:size-10' : 'size-auto gap-1 px-4',
                 )}
                 aria-label={currentLanguage?.displayName}
               >
-                {isCompact && <LucideLanguages className="size-5" />}
+                {isCompact && <LucideLanguages className="size-6 sm:size-5" />}
                 {!isCompact && (
                   <>
                     {currentLanguage?.displayName}
@@ -168,12 +168,18 @@ export function Header({
             </>
           )}
 
-          <ThemeButton className={cn(!isCompact && '!size-8')} />
+          <ThemeButton
+            className={cn(
+              isCompact
+                ? 'size-12 sm:size-10 [&_svg]:size-6 sm:[&_svg]:size-5'
+                : '!size-8',
+            )}
+          />
 
           <Link
             to={Routes.UserSetting}
             className={cn(
-              'relative flex size-10 shrink-0 items-center justify-center',
+              'relative flex size-12 shrink-0 items-center justify-center sm:size-10',
               !isCompact && 'ms-3',
             )}
             data-testid="settings-entrypoint"
@@ -182,7 +188,7 @@ export function Header({
               name={nickname}
               avatar={avatar}
               isPerson
-              className="size-8"
+              className="size-10 sm:size-8"
             />
           </Link>
         </div>

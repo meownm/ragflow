@@ -390,15 +390,15 @@ function MobileNavItem({
       {...linkProps}
       onClick={onClick}
       className={cn(
-        'flex min-h-11 w-full items-center gap-3 rounded-lg px-3 py-3 text-sm',
-        'text-text-secondary transition-colors hover:bg-bg-card hover:text-text-primary',
+        'flex min-h-14 w-full items-center gap-4 rounded-lg px-4 py-3 text-lg leading-6',
+        'text-text-primary transition-colors hover:bg-bg-card',
         'focus-visible:bg-bg-card focus-visible:text-text-primary',
         isActive &&
           'border-l-2 border-text-primary bg-bg-card font-medium text-text-primary',
       )}
       aria-current={isActive ? 'page' : undefined}
     >
-      <Icon className="size-5 shrink-0 stroke-[1.5]" />
+      <Icon className="size-6 shrink-0 stroke-[1.75]" />
       <span className="min-w-0 break-words">{label}</span>
     </Link>
   );
@@ -422,7 +422,7 @@ export function MobileNavbar({ renderFooter }: MobileNavbarProps) {
         <Button
           variant="ghost"
           size="icon"
-          className="size-10 shrink-0"
+          className="size-12 shrink-0 sm:size-10"
           aria-label={t('common.menu')}
         >
           <LucideMenu className="size-6 stroke-[1.75]" />
@@ -433,7 +433,7 @@ export function MobileNavbar({ renderFooter }: MobileNavbarProps) {
         side="left"
         closeIcon={false}
         aria-describedby={undefined}
-        className="flex w-[min(92vw,20rem)] flex-col gap-0 p-0 sm:w-80"
+        className="flex w-full max-w-[26rem] flex-col gap-0 p-0 sm:w-80"
       >
         <div className="flex shrink-0 items-center gap-3 border-b border-border-button p-4">
           <img
@@ -441,24 +441,24 @@ export function MobileNavbar({ renderFooter }: MobileNavbarProps) {
             alt="Логотип Агент Раггер"
             className="size-9"
           />
-          <SheetTitle className="flex-1 text-base text-text-primary">
+          <SheetTitle className="flex-1 text-xl text-text-primary">
             {t('common.menu')}
           </SheetTitle>
           <SheetClose asChild>
             <Button
               variant="ghost"
               size="icon"
-              className="size-11"
+              className="size-12"
               aria-label={t('common.close')}
             >
-              <X className="size-5" />
+              <X className="size-6" />
             </Button>
           </SheetClose>
         </div>
 
         <nav
           aria-label={t('common.menu')}
-          className="min-h-0 flex-1 overflow-y-auto px-2 py-3"
+          className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 py-3"
         >
           {(['home', 'documents', 'data', 'tools'] as const).map((group) => {
             const items = visibleMenuItems.filter(
@@ -468,7 +468,7 @@ export function MobileNavbar({ renderFooter }: MobileNavbarProps) {
             return (
               <div key={group} className="mb-4 last:mb-0">
                 {group !== 'home' && (
-                  <h2 className="px-3 pb-2 pt-1 text-xs font-medium text-text-secondary">
+                  <h2 className="px-4 pb-2 pt-2 text-sm font-semibold text-text-secondary">
                     {t(`header.navigationGroups.${group}`, {
                       defaultValue: group,
                     })}

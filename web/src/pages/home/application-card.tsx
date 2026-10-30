@@ -32,10 +32,10 @@ export function ApplicationCard({
           />
 
           <div className="flex-1">
-            <h3 className="text-sm font-normal line-clamp-1 mb-1 text-ellipsis w-[160px] overflow-hidden">
+            <h3 className="text-base font-normal line-clamp-1 mb-1 text-ellipsis w-[160px] overflow-hidden sm:text-sm">
               {app.title}
             </h3>
-            <p className="text-xs font-normal text-text-secondary">
+            <p className="text-sm font-normal text-text-secondary sm:text-xs">
               {formatDate(app.update_time)}
             </p>
           </div>
@@ -56,7 +56,7 @@ export function SeeAllAppCard({ click }: SeeAllAppCardProps) {
     <Button
       type="button"
       variant="outline"
-      className="min-h-[76px] h-full w-full whitespace-normal text-text-secondary"
+      className="min-h-[76px] h-full w-full whitespace-normal text-base text-text-secondary sm:text-sm"
       onClick={click}
     >
       {t('common.seeAll')} <ChevronRight className="size-4" />

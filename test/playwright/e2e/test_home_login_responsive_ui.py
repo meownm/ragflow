@@ -84,6 +84,10 @@ def _shot(page, name):
     page.screenshot(path=str(root / name), full_page=True, animations="disabled")
 
 
+def _font_size(locator):
+    return locator.evaluate("element => parseFloat(getComputedStyle(element).fontSize)")
+
+
 @pytest.mark.parametrize("size", [(320, 568), (375, 812), (390, 844), (1280, 900)])
 @pytest.mark.parametrize("theme", ["light", "dark"])
 def test_home_and_grouped_menu_fit_viewport_and_support_keyboard(page, base_url, size, theme):
@@ -92,6 +96,15 @@ def test_home_and_grouped_menu_fit_viewport_and_support_keyboard(page, base_url,
     page.goto(f"{base_url}/")
     expect(page.locator("html")).to_have_class(re.compile(rf"\b{theme}\b"))
     expect(page.get_by_role("button", name="Создать чат", exact=True)).to_be_visible()
+    if size[0] < 640:
+        for heading in page.locator("h2").all():
+            assert _font_size(heading) >= 24
+        for control in page.get_by_role("group", name="Тип приложения").get_by_role("button").all():
+            assert _font_size(control) >= 16
+            assert control.bounding_box()["height"] >= 48
+        create = page.get_by_role("button", name="Создать чат", exact=True)
+        assert _font_size(create) >= 16
+        assert create.bounding_box()["height"] >= 48
     expect(page.locator("h2 img")).to_have_count(2)
     for icon in page.locator("h2 img").all():
         expect(icon).to_have_attribute("src", re.compile(".+"))
@@ -102,6 +115,8 @@ def test_home_and_grouped_menu_fit_viewport_and_support_keyboard(page, base_url,
     _shot(page, f"home-action-{size[0]}-{theme}.png")
 
     menu_button = page.get_by_role("button", name="Меню", exact=True)
+    if size[0] < 640:
+        assert menu_button.bounding_box()["height"] >= 48
     menu_button.click()
     menu = page.get_by_role("dialog", name="Меню", exact=True)
     expect(menu.get_by_role("heading", name="Документы", exact=True)).to_be_visible()
@@ -109,11 +124,27 @@ def test_home_and_grouped_menu_fit_viewport_and_support_keyboard(page, base_url,
     expect(menu.get_by_role("heading", name="ИИ-инструменты", exact=True)).to_be_visible()
     expect(menu.get_by_test_id("nav-home")).to_have_attribute("aria-current", "page")
     expect(menu.get_by_role("link")).to_have_count(17)
+    for link in menu.get_by_role("navigation").get_by_role("link").all():
+        assert _font_size(link) >= 18
+        assert link.bounding_box()["height"] >= 56
+        assert round(link.locator("svg").bounding_box()["width"], 2) >= 24
+    for heading in menu.get_by_role("navigation").get_by_role("heading").all():
+        assert _font_size(heading) >= 14
+    if size[0] < 640:
+        assert menu.bounding_box()["width"] >= size[0] * 0.95
+    help_link = menu.get_by_role("link", name="Инструкция", exact=True)
+    assert _font_size(help_link) >= 16
+    assert help_link.bounding_box()["height"] >= 48
     expect(menu.get_by_test_id("nav-sql-assistant")).to_be_visible()
     _no_horizontal_scroll(page)
     _shot(page, f"menu-{size[0]}-{theme}.png")
     menu.get_by_test_id("nav-translator").focus()
     expect(menu.get_by_test_id("nav-translator")).to_be_focused()
+    last = menu.get_by_test_id("nav-translator").bounding_box()
+    nav = menu.get_by_role("navigation").bounding_box()
+    assert last["y"] >= nav["y"] - 1
+    assert last["y"] + last["height"] <= nav["y"] + nav["height"] + 1
+    _shot(page, f"menu-end-{size[0]}-{theme}.png")
     page.keyboard.press("Escape")
     expect(menu).not_to_be_visible()
     expect(menu_button).to_be_focused()
@@ -141,6 +172,10 @@ def test_login_validation_labels_and_registration_fit_viewport(page, base_url, s
     expect(password).to_have_attribute("autocomplete", "current-password")
     expect(password).to_have_attribute("aria-invalid", "false")
     expect(page.get_by_test_id("auth-email")).to_have_attribute("type", "email")
+    if size[0] < 640:
+        for label in page.locator("label").all():
+            assert _font_size(label) >= 16
+        assert _font_size(page.get_by_test_id("auth-submit")) >= 16
     for control in (password, page.get_by_test_id("auth-email"), page.get_by_test_id("auth-submit")):
         assert control.bounding_box()["height"] >= 44
     _no_horizontal_scroll(page)

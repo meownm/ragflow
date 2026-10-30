@@ -73,7 +73,11 @@ def test_chat_two_tabs_reject_one_stale_command_without_losing_the_winner(page, 
         winner = next(item for item in outcomes if item["status"] == 200)
         loser = next(item for item in outcomes if item["status"] == 409)
         assert winner["body"]["code"] == 0
-        assert "SQL_SESSION_VERSION_CONFLICT" in str(loser["body"])
+        # Either optimistic CAS can reject a command that raced the winner.
+        # Both require refresh; an unrelated 409 is not a version conflict.
+        conflict = loser["body"]["data"]
+        assert conflict["error_code"] in {"SQL_SESSION_VERSION_CONFLICT", "SQL_AGENT_VERSION_CONFLICT"}
+        assert conflict["recovery"] == "REFRESH" and conflict["retryable"] is False
         winner_text = winner["wire"]["payload"]["text"]
         winner_page, loser_page = (page, second) if winner_text == first_text else (second, page)
         if winner_text == second_text:

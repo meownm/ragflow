@@ -233,8 +233,19 @@
         "period"
       ],
       "automated_by": "test/playwright/e2e/test_sql_chat_calendar_live.py::test_chat_utc_period_and_exact_sum",
-      "status": "implemented_not_run",
-      "missing_prerequisite": null
+      "status": "live_pass",
+      "missing_prerequisite": null,
+      "evidence": {
+        "source_id": "08a2a9ebeac5581da264050581c7a312d8b2aa9a947dd16b5e00ace1c0a0d6d0",
+        "receipt": ".local/archives/sql-product-figma-20261029/patch18-canonical-remaining-calendar/browser.xml",
+        "receipt_sha256": "040c0c0ddcb8a1eae3c11e1346f9ab2a45b95acebcb67af64d5f0911ccff0df7",
+        "model": "qwen3.8:latest",
+        "case_names": [
+          "test_chat_utc_period_and_exact_sum[golden-a]",
+          "test_chat_utc_period_and_exact_sum[golden-b]"
+        ],
+        "scope": "Both complete golden datasets: UTC September preserves source and paid; exact rows and sums 240.00/490.00. Functional browser acceptance; native resource cleanup is tracked separately."
+      }
     },
     {
       "id": "C10",
@@ -252,8 +263,19 @@
         "timezone"
       ],
       "automated_by": "test/playwright/e2e/test_sql_chat_calendar_live.py::test_chat_missing_year_requires_an_ordinary_reply",
-      "status": "implemented_not_run",
-      "missing_prerequisite": null
+      "status": "live_pass",
+      "missing_prerequisite": null,
+      "evidence": {
+        "source_id": "08a2a9ebeac5581da264050581c7a312d8b2aa9a947dd16b5e00ace1c0a0d6d0",
+        "receipt": ".local/archives/sql-product-figma-20261029/patch18-canonical-remaining-calendar/browser.xml",
+        "receipt_sha256": "040c0c0ddcb8a1eae3c11e1346f9ab2a45b95acebcb67af64d5f0911ccff0df7",
+        "model": "qwen3.8:latest",
+        "case_names": [
+          "test_chat_missing_year_requires_an_ordinary_reply[golden-a]",
+          "test_chat_missing_year_requires_an_ordinary_reply[golden-b]"
+        ],
+        "scope": "Both complete golden datasets: missing year waits for an ordinary human reply, preserves the confirmed result and creates no SQL Run before clarification; final October UTC row is id103, amount80.00. Functional browser acceptance; native resource cleanup is tracked separately."
+      }
     },
     {
       "id": "C11",
@@ -470,8 +492,19 @@
         "explicit period"
       ],
       "automated_by": "test/playwright/e2e/test_sql_chat_calendar_live.py::test_chat_empty_period_is_success_without_expanding_scope",
-      "status": "implemented_not_run",
-      "missing_prerequisite": null
+      "status": "live_pass",
+      "missing_prerequisite": null,
+      "evidence": {
+        "source_id": "08a2a9ebeac5581da264050581c7a312d8b2aa9a947dd16b5e00ace1c0a0d6d0",
+        "receipt": ".local/archives/sql-product-figma-20261029/patch18-canonical-remaining-calendar/browser.xml",
+        "receipt_sha256": "040c0c0ddcb8a1eae3c11e1346f9ab2a45b95acebcb67af64d5f0911ccff0df7",
+        "model": "qwen3.8:latest",
+        "case_names": [
+          "test_chat_empty_period_is_success_without_expanding_scope[golden-a]",
+          "test_chat_empty_period_is_success_without_expanding_scope[golden-b]"
+        ],
+        "scope": "Both complete golden datasets: January2028 produces a successful READY result with zero rows, preserves paid/source/explicit period, and reload restores the same empty result. Functional browser acceptance; native resource cleanup is tracked separately."
+      }
     },
     {
       "id": "C22",
@@ -537,7 +570,8 @@
     "version": "2.2.9-dev.08a2a9ebeac5",
     "commit": "7eb5f14a44a158f368bf72748f43916f66c80ba2",
     "source_id": "08a2a9ebeac5581da264050581c7a312d8b2aa9a947dd16b5e00ace1c0a0d6d0",
-    "qualification_boundary": "Feature/local installed and published; current-source timezoneA/B and source/historyC17A/B smoke4 PASS. One full pass of42distinct scenarios remains incomplete; repeat only failures and affected behavior after fixes. Triple full series are not required for this local delivery. Each live_pass applies only to evidence.source_id.",
-    "verified_smoke_receipt": ".local/archives/sql-product-figma-20261029/patch18-canonical-remaining-smoke/browser.xml"
+    "qualification_boundary": "Feature/local installed and published. Current-source smoke4 and calendar8 PASS cover 10 distinct canonical scenarios on both full golden datasets. The remaining32 cases and own resource cleanup are incomplete. Repeat only failures and affected behavior after fixes; triple full series are out of scope. Each live_pass applies only to evidence.source_id.",
+    "verified_smoke_receipt": ".local/archives/sql-product-figma-20261029/patch18-canonical-remaining-smoke/browser.xml",
+    "verified_calendar_receipt": ".local/archives/sql-product-figma-20261029/patch18-canonical-remaining-calendar/browser.xml"
   }
 }

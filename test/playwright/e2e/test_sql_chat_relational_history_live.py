@@ -90,15 +90,16 @@ def test_chat_explicit_threshold_replacement_is_not_an_impossible_and(page, live
     before = chat._rows(page, live, chat_probe, high, ["id", "amount"])
     chat._send(page, chat_probe, "Добавь ещё условие amount меньше 50.")
 
-    def needs_clarification(value):
-        assert chat._identity(value) == chat._identity(before), "An unresolved contradiction must not replace the confirmed result"
-        assert {run["id"] for run in value["session"]["project"]["runs"]} == {run["id"] for run in before["session"]["project"]["runs"]}, "Do not run an impossible AND before clarifying replacement"
-        return value["session"]["conversation"]["phase"] == "WAITING"
-
-    waiting = chat._wait(page, live, chat_probe, needs_clarification)
-    question = chat._clarification_question(waiting)
-    assert re.search(r"замен|противореч|порог|сохран", question, re.IGNORECASE)
-    expect(chat._root(page)).to_contain_text(question)
+    empty = chat._wait(
+        page,
+        live,
+        chat_probe,
+        lambda value: chat._matches(value["result"], ["id", "amount"], []) and chat._idle(value["session"]["project"]),
+    )
+    assert empty["result"]["execution_status"] == "READY"
+    assert chat._identity(empty) != chat._identity(before)
+    assert len(empty["session"]["project"]["runs"]) == len(before["session"]["project"]["runs"]) + 1
+    expect(chat._root(page)).to_contain_text("Показано 0 из 0 строк сохранённого набора.")
     chat._send(page, chat_probe, "Теперь amount меньше 50 вместо прежнего порога. Остальные условия сохрани.")
     low = chat._rows(page, live, chat_probe, [[105, 40], [107, 0]], ["id", "amount"])
     assert chat._identity(low) != chat._identity(before)

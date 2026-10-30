@@ -70,7 +70,8 @@
         "receipt": ".local/archives/sql-product-figma-20261029/live-loop-subnet-path/browser.xml",
         "model": "qwen3.8:latest",
         "scope": "Frozen loop/view-refresh fix; subsequent definition/delivery increment not yet live qualified"
-      }
+      },
+      "question_scope": "Краткий вопрос про оплаченные заказы и поля, направление сортировки явно по возрастанию. Без SQL/grain/LIMIT/read-only подсказок; источник указан для изоляции QA. Время фиксируется, SLA не выдумывается."
     },
     {
       "id": "C02",
@@ -90,7 +91,8 @@
       "missing_prerequisite": "Matching runtime implementing the proposed single-composer UI; bindings must be verified there",
       "additional_checks": [
         "test/playwright/e2e/test_sql_assistant_chat_live.py::test_chat_registered_metric_binds_the_requested_parameter"
-      ]
+      ],
+      "question_scope": "Неопределённый «итог» без ведущей фразы о необходимости уточнения; до ответа пользователя SQL не запускается."
     },
     {
       "id": "C03",
@@ -304,13 +306,14 @@
     {
       "id": "C12",
       "priority": "P0",
-      "title": "Противоречие и явная замена",
+      "title": "Явное добавление и замена условия",
       "fixture": "golden",
       "steps": [
         "Оставь amount>=50.",
-        "Теперь amount<50 вместо прежнего порога."
+        "Добавь ещё условие amount меньше 50.",
+        "Теперь amount<50 вместо прежнего порога. Остальные условия сохрани."
       ],
-      "expected": "Вначале ids101,102 (+108,109,110 во втором наборе), затем105,107 в обоих. Явная замена не становится AND двух порогов. Неявное противоречие требует уточнения.",
+      "expected": "Вначале ids101,102 (+108,109,110 во втором наборе). Явное добавление AND amount<50 даёт успешные 0 строк; затем явная замена — ids105,107 в обоих наборах. Остальные условия и исторический результат сохраняются. Уточняется только действительно отсутствующее бизнес-решение.",
       "preserved": [
         "source",
         "paid",

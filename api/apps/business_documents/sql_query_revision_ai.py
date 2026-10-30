@@ -40,6 +40,9 @@ An added filter uses AND unless another Boolean combination is requested. Removi
 predicate and bindings no longer referenced. Explicit instructions to keep conditions, including "сохрани/не меняй",
 apply to their listed objects. Changing a bound value keeps its existing name and type, even if its name describes
 the old value. Never ask whether untouched conditions should stay: they stay by default.
+An explicit replacement removes the superseded predicate while keeping the other conditions.
+An explicit addition keeps the previous predicates and uses AND, even when their conjunction returns no rows.
+An empty result is valid; do not change or ask to replace a condition that the human explicitly added.
 
 For calendar filters on timestamp-with-time-zone columns, let PostgreSQL convert local boundaries.
 Never add/subtract UTC offsets yourself or shift a calendar label by hours. Bind the requested local start/end

@@ -240,7 +240,7 @@ def _complete(page, live, probe, value):
 
 def test_chat_fast_answer_and_server_restore_in_fresh_context(page, live, chat_probe):
     """C01/C05: no staged API setup of the question, then real server restore."""
-    _start(page, live, chat_probe)
+    _start(page, live, chat_probe, f"Покажи оплаченные заказы из {chat_probe['fqn']}: id, status, amount. Отсортируй по id по возрастанию.")
     before = _rows(page, live, chat_probe)
     page.reload(wait_until="domcontentloaded")
     assert _identity(_rows(page, live, chat_probe)) == _identity(before)
@@ -265,7 +265,7 @@ def test_chat_fast_answer_and_server_restore_in_fresh_context(page, live, chat_p
 
 def test_chat_clarifies_undefined_metric_before_running(page, live, chat_probe):
     """C02: ambiguity produces a question, not a fabricated number."""
-    _start(page, live, chat_probe, f"Используй только {chat_probe['fqn']}. Покажи итог по таблице. Что именно считать итогом, я пока не выбрал.")
+    _start(page, live, chat_probe, f"Покажи итог по таблице {chat_probe['fqn']}.")
     value = _wait(page, live, chat_probe, lambda item: bool(item["session"]["project"].get("pending_proposal")))
     assert value["session"]["selected_result_id"] is None
     assert not value["session"]["project"].get("runs")

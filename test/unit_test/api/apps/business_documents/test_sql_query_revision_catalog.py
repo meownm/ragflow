@@ -87,6 +87,22 @@ async def test_valid_edit_stays_one_call_without_catalog_io(source, monkeypatch)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["add", "replace"])
+async def test_explicit_numeric_addition_or_replacement_preserves_the_requested_predicates(source, monkeypatch, operation):
+    request, _ = source
+    request["comments"] = [{"text": "Add amount < 50" if operation == "add" else "Replace amount >= 50 with amount < 50; preserve other conditions"}]
+    before = deepcopy(request)
+    sql = BASE.replace(" LIMIT", " AND o.amount < :amount_min LIMIT") if operation == "add" else BASE.replace("o.amount >= :amount_min", "o.amount < :amount_min")
+    monkeypatch.setattr(catalog, "OpenMetadataCatalogResolver", lambda: pytest.fail("An existing-source filter edit needs no catalog discovery"))
+    model = Model(sql)
+    result = await generate(request, model)
+    assert result["proposal"]["checks"]["status"] == "PASS"
+    assert result["proposal"]["sql"] == sql and result["proposal"]["parameters"] == PARAMETERS
+    assert len(model.contexts) == 1 and request == before
+    assert "verified_catalog_schema" not in result
+
+
+@pytest.mark.asyncio
 async def test_actual_c11_shape_loads_fk_target_before_one_guarded_correction(source):
     request, _ = source
     before = deepcopy(request)

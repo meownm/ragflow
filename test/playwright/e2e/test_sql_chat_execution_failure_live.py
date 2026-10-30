@@ -1,7 +1,8 @@
 """C13: a genuine SQL permission error preserves the confirmed analysis.
 
 Only the disposable fixture's own SELECT grant is revoked/restored. The real
-worker plans/executes the new query; no API/model/result response is substituted.
+worker rejects the new query at physical preflight or execution; no API/model/
+result response is substituted. An EXPLAIN rejection need not create a Run.
 """
 
 import re
@@ -40,6 +41,8 @@ def test_chat_real_execution_error_keeps_previous_result_until_success(page, liv
     failed_run = None
     try:
         live.sql(f"REVOKE SELECT ON {schema}.regression_orders FROM {role}; SELECT json_build_object('own_select_revoked',true);")
+        denial = live.sql(f"SELECT json_build_object('allowed',has_table_privilege('{role}','{schema}.regression_orders','SELECT'));")
+        assert denial["allowed"] is False
         chat._send(page, chat_probe, "Оставь amount не меньше 50. Остальные условия сохрани.")
         deadline = time.monotonic() + chat.TIMEOUT_SECONDS
         while time.monotonic() < deadline:
@@ -48,12 +51,14 @@ def test_chat_real_execution_error_keeps_previous_result_until_success(page, liv
             if job.get("id"):
                 chat_probe["jobs"].add(job["id"])
             failed_run = next((run for run in session["project"].get("runs", []) if run["id"] not in initial_runs and run["status"] == "FAILED"), None)
-            if failed_run and chat._idle(session["project"]):
-                break
-            if session.get("conversation", {}).get("phase") == "ERROR" and not failed_run:
-                raise AssertionError("A model/planning error is not evidence of a real SQL execution failure")
+            error = session["project"].get("last_error") or session.get("conversation", {}).get("error") or {}
+            if session.get("conversation", {}).get("phase") == "ERROR":
+                assert error.get("code") in {"SQL_PHYSICAL_SCHEMA_INVALID", "SQL_EXECUTION_FAILED"}, "A model/planning failure is not evidence of the injected PostgreSQL denial"
+                if chat._idle(session["project"]):
+                    break
             page.wait_for_timeout(500)
-        assert failed_run is not None, "The genuine SQL permission failure must reach a terminal failed Run"
+        assert error.get("code") in {"SQL_PHYSICAL_SCHEMA_INVALID", "SQL_EXECUTION_FAILED"}, "The genuine PostgreSQL denial must be reported"
+        assert all(run["status"] == "FAILED" for run in session["project"].get("runs", []) if run["id"] not in initial_runs), "A denied query cannot publish a ready result"
         assert chat._idle(session["project"]), "Failure acceptance requires the actual worker to finish"
         assert session["selected_result_id"] == before["result"]["run_id"]
         retained = live.api("GET", chat.SESSIONS + "/" + chat_probe["id"] + "/results/" + before["result"]["run_id"])
@@ -68,6 +73,8 @@ def test_chat_real_execution_error_keeps_previous_result_until_success(page, liv
             {
                 "fault": "REVOKE SELECT on the exact owned fixture table and role",
                 "failed_run": failed_run,
+                "error_code": error["code"],
+                "physical_select_denied": denial["allowed"] is False,
                 "retained_identity": chat._identity({"result": retained}),
                 "retained_rows": retained["rows"],
                 "scope": "genuine PostgreSQL failure; no synthetic API success",

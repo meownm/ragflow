@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import { cn } from '@/lib/utils';
 import { Eye, EyeOff, Search } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 export interface InputProps extends Omit<
@@ -29,6 +29,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
     },
     ref,
   ) => {
+    const { t } = useTranslation();
     const isControlled = value !== undefined;
     const { defaultValue, ...restProps } = props;
     const inputValue = isControlled ? value : defaultValue;
@@ -64,44 +65,32 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
 
     const isPasswordInput = type === 'password';
 
-    const inputEl = useMemo(
-      () => (
-        <input
-          ref={ref}
-          type={isPasswordInput && showPassword ? 'text' : type}
-          className={cn(
-            'peer/input',
-            'flex h-8 w-full rounded-md border-0.5 border-border-button bg-bg-input px-3 py-2 outline-none text-sm text-text-primary',
-            'file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-[rgb(var(--ui-secondary))]',
-            'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ui-focus)] aria-[invalid=true]:border-[rgb(var(--ui-error))]',
-            'disabled:cursor-not-allowed disabled:opacity-50 transition-colors',
-            type === 'number' &&
-              '[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none',
-            className,
-          )}
-          style={{
-            paddingInlineStart:
-              !!prefix && prefixWidth ? `${prefixWidth}px` : '',
-            paddingInlineEnd: isPasswordInput
-              ? '40px'
-              : suffix
-                ? `${suffixWidth}px`
-                : '',
-          }}
-          value={inputValue ?? ''}
-          onChange={handleChange}
-          {...restProps}
-        />
-      ),
-      [
-        prefixWidth,
-        suffixWidth,
-        isPasswordInput,
-        inputValue,
-        className,
-        handleChange,
-        restProps,
-      ],
+    const inputEl = (
+      <input
+        ref={ref}
+        type={isPasswordInput && showPassword ? 'text' : type}
+        className={cn(
+          'peer/input',
+          'flex h-8 w-full rounded-md border-0.5 border-border-button bg-bg-input px-3 py-2 outline-none text-sm text-text-primary',
+          'file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-[rgb(var(--ui-secondary))]',
+          'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ui-focus)] aria-[invalid=true]:border-[rgb(var(--ui-error))]',
+          'disabled:cursor-not-allowed disabled:opacity-50 transition-colors',
+          type === 'number' &&
+            '[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none',
+          className,
+        )}
+        style={{
+          paddingInlineStart: !!prefix && prefixWidth ? `${prefixWidth}px` : '',
+          paddingInlineEnd: isPasswordInput
+            ? '40px'
+            : suffix
+              ? `${suffixWidth}px`
+              : '',
+        }}
+        value={inputValue ?? ''}
+        onChange={handleChange}
+        {...restProps}
+      />
     );
 
     if (prefix || suffix || isPasswordInput) {
@@ -129,9 +118,18 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
           {isPasswordInput && (
             <button
               type="button"
+              aria-label={
+                showPassword
+                  ? t('common.hidePassword', { defaultValue: 'Hide password' })
+                  : t('common.showPassword', { defaultValue: 'Show password' })
+              }
+              aria-pressed={showPassword}
+              aria-controls={restProps.id}
+              disabled={restProps.disabled}
               className="
-                p-2 text-text-secondary
+                flex h-full min-w-10 items-center justify-center text-text-secondary
                 absolute border-0 end-1 top-[50%] translate-y-[-50%]
+                rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ui-focus)]
                 dark:peer-autofill/input:text-text-secondary-inverse
                 dark:peer-autofill/input:hover:text-text-primary-inverse
                 dark:peer-autofill/input:focus-visible:text-text-primary-inverse
@@ -139,9 +137,9 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
               onClick={() => setShowPassword(!showPassword)}
             >
               {showPassword ? (
-                <EyeOff className="size-[1em]" />
+                <EyeOff className="size-[1em]" aria-hidden="true" />
               ) : (
-                <Eye className="size-[1em]" />
+                <Eye className="size-[1em]" aria-hidden="true" />
               )}
             </button>
           )}

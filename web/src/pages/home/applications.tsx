@@ -66,9 +66,9 @@ export function Applications() {
 
   if (!val) return null;
   return (
-    <section className="mt-12">
-      <header className="flex justify-between items-center mb-2.5">
-        <h2 className="text-2xl font-semibold">
+    <section className="mt-8">
+      <header className="mb-4 flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <h2 className="flex items-center text-xl font-semibold sm:text-2xl">
           <HomeIcon
             imgClass="me-2.5"
             name={`${IconMap[val as keyof typeof IconMap]}`}
@@ -77,17 +77,24 @@ export function Applications() {
           {options.find((x) => x.value === val)?.label}
         </h2>
 
-        <Segmented
-          buttonSize="sm"
-          options={options}
-          value={val}
-          onChange={handleChange}
-          // className="bg-bg-card border border-border-button rounded-lg"
-          // activeClassName="bg-text-primary border-none rounded-lg"
-        />
+        <div
+          role="group"
+          aria-label={t('header.applicationType', {
+            defaultValue: 'Application type',
+          })}
+          className="max-w-full"
+        >
+          <Segmented
+            buttonSize="lg"
+            className="max-w-full flex-wrap gap-1"
+            itemClassName="min-h-11 px-2"
+            options={options}
+            value={val}
+            onChange={handleChange}
+          />
+        </div>
       </header>
 
-      {/* <div className="flex flex-wrap gap-4"> */}
       <CardSineLineContainer>
         {val === Routes.Agents && (
           <Agents
@@ -124,7 +131,6 @@ export function Applications() {
           onClick={() => handleNavigate({ isCreate: true })}
         />
       )}
-      {/* </div> */}
     </section>
   );
 }

@@ -109,25 +109,20 @@ def test_logout_prevents_return_to_protected_page(page, base_url):
     expect(page.get_by_test_id("files-list")).to_have_count(0)
 
 
-def test_auth_card_toggle_keeps_inactive_face_out_of_keyboard_and_pointer_input(page, base_url):
+def test_auth_toggle_keeps_one_accessible_form_and_preserves_input(page, base_url):
     api = _AuthApi(registration=True)
     page.route("**/api/**", api)
     page.goto(f"{base_url}/login")
     active = page.get_by_test_id("auth-card-active")
+    active.get_by_test_id("auth-email").fill("qa@example.test")
     active.get_by_test_id("auth-toggle-register").click()
     expect(active.get_by_test_id("auth-nickname")).to_be_visible()
     expect(active).not_to_have_attribute("inert", "")
-    inactive = page.locator("[inert][aria-hidden='true']")
-    expect(inactive).to_have_count(1)
-    expect(inactive).to_have_css("pointer-events", "none")
-    active.get_by_test_id("auth-email").focus()
-    for _ in range(6):
-        page.keyboard.press("Tab")
-        assert page.evaluate("document.activeElement.closest('[inert]') === null")
-    active.get_by_test_id("auth-toggle-login").click()
+    expect(page.get_by_test_id("auth-form")).to_have_count(1)
+    expect(active.get_by_test_id("auth-email")).to_have_value("qa@example.test")
+    active.get_by_test_id("auth-toggle-login").press("Enter")
     expect(active.get_by_test_id("auth-nickname")).to_have_count(0)
-    expect(inactive).to_have_count(1)
-    expect(inactive).to_have_css("pointer-events", "none")
+    expect(page.get_by_test_id("auth-form")).to_have_count(1)
     form = page.locator("form[data-active='true']")
     form.get_by_test_id("auth-email").fill("qa@example.test")
     form.get_by_test_id("auth-password").fill("invalid-qa-password")

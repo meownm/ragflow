@@ -136,6 +136,8 @@ export default {
       greeting: '👋 Здравствуйте',
       setupLlm: 'Настройте языковую модель',
       menu: 'Меню',
+      showPassword: 'Показать пароль',
+      hidePassword: 'Скрыть пароль',
       refresh: 'Обновить',
       rootFolder: 'Корневая папка',
       statementTimeout: 'Ограничение времени запроса',
@@ -212,10 +214,12 @@ export default {
       signUpTitle: 'Создать учетную запись',
       login: 'Войти',
       signUp: 'Зарегистрироваться',
-      loginDescription: 'Мы рады снова видеть вас!',
-      registerDescription: 'Рады приветствовать вас на борту!',
+      loginDescription:
+        'Войдите, чтобы продолжить работу с документами и данными.',
+      registerDescription:
+        'Создайте учётную запись для работы с документами и данными.',
       emailLabel: 'Электронная почта',
-      emailPlaceholder: 'Введите email',
+      emailPlaceholder: 'Введите электронную почту',
       passwordLabel: 'Пароль',
       passwordPlaceholder: 'Введите пароль',
       rememberMe: 'Запомнить меня',
@@ -234,6 +238,12 @@ export default {
       signInWith: 'Войти через {{provider}}',
     },
     header: {
+      applicationType: 'Тип приложения',
+      navigationGroups: {
+        documents: 'Документы',
+        data: 'Данные',
+        tools: 'ИИ-инструменты',
+      },
       knowledgeBase: 'База знаний',
       chat: 'Чат',
       register: 'Регистрация',
@@ -3710,6 +3720,12 @@ export default {
     },
 
     empty: {
+      createAgent: 'Создать агента',
+      createDataset: 'Создать базу знаний',
+      createChat: 'Создать чат',
+      createSearch: 'Создать поиск',
+      createMemory: 'Создать память',
+      createSkills: 'Создать пространство навыков',
       noMCP: 'Нет доступных MCP-серверов',
       agentTitle: 'Приложение агента ещё не создано',
       notFoundAgent: 'Приложение агента не найдено',

@@ -6,6 +6,7 @@ import { Plus } from 'lucide-react';
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import SvgIcon from '../svg-icon';
+import { Button } from '../ui/button';
 import { EmptyCardData, EmptyCardType, EmptyType } from './constant';
 import { EmptyCardProps, EmptyProps } from './interface';
 
@@ -105,13 +106,10 @@ export const EmptyAppCard = (props: {
   return (
     <div className="flex w-full justify-center px-5 md:px-0">
       <EmptyCard
-        onClick={isSearch ? undefined : props.onClick}
-        data-testid={testId}
-        tabIndex={tabIndex ?? (isSearch ? undefined : 0)}
+        data-testid={isSearch || children ? testId : undefined}
         icon={showIcon ? cardData.icon : undefined}
         title={isSearch ? notFound : title}
         className={cn(
-          !isSearch && 'cursor-pointer',
           props.size === 'large' && 'p-14',
           className,
           'w-full max-w-[480px] md:max-w-none',
@@ -120,15 +118,22 @@ export const EmptyAppCard = (props: {
         )}
         style={style}
       >
-        {!isSearch && !children && (
-          <div
+        {!isSearch && !children && props.onClick && (
+          <Button
+            type="button"
+            variant="secondary"
+            size="lg"
             className={cn(
               defaultClass,
-              'flex w-full items-center justify-center md:justify-start',
+              'min-h-11 max-w-full whitespace-normal',
             )}
+            onClick={props.onClick}
+            data-testid={testId}
+            tabIndex={tabIndex}
           >
-            <Plus size={24} />
-          </div>
+            <Plus size={20} aria-hidden="true" />
+            {t(cardData.actionKey, { defaultValue: t('empty.addNow') })}
+          </Button>
         )}
         {children}
       </EmptyCard>

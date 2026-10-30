@@ -44,35 +44,3 @@
     animation-play-state: paused;
   }
 }
-
-//////////////////////////////////////////////////////////////////////////
-.perspective-1000 {
-  perspective: 1000px;
-  -webkit-perspective: 1000px;
-  overflow: hidden;
-  min-height: 680px;
-  display: flex;
-  align-items: center;
-  will-change: transform;
-}
-.transform-style-3d {
-  transform-style: preserve-3d;
-  -webkit-transform-style: preserve-3d;
-  transition-duration: 0.4s;
-  will-change: transform;
-}
-.backface-hidden {
-  backface-visibility: hidden;
-  -webkit-backface-visibility: hidden; /* Chrome、Safari */
-  -moz-backface-visibility: hidden; /* Firefox */
-  -ms-backface-visibility: hidden; /* Internet Explorer */
-}
-
-.rotate-y-180 {
-  transform: rotateY(180deg);
-  -webkit-transform: rotateY(180deg);
-}
-.rotate-y-0 {
-  transform: rotateY(0deg);
-  -webkit-transform: rotateY(0deg);
-}

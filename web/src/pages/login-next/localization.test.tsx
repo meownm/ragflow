@@ -31,17 +31,7 @@ jest.mock('@tanstack/react-query', () => ({
 }));
 jest.mock('react-router', () => ({ useNavigate: () => jest.fn() }));
 jest.mock('@/utils', () => ({ rsaPsw: () => 'encrypted-test-password' }));
-jest.mock('@/components/spotlight', () => () => null);
 jest.mock('@/components/svg-icon', () => () => null);
-jest.mock('./bg', () => ({ BgSvg: () => null }));
-jest.mock('./card', () => {
-  const React = jest.requireActual('react');
-  return {
-    __esModule: true,
-    FlipFaceContext: React.createContext('front'),
-    default: ({ children }: { children: React.ReactNode }) => children,
-  };
-});
 
 test.each([
   ['ru', 'Введите никнейм'],
@@ -75,5 +65,40 @@ test.each([
         password: 'encrypted-test-password',
       }),
     );
+  },
+);
+
+test('password has a label and an accessible toggle without losing the entered value', async () => {
+  await changeLanguageAsync('ru');
+  render(<Login />);
+  const password = screen.getByLabelText('Пароль', { selector: 'input' });
+  fireEvent.change(password, { target: { value: 'private-test-value' } });
+  expect(password).toHaveAttribute('type', 'password');
+  fireEvent.click(screen.getByRole('button', { name: 'Показать пароль' }));
+  expect(password).toHaveAttribute('type', 'text');
+  expect(password).toHaveValue('private-test-value');
+  fireEvent.click(screen.getByRole('button', { name: 'Скрыть пароль' }));
+  expect(password).toHaveAttribute('type', 'password');
+});
+
+test.each([
+  ['', 'Введите электронную почту'],
+  ['invalid-address', 'Введите корректный адрес электронной почты'],
+])(
+  'Russian email validation blocks an invalid request (%s)',
+  async (email, message) => {
+    jest.clearAllMocks();
+    await changeLanguageAsync('ru');
+    render(<Login />);
+    fireEvent.change(screen.getByTestId('auth-email'), {
+      target: { value: email },
+    });
+    fireEvent.change(screen.getByTestId('auth-password'), {
+      target: { value: 'Password123!' },
+    });
+    fireEvent.submit(screen.getByTestId('auth-form'));
+    expect(await screen.findByText(message)).toBeInTheDocument();
+    expect(screen.queryByText('Invalid email')).not.toBeInTheDocument();
+    expect(mockLogin).not.toHaveBeenCalled();
   },
 );

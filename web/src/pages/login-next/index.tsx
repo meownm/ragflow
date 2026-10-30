@@ -9,14 +9,13 @@ import {
 import { SystemConfigKeys, useSystemConfig } from '@/hooks/use-system-request';
 import { rsaPsw } from '@/utils';
 import { useQueryClient } from '@tanstack/react-query';
-import { useContext, useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   useTranslation,
   useTranslation as useUiTranslation,
 } from 'react-i18next';
 import { useNavigate } from 'react-router';
 
-import Spotlight from '@/components/spotlight';
 import { Button, ButtonLoading } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -28,17 +27,12 @@ import {
   FormMessage,
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
-import { cn } from '@/lib/utils';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm, UseFormReturn } from 'react-hook-form';
 import { z } from 'zod';
 import { NICKNAME_PATTERN } from '../user-setting/profile/constants';
-import { BgSvg } from './bg';
-import FlipCard3D, { FlipFaceContext } from './card';
-import './index.less';
 
 type LoginFormContentProps = {
-  isLoginPage: boolean;
   title: string;
   form: UseFormReturn<any>;
   loading: boolean;
@@ -52,7 +46,6 @@ type LoginFormContentProps = {
 };
 
 function LoginFormContent({
-  isLoginPage,
   title,
   form,
   loading,
@@ -64,23 +57,37 @@ function LoginFormContent({
   t,
   disablePasswordLogin,
 }: LoginFormContentProps) {
-  const face = useContext(FlipFaceContext);
-  const isActiveFace = isLoginPage ? face === 'front' : face === 'back';
+  const titleRef = useRef<HTMLHeadingElement>(null);
+
+  useEffect(() => {
+    const heading = titleRef.current;
+    heading?.focus({ preventScroll: true });
+    const viewport = heading?.closest('main');
+    if (viewport) viewport.scrollTop = 0;
+  }, [title]);
 
   return (
-    <div className="flex flex-col items-center justify-center w-full">
-      <div className="text-center mb-8">
-        <h2 className="text-xl font-semibold text-text-primary">
+    <div className="w-full" data-testid="auth-card-active">
+      <div className="mb-6 space-y-2">
+        <h1
+          ref={titleRef}
+          tabIndex={-1}
+          className="text-2xl font-semibold text-text-primary outline-none"
+        >
           {title === 'login' ? t('loginTitle') : t('signUpTitle')}
-        </h2>
+        </h1>
+        <p className="text-sm text-text-secondary">
+          {title === 'login' ? t('loginDescription') : t('registerDescription')}
+        </p>
       </div>
-      <div className=" w-full max-w-[540px] bg-bg-component backdrop-blur-sm rounded-2xl shadow-xl pt-14 pl-10 pr-10 pb-2 border border-border-button ">
+      <div className="rounded-xl border border-border-button bg-bg-component p-4 sm:p-6">
         {!disablePasswordLogin && (
           <Form {...form}>
             <form
-              className="flex flex-col gap-8 text-text-primary "
+              className="flex flex-col gap-5 text-text-primary"
               data-testid="auth-form"
-              data-active={isActiveFace ? 'true' : undefined}
+              data-active="true"
+              noValidate
               onSubmit={form.handleSubmit(onCheck)}
             >
               <FormField
@@ -92,6 +99,9 @@ function LoginFormContent({
                     <FormControl>
                       <Input
                         data-testid="auth-email"
+                        type="email"
+                        inputMode="email"
+                        className="h-12 text-base"
                         placeholder={t('emailPlaceholder')}
                         autoComplete="email"
                         {...field}
@@ -111,6 +121,7 @@ function LoginFormContent({
                       <FormControl>
                         <Input
                           data-testid="auth-nickname"
+                          className="h-12 text-base"
                           placeholder={t('nicknamePlaceholder')}
                           autoComplete="username"
                           {...field}
@@ -129,19 +140,18 @@ function LoginFormContent({
                   <FormItem>
                     <FormLabel required>{t('passwordLabel')}</FormLabel>
                     <FormControl>
-                      <div className="relative">
-                        <Input
-                          data-testid="auth-password"
-                          type={'password'}
-                          placeholder={t('passwordPlaceholder')}
-                          autoComplete={
-                            title === 'login'
-                              ? 'current-password'
-                              : 'new-password'
-                          }
-                          {...field}
-                        />
-                      </div>
+                      <Input
+                        data-testid="auth-password"
+                        className="h-12 text-base"
+                        type={'password'}
+                        placeholder={t('passwordPlaceholder')}
+                        autoComplete={
+                          title === 'login'
+                            ? 'current-password'
+                            : 'new-password'
+                        }
+                        {...field}
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -154,22 +164,17 @@ function LoginFormContent({
                   name="remember"
                   render={({ field }) => (
                     <FormItem>
-                      <div className="flex gap-2 group">
+                      <div className="flex min-h-11 items-center gap-3 group">
                         <FormControl>
                           <Checkbox
                             checked={field.value}
                             onCheckedChange={(checked) => {
                               field.onChange(checked);
                             }}
-                            className="group-hover:border-border-default group-hover:bg-border-button"
+                            className="size-5 group-hover:border-border-default group-hover:bg-border-button"
                           />
                         </FormControl>
-                        <FormLabel
-                          className={cn('cursor-pointer', {
-                            'text-text-disabled': !field.value,
-                            'text-text-primary': field.value,
-                          })}
-                        >
+                        <FormLabel className="flex min-h-11 cursor-pointer items-center text-text-secondary">
                           {t('rememberMe')}
                         </FormLabel>
                       </div>
@@ -182,7 +187,8 @@ function LoginFormContent({
                 data-testid="auth-submit"
                 type="submit"
                 loading={loading}
-                className="bg-metallic-gradient border-b-[#00BEB4] border-b-2 hover:bg-metallic-gradient hover:border-b-[#02bcdd] w-full my-8"
+                size="xl"
+                className="w-full"
               >
                 {title === 'login' ? t('login') : t('continue')}
               </ButtonLoading>
@@ -191,14 +197,15 @@ function LoginFormContent({
         )}
 
         {title === 'login' && channels && channels.length > 0 && (
-          <div className={disablePasswordLogin ? 'py-8' : 'mt-3 border'}>
+          <div
+            className={disablePasswordLogin ? 'space-y-3' : 'mt-5 space-y-3'}
+          >
             {channels.map((item) => (
               <Button
-                variant={'transparent'}
+                variant="outline"
                 key={item.channel}
                 onClick={() => handleLoginWithChannel(item.channel)}
-                style={{ marginTop: 10 }}
-                className={disablePasswordLogin ? 'w-full' : ''}
+                className="min-h-12 w-full whitespace-normal"
               >
                 <div className="flex items-center">
                   <SvgIcon
@@ -215,14 +222,14 @@ function LoginFormContent({
         )}
 
         {!disablePasswordLogin && title === 'login' && registerEnabled && (
-          <div className="mt-10 text-right">
-            <p className="text-text-disabled text-sm">
+          <div className="mt-5 text-center">
+            <p className="flex flex-wrap items-center justify-center gap-x-2 text-text-secondary text-sm">
               {t('signInTip')}
               <Button
                 data-testid="auth-toggle-register"
                 variant={'transparent'}
                 onClick={changeTitle}
-                className="text-accent-primary/90 hover:text-accent-primary hover:bg-transparent font-medium border-none transition-colors duration-200"
+                className="min-h-11 px-1 font-medium text-text-primary underline underline-offset-4 hover:bg-transparent"
               >
                 {t('signUp')}
               </Button>
@@ -230,14 +237,14 @@ function LoginFormContent({
           </div>
         )}
         {!disablePasswordLogin && title === 'register' && (
-          <div className="mt-10 text-right">
-            <p className="text-text-disabled text-sm">
+          <div className="mt-5 text-center">
+            <p className="flex flex-wrap items-center justify-center gap-x-2 text-text-secondary text-sm">
               {t('signUpTip')}
               <Button
                 data-testid="auth-toggle-login"
                 variant={'transparent'}
                 onClick={changeTitle}
-                className="text-accent-primary/90 hover:text-accent-primary hover:bg-transparent font-medium border-none transition-colors duration-200"
+                className="min-h-11 px-1 font-medium text-text-primary underline underline-offset-4 hover:bg-transparent"
               >
                 {t('login')}
               </Button>
@@ -263,7 +270,6 @@ const Login = () => {
   const { t: tSetting } = useTranslation('translation', {
     keyPrefix: 'setting',
   });
-  const [isLoginPage, setIsLoginPage] = useState(true);
 
   const loading =
     signLoading ||
@@ -284,24 +290,14 @@ const Login = () => {
     await loginWithChannel(channel);
   };
 
-  const changeTitle = () => {
-    setIsLoginPage(title !== 'login');
-    if (title === 'login' && !registerEnabled) {
-      return;
-    }
-
-    setTimeout(() => {
-      setTitle(title === 'login' ? 'register' : 'login');
-    }, 200);
-  };
-
   const FormSchema = z
     .object({
       nickname: z.string().optional(),
       email: z
         .string()
-        .email()
-        .min(1, { message: t('emailPlaceholder') }),
+        .trim()
+        .min(1, { message: t('emailPlaceholder') })
+        .email({ message: tUi('common.invalidEmail') }),
       password: z.string().min(1, { message: t('passwordPlaceholder') }),
       remember: z.boolean().optional(),
     })
@@ -334,6 +330,12 @@ const Login = () => {
     resolver: zodResolver(FormSchema),
   });
 
+  const changeTitle = () => {
+    if (title === 'login' && !registerEnabled) return;
+    form.clearErrors();
+    setTitle(title === 'login' ? 'register' : 'login');
+  };
+
   const onCheck = async (params: FormValues) => {
     try {
       const rsaPassWord = rsaPsw(params.password) as string;
@@ -365,60 +367,30 @@ const Login = () => {
   };
 
   return (
-    <>
-      <Spotlight opcity={0.4} coverage={60} color={'rgb(128, 255, 248)'} />
-      <Spotlight
-        opcity={0.3}
-        coverage={12}
-        X={'10%'}
-        Y={'-10%'}
-        color={'rgb(128, 255, 248)'}
-      />
-      <Spotlight
-        opcity={0.3}
-        coverage={12}
-        X={'90%'}
-        Y={'-10%'}
-        color={'rgb(128, 255, 248)'}
-      />
-      <div className=" h-[inherit] relative overflow-auto">
-        <BgSvg isPaused />
-
-        <div className="z-20 absolute top-3 flex flex-col items-center mb-12 w-full text-text-primary">
-          <div className="flex items-center mb-4 w-full pl-10 pt-10 ">
-            <div className="w-12 h-12 p-2 rounded-lg flex items-center justify-center mr-3">
-              <img
-                src={'/app-icon.png'}
-                alt={tUi('common.logo')}
-                className="size-8 mr-[12] cursor-pointer"
-              />
-            </div>
-            <div className="text-xl font-bold self-center">Агент Раггер</div>
-          </div>
-          <h1 className="text-[36px] font-medium  text-center mb-2">
-            {t('title')}
-          </h1>
+    <main className="h-full overflow-y-auto bg-bg-base px-4 py-6 text-text-primary sm:py-12">
+      <div className="mx-auto flex w-full max-w-[440px] flex-col gap-8">
+        <div className="flex items-center gap-3">
+          <img
+            src="/app-icon.png"
+            alt={tUi('common.logo')}
+            className="size-10"
+          />
+          <span className="text-xl font-semibold">Агент Раггер</span>
         </div>
-        <div className="relative z-10 flex flex-col items-center justify-center min-h-[1050px] px-4 sm:px-6 lg:px-8">
-          {/* Login Form */}
-          <FlipCard3D isLoginPage={isLoginPage}>
-            <LoginFormContent
-              isLoginPage={isLoginPage}
-              title={title}
-              form={form}
-              loading={loading}
-              onCheck={onCheck}
-              changeTitle={changeTitle}
-              registerEnabled={registerEnabled}
-              channels={channels || []}
-              handleLoginWithChannel={handleLoginWithChannel}
-              t={t}
-              disablePasswordLogin={!!config?.disablePasswordLogin}
-            />
-          </FlipCard3D>
-        </div>
+        <LoginFormContent
+          title={title}
+          form={form}
+          loading={loading}
+          onCheck={onCheck}
+          changeTitle={changeTitle}
+          registerEnabled={registerEnabled}
+          channels={channels || []}
+          handleLoginWithChannel={handleLoginWithChannel}
+          t={t}
+          disablePasswordLogin={!!config?.disablePasswordLogin}
+        />
       </div>
-    </>
+    </main>
   );
 };
 

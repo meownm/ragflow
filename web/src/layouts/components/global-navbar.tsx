@@ -17,11 +17,18 @@ import {
   LucideMessageSquareText,
   LucideNetwork,
   LucideSearch,
+  X,
   type LucideIcon,
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
+import {
+  Sheet,
+  SheetClose,
+  SheetContent,
+  SheetTitle,
+  SheetTrigger,
+} from '@/components/ui/sheet';
 import type { NavigationSection } from '@/constants/navigation';
 import { useSystemConfig } from '@/hooks/use-system-request';
 import { useFetchUserInfo } from '@/hooks/use-user-setting-request';
@@ -58,6 +65,7 @@ const menuItems: Array<{
   path: Routes;
   name: string;
   icon: LucideIcon;
+  group: 'home' | 'documents' | 'data' | 'tools';
   fallbackName?: string;
   section?: NavigationSection;
   requiresBusinessDocumentCreate?: boolean;
@@ -66,6 +74,7 @@ const menuItems: Array<{
   {
     path: Routes.Root,
     name: 'header.home',
+    group: 'home',
     icon: LucideHouse,
     section: 'home',
     'data-testid': 'nav-home',
@@ -73,12 +82,14 @@ const menuItems: Array<{
   {
     path: Routes.Datasets,
     name: 'header.dataset',
+    group: 'data',
     icon: LucideDatabase,
     section: 'dataset',
   },
   {
     path: Routes.Chats,
     name: 'header.chat',
+    group: 'tools',
     icon: LucideMessageSquareText,
     section: 'chat',
     'data-testid': 'nav-chat',
@@ -86,6 +97,7 @@ const menuItems: Array<{
   {
     path: Routes.Searches,
     name: 'header.search',
+    group: 'tools',
     icon: LucideSearch,
     section: 'search',
     'data-testid': 'nav-search',
@@ -93,6 +105,7 @@ const menuItems: Array<{
   {
     path: Routes.SourceWorkspaces,
     name: 'header.sourceWorkspaces',
+    group: 'documents',
     fallbackName: 'Связанные документы',
     icon: LucideFolderOpen,
     section: 'search',
@@ -101,6 +114,7 @@ const menuItems: Array<{
   {
     path: Routes.Agents,
     name: 'header.flow',
+    group: 'tools',
     icon: LucideCpu,
     section: 'agent',
     'data-testid': 'nav-agent',
@@ -108,12 +122,14 @@ const menuItems: Array<{
   {
     path: Routes.Memories,
     name: 'header.memories',
+    group: 'tools',
     icon: LucideBrain,
     section: 'memory',
   },
   {
     path: Routes.OpenMetadata,
     name: 'header.openMetadata',
+    group: 'data',
     icon: LucideNetwork,
     section: 'catalog',
     'data-testid': 'nav-openmetadata',
@@ -121,6 +137,7 @@ const menuItems: Array<{
   {
     path: Routes.BusinessDocuments,
     name: 'header.businessDocuments',
+    group: 'documents',
     fallbackName: 'Business docs',
     icon: FilePenLine,
     section: 'business_documents',
@@ -129,6 +146,7 @@ const menuItems: Array<{
   {
     path: Routes.TechnicalSpecifications,
     name: 'header.technicalSpecifications',
+    group: 'documents',
     fallbackName: 'Технические задания',
     icon: FilePenLine,
     section: 'technical_specifications',
@@ -137,6 +155,7 @@ const menuItems: Array<{
   {
     path: Routes.DocumentConstructor,
     name: 'header.documentConstructor',
+    group: 'documents',
     fallbackName: 'Constructor',
     icon: LayoutTemplate,
     section: 'document_constructor',
@@ -146,6 +165,7 @@ const menuItems: Array<{
   {
     path: Routes.SqlProjects,
     name: 'header.sqlProjects',
+    group: 'data',
     fallbackName: 'SQL-проекты',
     icon: Bot,
     section: 'sql_projects',
@@ -155,6 +175,7 @@ const menuItems: Array<{
   {
     path: Routes.SqlAssistant,
     name: 'header.sqlAssistant',
+    group: 'data',
     fallbackName: 'SQL-помощник',
     icon: Bot,
     section: 'sql_assistant',
@@ -163,12 +184,14 @@ const menuItems: Array<{
   {
     path: Routes.Files,
     name: 'header.fileManager',
+    group: 'data',
     icon: LucideFolderOpen,
     section: 'file_manager',
   },
   {
     path: Routes.Transcription,
     name: 'header.transcription',
+    group: 'tools',
     fallbackName: 'Расшифровка',
     icon: LucideAudioLines,
     section: 'asr',
@@ -177,6 +200,7 @@ const menuItems: Array<{
   {
     path: Routes.Translator,
     name: 'header.translator',
+    group: 'tools',
     fallbackName: 'Переводчик',
     icon: LucideLanguages,
     section: 'translator',
@@ -366,7 +390,7 @@ function MobileNavItem({
       {...linkProps}
       onClick={onClick}
       className={cn(
-        'flex w-full items-center gap-3.5 px-4 py-3.5 text-base',
+        'flex min-h-11 w-full items-center gap-3 rounded-lg px-3 py-3 text-sm',
         'text-text-secondary transition-colors hover:bg-bg-card hover:text-text-primary',
         'focus-visible:bg-bg-card focus-visible:text-text-primary',
         isActive &&
@@ -375,7 +399,7 @@ function MobileNavItem({
       aria-current={isActive ? 'page' : undefined}
     >
       <Icon className="size-5 shrink-0 stroke-[1.5]" />
-      <span className="truncate">{label}</span>
+      <span className="min-w-0 break-words">{label}</span>
     </Link>
   );
 }
@@ -408,33 +432,67 @@ export function MobileNavbar({ renderFooter }: MobileNavbarProps) {
       <SheetContent
         side="left"
         closeIcon={false}
-        className="flex w-[min(85vw,18rem)] flex-col gap-0 p-0 sm:w-72"
+        aria-describedby={undefined}
+        className="flex w-[min(92vw,20rem)] flex-col gap-0 p-0 sm:w-80"
       >
-        <div className="flex shrink-0 justify-center py-5">
+        <div className="flex shrink-0 items-center gap-3 border-b border-border-button p-4">
           <img
             src="/app-icon.png"
             alt="Логотип Агент Раггер"
             className="size-9"
           />
+          <SheetTitle className="flex-1 text-base text-text-primary">
+            {t('common.menu')}
+          </SheetTitle>
+          <SheetClose asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-11"
+              aria-label={t('common.close')}
+            >
+              <X className="size-5" />
+            </Button>
+          </SheetClose>
         </div>
 
-        <nav className="min-h-0 flex-1 overflow-y-auto py-3">
-          <ul className="space-y-1">
-            {visibleMenuItems.map((item) => (
-              <li key={item.path}>
-                <MobileNavItem
-                  data-testid={item['data-testid']}
-                  to={item.path}
-                  label={t(item.name, {
-                    defaultValue: item.fallbackName ?? item.name,
-                  })}
-                  icon={item.icon}
-                  isActive={item.path === activePath}
-                  onClick={close}
-                />
-              </li>
-            ))}
-          </ul>
+        <nav
+          aria-label={t('common.menu')}
+          className="min-h-0 flex-1 overflow-y-auto px-2 py-3"
+        >
+          {(['home', 'documents', 'data', 'tools'] as const).map((group) => {
+            const items = visibleMenuItems.filter(
+              (item) => item.group === group,
+            );
+            if (!items.length) return null;
+            return (
+              <div key={group} className="mb-4 last:mb-0">
+                {group !== 'home' && (
+                  <h2 className="px-3 pb-2 pt-1 text-xs font-medium text-text-secondary">
+                    {t(`header.navigationGroups.${group}`, {
+                      defaultValue: group,
+                    })}
+                  </h2>
+                )}
+                <ul className="space-y-1">
+                  {items.map((item) => (
+                    <li key={item.path}>
+                      <MobileNavItem
+                        data-testid={item['data-testid']}
+                        to={item.path}
+                        label={t(item.name, {
+                          defaultValue: item.fallbackName ?? item.name,
+                        })}
+                        icon={item.icon}
+                        isActive={item.path === activePath}
+                        onClick={close}
+                      />
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })}
         </nav>
 
         {renderFooter?.(close)}

@@ -7,30 +7,10 @@ import { IconFontFill } from './icon-font';
 import { RAGFlowAvatar } from './ragflow-avatar';
 import { useIsDarkTheme } from './theme-provider';
 
-// const importAll = (requireContext: __WebpackModuleApi.RequireContext) => {
-//   const list = requireContext.keys().map((key) => {
-//     const name = key.replace(/\.\/(.*)\.\w+$/, '$1');
-//     return { name, value: requireContext(key) };
-//   });
-//   return list;
-// };
-
-// let routeList: { name: string; value: string }[] = [];
-
-// try {
-//   routeList = importAll(require.context('@/assets/svg', true, /\.svg$/));
-// } catch (error) {
-//   console.warn(error);
-//   routeList = [];
-// }
-
-const svgModules =
-  typeof import.meta.glob === 'function'
-    ? import.meta.glob('@/assets/svg/**/*.svg', {
-        eager: true,
-        query: '?url',
-      })
-    : {};
+const svgModules = import.meta.glob('@/assets/svg/**/*.svg', {
+  eager: true,
+  query: '?url',
+});
 
 const routeList: { name: string; value: string }[] = Object.entries(
   svgModules,

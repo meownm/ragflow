@@ -1,4 +1,5 @@
 import { RAGFlowAvatar } from '@/components/ragflow-avatar';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { formatDate } from '@/utils/date';
 import { t } from 'i18next';
@@ -52,14 +53,13 @@ export type SeeAllAppCardProps = {
 
 export function SeeAllAppCard({ click }: SeeAllAppCardProps) {
   return (
-    <Card
-      className="w-full min-h-[76px] cursor-pointer"
+    <Button
+      type="button"
+      variant="outline"
+      className="min-h-[76px] h-full w-full whitespace-normal text-text-secondary"
       onClick={click}
-      tabIndex={0}
     >
-      <CardContent className="p-2.5 pt-1 w-full h-full flex items-center justify-center gap-1.5 text-text-secondary">
-        {t('common.seeAll')} <ChevronRight className="size-4" />
-      </CardContent>
-    </Card>
+      {t('common.seeAll')} <ChevronRight className="size-4" />
+    </Button>
   );
 }

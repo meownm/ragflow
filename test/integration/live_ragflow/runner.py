@@ -292,6 +292,8 @@ def main():
                 [sys.executable, "-B", str(source / "tools/quality/frontend_artifact.py"), "verify", "--candidate", str(candidate), "--archive", str(archive)], env=env, log="frontend-verification.log"
             )
             receipt = json.loads(Path(str(archive) + ".json").read_text(encoding="utf-8"))
+            if receipt["kind"] == "frontend-image":
+                assert receipt["image_id"] == identity["images"]["app"], "Frontend belongs to another runtime image"
             assert identity["dist_sha256"] == {name: value["sha256"] for name, value in receipt["files"].items()}, "Mounted dist differs from the verified candidate build"
             identity["frontend_receipt_id"] = receipt["receipt_id"]
         (OUT / "identity.json").write_text(json.dumps(identity, indent=2), encoding="utf-8")

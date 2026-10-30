@@ -1015,10 +1015,14 @@ class BusinessDocumentSqlAgentService:
             kind = current_job.job_type.removeprefix(_JOB_PREFIX)
             if kind == "REVISION":
                 request = (current_job.payload or {}).get("request") or {}
+                result = dict(result)
+                verified_schema = result.pop("verified_catalog_schema", None)
+                if verified_schema is not None and (request.get("target") != "QUERY" or not isinstance(verified_schema, Mapping)):
+                    raise ValueError("Invalid verified SQL revision schema")
                 result = {
                     **result,
                     "source": {
-                        field: request.get(field)
+                        field: verified_schema if field == "proposed_schema" and verified_schema is not None else request.get(field)
                         for field in (
                             "target",
                             "base_artifact_id",

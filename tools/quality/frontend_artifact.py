@@ -1,7 +1,9 @@
 """Build a candidate SPA once in a new workspace; verify reusable bytes, not tests.
 
 The receipt is unsigned provenance from this local runner, not a trusted attestation.
-Build scripts are trusted candidate code, not sandboxed. No live app is touched.
+Build scripts are trusted candidate code, not sandboxed. Runtime image receipts
+bind actual SPA bytes to the immutable image instead of claiming a host toolchain.
+No live app is touched.
 """
 
 from __future__ import annotations
@@ -345,8 +347,15 @@ def verify(candidate: Path, archive: Path, receipt: Path) -> dict:
     manifest = identity.verify(candidate)
     data = json.loads(receipt.read_bytes())
     content = {key: value for key, value in data.items() if key != "receipt_id"}
-    if data.get("schema") != 1 or data.get("kind") != "frontend-build" or data.get("receipt_id") != identity.digest(identity.canonical(content)):
+    if data.get("schema") != 1 or data.get("kind") not in {"frontend-build", "frontend-image"} or data.get("receipt_id") != identity.digest(identity.canonical(content)):
         raise ValueError("frontend receipt integrity mismatch")
+    if data.get("kind") == "frontend-image":
+        if data.get("source_id") != manifest["source_id"] or data.get("validation") != "NOT_ASSERTED":
+            raise ValueError("runtime frontend receipt belongs to a different source or claims tests")
+        _verify_archive(archive, data)
+        if _runtime_files(data.get("image_id"), manifest["source_id"]) != data["files"]:
+            raise ValueError("frontend archive differs from the immutable runtime image")
+        return data
     if data["source_id"] != manifest["source_id"] or data["profile"] != _profile(manifest["identity"]["build"]):
         raise ValueError("frontend receipt belongs to a different candidate/profile")
     expected_tools = {"node": data["profile"]["node"].removeprefix("v"), "pnpm": data["profile"]["package_manager"].removeprefix("pnpm@")}
@@ -356,6 +365,19 @@ def verify(candidate: Path, archive: Path, receipt: Path) -> dict:
         raise ValueError("frontend receipt is not a test attestation")
     _verify_archive(archive, data)
     return data
+
+
+def _runtime_files(image_id: str, source_id: str) -> dict:
+    """Verify actual runtime bytes without asserting the host build toolchain."""
+    from tools.quality.artifact_lifecycle import docker_args
+
+    if not isinstance(image_id, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
+        raise ValueError("immutable runtime image ID required")
+    info = json.loads(subprocess.check_output(["docker", "image", "inspect", image_id], timeout=60))[0]
+    if info.get("Id") != image_id or (info.get("Os"), info.get("Architecture")) != ("linux", "amd64") or (info.get("Config", {}).get("Labels") or {}).get("org.ragflow.source-id") != source_id:
+        raise ValueError("runtime image/source identity mismatch")
+    script = "import hashlib,json,pathlib;r=pathlib.Path('/ragflow/web/dist');print(json.dumps({p.relative_to(r).as_posix():{'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'size':p.stat().st_size} for p in r.rglob('*') if p.is_file()}))"
+    return json.loads(subprocess.check_output(docker_args(["docker", "run", "--rm", "--network", "none", "--entrypoint", "/ragflow/.venv/bin/python", image_id, "-B", "-c", script]), timeout=120))
 
 
 def main() -> int:

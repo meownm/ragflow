@@ -7,7 +7,7 @@ from typing import Any
 from business_documents.async_runtime import run_in_worker_loop
 from api.apps.business_documents.authorization import BusinessDocumentAccess
 from api.apps.business_documents.sql_query_planner import TenantQueryPlanner, query_planner_provenance
-from api.apps.business_documents.sql_query_revision_ai import propose_revision
+from api.apps.business_documents.sql_query_revision_catalog import propose_catalog_revision
 from api.apps.business_documents.sql_query_requirements import TenantRequirementsAnalyst, requirements_prompt_provenance
 from api.apps.business_documents.sql_query_schema import OpenMetadataCatalogResolver, TenantSchemaInterpreter
 from api.db.db_models import BusinessDocumentJob, BusinessDocumentSqlQueryProject, User
@@ -47,7 +47,7 @@ class BusinessDocumentSqlAgentRunner:
 
     async def _process(self, job: BusinessDocumentJob) -> dict[str, Any]:
         payload = job.payload if isinstance(job.payload, dict) else {}
-        actor_id, is_admin, _ = self._authorize(job)
+        actor_id, is_admin, access_role = self._authorize(job)
         request = payload.get("request")
         if job.job_type == "SQL_AGENT_REQUIREMENTS":
             command = parse_analyze_requirements_command(request, tenant_id=job.tenant_id)
@@ -87,5 +87,5 @@ class BusinessDocumentSqlAgentRunner:
         if job.job_type == "SQL_AGENT_REVISION":
             if not isinstance(request, dict):
                 raise RuntimeError("SQL revision request is missing")
-            return await propose_revision(job.tenant_id, request)
+            return await propose_catalog_revision(job.tenant_id, actor_id, request, is_admin, access_role)
         raise RuntimeError(f"Unsupported SQL agent job type: {job.job_type}")

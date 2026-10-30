@@ -126,13 +126,30 @@ def base_references(recipe_path: Path, overrides: dict | None = None) -> list[st
     return result
 
 
+def _configuration_sha256(info: dict) -> str:
+    return hashlib.sha256(json.dumps({k: info[k] for k in ("Config", "HostConfig", "Mounts")}, sort_keys=True).encode()).hexdigest()
+
+
+def _configuration_matches(info: dict, expected: str | None) -> bool:
+    """Keep the complete seal, allowing Docker's empty DNS array/null encoding."""
+    host = info["HostConfig"]
+    fields = [key for key in ("Dns", "DnsOptions", "DnsSearch") if key in host and (host[key] is None or host[key] == [])]
+    for mask in range(1 << len(fields)):
+        candidate = dict(host)
+        for index, key in enumerate(fields):
+            candidate[key] = [] if mask & (1 << index) else None
+        if _configuration_sha256({**info, "HostConfig": candidate}) == expected:
+            return True
+    return False
+
+
 def resource(info: dict, kind: str) -> dict:
     tag = labels(info, kind)
     identity = info["Id"] if kind != "volume" else {k: info.get(k) for k in ("Name", "Driver", "CreatedAt")}
     key = kind + ":" + hashlib.sha256(json.dumps([identity, tag.get(OBJECT)], sort_keys=True).encode()).hexdigest()
     result = {"key": key, "kind": kind, "identity": identity, "name": info.get("Name", info.get("Id", "")).lstrip("/"), "token": tag.get(OBJECT), "category": tag.get(CLASS), "status": "present"}
     if kind == "container":
-        result["config_sha256"] = hashlib.sha256(json.dumps({k: info[k] for k in ("Config", "HostConfig", "Mounts")}, sort_keys=True).encode()).hexdigest()
+        result["config_sha256"] = _configuration_sha256(info)
     if kind == "image":
         result["tags"] = sorted(info.get("RepoTags") or [])
     return result
@@ -222,7 +239,9 @@ class Engine:
         if not legacy_matches and (tags.get(PROJECT) != "ragflow" or tags.get(RUN) != run_id or not target.get("token") or tags.get(OBJECT) != target["token"]):
             return "ownership-or-generation-changed"
         actual = resource(info, kind)
-        if actual["identity"] != target["identity"] or actual.get("config_sha256") != target.get("config_sha256"):
+        if actual["identity"] != target["identity"]:
+            return "identity-or-configuration-changed"
+        if actual.get("config_sha256") != target.get("config_sha256") and (kind != "container" or not _configuration_matches(info, target.get("config_sha256"))):
             return "identity-or-configuration-changed"
         if kind == "container":
             if any(info["State"].get(key) for key in ("Running", "Paused", "Restarting")):
@@ -490,7 +509,7 @@ class Engine:
                 raise ValueError("Preserved resource generation changed")
             if target["kind"] == "container":
                 previous = json.loads(Path(existing["inspect"]["path"]).read_bytes())
-                if any(previous.get(key) != info.get(key) for key in ("Config", "HostConfig", "Mounts")):
+                if not _configuration_matches(info, _configuration_sha256(previous)):
                     raise ValueError("Preserved container configuration changed")
             for archive in existing.get("archives", []):
                 self.verify_image(archive)

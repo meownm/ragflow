@@ -33,6 +33,9 @@ Choose exactly one JSON response:
 The saved current_sql/current_parameters are the starting state. The latest edit replaces conflicting parts;
 preserve other agreements. Do not rebuild from initial requirements. Unmentioned filters, date boundaries,
 bindings and compatible clauses stay.
+If context.validation_feedback is present, its previous_proposal failed validation and is not the baseline.
+Correct the complete human edit from current_sql/current_parameters using the verified schema; do not merely
+parameterize a previous mistake while retaining changes the human explicitly prohibited.
 An added filter uses AND unless another Boolean combination is requested. Removing a filter removes only that
 predicate and bindings no longer referenced. Explicit instructions to keep conditions, including "сохрани/не меняй",
 apply to their listed objects. Changing a bound value keeps its existing name and type, even if its name describes
@@ -42,6 +45,8 @@ An aggregate without group keys replaces detail output with the requested aggreg
 Grouped aggregates output the supplied keys and aggregates. Remove incompatible old detail columns/ORDER BY;
 these necessary SQL changes are not missing business decisions. LEFT JOIN plus grouping includes the NULL group
 unless filtered out. A related table used only for filtering does not add output columns or multiply baseline rows.
+Preserve NULL group keys and empty strings as distinct values. Do not add COALESCE, CASE or NULLIF defaults
+to group keys unless the human explicitly requested that replacement.
 For specified to-one keys use LEFT JOIN to preserve baseline rows, unless INNER JOIN was requested or the
 complete added predicate excludes unmatched rows. In Boolean OR, a condition on the baseline table can still
 match a row without a related entity: do not discard it with an unintended INNER JOIN.
@@ -52,6 +57,8 @@ If several FK routes lead to the same entity and no key/role was specified, MUST
 a generic entity label does not choose a role. Missing reporting year, client timezone, threshold or row grain
 must not be invented. SQL implementation details and new bind names/aliases do not need confirmation.
 
+Use PostgreSQL schema.table identifiers from current SQL and verified physical metadata. OpenMetadata
+service.database.schema.table FQNs identify catalog entities; never use those service/database prefixes in SQL.
 Use accepted catalog tables/columns only. If unavailable data have no identified source, ask for the source.
 If a new source was identified, keep SQL/bindings unchanged and add up to eight source terms in requested_sources.
 Emit one SELECT or UNION. Every selected expression, including plain fields and subquery outputs, needs an
@@ -84,7 +91,19 @@ For a missing business decision return {"response_kind":"CLARIFICATION","answer"
 Ask one to three essential distinct questions, never repeat already supplied decisions. No markdown or reasoning."""
 
 
-async def propose_revision(tenant_id: str, request: Mapping[str, Any], *, llm: Any = None) -> dict[str, Any]:
+def query_revision_checks(request: Mapping[str, Any], proposal: Mapping[str, Any]) -> dict[str, Any]:
+    """Run the same catalog guard before and after verified schema discovery."""
+    candidate = {"mode": "manual", "sql": proposal["sql"], "parameters": proposal["parameters"], "confirmed_alignment": True}
+    try:
+        compiled = compile_query_payload(build_project_compile_command(request["requirements"], request["schema"], candidate))
+        if compiled.get("status") != "READY" or compiled.get("guard", {}).get("status") != "PASS":
+            raise ValueError("Proposed SQL did not pass the read-only catalog guard")
+    except (ProjectCompilationError, QuerySpecificationValidationError, SqlGuardError, ValueError) as exc:
+        return {"status": "BLOCKED", "reason": str(exc)[:1000]}
+    return {"status": "NEEDS_SCHEMA" if proposal.get("requested_sources") else "PASS", "guard": compiled["guard"], "output_columns": compiled["output_columns"]}
+
+
+async def propose_revision(tenant_id: str, request: Mapping[str, Any], *, llm: Any = None, validation_feedback: Mapping[str, Any] | None = None) -> dict[str, Any]:
     target = request.get("target")
     if target not in {"QUERY", "DOCUMENT"}:
         raise ValueError("Revision target is unsupported")
@@ -99,6 +118,8 @@ async def propose_revision(tenant_id: str, request: Mapping[str, Any], *, llm: A
         "comment_anchor": request.get("anchor"),
         "discussion": request.get("comments"),
     }
+    if validation_feedback is not None:
+        context["validation_feedback"] = dict(validation_feedback)
     if len(json.dumps(context, ensure_ascii=False, default=str).encode("utf-8")) > 120_000:
         raise ValueError("Revision context is too large")
     generator = llm or RAGFlowLLMAdapter()
@@ -123,7 +144,6 @@ async def propose_revision(tenant_id: str, request: Mapping[str, Any], *, llm: A
             raise ValueError("Model produced invalid catalog source suggestions")
         if not isinstance(request.get("requirements"), Mapping) or not isinstance(request.get("schema"), Mapping):
             raise ValueError("Accepted requirements and schema are required")
-        candidate = {"mode": "manual", "sql": value["sql"], "parameters": value["parameters"], "confirmed_alignment": True}
         before_sql = str(request.get("sql") or "")
         try:
             before_blocks = query_blocks(before_sql)
@@ -163,14 +183,7 @@ async def propose_revision(tenant_id: str, request: Mapping[str, Any], *, llm: A
                 lineterm="",
             )
         )
-        try:
-            compiled = compile_query_payload(build_project_compile_command(request["requirements"], request["schema"], candidate))
-            if compiled.get("status") != "READY" or compiled.get("guard", {}).get("status") != "PASS":
-                raise ValueError("Proposed SQL did not pass the read-only catalog guard")
-        except (ProjectCompilationError, QuerySpecificationValidationError, SqlGuardError, ValueError) as exc:
-            value["checks"] = {"status": "BLOCKED", "reason": str(exc)[:1000]}
-        else:
-            value["checks"] = {"status": "NEEDS_SCHEMA" if requested_sources else "PASS", "guard": compiled["guard"], "output_columns": compiled["output_columns"]}
+        value["checks"] = query_revision_checks(request, value)
     else:
         if set(value) == {"requires_new_run", "summary"} and value["requires_new_run"] is True and isinstance(value["summary"], str):
             value["checks"] = {"status": "NEEDS_RUN", "reason": "Для новых выводов по данным повторите проверенный запрос и сохраните новый документ"}

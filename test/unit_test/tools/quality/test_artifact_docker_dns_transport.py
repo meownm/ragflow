@@ -1,0 +1,101 @@
+"""Docker restart preserves identity when only empty DNS serialization changes."""
+
+from copy import deepcopy
+import json
+
+import pytest
+
+from tools.quality import artifact_docker as docker
+
+
+def container(mask=0):
+    return {
+        "Id": "same-id",
+        "Name": "/own-qa",
+        "Config": {"Image": "immutable-image", "Env": ["SYNTHETIC=yes"], "Labels": {docker.PROJECT: "ragflow", docker.RUN: "own-run", docker.OBJECT: "same-token", docker.CLASS: "disposable"}},
+        "HostConfig": {"ReadonlyRootfs": True, **{key: [] if mask & (1 << index) else None for index, key in enumerate(("Dns", "DnsOptions", "DnsSearch"))}},
+        "Mounts": [{"Type": "volume", "Name": "own-data", "Destination": "/data", "RW": True}],
+        "State": {"Running": False},
+    }
+
+
+def guarded(before, after):
+    engine = docker.Engine.__new__(docker.Engine)
+    engine.assert_engine = lambda: None
+    engine.inspect = lambda *_: after
+    engine.all = lambda *_: []
+    return engine.guard(docker.resource(before, "container"), "own-run", {}, set())
+
+
+@pytest.mark.parametrize("before_mask", range(8))
+@pytest.mark.parametrize("after_mask", range(8))
+def test_empty_dns_round_trip_keeps_the_complete_original_seal(before_mask, after_mask):
+    before, after = container(before_mask), container(after_mask)
+    original = deepcopy(after)
+    assert guarded(before, after) is None
+    assert docker._configuration_matches(after, docker.resource(before, "container")["config_sha256"])
+    assert after == original
+
+
+@pytest.mark.parametrize("key", ["Dns", "DnsOptions", "DnsSearch"])
+@pytest.mark.parametrize("direction", [False, True])
+def test_real_dns_configuration_is_never_normalized(key, direction):
+    before, after = container(0), container(7)
+    (before if direction else after)["HostConfig"][key] = ["configured-value"]
+    assert guarded(before, after) == "identity-or-configuration-changed"
+
+
+@pytest.mark.parametrize("change", ["image", "environment", "readonly", "mount", "missing-key"])
+def test_all_other_configuration_changes_stay_protected(change):
+    before, after = container(0), container(7)
+    if change == "image":
+        after["Config"]["Image"] = "another-image"
+    elif change == "environment":
+        after["Config"]["Env"] = ["SYNTHETIC=changed"]
+    elif change == "readonly":
+        after["HostConfig"]["ReadonlyRootfs"] = False
+    elif change == "mount":
+        after["Mounts"][0]["Name"] = "foreign-data"
+    else:
+        del after["HostConfig"]["Dns"]
+    assert guarded(before, after) == "identity-or-configuration-changed"
+
+
+@pytest.mark.parametrize("change", ["generation", "identity", "running"])
+def test_generation_identity_and_active_consumers_keep_their_guards(change):
+    before, after = container(0), container(7)
+    if change == "generation":
+        after["Config"]["Labels"][docker.OBJECT] = "new-token"
+        expected = "ownership-or-generation-changed"
+    elif change == "identity":
+        after["Id"] = "new-id"
+        expected = "identity-or-configuration-changed"
+    else:
+        after["State"]["Running"] = True
+        expected = "container-active"
+    assert guarded(before, after) == expected
+
+
+@pytest.mark.parametrize("custom_dns", [False, True])
+def test_preserved_backup_accepts_only_empty_dns_transport_changes(tmp_path, monkeypatch, custom_dns):
+    before, after = container(0), container(7)
+    if custom_dns:
+        after["HostConfig"]["Dns"] = ["different-resolver"]
+    target = docker.resource(before, "container")
+    root = tmp_path / "recovery"
+    monkeypatch.setenv("RAGFLOW_ARTIFACT_ARCHIVES", str(root))
+    folder = root / "resources" / target["key"].replace(":", "-")
+    folder.mkdir(parents=True)
+    inspect = folder / "inspect.json"
+    inspect.write_text(json.dumps(before), encoding="utf-8")
+    packet = {"kind": "container", "inspect": docker.archive_info(inspect), "archives": []}
+    (folder / "recovery.json").write_text(json.dumps(packet), encoding="utf-8")
+    engine = docker.Engine.__new__(docker.Engine)
+    engine.inspect = lambda *_: after
+    engine.verify_backup = lambda *_: None
+    if custom_dns:
+        with pytest.raises(ValueError, match="configuration changed"):
+            engine.backup(target, tmp_path / "state")
+    else:
+        assert engine.backup(target, tmp_path / "state")["inspect"] == packet["inspect"]
+    assert json.loads(inspect.read_text(encoding="utf-8")) == before

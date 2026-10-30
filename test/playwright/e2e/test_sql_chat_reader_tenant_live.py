@@ -57,12 +57,17 @@ def test_chat_reader_controls_and_foreign_tenant_cannot_read_or_export(page, bro
         root = chat._root(reader_page)
         expect(root.get_by_role("button", name="Новое исследование", exact=True)).to_be_disabled()
         expect(root.get_by_role("button", name="Отправить", exact=True)).to_be_disabled()
-        expect(root.locator("textarea:visible")).to_be_disabled()
+        attempted_creations = []
+        reader_page.on("request", lambda request: attempted_creations.append(request.url) if request.method == "POST" and request.url.endswith(chat.SESSIONS) else None)
+        root.locator("textarea:visible").fill("Покажи оплаченные заказы")
+        root.locator("textarea:visible").press("Enter")
+        expect(root.get_by_role("button", name="Отправить", exact=True)).to_be_disabled()
         live.browser(reader_page, "/sql-assistant?session=" + chat_probe["id"], user=reader, token=reader_token)
         expect(chat._root(reader_page)).to_contain_text("Не удалось открыть исследование")
         expect(root.get_by_role("table", name="Данные выбранного результата", exact=True)).to_have_count(0)
         expect(root.get_by_role("button", name="Скачать результат", exact=True)).to_have_count(0)
         assert chat_probe["fqn"] not in root.inner_text()
+        assert not attempted_creations, "Reader typing or Enter must not create an analysis request"
         reader_page.screenshot(path=str(live.out / (chat_probe["proof_id"] + "-reader-denied.png")))
     finally:
         context.close()

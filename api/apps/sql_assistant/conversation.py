@@ -67,6 +67,9 @@ def advance(job):
         state = deepcopy(current.state)
         if (state.get("conversation") or {}).get("job_id") != job.id:
             return
+        from api.apps.business_documents.sql_query_agents import BusinessDocumentSqlAgentService
+
+        BusinessDocumentSqlAgentService.discard_failed_conversation_proposal(stored)
         state["conversation"].update(
             phase="ERROR",
             job_id=None,

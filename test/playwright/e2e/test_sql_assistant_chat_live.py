@@ -180,8 +180,29 @@ def _matches(result, columns, rows):
     return len(values) == len(rows) and all(len(actual) == len(expected) and all(_equal(a, e) for a, e in zip(actual, expected, strict=True)) for actual, expected in zip(values, rows, strict=True))
 
 
+def _source_projection_matches(result, schema):
+    if not result:
+        return False
+    statement = parse_one(result["sql"], dialect="postgres")
+    columns = [item.this if isinstance(item, exp.Alias) else item for item in statement.expressions]
+    tables = list(statement.find_all(exp.Table))
+    return (
+        all(isinstance(item, exp.Column) for item in columns) and [item.name for item in columns] == COLUMNS and len(tables) == 1 and tables[0].db == schema and tables[0].name == "regression_orders"
+    )
+
+
 def _rows(page, live, probe, rows=PAID, columns=COLUMNS):
-    value = _wait(page, live, probe, lambda item: _matches(item["result"], columns, rows) and _idle(item["session"]["project"]))
+    def matches(item):
+        result = item["result"]
+        names = columns
+        if names is None:
+            # A plain question names source fields, without prescribing AS labels.
+            if not _source_projection_matches(result, probe["schema"]):
+                return False
+            names = [column["name"] for column in result["columns"]]
+        return _matches(result, names, rows) and _idle(item["session"]["project"])
+
+    value = _wait(page, live, probe, matches)
     table = _root(page).get_by_role("table", name="Данные выбранного результата", exact=True)
     expect(table).to_be_visible(timeout=30000)
     rendered = table.locator("tbody tr")
@@ -241,9 +262,9 @@ def _complete(page, live, probe, value):
 def test_chat_fast_answer_and_server_restore_in_fresh_context(page, live, chat_probe):
     """C01/C05: no staged API setup of the question, then real server restore."""
     _start(page, live, chat_probe, f"Покажи оплаченные заказы из {chat_probe['fqn']}: id, status, amount. Отсортируй по id по возрастанию.")
-    before = _rows(page, live, chat_probe)
+    before = _rows(page, live, chat_probe, columns=None)
     page.reload(wait_until="domcontentloaded")
-    assert _identity(_rows(page, live, chat_probe)) == _identity(before)
+    assert _identity(_rows(page, live, chat_probe, columns=None)) == _identity(before)
     context = page.context.browser.new_context()
     errors = []
     try:
@@ -251,12 +272,12 @@ def test_chat_fast_answer_and_server_restore_in_fresh_context(page, live, chat_p
         restored.on("pageerror", lambda error: errors.append(str(error)))
         # Only authentication is injected. No result, messages or analysis state.
         live.browser(restored, "/sql-assistant?session=" + chat_probe["id"])
-        after = _rows(restored, live, chat_probe)
+        after = _rows(restored, live, chat_probe, columns=None)
         assert _identity(after) == _identity(before)
         assert after["result"]["view"] == before["result"]["view"]
         assert [message["id"] for message in after["session"]["messages"]] == [message["id"] for message in before["session"]["messages"]]
         _send(restored, chat_probe, "Теперь оставь только заказы с amount не меньше 10.")
-        after = _rows(restored, live, chat_probe, [PAID[0]])
+        after = _rows(restored, live, chat_probe, [PAID[0]], columns=None)
         _complete(restored, live, chat_probe, after)
         assert not errors
     finally:
@@ -378,17 +399,7 @@ def _all_orders(value, schema):
     names = [column["name"] for column in result["columns"]]
     if not _matches(result, names, ALL):
         return False
-    statement = parse_one(result["sql"], dialect="postgres")
-    columns = [item.this if isinstance(item, exp.Alias) else item for item in statement.expressions]
-    tables = list(statement.find_all(exp.Table))
-    return (
-        all(isinstance(item, exp.Column) for item in columns)
-        and [item.name for item in columns] == COLUMNS
-        and statement.args.get("where") is None
-        and len(tables) == 1
-        and tables[0].db == schema
-        and tables[0].name == "regression_orders"
-    )
+    return _source_projection_matches(result, schema) and parse_one(result["sql"], dialect="postgres").args.get("where") is None
 
 
 def test_chat_new_conversation_does_not_inherit_previous_filters(page, live, chat_probe):

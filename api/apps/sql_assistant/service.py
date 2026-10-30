@@ -607,6 +607,8 @@ class SqlAssistantService:
             self._save_state(session, state)
             return
         self._progress_preparation(session, state)
+        if turn.get("phase") == "ERROR":
+            Projects.discard_failed_conversation_proposal(job)
         self._save_state(session, state)
 
     def _progress_preparation(self, session, state):

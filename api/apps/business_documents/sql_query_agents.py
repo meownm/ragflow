@@ -1055,6 +1055,43 @@ class BusinessDocumentSqlAgentService:
             cls._finish_job(current_job, "COMPLETED", result=result)
 
     @classmethod
+    def discard_failed_conversation_proposal(cls, job: BusinessDocumentJob) -> None:
+        """Release only the active chat turn's unaccepted candidate after rollback."""
+        with BusinessDocumentSqlQueryProject._meta.database.atomic():
+            session = SqlAssistantSession.get_or_none((SqlAssistantSession.id == job.document_id) & (SqlAssistantSession.tenant_id == job.tenant_id))
+            if session is None or (session.state.get("conversation") or {}).get("job_id") != job.id or job.status != "COMPLETED":
+                return
+            project = cls._get_project(job.tenant_id, job.document_id)
+            if project.current_job_id != job.id or project.state_version != job.source_state_version or project.operation_state != "REVIEW":
+                return
+            proposal = BusinessDocumentSqlAgentProposal.get_or_none(
+                (BusinessDocumentSqlAgentProposal.project_id == project.id)
+                & (BusinessDocumentSqlAgentProposal.tenant_id == job.tenant_id)
+                & (BusinessDocumentSqlAgentProposal.job_id == job.id)
+                & (BusinessDocumentSqlAgentProposal.status == "PENDING")
+            )
+            if proposal is None:
+                return
+            changed = (
+                BusinessDocumentSqlQueryProject.update(
+                    operation_state="IDLE", current_job_id=None, state_version=project.state_version + 1, last_error=None, update_time=current_timestamp(), update_date=datetime.now()
+                )
+                .where(
+                    (BusinessDocumentSqlQueryProject.id == project.id)
+                    & (BusinessDocumentSqlQueryProject.tenant_id == job.tenant_id)
+                    & (BusinessDocumentSqlQueryProject.state_version == project.state_version)
+                    & (BusinessDocumentSqlQueryProject.current_job_id == job.id)
+                    & (BusinessDocumentSqlQueryProject.operation_state == "REVIEW")
+                )
+                .execute()
+            )
+            if changed != 1:
+                raise ConflictError("SQL_AGENT_VERSION_CONFLICT", "Project changed while releasing a failed chat candidate")
+            proposal.status = "REJECTED"
+            proposal.decided_at = current_timestamp()
+            proposal.save(only=[BusinessDocumentSqlAgentProposal.status, BusinessDocumentSqlAgentProposal.decided_at])
+
+    @classmethod
     def fail_job(cls, job: BusinessDocumentJob, worker_id: str, lease_token: str, error: Mapping[str, Any]) -> None:
         with BusinessDocumentSqlQueryProject._meta.database.atomic():
             current_job = BusinessDocumentJob.get_by_id(job.id)

@@ -127,7 +127,52 @@ def test_actor_downgrade_during_model_call_cannot_accept_or_enqueue_next_stage(r
     current = service.get(created["id"])
     assert current["conversation"]["phase"] == "ERROR"
     assert current["project"]["artifact_ids"]["requirements"] is None
+    assert current["project"]["operation_state"] == "IDLE"
+    assert current["project"]["pending_proposal"] is None
     assert BusinessDocumentJob.select().count() == 1
+
+
+@pytest.mark.parametrize("invalid_proposal", [{}, {"requirements": [], "questions": []}], ids=["stopped-plan", "acceptance-error"])
+def test_invalid_automatic_proposal_does_not_block_the_next_message(research, actor, invalid_proposal):
+    from api.db.db_models import BusinessDocumentSqlAgentProposal
+
+    service = research[0]
+    created = service.create({"question": "Show orders", "client_request_id": "invalid-proposal"})
+    output = requirements(blocking=False)
+    output["proposal"] = invalid_proposal
+    job = finish_preparation(created["conversation"]["job_id"], output)
+    failed = service.get(created["id"])
+    assert failed["conversation"]["phase"] == "ERROR"
+    assert failed["project"]["operation_state"] == "IDLE"
+    assert failed["project"]["pending_proposal"] is None
+    proposal = BusinessDocumentSqlAgentProposal.get(BusinessDocumentSqlAgentProposal.job_id == job.id)
+    assert proposal.status == "REJECTED"
+    assert BusinessDocumentJob.get_by_id(job.id).status == "COMPLETED"
+    session = SqlAssistantSession.get_by_id(created["id"])
+    retried = native.command(service, session, "message", {"text": "Покажи оплаченные заказы"}, key="retry-invalid")
+    next_turn = retried["session"]["conversation"]
+    assert next_turn["phase"] in {"ROUTING", "PREPARING"}
+    assert next_turn["job_id"] != job.id
+    from api.apps.sql_assistant.conversation import advance
+
+    advance(job)
+    assert service.get(session.id)["conversation"] == next_turn
+
+
+def test_failed_chat_cleanup_does_not_discard_a_manual_workbench_proposal(research, actor):
+    from api.db.db_models import BusinessDocumentSqlAgentProposal
+
+    created = Projects.create_project(native.TENANT, native.ACTOR, {"schema_version": "1", "title": "Manual", "source_request": "Show orders", "locale": "en"})
+    queued = Projects.request_agent(
+        native.TENANT, native.ACTOR, created["id"], {"schema_version": "1", "expected_state_version": created["state_version"], "idempotency_key": "manual", "kind": "REQUIREMENTS", "payload": {}}
+    )
+    job = BusinessDocumentJobQueue.claim("worker", lease_ms=60000)
+    assert job.id == queued["current_job"]["id"]
+    Projects.complete_job(job, "worker", job.lease_token, requirements(blocking=False))
+    before = Projects.get_project(native.TENANT, native.ACTOR, created["id"])
+    Projects.discard_failed_conversation_proposal(BusinessDocumentJob.get_by_id(job.id))
+    assert Projects.get_project(native.TENANT, native.ACTOR, created["id"]) == before
+    assert BusinessDocumentSqlAgentProposal.get(BusinessDocumentSqlAgentProposal.job_id == job.id).status == "PENDING"
 
 
 def test_query_clarification_keeps_the_actual_question_with_its_answer(research, actor):

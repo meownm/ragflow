@@ -82,7 +82,10 @@ def test_chat_real_execution_error_keeps_previous_result_until_success(page, liv
         )
     finally:
         live.sql(f"GRANT SELECT ON {schema}.regression_orders TO {role}; SELECT json_build_object('own_select_restored',true);")
-    chat._send(page, chat_probe, "После исправления ошибки снова оставь amount не меньше 50. Период, paid, источник и поля сохрани.")
+    with page.expect_response(lambda response: response.request.method == "POST" and response.url.endswith(chat.SESSIONS + "/" + chat_probe["id"] + "/commands")) as delivery:
+        chat._send(page, chat_probe, "После исправления ошибки снова оставь amount не меньше 50. Период, paid, источник и поля сохрани.")
+    accepted = delivery.value
+    assert accepted.status == 200 and accepted.json().get("code") == 0, "The retry must be admitted before checking its new result"
     expected = [[101, 100], [102, 100]]
     if real_sql_catalog["calendar_discriminator"]:
         expected += [[108, 50], [109, 50], [110, 150]]

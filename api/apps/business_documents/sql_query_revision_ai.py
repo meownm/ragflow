@@ -59,6 +59,12 @@ An aggregate without group keys replaces detail output with the requested aggreg
 Grouped aggregates output the supplied keys and aggregates. Remove incompatible old detail columns/ORDER BY;
 these necessary SQL changes are not missing business decisions. LEFT JOIN plus grouping includes the NULL group
 unless filtered out. A related table used only for filtering does not add output columns or multiply baseline rows.
+Independent to-many child joins multiply each child's rows. When counting each child's entities, use
+COUNT(DISTINCT its verified primary key), not COUNT of joined rows or DISTINCT of its parent foreign key.
+Preserve a parent without children with LEFT JOIN; COUNT of the child key is then zero.
+Never repair fanout with SUM(DISTINCT measure): different entities can have equal legitimate amounts.
+For totals at the parent grain, drop joins not needed by the requested cohort, or aggregate child relations
+before joining them; preserve needed child filters without summing repeated parent measures.
 Preserve NULL group keys and empty strings as distinct values. Do not add COALESCE, CASE or NULLIF defaults
 to group keys unless the human explicitly requested that replacement.
 For specified to-one keys use LEFT JOIN to preserve baseline rows, unless INNER JOIN was requested or the

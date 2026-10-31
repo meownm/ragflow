@@ -18,3 +18,8 @@ The disposable PostgreSQL tests in `test/integration/test_source_document_migrat
 cover old drafts, repeated migration, interrupted backfill recovery and source
 updates. They require an explicitly disposable database and must not target the
 application database.
+
+For the proposed user/group permission model, follow the
+[access-control migration procedure](access_control_migration_ru.md). It defines
+the current-rule mapping, comparison gates, activation and rollback requirements;
+the new policy engine and migration executor are not implemented yet.

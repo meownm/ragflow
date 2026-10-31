@@ -16,6 +16,7 @@ if str(ROOT) not in sys.path:
 SUITES = [
     "test/playwright/e2e/test_home_login_responsive_ui.py",
     "test/playwright/e2e/test_sql_assistant_ui.py",
+    "test/playwright/e2e/test_sql_assistant_sidebar_ui.py",
     "test/playwright/e2e/test_admin_users_ui.py",
     "test/playwright/e2e/test_document_constructor_ui.py",
     "test/playwright/e2e/test_sql_revision_ui.py",

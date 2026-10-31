@@ -470,8 +470,9 @@ export function AssistantBuilder({
                 setDirty(true);
               }}
               rows={12}
+              resize="vertical"
               maxLength={20000}
-              className="mt-2 font-mono text-xs"
+              className="sa-sql-editor mt-2 font-mono text-xs"
               disabled={agreed || !canEdit || busy || editingOther}
             />
           </label>
@@ -485,9 +486,10 @@ export function AssistantBuilder({
                 setOrigin('sql');
                 setDirty(true);
               }}
-              rows={5}
+              rows={8}
+              resize="vertical"
               maxLength={10000}
-              className="mt-2 font-mono text-xs"
+              className="sa-sql-editor sa-parameters-editor mt-2 font-mono text-xs"
               disabled={agreed || !canEdit || busy || editingOther}
             />
           </label>

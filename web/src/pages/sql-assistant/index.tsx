@@ -148,7 +148,7 @@ export default function SqlAssistantPage() {
                   onClick={() => navigate(item.id)}
                   title={item.title}
                 >
-                  {item.title}
+                  <span className="sa-recent-title">{item.title}</span>
                 </button>
               ))
             ) : (

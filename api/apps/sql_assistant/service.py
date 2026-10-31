@@ -242,6 +242,8 @@ class SqlAssistantService:
                         "before_sql": (project.get("compilation") or {}).get("result", {}).get("sql", ""),
                         "after_sql": proposed["sql"],
                         "summary": proposed.get("summary", "Предложение изменения SQL"),
+                        "sql_diff": proposed.get("sql_diff", ""),
+                        "parameter_diff": proposed.get("parameter_diff", ""),
                     }
                 )
         return cards
@@ -370,6 +372,7 @@ class SqlAssistantService:
         references = resolve_references(project, payload.get("references", []))
         source_text = message + "".join("\n" + item["fqn"] for item in references if item["kind"] == "TABLE")
         require_metric_choice(project, message, payload)
+        selection = None
         if references:
             import json
 
@@ -383,8 +386,11 @@ class SqlAssistantService:
             if not columns[position]["drillable"]:
                 raise ValueError("Для детализации выберите измерение, а не рассчитанный показатель")
             value = run.rows[index][position]
+            from business_documents.sql_query.revisions import selected_group
+
+            selection = selected_group(source.compiled["sql"], position, value)
             message += f"\nКонтекст выбранного результата: колонка {columns[position]['name']}, типизированное значение {value!r}. Сохрани остальные условия исходного SQL; неоднозначности уточни. Не агрегируй ограниченную выдачу вместо данных источника."
-        return self.runtime.follow_up(project, run.id, message, command, source_text=source_text)
+        return self.runtime.follow_up(project, run.id, message, command, source_text=source_text, selection=selection)
 
     def _save_state(self, session, state):
         changed = (
@@ -599,8 +605,12 @@ class SqlAssistantService:
         response = job.result or {}
         if job.job_type == "SQL_AGENT_REVISION" and response.get("response_kind") in {"EXPLANATION", "CLARIFICATION"}:
             if response["response_kind"] == "CLARIFICATION":
-                pending = {"kind": "REVISION", "thread_id": job.payload["request"]["thread_id"]}
-                self._ask_preparation(state, pending, response["answer"], response["questions"][0]["options"])
+                question = response["questions"][0]
+                pending = {"kind": "REVISION", "thread_id": job.payload["request"]["thread_id"], "question_id": question["id"]}
+                text = response["answer"]
+                if question["text"] not in text:
+                    text += "\n\n" + question["text"]
+                self._ask_preparation(state, pending, text, question["options"])
             else:
                 state["messages"].append({"id": get_uuid(), "role": "assistant", "text": response["answer"], "created_at": current_timestamp(), "parent_result_id": None})
                 turn.update(phase="READY", job_id=None)
@@ -670,6 +680,15 @@ class SqlAssistantService:
                 questions = result.get("clarification_questions") or []
                 text = questions[0] if questions else "Уточните условия будущего расчёта."
                 self._ask_preparation(state, {"kind": "QUERY", "proposal_id": proposal["id"]}, text, [])
+                return
+            if action == "REVIEW_REVISION":
+                changes = result["proposal"].get("review_changes") or ["условия расчёта"]
+                self._ask_preparation(
+                    state,
+                    {"kind": "REVISION_REVIEW", "proposal_id": proposal["id"]},
+                    "Изменятся принятые условия расчёта: " + ", ".join(changes) + ".\n\n" + result["proposal"].get("summary", "") + "\n\nПрименить эту правку?",
+                    ["Применить правку", "Оставить прежний расчёт"],
+                )
                 return
             if action.startswith("ACCEPT_"):
                 supplied = {"answers": turn.get("answers", {})}
@@ -783,6 +802,33 @@ class SqlAssistantService:
             if text == "Исследовательский расчёт":
                 self._apply(session, state, project, "discard_draft", {}, command)
                 turn["metric_resolution"] = "EXPLORATORY"
+        elif pending["kind"] == "REVISION_REVIEW":
+            if keys:
+                raise ValueError("Уточните правку текстом или примените предложенный расчёт")
+            message_id = get_uuid()
+            state["messages"].append({"id": message_id, "role": "user", "text": text, "created_at": current_timestamp(), "parent_result_id": state.get("selected_result_id")})
+            turn.update(turn_id=message_id, message_id=message_id)
+            self._apply(session, state, project, "decide", {"decision": "ACCEPT" if text == "Применить правку" else "REJECT", "artifact_payload": None}, command)
+            current = self.runtime.project(session.id)
+            if text in {"Применить правку", "Оставить прежний расчёт"}:
+                turn.update(phase="PREPARING" if text == "Применить правку" else "READY", pending=None, question=None, job_id=None)
+                if turn["phase"] == "PREPARING":
+                    self._progress_preparation(session, state)
+                else:
+                    state["messages"].append(
+                        {"id": get_uuid(), "role": "assistant", "text": "Прежний расчёт сохранён.", "created_at": current_timestamp(), "parent_result_id": state.get("selected_result_id")}
+                    )
+                return {"kind": "message", "message_id": message_id}
+            thread_id = proposal["payload"]["agent_result"]["source"]["thread_id"]
+            thread = BusinessDocumentSqlQueryThread.get_by_id(thread_id)
+            self.runtime.call(
+                Revisions.reply, session.id, thread_id, {"schema_version": "1", "expected_thread_version": thread.version, "idempotency_key": command["idempotency_key"] + ":reply", "text": text}
+            )
+            queued = self.runtime.call(
+                Revisions.request_change, session.id, thread_id, {**command, "expected_state_version": current["state_version"], "idempotency_key": command["idempotency_key"] + ":revise"}
+            )
+            turn.update(phase="PREPARING", pending=None, question=None, job_id=queued["current_job"]["id"])
+            return {"kind": "message", "message_id": turn["message_id"]}
         elif pending["kind"] == "REVISION":
             if keys:
                 raise ValueError("Ответьте на уточнение текстом; новый источник укажите в следующем сообщении")
@@ -794,7 +840,16 @@ class SqlAssistantService:
             if thread is None:
                 raise ConflictError("SQL_THREAD_NOT_FOUND", "Исходное обсуждение недоступно")
             self.runtime.call(
-                Revisions.reply, session.id, thread.id, {"schema_version": "1", "expected_thread_version": thread.version, "idempotency_key": command["idempotency_key"] + ":reply", "text": text}
+                Revisions.reply,
+                session.id,
+                thread.id,
+                {
+                    "schema_version": "1",
+                    "expected_thread_version": thread.version,
+                    "idempotency_key": command["idempotency_key"] + ":reply",
+                    "text": text,
+                    **({"question_id": pending["question_id"]} if pending.get("question_id") else {}),
+                },
             )
             queued = self.runtime.call(Revisions.request_change, session.id, thread.id, command)
             turn["job_id"] = queued["current_job"]["id"]

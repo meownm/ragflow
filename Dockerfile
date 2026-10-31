@@ -331,7 +331,7 @@ COPY web web
 COPY docs docs
 COPY api/apps/business_documents/html_policy.json api/apps/business_documents/html_policy.json
 RUN --mount=type=cache,id=ragflow_npm,target=/root/.npm,sharing=locked \
-    cd web && NODE_OPTIONS="--max-old-space-size=8192" VITE_BUILD_SOURCEMAP=false VITE_MINIFY=esbuild npm run build
+    cd web && NODE_OPTIONS="--max-old-space-size=4096" VITE_CSS_PREPROCESSOR_MAX_WORKERS=0 VITE_BUILD_SOURCEMAP=false VITE_MINIFY=esbuild npm run build
 
 # Build identity is supplied by the caller, not by copying Git history.
 # Standalone builds without args remain usable but explicitly unverified.

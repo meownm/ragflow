@@ -3,6 +3,8 @@
 from copy import deepcopy
 import asyncio
 
+from business_documents.application.errors import BusinessDocumentError
+
 import pytest
 
 from test.unit_test.api.apps.business_documents.test_sql_query_revisions import ACTOR, TENANT, project as project_fixture
@@ -76,6 +78,66 @@ async def generate(request, model):
     return await catalog.propose_catalog_revision(TENANT, ACTOR, request, False, "AUTHOR_CREATOR", llm=model)
 
 
+async def test_sql_safety_pass_does_not_auto_approve_lost_customer_conditions(source):
+    from business_documents.sql_conversation import preparation_action
+
+    request, _ = source
+
+    class Model:
+        async def async_generate(self, *_):
+            return {"sql": BASE.split(" WHERE ")[0] + " LIMIT :row_limit", "parameters": [PARAMETERS[-1]], "summary": "Remove selection"}
+
+    result = await generate(request, Model())
+    assert result["proposal"]["checks"]["status"] == "PASS"
+    assert "прежний отбор строк" in result["proposal"]["review_changes"]
+    assert preparation_action({"pending_proposal": {"kind": "REVISION", "payload": {"agent_result": result}}}) == "REVIEW_REVISION"
+
+
+async def test_format_and_sql_correction_share_two_total_model_calls(source):
+    request, _ = source
+
+    class Model:
+        calls = 0
+
+        async def async_generate(self, *_):
+            self.calls += 1
+            if self.calls == 1:
+                return []
+            return {"sql": BASE.replace(" LIMIT :row_limit", ""), "parameters": PARAMETERS[:-1], "summary": "missing limit"}
+
+    model = Model()
+    result = await generate(request, model)
+    assert model.calls == 2
+    assert result["proposal"]["checks"]["status"] == "BLOCKED"
+
+
+async def test_catalog_time_is_inside_the_typed_model_deadline(source, monkeypatch):
+    import asyncio
+
+    request, _ = source
+    request["pinned_compilation_id"] = "pinned"
+    monkeypatch.setattr(catalog, "MODEL_TIMEOUT_SECONDS", 0.05)
+
+    async def verify(*_):
+        await asyncio.sleep(0.03)
+
+    monkeypatch.setattr(catalog.BusinessDocumentSqlQuerySchemaService, "verify_snapshot", verify)
+
+    class Model:
+        calls = 0
+
+        async def async_generate(self, *_):
+            self.calls += 1
+            await asyncio.sleep(0.03)
+            return {"response_kind": "EXPLANATION", "answer": "ready"}
+
+    model = Model()
+    with pytest.raises(BusinessDocumentError) as failure:
+        await generate(request, model)
+    assert model.calls == 1
+    assert failure.value.code == "SQL_REVISION_UNAVAILABLE"
+
+
 @pytest.mark.asyncio
 async def test_valid_edit_stays_one_call_without_catalog_io(source, monkeypatch):
     request, _ = source
@@ -113,7 +175,7 @@ async def test_actual_c11_shape_loads_fk_target_before_one_guarded_correction(so
     assert {item["entity_id"] for item in result["verified_catalog_schema"]["accepted_schema"]} == {"orders", "customers"}
     assert request == before
     assert model.contexts[1]["current_sql"] == BASE and model.contexts[1]["current_parameters"] == PARAMETERS
-    assert model.contexts[1]["discussion"] == request["comments"]
+    assert model.contexts[1]["discussion"] == [{**item, "role": "user"} for item in request["comments"]]
     assert model.contexts[1]["validation_feedback"]["verified_additional_entity_ids"] == ["customers"]
 
 
@@ -377,9 +439,12 @@ async def test_timeout_is_not_retried(source, monkeypatch):
             await asyncio.Event().wait()
 
     monkeypatch.setattr(catalog, "MODEL_TIMEOUT_SECONDS", 0.03)
-    with pytest.raises(TimeoutError):
+    with pytest.raises(BusinessDocumentError) as failure:
         await generate(request, Slow())
     assert len(calls) == 1
+
+    assert failure.value.code == "SQL_REVISION_UNAVAILABLE"
+    assert isinstance(failure.value.__cause__, TimeoutError)
 
 
 @pytest.mark.asyncio
@@ -394,9 +459,12 @@ async def test_correction_uses_the_remaining_shared_deadline(source, monkeypatch
 
     model = Slow(BASE.replace(":status_value", "'paid'"), BASE)
     monkeypatch.setattr(catalog, "MODEL_TIMEOUT_SECONDS", 0.5)
-    with pytest.raises(TimeoutError):
+    with pytest.raises(BusinessDocumentError) as failure:
         await generate(request, model)
     assert len(model.contexts) == 2
+
+    assert failure.value.code == "SQL_REVISION_UNAVAILABLE"
+    assert isinstance(failure.value.__cause__, TimeoutError)
 
 
 @pytest.mark.parametrize("cancel", [False, True])

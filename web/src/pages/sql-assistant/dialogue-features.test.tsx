@@ -78,6 +78,61 @@ function setup(overrides: Partial<AssistantSession> = {}) {
   );
   return { send };
 }
+
+it('shows the actual SQL and parameter diff before applying an impactful edit', async () => {
+  const { send } = setup({
+    conversation: {
+      phase: 'WAITING',
+      pending: { kind: 'REVISION_REVIEW' },
+      question: {
+        text: 'Применить эту правку?',
+        options: ['Применить правку', 'Оставить прежний расчёт'],
+      },
+    },
+    cards: session.cards?.map((card) =>
+      card.kind === 'QUERY_CHANGE'
+        ? {
+            ...card,
+            sql_diff: '- WHERE customer_id = :customer\n+ без фильтра',
+            parameter_diff: '- customer: 42',
+          }
+        : card,
+    ),
+  });
+  fireEvent.click(screen.getByText('Изменения SQL и параметров'));
+  expect(screen.getByText(/WHERE customer_id/)).toBeVisible();
+  expect(screen.getByText('- customer: 42')).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'Применить правку' }));
+  await waitFor(() =>
+    expect(send).toHaveBeenCalledWith(
+      'message',
+      expect.objectContaining({
+        text: 'Применить правку',
+        run_id: 'saved',
+        context,
+      }),
+    ),
+  );
+  expect(send).toHaveBeenCalledTimes(1);
+});
+
+it('does not offer application controls to a reader of a reviewed calculation', () => {
+  setup({
+    project: {
+      ...session.project,
+      capabilities: { ...session.project.capabilities, edit: false },
+    },
+    conversation: {
+      phase: 'WAITING',
+      pending: { kind: 'REVISION_REVIEW' },
+      question: { text: 'Применить?', options: ['Применить правку'] },
+    },
+  });
+  expect(
+    screen.queryByRole('button', { name: 'Применить правку' }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByLabelText('Сообщение SQL-помощнику')).toBeDisabled();
+});
 it('sends the immutable displayed context and resolved mention keys', async () => {
   const { send } = setup();
   fireEvent.change(screen.getByLabelText('Сообщение SQL-помощнику'), {

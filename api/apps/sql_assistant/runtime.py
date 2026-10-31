@@ -52,7 +52,7 @@ class SqlRuntime:
             return None
         return min(binding["selection"]["profile"]["max_rows"], MAX_PLAN_ROW_LIMIT)
 
-    def follow_up(self, project, run_id, message, command, *, source_text=None):
+    def follow_up(self, project, run_id, message, command, *, source_text=None, selection=None):
         run, source, _ = self.result(project["id"], run_id)
         thread = self.call(
             Revisions.create_thread,
@@ -65,6 +65,7 @@ class SqlRuntime:
                 "text": message,
             },
             compilation_id=source.compilation.id,
+            selected_group=selection,
         )
         return self.call(
             Revisions.request_change,

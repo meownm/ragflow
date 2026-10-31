@@ -385,7 +385,10 @@ def preparation_action(project, *, answers=None, pending_run_id=None):
         if kind == "QUERY":
             return "ACCEPT_QUERY" if result.get("status") == "PROPOSED" and result.get("proposal") else "ASK_QUERY" if result.get("status") == "NEEDS_CLARIFICATION" else "ERROR"
         if kind == "REVISION":
-            return "ACCEPT_REVISION" if result.get("proposal") and result["proposal"].get("checks", {}).get("status") == "PASS" else "ERROR"
+            proposal = result.get("proposal") or {}
+            if proposal.get("checks", {}).get("status") != "PASS":
+                return "ERROR"
+            return "ACCEPT_REVISION" if proposal.get("review_changes") == [] else "REVIEW_REVISION"
         return "ERROR"
     next_agent = project.get("next_agent")
     if next_agent in {"REQUIREMENTS", "SCHEMA", "QUERY"}:

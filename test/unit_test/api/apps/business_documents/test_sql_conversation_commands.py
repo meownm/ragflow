@@ -448,6 +448,79 @@ def test_followup_metric_choice_keeps_result_and_exploration_revises_original_qu
     assert BusinessDocumentSqlQueryRun.select().count() == 1
 
 
+def _revision_job(research):
+    service, session, run, _, _ = research
+    native.command(service, session, "select_result", {"run_id": run.id}, key="select-revision")
+    queued = native.command(service, session, "message", {"text": "Измени расчёт"}, key="start-revision")
+    finish_preparation(queued["session"]["conversation"]["job_id"], {"intent": "CHANGE"})
+    current = service.get(session.id)
+    return service, session, run, BusinessDocumentJob.get_by_id(current["conversation"]["job_id"])
+
+
+def test_revision_reply_binds_to_displayed_question_even_when_labels_repeat(research, actor):
+    from api.apps.business_documents.sql_query_revisions import BusinessDocumentSqlRevisionService as Revisions
+    from api.db.db_models import BusinessDocumentSqlQueryThread
+
+    service, session, _, job = _revision_job(research)
+    questions = [{"id": "keep", "text": "Сохранить сортировку?", "options": ["Да", "Нет"]}, {"id": "null", "text": "Исключить NULL?", "options": ["Да", "Нет"]}]
+    finish_preparation(job.id, {"response_kind": "CLARIFICATION", "answer": "Нужно уточнить условия", "questions": questions})
+    waiting = service.get(session.id)
+    assert "Сохранить сортировку?" in waiting["conversation"]["question"]["text"]
+    assert waiting["conversation"]["pending"]["question_id"] == "keep"
+    thread = BusinessDocumentSqlQueryThread.get_by_id(job.payload["request"]["thread_id"])
+    for index, invalid in enumerate(("absent", ["keep"], {"id": "keep"})):
+        with pytest.raises(ConflictError, match="Исходное уточнение изменилось"):
+            Revisions.reply(
+                native.TENANT,
+                native.ACTOR,
+                thread.project_id,
+                thread.id,
+                {"schema_version": "1", "expected_thread_version": thread.version, "idempotency_key": f"invalid-question-{index}", "text": "Да", "question_id": invalid},
+            )
+    assert BusinessDocumentSqlQueryThread.get_by_id(thread.id).messages == thread.messages
+    native.command(service, session, "message", {"text": "Да"}, key="answer-specific-question")
+    thread = BusinessDocumentSqlQueryThread.get_by_id(job.payload["request"]["thread_id"])
+    assert thread.messages[-1]["reply_to"] == {"message_id": thread.messages[-2]["id"], "question_id": "keep"}
+    assert thread.messages[-2]["questions"] == questions
+
+
+@pytest.mark.parametrize("decision", ["Применить правку", "Оставить прежний расчёт", "Сохрани прежний лимит"])
+def test_impactful_revision_waits_for_application_and_retains_original_result(research, actor, monkeypatch, decision):
+    from api.apps.business_documents.sql_query_revision_ai import propose_revision
+
+    service, session, run, job = _revision_job(research)
+    request = job.payload["request"]
+    parameters = deepcopy(request["parameters"])
+    next(item for item in parameters if item["name"] == "row_limit")["value"] += 1
+
+    class Model:
+        async def async_generate(self, *_):
+            return {"sql": request["sql"], "parameters": parameters, "summary": "Изменится лимит строк"}
+
+    result = asyncio.run(propose_revision(native.TENANT, request, llm=Model()))
+    finish_preparation(job.id, result)
+    waiting = service.get(session.id)
+    assert waiting["conversation"]["pending"]["kind"] == "REVISION_REVIEW"
+    before = waiting["project"]["artifact_ids"]["query"]
+    assert waiting["selected_result_id"] == run.id
+    admitted = []
+    monkeypatch.setattr(service, "_progress_preparation", lambda current, _state: admitted.append(service.runtime.project(current.id)["artifact_ids"]["query"]))
+    response = native.command(service, session, "message", {"text": decision}, key="apply-revision-choice")["session"]
+    assert response["selected_result_id"] == run.id
+    assert response["messages"][-1 if decision != "Оставить прежний расчёт" else -2]["text"] == decision
+    if decision == "Применить правку":
+        assert admitted and admitted[0] != before
+    elif decision == "Оставить прежний расчёт":
+        assert not admitted and response["conversation"]["phase"] == "READY"
+        assert response["project"]["artifact_ids"]["query"] == before
+    else:
+        assert not admitted and response["conversation"]["phase"] == "PREPARING"
+        assert response["project"]["artifact_ids"]["query"] == before
+        queued = BusinessDocumentJob.get_by_id(response["conversation"]["job_id"])
+        assert queued.payload["request"]["comments"][-1]["text"] == decision
+    assert BusinessDocumentSqlQueryRun.select().count() == 1
+
+
 def test_metric_binding_rechecks_edit_permission_before_publication(metric_binding, actor):
     service, session, current = metric_binding
     User.update(business_document_role="READER").where(User.id == actor.id).execute()

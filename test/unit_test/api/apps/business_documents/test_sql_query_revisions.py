@@ -960,7 +960,7 @@ def test_saved_project_question_can_be_reopened_without_erasing_accepted_artifac
 
 
 @pytest.mark.asyncio
-async def test_revision_separates_unconfirmed_questions_from_human_decisions_and_keeps_catalog_constraints():
+async def test_revision_keeps_question_answer_links_and_catalog_constraints():
     from copy import deepcopy
 
     calls = []
@@ -975,15 +975,17 @@ async def test_revision_separates_unconfirmed_questions_from_human_decisions_and
     request = {
         "target": "QUERY",
         "sql": SQL.replace(" LIMIT", " ORDER BY order_id ASC LIMIT"),
+        "selected_group": {"expression": "order_id", "value": 0},
         "schema": {"accepted_schema": [{"entity_id": "orders"}], "schema_snapshot": {"requirements": [{"selected_table": table}, {"selected_table": {"id": "unaccepted"}}]}},
         "comments": [
             {"text": "По месяцам для выбранной группы"},
             {
                 "role": "assistant",
+                "id": "assistant-question",
                 "text": "Уточните условия",
                 "questions": [{"id": "sort", "text": "Сменить сортировку?", "options": ["Да", "Нет"]}, {"id": "null", "text": "Что делать с NULL?", "options": ["Исключить", "Неизвестно"]}],
             },
-            {"text": "Неизвестно"},
+            {"text": "Неизвестно", "reply_to": {"message_id": "assistant-question", "question_id": "null"}},
         ],
     }
     before = deepcopy(request)
@@ -995,9 +997,12 @@ async def test_revision_separates_unconfirmed_questions_from_human_decisions_and
 
     await propose_revision(TENANT, request, llm=FakeLLM())
     context = calls[0]
-    assert [message["text"] for message in context["discussion"]] == ["По месяцам для выбранной группы", "Неизвестно"]
-    assert context["previous_questions"][0]["questions"] == request["comments"][1]["questions"][1:]
+    assert [message["role"] for message in context["discussion"]] == ["user", "assistant", "user"]
+    assert context["discussion"][1] == request["comments"][1]
+    assert context["discussion"][2]["reply_to"] == {"message_id": "assistant-question", "question_id": "null"}
+    assert "previous_questions" not in context
     assert context["current_ordering"] == "ORDER BY order_id ASC"
+    assert context["selected_group"] == request["selected_group"]
     assert context["accepted_schema"]["tables"] == [table]
     assert request == before
     request["sql"] = "SELECT FROM"
@@ -1017,10 +1022,10 @@ async def test_revision_repairs_invalid_model_contract_once(invalid):
             return invalid if len(calls) == 1 else valid
 
     request = {"target": "QUERY", "sql": SQL, "comments": [{"text": "По месяцам для выбранной модели"}]}
-    assert await propose_revision(TENANT, request, llm=FakeLLM()) == valid
+    assert await _coordinated(request, llm=FakeLLM()) == valid
     assert len(calls) == 2
-    assert calls[0]["context"] == calls[1]["context"]
-    assert calls[1]["format_correction"]["reason"]
+    assert calls[0]["context"] == {key: value for key, value in calls[1]["context"].items() if key != "validation_feedback"}
+    assert calls[1]["context"]["validation_feedback"]["reason"]
 
 
 @pytest.mark.asyncio
@@ -1033,7 +1038,7 @@ async def test_revision_invalid_repair_is_precise_terminal_error():
             return {"response_kind": "CLARIFICATION", "answer": "Продолжим", "questions": []}
 
     with pytest.raises(BusinessDocumentError) as failure:
-        await propose_revision(TENANT, {"target": "QUERY", "sql": SQL}, llm=FakeLLM())
+        await _coordinated({"target": "QUERY", "sql": SQL}, llm=FakeLLM())
     assert failure.value.code == "SQL_REVISION_INVALID_RESPONSE"
     assert failure.value.status == 422
     assert len(calls) == 2
@@ -1049,7 +1054,7 @@ async def test_revision_does_not_retry_unavailable_provider():
             raise ConnectionError("private provider diagnostic")
 
     with pytest.raises(BusinessDocumentError) as failure:
-        await propose_revision(TENANT, {"target": "QUERY", "sql": SQL}, llm=FakeLLM())
+        await _coordinated({"target": "QUERY", "sql": SQL}, llm=FakeLLM())
     assert failure.value.code == "SQL_REVISION_UNAVAILABLE"
     assert failure.value.status == 503
     assert "private" not in failure.value.message
@@ -1060,9 +1065,9 @@ async def test_revision_does_not_retry_unavailable_provider():
 async def test_revision_repair_uses_remaining_time_budget(monkeypatch):
     import asyncio
 
-    from api.apps.business_documents import sql_query_revision_ai
+    from api.apps.business_documents import sql_query_revision_catalog
 
-    monkeypatch.setattr(sql_query_revision_ai, "MODEL_TIMEOUT_SECONDS", 0.08)
+    monkeypatch.setattr(sql_query_revision_catalog, "MODEL_TIMEOUT_SECONDS", 0.08)
 
     class FakeLLM:
         async def async_generate(self, *_):
@@ -1070,7 +1075,7 @@ async def test_revision_repair_uses_remaining_time_budget(monkeypatch):
             return {"response_kind": "CLARIFICATION", "answer": "Продолжим", "questions": []}
 
     with pytest.raises(BusinessDocumentError) as failure:
-        await propose_revision(TENANT, {"target": "QUERY", "sql": SQL}, llm=FakeLLM())
+        await _coordinated({"target": "QUERY", "sql": SQL}, llm=FakeLLM())
     assert failure.value.code == "SQL_REVISION_UNAVAILABLE"
     assert isinstance(failure.value.__cause__, TimeoutError)
 
@@ -1356,3 +1361,9 @@ def test_human_source_selection_survives_clarification_without_promoting_cell_or
     assert raw_source in evidence and "2026 UTC" in evidence
     assert "untrusted.cell.source" not in evidence and "invented.model.source" not in evidence
     assert all("catalog_source_text" not in message for message in second.payload["request"]["comments"])
+
+
+async def _coordinated(request, *, llm):
+    from api.apps.business_documents.sql_query_revision_catalog import propose_catalog_revision
+
+    return await propose_catalog_revision(TENANT, ACTOR, request, False, "AUTHOR_CREATOR", llm=llm)

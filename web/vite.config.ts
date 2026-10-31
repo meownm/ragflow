@@ -192,12 +192,11 @@ export default defineConfig(({ mode }) => {
       },
     },
     css: {
-      // Multiple Less worker threads intermittently fail with EINVAL on
-      // Windows-mounted workspaces. One worker is deterministic and can be
-      // raised explicitly for build hosts that support parallel preprocessing.
+      // Host builds default to one Less worker. Docker uses 0 to avoid
+      // synchronous worker import-resolution timeouts during image builds.
       preprocessorMaxWorkers: Math.max(
-        1,
-        Number(env.VITE_CSS_PREPROCESSOR_MAX_WORKERS) || 1,
+        0,
+        Number(env.VITE_CSS_PREPROCESSOR_MAX_WORKERS ?? 1) || 0,
       ),
       modules: {
         localsConvention: 'camelCase',

@@ -442,7 +442,16 @@ class BusinessDocumentSqlRevisionService:
 
     @classmethod
     def create_thread(
-        cls, tenant_id: str, actor_id: str, project_id: str, raw: object, is_admin: bool = False, access_role: str = "AUTHOR_CREATOR", *, compilation_id: str | None = None
+        cls,
+        tenant_id: str,
+        actor_id: str,
+        project_id: str,
+        raw: object,
+        is_admin: bool = False,
+        access_role: str = "AUTHOR_CREATOR",
+        *,
+        compilation_id: str | None = None,
+        selected_group: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         if compilation_id is not None and (not isinstance(compilation_id, str) or len(compilation_id) != 32):
             raise ValidationError("INVALID_SQL_REVISION", "Select one saved compilation")
@@ -460,6 +469,8 @@ class BusinessDocumentSqlRevisionService:
         identity = {"type": "CREATE_SQL_THREAD", "request": data}
         if compilation_id is not None:
             identity["compilation_id"] = compilation_id
+        if selected_group is not None:
+            identity["selected_group"] = selected_group
         request_hash = _stable_hash(identity)
         with BusinessDocumentSqlQueryProject._meta.database.atomic():
             project = cls._project(tenant_id, actor_id, project_id, is_admin, access_role)
@@ -509,6 +520,8 @@ class BusinessDocumentSqlRevisionService:
                 if target != "QUERY" or requested_base is None:
                     raise ValidationError("INVALID_SQL_REVISION", "A saved compilation requires its selected query")
                 anchor["pinned_compilation_id"] = compilation_id
+            if selected_group is not None:
+                anchor["selected_group"] = dict(selected_group)
             thread = BusinessDocumentSqlQueryThread.create(
                 id=get_uuid(),
                 project_id=project_id,
@@ -595,7 +608,7 @@ class BusinessDocumentSqlRevisionService:
 
     @classmethod
     def reply(cls, tenant_id: str, actor_id: str, project_id: str, thread_id: str, raw: object, is_admin: bool = False, access_role: str = "AUTHOR_CREATOR") -> dict[str, Any]:
-        data = _payload(raw, {"expected_thread_version", "idempotency_key", "text"})
+        data = _payload(raw, {"expected_thread_version", "idempotency_key", "text", "question_id"})
         key = _key(data)
         request_hash = _stable_hash({"type": "REPLY_SQL_THREAD", "thread_id": thread_id, "request": data})
         with BusinessDocumentSqlQueryProject._meta.database.atomic():
@@ -610,7 +623,13 @@ class BusinessDocumentSqlRevisionService:
                 raise BusinessDocumentError("SQL_THREAD_NOT_FOUND", "Comment thread not found", 404)
             if thread.status != "OPEN" or thread.version != data.get("expected_thread_version"):
                 raise ConflictError("SQL_THREAD_VERSION_CONFLICT", "Discussion changed; reload it")
-            messages = [*thread.messages, _message(data.get("text"), actor_id)]
+            message = _message(data.get("text"), actor_id)
+            if data.get("question_id"):
+                question = next((item for item in reversed(thread.messages) if item.get("role") == "assistant" and item.get("questions")), None)
+                if question is None or data["question_id"] not in (item["id"] for item in question["questions"]):
+                    raise ConflictError("SQL_DIALOGUE_CONTEXT_CHANGED", "Исходное уточнение изменилось")
+                message["reply_to"] = {"message_id": question["id"], "question_id": data["question_id"]}
+            messages = [*thread.messages, message]
             changed = (
                 BusinessDocumentSqlQueryThread.update(
                     messages=messages,
@@ -738,6 +757,7 @@ class BusinessDocumentSqlRevisionService:
                 "schema": proposed_schema if proposed_schema is not None else pinned_source.schema.payload if pinned_source is not None else (current.get("artifacts") or {}).get("schema"),
                 "proposed_schema": proposed_schema,
                 "pinned_compilation_id": pinned_source.compilation.id if pinned_source is not None else None,
+                "selected_group": thread.anchor.get("selected_group"),
                 "document": artifact.payload if thread.target == "DOCUMENT" else None,
                 "locale": project.locale,
             }

@@ -8,6 +8,7 @@ This external harness deliberately does not modify the frozen application source
 
 from datetime import datetime
 import re
+import time
 
 from test.playwright.e2e import sql_chat_relation_fixture as catalog_fixture
 from playwright.sync_api import expect
@@ -100,9 +101,9 @@ def test_chat_selected_group_monthly_drilldown_preserves_measures_and_history(pa
         live,
         chat_probe,
         f"Используй только {chat_probe['fqn']}. За весь доступный период посчитай COUNT(id) AS request_count и AVG(amount) AS avg_amount по status. "
-        "Колонки status, request_count, avg_amount. Сортировка status ASC, LIMIT 100. Без JOIN, только чтение.",
+        "Исключи заказ id = 101. Колонки status, request_count, avg_amount. Сортировка request_count DESC, LIMIT 100. Без JOIN, только чтение.",
     )
-    groups = [["cancelled", 3, "75.0000000000000000"], ["paid", 9, "66.6666666666666667"]] if extra else [["cancelled", 1, "70.0000000000000000"], ["paid", 6, "58.3333333333333333"]]
+    groups = [["paid", 8, "62.5000000000000000"], ["cancelled", 3, "75.0000000000000000"]] if extra else [["paid", 5, "50.0000000000000000"], ["cancelled", 1, "70.0000000000000000"]]
     before = chat._rows(page, live, chat_probe, groups, ["status", "request_count", "avg_amount"])
     table = chat._root(page).get_by_role("table", name="Данные выбранного результата", exact=True)
     table.locator("tbody tr").filter(has_text="paid").get_by_role("button", name="Уточнить по этой строке", exact=True).click()
@@ -126,14 +127,48 @@ def test_chat_selected_group_monthly_drilldown_preserves_measures_and_history(pa
         stamp = datetime.fromisoformat(cells[time_columns[0]].replace("Z", "+00:00"))
         assert stamp.day == 1 and stamp.hour == stamp.minute == stamp.second == 0
         observed[stamp.strftime("%Y-%m")] = [cells["request_count"], cells["avg_amount"]]
-    expected = {"2026-08": [1, "30"], "2026-09": [7, "70"], "2026-10": [1, "80"]} if extra else {"2026-08": [1, "30"], "2026-09": [4, "60"], "2026-10": [1, "80"]}
+    expected = {"2026-08": [1, "30"], "2026-09": [6, "65"], "2026-10": [1, "80"]} if extra else {"2026-08": [1, "30"], "2026-09": [3, "46.6666666666666667"], "2026-10": [1, "80"]}
     assert len(result["rows"]) == len(expected)
     assert observed.keys() == expected.keys()
     assert all(chat._equal(a, b) for month, pair in expected.items() for a, b in zip(observed[month], pair, strict=True))
+    counts = [dict(zip(names, row["values"], strict=True))["request_count"] for row in result["rows"]]
+    assert counts == sorted(counts, reverse=True), "Accepted aggregate sorting must remain"
     assert "TO_CHAR" not in result["sql"].upper()
     assert len(value["session"]["messages"]) == len(before["session"]["messages"]) + 2, "Fully specified drill-down must not ask redundant questions"
     assert before["result"]["run_id"] in {run["id"] for run in value["session"]["project"]["runs"]}
     page.reload(wait_until="domcontentloaded")
     restored = chat._wait(page, live, chat_probe, lambda item: item["result"] and chat._identity(item) == chat._identity(value))
     assert restored["result"]["rows"] == result["rows"]
+    table = chat._root(page).get_by_role("table", name="Данные выбранного результата", exact=True)
+    expect(table).to_be_visible(timeout=30000)
+    expect(table.locator("tbody tr")).to_have_count(3)
+    if not extra:
+        replacement = "Замени только AVG(amount) AS avg_amount на SUM(amount) AS total_amount. COUNT, месяцы, фильтры, сортировку и лимит сохрани."
+
+        def waiting(item):
+            turn = item["session"]["conversation"]
+            return turn["phase"] == "WAITING" and turn["pending"]["kind"] == "REVISION_REVIEW"
+
+        def choose(text):
+            chat_probe["turns"].append({"text": text, "session_id": chat_probe["id"], "started_monotonic": time.monotonic()})
+            chat._root(page).get_by_role("button", name=text, exact=True).click()
+
+        chat._send(page, chat_probe, replacement)
+        review = chat._wait(page, live, chat_probe, waiting)
+        assert chat._identity(review) == chat._identity(restored)
+        chat._root(page).get_by_text("Изменения SQL и параметров", exact=True).click()
+        expect(chat._root(page).locator("details[open] pre").first).to_be_visible()
+        choose("Оставить прежний расчёт")
+        unchanged = chat._wait(page, live, chat_probe, lambda item: item["session"]["conversation"]["phase"] == "READY")
+        assert chat._identity(unchanged) == chat._identity(restored)
+        chat._send(page, chat_probe, replacement)
+        chat._wait(page, live, chat_probe, waiting)
+        choose("Применить правку")
+        restored = chat._wait(page, live, chat_probe, lambda item: item["result"] and item["result"]["run_id"] != result["run_id"] and chat._idle(item["session"]["project"]))
+        columns = [column["name"] for column in restored["result"]["columns"]]
+        assert "total_amount" in columns and "avg_amount" not in columns
+        totals = sorted(dict(zip(columns, row["values"], strict=True))["total_amount"] for row in restored["result"]["rows"])
+        assert all(chat._equal(a, b) for a, b in zip(sorted(totals, key=float), ["30", "80", "140"], strict=True))
+        expect(table).to_be_visible(timeout=30000)
+        expect(table.locator("tbody tr")).to_have_count(3)
     chat._complete(page, live, chat_probe, restored)

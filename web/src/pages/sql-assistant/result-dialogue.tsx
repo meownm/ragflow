@@ -67,6 +67,9 @@ export function ResultDialogue({
       card.kind === 'RESULT' && card.run_id === session.selected_result_id,
   );
   const selected = result?.kind === 'RESULT' ? result : undefined;
+  const change = session.cards?.find((card) => card.kind === 'QUERY_CHANGE');
+  const reviewing = session.conversation?.pending?.kind === 'REVISION_REVIEW';
+  const canReview = session.project.capabilities.edit;
   const { expired } = useSqlResultDeadline(
     selected?.run_id || '',
     selected?.expires_at,
@@ -81,6 +84,7 @@ export function ResultDialogue({
     expired ||
     unavailable ||
     session.capabilities?.chat === false ||
+    (reviewing && !canReview) ||
     session.conversation?.phase === 'RECONCILE';
   const last = session.messages[session.messages.length - 1];
   useEffect(() => {
@@ -230,7 +234,22 @@ export function ResultDialogue({
             )}
           </article>
         ))}
+        {reviewing && change?.kind === 'QUERY_CHANGE' && (
+          <details>
+            <summary>Изменения SQL и параметров</summary>
+            <pre className="max-h-80 overflow-auto whitespace-pre text-xs">
+              {change.sql_diff ||
+                `${change.before_sql}\n→\n${change.after_sql}`}
+            </pre>
+            {change.parameter_diff && (
+              <pre className="max-h-80 overflow-auto whitespace-pre text-xs">
+                {change.parameter_diff}
+              </pre>
+            )}
+          </details>
+        )}
         {session.conversation?.phase === 'WAITING' &&
+          (!reviewing || canReview) &&
           Boolean(session.conversation.question?.options.length) && (
             <div className="sa-chat-options">
               {session.conversation.question?.options.map((option, index) => (

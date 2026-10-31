@@ -123,6 +123,8 @@ export type AssistantCard =
       before_sql: string;
       after_sql: string;
       summary: string;
+      sql_diff?: string;
+      parameter_diff?: string;
     };
 
 export interface AssistantSession {

@@ -6,6 +6,7 @@ All scenarios preserve the complete eight-table golden schema and real FKs.
 This external harness deliberately does not modify the frozen application source.
 """
 
+from datetime import datetime
 import re
 
 from test.playwright.e2e import sql_chat_relation_fixture as catalog_fixture
@@ -88,4 +89,51 @@ def test_chat_empty_period_is_success_without_expanding_scope(page, live, chat_p
     page.reload(wait_until="domcontentloaded")
     restored = chat._wait(page, live, chat_probe, lambda value: chat._matches(value["result"], ["id", "amount"], []))
     assert chat._identity(restored) == chat._identity(empty)
+    chat._complete(page, live, chat_probe, restored)
+
+
+def test_chat_selected_group_monthly_drilldown_preserves_measures_and_history(page, live, chat_probe, real_sql_catalog):
+    """The failing LLM-log journey on independent rows and a NOT NULL timestamp."""
+    extra = real_sql_catalog["calendar_discriminator"]
+    chat._start(
+        page,
+        live,
+        chat_probe,
+        f"Используй только {chat_probe['fqn']}. За весь доступный период посчитай COUNT(id) AS request_count и AVG(amount) AS avg_amount по status. "
+        "Колонки status, request_count, avg_amount. Сортировка status ASC, LIMIT 100. Без JOIN, только чтение.",
+    )
+    groups = [["cancelled", 3, "75.0000000000000000"], ["paid", 9, "66.6666666666666667"]] if extra else [["cancelled", 1, "70.0000000000000000"], ["paid", 6, "58.3333333333333333"]]
+    before = chat._rows(page, live, chat_probe, groups, ["status", "request_count", "avg_amount"])
+    table = chat._root(page).get_by_role("table", name="Данные выбранного результата", exact=True)
+    table.locator("tbody tr").filter(has_text="paid").get_by_role("button", name="Уточнить по этой строке", exact=True).click()
+    chat._send(page, chat_probe, "Детализируй выбранную группу по месяцам created_at. Часовой пояс UTC. Остальные условия и обе метрики сохрани.")
+
+    def monthly(value):
+        result = value["result"]
+        return bool(result and result["run_id"] != before["result"]["run_id"] and chat._idle(value["session"]["project"]))
+
+    value = chat._wait(page, live, chat_probe, monthly)
+    result = value["result"]
+    names = [column["name"] for column in result["columns"]]
+    assert {"request_count", "avg_amount"} <= set(names)
+    time_columns = [name for name in names if name not in {"status", "request_count", "avg_amount"}]
+    assert len(time_columns) == 1
+    observed = {}
+    for row in result["rows"]:
+        cells = dict(zip(names, row["values"], strict=True))
+        if "status" in cells:
+            assert cells["status"] == "paid", "Selected group must filter the source"
+        stamp = datetime.fromisoformat(cells[time_columns[0]].replace("Z", "+00:00"))
+        assert stamp.day == 1 and stamp.hour == stamp.minute == stamp.second == 0
+        observed[stamp.strftime("%Y-%m")] = [cells["request_count"], cells["avg_amount"]]
+    expected = {"2026-08": [1, "30"], "2026-09": [7, "70"], "2026-10": [1, "80"]} if extra else {"2026-08": [1, "30"], "2026-09": [4, "60"], "2026-10": [1, "80"]}
+    assert len(result["rows"]) == len(expected)
+    assert observed.keys() == expected.keys()
+    assert all(chat._equal(a, b) for month, pair in expected.items() for a, b in zip(observed[month], pair, strict=True))
+    assert "TO_CHAR" not in result["sql"].upper()
+    assert len(value["session"]["messages"]) == len(before["session"]["messages"]) + 2, "Fully specified drill-down must not ask redundant questions"
+    assert before["result"]["run_id"] in {run["id"] for run in value["session"]["project"]["runs"]}
+    page.reload(wait_until="domcontentloaded")
+    restored = chat._wait(page, live, chat_probe, lambda item: item["result"] and chat._identity(item) == chat._identity(value))
+    assert restored["result"]["rows"] == result["rows"]
     chat._complete(page, live, chat_probe, restored)

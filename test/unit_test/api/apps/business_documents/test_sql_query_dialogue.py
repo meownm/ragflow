@@ -8,11 +8,20 @@ from api.apps.business_documents.sql_query_revision_ai import propose_revision
 from api.apps.business_documents.sql_query_revisions import BusinessDocumentSqlRevisionService
 from api.apps.business_documents.worker import BusinessDocumentJobQueue
 from api.db.db_models import BusinessDocumentJob, BusinessDocumentSqlAgentProposal, BusinessDocumentSqlQueryArtifact
+from business_documents.sql_query.dialogue import dialogue_response
 
 
 @pytest.fixture
 def project():
     yield from revision_project.__wrapped__()
+
+
+def test_dialogue_uses_required_fields_without_arbitrary_size_or_question_limits():
+    questions = [{"id": str(index), "text": "Уточните " + "условие " * 150, "options": [str(option) for option in range(8)], "extra": "ignored"} for index in range(7)]
+    response = dialogue_response({"response_kind": "CLARIFICATION", "answer": "Контекст " * 2000, "questions": questions, "extra": "ignored"})
+    assert len(response["questions"]) == 7
+    assert len(response["questions"][0]["options"]) == 8
+    assert "extra" not in response and "extra" not in response["questions"][0]
 
 
 @pytest.mark.asyncio
@@ -35,15 +44,23 @@ async def test_explanation_does_not_compile_or_prepare_changed_sql(monkeypatch):
 
 
 def request_reply(project):
-    thread = BusinessDocumentSqlRevisionService.create_thread(TENANT, ACTOR, project, {"schema_version": "1", "expected_state_version": 1, "idempotency_key": "dialogue-thread", "target": "QUERY", "anchor": {"kind": "WHOLE"}, "text": "Почему здесь LIMIT?"})
+    thread = BusinessDocumentSqlRevisionService.create_thread(
+        TENANT,
+        ACTOR,
+        project,
+        {"schema_version": "1", "expected_state_version": 1, "idempotency_key": "dialogue-thread", "target": "QUERY", "anchor": {"kind": "WHOLE"}, "text": "Почему здесь LIMIT?"},
+    )
     BusinessDocumentSqlRevisionService.request_change(TENANT, ACTOR, project, thread["id"], {"schema_version": "1", "expected_state_version": 1, "idempotency_key": "dialogue-request"})
     return thread, BusinessDocumentJobQueue.claim("dialogue-test")
 
 
-@pytest.mark.parametrize("response", [
-    {"response_kind": "EXPLANATION", "answer": "LIMIT ограничивает число строк."},
-    {"response_kind": "CLARIFICATION", "answer": "Уточните период.", "questions": [{"id": "year", "text": "Какой год?", "options": ["2025", "2026"]}]},
-])
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"response_kind": "EXPLANATION", "answer": "LIMIT ограничивает число строк."},
+        {"response_kind": "CLARIFICATION", "answer": "Уточните период.", "questions": [{"id": "year", "text": "Какой год?", "options": ["2025", "2026"]}]},
+    ],
+)
 def test_assistant_turn_is_persisted_without_a_proposal_or_query_revision(project, response):
     _, job = request_reply(project)
     count = BusinessDocumentSqlQueryArtifact.select().count()
@@ -60,7 +77,9 @@ def test_assistant_turn_is_persisted_without_a_proposal_or_query_revision(projec
 
 def test_new_user_reply_makes_late_explanation_stale(project):
     thread, job = request_reply(project)
-    BusinessDocumentSqlRevisionService.reply(TENANT, ACTOR, project, thread["id"], {"schema_version": "1", "expected_thread_version": 2, "idempotency_key": "new-message", "text": "Теперь измени лимит на 20"})
+    BusinessDocumentSqlRevisionService.reply(
+        TENANT, ACTOR, project, thread["id"], {"schema_version": "1", "expected_thread_version": 2, "idempotency_key": "new-message", "text": "Теперь измени лимит на 20"}
+    )
     BusinessDocumentSqlAgentService.complete_job(job, "dialogue-test", job.lease_token, {"response_kind": "EXPLANATION", "answer": "Old answer"})
     messages = BusinessDocumentSqlRevisionService.workspace(TENANT, ACTOR, project)["threads"][0]["messages"]
     assert len(messages) == 2

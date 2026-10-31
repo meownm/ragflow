@@ -960,6 +960,122 @@ def test_saved_project_question_can_be_reopened_without_erasing_accepted_artifac
 
 
 @pytest.mark.asyncio
+async def test_revision_separates_unconfirmed_questions_from_human_decisions_and_keeps_catalog_constraints():
+    from copy import deepcopy
+
+    calls = []
+    constraints = [{"constraint_type": "FOREIGN_KEY", "columns": ["customer_id"], "referred_columns": ["public.customers.id"]}]
+    table = {
+        "id": "orders",
+        "name": "orders",
+        "schema": "public",
+        "table_constraints": constraints,
+        "columns": [{"id": "public.orders.created_at", "name": "created_at", "data_type": "timestamptz", "constraint": "NOT_NULL"}],
+    }
+    request = {
+        "target": "QUERY",
+        "sql": SQL.replace(" LIMIT", " ORDER BY order_id ASC LIMIT"),
+        "schema": {"accepted_schema": [{"entity_id": "orders"}], "schema_snapshot": {"requirements": [{"selected_table": table}, {"selected_table": {"id": "unaccepted"}}]}},
+        "comments": [
+            {"text": "По месяцам для выбранной группы"},
+            {
+                "role": "assistant",
+                "text": "Уточните условия",
+                "questions": [{"id": "sort", "text": "Сменить сортировку?", "options": ["Да", "Нет"]}, {"id": "null", "text": "Что делать с NULL?", "options": ["Исключить", "Неизвестно"]}],
+            },
+            {"text": "Неизвестно"},
+        ],
+    }
+    before = deepcopy(request)
+
+    class FakeLLM:
+        async def async_generate(self, tenant_id, system, payload):
+            calls.append(payload["context"])
+            return {"response_kind": "EXPLANATION", "answer": "Исходная сортировка сохранена"}
+
+    await propose_revision(TENANT, request, llm=FakeLLM())
+    context = calls[0]
+    assert [message["text"] for message in context["discussion"]] == ["По месяцам для выбранной группы", "Неизвестно"]
+    assert context["previous_questions"][0]["questions"] == request["comments"][1]["questions"][1:]
+    assert context["current_ordering"] == "ORDER BY order_id ASC"
+    assert context["accepted_schema"]["tables"] == [table]
+    assert request == before
+    request["sql"] = "SELECT FROM"
+    await propose_revision(TENANT, request, llm=FakeLLM())
+    assert calls[-1]["current_ordering"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid", [{"response_kind": "CLARIFICATION", "answer": "Продолжим", "questions": []}, {"sql": "SELECT 1"}, "[]"])
+async def test_revision_repairs_invalid_model_contract_once(invalid):
+    calls = []
+    valid = {"response_kind": "EXPLANATION", "answer": "Сохранённые условия не изменены"}
+
+    class FakeLLM:
+        async def async_generate(self, tenant_id, system, payload):
+            calls.append(payload)
+            return invalid if len(calls) == 1 else valid
+
+    request = {"target": "QUERY", "sql": SQL, "comments": [{"text": "По месяцам для выбранной модели"}]}
+    assert await propose_revision(TENANT, request, llm=FakeLLM()) == valid
+    assert len(calls) == 2
+    assert calls[0]["context"] == calls[1]["context"]
+    assert calls[1]["format_correction"]["reason"]
+
+
+@pytest.mark.asyncio
+async def test_revision_invalid_repair_is_precise_terminal_error():
+    calls = []
+
+    class FakeLLM:
+        async def async_generate(self, *_):
+            calls.append(True)
+            return {"response_kind": "CLARIFICATION", "answer": "Продолжим", "questions": []}
+
+    with pytest.raises(BusinessDocumentError) as failure:
+        await propose_revision(TENANT, {"target": "QUERY", "sql": SQL}, llm=FakeLLM())
+    assert failure.value.code == "SQL_REVISION_INVALID_RESPONSE"
+    assert failure.value.status == 422
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_revision_does_not_retry_unavailable_provider():
+    calls = []
+
+    class FakeLLM:
+        async def async_generate(self, *_):
+            calls.append(True)
+            raise ConnectionError("private provider diagnostic")
+
+    with pytest.raises(BusinessDocumentError) as failure:
+        await propose_revision(TENANT, {"target": "QUERY", "sql": SQL}, llm=FakeLLM())
+    assert failure.value.code == "SQL_REVISION_UNAVAILABLE"
+    assert failure.value.status == 503
+    assert "private" not in failure.value.message
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_revision_repair_uses_remaining_time_budget(monkeypatch):
+    import asyncio
+
+    from api.apps.business_documents import sql_query_revision_ai
+
+    monkeypatch.setattr(sql_query_revision_ai, "MODEL_TIMEOUT_SECONDS", 0.08)
+
+    class FakeLLM:
+        async def async_generate(self, *_):
+            await asyncio.sleep(0.05)
+            return {"response_kind": "CLARIFICATION", "answer": "Продолжим", "questions": []}
+
+    with pytest.raises(BusinessDocumentError) as failure:
+        await propose_revision(TENANT, {"target": "QUERY", "sql": SQL}, llm=FakeLLM())
+    assert failure.value.code == "SQL_REVISION_UNAVAILABLE"
+    assert isinstance(failure.value.__cause__, TimeoutError)
+
+
+@pytest.mark.asyncio
 async def test_ai_revision_is_only_a_checked_proposal(monkeypatch):
     calls = []
 

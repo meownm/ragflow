@@ -17,6 +17,19 @@ COLUMNS = [{"id": AMOUNT, "name": "amount"}, {"id": STATUS, "name": "status"}]
 SQL = "SELECT amount, status FROM public.orders"
 
 
+def test_failed_revision_keeps_safe_specific_error_and_clears_active_job():
+    from business_documents.sql_conversation import conversation_status
+
+    turn = {"phase": "PREPARING", "job_id": "failed", "message_id": "saved-answer"}
+    error = {"code": "SQL_REVISION_INVALID_RESPONSE", "message": "Ответ не прошёл проверку. Результат сохранён."}
+    result = conversation_status(turn, {"status": "DEAD", "error": error}, [])
+    assert result == {**turn, "phase": "ERROR", "job_id": None, "error": error}
+    assert turn["phase"] == "PREPARING"
+    unsafe = conversation_status(turn, {"status": "DEAD", "error": {"code": "WORKER_FAILURE", "message": "private diagnostic"}}, [])
+    assert unsafe["error"]["code"] == "SQL_CONVERSATION_STOPPED"
+    assert "private" not in unsafe["error"]["message"]
+
+
 @pytest.mark.parametrize(
     "value,quote,expected", [("0", "10", False), ("paid", "unpaid", False), (5, "-5", False), (5, "5%", False), ("10", "порог 10.", True), ("2026-10-01", "2026-10-01T00:00", False)]
 )

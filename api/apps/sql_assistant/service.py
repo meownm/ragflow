@@ -177,7 +177,7 @@ class SqlAssistantService:
             if job_id
             else None
         )
-        return conversation_status(turn, {"status": job.status} if job else None, project.get("runs", []))
+        return conversation_status(turn, {"status": job.status, "error": job.error} if job else None, project.get("runs", []))
 
     def dialogue_options(self, session_id, question=""):
         self._session(session_id)

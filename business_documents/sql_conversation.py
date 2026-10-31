@@ -35,6 +35,9 @@ def conversation_status(turn, job, runs):
         current.update(phase="CANCELLED", job_id=None)
     elif run.get("status") in {"FAILED", "EXPIRED", "PURGED"} or (job or {}).get("status") in {"DEAD", "STALE"}:
         current.update(phase="ERROR", job_id=None, error={"code": "SQL_CONVERSATION_STOPPED", "message": "Не удалось завершить запрос. Последний успешный результат сохранён."})
+        error = (job or {}).get("error") or {}
+        if error.get("code") in {"SQL_REVISION_INVALID_RESPONSE", "SQL_REVISION_UNAVAILABLE"}:
+            current["error"] = deepcopy(error)
     return current
 
 

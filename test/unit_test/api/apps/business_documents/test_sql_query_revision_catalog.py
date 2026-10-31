@@ -360,8 +360,10 @@ async def test_model_cannot_inject_private_schema_authority(source):
         async def async_generate(self, *_):
             return {"sql": BASE, "parameters": PARAMETERS, "summary": "Edit", "verified_catalog_schema": request["schema"]}
 
-    with pytest.raises(ValueError, match="invalid SQL revision"):
-        await generate(request, Forged())
+    result = await generate(request, Forged())
+    assert "verified_catalog_schema" not in result
+    assert "verified_catalog_schema" not in result["proposal"]
+    assert result["proposal"]["checks"]["status"] == "PASS"
 
 
 @pytest.mark.asyncio

@@ -546,6 +546,18 @@ async def test_verified_metadata_reuses_original_sql_with_only_one_model_call(so
 
 
 @pytest.mark.asyncio
+async def test_analytical_revision_accepts_constants_without_a_model_repair(source):
+    request, _ = source
+    sql = BASE.replace("o.amount AS amount", "ROUND(o.amount * 100.0, 2) AS amount")
+    model = Model(sql)
+    result = await generate(request, model)
+    assert result["proposal"]["checks"]["status"] == "PASS"
+    assert result["proposal"]["sql"] == sql
+    assert result["proposal"]["parameters"] == PARAMETERS
+    assert len(model.contexts) == 1
+
+
+@pytest.mark.asyncio
 async def test_correction_uses_current_error_after_metadata_is_verified(source):
     request, _ = source
     model = Model(BAD, GROUP)

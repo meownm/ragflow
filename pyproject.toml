@@ -1,6 +1,6 @@
 [project]
 name = "ragflow"
-version = "2.2.15"
+version = "2.2.16"
 description = "[RAGFlow](https://ragflow.io/) is an open-source RAG (Retrieval-Augmented Generation) engine based on deep document understanding. It offers a streamlined RAG workflow for businesses of any scale, combining LLM (Large Language Models) to provide truthful question-answering capabilities, backed by well-founded citations from various complex formatted data."
 authors = [{ name = "Zhichang Yu", email = "yuzhichang@gmail.com" }]
 license-files = ["LICENSE"]
@@ -27,9 +27,9 @@ dependencies = [
     "captcha>=0.7.1",
     "certifi>=2026.10.19",
     "chardet>=5.2.0,<6.0.0",
-    "cn2an==0.5.22",
+    "cn2an==0.5.24",
     "cohere==5.6.2",
-    "crawl4ai==0.9.5+ragflow.1",
+    "crawl4ai==0.9.5+ragflow.3",
     "dashscope==1.25.11",
     "deepl==1.18.0",
     "debugpy>=1.8.13",
@@ -58,7 +58,7 @@ dependencies = [
     "groq>=0.30.0,<1.0.0",
     "grpcio-status==1.76.0",
     "html-text==0.6.2",
-    "infinity-sdk==0.7.0",
+    "infinity-sdk==0.7.0+ragflow.1",
     "infinity-emb>=0.0.66,<0.0.67",
     "jira==3.10.5",
     "json-repair==0.60.1",
@@ -95,14 +95,14 @@ dependencies = [
     "pyobvector==0.2.22",
     "pyodbc>=5.2.0,<6.0.0",
     "pypandoc>=1.16",
-    "pypdf>=6.19.0,<7",
+    "pypdf>=6.21.4,<7",
     "pillow>=13.0.0,<14",
     "python-calamine>=0.4.0",
     "python-docx>=1.1.2,<2.0.0",
     "paramiko>=3.5.1",
     "python-pptx>=1.0.2,<2.0.0",
     # "pywencai>=0.13.1,<1.0.0",  # Temporarily disabled: conflicts with agentrun-sdk (pydash>=8), needed for agent/tools/wencai.py
-    "qianfan==0.4.6",
+    "qianfan==0.4.6+ragflow.1",
     "quart-auth==0.11.0",
     "quart-cors==0.8.0",
     "ranx==0.3.20",
@@ -112,13 +112,13 @@ dependencies = [
     "roman-numbers==1.0.2",
     "ruamel-base==1.0.0",
     "ruamel-yaml>=0.18.6,<0.19.0",
-    "scholarly==1.7.11+ragflow.1",
+    "scholarly==1.7.11+ragflow.2",
     "selenium-wire==5.1.0",
     "spacy==3.8.14",
     "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
     "slack-sdk==3.37.0",
     "socksio==1.0.0",
-    "agentrun-sdk==0.0.51+ragflow.1",
+    "agentrun-sdk==0.0.51+ragflow.2",
     "nest-asyncio>=1.6.0,<2.0.0",  # Needed for agent/component/message.py
     "sqlglotrs==0.9.0",
     "tavily-python==0.5.1",
@@ -132,7 +132,7 @@ dependencies = [
     "wikipedia==1.4.0",
     "word2number==1.1",
     "xgboost==2.0.3",
-    "setuptools>=78.1.1,<81.0.0",
+    "setuptools>=83,<85",
     "xpinyin==0.7.6",
     "yfinance==0.2.65",
     "zai-sdk==0.2.3",
@@ -162,7 +162,7 @@ dependencies = [
     # Fixes CISA KEV CVE-2026-42208, CVE-2026-42271 and CVE-2026-59822.
     # 1.88.6 also fixes CVE-2026-84377 (proxy routing SSRF/credential leakage).
     # Keep an exact pin: newer releases have previously broken SDK imports.
-    "litellm==1.88.6",
+    "litellm==1.103.1",
     #    "pip>=25.2",
     #    "imageio-ffmpeg>=0.6.0",
     #    "cryptography==46.0.3",
@@ -209,10 +209,13 @@ test = [
 constraint-dependencies = [
     # CVE-2026-30922: Denial of Service via unbounded recursion in ASN.1 decoding (CVSS 7.5 HIGH)
     # Security floor for the ASN.1 parser used by google-auth / rsa.
-    "pyasn1>=0.6.4",
+    "pyasn1>=0.6.5",
     # Minimum patched releases from the Docker Scout dependency audit.
     "anyio>=4.14.2,<5",
+    "authlib>=1.9.4,<2",
     "azure-core>=1.38.0,<2",
+    "biopython>=1.87,<2",
+    "brotli>=1.2.1,<2",
     "cbor2>=5.9.0,<6",
     "cryptography>=50.0.0,<51",
     "curl-cffi>=0.15.0,<0.17",
@@ -222,11 +225,12 @@ constraint-dependencies = [
     "hpack>=4.2.0,<5",
     "httplib2>=0.32.0,<1",
     "idna>=3.15,<4",
+    "joserfc>=1.7.5,<2",
     "lxml>=6.1.0,<7",
     "lxml-html-clean>=0.4.5,<0.5",
     "mistune>=3.3.0,<4",
     "multidict>=6.9.1,<8",
-    "nltk>=3.10.3,<4",
+    "nltk>=3.10.4,<4",
     "oauthlib>=4.0.0,<5",
     "orjson>=3.11.6,<4",
     "pip>=26.2.0,<27",
@@ -261,10 +265,12 @@ url = "https://mirrors.aliyun.com/pypi/simple"
 
 [tool.uv.sources]
 trio = [{ index = "pypi" }]
-crawl4ai = { path = "vendor/python/crawl4ai-0.9.5+ragflow.1.tar.gz" }
+crawl4ai = { path = "vendor/python/crawl4ai-0.9.5+ragflow.3.tar.gz" }
 moodlepy = { path = "vendor/python/moodlepy-0.24.1+ragflow.1.tar.gz" }
-agentrun-sdk = { path = "vendor/python/agentrun_sdk-0.0.51+ragflow.1.tar.gz" }
-scholarly = { path = "vendor/python/scholarly-1.7.11+ragflow.1.tar.gz" }
+agentrun-sdk = { path = "vendor/python/agentrun_sdk-0.0.51+ragflow.2.tar.gz" }
+scholarly = { path = "vendor/python/scholarly-1.7.11+ragflow.2.tar.gz" }
+infinity-sdk = { path = "vendor/python/infinity_sdk-0.7.0+ragflow.1.tar.gz" }
+qianfan = { path = "vendor/python/qianfan-0.4.6+ragflow.1.tar.gz" }
 
 [tool.setuptools]
 packages = [

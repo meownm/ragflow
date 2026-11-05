@@ -51,7 +51,8 @@ RUN --mount=type=bind,from=ragflow_deps,source=/huggingface.co,target=/huggingfa
 # https://github.com/chrismattmann/tika-python
 # This is the only way to run python-tika without internet access. Without this set, the default is to check the tika version and pull latest every time from Apache.
 RUN --mount=type=bind,from=ragflow_deps,source=/,target=/deps \
-    cp -r /deps/nltk_data /root/ && \
+    cp -r /deps/nltk_data /usr/local/share/ && \
+    chmod -R a+rX /usr/local/share/nltk_data && \
     cp /deps/tika-server-standard-3.3.3.jar /deps/tika-server-standard-3.3.3.jar.md5 /ragflow/ && \
     cp /deps/cl100k_base.tiktoken /ragflow/9b5ad71b2ce5302211f9c61530b329a4922fc6a4
 
@@ -104,6 +105,7 @@ RUN --mount=type=cache,id=ragflow_apt,target=/var/cache/apt,sharing=locked \
     rm -rf /var/lib/apt/lists/*
 
 # Install uv
+ENV UV_PYTHON_INSTALL_DIR=/opt/ragflow-python
 RUN --mount=type=bind,from=ragflow_deps,source=/,target=/deps \
     if [ "$NEED_MIRROR" == "1" ]; then \
         mkdir -p /etc/uv && \
@@ -169,7 +171,7 @@ RUN --mount=type=cache,id=ragflow_apt,target=/var/cache/apt,sharing=locked \
 # The binary is pre-fetched by `download_deps.py` and shipped via
 # the ragflow_deps image, then written directly to the stagehand-go
 # cache path that `local.go:cacheDir()` constructs at runtime —
-# `/root/.cache/stagehand/lib/go_<ver>/stagehand-server-v3-<arch>`.
+# `/home/ragflow/.cache/stagehand/lib/go_<ver>/stagehand-server-v3-<arch>`.
 ARG STAGEHAND_GO_VERSION=v3.21.0
 RUN --mount=type=bind,from=ragflow_deps,source=/,target=/deps \
     set -eux; \
@@ -180,7 +182,7 @@ RUN --mount=type=bind,from=ragflow_deps,source=/,target=/deps \
         *) echo "Unsupported architecture: $arch" >&2; exit 1 ;; \
     esac; \
     stagehand_version="${STAGEHAND_GO_VERSION#v}"; \
-    stagehand_cache_dir="/root/.cache/stagehand/lib/go_${stagehand_version}"; \
+    stagehand_cache_dir="/home/ragflow/.cache/stagehand/lib/go_${stagehand_version}"; \
     mkdir -p "${stagehand_cache_dir}"; \
     cp "/deps/stagehand-server-v3-linux-${stagehand_arch}" \
        "${stagehand_cache_dir}/stagehand-server-v3-linux-${stagehand_arch}"; \
@@ -302,7 +304,7 @@ COPY --link --from=runtime-system-files / /
 SHELL ["/bin/bash", "-c"]
 USER root
 WORKDIR /ragflow
-ENV PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     TIKA_SERVER_JAR=file:///ragflow/tika-server-standard-3.3.3.jar \
     DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 \
@@ -313,7 +315,7 @@ CMD ["/bin/bash"]
 # This target contains no application, frontend or release identity. Every
 # production image starts here, never from a previous application image.
 FROM runtime-system AS runtime-base
-ENV VIRTUAL_ENV=/ragflow/.venv
+ENV VIRTUAL_ENV=/ragflow/.venv UV_PYTHON_INSTALL_DIR=/opt/ragflow-python
 COPY --link --from=runtime-python ${VIRTUAL_ENV} ${VIRTUAL_ENV}
 ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright
@@ -349,7 +351,7 @@ USER root
 
 WORKDIR /ragflow
 
-ENV PYTHONPATH=/ragflow/
+ENV PYTHONPATH=/ragflow/ HOME=/home/ragflow
 
 COPY admin admin
 COPY api api
@@ -390,4 +392,9 @@ COPY --from=frontend /ragflow/web/dist /ragflow/web/dist
 
 COPY --from=builder /ragflow/VERSION /ragflow/VERSION
 COPY --from=builder /ragflow/SOURCE_REVISION /ragflow/SOURCE_REVISION
+RUN groupadd --gid 10001 ragflow && \
+    useradd --uid 10001 --gid ragflow --home-dir /home/ragflow --no-create-home ragflow && \
+    install -d -o ragflow -g ragflow /ragflow/logs && \
+    chown ragflow:ragflow /home/ragflow /home/ragflow/.cache /ragflow/conf /etc/nginx/conf.d
+USER 10001:10001
 ENTRYPOINT ["./entrypoint.sh"]

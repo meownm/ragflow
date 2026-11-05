@@ -479,7 +479,7 @@ def test_invalid_or_unbounded_specs_fail_closed(mutate, message):
         "SELECT * FROM dwh.order_fact LIMIT :row_limit",
         "SELECT o.order_id FROM dwh.order_fact AS o; DELETE FROM x",
         "SELECT pg_read_file(:path) AS value FROM dwh.order_fact LIMIT :row_limit",
-        "SELECT security_definer_udf() AS value FROM dwh.order_fact LIMIT :row_limit",
+        "SELECT set_config(:path, :path, TRUE) AS value FROM dwh.order_fact LIMIT :row_limit",
         "SELECT p.rolname AS name FROM pg_catalog.pg_roles AS p LIMIT :row_limit",
         "WITH gone AS (DELETE FROM dwh.order_fact RETURNING order_id) SELECT gone.order_id AS order_id FROM gone LIMIT :row_limit",
     ],
@@ -529,6 +529,9 @@ def _manual_payload(sql: str) -> dict:
         "SELECT o.order_id AS order_id FROM dwh.order_fact AS o ORDER BY 1 DESC LIMIT :row_limit",
         "WITH sales AS (SELECT o.order_id AS order_id FROM dwh.order_fact AS o ORDER BY 1) SELECT sales.order_id AS order_id FROM sales ORDER BY 1 LIMIT :row_limit",
         "SELECT o.order_id AS order_id FROM dwh.order_fact AS o UNION SELECT c.customer_id AS order_id FROM dwh.customer_dim AS c ORDER BY 1 LIMIT :row_limit",
+        "SELECT o.order_id AS order_id FROM dwh.order_fact AS o ORDER BY 1+1 LIMIT :row_limit",
+        "SELECT o.order_id AS order_id FROM dwh.order_fact AS o WHERE o.order_id=1 ORDER BY 1 LIMIT :row_limit",
+        "SELECT o.order_id AS order_id, ROW_NUMBER() OVER (ORDER BY 1) AS position FROM dwh.order_fact AS o LIMIT :row_limit",
     ],
 )
 def test_manual_advanced_sql_is_catalog_bound(sql):
@@ -546,16 +549,13 @@ def test_manual_advanced_sql_is_catalog_bound(sql):
     [
         "SELECT o.missing AS missing FROM dwh.order_fact AS o LIMIT :row_limit",
         "SELECT o.order_id AS order_id FROM pg_catalog.pg_user AS o LIMIT :row_limit",
-        "SELECT dangerous(o.order_id) AS value FROM dwh.order_fact AS o LIMIT :row_limit",
+        "SELECT pg_terminate_backend(o.order_id) AS value FROM dwh.order_fact AS o LIMIT :row_limit",
         "SELECT o.order_id AS order_id FROM dwh.order_fact AS o LIMIT 25",
         "WITH RECURSIVE sales AS (SELECT o.order_id AS order_id FROM dwh.order_fact AS o) SELECT sales.order_id AS order_id FROM sales LIMIT :row_limit",
         "SELECT o.order_id AS order_id FROM dwh.order_fact AS o ORDER BY 0 LIMIT :row_limit",
         "SELECT o.order_id AS order_id FROM dwh.order_fact AS o ORDER BY 2 LIMIT :row_limit",
         "SELECT o.order_id AS order_id FROM dwh.order_fact AS o ORDER BY -1 LIMIT :row_limit",
         "SELECT o.order_id AS order_id FROM dwh.order_fact AS o ORDER BY 1.0 LIMIT :row_limit",
-        "SELECT o.order_id AS order_id FROM dwh.order_fact AS o ORDER BY 1+1 LIMIT :row_limit",
-        "SELECT o.order_id AS order_id FROM dwh.order_fact AS o WHERE o.order_id=1 ORDER BY 1 LIMIT :row_limit",
-        "SELECT o.order_id AS order_id, ROW_NUMBER() OVER (ORDER BY 1) AS position FROM dwh.order_fact AS o LIMIT :row_limit",
     ],
 )
 def test_manual_advanced_sql_rejects_unbound_or_unknown_access(sql):
@@ -595,13 +595,9 @@ def test_exists_constant_projection_does_not_require_a_value_binding(negation):
 @pytest.mark.parametrize(
     "fragment",
     [
-        "EXISTS (SELECT 2 FROM dwh.customer_dim c)",
-        "EXISTS (SELECT 1+o.order_id FROM dwh.customer_dim c)",
-        "EXISTS (SELECT 1 FROM dwh.customer_dim c WHERE c.customer_id=1)",
         "EXISTS (SELECT 1 FROM pg_catalog.pg_user c)",
         "EXISTS (SELECT pg_sleep(1) FROM dwh.customer_dim c)",
-        "o.order_id IN (SELECT 1 FROM dwh.customer_dim c)",
-        "o.order_id=(SELECT 1 FROM dwh.customer_dim c)",
+        "EXISTS (SELECT 1 FROM dwh.customer_dim c WHERE c.customer_type_code='day')",
     ],
 )
 def test_exists_projection_exception_does_not_allow_other_literals_or_access(fragment):
@@ -610,9 +606,176 @@ def test_exists_projection_exception_does_not_allow_other_literals_or_access(fra
         compile_query_payload(_manual_payload(sql))
 
 
-def test_constant_outer_projection_still_requires_a_bound_value():
+@pytest.mark.parametrize(
+    "fragment",
+    [
+        "EXISTS (SELECT 2 FROM dwh.customer_dim c)",
+        "EXISTS (SELECT 1+o.order_id FROM dwh.customer_dim c)",
+        "EXISTS (SELECT 1 FROM dwh.customer_dim c WHERE c.customer_id=1)",
+        "o.order_id IN (SELECT 1 FROM dwh.customer_dim c)",
+        "o.order_id=(SELECT 1 FROM dwh.customer_dim c)",
+    ],
+)
+def test_numeric_subquery_expressions_remain_catalog_bound(fragment):
+    result = compile_query_payload(_manual_payload(f"SELECT o.order_id AS order_id FROM dwh.order_fact o WHERE {fragment} LIMIT :row_limit"))
+    assert result["guard"]["status"] == "PASS"
+    assert result["guard"]["tables"] == ["dwh.customer_dim", "dwh.order_fact"]
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "1",
+        "AVG(o.paid_amount_rub) * 100.0",
+        "ROUND(CAST(AVG(o.paid_amount_rub) AS DECIMAL(12, 2)), 2)",
+        "SUM(o.paid_amount_rub) / NULLIF(COUNT(*), 0)",
+        "SUM(CASE WHEN o.status_id = 1 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0)",
+        "CASE o.status_id WHEN 1 THEN 100 ELSE 0 END",
+        "GREATEST(1, CEIL(COUNT(*) * 0.05))",
+        "LEAST(100, FLOOR(ABS(SUM(o.paid_amount_rub))))",
+        "COALESCE(AVG(o.paid_amount_rub), 0)",
+        "DATE_TRUNC('month', o.created_at)",
+    ],
+)
+def test_both_guards_allow_numeric_analytical_expressions(expression):
+    sql = f"SELECT {expression} AS value FROM dwh.order_fact o LIMIT :row_limit"
+    result = compile_query_payload(_manual_payload(sql))
+    assert result["guard"]["status"] == "PASS"
+    assert result["output_columns"] == ["value"]
+    assert result["parameters"] == {"row_limit": 25}
+    assert guard_read_only_sql(sql, allowed_tables=["dwh.order_fact"], parameter_names=["row_limit"])["status"] == "PASS"
+
+
+@pytest.mark.parametrize("value", ["day", "week", "month", "quarter", "year", "paid", ""])
+def test_date_word_filter_values_require_bindings_in_both_guards(value):
+    sql = f"SELECT o.order_id AS order_id FROM dwh.order_fact o WHERE CAST(o.status_id AS TEXT) = '{value}' LIMIT :row_limit"
+    with pytest.raises(SqlGuardError, match="bound parameters"):
+        compile_query_payload(_manual_payload(sql))
+    with pytest.raises(SqlGuardError, match="bound parameters"):
+        guard_read_only_sql(sql, allowed_tables=["dwh.order_fact"], parameter_names=["row_limit"])
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT CASE WHEN o.status_id = 1 THEN pg_sleep(1) ELSE 0 END AS value FROM dwh.order_fact o LIMIT :row_limit",
+        "SELECT GREATEST(0, pg_catalog.pg_terminate_backend(o.order_id)) AS value FROM dwh.order_fact o LIMIT :row_limit",
+        "SELECT COALESCE(pg_read_file(:path), :fallback) AS value FROM dwh.order_fact o LIMIT :row_limit",
+        "WITH deleted AS (DELETE FROM dwh.order_fact RETURNING order_id) SELECT 1 AS value FROM deleted LIMIT :row_limit",
+        "SELECT o.order_id AS value INTO copied FROM dwh.order_fact o LIMIT :row_limit",
+        "SELECT o.order_id AS value FROM dwh.order_fact o LIMIT :row_limit FOR UPDATE",
+        "SELECT o.order_id AS value FROM dwh.order_fact o WHERE EXISTS (SELECT 1 FROM dwh.order_fact i FOR UPDATE) LIMIT :row_limit",
+        "SELECT o.order_id AS value FROM dwh.order_fact o WHERE EXISTS (SELECT 1 INTO copied FROM dwh.order_fact i) LIMIT :row_limit",
+        "SELECT o.order_id AS value FROM dwh.order_fact o LIMIT :row_limit; DELETE FROM dwh.order_fact",
+        "SELECT AVG(o.paid_amount_rub) AS value FROM dwh.order_fact o UNION SELECT AVG(s.password) AS value FROM secret.users s LIMIT :row_limit",
+    ],
+)
+def test_analytical_expressions_do_not_bypass_read_only_guards(sql):
     with pytest.raises(SqlGuardError):
-        compile_query_payload(_manual_payload("SELECT 1 AS constant FROM dwh.order_fact o LIMIT :row_limit"))
+        compile_query_payload(_manual_payload(sql))
+    with pytest.raises(SqlGuardError):
+        guard_read_only_sql(sql, allowed_tables=["dwh.order_fact"], parameter_names=["row_limit"])
+
+
+def test_top_five_percent_query_can_select_rows_before_averaging():
+    sql = """WITH ranked AS (
+        SELECT o.status_id AS model, o.paid_amount_rub AS duration,
+               ROW_NUMBER() OVER (PARTITION BY o.status_id ORDER BY o.paid_amount_rub DESC, o.order_id) AS position,
+               COUNT(*) OVER (PARTITION BY o.status_id) AS total
+        FROM dwh.order_fact o WHERE o.paid_amount_rub IS NOT NULL
+    )
+    SELECT ranked.model AS model, AVG(ranked.duration) AS average_duration
+    FROM ranked WHERE ranked.position <= GREATEST(1, CEIL(ranked.total * 0.05))
+    GROUP BY ranked.model LIMIT :row_limit"""
+    result = compile_query_payload(_manual_payload(sql))
+    assert result["guard"]["status"] == "PASS"
+    assert result["output_columns"] == ["model", "average_duration"]
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "STDDEV_POP(o.paid_amount_rub)",
+        "PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY o.paid_amount_rub)",
+        "SQRT(ABS(o.paid_amount_rub))",
+        "LENGTH(CAST(o.status_id AS TEXT))",
+        "custom_metric(o.paid_amount_rub)",
+        "reporting.custom_metric(o.paid_amount_rub)",
+        'reporting."CuStOm_MeTrIc"(o.paid_amount_rub)',
+        "IF(o.status_id = 1, 1, 0)",
+    ],
+)
+def test_unlisted_functions_do_not_require_registration_in_either_guard(expression):
+    sql = f"SELECT {expression} AS value FROM dwh.order_fact o LIMIT :row_limit"
+    assert compile_query_payload(_manual_payload(sql))["guard"]["status"] == "PASS"
+    assert guard_read_only_sql(sql, allowed_tables=["dwh.order_fact"], parameter_names=["row_limit"])["status"] == "PASS"
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        "pg_read_file(:argument)",
+        'pg_catalog."PG_READ_FILE"(:argument)',
+        '"PG_CATALOG"."Pg_ReAd_FiLe"(:argument)',
+        "private_schema.pg_sleep(1)",
+        "GREATEST(0, pg_sleep_for(:argument))",
+        "CASE WHEN o.status_id = 1 THEN pg_terminate_backend(1) ELSE 0 END",
+        "set_config(:argument, :argument, TRUE)",
+        "current_setting(:argument)",
+        "dblink_exec(:argument, :argument)",
+        "public.dblink_connect_u(:argument)",
+        "query_to_xml(:argument, TRUE, FALSE, :argument)",
+        "query_to_xml_and_xmlschema(:argument, TRUE, FALSE, :argument)",
+        "table_to_xml(:argument, TRUE, FALSE, :argument)",
+        "pg_advisory_lock(1)",
+        "pg_try_advisory_xact_lock(1)",
+        "pg_notify(:argument, :argument)",
+        "nextval(:argument)",
+        "setval(:argument, 1)",
+        "lo_export(1, :argument)",
+        "lo_get(1)",
+        "loread(1, 100)",
+        "lowrite(1, :argument)",
+        "pg_stat_file(:argument)",
+        "pg_stat_reset()",
+        "pg_replication_slot_advance(:argument, :argument)",
+        "pg_logical_emit_message(TRUE, :argument, :argument)",
+        "pg_backup_start(:argument)",
+    ],
+)
+def test_prohibited_function_names_are_rejected_even_when_nested_or_qualified(call):
+    sql = f"SELECT {call} AS value FROM dwh.order_fact o LIMIT :row_limit"
+    payload = _manual_payload(sql)
+    parameters = ["row_limit"]
+    if ":argument" in call:
+        payload["parameters"].append({"name": "argument", "type": "text", "value": "untrusted"})
+        parameters.append("argument")
+    with pytest.raises(SqlGuardError, match="Function .* is prohibited"):
+        compile_query_payload(payload)
+    with pytest.raises(SqlGuardError, match="Function .* is prohibited"):
+        guard_read_only_sql(sql, allowed_tables=["dwh.order_fact"], parameter_names=parameters)
+
+
+@pytest.mark.parametrize("row_limit", [0, -1, 10001, True, "25"])
+def test_numeric_expressions_do_not_relax_the_manual_row_limit(row_limit):
+    payload = _manual_payload("SELECT COUNT(*) * 100.0 AS value FROM dwh.order_fact o LIMIT :row_limit")
+    payload["parameters"][0]["value"] = row_limit
+    with pytest.raises(QuerySpecificationValidationError):
+        compile_query_payload(payload)
+
+
+@pytest.mark.parametrize("parameter_names", [[], ["row_limit", "unused"]])
+def test_numeric_expressions_still_require_exact_parameter_bindings(parameter_names):
+    sql = "SELECT COUNT(*) * 100.0 AS value FROM dwh.order_fact o LIMIT :row_limit"
+    payload = _manual_payload(sql)
+    with pytest.raises(SqlGuardError, match="placeholders"):
+        guard_read_only_sql(sql, allowed_tables=["dwh.order_fact"], parameter_names=parameter_names)
+    if not parameter_names:
+        payload["manual_sql"] = sql.replace("100.0", ":missing")
+    else:
+        payload["parameters"].append({"name": "unused", "type": "integer", "value": 100})
+    with pytest.raises(SqlGuardError, match="placeholders"):
+        compile_query_payload(payload)
 
 
 def test_calendar_boundaries_use_bound_local_timestamps_and_postgres_timezone_conversion():

@@ -216,11 +216,31 @@ services:
   minio:
     ports: !reset []
 
-  redis:
-    image: local/ragflow-valkey:security-20261016
-    build:
+  redis-volume-init:
+    image: &local-valkey-image local/ragflow-valkey:security-20261016
+    build: &local-valkey-build
       context: ./security
       dockerfile: Dockerfile.valkey
+    user: "0:0"
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - redis_data:/data
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - >-
+        find /data -xdev ! -type l \( ! -user valkey -o ! -group valkey \)
+        -exec chown -h valkey:valkey {} +
+
+  redis:
+    image: *local-valkey-image
+    build: *local-valkey-build
+    depends_on:
+      redis-volume-init:
+        condition: service_completed_successfully
     ports: !reset []
 
   plantuml-server:

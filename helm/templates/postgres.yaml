@@ -38,6 +38,9 @@ spec:
         {{- include "ragflow.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: postgres
     spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       {{- if or .Values.global.imagePullSecrets .Values.postgres.image.pullSecrets }}
       imagePullSecrets:
         {{- with .Values.global.imagePullSecrets }}
@@ -50,6 +53,9 @@ spec:
       containers:
         - name: postgres
           image: {{ include "ragflow.imageRepo" (dict "root" . "repo" .Values.postgres.image.repository) }}:{{ .Values.postgres.image.tag }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
           imagePullPolicy: {{ .Values.postgres.image.pullPolicy }}
           envFrom:
             - secretRef:
@@ -71,7 +77,15 @@ spec:
           volumeMounts:
             - name: postgres-data
               mountPath: /var/lib/postgresql/data
+            - name: postgres-socket
+              mountPath: /var/run/postgresql
+            - name: tmp
+              mountPath: /tmp
       volumes:
+        - name: postgres-socket
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
         - name: postgres-data
           persistentVolumeClaim:
             claimName: {{ include "ragflow.fullname" . }}-postgres

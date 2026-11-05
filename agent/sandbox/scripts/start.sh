@@ -43,6 +43,8 @@ else
   echo "⚠️ .env file not found, skipping build."
 fi
 
+export SANDBOX_DOCKER_SOCKET_GID="${SANDBOX_DOCKER_SOCKET_GID:-$(stat -c %g /var/run/docker.sock)}"
+
 echo "🔧 STEP 2: Build executor services ..."
 docker compose build
 

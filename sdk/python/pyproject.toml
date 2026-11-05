@@ -6,7 +6,7 @@ authors = [{ name = "Zhichang Yu", email = "yuzhichang@gmail.com" }]
 license = { text = "Apache License, Version 2.0" }
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
-dependencies = ["requests>=2.30.0,<3.0.0", "beartype>=0.20.0,<1.0.0", "certifi>=2026.10.19"]
+dependencies = ["requests>=2.30.0,<3.0.0", "beartype>=0.20.0,<1.0.0", "certifi>=2026.10.19", "urllib3>=2.8.0,<3"]
 
 
 [dependency-groups]

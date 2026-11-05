@@ -10,3 +10,4 @@ RUN tar xzf /tmp/gosu.tar.gz --strip-components=1 && \
 FROM postgres:16.15-alpine
 RUN apk upgrade --no-cache && rm /usr/local/bin/gosu
 COPY --from=gosu /out/gosu /usr/local/bin/gosu
+USER postgres

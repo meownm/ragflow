@@ -1,3 +1,4 @@
+import workerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { memo, useEffect, useRef } from 'react';
 import {
   AreaHighlight,
@@ -17,6 +18,7 @@ import { getAuthorization } from '@/utils/authorization-util';
 import { useCatchDocumentError } from './hooks';
 type PdfLoaderProps = React.ComponentProps<typeof PdfLoader> & {
   httpHeaders?: Record<string, string>;
+  isEvalSupported?: boolean;
 };
 
 const Loader = PdfLoader as React.ComponentType<PdfLoaderProps>;
@@ -78,12 +80,13 @@ const PdfPreview = ({
       <Loader
         url={url}
         httpHeaders={httpHeaders}
+        isEvalSupported={false}
         beforeLoad={
           <div className="absolute inset-0 flex items-center justify-center">
             <Spin />
           </div>
         }
-        workerSrc="/pdfjs-dist/pdf.worker.min.js"
+        workerSrc={workerSrc}
         errorMessage={<FileError>{error}</FileError>}
       >
         {(pdfDocument) => {

@@ -79,6 +79,48 @@ function setup(overrides: Partial<AssistantSession> = {}) {
   return { send };
 }
 
+it('restores a stopped question as an editable draft and sends only on explicit submit', async () => {
+  const { send } = setup({
+    conversation: { phase: 'ERROR' },
+    messages: [
+      {
+        id: 'question',
+        role: 'user',
+        text: 'Добавь долю ошибок',
+        created_at: 1,
+        parent_result_id: 'saved',
+      },
+      {
+        id: 'answer',
+        role: 'assistant',
+        text: 'Применить правку?',
+        created_at: 2,
+        parent_result_id: 'saved',
+      },
+    ],
+  });
+  const input = screen.getByLabelText('Сообщение SQL-помощнику');
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Вернуть последний вопрос' }),
+  );
+  expect(input).toHaveValue('Добавь долю ошибок');
+  expect(send).not.toHaveBeenCalled();
+  expect(
+    screen.getByRole('button', { name: 'Вернуть последний вопрос' }),
+  ).toBeDisabled();
+  fireEvent.change(input, {
+    target: { value: 'Добавь долю ошибок в процентах' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: 'Отправить сообщение' }));
+  await waitFor(() =>
+    expect(send).toHaveBeenCalledWith('message', {
+      text: 'Добавь долю ошибок в процентах',
+      run_id: 'saved',
+      context,
+    }),
+  );
+});
+
 it('shows the actual SQL and parameter diff before applying an impactful edit', async () => {
   const { send } = setup({
     conversation: {

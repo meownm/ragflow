@@ -14,6 +14,7 @@ def test_qa_stack_has_private_ports_and_own_persistent_volumes():
     compose = yaml.safe_load((ROOT / "deployment/qa/compose.yml").read_text(encoding="utf-8"))
     assert compose["name"] == "ragflow-qa"
     assert compose["services"]["app"]["ports"] == ["127.0.0.1:19382:80", "127.0.0.1:19383:9381"]
+    assert compose["services"]["app"]["extra_hosts"] == ["host.docker.internal:host-gateway"]
     assert all(service["restart"] == "unless-stopped" for service in compose["services"].values())
     assert set(compose["volumes"]) == {"qa_pgdata", "qa_redis", "qa_objects", "qa_index"}
     assert not any("ragflow-local" in str(service) for service in compose["services"].values())

@@ -41,6 +41,10 @@ spec:
       annotations:
         checksum/config-env: {{ include (print $.Template.BasePath "/env.yaml") . | sha256sum }}
     spec:
+      securityContext:
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
       {{- if or .Values.global.imagePullSecrets .Values.redis.image.pullSecrets }}
       imagePullSecrets:
         {{- with .Values.global.imagePullSecrets }}
@@ -54,6 +58,12 @@ spec:
       containers:
         - name: redis
           image: {{ include "ragflow.imageRepo" (dict "root" . "repo" .Values.redis.image.repository) }}:{{ .Values.redis.image.tag }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
           {{- with .Values.redis.image.pullPolicy }}
           imagePullPolicy: {{ . }}
           {{- end }}
@@ -67,15 +77,22 @@ spec:
           ports:
             - containerPort: 6379
               name: redis
-          {{- if .Values.redis.persistence.enabled }}
           volumeMounts:
             - name: redis-data
               mountPath: /data
-          {{- end }}
+            - name: tmp
+              mountPath: /tmp
           {{- with .Values.redis.deployment.resources }}
           resources:
             {{- . | toYaml | nindent 12 }}
           {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if not .Values.redis.persistence.enabled }}
+        - name: redis-data
+          emptyDir: {}
+        {{- end }}
   {{- if .Values.redis.persistence.enabled }}
   {{- with .Values.redis.persistence.retentionPolicy }}
   persistentVolumeClaimRetentionPolicy:

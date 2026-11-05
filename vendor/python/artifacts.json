@@ -1,9 +1,9 @@
 [
   {
     "name": "crawl4ai",
-    "version": "0.9.5+ragflow.1",
-    "file": "crawl4ai-0.9.5+ragflow.1.tar.gz",
-    "sha256": "379743e15700bb7d6698f88163d22d0a1cc326c2c996d2625b12b5dbfb4165e8",
+    "version": "0.9.5+ragflow.3",
+    "file": "crawl4ai-0.9.5+ragflow.3.tar.gz",
+    "sha256": "1b72382e74a9532d6e022de7330e4d5ff7f10883024e07cb843550bea0decb49",
     "upstream_sha256": "84fa6f4970fbb086a68893c9fb18605a93fcd609c72bee6fbb1d2715924afbff"
   },
   {
@@ -15,16 +15,30 @@
   },
   {
     "name": "agentrun-sdk",
-    "version": "0.0.51+ragflow.1",
-    "file": "agentrun_sdk-0.0.51+ragflow.1.tar.gz",
-    "sha256": "3b132a5a69e78725491c27715d0fabbffedf17ac18ea38680f3b77efe476aa4e",
+    "version": "0.0.51+ragflow.2",
+    "file": "agentrun_sdk-0.0.51+ragflow.2.tar.gz",
+    "sha256": "13cde814d652d438a9dbf1ad7f1b760a93c390c2a161f321425052de060a7ca8",
     "upstream_sha256": "48ec49fd925bb204d1565488f832fc0a53cd8304938274f0ab528d5a57cdb1d6"
   },
   {
     "name": "scholarly",
-    "version": "1.7.11+ragflow.1",
-    "file": "scholarly-1.7.11+ragflow.1.tar.gz",
-    "sha256": "e294fc3d86beecc87d38e129800df3958d0d1caf9394fe615bb3ec55c6303080",
+    "version": "1.7.11+ragflow.2",
+    "file": "scholarly-1.7.11+ragflow.2.tar.gz",
+    "sha256": "3f6fb75c48007b7efac892c1075f81b674cbaf75f5743c31150a292cd4f3f5f6",
     "upstream_sha256": "2c983dd44d9d9398a6f2605102ae6e5586023b41ebbaec1461917ee48eb153f0"
+  },
+  {
+    "name": "infinity-sdk",
+    "version": "0.7.0+ragflow.1",
+    "file": "infinity_sdk-0.7.0+ragflow.1.tar.gz",
+    "sha256": "c704a30f506b2a671ace46fafdb15fbeac233cc21f0d13b3a8a5ebf7a5ee0b43",
+    "upstream_sha256": "42ba8c6acd4fad918b1ed189fab3383023e4750d46ef1bf1c9465ffcf3ff8335"
+  },
+  {
+    "name": "qianfan",
+    "version": "0.4.6+ragflow.1",
+    "file": "qianfan-0.4.6+ragflow.1.tar.gz",
+    "sha256": "54f0c0c2b412b4fbe78e15569101c0bfc6a732c30bd33960711103022f58f681",
+    "upstream_sha256": "90c2bf6f5fa1d1ae6ff63d982ce7b5fcb771c73048e81a147bcc24abed7eaefe"
   }
 ]

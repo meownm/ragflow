@@ -2,6 +2,7 @@
   {
     "name": "crawl4ai",
     "version": "0.9.5",
+    "revision": 3,
     "filename": "crawl4ai-0.9.5.tar.gz",
     "url": "https://files.pythonhosted.org/packages/ea/ad/44b57b650c3c0afaeea917bd7e6b87a64cd1108be53431690483cde0eb2d/crawl4ai-0.9.5.tar.gz",
     "sha256": "84fa6f4970fbb086a68893c9fb18605a93fcd609c72bee6fbb1d2715924afbff",
@@ -18,6 +19,7 @@
   {
     "name": "agentrun-sdk",
     "version": "0.0.51",
+    "revision": 2,
     "filename": "agentrun_sdk-0.0.51.tar.gz",
     "url": "https://files.pythonhosted.org/packages/55/56/7caca0780cee6098c39f2739ed9867746afb01e22d5a8bf22d353d8920b2/agentrun_sdk-0.0.51.tar.gz",
     "sha256": "48ec49fd925bb204d1565488f832fc0a53cd8304938274f0ab528d5a57cdb1d6",
@@ -26,9 +28,30 @@
   {
     "name": "scholarly",
     "version": "1.7.11",
+    "revision": 2,
     "filename": "scholarly-1.7.11.tar.gz",
     "url": "https://files.pythonhosted.org/packages/62/2d/38f22adc8abc1166d2c039e477bd8d7782fe32a72f5c80aed94b23348ac1/scholarly-1.7.11.tar.gz",
     "sha256": "2c983dd44d9d9398a6f2605102ae6e5586023b41ebbaec1461917ee48eb153f0",
     "size": 38819
+  },
+  {
+    "name": "infinity-sdk",
+    "version": "0.7.0",
+    "filename": "infinity_sdk-0.7.0.tar.gz",
+    "url": "https://files.pythonhosted.org/packages/46/c9/0bb4981acdaca79b864b26d998201f652ef6024fce7d0c39da9c11605890/infinity_sdk-0.7.0.tar.gz",
+    "sha256": "42ba8c6acd4fad918b1ed189fab3383023e4750d46ef1bf1c9465ffcf3ff8335",
+    "size": 29522991
+  },
+  {
+    "name": "qianfan",
+    "version": "0.4.6",
+    "filename": "qianfan-0.4.6.tar.gz",
+    "url": "https://files.pythonhosted.org/packages/3a/10/e06dd2f67a1f5f5a8eefac2e13c8f6d79c76e86a520c8976af33700d9c43/qianfan-0.4.6.tar.gz",
+    "sha256": "90c2bf6f5fa1d1ae6ff63d982ce7b5fcb771c73048e81a147bcc24abed7eaefe",
+    "size": 312564,
+    "license": {
+      "url": "https://raw.githubusercontent.com/baidubce/bce-qianfan-sdk/5340e053aeeec913fcdbd0231941ae7ebb461ca1/LICENSE",
+      "sha256": "5441c128de858675382b9b8dc9c73bf77e65f9ab4161cfc66de4f505c0dcfa0b"
+    }
   }
 ]

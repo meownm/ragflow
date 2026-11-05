@@ -42,4 +42,6 @@ RUN if [ "$NEED_MIRROR" = 1 ]; then export UV_INDEX_URL="https://pypi.tuna.tsing
     uv pip install --system -r requirements.txt "pip>=26.2.0,<27" "setuptools>=83,<85" "wheel>=0.46.2,<1" && \
     uv cache clean
 
+ENV PYTHONDONTWRITEBYTECODE=1
+USER 65534:65534
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "9385"]

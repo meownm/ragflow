@@ -1,2 +1,3 @@
 FROM valkey/valkey:8.1.10-alpine
 RUN apk upgrade --no-cache
+USER valkey

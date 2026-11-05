@@ -49,6 +49,8 @@ services:
 
   app:
     image: ${RAGFLOW_IMAGE:?required}
+    extra_hosts:
+      - host.docker.internal:host-gateway
     restart: unless-stopped
     entrypoint: [bash, /ragflow/entrypoint.sh]
     command: [--enable-adminserver, --init-superuser, --disable-datasync, --workers=1]

@@ -8,6 +8,9 @@ services:
   redis:
     image: ${VALKEY_IMAGE:-valkey/valkey:8}
 
+  redis-volume-init:
+    image: ${VALKEY_IMAGE:-valkey/valkey:8}
+
   minio:
     image: ${MINIO_IMAGE:-pgsty/minio:RELEASE.2026-03-25T00-00-00Z}
 

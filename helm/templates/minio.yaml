@@ -44,6 +44,9 @@ spec:
         {{- include "ragflow.labels" . | nindent 8 }}
         app.kubernetes.io/component: minio
     spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       {{- if or .Values.global.imagePullSecrets .Values.minio.image.pullSecrets }}
       imagePullSecrets:
         {{- with .Values.global.imagePullSecrets }}
@@ -56,6 +59,9 @@ spec:
       containers:
       - name: minio
         image: {{ include "ragflow.imageRepo" (dict "root" . "repo" .Values.minio.image.repository) }}:{{ .Values.minio.image.tag }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
         {{- with .Values.minio.image.pullPolicy }}
         imagePullPolicy: {{ . }}
         {{- end }}
@@ -78,7 +84,11 @@ spec:
         volumeMounts:
           - mountPath: /data
             name: minio-data
+          - mountPath: /tmp
+            name: tmp
       volumes:
+        - name: tmp
+          emptyDir: {}
         - name: minio-data
           persistentVolumeClaim:
             claimName: {{ include "ragflow.fullname" . }}-minio

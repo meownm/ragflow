@@ -1,0 +1,44 @@
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -3 +3 @@
+-version = "0.4.6"
++version = "0.4.6+ragflow.1"
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -18 +18 @@
+-python = ">=3.7,<4"
++python = ">=3.10,<4"
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -56 +56 @@
+-diskcache = ">=5.6.3"
++diskcache-community = "==5.8.3"
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -120 +120 @@
+-    "poetry-core"
++    "poetry-core==2.2.1"
+--- a/qianfan/utils/cache/base.py
++++ b/qianfan/utils/cache/base.py
+@@ -13,0 +14 @@
++from pickle import UnpicklingError
+@@ -16 +17 @@
+-from diskcache import Cache
++from diskcache_community import Cache, SafeDisk
+--- a/qianfan/utils/cache/base.py
++++ b/qianfan/utils/cache/base.py
+@@ -19,0 +20 @@
++from qianfan.resources.typing import QfLLMInfo
+--- a/qianfan/utils/cache/base.py
++++ b/qianfan/utils/cache/base.py
+@@ -30 +30 @@
+-        super().__init__(directory=get_config().CACHE_DIR, **kwargs)
++        super().__init__(directory=get_config().CACHE_DIR, disk=SafeDisk.with_types(QfLLMInfo), **kwargs)
+--- a/qianfan/utils/cache/base.py
++++ b/qianfan/utils/cache/base.py
+@@ -35 +35,4 @@
+-        return super().get(**kwargs)
++        try:
++            return super().get(**kwargs)
++        except (UnpicklingError, ValueError):
++            return kwargs.get("default")

@@ -5,11 +5,12 @@ services:
       dockerfile: Dockerfile
     image: sandbox-executor-manager:latest
     runtime: runc
-    privileged: true
     ports:
       - "${SANDBOX_EXECUTOR_MANAGER_PORT:-9385}:9385"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+    group_add:
+      - "${SANDBOX_DOCKER_SOCKET_GID:-0}"
     networks:
       - sandbox-network
     restart: always

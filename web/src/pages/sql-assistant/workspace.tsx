@@ -42,6 +42,7 @@ export function AssistantWorkspace({
   const [parentRow, setParentRow] = useState<DrillRow | null>(null);
   const [localChanges, setLocalChanges] = useState(false);
   const [delivery, setDelivery] = useState<MessageDelivery>();
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<ReturnType<
     typeof assistantFailure
   > | null>(null);
@@ -108,6 +109,17 @@ export function AssistantWorkspace({
     }
   };
   const retry = attempt.current;
+  const refreshState = async () => {
+    setRefreshing(true);
+    try {
+      await refresh();
+      setError(null);
+    } catch (failure) {
+      setError(assistantFailure(failure));
+    } finally {
+      setRefreshing(false);
+    }
+  };
   return (
     <section
       className="sa-workspace sa-conversation"
@@ -118,11 +130,15 @@ export function AssistantWorkspace({
         <Button
           variant="ghost"
           size="sm"
+          className="shrink-0"
           aria-label="Обновить исследование"
-          disabled={command.isPending}
-          onClick={() => void refresh()}
+          disabled={command.isPending || refreshing}
+          onClick={() => void refreshState()}
         >
-          <RefreshCw className="size-4" />
+          <RefreshCw
+            className={refreshing ? 'size-4 animate-spin' : 'size-4'}
+          />
+          {refreshing ? 'Обновляем…' : 'Обновить состояние'}
         </Button>
       </header>
       <div
@@ -183,6 +199,8 @@ export function AssistantWorkspace({
             optionsLoading={dialogue.isFetching}
             optionsError={dialogue.isError}
             delivery={delivery}
+            onRefresh={() => void refreshState()}
+            refreshing={refreshing}
           />
           {error && (
             <div className="sa-chat-error" role="alert">
@@ -202,18 +220,13 @@ export function AssistantWorkspace({
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => void refresh()}
+                  disabled={refreshing}
+                  onClick={() => void refreshState()}
                 >
                   Обновить состояние
                 </Button>
               )}
             </div>
-          )}
-          {session.conversation?.phase === 'ERROR' && (
-            <p className="sa-chat-error" role="alert">
-              {session.conversation.error?.message ||
-                'Запрос не завершён. Уточните вопрос или начните новое исследование.'}
-            </p>
           )}
           {activeRun?.status === 'UNKNOWN' && (
             <div className="sa-chat-error" role="status">

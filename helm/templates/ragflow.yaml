@@ -26,6 +26,13 @@ spec:
         checksum/config-env: {{ include (print $.Template.BasePath "/env.yaml") . | sha256sum }}
         checksum/config-ragflow: {{ include (print $.Template.BasePath "/ragflow_config.yaml") . | sha256sum }}
     spec:
+      securityContext:
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+        sysctls:
+          - name: net.ipv4.ip_unprivileged_port_start
+            value: "0"
       {{- if or .Values.global.imagePullSecrets .Values.ragflow.image.pullSecrets }}
       imagePullSecrets:
         {{- with .Values.global.imagePullSecrets }}
@@ -35,9 +42,35 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
       {{- end }}
+      initContainers:
+      - name: seed-runtime-config
+        image: {{ include "ragflow.imageRepo" (dict "root" . "repo" .Values.ragflow.image.repository) }}:{{ .Values.ragflow.image.tag }}
+        {{- with .Values.ragflow.image.pullPolicy }}
+        imagePullPolicy: {{ . }}
+        {{- end }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+        command:
+          - /bin/sh
+          - -ec
+          - |
+            cp -R /ragflow/conf/. /seed/conf/
+            cp -R /etc/nginx/conf.d/. /seed/nginx/
+            if [ -d /home/ragflow ]; then cp -R /home/ragflow/. /seed/home/; fi
+        volumeMounts:
+          - name: ragflow-conf
+            mountPath: /seed/conf
+          - name: nginx-conf
+            mountPath: /seed/nginx
+          - name: ragflow-home
+            mountPath: /seed/home
       containers:
       - name: ragflow
         image: {{ include "ragflow.imageRepo" (dict "root" . "repo" .Values.ragflow.image.repository) }}:{{ .Values.ragflow.image.tag }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
         {{- with .Values.ragflow.image.pullPolicy }}
         imagePullPolicy: {{ . }}
         {{- end }}
@@ -55,6 +88,18 @@ spec:
             name: admin
           {{- end }}
         volumeMounts:
+          - name: ragflow-conf
+            mountPath: /ragflow/conf
+          - name: nginx-conf
+            mountPath: /etc/nginx/conf.d
+          - name: ragflow-home
+            mountPath: /home/ragflow
+          - name: ragflow-logs
+            mountPath: /ragflow/logs
+          - name: nginx-logs
+            mountPath: /var/log/nginx
+          - name: tmp
+            mountPath: /tmp
           - mountPath: /etc/nginx/conf.d/ragflow.conf.python
             subPath: ragflow.conf.python
             name: nginx-config-volume
@@ -77,11 +122,18 @@ spec:
         envFrom:
           - secretRef:
               name: {{ include "ragflow.fullname" . }}-env-config
+        env:
+          - name: HOME
+            value: /home/ragflow
         {{- with .Values.ragflow.deployment.resources }}
         resources:
           {{- . | toYaml | nindent 10 }}
         {{- end }}
       volumes:
+        {{- range list "ragflow-conf" "nginx-conf" "ragflow-home" "ragflow-logs" "nginx-logs" "tmp" }}
+        - name: {{ . }}
+          emptyDir: {}
+        {{- end }}
         - name: nginx-config-volume
           configMap:
             name: nginx-config

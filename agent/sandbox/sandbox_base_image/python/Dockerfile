@@ -26,4 +26,5 @@ RUN if [ "$NEED_MIRROR" = 1 ]; then \
 
 WORKDIR /workspace
 
+USER 65534:65534
 CMD ["sleep", "infinity"]

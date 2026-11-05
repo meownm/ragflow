@@ -1,4 +1,4 @@
-FROM node:24.22.0-bookworm-slim
+FROM node:24.22.1-bookworm-slim
 
 ARG NEED_MIRROR=1
 
@@ -10,7 +10,7 @@ RUN if [ "$NEED_MIRROR" = 1 ]; then \
 
 WORKDIR /app
 
-COPY package.json package-lock.json .
+COPY package.json package-lock.json ./
 
 RUN apt-get update && apt-get upgrade -y --no-install-recommends && \
     rm -rf /var/lib/apt/lists/* && npm install --global npm@12.2.0 && \
@@ -26,5 +26,6 @@ RUN npm install --prefix /tmp/npm-security --omit=dev --ignore-scripts \
         rm -rf "${npm_modules:?}/${name}"; cp -a "$dependency" "$npm_modules/"; \
     done && rm -rf /tmp/npm-security && npm cache clean --force
 
+USER 65534:65534
 CMD ["sleep", "infinity"]
 

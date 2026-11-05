@@ -81,13 +81,25 @@ def check_json(paths: list[Path], fix: bool = False) -> int:
 
 def check_yaml(paths: list[Path], fix: bool = False) -> int:
     errors: list[str] = []
+    helm_chart = Path("helm")
+    lint_helm = False
     for path in paths:
         if path.suffix not in {".yaml", ".yml"} or not path.is_file():
+            continue
+        if path.is_relative_to(helm_chart / "templates"):
+            lint_helm = True
             continue
         try:
             yaml.load(path.read_text(encoding="utf-8"), Loader=_ComposeSafeLoader)
         except Exception as exc:
             errors.append(f"invalid yaml: {path}: {exc}")
+    if lint_helm:
+        try:
+            subprocess.run(["helm", "lint", str(helm_chart)], check=True)
+        except FileNotFoundError:
+            errors.append("Helm is required to validate staged chart templates.")
+        except subprocess.CalledProcessError:
+            errors.append("Helm chart validation failed.")
     return _report(errors)
 
 

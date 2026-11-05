@@ -5,5 +5,6 @@ ARG OWNER
 LABEL org.ragflow.ci-dry-run=$OWNER
 WORKDIR /ragflow
 COPY image-source/ /ragflow/
+USER 65534:65534
 ENTRYPOINT ["python3"]
 CMD ["--version"]

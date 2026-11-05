@@ -9,6 +9,7 @@ param(
     [string]$Mode = "Auto",
     [ValidateSet("BlueGreen", "Recreate")]
     [string]$Strategy = "BlueGreen",
+    [switch]$InfrastructureMaintenance,
     [switch]$InitializeBlueGreen,
     [string]$FeatureImageReference,
     [string]$FeatureSourceId,
@@ -436,7 +437,18 @@ if ($resolvedMode -eq "Auto") {
 if ($Strategy -eq "BlueGreen" -and ($resolvedMode -eq "Fast" -or $Services.Count -ne 1 -or $Services[0] -ne "ragflow-cpu")) {
     throw "BlueGreen requires one immutable application image. Use a separate -Strategy Recreate maintenance deployment for Fast or infrastructure changes."
 }
-if ($Strategy -eq "Recreate" -and (Test-Path -LiteralPath (Join-Path $repoRoot ".local/runtime/$ProjectName/blue-green/state.json"))) {
+$blueGreenRuntime = Join-Path $repoRoot ".local/runtime/$ProjectName/blue-green"
+if ($InfrastructureMaintenance) {
+    if ($Strategy -ne "Recreate" -or $Mode -ne "Fast" -or -not $PSBoundParameters.ContainsKey("Services") -or
+        $Services.Count -eq 0 -or @($Services | Where-Object { $_ -notin @("postgres", "redis") }).Count -gt 0 -or
+        $Build -or $BuildFrontend -or $SkipBackup) {
+        throw "InfrastructureMaintenance requires explicit Fast/Recreate with prebuilt postgres and/or redis, and a new backup."
+    }
+    if (Test-Path -LiteralPath (Join-Path $blueGreenRuntime "pending.json")) {
+        throw "Recover the pending blue/green deployment before database maintenance."
+    }
+}
+elseif ($Strategy -eq "Recreate" -and (Test-Path -LiteralPath (Join-Path $blueGreenRuntime "state.json"))) {
     throw "A blue/green gateway owns this project. Recreate requires a separately planned maintenance handover."
 }
 if ($InitializeBlueGreen -and $Strategy -ne "BlueGreen") {
@@ -463,7 +475,7 @@ if ($resolvedMode -eq "Feature") {
 elseif ($FeatureImageReference -or $FeatureSourceId) {
     throw "Feature image parameters require -Mode Feature."
 }
-if ($resolvedMode -eq "Fast" -and $changePlan.requires_candidate -and -not $asrOnly) {
+if ($resolvedMode -eq "Fast" -and $changePlan.requires_candidate -and -not $asrOnly -and -not $InfrastructureMaintenance) {
     $details = @($changePlan.image_inputs + $changePlan.unmounted_runtime | Sort-Object -Unique) -join ", "
     if (-not $details) { $details = "deployed SOURCE_REVISION is unknown" }
     throw "Fast deploy is unsafe: runtime changes require a CI candidate image. Paths: $details"
@@ -555,17 +567,16 @@ elseif (-not $PSBoundParameters.ContainsKey("Services")) {
     $Services = @($plannedServices | Select-Object -Unique)
 }
 
-if ($resolvedMode -eq "Fast" -and -not $asrOnly -and $changePlan.frontend.Count -gt 0) {
+if ($resolvedMode -eq "Fast" -and -not $asrOnly -and -not $InfrastructureMaintenance -and $changePlan.frontend.Count -gt 0) {
     $BuildFrontend = $true
 }
-if ($resolvedMode -eq "Fast" -and $changePlan.asr.Count -gt 0) {
+if ($resolvedMode -eq "Fast" -and -not $InfrastructureMaintenance -and $changePlan.asr.Count -gt 0) {
     $Build = $true
 }
 
 $renderedConfig = Invoke-Compose -Arguments @("config") -Capture
 $renderedConfig | Set-Content -LiteralPath (Join-Path $EvidenceDirectory "compose-config.yml") -Encoding utf8
 if ($Strategy -eq "BlueGreen") {
-    $blueGreenRuntime = Join-Path $repoRoot ".local/runtime/$ProjectName/blue-green"
     if (-not $InitializeBlueGreen -and -not (Test-Path -LiteralPath (Join-Path $blueGreenRuntime "state.json"))) {
         throw "First gateway installation needs a maintenance window: explicitly use -InitializeBlueGreen. Subsequent updates preserve the public listener."
     }
@@ -687,7 +698,7 @@ function Register-BackupArtifact {
 
 $backup = $null
 $backupRequired = $resolvedMode -in @("Feature", "Candidate", "Release") -or
-    $changePlan.database_sensitive.Count -gt 0 -or $changePlan.compose_config.Count -gt 0
+    $changePlan.database_sensitive.Count -gt 0 -or $changePlan.compose_config.Count -gt 0 -or $InfrastructureMaintenance
 if ($SkipBackup) {
     if ($resolvedMode -eq "Release" -or $changePlan.database_sensitive.Count -gt 0) {
         throw "Backup cannot be skipped for Release mode or database-sensitive changes."
@@ -767,6 +778,12 @@ elseif ($restartOnly) {
     $deploymentAction = "restart"
 }
 elseif ($Services.Count -gt 0) {
+    if ($Services -contains "redis") {
+        Invoke-Compose -Arguments @("stop", "redis")
+        $initArguments = @("run", "--rm", "--no-deps", "--pull", "never")
+        if ($Build) { $initArguments += "--build" }
+        Invoke-Compose -Arguments ($initArguments + "redis-volume-init")
+    }
     $upArguments = @("up", "-d", "--force-recreate", "--no-deps")
     if ($Build) {
         $upArguments += "--build"

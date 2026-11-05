@@ -100,7 +100,8 @@ compose() {
     if [[ ${OBSERVABILITY_ENABLED:-1} == "1" ]]; then
       profiles+=(--profile observability)
     fi
-    sudo env COMPOSE_PROFILES= docker compose "${profiles[@]}" \
+    sudo env COMPOSE_PROFILES= "SANDBOX_DOCKER_SOCKET_GID=${SANDBOX_DOCKER_SOCKET_GID:-$(stat -c %g /var/run/docker.sock)}" \
+      docker compose "${profiles[@]}" \
       --env-file .env -p "${PROJECT_NAME}" \
       -f docker-compose.yml \
       -f docker-compose.local.yml \
@@ -444,6 +445,9 @@ printf 'TARGET_RELEASE=%s\nBACKUP_DIR=%s\nPREVIOUS_DIR=%s\n' "${RELEASE_VERSION}
   | sudo tee "${RECOVERY_REQUIRED_FILE}" >/dev/null
 sudo chmod 0600 "${RECOVERY_REQUIRED_FILE}"
 DATA_MAY_HAVE_CHANGED=1
+if compose "${INSTALL_DIR}" config --services | grep -qx redis-volume-init; then
+  compose "${INSTALL_DIR}" stop redis
+fi
 compose "${INSTALL_DIR}" up -d --no-build --pull never
 wait_for_health "${BACKUP_DIR}/health-after.json"
 if [[ ${OBSERVABILITY_ENABLED} == "1" ]]; then

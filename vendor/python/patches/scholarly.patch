@@ -2,12 +2,12 @@
 +++ b/setup.py
 @@ -8 +8 @@
 -    version='1.7.11',
-+    version='1.7.11+ragflow.1',
++    version='1.7.11+ragflow.2',
 --- a/pyproject.toml
 +++ b/pyproject.toml
 @@ -2 +2 @@
 -requires = ["setuptools", "wheel"]
-+requires = ["setuptools==80.9.0", "wheel==0.45.1"]
++requires = ["setuptools==83.0.0", "wheel==0.45.1"]
 --- a/scholarly/_scholarly.py
 +++ b/scholarly/_scholarly.py
 @@ -312 +312 @@

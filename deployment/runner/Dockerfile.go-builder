@@ -8,6 +8,10 @@ ENV PATH="/usr/local/go/bin:${PATH}"
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libpcre2-dev \
     && ln -s "$(command -v lld)" /usr/local/bin/ld.lld \
+    && install -d -o 65532 -g 65532 /ragflow \
+    && install -d -m 1777 /tmp/builder-home \
     && rm -rf /var/lib/apt/lists/*
 
+ENV HOME=/tmp/builder-home
 WORKDIR /ragflow
+USER 65532:65532

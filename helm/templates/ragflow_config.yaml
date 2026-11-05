@@ -62,11 +62,10 @@ data:
     proxy_read_timeout 3600s;
     proxy_send_timeout 3600s;
   nginx.conf: |
-    user  root;
     worker_processes  auto;
 
-    error_log  /var/log/nginx/error.log notice;
-    pid        /var/run/nginx.pid;
+    error_log  stderr notice;
+    pid        /tmp/nginx.pid;
 
     events {
         worker_connections  1024;
@@ -80,7 +79,12 @@ data:
                         '$status $body_bytes_sent "$http_referer" '
                         '"$http_user_agent" "$http_x_forwarded_for"';
 
-        access_log  /var/log/nginx/access.log  main;
+        access_log  /dev/stdout  main;
+        client_body_temp_path /tmp/nginx-client;
+        proxy_temp_path /tmp/nginx-proxy;
+        fastcgi_temp_path /tmp/nginx-fastcgi;
+        uwsgi_temp_path /tmp/nginx-uwsgi;
+        scgi_temp_path /tmp/nginx-scgi;
 
         sendfile        on;
         #tcp_nopush     on;

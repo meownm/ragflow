@@ -10,6 +10,8 @@ Installed hooks use `lefthook.sh` to select `.venv/Scripts` on Windows or
 dependencies, including PyYAML, before committing. Ruff, gofmt and installed
 frontend tools are needed when the staged files require their checks. Missing
 tools fail the applicable check; hooks never download dependencies.
+Staged `helm/templates/` YAML files require `helm` on `PATH`. The YAML check
+validates them with `helm lint` so Go template directives are rendered first.
 
 On Windows use Git for Windows, whose hook environment supplies `sh`. A prepared
 native Lefthook can also live at `.local/tools/lefthook.exe`; install with:

@@ -1,3 +1,6 @@
+import subprocess
+from pathlib import Path
+
 import pytest
 
 from tools.hooks.check_files import check_eof, check_merge_conflicts, check_mixed_line_endings, check_trailing_whitespace, check_yaml
@@ -24,6 +27,23 @@ def test_check_yaml_rejects_unknown_tags(tmp_path):
     yaml_file.write_text("value: !unsupported thing\n", encoding="utf-8")
 
     assert check_yaml([yaml_file]) == 1
+
+
+def test_check_yaml_validates_helm_templates_with_chart_linter(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    template = Path("helm/templates/service.yaml")
+    template.parent.mkdir(parents=True)
+    template.write_text("{{- if .Values.enabled }}\n{{- end }}\n", encoding="utf-8")
+    calls = []
+
+    def lint(command, *, check):
+        assert check
+        calls.append(command)
+        raise subprocess.CalledProcessError(1, command)
+
+    monkeypatch.setattr(subprocess, "run", lint)
+    assert check_yaml([template]) == 1
+    assert calls == [["helm", "lint", "helm"]]
 
 
 @pytest.mark.parametrize("check", [check_eof, check_trailing_whitespace, check_mixed_line_endings, check_merge_conflicts])

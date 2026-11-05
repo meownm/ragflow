@@ -99,17 +99,55 @@ _PROHIBITED_AST_NODES = {
 }
 _PROHIBITED_FUNCTIONS = {
     "current_setting",
-    "dblink",
-    "dblink_connect",
-    "lo_export",
-    "lo_import",
-    "pg_ls_dir",
-    "pg_read_binary_file",
-    "pg_read_file",
-    "pg_sleep",
-    "query_to_xml",
+    "nextval",
+    "setval",
+    "set_config",
+    "setseed",
+    "loread",
+    "lowrite",
+    "pg_cancel_backend",
+    "pg_terminate_backend",
+    "pg_reload_conf",
+    "pg_rotate_logfile",
+    "pg_log_backend_memory_contexts",
+    "pg_notify",
+    "pg_stat_file",
+    "pg_logdir_ls",
+    "pg_switch_wal",
+    "pg_create_restore_point",
+    "pg_promote",
+    "pg_export_snapshot",
+    "pg_create_logical_replication_slot",
+    "pg_create_physical_replication_slot",
+    "pg_copy_logical_replication_slot",
+    "pg_copy_physical_replication_slot",
+    "pg_drop_replication_slot",
+    "pg_sync_replication_slots",
 }
-_ALLOWED_FUNCTIONS = {"and", "avg", "cast", "count", "date_trunc", "max", "min", "sum", "timestamp_trunc"}
+_PROHIBITED_FUNCTION_PREFIXES = (
+    "dblink",
+    "lo_",
+    "pg_read_",
+    "pg_ls_",
+    "pg_file_",
+    "pg_write_",
+    "pg_sleep",
+    "pg_advisory_",
+    "pg_try_advisory_",
+    "pg_stat_reset",
+    "pg_backup_",
+    "pg_start_backup",
+    "pg_stop_backup",
+    "pg_wal_replay_",
+    "pg_replication_origin_",
+    "pg_replication_slot_",
+    "pg_logical_",
+    "query_to_xml",
+    "table_to_xml",
+    "schema_to_xml",
+    "database_to_xml",
+    "cursor_to_xml",
+)
 _PROHIBITED_SCHEMAS = {"information_schema", "pg_catalog"}
 
 
@@ -1004,10 +1042,11 @@ def _guard_statement_shape(statement: exp.Select) -> None:
     for node in statement.walk():
         if type(node).__name__ in _PROHIBITED_AST_NODES:
             raise SqlGuardError(f"SQL node {type(node).__name__} is prohibited")
-    if any(True for _ in statement.find_all(exp.Star)):
+    if any(not isinstance(star.parent, exp.Count) for star in statement.find_all(exp.Star)):
         raise SqlGuardError("SELECT * is prohibited")
-    if statement.args.get("into") is not None or statement.args.get("locks"):
-        raise SqlGuardError("SELECT INTO and row locks are prohibited")
+    for select in statement.find_all(exp.Select):
+        if select.args.get("into") is not None or select.args.get("locks"):
+            raise SqlGuardError("SELECT INTO and row locks are prohibited")
     if statement.args.get("limit") is None:
         raise SqlGuardError("A row limit is required")
 
@@ -1026,16 +1065,28 @@ def _guard_tables(statement: exp.Select, allowed_tables: Sequence[str]) -> set[s
     return observed_tables
 
 
-def _guard_functions_and_literals(statement: exp.Select) -> None:
+def guard_sql_expressions(statement: exp.Expression) -> None:
+    """Reject prohibited function names throughout the expression tree.
+
+    SQLGlot normalizes date-truncation units to structural nodes. String scalar
+    values elsewhere must use bindings, including strings that spell date units.
+    Unlisted functions are admitted; database privileges govern custom functions.
+    """
     for function in statement.find_all(exp.Func):
-        sql_name = function.sql_name().casefold()
-        name = str(getattr(function, "name", "") or sql_name).casefold()
-        if name in _PROHIBITED_FUNCTIONS or sql_name not in _ALLOWED_FUNCTIONS:
-            raise SqlGuardError(f"Function {name} is not allowed")
-    allowed_literals = _DATE_GRAINS
+        name = (function.name if isinstance(function, exp.Anonymous) else function.sql_name()).casefold()
+        if name in _PROHIBITED_FUNCTIONS or name.startswith(_PROHIBITED_FUNCTION_PREFIXES):
+            raise SqlGuardError(f"Function {name} is prohibited")
     for literal in statement.find_all(exp.Literal):
-        if not literal.is_string or str(literal.this).casefold() not in allowed_literals:
-            raise SqlGuardError("User literals are prohibited; use bound parameters")
+        if literal.is_string:
+            raise SqlGuardError("String values must use bound parameters")
+    for order in statement.find_all(exp.Order):
+        if not isinstance(order.parent, (exp.Select, exp.Union)):
+            continue
+        for item in order.expressions:
+            position = item.this
+            if isinstance(position, exp.Literal) and not position.is_string:
+                if not position.is_int or not 1 <= int(position.this) <= len(order.parent.selects):
+                    raise SqlGuardError("ORDER BY position must identify an output column")
 
 
 def _guard_parameters(statement: exp.Select, parameter_names: Sequence[str]) -> set[str]:
@@ -1056,7 +1107,7 @@ def guard_read_only_sql(
     statement = _parse_guarded_select(sql)
     _guard_statement_shape(statement)
     observed_tables = _guard_tables(statement, allowed_tables)
-    _guard_functions_and_literals(statement)
+    guard_sql_expressions(statement)
     placeholders = _guard_parameters(statement, parameter_names)
     return {
         "status": "PASS",

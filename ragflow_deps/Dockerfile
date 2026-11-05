@@ -8,3 +8,5 @@ COPY chromedriver-linux64-155-0-8059-84 chrome-linux64-155-0-8059-84 cl100k_base
 COPY nltk_data /nltk_data
 
 COPY huggingface.co /huggingface.co
+
+USER 65534:65534

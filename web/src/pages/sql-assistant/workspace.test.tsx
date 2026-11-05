@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { AssistantWorkspace } from './workspace';
 
 const mockMutateAsync = jest.fn();
+beforeEach(() => mockMutateAsync.mockReset());
 jest.mock('@/hooks/use-sql-assistant-request', () => ({
   assistantCommandId: () => 'delivery-key',
   useAssistantCommand: () => ({
@@ -79,4 +80,36 @@ it('replays the exact delivery after response loss and a selected-result change'
   fireEvent.change(input, { target: { value: question } });
   view.rerender(<AssistantWorkspace {...props} session={after} />);
   expect(input).toHaveValue(question);
+});
+
+it('reloads a stopped conversation without sending a new command or losing the draft', async () => {
+  const stopped = session('saved-run', 2);
+  stopped.conversation = { phase: 'ERROR' };
+  stopped.messages = [
+    {
+      id: 'question',
+      role: 'user',
+      text: 'Добавь долю ошибок',
+      created_at: 1,
+      parent_result_id: 'saved-run',
+    },
+  ];
+  const refresh = jest
+    .fn()
+    .mockRejectedValueOnce(new Error('offline'))
+    .mockResolvedValueOnce(undefined);
+  render(
+    <AssistantWorkspace actor="actor" session={stopped} refresh={refresh} />,
+  );
+  const input = screen.getByLabelText('Сообщение SQL-помощнику');
+  fireEvent.change(input, { target: { value: 'Мой новый вопрос' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Обновить состояние' }));
+  await screen.findByText(/Сервис временно недоступен/);
+  expect(input).toHaveValue('Мой новый вопрос');
+  expect(mockMutateAsync).not.toHaveBeenCalled();
+  fireEvent.click(
+    screen.getAllByRole('button', { name: 'Обновить состояние' })[0],
+  );
+  await waitFor(() => expect(refresh).toHaveBeenCalledTimes(2));
+  expect(input).toHaveValue('Мой новый вопрос');
 });

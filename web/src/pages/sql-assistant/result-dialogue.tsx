@@ -43,6 +43,8 @@ export function ResultDialogue({
   optionsError,
   onQuestionChange,
   delivery,
+  onRefresh,
+  refreshing,
 }: {
   session: AssistantSession;
   send: SendCommand;
@@ -55,6 +57,8 @@ export function ResultDialogue({
   optionsError?: boolean;
   onQuestionChange?: (question: string) => void;
   delivery?: MessageDelivery;
+  onRefresh?: () => void;
+  refreshing?: boolean;
 }) {
   const [question, setQuestion] = useState('');
   const [references, setReferences] = useState<AssistantReference[]>([]);
@@ -87,6 +91,9 @@ export function ResultDialogue({
     (reviewing && !canReview) ||
     session.conversation?.phase === 'RECONCILE';
   const last = session.messages[session.messages.length - 1];
+  const lastQuestion = [...session.messages]
+    .reverse()
+    .find((message) => message.role === 'user');
   useEffect(() => {
     onQuestionChange?.(question);
   }, [question, onQuestionChange]);
@@ -283,6 +290,41 @@ export function ResultDialogue({
           </p>
         )}
       </div>
+      {session.conversation?.phase === 'ERROR' && (
+        <div className="sa-chat-error" role="alert">
+          <p>
+            {session.conversation.error?.message ||
+              'Запрос не завершён. Последний успешный результат сохранён.'}
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {lastQuestion && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={blocked || Boolean(question.trim())}
+                onClick={() => {
+                  setQuestion(lastQuestion.text);
+                  requestAnimationFrame(() => input.current?.focus());
+                }}
+              >
+                Вернуть последний вопрос
+              </Button>
+            )}
+            {onRefresh && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={busy || refreshing}
+                onClick={onRefresh}
+              >
+                Обновить состояние
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
       <form
         className="sa-chat-composer"
         onSubmit={(event) => {

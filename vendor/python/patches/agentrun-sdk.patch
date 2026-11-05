@@ -2,7 +2,7 @@
 +++ b/pyproject.toml
 @@ -3 +3 @@
 -version = "0.0.51"
-+version = "0.0.51+ragflow.1"
++version = "0.0.51+ragflow.2"
 --- a/pyproject.toml
 +++ b/pyproject.toml
 @@ -19 +18,0 @@
@@ -15,9 +15,9 @@
 +++ b/pyproject.toml
 @@ -216 +216 @@
 -requires = ["setuptools>=61.0", "wheel"]
-+requires = ["setuptools==80.9.0", "wheel==0.45.1"]
++requires = ["setuptools==83.0.0", "wheel==0.45.1"]
 --- a/agentrun/__init__.py
 +++ b/agentrun/__init__.py
 @@ -22 +22 @@
 -__version__ = "0.0.51"
-+__version__ = "0.0.51+ragflow.1"
++__version__ = "0.0.51+ragflow.2"

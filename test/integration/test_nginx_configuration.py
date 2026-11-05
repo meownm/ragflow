@@ -64,9 +64,12 @@ def nginx_container(tmp_path, *, https=False):
         selector.write_text(entrypoint[start:end], encoding="utf-8", newline="\n")
         docker("cp", selector, f"{name}:/tmp/select-nginx.sh")
         if https:
-            docker("exec", name, "mkdir", "-p", "/etc/nginx/ssl")
+            nginx_user = docker("exec", name, "id", "-u").strip()
+            docker("exec", "--user", "0", name, "mkdir", "-p", "/etc/nginx/ssl")
             docker(
                 "exec",
+                "--user",
+                "0",
                 name,
                 "openssl",
                 "req",
@@ -83,6 +86,7 @@ def nginx_container(tmp_path, *, https=False):
                 "-out",
                 "/etc/nginx/ssl/fullchain.pem",
             )
+            docker("exec", "--user", "0", name, "chown", nginx_user, "/etc/nginx/ssl/privkey.pem")
         yield name
     finally:
         assert docker("inspect", "--format", '{{index .Config.Labels "org.ragflow.nginx-test"}}', name).strip() == name
@@ -93,7 +97,7 @@ def test_profile_selection_survives_restarts_and_all_profiles_parse(tmp_path):
     with nginx_container(tmp_path) as name:
         for scheme, profile in (("", "python"), ("go", "golang"), ("hybrid", "hybrid"), ("python", "python")):
             docker("exec", "-e", f"API_PROXY_SCHEME={scheme}", name, "bash", "-e", "/tmp/select-nginx.sh")
-            docker("exec", name, "nginx", "-t")
+            docker("exec", name, "nginx", "-e", "stderr", "-t")
             actual = docker("exec", name, "cat", "/etc/nginx/conf.d/ragflow.conf")
             assert actual == (ROOT / f"docker/nginx/ragflow.conf.{profile}").read_text()
 
@@ -103,10 +107,10 @@ def test_readonly_https_mount_is_preserved_and_serves_static_files(tmp_path):
         before = (tmp_path / "https.conf").read_bytes()
         for scheme in ("", "python", "hybrid"):
             docker("exec", "-e", f"API_PROXY_SCHEME={scheme}", name, "bash", "-e", "/tmp/select-nginx.sh")
-            docker("exec", name, "nginx", "-t")
+            docker("exec", name, "nginx", "-e", "stderr", "-t")
         assert (tmp_path / "https.conf").read_bytes() == before
-        docker("exec", name, "python3", "-c", "from pathlib import Path; Path('/ragflow/web/dist/assets/review.css').write_bytes(b'body { color: black; }\\n' * 1000)")
-        docker("exec", name, "nginx")
+        docker("exec", "--user", "0", name, "python3", "-c", "from pathlib import Path; Path('/ragflow/web/dist/assets/review.css').write_bytes(b'body { color: black; }\\n' * 1000)")
+        docker("exec", name, "nginx", "-e", "stderr")
         checks = """
 import gzip,json,ssl,urllib.request,urllib.error
 class NoRedirect(urllib.request.HTTPRedirectHandler):

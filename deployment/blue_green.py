@@ -288,9 +288,10 @@ class BlueGreen:
             raise ValueError("Refusing to operate on a foreign container")
         return result
 
-    def execute(self, role: str, *args: str) -> str:
+    def execute(self, role: str, *args: str, user: str | None = None) -> str:
         self.inspect(role)
-        return command("docker", "exec", f"{self.project}-{role}", *args)
+        identity = ("--user", user) if user else ()
+        return command("docker", "exec", *identity, f"{self.project}-{role}", *args)
 
     def wait_ready(self, role: str) -> dict:
         deadline = time.monotonic() + self.timeout
@@ -434,8 +435,9 @@ class BlueGreen:
             ready = self.wait_ready(slot)
             if previous:
                 # Preserve JS from the active image even when its volume predates JS retention.
-                self.execute(previous["slot"], "python3", "-c", COPY_ASSETS)
-            self.execute(slot, "python3", "-c", COPY_ASSETS)
+                self.execute(previous["slot"], "python3", "-c", COPY_ASSETS, user="0:0")
+            # The shared release volume is owned by the deployment process.
+            self.execute(slot, "python3", "-c", COPY_ASSETS, user="0:0")
             if not previous:
                 # Existing direct-port service is stopped only after candidate warmup.
                 # This is the one-time maintenance handover, never a zero-downtime claim.

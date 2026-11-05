@@ -523,6 +523,7 @@ def consumption_subject(run):
         "recovery_epoch": run.get("recovery_epoch", 0),
         "images": run.get("image_dependencies", []),
         "unresolved_images": bool(run.get("unresolved_image_dependencies")),
+        **({"qa_exec": run["qa_exec"]} if run.get("qa_exec") else {}),
         "generations": [{key: item.get(key) for key in fields} for item in sorted(run["resources"], key=lambda item: item["key"]) if item["kind"] != "path" and item.get("token") not in helpers],
     }
 
@@ -530,6 +531,9 @@ def consumption_subject(run):
 def consumer_kind_allowed(run, kind):
     if not isinstance(kind, str):
         return False
+    if kind == "disposable-qa-exec":
+        execution = run.get("qa_exec", {})
+        return run["category"] == "disposable" and execution.get("exit_code") == 0 and bool(re.fullmatch(r"[0-9a-f]{64}", execution.get("command_sha256", "")))
     allowed = kind == run["producer"] and kind in {"pytest-disposable", "blue-green-qa", "live-regression-qa", "blue-green-preflight"}
     return allowed or kind in {"ci-engine", "handoff-qa"} and bool(run.get("handoff"))
 
@@ -1382,10 +1386,30 @@ def main():
             return subprocess.run(command, env=environment, check=False).returncode
         with Run(args.producer, store=args.state, category=args.category, days=args.keep_days) as run:
             run.engine()
-            result = subprocess.run(docker_args(command), check=False)
-            if result.returncode:
-                run.failed = True
-            return result.returncode
+            if args.category == "disposable":
+                run.data["qa_exec"] = {"command_sha256": checksum({"command": command})}
+                run.persist()
+            exit_code = 1
+            try:
+                result = subprocess.run(docker_args(command), check=False)
+                exit_code = result.returncode
+                run.failed = bool(exit_code)
+                if args.category == "disposable":
+                    run.data["qa_exec"]["exit_code"] = exit_code
+            finally:
+                if args.category == "disposable":
+                    try:
+                        cleanup = run.retire_owned()
+                        if cleanup["errors"] or cleanup["blocked"]:
+                            raise RuntimeError("Disposable QA cleanup incomplete")
+                    except Exception as error:
+                        run.preserve = True
+                        run.data["cleanup_failure"] = type(error).__name__
+                        print("QA cleanup incomplete; lifecycle recovery retained (" + type(error).__name__ + ")", file=sys.stderr)
+                        exit_code = exit_code or 1
+            if args.category == "disposable" and exit_code == 0:
+                run.close_consumption("disposable-qa-exec", exit_code=0, cleanup=cleanup)
+            return exit_code
     if not args.run:
         parser.error("--run is required")
     if args.action == "subject":

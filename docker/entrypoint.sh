@@ -234,8 +234,12 @@ function start_mcp_server() {
 function ensure_docling() {
     [[ "${USE_DOCLING}" == "true" ]] || { echo "[docling] disabled by USE_DOCLING"; return 0; }
     DOCLING_PIN="${DOCLING_VERSION:-==2.71.0}"
-    "$PY" -c "import importlib.util,sys; sys.exit(0 if importlib.util.find_spec('docling') else 1)" \
-      || uv pip install -i https://pypi.tuna.tsinghua.edu.cn/simple --extra-index-url https://pypi.org/simple --no-cache-dir "docling${DOCLING_PIN}"
+    local docling_packages="$HOME/.local/share/ragflow/docling"
+    export PYTHONPATH="$docling_packages${PYTHONPATH:+:$PYTHONPATH}"
+    if ! "$PY" -c "import importlib.util,sys; sys.exit(0 if importlib.util.find_spec('docling') else 1)"; then
+        uv pip install --python "$(command -v "$PY")" --target "$docling_packages" \
+            -i https://pypi.tuna.tsinghua.edu.cn/simple --extra-index-url https://pypi.org/simple --no-cache-dir "docling${DOCLING_PIN}"
+    fi
 }
 
 function ensure_db_init() {
@@ -321,7 +325,7 @@ if [[ "${ENABLE_WEBSERVER}" -eq 1 ]]; then
     wait_for_ragflow_backend
 
     echo "Starting nginx..."
-    /usr/sbin/nginx
+    /usr/sbin/nginx -e stderr
 fi
 
 if [[ "${ENABLE_DATASYNC}" -eq 1 ]]; then

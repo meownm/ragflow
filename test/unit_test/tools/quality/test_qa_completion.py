@@ -154,6 +154,55 @@ def test_pytest_finish_closes_consumption_only_after_verified_success(state, mon
         assert session.exitstatus == pytest.ExitCode.TESTS_FAILED and saved["state"] == "paused"
 
 
+@pytest.mark.parametrize(
+    "case", ["success", "failure", "start-error", "interrupt", "blocked", "cleanup-error", "failure-and-cleanup-error", "failure-and-unexpected-cleanup-error", "interrupt-and-cleanup-error", "cache"]
+)
+def test_exec_finishes_own_disposable_resources_without_hiding_failed_qa(state, monkeypatch, capsys, case):
+    monkeypatch.setattr(docker, "Engine", Engine)
+    monkeypatch.setenv("SOURCE_SHA", "a" * 40)
+    monkeypatch.setattr(
+        sys, "argv", ["artifact_lifecycle", "exec", "--state", str(state), "--producer", "synthetic-qa", "--category", "cache" if case == "cache" else "disposable", "--", "synthetic-command"]
+    )
+    calls = []
+
+    def invoke(*args, **kwargs):
+        if case == "start-error":
+            raise OSError("start failed")
+        if case.startswith("interrupt"):
+            raise KeyboardInterrupt()
+        return SimpleNamespace(returncode=7 if case.startswith("failure") else 0)
+
+    def cleanup(run):
+        calls.append(run.data["run_id"])
+        if "cleanup-error" in case:
+            raise (TypeError if "unexpected" in case else RuntimeError)("private-cleanup-canary")
+        value = result(run)
+        if case == "blocked":
+            value["blocked"] = ["active consumer"]
+        return value
+
+    monkeypatch.setattr(life.subprocess, "run", invoke)
+    monkeypatch.setattr(life.Run, "retire_owned", cleanup)
+    if case.startswith("interrupt"):
+        with pytest.raises(KeyboardInterrupt):
+            life.main()
+    elif case == "start-error":
+        with pytest.raises(OSError, match="start failed"):
+            life.main()
+    else:
+        expected = 7 if case.startswith("failure") else 1 if case in {"blocked", "cleanup-error"} else 0
+        assert life.main() == expected
+    saved = next(iter(life.runs(state)))
+    assert calls == ([] if case == "cache" else [saved["run_id"]])
+    assert life.consumption_closed(saved) is (case == "success")
+    assert saved["task_status"] == "open"
+    assert saved["state"] == ("completed" if case in {"success", "cache"} else "paused" if case in {"blocked", "cleanup-error"} else "failed")
+    assert "private-cleanup-canary" not in capsys.readouterr().err
+    if case == "success":
+        saved["qa_exec"]["command_sha256"] = "b" * 64
+        assert not life.consumption_closed(saved)
+
+
 def test_child_creation_uses_one_sealed_intent_before_execution(state):
     with life.Run("pytest-disposable", store=state) as run:
         run._engine = Engine()

@@ -187,7 +187,9 @@ export default function SqlAssistantPage() {
             <p role="status" className="p-8">
               Открываем исследование…
             </p>
-          ) : session.isError ? (
+          ) : !session.data ||
+            (session.isError &&
+              assistantFailure(session.error).recovery === 'DENIED') ? (
             <div className="sa-empty" role="alert">
               <h1>Не удалось открыть исследование</h1>
               <p>
@@ -202,7 +204,7 @@ export default function SqlAssistantPage() {
               actor={actor}
               session={session.data}
               refresh={async () => {
-                await session.refetch();
+                await session.refetch({ throwOnError: true });
               }}
             />
           )

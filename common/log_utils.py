@@ -70,17 +70,20 @@ def init_root_logger(logfile_basename: str, log_format: str | None = None):
     logger.handlers.clear()
     log_path = os.path.abspath(os.path.join(get_project_base_directory(), "logs", f"{logfile_basename}.log"))
 
-    os.makedirs(os.path.dirname(log_path), exist_ok=True)
     selected_format = os.getenv("LOG_FORMAT", "json").strip().lower()
     formatter = JsonLogFormatter() if selected_format == "json" and log_format is None else logging.Formatter(log_format or "%(asctime)-15s %(levelname)-8s %(process)d %(message)s")
-
-    handler1 = TimedRotatingFileHandler(log_path, when="midnight", backupCount=60, utc=True)
-    handler1.setFormatter(formatter)
-    logger.addHandler(handler1)
 
     handler2 = logging.StreamHandler()
     handler2.setFormatter(formatter)
     logger.addHandler(handler2)
+    try:
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        handler1 = TimedRotatingFileHandler(log_path, when="midnight", backupCount=60, utc=True)
+    except PermissionError:
+        logger.warning("Log path is not writable, using the container log: %s", log_path)
+    else:
+        handler1.setFormatter(formatter)
+        logger.addHandler(handler1)
 
     logging.captureWarnings(True)
 

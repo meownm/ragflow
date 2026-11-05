@@ -264,6 +264,26 @@ Go/C++ и Docker-слои при этом используют свои суще
 .venv\Scripts\python.exe -B deployment\local\build-feature.py --local
 ```
 
+Образ приложения запускается с UID/GID 10001. Для файловых журналов и ключа
+TLS при bind mount на Linux дайте этому пользователю право записи в каталог
+журналов и право чтения ключа. Если каталог журналов недоступен для записи,
+Python-сервисы продолжают писать в журнал контейнера.
+
+Valkey запускается от пользователя `valkey`. При обновлении старого Compose
+с сохранённым томом остановите `redis` до запуска `redis-volume-init`.
+Сценарий локального пересоздания Redis и Linux-обновление выполняют этот
+порядок. Одноразовый сервис меняет только владельца файлов в томе Redis.
+
+Для обслуживания PostgreSQL и Valkey в действующем BlueGreen-проекте
+подготовьте и проверьте образы, затем запустите
+`deploy.ps1 -Mode Fast -Strategy Recreate -InfrastructureMaintenance -Services postgres,redis`.
+Сценарий требует свежую резервную копию PostgreSQL, пересоздаёт только явно
+перечисленные сервисы и проверяет их готовность вместе с HTTP health RAGFlow.
+
+Для запуска Sandbox Manager с Linux Docker socket задайте
+`SANDBOX_DOCKER_SOCKET_GID` по `stat -c %g /var/run/docker.sock`. Скрипты
+Linux-установки и запуска Sandbox определяют группу при вызове Compose.
+
 Native-библиотеки берутся из `~/ragflow-native-libs` (`RAGFLOW_NATIVE_CACHE`),
 артефакты/Go modules/build — из `~/.cache/ragflow-go-builder`
 (`RAGFLOW_GO_CACHE_ROOT`). Результаты локального сборщика и проверок находятся в

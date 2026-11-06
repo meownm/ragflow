@@ -52,7 +52,7 @@ UI: `http://localhost:9011/`
 ## Optional engines
 - Whisper: устанавливается вместе с базовыми зависимостями (`torch`, `transformers`).
 - Tone backend: `poetry install -E tone`.
-- Docker image extends the official `tinkoffcreditsystems/t-one:0.1.0` runtime and exposes its bundled `t-tech/T-one` model as `t-one`.
+- The Docker image uses a Debian 13 Python runtime and copies the Python environment and bundled `t-tech/T-one` model from the official `tinkoffcreditsystems/t-one:0.1.0` image. The service exposes the model as `t-one`.
 - GigaAM backend: `poetry install -E gigaam`.
 
 Если optional backend не установлен, модель помечается `available=false`, а создание job возвращает `409 Q-ASR-ENGINE-NOT-AVAILABLE`.

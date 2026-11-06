@@ -1,0 +1,6 @@
+#!/bin/sh
+# tika-python invokes Java without arguments to check that it exists.
+if [ "$#" -eq 0 ]; then
+    exec /usr/bin/java
+fi
+exec /usr/bin/java "$@" --config /opt/tika/tika-config.json

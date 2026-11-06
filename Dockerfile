@@ -1,32 +1,35 @@
 ARG RAGFLOW_DEPS_IMAGE=infiniflow/ragflow_deps@sha256:e69762c256ea2338a786a9b2f003da8e91e5e69b26bb6797c2206276ce32e5ff
 
-# Pin browser/parser resources independently of the model/tokenizer image.
+# Pin browser resources independently of the model/tokenizer image.
 FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 AS resource_updates
 ARG NEED_MIRROR=0
 RUN apk add --no-cache ca-certificates curl
 WORKDIR /resources
 RUN set -eux; \
     if [ "$NEED_MIRROR" = "1" ]; then \
-        tika_origin=https://repo.huaweicloud.com/repository/maven; \
         chrome_origin=https://registry.npmmirror.com/-/binary/chrome-for-testing; \
     else \
-        tika_origin=https://repo1.maven.org/maven2; \
         chrome_origin=https://storage.googleapis.com/chrome-for-testing-public; \
     fi; \
-    curl --fail --location --retry 5 --output tika-server-standard-3.3.3.jar \
-        "$tika_origin/org/apache/tika/tika-server-standard/3.3.3/tika-server-standard-3.3.3.jar"; \
-    curl --fail --location --retry 5 --output tika-server-standard-3.3.3.jar.md5 \
-        "$tika_origin/org/apache/tika/tika-server-standard/3.3.3/tika-server-standard-3.3.3.jar.md5"; \
     curl --fail --location --retry 5 --output chrome-linux64-155-0-8059-84 \
         "$chrome_origin/155.0.8059.84/linux64/chrome-linux64.zip"; \
     curl --fail --location --retry 5 --output chromedriver-linux64-155-0-8059-84 \
         "$chrome_origin/155.0.8059.84/linux64/chromedriver-linux64.zip"; \
     printf '%s\n' \
-        '4559c1fa6ca08390a800036438607e31a6763aba0ea11b928c3fce72315ecf0f  tika-server-standard-3.3.3.jar' \
-        '24a0ab5c842bcf296bf9b8a5c5c3d76a1f1149c3fa4aedf0727929aeb32343a4  tika-server-standard-3.3.3.jar.md5' \
         'cf0f049892dea22e6a6db26d47ed0d7776b7158edcbec4634086633df8bafcbc  chrome-linux64-155-0-8059-84' \
         '4fe2433044363e5233d642e70fa50278b471bda08032d922402c8bd7c6d743fd  chromedriver-linux64-155-0-8059-84' \
         | sha256sum -c -
+
+FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 AS tika
+RUN apk add --no-cache ca-certificates curl unzip
+RUN curl --fail --location --retry 5 --output /tmp/tika.zip \
+        https://downloads.apache.org/tika/4.2.0/tika-server-standard-4.2.0.zip && \
+    echo 'ff4e794b115759930300e3327784f8a897f94fae493e8915eea1fb4f59a988f2133da7aa85b1e3ecee0f9f95ddb8caf6c753ca9c750c41b0279466ad3bddfbd3  /tmp/tika.zip' | sha512sum -c - && \
+    unzip -q /tmp/tika.zip -d /opt/tika && rm /tmp/tika.zip && \
+    cd /opt/tika && mv tika-server-standard-4.2.0.jar tika-server.jar && \
+    md5sum tika-server.jar | cut -d ' ' -f 1 | tr -d '\n' > tika-server.jar.md5
+COPY docker/tika/java docker/tika/tika-config.json /opt/tika/
+RUN chmod 755 /opt/tika/java
 
 FROM ${RAGFLOW_DEPS_IMAGE} AS ragflow_deps
 COPY --from=resource_updates /resources/ /
@@ -48,21 +51,17 @@ RUN --mount=type=bind,from=ragflow_deps,source=/huggingface.co,target=/huggingfa
         /huggingface.co/InfiniFlow/deepdoc \
         | tar -xf - --strip-components=3 -C /ragflow/rag/res/deepdoc
 
-# https://github.com/chrismattmann/tika-python
-# This is the only way to run python-tika without internet access. Without this set, the default is to check the tika version and pull latest every time from Apache.
 RUN --mount=type=bind,from=ragflow_deps,source=/,target=/deps \
     cp -r /deps/nltk_data /usr/local/share/ && \
     chmod -R a+rX /usr/local/share/nltk_data && \
-    cp /deps/tika-server-standard-3.3.3.jar /deps/tika-server-standard-3.3.3.jar.md5 /ragflow/ && \
     cp /deps/cl100k_base.tiktoken /ragflow/9b5ad71b2ce5302211f9c61530b329a4922fc6a4
 
-ENV TIKA_SERVER_JAR="file:///ragflow/tika-server-standard-3.3.3.jar"
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Setup apt
 # Python package and implicit dependencies:
 # opencv-python: libglib2.0-0 libglx-mesa0 libgl1
-# python-pptx:   default-jdk                              tika-server-standard-3.3.3.jar
+# Tika:         default-jdk
 # selenium:      libatk-bridge2.0-0                       chrome-linux64-155-0-8059-84
 # Building C extensions: libpython3-dev libgtk-4-1 libnss3 xdg-utils libgbm-dev
 RUN --mount=type=cache,id=ragflow_apt,target=/var/cache/apt,sharing=locked \
@@ -136,7 +135,7 @@ RUN --mount=type=cache,id=ragflow_apt,target=/var/cache/apt,sharing=locked \
     apt install -y nodejs && \
     npm install --global npm@12.2.0 && \
     npm install --prefix /tmp/npm-security --omit=dev --ignore-scripts \
-        --package-lock=false --save-exact undici@6.28.1 brace-expansion@5.0.12 \
+        --package-lock=false --save-exact undici@6.29.1 brace-expansion@5.0.12 \
         postcss-selector-parser@7.1.6 ip-address@10.7.1 && \
     npm_modules="$(npm root -g)/npm/node_modules" && \
     for dependency in /tmp/npm-security/node_modules/*; do \
@@ -305,7 +304,6 @@ SHELL ["/bin/bash", "-c"]
 USER root
 WORKDIR /ragflow
 ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-    TIKA_SERVER_JAR=file:///ragflow/tika-server-standard-3.3.3.jar \
     DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 \
     UV_HTTP_TIMEOUT=200 UV_HTTP_RETRIES=3
@@ -316,6 +314,10 @@ CMD ["/bin/bash"]
 # production image starts here, never from a previous application image.
 FROM runtime-system AS runtime-base
 ENV VIRTUAL_ENV=/ragflow/.venv UV_PYTHON_INSTALL_DIR=/opt/ragflow-python
+COPY --link --from=tika /opt/tika /opt/tika
+# Keep tika-python's launcher beside lib/ so Java can resolve its manifest classpath.
+ENV TIKA_PATH=/opt/tika TIKA_SERVER_JAR=file:///opt/tika/tika-server.jar \
+    TIKA_JAVA=/opt/tika/java TIKA_STARTUP_MAX_RETRY=12
 COPY --link --from=runtime-python ${VIRTUAL_ENV} ${VIRTUAL_ENV}
 ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright

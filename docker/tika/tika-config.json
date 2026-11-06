@@ -1,0 +1,6 @@
+{
+  "server": {},
+  "parse-context": {
+    "metadata-filters": ["legacy-key-migration-filter"]
+  }
+}

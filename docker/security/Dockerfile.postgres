@@ -1,4 +1,4 @@
-FROM golang:1.26.9-alpine AS gosu
+FROM golang:1.26.10-alpine AS gosu
 ADD --checksum=sha256:cd9719b775dbfedae53923c9b0dc792b66d42c51e0b36652ed6f747fbadc0164 \
     https://codeload.github.com/tianon/gosu/tar.gz/refs/tags/1.19 /tmp/gosu.tar.gz
 WORKDIR /src

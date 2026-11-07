@@ -26,6 +26,7 @@ class CommandType(StrEnum):
     ACCEPT_PROPOSAL = "ACCEPT_PROPOSAL"
     CANCEL_PROPOSAL_ACCEPTANCE = "CANCEL_PROPOSAL_ACCEPTANCE"
     ADD_COMMENT = "ADD_COMMENT"
+    ADD_SUBSECTION = "ADD_SUBSECTION"
     APPLY_CHANGES = "APPLY_CHANGES"
     PREPARE_CHANGES = "PREPARE_CHANGES"
     CONFIRM_PREPARED_CHANGES = "CONFIRM_PREPARED_CHANGES"
@@ -175,6 +176,16 @@ def command_problem(
             return None
         case CommandType.DECIDE_PROPOSAL | CommandType.ACCEPT_PROPOSAL | CommandType.CANCEL_PROPOSAL_ACCEPTANCE | CommandType.ADD_COMMENT:
             return _feedback_problem(document) or _lifecycle_problem(document, "REVIEW")
+        case CommandType.ADD_SUBSECTION:
+            if problem := _idle_problem(document) or _lifecycle_problem(document, "REVIEW"):
+                return problem
+            if not document["current_revision_id"]:
+                return StateConflict("CURRENT_REVISION_REQUIRED", "Adding a subsection requires an existing revision")
+            if preview is not None:
+                return StateConflict("CHANGE_PREVIEW_CONFIRMATION_REQUIRED", "Confirm or discard the prepared changes before adding a subsection")
+            if payload is not None and payload["base_revision_id"] != document["current_revision_id"]:
+                return StateConflict("BASE_REVISION_CONFLICT", "The subsection request does not target the current revision")
+            return None
         case CommandType.START_REVIEW:
             return _idle_problem(document) or _lifecycle_problem(document, "AGREED")
         case CommandType.RESTORE_REVISION:
@@ -217,7 +228,7 @@ def available_commands(document: Mapping[str, Any], review: ReviewState, *, prev
         else:
             commands.append("REQUEST_INTAKE_ASSESSMENT")
     elif lifecycle == "REVIEW":
-        commands = ["DECIDE_PROPOSAL", "ACCEPT_PROPOSAL", "ADD_COMMENT", "ARCHIVE"]
+        commands = ["DECIDE_PROPOSAL", "ACCEPT_PROPOSAL", "ADD_COMMENT", "ADD_SUBSECTION", "ARCHIVE"]
         if review.accepted_inputs & review.active_inputs:
             commands.append("CANCEL_PROPOSAL_ACCEPTANCE")
         if review.open_question_ids("REVIEW"):

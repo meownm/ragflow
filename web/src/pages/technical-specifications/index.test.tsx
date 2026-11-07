@@ -758,6 +758,50 @@ test('document shows proposal summaries and opens one comparison without applyin
   expect(specificationAction).not.toHaveBeenCalled();
 });
 
+test('adding a subsection preserves the other sections and autosaves a literal heading', async () => {
+  await openChat();
+  fireEvent.click(screen.getByRole('button', { name: 'Документ' }));
+  const editor = screen.getByLabelText('Раздел 5');
+  fireEvent.click(
+    within(editor.closest('section')!).getByRole('button', {
+      name: 'Добавить подраздел',
+    }),
+  );
+  const dialog = screen.getByRole('dialog', { name: 'Добавить подраздел' });
+  fireEvent.change(within(dialog).getByLabelText('Название подраздела'), {
+    target: { value: 'Отмена <заявки>' },
+  });
+  fireEvent.change(
+    within(dialog).getByLabelText('Текст подраздела (необязательно)'),
+    { target: { value: 'Срок отмены 48 часов.' } },
+  );
+  jest
+    .mocked(saveSpecification)
+    .mockImplementationOnce(async (_workspace, value) => ({
+      ...specification,
+      sections: value.sections,
+      revision: 2,
+      version: 2,
+    }));
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Добавить' }));
+  expect(
+    within(editor).getByRole('heading', { level: 3, name: 'Отмена <заявки>' }),
+  ).toBeInTheDocument();
+  expect(editor).toHaveTextContent('Срок отмены 48 часов.');
+  await act(async () => {
+    jest.advanceTimersByTime(800);
+  });
+  expect(saveSpecification).toHaveBeenCalledWith(
+    'project',
+    expect.objectContaining({
+      sections: {
+        ...specification.sections,
+        '5': `${specification.sections['5']}\n\n<h3>Отмена &lt;заявки&gt;</h3>\n\n<p>Срок отмены 48 часов.</p>`,
+      },
+    }),
+  );
+});
+
 test('autosave serializes requests and preserves typing during an in-flight save', async () => {
   await openChat();
   fireEvent.click(screen.getByRole('button', { name: 'Документ' }));

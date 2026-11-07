@@ -26,6 +26,7 @@
         "ACCEPT_PROPOSAL",
         "CANCEL_PROPOSAL_ACCEPTANCE",
         "ADD_COMMENT",
+        "ADD_SUBSECTION",
         "REQUEST_REVIEW_ASSESSMENT",
         "APPLY_CHANGES",
         "PREPARE_CHANGES",
@@ -123,6 +124,17 @@
         "base_revision_id": {"type": "string", "minLength": 1, "maxLength": 64}
       }
     },
+    "addSubsectionPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["base_revision_id", "parent_section_id", "title"],
+      "properties": {
+        "base_revision_id": {"type": "string", "minLength": 1, "maxLength": 64},
+        "parent_section_id": {"type": "string", "minLength": 1, "maxLength": 16},
+        "title": {"type": "string", "pattern": "\\S", "maxLength": 500},
+        "text": {"type": "string", "maxLength": 20000}
+      }
+    },
     "preparedChangesPayload": {
       "type": "object",
       "additionalProperties": false,
@@ -173,6 +185,10 @@
     {
       "if": {"properties": {"type": {"const": "ADD_COMMENT"}}},
       "then": {"properties": {"payload": {"$ref": "#/$defs/addCommentPayload"}}}
+    },
+    {
+      "if": {"properties": {"type": {"const": "ADD_SUBSECTION"}}},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/addSubsectionPayload"}}}
     },
     {
       "if": {"properties": {"type": {"enum": ["APPLY_CHANGES", "PREPARE_CHANGES"]}}},

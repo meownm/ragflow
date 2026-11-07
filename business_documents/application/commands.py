@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 from business_documents.application.change_application import ApplyChanges, ChangeMode
 from business_documents.application.content import DocumentContent
-from business_documents.domain.content import render_section_text
+from business_documents.domain.content import new_subsection, render_section_text
 from business_documents.application.errors import BusinessDocumentError, ConflictError, NotFoundError, PermissionDeniedError, ValidationError
 from business_documents.application.persistence import DocumentWriter
 from business_documents.application.queries import DocumentQueries, project_protocol
@@ -281,6 +281,7 @@ class DocumentCommands:
             CommandType.RESTORE_REVISION,
             CommandType.REQUEST_REVIEW_ASSESSMENT,
             CommandType.ADD_COMMENT,
+            CommandType.ADD_SUBSECTION,
             CommandType.ANSWER_QUESTION,
             CommandType.CANCEL_PROPOSAL_ACCEPTANCE,
         }:
@@ -302,7 +303,11 @@ class DocumentCommands:
     def _dispatch(self, document: Record, actor_id: str, envelope: _CommandEnvelope) -> dict[str, Any]:
         review_commands = {CommandType.REQUEST_INTAKE_ASSESSMENT, CommandType.REQUEST_REVIEW_ASSESSMENT, CommandType.REQUEST_DRAFT, CommandType.APPLY_CHANGES, CommandType.PREPARE_CHANGES}
         review = self._writer.review(document["id"], document["active_review_cycle"]) if envelope.type in review_commands and document["lifecycle_state"] != "ARCHIVED" else None
-        preview = self._writer.preview(document, self._clock()) if envelope.type in {CommandType.APPLY_CHANGES, CommandType.CONFIRM_PREPARED_CHANGES, CommandType.DISCARD_PREPARED_CHANGES} else None
+        preview = (
+            self._writer.preview(document, self._clock())
+            if envelope.type in {CommandType.ADD_SUBSECTION, CommandType.APPLY_CHANGES, CommandType.CONFIRM_PREPARED_CHANGES, CommandType.DISCARD_PREPARED_CHANGES}
+            else None
+        )
         if problem := command_problem(
             envelope.type, document, review, envelope.payload, preview=preview, work_pending=any(item["status"] == "QUEUED" for item in self._writer.work_requests(document["id"]))
         ):
@@ -329,6 +334,8 @@ class DocumentCommands:
                 return self._cancel_proposal_acceptance(document, actor_id, envelope)
             case CommandType.ADD_COMMENT:
                 return self._add_comment(document, actor_id, envelope)
+            case CommandType.ADD_SUBSECTION:
+                return self._add_subsection(document, actor_id, envelope)
             case CommandType.APPLY_CHANGES | CommandType.PREPARE_CHANGES:
                 return self._request_job(document, actor_id, envelope, "PLAN_CHANGES", OperationState.APPLYING_CHANGES, review=review)
             case CommandType.CONFIRM_PREPARED_CHANGES | CommandType.DISCARD_PREPARED_CHANGES:
@@ -359,6 +366,35 @@ class DocumentCommands:
             case CommandType.ARCHIVE:
                 return self._transition(document, actor_id, envelope, "DocumentArchived", lifecycle_state="ARCHIVED")
         raise AssertionError("Command policy accepted an unsupported command")
+
+    def _add_subsection(self, document: Record, actor_id: str, envelope: _CommandEnvelope) -> dict[str, Any]:
+        document_id = document["id"]
+        if self._writer.has_active_job(document_id):
+            raise ConflictError("OPERATION_IN_PROGRESS", "Another operation is already in progress")
+        base = self._writer.revision(document_id, document["current_revision_id"])
+        if base is None:
+            raise NotFoundError()
+        ast = base["document_ast"]
+        parent_id = envelope.payload["parent_section_id"]
+        try:
+            subsection = new_subsection(ast, parent_id, envelope.payload["title"].strip(), envelope.payload.get("text", "").strip())
+            updated = self._content.validate_document_ast({**ast, "sections": [*ast["sections"], subsection]}, previous_document=ast)
+        except RuleViolation as error:
+            raise ValidationError(error.code, error.message, error.details) from error
+        event_id, revision_id = self._new_id(), self._new_id()
+        self._writer.insert_revision(document_id, self._writer.next_revision_number(document_id), updated, self._content.render_document_ast(updated), [event_id], actor_id, revision_id=revision_id)
+        version = document["state_version"] + 1
+        document = self._writer.update_document(document, {"state_version": version, "current_revision_id": revision_id, "operation_state": "IDLE", "last_error": None})
+        self._writer.append_event(
+            document_id,
+            version,
+            "SubsectionAdded",
+            "USER",
+            actor_id,
+            {"revision_id": revision_id, "review_cycle": document["active_review_cycle"], "section_id": subsection["id"], "parent_section_id": parent_id},
+            event_id,
+        )
+        return self._command_response(document, version, event_id)
 
     def _restore_revision(self, document: Record, actor_id: str, envelope: _CommandEnvelope) -> dict[str, Any]:
         if self._writer.has_active_job(document["id"]):

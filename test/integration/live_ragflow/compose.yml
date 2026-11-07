@@ -29,6 +29,9 @@ services:
       discovery.type: single-node
       xpack.security.enabled: 'false'
       ES_JAVA_OPTS: '-Xms512m -Xmx512m'
+      cluster.routing.allocation.disk.watermark.low: '5gb'
+      cluster.routing.allocation.disk.watermark.high: '3gb'
+      cluster.routing.allocation.disk.watermark.flood_stage: '2gb'
     tmpfs: ['/tmp:mode=1777,size=512m']
     volumes: [indexdata:/usr/share/elasticsearch/data]
   plantuml-server:

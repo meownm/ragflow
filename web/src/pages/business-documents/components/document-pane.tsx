@@ -14,6 +14,10 @@ import type {
   BusinessDocumentRevision,
   BusinessDocumentSelection,
 } from '../types';
+import {
+  AddSubsectionButton,
+  type SubmitSubsection,
+} from './add-subsection-button';
 import { DocumentSectionChange } from './change-preview-panel';
 import { RevisionTextDiff } from './revision-text-diff';
 
@@ -27,6 +31,11 @@ interface DocumentPaneProps {
   focusRequest?: { sectionId: string; sequence: number } | null;
   changePreview?: BusinessDocumentChangePreview | null;
   preliminary?: boolean;
+  subsectionDisabled?: boolean;
+  onAddSubsection?: (
+    parent: string,
+    ...input: Parameters<SubmitSubsection>
+  ) => void;
   onFocusSource?: (
     kind: 'question' | 'proposal' | 'comment',
     id: string,
@@ -234,6 +243,8 @@ export function DocumentPane({
   onFocusSource,
   historyMode = false,
   previousRevision,
+  subsectionDisabled = false,
+  onAddSubsection,
 }: DocumentPaneProps) {
   const paneRef = useRef<HTMLDivElement>(null);
   const contentId = useId();
@@ -462,37 +473,53 @@ export function DocumentPane({
                           : undefined
                   }
                 >
-                  <Heading
-                    className={
-                      headingLevel === 2
-                        ? 'mb-3 mt-9 border-b border-border-button pb-2 text-xl font-semibold tracking-tight first:mt-0'
-                        : 'mb-2 mt-6 text-base font-semibold'
-                    }
+                  <div
+                    className={`flex flex-wrap items-center gap-2 ${headingLevel === 2 ? 'mb-3 mt-9 border-b border-border-button pb-2 first:mt-0' : 'mb-2 mt-6'}`}
                   >
-                    <button
-                      type="button"
-                      aria-expanded={!collapsed}
-                      aria-controls={sectionContentId}
-                      onMouseUp={(event) => event.stopPropagation()}
-                      onClick={() =>
-                        setCollapsedSections((previous) => {
-                          const next = new Set(previous);
-                          if (next.has(section.id)) next.delete(section.id);
-                          else next.add(section.id);
-                          return next;
-                        })
+                    <Heading
+                      className={
+                        headingLevel === 2
+                          ? 'min-w-0 flex-1 text-xl font-semibold tracking-tight'
+                          : 'min-w-0 flex-1 text-base font-semibold'
                       }
-                      className="flex w-full items-start gap-2 rounded text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary"
                     >
-                      <ChevronRight
-                        aria-hidden="true"
-                        className={`mt-1 size-4 shrink-0 transition-transform ${collapsed ? '' : 'rotate-90'}`}
-                      />
-                      <span>
-                        {section.id}. {section.title}
-                      </span>
-                    </button>
-                  </Heading>
+                      <button
+                        type="button"
+                        aria-expanded={!collapsed}
+                        aria-controls={sectionContentId}
+                        onMouseUp={(event) => event.stopPropagation()}
+                        onClick={() =>
+                          setCollapsedSections((previous) => {
+                            const next = new Set(previous);
+                            if (next.has(section.id)) next.delete(section.id);
+                            else next.add(section.id);
+                            return next;
+                          })
+                        }
+                        className="flex w-full items-start gap-2 rounded text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary"
+                      >
+                        <ChevronRight
+                          aria-hidden="true"
+                          className={`mt-1 size-4 shrink-0 transition-transform ${collapsed ? '' : 'rotate-90'}`}
+                        />
+                        <span>
+                          {section.id}. {section.title}
+                        </span>
+                      </button>
+                    </Heading>
+                    {onAddSubsection &&
+                      !historyMode &&
+                      !change &&
+                      headingLevel < 6 && (
+                        <AddSubsectionButton
+                          parent={`${section.id}. ${section.title}`}
+                          disabled={subsectionDisabled}
+                          onSubmit={(...input) =>
+                            onAddSubsection(section.id, ...input)
+                          }
+                        />
+                      )}
+                  </div>
                   {!change && highlightedSectionIds.includes(section.id) && (
                     <p className="mb-3 text-xs text-state-warning">
                       Возможно изменение · можно комментировать сохранённый

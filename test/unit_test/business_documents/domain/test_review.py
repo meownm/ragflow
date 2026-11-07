@@ -96,6 +96,7 @@ def test_new_eva_input_invalidates_assessment_and_available_commands():
         "DECIDE_PROPOSAL",
         "ACCEPT_PROPOSAL",
         "ADD_COMMENT",
+        "ADD_SUBSECTION",
         "ARCHIVE",
         "CANCEL_PROPOSAL_ACCEPTANCE",
         "REQUEST_REVIEW_ASSESSMENT",

@@ -1130,6 +1130,7 @@ def test_change_preview_requires_explicit_confirmation_and_shows_section_diff(da
     assert BusinessDocumentRevision.select().count() == 1
     assert document["change_preview"]["job_id"] == requested["job_id"]
     assert "CONFIRM_PREPARED_CHANGES" in document["allowed_commands"]
+    assert "ADD_SUBSECTION" not in document["allowed_commands"]
     from playhouse.test_utils import count_queries
 
     with count_queries(only_select=True) as preview_reads:
@@ -1152,6 +1153,14 @@ def test_change_preview_requires_explicit_confirmation_and_shows_section_diff(da
             _command(document, "APPLY_CHANGES", {"base_revision_id": base["revision_id"]}, key="bypass-preview"),
         )
     assert bypass.value.code == "CHANGE_PREVIEW_CONFIRMATION_REQUIRED"
+    with pytest.raises(BusinessDocumentError) as manual:
+        document_commands.execute(
+            TENANT,
+            AUTHOR,
+            document["document_id"],
+            _command(document, "ADD_SUBSECTION", {"base_revision_id": base["revision_id"], "parent_section_id": "5", "title": "Обработка ошибок"}),
+        )
+    assert manual.value.code == "CHANGE_PREVIEW_CONFIRMATION_REQUIRED"
 
     with pytest.raises(BusinessDocumentError) as denied:
         document_commands.execute(
@@ -3574,6 +3583,7 @@ def test_verified_eva_binding_supports_governed_pull_and_outbound_change(databas
         "DECIDE_PROPOSAL",
         "ACCEPT_PROPOSAL",
         "ADD_COMMENT",
+        "ADD_SUBSECTION",
         "ARCHIVE",
         "REQUEST_REVIEW_ASSESSMENT",
         "RESTORE_REVISION",

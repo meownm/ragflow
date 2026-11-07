@@ -214,7 +214,8 @@ async def test_invalid_session_rejects_before_command_parsing_and_enqueue(authen
 @pytest.mark.p0
 @pytest.mark.asyncio
 @pytest.mark.parametrize("actor,allowed", [("reader", False), ("other-author", False), ("moderator", True)])
-async def test_shared_catalog_and_cross_owner_mutation_contract(authenticated_app, actor, allowed):
+@pytest.mark.parametrize("kind", ["PREPARE_CHANGES", "ADD_SUBSECTION"])
+async def test_shared_catalog_and_cross_owner_mutation_contract(authenticated_app, actor, allowed, kind):
     app, users = authenticated_app
     document = reviewed_document()
     client = app.test_client()
@@ -229,15 +230,21 @@ async def test_shared_catalog_and_cross_owner_mutation_contract(authenticated_ap
     response = await client.get(BASE + "/" + document["document_id"])
     assert response.status_code == 200, await response.get_json()
     before = BusinessDocumentJob.select().count(), BusinessDocumentRevision.select().count(), BusinessDocumentCommand.select().count()
-    response = await client.post(
-        BASE + "/" + document["document_id"] + "/commands", json=service._command(document, "PREPARE_CHANGES", {"base_revision_id": document["current_revision"]["revision_id"]})
-    )
-    assert response.status_code == (202 if allowed else 403), await response.get_json()
-    if allowed:
+    payload = {"base_revision_id": document["current_revision"]["revision_id"]}
+    if kind == "ADD_SUBSECTION":
+        payload.update(parent_section_id="3.1", title="Отмена заявки")
+    response = await client.post(BASE + "/" + document["document_id"] + "/commands", json=service._command(document, kind, payload))
+    assert response.status_code == (403 if not allowed else 202 if kind == "PREPARE_CHANGES" else 200), await response.get_json()
+    if not allowed:
+        assert (BusinessDocumentJob.select().count(), BusinessDocumentRevision.select().count(), BusinessDocumentCommand.select().count()) == before
+    elif kind == "PREPARE_CHANGES":
         job = BusinessDocumentJob.get_by_id((await response.get_json())["data"]["job_id"])
         assert job.tenant_id == service.TENANT and job.payload["requested_by_actor_id"] == actor
     else:
-        assert (BusinessDocumentJob.select().count(), BusinessDocumentRevision.select().count(), BusinessDocumentCommand.select().count()) == before
+        current = (await response.get_json())["data"]["document"]["current_revision"]
+        assert any(section["id"] == "3.1.1" and section["title"] == "Отмена заявки" for section in current["document_ast"]["sections"])
+        assert BusinessDocumentJob.select().count() == before[0]
+        assert BusinessDocumentRevision.select().count() == before[1] + 1
 
 
 @pytest.mark.p0

@@ -291,7 +291,10 @@ def test_regular_user_can_add_and_remove_personal_eva_token_at_length_boundary(
 
     page.get_by_test_id("eva-token-delete-eva-1").click()
     expect(page.get_by_test_id("eva-token-delete-modal")).to_be_visible()
-    page.get_by_test_id("eva-token-delete-confirm").click()
+    with page.expect_response(lambda response: response.request.method == "DELETE" and urlparse(response.url).path == "/api/v1/users/me/eva-credentials/eva-1") as deleted:
+        page.get_by_test_id("eva-token-delete-confirm").click()
+    assert deleted.value.ok
+    expect(page.get_by_test_id("eva-token-delete-eva-1")).to_have_count(0)
     expect(page.get_by_test_id("eva-token-edit-eva-1")).to_be_visible()
     assert stub.eva_mutations == [("PUT", 4096), ("DELETE", 0)]
 

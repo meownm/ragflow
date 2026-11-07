@@ -47,10 +47,11 @@ def pytest_configure(config):
 def models_for_run(tests: list[str], skip_browser_tests: bool, chat_models: list[str] | None = None) -> tuple[tuple[str, str], ...]:
     """Debug on qwen3.8; additional chat models require explicit selection."""
     chats = tuple((name, "chat") for name in dict.fromkeys(chat_models or [MODELS[0][0]]))
-    if any(Path(path).name == "test_live_document_roundtrip.py" for path in tests) and len(chats) < 2:
+    files = {Path(test.partition("::")[0]).name for test in tests}
+    if "test_live_document_roundtrip.py" in files and len(chats) < 2:
         raise ValueError("The two-model roundtrip requires two explicitly authorized --chat-model values")
     retrieval = {"test_source_workbench_quality_live.py", "test_dataset_upload_parse.py", "test_next_apps_chat.py", "test_next_apps_search.py", "test_live_document_roundtrip.py"}
-    embedding = not skip_browser_tests and (not tests or any(Path(path).name in retrieval for path in tests))
+    embedding = not skip_browser_tests and (not files or bool(files & retrieval))
     return chats + ((MODELS[-1],) if embedding else ())
 
 
@@ -116,11 +117,11 @@ def command(args, *, env, log, input=None, check=True, cwd=None, timeout=180):
     return result
 
 
-def api(path, method="GET", payload=None, token=None):
+def api(path, method="GET", payload=None, token=None, *, timeout=240):
     headers = {"Content-Type": "application/json"}
     if token:
         headers["Authorization"] = token
-    with urlopen(Request(BASE + path, method=method, headers=headers, data=json.dumps(payload).encode() if payload is not None else None), timeout=240) as response:
+    with urlopen(Request(BASE + path, method=method, headers=headers, data=json.dumps(payload).encode() if payload is not None else None), timeout=timeout) as response:
         result = json.load(response)
         assert result.get("code") == 0, f"{method} {path}: code={result.get('code')} message={result.get('message')}"
         return result.get("data"), response.headers.get("Authorization")
@@ -345,18 +346,20 @@ def main():
                 )
                 print(f"Validated local {kind} model {model}", flush=True)
             api("/api/v1/providers", "PUT", {"provider_name": "Ollama"}, token)
-            api(
-                "/api/v1/providers/Ollama/instances",
-                "POST",
-                {
-                    "instance_name": "QA",
-                    "api_key": "",
-                    "base_url": OLLAMA_CONTAINER_URL,
-                    "region": "default",
-                    "model_info": [{"model_name": model, "model_type": [kind], "max_tokens": identity["ollama_models"][model]["context_length"]} for model, kind in models],
-                },
-                token,
-            )
+            instance = {
+                "instance_name": "QA",
+                "api_key": "",
+                "base_url": OLLAMA_CONTAINER_URL,
+                "region": "default",
+                "model_info": [{"model_name": model, "model_type": [kind], "max_tokens": identity["ollama_models"][model]["context_length"]} for model, kind in models],
+            }
+            # The server can probe chat and embeddings twice, each with its own timeout.
+            api("/api/v1/providers/Ollama/instances", "POST", instance, token, timeout=750)
+            chat_config = [model for model in instance["model_info"] if "chat" in model["model_type"]]
+            chat_suite = not args.tests or any(Path(test.partition("::")[0]).name == "test_next_apps_chat.py" for test in args.tests)
+            if not args.skip_browser_tests and chat_suite and len(chat_config) == 1:
+                # Exercise distinct routing identities using the same authorized model weights.
+                api("/api/v1/providers/Ollama/instances", "POST", {**instance, "instance_name": "QA-secondary", "model_info": chat_config}, token, timeout=390)
             defaults = {}
             for model, kind in models:
                 defaults.setdefault(kind, model)

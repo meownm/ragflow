@@ -31,7 +31,9 @@ import {
   useState,
   type CSSProperties,
 } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { useBlocker, useSearchParams } from 'react-router';
+import { AddSubsectionButton } from '../business-documents/components/add-subsection-button';
 import { ResizeHandle } from '../business-documents/components/resize-handle';
 import { AlignmentPanel } from './alignment-panel';
 import { ChatHistory } from './chat-history';
@@ -1437,7 +1439,51 @@ function Editor({
                       <h2 className="font-medium">
                         {section}. {heading}
                       </h2>
-                      <div className="flex gap-2">
+                      <div className="flex flex-wrap gap-2">
+                        {canEdit && (
+                          <AddSubsectionButton
+                            parent={`${section}. ${heading}`}
+                            disabled={busy}
+                            onSubmit={(subsectionTitle, text, done) => {
+                              const current = liveEditing.current;
+                              const headingMarkup = renderToStaticMarkup(
+                                <h3>{subsectionTitle}</h3>,
+                              );
+                              const paragraphs = text
+                                .split('\n')
+                                .filter((line) => line.trim())
+                                .map((line) =>
+                                  renderToStaticMarkup(<p>{line}</p>),
+                                );
+                              const body = [
+                                current.sections[section],
+                                headingMarkup,
+                                ...paragraphs,
+                              ]
+                                .filter(Boolean)
+                                .join('\n\n');
+                              const sections = {
+                                ...current.sections,
+                                [section]: body,
+                              };
+                              const size = Object.values(sections).reduce(
+                                (total, value) =>
+                                  total + Array.from(value).length,
+                                0,
+                              );
+                              if (size > 100_000) {
+                                done(
+                                  'ТЗ превышает 100 000 символов. Сократите текст подраздела.',
+                                );
+                                return;
+                              }
+                              persistEditing({ ...current, sections });
+                              setCandidateContext(null);
+                              setInvalidSelection(false);
+                              done();
+                            }}
+                          />
+                        )}
                         <Button
                           size="sm"
                           variant="ghost"

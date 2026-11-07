@@ -27,19 +27,21 @@ class AssistantBrowserStub(SqlWorkspaceBrowserStub):
         self.view_revision = 0
         project = self.sql_agent_project
         project.update(title="Поисковые запросы bot", runs=[{"id": "run-1", "status": "READY", "row_count": 250, "compilation_id": "compilation-1"}])
+        project["capabilities"]["edit"] = True
         self.session = {
             "id": project["id"],
             "revision": 1,
             "mode": "EXPLORATORY",
             "project": project,
             "messages": [{"id": "m1", "text": "Покажи данные bot", "created_at": int(time.time() * 1000), "parent_result_id": None}],
-            "selected_result_id": None,
+            "selected_result_id": "run-1",
             "draft": None,
             "structured_query": None,
             "definition_status": "NOT_VALIDATED",
             "source_completeness": "UNKNOWN",
         }
         self.definitions = []
+        self.query_change = None
         self.command_failure = None
         self.deadline = int((time.time() + 3600) * 1000)
         if structured:
@@ -106,6 +108,8 @@ class AssistantBrowserStub(SqlWorkspaceBrowserStub):
                 },
                 {"kind": "SOURCE", "entity_id": "orders", "title": "warehouse.analytics.public.orders"},
             ]
+        if self.query_change:
+            self.session["cards"].append(self.query_change)
 
     def __call__(self, route):
         request = route.request
@@ -158,27 +162,51 @@ class AssistantBrowserStub(SqlWorkspaceBrowserStub):
                 kind, payload = data["type"], data["payload"]
                 if kind == "select_result":
                     self.session["selected_result_id"] = payload["run_id"]
-                elif kind == "answer_result":
+                elif kind == "message":
                     assert payload["run_id"] == self.session["selected_result_id"]
-                    self.session["messages"].append(
-                        {
-                            "id": f"answer-{len(self.commands)}",
-                            "text": payload["text"],
-                            "created_at": int(time.time() * 1000),
-                            "parent_result_id": payload["run_id"],
-                            "answer": {
-                                "status": "READY",
-                                "kind": "ANSWER",
-                                "text": "В первой строке order_id: 1, amount: 499.",
-                                "scope": "LIMITED",
-                                "expires_at": int((time.time() + 3600) * 1000),
-                                "citations": [{"row_index": 0, "column_id": self.columns[0]["id"], "column": "order_id", "value": "1"}],
-                            },
+                    assert payload["context"] == self.dialogue_context()
+                    if payload["text"] == "Теперь по месяцам":
+                        self.session["messages"].append({"id": "change-request", "role": "user", "text": payload["text"], "created_at": int(time.time() * 1000), "parent_result_id": payload["run_id"]})
+                        self.query_change = {
+                            "kind": "QUERY_CHANGE",
+                            "proposal_id": "proposal-1",
+                            "before_sql": self.sql,
+                            "after_sql": "SELECT month, COUNT(*) FROM orders GROUP BY month",
+                            "summary": "Группировка по месяцам",
                         }
-                    )
-                elif kind == "follow_up":
-                    assert payload["run_id"] == self.session["selected_result_id"]
-                    self.session["messages"].append({"id": "change-request", "text": payload["text"], "created_at": int(time.time() * 1000), "parent_result_id": payload["run_id"]})
+                        self.session["conversation"] = {
+                            "phase": "WAITING",
+                            "pending": {"kind": "REVISION_REVIEW"},
+                            "question": {"text": "Применить расчёт?", "options": ["Применить правку", "Оставить прежний расчёт"]},
+                        }
+                    elif payload["text"] == "Количество заказов по месяцам":
+                        definition = self.definitions[0]
+                        self.session["conversation"] = {
+                            "phase": "WAITING",
+                            "pending": {"kind": "METRIC", "candidates": [{"id": definition["definition_id"], "version": definition["version"], "content_hash": definition["content_hash"]}]},
+                            "question": {"text": "Какое определение использовать?", "options": [{"id": definition["definition_id"], "label": definition["title"]}]},
+                        }
+                    elif payload["text"] == "Количество заказов":
+                        assert payload["references"] == [{"kind": "DEFINITION", "id": "definition-1", "version": 1, "content_hash": "sha256:fixture"}]
+                        self.session["conversation"] = {"phase": "READY"}
+                    else:
+                        self.session["messages"].append(
+                            {
+                                "id": f"answer-{len(self.commands)}",
+                                "role": "assistant",
+                                "text": payload["text"],
+                                "created_at": int(time.time() * 1000),
+                                "parent_result_id": payload["run_id"],
+                                "answer": {
+                                    "status": "READY",
+                                    "kind": "ANSWER",
+                                    "text": "В первой строке order_id: 1, amount: 499.",
+                                    "scope": "LIMITED",
+                                    "expires_at": int((time.time() + 3600) * 1000),
+                                    "citations": [{"row_index": 0, "column_id": self.columns[0]["id"], "column": "order_id", "value": "1"}],
+                                },
+                            }
+                        )
                 elif kind == "update_view":
                     assert payload["expected_view_revision"] == self.view_revision
                     self.presentation = payload["view"]
@@ -311,7 +339,7 @@ def test_assistant_is_separate_hidden_by_default_and_can_start_question(page, ba
     expect(page.get_by_role("heading", name="Что хотите узнать о данных?")).to_be_visible()
     screenshot(page, "welcome-light-1440")
     page.get_by_label("Вопрос к данным").fill("Сколько поисковых запросов в bot за август 2026?")
-    page.get_by_role("button", name="Исследовать", exact=True).click()
+    page.get_by_role("button", name="Отправить", exact=True).click()
     expect(page.get_by_role("heading", name="Поисковые запросы bot", exact=True)).to_be_visible()
     assert len(stub.created) == 1
     assert stub.created[0]["question"] == "Сколько поисковых запросов в bot за август 2026?"
@@ -321,26 +349,28 @@ def test_assistant_is_separate_hidden_by_default_and_can_start_question(page, ba
 def test_result_answer_restores_and_query_change_is_an_explicit_path(page, base_url):
     stub = AssistantBrowserStub()
     open_assistant(page, base_url, stub)
-    page.get_by_role("button", name="R1 · Готов · 250 строк", exact=True).click()
-    page.get_by_label("Вопрос по выбранному результату", exact=True).fill("Кто первый и какое значение?")
-    page.get_by_role("button", name="Получить ответ", exact=True).click()
+    page.get_by_label("Сообщение SQL-помощнику", exact=True).fill("Кто первый и какое значение?")
+    page.get_by_role("button", name="Отправить сообщение", exact=True).click()
     expect(page.get_by_text("В первой строке order_id: 1, amount: 499.", exact=True)).to_be_visible()
     page.get_by_text("Основания ответа", exact=True).click()
-    expect(page.get_by_text("Строка 1 · order_id: 1", exact=True)).to_be_visible()
-    assert [item["type"] for item in stub.commands] == ["select_result", "answer_result"]
+    expect(page.get_by_text("order_id, строка 1: 1", exact=True)).to_be_visible()
+    assert [item["type"] for item in stub.commands] == ["message"]
     assert stub.sql_agent_project["compilation"] == stub.query_before["compilation"]
     screenshot(page, "result-answer-light-1440")
     page.reload(wait_until="domcontentloaded")
     expect(page.get_by_text("В первой строке order_id: 1, amount: 499.", exact=True)).to_be_visible()
-    page.get_by_label("Изменить запрос", exact=True).check()
-    page.get_by_label("Изменение запроса", exact=True).fill("Теперь по месяцам")
-    assert len(stub.commands) == 2
-    page.get_by_role("button", name="Предложить изменение SQL", exact=True).click()
-    expect(page.locator(".sa-messages").get_by_text("Теперь по месяцам", exact=True)).to_be_visible()
-    assert [item["type"] for item in stub.commands] == ["select_result", "answer_result", "follow_up"]
+    page.get_by_label("Сообщение SQL-помощнику", exact=True).fill("Теперь по месяцам")
+    assert len(stub.commands) == 1
+    page.get_by_role("button", name="Отправить сообщение", exact=True).click()
+    expect(page.get_by_role("log").get_by_text("Теперь по месяцам", exact=True)).to_be_visible()
+    page.get_by_text("Изменения SQL и параметров", exact=True).click()
+    expect(page.get_by_role("log")).to_contain_text("GROUP BY month")
+    expect(page.get_by_role("button", name="Применить правку", exact=True)).to_be_enabled()
+    assert stub.sql_agent_project["compilation"] == stub.query_before["compilation"]
+    assert [item["type"] for item in stub.commands] == ["message", "message"]
     page.evaluate("document.documentElement.classList.add('dark')")
     page.set_viewport_size({"width": 390, "height": 844})
-    page.get_by_role("button", name="Предложить изменение SQL", exact=True).scroll_into_view_if_needed()
+    page.get_by_role("button", name="Отправить сообщение", exact=True).scroll_into_view_if_needed()
     screenshot(page, "result-answer-dark-390")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
 
@@ -349,7 +379,6 @@ def test_result_answer_restores_and_query_change_is_an_explicit_path(page, base_
 def test_assistant_preserves_draft_views_and_immutable_result_across_surfaces(page, base_url):
     stub = AssistantBrowserStub()
     open_assistant(page, base_url, stub)
-    page.get_by_role("button", name="R1 · Готов · 250 строк", exact=True).click()
     result = page.get_by_test_id("sql-assistant-result")
     expect(result.get_by_role("table")).to_be_visible()
     result.get_by_role("button", name="Настроить результат", exact=True).click()
@@ -360,17 +389,17 @@ def test_assistant_preserves_draft_views_and_immutable_result_across_surfaces(pa
     result.get_by_role("button", name="order_id", exact=True).click()
     result.get_by_role("button", name="order_id ↑", exact=True).click()
     expect(result.get_by_role("table").locator("tbody tr").first.locator("td").first).to_have_text("250")
-    page.get_by_role("tab", name="SQL", exact=True).click()
+    page.get_by_text("Изменить расчёт", exact=True).click()
     page.get_by_label("Исследовательский SQL", exact=True).fill("SELECT o.id AS order_id FROM public.orders o LIMIT :row_limit")
-    page.get_by_role("tab", name="Конструктор", exact=True).click()
-    page.get_by_role("tab", name="SQL", exact=True).click()
+    page.get_by_text("Изменить расчёт", exact=True).click()
+    page.get_by_text("Изменить расчёт", exact=True).click()
     expect(page.get_by_label("Исследовательский SQL", exact=True)).to_have_value("SELECT o.id AS order_id FROM public.orders o LIMIT :row_limit")
     page.get_by_role("button", name="Проверить и сохранить черновик", exact=True).click()
     expect(page.get_by_text("Черновик сохранён на сервере", exact=True)).to_be_visible()
     page.reload(wait_until="domcontentloaded")
-    page.get_by_role("tab", name="SQL", exact=True).click()
+    page.get_by_text("Изменить расчёт", exact=True).click()
     expect(page.get_by_label("Исследовательский SQL", exact=True)).to_have_value("SELECT o.id AS order_id FROM public.orders o LIMIT :row_limit")
-    assert all(item["type"] in {"select_result", "update_view", "save_draft"} for item in stub.commands)
+    assert all(item["type"] in {"update_view", "save_draft"} for item in stub.commands)
     assert stub.sql_agent_project["compilation"] == stub.query_before["compilation"]
     screenshot(page, "workspace-sql-light-1440")
     page.evaluate("document.documentElement.classList.add('dark')")
@@ -384,96 +413,71 @@ def test_assistant_preserves_draft_views_and_immutable_result_across_surfaces(pa
 def test_revoked_result_is_not_displayed_as_empty_data_or_retried(page, base_url):
     stub = AssistantBrowserStub(revoked=True)
     open_assistant(page, base_url, stub)
-    page.get_by_role("button", name="R1 · Готов · 250 строк", exact=True).click()
     expect(page.get_by_text("Результат недоступен:", exact=False)).to_be_visible()
     expect(page.get_by_role("table")).to_have_count(0)
-    assert [item["type"] for item in stub.commands] == ["select_result"]
+    assert stub.commands == []
 
 
 @pytest.mark.p0
-def test_visual_groups_and_having_survive_save_reload_without_sql_execution(page, base_url):
+def test_sql_grouping_and_having_survive_draft_save_without_execution(page, base_url):
     stub = AssistantBrowserStub(structured=True)
     open_assistant(page, base_url, stub)
-    page.get_by_role("tab", name="Конструктор", exact=True).click()
-    page.get_by_label("Связь группы WHERE 1", exact=True).select_option("OR")
-    page.get_by_role("button", name="Добавить группу WHERE 1", exact=True).click()
-    page.get_by_label("Значение WHERE 1.2.1", exact=True).fill("5")
-    page.get_by_role("button", name="Добавить условие HAVING 1", exact=True).click()
-    page.get_by_label("Условие HAVING 1.1", exact=True).select_option("gt")
-    page.get_by_label("Значение HAVING 1.1", exact=True).fill("10")
-    page.get_by_role("tab", name="SQL", exact=True).click()
-    page.get_by_role("tab", name="Конструктор", exact=True).click()
-    expect(page.get_by_label("Значение WHERE 1.2.1", exact=True)).to_have_value("5")
+    page.get_by_text("Изменить расчёт", exact=True).click()
+    sql = "SELECT o.id, COUNT(*) FROM public.orders o WHERE o.id > 5 GROUP BY o.id HAVING COUNT(*) > 10 LIMIT :row_limit"
+    page.get_by_label("Исследовательский SQL", exact=True).fill(sql)
     page.get_by_role("button", name="Проверить и сохранить черновик", exact=True).click()
     expect(page.get_by_text("Черновик сохранён на сервере", exact=True)).to_be_visible()
-    assert "HAVING COUNT" in stub.session["draft"]["compiled"]["sql"]
+    assert stub.session["draft"]["compiled"]["sql"] == sql
     page.reload(wait_until="domcontentloaded")
-    page.get_by_role("tab", name="Конструктор", exact=True).click()
-    expect(page.get_by_label("Связь группы WHERE 1", exact=True)).to_have_value("OR")
-    expect(page.get_by_label("Значение HAVING 1.1", exact=True)).to_have_value("10")
-    screenshot(page, "filters-light-1440")
-    page.evaluate("document.documentElement.classList.add('dark')")
-    page.set_viewport_size({"width": 390, "height": 844})
-    screenshot(page, "filters-dark-390")
-    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    page.get_by_text("Изменить расчёт", exact=True).click()
+    expect(page.get_by_label("Исследовательский SQL", exact=True)).to_have_value(sql)
     assert [item["type"] for item in stub.commands] == ["save_draft"]
+    assert stub.sql_agent_project["compilation"] == stub.query_before["compilation"]
 
 
 @pytest.mark.p0
-def test_definition_mode_locks_formula_keeps_mutable_values_and_requires_explicit_exploration(page, base_url):
+def test_definition_mode_locks_manual_sql_until_explicit_exploration(page, base_url):
     stub = AssistantBrowserStub(structured=True)
     open_assistant(page, base_url, stub)
+    page.get_by_text("Изменить расчёт", exact=True).click()
     page.get_by_label("Согласованное определение", exact=True).select_option("definition-1")
     page.get_by_role("button", name="Создать черновик по определению", exact=True).click()
-    page.get_by_role("tab", name="Конструктор", exact=True).click()
-    expect(page.get_by_label("Поле WHERE 1.1", exact=True)).to_be_disabled()
-    expect(page.get_by_label("Значение WHERE 1.1", exact=True)).to_be_enabled()
+    editor = page.get_by_label("Исследовательский SQL", exact=True)
+    expect(editor).to_be_disabled()
     page.get_by_role("button", name="Применить проверенный запрос", exact=True).click()
-    expect(page.get_by_text("По согласованному определению · версия 1", exact=True)).to_be_visible()
-    page.get_by_role("tab", name="SQL", exact=True).click()
-    expect(page.get_by_label("Исследовательский SQL", exact=True)).to_be_disabled()
-    screenshot(page, "definition-light-1440")
+    expect(page.get_by_text("По согласованному определению", exact=True)).to_be_visible()
+    expect(editor).to_be_disabled()
     page.get_by_role("button", name="Перейти к исследовательской правке", exact=True).click()
-    expect(page.get_by_label("Исследовательский SQL", exact=True)).to_be_enabled()
+    expect(editor).to_be_enabled()
     assert [item["type"] for item in stub.commands] == ["use_definition", "apply_draft", "start_exploration"]
 
 
 @pytest.mark.p0
-def test_dialogue_context_mentions_cards_and_metric_choice(page, base_url):
+def test_dialogue_context_mentions_and_saved_sql_evidence(page, base_url):
     stub = AssistantBrowserStub(structured=True)
     open_assistant(page, base_url, stub)
-    page.get_by_role("button", name="R1 · Готов · 250 строк", exact=True).click()
-    expect(page.get_by_label("Контекст вопроса")).to_contain_text("UTC")
-    question = page.get_by_label("Вопрос по выбранному результату", exact=True)
+    question = page.get_by_label("Сообщение SQL-помощнику", exact=True)
     question.fill("Покажи @orders")
     page.get_by_role("listbox", name="Доступные объекты").get_by_role("button", name="Таблица", exact=False).first.click()
     expect(page.get_by_label("Выбранные упоминания")).to_be_visible()
-    page.get_by_role("button", name="Получить ответ", exact=True).click()
+    page.get_by_role("button", name="Отправить сообщение", exact=True).click()
     expect(page.get_by_text("В первой строке order_id: 1, amount: 499.", exact=True)).to_be_visible()
-    answer = next(item for item in stub.commands if item["type"] == "answer_result")["payload"]
+    answer = stub.commands[0]["payload"]
     assert answer["context"] == stub.dialogue_context()
     assert answer["references"][0]["kind"] == "TABLE"
     assert "title" not in answer["references"][0]
-    page.get_by_role("button", name="Открыть SQL результата", exact=True).click()
-    expect(page.get_by_role("tab", name="SQL", exact=True)).to_have_attribute("aria-selected", "true")
+    page.get_by_text("SQL и основания", exact=True).click()
     expect(page.get_by_label("SQL выбранного результата", exact=True)).to_contain_text(stub.sql)
-    page.get_by_role("tab", name="Чат", exact=True).click()
-    page.get_by_role("button", name="Продолжить исследование", exact=True).click()
-    page.get_by_label("Изменение запроса", exact=True).fill("Количество заказов по месяцам")
-    choice = page.get_by_label("Определения для вопроса")
-    expect(choice).to_be_visible()
-    expect(page.get_by_role("button", name="Предложить изменение SQL", exact=True)).to_be_disabled()
-    assert choice.evaluate("panel => [...panel.querySelectorAll('button')].every(button => button.getBoundingClientRect().right <= panel.getBoundingClientRect().right)")
-    screenshot(page, "transfer-context-metric-light-1440")
-    page.evaluate("document.documentElement.classList.add('dark')")
+    page.get_by_text("Изменить расчёт", exact=True).click()
+    definition = page.get_by_label("Согласованное определение", exact=True)
+    expect(definition).to_contain_text("Количество заказов")
     page.set_viewport_size({"width": 390, "height": 844})
-    choice.scroll_into_view_if_needed()
-    assert choice.evaluate("panel => [...panel.querySelectorAll('button')].every(button => button.getBoundingClientRect().right <= panel.getBoundingClientRect().right)")
-    screenshot(page, "transfer-context-metric-dark-390")
+    question.fill("Количество заказов по месяцам")
+    page.get_by_role("button", name="Отправить сообщение", exact=True).click()
+    page.get_by_role("button", name="Количество заказов", exact=True).click()
+    expect(page.get_by_role("button", name="Количество заказов", exact=True)).to_have_count(0)
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-    choice.get_by_role("button", name="Выбрать определение", exact=False).click()
-    expect(page.get_by_role("tab", name="Конструктор", exact=True)).to_have_attribute("aria-selected", "true")
-    assert [item["type"] for item in stub.commands] == ["select_result", "answer_result", "use_definition"]
+    assert [item["type"] for item in stub.commands] == ["message", "message", "message"]
 
 
 @pytest.mark.p0
@@ -481,15 +485,14 @@ def test_dialogue_context_mentions_cards_and_metric_choice(page, base_url):
 def test_dialogue_error_preserves_input_and_never_automatically_retries(page, base_url, status):
     stub = AssistantBrowserStub()
     open_assistant(page, base_url, stub)
-    page.get_by_role("button", name="R1 · Готов · 250 строк", exact=True).click()
     stub.command_failure = {"status": status, "body": {"code": status, "message": "private diagnostic", "data": {"error_code": "SQL_RESULT_ANSWER_UNAVAILABLE"}}}
-    question = page.get_by_label("Вопрос по выбранному результату", exact=True)
+    question = page.get_by_label("Сообщение SQL-помощнику", exact=True)
     question.fill("Кто первый?")
-    page.get_by_role("button", name="Получить ответ", exact=True).click()
-    expect(page.locator(".sa-error")).to_be_visible()
-    expect(page.locator(".sa-error")).not_to_contain_text("private")
+    page.get_by_role("button", name="Отправить сообщение", exact=True).click()
+    expect(page.locator(".sa-chat-error")).to_be_visible()
+    expect(page.locator(".sa-chat-error")).not_to_contain_text("private")
     expect(question).to_have_value("Кто первый?")
-    assert [item["type"] for item in stub.commands] == ["select_result", "answer_result"]
+    assert [item["type"] for item in stub.commands] == ["message"]
 
 
 @pytest.mark.p0
@@ -498,7 +501,7 @@ def test_initial_question_uses_catalog_mention_ids(page, base_url):
     open_assistant(page, base_url, stub, session=False)
     page.get_by_label("Вопрос к данным", exact=True).fill("Исследуй @orders")
     page.get_by_role("listbox", name="Доступные объекты").get_by_role("button", name="Таблица", exact=False).first.click()
-    page.get_by_role("button", name="Исследовать", exact=True).click()
+    page.get_by_role("button", name="Отправить", exact=True).click()
     expect(page.get_by_role("heading", name="Поисковые запросы bot", exact=True)).to_be_visible()
     assert stub.created[0]["references"][0]["kind"] == "TABLE"
     assert "title" not in stub.created[0]["references"][0]
@@ -508,7 +511,6 @@ def test_initial_question_uses_catalog_mention_ids(page, base_url):
 def test_result_builder_persists_fields_filters_metrics_and_appearance(page, base_url):
     stub = AssistantBrowserStub()
     open_assistant(page, base_url, stub)
-    page.get_by_role("button", name="R1 · Готов · 250 строк", exact=True).click()
     builder = page.get_by_label("Конструктор результата", exact=True)
     builder.get_by_role("button", name="Настроить результат", exact=True).click()
     builder.get_by_label("Название amount", exact=True).fill("Сумма")
@@ -528,11 +530,11 @@ def test_result_builder_persists_fields_filters_metrics_and_appearance(page, bas
     builder.get_by_label("Название метрики 2", exact=True).fill("Сумма сохранённого набора")
     builder.get_by_label("Тип метрики 2", exact=True).select_option("sum")
     builder.get_by_label("Поле метрики 2", exact=True).select_option(stub.columns[1]["id"])
-    assert [item["type"] for item in stub.commands] == ["select_result"]
+    assert stub.commands == []
     builder.get_by_role("button", name="Сохранить представление", exact=True).click()
-    expect(builder.get_by_role("status")).to_have_text("Настройки результата сохранены")
     result = page.get_by_test_id("sql-assistant-result")
     expect(result.get_by_role("table", name="Данные выбранного результата").locator("thead th").first).to_have_text("Сумма")
+    assert stub.view_revision == 1
     metrics = page.get_by_label("Показатели сохранённого набора", exact=True)
     expect(metrics).to_contain_text("50 строк")
     expect(metrics.locator("article").first).to_contain_text("50")
@@ -555,7 +557,7 @@ def test_result_builder_persists_fields_filters_metrics_and_appearance(page, bas
     builder.scroll_into_view_if_needed()
     screenshot(page, "result-builder-appearance-dark-390")
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-    assert all(item["type"] in {"select_result", "update_view"} for item in stub.commands)
+    assert all(item["type"] in {"update_view"} for item in stub.commands)
     assert stub.sql_agent_project["compilation"] == stub.query_before["compilation"]
 
 
@@ -565,7 +567,6 @@ def test_result_builder_long_names_stay_inside_controls(page, base_url):
     stub.columns[0]["name"] = "column_" * 9
     stub.presentation["metrics"] = [{"id": "rows", "title": "M" * 120, "kind": "rows", "column_id": None, "row_index": None}]
     open_assistant(page, base_url, stub)
-    page.get_by_role("button", name="R1 · Готов · 250 строк", exact=True).click()
     builder = page.get_by_label("Конструктор результата", exact=True)
     builder.get_by_role("button", name="Настроить результат", exact=True).click()
     for width, height in [(1440, 1000), (390, 844)]:

@@ -1251,6 +1251,7 @@ export default function BusinessDocumentsPage() {
       if (
         type === 'APPLY_CHANGES' ||
         type === 'CONFIRM_PREPARED_CHANGES' ||
+        type === 'ADD_SUBSECTION' ||
         type === 'RESTORE_REVISION'
       ) {
         if (activeDocumentId.current === targetDocumentId) {
@@ -1290,10 +1291,14 @@ export default function BusinessDocumentsPage() {
       type: BusinessDocumentCommandType,
       payload: Record<string, unknown>,
       onSuccess?: () => void,
+      onError?: () => void,
     ) => {
-      if (!documentId || !document || commandInFlight.current) return;
+      if (!documentId || !document || commandInFlight.current) {
+        onError?.();
+        return;
+      }
       commandInFlight.current = true;
-      commandMutation.mutate({ type, payload }, { onSuccess });
+      commandMutation.mutate({ type, payload }, { onSuccess, onError });
     },
     [commandMutation, document, documentId],
   );
@@ -2171,6 +2176,26 @@ export default function BusinessDocumentsPage() {
                 : []
             }
             focusRequest={sectionFocus}
+            subsectionDisabled={isBusy}
+            onAddSubsection={
+              allowed.has('ADD_SUBSECTION') && currentRevisionId
+                ? (parent, title, text, done) =>
+                    submitCommand(
+                      'ADD_SUBSECTION',
+                      {
+                        base_revision_id: currentRevisionId,
+                        parent_section_id: parent,
+                        title,
+                        text,
+                      },
+                      () => done(),
+                      () =>
+                        done(
+                          'Не удалось добавить подраздел. Проверьте текущую редакцию и повторите попытку.',
+                        ),
+                    )
+                : undefined
+            }
             onSelectionChange={(nextSelection) => {
               if (!historyOpen) setSelection(nextSelection);
             }}

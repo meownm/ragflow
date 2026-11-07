@@ -25,6 +25,7 @@ from test.playwright.helpers.datasets import (
 )
 
 RESULT_TIMEOUT_MS = 15000
+PDF_INDEXING_TIMEOUT_MS = 240_000
 
 
 def make_test_png(path: Path) -> Path:
@@ -614,10 +615,9 @@ def step_06_wait_parse_success(
 ):
     require(flow_state, "uploads_done", "filenames")
     page = flow_page
-    parse_timeout_ms = RESULT_TIMEOUT_MS * 8
     for filename in flow_state["filenames"]:
         with step(f"wait for parse success {filename}"):
-            wait_for_success_dot(page, expect, filename, timeout_ms=parse_timeout_ms)
+            wait_for_success_dot(page, expect, filename, timeout_ms=PDF_INDEXING_TIMEOUT_MS)
         snap(f"parse_{filename}_success")
     flow_state["parse_complete"] = True
 

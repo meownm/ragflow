@@ -2,8 +2,9 @@ from copy import deepcopy
 
 import pytest
 
+from api.technical_specifications.ai import SpecificationAI
 from api.technical_specifications.application import Specifications
-from api.technical_specifications.domain import SpecificationError, empty_sections, fail
+from api.technical_specifications.domain import SpecificationError, empty_sections, fail, markdown, parse_markdown
 
 
 async def run(method, *args, **kwargs):
@@ -91,6 +92,42 @@ async def test_chat_then_one_apply_creates_one_revision_without_approval(env):
     assert len(repo.revisions) == 2
     assert await service.apply("editor", "workspace", "doc", request) == result
     assert len(repo.revisions) == 2
+
+
+@pytest.mark.asyncio
+async def test_one_request_updates_two_subheadings_and_another_section(env, monkeypatch):
+    service, repo, ai = env
+    original = {
+        **empty_sections(),
+        "5": "<h3>Создание заявки</h3>\n\n<p>Срок создания 24 часа.</p>\n\n<h3>Отмена заявки</h3>\n\n<p>Срок отмены 24 часа.</p>",
+        "8": "API принимает срок до 24 часов.",
+    }
+    repo.value["sections"] = original
+    planner = SpecificationAI()
+
+    async def ask(*args, **kwargs):
+        return {
+            "answer": "Предлагаю три изменения",
+            "required_sections": ["5", "8"],
+            "edits": [
+                {"section": "5", "before": "Срок создания 24 часа.", "after": "Срок создания 48 часов."},
+                {"section": "5", "before": "Срок отмены 24 часа.", "after": "Срок отмены 48 часов."},
+                {"section": "8", "before": "API принимает срок до 24 часов.", "after": "API принимает срок до 48 часов."},
+            ],
+        }
+
+    monkeypatch.setattr(planner, "_ask", ask)
+    monkeypatch.setattr(ai, "chat", planner.chat)
+    request = message()
+    request["draft"]["text"] = "Установи срок 48 часов в сценариях создания и отмены заявки и в API."
+
+    state = await service.chat("editor", "workspace", "doc", request)
+    assert state["sections"] == original
+    result = await service.apply("editor", "workspace", "doc", {"version": state["version"], "proposal_id": state["proposals"][0]["id"]})
+    assert result["sections"] == {**original, "5": original["5"].replace("24 часа", "48 часов"), "8": "API принимает срок до 48 часов."}
+    assert parse_markdown(markdown(result["sections"])) == result["sections"]
+    assert result["revision"] == 2
+    assert ai.change_request["text"] == request["draft"]["text"]
 
 
 @pytest.mark.asyncio

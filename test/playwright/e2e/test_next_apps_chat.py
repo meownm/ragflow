@@ -488,12 +488,12 @@ def mm_step_10_select_models_for_two_cards(ctx: FlowContext, step, snap):
     distinct = {}
     for model in available:
         if "chat" in model["model_type"]:
-            distinct.setdefault(model["name"], model)
-    assert len(distinct) >= 2, "Two distinct configured chat models are required"
-    models = list(distinct.values())[:2]
+            model_id = f"{model['name']}@{model['instance_name']}@{model['provider_name']}"
+            distinct.setdefault(model_id, model)
+    assert len(distinct) >= 2, "Two distinct configured chat model IDs are required"
     selected = []
     with step("select two distinct models for multi-model cards"):
-        for index, model in enumerate(models):
+        for index, (model_id, model) in enumerate(list(distinct.items())[:2]):
             card = page.locator(f"[data-testid='chat-detail-multimodel-card'][data-card-index='{index}']")
             trigger = card.get_by_test_id("chat-detail-multimodel-card-model-select")
             trigger.click()
@@ -501,11 +501,13 @@ def mm_step_10_select_models_for_two_cards(ctx: FlowContext, step, snap):
             expect(settings).to_be_visible(timeout=RESULT_TIMEOUT_MS)
             settings.locator("button[aria-haspopup='dialog']").first.click()
             options = page.get_by_role("dialog").last
-            options.get_by_text(model["name"], exact=True).first.click()
+            provider = options.get_by_text(model["provider_name"], exact=True).locator("../..")
+            instance = provider.get_by_text(model["instance_name"], exact=True).locator("../..")
+            instance.get_by_text(model["name"], exact=True).click()
             _mm_dismiss_open_popovers(page)
             expect(trigger).to_contain_text(model["name"])
-            selected.append(f"{model['name']}@{model['instance_name']}@{model['provider_name']}")
-    assert len(set(selected)) == 2
+            expect(trigger).to_contain_text(model["instance_name"])
+            selected.append(model_id)
     ctx.state["mm_selected_models"] = selected
     ctx.state["mm_models_selected"] = True
     snap("chat_mm_models_selected")

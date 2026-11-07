@@ -3195,6 +3195,43 @@ test('discards inline changes and restores the saved text without changing its r
   );
 });
 
+test('adds a subsection to the selected parent in the current revision', async () => {
+  mockedFetch.mockResolvedValue({
+    ...projection,
+    allowed_commands: ['ADD_SUBSECTION'],
+  });
+  renderPage();
+  const sections = await screen.findAllByTestId('business-document-section');
+  fireEvent.click(
+    within(sections[1]).getByRole('button', { name: 'Добавить подраздел' }),
+  );
+  const dialog = screen.getByRole('dialog', { name: 'Добавить подраздел' });
+  expect(dialog).toHaveTextContent('2. Текущий процесс');
+  fireEvent.change(within(dialog).getByLabelText('Название подраздела'), {
+    target: { value: 'Отмена заявки' },
+  });
+  fireEvent.change(
+    within(dialog).getByLabelText('Текст подраздела (необязательно)'),
+    { target: { value: 'Срок отмены 48 часов.' } },
+  );
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Добавить' }));
+  await waitFor(() =>
+    expect(mockedSubmit).toHaveBeenCalledWith(
+      'doc-1',
+      expect.objectContaining({
+        type: 'ADD_SUBSECTION',
+        expected_state_version: projection.state_version,
+        payload: {
+          base_revision_id: 'revision-3',
+          parent_section_id: '2',
+          title: 'Отмена заявки',
+          text: 'Срок отмены 48 часов.',
+        },
+      }),
+    ),
+  );
+});
+
 test('places new preview subsections in numeric document order', async () => {
   mockedFetch.mockResolvedValue({
     ...projection,

@@ -491,6 +491,19 @@ def section_hash(section: dict[str, Any]) -> str:
     return stable_hash(section)
 
 
+def new_subsection(document: dict[str, Any], parent_id: str, title: str, text: str) -> dict[str, Any]:
+    ids = {section["id"] for section in document["sections"]}
+    if parent_id not in ids:
+        raise RuleViolation("PARENT_SECTION_NOT_FOUND", "Родительский раздел не найден в текущей редакции")
+    if not title or len(title.splitlines()) != 1:
+        raise RuleViolation("INVALID_SUBSECTION_TITLE", "Введите название подраздела одной строкой")
+    children = (int(number) for prefix, _, number in (identifier.rpartition(".") for identifier in ids) if prefix == parent_id and number.isdecimal())
+    identifier = f"{parent_id}.{max(children, default=0) + 1}"
+    if len(identifier) > 16 or identifier.count(".") > 4:
+        raise RuleViolation("SUBSECTION_LIMIT", "Достигнут предел нумерации подразделов. Выберите раздел уровнем выше")
+    return {"id": identifier, "title": title, "blocks": [{"type": "paragraph", "text": text}] if text else []}
+
+
 def bind_change_plan_snapshot(base_document: dict[str, Any], change_plan: object, *, base_revision_id: str, source_state_version: int) -> object:
     """Bind concurrency metadata from the immutable server snapshot.
 

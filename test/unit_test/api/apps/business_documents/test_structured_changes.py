@@ -23,7 +23,7 @@ from api.apps.business_documents.worker import BusinessDocumentWorker
 from api.db.db_models import BusinessDocument, BusinessDocumentEvent, BusinessDocumentEvidenceSnapshot, BusinessDocumentJob, BusinessDocumentRevision
 from business_documents.domain.content import section_hash
 from business_documents.domain.block_diff import with_block_ids
-from business_documents.application.errors import ValidationError
+from business_documents.application.errors import ConflictError, PermissionDeniedError, ValidationError
 
 
 @pytest.mark.parametrize("kind", ["PREPARE_CHANGES", "APPLY_CHANGES"])
@@ -97,6 +97,73 @@ class PlanAdapter:
     def consume_execution_audit(self):
         audit, self.audit = self.audit, None
         return audit
+
+
+def test_manually_added_subsections_can_share_one_anchored_review_comment(database):
+    document = _request_and_complete_draft(_create())
+    document_id = document["document_id"]
+    original = document["current_revision"]
+    jobs_before = BusinessDocumentJob.select().count()
+    for title in ("Создание заявки", "Отмена заявки"):
+        command = _command(document, "ADD_SUBSECTION", {"base_revision_id": document["current_revision"]["revision_id"], "parent_section_id": "3.1", "title": title, "text": "Срок 24 часа."})
+        document = document_commands.execute(TENANT, AUTHOR, document_id, command)["document"]
+        assert document_commands.execute(TENANT, AUTHOR, document_id, command)["idempotent_replay"]
+
+    revision = document["current_revision"]
+    old_sections = {section["id"]: section for section in original["document_ast"]["sections"]}
+    current_sections = {section["id"]: section for section in revision["document_ast"]["sections"]}
+    assert [section for section in current_sections if section.startswith("3.1.")] == ["3.1.1", "3.1.2"]
+    assert {key: current_sections[key] for key in old_sections} == old_sections
+    assert "###" in revision["body_markdown"] and "3.1.2. Отмена заявки" in revision["body_markdown"]
+    assert BusinessDocumentRevision.select().count() == 3
+    assert BusinessDocumentJob.select().count() == jobs_before
+
+    selected = revision["section_texts"]["3.1.2"]
+    anchor = {"revision_id": revision["revision_id"], "section_id": "3.1.2", "selected_text": selected, "start_offset": 0, "end_offset": len(selected), "prefix": "", "suffix": ""}
+    comment = _command(
+        document, "ADD_COMMENT", {"revision_id": revision["revision_id"], "section_id": "3.1.2", "anchor": anchor, "text": "Установить срок 48 часов для создания, отмены и общих потребностей."}
+    )
+    document = document_commands.execute(TENANT, AUTHOR, document_id, comment)["document"]
+    document = _complete_review_assessment(document)
+    requested = document_commands.execute(TENANT, AUTHOR, document_id, _command(document, "PREPARE_CHANGES", {"base_revision_id": revision["revision_id"]}))
+    job = BusinessDocumentJob.get_by_id(requested["job_id"])
+    source = document["protocol"]["comments"][0]["source_event_id"]
+    targets = ("3.1.1", "3.1.2", "3.3")
+    block = {"type": "paragraph", "text": "Срок 48 часов."}
+    operations = [
+        {"operation_id": section, "type": "REPLACE_BLOCK", "block_id": current_sections[section]["blocks"][0]["id"], "block": dict(block), "source_event_ids": [source]} for section in targets[:2]
+    ]
+    operations.append({"operation_id": "3.3", "type": "INSERT_BLOCK", "section_id": "3.3", "after_block_id": None, "block": block, "source_event_ids": [source]})
+    plan = {"schema_version": "1", "base_revision_id": job.base_revision_id, "source_state_version": job.source_state_version, "operations": operations, "acknowledged_no_change_event_ids": []}
+    adapter = PlanAdapter(plan, None)
+    assert BusinessDocumentWorker(ai=BusinessDocumentAI(adapter)).run_once()
+    assert BusinessDocumentJob.get_by_id(job.id).status == "COMPLETED"
+    preview = document_queries.get_change_preview(document_id, job.id)
+    assert {section["section_id"] for section in preview["sections"]} == set(targets)
+    assert all(section["source_event_ids"] == [source] for section in preview["sections"])
+    current = document_queries.get_document(document_id, AUTHOR)
+    assert current["current_revision"] == revision
+    result = document_commands.execute(TENANT, AUTHOR, document_id, _command(current, "CONFIRM_PREPARED_CHANGES", {"job_id": job.id}))["document"]
+    assert all("Срок 48 часов." in result["current_revision"]["section_texts"][section] for section in targets)
+    assert all("24 часа" not in result["current_revision"]["section_texts"][section] for section in targets[:2])
+    assert result["current_revision"]["section_texts"]["3.1"] == revision["section_texts"]["3.1"]
+
+
+def test_add_subsection_checks_authorization_revision_and_parent_before_writing(database):
+    document = _request_and_complete_draft(_create())
+    document_id = document["document_id"]
+    payload = {"base_revision_id": document["current_revision"]["revision_id"], "parent_section_id": "3.1", "title": "Создание заявки"}
+    command = _command(document, "ADD_SUBSECTION", payload)
+    for actor, role in ((AUTHOR, "READER"), ("other-author", "AUTHOR_EDITOR")):
+        with pytest.raises(PermissionDeniedError):
+            document_commands.execute(TENANT, actor, document_id, command, access_role=role)
+    with pytest.raises(ConflictError, match="current revision"):
+        document_commands.execute(TENANT, AUTHOR, document_id, _command(document, "ADD_SUBSECTION", {**payload, "base_revision_id": "stale"}, key="stale-revision"))
+    with pytest.raises(ValidationError) as missing:
+        document_commands.execute(TENANT, AUTHOR, document_id, _command(document, "ADD_SUBSECTION", {**payload, "parent_section_id": "3.99"}, key="missing-parent"))
+    assert missing.value.code == "PARENT_SECTION_NOT_FOUND"
+    assert BusinessDocumentRevision.select().count() == 1
+    assert document_queries.get_document(document_id, AUTHOR)["current_revision"] == document["current_revision"]
 
 
 def request_plan(*, preview=False):

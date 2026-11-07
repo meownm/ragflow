@@ -19,6 +19,7 @@ ALL_SECTIONS = [
     "technical_specifications",
     "document_constructor",
     "sql_projects",
+    "sql_assistant",
     "asr",
     "translator",
     "file_manager",

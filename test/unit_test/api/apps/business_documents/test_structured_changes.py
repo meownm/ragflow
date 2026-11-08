@@ -60,8 +60,9 @@ def database():
 
 
 class PlanAdapter:
-    def __init__(self, plan, failure="transport"):
+    def __init__(self, plan, failure="transport", *, assessment=None):
         self.plan, self.failure = plan, failure
+        self.assessment = assessment
         self.calls = []
         self.audit = None
 
@@ -82,6 +83,8 @@ class PlanAdapter:
         }
         if task == "PLAN_CHANGES":
             return deepcopy(self.plan)
+        if task == "ASSESS_REVIEW":
+            return deepcopy(self.assessment)
         if self.failure == "transport":
             self.failure = None
             raise TimeoutError("Verifier temporarily unavailable")
@@ -99,7 +102,8 @@ class PlanAdapter:
         return audit
 
 
-def test_manually_added_subsections_can_share_one_anchored_review_comment(database):
+@pytest.mark.parametrize("unknown_target", [False, True])
+def test_manually_added_subsections_can_share_one_anchored_review_comment(database, unknown_target):
     document = _request_and_complete_draft(_create())
     document_id = document["document_id"]
     original = document["current_revision"]
@@ -124,11 +128,31 @@ def test_manually_added_subsections_can_share_one_anchored_review_comment(databa
         document, "ADD_COMMENT", {"revision_id": revision["revision_id"], "section_id": "3.1.2", "anchor": anchor, "text": "Установить срок 48 часов для создания, отмены и общих потребностей."}
     )
     document = document_commands.execute(TENANT, AUTHOR, document_id, comment)["document"]
-    document = _complete_review_assessment(document)
-    requested = document_commands.execute(TENANT, AUTHOR, document_id, _command(document, "PREPARE_CHANGES", {"base_revision_id": revision["revision_id"]}))
-    job = BusinessDocumentJob.get_by_id(requested["job_id"])
     source = document["protocol"]["comments"][0]["source_event_id"]
     targets = ("3.1.1", "3.1.2", "3.3")
+    review = document_commands.execute(TENANT, AUTHOR, document_id, _command(document, "REQUEST_REVIEW_ASSESSMENT"))
+    assessment = {
+        "schema_version": "1",
+        "questions": [{"semantic_tag": "exception", "target_section_id": "3.1.2", "text": "Есть ли исключения?", "options": [], "allow_custom_answer": True}],
+        "proposals": [
+            {"target_section_id": section, "text": f"В {section} установить срок 48 часов.", "rationale": "Замечание автора.", "source_event_ids": [source]}
+            for section in (*targets[:2], "3.1.99" if unknown_target else targets[2])
+        ],
+        "comment_dispositions": [{"comment_event_id": source, "disposition": "CONFIRMED_CHANGE"}],
+    }
+    assert BusinessDocumentWorker(ai=BusinessDocumentAI(PlanAdapter(None, None, assessment=assessment))).run_once()
+    review_job = BusinessDocumentJob.get_by_id(review["job_id"])
+    document = document_queries.get_document(document_id, AUTHOR)
+    if unknown_target:
+        assert review_job.status == "DEAD" and review_job.error["code"] == "PROPOSAL_SECTION_NOT_FOUND"
+        assert document["current_revision"] == revision
+        assert not document["protocol"]["proposals"]
+        return
+    assert review_job.status == "COMPLETED"
+    assert {item["target_section_id"] for item in document["protocol"]["proposals"]} == set(targets)
+    assert any(question["target_section_id"] == "3.1.2" for question in document["protocol"]["questions"])
+    requested = document_commands.execute(TENANT, AUTHOR, document_id, _command(document, "PREPARE_CHANGES", {"base_revision_id": revision["revision_id"]}))
+    job = BusinessDocumentJob.get_by_id(requested["job_id"])
     block = {"type": "paragraph", "text": "Срок 48 часов."}
     operations = [
         {"operation_id": section, "type": "REPLACE_BLOCK", "block_id": current_sections[section]["blocks"][0]["id"], "block": dict(block), "source_event_ids": [source]} for section in targets[:2]

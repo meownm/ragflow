@@ -13,7 +13,15 @@ from business_documents.application.errors import ConflictError, ValidationError
 from business_documents.application.export import ExportCommitter
 from business_documents.application.persistence import DocumentWriter
 from business_documents.application.queries import DocumentQueries
-from business_documents.domain.assessment import canonical_tag, empty_section_questions, normalize_proposal, normalize_question, validate_comment_dispositions, without_answered_gap_warnings
+from business_documents.domain.assessment import (
+    assessment_section_ids,
+    canonical_tag,
+    empty_section_questions,
+    normalize_proposal,
+    normalize_question,
+    validate_comment_dispositions,
+    without_answered_gap_warnings,
+)
 from business_documents.domain.change_plan import validate_evidence_sources, validate_snapshot_sources
 from business_documents.domain.errors import RuleViolation
 from business_documents.domain.execution_audit import validate_audit_envelope, validate_ai_audit, validate_retrieval_audit, verify_pinned_evidence
@@ -50,20 +58,14 @@ class JobWriter(AssessmentWriter, Protocol):
 
 
 class _AssessmentBatch:
-    def __init__(self, writer: AssessmentWriter, content: DocumentContent, new_id: Callable[[], str], document_id: str, review_cycle: int, snapshot: SnapshotIndex, *, comments: bool = False):
-        self.writer, self.content, self.new_id = writer, content, new_id
+    def __init__(self, writer: AssessmentWriter, new_id: Callable[[], str], document_id: str, review_cycle: int, snapshot: SnapshotIndex, section_ids: frozenset[str], *, comments: bool = False):
+        self.writer, self.new_id = writer, new_id
         self.document_id, self.review_cycle = document_id, review_cycle
         self.records = writer.assessment(document_id, review_cycle, comments=comments)
         self.questions = {(row["stage"], row["semantic_tag"]): row["id"] for row in self.records.questions}
         self.proposals = {(row["fingerprint"], row["source_scope_hash"]): row["id"] for row in self.records.proposals}
         self.snapshot = snapshot
-        self._section_ids: frozenset[str] | None = None
-
-    @property
-    def section_ids(self) -> frozenset[str]:
-        if self._section_ids is None:
-            self._section_ids = frozenset(section["id"] for section in self.content.published_template()["sections"])
-        return self._section_ids
+        self.section_ids = section_ids
 
     def outcome(self, stage: str) -> str:
         return "NEEDS_INPUT" if any(row_stage == stage and row_id not in self.records.answered_ids for (row_stage, _), row_id in self.questions.items()) else "COMPLETE"
@@ -270,7 +272,7 @@ class JobCompletion:
         if document["operation_state"] != "ANALYZING" or document["lifecycle_state"] != "INTAKE":
             raise ConflictError("JOB_STATE_CONFLICT", "Intake assessment is not active")
         self._content.validate_contract("question_batch", output)
-        batch = _AssessmentBatch(self._writer, self._content, self._new_id, document["id"], 0, SnapshotIndex.build(job, execution))
+        batch = _AssessmentBatch(self._writer, self._new_id, document["id"], 0, SnapshotIndex.build(job, execution), assessment_section_ids(self._content.published_template()))
         event_id = self._new_id()
         count = sum(int(batch.add_question(question, "INTAKE", event_id)[1]) for question in output["questions"])
         return self._finish(
@@ -288,7 +290,9 @@ class JobCompletion:
             raise ConflictError("JOB_STATE_CONFLICT", "Review assessment is not active")
         self._content.validate_contract("review_plan", output)
         cycle = document["active_review_cycle"]
-        batch = _AssessmentBatch(self._writer, self._content, self._new_id, document["id"], cycle, SnapshotIndex.build(job, execution), comments=True)
+        template = self._content.published_template()
+        revision = job["payload"].get("current_revision") or {}
+        batch = _AssessmentBatch(self._writer, self._new_id, document["id"], cycle, SnapshotIndex.build(job, execution), assessment_section_ids(template, revision), comments=True)
         try:
             validate_comment_dispositions(output, batch.records.comment_event_ids, batch.questions, batch.records.answered_ids)
         except RuleViolation as error:
@@ -299,10 +303,7 @@ class JobCompletion:
             if item["disposition"] == "NEEDS_QUESTION":
                 question_sources.setdefault(canonical_tag(item["question_semantic_tag"]), []).append(item["comment_event_id"])
         question_ids, question_count = {}, 0
-        revision = job["payload"].get("current_revision") or {}
-        gap_questions = empty_section_questions(
-            revision.get("document_ast") or {}, self._content.published_template(), output["questions"], batch.records.questions, answered_section_ids=batch.records.answered_section_ids
-        )
+        gap_questions = empty_section_questions(revision.get("document_ast") or {}, template, output["questions"], batch.records.questions, answered_section_ids=batch.records.answered_section_ids)
         for raw in [*output["questions"], *gap_questions]:
             tag = canonical_tag(raw["semantic_tag"])
             question_id, inserted = batch.add_question({**raw, "stage": "REVIEW"}, "REVIEW", event_id, question_sources.get(tag, []))
@@ -343,7 +344,8 @@ class JobCompletion:
         if document["current_revision_id"] is not None or self._writer.open_questions(document["id"], "INTAKE", 0):
             raise ConflictError("DRAFT_PRECONDITION_FAILED", "Draft preconditions changed while the worker was running")
         snapshot = SnapshotIndex.build(job, execution)
-        batch = _AssessmentBatch(self._writer, self._content, self._new_id, document["id"], 1, snapshot)
+        template = self._content.published_template()
+        batch = _AssessmentBatch(self._writer, self._new_id, document["id"], 1, snapshot, assessment_section_ids(template))
         draft = self._content.validate_document_ast(output.get("draft"))
         draft = with_document_warnings(draft, [warning for warning in job["payload"].get("protocol", {}).get("warnings", []) if warning["code"] not in SECTION_CONTENT_WARNING_CODES])
         draft = without_answered_gap_warnings(draft, batch.records.answered_section_ids)
@@ -369,7 +371,7 @@ class JobCompletion:
         ]
         revision_id = self._writer.insert_revision(document["id"], 1, draft, body, [event_id, *answer_events], requested_by(job, document["owner_id"]), revision_id=self._new_id())
         questions = review_questions["questions"]
-        gap_questions = empty_section_questions(draft, self._content.published_template(), questions, batch.records.questions, answered_section_ids=batch.records.answered_section_ids)
+        gap_questions = empty_section_questions(draft, template, questions, batch.records.questions, answered_section_ids=batch.records.answered_section_ids)
         question_count = sum(int(batch.add_question(question, "REVIEW", event_id)[1]) for question in [*questions, *gap_questions])
         proposal_count = sum(int(batch.add_proposal(proposal, event_id)) for proposal in proposals)
         return self._finish(

@@ -34,7 +34,7 @@ from api.apps.business_documents.assets import (
     validate_document_ast,
 )
 from business_documents.domain.content import bind_change_plan_snapshot, generated_document_from_text, with_document_warnings
-from business_documents.domain.assessment import normalize_assessment_output
+from business_documents.domain.assessment import assessment_section_ids, normalize_assessment_output
 from api.apps.business_documents.recovery import AIRecovery, is_transient_failure
 from business_documents.application.errors import ValidationError
 from business_documents.domain.job_recovery import REPAIRABLE_OUTPUT_CODES, REPAIRABLE_PLAN_INPUT_CODES
@@ -708,9 +708,10 @@ class BusinessDocumentAI:
 
     @staticmethod
     def _normalize_question_fields(job: BusinessDocumentJob, output: dict[str, Any]) -> dict[str, Any]:
+        payload = getattr(job, "payload", {})
         context = {
-            "section_ids": frozenset(section["id"] for section in published_template()["sections"]),
-            "known_questions": getattr(job, "payload", {}).get("protocol", {}).get("questions", []),
+            "section_ids": assessment_section_ids(published_template(), payload.get("current_revision")),
+            "known_questions": payload.get("protocol", {}).get("questions", []),
         }
         if job.job_type in {"ASSESS_INTAKE", "ASSESS_REVIEW"}:
             intake = job.job_type == "ASSESS_INTAKE"

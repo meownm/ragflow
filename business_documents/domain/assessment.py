@@ -15,6 +15,11 @@ def canonical_tag(value: str) -> str:
     return unicodedata.normalize("NFKC", value).strip().casefold()
 
 
+def assessment_section_ids(template: Mapping[str, Any], revision: Mapping[str, Any] | None = None) -> frozenset[str]:
+    outline = (revision or {}).get("document_ast") or template
+    return frozenset(section["id"] for section in outline["sections"])
+
+
 def empty_section_questions(
     document: Mapping[str, Any],
     template: Mapping[str, Any],
@@ -207,7 +212,7 @@ def normalize_question(raw: object, stage: str, section_ids: frozenset[str]) -> 
     if raw.get("stage") != stage:
         raise RuleViolation("QUESTION_STAGE_CONFLICT", "Question stage does not match the active workflow stage")
     if raw.get("target_section_id") not in section_ids:
-        raise RuleViolation("QUESTION_SECTION_NOT_FOUND", "Question target_section_id is not in the published template")
+        raise RuleViolation("QUESTION_SECTION_NOT_FOUND", "Question target_section_id is not in the assessment outline")
     if not isinstance(text, str) or not text.strip() or not isinstance(options, list):
         raise RuleViolation("INVALID_QUESTION", "Question requires text and an array of options; a free-text answer is always available")
     normalized_options, seen_ids = [], set()
@@ -233,7 +238,7 @@ def normalize_proposal(raw: object, section_ids: frozenset[str]) -> dict[str, An
     if not isinstance(raw, dict) or not isinstance(raw.get("text"), str) or not raw["text"].strip():
         raise RuleViolation("INVALID_PROPOSAL", "Proposal text must be non-empty")
     if raw.get("target_section_id") not in section_ids:
-        raise RuleViolation("PROPOSAL_SECTION_NOT_FOUND", "Proposal target_section_id is not in the published template")
+        raise RuleViolation("PROPOSAL_SECTION_NOT_FOUND", "Proposal target_section_id is not in the assessment outline")
     fingerprint = stable_hash({"target_section_id": raw.get("target_section_id"), "text": " ".join(unicodedata.normalize("NFKC", raw["text"]).casefold().split())})
     scope = stable_hash({"source_event_ids": sorted(set(raw.get("source_event_ids", []))), "evidence_refs": sorted(set(raw.get("evidence_refs", [])))})
     return {
